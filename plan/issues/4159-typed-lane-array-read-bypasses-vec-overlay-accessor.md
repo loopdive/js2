@@ -571,3 +571,37 @@ Neither is covered by an existing issue and both are measured, not inferred:
   `Object.prototype[1] = 111` followed by `({length:3})[1]` misses entirely.
   This is the substrate #4160 assumed it could extend; it does not exist yet, so
   #4160's slice 1 must CREATE the store, not just widen a scan.
+
+### Verification of the architect spec (opus, 2026-08-05)
+
+The spec above was independently re-checked rather than taken on trust. All
+three probes reproduce exactly as reported, on this tree:
+
+```
+P3  Object.prototype[1]=111 then ({length:3})[1]  -> NaN   (expected 111)
+P1  dynamic arr[1]=5 through a defined setter     -> 0     (expected 5)
+P2  forEach.call over array-like, inherited idx   -> 2     (expected 113)
+```
+
+Citations spot-checked and confirmed verbatim: the bare `return` on
+`FLAG_ACCESSOR` (`vec-overlay.ts` ~L1409), the `__extern_has_idx` hole-skip
+comment (`array-prototype-borrow.ts:607`), `shouldHoleSkip` as the sole
+`arrayProtoIndexDirty` consumer (`array-methods.ts:5590-5592`), and the host
+lane's `_protoIndexHas`/`_protoIndexGet` (`runtime.ts:409/417`, consulted at
+`:9692` and `:9776`).
+
+**One claim is UNCONFIRMED and slice S4 must not be planned as a salvage until
+it is checked.** The spec states that #3251 S2 is "implemented and validated but
+UNMERGED on fork branch `issue-3251-s2-write-enforcement` (tip `766af9b980`)".
+That is a faithful quotation of the epic (`plan/issues/3251-…md:345-352`) — but
+it is a citation of a *document*, not of the *remote*. From this checkout:
+
+- `git ls-remote --heads origin | grep -c 3251` -> **0**
+- `git cat-file -t 766af9b980` -> **not a valid object name**
+
+`origin` here is upstream (`loopdive/js2`) and no `fork` remote is configured, so
+the branch may well exist on `ttraenkler/js2` and simply be invisible from here.
+But nobody should schedule S4 as "merge main into the existing branch and
+re-validate" until someone has confirmed the branch still exists and the tip sha
+is reachable. If it is gone, S4 is unwritten work, not a salvage, and S5's
+sequencing estimate changes with it.
