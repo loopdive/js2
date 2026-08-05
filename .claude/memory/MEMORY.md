@@ -10,6 +10,7 @@
 - **`origin` IS THE FORK in /workspace** — verify landed code against `upstream/main` by merge-commit ancestry — [origin-is-the-fork](reference_origin_is_the_fork_verify_against_upstream_main.md)
 - **ALWAYS spawn writers as teammates** + `isolation: worktree` + bypassPermissions.
 - **BEFORE EVERY git add/commit**: `pwd && git branch --show-current`. Never `git add -A`.
+- **Signing is CONFIGURED — never pass `-c commit.gpgsign=false`, and never `--no-verify`.** There is no prompt to avoid. `%G? = N` is a local-verification artifact (`gpg.ssh.allowedSignersFile` unset), NOT an unsigned commit — verify with `git cat-file commit HEAD | grep -c "BEGIN SSH SIGNATURE"`. Slow chain ⇒ `SKIP_SLOW_PRECOMMIT=1`, and end the message with `✓` — [commit-signing](reference_commit_signing_in_this_container.md)
 - **Commit AUTHOR must be the user** + Claude co-author, never a role name — [commit-author](feedback_commit_author_is_user_not_agent_role.md)
 - **NEVER delete worktrees without checking diffs**; never work agent branches from `/workspace`; never kill tests without asking.
 - **NEVER `git worktree prune` in the container** — repo shared with a HOST session; `prunable` = "not visible from here" — [never-prune-in-container](reference_never_git_worktree_prune_inside_container.md)
