@@ -105,11 +105,17 @@ describe("#4055 ToPropertyDescriptor over a function descriptor carrier", () => 
     ).toBe(1);
   });
 
-  // ── #4017 guards: the general helper must stay exactly as it was ──────────
+  // ── #4017 guards, UPDATED for #4010 S3 (stale-pin fix, landed in #4161's PR) ─
+  //
+  // These two pinned the #4055-era answer `false`. #4010 S3 then widened
+  // `__hasOwnProperty`/`__object_hasOwn` over the carrier bags DELIBERATELY —
+  // after S2 made delete real and `buildBuiltinFnSetRefusalArm` removed the
+  // −684 pollution mechanism at its source — so the correct current answer is
+  // `true`, and these pins had been failing on main since S3 landed (they only
+  // run at PR time when their file is touched, #3008). What must still hold is
+  // the read/hasOwn AGREEMENT, which the updated assertions pin.
 
-  it("Object.prototype.hasOwnProperty on a function is UNCHANGED (the #4017 guard)", async () => {
-    // Widening this is what cost 684 host-free passes. The descriptor fix lives
-    // in `__desc_has_own`; this helper must still answer `false` here.
+  it("Object.prototype.hasOwnProperty on a function agrees with the read (#4010 S3)", async () => {
     expect(
       await runStandalone(`
         export function test(): number {
@@ -120,10 +126,10 @@ describe("#4055 ToPropertyDescriptor over a function descriptor carrier", () => 
           return has + read;
         }
       `),
-    ).toBe(2);
+    ).toBe(3);
   });
 
-  it("Object.hasOwn on a function is UNCHANGED (the #4017 guard, second name)", async () => {
+  it("Object.hasOwn on a function agrees with the read (#4010 S3, second name)", async () => {
     expect(
       await runStandalone(`
         export function test(): number {
@@ -132,7 +138,7 @@ describe("#4055 ToPropertyDescriptor over a function descriptor carrier", () => 
           return Object.hasOwn(f, "p") ? 1 : 0;
         }
       `),
-    ).toBe(0);
+    ).toBe(1);
   });
 
   it("builtin function name/length reflection is UNCHANGED (the parked population)", async () => {
@@ -180,11 +186,11 @@ describe("#4055 ToPropertyDescriptor over a function descriptor carrier", () => 
 
   // ── the boundary this slice does NOT cross (#4010) ────────────────────────
 
-  it("ARRAY expandos stay invisible to hasOwnProperty — the #4010 boundary, pinned", async () => {
-    // `arr.q` READS 5 (the #3537 bag) while `hasOwnProperty("q")` answers false,
-    // because vec-overlay's prologue answers every vec receiver from __vec_gopd
-    // (the disjoint #3251 overlay) and returns before any body arm. Recorded as
-    // measured behaviour, not endorsed: flipping this belongs to #4010.
+  it("ARRAY expandos are visible to hasOwnProperty (#4010 S3 flipped the pinned boundary)", async () => {
+    // The old pin recorded read=5 / hasOwn=false as "measured behaviour, not
+    // endorsed: flipping this belongs to #4010" — and #4010 S3 flipped it
+    // (`bagHasElseAbsent` in the vec arm). Updated to the endorsed answer:
+    // read, named-expando hasOwn, and index hasOwn all agree.
     expect(
       await runStandalone(`
         export function test(): number {
@@ -196,6 +202,6 @@ describe("#4055 ToPropertyDescriptor over a function descriptor carrier", () => 
           return read + has + idx;
         }
       `),
-    ).toBe(5);
+    ).toBe(7);
   });
 });
