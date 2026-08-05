@@ -127,9 +127,35 @@ the flag is dirty. Programs that never touch a prototype index keep today's
 emission **byte-identical**, with no runtime guard, which is a stronger
 no-regression guarantee than any benchmark.
 
+## Slice 1 — LANDED 2026-08-05
+
+`protoIndexDirty` (renamed from `arrayProtoIndexDirty`) now matches
+`Object.prototype` as well as `Array.prototype`, and a new `dynamicCodeDirty`
+predicate forces it when the module contains `eval` / `Function` / `new
+Function` — closing the hole where static eval inlining (#1163) splices
+statements in *after* this pre-pass has run. Byte-identity verified by A/B
+against main's compiler over 14 compilations (7 programs x both lanes): all
+hashes identical.
+
+**One latent bug found and fixed while doing it.** The #2001 predicate matched
+only a bare `PropertyAccessExpression`, so `(Array.prototype as any)[0] = 1` —
+which is how you write it in **TypeScript**, the language this compiler actually
+consumes — did not set the flag. test262's plain-JS corpus has no cast, which is
+why it went unnoticed. `unwrapExpr` now strips parens and the type-only
+assertion forms.
+
+**Behaviour change to be aware of:** widening the flag also widens its one
+existing consumer, `shouldHoleSkip`. A module writing `Object.prototype[i]` or
+using `eval` now loses the HOF hole-visit-skip and falls back to
+visit-with-`undefined`. For an inherited *value* that is still not spec-correct
+(the callback should see the inherited value, not `undefined`) — but the visit
+COUNT becomes right, and the fallback is the prerequisite for slice 2, which
+makes the value right too. Verified against main: the hole/peephole test set has
+an identical pass/fail split before and after.
+
 ## Slices (suggested)
 
-1. **Widen the pre-scan to `Object.prototype`.** Generalise `isArrayPrototypeExpr`
+1. ~~**Widen the pre-scan to `Object.prototype`.**~~ **DONE** — Generalise `isArrayPrototypeExpr`
    to `isArrayOrObjectPrototypeExpr`, rename the flag to `protoIndexDirty` (keep
    an alias if that churns too many sites), and unit-test that
    `Object.prototype[1] = 1`, `Object.defineProperty(Object.prototype, "1", …)`
