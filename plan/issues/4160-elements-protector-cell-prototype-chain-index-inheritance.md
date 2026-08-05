@@ -16,6 +16,20 @@ goal: builtin-methods
 related: [3185, 3251, 2670, 2001, 4159]
 depends_on: [4159]
 origin: "plan/log/analysis-2026-08-04-es5-untagged-standalone-clusters.md — design review of the fast-path question"
+# (#3102 LOC ratchet) Slice-1-read growth lives where the seams are, not where
+# the logic is: the store itself is a NEW module (proto-index-store.ts, under
+# budget by construction). What grows the god-files is only integration that
+# has exactly one legal home — object-runtime.ts: the reserve hook + the
+# registration-time terminal-miss consults inside the `__extern_get` /
+# `__extern_has` bodies it owns, plus the fillExternGetIdxVecArms /
+# fillExternArrayLikeStructArms miss-point swaps (those fills live there);
+# index.ts: the two finalize-order call sites for fillProtoIndexStore (the
+# finalize sequence is index.ts's); context/types.ts: four ctx field
+# declarations (reserve latch, fill latch, two companion global indices).
+loc-budget-allow:
+  - src/codegen/object-runtime.ts
+  - src/codegen/index.ts
+  - src/codegen/context/types.ts
 ---
 
 # #4160 — "clean elements" protector cell for Array.prototype traversal
@@ -276,3 +290,73 @@ standalone mechanism transfers.
 **Sequencing.** Shared slice **S0** (the pre-scan flags, jointly with #4159's
 Work Item A) lands once and first. This issue's S1/S2 then run in parallel with
 #4159's S3.
+
+## Implementation notes — S1+S2 read side (sendev-4160-read, 2026-08-05)
+
+Implements #4159 architect-spec §(c) items 1-4 (item 5, LengthOfArrayLike,
+deliberately untouched). New module `src/codegen/proto-index-store.ts`; consult
+hooks in `object-runtime.ts` / `object-runtime-enumeration.ts` / `hof-native.ts`;
+finalize wiring in `index.ts`. Everything gated `ctx.standalone &&
+ctx.protoIndexDirty`.
+
+**WHY the shape differs from a literal reading of the spec — three findings:**
+
+1. **"Final arms in `__extern_get_idx`/`__extern_has_idx`" cannot work as
+   literally specced for `$Object` receivers.** Measured (P3 WAT): the
+   `$Object` arm of `__extern_get_idx` DELEGATES to `__extern_get(v,
+   ToString(i))` and returns its result — a final arm after it never runs. The
+   own-absent miss is only precisely knowable inside `__extern_get`'s
+   proto-walk (an own entry HOLDING undefined must still shadow the chain), so
+   the consult lives at the TERMINAL miss of `__extern_get` / `__extern_has`
+   (registration-time, flag known from the pre-scan), and at the OOB/ladder
+   miss points of the vec + closed-struct arms (finalize, same gate). Same
+   semantics as the spec intended, different insertion points.
+2. **Write arms are substitution-by-RECURSION, not re-implementation** (the
+   #4161 `closureBagSubstitutionArm` idea): the prepended `$NativeProto` brand
+   arm re-targets `__extern_set` / `__defineProperty_value` / `_accessor` at
+   the companion `$Object` and calls ITSELF — accessor-set gate, #2042-S4
+   preflight, flag translation and frozen checks all apply to the companion
+   for free, and the define arms still return the ORIGINAL receiver.
+   `__extern_set_strict` needs no arm (its non-`$Object` head already
+   delegates to `__extern_set`).
+3. **Integer-index-only participation is enforced at the WRITE, not the
+   read.** `__protoidx_norm_key` admits only canonical non-negative-integer
+   keys ("01"/" 1"/""/1.5/2^53 all refused, matching host `_protoIndexHas`'s
+   `Number.isInteger && >= 0` plus CanonicalNumericIndexString for strings),
+   so the companions' key space is integer-only by construction and reads can
+   consult unconditionally. Symbol/object keys fall through untouched — an
+   object key is NOT ToPrimitive'd in the gate, so a user `toString` never
+   runs twice.
+
+**`__hof_*` gate (spec item 4):** per-iteration `__extern_has_idx` gate on
+forEach/map/filter/some/every/reduce/reduceRight (NOT the find* family —
+§23.1.3 visits every index there); map pushes undefined for an absent index to
+keep result alignment (the dense `$ObjVec` carrier cannot hold a hole); reduce
+no-init additionally scans for the FIRST PRESENT element as the seed
+(§23.1.3.24 step 8.b), keeping the documented return-undefined boundary for
+"no present element" instead of the spec TypeError.
+
+**Bonus beyond the letter of the spec:** direct read-back on the proto objects
+themselves (`Object.prototype[1]` after the write) via a `$NativeProto` brand
+arm on `__extern_get_idx`/`__extern_has_idx` — a store you cannot read back
+from its own carrier is a debugging trap.
+
+**Verified:** P3 → 111 (was NaN), P2 → sum 113/visits 3 (was 2/2);
+defineProperty + OOB-array + `in` + non-integer-refusal + dirty-dense-HOF
+probes green (`tests/issue-4160-proto-index-store.test.ts`); byte-identity
+A/B vs main over 9 flag-clear programs × {standalone, gc} — all 18 sha256
+identical; scoped standalone test262 A/B over
+`built-ins/Array/prototype/{forEach,map,filter,some,every,reduce,reduceRight}`
+(results in the PR description).
+
+**Known boundaries (recorded in the module header too):**
+- `Object.defineProperties(Object.prototype, {...})` (plural) not armed.
+- Companion setter invoked with the companion as `this` (write side only; the
+  Get side binds the spec receiver).
+- In-bounds vec holes still answer present (dense carriers; #2001/#3185).
+- `$ObjVec` OOB and unrecognized-receiver misses in `__extern_get_idx` do not
+  consult (enumeration-result arrays; out of the measured cluster).
+- The `__hof_*` route only serves vec/`$ObjVec` receivers today (measured:
+  plain-`$Object`/closed-struct `obj.forEach(...)` member calls miss on main
+  independently of this change — the test262 `.call` shapes go through
+  `compileArrayLikeBorrow`, which is covered).
