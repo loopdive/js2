@@ -341,3 +341,11 @@ A shortcut (e.g. hiding bags from hasOwn for bound functions) would re-break
 real expandos, so this one regression is accepted as known until the substrate
 lands. Net effect of #3979 with the gate: **+29 / −1** on the six descriptor
 directories.
+
+
+### Aggregate confirmed (2026-08-05)
+
+Full re-measure of the six descriptor directories with the writable-gate fix,
+same harness, same corpus: **1,625 -> 1,653 / 2,471 (+29 fixed, -1 regressed,
+net +28)**. The sole regression is `15.2.3.6-4-594` (the documented
+OrdinarySet proto-setter case). Matches the per-test verification exactly.
