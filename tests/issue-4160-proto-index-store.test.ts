@@ -108,6 +108,39 @@ describe("#4160 prototype-index store (standalone)", () => {
     expect(r).toBe(35);
   });
 
+  it("__hof_ gate SKIP branch: callback shrink makes later indices absent -> skipped", async () => {
+    // len is fixed at 3; pop() inside the callback shrinks the array, so i=2
+    // is OOB -> HasProperty false (no proto entry in range) -> skipped.
+    // Ungated (main) behaviour visits all 3 with an undefined read.
+    const r = await runStandalone(`
+      function visit(a: any): number {
+        let visits = 0;
+        a.forEach(function (v: any) { visits++; a.pop(); });
+        return visits;
+      }
+      export function main(): number {
+        (Object.prototype as any)[9] = 1; // dirty only
+        return visit([10, 20, 30]);
+      }
+    `);
+    expect(r).toBe(2);
+  });
+
+  it("__hof_ gate PROTO branch: vacated index resolves through Array.prototype", async () => {
+    const r = await runStandalone(`
+      function visit(a: any): number {
+        let sum = 0;
+        a.forEach(function (v: any) { sum += v; a.pop(); });
+        return sum;
+      }
+      export function main(): number {
+        (Array.prototype as any)[2] = 99;
+        return visit([10, 20, 30]);
+      }
+    `);
+    expect(r).toBe(129); // 10 + 20 + 99 (index 2 OOB after pop -> proto)
+  });
+
   it("flag-clear module emits NO proto-index machinery (structural byte-identity witness)", async () => {
     // A dense loop + HOF + dynamic read program that never touches a prototype
     // index: the compiled WAT must contain no __protoidx_ symbol and no

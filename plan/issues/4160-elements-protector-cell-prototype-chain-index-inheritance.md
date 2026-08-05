@@ -1,7 +1,8 @@
 ---
 id: 4160
 title: "Per-call \"clean elements\" protector cell for Array.prototype traversal — make prototype-chain index inheritance correct without taxing the dense loop (~297 ES5+untagged)"
-status: ready
+status: in-progress
+assignee: ttraenkler/sendev-4160-read
 sprint: current
 created: 2026-08-05
 updated: 2026-08-05
@@ -357,6 +358,35 @@ A/B vs main over 9 flag-clear programs × {standalone, gc} — all 18 sha256
 identical; scoped standalone test262 A/B over
 `built-ins/Array/prototype/{forEach,map,filter,some,every,reduce,reduceRight}`
 (results in the PR description).
+
+### Sizing correction (measured 2026-08-05, scoped A/B) — the ~297 figure conflates TWO mechanisms
+
+The scoped standalone test262 A/B over `built-ins/Array/prototype/{forEach,
+map,filter,some,every,reduce,reduceRight}` (1,605 files, both sides run with
+the same instrument) came back **byte-identical: {pass 879, fail 721,
+compile_error 5} on BOTH main and this branch — zero transitions**. The
+instrument is not blind: swapping main's compiler files in flips this issue's
+own acceptance test from 8/8 to 5-failed, so the A/B can see compiler changes.
+The zero is real.
+
+Root cause (project-lead triage, confirmed): the ~297-file estimate came from
+signature-based clustering, which lumped **own-accessor-descriptor** tests
+together with **prototype-chain-inheritance** tests because they share
+assertion text. The canonical `15.4.4.18-7-b-12` needs an own accessor on
+`obj["0"]` (whose getter deletes `obj[1]`) to run BEFORE the inherited index
+can matter, and e.g. `every/15.4.4.16-7-c-i-9.js` is "own accessor property on
+an Array-like object" — no prototype involved at all. Both pre-scan flags DO
+fire on the real test sources; the blocker is that the own-descriptor path
+(closed-struct/`$Object` accessor descriptors — #2668 / #3251 / #4161 scope)
+fails first, so the prototype-chain mechanism never gets to matter.
+
+**Real dependency order:** own-accessor descriptors on array-like receivers
+land FIRST; only then can the prototype-chain half of this cluster be scored.
+This slice is therefore **capability, not conformance**: the mechanism is
+proven by its acceptance tests (P2/P3 + 9 more in
+`tests/issue-4160-proto-index-store.test.ts`), and its test262 yield is gated
+behind the own-descriptor work. Do NOT re-derive a target count for this issue
+from the old cluster; re-measure after #3251-family lands.
 
 **Known boundaries (recorded in the module header too):**
 - `Object.defineProperties(Object.prototype, {...})` (plural) not armed.
