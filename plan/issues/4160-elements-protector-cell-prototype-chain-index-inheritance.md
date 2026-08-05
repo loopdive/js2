@@ -30,6 +30,15 @@ loc-budget-allow:
   - src/codegen/object-runtime.ts
   - src/codegen/index.ts
   - src/codegen/context/types.ts
+# (#1917/#2108 coercion-sites gate) proto-index-store.ts's `__protoidx_norm_key`
+# DELEGATES to the engine's own helpers by funcMap name (number_toString /
+# __str_to_number / __unbox_number — the same trio __to_property_key composes);
+# it hand-rolls no ToString/ToNumber matrix. The gate counts the references.
+# The CanonicalNumericIndexString round-trip (ToString(StringToNumber(k)) == k,
+# §7.1.4 canonical-integer-index gate) has no single engine entry point today;
+# if one lands, this helper is a one-call rewrite.
+coercion-sites-allow:
+  - src/codegen/proto-index-store.ts
 ---
 
 # #4160 — "clean elements" protector cell for Array.prototype traversal
