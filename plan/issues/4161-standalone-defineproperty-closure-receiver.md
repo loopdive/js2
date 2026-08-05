@@ -1,9 +1,10 @@
 ---
 id: 4161
 title: "standalone: Object.defineProperty/defineProperties on a FUNCTION receiver define into the #3468 own-property bag (harvest of fork PR #4124's #3979 slice)"
-status: in-progress
+status: done
 sprint: current
 created: 2026-08-05
+completed: 2026-08-05
 priority: high
 horizon: m
 feasibility: hard
@@ -134,20 +135,55 @@ Unit tests: `tests/issue-4161.test.ts`.
 
 ## MEASURED — standalone lane, six descriptor directories (2026-08-05)
 
-Same corpus and rule as the fork's measurement: `runTest262File(path,
-category, undefined, "standalone")` — the lane is the 4th POSITIONAL argument
-(the fork's first measurement was lane-mislabelled by passing an options
-object into `timeoutMs`; here the lane is passed positionally and standalone
-verdicts are host-free by `standaloneHostImportError`). 2,471 files across
-`built-ins/Object/{defineProperty,defineProperties,create,getOwnPropertyDescriptor,isExtensible,preventExtensions}`.
+Same corpus as the fork's measurement, but on CURRENT main's runner:
+`runTest262File(path, category, undefined, "standalone")` — the lane is the
+4th POSITIONAL argument (the fork's first measurement was lane-mislabelled by
+passing an options object into `timeoutMs`; here the lane is passed
+positionally, and standalone verdicts enforce host-freedom via
+`standaloneHostImportError` — visibly so: modules that demand a host import
+fail instantiation in this lane, see `15.2.3.6-4-594` below). 2,471 files
+across
+`built-ins/Object/{defineProperty,defineProperties,create,getOwnPropertyDescriptor,isExtensible,preventExtensions}`,
+BEFORE = this branch with `object-runtime-descriptors.ts` reverted to the
+merge base (`3f7f19e8a`), AFTER = this branch. Identical harness, 6 workers.
 
-<!-- MEASUREMENT-PLACEHOLDER: filled in below after the A/B runs -->
+| | standalone |
+| --- | --- |
+| BEFORE | 1,268 / 2,471 |
+| AFTER | **1,272 / 2,471** |
+| fixed | **+4** |
+| regressed (pass→fail transitions) | **0** |
 
-## Remaining / blocked (unchanged from the fork's analysis, re-checked)
+The four flips, individually:
+
+| test | BEFORE failure |
+| --- | --- |
+| `defineProperties/15.2.3.7-5-a-7.js` | `#1906 [SITE-PROPS-BAG-NOT-AUTHORITATIVE]` (function `Properties` map) |
+| `defineProperties/15.2.3.7-5-b-239.js` | same |
+| `create/15.2.3.5-4-28.js` | same, via `Object.create` |
+| `defineProperty/15.2.3.6-4-33.js` | "Expected a TypeError… no exception" — the #2042-S4 preflight a closure receiver used to skip |
+
+**Zero pass→fail transitions.** The fork's sole accepted regression,
+`15.2.3.6-4-594`, is NOT a transition here: it fails identically on BOTH
+sides of this A/B with a pre-existing, unrelated failure on current main
+(`WebAssembly.instantiate(): Import #0 module="js2wasm:runtime-eval"` — the
+compiled module demands a host import, so the host-free lane refuses to
+instantiate it).
+
+**Why +4 and not the fork's +29/−1:** the fork's number was measured against
+a months-old base. Between that base and current main, #4055 and #4010 S2/S3
+landed the READ side of the same cluster (function-as-descriptor resolution,
+hasOwn/`in`/gOPD/keys, real delete) — i.e. most of the fork's win was
+independently banked already. The fork's +29/−1 is reported here as ITS
+claim, not as something this A/B reproduced. This PR's own contribution on
+current main is the residual define-side: +4 / −0, plus the unit-test
+coverage and the two gate admissions.
+
+## Remaining / blocked (updated from the fork's analysis)
 
 | Sub-bucket | Blocked behind |
 | --- | --- |
-| `15.2.3.6-4-594` (bound fn + inherited `Function.prototype` accessor must dispatch the SETTER on assignment) | OrdinarySet fidelity for closure receivers — #2992/#3251 substrate; the fork accepted this as its sole regression and documented why a shortcut re-breaks real expandos |
+| `15.2.3.6-4-594` — now fails for a DIFFERENT reason on main (module pulls `js2wasm:runtime-eval`); once that import demand is gone, the fork's original analysis applies: inherited `Function.prototype` accessor must dispatch the SETTER on assignment (OrdinarySet fidelity, #2992/#3251) | runtime-eval import demand, then #2992/#3251 |
 | Date / RegExp / Error / Arguments expando storage (writes are LOST — no carrier) | a third side-table carrier (#4098's greenfield rows) |
 | vec `Properties` maps / vec bag-vs-overlay unification | #4010's "ONE authoritative store" for arrays |
 | closed-struct receivers / `Properties` | #2992 S6 shape widening |
