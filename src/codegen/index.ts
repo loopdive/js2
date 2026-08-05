@@ -234,6 +234,7 @@ import {
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { fillInstanceTombstones } from "./instance-tombstones.js"; // (#4098 G1 s1) per-instance own-property deletability
 import { fillVecPropHelpers } from "./vec-props.js"; // (#3537) array ($Vec) expando side table
+import { fillProtoIndexStore } from "./proto-index-store.js"; // (#4160) prototype-index companions
 import { finalizeFunctionPoisonPillCalls } from "./function-poison-pill.js";
 import { fillDataViewConstructProtoArm, fillTaDynViewMopArms } from "./ta-dyn-mop.js"; // (#3177/#3371) native view prototype arms
 import { fillObjVecReflectionHelpers } from "./objvec-array-proto.js"; // (#3666) RegExp indices Array reflection
@@ -4493,6 +4494,18 @@ export function generateModule(
     // native errors (standalone/wasi only) — byte-identical otherwise.
     fillExternGetErrorProps(ctx);
 
+    // (#4160) Prototype-index store: fill the reserved `__protoidx_*` helper
+    // bodies and splice the `$NativeProto` write/direct-read arms into
+    // `__extern_set` / `__defineProperty_value` / `__defineProperty_accessor`
+    // / `__extern_get_idx` / `__extern_has_idx`. Runs AFTER every fill above
+    // that locates its splice point by the helpers' preamble shape
+    // (`fillExternGetIdxVecArms` / `fillExternArrayLikeStructArms`) — this
+    // fill PREPENDS at body[0], which would break those shape probes if it ran
+    // first. The prepended `$NativeProto` arm is receiver-disjoint from every
+    // vec / TA-view arm, so taking the front slot is semantically inert.
+    // No-op unless `ctx.standalone && ctx.protoIndexDirty` reserved the store.
+    fillProtoIndexStore(ctx);
+
     // (#802 Slices B+C) Mint the struct-proto natives and prepend the
     // marked-root dispatch arms into `__object_setPrototypeOf` /
     // `__getPrototypeOf` / `__extern_get`, so `Object.setPrototypeOf(
@@ -6682,6 +6695,10 @@ export function generateMultiModule(
     fillTaDynViewMopArms(ctx);
     fillDataViewConstructProtoArm(ctx);
     fillReflectIsConstructor(ctx);
+    // (#4160) Prototype-index store — multi-source parity with the
+    // generateModule call above (same after-the-shape-probing-fills ordering;
+    // see the single-source comment). No-op unless reserved.
+    fillProtoIndexStore(ctx);
     // Emit __vec_get / __vec_len exports for runtime iterator fallback.
     emitVecAccessExports(ctx);
 

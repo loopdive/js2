@@ -1684,6 +1684,22 @@ export interface CodegenContext {
    */
   vecPropBaseTypeIdx?: number;
   /**
+   * (#4160) Set when `ensureObjectRuntime` reserved the prototype-index-store
+   * helpers (`__protoidx_*`, proto-index-store.ts) — the runtime companions
+   * that make `Object.prototype[i]` / `Array.prototype[i]` writes visible
+   * through the prototype chain. Reserved ONLY under
+   * `ctx.standalone && ctx.protoIndexDirty` (pre-scan flag, #4128), so a
+   * flag-clear module carries no trace; bodies + chokepoint arms are filled by
+   * `fillProtoIndexStore` at FINALIZE.
+   */
+  protoIndexStoreReserved?: boolean;
+  /** (#4160) Set once `fillProtoIndexStore` has run (idempotency latch). */
+  protoIndexStoreFilled?: boolean;
+  /** (#4160) Global index of `__protoidx_obj_companion` (`(mut externref)`). */
+  protoIndexObjCompanionGlobalIdx?: number;
+  /** (#4160) Global index of `__protoidx_arr_companion` (`(mut externref)`). */
+  protoIndexArrCompanionGlobalIdx?: number;
+  /**
    * (#1100) Set when the standalone Proxy trap-dispatch runtime reserved its
    * `__proxy_call_{get,set,has}` driver placeholders (in `ensureProxyRuntime`).
    * Those drivers invoke the user trap closures through the `__call_fn_method_N`
