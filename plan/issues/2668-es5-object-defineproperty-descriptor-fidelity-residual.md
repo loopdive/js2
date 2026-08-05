@@ -3,7 +3,7 @@ id: 2668
 title: "ES5: Object.defineProperty/defineProperties descriptor fidelity residual (~788 fails — largest ES5 cluster)"
 status: ready
 created: 2026-06-25
-updated: 2026-06-26
+updated: 2026-08-04
 priority: high
 feasibility: hard
 reasoning_effort: high
@@ -12,7 +12,7 @@ area: codegen
 es_edition: 5
 language_feature: property-descriptors
 goal: es5
-related: [1460, 1462, 929]
+related: [1460, 1462, 929, 3185, 4008, 4158]
 sprint: current
 ---
 # #2668 — ES5 Object.defineProperty/defineProperties descriptor fidelity residual
@@ -649,3 +649,48 @@ post-de-inflation regression set contains a much larger `writable`/`configurable
 wrongly-TRUE population (#3653, 202 + 134), which the pre-de-inflation baseline
 could not see. The two are measured on different trees and do **not** contradict —
 do not cite the ~10 against #3653.
+
+## Re-measure 2026-08-04 — standalone lane, ES5 + untagged scope
+
+Source: `plan/log/analysis-2026-08-04-es5-untagged-standalone-clusters.md`.
+Baselines fetched 2026-08-04, `oracle_version` 12, lane `honest`, baseline SHA
+`d3d7ec4c`. Scope is edition label `ES5` ∪ `Unclassified (untagged)` ∪
+`Unclassified (legacy)`, standalone lane, `scope_official` only.
+
+**762 files** — the largest cluster in that scope, ahead of Array traversal (738).
+605 `ES5`-tagged, 157 untagged. This is the descriptor family as a whole:
+attribute round-trip via `verifyProperty` (381) plus the
+`defineProperty`/`defineProperties`/`create`/`gOPD`/`seal`/`freeze` residual (381).
+
+Top failure shapes:
+
+```
+65  obj.property   Expected SameValue(«undefined», «…»)   built-ins/Object/defineProperty/15.2.3.6-3-228-1.js
+37  accessed !== true                                     built-ins/Object/defineProperty/15.2.3.6-3-40.js
+31  Expected obj[…] to be writable, but was not           built-ins/Object/defineProperty/15.2.3.6-4-302-1.js
+31  data           Expected SameValue(…)                  built-ins/Object/defineProperties/15.2.3.7-5-b-244.js
+27  desc.writable  Expected SameValue(«undefined», «true»)built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-4.js
+24  Expected obj[…] to equal …, actually null             built-ins/Object/defineProperty/15.2.3.6-4-231.js
+22  newObj.prop    Expected SameValue(«undefined», «…»)   built-ins/Object/create/15.2.3.5-4-250.js
+21  afterWrite     Expected SameValue(«false», «true»)    built-ins/Object/defineProperty/15.2.3.6-3-159.js
+```
+
+**Sizing caveat — 422 of 762 (55 %) also fail on the JS-host lane.** Only 340 are
+standalone-only. This is not a standalone-substrate line item; most of the work
+pays into ES5 conformance on both lanes, and quoting 762 as standalone yield
+overstates it roughly 2×. (Same finding as the 2026-08-01 census, refutation #5.)
+
+**Framing:** this cluster and #3185's array-traversal cluster are two faces of one
+substrate gap — property access is shape-specialised rather than routed through
+the ordinary-object MOP (`[[Get]]` / `[[Set]]` / `[[HasProperty]]` /
+`[[DefineOwnProperty]]` over a descriptor table and the prototype chain).
+Together with #3185 they account for 1,500 of the 3,854 non-passes in scope.
+Sequencing note: a substrate fix that lands the MOP for ordinary objects should
+move both, so measure them together rather than claiming each in full.
+
+**Missing-throw sub-cluster:** 59 of these are `assert.throws` seeing no exception
+at all (illegal reconfiguration silently accepted). They belong here and to
+#4008, not to the new #4158, which covers the Reference-layer remainder.
+
+**Not verified by repro.** These counts derive from the published baselines; no
+compiler was built for this re-measure.
