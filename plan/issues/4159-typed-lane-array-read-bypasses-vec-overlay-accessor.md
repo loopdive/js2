@@ -600,8 +600,22 @@ it is a citation of a *document*, not of the *remote*. From this checkout:
 - `git cat-file -t 766af9b980` -> **not a valid object name**
 
 `origin` here is upstream (`loopdive/js2`) and no `fork` remote is configured, so
-the branch may well exist on `ttraenkler/js2` and simply be invisible from here.
-But nobody should schedule S4 as "merge main into the existing branch and
-re-validate" until someone has confirmed the branch still exists and the tip sha
-is reachable. If it is gone, S4 is unwritten work, not a salvage, and S5's
-sequencing estimate changes with it.
+the branch was simply invisible from this checkout.
+
+**RESOLVED 2026-08-05 — the branch exists and the spec's claim stands.** Confirmed
+by the project lead against the fork (`ttraenkler/js2`):
+`issue-3251-s2-write-enforcement` is present, not deleted and not moved, and its
+tip is exactly `766af9b980` (full sha
+`766af9b9801188a1f6a5af2edf02e98e497bad4f`) — a merge commit dated 2026-07-18,
+*"Merge branch 'issue-3251-array-overlay-s1' into
+issue-3251-s2-write-enforcement"*.
+
+**S4/S5 are therefore a SALVAGE, not unwritten work**, and the architect spec's
+sequencing holds as written: merge current `main` into that branch, re-validate,
+and open the S2+S3 PR. The pre-check this section asked for is discharged; no
+further gate on S4 from this direction.
+
+The lesson worth keeping is about the *method*, not the outcome: the epic's prose
+turned out to be accurate, but it was still a report about external state, and a
+checkout that cannot see the fork cannot confirm it. Verify against the remote
+that owns the ref, or say plainly that you could not.
