@@ -53,6 +53,7 @@
   "codegen/promise-combinators.ts": 1,
   "codegen/property-access-dispatch.ts": 8,
   "codegen/property-access.ts": 7,
+  "codegen/proto-index-store.ts": 3,
   "codegen/regexp-standalone.ts": 2,
   "codegen/registry/imports.ts": 17,
   "codegen/runtime-eval-boundary.ts": 1,
