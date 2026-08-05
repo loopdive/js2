@@ -112,16 +112,21 @@ const CASES: Record<string, [string, number]> = {
     }`,
     2,
   ],
-  "B1 FUNCTION Properties -> still refuses loudly (bag not authoritative) [2]": [
+  // (#4161) B1/B2 flipped DELIBERATELY from the [2] refusal pins: the closure
+  // bag is now authoritative for a FUNCTION Properties map (defines land in the
+  // same #3468 bag assignments do, via the #4161 applier arms), so the gate
+  // enumerates the bag instead of refusing. The ARRAY pins (C1/C2) must NOT
+  // move — a vec's defines still land in the #3251 overlay, not its bag.
+  "B1 FUNCTION Properties -> bag enumerated, define lands (#4161) [0]": [
     `export function test(): number {
       const obj: any = {};
       const props: any = function () {};
       props.prop = { value: 1, enumerable: true };
       try { Object.defineProperties(obj, props); return obj.hasOwnProperty("prop") ? (obj.prop === 1 ? 0 : 4) : 1; } catch (e) { return 2; }
     }`,
-    2,
+    0,
   ],
-  "B2 FUNCTION Properties accessor descriptor -> still refuses [2]": [
+  "B2 FUNCTION Properties accessor descriptor -> setter installed (#4161) [0]": [
     `let data = "data";
     export function test(): number {
       const obj: any = {};
@@ -134,7 +139,7 @@ const CASES: Record<string, [string, number]> = {
         return data === "funData" ? 0 : 4;
       } catch (e) { return 2; }
     }`,
-    2,
+    0,
   ],
   "C1 empty ARRAY Properties with expando -> still refuses [2]": [
     `export function test(): number {
@@ -205,13 +210,15 @@ const CASES: Record<string, [string, number]> = {
     }`,
     0,
   ],
-  "F3 Object.create(proto, fnProps) -> still refuses [2]": [
+  // (#4161) Flipped from the [2] refusal pin — same mechanism as B1 above;
+  // Object.create shares the __defineProperties gate.
+  "F3 Object.create(proto, fnProps) -> bag enumerated, define lands (#4161) [0]": [
     `export function test(): number {
       const props: any = function () {};
       props.prop = { value: 3, enumerable: true };
       try { const o: any = Object.create({}, props); return o.hasOwnProperty("prop") ? (o.prop === 3 ? 0 : 4) : 1; } catch (e) { return 2; }
     }`,
-    2,
+    0,
   ],
   "G1 REGRESSION GUARD: static object-literal Properties still works [0]": [
     `export function test(): number {

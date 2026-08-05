@@ -677,17 +677,21 @@ describe("#4010 S3 — the screens that must NOT move", () => {
     ).toBe(1);
   });
 
-  it("Object.defineProperty on a FUNCTION still lands nowhere — no new lie", async () => {
-    // S2's handoff flagged this: a define on a function does not reach the bag,
-    // so `verifyProperty`'s restore step cannot round-trip there. S3 widens gOPD
-    // over the SAME bag the define did not write, so an absent property still
-    // reads as absent. A `2` here would mean gOPD had started reporting a
-    // descriptor the next read disproves.
+  it("(#4161) Object.defineProperty on a FUNCTION now LANDS — gOPD and the read agree", async () => {
+    // Flipped DELIBERATELY from the S3-era "still lands nowhere" pin. That pin
+    // guarded against gOPD reporting a descriptor the next read disproves; with
+    // the #4161 applier arm the define reaches the SAME #3468 bag gOPD reads,
+    // so the two surfaces now agree on presence instead of on absence. The
+    // invariant being pinned is the AGREEMENT, not the absence.
     expect(
       await run(`export function test(): number {
   function f(){} const g: any = f;
   Object.defineProperty(g, "p", { value: 5, writable: true, enumerable: true, configurable: true });
-  return Object.getOwnPropertyDescriptor(g, "p") === undefined ? 1 : 2;
+  const d = Object.getOwnPropertyDescriptor(g, "p");
+  if (d === undefined) return 2;
+  if (d.value !== 5) return 3;
+  if (g.p !== 5) return 4;
+  return 1;
 }`),
     ).toBe(1);
   });
