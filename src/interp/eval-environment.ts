@@ -51,6 +51,20 @@ export function registerVariableEnvironment(env: EnvRec | null, variableEnv: Env
   VARIABLE_ENVIRONMENTS.set(env as object, variableEnv);
 }
 
+/**
+ * A `Map`/`WeakMap` miss is `undefined` in TypeScript, but the standalone ABI
+ * has no distinct `undefined` for a **nullable class reference**: the local
+ * that receives `WeakMap<object, EnvRec>.get(missing)` holds `null`. Measured
+ * on this compiler — `WeakMap.get(missing) === null` is false when evaluated
+ * inline, yet `const v = WeakMap.get(missing); v === null` is true, so the
+ * coercion happens at the local store, exactly where an absence test reads it.
+ * An `x !== undefined` test therefore accepts a miss in the standalone lane and
+ * hands a null reference to the next call. Both spellings mean "absent".
+ */
+function presentEnv(env: EnvRec | undefined | null): EnvRec | null {
+  return env === undefined || env === null ? null : env;
+}
+
 /** Resolve the VariableEnvironment for a lexical chain without changing the
  * frozen `$Frame` / `$EnvRec` layouts.  The parent walk is a defensive fallback
  * for environments created before their child association was installed. */
@@ -58,8 +72,12 @@ export function variableEnvironmentFor(env: EnvRec | null): EnvRec | null {
   let current = env;
   for (;;) {
     if (current === null) return null;
-    const variableEnv = VARIABLE_ENVIRONMENTS.get(current as object);
-    if (variableEnv !== undefined) return variableEnv;
+    // A miss must CONTINUE the parent walk. Returning it (which is `null` under
+    // the standalone ABI, not `undefined`) truncated the walk at the first
+    // unregistered record, so `variableEnvironmentFor` answered "no variable
+    // environment" and B.3.3's synthetic assignment was silently skipped.
+    const variableEnv = presentEnv(VARIABLE_ENVIRONMENTS.get(current as object));
+    if (variableEnv !== null) return variableEnv;
     current = current.parent;
   }
 }
@@ -370,8 +388,12 @@ function setOwnEnvironmentBinding(env: EnvRec, name: string, value: JSValue): bo
  * records, where the Annex-B binding may have been cancelled. */
 export function setEvalVariableEnvironmentBinding(env: EnvRec, name: string, value: JSValue): boolean {
   if (setOwnEnvironmentBinding(env, name, value)) return true;
-  const existing = EXISTING_VARIABLE_ENVIRONMENTS.get(env as object);
-  return existing !== undefined && setOwnEnvironmentBinding(existing, name, value);
+  // `existing !== undefined` alone let a standalone-ABI miss (`null`, see
+  // `presentEnv`) through and dereferenced it in `setOwnEnvironmentBinding` —
+  // the null-pointer trap that killed every eval-code B.3.3 test whose caller
+  // activation was not registered here.
+  const existing = presentEnv(EXISTING_VARIABLE_ENVIRONMENTS.get(env as object));
+  return existing !== null && setOwnEnvironmentBinding(existing, name, value);
 }
 
 function addDeclarativeBinding(env: EnvRec, name: string, value: JSValue): void {
