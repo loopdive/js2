@@ -109,9 +109,11 @@ const BAG = 2;
  * if (__hasOwnProperty(obj, key)) return 1;          // never overridden
  * if (__is_closure_prop_carrier(obj)) {
  *   bag = __closure_bag_lookup(obj);                 // LOOKUP, never ensure
- *   if (bag != null && bag is $Object) return __obj_find(bag, key) != null;
+ *   if (bag != null && bag is $Object) {
+ *     if (__obj_find(bag, key) != null) return 1;    // (#4163) fall through on miss
+ *   }
  * }
- * return 0;
+ * return __extern_has(obj, key);                     // (#4163) §7.3.12 chain walk
  * ```
  *
  * The `__hasOwnProperty` call comes FIRST so every answer the existing helper
@@ -119,13 +121,25 @@ const BAG = 2;
  * answers `false` on, never an override. That ordering is what keeps this
  * additive rather than a redirection.
  *
+ * (#4163) The FINAL arm is the full ES §7.3.12 HasProperty — delegate to
+ * `__extern_has`, which walks the `$Object.$proto` chain (and the #4160
+ * prototype-index companions). ToPropertyDescriptor's field-presence step IS
+ * HasProperty, not HasOwnProperty: an INHERITED `enumerable`/`value`/… on a
+ * descriptor-argument object must be honored (the `Con.prototype = proto; new
+ * Con()` descriptor family). Prototype pollution was checked and is a
+ * non-issue: none of the six descriptor field names is reachable via `in` on
+ * any standalone plain object/array/function/RegExp/Date/Error/Arguments/
+ * wrapper receiver by default. This arm measured +0 while the #2660 chain was
+ * dead and is re-landed WITH the chain-liveness fix, where it is load-bearing
+ * (see plan/issues/4008-*.md "do not re-derive" note).
+ *
  * Returns the funcIdx, or `undefined` when a dependency is missing, in which
  * case callers keep using `__hasOwnProperty` directly.
  */
 export function registerDescriptorHasOwn(
   ctx: CodegenContext,
   registerNative: RegisterNative,
-  args: { hasOwnIdx: number; objFindIdx: number; objectTypeIdx: number },
+  args: { hasOwnIdx: number; objFindIdx: number; objectTypeIdx: number; externHasIdx?: number | undefined },
 ): number | undefined {
   const existing = ctx.funcMap.get(DESC_HAS_OWN);
   if (existing !== undefined) return existing;
@@ -179,7 +193,13 @@ export function registerDescriptorHasOwn(
                   { op: "call", funcIdx: args.objFindIdx },
                   { op: "ref.is_null" },
                   { op: "i32.eqz" },
-                  { op: "return" },
+                  // (#4163) HIT → 1; a bag MISS now falls through to the
+                  // §7.3.12 chain arm below instead of answering 0.
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: [{ op: "i32.const", value: 1 }, { op: "return" }],
+                  },
                 ],
               },
             ],
@@ -189,7 +209,15 @@ export function registerDescriptorHasOwn(
     );
   }
 
-  body.push({ op: "i32.const", value: 0 });
+  // (#4163) FINAL arm — full §7.3.12 HasProperty via `__extern_has` (own +
+  // carrier bag + `$proto` chain + #4160 companions). Registered after
+  // `__extern_has` precisely so this funcIdx is available; when it is not
+  // (dependency missing), keep the previous own-only 0 answer.
+  if (args.externHasIdx !== undefined) {
+    body.push({ op: "local.get", index: 0 }, { op: "local.get", index: 1 }, { op: "call", funcIdx: args.externHasIdx });
+  } else {
+    body.push({ op: "i32.const", value: 0 });
+  }
 
   return registerNative(
     DESC_HAS_OWN,

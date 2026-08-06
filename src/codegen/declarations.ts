@@ -1413,6 +1413,17 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // the null-access payload before strict [[Set]] can produce TypeError.
     if (!ctx.sourceIsModule && decl.initializer.kind === ts.SyntaxKind.ThisKeyword) return true;
     if (!ts.isObjectLiteralExpression(decl.initializer)) return false;
+    // (#802 Slice A / #4163) A proto-RECEIVER or proto-SOURCE object literal
+    // (marked by scanForDynamicProto, which runs before declaration collection)
+    // is built as an open `$Object` (externref) by the literals.ts routing —
+    // `$Object` is the only representation with a live `$proto` slot. The
+    // receiving module GLOBAL must be externref to match. This is the module-
+    // global twin of the hoistVarDecl / walkStmtForLetConst consults in
+    // index.ts; without it a top-level `var proto = {…}; F.prototype = proto`
+    // stored the `$Object` into a struct-typed global (or kept the closed
+    // struct), seeding `$proto = null` at `new F()` and killing every
+    // inherited read.
+    if (ctx.standalone && ctx.dynamicProtoLiteralNodes.has(decl.initializer)) return true;
     // (#3369) An untyped empty object literal is constructed by literals.ts as
     // a host `$Object` (`__new_plain_object`). Keep the module global on the
     // same externref representation unless a shape pre-pass deliberately

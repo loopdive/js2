@@ -79,6 +79,7 @@ import { nextModuleGlobalIdx } from "./registry/imports.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
 import { INITIAL_CAP } from "./object-runtime.js";
+import { resolveFnctorSymbol } from "./fnctor-escape-gate.js"; // (#4163) proto-SOURCE marks
 
 const EXTERNREF: ValType = { kind: "externref" };
 
@@ -150,6 +151,43 @@ export function scanForDynamicProto(ctx: CodegenContext, root: ts.Node): void {
     // closed struct flowing in as `any` keeps today's behavior (spec §5).
   };
 
+  // (#4163) Mark a PROTO-SOURCE expression: an object that will BECOME a
+  // [[Prototype]] (the donor side — the receiver-side marks above are #802's).
+  // In standalone the proto-position natives (`__object_create`'s `$proto`
+  // seed, `__object_setPrototypeOf`, the #2660 S3a reconstruct seed) all
+  // require the proto value to be an open `$Object`; a closed-struct literal
+  // silently seeds `$proto = null` and the whole inherited-read chain is dead
+  // (probe: `var proto = {foo:1}; F.prototype = proto; new F()` — `"foo" in
+  // child` was false while `Object.getPrototypeOf(child) === proto` READ true,
+  // the #4163 identity-without-liveness trap). Marking the literal initializer
+  // into `ctx.dynamicProtoLiteralNodes` reuses the ENTIRE Slice-A promotion:
+  // literals.ts builds it as `$Object`, and variables.ts / index.ts type the
+  // binding slot externref in lockstep. Direct literal proto ARGS (e.g.
+  // `Object.create({...})`) already build as `$Object` via compileProtoArg /
+  // the S2 fnctor-prototype assign interception, so only the one-hop
+  // identifier-binding case needs the mark.
+  const markProtoSource = (srcRaw: ts.Expression): void => {
+    let src = srcRaw;
+    while (
+      ts.isAsExpression(src) ||
+      ts.isParenthesizedExpression(src) ||
+      ts.isNonNullExpression(src) ||
+      ts.isSatisfiesExpression(src) ||
+      ts.isTypeAssertionExpression(src)
+    ) {
+      src = src.expression;
+    }
+    if (!ts.isIdentifier(src)) return;
+    const init = ctx.oracle.variableInitializerOf(src);
+    if (process.env.JS2WASM_LOG_PROTO_SOURCE === "1") {
+      // eslint-disable-next-line no-console
+      console.error(`[#4163 proto-source] id=${src.text} init=${init ? ts.SyntaxKind[init.kind] : "none"}`);
+    }
+    if (init && ts.isObjectLiteralExpression(init)) {
+      ctx.dynamicProtoLiteralNodes.add(init);
+    }
+  };
+
   const visit = (node: ts.Node): void => {
     if (ts.isClassDeclaration(node) && node.name) {
       declaredClasses.add(node.name.text);
@@ -168,6 +206,19 @@ export function scanForDynamicProto(ctx: CodegenContext, root: ts.Node): void {
       node.arguments.length >= 1
     ) {
       markReceiver(node.arguments[0]!);
+      // (#4163) the PROTO argument is a proto-source.
+      if (node.arguments.length >= 2) markProtoSource(node.arguments[1]!);
+    }
+    // (#4163) Object.create(X, …) — X is a proto-source.
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === "Object" &&
+      node.expression.name.text === "create" &&
+      node.arguments.length >= 1
+    ) {
+      markProtoSource(node.arguments[0]!);
     }
     // X.__proto__ = _  (the §B.2.2.1 setter form; assignment.ts routes it to
     // the same helper)
@@ -179,6 +230,30 @@ export function scanForDynamicProto(ctx: CodegenContext, root: ts.Node): void {
       node.left.name.text === "__proto__"
     ) {
       markReceiver(node.left.expression);
+      // (#4163) the assigned value is a proto-source.
+      markProtoSource(node.right);
+    }
+    // (#4163) `F.prototype = X` for an APPROVED user fnctor (#2660 S2/S3a):
+    // the assigned object becomes the live `[[Prototype]]` seed of every
+    // reconstructed `new F()` instance, so a literal-initialized binding X
+    // must build as an open `$Object` — `__object_create` seeds `$proto =
+    // (proto is $Object ? proto : null)`, and a closed struct kills the chain.
+    // Gated on the S1 escape gate's approvedNames (the same scope the S2
+    // prototype interception and the S3a reconstruct use), so a keep-typed /
+    // keep-static fnctor's prototype binding keeps its representation — the
+    // #2660 S2 header records a measured −40 standalone-floor cost for an
+    // UNSCOPED interception here.
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(node.left) &&
+      !ts.isPrivateIdentifier(node.left.name) &&
+      node.left.name.text === "prototype"
+    ) {
+      const sym = resolveFnctorSymbol(ctx.checker, node.left.expression);
+      if (sym && ctx.fnctorEscapeGate?.approvedNames.has(sym.name)) {
+        markProtoSource(node.right);
+      }
     }
     forEachChild(node, visit);
   };
