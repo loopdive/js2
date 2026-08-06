@@ -88,10 +88,39 @@ committer so both carry the configured identity.
 **Commits are authored by the USER, with Claude as co-author.** The user stated
 this directly, which settles the conflict the section below had left open.
 
+**A commit has TWO identities and they must differ here.** Setting
+`user.email` to the user's address sets author *and* committer, and the stop
+hook then flags every commit — GitHub verifies a signature against the
+**committer**, so a committer of `github.com@loopdive.com` renders as
+**Unverified** no matter that the commit is correctly signed. Attribution is
+the **author** field. So:
+
+| field | value | why |
+| --- | --- | --- |
+| author | `Thomas Tränkler <github.com@loopdive.com>` | the attribution the user asked for |
+| committer | `Claude <noreply@anthropic.com>` | the identity the signing key is registered to; what GitHub verifies |
+| trailer | `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>` | not automatic — write it into the message |
+
+This is ordinary git, not a workaround: `main`'s one human commit is
+`A: Thomas Tränkler / C: GitHub <noreply@github.com>` (a web-UI commit), so
+author≠committer is already the norm in this repo.
+
+Keep the config as the COMMITTER identity and pass the author explicitly:
+
 ```
-user.name   = Thomas Tränkler
-user.email  = github.com@loopdive.com
+user.name   = Claude
+user.email  = noreply@anthropic.com
 ```
+
+```bash
+git commit --author="Thomas Tränkler <github.com@loopdive.com>" -m "… ✓"
+# fixing earlier commits (note: NOT --reset-author, which would overwrite the
+# author with the committer — the exact mistake this section exists to prevent):
+git rebase --exec 'git commit --amend --no-edit --author="Thomas Tränkler <github.com@loopdive.com>"' <base>
+```
+
+Verify with `git log -3 --format='%h A:%ae C:%ce'` — you want two DIFFERENT
+addresses.
 
 plus a trailer in every commit message (it is **not** automatic — the config
 sets the author, not the trailer):
