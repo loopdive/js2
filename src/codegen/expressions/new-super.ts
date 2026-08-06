@@ -1137,22 +1137,36 @@ function flattenCallArgs(args: readonly ts.Expression[]): ts.Expression[] | null
  *       the REAL slot type — rather than re-deriving it from the TS annotation —
  *       is robust against every type-override in variables.ts and is exactly the
  *       value the result is `local.set` into.
+ *   (a') a MODULE-scope `var x = new F()` whose ALREADY-ALLOCATED module global
+ *       is externref (#4163). `collectDeclarations` registers module globals
+ *       (registerModuleGlobal) before any body compiles, so the slot type is
+ *       final here for the same reason (a)'s is. This is the dominant test262
+ *       shape — top-level `var child = new F()` in a script — which the
+ *       function-local-only check missed entirely, leaving the whole ES5
+ *       inherited-property family on the dead struct path.
  *   (b) an inline member/element receiver `new F().x` / `new F()[i]` (unwrapping
  *       `( )`/`as`/`!`): an externref receiver routes through the dynamic
  *       `__extern_get` + `$proto` walk — the resolution path we want.
- * Anything else (a struct-typed local, a module-global binding, a call argument,
- * a return, an assignment target) → false → status-quo struct lowering. The
- * conservative miss costs a row, never the floor.
+ * Anything else (a struct-typed local or global, a call argument, a return, an
+ * assignment target) → false → status-quo struct lowering. The conservative
+ * miss costs a row, never the floor.
  */
 function fnctorNewResultConsumedAsExternref(
-  _ctx: CodegenContext,
+  ctx: CodegenContext,
   fctx: FunctionContext,
   newExpr: ts.NewExpression,
 ): boolean {
   const declParent = newExpr.parent;
   if (ts.isVariableDeclaration(declParent) && declParent.initializer === newExpr && ts.isIdentifier(declParent.name)) {
     const localIdx = fctx.localMap.get(declParent.name.text);
-    if (localIdx === undefined) return false; // module-global binding → status quo
+    if (localIdx === undefined) {
+      // (a') module-global binding: accept iff the ALLOCATED global slot is
+      // externref (the untyped/`any` representation). A struct-typed or numeric
+      // global keeps status quo — returning externref into it would trap.
+      const globalIdx = ctx.moduleGlobals.get(declParent.name.text);
+      if (globalIdx === undefined) return false;
+      return ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type.kind === "externref";
+    }
     return getLocalType(fctx, localIdx)?.kind === "externref";
   }
   // Inline: unwrap `( )` / `as` / `!` between the new-expression and its consumer.

@@ -3061,18 +3061,9 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   emitHasOwn("__hasOwnProperty");
   emitHasOwn("__object_hasOwn");
 
-  // (#4055) ToPropertyDescriptor's HasProperty step, and ONLY it, must also see
-  // the #3468 closure own-property bag — a function used as a descriptor keeps
-  // its `value`/`enumerable`/… there, and gating each field on a bag-blind
-  // HasProperty yielded an empty descriptor with all-false defaults. Deliberately
-  // a separate native rather than a widening of `__hasOwnProperty`: #4017 tried
-  // the latter and cost 684 host-free passes via `propertyHelper.js`. See
-  // carrier-bag-hasown.ts.
-  registerDescriptorHasOwn(ctx, registerNative, {
-    hasOwnIdx: ctx.funcMap.get("__hasOwnProperty")!,
-    objFindIdx,
-    objectTypeIdx,
-  });
+  // (#4055/#4163) `registerDescriptorHasOwn` moved to AFTER the `__extern_has`
+  // registration below, so the §7.3.12 chain-walk arm can bake `__extern_has`'s
+  // funcIdx. See carrier-bag-hasown.ts.
 
   // ── __propertyIsEnumerable(externref obj, externref key) -> i32 (#2541) ─────
   //
@@ -3204,6 +3195,26 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       body,
     );
   }
+
+  // (#4055) ToPropertyDescriptor's HasProperty step, and ONLY it, must also see
+  // the #3468 closure own-property bag — a function used as a descriptor keeps
+  // its `value`/`enumerable`/… there, and gating each field on a bag-blind
+  // HasProperty yielded an empty descriptor with all-false defaults. Deliberately
+  // a separate native rather than a widening of `__hasOwnProperty`: #4017 tried
+  // the latter and cost 684 host-free passes via `propertyHelper.js`. See
+  // carrier-bag-hasown.ts.
+  // (#4163) Registered AFTER `__extern_has` so the widening to the full §7.3.12
+  // HasProperty (own + carrier bag + prototype chain) can delegate to it as the
+  // final arm — ToPropertyDescriptor's spec step IS HasProperty, and with the
+  // #2660 S3a chain now live (approved fnctor reconstruction + proto-source
+  // `$Object` promotion) an INHERITED descriptor field must be seen. Measured
+  // +0 while the chain was dead (per the #4008 pickup notes); load-bearing now.
+  registerDescriptorHasOwn(ctx, registerNative, {
+    hasOwnIdx: ctx.funcMap.get("__hasOwnProperty")!,
+    objFindIdx,
+    objectTypeIdx,
+    externHasIdx: ctx.funcMap.get("__extern_has"),
+  });
 
   // ── __to_primitive(externref input, externref hint) -> externref ─────────
   //

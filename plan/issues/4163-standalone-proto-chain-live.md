@@ -1,0 +1,89 @@
+---
+id: 4163
+title: "Standalone: make the [[Prototype]] chain LIVE for `new F()` with reassigned `F.prototype` (ES5 inherited-property family)"
+status: in-progress
+assignee: ttraenkler/W2-prototype-chain
+sprint: current
+created: 2026-08-06
+updated: 2026-08-06
+priority: high
+horizon: l
+feasibility: hard
+reasoning_effort: max
+task_type: bug
+area: codegen
+language_feature: prototype chain, constructor functions
+goal: standalone-gap
+related: [2660, 4008, 4055, 4160, 802]
+---
+
+# Standalone: make the [[Prototype]] chain LIVE for `new F()` with reassigned `F.prototype`
+
+## Problem
+
+**The largest single mechanism in the ES5 standalone tail — 219 files**
+(list: `.tmp/levers/W2-prototype-chain.txt`, derived from test262
+`description:` frontmatter, not error-string clustering; see the #4008
+pickup notes). Two shapes, one substrate gap:
+
+1. `new F()` with a REASSIGNED `F.prototype` does not link `[[Prototype]]`:
+
+   ```js
+   var proto = { foo: 1 };
+   var F = function () {};
+   F.prototype = proto;
+   var child = new F();
+   // standalone: "foo" in child === false, Object.getPrototypeOf(child) === proto === false
+   ```
+
+2. `Object.prototype.x = …` is invisible to every instance (12 files —
+   separate slice, #4160's proto-index store minus its integer-key gate).
+
+⚠ **Identity-without-liveness trap** (#4008 notes): `Object.getPrototypeOf({})
+=== Object.prototype` evaluates TRUE in standalone while the chain is dead.
+Probe with `in` or a property read, never the identity.
+
+## Root causes found (measured, 2026-08-06)
+
+The #2660 substrate (S1 escape gate, S2 per-fnctor prototype `$Object`, S3a
+`__object_create` reconstruction) already exists and the S1 gate classified the
+canonical repro `reconstruct` — but THREE independent gaps kept the chain dead:
+
+1. **S3a's G4 gate only accepted function-LOCAL externref bindings.**
+   `fnctorNewResultConsumedAsExternref` (new-super.ts) returned false for a
+   module-global binding — and top-level `var child = new F()` is the dominant
+   test262 shape. Widened to accept a module-global whose ALLOCATED slot is
+   externref.
+
+2. **The prototype OBJECT itself compiled as a closed struct.** `var proto =
+   {foo: 1}` (non-empty literal, no contextual type) takes the closed-struct
+   path, so `__object_create(proto)` seeds `$proto = (proto is $Object ? proto
+   : null)` → null. Fixed by marking proto-SOURCE literals (one-hop
+   identifier bindings flowing into `F.prototype = X` for approved fnctors,
+   `Object.create(X)`, `setPrototypeOf(_, X)`, `__proto__ = X`) into the
+   existing #802 `ctx.dynamicProtoLiteralNodes` promotion (scanForDynamicProto)
+   — literals.ts builds them as `$Object`, slot typing follows in lockstep.
+   Also added the MISSING third slot-typing consult: declarations.ts
+   `moduleInitForcesExternref` (the module-global twin of the two index.ts
+   consults).
+
+3. **Clause A missed the descriptor idiom.** `Object.defineProperty(obj, "p",
+   attr)` passes `attr` to a CONCRETELY-typed lib.d.ts param, so the
+   any/unknown-param dynamic-use check never fired → `keep-static` → struct
+   path. Added: any argument of a builtin `Object.*`/`Reflect.*` call is a
+   dynamic consumer (their standalone lowerings all consume via the externref
+   `$Object` runtime). Clause B (typed own-field ⇒ keep-typed) unchanged.
+
+Plus the **#4008 prerequisite re-land**: `__desc_has_own` widened from
+HasOwnProperty to full §7.3.12 HasProperty (final arm delegates to
+`__extern_has`, registered after it for funcIdx ordering). Measured +0 while
+the chain was dead; load-bearing now that it is live.
+
+## Acceptance
+
+- The four-line repros above resolve `in`/read/gpo correctly (probes 1, 1a-1c,
+  3, 3b in `.tmp/` — all verified 2026-08-06).
+- Measured pass-count gain on the 219-file lever list, 0 regressions on it.
+- Standalone floor / equivalence tests green (the #2660 S2 header records a
+  −40 floor cost for unscoped interception — every widening here stays behind
+  the S1 (A)∧(B) gate).
