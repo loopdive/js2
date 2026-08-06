@@ -1,5 +1,5 @@
 ---
-id: 3974
+id: 4171
 title: "annexB eval-code: `assert is not defined` inside eval'd code — 120 tests, harness bindings not visible to the eval scope"
 status: ready
 sprint: current
@@ -17,7 +17,7 @@ related: [3083, 2928, 1387]
 origin: "2026-08-01 /harvest-errors of loopdive/js2wasm-baselines test262-current.jsonl (run 20260801-090441, gitHash c601e89b)"
 ---
 
-# #3974 — `assert is not defined` inside annexB eval'd code
+# #4171 — `assert is not defined` inside annexB eval'd code
 
 ## TL;DR
 

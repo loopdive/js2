@@ -1,5 +1,5 @@
 ---
-id: 3973
+id: 4170
 title: "test262 .js sources rejected with TS8010/8017 'can only be used in TypeScript files' at L1:1 — 153 tests (112 Atomics, 29 module-code, 12 import)"
 status: ready
 sprint: current
@@ -17,7 +17,7 @@ related: [3721, 3427, 1061, 1710]
 origin: "2026-08-01 /harvest-errors of loopdive/js2wasm-baselines test262-current.jsonl (run 20260801-090441, gitHash c601e89b)"
 ---
 
-# #3973 — test262 `.js` files rejected as if they were TypeScript
+# #4170 — test262 `.js` files rejected as if they were TypeScript
 
 ## TL;DR
 
