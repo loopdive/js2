@@ -1,10 +1,11 @@
 {
   "id": "4161",
   "assignee": "ttraenkler/fable-harvest",
-  "requested_by": "ttraenkler/fable-harvest",
-  "status": "in-progress",
+  "requested_by": "noreply@anthropic.com",
+  "status": "done",
   "branch": "issue-4161-standalone-defineproperty-closure-receiver",
   "claimed_at": "2026-08-05T01:22:45Z",
-  "updated_at": "2026-08-05T01:22:45Z",
-  "write_id": "6380-zpri2hj2"
+  "updated_at": "2026-08-06T08:03:27Z",
+  "write_id": "4908-e444g34v",
+  "released_at": "2026-08-06T08:03:27Z"
 }
