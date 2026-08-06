@@ -1,9 +1,10 @@
 {
   "id": "2660",
-  "assignee": "ttraenkler/sd-s3a",
-  "status": "released",
-  "branch": "issue-2660-s3b",
-  "claimed_at": "2026-06-26T05:37:54Z",
-  "updated_at": "2026-06-26T05:46:14Z",
-  "released_at": "2026-06-26T05:46:14Z"
+  "assignee": "ttraenkler/senior-dev-s3b",
+  "requested_by": "ttraenkler/senior-dev-s3b",
+  "status": "in-progress",
+  "branch": "claude/issue-2660-s3b-typed-bindings",
+  "claimed_at": "2026-08-06T09:20:05Z",
+  "updated_at": "2026-08-06T09:20:05Z",
+  "write_id": "23606-vdmxa5ei"
 }
