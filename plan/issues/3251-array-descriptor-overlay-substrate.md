@@ -1,7 +1,8 @@
 ---
 id: 3251
 title: "standalone: array-descriptor OVERLAY substrate — $Vec receivers have no per-index/expando property-descriptor storage (blocks array-exotic defineProperty + Array generic-method-over-accessor-index)"
-status: ready
+status: in-progress
+assignee: ttraenkler/L2-fable-array-exotic
 sprint: current
 s1_completed: 2026-07-18
 created: 2026-07-13
