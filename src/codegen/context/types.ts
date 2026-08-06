@@ -2295,6 +2295,22 @@ export interface CodegenContext {
    * declaration is ever reassigned), so non-affected programs stay byte-identical.
    */
   liveFuncBindingGlobals?: Set<string>;
+  /**
+   * (#4182) Names bound live at MODULE scope by Annex B B.3.3.2 (a sloppy
+   * block/`if`/`switch`-nested `function f` whose enclosing var scope is the
+   * SourceFile). Subset discipline: every member is also in
+   * `liveFuncBindingGlobals` and `moduleGlobals`. Reads/typeof/calls route
+   * through the backing externref global; the B.3.3.2.c evaluation step
+   * (`tryCompileAnnexBModuleBlockFnEvaluation`) `global.set`s it at the
+   * declaration's textual position in `__module_init`. Normally empty.
+   */
+  annexBModuleBindings?: Set<string>;
+  /**
+   * (#4182) Per-declaration compiled function index for module-scope Annex B
+   * block functions — keeps the #2965 two-pass `__module_init` compile from
+   * compiling the same declaration node twice.
+   */
+  annexBModuleFnIdxByDecl?: WeakMap<ts.FunctionDeclaration, number>;
   /** Deferred `export default <variable>` where variable is a module global (#1108).
    *  Resolved after all collectDeclarations calls when global indices are final. */
   deferredDefaultGlobalExport?: string;

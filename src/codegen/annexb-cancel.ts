@@ -214,7 +214,7 @@ export function scopeBindsName(scope: ts.Node, name: string): boolean {
  * Error: a `let`/`const`/`class` at the top of an enclosing block or case
  * clause, a lexical loop head, or a destructuring catch parameter.
  */
-function hasInterveningLexicalBinder(from: ts.Node, name: string, scope: ts.Node): boolean {
+export function hasInterveningLexicalBinder(from: ts.Node, name: string, scope: ts.Node): boolean {
   let node: ts.Node | undefined = from;
   let child: ts.Node | undefined;
   while (node && node !== scope) {

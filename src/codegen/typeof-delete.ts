@@ -1402,6 +1402,26 @@ function sourceHasIdentifierAssignment(sf: ts.SourceFile, name: string): boolean
  * For statically known types, emits the string constant directly.
  * For externref/union types, calls the __typeof host helper.
  */
+/**
+ * (#4182) `typeof f` where `f` is a module-scope Annex B B.3.3.2 live binding:
+ * read the backing externref global and dispatch `__typeof` at runtime (null
+ * extern → "undefined" before the declaration evaluates, closure → "function"
+ * after). Gated on the normally-empty `annexBModuleBindings` set and on the
+ * name not being locally shadowed, so every other typeof path is byte-identical.
+ */
+function emitAnnexBModuleTypeofRead(ctx: CodegenContext, fctx: FunctionContext, name: string): ValType | null {
+  if (ctx.annexBModuleBindings?.has(name) !== true) return null;
+  if (fctx.localMap.get(name) !== undefined) return null;
+  const globalIdx = ctx.moduleGlobals.get(name);
+  if (globalIdx === undefined) return null;
+  addUnionImports(ctx);
+  const typeofIdx = ctx.funcMap.get("__typeof");
+  if (typeofIdx === undefined) return null;
+  fctx.body.push({ op: "global.get", index: globalIdx });
+  fctx.body.push({ op: "call", funcIdx: typeofIdx });
+  return { kind: "externref" };
+}
+
 function runtimeEvalMayRebindIdentifier(ctx: CodegenContext, expression: ts.Expression): boolean {
   if (!(ctx.standalone || ctx.wasi) || !ctx.runtimeEvalGlobalFunctionBindings) return false;
   let bare = expression;
@@ -1489,6 +1509,15 @@ export function compileTypeofExpression(
       // other typeof path is byte-identical.
       const annexB = emitAnnexBTypeofFlagBranch(ctx, fctx, ident.text);
       if (annexB) return annexB;
+      // (#4182) Module-scope Annex B live binding: `typeof f` must observe the
+      // live global (`undefined` before the declaration evaluates, "function"
+      // after), never a static fold. Must run before BOTH the `!hasValueDecl`
+      // fold below (for a Block-nested decl the checker reports no
+      // valueDeclaration at an outer read → wrongly "undefined" forever) and
+      // the static type fold (for `if`-nested decls the checker resolves the
+      // hoisted symbol → wrongly "function" before the block runs).
+      const annexBModule = emitAnnexBModuleTypeofRead(ctx, fctx, ident.text);
+      if (annexBModule) return annexBModule;
       const withBinding = findWithBinding(fctx, ident.text);
       if (withBinding) {
         return compileStringLiteral(ctx, fctx, staticTypeofForWasmType(withBinding.field.type));
@@ -1552,6 +1581,9 @@ export function compileTypeofExpression(
       // `typeof F` case; this covers any path where the operand resolved past it).
       const annexB = emitAnnexBTypeofFlagBranch(ctx, fctx, bare.text);
       if (annexB) return annexB;
+      // (#4182) Same late fallback for a module-scope Annex B live binding.
+      const annexBModule = emitAnnexBModuleTypeofRead(ctx, fctx, bare.text);
+      if (annexBModule) return annexBModule;
     }
   }
 

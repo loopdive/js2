@@ -23,7 +23,7 @@ import { collectShapes } from "../shape-inference.js";
 // allow-list's fall-through leaves evidence instead of silently dropping an
 // observable statement (the #1268/#2671/#2992/#3366/#3468/#3592/#3615 class).
 import { classifyTopLevelExpressionStatement, createsGlobalObjectBinding } from "./module-init-collection.js";
-import { ensureWrapperTypes } from "./any-helpers.js";
+import { emitUndefinedExtern, ensureWrapperTypes } from "./any-helpers.js";
 import { ASYNC_CPS_ENABLED, analyzeAsyncBody, asyncFnNeedsCps } from "./async-cps.js";
 import { asyncFnNeedsHostDrive, asyncGenDrivableUnderCarrier, asyncGenStem } from "./async-frame.js";
 import { collectClassDeclaration, compileClassBodies, type ClassBodyCompileRouting } from "./class-bodies.js";
@@ -97,6 +97,7 @@ import {
 } from "./program-abi-source-callable-planning.js";
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import { prepareModuleTdzGlobals, registerModuleGlobal } from "./module-global-registration.js";
+import { annexBModuleGlobalSeedsFromTopLevel } from "./annexb-global-live-binding.js";
 import { emitRuntimeEvalAotCallableAdapter } from "./runtime-eval-callable.js";
 
 // ── Extracted subsystems (#3268) — re-exported for external consumers ─────
@@ -2492,6 +2493,27 @@ export function compileDeclarations(
     if (ctx.liveFuncBindingGlobals && ctx.liveFuncBindingGlobals.size > 0) {
       const seededGlobals = new Set<number>();
       for (const liveName of ctx.liveFuncBindingGlobals) {
+        // (#4182) A module-scope Annex B block-fn binding starts as `undefined`
+        // (B.3.3.2.b CreateGlobalFunctionBinding(F, undefined)) unless a real
+        // top-level `function f` also exists — GDI initializes only that one.
+        // Without this split, pass 2 of the #2965 two-pass init compile would
+        // seed the block function's closure (its funcMap entry exists by then),
+        // making the pre-evaluation read wrongly observe the function. Under
+        // the `undefinedSingleton` regime the binding must read as `undefined`,
+        // not `null`, so seed the `$undefined` singleton rather than leaving
+        // the `ref.null.extern` global init.
+        if (!annexBModuleGlobalSeedsFromTopLevel(ctx, liveName)) {
+          const annexBGlobalIdx = ctx.moduleGlobals.get(liveName);
+          if (
+            annexBGlobalIdx !== undefined &&
+            !seededGlobals.has(annexBGlobalIdx) &&
+            emitUndefinedExtern(ctx, initFctx)
+          ) {
+            initFctx.body.push({ op: "global.set", index: annexBGlobalIdx });
+            seededGlobals.add(annexBGlobalIdx);
+          }
+          continue;
+        }
         const liveGlobalIdx = ctx.moduleGlobals.get(liveName);
         const liveFuncIdx = ctx.funcMap.get(liveName);
         if (liveGlobalIdx === undefined || liveFuncIdx === undefined) continue;
