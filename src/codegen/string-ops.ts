@@ -29,6 +29,7 @@ import {
   tryCompileNativeVecConcatOperand,
 } from "./native-strings.js";
 import { emitBrandCheckTypeError } from "./native-proto.js";
+import { emitFlattenWithInlineFlatFastPath } from "./string-materialize.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
 import {
   emitStandaloneRegExpToStringFromExpr,
@@ -2717,9 +2718,11 @@ export function compileNativeStringMethodCall(
       // directly instead of re-running the flatten discriminator each time.
       fctx.body.push({ op: "ref.cast", typeIdx: strTypeIdx });
     } else {
-      // Flatten to FlatString (handles ConsString → FlatString)
-      const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten")!;
-      fctx.body.push({ op: "call", funcIdx: flattenIdx });
+      // (#4174) Inline already-flat fast path: `charCodeAt` is the scanner
+      // hot-loop primitive (acorn calls it once per scanned character); test
+      // flatness at the call site and only enter `__str_flatten` on the
+      // rope arm instead of paying a cross-function call per character.
+      emitFlattenWithInlineFlatFastPath(ctx, fctx, ctx.nativeStrHelpers.get("__str_flatten")!);
     }
     // Store flat string ref in a temp local to access both data and off
     const tmpLocal = allocLocal(fctx, "__charCodeAt_tmp", flatStringType(ctx));
