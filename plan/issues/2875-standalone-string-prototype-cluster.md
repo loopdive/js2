@@ -391,3 +391,69 @@ out-of-range `=== undefined` return-value comparison (a separate return-path
 undefined-singleton mismatch), the case family (`toUpperCase`/`toLowerCase`,
 un-wired), the RegExp-arg family (~114), and the #2862 ToPrimitive
 object-receiver bucket.
+
+## Slice C (LANDED, lead-es5, 2026-08-06) — borrowed `String.prototype.slice`
+
+`emitStringProtoMemberBody` wired `substring` to a real reflective body but let
+`slice` fall through to `emitProtoMemberBodyRefusal`, so
+`x.slice = String.prototype.slice; x.slice(0, 1)` threw *"String.prototype.slice
+is not yet implemented in --target standalone"*.
+
+The two methods differ only in §22.1.3.22-vs-§22.1.3.24 index resolution
+(`slice` resolves negative indices; `substring` swaps reversed bounds), and that
+difference lives entirely inside the native helper: `__str_slice` and
+`__str_substring` share the signature `(ref $NativeString, i32 start, i32 end)
+-> ref $NativeString` **and** the same `0x7fffffff` absent-end sentinel — the
+two direct paths in `string-ops.ts` already emit the same call sequence with
+only the helper name differing. So `emitStringSubstringMemberBody` is now
+parameterised on `"substring" | "slice"` and swaps the helper; nothing else
+changed.
+
+**Measured** — scoped standalone test262, `built-ins/String/prototype/slice`:
+**29/38 → 33/38, +4**, no regressions in that path. Covered by
+`tests/issue-2875-borrowed-string-slice.test.ts` (7 cases, including the two
+that prove the helper swap actually happened: negative indices resolve from the
+end, and reversed bounds give `""` rather than substring's swap; plus a
+substring-unaffected guard).
+
+Harvested from fork PR #4124's `#3978` slice, re-derived against current main.
+**Most of that PR's String work is already on main** — its census claimed +29
+across the case-conversion family, `indexOf`, `charCodeAt` and `substring`, and
+all of those now pass on main by other routes. `slice` was the only part still
+outstanding. Do not re-harvest #3978 expecting its headline number.
+
+## Next slice — primitive-number and builtin-brand receivers return `null`
+
+Found while measuring slice C; **not fixed**. Probed on main + slice C
+(literal-JS `allowJs` lane, `--target standalone`), each returning a
+discriminator rather than a boolean:
+
+| receiver shape | result |
+| --- | --- |
+| `new Object(true).toUpperCase = String.prototype.toUpperCase` | **correct** |
+| `"AB".toLowerCase()` direct | **correct** |
+| `Number.prototype.toLowerCase = String.prototype.toLowerCase; NaN.toLowerCase()` | `null` |
+| same, `(123).toLowerCase()` | `null` |
+| same, `new Number(123).toLowerCase()` | `null` |
+| `var r = new RegExp("abc"); r.toUpperCase = String.prototype.toUpperCase; r.toUpperCase()` | `null` |
+| controls `String(NaN)`, `"" + NaN` | **correct** |
+
+`null` is `emitProtoMemberBodyRefusal`'s "not wired — fall through" signal, so
+these calls are **not reaching the reflective body at all**. Since a plain
+`new Object(...)` receiver works, the gap is not "borrowed methods" generally —
+it is member-call dispatch when the borrowed method is installed on a **builtin
+prototype** (`Number.prototype`) or a **builtin-branded instance** (a RegExp
+object), and/or when the receiver is a **primitive** number. That points at the
+transferred-closure dispatch arms rather than at ToString.
+
+Worth roughly **12–17 ES5-label standalone files** in the 2026-08-06 baseline:
+the `Number.prototype.<caseMethod>` × `{NaN, Infinity, -Infinity}` matrix (~12),
+the `new RegExp(...)` receiver family (~5), and two `eval("\"bj\"")`-produced
+string cases. Verify by repro before sizing — the L6 census that produced these
+counts is signature-derived.
+
+**Out of scope for this issue** (measured 2026-08-06, `ES5` label, standalone,
+`built-ins/String/prototype` = 109 failures): `split` 11 + `replace`/`match`
+RegExp-gated ~16 belong to the standalone RegExp engine (#4016/#4065 — #4065
+already refuted the "51-file RegExp lever inside String.prototype" framing);
+`concat` (4) is variadic and needs a different closure ABI.
