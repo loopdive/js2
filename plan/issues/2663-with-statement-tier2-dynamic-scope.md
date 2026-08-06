@@ -16,6 +16,23 @@ goal: spec-completeness
 depends_on: [1387, 2580]
 needs_arch_spec: false
 sprint: 67
+loc-budget-allow:
+  # Slice 3 (`with` read-modify-write) needs a dispatch hook at the two places
+  # the compiler decides how an identifier LHS is updated. Both are the sole
+  # entry points for their node kind, so the hook cannot live anywhere else; all
+  # of the new LOGIC is in the new file src/codegen/with-rmw.ts (0 god-file
+  # growth). operator-assignment.ts: +8 (compound-assign dispatch + import).
+  - src/codegen/expressions/operator-assignment.ts
+  # unary-updates.ts: +17 (++/-- prefix and postfix dispatch + import).
+  - src/codegen/expressions/unary-updates.ts
+func-budget-allow:
+  # Same two dispatch hooks. Both functions are the single switch over how an
+  # identifier LHS is updated, and the `with` Object Environment Record must be
+  # consulted BEFORE the const/local/global arms they already contain — so the
+  # check has to sit inside them (+7 / +10 lines). The body it dispatches to is
+  # in src/codegen/with-rmw.ts.
+  - src/codegen/expressions/operator-assignment.ts::compileCompoundAssignment
+  - src/codegen/expressions/unary-updates.ts::compilePrefixUpdate
 ---
 
 # #2663 — `with` statement Tier 2: dynamic-scope fallback
