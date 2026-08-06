@@ -13,7 +13,7 @@ task_type: performance
 area: codegen, runtime
 language_feature: objects
 goal: performance
-related: [3673, 3669, 3671, 3685, 3686, 3780, 3921]
+related: [4157, 3673, 3669, 3671, 3685, 3686, 3780, 3921]
 origin: "#3780 round 4 — re-ranking the standalone acorn profile found __extern_get unowned: #3673 (which carried it as a slice) is done, and #3669/#3671 are about slot MONOMORPHISM, not lookup cost"
 ---
 

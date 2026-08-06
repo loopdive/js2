@@ -457,9 +457,23 @@ const STANDALONE_ROOT_CAUSE_BUCKETS = [
       pathHas(record, ["generator", "asyncgenerator", "for-await"]) || hasAny(text, ["generator", "async iterator"]),
   },
   {
-    id: "class-prototype-private-descriptor",
+    id: "class-element-private-descriptor",
     issues: ["#1591", "#1365", "#1364"],
-    label: "Class element, prototype, private-name, and descriptor reconciliation gaps",
+    label: "Class element, private-name, and descriptor reconciliation gaps",
+    // (2026-08-04) The free-text arm used to carry a bare "prototype" token.
+    // `textOf(record)` INCLUDES `record.file`, so that token matched every
+    // `built-ins/*/prototype/*` path and this bucket swallowed the entire
+    // builtin-prototype corpus. Measured on the ES5+untagged standalone scope
+    // before the fix: 1,662 files matched, of which only 66 came from the
+    // intended path arm — 1,589 matched on the "prototype" token alone, and
+    // 1,130 of those had NO such token anywhere in the error text at all. It
+    // was a path match wearing a free-text disguise, and it sits at position 22
+    // of ~59, so it stole from every later bucket (`object-property-semantics`,
+    // `array-typedarray-buffer`, `function-object-semantics`, …).
+    //
+    // Keep free-text tokens that name a MECHANISM ("private", "class element").
+    // Never add a token that also occurs in a file path — put those in the path
+    // arm, where the intent is explicit and reviewable.
     match: (record, text) =>
       pathHas(record, [
         "language/classes",
@@ -469,7 +483,7 @@ const STANDALONE_ROOT_CAUSE_BUCKETS = [
         "private",
         "computed-property-names",
         "built-ins/object/getownpropertydescriptor",
-      ]) || hasAny(text, ["private", "class element", "prototype", "property descriptor", "getownpropertydescriptor"]),
+      ]) || hasAny(text, ["private", "class element", "getownpropertydescriptor"]),
   },
   {
     id: "object-to-primitive",

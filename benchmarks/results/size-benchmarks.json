@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-08-04T05:10:58.142Z",
+  "timestamp": "2026-08-06T08:38:08.478Z",
   "howItWorks": {
     "fib": {
       "name": "fib",
@@ -13,11 +13,11 @@
       "hostJsGzip": 447,
       "wasmTotalGzip": 543,
       "jsParseMs": 0.0013,
-      "jsParseBatchSize": 3469,
+      "jsParseBatchSize": 3451,
       "wasmCompileMs": 0.0018,
-      "wasmCompileBatchSize": 2711,
+      "wasmCompileBatchSize": 2745,
       "hostJsParseMs": 0.0043,
-      "hostJsParseBatchSize": 1168,
+      "hostJsParseBatchSize": 1156,
       "wasmTotalMs": 0.0061
     },
     "dom": {
@@ -32,12 +32,12 @@
       "hostJsGzip": 723,
       "wasmTotalGzip": 1003,
       "jsParseMs": 0.0012,
-      "jsParseBatchSize": 3819,
+      "jsParseBatchSize": 3849,
       "wasmCompileMs": 0.0035,
-      "wasmCompileBatchSize": 1430,
+      "wasmCompileBatchSize": 1447,
       "hostJsParseMs": 0.009,
-      "hostJsParseBatchSize": 568,
-      "wasmTotalMs": 0.0125
+      "hostJsParseBatchSize": 569,
+      "wasmTotalMs": 0.0124
     }
   },
   "benchmarks": [
@@ -52,13 +52,13 @@
       "wasmSizeGzip": 1829,
       "hostJsGzip": 1339,
       "wasmTotalGzip": 3168,
-      "jsParseMs": 0.0078,
-      "jsParseBatchSize": 636,
-      "wasmCompileMs": 0.0133,
-      "wasmCompileBatchSize": 372,
-      "hostJsParseMs": 0.0186,
-      "hostJsParseBatchSize": 272,
-      "wasmTotalMs": 0.0319
+      "jsParseMs": 0.0079,
+      "jsParseBatchSize": 633,
+      "wasmCompileMs": 0.0132,
+      "wasmCompileBatchSize": 375,
+      "hostJsParseMs": 0.0185,
+      "hostJsParseBatchSize": 277,
+      "wasmTotalMs": 0.0317
     },
     {
       "name": "loop",
@@ -71,13 +71,13 @@
       "wasmSizeGzip": 1893,
       "hostJsGzip": 1350,
       "wasmTotalGzip": 3243,
-      "jsParseMs": 0.0051,
-      "jsParseBatchSize": 899,
-      "wasmCompileMs": 0.013,
-      "wasmCompileBatchSize": 384,
+      "jsParseMs": 0.0052,
+      "jsParseBatchSize": 921,
+      "wasmCompileMs": 0.0128,
+      "wasmCompileBatchSize": 389,
       "hostJsParseMs": 0.0185,
-      "hostJsParseBatchSize": 265,
-      "wasmTotalMs": 0.0315
+      "hostJsParseBatchSize": 270,
+      "wasmTotalMs": 0.0313
     },
     {
       "name": "string",
@@ -91,11 +91,11 @@
       "hostJsGzip": 1377,
       "wasmTotalGzip": 3222,
       "jsParseMs": 0.0056,
-      "jsParseBatchSize": 906,
+      "jsParseBatchSize": 882,
       "wasmCompileMs": 0.0134,
       "wasmCompileBatchSize": 373,
       "hostJsParseMs": 0.0199,
-      "hostJsParseBatchSize": 257,
+      "hostJsParseBatchSize": 249,
       "wasmTotalMs": 0.0333
     },
     {
@@ -109,13 +109,13 @@
       "wasmSizeGzip": 1958,
       "hostJsGzip": 1337,
       "wasmTotalGzip": 3295,
-      "jsParseMs": 0.0084,
-      "jsParseBatchSize": 597,
+      "jsParseMs": 0.0083,
+      "jsParseBatchSize": 605,
       "wasmCompileMs": 0.0132,
       "wasmCompileBatchSize": 379,
-      "hostJsParseMs": 0.0185,
-      "hostJsParseBatchSize": 271,
-      "wasmTotalMs": 0.0317
+      "hostJsParseMs": 0.0187,
+      "hostJsParseBatchSize": 277,
+      "wasmTotalMs": 0.0319
     },
     {
       "name": "dom",
@@ -130,11 +130,11 @@
       "wasmTotalGzip": 3227,
       "jsParseMs": 0.0087,
       "jsParseBatchSize": 553,
-      "wasmCompileMs": 0.0133,
+      "wasmCompileMs": 0.0132,
       "wasmCompileBatchSize": 375,
-      "hostJsParseMs": 0.0194,
-      "hostJsParseBatchSize": 266,
-      "wasmTotalMs": 0.0328
+      "hostJsParseMs": 0.019,
+      "hostJsParseBatchSize": 267,
+      "wasmTotalMs": 0.0322
     },
     {
       "name": "style",
@@ -148,11 +148,11 @@
       "hostJsGzip": 1414,
       "wasmTotalGzip": 3359,
       "jsParseMs": 0.0094,
-      "jsParseBatchSize": 529,
-      "wasmCompileMs": 0.0138,
-      "wasmCompileBatchSize": 361,
-      "hostJsParseMs": 0.0203,
-      "hostJsParseBatchSize": 253,
+      "jsParseBatchSize": 534,
+      "wasmCompileMs": 0.0137,
+      "wasmCompileBatchSize": 360,
+      "hostJsParseMs": 0.0204,
+      "hostJsParseBatchSize": 251,
       "wasmTotalMs": 0.0341
     },
     {
@@ -166,13 +166,13 @@
       "wasmSizeGzip": 4406,
       "hostJsGzip": 2050,
       "wasmTotalGzip": 6456,
-      "jsParseMs": 0.0569,
-      "jsParseBatchSize": 89,
-      "wasmCompileMs": 0.0232,
-      "wasmCompileBatchSize": 216,
-      "hostJsParseMs": 0.0266,
-      "hostJsParseBatchSize": 190,
-      "wasmTotalMs": 0.0499
+      "jsParseMs": 0.0578,
+      "jsParseBatchSize": 88,
+      "wasmCompileMs": 0.0237,
+      "wasmCompileBatchSize": 211,
+      "hostJsParseMs": 0.0268,
+      "hostJsParseBatchSize": 193,
+      "wasmTotalMs": 0.0504
     }
   ]
 }

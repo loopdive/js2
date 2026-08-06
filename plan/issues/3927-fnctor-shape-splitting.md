@@ -13,7 +13,7 @@ task_type: performance
 area: codegen
 language_feature: objects, classes
 goal: performance
-related: [3780, 3921, 3686, 3685, 743, 684]
+related: [4157, 3780, 3921, 3686, 3685, 743, 684]
 origin: "#3780 round 4 — after packing the presence flags, `Node` is still 292 B, and the residue is the union-of-all-shapes widening itself"
 ---
 

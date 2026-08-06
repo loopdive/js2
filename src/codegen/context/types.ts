@@ -1404,7 +1404,22 @@ export interface CodegenContext {
    * keeps the spec-correct skip. See the regressed trio
    * `built-ins/Array/prototype/{every,filter,some}/*-c-i-22.js`.
    */
-  arrayProtoIndexDirty: boolean;
+  protoIndexDirty: boolean;
+  /**
+   * (#4159) A descriptor that is not provably data-only may exist somewhere in
+   * the module. Consumers: the TYPED element read/write lanes only — #3251's
+   * value write-back keeps `array.get` coherent for DATA descriptors, but an
+   * accessor has no value to write back. Clear ⇒ byte-identical emission, no
+   * runtime guard. Per-MODULE over-approximation; see #4159 for the rationale.
+   */
+  vecAccessorDescriptorDirty: boolean;
+  /**
+   * (#4159/#4160) `eval` / `Function` present ⇒ forces BOTH flags above.
+   * Load-bearing: static eval inlining (#1163) splices statements in during
+   * BODY compilation, after this pre-scan, so the flags would otherwise stay
+   * clear for code the scan never saw. See #4160.
+   */
+  dynamicCodeDirty: boolean;
   /**
    * (#2083) Set true the first time `getOrRegisterVecType` is asked for a vec
    * type from a genuine usage site (an array literal, array method, for-of over
@@ -1668,6 +1683,22 @@ export interface CodegenContext {
    * a type at finalize) — the `ref.test` target for `__is_vec_prop_carrier`.
    */
   vecPropBaseTypeIdx?: number;
+  /**
+   * (#4160) Set when `ensureObjectRuntime` reserved the prototype-index-store
+   * helpers (`__protoidx_*`, proto-index-store.ts) — the runtime companions
+   * that make `Object.prototype[i]` / `Array.prototype[i]` writes visible
+   * through the prototype chain. Reserved ONLY under
+   * `ctx.standalone && ctx.protoIndexDirty` (pre-scan flag, #4128), so a
+   * flag-clear module carries no trace; bodies + chokepoint arms are filled by
+   * `fillProtoIndexStore` at FINALIZE.
+   */
+  protoIndexStoreReserved?: boolean;
+  /** (#4160) Set once `fillProtoIndexStore` has run (idempotency latch). */
+  protoIndexStoreFilled?: boolean;
+  /** (#4160) Global index of `__protoidx_obj_companion` (`(mut externref)`). */
+  protoIndexObjCompanionGlobalIdx?: number;
+  /** (#4160) Global index of `__protoidx_arr_companion` (`(mut externref)`). */
+  protoIndexArrCompanionGlobalIdx?: number;
   /**
    * (#1100) Set when the standalone Proxy trap-dispatch runtime reserved its
    * `__proxy_call_{get,set,has}` driver placeholders (in `ensureProxyRuntime`).

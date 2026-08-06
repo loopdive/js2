@@ -5579,7 +5579,7 @@ function emitArrayLoop(fctx: FunctionContext, loopBody: Instr[]): void {
  * are byte-identical — no `ref.test`, no gate.
  *
  * (PR #2832 merge-group park) ALSO disabled module-wide when the pre-scan saw
- * an `Array.prototype` INDEX write (`arrayProtoIndexDirty`): §23.1.3.* keys the
+ * an `Array`/`Object.prototype` INDEX write (`protoIndexDirty`): §23.1.3.* keys the
  * skip on `HasProperty(O, k)`, which is TRUE for a hole whose index is
  * inherited from `Array.prototype` — a relationship the flat vec cannot check
  * per element. Falling back to the S1 visit-with-`undefined` behavior matches
@@ -5588,7 +5588,7 @@ function emitArrayLoop(fctx: FunctionContext, loopBody: Instr[]): void {
  * `{every,filter,some}/*-c-i-22.js`.
  */
 function shouldHoleSkip(ctx: CodegenContext, elemType: ValType): boolean {
-  return ctx.usesArrayHoles && !ctx.arrayProtoIndexDirty && elemType.kind === "externref";
+  return ctx.usesArrayHoles && !ctx.protoIndexDirty && elemType.kind === "externref";
 }
 
 /**

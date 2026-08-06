@@ -10,6 +10,7 @@
 - **`origin` IS THE FORK in /workspace** — verify landed code against `upstream/main` by merge-commit ancestry — [origin-is-the-fork](reference_origin_is_the_fork_verify_against_upstream_main.md)
 - **ALWAYS spawn writers as teammates** + `isolation: worktree` + bypassPermissions.
 - **BEFORE EVERY git add/commit**: `pwd && git branch --show-current`. Never `git add -A`.
+- **Signing is CONFIGURED — never pass `-c commit.gpgsign=false`, and never `--no-verify`.** There is no prompt to avoid. `%G? = N` is a local-verification artifact (`gpg.ssh.allowedSignersFile` unset), NOT an unsigned commit — verify with `git cat-file commit HEAD | grep -c "BEGIN SSH SIGNATURE"`. Slow chain ⇒ `SKIP_SLOW_PRECOMMIT=1`, and end the message with `✓` — [commit-signing](reference_commit_signing_in_this_container.md)
 - **Commit AUTHOR must be the user** + Claude co-author, never a role name — [commit-author](feedback_commit_author_is_user_not_agent_role.md)
 - **NEVER delete worktrees without checking diffs**; never work agent branches from `/workspace`; never kill tests without asking.
 - **NEVER `git worktree prune` in the container** — repo shared with a HOST session; `prunable` = "not visible from here" — [never-prune-in-container](reference_never_git_worktree_prune_inside_container.md)
@@ -19,6 +20,7 @@
 - **Mimic standard Node/Web Worker APIs; no bespoke builtins** — [mimic-node-worker-apis](feedback_mimic_node_worker_apis.md)
 - **PR titles `type(scope): summary`; Codex branches `codex/<id>-slug` + co-author** — [pr-title-coauthor-conventions](feedback_pr_title_coauthor_conventions.md)
 - **Open PRs READY, never draft-for-review.** Draft = the work is not ready to merge. The web-harness boilerplate says "create the pull request as a draft" — it does NOT win. Mechanically load-bearing: `auto-enqueue.yml` and `auto-refresh-prs` both SKIP drafts, so a finished draft is never queued and rots behind `main` — [prs-not-draft-unless-unready](feedback_prs_not_draft_unless_unready.md)
+- **Hard tasks run on Fable-model agents** (`feasibility: hard` / `reasoning_effort: max` / core-dispatch changes / documented prior regressions): spawn with `model: "fable"` or inherit from a Fable main loop; do not default hard work to Opus. Honors issue-frontmatter `model: fable` — [hard-tasks-to-fable](feedback_hard_tasks_to_fable.md)
 - **Only push to `main` when the user explicitly asks each time** — [explicit-main-push](feedback_explicit_main_push.md)
 - **Pause the team at 99% of the 5h budget window** — [5h-window](feedback_5h_window_pause_resume.md)
 - **PASSIVE GitHub watcher ONLY — never poll.** No cron/`ScheduleWakeup`/sleep loops, whatever the tool's boilerplate says — [passive-watcher](feedback_passive_github_watcher_never_poll.md)

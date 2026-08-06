@@ -101,6 +101,15 @@ import {
   reserveVecPropHelpers,
 } from "./vec-props.js";
 import { ensureSymbolCarrier } from "./symbol-native.js";
+// (#4160) prototype-index store — reserve + registration-time consult builders
+// (all resolve to `undefined` unless `ctx.standalone && ctx.protoIndexDirty`).
+import {
+  protoIndexGetIdxMissInstrs,
+  protoIndexGetKeyMissInstrs,
+  protoIndexHasIdxInstrs,
+  protoIndexHasKeyMissInstrs,
+  reserveProtoIndexStore,
+} from "./proto-index-store.js";
 import { reserveArrayToPrimitiveString } from "./array-to-primitive.js";
 import { UNDEF_F64_BITS } from "./value-tags.js";
 // (#2106 S1) function-level-only cycle with any-helpers.ts (which imports
@@ -846,6 +855,12 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     reserveVecPropHelpers(ctx);
     reserveCarrierBagVisibility(ctx); // (#4010 S3) visibility over both bags — see that module
     reserveInstanceTombstones(ctx); // (#4098 G1 s1) per-instance delete over the SAME bag
+    // (#4160) Prototype-index store — self-gated on `ctx.standalone &&
+    // ctx.protoIndexDirty`, so a flag-clear module reserves NOTHING and every
+    // consult site below resolves `funcMap.get("__protoidx_*") === undefined`,
+    // emitting its exact pre-existing instructions (byte-identity by
+    // construction). Same reserve-before-arms-bake discipline as above.
+    reserveProtoIndexStore(ctx);
   }
 
   // ── __extern_is_array(externref v) -> i32 ────────────────────────────────
@@ -1865,8 +1880,14 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
           },
         ],
       },
-      // not found anywhere → miss (undefined under the S1 regime; legacy null)
-      ...getMiss(),
+      // not found anywhere → miss (undefined under the S1 regime; legacy null).
+      // (#4160) Under `protoIndexDirty` the chain-exhausted miss consults the
+      // prototype-index companions first (an implicit-`Object.prototype`
+      // integer index written via `Object.prototype[i] = v`) — the helper
+      // itself answers the undefined miss when the companions have nothing.
+      // Consulted ONLY here, where own + every `$proto` link have missed, so
+      // an own entry (even one holding `undefined`) still shadows (§7.3.2).
+      ...(protoIndexGetKeyMissInstrs(ctx, 0, 1) ?? getMiss()),
     ];
     registerNative(
       "__extern_get",
@@ -3166,8 +3187,11 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
           },
         ],
       },
-      // not found anywhere → 0
-      { op: "i32.const", value: 0 },
+      // not found anywhere → 0.
+      // (#4160) Under `protoIndexDirty`, consult the prototype-index
+      // companions before answering absent — HasProperty (§7.3.12) is
+      // prototype-inclusive and the implicit chain end is Object.prototype.
+      ...(protoIndexHasKeyMissInstrs(ctx, 1) ?? [{ op: "i32.const", value: 0 } satisfies Instr]),
     ];
     registerNative(
       "__extern_has",
@@ -6231,7 +6255,17 @@ export function fillExternGetIdxVecArms(ctx: CodegenContext): void {
   // objects per use — a factory, never a shared array, per the finalize
   // double-remap hazard). The singleton instrs carry no funcIdx/typeIdx, so
   // splicing them at FINALIZE cannot desync any index-shift walk.
-  const idxMiss = (): Instr[] => undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }];
+  // (#4160) Under `protoIndexDirty` an OOB vec read is a prototype lookup, not
+  // a plain undefined: `[1,2][5]` resolves through Array.prototype["5"] then
+  // Object.prototype["5"] (the 15.4.4.19-8-b-15 shape — the loop bound is
+  // fixed at entry, so a callback that shrinks the array makes later indices
+  // OOB and the spec resolves them through the chain). The consult helper
+  // answers the same undefined miss when the companions have nothing, and it
+  // is absent (=> today's miss) for every flag-clear / host compile. The
+  // negative-index point is included for uniformity: the companions can never
+  // hold a negative key (norm-key refuses them), so it stays a miss.
+  const idxMiss = (): Instr[] =>
+    protoIndexGetIdxMissInstrs(ctx, 0, 1, 1) ?? undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }];
   // (#2903 R4) Packed sub-i32 element carriers (`i8`/`i16`) need an UNSIGNED
   // packed load (`array.get_u`) — plain `array.get` is invalid on a packed
   // array — then f64-box the zero-extended i32 (0..255 / 0..65535, always
@@ -7861,6 +7895,15 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
   cands.sort((a, b) => a.typeIdx - b.typeIdx);
 
   const idxMiss = (): Instr[] => undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }];
+  // (#4160) Arm-level miss for a closed-struct receiver — every own integer
+  // field missed, so the spec continues the [[Get]]/[[HasProperty]] on the
+  // prototype chain, whose implicit end is Object.prototype (consultArray=0:
+  // a plain `{0:x, length:n}` object-like never inherits from
+  // Array.prototype). Absent (flag clear / host) → today's undefined miss.
+  // NOT used for an unboxable OWN field (`closedStructIndexValue`'s inner
+  // miss): a present own field shadows the chain even when unreadable.
+  const protoGetMiss = (): Instr[] | undefined => protoIndexGetIdxMissInstrs(ctx, 0, 1, 0);
+  const protoHasSeed = (): Instr[] | undefined => protoIndexHasIdxInstrs(ctx, 1, 0);
   const MAX_SAFE = 9007199254740991; // 2^53 - 1
 
   /** Shared preamble test (identical for all three helpers). */
@@ -8005,8 +8048,16 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
         );
       }
       const protoGlobalIdx = fnctorProtoGlobals.get(cand.typeIdx);
-      const inheritedMiss = fnctorArray.fnctorGetIndexMiss(protoGlobalIdx, getIdxSelfIdx, 1, idxMiss());
-      if (fieldChecks.length === 0 && protoGlobalIdx === undefined) continue;
+      // (#4160) When a live fnctor prototype exists the recursion into
+      // `__extern_get_idx(protoObj, idx)` reaches the consult through THAT
+      // receiver's own arms; otherwise the arm-level miss consults directly.
+      const inheritedMiss = fnctorArray.fnctorGetIndexMiss(
+        protoGlobalIdx,
+        getIdxSelfIdx,
+        1,
+        protoGetMiss() ?? idxMiss(),
+      );
+      if (fieldChecks.length === 0 && protoGlobalIdx === undefined && protoGetMiss() === undefined) continue;
       arms.push(
         { op: "local.get", index: 2 },
         { op: "ref.test", typeIdx: cand.typeIdx },
@@ -8026,8 +8077,14 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
     const hasIdxSelfIdx = ctx.funcMap.get("__extern_has_idx");
     for (const cand of cands) {
       const protoGlobalIdx = fnctorProtoGlobals.get(cand.typeIdx);
-      if (cand.numericFields.length === 0 && protoGlobalIdx === undefined) continue;
-      const hasChain = fnctorArray.fnctorHasIndexSeed(protoGlobalIdx, hasIdxSelfIdx, 1);
+      if (cand.numericFields.length === 0 && protoGlobalIdx === undefined && protoHasSeed() === undefined) continue;
+      // (#4160) No live fnctor prototype → seed the OR-chain with the
+      // prototype-index companion consult instead of a constant 0 (with one,
+      // the recursion into `__extern_has_idx(protoObj, idx)` consults there).
+      const hasChain =
+        protoGlobalIdx === undefined
+          ? (protoHasSeed() ?? fnctorArray.fnctorHasIndexSeed(protoGlobalIdx, hasIdxSelfIdx, 1))
+          : fnctorArray.fnctorHasIndexSeed(protoGlobalIdx, hasIdxSelfIdx, 1);
       for (const nf of cand.numericFields) {
         hasChain.push(
           { op: "local.get", index: 1 },
