@@ -1,10 +1,11 @@
 {
   "id": "4173",
   "assignee": "ttraenkler/claude-fable-4",
-  "requested_by": "ttraenkler/claude-fable-4",
-  "status": "in-progress",
+  "requested_by": "ttraenkler@users.noreply.github.com",
+  "status": "done",
   "branch": "claude/issue-4173-boxed-strict-eq",
   "claimed_at": "2026-08-06T14:33:17Z",
-  "updated_at": "2026-08-06T14:33:17Z",
-  "write_id": "26900-lgyni0vc"
+  "updated_at": "2026-08-06T15:49:00Z",
+  "write_id": "16226-2b50qhjn",
+  "released_at": "2026-08-06T15:49:00Z"
 }
