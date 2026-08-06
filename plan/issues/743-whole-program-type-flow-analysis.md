@@ -450,3 +450,34 @@ internal-only approaches are now measured at 2 slots.
 Consequence for the flag: `JS2WASM_FNCTOR_CTOR_PARAM_TYPES` stays OFF — two
 measured nulls (single-hop, fixpoint) and no consumer until entrypoint
 seeding exists.
+
+### Implementation sketch — `.d.ts` entrypoint seeding (the next #743 slice)
+
+Mechanism, staying inside the existing architecture:
+
+1. **Load the shipped declarations.** When compiling a `.js`/`.mjs` entry whose
+   package carries a sibling `.d.ts` (acorn: `dist/acorn.d.ts`), add it to the
+   Program (the language service already accepts extra roots). Zero effect on
+   files without declarations.
+2. **Match exported symbols.** For each EXPORTED function in the compiled
+   module with an implicit-`any` parameter, look up the same-named export in
+   the `.d.ts` and take its declared parameter types (`parse(input: string,
+   options: Options)`); interfaces resolve through the existing checker.
+3. **Seed, do not force.** Feed the declared types into `seedFromDeclaration`
+   in `src/ir/propagate.ts` as SEEDS for exported functions' params (today
+   they seed `dynamic` for lack of call sites). The fixpoint — including the
+   #4131 `new`-edges — propagates them inward; a conflicting internal call
+   site still widens per the lattice. Legacy lane: the same seed consulted by
+   `inferParamTypeFromCallSites` where `sawCallSite === false` (the
+   exported-entrypoint case it explicitly distinguishes, #3471), keeping
+   IR/legacy parity.
+4. **Trust boundary, stated honestly:** a `.d.ts` is a CLAIM, not a proof —
+   external callers may violate it. Seeded params therefore need the same
+   guarded-entry treatment as any externref→typed boundary (guard at the
+   export wrapper, not blind trust in the body). That is the main design
+   cost and the reason this is its own slice, not an evening patch.
+
+Expected effect (to be measured, not assumed): `input: string` alone types
+`this.input` (`String(input)` already native) plus every position derived
+from it; `options: Options` collides with the #2937 hash-consumer routing for
+`getOptions` and may be unseedable — check before promising the bucket moves.
