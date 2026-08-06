@@ -73,6 +73,7 @@ import {
 import { tryCompileNativeSetSizeGet } from "./set-runtime.js";
 import { tryEmitLinearU8ElementGet, tryEmitLinearU8Length } from "./linear-uint8-codegen.js";
 import { tryEmitFnctorPrototypeRead } from "./expressions/fnctor-prototype.js";
+import { tryEmitFnctorTypedFieldGet } from "./fnctor-typed-reads.js"; // (#4155 Phase 2) struct-typed fnctor receiver
 import { ensureNativeStringHelpers, stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { emitIsUndefF64 } from "./value-tags.js";
@@ -2424,6 +2425,14 @@ export function tryEmitPinnedStructMemberGet(
   // — `local index out of range` in `__module_init`. A stack-resident receiver
   // has no local to orphan.)
   const objResult = compileExpression(ctx, fctx, expr.expression);
+  // (#4155 Phase 2) Struct-typed receiver + own data slot → one `struct.get`
+  // instead of the externref hop + `__get_member_<name>` ladder. Flag-gated
+  // (declines are byte-identical); flag-independent census under
+  // JS2WASM_FNCTOR_TYPED_READS_DEBUG.
+  const fnctorTypedGet = tryEmitFnctorTypedFieldGet(ctx, fctx, expr, propName, objResult, () =>
+    typeErrorThrowInstrs(ctx, expr),
+  );
+  if (fnctorTypedGet !== undefined) return fnctorTypedGet;
   if (objResult && objResult.kind !== "externref") {
     coerceType(ctx, fctx, objResult, { kind: "externref" });
   } else if (!objResult) {
