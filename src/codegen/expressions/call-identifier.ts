@@ -116,6 +116,48 @@ function emitStringBuiltinNumberResult(ctx: CodegenContext, fctx: FunctionContex
 }
 
 /**
+ * (#4174) `String(x)` is an explicit materialization point — flatten its
+ * native-string result ONCE so downstream per-character reads (`charCodeAt`
+ * in a scanner loop) hit the already-flat fast path instead of re-entering
+ * `__str_flatten`'s memoized-cons dispatch on every call. acorn's Parser
+ * seeds `this.input = String(input)`; when `input` is a rope (the standalone
+ * benchmark builds it by concatenation), the old identity lowering stored the
+ * ConsString as-is and the scanner paid a flatten call per scanned character
+ * (3.7% of total parse self-time on the 2026-08-06 profile).
+ *
+ * Deliberately scoped to the explicit `String(x)` builtin: flattening inside
+ * the generic ToString coercions (`__extern_toString` / `__any_to_string`)
+ * would run on concat operands too and turn `s += chunk` loops O(n²).
+ *
+ * Stack effect: externref → externref. Non-strings and null pass through
+ * unchanged (`ref.test` fails on both), so this never traps and never alters
+ * observable values — a FlatString has identical content to the rope it
+ * replaces, and JS cannot observe string reference identity.
+ */
+function emitStringExternResultFlatten(ctx: CodegenContext, fctx: FunctionContext): void {
+  if (!ctx.nativeStrings || ctx.nativeStrTypeIdx < 0 || ctx.anyStrTypeIdx < 0) return;
+  const flattenIdx = ctx.funcMap.get("__str_flatten") ?? ctx.nativeStrHelpers.get("__str_flatten");
+  if (flattenIdx === undefined) return;
+  const tmp = allocLocal(fctx, `__strflat_ext_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: tmp });
+  fctx.body.push({ op: "local.get", index: tmp });
+  fctx.body.push({ op: "any.convert_extern" });
+  fctx.body.push({ op: "ref.test", typeIdx: ctx.anyStrTypeIdx });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "externref" } },
+    then: [
+      { op: "local.get", index: tmp },
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+      { op: "call", funcIdx: flattenIdx },
+      { op: "extern.convert_any" },
+    ],
+    else: [{ op: "local.get", index: tmp }],
+  });
+}
+
+/**
  * (#742) Identifier-callee call dispatch — extracted verbatim from
  * compileCallExpression. Handles the cases where the call target is a bare
  * identifier: node:fs global functions (readFileSync / writeFileSync, both the
@@ -791,7 +833,9 @@ export function compileIdentifierCall(
           return compileStringLiteral(ctx, fctx, "undefined", strArg0) ?? { kind: "externref" };
         }
         if (isStringType(argTsType)) {
-          // Already a string — return as-is
+          // Already a string — (#4174) flatten the native-string value once at
+          // this explicit materialization point (identity in host-string mode).
+          emitStringExternResultFlatten(ctx, fctx);
           return { kind: "externref" };
         }
         // Other externref — coerce via __extern_toString, which routes
@@ -807,6 +851,12 @@ export function compileIdentifierCall(
         flushLateImportShifts(ctx, fctx);
         if (toStrIdx !== undefined) {
           fctx.body.push({ op: "call", funcIdx: toStrIdx });
+          // (#4174) A dynamic `String(x)` whose argument was already a (rope)
+          // string comes back unchanged from `__extern_toString`'s identity
+          // arm — flatten it here, at the one explicit materialization point.
+          // This is the arm acorn's `this.input = String(input)` ctor seed
+          // takes in standalone-dynamic mode.
+          emitStringExternResultFlatten(ctx, fctx);
         }
         return { kind: "externref" };
       }
@@ -815,7 +865,50 @@ export function compileIdentifierCall(
         // Check if it's a native string type
         const argTsType = ctx.checker.getTypeAtLocation(strArg0);
         if (isStringType(argTsType)) {
-          // Already a native string — return as-is
+          // Already a native string — (#4174) a `ref $NativeString` is flat by
+          // construction, but a `ref $AnyString` may be a rope: flatten once at
+          // this explicit materialization point so per-character consumers hit
+          // the flat fast path. Null passes through unchanged (matching the old
+          // identity); the flat/rope dispatch mirrors `__str_charCodeAt`.
+          if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0 && argType.typeIdx === ctx.anyStrTypeIdx) {
+            const flattenIdx = ctx.funcMap.get("__str_flatten") ?? ctx.nativeStrHelpers.get("__str_flatten");
+            if (flattenIdx !== undefined) {
+              const anyStrNullable: ValType = { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
+              const tmp = allocLocal(fctx, `__strflat_ref_${fctx.locals.length}`, anyStrNullable);
+              fctx.body.push({ op: "local.set", index: tmp });
+              fctx.body.push({ op: "local.get", index: tmp });
+              fctx.body.push({ op: "ref.test", typeIdx: ctx.nativeStrTypeIdx });
+              fctx.body.push({
+                op: "if",
+                blockType: { kind: "val", type: { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx } },
+                then: [{ op: "local.get", index: tmp }],
+                else: [
+                  { op: "local.get", index: tmp },
+                  { op: "ref.is_null" },
+                  {
+                    op: "if",
+                    blockType: { kind: "val", type: { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx } },
+                    then: [{ op: "local.get", index: tmp }],
+                    else: [
+                      { op: "local.get", index: tmp },
+                      { op: "call", funcIdx: flattenIdx },
+                    ],
+                  },
+                ],
+              });
+              // Preserve the incoming ValType EXACTLY: downstream signature
+              // inference (the IR/legacy two-lane "typeIdx parity" contract)
+              // derives function types from this result, so widening `ref` →
+              // `ref_null` here demoted acorn's `tokenizer` IR body with a
+              // "function typeIdx parity mismatch" fallback. For a non-null
+              // input the null-passthrough arm is unreachable; re-assert
+              // non-nullness for the stack type instead of widening.
+              if (argType.kind === "ref") {
+                fctx.body.push({ op: "ref.as_non_null" });
+              }
+              return argType;
+            }
+          }
           return argType;
         }
         // Native/standalone object ToString needs a real `$AnyString` result.

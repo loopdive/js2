@@ -1,7 +1,8 @@
 ---
 id: 4174
 title: "perf: the scanner re-flattens the source string PER CHARACTER — `__str_flatten` is 3.7% of the standalone acorn parse, called from `skipSpace`/`fullCharCodeAt`; likely the cheapest slice the profile found"
-status: ready
+status: in-progress
+assignee: ttraenkler/claude-fable-3
 sprint: current
 created: 2026-08-06
 updated: 2026-08-06

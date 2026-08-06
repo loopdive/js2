@@ -2717,9 +2717,31 @@ export function compileNativeStringMethodCall(
       // directly instead of re-running the flatten discriminator each time.
       fctx.body.push({ op: "ref.cast", typeIdx: strTypeIdx });
     } else {
-      // Flatten to FlatString (handles ConsString → FlatString)
+      // (#4174) Inline already-flat fast path: `charCodeAt` is the scanner
+      // hot-loop primitive (acorn calls it once per scanned character), and an
+      // unconditional `call __str_flatten` paid a cross-function call just to
+      // discover the receiver was already a FlatString. Test flatness at the
+      // call site and only enter the helper on the rope/Utf8 arm — the same
+      // dispatch the IR-path `__str_charCodeAt` helper uses (#3156). A null
+      // receiver fails the test and reaches `__str_flatten`, which traps on
+      // deref exactly as the unconditional call did.
       const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten")!;
-      fctx.body.push({ op: "call", funcIdx: flattenIdx });
+      const recvLocal = allocLocal(fctx, `__charCodeAt_recv_${fctx.locals.length}`, nativeStringTypeNullable(ctx));
+      fctx.body.push({ op: "local.set", index: recvLocal });
+      fctx.body.push({ op: "local.get", index: recvLocal });
+      fctx.body.push({ op: "ref.test", typeIdx: strTypeIdx });
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "val", type: { kind: "ref_null", typeIdx: strTypeIdx } },
+        then: [
+          { op: "local.get", index: recvLocal },
+          { op: "ref.cast", typeIdx: strTypeIdx },
+        ],
+        else: [
+          { op: "local.get", index: recvLocal },
+          { op: "call", funcIdx: flattenIdx },
+        ],
+      });
     }
     // Store flat string ref in a temp local to access both data and off
     const tmpLocal = allocLocal(fctx, "__charCodeAt_tmp", flatStringType(ctx));
