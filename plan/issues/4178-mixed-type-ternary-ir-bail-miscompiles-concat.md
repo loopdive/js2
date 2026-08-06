@@ -1,10 +1,20 @@
 ---
 id: 4178
 title: "Mixed-type ternary: the IR path BAILS on differing arm types, and the legacy fallback then miscompiles string-concat of the result (§13.15.3) — sometimes it fails to compile at all"
-status: ready
+status: in-progress
+assignee: ttraenkler/W3-runtime-eval-ternary
 sprint: current
 created: 2026-08-06
 updated: 2026-08-06
+loc-budget-allow:
+  # +35 lines in `coerceType`'s `ref -> ref_null` arm: the missing `$AnyValue`
+  # UNBOX case, which its three sibling arms (`ref_null->ref_null`,
+  # `ref_null->ref`, `ref->ref`) all already carry IN THIS SAME FUNCTION. The
+  # arm is a `coerceType` branch selected by `from.kind`/`to.kind`; there is no
+  # subsystem module it could live in without splitting one four-way dispatch
+  # across two files, which is what let the fourth arm silently diverge in the
+  # first place. Most of the +35 is the comment recording why.
+  - src/codegen/type-coercion.ts
 priority: high
 horizon: m
 feasibility: hard
