@@ -261,7 +261,7 @@ describe("#3251 S1 — no-regression guards", () => {
     ).toBe(5);
   });
 
-  it("length keeps the legacy behavior (define is a lenient no-op, slice 3)", async () => {
+  it("length defines apply ArraySetLength (S3 — was a lenient no-op in S1)", async () => {
     expect(
       await runStandalone(`${MK}
         export function test(): number {
@@ -269,7 +269,7 @@ describe("#3251 S1 — no-regression guards", () => {
           Object.defineProperty(arr, "length", { value: 2 });
           return arr.length as number;
         }`),
-    ).toBe(3);
+    ).toBe(2);
   });
 
   it("host mode compiles and runs the same program unchanged", async () => {

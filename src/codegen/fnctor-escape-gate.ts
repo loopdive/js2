@@ -1075,6 +1075,78 @@ function inferReturnStruct(
   return result;
 }
 
+/** (#2660 S3b) See {@link writeOnceThisCallReturnStruct}. */
+export interface WriteOnceThisCallVerdict {
+  /** The fnctor whose PROTOTYPE method is being called (`this` is its instance). */
+  ownerName: string;
+  /** The called method name. */
+  methodName: string;
+  /** `__fnctor_<Name>` of the instance the method's single return allocates. */
+  returnedStructName: string;
+}
+
+/**
+ * (#2660 S3b) The `__fnctor_<Name>` struct a `this.m(...)` call PROVABLY
+ * returns, under WRITE-ONCE-strength evidence on the PROTOTYPE slot — or
+ * `undefined` for anything weaker. This is deliberately stronger than
+ * {@link inferReturnStruct} (which feeds the SPECULATIVE, `ref.test`-guarded
+ * dispatch pins): the S3b consumer retypes a local SLOT, where a wrong verdict
+ * is not a missed fast path but a guarded-cast-to-null value corruption.
+ * Requirements checked HERE (the prototype-slot half):
+ *
+ *   - the callee is syntactically `this.m(...)` inside a PROTOTYPE method of a
+ *     fnctor `O` (so `this` is an `O` instance);
+ *   - `m` has a #3683 S1 write-once verdict on `O` (single unconditional
+ *     top-level `O.prototype.m = fn` / alias form, never written again, class
+ *     not poisoned);
+ *   - nothing inherits from `O.prototype` (`inheritedFrom` — a foreign
+ *     `Object.create(O.prototype)` receiver could override `m` as an own
+ *     property) and `m` is not `defineProperty`-installed (`runtimeDefined`);
+ *   - the write-once method body has exactly ONE return and it is a direct
+ *     `new F(...)` of a resolvable fnctor (no chain recursion — the write-once
+ *     verdict covers exactly this one hop).
+ *
+ * The OWN-PROPERTY shadow half is deliberately NOT the global
+ * `otherNameWrites` sentinel (acorn trips it with `keywordTypes[name] = …`, a
+ * plain object): the S3b caller applies the same receiver-shape argument
+ * #3683 S3 documents in typed-this.ts — in STANDALONE a `$__fnctor_O`
+ * instance is a CLOSED struct with no expando sidecar, so an own shadow of
+ * `m` is impossible unless `m` is a declared struct field/accessor, which the
+ * caller rejects by name against `ctx.structFields`.
+ */
+export function writeOnceThisCallReturnStruct(
+  checker: ts.TypeChecker,
+  gate: FnctorEscapeGateResult,
+  call: ts.CallExpression,
+): WriteOnceThisCallVerdict | undefined {
+  const calleeExpr = unwrapExpr(call.expression);
+  if (!ts.isPropertyAccessExpression(calleeExpr)) return undefined;
+  if (ts.isPrivateIdentifier(calleeExpr.name)) return undefined;
+  if (unwrapExpr(calleeExpr.expression).kind !== ts.SyntaxKind.ThisKeyword) return undefined;
+  const methodName = calleeExpr.name.text;
+  const owner = resolveEnclosingFnctorOwner(checker, call);
+  // `viaPrototype` required: in a STATIC method `this` is the constructor, not
+  // an instance, and `this.m` would be a static function property.
+  if (owner === undefined || !owner.viaPrototype) return undefined;
+  const wo = gate.protoMethodWriteOnce;
+  if (wo.poisoned.has(owner.name)) return undefined;
+  if (wo.inheritedFrom.has(owner.name)) return undefined;
+  if (wo.runtimeDefined.get(owner.name)?.has(methodName) === true) return undefined;
+  const fn = wo.methods.get(owner.name)?.get(methodName);
+  if (fn === undefined) return undefined;
+  const ret = singleReturnExpr(fn);
+  if (ret === undefined) return undefined;
+  let r = unwrapExpr(ret);
+  // `return published = new T()` evaluates to the new instance.
+  while (ts.isBinaryExpression(r) && r.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+    r = unwrapExpr(r.right);
+  }
+  if (!ts.isNewExpression(r)) return undefined;
+  const ctorSym = resolveFnctorSymbol(checker, r.expression);
+  if (ctorSym === undefined) return undefined;
+  return { ownerName: owner.name, methodName, returnedStructName: `__fnctor_${ctorSym.name}` };
+}
+
 /**
  * Build the #2660 PART-1 receiver-struct flow map: for every local binding
  * `const/let/var x = <call>` whose initializer call's single-return chain

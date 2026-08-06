@@ -5,6 +5,7 @@ import { emitWasiErrorConstructor, fillExternGetErrorProps } from "./registry/er
 import { analyzeLinearUint8 } from "./linear-uint8-analysis.js";
 import { analyzeFnctorEscapeGate, deriveFnctorFields } from "./fnctor-escape-gate.js";
 import { resolveFnctorInstanceType } from "./fnctor-typed-instances.js";
+import { resolveFnctorTypedBindingType } from "./fnctor-typed-bindings.js";
 import { isLinearU8RepresentableNew } from "./linear-uint8-signatures.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 import { fillHostFnctorMethodDrivers, maxHostFnctorMethodArity } from "./host-fnctor-method-driver.js";
@@ -8682,11 +8683,19 @@ function hoistVarDecl(ctx: CodegenContext, fctx: FunctionContext, decl: ts.Varia
     }
     const carrierForcesExternref = initForcesExternref || forInTargetForcesExternref || mixedAssignmentCarrier;
     const usageF64 = carrierForcesExternref ? null : usageInferredLocalType(ctx, decl);
-    const wasmType: ValType =
+    let wasmType: ValType =
       inferredArrayVecType ??
       (carrierForcesExternref || isNullablePrimitiveType(varType) || varBindingNeedsExternrefForUndefined(decl, ctx)
         ? { kind: "externref" as const }
         : (usageF64 ?? resolveWasmType(ctx, varType)));
+    // (#2660 S3b) A provably-monomorphic `var x = new F(...)` binding of an
+    // approved fnctor gets the reserved struct slot instead of externref —
+    // decision logic + admission proof in fnctor-typed-bindings.ts. Admission
+    // guarantees no use can observe the pre-init value, so the `undefined`
+    // entry seed below is safely skipped (a ref_null local defaults to null).
+    if (wasmType.kind === "externref") {
+      wasmType = resolveFnctorTypedBindingType(ctx, decl) ?? wasmType;
+    }
     if (initForcesExternref) ctx.externrefAccessorVars.add(name);
     const localIdx = allocLocal(fctx, name, wasmType);
     // (#684) A hoisted `var` is `undefined` from function entry; when narrowed
@@ -9341,6 +9350,14 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
             wasmType = { kind: "externref" };
             (fctx.fnctorWidenedLocals ??= new Set()).add(name);
           }
+        }
+        // (#2660 S3b) A provably-monomorphic `let/const x = new F(...)` of an
+        // approved fnctor gets the reserved struct slot instead of externref.
+        // This allocator is the AUTHORITATIVE let/const slot-typer, so the
+        // retype must land here; compileVariableStatement applies the same
+        // (cached) verdict so the two agree. See fnctor-typed-bindings.ts.
+        if (wasmType.kind === "externref") {
+          wasmType = resolveFnctorTypedBindingType(ctx, decl) ?? wasmType;
         }
         const valueSlot = allocLocal(fctx, name, wasmType);
         // (#2814) Record the pre-hoisted slot for THIS declaration so

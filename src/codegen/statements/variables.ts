@@ -27,6 +27,7 @@ import {
   getOrRegisterVecType,
 } from "../registry/types.js";
 import { coerceType, compileExpression, valTypesMatch } from "../shared.js";
+import { resolveFnctorTypedBindingType } from "../fnctor-typed-bindings.js";
 import { emitGuardedRefCast } from "../type-coercion.js";
 import { emitLazyClassObjectGet } from "../expressions/extern.js";
 import { compileArrayDestructuring, compileObjectDestructuring } from "./destructuring.js";
@@ -1858,7 +1859,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     if (mixedAssignmentCarrier) {
       (fctx.mixedAssignmentCarrierVars ??= new Set()).add(name);
     }
-    const wasmType: ValType =
+    const wasmTypeBase: ValType =
       // (#3123) A widened fnctor-subclass binding (pre-hoist recorded it in
       // `fnctorWidenedLocals` — reassigned with a foreign/host value) must
       // keep its externref slot even when the block-scoped shadow machinery
@@ -1911,6 +1912,13 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
                                   isBindHostCall(decl.initializer)
                                 ? { kind: "externref" as const }
                                 : localTypeForDeclaration(ctx, varType, decl)));
+    // (#2660 S3b) A provably-monomorphic `new F(...)` binding of an approved
+    // fnctor gets the reserved struct slot instead of externref. Same (cached)
+    // verdict as the var hoister / let-const pre-hoister, so a reused
+    // pre-hoisted slot and this cascade always agree. Applied only when the
+    // cascade itself settled on externref — never overrides another inference.
+    const wasmType: ValType =
+      wasmTypeBase.kind === "externref" ? (resolveFnctorTypedBindingType(ctx, decl) ?? wasmTypeBase) : wasmTypeBase;
 
     // (#2814) Bug C: re-align a block-scoped let/const with its OWN pre-hoisted
     // slot. `saveBlockScopedShadows` removed this name's localMap (and TDZ-flag)
