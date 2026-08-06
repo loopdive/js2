@@ -1,7 +1,8 @@
 ---
 id: 4173
 title: "perf: boxed strict-eq / truthiness helpers are 7.1% of the standalone acorn parse — `__extern_strict_eq` 3.7% + `__is_truthy` 3.1% self-time, and no issue owned this bucket"
-status: ready
+status: in-progress
+assignee: ttraenkler/claude-fable-4
 sprint: current
 created: 2026-08-06
 updated: 2026-08-06
