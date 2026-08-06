@@ -1,10 +1,11 @@
 {
   "id": "4159",
   "assignee": "ttraenkler/claude-fable",
-  "requested_by": "ttraenkler/claude-fable",
-  "status": "in-progress",
+  "requested_by": "ttraenkler@users.noreply.github.com",
+  "status": "released",
   "branch": "claude/acorn-performance-optimization-hagjht",
   "claimed_at": "2026-08-06T11:23:03Z",
-  "updated_at": "2026-08-06T11:23:03Z",
-  "write_id": "25003-8v4gk6ms"
+  "updated_at": "2026-08-06T11:23:42Z",
+  "write_id": "28883-mn6asx62",
+  "released_at": "2026-08-06T11:23:42Z"
 }
