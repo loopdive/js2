@@ -12,6 +12,7 @@
 import type { Instr } from "../ir/types.js";
 import { runtimeToPrimitiveInstrs } from "./coercion-engine.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { emitBrandCheckTypeError } from "./native-proto.js";
 
 /**
  * The reflective `String.prototype` members that take NO arguments and return a
@@ -64,8 +65,25 @@ export function emitStringProtoToStringFlat(
   anyToStrIdx: number,
   flattenIdx: number,
 ): void {
+  // §7.1.17 step 1: ToString of a SYMBOL throws — unlike the deliberately
+  // printable `$__any_to_string` fallback, and ToPrimitive passes a Symbol
+  // through unchanged (it is already primitive). Guarding HERE covers every
+  // caller at once: the no-arg receiver bodies (`toLowerCase.call(Symbol())`)
+  // and the search family's `ToString(searchString)` operands alike. Same
+  // guard the bespoke `substring` body carries.
+  const body: Instr[] = [];
+  if (ctx.symbolTypeIdx >= 0) {
+    const symbolThrow: Instr[] = [];
+    emitBrandCheckTypeError(ctx, symbolThrow, "Cannot convert a Symbol value to a string");
+    body.push(
+      { op: "local.get", index: paramIdx },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: ctx.symbolTypeIdx },
+      { op: "if", blockType: { kind: "empty" }, then: symbolThrow },
+    );
+  }
   const toPrimitive = runtimeToPrimitiveInstrs(ctx, "string");
-  const body: Instr[] = [{ op: "local.get", index: paramIdx }];
+  body.push({ op: "local.get", index: paramIdx });
   if (toPrimitive !== null) body.push(...toPrimitive);
   body.push({ op: "any.convert_extern" }, { op: "call", funcIdx: anyToStrIdx }, { op: "call", funcIdx: flattenIdx });
   for (const instr of body) fctx.body.push(instr);
