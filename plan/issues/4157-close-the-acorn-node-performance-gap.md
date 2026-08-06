@@ -77,9 +77,14 @@ The gap decomposes into two unequal parts (#3780):
 
 ### Workstream 2 — JIT-class structural work (the ~3.5x residue)
 
-- [ ] **#3926 — `__extern_get` lookup cost**: perfect-hash / `br_table` the
+- [x] **#3926 — `__extern_get` lookup cost**: perfect-hash / `br_table` the
       key dispatch (today: 1,080 ifs, 463 `ref.test`, 303 `__str_equals`,
       zero `br_table`). Pays off on every read Workstream 1 does NOT convert.
+      → LANDED 2026-08-06: baked-hash + `br_table` bucket dispatch, +4.1%
+      `standaloneDynamic` (3 interleaved pairs, min-new > max-base), self-time
+      7.91% → 6.33%, +2,001 B. The residual self-time is receiver `ref.test`
+      arms + the per-lookup flatten, so the "< 3%" acceptance line below stays
+      open. Details in #3926's Results section.
 - [ ] **#3927 — per-shape fnctor splitting**: `Node` is a 292 B union struct
       for a 3-6 property object; #4074's declared-shape partition (acorn's
       own `.d.ts`, 83 interfaces) is the cheap partition signal. Bounded at
