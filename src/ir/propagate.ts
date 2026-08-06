@@ -554,7 +554,10 @@ function seedParamType(param: ts.ParameterDeclaration, checker: ts.TypeChecker |
   return tsTypeToLattice(ty, checker);
 }
 
-function seedReturnType(fn: ts.FunctionDeclaration, checker: ts.TypeChecker | undefined): LatticeType {
+function seedReturnType(
+  fn: ts.FunctionDeclaration | ts.FunctionExpression,
+  checker: ts.TypeChecker | undefined,
+): LatticeType {
   if (fn.type) {
     const t = typeNodeToLattice(fn.type);
     if (t !== null) return t;
@@ -1510,6 +1513,29 @@ function inferLegacyExpressionForTests(
     return structuralEntries.has(legacyName) ? legacyName : undefined;
   });
 }
+
+// (#743) Shared propagation core for the flag-gated fnctor method-edge
+// satellite (src/ir/fnctor-method-edges.ts). The satellite runs a SECOND,
+// self-contained fixpoint over prototype/static methods and function-expression
+// constructors — a population this module's `collectIndexedFunctionDeclarations`
+// deliberately excludes — and reuses the exact lattice rules so the two
+// fixpoints cannot drift on operator/join semantics. Deliberately NOT widened
+// into `buildIrUnitTypeMap` itself: the main map feeds IR selection and the
+// legacy-parity seams, so any change to its entries shifts IR claims; the
+// satellite's facts feed only the fnctor field-slot consumer
+// (src/codegen/fnctor-ctor-param-types.ts) and therefore cannot cause
+// typeIdx-parity demotions. Rationale + measurements: plan/issues/743.
+export const _propagationCore = {
+  inferExpr,
+  walkBodyForReturns,
+  seedParamType,
+  seedReturnType,
+  join,
+  paramsEqual,
+  typesEqual,
+  UNKNOWN,
+  DYNAMIC,
+} as const;
 
 // Exported for tests — let them poke at the lattice without rebuilding
 // everything from scratch.

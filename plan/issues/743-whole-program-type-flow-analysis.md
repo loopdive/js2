@@ -40,6 +40,11 @@ loc-budget-allow:
   # of `buildIrUnitTypeMap` — the one place fixpoint seeds are formed. All
   # collection/discovery logic lives in the new
   # src/checker/dts-entrypoint-seeds.ts.
+  # Plus +26 (1533 → 1559) for the graph-completeness slice: the exported
+  # `_propagationCore` block (named re-exports of the lattice rules + a
+  # rationale comment) so the method-edge satellite
+  # (src/ir/fnctor-method-edges.ts) shares the EXACT join/inferExpr semantics
+  # instead of forking them. All new analysis logic lives in the satellite.
   - src/ir/propagate.ts
   # +6: a three-line comment and one call in `deriveFnctorFields`, which is the
   # single place a fnctor field slot is chosen and therefore the only place this
