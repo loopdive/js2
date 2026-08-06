@@ -1,5 +1,5 @@
 ---
-id: 4167
+id: 4174
 title: "perf: the scanner re-flattens the source string PER CHARACTER — `__str_flatten` is 3.7% of the standalone acorn parse, called from `skipSpace`/`fullCharCodeAt`; likely the cheapest slice the profile found"
 status: ready
 sprint: current
@@ -12,11 +12,11 @@ reasoning_effort: high
 task_type: performance
 area: codegen
 goal: performance
-related: [4157, 3926, 4166]
+related: [4157, 3926, 4173]
 origin: "2026-08-06 post-campaign CPU profile (#4157, PR #4143) — one of two measured buckets with no owning issue"
 ---
 
-# #4167 — per-character `__str_flatten` in the scanner
+# #4174 — per-character `__str_flatten` in the scanner
 
 ## Problem (measured, not estimated)
 

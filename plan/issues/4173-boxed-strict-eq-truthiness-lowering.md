@@ -1,5 +1,5 @@
 ---
-id: 4166
+id: 4173
 title: "perf: boxed strict-eq / truthiness helpers are 7.1% of the standalone acorn parse — `__extern_strict_eq` 3.7% + `__is_truthy` 3.1% self-time, and no issue owned this bucket"
 status: ready
 sprint: current
@@ -16,7 +16,7 @@ related: [4157, 4155, 743, 3926]
 origin: "2026-08-06 post-campaign CPU profile (#4157, PR #4143) — one of two measured buckets with no owning issue"
 ---
 
-# #4166 — boxed strict-eq / truthiness lowering
+# #4173 — boxed strict-eq / truthiness lowering
 
 ## Problem (measured, not estimated)
 
