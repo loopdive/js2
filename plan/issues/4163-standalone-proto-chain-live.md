@@ -28,6 +28,13 @@ loc-budget-allow:
   # registerDescriptorHasOwn moved after __extern_has (funcIdx ordering) +
   # rationale comment; the logic lives in carrier-bag-hasown.ts (not a god-file)
   - src/codegen/object-runtime.ts
+func-budget-allow:
+  # one predicate line + lockstep-rationale comment; the consult must live in
+  # moduleInitForcesExternref (nested closure of collectDeclarations)
+  - src/codegen/declarations.ts::collectDeclarations
+  # registerDescriptorHasOwn call relocation + rationale comment inside the
+  # ensure flow — the funcIdx-ordering constraint pins it to this position
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
 ---
 
 # Standalone: make the [[Prototype]] chain LIVE for `new F()` with reassigned `F.prototype`
@@ -91,6 +98,22 @@ Plus the **#4008 prerequisite re-land**: `__desc_has_own` widened from
 HasOwnProperty to full §7.3.12 HasProperty (final arm delegates to
 `__extern_has`, registered after it for funcIdx ordering). Measured +0 while
 the chain was dead; load-bearing now that it is live.
+
+## Measured (2026-08-06, CI-aligned shimmed instrument — see L2 handoff §2/§3)
+
+| | pass on the 219-file lever list |
+| --- | ---: |
+| origin/main (`83e7c4db3`), base files swapped in | **0 / 219** |
+| this branch | **95 / 219** |
+
+Delta **+95**, 0 regressions on the list. Instrument responsiveness verified in
+both directions (95 → 0 on revert-swap, 0 → 95 on restore). Remaining 124:
+15 × override-of-inherited define semantics (§8.12.9 step-1 refinements),
+14 × `accessed !== true` (accessor `this`-binding / invocation shapes),
+12-file `Object.prototype.x` named-key slice (probe2 — proto-index store minus
+its integer gate, follow-up), 8 × missing TypeError arms, plus a long tail of
+builtin-prototype (`String.prototype` S15.5.3.1_A*, `Number.prototype`) tests
+that are a DIFFERENT mechanism (builtin proto objects, not user fnctors).
 
 ## Acceptance
 
