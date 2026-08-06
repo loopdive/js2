@@ -1,7 +1,12 @@
 ---
 id: 4177
 title: "IR-first hard-fails on lattice-narrowed `+`: selection claims a function off the fixpoint's f64 param fact, but from-ast `+` provability does not consume lattice facts"
-status: ready
+status: in-progress
+assignee: ttraenkler/claude-fable-5
+loc-budget-allow:
+  - src/ir/from-ast.ts
+func-budget-allow:
+  - src/ir/from-ast.ts::lowerFunctionAstToIr
 sprint: current
 created: 2026-08-06
 updated: 2026-08-06

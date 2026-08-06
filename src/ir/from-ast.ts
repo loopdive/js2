@@ -147,6 +147,8 @@ import {
   isI32PureExprIR,
   isIrBitwiseOperatorToken,
 } from "./i32-pure-bitwise.js";
+// #4177 — fixpoint-fact consumption for the `+` operand proof.
+import { collectLatticeParamFacts, latticeAdditiveFact, type LatticeParamFacts } from "./lattice-param-facts.js";
 import { tryEmitUnrolledReduction } from "./reduction-unroll.js";
 import { demoteToLegacy, IrUnsupportedError } from "./outcomes.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
@@ -1045,6 +1047,9 @@ export function lowerFunctionAstToIr(
     funcKind: isGenerator ? "generator" : isAsync ? "async" : "regular",
     generatorBufferSlot,
     checker: options.checker,
+    // #4177 — outer function only; lifted-closure contexts deliberately omit
+    // it (see the LowerCtx field doc).
+    latticeParamFacts: collectLatticeParamFacts(fn, params),
     numericLocalScalarForDecl: options.numericLocalScalarForDecl,
     allocRegistry: options.allocRegistry,
     moduleBindings: options.moduleInitUnit ? options.moduleBindings : undefined,
@@ -2041,6 +2046,16 @@ interface LowerCtx {
   readonly generatorBufferSlot?: number;
   /** Optional-chain nullability check (#1281). When absent, `?.` / `?.()` throw to legacy. */
   readonly checker?: ts.TypeChecker;
+  /**
+   * #4177 — the enclosing function's OWN never-written parameter facts from
+   * the SAME signature resolution selection claimed the function with,
+   * consumed by `proveAdditiveOperand` via `latticeAdditiveFact`. Populated
+   * for the OUTER function only; lifted-closure contexts omit it (a captured
+   * param could be reassigned by a sibling closure between the outer read
+   * sites, which the outer-body write scan cannot see). Full soundness
+   * argument: src/ir/lattice-param-facts.ts.
+   */
+  readonly latticeParamFacts?: LatticeParamFacts;
   /** See {@link AstToIrOptions.numericLocalScalarForDecl}. */
   readonly numericLocalScalarForDecl?: (decl: ts.VariableDeclaration) => "number" | undefined;
   /**
@@ -8837,7 +8852,19 @@ function classifyPrimitiveProof(t: ts.Type): "number" | "string" | "unprovable" 
 function proveAdditiveOperand(node: ts.Expression, cx: LowerCtx): "number" | "string" | "unprovable" | "no-checker" {
   const checker = cx.checker;
   if (!checker) return "no-checker";
-  return classifyPrimitiveProof(checker.getTypeAtLocation(node));
+  const byChecker = classifyPrimitiveProof(checker.getTypeAtLocation(node));
+  if (byChecker !== "unprovable") return byChecker;
+  // #4177 — the checker says `any` for an unannotated param / a call to an
+  // unannotated local function, but SELECTION may have claimed this function
+  // off the #1131 interprocedural fixpoint's lattice facts (an f64 param atom,
+  // an f64 callee return atom). The proof must consume the SAME facts, or the
+  // claim hard-fails after the legacy body was already skipped (the exact
+  // split-brain of #4177). Only already-proved facts are consulted — the
+  // per-declaration param map and the certified direct-call plan signatures —
+  // never fresh inference and never the lowered Wasm kind (the Row-7 trap:
+  // the lattice's bool atom is i32-branded and deliberately unmapped there).
+  // See src/ir/lattice-param-facts.ts for the full soundness argument.
+  return latticeAdditiveFact(node, cx) ?? "unprovable";
 }
 
 /**
