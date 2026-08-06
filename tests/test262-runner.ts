@@ -28,6 +28,11 @@ import { isModuleGoal } from "../scripts/test262-module-goal.mjs";
 import { restoreHostBuiltins } from "./test262-restore-builtins.js";
 import { assembleOriginalHarness, type OriginalHarnessVariant } from "./test262-original-harness.js";
 import { SANDBOX_GLOBAL_NAMES } from "../scripts/test262-sandbox-globals.mjs";
+import {
+  RUNTIME_EVAL_IMPORT_MODULE,
+  instantiateRuntimeEvalNamespace,
+  selectCachedRuntimeEvalProvider,
+} from "../scripts/runtime-eval-provider.mjs";
 
 // #1310: per-shard global isolation for test262.
 //
@@ -3634,6 +3639,47 @@ export function standaloneHostImportError(target: string | undefined, imports: r
   return `standalone target emitted host imports: ${[...new Set(names)].sort().join(", ")} (#2961)`;
 }
 
+// ── standalone runtime-eval provider attachment ────────────────────
+// The sharded CI worker and the fixture-graph lane in `test262-shared.ts` both
+// attach the cached `js2wasm:runtime-eval` provider namespace before
+// instantiating a standalone module. The in-process runner did NOT, so any
+// standalone module that merely MENTIONS `eval`/`new Function` — including
+// every test that reads a property off the `Function` constructor, which pulls
+// in the linked runtime-eval carrier — died with
+// `Import #0 module="js2wasm:runtime-eval": module is not an object` and that
+// link error OVERWROTE the real failure signature. Three triage lanes lost time
+// to it. Keep this seam in sync with `test262-shared.ts`.
+let inProcessRuntimeEvalProvider: WebAssembly.Module | null | undefined;
+function getInProcessRuntimeEvalProvider(): WebAssembly.Module | null {
+  if (inProcessRuntimeEvalProvider !== undefined) return inProcessRuntimeEvalProvider;
+  const selection = selectCachedRuntimeEvalProvider();
+  if (process.env.TEST262_QUIET_PROVIDER !== "1") {
+    console.error(`[test262-runner] runtime-eval tier: ${selection.message}`);
+  }
+  inProcessRuntimeEvalProvider = selection.module;
+  return inProcessRuntimeEvalProvider;
+}
+
+/**
+ * Compile `binary` to a `WebAssembly.Module` and, on the standalone target,
+ * attach a fresh runtime-eval provider namespace to `imports` when the module
+ * asks for one. Returns the module so the caller can instantiate it without a
+ * second compile. Every test gets its own provider instance — interpreter
+ * globals never leak between tests.
+ */
+export function attachRuntimeEvalProvider(
+  binary: BufferSource,
+  imports: Record<string, unknown>,
+  target: string | undefined,
+): WebAssembly.Module {
+  const mod = new WebAssembly.Module(binary as BufferSource);
+  if (target !== "standalone") return mod;
+  if (!WebAssembly.Module.imports(mod).some((entry) => entry.module === RUNTIME_EVAL_IMPORT_MODULE)) return mod;
+  const provider = getInProcessRuntimeEvalProvider();
+  if (provider) imports[RUNTIME_EVAL_IMPORT_MODULE] = instantiateRuntimeEvalNamespace(provider);
+  return mod;
+}
+
 /** Default per-test timeout in milliseconds (prevents infinite-loop hangs) */
 const TEST_TIMEOUT_MS = 15000;
 
@@ -4239,7 +4285,8 @@ async function runOriginalHarnessVariant(
         globalSandbox: sandbox,
       }) as any;
       const instantiateStarted = performance.now();
-      ({ instance } = await WebAssembly.instantiate(result.binary, imports));
+      const linkedModule = attachRuntimeEvalProvider(result.binary, imports, target);
+      instance = await WebAssembly.instantiate(linkedModule, imports);
       instantiateMs = performance.now() - instantiateStarted;
       imports.setInstance?.(instance);
 
@@ -4724,7 +4771,8 @@ export async function runSyntheticTest262File(
     const importResult = buildImports(result.imports, undefined, result.stringPool, { globalSandbox: sandbox });
     const imports = importResult as any;
     const instantiateStart = performance.now();
-    ({ instance } = await WebAssembly.instantiate(result.binary, imports));
+    const linkedModule = attachRuntimeEvalProvider(result.binary, imports, target);
+    instance = await WebAssembly.instantiate(linkedModule, imports);
     instantiateMs = performance.now() - instantiateStart;
     // Provide the branded instance so callbacks and host bridges are discoverable.
     importResult.setInstance?.(instance);
