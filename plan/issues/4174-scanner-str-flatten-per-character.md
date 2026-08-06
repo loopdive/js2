@@ -14,6 +14,13 @@ task_type: performance
 area: codegen
 goal: performance
 related: [4157, 3926, 4173]
+# LOC grant: the implementation lives in the new src/codegen/string-materialize.ts;
+# these god-files carry only thin call sites (+6/+3) and an env-gated ABI-parity
+# debug print (+5) that cannot shrink below their frozen baselines.
+loc-budget-allow:
+  - src/codegen/expressions/call-identifier.ts
+  - src/codegen/string-ops.ts
+  - src/ir/integration.ts
 origin: "2026-08-06 post-campaign CPU profile (#4157, PR #4143) — one of two measured buckets with no owning issue"
 ---
 
