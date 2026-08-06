@@ -85,7 +85,9 @@ unmodified main): `issue-1130` ×2, `issue-2668` ×2 (host-lane, fail on main).
 
 ### Residual failure roots on the lever (measured, out of scope here)
 
-- **#4164 (new, filed in this PR)**: runtime-eval-consumer mode miscompiles
+- **Runtime-eval mixed-type-ternary miscompile** (written up in this PR under
+  `## RESIDUAL BLOCKER` in `plan/issues/3251-array-descriptor-overlay-substrate.md`; awaiting its own id, see the
+  note there): runtime-eval-consumer mode miscompiles
   mixed-type ternaries into an incoherent box (`typeof`="string",
   `Number()`=NaN, concat="[object Object]") — caps EVERY propertyHelper
   `verifyProperty(arr, "length", {writable:…})` because `isWritable` writes
