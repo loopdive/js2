@@ -1,11 +1,10 @@
 {
   "id": "3251",
-  "assignee": "ttraenkler/L2-array-exotic-define",
-  "requested_by": "noreply@anthropic.com",
-  "status": "released",
-  "branch": "issue-3251-s2-array-exotic-define",
-  "claimed_at": "2026-08-06T08:31:04Z",
-  "updated_at": "2026-08-06T08:54:08Z",
-  "write_id": "1835-gh5j5utn",
-  "released_at": "2026-08-06T08:54:08Z"
+  "assignee": "ttraenkler/L2-fable-array-exotic",
+  "requested_by": "ttraenkler/L2-fable-array-exotic",
+  "status": "in-progress",
+  "branch": "issue-3251-s2-port",
+  "claimed_at": "2026-08-06T10:00:11Z",
+  "updated_at": "2026-08-06T10:00:11Z",
+  "write_id": "26216-za09pws8"
 }
