@@ -33,6 +33,18 @@ func-budget-allow:
   # in src/codegen/with-rmw.ts.
   - src/codegen/expressions/operator-assignment.ts::compileCompoundAssignment
   - src/codegen/expressions/unary-updates.ts::compilePrefixUpdate
+# (#1917/#2108 coercion-sites gate) with-rmw.ts: 0 -> 1 (__unbox_number).
+# A read-modify-write through a `with` scope reads an externref out of the
+# Object Environment Record, applies an f64 operator, and writes it back — so
+# the unbox is intrinsic to the operation, not incidental. It DELEGATES to the
+# engine's existing helper by funcMap name (`__unbox_number`, paired with
+# `__box_number` on the way out) and hand-rolls no ToString/ToNumber/ToPrimitive
+# matrix, which is what the gate actually guards against; the gate counts the
+# reference. This follows the #4160 precedent for delegating-by-name rather
+# than the discouraged pattern. If the single coercion engine grows an entry
+# point for "unbox, apply numeric op, rebox", this is a one-call rewrite.
+coercion-sites-allow:
+  - src/codegen/with-rmw.ts
 ---
 
 # #2663 — `with` statement Tier 2: dynamic-scope fallback
