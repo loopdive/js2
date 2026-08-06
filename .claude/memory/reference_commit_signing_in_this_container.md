@@ -83,12 +83,75 @@ git cat-file commit HEAD | grep -c "BEGIN SSH SIGNATURE"   # verify by effect
 `--reset-author` is what the stop hook asks for; it re-stamps author AND
 committer so both carry the configured identity.
 
-## Note on the author identity
+## Author identity — RESOLVED by the user, 2026-08-06
 
-This container's local config uses `Claude <noreply@anthropic.com>`, which the
+**Commits are authored by the USER, with Claude as co-author.** The user stated
+this directly, which settles the conflict the section below had left open.
+
+**A commit has TWO identities and they must differ here.** Setting
+`user.email` to the user's address sets author *and* committer, and the stop
+hook then flags every commit — GitHub verifies a signature against the
+**committer**, so a committer of `github.com@loopdive.com` renders as
+**Unverified** no matter that the commit is correctly signed. Attribution is
+the **author** field. So:
+
+| field | value | why |
+| --- | --- | --- |
+| author | `Thomas Tränkler <github.com@loopdive.com>` | the attribution the user asked for |
+| committer | `Claude <noreply@anthropic.com>` | the identity the signing key is registered to; what GitHub verifies |
+| trailer | `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>` | not automatic — write it into the message |
+
+This is ordinary git, not a workaround: `main`'s one human commit is
+`A: Thomas Tränkler / C: GitHub <noreply@github.com>` (a web-UI commit), so
+author≠committer is already the norm in this repo.
+
+Keep the config as the COMMITTER identity and pass the author explicitly:
+
+```
+user.name   = Claude
+user.email  = noreply@anthropic.com
+```
+
+```bash
+git commit --author="Thomas Tränkler <github.com@loopdive.com>" -m "… ✓"
+# fixing earlier commits (note: NOT --reset-author, which would overwrite the
+# author with the committer — the exact mistake this section exists to prevent):
+git rebase --exec 'git commit --amend --no-edit --author="Thomas Tränkler <github.com@loopdive.com>"' <base>
+```
+
+Verify with `git log -3 --format='%h A:%ae C:%ce'` — you want two DIFFERENT
+addresses.
+
+plus a trailer in every commit message (it is **not** automatic — the config
+sets the author, not the trailer):
+
+```
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+```
+
+Now set in the repo's **local** git config, which lives in the common `.git`
+dir and is therefore **shared by every worktree** — so agents spawned with
+`isolation: worktree` inherit it without being told. They still have to add the
+trailer themselves.
+
+Confirm before pushing: `git log -3 --format='%an <%ae>'`.
+
+Historical note worth keeping: 26 of the last 60 commits on `main` are authored
+`Claude <noreply@anthropic.com>`, so the wrong identity has been the de-facto
+default here for a long time. Do not read existing history as evidence of the
+convention — read this file.
+
+## (superseded) The conflict this used to describe
+
+This container's local config used `Claude <noreply@anthropic.com>`, which the
 stop hook accepts. That differs from
 [[feedback_commit_author_is_user_not_agent_role]], which requires the USER as
-author with Claude as co-author. **The two rules disagree; the stop hook is what
-actually gates this container.** If the user wants the repo convention instead,
-they have to change the container's git identity — flag the conflict rather than
-picking one silently.
+author with Claude as co-author. The two rules disagreed, and this file said to
+flag the conflict rather than pick one silently.
+
+**Outcome: flagging it was right, but I did not do it early enough.** The
+conflict sat unresolved while commits kept going out under the wrong identity;
+the user had to raise it. The lesson is not about this particular setting — it
+is that a known, written-down conflict is a thing to surface **at the first
+commit**, not to carry indefinitely as a footnote.
+`[[feedback_commit_author_is_user_not_agent_role]]` won.
