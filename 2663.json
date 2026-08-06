@@ -1,10 +1,11 @@
 {
   "id": "2663",
   "assignee": "ttraenkler/L4-with-statement",
-  "requested_by": "ttraenkler/L4-with-statement",
-  "status": "in-progress",
+  "requested_by": "noreply@anthropic.com",
+  "status": "released",
   "branch": "issue-2663-with-compound-rmw",
   "claimed_at": "2026-08-06T08:43:02Z",
-  "updated_at": "2026-08-06T08:43:02Z",
-  "write_id": "4451-yayyq80o"
+  "updated_at": "2026-08-06T09:10:17Z",
+  "write_id": "25108-5pqtf4pp",
+  "released_at": "2026-08-06T09:10:17Z"
 }
