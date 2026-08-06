@@ -1,5 +1,5 @@
 ---
-id: 4163
+id: 4172
 title: "Standalone: make the [[Prototype]] chain LIVE for `new F()` with reassigned `F.prototype` (ES5 inherited-property family)"
 status: in-progress
 assignee: ttraenkler/W2-prototype-chain
@@ -35,6 +35,19 @@ func-budget-allow:
   # registerDescriptorHasOwn call relocation + rationale comment inside the
   # ensure flow — the funcIdx-ordering constraint pins it to this position
   - src/codegen/object-runtime.ts::ensureObjectRuntime
+# (#1930/#3273 oracle ratchet) dynamic-proto.ts: ctxChecker 0 -> 1.
+# NOT a hand-rolled checker query. The new proto-SOURCE detection calls the
+# EXISTING `resolveFnctorSymbol` (src/codegen/fnctor-escape-gate.ts:233), whose
+# signature is `(checker: ts.TypeChecker, calleeExpr)` and which is shared with
+# the #2660 escape gate — so the call site cannot avoid passing `ctx.checker`
+# without changing that shared helper's signature and every existing caller.
+# That refactor belongs with the gate it serves, not smuggled into a
+# behavioural slice; doing it here would widen this PR's blast radius across
+# the one subsystem whose S2 header records a measured -40 standalone-floor
+# cost for unscoped change. The gate is counting the reference, not new
+# vocabulary: total raw-checker QUERIES in the tree are unchanged.
+oracle-ratchet-allow:
+  - src/codegen/dynamic-proto.ts
 ---
 
 # Standalone: make the [[Prototype]] chain LIVE for `new F()` with reassigned `F.prototype`

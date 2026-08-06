@@ -1,6 +1,6 @@
 # W2 — prototype-chain lever: PR body + session notes
 
-**Agent**: `ttraenkler/W2-prototype-chain` · **Issue**: #4163 (allocated via
+**Agent**: `ttraenkler/W2-prototype-chain` · **Issue**: #4172 (allocated via
 `claim-issue.mjs --allocate --allow-unscanned`, gh unavailable in container;
 claim verified on `origin/issue-assignments`).
 **Branch**: `issue-4163-standalone-proto-chain-live` (pushed to `origin` =
@@ -10,11 +10,11 @@ upstream `loopdive/js2`). **PR**: to be opened by main agent — body below.
 
 ## PR title
 
-fix(#4163): make the standalone [[Prototype]] chain live for reassigned F.prototype (+95 on the 219-file ES5 lever)
+fix(#4172): make the standalone [[Prototype]] chain live for reassigned F.prototype (+95 on the 219-file ES5 lever)
 
 ## PR body
 
-Closes #4163. Largest single mechanism in the ES5 standalone tail (219 files,
+Closes #4172. Largest single mechanism in the ES5 standalone tail (219 files,
 `description:`-frontmatter census — see #4008's pickup notes, which this PR
 executes).
 
