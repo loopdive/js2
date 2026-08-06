@@ -2,7 +2,8 @@
 
 **Agent**: `ttraenkler/W9-descriptor-proto-residue` (senior-dev, fable lane).
 **Branch**: `issue-4187-standalone-hasown-delete-fold` (docs-only: this file +
-`plan/issues/4187-*.md`). **Issue filed**: #4187 (claimed on
+`plan/issues/4187-standalone-hasown-const-fold-ignores-delete.md`).
+**Issue filed**: #4187 (claimed on
 `origin/issue-assignments`, pr_scan=degraded — `gh` absent in this container,
 #4151; allocation used `--allow-unscanned`, CI id-gate backstops).
 
