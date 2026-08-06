@@ -1,7 +1,7 @@
 ---
 id: 4185
 title: "perf: attribute standalone acorn's 607k-allocation stream; kill the top elidable stream (dead $ObjVec pairs on dynamic closure .call)"
-status: in-progress
+status: done
 assignee: "ttraenkler/claude-fable-7"
 sprint: current
 created: 2026-08-06
@@ -111,13 +111,100 @@ intact in the else-arm). Flag `JS2WASM_FAST_CLOSURE_CALL`, `=0` restores the
 legacy-only dispatcher. Vararg `.call(...xs)`, `.apply`, arity-0 `.call()`,
 non-closure receivers: unchanged legacy path.
 
+## Results — 2026-08-06
+
+### Census A/B (deterministic; the primary evidence)
+
+Standalone-dynamic acorn, checksum 422×3 intact both sides:
+
+| | flag OFF (legacy) | flag ON | delta |
+| --- | ---: | ---: | ---: |
+| total allocations/parse | 614,820 | **531,424** | **−83,396 (−13.6%)** |
+| `$ObjVec` pairs/parse | 41,811 + 41,811 | 113 + 113 | **−99.7%** |
+| every other stream | — | unchanged (e.g. `$AnyValue` 283,370 both sides) | isolation clean |
+
+Binary 1,479,679 → 1,479,820 B (+141 B).
+
+### Profile bucket A/B (300 parses each, order-reversed pairs)
+
+| bucket | pair 1 ON→OFF | pair 2 OFF→ON (control) |
+| --- | --- | --- |
+| call-dispatch | 8.53 / 11.06 (**−2.5pp**) | 9.34 / 10.82 (**−1.5pp**) |
+| gc-engine | 21.83 / 17.56 (contaminated — see below) | 17.10 / 17.82 (−0.7pp) |
+
+`__extern_method_call`'s 1.89% self-time frame is GONE from both ON profiles
+(the ladder truly dies). Call-dispatch −2.0pp mean, consistent in BOTH orders
+— the trustworthy profile finding. **The pair-1 gc reading (21.83% ON) is a
+§3927-§6-class contamination artifact**: mechanism-inconsistent (removing 83k
+allocs cannot raise GC share 4pp), and the order-reversal control read
+17.10 ON vs 17.82 OFF. Recorded because it would have flipped the verdict if
+the control hadn't been run — the §6 lesson held again, in the other
+direction.
+
+### Wall A/B (back-to-back pairs, both orders; shared box, other lanes active)
+
+| pair | order | ON wasmUs | OFF wasmUs | within-pair |
+| --- | --- | ---: | ---: | ---: |
+| 1 (under profiler) | ON→OFF | 161,386 | 163,019 | −1.0% |
+| 2 (under profiler) | OFF→ON | 155,264 | 168,159 | −7.7% |
+| 3 (plain) | ON→OFF | 164,346 | 176,672 | −7.0% |
+| 4 (plain) | OFF→ON | 167,238 | 171,208 | −2.3% |
+
+4/4 pairs favor ON, both orders represented; pooled mean 162,059 vs 169,765
+(**−4.5%**). Each individual pair is below this box's ~10% resolvability bar
+(§6); the claim rests on 4/4 order-balanced consistency + the deterministic
+census + the both-orders call-dispatch drop, not on any single wall number.
+
+### Flag decision
+
+`JS2WASM_FAST_CLOSURE_CALL` ships **default ON**: allocation kill is
+deterministic and isolated, the dispatch-ladder removal is profile-verified in
+both orders, wall is 4/4 positive, and every guard that could change
+semantics routes back to the byte-equivalent legacy chain (`=0` restores the
+legacy-only dispatcher).
+
+### Semantics findings
+
+- Own-`call` override via **dynamic** member write is honored on both paths
+  (1005 — the §10.2 guard works; pinned).
+- Own-`call` override via **static** assignment (`real.call = …` at top
+  level) is ignored by BOTH paths (answers 6; Node answers 1005) — a
+  **pre-existing gap**, not an arm regression: the static assignment never
+  reaches the closure side bag that `__extern_get` reads. Pinned as parity so
+  a future side-bag fix updates both paths together.
+
+### What was priced and NOT taken (for the next #4157 slice)
+
+Post-#4173+#4185, the remaining allocation streams by count: `$AnyString`
+substring/concat headers 58k (the string VALUES — not plumbing, not elidable),
+`__regexp_test_carrier` captures scratch 29k + `__regex_run` state 18.7k
+(engine-internal; a test-only scratch-captures reuse is plausible but touches
+the regex engine — priced M, not taken here), `__vec_externref` closure arg
+vecs ~25k spread across `__closure_550`/`__call_fn_method_1`/`Scope_new`
+(spread wide, no single chokepoint), `__fnctor_Node` 32.5k retained (#3927
+demotion stands), `$AnyValue` residual ~22k (honest-boxing via typed-this
+reads — #3685/#743 territory).
+
+### Gates (all by exit code, 0 unless noted)
+
+tsc 0 · biome lint 0 · oracle-ratchet 0 · loc-budget 0 (granted:
+closed-method-dispatch.ts +6) · func-budget 0 (granted:
+`fillClosedMethodDispatch` +5 — the fill was exactly at cap; the arm body
+lives in the new file) · dead-exports 0 · coercion-sites 0 · stack-balance 0
+· check:ir-fallbacks 0 · prettier 0. Suites: issue-4185 7/7, #3673
+closure-call/apply + #4096 21/21, #4155 Phase 0+2+provenance 25/25, #2660
+fnctor 54/54. Dogfood canaries 2/3/4/5, `functionImports: []`, exactly the 3
+pre-existing IR-FALLBACKs (typeIdx parity on parse/parseExpressionAt/
+tokenizer).
+
 ## Acceptance criteria
 
 - [x] Top-10 attribution table with counts × size × producer × caller (above)
 - [x] Mechanism WAT-verified before measurement
-- [ ] Census A/B: `$ObjVec` allocations collapse on the standalone acorn parse
-- [ ] Profile bucket + wall A/B with order-reversal controls (#3927 §6 rules)
-- [ ] Semantics pinned: this-binding, under/over-application, own-prop
-      override, flag-off parity
-- [ ] Dogfood canaries 2/3/4/5, `functionImports: []`, 3 pre-existing
+- [x] Census A/B: `$ObjVec` allocations collapse (−99.7%, isolation clean)
+- [x] Profile bucket + wall A/B with order-reversal controls (#3927 §6 rules)
+- [x] Semantics pinned: this-binding, under/over-application, own-prop
+      override (dynamic honored; static = pre-existing gap pinned as parity),
+      flag-off parity
+- [x] Dogfood canaries 2/3/4/5, `functionImports: []`, 3 pre-existing
       IR-FALLBACKs unchanged
