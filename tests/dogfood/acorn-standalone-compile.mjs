@@ -92,6 +92,17 @@ export function __acorn_function_body_canary() {
   const started = performance.now();
   const result = await compile(source, {
     fileName: "acorn.mjs",
+    // (#743) `.d.ts` entrypoint seeding measurement lane: when the flag is on,
+    // hand the compiler the SHIPPED declaration file (`dist/acorn.d.mts`, a
+    // byte-for-byte copy of `dist/acorn.d.ts`) so exported entrypoints
+    // (`parse(input: string, options: Options)`, …) seed their implicit-`any`
+    // params from it. The entry here is in-memory (`fileName: "acorn.mjs"` is
+    // virtual), so on-disk sibling discovery cannot fire — the explicit option
+    // is the honest equivalent. Flag off (the default): option absent,
+    // byte-identical compile.
+    ...(process.env.JS2WASM_DTS_ENTRYPOINT_SEEDS === "1"
+      ? { entryDeclarations: readFileSync(entryModulePath.replace(/\.mjs$/, ".d.mts"), "utf-8") }
+      : {}),
     skipSemanticDiagnostics: true,
     target: "standalone",
     // (#3673 round 30) Dogfood the SHIPPED configuration: the CLI defaults to

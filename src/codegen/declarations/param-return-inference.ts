@@ -4,6 +4,7 @@
  * that return a ValType/Map and mutate nothing on ctx. Extracted verbatim from
  * codegen/declarations.ts (#3268).
  */
+import type { DtsSeedAtom } from "../../checker/dts-entrypoint-seeds.js";
 import { isVoidType, unwrapPromiseType } from "../../checker/type-mapper.js";
 import { isSyntacticallyBooleanExpr } from "../../checker/oracle.js";
 import { forEachChild, ts } from "../../ts-api.js";
@@ -54,6 +55,92 @@ export function resolveGenericCallSiteTypes(
 
   forEachChild(sourceFile, visit);
   return found;
+}
+
+// ---------------------------------------------------------------------------
+// (#743) `.d.ts` entrypoint seeds — legacy-lane consumers.
+//
+// The seed map on `ctx.dtsEntrypointSeeds` is the SAME object the IR fixpoint
+// seeds from (`applyDtsEntrypointSeeds` in src/ir/propagate.ts); consuming it
+// here keeps the two lanes' seed facts identical, which is what prevents
+// "function typeIdx parity mismatch" demotions. Two consumers:
+//
+//  1. The seeded entrypoint's OWN param (`inferImplicitAnyParamType`,
+//     `sawCallSite === false` arm only, #3471): the claim applies exactly when
+//     there is no internal evidence at all.
+//  2. ONE-HOP forwarding (`dtsSeedValTypeForArgIdentifier`): a call/new ARG
+//     that is literally a seeded entrypoint's parameter identifier types as
+//     the seed — mirroring the fixpoint's first propagation hop. Without this
+//     the fixpoint types a downstream callee's param while this single-hop
+//     scan cannot, and the IR claim demotes on ABI parity. Gated on the same
+//     condition under which the entrypoint's own signature takes the seed
+//     (no internal call sites — evidence always beats the claim).
+// ---------------------------------------------------------------------------
+
+const internalCallSiteMemo = new WeakMap<ts.SourceFile, Map<string, boolean>>();
+
+/** Does ANY internal `f(…)` / `new f(…)` identifier site exist? (name walk only — no typing, no recursion) */
+function hasInternalCallSites(funcName: string, sourceFile: ts.SourceFile): boolean {
+  let memo = internalCallSiteMemo.get(sourceFile);
+  if (!memo) {
+    memo = new Map();
+    internalCallSiteMemo.set(sourceFile, memo);
+  }
+  const cached = memo.get(funcName);
+  if (cached !== undefined) return cached;
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (
+      (ts.isCallExpression(node) || ts.isNewExpression(node)) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === funcName
+    ) {
+      found = true;
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(sourceFile, visit);
+  memo.set(funcName, found);
+  return found;
+}
+
+/**
+ * Lower a seed atom to this compile's ABI. `string` narrows only in
+ * native-string lanes where the ref-typed export boundary traps a violating
+ * external call; in externref-string lanes it is a deliberate no-op (the param
+ * stays externref — identical to unseeded), so the claim can never be read
+ * blindly. `f64` is guarded by the JS API's ToNumber boundary coercion.
+ */
+function dtsSeedAtomToValType(ctx: CodegenContext, atom: DtsSeedAtom): ValType | null {
+  if (atom === "f64") return { kind: "f64" };
+  if (atom === "string" && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+    return { kind: "ref", typeIdx: ctx.anyStrTypeIdx };
+  }
+  return null;
+}
+
+/** Seed atom for a parameter of `decl` when it is a seeded top-level entrypoint. */
+function dtsSeedForParam(ctx: CodegenContext, decl: ts.Node | undefined, paramIndex: number): DtsSeedAtom | null {
+  const seeds = ctx.dtsEntrypointSeeds;
+  if (!seeds || !decl || !ts.isFunctionDeclaration(decl) || !decl.name || !ts.isSourceFile(decl.parent)) return null;
+  return seeds.get(decl.name.text)?.[paramIndex] ?? null;
+}
+
+/** One-hop seed forwarding for a call-site arg identifier (see block comment above). */
+function dtsSeedValTypeForArgIdentifier(ctx: CodegenContext, arg: ts.Identifier): ValType | null {
+  if (!ctx.dtsEntrypointSeeds) return null;
+  const decl = ctx.oracle.valueDeclarationOf(arg);
+  if (!decl || !ts.isParameter(decl) || decl.dotDotDotToken || decl.initializer) return null;
+  const fn = decl.parent;
+  if (!ts.isFunctionDeclaration(fn) || !fn.name || !ts.isSourceFile(fn.parent)) return null;
+  const atom = dtsSeedForParam(ctx, fn, fn.parameters.indexOf(decl));
+  if (atom === null) return null;
+  // The seed governs the entrypoint's param ONLY when the entrypoint has zero
+  // internal call sites (otherwise evidence decides its type, not the claim).
+  if (hasInternalCallSites(fn.name.text, fn.getSourceFile())) return null;
+  return dtsSeedAtomToValType(ctx, atom);
 }
 
 /**
@@ -163,10 +250,25 @@ export function inferParamTypeFromCallSites(
             // other `any` expressions remain inconclusive exactly as before.
             if (ts.isIdentifier(arg)) {
               const declaration = ctx.oracle.variableDeclarationOf(arg);
+              // (#743) One-hop `.d.ts` seed forwarding — a seeded entrypoint's
+              // own parameter passed straight through participates with the
+              // seed's type, mirroring the IR fixpoint's first hop. Null for
+              // every arg outside that exact shape.
+              const seededArg = dtsSeedValTypeForArgIdentifier(ctx, arg);
               if (declaration && ctx.usageInference.scalarForDecl(declaration) === "number") {
                 const wasmType: ValType = { kind: "f64" };
                 if (agreed === null) agreed = wasmType;
                 else if (agreed.kind !== wasmType.kind) conflict = true;
+              } else if (seededArg !== null) {
+                if (agreed === null) agreed = seededArg;
+                else if (
+                  agreed.kind !== seededArg.kind ||
+                  (agreed.kind === "ref" &&
+                    seededArg.kind === "ref" &&
+                    (agreed as { typeIdx: number }).typeIdx !== (seededArg as { typeIdx: number }).typeIdx)
+                ) {
+                  conflict = true;
+                }
               } else if (isRecursiveCall(node)) {
                 // (#3961) A dynamic value forwarded recursively is part of the
                 // callee's runtime domain. React's `mapIntoArray(children, …)`
@@ -352,6 +454,16 @@ export function inferImplicitAnyParamType(
   const callSites = inferParamTypeFromCallSites(ctx, funcName, paramIndex, sourceFile);
   if (callSites.type) return callSites.type;
   if (callSites.sawCallSite) return null;
+  // (#743) Truly-uncalled exported entrypoint: the shipped `.d.ts` claim is the
+  // only signal and its export boundary is guarded (ToNumber for f64; a typed
+  // ref that traps a violating external call for native strings). Declared
+  // types outrank the body-usage heuristic; body inference stays the fallback
+  // for unseeded positions.
+  const seedAtom = dtsSeedForParam(ctx, decl, paramIndex);
+  if (seedAtom !== null) {
+    const seeded = dtsSeedAtomToValType(ctx, seedAtom);
+    if (seeded !== null) return seeded;
+  }
   return inferParamTypeFromBody(ctx, decl, paramIndex);
 }
 

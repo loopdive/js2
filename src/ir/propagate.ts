@@ -81,6 +81,7 @@
 // - Local flow is limited to parameters and simple `let`/`const` initializers;
 //   it is not a full CFG analysis.
 
+import type { DtsEntrypointSeeds } from "../checker/dts-entrypoint-seeds.js";
 import { ts, forEachChild } from "../ts-api.js";
 import { buildIrUnitInventory, type IrUnitId } from "./identity.js";
 import {
@@ -241,6 +242,7 @@ export function buildIrUnitTypeMap(
   sourceFiles: readonly ts.SourceFile[],
   checker: ts.TypeChecker | undefined,
   identityContext: IrPlanningIdentityContext,
+  entrypointSeeds?: DtsEntrypointSeeds,
 ): IrUnitTypeMap {
   const functions = collectIndexedFunctionDeclarations(sourceFiles, identityContext);
   const decls = new Map(functions.map((info) => [info.unitId, info.declaration] as const));
@@ -253,6 +255,7 @@ export function buildIrUnitTypeMap(
   const seeds = new Map<IrUnitId, { params: LatticeType[]; returnType: LatticeType }>();
   for (const [unitId, fn] of decls) {
     const seed = seedFromDeclaration(fn, checker);
+    applyDtsEntrypointSeeds(seed, fn, entrypointSeeds);
     seeds.set(unitId, seed);
     entries.set(unitId, {
       params: [...seed.params],
@@ -500,6 +503,34 @@ function seedFromDeclaration(
   }
   const returnType = seedReturnType(fn, checker);
   return { params, returnType };
+}
+
+// (#743) `.d.ts` entrypoint seeding — SEED, do not force. An exported
+// entrypoint has no internal call sites, so its implicit-`any` params start
+// (and end) at `unknown`; the shipped declaration's `string`/`number` claim is
+// exactly the missing seed. Only `unknown` positions are replaced (an explicit
+// TS annotation or checker fact keeps its authority), and the seed is a
+// fixpoint STARTING point: inbound call-site evidence still joins on top, so a
+// conflicting internal caller widens per the lattice — the claim never beats
+// evidence. The map is pre-restricted (src/checker/dts-entrypoint-seeds.ts)
+// to exported top-level functions of the entry file and to the two atoms whose
+// export boundary is already guarded (f64 ToNumber-coerces; native-string refs
+// trap on a violating external call). The legacy lane consults the SAME map in
+// `inferImplicitAnyParamType`, keeping IR/legacy seed facts identical.
+function applyDtsEntrypointSeeds(
+  seed: { params: LatticeType[] },
+  fn: ts.FunctionDeclaration,
+  entrypointSeeds: DtsEntrypointSeeds | undefined,
+): void {
+  if (!entrypointSeeds || !fn.name) return;
+  const atoms = entrypointSeeds.get(fn.name.text);
+  if (!atoms) return;
+  for (let i = 0; i < seed.params.length && i < atoms.length; i++) {
+    const atom = atoms[i];
+    if (atom !== null && atom !== undefined && seed.params[i]!.kind === "unknown") {
+      seed.params[i] = atom === "f64" ? F64 : STRING;
+    }
+  }
 }
 
 function seedParamType(param: ts.ParameterDeclaration, checker: ts.TypeChecker | undefined): LatticeType {
