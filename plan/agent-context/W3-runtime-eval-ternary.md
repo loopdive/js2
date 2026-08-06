@@ -47,7 +47,28 @@ the folder it guards.
 | `scripts/equivalence-gate.mjs` | 36 known-failures | **12 now PASS, 0 new regressions** |
 | `tests/equivalence/spec/coercion-arithmetic-add.test.ts` | 8/20 fail | **20/20 pass** |
 | 30 scoped test262-harness probes (`--target standalone`, #4162 shim) | 7 trapping + 1 wrong-answer | **all 8 correct, 0 moved backwards** |
-| test262 ES5-label standalone A/B, 800-file sample | see below | see below |
+| test262 ES5-label standalone A/B, 800-file sample (500 baseline-fails + 300 baseline-passes) | — | **0 gained, 0 lost — no measurable delta** |
+| `pnpm run check:ir-fallbacks` | OK | OK (no bucket moved) |
+| `tests/issue-{1988,745,2104,2107}.test.ts` | 6 fail | 6 fail — **byte-identical set on base**, all pre-existing |
+
+**State the null result plainly: this change has no measurable test262 delta on
+that sample.** The raw run looks like `+25 / −22` against the committed
+standalone baseline, and both numbers are artifacts:
+
+- the **+25** (heavily `Object/defineProperty|defineProperties|create|isFrozen`)
+  are baseline **staleness** — main moved 76.90% → 78.87% across seven PRs while
+  this lane was paused, and the committed jsonl predates them;
+- **18 of the 22 −** are my own instrument: I built the provider
+  `--refusal-only`, so anything reaching real `eval` reports
+  `dynamic code evaluation is not supported in this standalone build`. CI links
+  the full interpreter.
+
+I settled it rather than arguing it: re-running the 25 gains + the 4 non-shim
+losses on **base** and on **patched** gives `pass 25 / 29` **both times, with 0
+per-file differences**. So the honest reading is: the equivalence evidence is
+real and cross-lane; the conformance yield is **unproven at this sample size**
+(500 of the 2,063 ES5-label failures, ~24%, so a true effect below roughly
+±4 tests would not surface).
 
 The 12 equivalence rows are **all 8** `coercion/arithmetic-add` any-concat
 entries (`host`, `host-O`, `standalone`, `standalone-O` × two cases) — 22% of

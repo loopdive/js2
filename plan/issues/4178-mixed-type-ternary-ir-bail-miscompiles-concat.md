@@ -207,6 +207,20 @@ describes as "the same mechanism, two outcomes" are two different mechanisms:
 the hard `IR-FALLBACK` error is the bail; the wrong answer / trap is (A).
 **Fixing the bail alone would have moved zero measured failures.**
 
+### Conformance yield: NULL at the sample size measured
+
+An 800-file ES5-label standalone A/B (500 baseline-fails + 300 baseline-passes,
+#4162-shimmed) shows **0 gained, 0 lost** attributable to this change. The raw
+`+25 / −22` against the committed baseline is entirely artifact: the `+` are
+baseline staleness (main moved 76.90% → 78.87% across seven PRs), and 18 of the
+`−` are the `--refusal-only` provider tier of my own instrument. Re-running the
+25 gains + 4 non-shim losses on **base** and **patched** gives `pass 25 / 29`
+both times with **0 per-file differences**.
+
+So: the equivalence evidence is real and cross-lane; the conformance yield is
+**unproven**, not disproven — the sample is ~24% of the ES5-label failures, so a
+true effect below roughly ±4 tests would not surface.
+
 ### The acceptance criterion was also mis-attributed — and is met anyway
 
 The 8 `coercion/arithmetic-add` rows contain **no ternary**. They are (B) plus
