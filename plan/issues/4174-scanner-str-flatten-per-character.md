@@ -56,7 +56,7 @@ per-character cost a bounds-checked array read. The profiler called this
 
 ## Dupe check
 
-Distinct from #3926 (property lookup) and #4166 (equality) — same profile,
+Distinct from #3926 (property lookup) and #4173 (equality) — same profile,
 different helper. The string-runtime issues around `__str_toLowerCase`
 (#4106-era analysis) touched adjacent code but not the flatten-per-character
 pattern.
