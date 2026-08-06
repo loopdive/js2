@@ -52,21 +52,26 @@
  *      per-fnctor prototype `$Object`, so a boxed struct receiver resolves
  *      prototype methods dynamically. Non-approved fnctors carry the #4155
  *      Phase 0 `it.fails` bugs and are refused.
- *   3. The declaration is a TOP-LEVEL statement of a plain (non-async,
- *      non-generator) containing function's body block. Top-level straight-line
- *      placement means the initializer provably runs before every use, so
- *      dropping the hoisted `undefined` init cannot be observed (a `var` in a
- *      conditional/try block whose init may be skipped would surface
- *      null-instead-of-undefined; a generator/async body would desync the
- *      #2864 spill-slot mirror, which replicates the slot-type cascade).
- *   4. `needsTdzFlag(ctx, decl) === false` — every use is provably after the
- *      declaration, in the same function (no closure capture — capture
- *      cells/globals are typed at hoist time), loop-safe.
- *   5. Assignment-compatibility scan: every WRITE to the binding is a direct
- *      `new F(...)` of the SAME fnctor. Anything else — null, undefined,
- *      another type, compound assignment, ++/--, destructuring target,
- *      for-in/of target — refuses the retype (the slot then stays the boxed
- *      externref carrier and semantics are untouched).
+ *   3. The containing function is a plain function (non-async, non-generator —
+ *      a generator/async body would desync the #2864 spill-slot mirror, which
+ *      replicates the slot-type cascade).
+ *   4. Every use is LINEARLY DOMINATED by the declaration
+ *      ({@link declDominatesUse}): it hangs off a statement in the SAME
+ *      statement list as the declaration statement, at-or-after it. Then any
+ *      execution reaching a use has executed the initializer, so dropping the
+ *      hoisted `undefined` seed for a `var` (a ref_null slot pre-inits to
+ *      null, observably different) cannot be observed. This admits the
+ *      block/loop-body shapes and declines the hazardous ones: use after a
+ *      loop whose body declares, sibling branch, `catch` reading a `try`
+ *      declaration, cross-`switch`-clause reads. Every use must also be in
+ *      the SAME function (no closure capture — capture cells/globals are
+ *      typed at hoist time).
+ *   5. Assignment-compatibility scan: every WRITE to the binding provably
+ *      yields the SAME fnctor's instance (direct `new F(...)`, or a
+ *      write-once-proven `this.m(...)` — Slice 2). Anything else — null,
+ *      undefined, another type, compound assignment, ++/--, destructuring
+ *      target, for-in/of target, redeclaration — refuses the retype (the slot
+ *      then stays the boxed externref carrier and semantics are untouched).
  *   6. No direct `eval` in the containing function (eval reifies locals into
  *      externref cells).
  *

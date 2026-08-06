@@ -824,3 +824,30 @@ cross-session sync point. sd-s3a standing down.**
 ## Residual (as of #2199, PO reconcile 2026-06-28)
 
 NOT done — hard infra. S1 (inert A∧B whole-program escape/dynamic-use gate) + S2 (per-fnctor prototype $Object, standalone) landed. The remaining slices — reconstructing new F() instances as $Object behind the gate, the floor-risk full merge_group slice — remain. Stays in-progress.
+
+## S3b — LANDED (fnctor-typed bindings, 2026-08-06, senior-dev-s3b, max-reasoning)
+
+The 2026-06-26 S3b park is superseded: S3b shipped as the BINDING-RETYPE lever
+under umbrella #4157 Workstream 1, flag-gated `JS2WASM_FNCTOR_TYPED_BINDINGS`
+(default OFF — set by measurement), branch `claude/issue-2660-s3b-typed-bindings`
+(stacked on the #4155 Phase 2 branch).
+
+- `src/codegen/fnctor-typed-bindings.ts`: admission (Slice 1 direct `new F()`,
+  Slice 2 write-once-proven `this.m()` single-return chains via the new
+  `writeOnceThisCallReturnStruct` in fnctor-escape-gate.ts), consulted by all
+  THREE slot-minting sites (var hoister, let/const pre-hoister, decl compile).
+- The #4155 Phase 2 machinery is the consumer: presence-tracked externref
+  slots admitted (read: bit-test → slot : undefined; write: struct.set +
+  presenceSetInstrs), pinned member-SET hook added, `name` reserved-prop
+  carve-out narrowed to require-declared-field.
+- Acorn: 43 bindings retyped, Phase-2 candidates 78 → 424; canaries/imports/
+  IR-fallbacks unchanged; flag-off byte-identical (866,718 B).
+- **A/B (`standaloneDynamic`, 3 pairs): wash** — ON 0.1167 vs OFF 0.1185 mean,
+  inside noise. Numbers + interpretation in
+  `plan/issues/4155-…md` § "2026-08-06 — #2660 S3b binding retype implemented".
+- Tests: `tests/issue-2660-s3b-typed-bindings.test.ts` (11) + all fnctor/
+  equivalence suites green flags-on. The #4155 Phase 0 `it.fails` are NOT
+  promoted (their fnctors are gate-unapproved; S3b correctly refuses).
+
+Remaining #2660 scope (S3c ctor-body reconstruction, the floor-risk full
+merge_group slice) is untouched by this lap.
