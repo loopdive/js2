@@ -1,9 +1,10 @@
 {
   "id": "2875",
-  "assignee": "ttraenkler/dev-std-4",
-  "status": "released",
-  "branch": "issue-2875-string-roc-undefined",
-  "claimed_at": "2026-07-24T08:14:42Z",
-  "updated_at": "2026-07-24T08:45:05Z",
-  "released_at": "2026-07-24T08:45:05Z"
+  "assignee": "ttraenkler/lead-es5",
+  "requested_by": "ttraenkler/lead-es5",
+  "status": "in-progress",
+  "branch": "claude/es5-string-proto-slice-harvest",
+  "claimed_at": "2026-08-06T08:39:09Z",
+  "updated_at": "2026-08-06T08:39:09Z",
+  "write_id": "6381-r171qktc"
 }
