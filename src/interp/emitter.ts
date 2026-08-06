@@ -73,15 +73,12 @@ interface LoopCtx {
 const LEXICAL_SCOPE_LABEL = "\u0000lexical-env";
 
 /**
- * The same kind of marker, for the declarative record of a **simple**
- * `catch (e)` parameter. It is a real lexical environment for every purpose
- * except one: B.3.5 says a simple `CatchParameter: BindingIdentifier` does NOT
- * cancel the B.3.3 web-compat var binding of a same-named function declared
- * inside the catch block — `try {} catch (f) { { function f(){} } }` must still
- * update the enclosing var `f`. A *destructuring* parameter does cancel, and
- * `emitTry` rejects those before reaching here, so this label always means
- * "does not cancel". Distinguishing it at the marker keeps that exemption in
- * one place instead of re-deriving the catch shape at each Annex B site.
+ * Same marker, for a **simple** `catch (e)` parameter's declarative record. It
+ * is a lexical environment for every purpose except one: B.3.5 exempts a simple
+ * `CatchParameter: BindingIdentifier` from cancelling B.3.3's web-compat var
+ * binding, so `try {} catch (f) { { function f(){} } }` must still update the
+ * enclosing var `f`. A destructuring parameter does cancel, and `emitTry`
+ * rejects those earlier, so this label always means "does not cancel" (#4137).
  */
 const SIMPLE_CATCH_SCOPE_LABEL = LEXICAL_SCOPE_LABEL + "catch-param";
 
@@ -628,10 +625,11 @@ class FunctionEmitter {
     this.release(assignmentMark);
   }
 
-  private isActiveBlockLexical(name: string): boolean {
+  /** `skipCatchParam` excludes the B.3.5-exempt simple catch parameter. */
+  private scopeBindsName(name: string, skipCatchParam: boolean): boolean {
     for (let i = this.loopTop - 1; i >= 0; i -= 1) {
       const ctx = this.loops[i]!;
-      if (!isEnvScopeLabel(ctx.label)) continue;
+      if (skipCatchParam ? ctx.label !== LEXICAL_SCOPE_LABEL : !isEnvScopeLabel(ctx.label)) continue;
       for (let j = ctx.continues.length - 1; j >= 0; j -= 1) {
         if (ctx.continues[j] === name) return true;
       }
@@ -639,21 +637,14 @@ class FunctionEmitter {
     return false;
   }
 
-  /**
-   * The Annex B B.3.3 cancellation test. Identical to
-   * {@link isActiveBlockLexical} except that a **simple** catch parameter does
-   * not count: B.3.5 exempts it, so the web-compat var binding is still created
-   * and updated through it.
-   */
+  private isActiveBlockLexical(name: string): boolean {
+    return this.scopeBindsName(name, false);
+  }
+
+  /** The Annex B B.3.3 cancellation test — as {@link isActiveBlockLexical} but a
+   * simple catch parameter does not count (B.3.5 exempts it). */
   private cancelsAnnexBVarBinding(name: string): boolean {
-    for (let i = this.loopTop - 1; i >= 0; i -= 1) {
-      const ctx = this.loops[i]!;
-      if (ctx.label !== LEXICAL_SCOPE_LABEL) continue;
-      for (let j = ctx.continues.length - 1; j >= 0; j -= 1) {
-        if (ctx.continues[j] === name) return true;
-      }
-    }
-    return false;
+    return this.scopeBindsName(name, true);
   }
 
   private lexicalEnvDepth(): number {
@@ -1048,20 +1039,14 @@ class FunctionEmitter {
       this.enc.emitCallBuiltin(BUILTIN_RESTORE_ENV, handlerEnvReg, 1);
       // The loop has already stored the caught value into handlerReg.
       //
-      // §14.15.3 CatchClauseEvaluation gives the CatchParameter its OWN
-      // declarative Environment Record, pushed on entry and popped on exit.
-      // `bind()` cannot express that: `names` is a FLAT, function-wide
-      // name→register map with no pop, so `catch (f)` shadowed `f` for the rest
-      // of the function body. Every name resolution emitted AFTER the catch
-      // clause read the catch register instead of the enclosing binding — which
-      // is exactly what B.3.3's `no-skip-try` family checks (`try { throw null }
-      // catch (f) { { function f(){} } }`: after the clause `f` must be the
-      // block function, not the caught `null`).
-      //
-      // Route it through the same lexical-scope machinery blocks already use, so
-      // `emitLoadName` / `storeName` / `initializeName` / the `typeof` fast path
-      // all see the binding via `isActiveBlockLexical` and stop seeing it the
-      // moment the clause ends.
+      // §14.15.3 gives the CatchParameter its OWN declarative Environment
+      // Record. `bind()` cannot express that — `names` is a FLAT, function-wide
+      // name→register map with no pop — so `catch (f)` used to shadow `f` for
+      // the rest of the body and every name resolution emitted AFTER the clause
+      // read the catch register. Route it through the same lexical-scope
+      // machinery blocks use, so `emitLoadName` / `storeName` /
+      // `initializeName` / the `typeof` fast path see it via
+      // `isActiveBlockLexical` and stop seeing it when the clause ends (#4137).
       let handlerReg: number;
       let catchSaveReg = -1;
       if (s.handler.param) {
