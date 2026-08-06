@@ -1,10 +1,11 @@
 {
   "id": "4174",
   "assignee": "ttraenkler/claude-fable-3",
-  "requested_by": "ttraenkler/claude-fable-3",
-  "status": "in-progress",
+  "requested_by": "ttraenkler@users.noreply.github.com",
+  "status": "done",
   "branch": "claude/issue-4174-scanner-flatten",
   "claimed_at": "2026-08-06T13:04:05Z",
-  "updated_at": "2026-08-06T13:04:05Z",
-  "write_id": "4555-179palrj"
+  "updated_at": "2026-08-06T15:14:36Z",
+  "write_id": "588-rcztfhn5",
+  "released_at": "2026-08-06T15:14:36Z"
 }
