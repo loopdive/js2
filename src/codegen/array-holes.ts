@@ -42,6 +42,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import type { Instr, StructTypeDef } from "../ir/types.js";
 import { allocTempLocal } from "./context/locals.js";
 import { emitUndefined } from "./expressions/late-imports.js";
+import { isBrandedBuiltinName } from "./native-proto.js"; // (#4176) named proto-write pre-scan
 
 /**
  * Cheap AST pre-scan: set `ctx.usesArrayHoles` when the program contains any
@@ -57,7 +58,13 @@ import { emitUndefined } from "./expressions/late-imports.js";
  */
 export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
   const visit = (node: ts.Node): void => {
-    if (ctx.usesArrayHoles && ctx.protoIndexDirty && ctx.vecAccessorDescriptorDirty && ctx.dynamicCodeDirty) {
+    if (
+      ctx.usesArrayHoles &&
+      ctx.protoIndexDirty &&
+      ctx.protoNamedDirty &&
+      ctx.vecAccessorDescriptorDirty &&
+      ctx.dynamicCodeDirty
+    ) {
       return;
     }
     if (ts.isArrayLiteralExpression(node)) {
@@ -71,6 +78,9 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
     if (!ctx.protoIndexDirty && isProtoIndexWrite(node)) {
       ctx.protoIndexDirty = true;
     }
+    if (!ctx.protoNamedDirty && isProtoNamedWrite(node)) {
+      ctx.protoNamedDirty = true;
+    }
     if (!ctx.vecAccessorDescriptorDirty && isNonDataDescriptorDefine(node)) {
       ctx.vecAccessorDescriptorDirty = true;
     }
@@ -83,6 +93,7 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
     if (!ctx.dynamicCodeDirty && isDynamicCodeUse(node)) {
       ctx.dynamicCodeDirty = true;
       ctx.protoIndexDirty = true;
+      ctx.protoNamedDirty = true;
       ctx.vecAccessorDescriptorDirty = true;
     }
     forEachChild(node, visit);
@@ -250,6 +261,81 @@ function isDynamicCodeUse(node: ts.Node): boolean {
  * behavior), because the flat vec cannot check the prototype per element at
  * runtime. See `protoIndexDirty` in context/types.ts.
  */
+/**
+ * (#4176) Structurally `<BrandedBuiltin>.prototype` — the generalization of
+ * `isArrayOrObjectPrototypeExpr` to every constructor in the builtin brand
+ * table (`Function.prototype`, `String.prototype`, `Error.prototype`, …).
+ */
+function isBrandedBuiltinPrototypeExpr(node: ts.Node): boolean {
+  const inner = unwrapExpr(node);
+  return (
+    ts.isPropertyAccessExpression(inner) &&
+    inner.name.text === "prototype" &&
+    ts.isIdentifier(inner.expression) &&
+    isBrandedBuiltinName(inner.expression.text)
+  );
+}
+
+/**
+ * (#4176) Does this node WRITE a NAMED (or any non-index, for the non-Array/
+ * Object builtins any) property onto a branded builtin's `.prototype`? The
+ * shapes test262 uses to make a named property inherited:
+ *
+ *   - `Function.prototype.value = …` / `Object.prototype.zzz = …` (any
+ *     assignment operator — property-access form; `isProtoIndexWrite` only
+ *     matches the ELEMENT-access form);
+ *   - `String.prototype[k] = …` for a non-Object/Array builtin (element form
+ *     — over-approximated into the named store, whose write arms accept both
+ *     named and integer keys);
+ *   - `Object.defineProperty(Number.prototype, …)` (+ `defineProperties` /
+ *     `Reflect.defineProperty`) targeting a non-Object/Array builtin proto.
+ *
+ * Sets `protoNamedDirty` ONLY (store reservation) — never `protoIndexDirty`,
+ * so the HOF hole visit-skip / typed element lanes keep their fast paths for
+ * the polyfill idiom. Same deliberate static over-approximation as
+ * `isProtoIndexWrite`.
+ */
+function isProtoNamedWrite(node: ts.Node): boolean {
+  // `X.prototype.name = …` — property-access assignment target (any builtin,
+  // including Object/Array whose index predicate ignores the named form).
+  if (
+    ts.isBinaryExpression(node) &&
+    node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+    node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+  ) {
+    const lhs = unwrapExpr(node.left);
+    if (ts.isPropertyAccessExpression(lhs) && isBrandedBuiltinPrototypeExpr(lhs.expression)) return true;
+    // `X.prototype[k] = …` for builtins the index predicate does not cover.
+    if (
+      ts.isElementAccessExpression(lhs) &&
+      isBrandedBuiltinPrototypeExpr(lhs.expression) &&
+      !isArrayOrObjectPrototypeExpr(lhs.expression)
+    ) {
+      return true;
+    }
+  }
+  // Object/Reflect.defineProperty(ies)(X.prototype, …) for the non-Object/
+  // Array builtins (the Object/Array form already sets `protoIndexDirty`,
+  // which reserves the same store).
+  if (
+    ts.isCallExpression(node) &&
+    node.arguments.length > 0 &&
+    isBrandedBuiltinPrototypeExpr(node.arguments[0]) &&
+    !isArrayOrObjectPrototypeExpr(node.arguments[0])
+  ) {
+    const callee = node.expression;
+    if (
+      ts.isPropertyAccessExpression(callee) &&
+      ts.isIdentifier(callee.expression) &&
+      (callee.expression.text === "Object" || callee.expression.text === "Reflect") &&
+      (callee.name.text === "defineProperty" || callee.name.text === "defineProperties")
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function isProtoIndexWrite(node: ts.Node): boolean {
   // Object.defineProperty(Array.prototype, …) / Object.defineProperties /
   // Reflect.defineProperty — first argument is Array.prototype.

@@ -47,7 +47,7 @@ import { allocLocal } from "./context/locals.js";
 // a `$NativeProto.$brand` value can never collide with a user-class tag, keeping
 // the i32 namespace single (#2009 / #2101 §"Brand space"). The negative band
 // also makes the disjointness invariant trivially checkable: class tags are >= 0.
-const BUILTIN_BRAND_BASE = -0x4000_0000; // far from any plausible classTag count
+export const BUILTIN_BRAND_BASE = -0x4000_0000; // far from any plausible classTag count
 
 /**
  * The fixed builtin-brand table. Each builtin that gets (or will get) a
@@ -151,6 +151,28 @@ const BUILTIN_BRAND_TABLE: Readonly<Record<string, number>> = {
 
   // Next free slot: BUILTIN_BRAND_BASE + 45 (append only).
 };
+
+/**
+ * (#4176) Number of reserved builtin-brand slots — the proto-named-key store
+ * sizes its per-brand companion table off this. Keep in lockstep with the
+ * "next free slot" comment above (append-only contract).
+ */
+export const BUILTIN_BRAND_COUNT = 45;
+
+/**
+ * (#4176) Static brand OFFSET (0-based slot in the brand band) for a builtin
+ * name, or `undefined`. Pure table lookup — safe for pre-scan predicates that
+ * run before any context exists.
+ */
+export function builtinBrandOffsetOf(name: string): number | undefined {
+  const brand = BUILTIN_BRAND_TABLE[name];
+  return brand === undefined ? undefined : brand - BUILTIN_BRAND_BASE;
+}
+
+/** (#4176) Is `name` a global constructor with a reserved builtin brand? */
+export function isBrandedBuiltinName(name: string): boolean {
+  return Object.prototype.hasOwnProperty.call(BUILTIN_BRAND_TABLE, name);
+}
 
 /**
  * Resolve (and lazily seed) the builtin brand id for `name`. Asserts the brand
