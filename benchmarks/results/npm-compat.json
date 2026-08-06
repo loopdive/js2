@@ -1,5 +1,47 @@
 {
-  "generatedAt": "2026-08-01T11:06:18.699Z",
+  "generatedAt": "2026-08-06T03:44:41.361Z",
+  "correctness": {
+    "definition": {
+      "verified": "a differential workload ran against native Node and every operation matched",
+      "divergent": "a differential workload ran and at least one operation did NOT match native Node",
+      "unverified": "no differential workload exists — compile/validation only; correctness is UNKNOWN, not confirmed"
+    },
+    "oracle": "native Node executing the same pinned package, computed at run time; never read from a committed pin",
+    "counts": {
+      "verified": 1,
+      "divergent": 4,
+      "unverified": 18
+    },
+    "verified": [
+      "react"
+    ],
+    "divergent": [
+      "acorn",
+      "clsx",
+      "cookie",
+      "lit"
+    ],
+    "unverified": [
+      "axios",
+      "eslint",
+      "hono",
+      "jest",
+      "jsdom",
+      "lodash",
+      "marked",
+      "moment",
+      "prettier",
+      "react-dom",
+      "redux",
+      "styled-components",
+      "stylelint",
+      "tailwindcss",
+      "three",
+      "typescript",
+      "uuid",
+      "webpack"
+    ]
+  },
   "note": "Only packages with a committed, reproducible tests/dogfood harness are listed. Original upstream tests are preferred; when npm omits them, the card says so instead of substituting harness-authored tests.",
   "popularity": {
     "metric": "weekly npm downloads",
@@ -22,32 +64,26 @@
       "entryFile": "dist/index.js",
       "shape": "esm-project",
       "compile": {
-        "success": false,
-        "durationMs": 2952,
+        "success": true,
+        "durationMs": 1737,
         "timedOut": false,
         "timeoutMs": 120000,
-        "errorCount": 1,
-        "binaryBytes": 0,
-        "categories": {
-          "compiler-diagnostic": {
-            "count": 1,
-            "sample": "Codegen error: source callable v1ToV6 has no consistent exact top-level or compiler-support inventory owner"
-          }
-        },
-        "errors": [
-          {
-            "message": "Codegen error: source callable v1ToV6 has no consistent exact top-level or compiler-support inventory owner"
-          }
-        ]
+        "errorCount": 0,
+        "binaryBytes": 1219,
+        "categories": {}
       },
       "validation": {
-        "validates": false,
-        "firstError": "Codegen error: source callable v1ToV6 has no consistent exact top-level or compiler-support inventory owner"
+        "validates": true,
+        "firstError": null
       },
       "tests": {
         "kind": "upstream-suite",
         "status": "not-integrated",
         "reason": "not shipped in npm tarball; adapter pending"
+      },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
       },
       "perf": null,
       "knownBugs": [],
@@ -61,7 +97,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 26152,
+        "durationMs": 12171,
         "timedOut": false,
         "timeoutMs": 180000,
         "errorCount": 1,
@@ -87,6 +123,10 @@
         "status": "not-integrated",
         "reason": "not shipped in npm tarball; adapter pending"
       },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
+      },
       "perf": null,
       "knownBugs": [],
       "weeklyDownloads": 250686863
@@ -99,9 +139,9 @@
       "shape": "esm-direct",
       "compile": {
         "success": true,
-        "durationMs": 37534,
+        "durationMs": 23400,
         "errorCount": 0,
-        "binaryBytes": 620820,
+        "binaryBytes": 631277,
         "categories": {}
       },
       "validation": {
@@ -110,10 +150,16 @@
       },
       "tests": {
         "kind": "official-suite",
-        "passed": 3507,
+        "passed": 3508,
         "total": 3518,
-        "passRatePct": 99.69,
+        "passRatePct": 99.72,
         "sourceIssue": 3729
+      },
+      "correctness": {
+        "status": "divergent",
+        "passed": 3508,
+        "total": 3518,
+        "reason": "10 of 3518 operations diverged from native node"
       },
       "perf": {
         "sampleOp": "parse(own 226KB dist bundle).body.length",
@@ -123,43 +169,43 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "parse(own 226KB dist bundle).body.length",
-            "wasmUs": 7006641.087999975,
-            "nodeUs": 15261.266000044998,
-            "wasmStdUs": 1324848.6942873725,
-            "nodeStdUs": 2938.9509312722594,
-            "ratio": 0.002178114421499686,
-            "ratioStd": 0.00045885604162415155,
+            "wasmUs": 3508863.7109999834,
+            "nodeUs": 9840.18400000059,
+            "wasmStdUs": 550989.1686871183,
+            "nodeStdUs": 402.6321832658206,
+            "ratio": 0.0028043790840756987,
+            "ratioStd": 0.0003005604136701596,
             "iters": 1,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              7080337.401000027,
-              7006641.087999975,
-              7485244.469000027,
-              7573588.804,
-              11151079.061000027,
-              6817045.915999973,
-              6809011.286999973,
-              6806228.968999989,
-              6714745.269999956
+              5269035.174000019,
+              3501576.0239999797,
+              3634156.4700000165,
+              3490699.8779999847,
+              3507798.694000026,
+              3486057.7710000216,
+              3508863.7109999834,
+              3520371.207000018,
+              3517109.052999993
             ],
             "nodeSamplesUs": [
-              14303.107000014279,
-              22246.32500001462,
-              14460.273000004236,
-              17181.790000002366,
-              19671.62899998948,
-              15261.266000044998,
-              14356.68299999088,
-              14170.992000028491,
-              20377.84400000237
+              10145.284999976866,
+              10246.789000026183,
+              11067.990000010468,
+              9790.569000004325,
+              9840.18400000059,
+              9816.577999998117,
+              9733.13199999393,
+              9757.098999980371,
+              9889.208000007784
             ],
-            "compileDurationMs": 45073.173454,
-            "wasmCompileMs": 2.2423690000141505,
-            "instantiateMs": 9.653410999977496,
-            "wireMs": 0.2540090000256896,
-            "wrapMs": 0.8134250000002794,
-            "binaryBytes": 345386,
+            "compileDurationMs": 40156.68794799999,
+            "wasmCompileMs": 2.1645019999996293,
+            "instantiateMs": 7.718819000001531,
+            "wireMs": 0.2993430000060471,
+            "wrapMs": 0.387776000003214,
+            "binaryBytes": 350450,
             "moduleImportCount": 1150,
             "functionImportCount": 78,
             "expectedChecksum": 422,
@@ -173,42 +219,42 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "parse(own 226KB dist bundle).body.length",
-            "wasmUs": 0.2461428604354816,
-            "nodeUs": 15525.975785712944,
-            "wasmStdUs": 0.02067714551338467,
-            "nodeStdUs": 561.4464516941516,
-            "ratio": 63077.09172731654,
-            "ratioStd": 5203.239319421677,
-            "iters": 14,
+            "wasmUs": 0.14589999918825924,
+            "nodeUs": 9551.06889999976,
+            "wasmStdUs": 0.01967631744513085,
+            "nodeStdUs": 95.23582673100752,
+            "ratio": 65463.11825317917,
+            "ratioStd": 7099.614281231576,
+            "iters": 30,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.2731428581422993,
-              0.24499999874803635,
-              0.23407142725773156,
-              0.297571428486013,
-              0.2576428565329739,
-              0.2316428581252694,
-              0.2461428604354816,
-              0.23085714201442897,
-              0.257428569187011
+              0.1976333325728774,
+              0.14853333317053816,
+              0.14589999918825924,
+              0.14990000054240227,
+              0.13353333342820406,
+              0.13820000070457655,
+              0.1301999999365459,
+              0.16926666721701622,
+              0.14456666734380025
             ],
             "nodeSamplesUs": [
-              16061.631142856122,
-              15211.226928571705,
-              14518.697214283748,
-              15525.975785712944,
-              15719.325571429052,
-              16463.209714287328,
-              15130.368285712653,
-              15755.834857143262,
-              14952.758642857329
+              9698.39726666687,
+              9576.184066666368,
+              9518.842199999684,
+              9765.772100000564,
+              9545.48613333221,
+              9669.19980000045,
+              9485.292633333787,
+              9551.06889999976,
+              9475.72190000016
             ],
-            "compileDurationMs": 142322.19423700002,
-            "moduleCompileDurationMs": 128.19127800001297,
-            "instantiateDurationMs": 0.39435700001195073,
-            "firstBatchDurationMs": 0.13292599999113008,
-            "binaryBytes": 21039,
+            "compileDurationMs": 79599.48272399997,
+            "moduleCompileDurationMs": 3.8563589999685064,
+            "instantiateDurationMs": 0.03220899996813387,
+            "firstBatchDurationMs": 0.07201900001382455,
+            "binaryBytes": 74,
             "moduleImportCount": 0,
             "functionImportCount": 0,
             "expectedChecksum": 422,
@@ -222,8 +268,8 @@
             "staticEvaluation": {
               "operationEvaluatedInWasm": true,
               "operationResultType": "number",
-              "stageDurationMs": 464.86510799999814,
-              "stageBinaryBytes": 2335336,
+              "stageDurationMs": 226.79795199999353,
+              "stageBinaryBytes": 1472067,
               "stageModuleImportCount": 0
             }
           },
@@ -232,43 +278,43 @@
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
             "sampleOp": "parse(runtime-suffixed own 226KB dist bundle).body.length",
-            "wasmUs": 230200.97700000042,
-            "nodeUs": 20062.7000000095,
-            "wasmStdUs": 12970.745392847935,
-            "nodeStdUs": 1419.2545736967807,
-            "ratio": 0.08715297502846595,
-            "ratioStd": 0.007895271106219902,
-            "iters": 2,
+            "wasmUs": 104514.88533332788,
+            "nodeUs": 10595.61466666249,
+            "wasmStdUs": 1126.1270495801014,
+            "nodeStdUs": 279.4054192883223,
+            "ratio": 0.10137900101856345,
+            "ratioStd": 0.0025761255789699274,
+            "iters": 3,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              230200.97700000042,
-              210334.27299995674,
-              217910.73650005274,
-              252901.20000002207,
-              227701.69850002276,
-              231621.5090000187,
-              240484.88499998348,
-              248237.0579999988,
-              224677.66950000077
+              101494.19400000868,
+              105003.8273333339,
+              104808.03499999456,
+              104514.88533332788,
+              104546.56666666658,
+              103830.9686666665,
+              103064.42833332888,
+              103452.64533332859,
+              105306.35133333271
             ],
             "nodeSamplesUs": [
-              19812.489999982063,
-              18354.01050001383,
-              20062.7000000095,
-              16195.276500016917,
-              20610.881000000518,
-              20785.424000001512,
-              20684.680500009563,
-              20661.034999997355,
-              19762.14299997082
+              10699.96566666911,
+              11480.461666670939,
+              10595.61466666249,
+              10754.435000009835,
+              10771.33033333424,
+              10534.472333344942,
+              10562.087333334299,
+              10568.149666670555,
+              10569.839000003412
             ],
-            "compileDurationMs": 125536.31636900001,
-            "moduleCompileDurationMs": 13.787307000020519,
-            "instantiateDurationMs": 12.455541000002995,
-            "moduleInitDurationMs": 28.657397000002675,
-            "firstBatchDurationMs": 467.46700499998406,
-            "binaryBytes": 2335444,
+            "compileDurationMs": 82239.88322000002,
+            "moduleCompileDurationMs": 10.126072000013664,
+            "instantiateDurationMs": 7.172338000033051,
+            "moduleInitDurationMs": 10.845689000037964,
+            "firstBatchDurationMs": 336.4395539999823,
+            "binaryBytes": 1472194,
             "moduleImportCount": 0,
             "functionImportCount": 0,
             "expectedChecksum": 422,
@@ -306,43 +352,42 @@
               "isOctalDigit",
               "stringToNumber",
               "parse",
-              "parseExpressionAt",
-              "tokenizer"
+              "parseExpressionAt"
             ],
             "target": "standalone",
             "runtimeArgumentSuppliedAfterCompile": true
           }
         },
-        "wasmUs": 7006641.087999975,
-        "nodeUs": 15261.266000044998,
-        "wasmStdUs": 1324848.6942873725,
-        "nodeStdUs": 2938.9509312722594,
-        "ratio": 0.002178114421499686,
-        "ratioStd": 0.00045885604162415155,
+        "wasmUs": 3508863.7109999834,
+        "nodeUs": 9840.18400000059,
+        "wasmStdUs": 550989.1686871183,
+        "nodeStdUs": 402.6321832658206,
+        "ratio": 0.0028043790840756987,
+        "ratioStd": 0.0003005604136701596,
         "iters": 1,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          7080337.401000027,
-          7006641.087999975,
-          7485244.469000027,
-          7573588.804,
-          11151079.061000027,
-          6817045.915999973,
-          6809011.286999973,
-          6806228.968999989,
-          6714745.269999956
+          5269035.174000019,
+          3501576.0239999797,
+          3634156.4700000165,
+          3490699.8779999847,
+          3507798.694000026,
+          3486057.7710000216,
+          3508863.7109999834,
+          3520371.207000018,
+          3517109.052999993
         ],
         "nodeSamplesUs": [
-          14303.107000014279,
-          22246.32500001462,
-          14460.273000004236,
-          17181.790000002366,
-          19671.62899998948,
-          15261.266000044998,
-          14356.68299999088,
-          14170.992000028491,
-          20377.84400000237
+          10145.284999976866,
+          10246.789000026183,
+          11067.990000010468,
+          9790.569000004325,
+          9840.18400000059,
+          9816.577999998117,
+          9733.13199999393,
+          9757.098999980371,
+          9889.208000007784
         ]
       },
       "knownBugs": [
@@ -365,9 +410,9 @@
       "shape": "esm-direct",
       "compile": {
         "success": true,
-        "durationMs": 580,
+        "durationMs": 348,
         "errorCount": 9,
-        "binaryBytes": 19035,
+        "binaryBytes": 18901,
         "categories": {
           "other": {
             "count": 9,
@@ -391,6 +436,12 @@
         "total": 21,
         "sourceIssue": 3751
       },
+      "correctness": {
+        "status": "divergent",
+        "passed": 18,
+        "total": 21,
+        "reason": "3 of 21 operations diverged from native node"
+      },
       "perf": {
         "sampleOp": "parseCookie(8-pair header); verify a/h",
         "lanes": {
@@ -399,38 +450,38 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "parseCookie(8-pair header); verify a/h",
-            "wasmUs": 451.93082805910103,
-            "nodeUs": 0.9084957805786376,
-            "wasmStdUs": 50.58209309554841,
-            "nodeStdUs": 0.21199064778551108,
-            "ratio": 0.0020102540569766785,
-            "ratioStd": 0.0006219373709185797,
-            "iters": 948,
+            "wasmUs": 230.1802656351037,
+            "nodeUs": 0.551691811728735,
+            "wasmStdUs": 22.05148066279645,
+            "nodeStdUs": 0.004976029594210821,
+            "ratio": 0.00239678154079165,
+            "ratioStd": 0.00024117667252486152,
+            "iters": 1551,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              338.5075981012066,
-              343.5191276371735,
-              388.2395706751299,
-              454.4671962025648,
-              462.15968037980514,
-              467.27398523207626,
-              439.69588818564966,
-              451.93082805910103,
-              475.78728902949416
+              200.65216183107583,
+              204.00393294647267,
+              216.65819084461987,
+              223.67319084461036,
+              230.1802656351037,
+              239.88822630558855,
+              244.99803803996846,
+              260.02092907799835,
+              267.8549877498665
             ],
             "nodeSamplesUs": [
-              0.8566213080576986,
-              0.889570675033856,
-              1.548932489491056,
-              1.0840200421445558,
-              1.1008597046130961,
-              0.8861677215693967,
-              0.9336445146812055,
-              0.9084957805786376,
-              0.8338291139316348
+              0.5567343649244252,
+              0.5629722759362399,
+              0.551691811728735,
+              0.5505738233403452,
+              0.5454861380034958,
+              0.5483397807767416,
+              0.5562888459271861,
+              0.5494184397385582,
+              0.5517298517298965
             ],
-            "binaryBytes": 15344,
+            "binaryBytes": 15213,
             "moduleImportCount": 136,
             "functionImportCount": 34,
             "expectedChecksum": 1,
@@ -443,42 +494,42 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "parseCookie(8-pair header); verify a/h",
-            "wasmUs": 0.0015339052120862558,
-            "nodeUs": 0.8935331821715642,
-            "wasmStdUs": 0.00010357794199777052,
-            "nodeStdUs": 0.02597936888282025,
-            "ratio": 582.5217719654755,
-            "ratioStd": 29.62111574993164,
-            "iters": 315335,
+            "wasmUs": 0.0011059347002790564,
+            "nodeUs": 0.5527113162167089,
+            "wasmStdUs": 0.00002916485358775346,
+            "nodeStdUs": 0.0022364507466029904,
+            "ratio": 499.76849092197335,
+            "ratioStd": 14.384278540454467,
+            "iters": 498930,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.0015039751376025009,
-              0.0018023815941401239,
-              0.0015339052120862558,
-              0.0015353068959766002,
-              0.001723313301756553,
-              0.0015073049296096073,
-              0.001584330949813195,
-              0.0015138059523633713,
-              0.0014962246500785333
+              0.001091844547277537,
+              0.0011087447137549304,
+              0.0011059347002790564,
+              0.0010696430361544645,
+              0.0010777323471605025,
+              0.0010538251859083865,
+              0.001117758002108135,
+              0.0011490309261798567,
+              0.0011349006874395227
             ],
             "nodeSamplesUs": [
-              0.9043585551875598,
-              0.9284642047346554,
-              0.8810926157897604,
-              0.8935331821715642,
-              0.9437970380707446,
-              0.8594133096549973,
-              0.8858767406092637,
-              0.8926207461906392,
-              0.9328687142245295
+              0.5523623814963746,
+              0.5519661555730286,
+              0.5527113162167089,
+              0.5523704126831352,
+              0.5548848656124483,
+              0.5555490088790763,
+              0.5556197462570522,
+              0.5481430882087451,
+              0.554653480448074
             ],
-            "compileDurationMs": 2339.1995299999835,
-            "moduleCompileDurationMs": 0.8584589998936281,
-            "instantiateDurationMs": 0.3377829999662936,
-            "firstBatchDurationMs": 0.1864470000145957,
-            "binaryBytes": 20337,
+            "compileDurationMs": 406.30794899998,
+            "moduleCompileDurationMs": 4.937472000019625,
+            "instantiateDurationMs": 0.037527000007685274,
+            "firstBatchDurationMs": 0.08127299998886883,
+            "binaryBytes": 103,
             "moduleImportCount": 0,
             "functionImportCount": 0,
             "expectedChecksum": 1,
@@ -491,50 +542,88 @@
             "target": "standalone"
           },
           "standaloneDynamic": {
-            "status": "runtime-error",
+            "status": "measured",
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
-            "diagnostic": "TypeError: Cannot access property on null or undefined at 14:17",
-            "phase": "checksum",
-            "compileDurationMs": 3946.2578259999864,
-            "moduleCompileDurationMs": 0.8915819999529049,
-            "instantiateDurationMs": 0.3624520000303164,
-            "moduleInitDurationMs": 0.3369740000925958,
-            "binaryBytes": 44223,
+            "sampleOp": "parseCookie(8-pair runtime-generated header); verify a/h",
+            "wasmUs": 7.509644754963355,
+            "nodeUs": 0.7322474219888693,
+            "wasmStdUs": 0.05468455183695734,
+            "nodeStdUs": 0.0015508137443224384,
+            "ratio": 0.09750759801319556,
+            "ratioStd": 0.0007802593347523989,
+            "iters": 29771,
+            "warmupRounds": 2,
+            "measuredRounds": 9,
+            "wasmSamplesUs": [
+              7.52296674616246,
+              7.481140405091013,
+              7.485139934837189,
+              7.540472305263217,
+              7.6638117967156125,
+              7.471082227670415,
+              7.495723959558705,
+              7.509644754963355,
+              7.522550938832453
+            ],
+            "nodeSamplesUs": [
+              0.7322474219888693,
+              0.734073460750544,
+              0.7302320378883729,
+              0.7333044237681827,
+              0.731294044539159,
+              0.7342853447991452,
+              0.7307568103174069,
+              0.7344468442448429,
+              0.7311197809947368
+            ],
+            "compileDurationMs": 2939.79128200002,
+            "moduleCompileDurationMs": 0.7503940000315197,
+            "instantiateDurationMs": 0.17305099999066442,
+            "moduleInitDurationMs": 0.33871199999703094,
+            "firstBatchDurationMs": 1.1414159999694675,
+            "binaryBytes": 42674,
             "moduleImportCount": 0,
-            "functionImportCount": 0
+            "functionImportCount": 0,
+            "expectedChecksum": 1,
+            "actualChecksum": 1,
+            "testCompiledToWasm": true,
+            "benchmarkUsesIr": false,
+            "irCompiledFunctions": [],
+            "target": "standalone",
+            "runtimeArgumentSuppliedAfterCompile": true
           }
         },
-        "wasmUs": 451.93082805910103,
-        "nodeUs": 0.9084957805786376,
-        "wasmStdUs": 50.58209309554841,
-        "nodeStdUs": 0.21199064778551108,
-        "ratio": 0.0020102540569766785,
-        "ratioStd": 0.0006219373709185797,
-        "iters": 948,
+        "wasmUs": 230.1802656351037,
+        "nodeUs": 0.551691811728735,
+        "wasmStdUs": 22.05148066279645,
+        "nodeStdUs": 0.004976029594210821,
+        "ratio": 0.00239678154079165,
+        "ratioStd": 0.00024117667252486152,
+        "iters": 1551,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          338.5075981012066,
-          343.5191276371735,
-          388.2395706751299,
-          454.4671962025648,
-          462.15968037980514,
-          467.27398523207626,
-          439.69588818564966,
-          451.93082805910103,
-          475.78728902949416
+          200.65216183107583,
+          204.00393294647267,
+          216.65819084461987,
+          223.67319084461036,
+          230.1802656351037,
+          239.88822630558855,
+          244.99803803996846,
+          260.02092907799835,
+          267.8549877498665
         ],
         "nodeSamplesUs": [
-          0.8566213080576986,
-          0.889570675033856,
-          1.548932489491056,
-          1.0840200421445558,
-          1.1008597046130961,
-          0.8861677215693967,
-          0.9336445146812055,
-          0.9084957805786376,
-          0.8338291139316348
+          0.5567343649244252,
+          0.5629722759362399,
+          0.551691811728735,
+          0.5505738233403452,
+          0.5454861380034958,
+          0.5483397807767416,
+          0.5562888459271861,
+          0.5494184397385582,
+          0.5517298517298965
         ]
       },
       "knownBugs": [
@@ -553,7 +642,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 44676,
+        "durationMs": 40506,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -561,23 +650,27 @@
         "categories": {
           "compiler-diagnostic": {
             "count": 1,
-            "sample": "Binary emit error: RangeError: Codegen error: local index out of range — 17 (valid: [0, 8)) at function '__cb_6'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/user/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/user/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:1016:44)\n    at encodeInstrWithSourceMap (/home/user/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/user/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/user/js2/src/emit/binary.ts:524:7)\n    at emitBinaryWithSourceMap (/home/user/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/user/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/user/js2/src/compiler.ts:1072:16)\n    at compileMultiSource (/home/user/js2/src/compiler.ts:1616:5)"
+            "sample": "Codegen error: stack-balance invariant (entry): '__closure_106' references local 152, but only 2 params + 28 locals are declared (locals: 2:__self_cast, 3:undefined, 4:methodName, 5:Array, 6:strSymbols, 7:chr, 8:trailing, 9:__tmp_7, 10:__nve_recv_8, 11:__nve_idx_9, 12:__nve_any_10, 13:__emc_recv_11, 14:__emc_args_12, 15:__arr_join_vec_13, 16:__arr_join_data_14, 17:__arr_join_len_15, 18:__arr_join_i_16, 19:__arr_join_res_17, 20:__arr_join_sep_18, 21:__tmp_19, 22:__vec_mat_20, 23:__vec_len_21, 24:__vec_arr_22, 25:__vec_idx_23, 26:__emc_recv_24, 27:__emc_args_25, 28:__tmp_26, 29:__tmp_27; body: [{\"op\":\"local.get\",\"index\":0},{\"op\":\"ref.cast\",\"typeIdx\":316},{\"op\":\"local.tee\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":2},{\"op\":\"local.set\",\"index\":3},{\"op\":\"local.get\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":3},{\"op\":\"local.set\",\"index\":4},{\"op\":\"local.get\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":4},{\"op\":\"local.set\",\"index\":5},{\"op\":\"call\",\"funcIdx\":39},{\"op\":\"local.set\",\"index\":6},{\"op\":\"call\",\"funcIdx\":39},{\"op\":\"local.set\",\"index\":7},{\"op\":\"call\",\"funcIdx\":39},{\"op\":\"local.set\",\"index\":8},{\"op\":\"ref.null.extern\"},{\"op\":\"local.set\",\"index\":1},{\"op\":\"local.get\",\"index\":152},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":2097189},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":152},{\"op\":\"local.get\",\"index\":150},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":2097200},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":43}],\"else\":[{\"op\":\"call\",\"funcIdx\":39}]},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":6},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1354},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":9},{\"op\":\"local.set\",\"index\":10},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"local.set\",\"index\":11},{\"op\":\"local.get\",\"index\":10},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":2},{\"op\":\"local.get\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":4},{\"op\":\"i32.or\"},{\"op\":\"local.get\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":28},{\"op\":\"i32.or\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":10},{\"op\":\"local.get\",\"index\":11},{\"op\":\"i32.trunc_sat_f64_s\"},{\"op\":\"call\",\"funcIdx\":142}],\"else\":[{\"op\":\"local.get\",\"index\":10},{\"op\":\"local.get\",\"index\":11},{\"op\":\"call\",\"funcIdx\":32},{\"op\":\"call\",\"funcIdx\":4}]}],\"else\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":13},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"local.tee\",\"index\":14},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":32},{\"op\":\"call\",\"funcIdx\":41},{\"op\":\"local.get\",\"index\":13},{\"op\":\"global.get\",\"index\":1355},{\"op\":\"local.get\",\"index\":14},{\"op\":\"call\",\"funcIdx\":42}]},{\"op\":\"local.set\",\"index\":7},{\"op\":\"local.get\",\"index\":6},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8},{\"op\":\"local.get\",\"index\":5},{\"op\":\"local.get\",\"index\":6},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":21},{\"op\":\"ref.test\",\"typeIdx\":2},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"ref_null\",\"typeIdx\":2}},\"then\":[{\"op\":\"local.get\",\"index\":21},{\"op\":\"ref.cast_null\",\"typeIdx\":2}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":45},{\"op\":\"local.tee\",\"index\":22},{\"op\":\"call\",\"funcIdx\":22},{\"op\":\"i32.trunc_sat_f64_s\"},{\"op\":\"local.tee\",\"index\":23},{\"op\":\"array.new_default\",\"typeIdx\":1},{\"op\":\"local.set\",\"index\":24},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"local.set\",\"index\":25},{\"op\":\"block\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"loop\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"local.get\",\"index\":25},{\"op\":\"local.get\",\"index\":23},{\"op\":\"i32.ge_u\"},{\"op\":\"br_if\",\"depth\":1},{\"op\":\"local.get\",\"index\":24},{\"op\":\"local.get\",\"index\":25},{\"op\":\"local.get\",\"index\":22},{\"op\":\"local.get\",\"index\":25},{\"op\":\"f64.convert_i32_s\"},{\"op\":\"call\",\"funcIdx\":32},{\"op\":\"call\",\"funcIdx\":4},{\"op\":\"array.set\",\"typeIdx\":1},{\"op\":\"local.get\",\"index\":25},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"i32.add\"},{\"op\":\"local.set\",\"index\":25},{\"op\":\"br\",\"depth\":0}]}]},{\"op\":\"local.get\",\"index\":23},{\"op\":\"local.get\",\"index\":24},{\"op\":\"struct.new\",\"typeIdx\":2}]},{\"op\":\"f64.const\",\"value\":1},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":2097448},{\"op\":\"local.tee\",\"index\":15},{\"op\":\"local.get\",\"index\":15},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1032},{\"op\":\"call\",\"funcIdx\":49},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"struct.get\",\"typeIdx\":2,\"fieldIdx\":0},{\"op\":\"local.set\",\"index\":17},{\"op\":\"local.get\",\"index\":15},{\"op\":\"struct.get\",\"typeIdx\":2,\"fieldIdx\":1},{\"op\":\"local.set\",\"index\":16},{\"op\":\"global.get\",\"index\":419},{\"op\":\"local.set\",\"index\":20},{\"op\":\"global.get\",\"index\":419},{\"op\":\"local.set\",\"index\":19},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"local.set\",\"index\":18},{\"op\":\"block\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"loop\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":17},{\"op\":\"i32.ge_s\"},{\"op\":\"br_if\",\"depth\":1},{\"op\":\"local.get\",\"index\":18},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"i32.eq\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":16},{\"op\":\"array.len\"},{\"op\":\"i32.lt_s\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":16},{\"op\":\"local.get\",\"index\":18},{\"op\":\"array.get\",\"typeIdx\":1},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.test\",\"typeIdx\":58},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":57}]}],\"else\":[{\"op\":\"global.get\",\"index\":419}]},{\"op\":\"local.set\",\"index\":19}],\"else\":[{\"op\":\"local.get\",\"index\":19},{\"op\":\"local.get\",\"index\":20},{\"op\":\"call\",\"funcIdx\":9},{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":16},{\"op\":\"array.len\"},{\"op\":\"i32.lt_s\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":16},{\"op\":\"local.get\",\"index\":18},{\"op\":\"array.get\",\"typeIdx\":1},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.test\",\"typeIdx\":58},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":57}]}],\"else\":[{\"op\":\"global.get\",\"index\":419}]},{\"op\":\"call\",\"funcIdx\":9},{\"op\":\"local.set\",\"index\":19}]},{\"op\":\"local.get\",\"index\":18},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"i32.add\"},{\"op\":\"local.set\",\"index\":18},{\"op\":\"br\",\"depth\":0}]}]},{\"op\":\"local.get\",\"index\":19},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":19}]}],\"else\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":26},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"local.tee\",\"index\":27},{\"op\":\"f64.const\",\"value\":1},{\"op\":\"call\",\"funcIdx\":32},{\"op\":\"call\",\"funcIdx\":41},{\"op\":\"local.get\",\"index\":26},{\"op\":\"global.get\",\"index\":747},{\"op\":\"local.get\",\"index\":27},{\"op\":\"call\",\"funcIdx\":42}]},{\"op\":\"local.set\",\"index\":8},{\"op\":\"ref.null.extern\"},{\"op\":\"local.set\",\"index\":28},{\"op\":\"local.get\",\"index\":8},{\"op\":\"local.set\",\"index\":29},{\"op\":\"local.get\",\"index\":28},{\"op\":\"local.get\",\"index\":29},{\"op\":\"call\",\"funcIdx\":50},{\"op\":\"return\"}]) (at src/codegen/stack-balance.ts:274:13)"
           }
         },
         "errors": [
           {
-            "message": "Binary emit error: RangeError: Codegen error: local index out of range — 17 (valid: [0, 8)) at function '__cb_6'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/user/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/user/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:1016:44)\n    at encodeInstrWithSourceMap (/home/user/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/user/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/user/js2/src/emit/binary.ts:524:7)\n    at emitBinaryWithSourceMap (/home/user/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/user/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/user/js2/src/compiler.ts:1072:16)\n    at compileMultiSource (/home/user/js2/src/compiler.ts:1616:5)"
+            "message": "Codegen error: stack-balance invariant (entry): '__closure_106' references local 152, but only 2 params + 28 locals are declared (locals: 2:__self_cast, 3:undefined, 4:methodName, 5:Array, 6:strSymbols, 7:chr, 8:trailing, 9:__tmp_7, 10:__nve_recv_8, 11:__nve_idx_9, 12:__nve_any_10, 13:__emc_recv_11, 14:__emc_args_12, 15:__arr_join_vec_13, 16:__arr_join_data_14, 17:__arr_join_len_15, 18:__arr_join_i_16, 19:__arr_join_res_17, 20:__arr_join_sep_18, 21:__tmp_19, 22:__vec_mat_20, 23:__vec_len_21, 24:__vec_arr_22, 25:__vec_idx_23, 26:__emc_recv_24, 27:__emc_args_25, 28:__tmp_26, 29:__tmp_27; body: [{\"op\":\"local.get\",\"index\":0},{\"op\":\"ref.cast\",\"typeIdx\":316},{\"op\":\"local.tee\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":2},{\"op\":\"local.set\",\"index\":3},{\"op\":\"local.get\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":3},{\"op\":\"local.set\",\"index\":4},{\"op\":\"local.get\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":4},{\"op\":\"local.set\",\"index\":5},{\"op\":\"call\",\"funcIdx\":39},{\"op\":\"local.set\",\"index\":6},{\"op\":\"call\",\"funcIdx\":39},{\"op\":\"local.set\",\"index\":7},{\"op\":\"call\",\"funcIdx\":39},{\"op\":\"local.set\",\"index\":8},{\"op\":\"ref.null.extern\"},{\"op\":\"local.set\",\"index\":1},{\"op\":\"local.get\",\"index\":152},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":2097189},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":152},{\"op\":\"local.get\",\"index\":150},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":2097200},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":43}],\"else\":[{\"op\":\"call\",\"funcIdx\":39}]},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":6},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1354},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":9},{\"op\":\"local.set\",\"index\":10},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"local.set\",\"index\":11},{\"op\":\"local.get\",\"index\":10},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":2},{\"op\":\"local.get\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":4},{\"op\":\"i32.or\"},{\"op\":\"local.get\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":28},{\"op\":\"i32.or\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":10},{\"op\":\"local.get\",\"index\":11},{\"op\":\"i32.trunc_sat_f64_s\"},{\"op\":\"call\",\"funcIdx\":142}],\"else\":[{\"op\":\"local.get\",\"index\":10},{\"op\":\"local.get\",\"index\":11},{\"op\":\"call\",\"funcIdx\":32},{\"op\":\"call\",\"funcIdx\":4}]}],\"else\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":13},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"local.tee\",\"index\":14},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":32},{\"op\":\"call\",\"funcIdx\":41},{\"op\":\"local.get\",\"index\":13},{\"op\":\"global.get\",\"index\":1355},{\"op\":\"local.get\",\"index\":14},{\"op\":\"call\",\"funcIdx\":42}]},{\"op\":\"local.set\",\"index\":7},{\"op\":\"local.get\",\"index\":6},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8},{\"op\":\"local.get\",\"index\":5},{\"op\":\"local.get\",\"index\":6},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":21},{\"op\":\"ref.test\",\"typeIdx\":2},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"ref_null\",\"typeIdx\":2}},\"then\":[{\"op\":\"local.get\",\"index\":21},{\"op\":\"ref.cast_null\",\"typeIdx\":2}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":45},{\"op\":\"local.tee\",\"index\":22},{\"op\":\"call\",\"funcIdx\":22},{\"op\":\"i32.trunc_sat_f64_s\"},{\"op\":\"local.tee\",\"index\":23},{\"op\":\"array.new_default\",\"typeIdx\":1},{\"op\":\"local.set\",\"index\":24},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"local.set\",\"index\":25},{\"op\":\"block\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"loop\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"local.get\",\"index\":25},{\"op\":\"local.get\",\"index\":23},{\"op\":\"i32.ge_u\"},{\"op\":\"br_if\",\"depth\":1},{\"op\":\"local.get\",\"index\":24},{\"op\":\"local.get\",\"index\":25},{\"op\":\"local.get\",\"index\":22},{\"op\":\"local.get\",\"index\":25},{\"op\":\"f64.convert_i32_s\"},{\"op\":\"call\",\"funcIdx\":32},{\"op\":\"call\",\"funcIdx\":4},{\"op\":\"array.set\",\"typeIdx\":1},{\"op\":\"local.get\",\"index\":25},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"i32.add\"},{\"op\":\"local.set\",\"index\":25},{\"op\":\"br\",\"depth\":0}]}]},{\"op\":\"local.get\",\"index\":23},{\"op\":\"local.get\",\"index\":24},{\"op\":\"struct.new\",\"typeIdx\":2}]},{\"op\":\"f64.const\",\"value\":1},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":2097448},{\"op\":\"local.tee\",\"index\":15},{\"op\":\"local.get\",\"index\":15},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1032},{\"op\":\"call\",\"funcIdx\":49},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"struct.get\",\"typeIdx\":2,\"fieldIdx\":0},{\"op\":\"local.set\",\"index\":17},{\"op\":\"local.get\",\"index\":15},{\"op\":\"struct.get\",\"typeIdx\":2,\"fieldIdx\":1},{\"op\":\"local.set\",\"index\":16},{\"op\":\"global.get\",\"index\":419},{\"op\":\"local.set\",\"index\":20},{\"op\":\"global.get\",\"index\":419},{\"op\":\"local.set\",\"index\":19},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"local.set\",\"index\":18},{\"op\":\"block\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"loop\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":17},{\"op\":\"i32.ge_s\"},{\"op\":\"br_if\",\"depth\":1},{\"op\":\"local.get\",\"index\":18},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"i32.eq\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":16},{\"op\":\"array.len\"},{\"op\":\"i32.lt_s\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":16},{\"op\":\"local.get\",\"index\":18},{\"op\":\"array.get\",\"typeIdx\":1},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.test\",\"typeIdx\":58},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":57}]}],\"else\":[{\"op\":\"global.get\",\"index\":419}]},{\"op\":\"local.set\",\"index\":19}],\"else\":[{\"op\":\"local.get\",\"index\":19},{\"op\":\"local.get\",\"index\":20},{\"op\":\"call\",\"funcIdx\":9},{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":16},{\"op\":\"array.len\"},{\"op\":\"i32.lt_s\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":16},{\"op\":\"local.get\",\"index\":18},{\"op\":\"array.get\",\"typeIdx\":1},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.test\",\"typeIdx\":58},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":57}]}],\"else\":[{\"op\":\"global.get\",\"index\":419}]},{\"op\":\"call\",\"funcIdx\":9},{\"op\":\"local.set\",\"index\":19}]},{\"op\":\"local.get\",\"index\":18},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"i32.add\"},{\"op\":\"local.set\",\"index\":18},{\"op\":\"br\",\"depth\":0}]}]},{\"op\":\"local.get\",\"index\":19},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":19}]}],\"else\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":26},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"local.tee\",\"index\":27},{\"op\":\"f64.const\",\"value\":1},{\"op\":\"call\",\"funcIdx\":32},{\"op\":\"call\",\"funcIdx\":41},{\"op\":\"local.get\",\"index\":26},{\"op\":\"global.get\",\"index\":747},{\"op\":\"local.get\",\"index\":27},{\"op\":\"call\",\"funcIdx\":42}]},{\"op\":\"local.set\",\"index\":8},{\"op\":\"ref.null.extern\"},{\"op\":\"local.set\",\"index\":28},{\"op\":\"local.get\",\"index\":8},{\"op\":\"local.set\",\"index\":29},{\"op\":\"local.get\",\"index\":28},{\"op\":\"local.get\",\"index\":29},{\"op\":\"call\",\"funcIdx\":50},{\"op\":\"return\"}]) (at src/codegen/stack-balance.ts:274:13)"
           }
         ]
       },
       "validation": {
         "validates": false,
-        "firstError": "Binary emit error: RangeError: Codegen error: local index out of range — 17 (valid: [0, 8)) at function '__cb_6'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/user/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/user/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:1016:44)\n    at encodeInstrWithSourceMap (/home/user/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/user/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/user/js2/src/emit/binary.ts:524:7)\n    at emitBinaryWithSourceMap (/home/user/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/user/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/user/js2/src/compiler.ts:1072:16)\n    at compileMultiSource (/home/user/js2/src/compiler.ts:1616:5)"
+        "firstError": "Codegen error: stack-balance invariant (entry): '__closure_106' references local 152, but only 2 params + 28 locals are declared (locals: 2:__self_cast, 3:undefined, 4:methodName, 5:Array, 6:strSymbols, 7:chr, 8:trailing, 9:__tmp_7, 10:__nve_recv_8, 11:__nve_idx_9, 12:__nve_any_10, 13:__emc_recv_11, 14:__emc_args_12, 15:__arr_join_vec_13, 16:__arr_join_data_14, 17:__arr_join_len_15, 18:__arr_join_i_16, 19:__arr_join_res_17, 20:__arr_join_sep_18, 21:__tmp_19, 22:__vec_mat_20, 23:__vec_len_21, 24:__vec_arr_22, 25:__vec_idx_23, 26:__emc_recv_24, 27:__emc_args_25, 28:__tmp_26, 29:__tmp_27; body: [{\"op\":\"local.get\",\"index\":0},{\"op\":\"ref.cast\",\"typeIdx\":316},{\"op\":\"local.tee\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":2},{\"op\":\"local.set\",\"index\":3},{\"op\":\"local.get\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":3},{\"op\":\"local.set\",\"index\":4},{\"op\":\"local.get\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":4},{\"op\":\"local.set\",\"index\":5},{\"op\":\"call\",\"funcIdx\":39},{\"op\":\"local.set\",\"index\":6},{\"op\":\"call\",\"funcIdx\":39},{\"op\":\"local.set\",\"index\":7},{\"op\":\"call\",\"funcIdx\":39},{\"op\":\"local.set\",\"index\":8},{\"op\":\"ref.null.extern\"},{\"op\":\"local.set\",\"index\":1},{\"op\":\"local.get\",\"index\":152},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":2097189},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":152},{\"op\":\"local.get\",\"index\":150},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":2097200},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":43}],\"else\":[{\"op\":\"call\",\"funcIdx\":39}]},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":6},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1354},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":9},{\"op\":\"local.set\",\"index\":10},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"local.set\",\"index\":11},{\"op\":\"local.get\",\"index\":10},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":2},{\"op\":\"local.get\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":4},{\"op\":\"i32.or\"},{\"op\":\"local.get\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":28},{\"op\":\"i32.or\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":10},{\"op\":\"local.get\",\"index\":11},{\"op\":\"i32.trunc_sat_f64_s\"},{\"op\":\"call\",\"funcIdx\":142}],\"else\":[{\"op\":\"local.get\",\"index\":10},{\"op\":\"local.get\",\"index\":11},{\"op\":\"call\",\"funcIdx\":32},{\"op\":\"call\",\"funcIdx\":4}]}],\"else\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":13},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"local.tee\",\"index\":14},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":32},{\"op\":\"call\",\"funcIdx\":41},{\"op\":\"local.get\",\"index\":13},{\"op\":\"global.get\",\"index\":1355},{\"op\":\"local.get\",\"index\":14},{\"op\":\"call\",\"funcIdx\":42}]},{\"op\":\"local.set\",\"index\":7},{\"op\":\"local.get\",\"index\":6},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8},{\"op\":\"local.get\",\"index\":5},{\"op\":\"local.get\",\"index\":6},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":21},{\"op\":\"ref.test\",\"typeIdx\":2},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"ref_null\",\"typeIdx\":2}},\"then\":[{\"op\":\"local.get\",\"index\":21},{\"op\":\"ref.cast_null\",\"typeIdx\":2}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":45},{\"op\":\"local.tee\",\"index\":22},{\"op\":\"call\",\"funcIdx\":22},{\"op\":\"i32.trunc_sat_f64_s\"},{\"op\":\"local.tee\",\"index\":23},{\"op\":\"array.new_default\",\"typeIdx\":1},{\"op\":\"local.set\",\"index\":24},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"local.set\",\"index\":25},{\"op\":\"block\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"loop\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"local.get\",\"index\":25},{\"op\":\"local.get\",\"index\":23},{\"op\":\"i32.ge_u\"},{\"op\":\"br_if\",\"depth\":1},{\"op\":\"local.get\",\"index\":24},{\"op\":\"local.get\",\"index\":25},{\"op\":\"local.get\",\"index\":22},{\"op\":\"local.get\",\"index\":25},{\"op\":\"f64.convert_i32_s\"},{\"op\":\"call\",\"funcIdx\":32},{\"op\":\"call\",\"funcIdx\":4},{\"op\":\"array.set\",\"typeIdx\":1},{\"op\":\"local.get\",\"index\":25},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"i32.add\"},{\"op\":\"local.set\",\"index\":25},{\"op\":\"br\",\"depth\":0}]}]},{\"op\":\"local.get\",\"index\":23},{\"op\":\"local.get\",\"index\":24},{\"op\":\"struct.new\",\"typeIdx\":2}]},{\"op\":\"f64.const\",\"value\":1},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":2097448},{\"op\":\"local.tee\",\"index\":15},{\"op\":\"local.get\",\"index\":15},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1032},{\"op\":\"call\",\"funcIdx\":49},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"struct.get\",\"typeIdx\":2,\"fieldIdx\":0},{\"op\":\"local.set\",\"index\":17},{\"op\":\"local.get\",\"index\":15},{\"op\":\"struct.get\",\"typeIdx\":2,\"fieldIdx\":1},{\"op\":\"local.set\",\"index\":16},{\"op\":\"global.get\",\"index\":419},{\"op\":\"local.set\",\"index\":20},{\"op\":\"global.get\",\"index\":419},{\"op\":\"local.set\",\"index\":19},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"local.set\",\"index\":18},{\"op\":\"block\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"loop\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":17},{\"op\":\"i32.ge_s\"},{\"op\":\"br_if\",\"depth\":1},{\"op\":\"local.get\",\"index\":18},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"i32.eq\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":16},{\"op\":\"array.len\"},{\"op\":\"i32.lt_s\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":16},{\"op\":\"local.get\",\"index\":18},{\"op\":\"array.get\",\"typeIdx\":1},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.test\",\"typeIdx\":58},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":57}]}],\"else\":[{\"op\":\"global.get\",\"index\":419}]},{\"op\":\"local.set\",\"index\":19}],\"else\":[{\"op\":\"local.get\",\"index\":19},{\"op\":\"local.get\",\"index\":20},{\"op\":\"call\",\"funcIdx\":9},{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":16},{\"op\":\"array.len\"},{\"op\":\"i32.lt_s\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":16},{\"op\":\"local.get\",\"index\":18},{\"op\":\"array.get\",\"typeIdx\":1},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.test\",\"typeIdx\":58},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":57}]}],\"else\":[{\"op\":\"global.get\",\"index\":419}]},{\"op\":\"call\",\"funcIdx\":9},{\"op\":\"local.set\",\"index\":19}]},{\"op\":\"local.get\",\"index\":18},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"i32.add\"},{\"op\":\"local.set\",\"index\":18},{\"op\":\"br\",\"depth\":0}]}]},{\"op\":\"local.get\",\"index\":19},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":19}]}],\"else\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":26},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"local.tee\",\"index\":27},{\"op\":\"f64.const\",\"value\":1},{\"op\":\"call\",\"funcIdx\":32},{\"op\":\"call\",\"funcIdx\":41},{\"op\":\"local.get\",\"index\":26},{\"op\":\"global.get\",\"index\":747},{\"op\":\"local.get\",\"index\":27},{\"op\":\"call\",\"funcIdx\":42}]},{\"op\":\"local.set\",\"index\":8},{\"op\":\"ref.null.extern\"},{\"op\":\"local.set\",\"index\":28},{\"op\":\"local.get\",\"index\":8},{\"op\":\"local.set\",\"index\":29},{\"op\":\"local.get\",\"index\":28},{\"op\":\"local.get\",\"index\":29},{\"op\":\"call\",\"funcIdx\":50},{\"op\":\"return\"}]) (at src/codegen/stack-balance.ts:274:13)"
       },
       "tests": {
         "kind": "upstream-suite",
         "status": "not-integrated",
         "reason": "not shipped in npm tarball; adapter pending"
+      },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
       },
       "perf": null,
       "knownBugs": [],
@@ -591,7 +684,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": true,
-        "durationMs": 2663,
+        "durationMs": 1685,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -604,13 +697,18 @@
       },
       "tests": {
         "kind": "upstream-suite",
-        "passed": 39,
+        "passed": 55,
         "total": 55,
-        "passRatePct": 70.91,
+        "passRatePct": 100,
         "admitted": 272,
         "upstreamTestsSeen": 273,
         "harnessIncompatible": 209,
         "sourceIssue": 3958
+      },
+      "correctness": {
+        "status": "verified",
+        "passed": 55,
+        "total": 55
       },
       "perf": null,
       "knownBugs": [],
@@ -624,43 +722,27 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 14944,
-        "timedOut": false,
+        "durationMs": 180153,
+        "timedOut": true,
         "timeoutMs": 180000,
-        "errorCount": 6,
+        "errorCount": 0,
         "binaryBytes": 0,
         "categories": {
-          "compiler-diagnostic": {
-            "count": 6,
-            "sample": "Module '\"./eslint/eslint\"' declares 'ESLint' locally, but it is not exported."
+          "compile-budget": {
+            "count": 1,
+            "sample": "compileProject exceeded the 180000ms ESLint harness budget"
           }
-        },
-        "errors": [
-          {
-            "message": "Module '\"./eslint/eslint\"' declares 'ESLint' locally, but it is not exported."
-          },
-          {
-            "message": "Module '\"./linter\"' declares 'Linter' locally, but it is not exported."
-          },
-          {
-            "message": "Module '\"./rule-tester\"' declares 'RuleTester' locally, but it is not exported."
-          },
-          {
-            "message": "Module '\"./languages/js/source-code\"' declares 'SourceCode' locally, but it is not exported."
-          },
-          {
-            "message": "Cannot find name 'module'. Do you need to install type definitions for node? Try `npm i --save-dev @types/node`."
-          },
-          {
-            "message": "Codegen error: source callable validate has no consistent exact top-level or compiler-support inventory owner"
-          }
-        ]
+        }
       },
       "validation": {
         "validates": false,
-        "firstError": "Module '\"./eslint/eslint\"' declares 'ESLint' locally, but it is not exported."
+        "firstError": "compileProject exceeded the 180000ms budget (#3672)"
       },
       "tests": null,
+      "correctness": {
+        "status": "unverified",
+        "reason": "package does not compile, so no workload could run"
+      },
       "perf": null,
       "knownBugs": [
         {
@@ -673,12 +755,12 @@
     {
       "name": "react-dom",
       "version": "19.2.6",
-      "issue": 1033,
+      "issue": 3982,
       "entryFile": "index.js",
       "shape": "cjs-project",
       "compile": {
         "success": true,
-        "durationMs": 2807,
+        "durationMs": 1788,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -691,8 +773,19 @@
       },
       "tests": {
         "kind": "upstream-suite",
-        "status": "not-integrated",
-        "reason": "not shipped in npm tarball; adapter pending"
+        "passed": 0,
+        "total": 0,
+        "passRatePct": 0,
+        "admitted": 1942,
+        "upstreamTestsSeen": 2003,
+        "harnessIncompatible": 1942,
+        "implementationInvalidTests": null,
+        "implementationError": "Codegen error: Do not know how to serialize a BigInt",
+        "sourceIssue": 3982
+      },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' ran zero operations"
       },
       "perf": null,
       "knownBugs": [],
@@ -706,7 +799,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 4372,
+        "durationMs": 2846,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -714,20 +807,24 @@
         "categories": {
           "compiler-diagnostic": {
             "count": 1,
-            "sample": "Codegen error: inherited class callable jt_diff has no exact canonical class unit"
+            "sample": "Codegen error: inherited class callable jt_diff has no exact canonical class unit (at src/codegen/program-abi-class-callable-planning.ts:282:13)"
           }
         },
         "errors": [
           {
-            "message": "Codegen error: inherited class callable jt_diff has no exact canonical class unit"
+            "message": "Codegen error: inherited class callable jt_diff has no exact canonical class unit (at src/codegen/program-abi-class-callable-planning.ts:282:13)"
           }
         ]
       },
       "validation": {
         "validates": false,
-        "firstError": "Codegen error: inherited class callable jt_diff has no exact canonical class unit"
+        "firstError": "Codegen error: inherited class callable jt_diff has no exact canonical class unit (at src/codegen/program-abi-class-callable-planning.ts:282:13)"
       },
       "tests": null,
+      "correctness": {
+        "status": "unverified",
+        "reason": "package does not compile, so no workload could run"
+      },
       "perf": null,
       "knownBugs": [],
       "weeklyDownloads": 117242232
@@ -740,7 +837,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 120148,
+        "durationMs": 120111,
         "timedOut": true,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -760,6 +857,10 @@
         "kind": "upstream-suite",
         "status": "not-integrated",
         "reason": "not shipped in npm tarball; adapter pending"
+      },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
       },
       "perf": null,
       "knownBugs": [],
@@ -773,26 +874,35 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 120162,
-        "timedOut": true,
+        "durationMs": 11902,
+        "timedOut": false,
         "timeoutMs": 120000,
-        "errorCount": 0,
+        "errorCount": 1,
         "binaryBytes": 0,
         "categories": {
-          "compile-budget": {
+          "compiler-diagnostic": {
             "count": 1,
-            "sample": "compileProject exceeded the 120000ms budget"
+            "sample": "async shape not supported: this suspension point (await / for-await) sits inside a `try` whose overall body shape the async engine cannot drive yet, and the synchronous fallback would SILENTLY drop awaited rejections (execution would continue past a rejected await; catch/finally would not run). Restructure toward canonical awaits — top-level `await p` / `const x = await p` / `return await p` statements, try/catch(/finally) without awaits in loops/conditions inside the try — or hoist the await out of the try (#3587)"
           }
-        }
+        },
+        "errors": [
+          {
+            "message": "async shape not supported: this suspension point (await / for-await) sits inside a `try` whose overall body shape the async engine cannot drive yet, and the synchronous fallback would SILENTLY drop awaited rejections (execution would continue past a rejected await; catch/finally would not run). Restructure toward canonical awaits — top-level `await p` / `const x = await p` / `return await p` statements, try/catch(/finally) without awaits in loops/conditions inside the try — or hoist the await out of the try (#3587)"
+          }
+        ]
       },
       "validation": {
         "validates": false,
-        "firstError": "compileProject exceeded the 120000ms budget"
+        "firstError": "async shape not supported: this suspension point (await / for-await) sits inside a `try` whose overall body shape the async engine cannot drive yet, and the synchronous fallback would SILENTLY drop awaited rejections (execution would continue past a rejected await; catch/finally would not run). Restructure toward canonical awaits — top-level `await p` / `const x = await p` / `return await p` statements, try/catch(/finally) without awaits in loops/conditions inside the try — or hoist the await out of the try (#3587)"
       },
       "tests": {
         "kind": "upstream-suite",
         "status": "not-integrated",
         "reason": "not shipped in npm tarball; adapter pending"
+      },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
       },
       "perf": null,
       "knownBugs": [],
@@ -806,9 +916,9 @@
       "shape": "esm-driver-epilogue",
       "compile": {
         "success": true,
-        "durationMs": 444,
+        "durationMs": 235,
         "errorCount": 0,
-        "binaryBytes": 8191,
+        "binaryBytes": 8263,
         "categories": {}
       },
       "validation": {
@@ -821,6 +931,12 @@
         "total": 18,
         "sourceIssue": 3748
       },
+      "correctness": {
+        "status": "divergent",
+        "passed": 17,
+        "total": 18,
+        "reason": "1 of 18 operations diverged from native node"
+      },
       "perf": {
         "sampleOp": "op_two_strings.length (host-owned arguments)",
         "lanes": {
@@ -829,36 +945,36 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "op_two_strings.length (host-owned arguments)",
-            "wasmUs": 1.7905703913714313,
-            "nodeUs": 0.06712560940827064,
-            "wasmStdUs": 0.22063850711454017,
-            "nodeStdUs": 0.007308012184926238,
-            "ratio": 0.037488394609752194,
-            "ratioStd": 0.005747043742467588,
-            "iters": 133326,
+            "wasmUs": 1.3223189609134922,
+            "nodeUs": 0.03373901635982402,
+            "wasmStdUs": 0.026593059415946092,
+            "nodeStdUs": 0.00007021260292011142,
+            "ratio": 0.0255150363544029,
+            "ratioStd": 0.0005162841743046574,
+            "iters": 215343,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              1.922686775272913,
-              1.7457661671389797,
-              1.7656343998914776,
-              1.7233391311520716,
-              1.7905703913714313,
-              1.942570668887258,
-              2.4303866537661993,
-              1.735725132382315,
-              2.1072110841101526
+              1.3107114928277015,
+              1.3055441272759223,
+              1.3223189609134922,
+              1.3523025173792447,
+              1.381238442856271,
+              1.3204743409349926,
+              1.304445535726717,
+              1.3643306120930305,
+              1.3524430652494615
             ],
             "nodeSamplesUs": [
-              0.06477422258158183,
-              0.06767733225333016,
-              0.06167399457008184,
-              0.07662331428165602,
-              0.07150401272066852,
-              0.08370078604322131,
-              0.05979783388104965,
-              0.06250357019620556,
-              0.06712560940827064
+              0.03371011827655338,
+              0.033703050482085294,
+              0.03375890555992147,
+              0.03376170109999252,
+              0.033617294269962586,
+              0.033897702734650335,
+              0.03370543737190263,
+              0.03373901635982402,
+              0.033753388779874646
             ],
             "binaryBytes": 2100,
             "moduleImportCount": 21,
@@ -873,42 +989,42 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "op_two_strings.length (driver compiled to Wasm)",
-            "wasmUs": 0.001262080452288723,
-            "nodeUs": 0.05396670033139253,
-            "wasmStdUs": 0.000017580190689661413,
-            "nodeStdUs": 0.001333064795568009,
-            "ratio": 42.76011107970691,
-            "ratioStd": 1.0718834763209508,
-            "iters": 2850659,
+            "wasmUs": 0.0010597107649760696,
+            "nodeUs": 0.020208416277547665,
+            "wasmStdUs": 0.0000039260351547330685,
+            "nodeStdUs": 0.00005714467138988652,
+            "ratio": 19.069747090852672,
+            "ratioStd": 0.10317250430596533,
+            "iters": 4302591,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.0012319460166769762,
-              0.0012557408655453721,
-              0.0012674357052123275,
-              0.001262080452288723,
-              0.0012475325880712553,
-              0.0012886223852201502,
-              0.00125809821517809,
-              0.0012690988294273117,
-              0.0012910969007778415
+              0.0010597107649760696,
+              0.0010617590656514775,
+              0.0010577252171904074,
+              0.0010567637035460461,
+              0.001064717515560131,
+              0.001060117961479534,
+              0.0010585795861027657,
+              0.0010585421668023107,
+              0.0010700245503219893
             ],
             "nodeSamplesUs": [
-              0.05328059932809771,
-              0.05327398857596235,
-              0.05371127448075232,
-              0.05259312145016282,
-              0.05409926897601387,
-              0.05466892532568317,
-              0.0574335067785843,
-              0.05396670033139253,
-              0.05505963393025193
+              0.020208416277547665,
+              0.020189240622692603,
+              0.020223164367695595,
+              0.02038283071758783,
+              0.020232072720825767,
+              0.02020795980839833,
+              0.020225678434220195,
+              0.020180071961290062,
+              0.020199929298410895
             ],
-            "compileDurationMs": 2141.508245999925,
-            "moduleCompileDurationMs": 0.7036490000318736,
-            "instantiateDurationMs": 0.34204200003296137,
-            "firstBatchDurationMs": 0.06329700001515448,
-            "binaryBytes": 20337,
+            "compileDurationMs": 373.70364000002155,
+            "moduleCompileDurationMs": 0.32984800002304837,
+            "instantiateDurationMs": 0.03845799999544397,
+            "firstBatchDurationMs": 0.069164999993518,
+            "binaryBytes": 103,
             "moduleImportCount": 0,
             "functionImportCount": 0,
             "expectedChecksum": 7,
@@ -925,42 +1041,42 @@
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
             "sampleOp": "op_two_strings.length (runtime-generated arguments; driver compiled to Wasm)",
-            "wasmUs": 1.3261582075406744,
-            "nodeUs": 0.1293440194946628,
-            "wasmStdUs": 0.08290886282376168,
-            "nodeStdUs": 0.01313341550034278,
-            "ratio": 0.09753287259332948,
-            "ratioStd": 0.006835209518611069,
-            "iters": 221595,
+            "wasmUs": 0.4858586223139765,
+            "nodeUs": 0.05641237076886534,
+            "wasmStdUs": 0.011375442751747912,
+            "nodeStdUs": 0.0011081482172235547,
+            "ratio": 0.11610861303683928,
+            "ratioStd": 0.002644037658927508,
+            "iters": 564686,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              1.3403708747943215,
-              1.3673895304497583,
-              1.3199733838762142,
-              1.4224991132472142,
-              1.2629614883007934,
-              1.254813154628665,
-              1.5001006520907882,
-              1.3261582075406744,
-              1.2168862474331865
+              0.5213348303304878,
+              0.48892627052909715,
+              0.48611795581967254,
+              0.4839550440421316,
+              0.4858586223139765,
+              0.48514582263410433,
+              0.4845972894670892,
+              0.487546588723629,
+              0.48252905154374737
             ],
             "nodeSamplesUs": [
-              0.14214292741303194,
-              0.1247340508585642,
-              0.1388955752608487,
-              0.15378239129953086,
-              0.1135167806132565,
-              0.1293440194946628,
-              0.14847371556205155,
-              0.11898547349877064,
-              0.12264530336851932
+              0.05825898286835043,
+              0.05806683360308894,
+              0.055957039841560176,
+              0.056134823601120744,
+              0.05848889117140471,
+              0.058219591064777296,
+              0.05612038725946541,
+              0.05570240806393676,
+              0.05641237076886534
             ],
-            "compileDurationMs": 3136.7981599998893,
-            "moduleCompileDurationMs": 0.9916669999947771,
-            "instantiateDurationMs": 0.3365759999724105,
-            "firstBatchDurationMs": 0.6987609999487177,
-            "binaryBytes": 34081,
+            "compileDurationMs": 2005.3603789999615,
+            "moduleCompileDurationMs": 9.177911999984644,
+            "instantiateDurationMs": 0.29415499995229766,
+            "firstBatchDurationMs": 0.424622000020463,
+            "binaryBytes": 32683,
             "moduleImportCount": 0,
             "functionImportCount": 0,
             "expectedChecksum": 14,
@@ -972,36 +1088,36 @@
             "runtimeArgumentSuppliedAfterCompile": true
           }
         },
-        "wasmUs": 1.7905703913714313,
-        "nodeUs": 0.06712560940827064,
-        "wasmStdUs": 0.22063850711454017,
-        "nodeStdUs": 0.007308012184926238,
-        "ratio": 0.037488394609752194,
-        "ratioStd": 0.005747043742467588,
-        "iters": 133326,
+        "wasmUs": 1.3223189609134922,
+        "nodeUs": 0.03373901635982402,
+        "wasmStdUs": 0.026593059415946092,
+        "nodeStdUs": 0.00007021260292011142,
+        "ratio": 0.0255150363544029,
+        "ratioStd": 0.0005162841743046574,
+        "iters": 215343,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          1.922686775272913,
-          1.7457661671389797,
-          1.7656343998914776,
-          1.7233391311520716,
-          1.7905703913714313,
-          1.942570668887258,
-          2.4303866537661993,
-          1.735725132382315,
-          2.1072110841101526
+          1.3107114928277015,
+          1.3055441272759223,
+          1.3223189609134922,
+          1.3523025173792447,
+          1.381238442856271,
+          1.3204743409349926,
+          1.304445535726717,
+          1.3643306120930305,
+          1.3524430652494615
         ],
         "nodeSamplesUs": [
-          0.06477422258158183,
-          0.06767733225333016,
-          0.06167399457008184,
-          0.07662331428165602,
-          0.07150401272066852,
-          0.08370078604322131,
-          0.05979783388104965,
-          0.06250357019620556,
-          0.06712560940827064
+          0.03371011827655338,
+          0.033703050482085294,
+          0.03375890555992147,
+          0.03376170109999252,
+          0.033617294269962586,
+          0.033897702734650335,
+          0.03370543737190263,
+          0.03373901635982402,
+          0.033753388779874646
         ]
       },
       "knownBugs": [
@@ -1013,6 +1129,43 @@
       "weeklyDownloads": 104930549
     },
     {
+      "name": "jsdom",
+      "version": "30.0.1",
+      "issue": null,
+      "entryFile": "lib/api.js",
+      "shape": "cjs-project",
+      "compile": {
+        "success": false,
+        "durationMs": 180200,
+        "timedOut": true,
+        "timeoutMs": 180000,
+        "errorCount": 0,
+        "binaryBytes": 0,
+        "categories": {
+          "compile-budget": {
+            "count": 1,
+            "sample": "compileProject exceeded the 180000ms budget"
+          }
+        }
+      },
+      "validation": {
+        "validates": false,
+        "firstError": "compileProject exceeded the 180000ms budget"
+      },
+      "tests": {
+        "kind": "upstream-suite",
+        "status": "not-integrated",
+        "reason": "not shipped in npm tarball; adapter pending"
+      },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
+      },
+      "perf": null,
+      "knownBugs": [],
+      "weeklyDownloads": 89317829
+    },
+    {
       "name": "marked",
       "version": "18.0.2",
       "issue": 3716,
@@ -1020,7 +1173,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": false,
-        "durationMs": 1398,
+        "durationMs": 803,
         "errorCount": 64,
         "binaryBytes": 0,
         "categories": {
@@ -1062,6 +1215,10 @@
         "firstError": "no binary emitted"
       },
       "tests": null,
+      "correctness": {
+        "status": "unverified",
+        "reason": "package does not compile, so no workload could run"
+      },
       "perf": null,
       "knownBugs": [
         {
@@ -1079,7 +1236,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 120191,
+        "durationMs": 120179,
         "timedOut": true,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -1100,6 +1257,10 @@
         "status": "not-integrated",
         "reason": "not shipped in npm tarball; adapter pending"
       },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
+      },
       "perf": null,
       "knownBugs": [],
       "weeklyDownloads": 55617769
@@ -1112,7 +1273,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 4000,
+        "durationMs": 2256,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -1120,23 +1281,27 @@
         "categories": {
           "compiler-diagnostic": {
             "count": 1,
-            "sample": "Codegen error: inherited class callable RegExpRouterWithMatcherExport_add has no exact canonical class unit"
+            "sample": "Codegen error: inherited class callable RegExpRouterWithMatcherExport_add has no exact canonical class unit (at src/codegen/program-abi-class-callable-planning.ts:282:13)"
           }
         },
         "errors": [
           {
-            "message": "Codegen error: inherited class callable RegExpRouterWithMatcherExport_add has no exact canonical class unit"
+            "message": "Codegen error: inherited class callable RegExpRouterWithMatcherExport_add has no exact canonical class unit (at src/codegen/program-abi-class-callable-planning.ts:282:13)"
           }
         ]
       },
       "validation": {
         "validates": false,
-        "firstError": "Codegen error: inherited class callable RegExpRouterWithMatcherExport_add has no exact canonical class unit"
+        "firstError": "Codegen error: inherited class callable RegExpRouterWithMatcherExport_add has no exact canonical class unit (at src/codegen/program-abi-class-callable-planning.ts:282:13)"
       },
       "tests": {
         "kind": "upstream-suite",
         "status": "not-integrated",
         "reason": "not shipped in npm tarball; adapter pending"
+      },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
       },
       "perf": null,
       "knownBugs": [],
@@ -1150,11 +1315,11 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 2743,
+        "durationMs": 1701,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
-        "binaryBytes": 2624,
+        "binaryBytes": 2410,
         "categories": {}
       },
       "validation": {
@@ -1165,6 +1330,10 @@
         "kind": "upstream-suite",
         "status": "not-integrated",
         "reason": "not shipped in npm tarball; adapter pending"
+      },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
       },
       "perf": null,
       "knownBugs": [],
@@ -1178,7 +1347,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 4172,
+        "durationMs": 2299,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -1186,23 +1355,27 @@
         "categories": {
           "compiler-diagnostic": {
             "count": 1,
-            "sample": "Binary emit error: RangeError: Codegen error: local index out of range — 19 (valid: [0, 15)) at function 'observable'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/user/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/user/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:1016:44)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:960:35)\n    at encodeInstrWithSourceMap (/home/user/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/user/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/user/js2/src/emit/binary.ts:524:7)\n    at emitBinaryWithSourceMap (/home/user/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/user/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/user/js2/src/compiler.ts:1072:16)"
+            "sample": "Codegen error: stack-balance invariant (entry): 'observeState' references local 19, but only 1 params + 8 locals are declared (locals: 1:observerAsObserver, 2:__nullchk_1, 3:__emc_recv_2, 4:__emc_args_3, 5:__boxed_isDispatching, 6:__boxed_currentState, 7:__tdz_box_isDispatching, 8:__tdz_box_currentState; body: [{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":1},{\"op\":\"local.tee\",\"index\":2},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":145},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":2},{\"op\":\"global.get\",\"index\":146},{\"op\":\"call\",\"funcIdx\":1},{\"op\":\"call\",\"funcIdx\":26},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":3},{\"op\":\"call\",\"funcIdx\":43},{\"op\":\"local.tee\",\"index\":4},{\"op\":\"local.get\",\"index\":19},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"local.get\",\"index\":11},{\"op\":\"struct.new\",\"typeIdx\":34},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":2097173},{\"op\":\"call\",\"funcIdx\":44},{\"op\":\"local.get\",\"index\":3},{\"op\":\"global.get\",\"index\":146},{\"op\":\"local.get\",\"index\":4},{\"op\":\"call\",\"funcIdx\":55},{\"op\":\"drop\"}]}]) (at src/codegen/stack-balance.ts:274:13)"
           }
         },
         "errors": [
           {
-            "message": "Binary emit error: RangeError: Codegen error: local index out of range — 19 (valid: [0, 15)) at function 'observable'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/user/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/user/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:1016:44)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:960:35)\n    at encodeInstrWithSourceMap (/home/user/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/user/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/user/js2/src/emit/binary.ts:524:7)\n    at emitBinaryWithSourceMap (/home/user/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/user/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/user/js2/src/compiler.ts:1072:16)"
+            "message": "Codegen error: stack-balance invariant (entry): 'observeState' references local 19, but only 1 params + 8 locals are declared (locals: 1:observerAsObserver, 2:__nullchk_1, 3:__emc_recv_2, 4:__emc_args_3, 5:__boxed_isDispatching, 6:__boxed_currentState, 7:__tdz_box_isDispatching, 8:__tdz_box_currentState; body: [{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":1},{\"op\":\"local.tee\",\"index\":2},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":145},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":2},{\"op\":\"global.get\",\"index\":146},{\"op\":\"call\",\"funcIdx\":1},{\"op\":\"call\",\"funcIdx\":26},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":3},{\"op\":\"call\",\"funcIdx\":43},{\"op\":\"local.tee\",\"index\":4},{\"op\":\"local.get\",\"index\":19},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"local.get\",\"index\":11},{\"op\":\"struct.new\",\"typeIdx\":34},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":2097173},{\"op\":\"call\",\"funcIdx\":44},{\"op\":\"local.get\",\"index\":3},{\"op\":\"global.get\",\"index\":146},{\"op\":\"local.get\",\"index\":4},{\"op\":\"call\",\"funcIdx\":55},{\"op\":\"drop\"}]}]) (at src/codegen/stack-balance.ts:274:13)"
           }
         ]
       },
       "validation": {
         "validates": false,
-        "firstError": "Binary emit error: RangeError: Codegen error: local index out of range — 19 (valid: [0, 15)) at function 'observable'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/user/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/user/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:1016:44)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:960:35)\n    at encodeInstrWithSourceMap (/home/user/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/user/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/user/js2/src/emit/binary.ts:524:7)\n    at emitBinaryWithSourceMap (/home/user/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/user/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/user/js2/src/compiler.ts:1072:16)"
+        "firstError": "Codegen error: stack-balance invariant (entry): 'observeState' references local 19, but only 1 params + 8 locals are declared (locals: 1:observerAsObserver, 2:__nullchk_1, 3:__emc_recv_2, 4:__emc_args_3, 5:__boxed_isDispatching, 6:__boxed_currentState, 7:__tdz_box_isDispatching, 8:__tdz_box_currentState; body: [{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":1},{\"op\":\"local.tee\",\"index\":2},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":145},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":2},{\"op\":\"global.get\",\"index\":146},{\"op\":\"call\",\"funcIdx\":1},{\"op\":\"call\",\"funcIdx\":26},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":3},{\"op\":\"call\",\"funcIdx\":43},{\"op\":\"local.tee\",\"index\":4},{\"op\":\"local.get\",\"index\":19},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"local.get\",\"index\":11},{\"op\":\"struct.new\",\"typeIdx\":34},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":2097173},{\"op\":\"call\",\"funcIdx\":44},{\"op\":\"local.get\",\"index\":3},{\"op\":\"global.get\",\"index\":146},{\"op\":\"local.get\",\"index\":4},{\"op\":\"call\",\"funcIdx\":55},{\"op\":\"drop\"}]}]) (at src/codegen/stack-balance.ts:274:13)"
       },
       "tests": {
         "kind": "upstream-suite",
         "status": "not-integrated",
         "reason": "not shipped in npm tarball; adapter pending"
+      },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
       },
       "perf": null,
       "knownBugs": [],
@@ -1216,7 +1389,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 15281,
+        "durationMs": 11248,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -1224,23 +1397,27 @@
         "categories": {
           "compiler-diagnostic": {
             "count": 1,
-            "sample": "Binary emit error: RangeError: Codegen error: local index out of range — 17 (valid: [0, 11)) at function 'normalizeObjectUnits'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/user/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/user/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:1016:44)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:960:35)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:948:35)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:954:35)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:948:35)\n    at encodeInstrWithSourceMap (/home/user/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/user/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/user/js2/src/emit/binary.ts:524:7)"
+            "sample": "Codegen error: stack-balance invariant (entry): '__fnctor_Duration_new' references local 80, but only 1 params + 59 locals are declared (locals: 1:__self, 2:__fnctor_ctor_1, 3:normalizedInput, 4:years, 5:__nullchk_4, 6:__sd_any_5, 7:__sd_res_6, 8:__tmp_7, 9:quarters, 10:__nullchk_9, 11:__sd_any_10, 12:__sd_res_11, 13:months, 14:__nullchk_13, 15:__sd_any_14, 16:__sd_res_15, 17:weeks, 18:__nullchk_17, 19:__sd_any_18, 20:__sd_res_19, 21:__nullchk_20, 22:__sd_any_21, 23:__sd_res_22, 24:days, 25:__nullchk_24, 26:__sd_any_25, 27:__sd_res_26, 28:hours, 29:__nullchk_28, 30:__sd_any_29, 31:__sd_res_30, 32:minutes, 33:__nullchk_32, 34:__sd_any_33, 35:__sd_res_34, 36:seconds, 37:__nullchk_36, 38:__sd_any_37, 39:__sd_res_38, 40:milliseconds, 41:__nullchk_40, 42:__sd_any_41, 43:__sd_res_42, 44:__prop_assign_43, 45:__prop_recv_44, 46:__prop_assign_45, 47:__prop_recv_46, 48:__prop_assign_47, 49:__prop_recv_48, 50:__prop_assign_49, 51:__prop_recv_50, 52:__prop_assign_51, 53:__prop_recv_52, 54:__boxed_globalLocale, 55:__boxed_hookCallback, 56:__prop_assign_55, 57:__prop_recv_56, 58:__emc_recv_57, 59:__emc_args_58; body: [{\"op\":\"i32.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"ref.null.extern\"},{\"op\":\"ref.null.extern\"},{\"op\":\"struct.new\",\"typeIdx\":189},{\"op\":\"local.set\",\"index\":1},{\"op\":\"global.get\",\"index\":1617},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"ref.func\",\"funcIdx\":2097512},{\"op\":\"i32.const\",\"value\":10},{\"op\":\"struct.new\",\"typeIdx\":191},{\"op\":\"extern.convert_any\"},{\"op\":\"global.set\",\"index\":1617}],\"else\":[]},{\"op\":\"global.get\",\"index\":1617},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.cast\",\"typeIdx\":191},{\"op\":\"extern.convert_any\"},{\"op\":\"local.set\",\"index\":2},{\"op\":\"local.get\",\"index\":1},{\"op\":\"extern.convert_any\"},{\"op\":\"local.get\",\"index\":2},{\"op\":\"call\",\"funcIdx\":76},{\"op\":\"local.get\",\"index\":17},{\"op\":\"local.get\",\"index\":0},{\"op\":\"call\",\"funcIdx\":2097239},{\"op\":\"local.tee\",\"index\":3},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1268},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":5},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097448},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":4},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":10},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1269},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":10},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":11},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097474},{\"op\":\"local.tee\",\"index\":12},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":9},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":14},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1270},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":14},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":15},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097449},{\"op\":\"local.tee\",\"index\":16},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":13},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":18},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1271},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":18},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":19},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097475},{\"op\":\"local.tee\",\"index\":20},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":21},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1272},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":21},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":22},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097476},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.tee\",\"index\":23},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":17},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":25},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1273},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":25},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":26},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097446},{\"op\":\"local.tee\",\"index\":27},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":24},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":29},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1274},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":29},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":30},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097450},{\"op\":\"local.tee\",\"index\":31},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":28},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":33},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1275},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":33},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":34},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097451},{\"op\":\"local.tee\",\"index\":35},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":32},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":37},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1276},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":37},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":38},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097452},{\"op\":\"local.tee\",\"index\":39},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":36},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":41},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1277},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":41},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":42},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097453},{\"op\":\"local.tee\",\"index\":43},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":40},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":80},{\"op\":\"local.get\",\"index\":50},{\"op\":\"local.get\",\"index\":3},{\"op\":\"call\",\"funcIdx\":2097470},{\"op\":\"local.set\",\"index\":44},{\"op\":\"local.tee\",\"index\":45},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1343},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":45},{\"op\":\"local.get\",\"index\":44},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":0}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":40},{\"op\":\"local.get\",\"index\":36},{\"op\":\"f64.const\",\"value\":1000},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":32},{\"op\":\"f64.const\",\"value\":60000},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":28},{\"op\":\"f64.const\",\"value\":1000},{\"op\":\"f64.mul\"},{\"op\":\"f64.const\",\"value\":60},{\"op\":\"f64.mul\"},{\"op\":\"f64.const\",\"value\":60},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":46},{\"op\":\"local.tee\",\"index\":47},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1344},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":47},{\"op\":\"local.get\",\"index\":46},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":1}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":24},{\"op\":\"local.get\",\"index\":17},{\"op\":\"f64.const\",\"value\":7},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":48},{\"op\":\"local.tee\",\"index\":49},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1345},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":49},{\"op\":\"local.get\",\"index\":48},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":2}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":13},{\"op\":\"local.get\",\"index\":9},{\"op\":\"f64.const\",\"value\":3},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":4},{\"op\":\"f64.const\",\"value\":12},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":50},{\"op\":\"local.tee\",\"index\":51},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1346},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":51},{\"op\":\"local.get\",\"index\":50},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":3}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":68},{\"op\":\"local.set\",\"index\":52},{\"op\":\"local.tee\",\"index\":53},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1347},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":53},{\"op\":\"local.get\",\"index\":52},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":4}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":68},{\"op\":\"struct.new\",\"typeIdx\":42},{\"op\":\"local.tee\",\"index\":54},{\"op\":\"local.get\",\"index\":66},{\"op\":\"local.get\",\"index\":65},{\"op\":\"local.get\",\"index\":67},{\"op\":\"local.get\",\"index\":5},{\"op\":\"local.get\",\"index\":121},{\"op\":\"struct.new\",\"typeIdx\":42},{\"op\":\"local.tee\",\"index\":55},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"call\",\"funcIdx\":2097393},{\"op\":\"local.set\",\"index\":56},{\"op\":\"local.tee\",\"index\":57},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1348},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":57},{\"op\":\"local.get\",\"index\":56},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":5}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"extern.convert_any\"},{\"op\":\"local.set\",\"index\":58},{\"op\":\"call\",\"funcIdx\":42},{\"op\":\"local.set\",\"index\":59},{\"op\":\"local.get\",\"index\":58},{\"op\":\"global.get\",\"index\":1281},{\"op\":\"local.get\",\"index\":59},{\"op\":\"call\",\"funcIdx\":44},{\"op\":\"drop\"},{\"op\":\"local.get\",\"index\":1}]) (at src/codegen/stack-balance.ts:274:13)"
           }
         },
         "errors": [
           {
-            "message": "Binary emit error: RangeError: Codegen error: local index out of range — 17 (valid: [0, 11)) at function 'normalizeObjectUnits'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/user/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/user/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:1016:44)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:960:35)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:948:35)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:954:35)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:948:35)\n    at encodeInstrWithSourceMap (/home/user/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/user/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/user/js2/src/emit/binary.ts:524:7)"
+            "message": "Codegen error: stack-balance invariant (entry): '__fnctor_Duration_new' references local 80, but only 1 params + 59 locals are declared (locals: 1:__self, 2:__fnctor_ctor_1, 3:normalizedInput, 4:years, 5:__nullchk_4, 6:__sd_any_5, 7:__sd_res_6, 8:__tmp_7, 9:quarters, 10:__nullchk_9, 11:__sd_any_10, 12:__sd_res_11, 13:months, 14:__nullchk_13, 15:__sd_any_14, 16:__sd_res_15, 17:weeks, 18:__nullchk_17, 19:__sd_any_18, 20:__sd_res_19, 21:__nullchk_20, 22:__sd_any_21, 23:__sd_res_22, 24:days, 25:__nullchk_24, 26:__sd_any_25, 27:__sd_res_26, 28:hours, 29:__nullchk_28, 30:__sd_any_29, 31:__sd_res_30, 32:minutes, 33:__nullchk_32, 34:__sd_any_33, 35:__sd_res_34, 36:seconds, 37:__nullchk_36, 38:__sd_any_37, 39:__sd_res_38, 40:milliseconds, 41:__nullchk_40, 42:__sd_any_41, 43:__sd_res_42, 44:__prop_assign_43, 45:__prop_recv_44, 46:__prop_assign_45, 47:__prop_recv_46, 48:__prop_assign_47, 49:__prop_recv_48, 50:__prop_assign_49, 51:__prop_recv_50, 52:__prop_assign_51, 53:__prop_recv_52, 54:__boxed_globalLocale, 55:__boxed_hookCallback, 56:__prop_assign_55, 57:__prop_recv_56, 58:__emc_recv_57, 59:__emc_args_58; body: [{\"op\":\"i32.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"ref.null.extern\"},{\"op\":\"ref.null.extern\"},{\"op\":\"struct.new\",\"typeIdx\":189},{\"op\":\"local.set\",\"index\":1},{\"op\":\"global.get\",\"index\":1617},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"ref.func\",\"funcIdx\":2097512},{\"op\":\"i32.const\",\"value\":10},{\"op\":\"struct.new\",\"typeIdx\":191},{\"op\":\"extern.convert_any\"},{\"op\":\"global.set\",\"index\":1617}],\"else\":[]},{\"op\":\"global.get\",\"index\":1617},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.cast\",\"typeIdx\":191},{\"op\":\"extern.convert_any\"},{\"op\":\"local.set\",\"index\":2},{\"op\":\"local.get\",\"index\":1},{\"op\":\"extern.convert_any\"},{\"op\":\"local.get\",\"index\":2},{\"op\":\"call\",\"funcIdx\":76},{\"op\":\"local.get\",\"index\":17},{\"op\":\"local.get\",\"index\":0},{\"op\":\"call\",\"funcIdx\":2097239},{\"op\":\"local.tee\",\"index\":3},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1268},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":5},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097448},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":4},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":10},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1269},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":10},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":11},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097474},{\"op\":\"local.tee\",\"index\":12},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":9},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":14},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1270},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":14},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":15},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097449},{\"op\":\"local.tee\",\"index\":16},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":13},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":18},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1271},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":18},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":19},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097475},{\"op\":\"local.tee\",\"index\":20},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":21},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1272},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":21},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":22},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097476},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.tee\",\"index\":23},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":17},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":25},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1273},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":25},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":26},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097446},{\"op\":\"local.tee\",\"index\":27},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":24},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":29},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1274},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":29},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":30},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097450},{\"op\":\"local.tee\",\"index\":31},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":28},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":33},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1275},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":33},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":34},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097451},{\"op\":\"local.tee\",\"index\":35},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":32},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":37},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1276},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":37},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":38},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097452},{\"op\":\"local.tee\",\"index\":39},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":36},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":41},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1277},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":41},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":42},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097453},{\"op\":\"local.tee\",\"index\":43},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":40},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":80},{\"op\":\"local.get\",\"index\":50},{\"op\":\"local.get\",\"index\":3},{\"op\":\"call\",\"funcIdx\":2097470},{\"op\":\"local.set\",\"index\":44},{\"op\":\"local.tee\",\"index\":45},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1343},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":45},{\"op\":\"local.get\",\"index\":44},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":0}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":40},{\"op\":\"local.get\",\"index\":36},{\"op\":\"f64.const\",\"value\":1000},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":32},{\"op\":\"f64.const\",\"value\":60000},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":28},{\"op\":\"f64.const\",\"value\":1000},{\"op\":\"f64.mul\"},{\"op\":\"f64.const\",\"value\":60},{\"op\":\"f64.mul\"},{\"op\":\"f64.const\",\"value\":60},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":46},{\"op\":\"local.tee\",\"index\":47},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1344},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":47},{\"op\":\"local.get\",\"index\":46},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":1}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":24},{\"op\":\"local.get\",\"index\":17},{\"op\":\"f64.const\",\"value\":7},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":48},{\"op\":\"local.tee\",\"index\":49},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1345},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":49},{\"op\":\"local.get\",\"index\":48},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":2}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":13},{\"op\":\"local.get\",\"index\":9},{\"op\":\"f64.const\",\"value\":3},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":4},{\"op\":\"f64.const\",\"value\":12},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":50},{\"op\":\"local.tee\",\"index\":51},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1346},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":51},{\"op\":\"local.get\",\"index\":50},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":3}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":68},{\"op\":\"local.set\",\"index\":52},{\"op\":\"local.tee\",\"index\":53},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1347},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":53},{\"op\":\"local.get\",\"index\":52},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":4}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":68},{\"op\":\"struct.new\",\"typeIdx\":42},{\"op\":\"local.tee\",\"index\":54},{\"op\":\"local.get\",\"index\":66},{\"op\":\"local.get\",\"index\":65},{\"op\":\"local.get\",\"index\":67},{\"op\":\"local.get\",\"index\":5},{\"op\":\"local.get\",\"index\":121},{\"op\":\"struct.new\",\"typeIdx\":42},{\"op\":\"local.tee\",\"index\":55},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"call\",\"funcIdx\":2097393},{\"op\":\"local.set\",\"index\":56},{\"op\":\"local.tee\",\"index\":57},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1348},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":57},{\"op\":\"local.get\",\"index\":56},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":5}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"extern.convert_any\"},{\"op\":\"local.set\",\"index\":58},{\"op\":\"call\",\"funcIdx\":42},{\"op\":\"local.set\",\"index\":59},{\"op\":\"local.get\",\"index\":58},{\"op\":\"global.get\",\"index\":1281},{\"op\":\"local.get\",\"index\":59},{\"op\":\"call\",\"funcIdx\":44},{\"op\":\"drop\"},{\"op\":\"local.get\",\"index\":1}]) (at src/codegen/stack-balance.ts:274:13)"
           }
         ]
       },
       "validation": {
         "validates": false,
-        "firstError": "Binary emit error: RangeError: Codegen error: local index out of range — 17 (valid: [0, 11)) at function 'normalizeObjectUnits'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/user/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/user/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:1016:44)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:960:35)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:948:35)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:954:35)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:948:35)\n    at encodeInstrWithSourceMap (/home/user/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/user/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/user/js2/src/emit/binary.ts:524:7)"
+        "firstError": "Codegen error: stack-balance invariant (entry): '__fnctor_Duration_new' references local 80, but only 1 params + 59 locals are declared (locals: 1:__self, 2:__fnctor_ctor_1, 3:normalizedInput, 4:years, 5:__nullchk_4, 6:__sd_any_5, 7:__sd_res_6, 8:__tmp_7, 9:quarters, 10:__nullchk_9, 11:__sd_any_10, 12:__sd_res_11, 13:months, 14:__nullchk_13, 15:__sd_any_14, 16:__sd_res_15, 17:weeks, 18:__nullchk_17, 19:__sd_any_18, 20:__sd_res_19, 21:__nullchk_20, 22:__sd_any_21, 23:__sd_res_22, 24:days, 25:__nullchk_24, 26:__sd_any_25, 27:__sd_res_26, 28:hours, 29:__nullchk_28, 30:__sd_any_29, 31:__sd_res_30, 32:minutes, 33:__nullchk_32, 34:__sd_any_33, 35:__sd_res_34, 36:seconds, 37:__nullchk_36, 38:__sd_any_37, 39:__sd_res_38, 40:milliseconds, 41:__nullchk_40, 42:__sd_any_41, 43:__sd_res_42, 44:__prop_assign_43, 45:__prop_recv_44, 46:__prop_assign_45, 47:__prop_recv_46, 48:__prop_assign_47, 49:__prop_recv_48, 50:__prop_assign_49, 51:__prop_recv_50, 52:__prop_assign_51, 53:__prop_recv_52, 54:__boxed_globalLocale, 55:__boxed_hookCallback, 56:__prop_assign_55, 57:__prop_recv_56, 58:__emc_recv_57, 59:__emc_args_58; body: [{\"op\":\"i32.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"ref.null.extern\"},{\"op\":\"ref.null.extern\"},{\"op\":\"struct.new\",\"typeIdx\":189},{\"op\":\"local.set\",\"index\":1},{\"op\":\"global.get\",\"index\":1617},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"ref.func\",\"funcIdx\":2097512},{\"op\":\"i32.const\",\"value\":10},{\"op\":\"struct.new\",\"typeIdx\":191},{\"op\":\"extern.convert_any\"},{\"op\":\"global.set\",\"index\":1617}],\"else\":[]},{\"op\":\"global.get\",\"index\":1617},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.cast\",\"typeIdx\":191},{\"op\":\"extern.convert_any\"},{\"op\":\"local.set\",\"index\":2},{\"op\":\"local.get\",\"index\":1},{\"op\":\"extern.convert_any\"},{\"op\":\"local.get\",\"index\":2},{\"op\":\"call\",\"funcIdx\":76},{\"op\":\"local.get\",\"index\":17},{\"op\":\"local.get\",\"index\":0},{\"op\":\"call\",\"funcIdx\":2097239},{\"op\":\"local.tee\",\"index\":3},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1268},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":5},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097448},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":4},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":10},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1269},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":10},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":11},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097474},{\"op\":\"local.tee\",\"index\":12},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":9},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":14},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1270},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":14},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":15},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097449},{\"op\":\"local.tee\",\"index\":16},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":13},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":18},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1271},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":18},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":19},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097475},{\"op\":\"local.tee\",\"index\":20},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":21},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1272},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":21},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":22},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097476},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.tee\",\"index\":23},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":17},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":25},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1273},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":25},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":26},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097446},{\"op\":\"local.tee\",\"index\":27},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":24},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":29},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1274},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":29},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":30},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097450},{\"op\":\"local.tee\",\"index\":31},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":28},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":33},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1275},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":33},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":34},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097451},{\"op\":\"local.tee\",\"index\":35},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":32},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":37},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1276},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":37},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":38},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097452},{\"op\":\"local.tee\",\"index\":39},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":36},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":41},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1277},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":41},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":42},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097453},{\"op\":\"local.tee\",\"index\":43},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":40},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":80},{\"op\":\"local.get\",\"index\":50},{\"op\":\"local.get\",\"index\":3},{\"op\":\"call\",\"funcIdx\":2097470},{\"op\":\"local.set\",\"index\":44},{\"op\":\"local.tee\",\"index\":45},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1343},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":45},{\"op\":\"local.get\",\"index\":44},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":0}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":40},{\"op\":\"local.get\",\"index\":36},{\"op\":\"f64.const\",\"value\":1000},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":32},{\"op\":\"f64.const\",\"value\":60000},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":28},{\"op\":\"f64.const\",\"value\":1000},{\"op\":\"f64.mul\"},{\"op\":\"f64.const\",\"value\":60},{\"op\":\"f64.mul\"},{\"op\":\"f64.const\",\"value\":60},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":46},{\"op\":\"local.tee\",\"index\":47},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1344},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":47},{\"op\":\"local.get\",\"index\":46},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":1}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":24},{\"op\":\"local.get\",\"index\":17},{\"op\":\"f64.const\",\"value\":7},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":48},{\"op\":\"local.tee\",\"index\":49},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1345},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":49},{\"op\":\"local.get\",\"index\":48},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":2}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":13},{\"op\":\"local.get\",\"index\":9},{\"op\":\"f64.const\",\"value\":3},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":4},{\"op\":\"f64.const\",\"value\":12},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":50},{\"op\":\"local.tee\",\"index\":51},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1346},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":51},{\"op\":\"local.get\",\"index\":50},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":3}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":68},{\"op\":\"local.set\",\"index\":52},{\"op\":\"local.tee\",\"index\":53},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1347},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":53},{\"op\":\"local.get\",\"index\":52},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":4}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":68},{\"op\":\"struct.new\",\"typeIdx\":42},{\"op\":\"local.tee\",\"index\":54},{\"op\":\"local.get\",\"index\":66},{\"op\":\"local.get\",\"index\":65},{\"op\":\"local.get\",\"index\":67},{\"op\":\"local.get\",\"index\":5},{\"op\":\"local.get\",\"index\":121},{\"op\":\"struct.new\",\"typeIdx\":42},{\"op\":\"local.tee\",\"index\":55},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"call\",\"funcIdx\":2097393},{\"op\":\"local.set\",\"index\":56},{\"op\":\"local.tee\",\"index\":57},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1348},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":57},{\"op\":\"local.get\",\"index\":56},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":5}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"extern.convert_any\"},{\"op\":\"local.set\",\"index\":58},{\"op\":\"call\",\"funcIdx\":42},{\"op\":\"local.set\",\"index\":59},{\"op\":\"local.get\",\"index\":58},{\"op\":\"global.get\",\"index\":1281},{\"op\":\"local.get\",\"index\":59},{\"op\":\"call\",\"funcIdx\":44},{\"op\":\"drop\"},{\"op\":\"local.get\",\"index\":1}]) (at src/codegen/stack-balance.ts:274:13)"
       },
       "tests": {
         "kind": "upstream-suite",
         "status": "not-integrated",
         "reason": "not shipped in npm tarball; adapter pending"
+      },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
       },
       "perf": null,
       "knownBugs": [],
@@ -1254,7 +1431,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": false,
-        "durationMs": 180095,
+        "durationMs": 180129,
         "timedOut": true,
         "timeoutMs": 180000,
         "errorCount": 0,
@@ -1275,6 +1452,10 @@
         "status": "not-integrated",
         "reason": "not shipped in npm tarball; adapter pending"
       },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
+      },
       "perf": null,
       "knownBugs": [],
       "weeklyDownloads": 12487515
@@ -1287,21 +1468,25 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 9595,
+        "durationMs": 5890,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
-        "binaryBytes": 206800,
+        "binaryBytes": 191572,
         "categories": {}
       },
       "validation": {
         "validates": false,
-        "firstError": "WebAssembly.Module(): Compiling function #212:\"nt\" failed: local.tee[0] expected type (ref null 205), found local.get of type i32 @+99408"
+        "firstError": "WebAssembly.Module(): Compiling function #216:\"nt\" failed: local.tee[0] expected type (ref null 193), found local.get of type i32 @+97603"
       },
       "tests": {
         "kind": "upstream-suite",
         "status": "not-integrated",
         "reason": "not shipped in npm tarball; adapter pending"
+      },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
       },
       "perf": null,
       "knownBugs": [],
@@ -1315,14 +1500,14 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 50089,
+        "durationMs": 8396,
         "timedOut": false,
         "timeoutMs": 120000,
-        "errorCount": 152,
+        "errorCount": 7,
         "binaryBytes": 0,
         "categories": {
           "compiler-diagnostic": {
-            "count": 152,
+            "count": 7,
             "sample": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
           }
         },
@@ -1334,442 +1519,7 @@
             "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
           },
           {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
             "message": "async shape not supported: this suspension point (await / for-await) sits inside a `try` whose overall body shape the async engine cannot drive yet, and the synchronous fallback would SILENTLY drop awaited rejections (execution would continue past a rejected await; catch/finally would not run). Restructure toward canonical awaits — top-level `await p` / `const x = await p` / `return await p` statements, try/catch(/finally) without awaits in loops/conditions inside the try — or hoist the await out of the try (#3587)"
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
           },
           {
             "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
@@ -1794,6 +1544,10 @@
         "status": "not-integrated",
         "reason": "not shipped in npm tarball; adapter pending"
       },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
+      },
       "perf": null,
       "knownBugs": [],
       "weeklyDownloads": 10427988
@@ -1801,12 +1555,12 @@
     {
       "name": "lit",
       "version": "3.3.3",
-      "issue": null,
+      "issue": 3977,
       "entryFile": "index.js",
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 2434,
+        "durationMs": 1611,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -1817,10 +1571,23 @@
         "validates": true,
         "firstError": null
       },
+      "entryIsBarrel": true,
       "tests": {
         "kind": "upstream-suite",
-        "status": "not-integrated",
-        "reason": "not shipped in npm tarball; adapter pending"
+        "passed": 7,
+        "total": 16,
+        "passRatePct": 43.75,
+        "admitted": 583,
+        "upstreamTestsSeen": 587,
+        "harnessIncompatible": 557,
+        "implementationInvalidTests": 448,
+        "sourceIssue": 3977
+      },
+      "correctness": {
+        "status": "divergent",
+        "passed": 7,
+        "total": 16,
+        "reason": "9 of 16 operations diverged from native node"
       },
       "perf": null,
       "knownBugs": [],

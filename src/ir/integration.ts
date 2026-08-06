@@ -23,6 +23,7 @@
 // That's the whole point of the symbolic-ref design — spec #1131 §1.2.
 
 import { ts } from "../ts-api.js";
+import { acceptsStaticNumericArrayParam, staticNumericArrayGlobalMatches } from "./select-vector-slots.js";
 import { makeIrHostDateSnapshotResolver } from "./host-date.js";
 import { supportsIrBackendTargetCapability, type IrBackendTargetCapability } from "./backend/legality.js";
 
@@ -65,16 +66,20 @@ import {
 import { JsTag, jsTagUnboxKind } from "./js-tag.js";
 import {
   ensureVecElemSet,
+  ensureVecElemSetForElement,
   ensureVecNewSized,
+  ensureVecNewSizedForElement,
   VEC_ELEM_SET_PREFIX,
   VEC_NEW_SIZED_PREFIX,
 } from "../codegen/vec-elem-set.js"; // (#2856 C2) on-demand vec helpers
 import { classMemberFuncKey } from "../codegen/class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
+import { ensureNativeStringHelpers } from "../codegen/native-strings.js";
 import {
-  ensureNativeStringHelpers,
+  nativeStringLiteralMaterialization,
   nativeStringLiteralInstrs,
+  type NativeStringLiteralMaterialization,
   type StringEncoding,
-} from "../codegen/native-strings.js";
+} from "../codegen/native-string-literals.js";
 import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "../codegen/regexp-runtime-contract.js";
 import { ensureStandaloneRegExpCarrierTestHelper } from "../codegen/regexp-standalone.js";
 import { addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "../codegen/registry/imports.js";
@@ -82,11 +87,13 @@ import {
   planProgramAbiSupportCallableAlias,
   planProgramAbiSupportCallable,
   planProgramAbiGlobal,
-  planProgramAbiUnitCallable,
   PROGRAM_ABI_CALLABLE_ROLE,
   PROGRAM_ABI_GLOBAL_ROLE,
 } from "../codegen/program-abi-planning.js";
-import { catalogProgramAbiCallableImports } from "../codegen/program-abi-import-planning.js";
+import {
+  catalogProgramAbiCallableImports,
+  programAbiStringConstantRef,
+} from "../codegen/program-abi-import-planning.js";
 // (#2856) Console-variant parity with the legacy collectConsoleImports scan.
 import { isBooleanType, isNumberType, isStringType } from "../checker/type-mapper.js";
 import {
@@ -97,16 +104,19 @@ import {
 } from "../codegen/registry/types.js";
 import type { CodegenContext, FunctionContext } from "../codegen/context/types.js";
 import { applyIrTailCalls } from "../codegen/ir-tail-call.js";
+import { lowerPreparedIrAsyncFunction } from "../codegen/ir-async-frame.js";
+import { preparedIrAsyncFromAstResolver } from "../codegen/async-ir-planning.js";
 import {
   getFuncRefWrapperRootTypeIdx,
   getOrCreateFuncRefWrapperTypes,
 } from "../codegen/closures/funcref-wrapper-types.js";
 import { ensureFmod, FMOD_FN } from "../codegen/fmod.js"; // #2945 — on-demand `%` helper materialization
-// (#3156) — on-demand guarded charCodeAt helper materialization
 import {
   ensureHostCharCodeAtGuarded,
+  ensureHostSubstringGuarded,
   ensureNativeCharCodeAtHelper,
   JSSTR_CHARCODEAT_FN,
+  JSSTR_SUBSTRING_FN,
   NATIVE_CHARCODEAT_FN,
 } from "../codegen/char-code-at-helpers.js";
 import {
@@ -117,6 +127,7 @@ import {
   type LoweredFunctionResult,
   type ModuleBindingGlobal,
 } from "./from-ast.js";
+import { prepareSuspendingIrFunction } from "./async-prepare.js";
 import {
   collectIrDirectCallLoweringPlans,
   type IrDirectCallLoweringPlan,
@@ -143,8 +154,8 @@ import {
 import {
   buildIrUnitInventory,
   indexIrTerminalDeclarations,
-  type IrBindingId,
   type IrClassId,
+  type IrUnitInventory,
   type IrUnitId,
 } from "./identity.js";
 import type { ProgramAbiDerivedUnitRecord } from "./program-abi.js";
@@ -155,6 +166,15 @@ import {
   type IrPlanningIdentityContext,
 } from "./planning-identity.js";
 import { validateIrIntegrationPopulation } from "./integration-identity.js";
+import {
+  preparedUnitProgramAbiBinding,
+  resolvePreparedSupportCallable,
+  resolvePreparedUnitCallable,
+  settlePreparedDerivedCallable,
+  type PreparedIrUnitCallableSlot,
+} from "./prepared-callable-resolution.js";
+export { exactPreparedUnitCallableBindingId } from "./prepared-callable-resolution.js";
+import { prepareIrVectorSupport } from "./prepared-vector-support.js";
 import {
   makeIrArrayExpressionPredicate,
   makeIrDeclaredPrimitiveExpressionClassifier,
@@ -185,6 +205,7 @@ import {
   forEachInstrDeep, // (#2949 slice 3) deep instr walk for preregisterDynamicSupport
   irVal,
   irTypeEquals,
+  mapNestedBuffers,
   type IrClassMemberKind,
   type IrClassShape,
   type IrClosureSignature,
@@ -192,8 +213,10 @@ import {
   type IrFunction,
   type IrGlobalRef,
   type IrInstr,
+  type IrInstrStringConst,
   type IrModule,
   type IrObjectShape,
+  type IrStringLengthProvider,
   type IrType,
   type IrTypeRef,
 } from "./nodes.js";
@@ -214,10 +237,15 @@ import {
   type IrSelection,
 } from "./select.js";
 import { verifyIrFunction } from "./verify.js";
+import { prepareIrRuntimeManifest, type PreparedIrRuntimeManifest } from "./intrinsic-support.js";
+import { isIntrinsicId, type IntrinsicId } from "./intrinsics.js";
+import { materializePreparedMathProviders, preparedMathProviderIndex } from "./math-runtime-providers.js";
+import { materializePreparedAsyncHostAdapters } from "../codegen/ir-async-runtime-adapters.js";
+import type { RuntimeProviderPlan } from "./runtime-manifest.js";
 import { AllocSiteRegistry, ALLOC_NAMESPACES } from "./alloc-registry.js";
 import { analyzeEncoding } from "./analysis/encoding.js";
-import { assertAllocProvenance } from "./verify-alloc.js";
-import type { FieldDef, FuncTypeDef, GlobalDef, Import, Instr, StructTypeDef, ValType } from "./types.js";
+import { assertAllocProvenance, assertFinalAllocProvenance } from "./verify-alloc.js";
+import type { FieldDef, FuncTypeDef, GlobalDef, Import, Instr, StructTypeDef, ValType, WasmFunction } from "./types.js";
 import {
   definedFuncAt,
   definedFuncHandleOf,
@@ -242,6 +270,31 @@ import {
   type IrIntegrationReport,
   type IrIntegrationTerminalFailureEvent,
 } from "./integration-report.js";
+import {
+  allocatePreparedDerivedCallableSlots,
+  lowerPreparedClosureSupportType,
+  prepareDependencyCompleteClosureSupport,
+  type PreparedDerivedCallableSlot,
+} from "./prepared-closure-support.js";
+import { sealDependencyCompletePreparedComponents } from "./prepared-component-sealing.js";
+import { attachIrStringCarrier } from "./string-carrier.js";
+import { attachIrStringSupport } from "./string-support.js";
+import {
+  IR_ASYNC_CLOCK_SNAPSHOT_FN,
+  IR_ASYNC_CONSOLE_LOG_STRING_FN,
+  IR_ASYNC_NUMBER_TO_STRING_FN,
+  IR_ASYNC_STRING_CONCAT_5_FN,
+} from "./async-semantic-runtime.js";
+import { IR_VEC_ELEM_SET_PREFIX, IR_VEC_NEW_SIZED_PREFIX, parseIrVectorRuntimeElement } from "./vector-runtime.js";
+import {
+  IR_STRING_CHAR_AT_FN,
+  IR_STRING_CHAR_CODE_AT_FN,
+  IR_STRING_CONCAT_FN,
+  IR_STRING_CONCAT_OWNED_FN,
+  IR_STRING_EQUALS_FN,
+  IR_STRING_ITERATOR_CHAR_AT_FN,
+  IR_STRING_LITERAL_MATERIALIZE_FN,
+} from "./string-runtime.js";
 export {
   buildIrIntegrationReport,
   caughtIntegrationFailure,
@@ -254,6 +307,43 @@ export {
   type IrIntegrationTerminalFailureEvent,
   type IrIntegrationTerminalEvidence,
 } from "./integration-report.js";
+
+function prepareSuspendingAsyncLowering(
+  lowered: LoweredFunctionResult,
+  ownerUnitId: IrUnitId,
+  name: string,
+  suspendingOwners: ReadonlySet<IrUnitId> | undefined,
+): LoweredFunctionResult {
+  if (!suspendingOwners?.has(ownerUnitId)) return lowered;
+  const prepared = prepareSuspendingIrFunction(lowered.main);
+  if (!prepared) {
+    throw new IrUnsupportedError(
+      "body-shape-rejected",
+      "build",
+      `async-plan producer could not split the certified suspending body ${name}`,
+    );
+  }
+  return {
+    main: prepared.main,
+    lifted: [...lowered.lifted, ...prepared.stateFunctions],
+    liftedUnitProvenance: [...lowered.liftedUnitProvenance, ...prepared.provenance],
+  };
+}
+
+function isLiftedExecutableRole(role: ProgramAbiDerivedUnitRecord["role"]): boolean {
+  return role === "lifted-closure" || role === "ir-async-state";
+}
+
+function lowerIrEntryFunction(
+  ctx: CodegenContext,
+  fn: IrFunction,
+  resolver: IrLowerResolver,
+  existing: WasmFunction,
+): WasmFunction {
+  return fn.asyncPlan
+    ? lowerPreparedIrAsyncFunction(ctx, fn, { resolveFunc: (ref) => resolver.resolveFunc(ref) }, existing)
+    : lowerIrFunctionToWasm(fn, resolver).func;
+}
 
 /**
  * Find checker-certified ambient Date snapshots in owners that have already
@@ -310,6 +400,192 @@ export interface IrTypeOverrideMap {
   // void-returning function (zero Wasm result types). Plumbs through to
   // `from-ast.ts` so the IR builder can be constructed with `[]` results.
   get(name: string): { readonly params: readonly IrType[]; readonly returnType: IrType | null } | undefined;
+}
+
+export interface IrIntegrationOptions {
+  /**
+   * Derive post-pass R2 components and seal every dependency-complete ABI
+   * component before lowering. Components with still-implicit runtime/layout
+   * support retain the established transitional route.
+   */
+  readonly sealPreparedComponents?: boolean;
+}
+
+interface BuiltFn {
+  /** Exact pass-created/source artifact identity. */
+  readonly artifactUnitId: IrUnitId;
+  /** Exact R0 terminal owner; labels below are compatibility metadata only. */
+  readonly terminalOwnerUnitId: IrUnitId;
+  readonly name: string;
+  /** Public/legacy terminal-owner label; synthesized artifacts never become rows. */
+  readonly ownerName: string;
+  readonly fn: IrFunction;
+  /** Complete Program ABI provenance when this artifact was lifted from a source unit. */
+  readonly derivedUnit?: ProgramAbiDerivedUnitRecord;
+  /** True when a pass-created artifact owns a fresh callable slot. */
+  readonly synthesized?: boolean;
+  /** True when the artifact patches a preallocated class-member slot. */
+  readonly classMember?: boolean;
+  /** True when the artifact patches the exact module-initializer slot. */
+  readonly moduleInit?: boolean;
+}
+
+interface PreparedClosureTransaction {
+  readonly registry: ClosureStructRegistry;
+  readonly freshSlots: readonly PreparedDerivedCallableSlot[];
+  readonly componentIds: ReadonlyMap<IrUnitId, string>;
+  bindLowerResolver(resolver: IrLowerResolver): void;
+}
+
+function prepareClosureTransaction(input: {
+  readonly ctx: CodegenContext;
+  readonly entries: readonly BuiltFn[];
+  readonly originalArtifactUnitIds: ReadonlySet<IrUnitId>;
+  readonly inventory: IrUnitInventory;
+  readonly callableImports: ReadonlyMap<string, Import>;
+  readonly onSealFailure: (terminalUnitId: IrUnitId, error: IrInvariantError) => void;
+}): PreparedClosureTransaction {
+  let resolveValType: (type: IrType) => ValType = (type) => lowerPreparedClosureSupportType(input.ctx, type);
+  const registry = new ClosureStructRegistry(input.ctx, (type) => resolveValType(type));
+  const closureSupport = prepareDependencyCompleteClosureSupport(input.ctx, input.entries, registry);
+  const freshSlots = allocatePreparedDerivedCallableSlots(
+    input.ctx,
+    input.entries,
+    input.originalArtifactUnitIds,
+    registry,
+  );
+  const componentIds = sealDependencyCompletePreparedComponents({
+    ctx: input.ctx,
+    entries: input.entries,
+    inventory: input.inventory,
+    closureSupport,
+    callableImports: input.callableImports,
+    onSealFailure: input.onSealFailure,
+  });
+  return {
+    registry,
+    freshSlots,
+    componentIds,
+    bindLowerResolver: (resolver) => {
+      resolveValType = (type) => lowerIrTypeToValType(type, resolver, "<closure-registry>");
+    },
+  };
+}
+
+function prepareBuiltFnRuntimeManifest(
+  ctx: CodegenContext,
+  sourceFile: string,
+  entries: readonly BuiltFn[],
+): { readonly entries: readonly BuiltFn[]; readonly runtime?: PreparedIrRuntimeManifest } {
+  const runtime = prepareIrRuntimeManifest({
+    functions: entries.map((entry) => entry.fn),
+    sourceFile,
+    policy: {
+      target: ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : ctx.strictNoHostImports ? "strict-no-host" : "host",
+      backend: "wasmgc",
+    },
+  });
+  if (!runtime) return { entries };
+  const preparedByUnitId = new Map(runtime.functions.map((fn) => [fn.unitId, fn] as const));
+  const preparedEntries = entries.map((entry) => {
+    const fn = preparedByUnitId.get(entry.artifactUnitId);
+    if (!fn) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `runtime-manifest preparation lost artifact ${entry.artifactUnitId} / ${entry.name}`,
+      );
+    }
+    return fn === entry.fn ? entry : { ...entry, fn };
+  });
+  materializePreparedMathProviders(ctx, runtime);
+  materializePreparedAsyncHostAdapters(ctx, runtime.functions);
+  return { entries: preparedEntries, runtime };
+}
+
+/** Test-only negative control for the required #4113 final gate. */
+function injectFinalAllocProvenanceFailure(
+  fn: IrFunction,
+  compatibilityName: string,
+  artifactKind: "ordinary" | "synthetic" | "monomorphized",
+): IrFunction {
+  const selector = process.env.JS2WASM_TEST_INJECT_IR_FINAL_ALLOC_FAILURE;
+  if (selector === undefined || (selector !== "1" && selector !== compatibilityName && selector !== artifactKind)) {
+    return fn;
+  }
+
+  let removed = false;
+  const rewriteInstr = (instr: IrInstr): IrInstr => {
+    const withNested = mapNestedBuffers(instr, (buffer) => {
+      const rewritten = buffer.map(rewriteInstr);
+      return rewritten.some((candidate, index) => candidate !== buffer[index]) ? rewritten : buffer;
+    });
+    if (removed || withNested.alloc === undefined) return withNested;
+    const { alloc: _removedAlloc, ...withoutAlloc } = withNested;
+    removed = true;
+    return withoutAlloc as IrInstr;
+  };
+  const blocks = fn.blocks.map((block) => {
+    const instrs = block.instrs.map(rewriteInstr);
+    return instrs.some((instr, index) => instr !== block.instrs[index]) ? { ...block, instrs } : block;
+  });
+  if (!removed) {
+    throw new Error(
+      `final allocation-provenance injection for ${compatibilityName} requires one allocation instruction`,
+    );
+  }
+  return { ...fn, blocks };
+}
+
+/**
+ * Require final provenance after all IR attachments and before component
+ * sealing, publication, or lowering. The collection includes source,
+ * synthetic, async-state, and monomorphized artifacts.
+ */
+function verifyFinalAllocArtifacts(
+  entries: readonly BuiltFn[],
+  registry: AllocSiteRegistry,
+  cloneOrigins: ReadonlyMap<IrUnitId, IrUnitId>,
+  onFailure: (entry: BuiltFn, error: unknown) => void,
+): BuiltFn[] {
+  const verified: BuiltFn[] = [];
+  for (const entry of entries) {
+    try {
+      const artifactKind = cloneOrigins.has(entry.artifactUnitId)
+        ? "monomorphized"
+        : entry.synthesized
+          ? "synthetic"
+          : "ordinary";
+      const fn = injectFinalAllocProvenanceFailure(entry.fn, entry.name, artifactKind);
+      assertFinalAllocProvenance(fn, registry);
+      verified.push(fn === entry.fn ? entry : { ...entry, fn });
+    } catch (error) {
+      onFailure(entry, error);
+    }
+  }
+  return verified;
+}
+
+function fillSealedPreparedCallable(
+  componentId: string,
+  previous: WasmFunction,
+  replacement: WasmFunction,
+): WasmFunction {
+  if (
+    previous.typeIdx !== replacement.typeIdx ||
+    previous.name !== replacement.name ||
+    previous.exported !== replacement.exported
+  ) {
+    throw new IrInvariantError(
+      "abi-type-index-mismatch",
+      "patch",
+      `prepared component ${componentId} cannot change the reserved callable contract for ${previous.name}`,
+    );
+  }
+  // The prepared ABI scope pins this allocator object before lowering.
+  previous.locals = replacement.locals;
+  previous.body = replacement.body;
+  return previous;
 }
 
 function makeAmbientStringBindingPredicate(checker: ts.TypeChecker): (node: ts.Identifier) => boolean {
@@ -405,6 +681,7 @@ export function compileIrPathFunctions(
   overrides?: IrTypeOverrideMap,
   classShapes?: ReadonlyMap<string, IrClassShape>,
   loweringPlans?: IrIntegrationLoweringPlans,
+  options?: IrIntegrationOptions,
 ): IrIntegrationReport {
   const jsHostExterns = !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports);
   const supportsBackendCapability = (capability: IrBackendTargetCapability): boolean =>
@@ -424,8 +701,7 @@ export function compileIrPathFunctions(
     allowHostExterns: jsHostExterns && !ctx.nativeStrings,
     allowBuiltinMapExtern: jsHostExterns && !ctx.nativeStrings,
   };
-  // Compatibility-only direct callers still receive one exact local planning
-  // context. Structural global refs must never fall back to declaration names.
+  // Direct compatibility callers share this context; structural globals never fall back to declaration names.
   const compatibilityInventory = loweringPlans
     ? undefined
     : buildIrUnitInventory([sourceFile], { entrySource: sourceFile, checker: ctx.checker });
@@ -463,7 +739,7 @@ export function compileIrPathFunctions(
     }
     const records = new Map<IrUnitId, ProgramAbiDerivedUnitRecord>();
     for (const provenance of result.liftedUnitProvenance) {
-      if (provenance.parentId !== parentUnitId || provenance.role !== "lifted-closure") {
+      if (provenance.parentId !== parentUnitId || !isLiftedExecutableRole(provenance.role)) {
         throw new IrInvariantError(
           "selection-preparation-mismatch",
           "build",
@@ -707,7 +983,7 @@ export function compileIrPathFunctions(
           `direct-call plan at ${sourceFile.fileName}:${call.pos} disagrees with exact integration identity`,
         );
       }
-      preparedDirectCalls.set(call, plan);
+      if (!existing) preparedDirectCalls.set(call, plan);
     }
     return preparedDirectCalls;
   };
@@ -766,45 +1042,6 @@ export function compileIrPathFunctions(
   // -------------------------------------------------------------------------
   // Phase 1 — Build: lower every selected AST function to an IrFunction.
   // -------------------------------------------------------------------------
-  interface BuiltFn {
-    /** Exact pass-created/source artifact identity. */
-    readonly artifactUnitId: IrUnitId;
-    /** Exact R0 terminal owner; labels below are compatibility metadata only. */
-    readonly terminalOwnerUnitId: IrUnitId;
-    readonly name: string;
-    /** Public/legacy terminal-owner label; synthesized artifacts never become rows. */
-    readonly ownerName: string;
-    readonly fn: IrFunction;
-    /** Complete Program ABI provenance when this artifact was lifted from a source unit. */
-    readonly derivedUnit?: ProgramAbiDerivedUnitRecord;
-    /**
-     * Slice 3 (#1169c): set when `fn` is a lifted closure or nested
-     * function rather than a top-level FunctionDeclaration. Synthesized
-     * fns have no ts.FunctionDeclaration and no pre-allocated funcIdx —
-     * the integration loop allocates a fresh slot in `ctx.mod.functions`
-     * (mirrors the monomorphize-clone path).
-     */
-    readonly synthesized?: boolean;
-    /**
-     * #1370 Phase B: marks instance class methods. The legacy
-     * `class-bodies.ts` already pre-allocated a typeIdx + signature for
-     * the slot; before patching the body, the Phase 3 loop verifies the
-     * IR-lowered typeIdx matches the existing one. On mismatch it skips
-     * the patch — the legacy body stays in place, callers' `call $...`
-     * ops keep working, and a warning is logged so the divergence is
-     * visible. This guard is unnecessary for top-level FunctionDeclarations
-     * where the slot's pre-allocated typeIdx is whatever the integration
-     * lowerer chose (no legacy callers depending on it).
-     */
-    readonly classMember?: boolean;
-    /**
-     * (#3142 Slice 2) The synthetic `<module-init>` unit. Its target slot is
-     * the legacy module-initializer function (resolved from its exact source
-     * unit through the allocator registry), patched in place with the same typeIdx
-     * parity guard class members use. Never allocated a fresh slot.
-     */
-    readonly moduleInit?: boolean;
-  }
   const built: BuiltFn[] = [];
   const requireArtifactUnitId = (declaration: ts.Node, displayName: string) => {
     const unitId =
@@ -859,7 +1096,7 @@ export function compileIrPathFunctions(
         );
       }
       const o = effectiveOverride(name);
-      const result = lowerFunctionAstToIr(stmt, {
+      const lowered = lowerFunctionAstToIr(stmt, {
         exported: hasExportModifier(stmt),
         ownerUnitId,
         directCalls: directCallsFor(stmt, ownerUnitId),
@@ -882,6 +1119,7 @@ export function compileIrPathFunctions(
         // #3765: share direct-codegen's grounded numeric-local oracle with IR.
         numericLocalScalarForDecl: (decl) => ctx.usageInference.scalarForDecl(decl),
       });
+      const result = prepareSuspendingAsyncLowering(lowered, ownerUnitId, name, loweringPlans?.suspendingAsyncUnitIds);
       if (result.main.unitId !== ownerUnitId) {
         throw new IrInvariantError(
           "selection-preparation-mismatch",
@@ -935,10 +1173,9 @@ export function compileIrPathFunctions(
   //   1. Walk class declarations from sourceFile.statements.
   //   2. Filter to MethodDeclarations whose synthetic name is in
   //      `selected.classMembers`.
-  //   3. Currently restricted to NON-static instance methods. Static
-  //      methods stay on legacy (no `self` injection complication; can
-  //      be added in a follow-up). Constructors stay on legacy (Phase C
-  //      handles their `struct.new + __self` epilogue).
+  //   3. Instance methods receive the projected `self` parameter. Static
+  //      methods are ordinary no-receiver callables. Constructors use Phase
+  //      C's `struct.new + __self` epilogue.
   //   4. For each eligible method:
   //      - Look up the class's `IrClassShape` from the resolver-supplied
   //        `classShapes` map. Skip if absent (legacy class shape couldn't
@@ -967,21 +1204,23 @@ export function compileIrPathFunctions(
       if (!classShape) continue;
 
       for (const member of stmt.members) {
-        // Phase B v1 — instance methods + (#3000-B) instance get/set accessors
-        // + (#3000-C) the constructor. Static members skip `self` injection and
-        // use a different funcMap entry shape; defer. Abstract methods have no
-        // body — Phase A already rejected them as `class-method`.
+        // Phase B — instance methods + (#3000-B) instance get/set accessors +
+        // (#3000-C) the constructor + (#3522) static methods. Static accessors
+        // still remain selector-unsupported. Abstract methods have no body —
+        // Phase A already rejected them as `class-method`.
         const isCtorMember = ts.isConstructorDeclaration(member);
         const isAccessor = ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member);
+        const isStaticMethod =
+          ts.isMethodDeclaration(member) &&
+          (member.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword) ?? false);
         if (!ts.isMethodDeclaration(member) && !isAccessor && !isCtorMember) continue;
         if (!member.body) continue;
-        // Non-ctor members: skip nameless / static / abstract. A constructor
-        // carries no `.name`, is never static, and never abstract — so these
-        // guards apply only to methods / accessors.
+        // Non-ctor members: skip nameless / static accessors / abstract. A
+        // constructor carries no `.name`, is never static, and never abstract.
         if (!isCtorMember) {
           if (!member.name) continue;
           const isStatic = member.modifiers?.some((m) => m.kind === ts.SyntaxKind.StaticKeyword) ?? false;
-          if (isStatic) continue;
+          if (isStatic && !isStaticMethod) continue;
           if (member.modifiers?.some((m) => m.kind === ts.SyntaxKind.AbstractKeyword)) continue;
         }
 
@@ -990,7 +1229,7 @@ export function compileIrPathFunctions(
         // the member name below.
         let memberName: string;
         let memberBaseName: string | undefined;
-        let descriptorKind: "method" | "getter" | "setter" | undefined;
+        let descriptorKind: "method" | "getter" | "setter" | "static" | undefined;
         if (isCtorMember) {
           memberName = `${className}_new`;
         } else {
@@ -1015,7 +1254,7 @@ export function compileIrPathFunctions(
             descriptorKind = "setter";
           } else {
             memberName = `${className}_${memberBaseName}`;
-            descriptorKind = "method";
+            descriptorKind = isStaticMethod ? "static" : "method";
           }
         }
         if (!selected.classMembers.has(memberName)) continue;
@@ -1056,11 +1295,13 @@ export function compileIrPathFunctions(
             directCalls: directCallsFor(member, ownerUnitId),
             ...(isCtorMember
               ? { constructorClassShape: classShape, paramTypeOverrides }
-              : {
-                  selfParam: { type: { kind: "class", shape: classShape } as IrType },
-                  paramTypeOverrides,
-                  returnTypeOverride,
-                }),
+              : isStaticMethod
+                ? { paramTypeOverrides, returnTypeOverride }
+                : {
+                    selfParam: { type: { kind: "class", shape: classShape } as IrType },
+                    paramTypeOverrides,
+                    returnTypeOverride,
+                  }),
             calleeTypes,
             importedCalls: loweringPlans?.importedCalls,
             topLevelFunctionValues: loweringPlans?.topLevelFunctionValues,
@@ -1722,7 +1963,6 @@ export function compileIrPathFunctions(
 
   // -------------------------------------------------------------------------
   // 2g. Ownership + access-semantics analysis (#1587) — gated, default OFF.
-  //
   // Runs on the final (post-mono/TU) IR shape, writing inferred ownership /
   // access annotations to the registry `ownership` namespace. The analysis is
   // purely an optimization aid: it does NOT mutate the IR and registry
@@ -1732,7 +1972,6 @@ export function compileIrPathFunctions(
   // is likewise gated and annotation-only). Behind `JS2WASM_IR_OWNERSHIP=1`
   // for the rollout period.
   // -------------------------------------------------------------------------
-  //
   // 2h. Escape analysis (#747) — gated, default OFF. When
   // `JS2WASM_IR_ESCAPE=1`, classifies each allocation
   // (local/returned/stored/captured/opaque) on top of the ownership result and
@@ -1754,10 +1993,7 @@ export function compileIrPathFunctions(
   }
   healthyForLower = retainHealthyOwners(healthyForLower);
   if (healthyForLower.length === 0) return finishReport();
-
-  // Every late-registration boundary is part of IR preparation. Unknown
-  // throws are invariants and must fan out to the active source owners rather
-  // than escaping or being silently demoted.
+  // Late registrations are preparation; unknown throws fan out to active owners.
   const runGlobalPreparation = (action: () => void): boolean => {
     try {
       action();
@@ -1767,16 +2003,27 @@ export function compileIrPathFunctions(
       return false;
     }
   };
-  if (!runGlobalPreparation(() => preregisterStringSupport(ctx, healthyForLower))) return finishReport();
+  let preparedRuntimeManifest: PreparedIrRuntimeManifest | undefined;
+  if (!runGlobalPreparation(() => (healthyForLower = prepareStrings(ctx, healthyForLower)))) return finishReport();
+  if (
+    !runGlobalPreparation(() => {
+      const prepared = prepareBuiltFnRuntimeManifest(ctx, sourceFile.fileName, healthyForLower);
+      preparedRuntimeManifest = prepared.runtime;
+      healthyForLower = [...prepared.entries];
+    })
+  ) {
+    return finishReport();
+  }
+  if (!runGlobalPreparation(() => (healthyForLower = prepareVectors(ctx, healthyForLower)))) return finishReport();
+  healthyForLower = verifyFinalAllocArtifacts(healthyForLower, allocRegistry, monoResult.cloneOrigins, (entry, error) =>
+    markOwnerFailure(terminalOwnerOf(entry), entry.artifactUnitId, entry.name, error, "verify"),
+  );
+  healthyForLower = retainHealthyOwners(healthyForLower);
+  if (healthyForLower.length === 0) return finishReport();
   if (!runGlobalPreparation(() => preregisterHostDateSnapshotSupport(ctx, healthyForLower))) {
     return finishReport();
   }
-  const iteratorFailures = preregisterIteratorSupport(ctx, healthyForLower);
-  for (const { owner, outcome } of iteratorFailures.values()) {
-    if (failedOwners.has(owner.unitId)) continue;
-    failures.record(owner, integrationFailure(owner.legacyName, outcome));
-    failedOwners.add(owner.unitId);
-  }
+  recordOwnerPreparationFailures(failures, failedOwners, preregisterIteratorSupport(ctx, healthyForLower));
   healthyForLower = retainHealthyOwners(healthyForLower);
   if (healthyForLower.length === 0) return finishReport();
   if (
@@ -1827,18 +2074,36 @@ export function compileIrPathFunctions(
   ) {
     return finishReport();
   }
+  recordOwnerPreparationFailures(
+    failures,
+    failedOwners,
+    preregisterCallableProviders(ctx, healthyForLower, preparedRuntimeManifest?.providers),
+  );
+  healthyForLower = retainHealthyOwners(healthyForLower);
+  if (healthyForLower.length === 0) return finishReport();
   const importedCallableCatalog = catalogProgramAbiCallableImports(ctx);
-
-  // -------------------------------------------------------------------------
-  // Register monomorphized clones in `ctx` — append a placeholder
-  // WasmFunction slot and record the assigned funcIdx in `ctx.funcMap`.
-  // The placeholder body is overwritten with the real lowered body in the
-  // Phase-3 loop below.
-  // -------------------------------------------------------------------------
-  // (#3551) Track freshly-allocated slots so an owner failure AFTER
-  // allocation (e.g. the ABI-parity withdrawal cascade in Phase 3) can stub
-  // the orphaned slot instead of leaving an EMPTY body in the module (see
-  // the stub pass after the patch loop below).
+  const freshSlots: PreparedDerivedCallableSlot[] = [];
+  let preparedComponentIdByTerminalUnitId: ReadonlyMap<IrUnitId, string> = new Map();
+  let preparedClosure: PreparedClosureTransaction | undefined;
+  if (options?.sealPreparedComponents) {
+    runGlobalPreparation(() => {
+      preparedClosure = prepareClosureTransaction({
+        ctx,
+        entries: healthyForLower,
+        originalArtifactUnitIds,
+        inventory: moduleBindingIdentityContext.inventory,
+        callableImports: importedCallableCatalog,
+        onSealFailure: (terminalUnitId, error) => {
+          const owner = activeOwnerProjection.requireUnit(terminalUnitId);
+          markOwnerFailure(owner, terminalUnitId, owner.legacyName, error, "resolve");
+        },
+      });
+      freshSlots.push(...preparedClosure.freshSlots);
+      preparedComponentIdByTerminalUnitId = preparedClosure.componentIds;
+    });
+    if ((healthyForLower = retainHealthyOwners(healthyForLower)).length === 0) return finishReport();
+  }
+  // Allocate remaining synthetic placeholders and retain every fresh slot for orphan stubbing (#3551).
   const exactArtifactFuncIdx = (unitId: IrUnitId): number | undefined => {
     const func = ctx.irUnitFuncMap.get(unitId);
     return func ? definedFuncHandleOf(ctx, func) : undefined;
@@ -1867,11 +2132,6 @@ export function compileIrPathFunctions(
     const func = funcIdx === undefined ? undefined : definedFuncAt(ctx, funcIdx);
     if (func) ctx.irUnitFuncMap.set(entry.artifactUnitId, func);
   }
-  const freshSlots: Array<{
-    readonly artifactUnitId: IrUnitId;
-    readonly funcIdx: number;
-    readonly terminalOwnerUnitId: IrUnitId;
-  }> = [];
   const claimedIrFunctions = new Set(ctx.irUnitFuncMap.values());
   for (const entry of healthyForLower) {
     // Top-level (non-synthesized) functions already have a funcIdx
@@ -1943,8 +2203,6 @@ export function compileIrPathFunctions(
   // machinery — but we still walk the IR for symmetry and to keep the
   // resolver path uniform.
   // -------------------------------------------------------------------------
-  // Registration completed transactionally above, before synthetic slots.
-
   // -------------------------------------------------------------------------
   // Slice 6 part 3 (#1182) — iterator host imports.
   //
@@ -2025,7 +2283,7 @@ export function compileIrPathFunctions(
   // the fragile one. Resolution goes through `nativeStrHelperHandle`
   // (src/codegen/func-space.ts), which prefers the stable handle and keeps the
   // scan only as a fallback for helpers not yet on stable minting.
-  const unitCallableSlots = new Map<IrUnitId, IrUnitCallableSlot>();
+  const unitCallableSlots = new Map<IrUnitId, PreparedIrUnitCallableSlot>();
   const bindUnitCallableSlot = (ref: IrFuncRef, funcIdx: number, physicalName: string): void => {
     if (ref.binding.kind !== "unit") {
       throw new IrInvariantError(
@@ -2063,19 +2321,7 @@ export function compileIrPathFunctions(
       );
     }
     ctx.irUnitFuncMap.set(ref.binding.unitId, defined);
-    let programAbiBindingId: IrBindingId | undefined;
-    const derived = ctx.programAbiSession?.registeredDerivedUnit(ref.binding.unitId);
-    if (ctx.programAbiSession?.hasKnownUnit(ref.binding.unitId) && !derived) {
-      const signature = ctx.mod.types[defined.typeIdx];
-      if (!signature || signature.kind !== "func") {
-        throw new IrInvariantError(
-          "abi-type-index-mismatch",
-          "resolve",
-          `ir/integration: exact unit ${ref.binding.unitId} / ${ref.name} has non-function type ${defined.typeIdx}`,
-        );
-      }
-      programAbiBindingId = planProgramAbiUnitCallable(ctx, { ref, signature, func: defined });
-    }
+    const programAbiBindingId = preparedUnitProgramAbiBinding(ctx, ref, defined);
     unitCallableSlots.set(ref.binding.unitId, {
       funcIdx,
       physicalName,
@@ -2113,7 +2359,15 @@ export function compileIrPathFunctions(
           `ir/integration: no slot allocated for exact artifact ${entry.fn.unitId} / ${entry.name}`,
         );
       }
-      bindUnitCallableSlot(irUnitFuncRef(entry.fn), funcIdx, entry.moduleInit ? "__module_init" : entry.name);
+      const allocated = definedFuncAt(ctx, funcIdx);
+      if (!allocated) {
+        throw new IrInvariantError(
+          "missing-function-slot",
+          "resolve",
+          `ir/integration: exact artifact ${entry.fn.unitId} / ${entry.name} has no allocated function object`,
+        );
+      }
+      bindUnitCallableSlot(irUnitFuncRef(entry.fn), funcIdx, allocated.name);
     }
     for (const plan of preparedDirectCalls.values()) bindPlannedUnitTarget(plan.target);
     for (const plan of loweringPlans?.importedCalls.values() ?? []) bindPlannedUnitTarget(plan.target);
@@ -2151,6 +2405,7 @@ export function compileIrPathFunctions(
       deferredClass,
       unitCallableSlots,
       importedCallableCatalog,
+      preparedRuntimeManifest?.providers,
     );
     const resolverInjection = process.env.JS2WASM_TEST_INJECT_IR_RESOLVER_FAILURE;
     if (resolverInjection === "function") resolver.resolveFunc(irIntrinsicFuncRef("__injected_missing_func"));
@@ -2227,9 +2482,10 @@ export function compileIrPathFunctions(
     }
     const objectRegistry = new ObjectStructRegistry(ctx, (t) => lowerIrTypeToValType(t, resolver, "<obj-registry>"));
     deferredObj.resolve = (shape) => objectRegistry.resolve(shape);
-    const closureRegistry = new ClosureStructRegistry(ctx, (t) =>
-      lowerIrTypeToValType(t, resolver, "<closure-registry>"),
-    );
+    preparedClosure?.bindLowerResolver(resolver);
+    const closureRegistry =
+      preparedClosure?.registry ??
+      new ClosureStructRegistry(ctx, (t) => lowerIrTypeToValType(t, resolver, "<closure-registry>"));
     deferredCl.resolveBase = (sig) => closureRegistry.resolveBase(sig);
     deferredCl.resolveSubtype = (sig, fields) => closureRegistry.resolveSubtype(sig, fields);
     const refCellRegistry = new RefCellRegistry(ctx);
@@ -2253,10 +2509,11 @@ export function compileIrPathFunctions(
   };
   const replaceUnitCallableAt = (
     unitId: IrUnitId,
+    terminalOwnerUnitId: IrUnitId,
     funcIdx: number,
     previous: NonNullable<ReturnType<typeof definedFuncAt>>,
     replacement: NonNullable<ReturnType<typeof definedFuncAt>>,
-  ): void => {
+  ): NonNullable<ReturnType<typeof definedFuncAt>> => {
     const mapped = ctx.irUnitFuncMap.get(unitId);
     if (mapped && mapped !== previous) {
       throw new IrInvariantError(
@@ -2265,54 +2522,19 @@ export function compileIrPathFunctions(
         `ir/integration: exact unit ${unitId} replacement does not match its allocator function`,
       );
     }
+    const preparedComponentId = preparedComponentIdByTerminalUnitId.get(terminalOwnerUnitId);
+    if (preparedComponentId !== undefined) {
+      const installed = fillSealedPreparedCallable(preparedComponentId, previous, replacement);
+      ctx.irUnitFuncMap.set(unitId, installed);
+      return installed;
+    }
     replaceDefinedFuncAt(ctx, funcIdx, replacement);
     ctx.irUnitFuncMap.set(unitId, replacement);
     const bindingId = unitCallableSlots.get(unitId)?.programAbiBindingId;
     if (bindingId) {
       ctx.programAbiSession!.replaceDefinedFunctionLocator(bindingId, previous, replacement);
     }
-  };
-  const planSettledDerivedCallable = (
-    entry: BuiltFn,
-    replacement: NonNullable<ReturnType<typeof definedFuncAt>>,
-  ): void => {
-    if (!entry.derivedUnit || !ctx.programAbiSession) return;
-    const slot = unitCallableSlots.get(entry.artifactUnitId);
-    if (!slot || slot.programAbiBindingId) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "patch",
-        `ir/integration: derived unit ${entry.artifactUnitId} has no unique unsettled callable slot`,
-      );
-    }
-    const signature = ctx.mod.types[replacement.typeIdx];
-    if (!signature || signature.kind !== "func") {
-      throw new IrInvariantError(
-        "abi-type-index-mismatch",
-        "patch",
-        `ir/integration: derived unit ${entry.artifactUnitId} has non-function type ${replacement.typeIdx}`,
-      );
-    }
-    if (!ctx.programAbiSession.registeredDerivedUnit(entry.artifactUnitId)) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "patch",
-        `ir/integration: derived unit ${entry.artifactUnitId} was not registered before callable ordering`,
-      );
-    }
-    const bindingId = planProgramAbiUnitCallable(ctx, {
-      ref: irUnitFuncRef(entry.fn),
-      signature,
-      func: replacement,
-    });
-    if (!bindingId) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "patch",
-        `ir/integration: derived unit ${entry.artifactUnitId} was not accepted by Program ABI planning`,
-      );
-    }
-    slot.programAbiBindingId = bindingId;
+    return replacement;
   };
   const pendingPatches: PendingPatch[] = [];
   // (#3551) Exact artifact identities withdrawn by the typeIdx-parity guard
@@ -2361,7 +2583,7 @@ export function compileIrPathFunctions(
         continue;
       }
 
-      const { func: wasmFunc } = lowerIrFunctionToWasm(entry.fn, resolver);
+      const wasmFunc = lowerIrEntryFunction(ctx, entry.fn, resolver, existing);
       // #1370 Phase B: signature parity guard for class methods.
       //
       // The legacy `class-bodies.ts` pass pre-allocated this method's
@@ -2531,13 +2753,24 @@ export function compileIrPathFunctions(
       body: patch.finalBody,
       exported: patch.existing.exported,
     };
-    replaceUnitCallableAt(patch.entry.artifactUnitId, patch.funcIdx, patch.existing, replacement);
-    planSettledDerivedCallable(patch.entry, replacement);
+    const installed = replaceUnitCallableAt(
+      patch.entry.artifactUnitId,
+      patch.entry.terminalOwnerUnitId,
+      patch.funcIdx,
+      patch.existing,
+      replacement,
+    );
+    settlePreparedDerivedCallable(ctx, patch.entry, installed, unitCallableSlots.get(patch.entry.artifactUnitId));
     compiled.push(patch.entry.name);
     compiledArtifactEvidence.push({
       artifactUnitId: patch.entry.artifactUnitId,
       terminalOwnerUnitId: patch.entry.terminalOwnerUnitId,
       name: patch.entry.name,
+      ...(preparedComponentIdByTerminalUnitId.get(patch.entry.terminalOwnerUnitId) === undefined
+        ? {}
+        : {
+            preparedComponentId: preparedComponentIdByTerminalUnitId.get(patch.entry.terminalOwnerUnitId)!,
+          }),
     });
     if (patch.entry.artifactUnitId === patch.entry.terminalOwnerUnitId) {
       compiledOwners.push(patch.entry.ownerName);
@@ -2556,19 +2789,24 @@ export function compileIrPathFunctions(
   // only on a path that actually enters the orphaned artifact. Empty VOID
   // bodies are already valid Wasm (fall-through) — leave those as-is rather
   // than converting today's silent no-op into a trap.
-  const stubIfOrphanedEmpty = (unitId: IrUnitId, funcIdx: number): void => {
+  const stubIfOrphanedEmpty = (unitId: IrUnitId, terminalOwnerUnitId: IrUnitId, funcIdx: number): void => {
     const orphan = definedFuncAt(ctx, funcIdx);
     if (!orphan || orphan.body.length > 0) return;
     const typeDef = ctx.mod.types[orphan.typeIdx];
     if (!typeDef || typeDef.kind !== "func" || typeDef.results.length === 0) return;
-    replaceUnitCallableAt(unitId, funcIdx, orphan, { ...orphan, body: [{ op: "unreachable" }] });
+    replaceUnitCallableAt(unitId, terminalOwnerUnitId, funcIdx, orphan, {
+      ...orphan,
+      body: [{ op: "unreachable" }],
+    });
   };
   for (const slot of freshSlots) {
-    if (failedOwners.has(slot.terminalOwnerUnitId)) stubIfOrphanedEmpty(slot.artifactUnitId, slot.funcIdx);
+    if (failedOwners.has(slot.terminalOwnerUnitId)) {
+      stubIfOrphanedEmpty(slot.artifactUnitId, slot.terminalOwnerUnitId, slot.funcIdx);
+    }
   }
   for (const patch of pendingPatches) {
     if (failedOwners.has(patch.entry.terminalOwnerUnitId)) {
-      stubIfOrphanedEmpty(patch.entry.artifactUnitId, patch.funcIdx);
+      stubIfOrphanedEmpty(patch.entry.artifactUnitId, patch.entry.terminalOwnerUnitId, patch.funcIdx);
     }
   }
 
@@ -2959,15 +3197,6 @@ interface DeferredClassResolver {
 }
 
 /** Exact binding of one structural source unit to its settled Wasm slot. */
-interface IrUnitCallableSlot {
-  readonly funcIdx: number;
-  readonly physicalName: string;
-  /** Temporary adapter labels admitted for this exact unit and slot only. */
-  readonly compatibilityNames: Set<string>;
-  /** Set once the unit has a settled signature and Program ABI plan. */
-  programAbiBindingId?: IrBindingId;
-}
-
 /**
  * Slice 6 part 4 refactor (#1185): build the from-ast subset of the
  * IR resolver eagerly (before Phase 1 IR build). Only the methods
@@ -3004,6 +3233,7 @@ function resolveVecForElementImpl(
   const arrayDef = ctx.mod.types[arrayTypeIdx];
   if (!arrayDef || arrayDef.kind !== "array") return null;
   return {
+    valueType: { kind: "ref", typeIdx: vecStructTypeIdx },
     vecStructTypeIdx,
     lengthFieldIdx: 0,
     dataFieldIdx: 1,
@@ -3178,28 +3408,18 @@ function resolveRetainedFunctionMethod(
   return { receiverGlobal, funcName };
 }
 
-function sameExactValType(left: ValType, right: ValType): boolean {
-  if (left.kind !== right.kind) return false;
-  if (left.kind === "ref" || left.kind === "ref_null") {
-    return right.kind === left.kind && left.typeIdx === right.typeIdx;
-  }
-  return true;
-}
-
 function resolveStaticNumericArrayGlobal(
   ctx: CodegenContext,
   plan: IrStaticNumericArrayPlan,
   expected: IrType,
 ): { readonly globalRef: IrGlobalRef; readonly type: IrType } {
-  const expectedVal = asVal(expected);
   if (
     plan.globalBindingId === undefined ||
     plan.storageOwnerUnitId === undefined ||
     plan.sourceId === undefined ||
     plan.declarationOrdinal === undefined ||
     !ts.isIdentifier(plan.declaration.name) ||
-    expectedVal === null ||
-    (expectedVal.kind !== "ref" && expectedVal.kind !== "ref_null")
+    !acceptsStaticNumericArrayParam(expected)
   ) {
     throw new IrInvariantError(
       "selection-preparation-mismatch",
@@ -3224,7 +3444,8 @@ function resolveStaticNumericArrayGlobal(
     const globalIdx = ctx.moduleGlobals.get(name);
     global = globalIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
   }
-  if (!global || global.name !== globalName || !sameExactValType(global.type, expectedVal)) {
+  const nameOf = (i: number) => ctx.typeIdxToStructName.get(i);
+  if (!global || global.name !== globalName || !staticNumericArrayGlobalMatches(global.type, expected, nameOf)) {
     throw new IrInvariantError(
       "abi-type-index-mismatch",
       "build",
@@ -3256,6 +3477,7 @@ function makeFromAstResolver(ctx: CodegenContext, moduleBindingResolver?: IrModu
       capability,
     );
   return {
+    ...preparedIrAsyncFromAstResolver(ctx),
     retainedFunctionMethodPlan(call: ts.CallExpression) {
       if (
         !supportsBackendCapability("standalone-native-regexp-test-carrier") ||
@@ -3278,11 +3500,10 @@ function makeFromAstResolver(ctx: CodegenContext, moduleBindingResolver?: IrModu
       };
     },
     staticNumericArrayRead(expression: ts.Expression, expected: IrType) {
-      const expectedValue = asVal(expected);
       if (
         !supportsBackendCapability("legacy-numeric-array-global") ||
         !moduleBindingResolver ||
-        (expectedValue?.kind !== "ref" && expectedValue?.kind !== "ref_null")
+        !acceptsStaticNumericArrayParam(expected)
       ) {
         return null;
       }
@@ -3301,8 +3522,7 @@ function makeFromAstResolver(ctx: CodegenContext, moduleBindingResolver?: IrModu
     },
     // (#2955 slice 5) No raw `nativeStrings()` here anymore — from-ast's
     // interface no longer carries the mode discriminator; every mode
-    // decision flows through the named capability/rep/strategy queries
-    // below.
+    // decision flows through the named capability/rep/strategy queries.
     // (#2955 slice 2) The WHOLE string-prototype-method mode decision table,
     // relocated here from from-ast's `lowerStringMethodCall` so the front-end
     // reads no `nativeStrings` at that site. Byte-inert by construction: the
@@ -3340,10 +3560,7 @@ function makeFromAstResolver(ctx: CodegenContext, moduleBindingResolver?: IrModu
       const sig = STRING_METHOD_TABLE[method];
       if (!sig) return null;
       const omitted = argCount < sig.hostArgs.length;
-      // (#3156) substring — native `__str_substring` clamps both indices to
-      // [0, len], so omissions pad exact sentinels (start 0 / end 0x7fffffff,
-      // the legacy native arm's convention) and every arity lowers; host mode
-      // rides the #1248 length-default pad in from-ast.
+      // Both substring helpers take i32 indices and enforce JS clamp/swap semantics.
       if (method === "substring") {
         return native
           ? {
@@ -3352,9 +3569,9 @@ function makeFromAstResolver(ctx: CodegenContext, moduleBindingResolver?: IrModu
               padOmitted: "native-substring" as const,
             }
           : {
-              funcName: "string_substring",
-              indexArgRep: "f64" as const,
-              padOmitted: "host" as const,
+              funcName: JSSTR_SUBSTRING_FN,
+              indexArgRep: "i32" as const,
+              padOmitted: "native-substring" as const,
             };
       }
       // #1248 — native mode only lowers fully-specified call sites, except
@@ -3365,6 +3582,28 @@ function makeFromAstResolver(ctx: CodegenContext, moduleBindingResolver?: IrModu
         indexArgRep: (native ? "i32" : "f64") as "i32" | "f64",
         padOmitted: (native ? "native-slice-len" : "host") as "native-slice-len" | "host",
       };
+    },
+    preferLegacyFlatSubstringCharCodeAt(receiver: ts.Expression) {
+      let current = receiver;
+      while (
+        ts.isParenthesizedExpression(current) ||
+        ts.isAsExpression(current) ||
+        ts.isNonNullExpression(current) ||
+        ts.isTypeAssertionExpression(current)
+      ) {
+        current = current.expression;
+      }
+      if (!ts.isIdentifier(current)) return false;
+      const symbol = ctx.checker.getSymbolAtLocation(current);
+      const declaration = symbol?.valueDeclaration;
+      if (!declaration || !ts.isVariableDeclaration(declaration) || !declaration.initializer) return false;
+      const list = declaration.parent;
+      if (!ts.isVariableDeclarationList(list) || !(list.flags & ts.NodeFlags.Const)) return false;
+      return (
+        ts.isCallExpression(declaration.initializer) &&
+        ts.isPropertyAccessExpression(declaration.initializer.expression) &&
+        declaration.initializer.expression.name.text === "substring"
+      );
     },
     stringFromCharCodePlan() {
       return ctx.nativeStrings
@@ -3600,6 +3839,7 @@ function makeFromAstResolver(ctx: CodegenContext, moduleBindingResolver?: IrModu
       const arrayDef = ctx.mod.types[arrayTypeIdx];
       if (!arrayDef || arrayDef.kind !== "array") return null;
       return {
+        valueType: valType,
         vecStructTypeIdx: typeIdx,
         lengthFieldIdx: 0,
         dataFieldIdx: 1,
@@ -3631,6 +3871,158 @@ function makeFromAstResolver(ctx: CodegenContext, moduleBindingResolver?: IrModu
   };
 }
 
+function resolveAndObserveCallableProvider(
+  ctx: CodegenContext,
+  ref: IrFuncRef,
+  runtimeProviders?: ReadonlyMap<IntrinsicId, RuntimeProviderPlan>,
+): number {
+  if (ref.binding.kind !== "runtime" && ref.binding.kind !== "intrinsic") {
+    throw new TypeError("callable-provider resolution requires a runtime or intrinsic reference");
+  }
+  const registry = ctx.programAbiCallableProviders;
+  const existing = registry?.resolveCurrentIndex(ref);
+  if (existing !== undefined) return existing;
+
+  let index: number | null | undefined;
+  const { symbol } = ref.binding;
+  if (ref.binding.kind === "intrinsic" && isIntrinsicId(symbol)) {
+    const provider = runtimeProviders?.get(symbol);
+    if (!provider || provider.implementation.kind !== "self-hosted") {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `semantic intrinsic ${symbol} has no frozen callable provider`,
+      );
+    }
+    if (ref.name !== provider.implementation.symbol) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `semantic intrinsic ${symbol} changed provider from ${provider.implementation.symbol} to ${ref.name}`,
+      );
+    }
+    index = preparedMathProviderIndex(ctx, provider.implementation.symbol);
+  } else if (ref.binding.kind === "intrinsic" && symbol === FMOD_FN) {
+    index = ensureFmod(ctx);
+  } else if (ref.binding.kind === "intrinsic" && symbol === IR_ASYNC_CLOCK_SNAPSHOT_FN) {
+    index = ensureLateImport(ctx, "__date_now", [], [{ kind: "f64" }]);
+  } else if (ref.binding.kind === "intrinsic" && symbol === IR_ASYNC_NUMBER_TO_STRING_FN) {
+    index = ensureLateImport(ctx, "number_toString", [{ kind: "f64" }], [{ kind: "externref" }]);
+  } else if (ref.binding.kind === "intrinsic" && symbol === IR_ASYNC_CONSOLE_LOG_STRING_FN) {
+    index = ensureLateImport(ctx, "console_log_string", [{ kind: "externref" }], []);
+  } else if (ref.binding.kind === "intrinsic" && symbol === IR_ASYNC_STRING_CONCAT_5_FN) {
+    index = ensureLateImport(
+      ctx,
+      "__concat_5",
+      Array.from({ length: 5 }, () => ({ kind: "externref" }) as const),
+      [{ kind: "externref" }],
+    );
+  } else if (ref.binding.kind === "intrinsic" && symbol.startsWith(IR_VEC_ELEM_SET_PREFIX)) {
+    const element = parseIrVectorRuntimeElement(symbol, IR_VEC_ELEM_SET_PREFIX);
+    index = element ? ensureVecElemSetForElement(ctx, element) : null;
+  } else if (ref.binding.kind === "intrinsic" && symbol.startsWith(IR_VEC_NEW_SIZED_PREFIX)) {
+    const element = parseIrVectorRuntimeElement(symbol, IR_VEC_NEW_SIZED_PREFIX);
+    index = element ? ensureVecNewSizedForElement(ctx, element) : null;
+  } else if (ref.binding.kind === "intrinsic" && symbol.startsWith(VEC_ELEM_SET_PREFIX)) {
+    const vecTypeIdx = Number(symbol.slice(VEC_ELEM_SET_PREFIX.length));
+    index = Number.isInteger(vecTypeIdx) ? ensureVecElemSet(ctx, vecTypeIdx) : null;
+  } else if (ref.binding.kind === "intrinsic" && symbol.startsWith(VEC_NEW_SIZED_PREFIX)) {
+    const vecTypeIdx = Number(symbol.slice(VEC_NEW_SIZED_PREFIX.length));
+    index = Number.isInteger(vecTypeIdx) ? ensureVecNewSized(ctx, vecTypeIdx) : null;
+  } else if (ref.binding.kind === "intrinsic" && symbol === JSSTR_CHARCODEAT_FN) {
+    index = ensureHostCharCodeAtGuarded(ctx);
+  } else if (ref.binding.kind === "intrinsic" && symbol === JSSTR_SUBSTRING_FN) {
+    index = ensureHostSubstringGuarded(ctx);
+  } else if (ref.binding.kind === "intrinsic" && symbol === NATIVE_CHARCODEAT_FN) {
+    index = ensureNativeCharCodeAtHelper(ctx);
+  } else if (ref.binding.kind === "intrinsic" && symbol === IR_STRING_COMPARE_FN) {
+    if (ctx.nativeStrings) {
+      ensureNativeStringHelpers(ctx);
+      index = nativeStrHelperHandle(ctx, "__str_compare");
+    } else {
+      index = ctx.funcMap.get("string_compare");
+    }
+  } else if (
+    ref.binding.kind === "intrinsic" &&
+    (symbol === IR_STRING_CONCAT_FN || symbol === IR_STRING_CONCAT_OWNED_FN || symbol === IR_STRING_EQUALS_FN)
+  ) {
+    if (ctx.nativeStrings) {
+      ensureNativeStringHelpers(ctx);
+      const helper =
+        symbol === IR_STRING_CONCAT_OWNED_FN
+          ? "__str_concat_owned"
+          : symbol === IR_STRING_CONCAT_FN
+            ? "__str_concat"
+            : "__str_equals";
+      index = nativeStrHelperHandle(ctx, helper);
+    } else {
+      const field = symbol === IR_STRING_EQUALS_FN ? "equals" : "concat";
+      index = exactCallableImportIndex(ctx, "wasm:js-string", field);
+    }
+  } else if (ref.binding.kind === "intrinsic" && symbol === IR_STRING_CHAR_AT_FN) {
+    if (ctx.nativeStrings) {
+      ensureNativeStringHelpers(ctx);
+      index = nativeStrHelperHandle(ctx, "__str_charAt");
+    } else {
+      index = exactCallableImportIndex(ctx, "env", "string_charAt");
+    }
+  } else if (ref.binding.kind === "intrinsic" && symbol === IR_STRING_CHAR_CODE_AT_FN) {
+    index = ctx.nativeStrings ? ensureNativeCharCodeAtHelper(ctx) : ensureHostCharCodeAtGuarded(ctx);
+  } else if (ref.binding.kind === "intrinsic" && symbol === IR_STRING_ITERATOR_CHAR_AT_FN) {
+    if (ctx.nativeStrings) {
+      ensureNativeStringHelpers(ctx);
+      index = nativeStrHelperHandle(ctx, "__str_charAt_cp");
+    }
+  } else {
+    index = ctx.funcMap.get(symbol) ?? nativeStrHelperHandle(ctx, symbol);
+  }
+  if (index === null || index === undefined) {
+    throw new IrInvariantError(
+      "unknown-function-ref",
+      "resolve",
+      `ir/integration: cannot materialize callable provider ${irCallableBindingKey(ref.binding)} / ${ref.name}`,
+    );
+  }
+  return registry?.observe(ref, index) ?? index;
+}
+
+function exactCallableImportIndex(ctx: CodegenContext, module: string, field: string): number | undefined {
+  let functionIndex = 0;
+  for (const imported of ctx.mod.imports) {
+    if (imported.desc.kind !== "func") continue;
+    if (imported.module === module && imported.name === field) return functionIndex;
+    functionIndex++;
+  }
+  return undefined;
+}
+
+function emitResolvedStringConst(
+  ctx: CodegenContext,
+  resolver: Pick<IrLowerResolver, "resolveFunc" | "resolveGlobal">,
+  value: string,
+  alloc?: import("./nodes.js").AllocSiteId,
+  storage?: IrGlobalRef,
+  materializer?: IrFuncRef,
+): readonly Instr[] {
+  if (storage && materializer) {
+    throw new Error("ir/integration: string literal cannot use storage and a materializer together");
+  }
+  if (storage) return [{ op: "global.get", index: resolver.resolveGlobal(storage) }];
+  if (materializer) return [{ op: "call", funcIdx: resolver.resolveFunc(materializer) }];
+  if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0) {
+    const encoding =
+      ctx.utf8Storage && alloc !== undefined && ctx.allocRegistry
+        ? ctx.allocRegistry.read<StringEncoding>(alloc, ALLOC_NAMESPACES.encoding)
+        : undefined;
+    return nativeStringLiteralInstrs(ctx, value, encoding);
+  }
+  const globalIdx = ctx.stringGlobalMap.get(value);
+  if (globalIdx === undefined || globalIdx < 0) {
+    throw new Error(`ir/integration: string literal "${value}" was not pre-registered`);
+  }
+  return [{ op: "global.get", index: globalIdx }];
+}
+
 function makeResolver(
   ctx: CodegenContext,
   unionRegistry: UnionStructRegistry,
@@ -3639,17 +4031,14 @@ function makeResolver(
   closureResolver: DeferredClosureResolver,
   refCellResolver: DeferredRefCellResolver,
   classResolver: DeferredClassResolver,
-  unitCallableSlots: ReadonlyMap<IrUnitId, IrUnitCallableSlot>,
+  unitCallableSlots: ReadonlyMap<IrUnitId, PreparedIrUnitCallableSlot>,
   importedCallableCatalog: ReadonlyMap<string, Import>,
+  runtimeProviders?: ReadonlyMap<IntrinsicId, RuntimeProviderPlan>,
 ): IrLowerResolver {
   // (#2949 slice 3) One dynamic-lowering handle per resolver (undefined =
   // not yet built; null = mode has no dynamic op lowering).
   let dynamicLoweringMemo: IrDynamicLowering | null | undefined;
-  const bindCallableProvider = (ref: IrFuncRef, index: number): number =>
-    ref.binding.kind === "runtime" || ref.binding.kind === "intrinsic"
-      ? (ctx.programAbiCallableProviders?.observe(ref, index) ?? index)
-      : index;
-  return {
+  const resolver: IrLowerResolver = {
     resolveFunc(ref: IrFuncRef): number {
       if (process.env.JS2WASM_TEST_INJECT_IR_RESOLVER_FAILURE === "function") {
         throw new IrInvariantError(
@@ -3659,29 +4048,10 @@ function makeResolver(
         );
       }
       if (ref.binding.kind === "unit") {
-        const slot = unitCallableSlots.get(ref.binding.unitId);
-        if (!slot || !slot.compatibilityNames.has(ref.name)) {
-          throw new IrInvariantError(
-            "unknown-function-ref",
-            "lower",
-            `ir/integration: unknown exact function ref ${ref.binding.unitId} / ${JSON.stringify(ref.name)}`,
-          );
-        }
-        if (ctx.programAbiSession && slot.programAbiBindingId) {
-          return ctx.programAbiSession.resolveCurrentIndex(
-            slot.programAbiBindingId,
-            "function",
-            irCallableBindingKey(ref.binding),
-          );
-        }
-        return slot.funcIdx;
+        return resolvePreparedUnitCallable(ctx, ref, unitCallableSlots);
       }
       if (ref.binding.kind === "support" && ctx.programAbiSession?.hasPlan(ref.binding.bindingId)) {
-        return ctx.programAbiSession.resolveCurrentIndex(
-          ref.binding.bindingId,
-          "function",
-          irCallableBindingKey(ref.binding),
-        );
+        return resolvePreparedSupportCallable(ctx, ref);
       }
       if (ref.binding.kind === "import" && ctx.programAbiSession) {
         const structuralReferenceKey = irCallableBindingKey(ref.binding);
@@ -3717,93 +4087,11 @@ function makeResolver(
         );
       }
       if (ref.binding.kind === "runtime" || ref.binding.kind === "intrinsic") {
-        const exactProviderIdx = ctx.programAbiCallableProviders?.resolveCurrentIndex(ref);
-        if (exactProviderIdx !== undefined) return exactProviderIdx;
+        return resolveAndObserveCallableProvider(ctx, ref, runtimeProviders);
       }
-      // #2945 — `%` lowers to a call of the Wasm-native exact-fmod helper.
-      // Materialize it on demand: `ensureFmod` is idempotent (funcMap-cached)
-      // and appends a DEFINED function (never an import), so no existing
-      // funcIdx shifts — same append-only discipline as the IR's own closure
-      // functions. On-demand keeps the helper out of modules that never use
-      // `%` (parity with legacy, which also emits it lazily).
-      if (ref.binding.kind === "intrinsic" && ref.binding.symbol === FMOD_FN) {
-        return bindCallableProvider(ref, ensureFmod(ctx));
-      }
-      // (#2856 C2) `__vec_elem_set_<vecTypeIdx>` — element-store helper with
-      // full legacy grow semantics. Materialized on demand, same append-only
-      // defined-function discipline as `ensureFmod` (never an import, no
-      // existing funcIdx shifts). Idempotent via funcMap.
-      if (ref.binding.kind === "intrinsic" && ref.binding.symbol.startsWith(VEC_ELEM_SET_PREFIX)) {
-        const vecTypeIdx = Number(ref.binding.symbol.slice(VEC_ELEM_SET_PREFIX.length));
-        const helperIdx = Number.isInteger(vecTypeIdx) ? ensureVecElemSet(ctx, vecTypeIdx) : null;
-        if (helperIdx === null) {
-          throw new Error(`ir/integration: cannot materialize ${ref.name} (not a recognisable vec struct)`);
-        }
-        return bindCallableProvider(ref, helperIdx);
-      }
-      if (ref.binding.kind === "intrinsic" && ref.binding.symbol.startsWith(VEC_NEW_SIZED_PREFIX)) {
-        const vecTypeIdx = Number(ref.binding.symbol.slice(VEC_NEW_SIZED_PREFIX.length));
-        const helperIdx = Number.isInteger(vecTypeIdx) ? ensureVecNewSized(ctx, vecTypeIdx) : null;
-        if (helperIdx === null) {
-          throw new Error(`ir/integration: cannot materialize ${ref.name} (not a recognisable vec struct)`);
-        }
-        return bindCallableProvider(ref, helperIdx);
-      }
-      // (#3156) Guarded charCodeAt helpers — materialized on demand, same
-      // append-only defined-function discipline as ensureFmod (never an
-      // import, no existing funcIdx shifts). Idempotent via funcMap. The
-      // host variant bakes the `wasm:js-string` builtin import indices from
-      // `ctx.jsStringImports` (the #1072 shadowing-safe registry; import
-      // indices never shift) — `preregisterStringSupport` guarantees
-      // `addStringImports` ran before Phase-3 emission whenever a lowered
-      // function calls this helper.
-      if (ref.binding.kind === "intrinsic" && ref.binding.symbol === JSSTR_CHARCODEAT_FN) {
-        const helperIdx = ensureHostCharCodeAtGuarded(ctx);
-        if (helperIdx === null) {
-          throw new Error(`ir/integration: cannot materialize ${ref.name} (wasm:js-string builtins not registered)`);
-        }
-        return bindCallableProvider(ref, helperIdx);
-      }
-      if (ref.binding.kind === "intrinsic" && ref.binding.symbol === NATIVE_CHARCODEAT_FN) {
-        const helperIdx = ensureNativeCharCodeAtHelper(ctx);
-        if (helperIdx === null) {
-          throw new Error(`ir/integration: cannot materialize ${ref.name} (native-string helpers unavailable)`);
-        }
-        return bindCallableProvider(ref, helperIdx);
-      }
-      // (#3167) String relational compare helper. Resolve mode-appropriately:
-      //   native/WASI → the `__str_compare` defined helper (idempotently
-      //     ensured via `ensureNativeStringHelpers`; append-only, so no funcIdx
-      //     shift — same discipline as `ensureFmod`/the charCodeAt helpers).
-      //   host → the `string_compare` env import (registered by the legacy
-      //     declaration-collection pass whenever source has a string relational,
-      //     so it is already in `ctx.funcMap`; its import index is stable).
-      // Both are `(str, str) -> i32` returning a -1/0/1 lexicographic sign.
-      if (ref.binding.kind === "intrinsic" && ref.binding.symbol === IR_STRING_COMPARE_FN) {
-        if (ctx.nativeStrings) {
-          ensureNativeStringHelpers(ctx);
-          if (!ctx.nativeStrHelpers.has("__str_compare")) {
-            throw new Error(`ir/integration: cannot materialize ${ref.name} (native __str_compare unavailable)`);
-          }
-          // (#3909) Stable handle first, post-shift name scan only as fallback
-          // — a baked live index stops being shifted once the import count
-          // climbs past it (see `nativeStrHelperHandle`).
-          return bindCallableProvider(ref, nativeStrHelperHandle(ctx, "__str_compare")!);
-        }
-        const hostIdx = ctx.funcMap.get("string_compare");
-        if (hostIdx === undefined) {
-          throw new Error(`ir/integration: cannot resolve ${ref.name} (host string_compare import not registered)`);
-        }
-        return bindCallableProvider(ref, hostIdx);
-      }
-      const adapterName =
-        ref.binding.kind === "runtime" || ref.binding.kind === "intrinsic"
-          ? ref.binding.symbol
-          : ref.binding.kind === "import"
-            ? ref.binding.field
-            : ref.name;
+      const adapterName = ref.binding.kind === "import" ? ref.binding.field : ref.name;
       const idx = ctx.funcMap.get(adapterName);
-      if (idx !== undefined) return bindCallableProvider(ref, idx);
+      if (idx !== undefined) return idx;
       // Slice 6 part 4 (#1183): native-string helpers (`__str_charAt`,
       // `__str_concat`, `__str_equals`, `__str_flatten`, etc.) are
       // registered in `ctx.nativeStrHelpers`, not `ctx.funcMap`.
@@ -3812,7 +4100,7 @@ function makeResolver(
       // downgraded an unshiftable stable handle to a live index that the
       // shifters stop tracking once the import count passes it.
       const helperIdx = nativeStrHelperHandle(ctx, adapterName);
-      if (helperIdx !== undefined) return bindCallableProvider(ref, helperIdx);
+      if (helperIdx !== undefined) return helperIdx;
       throw new IrInvariantError("unknown-function-ref", "lower", `ir/integration: unknown function ref "${ref.name}"`);
     },
     resolveGlobal(ref: IrGlobalRef): number {
@@ -3909,6 +4197,7 @@ function makeResolver(
       const arrayDef = ctx.mod.types[arrayTypeIdx];
       if (!arrayDef || arrayDef.kind !== "array") return null;
       return {
+        valueType: valType,
         vecStructTypeIdx: typeIdx,
         lengthFieldIdx: 0,
         dataFieldIdx: 1,
@@ -3960,27 +4249,18 @@ function makeResolver(
     nativeStrings(): boolean {
       return ctx.nativeStrings;
     },
-    emitStringConst(value: string, alloc?: import("./nodes.js").AllocSiteId): readonly Instr[] {
-      if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0) {
-        // Match direct codegen's interned native-literal representation. Besides
-        // avoiding per-execution allocation, shared identity is a prerequisite
-        // for the native method/property fast paths. The optional encoding fact
-        // retains the existing Utf8String selection.
-        const encoding =
-          ctx.utf8Storage && alloc !== undefined && ctx.allocRegistry
-            ? ctx.allocRegistry.read<StringEncoding>(alloc, ALLOC_NAMESPACES.encoding)
-            : undefined;
-        return nativeStringLiteralInstrs(ctx, value, encoding);
-      }
-      // Host strings: pre-registration in `preregisterStringSupport` already
-      // ensured the string global exists. Look up the (now-final) index.
-      const globalIdx = ctx.stringGlobalMap.get(value);
-      if (globalIdx === undefined || globalIdx < 0) {
-        throw new Error(`ir/integration: string literal "${value}" was not pre-registered`);
-      }
-      return [{ op: "global.get", index: globalIdx }];
+    emitStringConst(
+      value: string,
+      alloc?: import("./nodes.js").AllocSiteId,
+      storage?: IrGlobalRef,
+      materializer?: IrFuncRef,
+    ): readonly Instr[] {
+      return emitResolvedStringConst(ctx, resolver, value, alloc, storage, materializer);
     },
-    emitStringConcat(_alloc, mode): readonly Instr[] {
+    emitStringConcat(_alloc, mode, provider): readonly Instr[] {
+      if (provider) {
+        return [{ op: "call", funcIdx: resolver.resolveFunc(provider) }];
+      }
       if (ctx.nativeStrings) {
         // (#3744) `owned-append` — the builder-loop license computed by
         // `collectOwnedStringAppendSymbols`; see src/ir/string-builder-shape.ts.
@@ -3999,7 +4279,10 @@ function makeResolver(
       if (idx === undefined) throw new Error("ir/integration: wasm:js-string concat not registered");
       return [{ op: "call", funcIdx: idx }];
     },
-    emitStringEquals(): readonly Instr[] {
+    emitStringEquals(provider): readonly Instr[] {
+      if (provider) {
+        return [{ op: "call", funcIdx: resolver.resolveFunc(provider) }];
+      }
       if (ctx.nativeStrings) {
         const idx = stringBackend.nativeHelpers.get("__str_equals");
         if (idx === undefined) {
@@ -4011,7 +4294,19 @@ function makeResolver(
       if (idx === undefined) throw new Error("ir/integration: wasm:js-string equals not registered");
       return [{ op: "call", funcIdx: idx }];
     },
-    emitStringLen(): readonly Instr[] {
+    emitStringLen(_inputEncoding, provider): readonly Instr[] {
+      if (provider?.kind === "callable") {
+        return [{ op: "call", funcIdx: resolver.resolveFunc(provider.target) }];
+      }
+      if (provider?.kind === "struct-field") {
+        return [
+          {
+            op: "struct.get",
+            typeIdx: resolver.resolveType(provider.ownerType),
+            fieldIdx: provider.fieldIndex,
+          },
+        ];
+      }
       if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
         // AnyString.length is field 0 (matches struct definition in
         // src/codegen/native-strings.ts).
@@ -4021,7 +4316,11 @@ function makeResolver(
       if (idx === undefined) throw new Error("ir/integration: wasm:js-string length not registered");
       return [{ op: "call", funcIdx: idx }];
     },
-    emitStringCharAt(): readonly Instr[] {
+    emitStringCharAt(_alloc, _inputEncoding, provider): readonly Instr[] {
+      if (provider) {
+        const call = { op: "call" as const, funcIdx: resolver.resolveFunc(provider) };
+        return ctx.nativeStrings ? [call] : [{ op: "f64.convert_i32_s" }, call];
+      }
       if (ctx.nativeStrings) {
         // (#3909) stable handle first — see `nativeStrHelperHandle`.
         const h = nativeStrHelperHandle(ctx, "__str_charAt");
@@ -4032,7 +4331,10 @@ function makeResolver(
       if (idx === undefined) throw new Error("ir/integration: string_charAt import not registered");
       return [{ op: "f64.convert_i32_s" }, { op: "call", funcIdx: idx }];
     },
-    emitStringCharCodeAt(): readonly Instr[] {
+    emitStringCharCodeAt(_inputEncoding, provider): readonly Instr[] {
+      if (provider) {
+        return [{ op: "call", funcIdx: resolver.resolveFunc(provider) }];
+      }
       const idx = ctx.nativeStrings ? ensureNativeCharCodeAtHelper(ctx) : ensureHostCharCodeAtGuarded(ctx);
       if (idx === null) throw new Error("ir/integration: guarded charCodeAt helper unavailable");
       return [{ op: "call", funcIdx: idx }];
@@ -4073,6 +4375,7 @@ function makeResolver(
       return isStandalonePromiseActive(ctx);
     },
   };
+  return resolver;
 }
 
 // ---------------------------------------------------------------------------
@@ -4090,6 +4393,94 @@ interface BuiltFnRef {
 interface IrOwnerPreparationFailure {
   readonly owner: IrLegacyUnitProjectionEntry;
   readonly outcome: IrPreparationFailure;
+}
+
+function recordOwnerPreparationFailures(
+  failures: IrIntegrationFailureLog,
+  failedOwners: Set<IrUnitId>,
+  records: ReadonlyMap<IrUnitId, IrOwnerPreparationFailure>,
+): void {
+  for (const { owner, outcome } of records.values()) {
+    if (failedOwners.has(owner.unitId)) continue;
+    failures.record(owner, integrationFailure(owner.legacyName, outcome));
+    failedOwners.add(owner.unitId);
+  }
+}
+
+function callableProviderRef(instr: IrInstr): IrFuncRef | undefined {
+  switch (instr.kind) {
+    case "call":
+      return instr.target;
+    case "intrinsic":
+      return instr.provider?.kind === "callable" ? instr.provider.target : undefined;
+    case "closure.new":
+      return instr.liftedFunc;
+    case "class.call":
+    case "class.super_init":
+    case "class.super_call":
+    case "class.static_call":
+    case "class.new":
+      return instr.target;
+    case "string.const":
+      return instr.materializer;
+    case "string.concat":
+    case "string.eq":
+    case "string.char_at":
+    case "string.char_code_at":
+    case "forof.string":
+      return instr.provider;
+    default:
+      return undefined;
+  }
+}
+
+/** Resolve every final runtime/intrinsic ref before component discovery seals. */
+function preregisterCallableProviders(
+  ctx: CodegenContext,
+  fns: readonly BuiltFnRef[],
+  runtimeProviders?: ReadonlyMap<IntrinsicId, RuntimeProviderPlan>,
+): ReadonlyMap<IrUnitId, IrOwnerPreparationFailure> {
+  const failures = new Map<IrUnitId, IrOwnerPreparationFailure>();
+  const owners = new Map<IrUnitId, IrLegacyUnitProjectionEntry>();
+  for (const entry of fns) {
+    const existing = owners.get(entry.terminalOwnerUnitId);
+    if (existing && existing.legacyName !== entry.ownerName) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `terminal owner ${entry.terminalOwnerUnitId} has conflicting labels ${existing.legacyName} and ${entry.ownerName}`,
+      );
+    }
+    owners.set(entry.terminalOwnerUnitId, {
+      unitId: entry.terminalOwnerUnitId,
+      legacyName: entry.ownerName,
+    });
+  }
+  for (const entry of fns) {
+    const owner = owners.get(entry.terminalOwnerUnitId)!;
+    const instructionBuffers = [
+      ...entry.fn.blocks.map((block) => block.instrs),
+      ...(entry.fn.asyncPlan?.states.map((state) => state.body) ?? []),
+    ];
+    for (const instrs of instructionBuffers) {
+      for (const root of instrs) {
+        forEachInstrDeep(root, (instr) => {
+          const ref = callableProviderRef(instr);
+          if (!ref || (ref.binding.kind !== "runtime" && ref.binding.kind !== "intrinsic")) return;
+          try {
+            resolveAndObserveCallableProvider(ctx, ref, runtimeProviders);
+          } catch (error) {
+            if (!failures.has(owner.unitId)) {
+              failures.set(owner.unitId, { owner, outcome: classifyIrFailure(error, "resolve") });
+            }
+          }
+        });
+      }
+    }
+  }
+  // Seal deferred import indices before prepared component bodies bake them.
+  flushLateImportShifts(ctx, null);
+  return failures;
 }
 
 interface HostDateImportSpec {
@@ -4179,7 +4570,7 @@ function preregisterHostDateSnapshotSupport(ctx: CodegenContext, fns: readonly B
  * Idempotent — repeat calls are no-ops, and the helpers themselves are
  * idempotent on `(ctx.hasStringImports, ctx.stringGlobalMap)`.
  */
-function preregisterStringSupport(ctx: CodegenContext, fns: readonly BuiltFnRef[]): void {
+function prepareStrings(ctx: CodegenContext, fns: BuiltFn[]): BuiltFn[] {
   // Find all distinct string literals + whether any string op is used at all.
   // Slice 10 (#1169i): the `extern.regex` instr lowers to two `string.const`
   // ops (pattern + flags). We collect them here too so the host-strings
@@ -4188,9 +4579,13 @@ function preregisterStringSupport(ctx: CodegenContext, fns: readonly BuiltFnRef[
   // body buffers may contain string ops nested inside the for-of.
   const literals = new Set<string>();
   let usesStringOp = false;
+  let usesStringLen = false;
+  let usesStringCharAt = false;
   const walk = (instr: IrInstr): void => {
     if (instrUsesStrings(instr)) usesStringOp = true;
     if (instr.kind === "string.const") literals.add(instr.value);
+    if (instr.kind === "string.len") usesStringLen = true;
+    if (instr.kind === "string.char_at") usesStringCharAt = true;
     // (#3156) The host guarded-charCodeAt helper wraps the `wasm:js-string`
     // charCodeAt/length builtins — its materialization (resolveFunc) reads
     // `ctx.jsStringImports`, so `addStringImports` must have run BEFORE
@@ -4244,9 +4639,7 @@ function preregisterStringSupport(ctx: CodegenContext, fns: readonly BuiltFnRef[
       for (const instr of block.instrs) walk(instr);
     }
   }
-  if (!usesStringOp) return;
-
-  if (!ctx.nativeStrings) {
+  if (usesStringOp && !ctx.nativeStrings) {
     // Host-string backend: ensure all five `wasm:js-string` imports exist.
     addStringImports(ctx);
     // Pre-register every string literal as a global import. The helper is
@@ -4255,6 +4648,13 @@ function preregisterStringSupport(ctx: CodegenContext, fns: readonly BuiltFnRef[
     for (const value of literals) {
       addStringConstantGlobal(ctx, value);
     }
+    if (usesStringCharAt && exactCallableImportIndex(ctx, "env", "string_charAt") === undefined) {
+      ensureLateImport(ctx, "string_charAt", [{ kind: "externref" }, { kind: "f64" }], [{ kind: "externref" }]);
+      flushLateImportShifts(ctx, null);
+      if (exactCallableImportIndex(ctx, "env", "string_charAt") === undefined) {
+        throw new Error("ir/integration: prepared string.char_at has no exact env.string_charAt import");
+      }
+    }
   }
   // Native strings: nothing to pre-register here. The native-string struct
   // types and helpers (`__str_concat`, `__str_equals`, `__str_flatten`) are
@@ -4262,7 +4662,87 @@ function preregisterStringSupport(ctx: CodegenContext, fns: readonly BuiltFnRef[
   // operation appears in source. The IR selector accepts `string` only when
   // a string operation appears in source, so the helpers are guaranteed to
   // exist by the time Phase 3 runs. (If they don't, the resolver throws
-  // with a clear message and the caller falls back to legacy.)
+  // with a clear preparation invariant; an IR-owned body is never retried.)
+  const registry = ctx.programAbiTypes;
+  if (!registry) return fns;
+  const carrierRef = registry.stringCarrierRef();
+  let lengthProvider: IrStringLengthProvider | undefined;
+  if (usesStringLen) {
+    if (ctx.nativeStrings) {
+      lengthProvider = { kind: "struct-field", ownerType: carrierRef, fieldIndex: 0 };
+    } else {
+      const target = irImportFuncRef("wasm:js-string", "length", "length");
+      const structuralReferenceKey = irCallableBindingKey(target.binding);
+      const imported = catalogProgramAbiCallableImports(ctx).get(structuralReferenceKey);
+      if (!imported || imported.desc.kind !== "func") {
+        throw new Error("ir/integration: prepared string.len has no exact wasm:js-string.length import");
+      }
+      ctx.programAbiCallableImports?.planPrepared(new Set([imported]));
+      lengthProvider = { kind: "callable", target };
+    }
+  }
+
+  const nativeMaterializations = new Map<IrInstrStringConst, NativeStringLiteralMaterialization>();
+  const nativeMaterializationFor = (instr: IrInstrStringConst): NativeStringLiteralMaterialization | undefined => {
+    if (!ctx.nativeStrings || ctx.nativeStrTypeIdx < 0) return undefined;
+    const existing = nativeMaterializations.get(instr);
+    if (existing) return existing;
+    const encoding =
+      ctx.utf8Storage && instr.alloc !== undefined && ctx.allocRegistry
+        ? ctx.allocRegistry.read<StringEncoding>(instr.alloc, ALLOC_NAMESPACES.encoding)
+        : undefined;
+    const materialization = nativeStringLiteralMaterialization(ctx, instr.value, encoding);
+    nativeMaterializations.set(instr, materialization);
+    return materialization;
+  };
+
+  const storageForConst = (instr: IrInstrStringConst): IrGlobalRef | undefined => {
+    if (!ctx.nativeStrings) return programAbiStringConstantRef(ctx, instr.value);
+    if (!ctx.programAbiGlobals || ctx.nativeStrTypeIdx < 0) return undefined;
+    const materialization = nativeMaterializationFor(instr);
+    if (!materialization || materialization.kind !== "global") return undefined;
+    const global = ctx.mod.globals[materialization.globalIdx - ctx.numImportGlobals];
+    if (!global) {
+      throw new Error(`ir/integration: native string literal ${JSON.stringify(instr.value)} lost its interned global`);
+    }
+    return ctx.programAbiGlobals.prepareNativeStringLiteral(global);
+  };
+
+  const materializerRefs = new Map<number, IrFuncRef>();
+  const materializerForConst = (instr: IrInstrStringConst): IrFuncRef | undefined => {
+    const materialization = nativeMaterializationFor(instr);
+    const providerRegistry = ctx.programAbiCallableProviders;
+    if (!materialization || materialization.kind !== "callable" || !providerRegistry) return undefined;
+    const existing = materializerRefs.get(materialization.funcIdx);
+    if (existing) return existing;
+    const provider = irIntrinsicFuncRef(`${IR_STRING_LITERAL_MATERIALIZE_FN}:${materializerRefs.size}`);
+    providerRegistry.observe(provider, materialization.funcIdx);
+    materializerRefs.set(materialization.funcIdx, provider);
+    return provider;
+  };
+
+  let usesString = false;
+  const prepared = fns.map((entry) => {
+    const attachment = attachIrStringCarrier(entry.fn, carrierRef);
+    usesString ||= attachment.usesString;
+    const fn = attachIrStringSupport(attachment.function, {
+      storageForConst,
+      materializerForConst,
+      providerForLength: () => lengthProvider,
+    });
+    return fn === entry.fn ? entry : { ...entry, fn };
+  });
+  if (usesString) registry.prepareStringCarrier();
+  return prepared;
+}
+
+function prepareVectors(ctx: CodegenContext, fns: BuiltFn[]): BuiltFn[] {
+  return prepareIrVectorSupport({
+    ctx,
+    entries: fns,
+    resolveVecForElement: (element) => resolveVecForElementImpl(ctx, element),
+    typeKey: irTypeKey,
+  });
 }
 
 function instrUsesStrings(instr: IrInstr): boolean {
@@ -4272,7 +4752,8 @@ function instrUsesStrings(instr: IrInstr): boolean {
     instr.kind === "string.eq" ||
     instr.kind === "string.len" ||
     instr.kind === "string.char_at" ||
-    instr.kind === "string.char_code_at"
+    instr.kind === "string.char_code_at" ||
+    instr.kind === "forof.string"
   );
 }
 
@@ -4283,7 +4764,7 @@ function instrUsesStrings(instr: IrInstr): boolean {
 /**
  * Slice 6 part 3 (#1182): pre-register the iterator host imports if any
  * IR function emits an `iter.*` or `forof.iter` instr. Same pattern and
- * rationale as `preregisterStringSupport`: late import registration
+ * rationale as `prepareStrings`: late import registration
  * shifts function indices, and we want the shift to be a no-op on the
  * IR path's `IrFuncRef` resolution.
  *
@@ -5248,6 +5729,7 @@ export function irTypeKey(t: IrType): string {
     return t.val.kind;
   }
   if (t.kind === "string") return "string";
+  if (t.kind === "vec") return `vec<${irTypeKey(t.elementType)}>${t.nullable ? "?" : ""}`;
   if (t.kind === "object") {
     return `object{${t.shape.fields.map((f) => `${f.name}:${irTypeKey(f.type)}`).join(",")}}`;
   }
@@ -5582,6 +6064,26 @@ class ClassRegistry {
     return ref;
   }
 
+  /** Rebind a dependency-sealed symbolic member target into this lowering pass. */
+  private preparedMemberTarget(target?: IrFuncRef): IrFuncRef | null {
+    if (
+      target?.binding.kind !== "unit" ||
+      !this.ctx.programAbiSession?.hasPlan(irUnitCallableBindingId(target.binding.unitId))
+    ) {
+      return null;
+    }
+    const funcIdx = this.unitFuncIdx(target.binding.unitId, target.name);
+    if (funcIdx === undefined) {
+      throw new IrInvariantError(
+        "missing-function-slot",
+        "resolve",
+        `ir/integration: prepared class member ${target.binding.unitId} has no slot ${target.name}`,
+      );
+    }
+    this.bindUnitCallableSlot(target, funcIdx, target.name);
+    return target;
+  }
+
   /**
    * Publish one inherited class member as an explicit alias of the exact
    * ancestor source unit that owns its allocator slot.
@@ -5891,14 +6393,8 @@ class ClassRegistry {
       classLayout?.type.fields ?? (this.ctx.programAbiTypes ? undefined : this.ctx.structFields.get(shape.className));
     if (!layoutFields) return null;
 
-    // Build a name → wasm-field-index map directly from the exact allocator
-    // struct field list so the IR sees the same indices the legacy path uses
-    // for `struct.get` / `struct.set`. The `__tag` prefix (at index 0 for root
-    // classes) is included in layoutFields, so a
-    // user field "x" at IR position 0 corresponds to legacy field
-    // index 1 (or higher, depending on the parent chain). Slice 4
-    // doesn't claim functions referencing inherited classes, so
-    // layoutFields[0] is always `__tag`; user fields start at index 1.
+    // Derive field indices from the exact allocator layout. This includes the
+    // legacy `__tag` prefix and every inherited field before own source fields.
     const fieldIdxByName = new Map<string, number>();
     for (let i = 0; i < layoutFields.length; i++) {
       fieldIdxByName.set(layoutFields[i]!.name, i);
@@ -5963,7 +6459,9 @@ class ClassRegistry {
       constructorFunc,
       initFunc,
       instanceOfTags,
-      memberFunc: (memberKind: IrClassMemberKind, name: string): IrFuncRef => {
+      memberFunc: (memberKind: IrClassMemberKind, name: string, target?: IrFuncRef): IrFuncRef => {
+        const preparedTarget = this.preparedMemberTarget(target);
+        if (preparedTarget) return preparedTarget;
         const suffix = memberKind === "getter" ? `get_${name}` : memberKind === "setter" ? `set_${name}` : name;
         const legacyName = `${shape.className}_${suffix}`;
         const physicalName = classMemberFuncKey(ctx, legacyName);

@@ -4,6 +4,7 @@ import type { Instr } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { addFuncType } from "./registry/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { buildBuiltinConstructorTestArm } from "./builtin-callable-brand.js";
 
 const HELPER = "__reflect_is_constructor";
 
@@ -42,6 +43,12 @@ export function fillReflectIsConstructor(ctx: CodegenContext): void {
       },
     );
   }
+  // (#4120) A reified builtin CONSTRUCTOR (`Set`, `Array`, `TypeError`, …) is a
+  // brand-marked `$Object` carrier, not a nominal closure wrapper, so no
+  // `ref.test` above can see it. Without this arm `Reflect.construct(fn, [], Set)`
+  // threw "newTarget is not a constructor" — test262's `isConstructor(Set)`
+  // returned false where the spec says true.
+  body.push(...buildBuiltinConstructorTestArm(ctx, 1, [{ op: "i32.const", value: 1 }, { op: "return" }]));
   body.push({ op: "i32.const", value: 0 });
   fn.body = body;
 }

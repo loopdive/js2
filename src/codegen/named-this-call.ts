@@ -13,6 +13,10 @@
  * is exception-safe: catch_all restores the prior receiver and rethrows the
  * original exception. A null receiver uses the pre-existing unbound exact call
  * instead, so this narrow fast path does not redefine the legacy nullish case.
+ *
+ * That last sentence is load-bearing for admission (#4025): because the split
+ * is on the receiver's RUNTIME value, the gate does not need — and must not
+ * demand — a static proof of non-nullishness. See `factIsStaticallyNullish`.
  */
 import { ts } from "../ts-api.js";
 import type { TypeFact } from "../checker/oracle.js";
@@ -48,23 +52,33 @@ function unwrap(expr: ts.Expression): ts.Expression {
   return current;
 }
 
-function oracleProvesNonNullish(fact: TypeFact): boolean {
+/**
+ * (#4025) Is the receiver's static type nullish through and through?
+ *
+ * This is deliberately the NEGATIVE of "proven non-nullish". The gate used to
+ * demand a *proof of non-nullishness*, which no `any`/`unknown`/unresolvable
+ * receiver can ever supply — so every untyped-JS receiver (the entire corpus
+ * this path exists for) fell through to the generic lowering, which evaluates
+ * `thisArg` and DROPS it. That was a silent wrong answer, not a refusal.
+ *
+ * A statically-unprovable receiver is safe to admit because the trampoline
+ * splits on the receiver's runtime value (`ref.is_null`) and routes a null one
+ * to the pre-existing unbound exact call — verified against the emitted body
+ * in `ensureNamedThisCallTrampoline` below. Only a receiver the oracle can
+ * prove is *always* nullish stays out of the fast arm: emitting a trampoline
+ * whose null branch is the only reachable one is pure cost, and keeping those
+ * shapes (`f.call(null)`, `f.call(undefined)`) bit-identical to the legacy
+ * lowering is what keeps the `this === undefined` test262 rows passing.
+ *
+ * `void` counts as nullish here for a second reason: a void-typed receiver
+ * expression is the one shape whose compiled form could leave no value on the
+ * stack at all.
+ */
+function factIsStaticallyNullish(fact: TypeFact): boolean {
   if (fact.kind === "union") {
-    return (
-      !fact.nullable &&
-      !fact.undefinable &&
-      fact.parts.length > 0 &&
-      fact.parts.every((part) => oracleProvesNonNullish(part))
-    );
+    return fact.parts.length > 0 && fact.parts.every((part) => factIsStaticallyNullish(part));
   }
-  return (
-    fact.kind !== "any" &&
-    fact.kind !== "unknown" &&
-    fact.kind !== "unresolvable" &&
-    fact.kind !== "null" &&
-    fact.kind !== "undefined" &&
-    fact.kind !== "void"
-  );
+  return fact.kind === "null" || fact.kind === "undefined" || fact.kind === "void";
 }
 
 function receiverIsAdmitted(ctx: CodegenContext, fctx: FunctionContext, receiver: ts.Expression): boolean {
@@ -74,7 +88,7 @@ function receiverIsAdmitted(ctx: CodegenContext, fctx: FunctionContext, receiver
   // dispatch. The trampoline still runtime-splits a null value to the legacy
   // unbound call, so a detached/nullish reach does not enter the fast arm.
   if (inner.kind === ts.SyntaxKind.ThisKeyword) return fctx.readsCurrentThis === true;
-  return oracleProvesNonNullish(ctx.oracle.typeFactOf(inner));
+  return !factIsStaticallyNullish(ctx.oracle.typeFactOf(inner));
 }
 
 function resolveDeclaration(ctx: CodegenContext, callee: ts.Identifier): ts.FunctionDeclaration | undefined {
@@ -256,7 +270,7 @@ export function resolveNamedThisCallTarget(
 }
 
 /**
- * (#4168) `.apply(thisArg[, argsArray])` counterpart to the `.call` path above.
+ * (#3983) `.apply(thisArg[, argsArray])` counterpart to the `.call` path above.
  *
  * `.apply` used to fall through to a lowering that evaluated `thisArg` and
  * DROPPED it, so the callee's `this` was the ambient receiver rather than the

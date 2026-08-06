@@ -25,3 +25,22 @@ Note behavior changes, risks, or follow-ups if they matter.
 ```
 
 Examples of acceptable types: `fix`, `feat`, `refactor`, `docs`, `test`, `chore`.
+
+## Commit Attribution
+
+- Commits produced by an AI agent must be authored by the user:
+  `Thomas Tränkler <git@thomas.traenkler.com>`.
+- Add a co-author trailer identifying the agent that actually produced the
+  commit:
+
+```text
+# Codex session
+Co-authored-by: Codex <codex@openai.com>
+
+# Claude session
+Co-authored-by: Claude <noreply@anthropic.com>
+```
+
+- Never attribute Codex work to Claude or Claude work to Codex.
+- Before committing, verify `git config user.name` and `git config user.email`
+  still identify Thomas Tränkler.

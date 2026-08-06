@@ -56,7 +56,29 @@ const ESLINT_LINTER = resolveEslintFile("lib/linter/linter.js");
 // recording matters here: an out-of-memory abort or a hung child must surface
 // as a named probe failure, never as "the compiler produced no diagnostics".
 const TIER1_HEAP_LIMIT_MB = 2048;
-const TIER1_WALL_CLOCK_BUDGET_MS = 120_000;
+// (#1282) Re-measured after the ambient-`.d.ts` fix removed the `source callable
+// validate` abort: the package entry now runs REAL codegen instead of stopping
+// at ~12 s, and reaches its next blocker at 297 s. Widened on a fresh
+// measurement, exactly as this file's own rule requires — not to make a red rung
+// green. 600 s leaves ~2x headroom for a slower CI runner.
+//
+// (2026-08-01) Re-measured AGAIN after #4001/#4018/#4019/#4027/#4028 cleared
+// five successive aborts. Each fix lets the compiler lower more of the graph
+// before stopping, so wall time GREW even though #4001 removed a quadratic:
+// 297 s -> 820 s. Measured under this file's own enforced 2048 MB cap on a
+// 4-core container: 820 s wall, peak RSS 1,576 MB (`VmHWM`, sampled every 2 s
+// by a parent supervisor), exit 0, structured report emitted. The heap cap is
+// therefore still honest and stays at 2048.
+//
+// (2026-08-02) Re-measured once more after #4033 and with `allowFs` on: 955 s.
+// Still inside 1,500 s (~1.6x), so the budget is unchanged. Each cleared blocker
+// costs wall time because more of the graph actually lowers.
+//
+// 1,500 s is ~1.6x the measurement. This is a slow rung, and deliberately so —
+// the dominant cost is the single surviving module-init compile (#4031, ~51 % of
+// the ESLint compile). Shrink this budget when #4031 lands, do not leave it wide.
+// `tests/stress/` runs in no required check, so this does not gate CI.
+const TIER1_WALL_CLOCK_BUDGET_MS = 1_500_000;
 
 let tier1EntryCompile: Promise<CompileProjectProbeReport> | null = null;
 
@@ -95,7 +117,12 @@ export function test(): number {
     // budget broke, so a breach can never be read as a compiler diagnostic.
     tier1EntryCompile = runCompileProjectProbe({
       entry,
-      options: { allowJs: true, target: "gc", platform: "node" },
+      // (#4033) `allowFs` is REQUIRED, not a convenience: ESLint calls
+      // `fs.readFileSync`, and the #1491 policy gate refuses to emit for a
+      // non-WASI target without it. That refusal is correct behaviour, not a
+      // compiler defect, and leaving it in the run buried a real policy decision
+      // in the middle of a defect ladder.
+      options: { allowJs: true, target: "gc", platform: "node", allowFs: true },
       heapLimitMb: TIER1_HEAP_LIMIT_MB,
       timeoutMs: TIER1_WALL_CLOCK_BUDGET_MS,
     }).then((outcome) => outcome.report);
@@ -117,18 +144,23 @@ describe.skipIf(ESLINT_LINTER === null)(
      * was *zero* automated signal on ESLint compilation, which is worse than a
      * red rung.
      *
-     * Frontier as of 2026-07-31, AFTER the builtin-subclass inherited-alias fix
-     * in `src/codegen/program-abi-class-callable-planning.ts`. The previous rung
-     * here was the hard codegen abort for `LazyLoadingRuleMap extends Map`
-     * (`inherited class callable ... has no exact defined function for handle
-     * 590`); that is retired, and the guard for it now lives in
-     * `tests/issue-3672.test.ts`. The package entry now walks past every
-     * `extends Map` in ESLint and stops on the NEXT structural blocker — a
-     * `function validate` whose inventory unit is neither `top-level-function`
-     * nor `synthetic-support`. Both this entry and the direct `linter.js` entry
-     * reach the identical new diagnostic. Resolution is otherwise complete —
-     * #3654 landed and there is not a single `Cannot find module` left on this
-     * entry. #3656's dynamic-destructuring invariant is gone too.
+     * Frontier as of 2026-08-01, AFTER the ambient-`.d.ts` fix (#1282) in
+     * `src/codegen/declarations.ts`. The previous two rungs are both retired:
+     * the builtin-subclass inherited-alias abort, and then
+     * `source callable validate has no consistent exact top-level or
+     * compiler-support inventory owner` — the latter caused by a bare
+     * `function validate(...)` in `json-schema/index.d.ts` being minted as a
+     * DEFINED wasm function (inside a `.d.ts`, `declare` is implicit, so the
+     * `hasDeclareModifier` guard missed it).
+     *
+     * With that gone the package entry no longer stops in the front-end at
+     * ~12 s — it runs REAL codegen for the first time, for 297 s, and reaches
+     * a genuinely different class of blocker: a module-init ORDERING defect,
+     * `module TDZ global minimatch was observed before its value global`.
+     *
+     * Resolution is otherwise complete — #3654 landed and there is not a single
+     * `Cannot find module` left on this entry. #3656's dynamic-destructuring
+     * invariant is gone too.
      */
     it('Tier 1a — package entry reaches the current frontier for `import { Linter } from "eslint"`', async () => {
       const r = await compileTier1Entry();
@@ -138,22 +170,35 @@ describe.skipIf(ESLINT_LINTER === null)(
       expect(diagnostics).not.toContain("Cannot find module");
       expect(diagnostics).not.toContain("object destructuring source must be IrType.object or IrType.class");
 
-      // Pin the frontier: one hard codegen abort, and it is the source-callable
-      // inventory-owner invariant. When that is fixed this rung goes red on
-      // purpose — advance the ladder, do not relax the assertion.
+      // Frontier as of 2026-08-02. The single-hard-abort ladder is FINISHED:
+      // #4018 (ambient `.d.ts` owning a module TDZ global), #4019 (unbounded
+      // recursion on cyclic types), #4027 (documented IR deferrals classified as
+      // fatal invariants), #4028 (a nested `FunctionDeclaration` admitted as an
+      // imported direct-call target the inventory can never own) and #4033
+      // (`callableProvider` duplicating `moduleInit`'s role ordinal) each retired
+      // the abort before it. There is now NO hard codegen abort at all.
       const codegenErrors = r.errors.filter((error) => error.message.startsWith("Codegen error:"));
       expect(
         codegenErrors.map((error) => error.message),
-        "the ESLint package-entry frontier moved — advance this rung",
-      ).toHaveLength(1);
-      expect(codegenErrors[0]?.message).toContain("source callable validate");
-      expect(codegenErrors[0]?.message).toContain(
-        "has no consistent exact top-level or compiler-support inventory owner",
-      );
+        "a hard codegen abort came back on the ESLint package entry",
+      ).toEqual([]);
 
-      // The retired rung must not come back.
+      // What blocks emission now is a SET of independent gaps, not one abort.
+      // Pin them by identity so fixing any one turns this rung red on purpose.
+      expect(diagnostics).toContain("$ObjVecArr"); // #4037
+      expect(diagnostics).toContain("Internal error compiling expression"); // #4038
+
+      // Retired rungs must not come back — each of these WAS the frontier.
       expect(diagnostics).not.toContain("inherited class callable");
-    }, 180_000);
+      expect(diagnostics).not.toContain("was observed before its value global"); // #4018
+      expect(diagnostics).not.toContain("Maximum call stack size exceeded"); // #4019
+      expect(diagnostics).not.toContain("concrete return needs a dynamic box"); // #4027
+      expect(diagnostics).not.toContain("has no exact structural unit identity"); // #4028
+      expect(diagnostics).not.toContain("share structural order"); // #4033
+      // #1491's fs gate is a POLICY refusal, not a defect — `allowFs` above
+      // settles it. If it reappears the option was dropped, not a bug found.
+      expect(diagnostics).not.toContain("requires the --allow-fs flag");
+    }, 1_560_000);
 
     /**
      * Tier 1b — the binary produced by Tier 1a is structurally valid Wasm.

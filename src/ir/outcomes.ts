@@ -57,6 +57,27 @@ export type IrUnsupportedCode =
   //     `any`-typed receiver, i.e. ordinary untyped JS — stopped compiling at
   //     all (empty binary) on every target. `let` was equally affected.
   | "unboxed-number-local-unprovable"
+  // (#4035) Two MORE sites in the same #3565/#3784 class, found 2026-08-02 while
+  // the #3008 fix-on-touch ratchet surfaced `tests/issue-2877.test.ts` (rotted
+  // 3/7 red on main — untouched root tests never run at PR time, so nothing
+  // reported it). Both are DESIGNED demotes whose own comments say so, and both
+  // threw a PLAIN `Error`, so `classifyIrFailure` bucketed them as the untyped
+  // `unexpected-internal-throw` invariant and the documented demotion became a
+  // hard compile error on every target:
+  //   - `throw-value-unsupported`   — `lowerThrowStatement` (from-ast.ts). Its
+  //     own comment: "Slice 9 defers — fall back to legacy by throwing here so
+  //     the function compilation aborts cleanly and the legacy path takes
+  //     over." Covers the numeric (`throw 42`) and bare-`throw` arms.
+  //   - `unknown-class-construction` — the `new X(...)` arm of from-ast.ts with
+  //     neither a class shape nor extern metadata. `KNOWN_EXTERN_CLASSES`
+  //     (select.ts) states the contract for its own deliberate over-claim: "the
+  //     actual lowering throws cleanly if the resolver doesn't carry metadata
+  //     for the class, falling the function back to legacy via `safeSelection`".
+  //     Measured casualty: `throw new SyntaxError("…")` — SyntaxError is
+  //     selector-claimed but carries no metadata (TypeError/RangeError are
+  //     selector-REJECTED, which is why only some error classes broke).
+  | "throw-value-unsupported"
+  | "unknown-class-construction"
   | "element-store-unsupported"
   | "element-access-unsupported"
   | "return-type-legacy-coupling"
@@ -143,6 +164,21 @@ export class IrInvariantError extends Error {
   }
 }
 
+/**
+ * (#4035) Throw a DESIGNED demote-to-legacy at a build-stage site.
+ *
+ * Lives here rather than at the call sites because `src/ir/from-ast.ts` is a
+ * god-file pinned at its LOC ceiling, and because the whole point of this
+ * helper is that the demote must be TYPED: a plain `throw new Error` is
+ * classified as `unexpected-internal-throw`, which #3341/#3519 hard-error, so
+ * the documented "clean throw → legacy" contract silently became a compile
+ * failure. Always use this rather than a bare `Error` for a not-yet-adopted
+ * construct.
+ */
+export function demoteToLegacy(code: IrUnsupportedCode, detail: string): never {
+  throw new IrUnsupportedError(code, "build", detail);
+}
+
 /** Preserve a typed failure; unknown throws are compiler invariants. */
 export function classifyIrFailure(error: unknown, stage: Exclude<IrPreparationStage, "select">): IrPreparationFailure {
   if (error instanceof IrUnsupportedError) {
@@ -193,6 +229,8 @@ interface IrObservedOutcomeBase {
   readonly target: IrObservedTarget;
   readonly legacyBodyEmitted: boolean;
   readonly irBodyEmitted: boolean;
+  /** R2 component whose ABI was dependency-derived and sealed before lowering. */
+  readonly preparedComponentId?: string;
 }
 
 export type IrObservedOutcome =

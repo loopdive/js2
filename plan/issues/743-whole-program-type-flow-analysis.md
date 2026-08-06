@@ -5,6 +5,7 @@ status: ready
 created: 2026-03-22
 updated: 2026-07-18
 priority: critical
+horizon: xl
 feasibility: hard
 model: fable
 fable_role: spec
@@ -12,7 +13,7 @@ reasoning_effort: max
 goal: performance
 sprint: current
 required_by: [744, 904, 905]
-related: [773, 745, 2773, 1046, 1124, 1131]
+related: [4157, 773, 745, 2773, 1046, 1124, 1131]
 files:
   src/checker/type-mapper.ts:
     breaking:
@@ -27,6 +28,26 @@ files:
   src/codegen/expressions.ts:
     breaking:
       - "use narrowed parameter/return types from whole-program analysis"
+loc-budget-allow:
+  # +19 (1483 → 1502, crossing the 1500 god-file threshold by 2): the
+  # `new F(…)` call-graph edge in `buildCallGraph` — 8 lines of code and a
+  # compressed rationale comment. The site collector is the ONE place
+  # call-graph edges exist, so the widening cannot live in a satellite
+  # module; the full rationale and the transitive-proof tests were placed in
+  # tests/issue-743-ctor-sites-in-fixpoint.test.ts instead of comment bulk.
+  - src/ir/propagate.ts
+  # +6: a three-line comment and one call in `deriveFnctorFields`, which is the
+  # single place a fnctor field slot is chosen and therefore the only place this
+  # narrowing can be applied. All of the decision logic — the flag, the
+  # parameter-resolution checks, the call-site query and the f64-only
+  # restriction — lives in the new `fnctor-ctor-param-types.ts`.
+  - src/codegen/fnctor-escape-gate.ts
+func-budget-allow:
+  # `deriveFnctorFields` 300 -> 301, crossing the threshold by one line for the
+  # call described above. Splitting it is a real refactor (#3399) and doing it
+  # underneath a flag-gated inference change would make both harder to review;
+  # the function is not growing in complexity, only in one delegation.
+  - src/codegen/fnctor-escape-gate.ts::deriveFnctorFields
 ---
 
 # #743 — Whole-program type flow analysis

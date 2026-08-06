@@ -13,6 +13,42 @@ import { coerceType, compileExpression, valTypesMatch } from "../shared.js";
 import { defaultValueInstrs } from "../type-coercion.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 
+type MappedArgsInfo = NonNullable<FunctionContext["mappedArgsInfo"]>;
+
+/** Runtime half of the mapped-arguments guard. A null state local means no
+ * runtime eval has initialized/severed the map yet, so the correspondence is
+ * still live. Once initialized, a null vector entry means it was severed. */
+function runtimeMappedEntryIsLive(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  info: MappedArgsInfo,
+  argIndex: number,
+): Instr[] | null {
+  const mapLocal = info.runtimeMappedNamesLocalIdx;
+  if (mapLocal === undefined) return null;
+  const externref: ValType = { kind: "externref" };
+  const getIdx = ensureLateImport(ctx, "__extern_get_idx", [externref, { kind: "f64" }], [externref]);
+  flushLateImportShifts(ctx, fctx);
+  const liveGetIdx = ctx.funcMap.get("__extern_get_idx") ?? getIdx;
+  if (liveGetIdx === undefined) return null;
+  return [
+    { op: "local.get", index: mapLocal },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [{ op: "i32.const", value: 1 }],
+      else: [
+        { op: "local.get", index: mapLocal },
+        { op: "f64.const", value: argIndex },
+        { op: "call", funcIdx: liveGetIdx },
+        { op: "ref.is_null" },
+        { op: "i32.eqz" },
+      ],
+    },
+  ];
+}
+
 export function compileLogicalAnd(ctx: CodegenContext, fctx: FunctionContext, expr: ts.BinaryExpression): ValType {
   // JS semantics: a && b → if a is falsy, return a; else return b
   const leftType = compileExpression(ctx, fctx, expr.left);
@@ -347,6 +383,7 @@ function emitMappedArgParamSync(
   // §10.4.4.2 — once severed, a parameter write must NOT propagate to
   // arguments[i].
   if (info.unmappedIndices?.has(argIndex)) return;
+  const runtimeLive = runtimeMappedEntryIsLive(ctx, fctx, info, argIndex);
 
   // Save the expression result (currently on stack from local.tee)
   const tmp = allocLocal(fctx, `__arg_sync_${fctx.locals.length}`, resultType);
@@ -371,22 +408,28 @@ function emitMappedArgParamSync(
   }
   // externref: no coercion needed
 
-  // Sync param value to arguments backing array (null-guarded)
-  fctx.body.push({ op: "local.get", index: info.argsLocalIdx });
-  fctx.body.push({ op: "ref.is_null" });
-  fctx.body.push({
-    op: "if",
-    blockType: { kind: "empty" },
-    then: [],
-    else: [
-      { op: "local.get", index: info.argsLocalIdx },
-      { op: "struct.get", typeIdx: info.vecTypeIdx, fieldIdx: 1 },
-      { op: "i32.const", value: argIndex },
-      { op: "local.get", index: paramIdx },
-      ...coerceInstrs,
-      { op: "array.set", typeIdx: info.arrTypeIdx },
-    ],
-  });
+  // Sync param value to arguments backing array (null-guarded).
+  const syncBody: Instr[] = [
+    { op: "local.get", index: info.argsLocalIdx },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [],
+      else: [
+        { op: "local.get", index: info.argsLocalIdx },
+        { op: "struct.get", typeIdx: info.vecTypeIdx, fieldIdx: 1 },
+        { op: "i32.const", value: argIndex },
+        { op: "local.get", index: paramIdx },
+        ...coerceInstrs,
+        { op: "array.set", typeIdx: info.arrTypeIdx },
+      ],
+    },
+  ];
+  if (runtimeLive === null) fctx.body.push(...syncBody);
+  else {
+    fctx.body.push(...runtimeLive, { op: "if", blockType: { kind: "empty" }, then: syncBody, else: [] });
+  }
 
   // Restore expression result
   fctx.body.push({ op: "local.get", index: tmp });
@@ -412,6 +455,7 @@ function emitMappedArgReverseSync(
     if (info.unmappedIndices?.has(i)) continue;
     const paramType = info.paramTypes[i]!;
     const localIdx = i + info.paramOffset;
+    const runtimeLive = runtimeMappedEntryIsLive(ctx, fctx, info, i);
 
     // Build instructions to convert externref value to param type
     const convertInstrs: Instr[] = [];
@@ -435,13 +479,18 @@ function emitMappedArgReverseSync(
     }
     // externref → externref: just local.get valLocal (already in convertInstrs)
 
+    const writeParam: Instr[] = [...convertInstrs, { op: "local.set", index: localIdx }];
+    const mappedWrite: Instr[] =
+      runtimeLive === null
+        ? writeParam
+        : [...runtimeLive, { op: "if", blockType: { kind: "empty" }, then: writeParam, else: [] }];
     fctx.body.push({ op: "local.get", index: idxLocal });
     fctx.body.push({ op: "i32.const", value: i });
     fctx.body.push({ op: "i32.eq" });
     fctx.body.push({
       op: "if",
       blockType: { kind: "empty" },
-      then: [...convertInstrs, { op: "local.set", index: localIdx }],
+      then: mappedWrite,
       else: [],
     });
   }

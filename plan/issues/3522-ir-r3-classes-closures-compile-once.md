@@ -1,10 +1,10 @@
 ---
 id: 3522
 title: "IR-only R3: compile-once classes, members, and closures"
-status: blocked
-sprint: Backlog
+status: in-progress
+sprint: current
 created: 2026-07-21
-updated: 2026-07-21
+updated: 2026-08-03
 priority: critical
 horizon: xl
 complexity: XL
@@ -30,12 +30,29 @@ files:
   - src/ir/select.ts
   - src/ir/from-ast.ts
   - src/ir/integration.ts
+  - src/ir/prepared-component-dependencies.ts
   - src/codegen/class-bodies.ts
   - src/codegen/closures.ts
   - src/codegen/declarations.ts
+  - src/codegen/ir-prepared-free-functions.ts
+  - src/codegen/ir-overlay-outcomes.ts
+  - src/codegen/program-abi-class-callable-planning.ts
+  - src/codegen/program-abi-session.ts
+  - src/codegen/program-abi-type-planning.ts
   - src/codegen/context/types.ts
   - src/codegen/index.ts
   - tests/issue-3522-ir-class-compile-once.test.ts
+  - tests/issue-3522-ir-static-class-method.test.ts
+loc-budget-allow:
+  - src/codegen/class-bodies.ts
+  - src/codegen/declarations.ts
+  - src/codegen/index.ts
+  - src/codegen/program-abi-session.ts
+  - src/ir/integration.ts
+func-budget-allow:
+  - src/codegen/class-bodies.ts::compileClassBodiesInner
+  - src/codegen/declarations.ts::compileDeclarations
+  - src/codegen/index.ts::generateModule
 ---
 
 # #3522 — IR-only R3: compile-once classes, members, and closures
@@ -90,6 +107,246 @@ Class integration still depends on direct compilation as its ABI producer:
 
 R3 splits class/closure planning from body emission and makes every hidden
 support unit visible to `PreparedIrProgram`.
+
+## Static-method production slice (2026-08-02)
+
+The selector/integration mismatch for ordinary static methods is closed.
+Static methods lower as class-owned, no-receiver IR functions; exact owner
+projection, terminal evidence, and outcome reconciliation now include them.
+Their allocated class-callable handles survive pre-direct function-record
+replacement, and dependency-complete static components can seal through the
+same Program ABI transaction as free functions.
+
+For a sealed static component, `compileClassBodies` receives an exact requested
+skip projection, preserves the already installed IR body, and reports the
+physical class slot back for unit-ID correlation. The shared audit proves every
+skipped class slot has one patched terminal result. Unsealed static probes are
+removed from the early report, compile direct, and run through the established
+late overlay; they do not produce duplicate terminal evidence. Instance
+methods, constructors, accessors, fields, and closures remained on that
+transitional route at this slice.
+
+Focused runtime coverage proves:
+
+- numeric static methods on `gc` and `standalone` have no synthetic `self`,
+  emit no legacy body, validate as Wasm, and return the expected value;
+- same-named static overrides on separate structural class owners retain
+  distinct slots and runtime behavior; and
+- an adjacent Unsupported instance method in a separate class still emits its
+  direct body, preventing a source-wide or flat-name skip from satisfying the
+  test.
+
+The authoritative single-host lane moves from **31 to 33 IR-emitted units**,
+from **6 to 4 Unsupported units**, and from **37 to 35 legacy bodies**, with
+zero invariants. The remaining Unsupported units are two async functions, one
+async-body shape, and one call-graph closure. Hybrid is READY; strict IR-only
+is still NOT READY because 35 units retain legacy bodies.
+
+This is the first bounded R3 production slice, not issue completion. The
+no-receiver static ABI is preserved, but constructors, accessors, field work,
+inheritance support, class expressions, nested units,
+object methods, and closures still need component-atomic prepare/emit ownership
+and optimization-parity evidence before their direct handlers can retire.
+
+## Flat instance-method production slice (2026-08-02)
+
+Ordinary instance methods on exact top-level class declarations without an
+`extends` clause now join the pre-direct class-method preparation pass when the
+method contains no nested executable syntax and the already-collected class
+layout is index-stable and scalar. Scalar here is a structural contract: the
+layout has no parent edge and every field is `i32`, `i64`, `f32`, `f64`,
+`v128`, `i8`, or `i16`. Reference-bearing layouts stay on the established late
+route because their physical type indices may move during compaction. The
+eligible layout is published into Program ABI before IR integration, and the
+exact `class-layout` binding is included in the prepared component scope before
+it seals. This keeps the receiver ABI and class callable handle immutable
+before any class body emitter can run.
+
+Methods that depend on the same canonical class-layout binding are unioned into
+one atomic prepared component. `compileClassBodies` skips only the exact sealed
+ordinary-method slots, preserves the installed IR bodies, and reports their
+physical handles for terminal reconciliation. Constructors and accessors remain
+direct, as do Unsupported instance methods; the direct emitter and its existing
+optimizations are unchanged for those paths. A verifier Invariant is terminal
+and cannot retry the direct body emitter.
+
+Focused `gc` and `standalone` coverage proves:
+
+- two instance methods on the same flat class each record `direct=0, IR=1` and
+  share one prepared component ID, so omitting class-layout ownership or
+  component union cannot satisfy the test;
+- a default-parameter method on a separate string-field class records
+  `direct=1, IR=0`; a direct structural-policy test rejects its `ref_null`
+  layout, while the combined program validates as Wasm and returns the expected
+  runtime value; and
+- an injected verifier failure records one Invariant with `direct=0, IR=0`,
+  proving there is no post-claim legacy retry.
+
+The authoritative single-host readiness corpus is unchanged before versus
+after this bounded slice: **37 terminal units, 33 IR bodies, 35 legacy bodies,
+4 Unsupported, and zero Invariants** on both `origin/main` and this branch.
+None of its five entries contains an eligible scalar-layout instance method;
+the physical ownership improvement is therefore measured by the focused
+per-unit counters above rather than an artificial corpus change. Hybrid remains
+READY, while strict IR-only remains NOT READY with the same four typed async /
+closure blockers and 35 retained legacy bodies.
+
+Reference-bearing class layouts, constructors, accessors, fields,
+derived/inherited classes, class expressions, nested class units, object
+methods, and closures remain for later R3 slices.
+
+## Bounded class method/accessor checkpoint (2026-08-03)
+
+The final-async checkpoint #4065 leaves the authoritative single-host lane at
+**37/37 IR-emitted**, **30 legacy bodies**, **0 Unsupported**, and **0
+Invariant**. Ten terminal units are class members. The two static bodies
+`Animal_kingdom` and `Dog_kingdom` already compile once through Prepared IR.
+This checkpoint retires the next six source bodies:
+
+| Component | Source unit       | Kind                | Prepared dependencies                            |
+| --------- | ----------------- | ------------------- | ------------------------------------------------ |
+| Animal    | `Animal_get_name` | instance getter     | receiver layout and native-string field carrier  |
+| Animal    | `Animal_set_name` | instance setter     | receiver layout and native-string field carrier  |
+| Animal    | `Animal_get_age`  | instance getter     | receiver layout and native `f64` field carrier   |
+| Animal    | `Animal_speak`    | instance method     | receiver layout, private read, string concat      |
+| Dog       | `Dog_speak`       | overriding method   | inherited layout, direct `super.speak`, concat    |
+| Dog       | `Dog_get_breed`   | instance getter     | inherited layout and native-string field carrier |
+
+`Animal_new` and `Dog_new` remain direct in this checkpoint. Constructor
+retirement is not another method-shaped skip: the current IR constructor
+overlay owns `_new`, while the direct backend executes the source constructor
+inside `_init` and `Dog_init` calls `Animal_init`. Retiring those bodies safely
+requires one source-constructor unit lowered into `_init`, plus an AST-free
+allocation-and-init `_new` support wrapper. That `_new`/`_init` ownership
+transaction is the first item in the handover below.
+
+### Preparation and deletion contract
+
+1. Replace the scalar-only early class-layout gate with Program-ABI-owned
+   preparation of reference-bearing and inherited class layouts. Every parent
+   and field type index follows structural remapping; a prepared class draft is
+   refreshed after exact type compaction and reported leaf finalization.
+2. Prepare top-level instance methods, getters, and setters through the same
+   exact structural owner projection. `compileClassBodies` skips only sealed
+   bodies and never inspects their AST; an injected direct-body poison proves
+   the six names stay outside the legacy emitter, with `Animal_new` as the
+   positive control.
+3. Delete the obsolete scalar-layout-only preparation API and method-only
+   naming in the same checkpoint. Constructors retain their measured direct
+   implementation until the `_new`/`_init` transaction proves one source-body
+   owner and can delete it.
+4. Bank only a freshly measured reduction from **30 to 24 legacy bodies**.
+   The result must remain **37/37 IR-emitted**, **0 Unsupported**, and **0
+   Invariant**. Eight class-member terminals then have `legacyBodyEmitted:
+   false`; only `Animal_new` and `Dog_new` remain legacy-backed in that family.
+   Strict IR-only remains red solely on 20 free functions, two module-init
+   bodies, and those two constructors.
+
+### Optimization-parity contract
+
+- Preserve one typed class receiver for every method/accessor, with no dynamic
+  receiver box, ambient-`this` frame, or generic member ladder. `Dog_speak`
+  retains the direct backend's single static parent narrowing at the
+  `Animal_speak` ABI boundary and does not add a `ref.test` dispatch ladder.
+- Preserve private-field `struct.get`/`struct.set` lowering, native `f64` age,
+  and native-string field carriers. No `__extern_get`, `__extern_set`, dynamic
+  member ladder, or string box/unbox round trip may appear in the six bodies.
+- Preserve one direct symbolic `Animal_speak` target from `Dog_speak`, the
+  existing class-tag/subtype layout, and owned/native string concatenation.
+- Record typed class receivers, private class fields, and direct super calls in
+  the optimization-retirement ledger. Runtime and WAT evidence are verified;
+  performance attribution stays pending under #3792 before deleting the
+  corresponding direct optimization globally.
+
+### Required anti-vacuity evidence for this checkpoint
+
+- Pin all ten class-member telemetry rows and the exact six-body delta; a
+  summary count without names is insufficient.
+- Run the unchanged playground classes entry in the GC lane and assert the
+  complete console trace: accessors, field mutation, override/super ordering,
+  `instanceof`, and static results. Compile and validate both GC and standalone.
+- Compare direct-control and prepared WAT shapes for typed receiver, private
+  field, super-call, and string-concat operations. The prepared output may not
+  replace those with generic host/member traffic.
+- Activate the direct-body poison seam for all six prepared names and prove the
+  constructor positive control fails.
+- Keep focused #3520/#3521/#3522 class identity, callable, remap, inheritance,
+  funcMap collision, and selector-preclaim suites green. Pass hybrid readiness,
+  expected strict IR-only failure solely on 24 named bodies, fallback/shape,
+  optimization-retirement, allocation provenance, typecheck, formatting,
+  cross-backend/equivalence, and full merge-group Test262 gates.
+
+### Handover after this checkpoint
+
+Checkpoint result: hybrid shadow validation measures **5/5 entries, 37/37
+IR-emitted terminals, 24 legacy bodies, 0 Unsupported, and 0 Invariant**. The
+six retired names are `Animal_get_name`, `Animal_set_name`, `Animal_get_age`,
+`Animal_speak`, `Dog_speak`, and `Dog_get_breed`; each records
+`legacyBodyEmitted: false` and `irBodyEmitted: true` on GC and standalone. The
+strict IR-only shadow remains red only because these exact bodies remain:
+
+- constructors: `Animal_new`, `Dog_new`;
+- module init: `calendar.ts::<module-init>`, `algorithms.ts::<module-init>`;
+- calendar functions: `el`, `mname`, `dimOf`, `fdow`, `priceOf`, `renderCal`,
+  `onDay`, `updFoot`, and `main`;
+- algorithms functions: `fibIter`, `fibMemo`, `binarySearch`, `quicksort`,
+  `joinNums`, and `main`;
+- builtins functions: `el`, `crd`, `rw`, and `main`;
+- classes function: `main`.
+
+The production branch is `codex/3522-class-member-retirement` in the isolated
+worktree `/private/tmp/ts2wasm-3522-class-member-retirement`, published as
+ready PR [#4081](https://github.com/loopdive/js2/pull/4081). The branch was
+rebased onto `origin/main` immediately before the final handover push and is
+not queued at suspension. The dirty root checkout is not part of this work.
+
+### PR #4081 equivalence repair (2026-08-03)
+
+The first PR run exposed four genuine branch regressions: the derived class
+without an explicit constructor and three inherited/private-field programs.
+Each passed alone on the detached `origin/main` control and failed alone on the
+published head. All four had the same failure: dependency discovery sealed the
+exact ancestor class-member unit, but Phase 3 ignored the `class.call` target
+already carried by IR and attempted to mint a child-name inherited adapter
+after that component was immutable.
+
+The Phase 3 class resolver now binds dependency-sealed class-operation unit
+targets into each lowering pass and uses those same targets for instance,
+`super`, and static calls. The inherited adapter remains only for compatibility
+IR without a structural target. Added GC/standalone coverage poisons both the
+ancestor and derived direct emitters,
+requires both class bodies to remain Prepared IR, validates the module, and
+checks the inherited runtime result. The four CI regression cases pass alone;
+the complete private-field equivalence file and focused #3000/#3520/#3521/#3522
+suites pass. This repair changes no terminal ownership or readiness counts:
+**37/37 IR-emitted, 24 legacy bodies, 0 Unsupported, 0 Invariant**.
+
+Final-head validation before publication:
+
+- focused prepared routing and class retirement: **42/42 passed**;
+- IR allocation registry/provenance: **16/16 passed**;
+- typecheck, formatting, issue integrity, optimization retirement, fallback
+  shape diagnostics, oracle, LOC/function budgets, vacuity shapes, and
+  equivalence gates passed;
+- hybrid shadow: **37/37 IR, 24 legacy, 0 Unsupported, 0 Invariant**;
+- strict IR-only shadow: expected red on exactly 24 legacy bodies;
+- `check:linear-ir` has a pre-existing current-main ratchet failure
+  (`compiled 8 -> 6`, two `vec.set_length` and two string-builder demotions).
+  The identical result was reproduced in a clean detached `origin/main`
+  worktree at `f23ea5025e04ac`; this checkpoint does not refresh that unrelated
+  baseline.
+
+1. Retire `Animal_new` and `Dog_new` by making `_init` the sole source-body
+   owner and `_new` an AST-free allocation wrapper; retain same-receiver
+   `Animal_init` chaining and delete the obsolete direct constructor-body path.
+2. Retire closures and cross-owner calls as one family, then module
+   initialization, then runtime/linear-memory helpers. Keep only one
+   overlapping production PR active. The class-member selector intentionally
+   leaves a member with a structural edge to a top-level free function direct
+   until that family can prepare both owners atomically.
+3. For each family, reduce the measured legacy count, pass hybrid plus strict
+   shadow validation, add semantic/output-shape optimization parity, and delete
+   the obsolete legacy implementation in the same PR when no consumers remain.
 
 ## Exhaustive source-unit census
 
@@ -279,7 +536,7 @@ Run adjacent coverage from `tests/issue-1983-funcmap-collision.test.ts`,
 ## Required completion evidence
 
 ```bash
-pnpm exec vitest run tests/issue-3522-ir-class-compile-once.test.ts tests/issue-1983-funcmap-collision.test.ts tests/issue-3000-1b.test.ts tests/issue-3000-e.test.ts tests/issue-3144-ir-class-claims.test.ts tests/class-expressions.test.ts tests/nested-class-declarations.test.ts --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
+pnpm exec vitest run tests/issue-3522-ir-class-compile-once.test.ts tests/issue-3522-ir-static-class-method.test.ts tests/issue-1983-funcmap-collision.test.ts tests/issue-3000-1b.test.ts tests/issue-3000-e.test.ts tests/issue-3144-ir-class-claims.test.ts tests/class-expressions.test.ts tests/nested-class-declarations.test.ts --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
 pnpm run check:ir-only -- --policy=hybrid
 pnpm run check:ir-only -- --policy=ir-only --json
 pnpm run check:ir-fallbacks -- --verbose

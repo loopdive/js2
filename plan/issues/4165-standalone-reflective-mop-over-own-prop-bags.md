@@ -349,3 +349,21 @@ Full re-measure of the six descriptor directories with the writable-gate fix,
 same harness, same corpus: **1,625 -> 1,653 / 2,471 (+29 fixed, -1 regressed,
 net +28)**. The sole regression is `15.2.3.6-4-594` (the documented
 OrdinarySet proto-setter case). Matches the per-test verification exactly.
+
+
+## SUPERSEDED upstream (2026-08-05 merge) — surviving pieces only
+
+While this branch was in flight, upstream independently landed a fuller
+implementation of this issue's territory: #4010 S2/S3 (carrier-bag delete +
+visibility), #4017, #4055 (descriptor-scoped HasProperty), and #4161 — whose
+`carrier-bag-define.ts` header explicitly reviews this PR's wiring and extracts
+its surviving piece (the defineProperties/create substitution arms). The
+`__closure_prop_set` writable-gate is superseded by their
+`buildBuiltinFnSetRefusalArm`.
+
+Resolution taken in the merge: upstream's modules win wholesale;
+`own-prop-bag.ts` deleted. **The behavior tests from this issue were kept and
+pass against upstream's implementation (4/4)** — including the regressed
+verifyProperty write→delete→hasOwn cycle — so the supersession is verified
+equivalent-or-better, not assumed. The measured history above (+29/−1 on this
+branch's own implementation) remains valid for what it measured.

@@ -13,15 +13,30 @@ import type { BenchmarkDef } from "../harness.js";
 // Varying the *position argument* instead was rejected for the same reason as in
 // `suites/strings.ts`: `startsWith("The", p)` with p > 0 mismatches on the first
 // character and returns early, which deletes work from both lanes rather than
-// preserving it. Every variant below keeps the original match outcome, so the
-// accumulated result is unchanged from the pre-#3898 workload.
+// preserving it.
+//
+// ---------------------------------------------------------------------------
+// #4118 follow-up — the accumulated VALUE has to vary, not just the receiver
+// ---------------------------------------------------------------------------
+//
+// "Every variant keeps the original match outcome" preserved comparability but
+// left the loop body loop-invariant in value: all four TEXT variants matched all
+// four predicates, so `count` was 4 every iteration, and every CSV_DOC variant
+// had 11 lines of 3 columns, so `sum` was 30 every iteration. See the long note
+// in `suites/strings.ts` for how that collapsed a lane below the #3898 floor.
+//
+// `mixed/text-search` now folds in the `indexOf` RESULT rather than just the
+// sign of it. That costs nothing — the index is already computed — and it varies
+// per variant because the rearrangements move "jump". Two variants also end in
+// "quickly!" so `endsWith("quickly.")` differs; the mismatch is on the final
+// character, so the comparison still scans the full needle.
 
-/** 4 rearrangements; all start with "The", end with "quickly.", contain "jump". */
+/** 4 rearrangements; all start with "The" and contain "jump" at differing offsets. */
 const TEXT_VARIANTS = [
   "The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs. How vexingly quick daft zebras jump. The five boxing wizards jump quickly.",
   "The quick brown fox jumps over the lazy dog. How vexingly quick daft zebras jump. Pack my box with five dozen liquor jugs. The five boxing wizards jump quickly.",
-  "The five boxing wizards jump over the lazy dog. Pack my box with five dozen liquor jugs. How vexingly quick daft zebras jump. The quick brown fox jumps quickly.",
-  "The quick brown fox jumps over the lazy dog. The five boxing wizards jump. Pack my box with five dozen liquor jugs. How vexingly quick daft zebras jump quickly.",
+  "The five boxing wizards jump over the lazy dog. Pack my box with five dozen liquor jugs. How vexingly quick daft zebras jump. The quick brown fox jumps quickly!",
+  "The quick brown fox jumps over the lazy dog. The five boxing wizards jump. Pack my box with five dozen liquor jugs. How vexingly quick daft zebras jump quickly!",
 ];
 
 /** 4 header/row rearrangements; all 11 lines of 3 comma-separated columns. */
@@ -43,7 +58,9 @@ function csvParse(): number {
     let sum = 0;
     for (let i = 1; i < lines.length; i++) {
       const cols = lines[i]!.split(",");
-      sum += cols.length;
+      // (#4118) cols.length is 3 for every row of every variant. Fold in the
+      // last column's length too so the result varies — see the note at the top.
+      sum += cols.length + cols[cols.length - 1]!.length;
     }
     total += sum;
   }
@@ -60,7 +77,8 @@ function textSearch(): number {
     if (text.startsWith("The")) count++;
     if (text.endsWith("quickly.")) count++;
     const idx = text.indexOf(needle);
-    if (idx >= 0) count++;
+    // (#4118) Fold in the INDEX, not just its sign — see the note at the top.
+    if (idx >= 0) count += idx;
     total += count;
   }
   return total;
@@ -163,7 +181,7 @@ ${variantTable(CSV_DOC_VARIANTS)}
     let sum = 0;
     for (let i = 1; i < lines.length; i = i + 1) {
       const cols = lines[i].split(",");
-      sum = sum + cols.length;
+      sum = sum + cols.length + cols[cols.length - 1].length;
     }
     total = total + sum;
   }
@@ -189,7 +207,7 @@ ${variantTable(TEXT_VARIANTS)}
     if (text.startsWith("The")) count = count + 1;
     if (text.endsWith("quickly.")) count = count + 1;
     const idx = text.indexOf(needle);
-    if (idx >= 0) count = count + 1;
+    if (idx >= 0) count = count + idx;
     total = total + count;
   }
   return total;

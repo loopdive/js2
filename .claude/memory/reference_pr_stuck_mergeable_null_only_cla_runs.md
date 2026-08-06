@@ -5,14 +5,46 @@ metadata:
   node_type: memory
   type: reference
   originSessionId: 31a336a9-7fce-4c41-9a15-3e10d02eca44
-  modified: 2026-07-25T23:44:44.040Z
+  modified: 2026-08-02T05:30:14.103Z
 ---
 
 **A PR can wedge at `mergeable: null` / `mergeable_state: "unknown"` and stay
 there indefinitely.** It hit **two independent PRs within one hour** on
 `loopdive/js2` (2026-07-25, #3639 and #3641), so it is not a one-off.
 
-## The ONLY reliable discriminator
+## ⚠ RULE OUT `MERGED`/`CLOSED` FIRST — added 2026-08-02 after a false positive
+
+**A merged or closed PR reads `mergeable: null` / `mergeStateStatus: UNKNOWN`
+PERMANENTLY**, because GitHub stops computing mergeability once a PR is no
+longer open. So a merged PR **reproduces the wedge signature below exactly** —
+including "persists across repeated polls", which is the discriminator this note
+calls the only reliable one.
+
+```bash
+gh pr view <N> --json state          # MERGED/CLOSED ⇒ UNKNOWN is EXPECTED, stop here
+```
+
+**`mergeStateStatus` is only interpretable on an `OPEN` PR.** Query `state`
+alongside it, always — a query that omits `state` cannot distinguish a wedge
+from a landed PR.
+
+Measured 2026-08-02: an agent tracked `UNKNOWN` across **~12 reads over ~25
+minutes** via both GraphQL and REST, worked through this note's ⚠ false-positive
+list, ruled out the *queued* case by direct measurement — and was about to
+close+reopen a PR that had **merged 20 minutes earlier**. Every read was
+accurate; every inference was invalid.
+
+**The transferable lesson:** ruling out one documented false positive is not the
+same as establishing that the signature means what you think it means. It
+*resembles* rigor closely enough to pass. A false-positive list is a floor, not
+a ceiling — treat it as incomplete by default.
+
+(Corollary artifact worth recognising: a queue branch named
+`gh-readonly-queue/main/pr-<other>-<sha>` embeds the **merge commit of the PR
+that just landed**. In that incident the SHA quoted as evidence *against* the
+PR having merged was that PR's own merge commit.)
+
+## The ONLY reliable discriminator (on an OPEN PR)
 
 ```bash
 gh api repos/<owner>/<repo>/pulls/<N> -q '.mergeable, .mergeable_state'

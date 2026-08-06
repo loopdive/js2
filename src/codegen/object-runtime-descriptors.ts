@@ -37,15 +37,12 @@ import { emitSelfHostedFunc } from "./stdlib-selfhost.js";
 import { SELF_HOSTED_OBJECT_RUNTIME } from "../stdlib/object-runtime.js";
 import { getOrRegisterVecBaseType } from "./registry/types.js";
 import { reserveVecOverlayHelpers } from "./vec-overlay.js";
-// (#4165) reflective-MOP own-property bag substitution (#3468 closures / #3537 arrays).
-import {
-  bagSubstitutionArm,
-  closureBagEnsureInstrs,
-  closureBagSubstitutionArm,
-  isVecCarrierInstrs,
-  ownPropBagLookupInstrs,
-} from "./own-prop-bag.js";
+import { buildIntegrityPredicate, registerIntegrityBagResolver } from "./object-integrity-carrier.js";
 import { buildObjectIntegrityMutationHelpers } from "./object-runtime-integrity.js";
+import { bagGopdBetween, bagKeysIf } from "./carrier-bag-visibility.js"; // (#4010 S3) visibility over the bags
+// (#4161) DEFINE-side closure-bag arms — Object.defineProperty/defineProperties
+// on a FUNCTION receiver store into the #3468 own-property bag.
+import { closureBagSubstitutionArm, closurePropertiesBagArm, isClosureCarrierInstrs } from "./carrier-bag-define.js";
 
 /**
  * Everything the descriptor/integrity block reads from the enclosing
@@ -373,7 +370,10 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       },
     ];
 
-    // (#4165) closure-receiver bag substitution; bag local appended at index 13.
+    // (#4161) Closure-receiver bag substitution; bag local APPENDED at index 13
+    // (standalone/wasi only — `undefined` in gc/host keeps the body and local
+    // vector byte-identical). Runs AFTER the vec overlay (#3251 owns vec
+    // receivers) and carries the lenient no-op as its bag-absent fallback.
     const dpValueClosureArm = closureBagSubstitutionArm(ctx, {
       recvLocalIdx: 0,
       anyLocalIdx: 5,
@@ -383,8 +383,13 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     const body: Instr[] = [
       // any = any.convert_extern(obj) ; if !$Object → vec receivers route to
       // the #3251 overlay (per-index/expando descriptor storage on a
-      // companion $Object); anything else keeps the lenient no-op (matches
-      // the host import returning O unchanged).
+      // companion $Object); a CLOSURE receiver defines into its #3468
+      // own-property bag (#4161) and falls through into the unchanged
+      // `$Object` path below — including the #2042-S4
+      // ValidateAndApplyPropertyDescriptor preflight, which a function
+      // receiver previously skipped entirely via the lenient no-op; anything
+      // else keeps the lenient no-op (matches the host import returning O
+      // unchanged).
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "local.tee", index: 5 },
@@ -393,11 +398,6 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       {
         op: "if",
         blockType: { kind: "empty" },
-        // (#4165) A CLOSURE receiver's own-property table is the #3468
-        // side-table bag; define into it (creating it on demand) and fall out of
-        // this arm into the unchanged `$Object` path — including the #2042-S4
-        // ValidateAndApplyPropertyDescriptor preflight, which a function object
-        // previously skipped entirely via the lenient no-op below.
         then: [
           ...vecOverlayArm(5, vecOverlay?.dpValueIdx ?? -1, 4),
           ...(dpValueClosureArm ?? [{ op: "local.get", index: 0 }, { op: "return" }]),
@@ -609,7 +609,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
         { name: "seq", type: { kind: "i32" } },
         { name: "e", type: entryRefNull }, // #2042 S4 — existing entry (local 11)
         { name: "efl", type: { kind: "i32" } }, // #2042 S4 — existing flags (local 12)
-        // (#4165) closure own-property bag (local 13) — standalone/wasi only.
+        // (#4161) closure own-property bag (local 13) — standalone/wasi only.
         ...(dpValueClosureArm
           ? ([{ name: "bag", type: { kind: "externref" } }] as { name: string; type: ValType }[])
           : []),
@@ -699,7 +699,8 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       { op: "i32.const", value: 0 },
       { op: "i32.ne" },
     ];
-    // (#4165) closure-receiver bag substitution; bag local appended at index 16.
+    // (#4161) Closure-receiver bag substitution; bag local APPENDED at index 16
+    // (standalone/wasi only) — same shape as the `__defineProperty_value` arm.
     const dpAccessorClosureArm = closureBagSubstitutionArm(ctx, {
       recvLocalIdx: 0,
       anyLocalIdx: 6,
@@ -709,7 +710,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     const body: Instr[] = [
       // any = any.convert_extern(obj) ; if !$Object → vec receivers route to
       // the #3251 overlay; a CLOSURE receiver defines into its #3468
-      // own-property bag (#4165); anything else keeps the lenient no-op.
+      // own-property bag (#4161); anything else keeps the lenient no-op.
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "local.tee", index: 6 },
@@ -1058,7 +1059,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
         { name: "efl", type: { kind: "i32" } },
         { name: "getSpec", type: { kind: "i32" } },
         { name: "setSpec", type: { kind: "i32" } },
-        // (#4165) closure own-property bag (local 16) — standalone/wasi only.
+        // (#4161) closure own-property bag (local 16) — standalone/wasi only.
         ...(dpAccessorClosureArm
           ? ([{ name: "bag", type: { kind: "externref" } }] as { name: string; type: ValType }[])
           : []),
@@ -1066,6 +1067,8 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       body,
     );
   }
+
+  const isVecCarrierIdx = ctx.funcMap.get("__is_vec_prop_carrier");
 
   // ── __defineProperties (#1906 — native plural descriptor apply) ─────────
   //
@@ -1087,10 +1090,10 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     emitWasiErrorConstructor(ctx, "TypeError", 1);
     const typeErrorCtorIdx = ctx.funcMap.get("__new_TypeError")!;
     const exnTagIdx = ensureExnTag(ctx);
-    // (#4165) §6.2.5.6 field presence is HasProperty, not HasOwnProperty — see
-    // `hasField` below. Falls back to the own-only helper when `__extern_has`
-    // is somehow absent (keeps the pre-#4165 encoding).
-    const descHasFieldIdx = ctx.funcMap.get("__hasOwnProperty")!;
+    // (#4055) `__hasOwnProperty` PLUS the #3468 closure bag — scoped to this
+    // caller, because widening the helper itself cost 684 host-free passes
+    // (#4017). Rationale in carrier-bag-hasown.ts; fallback for host/gc.
+    const hasOwnIdx = ctx.funcMap.get("__desc_has_own") ?? ctx.funcMap.get("__hasOwnProperty")!;
     const isTruthyIdx = ctx.funcMap.get("__is_truthy")!;
     const typeofFunctionIdx = ctx.funcMap.get("__typeof_function")!;
     const typeofObjectIdx = ctx.funcMap.get("__typeof_object")!;
@@ -1124,27 +1127,23 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     const L_VALUE = 19;
     const L_GETTER = 20;
     const L_SETTER = 21;
+    // (#4161) closure `Properties` own-property bag — APPENDED (local 22),
+    // standalone/wasi only.
+    const L_BAG = 22;
 
     const keyRef = (key: string): Instr[] => [...nativeStringLiteralInstrs(ctx, key), { op: "extern.convert_any" }];
-    // (#4165 — INVESTIGATED, DELIBERATELY NOT CHANGED) §6.2.5.6
-    // ToPropertyDescriptor probes each field with **HasProperty**
-    // (proto-walking), not HasOwnProperty, so a descriptor object that INHERITS
-    // `value`/`get`/`enumerable`/… is legal and this own-only probe reads it as
-    // the empty descriptor. Switching to `__extern_has` regresses the plain
-    // data-descriptor path — see the note on the `__obj_define_from_desc` twin
-    // below for the exact repro. Left as-is pending that root cause.
     const hasField = (key: string): Instr[] => [
       { op: "local.get", index: L_RAW_DESC },
       ...keyRef(key),
-      { op: "call", funcIdx: descHasFieldIdx },
+      { op: "call", funcIdx: hasOwnIdx },
     ];
-    const getField = (key: string): Instr[] => [
+    const getField = (key: string, nullishToNull = true): Instr[] => [
       { op: "local.get", index: L_RAW_DESC },
       ...keyRef(key),
       { op: "call", funcIdx: externGetIdx },
-      // (#2106 S1) normalize missing/undefined descriptor fields back to the
-      // legacy null convention so downstream null-keyed logic is unchanged.
-      ...(ctx.funcMap.has("__nullish_to_null")
+      // (#2106 S1) normalize missing/undefined fields to the legacy null convention.
+      // (#3991) `value` opts OUT — there `undefined` is a real value, and null is not it.
+      ...(nullishToNull && ctx.funcMap.has("__nullish_to_null")
         ? ([{ op: "call", funcIdx: ctx.funcMap.get("__nullish_to_null")! }] satisfies Instr[])
         : []),
     ];
@@ -1162,8 +1161,8 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
         { op: "throw", tagIdx: exnTagIdx },
       ];
     };
-    const throwUnsupported = (): Instr[] =>
-      throwTypeError("Object.defineProperties unsupported descriptor shape in standalone mode (#1906)");
+    const throwUnsupported = (site = ""): Instr[] =>
+      throwTypeError(`Object.defineProperties unsupported descriptor shape in standalone mode (#1906)${site}`);
     const throwConflict = (): Instr[] =>
       throwTypeError("TypeError: Invalid property descriptor in Object.defineProperties (#1906)");
     const throwAccessor = (): Instr[] =>
@@ -1171,6 +1170,17 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     // (#3957) ToObject(Properties) on null/undefined — §7.1.18 step 1/2.
     const throwPropertiesNotCoercible = (): Instr[] =>
       throwTypeError("TypeError: Cannot convert undefined or null to object");
+
+    // (#4161) closure `Properties` bag substitution (LOOKUP, never ensure).
+    // `undefined` when the #3468 substrate is absent — the gate then keeps its
+    // pre-existing refusal and the local vector stays byte-identical.
+    const propsClosureArm = closurePropertiesBagArm(ctx, {
+      propsLocalIdx: 1,
+      descsAnyLocalIdx: L_DESCS_ANY,
+      bagLocalIdx: L_BAG,
+      emptyMapFallback: [{ op: "local.get", index: 0 }, { op: "return" }],
+      nonClosureFallback: throwUnsupported(" [SITE-PROPS-BAG-NOT-AUTHORITATIVE]"),
+    });
 
     const readBooleanFlag = (key: string, specifiedBit: number, valueBit: number, marksData: boolean): Instr[] => [
       ...hasField(key),
@@ -1288,237 +1298,105 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       },
     ];
 
-    // ── (#4165) Non-`$Object` `O` / `Properties` — narrow, substrate-backed
-    // widenings of the two #1906 fail-loud gates. Every widening below either
-    // routes to machinery that is already correct for that receiver, or is an
-    // exact §20.1.2.3.1/§7.1.18 no-op. Anything else KEEPS the loud throw: the
-    // gate exists because `__object_keys`/`__obj_ordered` answer an EMPTY key
-    // vector for a receiver they cannot enumerate, so a blanket widening trades
-    // a loud refusal for a SILENT no-op (measured — see the comment on the
-    // `Properties` gate below).
-    const L_BAG = 22;
-    // Native-string machinery is only usable in the standalone+nativeStrings
-    // lane (same predicate as the #2987 `strExotic` gOPD arm below).
-    const strExoticStrTest = ctx.standalone && ctx.nativeStrings && anyStrTypeIdx >= 0 && nativeStrTypeIdx >= 0;
-    const dpBagLookup = ownPropBagLookupInstrs(ctx, 1);
-    const dpVecTarget = isVecCarrierInstrs(ctx, 0);
-    const dpClosureTargetEnsure = closureBagEnsureInstrs(ctx, 0);
-    const dpSubstrate = dpBagLookup !== undefined || dpVecTarget !== undefined;
-
-    // `Properties` is a NUMBER / BOOLEAN / STRING primitive: §7.1.18 ToObject
-    // yields a wrapper with no own enumerable properties, so the whole call is
-    // a spec NO-OP that returns `O` — not a throw. The one exception is a
-    // NON-EMPTY string, whose own enumerable index properties are
-    // single-character strings; each is a non-object descriptor, i.e. a
-    // §6.2.5.6 TypeError.
-    //
-    // The test is POSITIVE (number|boolean|string), never "not an object":
-    // `ToObject(undefined)`/`ToObject(null)` THROW (§20.1.2.3.1 step 2 —
-    // `Object.defineProperties({}, undefined)` is REQUIRED to raise a
-    // TypeError, test 15.2.3.7-2-2, and the legacy value regime cannot tell
-    // `undefined` apart from "some other non-object" here). Anything not
-    // provably one of the three wrapper primitives keeps the pre-existing
-    // throw. (`Object.create(o, undefined)` is a DIFFERENT operation:
-    // §20.1.2.2 step 3 skips ObjectDefineProperties entirely when Properties is
-    // undefined — that belongs at the `Object.create` call site, not here.)
-    //
-    // FACTORY: emitted at two sites, and a shared Instr[] would be
-    // double-remapped by the finalize index walks.
-    const typeofNumberIdx = ctx.funcMap.get("__typeof_number");
-    const typeofBooleanIdx = ctx.funcMap.get("__typeof_boolean");
-    const typeofStringIdx = ctx.funcMap.get("__typeof_string");
-    const wrapperPrimitiveProperties =
-      typeofNumberIdx !== undefined && typeofBooleanIdx !== undefined && typeofStringIdx !== undefined;
-    const primitivePropertiesArm = (): Instr[] =>
-      wrapperPrimitiveProperties
-        ? [
-            { op: "local.get", index: 1 },
-            { op: "call", funcIdx: typeofNumberIdx as number },
-            { op: "local.get", index: 1 },
-            { op: "call", funcIdx: typeofBooleanIdx as number },
-            { op: "i32.or" },
-            { op: "local.get", index: 1 },
-            { op: "call", funcIdx: typeofStringIdx as number },
-            { op: "i32.or" },
-            { op: "i32.eqz" },
-            { op: "if", blockType: { kind: "empty" }, then: throwPropertiesNotCoercible() },
-            ...(strExoticStrTest
-              ? ([
-                  { op: "local.get", index: 1 },
-                  { op: "any.convert_extern" },
-                  { op: "ref.test", typeIdx: anyStrTypeIdx },
-                  {
-                    op: "if",
-                    blockType: { kind: "empty" },
-                    then: [
-                      { op: "local.get", index: 1 },
-                      { op: "any.convert_extern" },
-                      { op: "ref.cast", typeIdx: anyStrTypeIdx },
-                      { op: "call", funcIdx: strFlattenIdx },
-                      { op: "struct.get", typeIdx: nativeStrTypeIdx, fieldIdx: 0 },
-                      {
-                        op: "if",
-                        blockType: { kind: "empty" },
-                        then: throwTypeError("TypeError: Property description must be an object"),
-                      },
-                    ],
-                  },
-                ] satisfies Instr[])
-              : []),
-            { op: "local.get", index: 0 },
-            { op: "return" },
-          ]
-        : throwUnsupported();
-    /** `[] -> [i32]` — is the value in `local` an object or a function? */
-    const isObjectish = (local: number): Instr[] => [
-      { op: "local.get", index: local },
-      { op: "call", funcIdx: typeofObjectIdx },
-      { op: "local.get", index: local },
-      { op: "call", funcIdx: typeofFunctionIdx },
-      { op: "i32.or" },
-    ];
-
-    // TARGET `O` is not a `$Object`:
-    //   - a `$Vec` (array) target is handled by the appliers themselves — both
-    //     `__defineProperty_value` and `__defineProperty_accessor` carry the
-    //     #3251 overlay arm — so pass the receiver through untouched (pass 2
-    //     reads param 0, never `L_OBJ`, which is write-only here).
-    //   - a CLOSURE (function) target: its own-property table IS the #3468
-    //     side-table bag that `__extern_get`/`__extern_set`/gOPD consult, so
-    //     define into the bag by rebinding param 0 to it.
-    //   - any OTHER object (a closed-struct literal shape inference never
-    //     widened, a Date/RegExp/…): `Type(O)` is genuinely Object, so the
-    //     #1906 refusal here is OUR limitation, not the spec's. When
-    //     `Properties` carries nothing to define, the whole call is a no-op and
-    //     answering `O` is strictly more correct than throwing. Only a
-    //     Properties we would actually have had to enumerate still fails loud.
-    //   - a PRIMITIVE `O` is a real §20.1.2.3.1 step-1 TypeError.
-    const targetNonObjectArm: Instr[] =
-      dpVecTarget || dpClosureTargetEnsure
-        ? [
-            ...(dpVecTarget ?? [{ op: "i32.const", value: 0 }]),
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [],
-              else: [
-                ...(dpClosureTargetEnsure ?? [{ op: "ref.null.extern" } satisfies Instr]),
-                { op: "local.tee", index: L_BAG },
-                { op: "ref.is_null" },
-                {
-                  op: "if",
-                  blockType: { kind: "empty" },
-                  then: [
-                    ...isObjectish(0),
-                    { op: "i32.eqz" },
-                    {
-                      op: "if",
-                      blockType: { kind: "empty" },
-                      then: throwTypeError("TypeError: Object.defineProperties called on non-object"),
-                    },
-                    ...isObjectish(1),
-                    { op: "if", blockType: { kind: "empty" }, then: throwUnsupported() },
-                    ...primitivePropertiesArm(),
-                  ],
-                  else: [
-                    { op: "local.get", index: L_BAG },
-                    { op: "local.set", index: 0 },
-                  ],
-                },
-              ],
-            },
-          ]
-        : throwUnsupported();
-    // The `L_OBJ` cast is write-only (see `void L_OBJ` below) — with the
-    // widening above, `L_OBJ_ANY` may legitimately be a vec, so the cast has to
-    // be guarded. When the substrate is absent the original two instructions are
-    // emitted verbatim (gc/host body stays byte-identical).
-    const targetCastArm: Instr[] = dpSubstrate
-      ? [
-          { op: "local.get", index: L_OBJ_ANY },
-          { op: "ref.test", typeIdx: objectTypeIdx },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [
-              { op: "local.get", index: L_OBJ_ANY },
-              { op: "ref.cast", typeIdx: objectTypeIdx },
-              { op: "local.set", index: L_OBJ },
-            ],
-          },
-        ]
-      : [
-          { op: "local.get", index: L_OBJ_ANY },
-          { op: "ref.cast", typeIdx: objectTypeIdx },
-          { op: "local.set", index: L_OBJ },
-        ];
-
-    // `Properties` is not a `$Object`:
-    //   (a) it carries an own-property side-table bag (function #3468 / array
-    //       #3537) → enumerate the BAG, which is a real `$Object` holding
-    //       exactly that receiver's own named properties.
-    //   (b) it is a PRIMITIVE → §7.1.18 ToObject yields a wrapper with no own
-    //       enumerable properties, so the correct answer is "define nothing,
-    //       return O" — NOT a throw. The one exception is a non-empty string,
-    //       whose own enumerable index properties are single-character strings;
-    //       each is a non-object descriptor, i.e. a §6.2.5.6 TypeError.
-    //   (c) any other object (Date/RegExp/Error/Arguments/boxed wrapper, or a
-    //       closed-struct literal shape inference never widened) keeps the loud
-    //       #1906 throw — those still have no own-key enumeration substrate.
-    const propertiesNonObjectArm: Instr[] = dpBagLookup
-      ? [
-          ...dpBagLookup,
-          { op: "local.tee", index: L_BAG },
-          { op: "ref.is_null" },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [
-              // No bag: object-or-function → keep the loud refusal; primitive →
-              // spec no-op.
-              ...isObjectish(1),
-              { op: "if", blockType: { kind: "empty" }, then: throwUnsupported(), else: primitivePropertiesArm() },
-            ],
-            else: [
-              { op: "local.get", index: L_BAG },
-              { op: "any.convert_extern" },
-              { op: "local.set", index: L_DESCS_ANY },
-            ],
-          },
-        ]
-      : throwUnsupported();
-
     const body: Instr[] = [
-      // Dynamic Type(O) / ToObject(Properties) checks for the supported native
-      // surface: both must be standalone `$Object`s.
+      // ── Type(O) — §20.1.2.3.1 step 1 ──────────────────────────────────────
+      //
+      // (#4047) This used to be `ref.test $Object(O)` and refused everything
+      // else. That was measurably the wrong question: 8 of the goal-scope
+      // #1906 refusals are an ARRAY receiver, and `ref.test $Object` false does
+      // not mean "not an object" (#4032, same idiom).
+      //
+      // `O` is otherwise UNUSED by this helper — the `L_OBJ` cast below was
+      // dead (`void L_OBJ` at the end of the block) and pass 2 passes the raw
+      // `local.get 0` externref to `__defineProperty_value` /
+      // `__defineProperty_accessor`, which carry their OWN receiver dispatch
+      // (`vecOverlayArm` → the #3251 per-index/expando companion). So the gate
+      // had no downstream dependency at all; it only decided whether to refuse.
+      //
+      // What replaces it is the spec question plus an honesty check:
+      //   Type(O) is not Object                  → TypeError (spec)
+      //   `$Object` or a vec carrier             → proceed; the appliers store
+      //   object with NO carrier (Date/RegExp/…) → keep the loud #1906 refusal
+      // The last arm is load-bearing: `__defineProperty_value`'s terminal arm
+      // for a carrier-less receiver is a LENIENT NO-OP (it returns O unchanged,
+      // matching the host import). Letting such a receiver through would trade
+      // a loud refusal for a silent wrong answer — the exact vacuity this
+      // refusal exists to prevent.
       { op: "local.get", index: 0 },
       { op: "ref.is_null" },
-      { op: "if", blockType: { kind: "empty" }, then: throwUnsupported() },
+      { op: "if", blockType: { kind: "empty" }, then: throwTypeError("Object.defineProperties called on non-object") },
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "local.tee", index: L_OBJ_ANY },
       { op: "ref.test", typeIdx: objectTypeIdx },
       { op: "i32.eqz" },
-      { op: "if", blockType: { kind: "empty" }, then: targetNonObjectArm },
-      ...targetCastArm,
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          // Not the open-object representation. Type(O) must still be Object.
+          { op: "local.get", index: 0 },
+          { op: "call", funcIdx: typeofObjectIdx },
+          { op: "local.get", index: 0 },
+          { op: "call", funcIdx: typeofFunctionIdx },
+          { op: "i32.or" },
+          { op: "i32.eqz" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: throwTypeError("Object.defineProperties called on non-object"),
+          },
+          // An object, but is there anywhere to STORE a descriptor? The vec
+          // carrier (#3251 overlay) and — since #4161 — the closure carrier
+          // (the appliers' own-property-bag arm) both have applier arms; pass 2
+          // passes the raw `local.get 0` receiver to the appliers, which carry
+          // their own dispatch, so admission is all that is needed here.
+          // Anything else (Date/RegExp/closed struct) keeps the loud refusal:
+          // the appliers' terminal arm for a carrier-less receiver is a LENIENT
+          // NO-OP, and letting one through would trade a loud refusal for a
+          // silent wrong answer.
+          ...(isVecCarrierIdx === undefined && isClosureCarrierInstrs(ctx, 0) === undefined
+            ? throwUnsupported(" [SITE-O-NO-CARRIER]")
+            : ([
+                ...(isVecCarrierIdx === undefined
+                  ? ([{ op: "i32.const", value: 0 }] satisfies Instr[])
+                  : ([
+                      { op: "local.get", index: 0 },
+                      { op: "call", funcIdx: isVecCarrierIdx },
+                    ] satisfies Instr[])),
+                ...(isClosureCarrierInstrs(ctx, 0) ?? ([{ op: "i32.const", value: 0 }] satisfies Instr[])),
+                { op: "i32.or" },
+                { op: "i32.eqz" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: throwUnsupported(" [SITE-O-NO-CARRIER]"),
+                },
+              ] satisfies Instr[])),
+        ],
+      },
 
-      // `Properties` must be a native `$Object` for the key walk below.
+      // ── ToObject(Properties) + its own enumerable key source ──────────────
       //
-      // (#3957) This gate deliberately STAYS. Per §20.1.2.3.1 step 1 the
-      // argument only has to be object-COERCIBLE, so a RegExp/Date/Array/
-      // Function/Arguments/Error/boxed-wrapper `Properties` — or a
-      // closed-struct object literal that shape inference never widened — is
-      // legal and this refuses it. Widening the gate is NOT a local fix: the
-      // own-enumerable-key enumeration itself (`__object_keys`,
-      // object-runtime-enumeration.ts) carries the SAME `ref.test $Object`
-      // test and returns an EMPTY `$ObjVec` for every other receiver. Dropping
-      // this gate therefore trades a loud refusal for a SILENT no-op —
-      // `Object.defineProperties(o, new Boolean(true))` would define nothing
-      // and return normally. Measured directly (2026-08-01): with the gate
-      // removed, `Object.defineProperties(obj, {a:{value:100,…}})` on a
-      // closed-struct literal silently defined no properties. Fail-loud is a
-      // deliberate #1906 property; keep it until the exotic-receiver own-key
-      // MOP substrate lands (#2992 slice 2/5, #3251).
+      // (#3957 stated the constraint that shaped this; #4047 resolves the part
+      // of it that is actually answerable.) Per §20.1.2.3.1 step 1 the argument
+      // only has to be object-COERCIBLE, so a RegExp / Date / Array / Function
+      // / arguments / Error / boxed-wrapper / primitive `Properties` is legal.
+      // The old code answered every one of them with the #1906 refusal.
+      //
+      // #3957's objection to simply widening the gate was CORRECT and still
+      // holds: the own-enumerable-key walk needs a real key source, and
+      // `__object_keys` returns an EMPTY vec for every non-`$Object` receiver,
+      // so a blanket widening trades a loud refusal for a SILENT no-op. (Both
+      // halves re-measured 2026-08-02: `Object.keys([10,20,30]).length === 0`
+      // and `Object.keys(fn-with-own-prop).length === 0` in standalone, while
+      // the WRITES round-trip in both cases. Enumeration is the dead half.)
+      //
+      // The resolution is per-shape rather than blanket. Each arm below either
+      // produces a COMPLETE key source or keeps refusing — no arm answers
+      // "define nothing" unless "nothing" is what the spec says. The remaining
+      // refusals are tagged so a future harvest reads the mechanism, not just
+      // the family: STRING-INDICES, VEC-INDEXED, NO-CARRIER.
       { op: "local.get", index: 1 },
       { op: "ref.is_null" },
       { op: "if", blockType: { kind: "empty" }, then: throwPropertiesNotCoercible() },
@@ -1526,11 +1404,131 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       { op: "any.convert_extern" },
       { op: "local.tee", index: L_DESCS_ANY },
       { op: "ref.test", typeIdx: objectTypeIdx },
-      { op: "i32.eqz" },
-      { op: "if", blockType: { kind: "empty" }, then: propertiesNonObjectArm },
-      { op: "local.get", index: L_DESCS_ANY },
-      { op: "ref.cast", typeIdx: objectTypeIdx },
-      { op: "local.set", index: L_DESCS },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: L_DESCS_ANY },
+          { op: "ref.cast", typeIdx: objectTypeIdx },
+          { op: "local.set", index: L_DESCS },
+        ],
+        // (#4047) Not the open-object representation. The old code refused
+        // outright; measured over the whole `built-ins/Object/{defineProperties,
+        // create}` corpus (952 files, CI path) that single gate accounted for
+        // 42 of the 50 goal-scope #1906 refusals, and NONE of them were the
+        // descriptor-shape problem the message names. Resolve what CAN be
+        // resolved, completely, and keep refusing only what genuinely has no
+        // answer:
+        else: [
+          // (a) `Properties` is a native STRING. §7.1.18 ToObject("") is a
+          //     String exotic with NO own enumerable keys, so the empty string
+          //     is a complete, spec-correct NO-OP. A non-empty string has own
+          //     enumerable index keys whose values are single-character
+          //     STRINGS, and §6.2.5.6 ToPropertyDescriptor on a primitive is a
+          //     TypeError — we cannot read those through the `$Object` walk, so
+          //     that case KEEPS the loud refusal rather than defining nothing.
+          ...(nativeStrTypeIdx >= 0
+            ? ([
+                { op: "local.get", index: L_DESCS_ANY },
+                { op: "ref.test", typeIdx: nativeStrTypeIdx },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "local.get", index: L_DESCS_ANY },
+                    { op: "ref.cast", typeIdx: nativeStrTypeIdx },
+                    { op: "struct.get", typeIdx: nativeStrTypeIdx, fieldIdx: 0 },
+                    {
+                      op: "if",
+                      blockType: { kind: "empty" },
+                      then: throwUnsupported(" [SITE-PROPS-STRING-INDICES]"),
+                    },
+                    { op: "local.get", index: 0 },
+                    { op: "return" },
+                  ],
+                },
+              ] satisfies Instr[])
+            : []),
+          // (b) `undefined` — ToObject(undefined) is a TypeError (§7.1.18
+          //     step 1). Under the #2106 singleton regime `undefined` is a
+          //     STRUCT, not a null externref, so the `ref.is_null` guard above
+          //     does not catch it and it would otherwise fall through to the
+          //     primitive no-op below. Same tag test the accessor reader uses.
+          ...(dpUndefTagTypeIdx >= 0
+            ? ([
+                { op: "local.get", index: L_DESCS_ANY },
+                { op: "ref.test", typeIdx: dpUndefTagTypeIdx },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "local.get", index: L_DESCS_ANY },
+                    { op: "ref.cast", typeIdx: dpUndefTagTypeIdx },
+                    { op: "struct.get", typeIdx: dpUndefTagTypeIdx, fieldIdx: 0 },
+                    { op: "i32.const", value: 1 },
+                    { op: "i32.eq" },
+                    {
+                      op: "if",
+                      blockType: { kind: "empty" },
+                      then: throwPropertiesNotCoercible(),
+                    },
+                  ],
+                },
+              ] satisfies Instr[])
+            : []),
+          // (c) any other PRIMITIVE (boolean / number / symbol / bigint).
+          //     ToObject creates a FRESH wrapper, which has zero own
+          //     enumerable properties, so §20.1.2.3.1's key walk is empty and
+          //     the whole operation is a no-op returning O. This is a COMPLETE
+          //     answer, not a degraded one — it is the only shape in this
+          //     block where "define nothing" is what the spec says.
+          { op: "local.get", index: 1 },
+          { op: "call", funcIdx: typeofObjectIdx },
+          { op: "local.get", index: 1 },
+          { op: "call", funcIdx: typeofFunctionIdx },
+          { op: "i32.or" },
+          { op: "i32.eqz" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [{ op: "local.get", index: 0 }, { op: "return" }],
+          },
+          // (d) a CLOSURE (function) `Properties` map (#4161): substitute its
+          //     #3468 own-property bag for the map and fall through into the
+          //     unchanged `$Object` key walk. SOUND NOW, and only now: the
+          //     #4047-era measurement that reverted bag-enumeration found the
+          //     bag was not the complete own-property store because
+          //     `Object.defineProperty(props,"p",…)` on a Function landed
+          //     NOWHERE (`__defineProperty_value`'s terminal arm was a lenient
+          //     no-op for closures). With the #4161 applier arms, defines land
+          //     in the same bag `__extern_set` writes, so the closure bag IS
+          //     the complete own-NAMED-property store. A closure with no bag
+          //     has no own enumerable named properties (builtin `name`/
+          //     `length` metadata is non-enumerable), so "define nothing,
+          //     return O" is the complete spec answer.
+          //
+          // (e) any OTHER object — Array, arguments, Date, RegExp, Error, a
+          //     closed struct — KEEPS REFUSING. The ARRAY half of the
+          //     #4047-era unsoundness still holds: a vec's defines land in the
+          //     SEPARATE #3251 overlay companion, not in its #3537 bag, so
+          //     enumerating the bag would silently drop overlay-defined
+          //     properties — the exact silent no-op #3957 forbade
+          //     (`tests/issue-3957.test.ts`'s Array invariant case catches
+          //     it). That arm becomes sound the moment ONE store is
+          //     authoritative for a vec's own properties (#4010).
+          ...(propsClosureArm === undefined
+            ? throwUnsupported(" [SITE-PROPS-BAG-NOT-AUTHORITATIVE]")
+            : ([
+                ...propsClosureArm,
+                // Reached only on the substituted-bag path (the other arms
+                // return/throw): mirror the `$Object` branch's cast so the key
+                // walk below reads a non-null L_DESCS.
+                { op: "local.get", index: L_DESCS_ANY },
+                { op: "ref.cast", typeIdx: objectTypeIdx },
+                { op: "local.set", index: L_DESCS },
+              ] satisfies Instr[])),
+        ],
+      },
 
       // ordered = enumerable own keys of Properties; gathered has the same
       // capacity and is filled compactly in pass 1.
@@ -1611,14 +1609,14 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
               // still throw (§6.2.5.6 step 2) — reject it explicitly first.
               { op: "local.get", index: L_RAW_DESC },
               { op: "ref.is_null" },
-              { op: "if", blockType: { kind: "empty" }, then: throwUnsupported() },
+              { op: "if", blockType: { kind: "empty" }, then: throwUnsupported(" [SITE-DESC-NULL]") },
               { op: "local.get", index: L_RAW_DESC },
               { op: "call", funcIdx: typeofObjectIdx },
               { op: "local.get", index: L_RAW_DESC },
               { op: "call", funcIdx: typeofFunctionIdx },
               { op: "i32.or" },
               { op: "i32.eqz" },
-              { op: "if", blockType: { kind: "empty" }, then: throwUnsupported() },
+              { op: "if", blockType: { kind: "empty" }, then: throwUnsupported(" [SITE-DESC-NOT-OBJ]") },
 
               // Reset descriptor accumulators. (#3319) The VALUE default is
               // `undefined` (§10.1.6.3 fresh-define [[Value]] default) — the
@@ -1647,7 +1645,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
                   { op: "i32.const", value: 1 },
                   { op: "local.set", index: L_HAS_DATA },
                   ...setFlag(HOST_FLAG_HAS_VALUE),
-                  ...getField("value"),
+                  ...getField("value", false),
                   { op: "local.set", index: L_VALUE },
                 ],
               },
@@ -1803,8 +1801,10 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
         { name: "value", type: { kind: "externref" } },
         { name: "getter", type: { kind: "externref" } },
         { name: "setter", type: { kind: "externref" } },
-        // (#4165) own-property bag local — appended last, standalone/wasi only.
-        ...(dpSubstrate ? ([{ name: "bag", type: { kind: "externref" } }] as { name: string; type: ValType }[]) : []),
+        // (#4161) closure Properties bag (local 22) — standalone/wasi only.
+        ...(propsClosureArm
+          ? ([{ name: "bag", type: { kind: "externref" } }] as { name: string; type: ValType }[])
+          : []),
       ],
       body,
     );
@@ -1838,10 +1838,10 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     emitWasiErrorConstructor(ctx, "TypeError", 1);
     const typeErrorCtorIdx = ctx.funcMap.get("__new_TypeError")!;
     const exnTagIdx = ensureExnTag(ctx);
-    // (#4165) §6.2.5.6 field presence is HasProperty, not HasOwnProperty — see
-    // `hasField` below. Falls back to the own-only helper when `__extern_has`
-    // is somehow absent (keeps the pre-#4165 encoding).
-    const descHasFieldIdx = ctx.funcMap.get("__hasOwnProperty")!;
+    // (#4055) `__hasOwnProperty` PLUS the #3468 closure bag — scoped to this
+    // caller, because widening the helper itself cost 684 host-free passes
+    // (#4017). Rationale in carrier-bag-hasown.ts; fallback for host/gc.
+    const hasOwnIdx = ctx.funcMap.get("__desc_has_own") ?? ctx.funcMap.get("__hasOwnProperty")!;
     const isTruthyIdx = ctx.funcMap.get("__is_truthy")!;
     const typeofFunctionIdx = ctx.funcMap.get("__typeof_function")!;
     const typeofObjectIdx = ctx.funcMap.get("__typeof_object")!;
@@ -1879,24 +1879,10 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     const L_DEFINE_RESULT = 11; // (#3177 slice 4) dyn-view rejection-sentinel thread-out
 
     const keyRef = (key: string): Instr[] => [...nativeStringLiteralInstrs(ctx, key), { op: "extern.convert_any" }];
-    // (#4165 — INVESTIGATED, DELIBERATELY NOT CHANGED) §6.2.5.6
-    // ToPropertyDescriptor probes each field with **HasProperty** (proto-walking),
-    // not HasOwnProperty, so an INHERITED `value`/`get`/`enumerable` should be
-    // honoured. Switching this call (and its `__defineProperties` twin) to
-    // `__extern_has` was measured to REGRESS the plain data-descriptor path:
-    //
-    //   var o = {}; var p = {}; p.prop = { value: 12, enumerable: true };
-    //   Object.defineProperties(o, p);   // o.prop becomes undefined, was 12
-    //
-    // i.e. `__extern_has` answers 0 for an own key that `__hasOwnProperty`
-    // answers 1 for, on the SAME `$Object` descriptor. Root cause not yet
-    // isolated; until it is, the own-only probe stays and the inherited-field
-    // descriptor family stays red. Do not "fix" this by flipping the helper
-    // without re-running the repro above.
     const hasField = (key: string): Instr[] => [
       { op: "local.get", index: L_DESC },
       ...keyRef(key),
-      { op: "call", funcIdx: descHasFieldIdx },
+      { op: "call", funcIdx: hasOwnIdx },
     ];
     const getField = (key: string): Instr[] => [
       { op: "local.get", index: L_DESC },
@@ -2525,18 +2511,6 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
           ]
         : [{ op: "ref.null.extern" } as Instr, { op: "return" } as Instr];
 
-    // (#4165) Own-property side-table bag substitution. The bag local is
-    // APPENDED to the local vector (index 7, or 13 when the #2987 String-exotic
-    // arm's six locals are present) so no existing local index shifts; it is
-    // only added when the substrate exists (standalone/wasi), keeping the
-    // gc/host body + local vector byte-identical.
-    const gopdBagLocalIdx = 7 + (strExotic ? 6 : 0);
-    const gopdBagArm = bagSubstitutionArm(ctx, {
-      recvLocalIdx: 0,
-      anyLocalIdx: 2,
-      bagLocalIdx: gopdBagLocalIdx,
-      fallback: primitiveReceiverArm,
-    });
     const body: Instr[] = [
       // (#2896) Builtin-fn metadata arm: gOPD over a builtin function value
       // synthesizes the spec data descriptor for its "name"/"length" own
@@ -2571,17 +2545,8 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       {
         op: "if",
         blockType: { kind: "empty" },
-        // (#4165) A closure (#3468) / array (#3537) receiver keeps its NAMED
-        // own properties in an identity-keyed side-table `$Object` bag that
-        // `__extern_get`/`__extern_set` already serve. Substituting the bag for
-        // the receiver lets gOPD answer from that same store — falling out of
-        // this `then` block lands on the UNCHANGED `$Object` path below — instead
-        // of reporting `undefined` for a property the program can read. The
-        // substitution runs AFTER the vec overlay (#3251 owns INDEX keys) and
-        // wraps the primitive arm as its bag-absent fallback, so a nullish
-        // receiver still ToObject-throws and a string receiver still gets its
-        // §10.4.3 exotic descriptor.
-        then: [...vecOverlayArm(2, vecOverlay?.gopdIdx ?? -1, 2), ...(gopdBagArm ?? primitiveReceiverArm)],
+        // (#4010 S3) the FUNCTION receiver's closure bag sits between the vec overlay and the primitive arm
+        then: bagGopdBetween(ctx, 6, vecOverlayArm(2, vecOverlay?.gopdIdx ?? -1, 2), primitiveReceiverArm),
       },
       // o = cast<$Object>(any) ; e = __obj_find(o, key)
       { op: "local.get", index: 2 },
@@ -2672,8 +2637,6 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
               { name: "kIdx", type: { kind: "i32" } },
             ] as { name: string; type: ValType }[])
           : []),
-        // (#4165) own-property bag local — appended last, standalone/wasi only.
-        ...(gopdBagArm ? ([{ name: "bag", type: { kind: "externref" } }] as { name: string; type: ValType }[]) : []),
       ],
       body,
     );
@@ -2867,11 +2830,8 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       { op: "local.tee", index: 1 },
       { op: "ref.test", typeIdx: objectTypeIdx },
       { op: "i32.eqz" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "local.get", index: 7 }, { op: "return" }],
-      },
+      // (#4010 S3) non-`$Object` ⇒ the carrier bag's own string keys, enumerable filter DROPPED here
+      bagKeysIf(ctx, { vecLocal: 7, includeNonEnum: true }),
       // o = cast<$Object>(any) ; arr = __obj_ordered_all(o) ; cap = arr.len
       { op: "local.get", index: 1 },
       { op: "ref.cast", typeIdx: objectTypeIdx },
@@ -3093,36 +3053,30 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
   // ES §20.5.2.13/14: isFrozen/isSealed on a NON-object return TRUE; §20.5.2.12:
   // isExtensible on a non-object returns FALSE. (Merged from main; preserved
   // here through the Blocker B merge so the standalone predicates remain native.)
-  const emitIntegrityPredicate = (name: string, flagBit: number, invert: boolean, nonObjResult: number): void => {
-    const testExpr: Instr[] = [
-      { op: "local.get", index: 1 },
-      { op: "ref.cast", typeIdx: objectTypeIdx },
-      { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
-      { op: "i32.const", value: flagBit },
-      { op: "i32.and" },
-    ];
-    if (invert) {
-      testExpr.push({ op: "i32.eqz" });
-    } else {
-      testExpr.push({ op: "i32.const", value: 0 }, { op: "i32.ne" });
-    }
-    const body: Instr[] = [
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "local.tee", index: 1 },
-      { op: "ref.test", typeIdx: objectTypeIdx },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "i32" } },
-        then: testExpr,
-        else: [{ op: "i32.const", value: nonObjResult }],
-      },
-    ];
-    registerNative(name, [{ kind: "externref" }], [{ kind: "i32" }], [{ name: "any", type: { kind: "anyref" } }], body);
+  // (#4032) `ref.test $Object` false does NOT mean "not an object" — see
+  // `object-integrity-carrier.ts` for the mechanism, the two halves of the fix,
+  // and why this is byte-neutral in host mode (`integrityBagIdx === undefined`).
+  const integrityBagIdx = registerIntegrityBagResolver(ctx, registerNative);
+  const emitIntegrityPredicate = (name: string, flagBit: number, invert: boolean, terminalResult: number): void => {
+    const { locals, body } = buildIntegrityPredicate({
+      objectTypeIdx,
+      flagBit,
+      invert,
+      terminalResult,
+      integrityBagIdx,
+    });
+    registerNative(name, [{ kind: "externref" }], [{ kind: "i32" }], locals, body);
   };
   emitIntegrityPredicate("__object_isFrozen", OBJ_FLAG_FROZEN, false, 1);
   emitIntegrityPredicate("__object_isSealed", OBJ_FLAG_SEALED, false, 1);
   emitIntegrityPredicate("__object_isExtensible", OBJ_FLAG_NONEXTENSIBLE, true, 0);
+  // Known-object variants: same body, terminal fallback flipped to the ORDINARY
+  // OBJECT rule. Standalone/wasi only — host already answers these correctly.
+  if (integrityBagIdx !== undefined) {
+    emitIntegrityPredicate("__object_isFrozen_obj", OBJ_FLAG_FROZEN, false, 0);
+    emitIntegrityPredicate("__object_isSealed_obj", OBJ_FLAG_SEALED, false, 0);
+    emitIntegrityPredicate("__object_isExtensible_obj", OBJ_FLAG_NONEXTENSIBLE, true, 1);
+  }
 
   // Register at the original minting point so every subsequent function index
   // remains byte-for-byte stable.
@@ -3139,5 +3093,6 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     OBJ_FLAG_NONEXTENSIBLE,
     OBJ_FLAG_SEALED,
     OBJ_FLAG_FROZEN,
+    integrityBagIdx,
   });
 }

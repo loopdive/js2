@@ -145,7 +145,29 @@ export function replaceDefinedFuncAt(ctx: CodegenContext, funcIdx: FuncHandle, f
   if (pos < 0 || pos >= ctx.mod.functions.length) {
     throw new Error(`replaceDefinedFuncAt: funcIdx ${funcIdx} is not a defined function`);
   }
+  traceSlotWrite(pos, "replaceDefinedFuncAt", fn);
   ctx.mod.functions[pos] = fn;
+}
+
+/**
+ * (#4134) `JS2WASM_TRACE_SLOT=<position>` reports every write to one defined
+ * function slot — the writer, the resulting frame size, and a stack — then keeps
+ * going.
+ *
+ * A "local index out of range" at emit means a body and its frame disagree, and
+ * the emitter can only say WHICH slot is inconsistent, never WHO made it so. On
+ * an 8,000-function graph that is the difference between a targeted fix and
+ * guesswork. Inert unless the variable is set.
+ */
+function traceSlotWrite(position: number, writer: string, fn: WasmFunction): void {
+  if (typeof process === "undefined") return;
+  const target = process.env?.JS2WASM_TRACE_SLOT;
+  if (target === undefined || Number(target) !== position) return;
+  const frame = fn.locals.length;
+  process.stderr.write(
+    `[js2:slot] ${writer} -> position ${position} name='${fn.name}' locals=${frame} ` +
+      `bodyOps=${fn.body.length}\n${new Error("slot write").stack ?? ""}\n`,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -199,6 +221,7 @@ export function pushDefinedFunc(ctx: CodegenContext, funcIdx: FuncHandle, fn: Wa
     throw new Error(`pushDefinedFunc: handle ${funcIdx} already pushed at position ${existing}`);
   }
   ctx.mod.funcOrdinalToPosition[ordinal] = ctx.mod.functions.length;
+  traceSlotWrite(ctx.mod.functions.length, "pushDefinedFunc", fn);
   ctx.mod.functions.push(fn);
 }
 

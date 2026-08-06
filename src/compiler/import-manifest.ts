@@ -101,6 +101,7 @@ function classifyImport(name: string, mod: WasmModule): ImportIntent {
   if (name === "__typeof_object") return { type: "typeof_check", targetType: "object" };
   if (name === "__typeof_function") return { type: "typeof_check", targetType: "function" };
   if (name === "__unbox_number") return { type: "unbox", targetType: "number" };
+  if (name === "__unbox_symbol") return { type: "unbox", targetType: "symbol" };
   // Symbol-safe array-index probe (#3511): like __unbox_number (ToNumber) but
   // NEVER throws — a Symbol/BigInt key (or any ToNumber-throwing value) returns
   // NaN so the element-access caller falls to the string/symbol-keyed property

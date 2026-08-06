@@ -9,12 +9,144 @@
 // callable through the interpreter's existing closure seam.
 
 import { emitFunction, emitProgram } from "./emitter.js";
-import { interpEnter, makeInterpClosure, type InterpCallable } from "./loop.js";
-import { ENV_GLOBAL, EnvRec, type FuncMeta, type JSValue } from "./types.js";
+import {
+  createRuntimeEvalGlobalEnvironment,
+  prepareEvalEnvironment,
+  preparePersistentEvalBindings,
+  programIsStrict,
+  registerVariableEnvironment,
+} from "./eval-environment.js";
+import {
+  installRuntimeEvalRealm,
+  interpEnter,
+  makeInterpClosure,
+  makeRuntimeEvalIntrinsic,
+  makeRuntimeFunctionIntrinsic,
+  registerRuntimeEvalCallerIntrinsic,
+  runtimeEvalIntrinsic,
+  type InterpCallable,
+  type RuntimeDirectEvalHook,
+  type RuntimeFunctionHook,
+} from "./loop.js";
+import { ENV_DECLARATIVE, ENV_OBJECT, EnvRec, type EvalBindingCell, type FuncMeta, type JSValue } from "./types.js";
 
 /** Host-free Acorn entry shape. `source` uses the compiler's native string
  * carrier; both `options` and the result use the shared open-$Object carrier. */
 export type DynamicParser = (source: string, options: JSValue) => JSValue;
+
+/** Parse direct-eval source under the caller's strictness. Prefixing a strict
+ * directive asks Acorn to apply strict Script early errors; removing that
+ * synthetic statement afterwards preserves the source completion value. */
+function parseDirectEvalScript(parse: DynamicParser, source: string, callerStrict: boolean): JSValue {
+  const options: JSValue = {};
+  options.ecmaVersion = 2025;
+  options.sourceType = "script";
+  if (!callerStrict) return parse(source, options);
+
+  const ast = parse("'use strict';\n" + source, options);
+  const originalBody: JSValue[] = [];
+  const parsedBody: JSValue = ast.body;
+  let bodyStart = 0;
+  if (
+    parsedBody.length > 0 &&
+    parsedBody[0].type === "ExpressionStatement" &&
+    parsedBody[0].expression.type === "Literal" &&
+    parsedBody[0].expression.value === "use strict"
+  ) {
+    bodyStart = 1;
+  }
+  for (let i = bodyStart; i < parsedBody.length; i += 1) originalBody.push(parsedBody[i]);
+  ast.body = originalBody;
+  return ast;
+}
+
+/** Direct eval originating from bytecode already has a provider-local
+ * environment chain, so declarations can attach directly to its live
+ * VariableEnvironment without the cross-module caller-cell sidecar used by
+ * executeDirectEval. */
+function executeInterpretedDirectEval(
+  parse: DynamicParser,
+  source: JSValue,
+  globalObject: JSValue,
+  lexicalEnv: EnvRec | null,
+  variableEnv: EnvRec | null,
+  thisArg: JSValue,
+  callerStrict: boolean,
+): JSValue {
+  if (typeof source !== "string") return source;
+  const ast = parseDirectEvalScript(parse, source, callerStrict);
+  const strictEval = callerStrict || programIsStrict(ast);
+  const globalEnv = createRuntimeEvalGlobalEnvironment(globalObject);
+  registerVariableEnvironment(globalEnv, globalEnv);
+  const lex = lexicalEnv === null ? globalEnv : lexicalEnv;
+  const vars = variableEnv === null ? globalEnv : variableEnv;
+  registerRuntimeEvalCallerIntrinsic(lex);
+  const env = prepareEvalEnvironment(ast, lex, vars, strictEval);
+  const annexBCancelledNames: JSValue[] = [];
+  if (!strictEval) {
+    let current: EnvRec | null = lex;
+    for (;;) {
+      if (current === vars || current === null) break;
+      if (current.kind !== ENV_OBJECT && current.names !== undefined && current.names !== null) {
+        for (let i = 0; i < current.names.length; i += 1) annexBCancelledNames.push(current.names[i]);
+      }
+      current = current.parent;
+    }
+  }
+  return interpEnter(emitProgram(ast, strictEval, true, annexBCancelledNames), env, thisArg, []);
+}
+
+/** Ensure the global object carries the provider-owned realm `%eval%` value.
+ * Ordinary/aliased calls invoke indirect eval; the bytecode DirectEval builtin
+ * separately invokes the realm's direct hook after checking exact identity. */
+function ensureRuntimeEvalRealm(parse: DynamicParser, globalObject: JSValue): void {
+  if (runtimeEvalIntrinsic(globalObject) !== undefined) return;
+  const intrinsicEval = makeRuntimeEvalIntrinsic(globalObject);
+  const intrinsicFunction = makeRuntimeFunctionIntrinsic(globalObject);
+  // biome-ignore lint/complexity/useArrowFunction: The standalone self-compiler rejects this multiline typed arrow shape.
+  const directEval: RuntimeDirectEvalHook = function (
+    source: JSValue,
+    lexicalEnv: EnvRec | null,
+    variableEnv: EnvRec | null,
+    thisArg: JSValue,
+    callerStrict: boolean,
+  ): JSValue {
+    return executeInterpretedDirectEval(parse, source, globalObject, lexicalEnv, variableEnv, thisArg, callerStrict);
+  };
+  // biome-ignore lint/complexity/useArrowFunction: Keep the parser-injected runtime hook on the self-compiled function-expression path.
+  const dynamicFunction: RuntimeFunctionHook = function (args: JSValue[]): JSValue {
+    let paramString = "";
+    const paramCount = args.length > 0 ? args.length - 1 : 0;
+    for (let i = 0; i < paramCount; i += 1) {
+      if (i > 0) paramString += ",";
+      paramString += String(args[i]);
+    }
+    const bodyString = args.length === 0 ? "" : String(args[args.length - 1]);
+    return createDynamicFunction(parse, paramString, bodyString, globalObject);
+  };
+  installRuntimeEvalRealm(globalObject, intrinsicEval, directEval, intrinsicFunction, dynamicFunction);
+}
+
+/** Restore parallel provider-local names and caller-owned value cells from a
+ * pool of alternating name/value cells. The provider never retains or grows a
+ * foreign vector; all mutable values stay in canonical AOT-owned cells. */
+export function restoreDirectEvalActivationState(stateCells: JSValue[], names: JSValue[], slots: JSValue[]): void {
+  for (let i = 0; i + 1 < stateCells.length; i += 2) {
+    const nameCell = stateCells[i] as EvalBindingCell;
+    const valueCell = stateCells[i + 1] as EvalBindingCell;
+    names.push(nameCell.value);
+    slots.push(valueCell);
+  }
+}
+
+/** Copy provider-local names back into their caller-owned name cells. Value
+ * cells were shared with the interpreter and already contain live mutations. */
+export function snapshotDirectEvalActivationState(stateCells: JSValue[], names: JSValue[]): void {
+  for (let i = 0; i < names.length; i += 1) {
+    const nameCell = stateCells[i * 2] as EvalBindingCell;
+    nameCell.value = names[i];
+  }
+}
 
 /** Build the source text parsed by the Function constructor.
  *
@@ -51,8 +183,11 @@ export function createDynamicFunction(
   bodyString: string,
   globalObject: JSValue,
 ): InterpCallable {
+  ensureRuntimeEvalRealm(parse, globalObject);
   const meta = compileDynamicFunctionMeta(parse, paramString, bodyString);
-  const env = new EnvRec(ENV_GLOBAL, null, null, null, globalObject);
+  const env = createRuntimeEvalGlobalEnvironment(globalObject);
+  registerVariableEnvironment(env, env);
+  registerRuntimeEvalCallerIntrinsic(env);
   return makeInterpClosure(meta, env);
 }
 
@@ -65,10 +200,66 @@ export function createDynamicFunction(
 export function executeIndirectEval(parse: DynamicParser, source: JSValue, globalObject: JSValue): JSValue {
   if (typeof source !== "string") return source;
 
+  ensureRuntimeEvalRealm(parse, globalObject);
+
   const options: JSValue = {};
   options.ecmaVersion = 2025;
   options.sourceType = "script";
   const ast = parse(source, options);
-  const env = new EnvRec(ENV_GLOBAL, null, null, null, globalObject);
-  return interpEnter(emitProgram(ast), env, globalObject, []);
+  const globalEnv = createRuntimeEvalGlobalEnvironment(globalObject);
+  registerVariableEnvironment(globalEnv, globalEnv);
+  registerRuntimeEvalCallerIntrinsic(globalEnv);
+  const strictEval = programIsStrict(ast);
+  const env = prepareEvalEnvironment(ast, globalEnv, globalEnv, strictEval);
+  return interpEnter(emitProgram(ast, strictEval, true), env, globalObject, []);
+}
+
+/** Execute direct eval against live caller binding cells.
+ *
+ * Each names/slots pair is parallel and every slot is an `EvalBindingCell`.
+ * The activation vectors are reused across calls in one AOT invocation, so a
+ * sloppy eval-created `var` persists. Fresh lexical cells precede that record;
+ * captured outer cells follow it. This prevents a new current-function var from
+ * mutating an identically named outer capture while retaining direct aliasing.
+ */
+export function executeDirectEval(
+  parse: DynamicParser,
+  source: JSValue,
+  globalObject: JSValue,
+  thisArg: JSValue,
+  createdVarNames: JSValue[],
+  createdVarSlots: JSValue[],
+  activationNames: JSValue,
+  activationSlots: JSValue[],
+  lexicalNames: JSValue,
+  lexicalSlots: JSValue[],
+  outerNames: JSValue,
+  outerSlots: JSValue[],
+  callerStrict: boolean,
+  mappedParamNames: JSValue,
+): JSValue {
+  if (typeof source !== "string") return source;
+
+  ensureRuntimeEvalRealm(parse, globalObject);
+  const ast = parseDirectEvalScript(parse, source, callerStrict);
+  const strictEval = callerStrict || programIsStrict(ast);
+  if (!strictEval) {
+    preparePersistentEvalBindings(ast, createdVarNames, createdVarSlots, activationNames, lexicalNames);
+  }
+  const globalEnv = createRuntimeEvalGlobalEnvironment(globalObject);
+  registerVariableEnvironment(globalEnv, globalEnv);
+  const outerEnv = new EnvRec(ENV_DECLARATIVE, globalEnv, outerNames, outerSlots, undefined);
+  const activationEnv = new EnvRec(ENV_DECLARATIVE, outerEnv, activationNames, activationSlots, mappedParamNames);
+  const createdVarEnv = new EnvRec(ENV_DECLARATIVE, activationEnv, createdVarNames, createdVarSlots, undefined);
+  const lexicalEnv = new EnvRec(ENV_DECLARATIVE, createdVarEnv, lexicalNames, lexicalSlots, undefined);
+  registerRuntimeEvalCallerIntrinsic(lexicalEnv);
+  const env = prepareEvalEnvironment(ast, lexicalEnv, createdVarEnv, strictEval, activationEnv);
+  // Direct eval reuses the caller's ThisBinding. The AOT free-function ABI
+  // represents a bare sloppy call with an absent receiver; perform the
+  // ordinary sloppy-this substitution here before entering eval code. A
+  // strict caller keeps null/undefined unchanged, and source-level strictness
+  // inside eval does not alter the caller's already-established binding.
+  let evalThis = thisArg;
+  if (!callerStrict && (evalThis === undefined || evalThis === null)) evalThis = globalObject;
+  return interpEnter(emitProgram(ast, strictEval, true, lexicalNames), env, evalThis, []);
 }

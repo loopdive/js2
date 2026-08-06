@@ -610,14 +610,35 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
               },
             ]
           : readValueInstrs;
+      const next = buildGetDispatch(idx + 1);
+      // ref.test is insufficient for structurally canonicalized object shapes:
+      // two objects with different field names can share a Wasm heap type.
+      // Check the collision stamp before reading a slot, and keep searching on
+      // a shape mismatch just like the generated __sget_* dispatcher does.
+      const shapeGuardedReadInstrs: Instr[] =
+        cand.shapeId !== undefined && cand.shapeFieldIdx !== undefined
+          ? [
+              { op: "local.get", index: 1 },
+              { op: "ref.cast", typeIdx: cand.structTypeIdx },
+              { op: "struct.get", typeIdx: cand.structTypeIdx, fieldIdx: cand.shapeFieldIdx },
+              { op: "i32.const", value: cand.shapeId },
+              { op: "i32.eq" },
+              {
+                op: "if",
+                blockType: { kind: "val", type: { kind: "externref" } as ValType },
+                then: readInstrs,
+                else: next,
+              },
+            ]
+          : readInstrs;
       return [
         { op: "local.get", index: 1 }, // __any
         { op: "ref.test", typeIdx: cand.structTypeIdx },
         {
           op: "if",
           blockType: { kind: "val", type: { kind: "externref" } as ValType },
-          then: readInstrs,
-          else: buildGetDispatch(idx + 1),
+          then: shapeGuardedReadInstrs,
+          else: next,
         },
       ];
     };

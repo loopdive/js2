@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: reference
   originSessionId: 31a336a9-7fce-4c41-9a15-3e10d02eca44
-  modified: 2026-07-27T00:51:00.500Z
+  modified: 2026-08-01T06:46:54.172Z
 ---
 
 **#2928 E6 (PR #3691, merged 2026-07-27) is the best-controlled measurement
@@ -53,6 +53,71 @@ result as falling short:
 Same family as [[feedback_measure_never_extrapolate]]: always give the
 denominator, and make sure it is the denominator of the question you are
 actually answering.
+
+## A kill switch proves the BEHAVIOUR; it does not prove the SHIPPED CODE
+
+**The switch and the shipped change are different artifacts.** An arm run with
+`JS2WASM_NO_X=1` (or any env-gated scaffold) establishes that *the behaviour*
+produces the measured delta. It does **not** establish that the constant /
+carve-out / conditional you actually commit produces the same delta — the
+scaffold may read at a different time, cover a different set, or short-circuit
+a path the real edit does not.
+
+**So run one more arm with the scaffold DELETED**, on the real change, and
+require it to match. Named "arm D" on #2742 (2026-08-01): arm C proved +18/−0
+via the env switch; arm D re-ran it with the switch removed and the shipped
+constant in place. *If arm D ≠ arm C, the switch was doing something the
+committed code does not.*
+
+Same principle as verifying probes still pass after stripping a measurement
+scaffold, and as `git diff` against the proven-green head being **empty** after
+a revert. Cheap, and it closes the last gap between "I measured this" and
+"this is what merges".
+
+## Provenance must travel WITH the number, not near it
+
+**A caveat in prose does not survive re-quoting.** E6 *did* disclose that its
+figures were interpreter-linked — in the surrounding text. The headline table
+carried the numbers alone, so the numbers travelled and the caveat did not.
+
+**Empirical proof, not an argument: I did it myself, one hop, within days.**
+I reported E6 to the stakeholder as "official `eval-code` 106→117, 11
+revert-verified attributable flips" with **no tier qualifier**, having read the
+disclosure. The prose caveat did not survive a single retelling by someone who
+had seen it.
+
+**The fix has TWO halves and needs both** (learned when half one looked
+sufficient):
+
+1. **Opt-in behind a named flag** — removes the silence about the *choice*.
+2. **A tier announcement on EVERY path** — removes the silence about the
+   *outcome*. Logging only the absent/failure case still leaves a successful
+   run untraceable, which is precisely the run that produced the inflated
+   numbers.
+
+Discovered 2026-08-01: between E6 and E7 the test262 worker linked the
+interpreter provider **unconditionally, with no flag and no log line naming the
+tier**, while CI's provider cache was always cold. So every *local* standalone
+eval figure was inflated relative to CI by roughly the interpreter's yield
+(order of magnitude: ≥ +17 on a 262-file slice).
+
+**The distinction that matters, and must not be collapsed:** those numbers were
+**not wrong as measured** — the interpreter really produced them, the
+kill-switch arm really was status-identical, the attribution really holds. They
+were wrong **to use as a CI/lane baseline**, because CI was never in that
+configuration. Internal validity intact; external validity void.
+
+**Rules:**
+
+- Put the configuration **inside the table** — a row, a column, or a warning
+  block immediately above it. Never only in the paragraph before.
+- Name the tier/flag/lane with **every** figure: "refusal tier, CI-comparable"
+  vs "interpreter tier, NOT CI-comparable".
+- If a harness silently selects a capability the published lane lacks, that is
+  a measurement-validity defect, not a convenience — make the selection
+  explicit and logged (here: `TEST262_FULL_RUNTIME_EVAL=1`).
+- When you discover such a divergence, state **what it invalidates by name**,
+  including your own earlier headline numbers.
 
 Related: [[reference_never_diff_local_sweep_against_committed_ci_baseline]]
 (same-run local-vs-local control only) ·

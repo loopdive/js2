@@ -60,6 +60,10 @@ export function maxReservedHostFnctorMethodArity(ctx: CodegenContext): number {
   return -1;
 }
 
+export function maxHostFnctorMethodArity(ctx: CodegenContext, closureArity: number): number {
+  return Math.max(closureArity, maxReservedHostFnctorMethodArity(ctx), ctx.maxHostDynamicMethodCallArity ?? 0);
+}
+
 /**
  * Fill every reserved driver after the public closure-method dispatchers exist.
  * A missing dispatcher leaves a valid undefined result rather than a trap.

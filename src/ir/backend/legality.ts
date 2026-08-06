@@ -150,6 +150,17 @@ function linearInstrError(instr: IrInstr): string | null {
           // null/ref/string/undefined consts are representation-divergent.
           return `linear backend does not support const '${instr.value.kind}'`;
       }
+    case "intrinsic":
+      switch (instr.id) {
+        case "math.abs":
+        case "math.ceil":
+        case "math.floor":
+        case "math.sqrt":
+        case "math.trunc":
+          return null;
+        default:
+          return `linear backend does not support semantic intrinsic '${instr.id}' without a native backend operation`;
+      }
     case "binary":
     case "unary":
     case "select":
@@ -358,6 +369,12 @@ function backendTypeError(backend: IrBackendKind, type: IrType): string | null {
   if (backend === "wasmgc") return null;
   if (backend === "linear") {
     if (type.kind === "string") return null;
+    if (type.kind === "vec") {
+      const element = asVal(type.elementType);
+      return element?.kind === "f64"
+        ? null
+        : `${backend} backend does not support vec element IR type '${type.elementType.kind}'`;
+    }
     if (type.kind === "object") return linearAggregateTypeError(type);
     if (type.kind === "boxed") {
       const inner = asVal(type.inner);
@@ -377,6 +394,12 @@ function backendTypeError(backend: IrBackendKind, type: IrType): string | null {
   }
   if (type.kind === "object") return porfforAggregateTypeError(type);
   if (type.kind === "string") return null;
+  if (type.kind === "vec") {
+    const element = asVal(type.elementType);
+    return element?.kind === "f64"
+      ? null
+      : `${backend} backend does not support vec element IR type '${type.elementType.kind}'`;
+  }
   const v = asVal(type);
   if (!v) return `porffor backend does not support IR type '${type.kind}'`;
   return porfforValTypeError(v);

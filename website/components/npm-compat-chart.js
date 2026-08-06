@@ -239,7 +239,7 @@ class NpmCompatChart extends HTMLElement {
         return `
           <line x1="${pad.left}" y1="${yPos}" x2="${W - pad.right}" y2="${yPos}"
             stroke="${baseline ? "rgba(255,255,255,0.55)" : "rgba(255,255,255,0.08)"}"
-            stroke-width="${baseline ? 1.5 : 1}" ${baseline ? 'stroke-dasharray="5 4"' : ""}/>
+            stroke-width="${baseline ? 0.85 : 0.7}" ${baseline ? 'stroke-dasharray="4 5"' : ""}/>
           <text x="${pad.left - 8}" y="${yPos + 4}" text-anchor="end"
             fill="${baseline ? "rgba(255,255,255,0.72)" : "rgba(255,255,255,0.35)"}"
             font-size="10" font-family="monospace">${this._ratioTick(value)}</text>`;
@@ -251,15 +251,22 @@ class NpmCompatChart extends HTMLElement {
         const path = item.points
           .map((point, index) => `${index === 0 ? "M" : "L"} ${x(point.time)} ${y(point.ratio)}`)
           .join(" ");
+        const primary = item.key === "dynamic";
+        const fillPath = primary
+          ? `${path} L ${x(item.points.at(-1).time)} ${pad.top + plotH} L ${x(item.points[0].time)} ${pad.top + plotH} Z`
+          : "";
         const dots = item.points
           .map(
             (point) => `
-              <circle cx="${x(point.time)}" cy="${y(point.ratio)}" r="3" fill="${item.color}">
+              <circle cx="${x(point.time)}" cy="${y(point.ratio)}" r="${primary ? 1.7 : 1.25}"
+                fill="${item.color}" opacity="${primary ? 0.8 : 0.55}">
                 <title>${this._esc(`${item.label} · ${this._shortDate(point.generatedAt)} · ${this._perfLabel(point.ratio).text}`)}</title>
               </circle>`,
           )
           .join("");
-        return `<path d="${path}" fill="none" stroke="${item.color}" stroke-width="2"/>${dots}`;
+        return `${primary ? `<path d="${fillPath}" fill="url(#primary-speed-fill)"/>` : ""}
+          <path d="${path}" fill="none" stroke="${item.color}" stroke-width="${primary ? 2.5 : 1}"
+            opacity="${primary ? 1 : 0.68}" stroke-linecap="round" stroke-linejoin="round"/>${dots}`;
       })
       .join("");
 
@@ -287,10 +294,12 @@ class NpmCompatChart extends HTMLElement {
         <svg viewBox="0 0 ${W} ${H}" role="img"
           aria-label="${this._esc(`${pkg.name} relative speed versus Node over time`)}">
           <title>${this._esc(`${pkg.name}: relative Wasm speed, with native Node fixed at 1×`)}</title>
-          <rect x="${pad.left}" y="${pad.top}" width="${plotW}" height="${Math.max(0, baselineY - pad.top)}"
-            fill="rgba(74,222,128,0.025)"/>
-          <rect x="${pad.left}" y="${baselineY}" width="${plotW}"
-            height="${Math.max(0, pad.top + plotH - baselineY)}" fill="rgba(248,113,113,0.025)"/>
+          <defs>
+            <linearGradient id="primary-speed-fill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#8ba4ff" stop-opacity="0.22"/>
+              <stop offset="100%" stop-color="#8ba4ff" stop-opacity="0"/>
+            </linearGradient>
+          </defs>
           ${grid}
           <text x="${W - pad.right - 4}" y="${baselineY - 6}" text-anchor="end"
             fill="rgba(255,255,255,0.62)" font-size="9" font-family="monospace">Node 1×</text>
@@ -348,6 +357,21 @@ class NpmCompatChart extends HTMLElement {
     const badge = (ok, label) =>
       `<span class="badge ${ok === true ? "ok" : ok === false ? "bad" : ""}">${this._esc(label)}</span>`;
 
+    // (#4127) Correctness — NAMED, not inferred. The tests row below shows a
+    // fraction, and a fraction invites reading 18/21 as a score rather than as
+    // three wrong answers. This row states which of the three states the
+    // package is in, and "unverified" is never a synonym for "fine".
+    const correctness = pkg.correctness
+      ? this._row(
+          "correctness",
+          pkg.correctness.status === "verified"
+            ? `${badge(true, "verified")} <span class="muted">every operation matched native Node</span>`
+            : pkg.correctness.status === "divergent"
+              ? `${badge(false, "divergent")} <span class="muted">${this._esc(pkg.correctness.reason ?? "")}</span>`
+              : `${badge(null, "unverified")} <span class="muted">${this._esc(pkg.correctness.reason ?? "correctness unknown")}</span>`,
+        )
+      : "";
+
     // Tests — the "own test suite" vs "differential ops" distinction is
     // load-bearing, so it is the row's own label, never blurred into one number.
     let tests;
@@ -355,8 +379,18 @@ class NpmCompatChart extends HTMLElement {
       const reason = compiles ? "runtime not verified" : "compile blocked";
       tests = this._row("tests", `<span class="muted">n/a — ${reason}</span>`);
     } else {
-      const { kind, passed, total, passRatePct, status, reason, admitted, upstreamTestsSeen, harnessIncompatible } =
-        pkg.tests;
+      const {
+        kind,
+        passed,
+        total,
+        passRatePct,
+        status,
+        reason,
+        admitted,
+        upstreamTestsSeen,
+        harnessIncompatible,
+        implementationInvalidTests,
+      } = pkg.tests;
       const label =
         kind === "official-suite"
           ? "own test suite"
@@ -373,6 +407,13 @@ class NpmCompatChart extends HTMLElement {
       const slice = upstreamTestsSeen
         ? ` <span class="muted">${admitted} of ${upstreamTestsSeen} run${
             harnessIncompatible ? `, ${harnessIncompatible} need unavailable infra` : ""
+          }${
+            // Not the same thing as "needs unavailable infra": these tests were
+            // blocked by the COMPILER — the package's own implementation does
+            // not produce a valid module (#3978) — so hiding them inside the
+            // infra count would read as the harness's limitation rather than
+            // ours.
+            implementationInvalidTests ? `, ${implementationInvalidTests} blocked by an invalid compiled module` : ""
           }</span>`
         : "";
       if (status && status !== "measured") {
@@ -429,8 +470,17 @@ class NpmCompatChart extends HTMLElement {
           ${speed}
           ${issueLink}
         </div>
-        <div class="badges">${badge(compiles, "compiles")}${badge(validates, "validates")}</div>
-        <div class="rows">${tests}${perf}${bugs}</div>
+        <div class="badges">${badge(compiles, "compiles")}${badge(validates, "validates")}${
+          // The entry is a re-export barrel with no implementation in it, so
+          // the two badges above describe the barrel, not the package. Saying
+          // so on the badge line is the point — a green "compiles" next to a
+          // silent caveat is exactly how `lit` read as supported while most of
+          // its code did not compile at all (#3977).
+          pkg.entryIsBarrel
+            ? `<span class="badge" title="The published entry module only re-exports other packages, so these badges describe the barrel — see the tests row for the real implementation.">entry is a barrel</span>`
+            : ""
+        }</div>
+        <div class="rows">${correctness}${tests}${perf}${bugs}</div>
         <a class="entry mono" href="${npmCodeUrl}" target="_blank" rel="noopener"
           title="View ${this._esc(pkg.entryFile)} in ${this._esc(pkg.name)} ${this._esc(pkg.version)} on npm">${this._esc(pkg.entryFile)}</a>
       </div>`;
@@ -781,9 +831,7 @@ class NpmCompatChart extends HTMLElement {
           display: block;
         }
         .speed-chart {
-          background: rgba(255, 255, 255, 0.035);
-          border: 1px solid rgba(255, 255, 255, 0.07);
-          padding: 4px 7px 8px;
+          padding: 4px 0 8px;
         }
         .speed-chart svg {
           display: block;
@@ -813,7 +861,10 @@ class NpmCompatChart extends HTMLElement {
         .chart-legend-item.unavailable { opacity: 0.48; }
         .legend-swatch {
           width: 14px;
-          border-top: 2px solid var(--series-color);
+          border-top: 1px solid var(--series-color);
+        }
+        .chart-legend-item:last-child .legend-swatch {
+          border-top-width: 3px;
         }
         .chart-scale {
           padding: 5px 8px 0;

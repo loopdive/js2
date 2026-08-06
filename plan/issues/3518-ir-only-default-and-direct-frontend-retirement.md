@@ -2,26 +2,25 @@
 id: 3518
 title: "IR-only default and direct front-end retirement"
 status: in-progress
-sprint: current
 created: 2026-07-21
-updated: 2026-07-26
+updated: 2026-08-03
 priority: critical
-horizon: xl
-complexity: XL
 feasibility: hard
 reasoning_effort: max
 task_type: refactor
 area: ir, codegen, codegen-linear, compiler
 language_feature: compiler-internals
-es_edition: n/a
 goal: ir-full-coverage
+sprint: current
+depends_on: [3519]
+horizon: xl
+complexity: XL
+es_edition: n/a
 lane: ir-retirement
 model: gpt-5.6-sol
-depends_on: [3519]
 related: [1373b, 2855, 2950, 3090, 3142, 3143, 3341, 3517, 3529, 3520, 3521, 3522, 3523, 3525, 3526, 3527, 3528]
 origin: "2026-07-21 explicit user directive: enable IR-only by default and retire the old direct codegen path"
 ---
-
 # #3518 — IR-only default and direct front-end retirement
 
 > **Tracking epic, not a single developer task.** The current compiler is a
@@ -53,7 +52,7 @@ through semantic IR intents rather than `compileExpression` /
 language fail with a stable source-located `Unsupported` diagnostic; they do
 not resurrect the direct path.
 
-## Current truth (audited 2026-07-21)
+## Current truth (audited 2026-08-03)
 
 The following measurements are independent and must not be conflated:
 
@@ -65,28 +64,33 @@ The following measurements are independent and must not be conflated:
 | Adoption matrix                                  |       **18 / 56 rows IR-owned** | Those syntax rows have an IR implementation in measured configurations | Their legacy handlers are unreachable in mixed functions or at module scope |
 | Front-end reachability                           | **59,676 legacy-only fn-lines** | Approximate final deletion opportunity                                 | Those lines are dormant today                                               |
 | Runtime/builtin reachability                     |               **~47K fn-lines** | Behavior emission must gain IR-owned entry points                      | Those routines should be deleted with the front-end                         |
+| Bounded host terminal readiness                  | **37/37 IR; 30 legacy bodies** | Every measured terminal has an IR body and no typed blocker remains    | The remaining direct bodies or global runtime/linear paths are unreachable  |
 
-R0 is complete. Full equivalence is **1,608 passing / 35 failing** against 36
-committed known failures: one baseline-known case now passes, there are zero
-new regressions, and the baseline is unchanged. The bounded hybrid gate is
-green at 5/5 entries, 37 terminal units, 31 emitted IR bodies, 6 typed
-Unsupported outcomes, 0 Invariants, and 37 legacy bodies. Strict IR-only is
-honestly red on the six Unsupported units and the 37 legacy bodies.
+R0 is complete. After #4124, the bounded hybrid gate is green at 5/5 entries,
+37 terminal units, 37 emitted IR bodies, 0 typed Unsupported outcomes, 0
+Invariants, and 30 legacy bodies. Strict IR-only is still red only because
+those 30 terminal units retain direct bodies.
 
 Additional blockers:
 
-- Class members are still compile-twice. Legacy declaration/body side effects
-  establish ABI and type-index state before the overlay patches methods.
+- Dependency-complete static methods can now prepare and emit once. Instance
+  methods, constructors, accessors, fields, nested classes, and closures still
+  rely on legacy declaration/body side effects before the overlay patches
+  their slots.
 - #3142 made module init claimable and patchable, but it still compiles the
   legacy `__module_init` first. Claimability is not compile-once ownership.
 - Multi-source/M0 is a per-source, post-legacy overlay; fast-mode multi-source,
   class members, module init, and IR-first body skipping are incomplete.
 - The linear backend still has direct AST-reading paths and does not consume the
   same whole-program IR contract as WasmGC.
-- The R0 typed gate has replaced substring-matched build-error policy, but its
-  current strict failure is expected: async (2), call-graph closure (1), body
-  shape (1), and static class members (2) remain explicit Unsupported units,
-  and every measured unit still has a legacy body.
+- The R0 typed gate has replaced substring-matched build-error policy. Its
+  current strict failure is expected: the bounded lane has no Unsupported or
+  Invariant outcomes, but 20 free functions, eight class members, and two
+  module initializers still emit legacy bodies.
+- The normal fallback gate now reconciles preliminary selector labels with
+  source-qualified terminal outcomes. Its async-function bucket fell from four
+  to zero with #4124; this does not claim that async methods, closures,
+  `for await`, async generators, or AST planner deletion are complete.
 
 ## Terms used by this program
 
@@ -111,8 +115,8 @@ their order and acceptance boundaries.
 | **R0a — #3529 (done)**       | Restore typed-producer equivalence parity without weakening unknown-throw-to-Invariant classification | #3143; exposed by #3519               | 154 new compile failures return to the committed baseline through preclaim/typed Unsupported or true invariant fixes; no baseline expansion                     |
 | **R0b — #3519 (done)**       | Typed `Prepared` / `Unsupported` / `Invariant` outcomes plus an honest `check:ir-only` readiness gate | #3143, #3529; informed by #2855/#3341 | No TypeMap or compile failures are skipped; `result.errors` and every unit outcome are accounted for; hybrid vs IR-only policy is tested                        |
 | **R1 — #3520 (in progress)** | Source-qualified `IrUnitId` and a whole-program `ProgramAbiMap`                                       | R0                                    | Same-named units across files/classes cannot collide; signatures, globals, imports, types, exports, and synthetic units are planned once                        |
-| **R2 — #3521 (blocked)**     | `PreparedIrProgram` and prepare-before-emit compile-once pipeline                                     | #3520                                 | Prepared free functions never call legacy body compilation; unsupported units are decided before any body emitter side effect                                   |
-| **R3 — #3522 (blocked)**     | Classes and class members are Prepared/compile-once                                                   | #3521                                 | Constructors, instance/static methods, fields, inheritance, wrappers, and type indices no longer depend on legacy body compilation                              |
+| **R2 — #3521 (in progress)** | `PreparedIrProgram` and prepare-before-emit compile-once pipeline                                     | #3520                                 | Prepared free functions never call legacy body compilation; unsupported units are decided before any body emitter side effect                                   |
+| **R3 — #3522 (in progress)** | Classes and class members are Prepared/compile-once                                                   | #3521                                 | Constructors, instance/static methods, fields, inheritance, wrappers, and type indices no longer depend on legacy body compilation                              |
 | **R4 — #3523 (blocked)**     | Module init is Prepared/compile-once                                                                  | #3521, #3522                          | One program-owned module-init unit replaces the compile-first/patch-later `__module_init` overlay, including top-level binding/TDZ/export effects               |
 | **R5 — #3525 (blocked)**     | Whole-program single- and multi-source Prepared ownership                                             | #3520–#3523                           | Cross-file calls/imports, fast mode, collisions, module init, and class members use one `PreparedIrProgram`; no per-source overlay loop remains                 |
 | **R6 — #3526 (blocked)**     | Typed semantic intrinsic/runtime-feature/host-capability contract                                     | #3521                                 | The ~47K runtime/builtin emission lines are reached from a frozen semantic manifest, never AST dispatch; families land in measured sub-slices                   |
@@ -121,18 +125,15 @@ their order and acceptance boundaries.
 | **R9**                       | Fail-closed IR-only default; remove escape hatches                                                    | R3–R8; #2949, #2952, #1373b, #3583    | Default policy is IR-only; hybrid demotion, `experimentalIR: false`, `JS2WASM_IR_FIRST`, `disableIrFirst`, skip allowlists, and compile-twice switches are gone |
 | **R10**                      | Reachability-proven direct-front-end deletion                                                         | R9                                    | Re-run #3090 audit; delete the ~59,676 frontend-only fn-lines and dispatch roots; zero direct AST→Wasm reachability remains                                     |
 
-R0a and R0b completed on 2026-07-21. **#3520 is active on draft PR #3679.
-Commits 1–3 and the C9/C10 class-callable continuations are on main. C11 moves
-retained function imports into the Program ABI. The remainder of Commit 4 is
-runtime/intrinsic provider ownership, inherited accessors and static/support
-families, type/class-layout entries, exports and remaining aliases, and the
-production `LegacyAbiAdapter` cutover.** R2–R8 remain blocked on the concrete
-dependency spine. R4 follows R3 because its ordered plan consumes the
-class/static-intent census owned by #3522. Runtime-family sub-slices in #3526
-may proceed in parallel after R2 once C0 fixes their semantic contract. #3525,
-#3527, #3528, and R9 are integration barriers, not parallel deletion
-opportunities. R9 also requires the explicit dynamic-value, control-flow,
-async, adoption-owner, and broader-corpus coverage closure named above.
+R0a and R0b completed on 2026-07-21. R1 remains active while R2 production
+preparation and the first R3 static-method transaction are now in progress.
+The current cutover is deliberately component-local: sealed owners skip direct
+body emission, while unsealed owners retain the typed hybrid route. R4 follows
+R3 because its ordered plan consumes the class/static-intent census owned by
+#3522. #3525, #3527, #3528, and R9 remain integration barriers rather than
+parallel deletion opportunities. R9 also requires the explicit dynamic-value,
+control-flow, async, adoption-owner, and broader-corpus coverage closure named
+above.
 
 ## Program rules
 

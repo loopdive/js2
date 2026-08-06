@@ -68,6 +68,13 @@ import {
   registerLinearU8Buffer,
 } from "./linear-uint8-signatures.js";
 import { containsLinearU8Allocation, emitLinearU8ArenaMark, emitLinearU8ArenaReset } from "./linear-uint8-arena.js";
+import { walkInstructions } from "./walk-instructions.js";
+import {
+  collectDirectEvalActivationBindingNames,
+  collectDirectEvalBindingNames,
+  functionMayReachDirectEval,
+  reifyCurrentDirectEvalBindings,
+} from "./direct-eval-environment.js";
 
 /** Maximum number of instructions for a function body to be considered inlinable */
 export const INLINE_MAX_INSTRS = 10;
@@ -164,6 +171,48 @@ export const INLINE_DISALLOWED_OPS = new Set([
  * - No extra locals beyond parameters
  * - Not a rest-param or capture function
  */
+/**
+ * (#4134) Dump a just-compiled ordinary function body that references locals
+ * outside its own frame, with `<<<<` on the offending ops.
+ *
+ * A `push`-trap on `fctx.body` misses this class entirely: `fctx.body` is
+ * REASSIGNED during compilation (the savedBodies swap), so a proxy installed on
+ * the initial array stops seeing writes after the first swap. Inspecting the
+ * finished body sidesteps that. Enabled by `JS2WASM_FRAME_OPS`.
+ */
+export const frameSnapshotAtCompile = new Map<WasmFunction, { locals: number; bodyLen: number }>();
+
+export function dumpFrameBreach(ctx: CodegenContext, func: WasmFunction): void {
+  if (process.env?.JS2WASM_FRAME_STAGES) {
+    frameSnapshotAtCompile.set(func, { locals: func.locals.length, bodyLen: func.body.length });
+  }
+  if (!process.env?.JS2WASM_FRAME_OPS) return;
+  const type = ctx.mod.types[func.typeIdx];
+  if (!type || type.kind !== "func") return;
+  const frame = type.params.length + func.locals.length;
+  const lines: string[] = [];
+  let bad = false;
+  const walk = (instrs: readonly Instr[], depth: number): void => {
+    for (const instr of instrs) {
+      const index = (instr as { index?: number }).index;
+      const out = typeof index === "number" && index >= frame && instr.op.startsWith("local.");
+      if (out) bad = true;
+      lines.push(`${"  ".repeat(depth)}${instr.op}${index === undefined ? "" : ` ${index}`}${out ? "   <<<<" : ""}`);
+      for (const key of ["body", "then", "else", "catchAll"] as const) {
+        const nested = (instr as unknown as Record<string, unknown>)[key];
+        if (Array.isArray(nested)) walk(nested as Instr[], depth + 1);
+      }
+    }
+  };
+  walk(func.body, 0);
+  if (!bad) return;
+  process.stderr.write(
+    `[js2:fn-breach] ${func.name} frame=${frame} (${type.params.length} params + ${func.locals.length} locals)` +
+      ` locals=${func.locals.map((l) => `${l.name}:${l.type.kind}`).join(",")}\n`,
+  );
+  for (const line of lines) process.stderr.write(`[js2:fn-breach]   ${line}\n`);
+}
+
 export function registerInlinableFunction(ctx: CodegenContext, funcName: string, func: WasmFunction): void {
   // Skip functions with rest params or captures
   if (ctx.funcRestParams.has(funcName)) return;
@@ -210,6 +259,13 @@ export function registerInlinableFunction(ctx: CodegenContext, funcName: string,
     returnType,
   });
 }
+
+function assertDirectAsyncBodyAllowed(name: string, isAsync: boolean): void {
+  if (isAsync && process.env.JS2WASM_TEST_POISON_DIRECT_ASYNC_BODY) {
+    throw new Error(`direct async body poison reached ${name}`);
+  }
+}
+
 export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclaration, func: WasmFunction): void {
   const sig = ctx.checker.getSignatureFromDeclaration(decl);
   if (!sig) {
@@ -228,9 +284,9 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
   // compile while a lifted closure / nested function compiles.
   const liveBodiesAtEntry = ctx.liveBodies.size;
 
-  // For async functions, unwrap Promise<T> to get T
   const isAsync = ctx.asyncFunctions.has(func.name);
   const isGenerator = ctx.generatorFunctions.has(func.name);
+  assertDirectAsyncBodyAllowed(func.name, isAsync);
   const effectiveRetType = isAsync ? unwrapPromiseType(retType, ctx.checker) : retType;
 
   // Use call-site resolved types for generic functions
@@ -338,6 +394,14 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
     i32CoercedLocals: i32CoercedLocals.size > 0 ? i32CoercedLocals : undefined,
     i32SpecializedArrays: i32SpecializedArrays.size > 0 ? i32SpecializedArrays : undefined,
   };
+
+  // A nested lexical descendant can direct-eval a name owned by this function,
+  // so mark the whole ancestor chain before any parameter/default/body lowering
+  // can capture those bindings through a narrower, non-canonical cell type.
+  if (functionMayReachDirectEval(decl, ctx.oracle)) {
+    fctx.directEvalBindingNames = collectDirectEvalBindingNames(decl);
+    fctx.directEvalActivationBindingNames = collectDirectEvalActivationBindingNames(decl);
+  }
 
   // Register params as locals
   for (let i = 0; i < params.length; i++) {
@@ -570,7 +634,7 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
   // We create a vec struct (same as Array) populated from all function parameters.
   // Use externref elements so that all parameter types (numbers, strings, objects)
   // are preserved — matching the closure version in closures.ts (#771).
-  if (decl.body && bodyUsesArguments(decl.body)) {
+  if (decl.body && (bodyUsesArguments(decl.body) || fctx.directEvalBindingNames !== undefined)) {
     // Ensure __box_number and __unbox_number are available for mapped arguments sync
     const hasNumericParam = params.some((p) => p.type.kind === "f64" || p.type.kind === "i32");
     if (hasNumericParam) {
@@ -677,6 +741,7 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
       if (decl.body) {
         hoistVarDeclarations(ctx, fctx, decl.body.statements);
         hoistLetConstWithTdz(ctx, fctx, decl.body.statements);
+        reifyCurrentDirectEvalBindings(ctx, fctx);
         hoistFunctionDeclarations(ctx, fctx, decl.body.statements);
         for (const stmt of decl.body.statements) {
           compileStatement(ctx, fctx, stmt);
@@ -755,6 +820,10 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
       // Hoist `let`/`const` declarations with TDZ flags so nested functions can
       // capture them. The TDZ flag ensures ReferenceError if accessed before init.
       hoistLetConstWithTdz(ctx, fctx, bodyStatements);
+      // Promote the eval-visible entry environment before compiling hoisted
+      // functions. Their capture lowering then aliases these same canonical
+      // cells, as do interpreter reads/writes at a direct-eval call site.
+      reifyCurrentDirectEvalBindings(ctx, fctx);
       // Hoist function declarations: JS semantics require function declarations
       // to be available before their textual position in the enclosing scope.
       hoistFunctionDeclarations(ctx, fctx, bodyStatements);
@@ -797,7 +866,26 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
   }
 
   cacheStringLiterals(ctx, fctx);
+  const localsBeforeDedup = fctx.locals.length;
   deduplicateLocals(fctx);
+  const maxLocal = fctx.params.length + fctx.locals.length;
+  const invalidLocalRefs = new Set<number>();
+  walkInstructions(fctx.body, (instr) => {
+    if ((instr.op === "local.get" || instr.op === "local.set" || instr.op === "local.tee") && instr.index >= maxLocal) {
+      invalidLocalRefs.add(instr.index);
+    }
+  });
+  if (invalidLocalRefs.size > 0) {
+    const staleBindings = [...fctx.localMap.entries()]
+      .filter(([, index]) => index >= maxLocal)
+      .map(([name, index]) => `${name}=${index}`)
+      .join(", ");
+    throw new Error(
+      `codegen invariant: '${func.name}' references out-of-range local(s) ${[...invalidLocalRefs].join(", ")} ` +
+        `after local dedup (params=${fctx.params.length}, locals=${fctx.locals.length}, before=${localsBeforeDedup}` +
+        `${staleBindings ? `, stale bindings: ${staleBindings}` : ""})`,
+    );
+  }
   func.locals = fctx.locals;
   func.body = fctx.body;
 

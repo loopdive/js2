@@ -968,6 +968,21 @@ function makeProver(
         if (STRING_NUMERIC_METHODS.has(callee.name.text) && isString(callee.expression, depth + 1)) return true;
         if (ARRAY_NUMERIC_METHODS.has(callee.name.text) && isArray(callee.expression, depth + 1)) return true;
         if (recv.kind === ts.SyntaxKind.ThisKeyword) return sets.numericFunctions.has(callee.name.text);
+        // (#4122) The same verdict for a NON-`this` receiver. `numericFunctions`
+        // is whole-program and NAME-keyed — "every visible function of this name
+        // returns a number on every path" — which is exactly as true of
+        // `p.inc()` as of `this.inc()`; a single non-numeric `inc` anywhere in
+        // the program removes the name for both. The `this`-only restriction was
+        // conservatism, not a consequence of the verdict.
+        //
+        // The trust boundary this widens is the SAME one the file documents for
+        // name-keying generally: an `inc` that is not statically visible (a host
+        // or builtin method reached through an opaque receiver) is not in
+        // `functionsByName` and so cannot demote the name. That risk already
+        // exists for `this.m()`, whose receiver is equally unconstrained at
+        // runtime. Restricted to a bare identifier receiver so member chains
+        // (`a.b.inc()`) and call results (`f().inc()`) keep the old answer.
+        if (ts.isIdentifier(recv)) return sets.numericFunctions.has(callee.name.text);
       }
       return false;
     }
@@ -1094,6 +1109,13 @@ export interface NumericPropertyAnalysisTarget {
   numericPropertyNames?: ReadonlySet<string>;
   stringPropertyNames?: ReadonlySet<string>;
   numericFunctionNames?: ReadonlySet<string>;
+  /**
+   * (#4122) The grounded slot verdict, exposed directly rather than only
+   * through `usageInference`. `bindingHasMixedAssignmentCarrier` needs to ask
+   * it BEFORE the carrier type exists, which is upstream of where
+   * `usageInference` is consulted.
+   */
+  numericLocalVerdict?: PropertyKindVerdicts["isNumericLocal"];
   readonly usageInference: {
     setNumericLocalOracle(oracle: PropertyKindVerdicts["isNumericLocal"]): void;
   };
@@ -1266,13 +1288,37 @@ export function analyzeNumericPropertyNames(
       // holding a comparison result makes `` `${b}` `` print "1" where JS says
       // "true". Caught by `coercion/tostring > standalone-O > template over
       // any-boolean`.
-      const allNumeric =
-        slot.defs.length > 0 &&
-        slot.defs.every(
-          (def) => def.forcedNumeric === true || (def.expr !== undefined && groundedProver.isNumeric(def.expr)),
-        ) &&
-        !slot.defs.some((def) => def.expr !== undefined && groundedProver.isBooleanish(def.expr));
-      if (allNumeric) {
+      // (#4122) SELF-REFERENCE. The accumulator `var s = 0; s = s + f();` is the
+      // most common numeric-local shape in ordinary JS, and a plain least
+      // fixpoint can never admit it: proving `s` numeric requires `s` to be
+      // numeric already. So assume the slot numeric while judging its OWN
+      // definitions — the same induction `withSelf` gives the property path
+      // ("if every other write stores a number then the slot always holds
+      // one"), just for a lexical slot instead of a property name.
+      groundedSlots.add(slot);
+      let allNumeric: boolean;
+      try {
+        allNumeric =
+          slot.defs.length > 0 &&
+          slot.defs.every(
+            (def) => def.forcedNumeric === true || (def.expr !== undefined && groundedProver.isNumeric(def.expr)),
+          ) &&
+          !slot.defs.some((def) => def.expr !== undefined && groundedProver.isBooleanish(def.expr));
+      } finally {
+        groundedSlots.delete(slot);
+      }
+      if (!allNumeric) continue;
+      // GROUNDEDNESS, re-checked with the assumption withdrawn: at least one
+      // definition must be numeric on its own. Without this, `var s = s + 1;`
+      // — whose only definition reads the slot before anything writes it — is
+      // self-justifying, and an f64 carrier would read 0 where JS says NaN.
+      // This is the slot analogue of the property path's `withoutSelf` pass,
+      // and it is also what keeps a mutual cycle (`var a = b; var b = a;`) out:
+      // the assumption covers a slot's own name, never its partner's.
+      const grounded = slot.defs.some(
+        (def) => def.forcedNumeric === true || (def.expr !== undefined && groundedProver.isNumeric(def.expr)),
+      );
+      if (grounded) {
         groundedSlots.add(slot);
         added = true;
       }
@@ -1349,5 +1395,6 @@ export function applyNumericPropertyAnalysis(
   target.numericFunctionNames = verdicts.numericFunctions;
   if (process.env.JS2WASM_NUMERIC_LOCALS !== "0") {
     target.usageInference.setNumericLocalOracle(verdicts.isNumericLocal);
+    target.numericLocalVerdict = verdicts.isNumericLocal;
   }
 }

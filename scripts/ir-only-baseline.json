@@ -1,19 +1,15 @@
 {
   "schemaVersion": 1,
-  "generated": "2026-07-30",
+  "generated": "2026-08-03",
   "lanes": {
     "single-host": {
       "entryFloor": 5,
       "terminalUnitFloor": 37,
-      "emittedFloor": 30,
-      "irBodyEmittedFloor": 30,
-      "unsupportedCeiling": 6,
-      "unsupportedByCode": {
-        "select/async-function": 2,
-        "select/call-graph-closure": 1,
-        "select/body-shape-rejected": 1,
-        "build/static-class-member": 2
-      },
+      "emittedFloor": 37,
+      "irBodyEmittedFloor": 37,
+      "legacyBodyEmittedCeiling": 24,
+      "unsupportedCeiling": 0,
+      "unsupportedByCode": {},
       "invariantCeiling": 0
     }
   }

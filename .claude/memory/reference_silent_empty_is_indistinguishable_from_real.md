@@ -5,8 +5,27 @@ metadata:
   node_type: memory
   type: reference
   originSessionId: 31a336a9-7fce-4c41-9a15-3e10d02eca44
-  modified: 2026-07-26T11:36:24.976Z
+  modified: 2026-08-01T11:43:57.835Z
+  modified: 2026-08-01T10:10:12.701Z
 ---
+
+## Recurring instance: un-awaited async `compile()` scores a fictitious 100% failure
+
+**Hit by two independent agents in one session (2026-08-01).** `compile()` in
+`src/index.ts` is **async**. A probe that forgets `await` gets a Promise, reads
+no `.wasm`/`.errors` off it, and scores **every case as a compile failure** —
+a clean, plausible, completely fictitious result (one agent scored 28/28
+`compile_error`; another read every case as a compile failure and nearly
+triaged the wrong defect).
+
+It is the perfect silent-empty: 100% failure looks exactly like "this feature
+is entirely broken", which is often the very hypothesis being tested.
+
+**Guard:** have the probe **throw on a malformed result** rather than treating
+a missing `.wasm` as a failure — `if (!r || typeof r.then === "function" ||
+!("errors" in r)) throw new Error("probe: compile() result malformed")`. And
+keep a **known-passing control row** in every probe: if the control also
+"fails", the instrument is broken, not the subject.
 
 **The benign-looking outcome is indistinguishable from the broken one, and
 nothing records which happened.** Eight measured instances in a single session
@@ -22,7 +41,7 @@ clean.
 | 5 | `regressions-allow` reader | gate refused, no mention | **never read** (rebase-mode only) |
 | 6 | merge_group regression gate | a park = "your change regressed" | baseline cloned **at step time**; verdict depends on wall-clock (#3648) |
 | 7 | `mergeable` field | PR looks healthy, `cla-check` green | wedged at `null`; **`pull_request` workflows never fired** |
-| 8 | a CI watcher | "0 pending ⇒ checks finished" | only 2 checks had **started** |
+| 8 | a CI watcher | "0 pending ⇒ checks finished" | only 2 checks had **started** — **RECURRED 2026-08-01**: the required jobs had not been **created**, so the pending list enumerated only jobs that *exist* and was empty for that reason. Cure: floor the required-check COUNT and pin the watcher to the expected SHA |
 | 9 | `__vec_len` discriminator | `typeof … === "number"` true | not-a-vec default is `i32.const 0` — vacuously true |
 | 10 | a corpus sweep | "0 spurious firings" | a concurrent arm had swapped in an instrumented harness |
 
@@ -98,6 +117,38 @@ someone else's work**:
 - `git stash push -- <file>` printing *"No local changes to save"* because the change was already **committed**, so the run labelled *"fix reverted"* still contained the fix. Two runs agreed; the agreement was meaningless.
 - A regex that never captured the token it was asserting on, so it passed **by absence**.
 
+## `contents` API on a big directory: empty = TRUNCATION, not absence (2× in one day, 2026-08-02/03)
+
+`gh api repos/<o>/<r>/contents/plan/issues --jq '.[].name' | grep '^NNNN'` came
+back EMPTY for files that were ON MAIN — the endpoint caps at 1000 entries and
+`plan/issues/` holds 4000+. Two independent near-misses in one session (one
+almost reported a live id collision that had already been resolved). The
+canonical "does main contain X" check is the git tree API **with an explicit
+truncation check**:
+
+```bash
+gh api "repos/<o>/<r>/git/trees/main?recursive=1" --jq '.truncated'  # must be false
+# then grep the tree for the path; or fetch the exact path via contents/<full/path>
+```
+
+A single exact-path `contents/<dir>/<file>` GET is also safe (404 = absent).
+Never grep a listing that can silently cap.
+
+## An HONEST negative from an unvalidated instrument is still unvalidated (2026-08-03, #4096)
+
+An agent marked "all 463 single-statement `ref.null.extern` push sites across
+60 files", got no marker hit on the repro, and honestly reported "the null
+comes from another spelling — not one of these sites." The next agent pinned
+the emit site by chokepoint instrumentation **on the first try** — and it WAS
+a plain single-statement push, squarely inside the class the sweep claimed to
+cover. **The sweep's negative was an instrument failure**: it had no positive
+control (mark a site KNOWN to be reached; confirm the marker fires through the
+same build/run path). The honesty of the report ("not pinned, here is what was
+ruled out") was real and still valuable — but "ruled out" was itself a result
+from an unproven tool, and it misdirected the follow-up brief. Rule: a
+negative sweep without a fired positive control rules out NOTHING; say "the
+sweep found nothing AND was not validated" — those are different handoffs.
+
 The same agent had built structural positive controls into an instrument hours
 earlier and then failed to apply the principle three feet away. **Knowing the
 rule does not protect you; running the falsifiability test does.**
@@ -128,6 +179,35 @@ not.** Verify the *content* after a cherry-pick, not that it applied.
 
 In both cases the honest signal came from elsewhere — a CI `ENOENT` on a missing
 fixture is what revealed the partial merge.
+
+## `/workspace` IS A SHALLOW CLONE — ancestry checks there fail toward "unique"
+
+**Measured 2026-08-01.** `git rev-parse --is-shallow-repository` → **true** (642 commits
+reachable from `origin/main`, 5 boundary points). So `git merge-base` returns nothing and
+`git merge-tree` says **`fatal: refusing to merge unrelated histories`** — for **14 of 16**
+stash entries, including one whose base commit is *titled* "Merge remote-tracking branch
+'origin/main' into …".
+
+> That is the **clone's horizon**, not a fact about the work. Any ancestry-based triage
+> reads those 14 as *"not superseded / unique unmerged work"* — the alarming answer,
+> produced by a tool that simply cannot see.
+
+Use **server-side** queries instead (`gh api .../compare/A...B`,
+`commits?path=<f>&sha=main`) or grep `main` for a distinctive identifier. Validate the
+replacement two-sided before trusting it: a commit known to be on main must read
+SUPERSEDED, and a known-unmerged branch must read NOT-superseded with exactly its own
+files as residual.
+
+**Two more ways a containment check lies, same session:**
+
+- **Renumbering** — the **#3889** issue file (`editions…`) read as absent from main; it
+  landed **renumbered as `3892-editions….md`**. Index by post-id slug, not by path.
+- **File splits** — `declarations.ts` read 0% contained; the symbols were on main in
+  `declarations/import-collector.ts`. Only grepping for the *identifier* settled it.
+
+**And a ratio is not a verdict.** One entry read "PARTIAL, 86% of added lines on main" —
+all 26 missing lines were **comments**. Split missing lines into **code vs prose** and read
+the code; that turned every ambiguous case into a confident one.
 
 ## The cures, in order of power
 

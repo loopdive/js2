@@ -113,6 +113,7 @@ export function effectsOf(instr: IrInstr, cache: Map<IrInstr, IrEffects> = new M
     // string content ops. Re-ordering these is unobservable.
     case "const":
     case "string.const":
+    case "intrinsic":
     case "binary":
     case "unary":
     case "select":

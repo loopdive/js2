@@ -76,6 +76,7 @@ import { tryEmitFnctorPrototypeRead } from "./expressions/fnctor-prototype.js";
 import { ensureNativeStringHelpers, stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { emitIsUndefF64 } from "./value-tags.js";
+import { tryEmitStaticI32Expression } from "./i32-static-range-expr.js";
 import {
   ensureRegExpNativeProtoGlue,
   tryCompileStandaloneRegExpMatchResultRead,
@@ -168,11 +169,14 @@ import {
 import { coercionInstrs, defaultValueInstrs } from "./type-coercion.js";
 import { tryEmitJsonParseElementAccess, tryEmitJsonParsePropertyAccess } from "./json-standalone.js";
 import { reserveMemberSetDispatch } from "./member-set-dispatch.js";
+import { alternateFieldArmRead } from "./alternate-field-arm.js";
 import { classMethodCandidatesForProp, reserveMemberGetDispatch } from "./member-get-dispatch.js";
 import { resolveReceiverStruct } from "./fnctor-escape-gate.js"; // (#2681/#2686 A3) pinned-struct read dispatch
+import { emitGuardedNativeStringElementGet } from "./string-element-read.js"; // (#3973) any-typed native-string element read
 import { reserveAccessorGetDriver } from "./accessor-driver.js";
 import { S5C_STRUCT_ACCESSOR_CLOSURE } from "./struct-accessor-closure.js";
 import { tryCompileTemporalPropertyAccess } from "./temporal-native.js";
+import { emitRuntimeEvalSharedValueUnwrap, runtimeEvalSharedValueUnwrapInstrs } from "./global-environment.js";
 import {
   BUILTIN_CTOR_ARITY,
   BUILTIN_CTOR_NAMES,
@@ -1203,6 +1207,8 @@ export function findAlternateStructsForField(
   fieldType: ValType;
   mutable: boolean;
   presenceSlot?: PresenceSlot;
+  shapeId?: number;
+  shapeFieldIdx?: number;
 }[] {
   const result: {
     structTypeIdx: number;
@@ -1210,18 +1216,23 @@ export function findAlternateStructsForField(
     fieldType: ValType;
     mutable: boolean;
     presenceSlot?: PresenceSlot;
+    shapeId?: number;
+    shapeFieldIdx?: number;
   }[] = [];
   for (const [typeName, fields] of ctx.structFields) {
     const sIdx = ctx.structMap.get(typeName);
     if (sIdx === undefined || sIdx === excludeTypeIdx) continue;
     const fIdx = fields.findIndex((f) => f.name === propName);
     if (fIdx !== -1) {
+      const shapeId = ctx.shapeIdByStructName.get(typeName);
+      const shapeFieldIdx = shapeId !== undefined ? fields.findIndex((f) => f.name === "$shape") : -1;
       result.push({
         structTypeIdx: sIdx,
         fieldIdx: fIdx,
         fieldType: fields[fIdx]!.type,
         mutable: fields[fIdx]!.mutable,
         ...(presenceSlotOf(fields, propName) ? { presenceSlot: presenceSlotOf(fields, propName)! } : {}),
+        ...(shapeId !== undefined && shapeFieldIdx >= 0 ? { shapeId, shapeFieldIdx } : {}),
       });
     }
   }
@@ -1311,13 +1322,9 @@ export function emitNullGuardedStructGet(
     const buildFallback = (srcLocal: number, altIdx: number): Instr[] => {
       if (altIdx < alternates.length) {
         const alt = alternates[altIdx]!;
-        const altCoerce = coercionInstrs(ctx, alt.fieldType, resultType, fctx);
-        const altRead: Instr[] = [
-          { op: "local.get", index: srcLocal },
-          { op: "ref.cast", typeIdx: alt.structTypeIdx },
-          { op: "struct.get", typeIdx: alt.structTypeIdx, fieldIdx: alt.fieldIdx },
-          ...altCoerce,
-        ];
+        // null = this shape cannot produce `resultType`; skip the arm.
+        const altRead = alternateFieldArmRead(ctx, fctx, alt, resultType, srcLocal);
+        if (!altRead) return buildFallback(srcLocal, altIdx + 1);
         return [
           { op: "local.get", index: srcLocal },
           { op: "ref.test", typeIdx: alt.structTypeIdx },
@@ -1682,10 +1689,17 @@ export function emitExternrefToStructGet(
   const resultType: ValType =
     fieldType.kind === "ref" ? { kind: "ref_null", typeIdx: (fieldType as any).typeIdx } : fieldType;
   let primaryPresenceSlot: PresenceSlot | undefined;
+  let primaryShapeId: number | undefined;
+  let primaryShapeFieldIdx: number | undefined;
   if (propName) {
     for (const [structName, fields] of ctx.structFields) {
       if (ctx.structMap.get(structName) !== structTypeIdx) continue;
       if (fields[fieldIdx]?.presenceTracked) primaryPresenceSlot = presenceSlotOf(fields, propName);
+      primaryShapeId = ctx.shapeIdByStructName.get(structName);
+      if (primaryShapeId !== undefined) {
+        const shapeFieldIdx = fields.findIndex((field) => field.name === "$shape");
+        if (shapeFieldIdx >= 0) primaryShapeFieldIdx = shapeFieldIdx;
+      }
       break;
     }
   }
@@ -1742,6 +1756,9 @@ export function emitExternrefToStructGet(
       addStringConstantGlobal(ctx, propName);
       externGetFallback.push(...stringConstantExternrefInstrs(ctx, propName));
       externGetFallback.push({ op: "call", funcIdx: getIdx });
+      if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+        externGetFallback.push(...runtimeEvalSharedValueUnwrapInstrs(ctx, fctx));
+      }
       // Coerce externref result to the expected result type
       if (resultType.kind === "f64") {
         const unboxIdx = ensureLateImport(ctx, "__unbox_number", [{ kind: "externref" }], [{ kind: "f64" }]);
@@ -1792,35 +1809,48 @@ export function emitExternrefToStructGet(
   const buildFallbackChain = (altIdx: number): Instr[] => {
     if (altIdx < alternates.length) {
       const alt = alternates[altIdx]!;
-      const altCoerce = coercionInstrs(ctx, alt.fieldType, resultType, fctx);
-      const altRead: Instr[] = [
-        { op: "local.get", index: tmpAny },
-        { op: "ref.cast", typeIdx: alt.structTypeIdx },
-        { op: "struct.get", typeIdx: alt.structTypeIdx, fieldIdx: alt.fieldIdx },
-        ...altCoerce,
+      // null = this shape cannot produce `resultType`; skip the arm.
+      const altRead = alternateFieldArmRead(ctx, fctx, alt, resultType, tmpAny);
+      if (!altRead) return buildFallbackChain(altIdx + 1);
+      const altReadAndStore: Instr[] = [
+        ...(alt.presenceSlot !== undefined
+          ? ([
+              { op: "local.get", index: tmpAny },
+              { op: "ref.cast", typeIdx: alt.structTypeIdx },
+              ...presenceTestInstrs(alt.structTypeIdx, alt.presenceSlot),
+              {
+                op: "if",
+                blockType: { kind: "val", type: resultType },
+                then: altRead,
+                else: absentValueInstrs(),
+              },
+            ] satisfies Instr[])
+          : altRead),
+        { op: "local.set", index: resultLocal },
       ];
+      const shapeGuardedAltRead: Instr[] =
+        alt.shapeId !== undefined && alt.shapeFieldIdx !== undefined
+          ? [
+              { op: "local.get", index: tmpAny },
+              { op: "ref.cast", typeIdx: alt.structTypeIdx },
+              { op: "struct.get", typeIdx: alt.structTypeIdx, fieldIdx: alt.shapeFieldIdx },
+              { op: "i32.const", value: alt.shapeId },
+              { op: "i32.eq" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: altReadAndStore,
+                else: buildFallbackChain(altIdx + 1),
+              },
+            ]
+          : altReadAndStore;
       return [
         { op: "local.get", index: tmpAny },
         { op: "ref.test", typeIdx: alt.structTypeIdx },
         {
           op: "if",
           blockType: { kind: "empty" },
-          then: [
-            ...(alt.presenceSlot !== undefined
-              ? ([
-                  { op: "local.get", index: tmpAny },
-                  { op: "ref.cast", typeIdx: alt.structTypeIdx },
-                  ...presenceTestInstrs(alt.structTypeIdx, alt.presenceSlot),
-                  {
-                    op: "if",
-                    blockType: { kind: "val", type: resultType },
-                    then: altRead,
-                    else: absentValueInstrs(),
-                  },
-                ] satisfies Instr[])
-              : altRead),
-            { op: "local.set", index: resultLocal },
-          ],
+          then: shapeGuardedAltRead,
           else: buildFallbackChain(altIdx + 1),
         },
       ];
@@ -1852,33 +1882,51 @@ export function emitExternrefToStructGet(
     return [...defaultValueInstrs(resultType), { op: "local.set", index: resultLocal }];
   };
 
+  const primaryReadAndStore: Instr[] = [
+    ...(primaryPresenceSlot !== undefined
+      ? ([
+          { op: "local.get", index: tmpAny },
+          { op: "ref.cast", typeIdx: structTypeIdx },
+          ...presenceTestInstrs(structTypeIdx, primaryPresenceSlot),
+          {
+            op: "if",
+            blockType: { kind: "val", type: resultType },
+            then: [
+              { op: "local.get", index: tmpAny },
+              { op: "ref.cast", typeIdx: structTypeIdx },
+              { op: "struct.get", typeIdx: structTypeIdx, fieldIdx },
+            ],
+            else: absentValueInstrs(),
+          },
+        ] satisfies Instr[])
+      : ([
+          { op: "local.get", index: tmpAny },
+          { op: "ref.cast", typeIdx: structTypeIdx },
+          { op: "struct.get", typeIdx: structTypeIdx, fieldIdx },
+        ] satisfies Instr[])),
+    { op: "local.set", index: resultLocal },
+  ];
+  const shapeGuardedPrimaryRead: Instr[] =
+    primaryShapeId !== undefined && primaryShapeFieldIdx !== undefined
+      ? [
+          { op: "local.get", index: tmpAny },
+          { op: "ref.cast", typeIdx: structTypeIdx },
+          { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: primaryShapeFieldIdx },
+          { op: "i32.const", value: primaryShapeId },
+          { op: "i32.eq" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: primaryReadAndStore,
+            else: buildFallbackChain(0),
+          },
+        ]
+      : primaryReadAndStore;
+
   fctx.body.push({
     op: "if",
     blockType: { kind: "empty" },
-    then: [
-      ...(primaryPresenceSlot !== undefined
-        ? ([
-            { op: "local.get", index: tmpAny },
-            { op: "ref.cast", typeIdx: structTypeIdx },
-            ...presenceTestInstrs(structTypeIdx, primaryPresenceSlot),
-            {
-              op: "if",
-              blockType: { kind: "val", type: resultType },
-              then: [
-                { op: "local.get", index: tmpAny },
-                { op: "ref.cast", typeIdx: structTypeIdx },
-                { op: "struct.get", typeIdx: structTypeIdx, fieldIdx },
-              ],
-              else: absentValueInstrs(),
-            },
-          ] satisfies Instr[])
-        : ([
-            { op: "local.get", index: tmpAny },
-            { op: "ref.cast", typeIdx: structTypeIdx },
-            { op: "struct.get", typeIdx: structTypeIdx, fieldIdx },
-          ] satisfies Instr[])),
-      { op: "local.set", index: resultLocal },
-    ],
+    then: shapeGuardedPrimaryRead,
     else: buildFallbackChain(0),
   });
 
@@ -4188,6 +4236,18 @@ export function compileElementAccess(
         return { kind: "ref", typeIdx: ctx.nativeStrTypeIdx };
       }
     }
+
+    // (#3973) Same read, but the receiver is only KNOWN to be a string at
+    // RUNTIME (`any`/`unknown` static type). Full rationale, spec shape and the
+    // `moduleUsesDynTaView` deferral are documented in string-element-read.ts.
+    if (
+      !ctx.moduleUsesDynTaView &&
+      isNumericIndexExpression(ctx, expr.argumentExpression, fctx) &&
+      receiverMayBeNativeStringAtRuntime(ctx, expr.expression)
+    ) {
+      const guarded = emitGuardedNativeStringElementGet(ctx, fctx, expr.expression, expr.argumentExpression);
+      if (guarded) return guarded;
+    }
   }
 
   // (#3027) Computed non-numeric key on a string/String-wrapper-typed
@@ -4385,6 +4445,10 @@ function isArgumentsRootedExpression(fctx: FunctionContext, node: ts.Expression)
 }
 
 /** Inner element access logic — assumes objType is on the stack and non-null */
+function compileI32ElementIndex(ctx: CodegenContext, fctx: FunctionContext, expression: ts.Expression): void {
+  if (!tryEmitStaticI32Expression(ctx, fctx, expression)) compileExpression(ctx, fctx, expression, { kind: "i32" });
+}
+
 export function compileElementAccessBody(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -4718,6 +4782,9 @@ export function compileElementAccessBody(
           ],
         });
         fctx.body.push({ op: "local.get", index: resLocal });
+        if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+          emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+        }
         return { kind: "externref" };
       }
       // Defensive fallback — helpers unavailable. Read via the string-keyed
@@ -4726,6 +4793,9 @@ export function compileElementAccessBody(
       fctx.body.push({ op: "local.get", index: keyLocal });
       if (extGetIdx !== undefined) {
         fctx.body.push({ op: "call", funcIdx: extGetIdx });
+        if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+          emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+        }
         return { kind: "externref" };
       }
       fctx.body.push({ op: "drop" });
@@ -4776,6 +4846,9 @@ export function compileElementAccessBody(
       flushLateImportShifts(ctx, fctx);
       if (getIdxFn !== undefined) {
         fctx.body.push({ op: "call", funcIdx: getIdxFn });
+        if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+          emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+        }
         return { kind: "externref" };
       }
       return null;
@@ -4791,6 +4864,9 @@ export function compileElementAccessBody(
     flushLateImportShifts(ctx, fctx);
     if (funcIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx });
+      if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+        emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+      }
       return { kind: "externref" };
     }
     return null;
@@ -4831,6 +4907,9 @@ export function compileElementAccessBody(
     flushLateImportShifts(ctx, fctx);
     if (funcIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx });
+      if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+        emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+      }
       return { kind: "externref" };
     }
     return null;
@@ -5114,6 +5193,9 @@ export function compileElementAccessBody(
         flushLateImportShifts(ctx, fctx);
         if (funcIdx !== undefined) {
           fctx.body.push({ op: "call", funcIdx });
+          if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+            emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+          }
           return { kind: "externref" };
         }
       }
@@ -5208,11 +5290,10 @@ export function compileElementAccessBody(
     }
     // Unwrap: struct.get data field, then index into backing array
     fctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 1 }); // get data from vec
-    // #1179: hint i32 directly for the index. compileExpression will produce
-    // i32 cleanly for i32 locals / integer literals (no f64 round-trip), and
-    // the existing coerceType(f64→i32) path handles non-i32 results via
-    // trunc_sat — same as the legacy explicit cast below.
-    compileExpression(ctx, fctx, expr.argumentExpression, { kind: "i32" });
+    // Keep range-proven counted-loop index arithmetic in i32. Composite
+    // expressions such as `i * N + k` otherwise compile through f64 and then
+    // truncate back to i32 at every element read.
+    compileI32ElementIndex(ctx, fctx, expr.argumentExpression);
     const valueType: ValType =
       arrDef.element.kind === "i8" || arrDef.element.kind === "i16" ? { kind: "i32" } : arrDef.element;
     if (isSafeBoundsEliminated(fctx, expr)) {
@@ -5330,10 +5411,9 @@ export function compileElementAccessBody(
   // (#2785) Type-aware box ValType for the F1 widen (null = defer) — matches the
   // vec-struct call site above.
   const f1BoxTypeArr = f1ElementBoxType(ctx, expr, typeDef.element);
-  // Compile index and convert to i32 (#1179: hint i32 directly to skip the
-  // f64.convert_i32_s + i32.trunc_sat_f64_s round-trip when the index is
-  // already an i32 local or integer literal).
-  compileExpression(ctx, fctx, expr.argumentExpression, { kind: "i32" });
+  // Compile range-proven index arithmetic directly in i32; retain the generic
+  // numeric conversion for every expression whose range is not proven.
+  compileI32ElementIndex(ctx, fctx, expr.argumentExpression);
   const valueType: ValType =
     typeDef.element.kind === "i8" || typeDef.element.kind === "i16" ? { kind: "i32" } : typeDef.element;
 

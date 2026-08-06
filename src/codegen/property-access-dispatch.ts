@@ -31,6 +31,7 @@ import {
   isStringType,
   isStringWrapperType,
 } from "../checker/type-mapper.js";
+import { commonScalarFieldType, ensureScalarUnbox, symbolBrand } from "./symbol-field-carrier.js";
 import { emitDynGet, widenBooleanDynamicAccess } from "./dyn-read.js";
 import { emitSymbolDescLoad } from "./symbol-native.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
@@ -92,6 +93,7 @@ import {
   getOrRegisterDvWindowType,
   pushTaViewEffectiveLen,
 } from "./dataview-native.js";
+import { staticConstStringValues } from "./analysis/static-string-values.js";
 import {
   addUnionImports,
   resolveWasmType,
@@ -168,6 +170,7 @@ import {
 } from "./property-access.js";
 import { tryEmitExactStructFieldGet, tryEmitStructuralContractReadFromLocal } from "./property-access-exact-shapes.js";
 import { tryEmitProvenReceiverFieldGet, tryEmitTypedThisFieldGet } from "./typed-this.js"; // (#3683 S2 / #3685 S2) inline field reads
+import { emitRuntimeEvalSharedValueUnwrap, runtimeEvalSharedValueUnwrapInstrs } from "./global-environment.js";
 
 /**
  * Sentinel returned by every dispatch helper to mean "this guard band did not
@@ -1618,6 +1621,9 @@ export function tryGlobalThisAndProcessRead(
     addStringConstantGlobal(ctx, propName);
     fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
     fctx.body.push({ op: "call", funcIdx: getIdx });
+    if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+      emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+    }
 
     // Coerce externref to expected type
     const accessType = ctx.checker.getTypeAtLocation(expr);
@@ -2237,6 +2243,55 @@ export function tryLengthAndNameReads(
   propName: string,
   objType: ts.Type,
 ): PADispatchResult {
+  if (propName === "length" && ts.isIdentifier(expr.expression)) {
+    const symbol = ctx.checker.getSymbolAtLocation(expr.expression);
+    const substring = symbol ? fctx.derivedSubstringReads?.get(symbol) : undefined;
+    if (substring !== undefined) {
+      fctx.body.push({ op: "local.get", index: substring.lenLocal });
+      return { kind: "i32" };
+    }
+    const scalarLengthLocal = symbol ? fctx.derivedStringArrayLengthLocals?.get(symbol) : undefined;
+    if (scalarLengthLocal !== undefined) {
+      fctx.body.push({ op: "local.get", index: scalarLengthLocal });
+      return { kind: "i32" };
+    }
+  }
+
+  // `split(literal).length` normally enters the array-length arm below before
+  // the string-derived-length dispatcher gets a chance to see the call. If an
+  // immutable literal table proves the field count is uniform, retain the
+  // receiver read/trap and return that count without building a string array.
+  if (
+    ctx.nativeStrings &&
+    ctx.anyStrTypeIdx >= 0 &&
+    propName === "length" &&
+    ts.isCallExpression(expr.expression) &&
+    ts.isPropertyAccessExpression(expr.expression.expression) &&
+    expr.expression.expression.name.text === "split" &&
+    expr.expression.arguments.length === 1 &&
+    ts.isStringLiteralLike(expr.expression.arguments[0]!)
+  ) {
+    const receiver = expr.expression.expression.expression;
+    const receiverValues = staticConstStringValues(ctx, receiver);
+    if (receiverValues) {
+      const separator = expr.expression.arguments[0]!.text;
+      const lengths = new Set(receiverValues.map((value) => value.split(separator).length));
+      if (lengths.size === 1) {
+        const uniformLength = lengths.values().next().value;
+        if (uniformLength !== undefined) {
+          const receiverType = compileExpression(ctx, fctx, receiver);
+          if (receiverType?.kind === "externref") {
+            coerceType(ctx, fctx, receiverType, { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx });
+          }
+          fctx.body.push({ op: "struct.get", typeIdx: ctx.anyStrTypeIdx, fieldIdx: 0 });
+          fctx.body.push({ op: "drop" });
+          fctx.body.push({ op: "i32.const", value: uniformLength });
+          return { kind: "i32" };
+        }
+      }
+    }
+  }
+
   // (#2187) `.length` on an `any`-typed identifier whose compiled local ValType
   // is a native-string ref (e.g. a for-of var from a string-yielding generator).
   // Must run BEFORE the Function/vec `.length` arms below: the static type is
@@ -2987,6 +3042,75 @@ export function tryStringLengthIteratorAndExternClassReads(
   propName: string,
   objType: ts.Type,
 ): PADispatchResult {
+  // A temporary ASCII case conversion preserves UTF-16 length exactly, and a
+  // string replacement with equal literal code-unit lengths (and no `$`
+  // substitution tokens) does too. When `.length` is the only observation,
+  // avoid allocating the transformed string. The ASCII proof accepts only a
+  // const literal table with no writes/aliases/method calls anywhere in its
+  // source file; any uncertainty retains the ordinary native helper.
+  if (propName === "length" && ts.isCallExpression(expr.expression)) {
+    const call = expr.expression;
+    const callee = call.expression;
+    if (ts.isPropertyAccessExpression(callee)) {
+      const method = callee.name.text;
+      const receiverValues = staticConstStringValues(ctx, callee.expression);
+      let uniformDerivedLength: number | undefined;
+      if (receiverValues && method === "trim" && call.arguments.length === 0) {
+        const lengths = new Set(receiverValues.map((value) => value.trim().length));
+        if (lengths.size === 1) uniformDerivedLength = lengths.values().next().value;
+      } else if (
+        receiverValues &&
+        method === "split" &&
+        call.arguments.length === 1 &&
+        ts.isStringLiteralLike(call.arguments[0]!)
+      ) {
+        const separator = call.arguments[0]!.text;
+        const lengths = new Set(receiverValues.map((value) => value.split(separator).length));
+        if (lengths.size === 1) uniformDerivedLength = lengths.values().next().value;
+      }
+      if (uniformDerivedLength !== undefined) {
+        // Preserve evaluation (including an OOB/null trap) even though the
+        // derived result is uniform across every immutable table entry.
+        const receiverType = compileExpression(ctx, fctx, callee.expression);
+        if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+          if (receiverType?.kind === "externref") {
+            coerceType(ctx, fctx, receiverType, { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx });
+          }
+          fctx.body.push({ op: "struct.get", typeIdx: ctx.anyStrTypeIdx, fieldIdx: 0 });
+          fctx.body.push({ op: "drop" });
+        } else if (receiverType) {
+          fctx.body.push({ op: "drop" });
+        }
+        fctx.body.push({ op: "i32.const", value: uniformDerivedLength });
+        return { kind: "i32" };
+      }
+      const asciiCaseLength =
+        (method === "toLowerCase" || method === "toUpperCase") &&
+        call.arguments.length === 0 &&
+        receiverValues?.every((value) => [...value].every((char) => char.charCodeAt(0) <= 0x7f)) === true;
+      const equalLiteralReplaceLength =
+        method === "replace" &&
+        call.arguments.length === 2 &&
+        ts.isStringLiteralLike(call.arguments[0]!) &&
+        ts.isStringLiteralLike(call.arguments[1]!) &&
+        call.arguments[0]!.text.length === call.arguments[1]!.text.length &&
+        !call.arguments[1]!.text.includes("$");
+      const hostLengthIdx = ctx.jsStringImports.get("length");
+      if ((asciiCaseLength || equalLiteralReplaceLength) && (ctx.nativeStrings || hostLengthIdx !== undefined)) {
+        const receiverType = compileExpression(ctx, fctx, callee.expression);
+        if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+          if (receiverType?.kind === "externref") {
+            coerceType(ctx, fctx, receiverType, { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx });
+          }
+          fctx.body.push({ op: "struct.get", typeIdx: ctx.anyStrTypeIdx, fieldIdx: 0 });
+        } else {
+          fctx.body.push({ op: "call", funcIdx: hostLengthIdx! });
+        }
+        return { kind: "i32" };
+      }
+    }
+  }
+
   // #1910 R4 — String-wrapper `.length` in standalone. `new String("ab")` builds
   // a `$Object` wrapper carrying its [[StringData]] native string in the reserved
   // FLAG_INTERNAL slot (#1910 S2). `.length` is a String-exotic own property whose
@@ -3182,12 +3306,22 @@ export function finalizeStructAndDynamicMemberGet(
           const fieldIdx = structFields ? structFields.findIndex((f) => f.name === propName) : -1;
           const structTypeIdx = ctx.structMap.get(typeName);
           if (!ctx.classSet.has(typeName) && structFields && fieldIdx >= 0 && structTypeIdx !== undefined) {
-            // Compile the object → struct ref on stack → struct.get the field.
+            // Direct eval may reify a typed object binding into an externref
+            // cell so the interpreter can observe and update it.  Preserve the
+            // object-literal method fast path, but recover the concrete struct
+            // before reading its closure field when that widening happened.
+            const fieldType = structFields[fieldIdx]!.type;
             const objResult = compileExpression(ctx, fctx, expr.expression);
             if (objResult) {
-              fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx });
-              const fType = structFields[fieldIdx]!.type;
-              return fType;
+              if (objResult.kind === "externref") {
+                emitExternrefToStructGet(ctx, fctx, fieldType, structTypeIdx, fieldIdx, propName, true);
+                if (fieldType.kind === "ref") {
+                  return { kind: "ref_null", typeIdx: fieldType.typeIdx };
+                }
+              } else {
+                fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx });
+              }
+              return fieldType;
             }
           }
           // (#1394) For CLASS instances, return the SAME cached singleton
@@ -3395,6 +3529,7 @@ export function finalizeStructAndDynamicMemberGet(
               { op: "local.get", index: protoLocal },
               ...stringConstantExternrefInstrs(ctx, propName),
               { op: "call", funcIdx: getIdx },
+              ...(ctx.runtimeEvalGlobalFunctionBindings === true ? runtimeEvalSharedValueUnwrapInstrs(ctx, fctx) : []),
               ...((effectiveResult.kind === "f64" && unboxIdx !== undefined
                 ? [{ op: "call", funcIdx: unboxIdx }]
                 : effectiveResult.kind === "i32" && unboxIdx !== undefined
@@ -3431,6 +3566,9 @@ export function finalizeStructAndDynamicMemberGet(
           addStringConstantGlobal(ctx, propName);
           fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
           fctx.body.push({ op: "call", funcIdx: getIdx });
+          if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+            emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+          }
 
           // Unbox if the expected type is numeric
           const protoAccessType = ctx.checker.getTypeAtLocation(expr);
@@ -3463,7 +3601,7 @@ export function finalizeStructAndDynamicMemberGet(
   // (e.g., properties on Object, {}, undefined, or dynamically-typed values).
   // Determine the expected result type from the TS checker at the access site.
   const accessType = ctx.checker.getTypeAtLocation(expr);
-  const accessWasm = widenBooleanDynamicAccess(accessType, resolveWasmType(ctx, accessType)); // (#2984)
+  const accessWasm = symbolBrand(accessType, widenBooleanDynamicAccess(accessType, resolveWasmType(ctx, accessType)));
 
   // For struct types with the property, try to compile the object and do struct.get
   // but NEVER for class struct types — their fields are fixed at collection time
@@ -3564,11 +3702,7 @@ export function finalizeStructAndDynamicMemberGet(
         [{ kind: "externref" }, { kind: "externref" }],
         [{ kind: "externref" }],
       );
-      let unboxIdx: number | undefined;
-      if (accessWasm.kind === "f64" || accessWasm.kind === "i32") {
-        unboxIdx = ensureLateImport(ctx, "__unbox_number", [{ kind: "externref" }], [{ kind: "f64" }]);
-      }
-      flushLateImportShifts(ctx, fctx);
+      let unboxIdx = ensureScalarUnbox(ctx, fctx, accessWasm);
       if (getIdx !== undefined) {
         const objExprType = compileExpression(ctx, fctx, expr.expression);
         // If the expression produced a ref/ref_null (struct), convert to externref
@@ -3663,13 +3797,12 @@ export function finalizeStructAndDynamicMemberGet(
                 // partition saw number-vs-boolean, fell to ref identity, and
                 // answered UNEQUAL (the residual wrong-value failure of the
                 // #2938 no-yield relax — generators/no-yield.js, return.js).
-                const allBoolean =
-                  k === "i32" &&
-                  structCandidates.every((c) => c.fieldType.kind === "i32" && c.fieldType.boolean === true);
-                resultWasm = allBoolean ? { kind: "i32", boolean: true } : ({ kind: k } as ValType);
+                resultWasm = commonScalarFieldType(
+                  k,
+                  structCandidates.map((candidate) => candidate.fieldType),
+                );
                 if (unboxIdx === undefined) {
-                  unboxIdx = ensureLateImport(ctx, "__unbox_number", [{ kind: "externref" }], [{ kind: "f64" }]);
-                  flushLateImportShifts(ctx, fctx);
+                  unboxIdx = ensureScalarUnbox(ctx, fctx, resultWasm);
                 }
               }
             }
@@ -3681,11 +3814,14 @@ export function finalizeStructAndDynamicMemberGet(
           addStringConstantGlobal(ctx, propName);
           externGetFallback.push(...stringConstantExternrefInstrs(ctx, propName));
           externGetFallback.push({ op: "call", funcIdx: getIdx });
+          if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+            externGetFallback.push(...runtimeEvalSharedValueUnwrapInstrs(ctx, fctx));
+          }
           if (resultWasm.kind === "f64" && unboxIdx !== undefined) {
             externGetFallback.push({ op: "call", funcIdx: unboxIdx });
           } else if (resultWasm.kind === "i32" && unboxIdx !== undefined) {
             externGetFallback.push({ op: "call", funcIdx: unboxIdx });
-            externGetFallback.push({ op: "i32.trunc_sat_f64_s" });
+            if (resultWasm.symbol !== true) externGetFallback.push({ op: "i32.trunc_sat_f64_s" });
           }
           externGetFallback.push({ op: "local.set", index: resultLocal });
 
@@ -3710,77 +3846,24 @@ export function finalizeStructAndDynamicMemberGet(
                   { op: "local.get", index: tmpAnyExt },
                   { op: "extern.convert_any" },
                   { op: "call", funcIdx: getMemberIdx },
+                  ...(ctx.runtimeEvalGlobalFunctionBindings === true
+                    ? runtimeEvalSharedValueUnwrapInstrs(ctx, fctx)
+                    : []),
                   ...coercionInstrs(ctx, { kind: "externref" }, resultWasm, fctx),
                   { op: "local.set", index: resultLocal },
                 ]
               : externGetFallback;
 
-          // (#3032 W6) The native-generator IteratorResult `value` arm must box
-          // SENTINEL-AWARE (the UNDEF_F64 bit pattern is the absent/done marker
-          // — #2979): a plain `__box_number` leaks it as NaN, failing
-          // `result.value === undefined` on every done-result read through this
-          // INLINE fast chain (the deferred `__get_member_*` dispatcher already
-          // carries the exception; this pre-dispatcher chain did not). Under a
-          // JS host the sentinel canonicalizes to the REAL `undefined`
-          // (`__get_undefined` — null-extern reads back as JS null); standalone
-          // keeps null-extern (ensureGetUndefined is nativeStrings-gated).
-          const hasSentinelValueArm = structCandidates.some(
-            (c) => c.fieldType.kind === "f64" && isNativeGeneratorResultStruct(ctx, c.structTypeIdx),
-          );
-          let sentinelBoxDeps: { f64Scratch: number; boxNumIdx: number; undefInstrs: Instr[] } | undefined;
-          if (hasSentinelValueArm && resultWasm.kind === "externref") {
-            const boxNumIdx = ctx.funcMap.get("__box_number");
-            if (boxNumIdx !== undefined) {
-              const getUndefIdx = ctx.nativeStrings
-                ? undefined
-                : ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
-              flushLateImportShifts(ctx, fctx);
-              sentinelBoxDeps = {
-                f64Scratch: allocLocal(fctx, `__sd_sent_f64_${fctx.locals.length}`, { kind: "f64" }),
-                boxNumIdx,
-                undefInstrs:
-                  getUndefIdx !== undefined ? [{ op: "call", funcIdx: getUndefIdx }] : [{ op: "ref.null.extern" }],
-              };
-            }
-          }
-
-          // Build nested if/else chain for struct candidates
-          const buildStructDispatch = (idx: number): Instr[] => {
-            if (idx >= structCandidates.length) {
-              return dispatchTerminal;
-            }
-            const cand = structCandidates[idx]!;
-            const getFieldInstrs: Instr[] = [
-              { op: "local.get", index: tmpAnyExt },
-              { op: "ref.cast", typeIdx: cand.structTypeIdx },
-              { op: "struct.get", typeIdx: cand.structTypeIdx, fieldIdx: cand.fieldIdx },
-            ];
-            const coerce =
-              sentinelBoxDeps !== undefined &&
-              cand.fieldType.kind === "f64" &&
-              isNativeGeneratorResultStruct(ctx, cand.structTypeIdx)
-                ? sentinelAwareF64BoxInstrs(
-                    sentinelBoxDeps.f64Scratch,
-                    sentinelBoxDeps.boxNumIdx,
-                    sentinelBoxDeps.undefInstrs,
-                  )
-                : coercionInstrs(ctx, cand.fieldType, resultWasm, fctx);
-            getFieldInstrs.push(...coerce);
-            getFieldInstrs.push({ op: "local.set", index: resultLocal });
-
-            return [
-              { op: "local.get", index: tmpAnyExt },
-              { op: "ref.test", typeIdx: cand.structTypeIdx },
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: getFieldInstrs,
-                else: buildStructDispatch(idx + 1),
-              },
-            ];
-          };
-
-          fctx.body.push(...buildStructDispatch(0));
+          // The inline candidate chain used to run before the deferred terminal.
+          // That froze both the candidate set and collision-stamp knowledge at
+          // this read's compile time. A later object shape could therefore be
+          // structurally canonicalized with an earlier candidate and make its
+          // ref.test succeed before the shape id existed, selecting the wrong
+          // field (ReactDOM's `updateQueue.shared` returned a pending-state
+          // object). The finalize-filled dispatcher already owns the complete
+          // candidate set, shape guards, presence bits, boolean branding, and
+          // generator-sentinel boxing. Use it as the single dynamic read path.
+          fctx.body.push(...dispatchTerminal);
           fctx.body.push({ op: "local.get", index: resultLocal });
           // Phase 3 (#1269): when we narrowed `resultWasm` to the
           // candidates' shared primitive type, return that — caller
@@ -3815,13 +3898,16 @@ export function finalizeStructAndDynamicMemberGet(
           if (getMemberIdx !== undefined) {
             fctx.body.push({ op: "local.get", index: objTmp });
             fctx.body.push({ op: "call", funcIdx: getMemberIdx });
+            if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+              emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+            }
             if (accessWasm.kind === "f64") {
               if (unboxIdx !== undefined) fctx.body.push({ op: "call", funcIdx: unboxIdx });
               return { kind: "f64" };
             }
             if (accessWasm.kind === "i32") {
               if (unboxIdx !== undefined) fctx.body.push({ op: "call", funcIdx: unboxIdx });
-              fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+              if (accessWasm.symbol !== true) fctx.body.push({ op: "i32.trunc_sat_f64_s" });
               return { kind: "i32" };
             }
             return { kind: "externref" };
@@ -3833,6 +3919,9 @@ export function finalizeStructAndDynamicMemberGet(
         addStringConstantGlobal(ctx, propName);
         compileStringLiteral(ctx, fctx, propName);
         fctx.body.push({ op: "call", funcIdx: getIdx });
+        if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+          emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+        }
         if (accessWasm.kind === "f64") {
           if (unboxIdx !== undefined) {
             fctx.body.push({ op: "call", funcIdx: unboxIdx });
@@ -3843,8 +3932,8 @@ export function finalizeStructAndDynamicMemberGet(
           if (unboxIdx !== undefined) {
             fctx.body.push({ op: "call", funcIdx: unboxIdx });
           }
-          fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-          return { kind: "i32" };
+          if (accessWasm.symbol !== true) fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+          return accessWasm;
         }
         return { kind: "externref" };
       }
@@ -3992,6 +4081,9 @@ export function finalizeStructAndDynamicMemberGet(
         addStringConstantGlobal(ctx, propName);
         fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
         fctx.body.push({ op: "call", funcIdx: getIdx856 });
+        if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+          emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+        }
         if (accessWasm.kind === "f64") {
           if (unboxIdx856 !== undefined) fctx.body.push({ op: "call", funcIdx: unboxIdx856 });
           return { kind: "f64" };

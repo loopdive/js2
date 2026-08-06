@@ -4,7 +4,7 @@ title: "Compile Acorn parse hot path to Wasm faster than native Node"
 status: in-progress
 sprint: current
 created: 2026-07-29
-updated: 2026-07-31
+updated: 2026-08-01
 priority: high
 horizon: l
 feasibility: hard
@@ -15,7 +15,7 @@ language_feature: strings, objects, arrays, classes, parser
 goal: performance
 assignee: "ttraenkler/codex"
 depends_on: [3779]
-related: [1710, 1712, 3756, 3920, 3921]
+related: [4157, 1710, 1712, 3756, 3920, 3921]
 files:
   - .husky/pre-push
   - package.json
@@ -580,3 +580,208 @@ parser calls or AST-result marshalling.
 - [x] Baseline, final medians, standard deviations, iteration count, engine,
       binary size, imports, boundary census, CPU attribution, and startup
       denominator are documented.
+
+## 2026-08-01 gap decomposition — where the remaining distance lives
+
+Re-measured on current `main` (`eb9c2d7b5`), Node 22.22.2 / x64 Linux
+container, same 226 KB corpus and the same `body.length === 422` observation.
+The earlier sections above were taken on Node 24 / arm64 macOS at 295-328x; the
+gap has closed by roughly 30x since, so the ranking below supersedes them.
+Absolute figures are not comparable across the two boxes — see the cross-box
+caveat on #3684/#3685/#3686.
+
+### The honest lane is 9.6x, not 295x
+
+| lane (`pnpm run benchmark:acorn:perf`) |    wasm median |   node median |          ratio |
+| -------------------------------------- | -------------: | ------------: | -------------: |
+| standalone, runtime-dynamic            |    132.1 ms/op |   13.8 ms/op  |     **0.104x** |
+| js-host, runtime-dynamic               |  3,531.3 ms/op |   11.0 ms/op  |       0.0031x  |
+| standalone, compile-time-static        |     0.107 µs   |   11.1 ms     |   104,091x     |
+
+Only the first row is a like-for-like throughput comparison. The static lane
+folds the whole parse at compile time and measures a residual, and the js-host
+lane is a different problem — every operation crosses into JS, so it is a
+boundary-cost measurement, not a codegen one. **All analysis below uses the
+standalone runtime-dynamic lane: 9.6x behind Node.**
+
+### Binary structure — 1,702,365 bytes, and half of it is string data
+
+| section  |     bytes |  share | count |
+| -------- | --------: | -----: | ----: |
+| Global   |   867,943 |  51.0% | 2,177 |
+| Code     |   811,714 |  47.7% | 1,895 |
+| Export   |    16,336 |   1.0% |   802 |
+| Type     |     3,304 |   0.2% |   315 |
+| Function |     2,263 |   0.1% | 1,895 |
+| Elem     |       752 |   0.0% |    18 |
+
+There is **no Data section**. Every string literal is materialized as a global
+holding `array.new_fixed $3 <n>` with **one `i32.const` per UTF-16 code unit** —
+1,915 such globals, and ~304,000 of the module's 327,120 `i32.const`
+occurrences live outside function bodies. A passive data segment plus
+`array.new_data` would encode the same constants at roughly one byte per
+character instead of two to five, and would let the engine copy them rather
+than run 304,000 constant expressions at instantiation.
+
+That instantiation cost is measurable:
+
+| phase                       |  time |
+| --------------------------- | ----: |
+| `WebAssembly.compile`       | 11.1 ms |
+| `WebAssembly.instantiate`   | 13.8 ms |
+| `__module_init()`           | 11.3 ms |
+| **total to first parse**    | **36.2 ms** |
+| (`import acorn` in Node)    | 11.8 ms |
+
+Startup is 3x Node's and one full parse's worth of time. The 13.8 ms
+instantiate is the eager global initializers; it is not steady-state cost, but
+it is the whole cold-start budget.
+
+### Code shape — a quarter of the code is duplicated twins
+
+| name pattern              | fns |    lines | share of body text |
+| ------------------------- | --: | -------: | -----------------: |
+| `$__closure_N`            | 313 |  293,485 |              46.5% |
+| `$__closure_N__typed_this`| 236 |  162,779 |          **25.8%** |
+| `$__call_fn_method_N`     |   9 |   34,840 |               5.5% |
+| `$getOptions`             |   1 |   15,271 |               2.4% |
+| `$__extern_get`           |   1 |   14,035 |               2.2% |
+| `$__module_init`          |   1 |   12,562 |               2.0% |
+
+The `__typed_this` twins (#3683/#3685) are a quarter of all emitted code. They
+buy proven receiver field access on the typed path, but they are whole-body
+duplicates — pure i-cache and binary-size cost on every call that does not take
+the typed path.
+
+### Whole-module opcode mix — two type checks per call
+
+| opcode group                                        |  static count |
+| --------------------------------------------------- | ------------: |
+| `ref.test` + `ref.cast` + `ref.is_null`             |    **42,930** |
+| `extern.convert_any` + `any.convert_extern`         |    **24,288** |
+| `call` (direct)                                     |        22,003 |
+| `struct.get` / `struct.set`                         |        11,513 |
+| `struct.new` + `array.new*`                         |         7,873 |
+| `call_ref`                                          |         1,788 |
+| `call_indirect`                                     |             0 |
+
+The module performs about **two runtime type discriminations per call site**
+and more representation conversions than it has calls. Meanwhile `call_ref` is
+7.5% of call sites and `call_indirect` is zero — **dispatch is not where the
+time is**, consistent with the earlier 3.87% dynamic dispatch-family figure.
+
+Most-called helpers by static call-site count: `__box_number` 2,250,
+`__unbox_number` 2,157, `__str_flatten` 1,834, `__str_equals` 1,370,
+`__to_bigint` 992, `__extern_is_nullish` 869, `__is_truthy` 854,
+`__extern_get` 673.
+
+### CPU profile — 38% of runtime is helpers that exist because a type wasn't proven
+
+Self time, 6,746 samples at 150 µs, named standalone binary:
+
+| category                          | self |
+| --------------------------------- | ---: |
+| compiled acorn code               | 41.4% |
+| **GC**                            | **17.4%** |
+| extern / dynamic property + eq    | 10.4% |
+| dynamic dispatch                  |  7.6% |
+| regexp runtime                    |  5.2% |
+| any boxing / coercion             |  4.9% |
+| object construction (fnctor)      |  3.9% |
+| JS host / node startup            |  3.2% |
+| other runtime                     |  2.8% |
+| string runtime                    |  1.7% |
+| object model                      |  1.0% |
+| argvec / vec helpers              |  0.5% |
+| **runtime helpers, non-GC**       | **38.0%** |
+
+Largest single frames: `__extern_get` 5.6%, `__regex_search` 4.1%,
+`__fnctor_Node_new` 3.4%, `__extern_strict_eq` 2.7%.
+
+### `__extern_get` is a 303-way linear string scan
+
+The single hottest helper is one function of 14,035 WAT lines containing
+**1,080 `if`s, 463 `ref.test`, 457 `ref.cast`, 535 `struct.get`, 376 calls and
+303 `__str_equals`** — with **zero `br_table`**. Every dynamic property read
+walks a linear chain: up to 463 type tests to identify the receiver's concrete
+shape, then up to 303 string comparisons to identify the key. That is why 673
+static call sites cost 5.6% of self time. Perfect-hashing the key and
+`br_table`-dispatching the receiver shape is the single most concentrated lever
+visible in the binary (#3926).
+
+### Inside the parser's own hot code, a fifth of the instructions are tax
+
+Instruction mix across the 12 hottest compiled-acorn functions (10,608 ops):
+
+| category                | share |
+| ----------------------- | ----: |
+| local / global traffic  | 37.8% |
+| arithmetic + constants  | 19.3% |
+| **type discrimination** | **11.8%** |
+| control flow            | 11.7% |
+| **rep conversion**      | **8.1%** |
+| call                    |  6.7% |
+| field access            |  4.1% |
+| allocation              |  0.5% |
+
+Even in code compiled natively, **19.9% of instructions are `ref.test` /
+`ref.cast` / `extern.convert_any` / `any.convert_extern`** — while actual field
+access, the work of reading parser state and writing AST nodes, is 4.1%. The
+37.8% local/global traffic is largely the spill pressure the tagged
+representation forces.
+
+### Allocation — 8.6x Node's volume
+
+Bytes allocated per parse, from `--trace-gc` inter-collection deltas:
+
+| runtime | allocated per parse |
+| ------- | ------------------: |
+| wasm    |          **43.9 MB** |
+| node    |             5.1 MB  |
+
+This corroborates the #3921 census (647,346 allocations per parse, of which
+`$AnyValue` boxes are 47.96%) and explains the 17.4% GC bucket directly. Note
+`__str_flatten` at 1,834 static call sites: rope flattening is a second
+allocation source the census did not separate out.
+
+### Conclusion — the gap is representation, not dispatch and not the allocator
+
+Adding the independent measurements: 38.0% runtime helpers + 17.4% GC + 19.9%
+of the 41.4% parser body (8.2%) ≈ **63% of execution is representation
+overhead** — work that exists only because a value's type or a callee's
+identity was not proven at compile time. Eliminating all of it is an upper
+bound of ~2.7x, taking 9.6x behind to roughly 3.5x behind. Proving types is
+therefore necessary but not sufficient; the residual 3.5x is the compiled
+parser losing to V8's JIT on the same algorithm.
+
+Three things this decomposition rules out as levers, each already measured:
+
+- **The allocator.** Heap2Local promotes zero sites under `-O3 --closed-world
+  --gufa`; sharing the zero-arity argvec removed 0.13% of allocations; sharing
+  the empty backing store removed 1.4% (#3921/#3933). Allocation volume is not
+  reachable by making allocation cheaper — only by not allocating.
+- **Devirtualization for its own sake.** `call_ref` is 7.5% of call sites,
+  `call_indirect` is zero, and the dispatch family is 3.87% of parse self-time
+  across ~345 dispatchers with none above 0.08%. Devirtualization pays through
+  the *boxing and widening it lets you avoid*, not through call cost.
+- **Binary size and startup.** The 51% global section and the 25.8% typed-this
+  duplication are real (36 ms cold start vs Node's 11.8 ms, 1.7 MB module), but
+  they are cold-start and footprint problems and cannot move the 9.6x
+  steady-state ratio.
+
+Ranked by measured share, the remaining work is:
+
+1. `__extern_get` / the extern family — 10.4% self, in one linear-scan function
+   with an obvious algorithmic fix (#3926).
+2. `$AnyValue` boxing — 48% of allocations, driving the 17.4% GC bucket and the
+   8.1% in-body conversion tax (#3685 and successors).
+3. The 11.8% in-body `ref.test`/`ref.cast` — proven receivers and proven fields
+   remove these at the same time as (2).
+4. `__regex_search` at 4.1% and `__fnctor_Node_new` at 3.4% — narrower, but
+   both are single functions on the hot path.
+5. String-literal globals → passive data segment; twin de-duplication. Halves
+   the binary and the cold start, moves the steady state by nothing.
+
+Reproduction: `.tmp/wat-census.mjs`, `.tmp/wat-funcs2.mjs`, `.tmp/hot-mix.mjs`,
+`.tmp/prof-buckets.mjs`, `.tmp/alloc-rate.mjs`, `.tmp/startup.mjs` against a
+WAT dump and the named standalone binary.

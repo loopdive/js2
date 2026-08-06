@@ -898,6 +898,41 @@ export function ensureAnyToExternHelper(ctx: CodegenContext): number | undefined
         { op: "return" },
       ],
     },
+    // A genuine native string payload is safe to unwrap. Generic externref
+    // boxing recreates exactly the same tag-5 string box on the next any-typed
+    // operation. Keeping the whole box here instead creates a nested tag-5
+    // carrier; a second `+` then classifies the inner `$AnyValue` as an object
+    // (`let s = ""; s += "a"; s += "b"` became NaN in the standalone
+    // interpreter). The runtime type test is essential because field 4 is also
+    // used by legacy tag-5 boxes for numbers, booleans, null, and opaque refs.
+    ...((ctx.anyStrTypeIdx >= 0
+      ? [
+          { op: "local.get", index: 1 },
+          { op: "i32.const", value: 5 },
+          { op: "i32.eq" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 0 },
+              { op: "ref.as_non_null" },
+              { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
+              { op: "any.convert_extern" },
+              { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "local.get", index: 0 },
+                  { op: "ref.as_non_null" },
+                  { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
+                  { op: "return" },
+                ],
+              },
+            ],
+          },
+        ]
+      : []) satisfies Instr[]),
     // (#2106 S1) Under the `undefinedSingleton` regime tag 0 (null) unwraps to
     // its canonical externref-plane representation `ref.null.extern` — and the
     // round-trip is SAFE there because `__any_from_extern`'s null arm boxes
@@ -915,17 +950,17 @@ export function ensureAnyToExternHelper(ctx: CodegenContext): number | undefined
           },
         ]
       : []) satisfies Instr[]),
-    // Tags 0 (null), 1 (undefined), 5 (string), 6 (GC ref): keep the WHOLE
-    // $AnyValue box wrapped via extern.convert_any. Standalone/WASI has no host
-    // that needs unwrapped values, and __any_from_extern recovers the wrapped
-    // box exactly via its `ref.test $AnyValue` arm — preserving the tag and
-    // reference identity. Unwrapping these here was NOT round-trip-safe (in the
-    // legacy regime; see the S1 arm above for the flagged tag-0 exception):
+    // Tags 0 (null), 1 (undefined), non-string-overloaded 5, and 6 (GC ref):
+    // keep the WHOLE $AnyValue box wrapped via extern.convert_any.
+    // Standalone/WASI has no host that needs unwrapped values, and
+    // __any_from_extern recovers the wrapped box exactly via its `ref.test
+    // $AnyValue` arm — preserving the tag and reference identity. Unwrapping
+    // these here is NOT round-trip-safe (see the S1 and guarded-string arms):
     //   - tag 0 came back as tag 1 (null → undefined across every boundary),
     //   - tag 6 (raw struct) was mis-tagged as tag 5 (string) by the
     //     __any_from_extern fallback.
-    // Only the numeric/boolean carriers (tags 2/3/4 above) are unwrapped into
-    // __box_number / __box_boolean — the NaN/number fix this helper exists for.
+    // Numeric/boolean carriers (tags 2/3/4) and proven native strings are the
+    // only values unwrapped; every other carrier takes this wrapped tail.
     { op: "local.get", index: 0 },
     { op: "ref.as_non_null" },
     { op: "extern.convert_any" },

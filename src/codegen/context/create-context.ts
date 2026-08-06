@@ -127,8 +127,17 @@ export function createCodegenContext(
     dynamicProtoLiteralNodes: new WeakSet(), // (#802) object-literal proto receivers (Slice A)
     dynProtoSentinelGlobalIdx: undefined, // (#802) "explicit null proto" sentinel global
     usesArrayHoles: false, // (#2001 S1) set by the scanForArrayHoles pre-scan
-    arrayProtoIndexDirty: false, // (#2001 S2) set by scanForArrayHoles: Array.prototype index write ⇒ HOF hole-skip disabled
+    protoIndexDirty: false, // (#2001 S2, widened #4160) scanForArrayHoles: Array/Object.prototype index write
+    vecAccessorDescriptorDirty: false, // (#4159) scanForArrayHoles: a non-data descriptor may exist somewhere
+    dynamicCodeDirty: false, // (#4159/#4160) scanForArrayHoles: eval/Function present ⇒ both flags above forced
     usesVecValue: false, // (#2083) flipped by genuine getOrRegisterVecType usage
+    // (#4035) "auto" = the JS host needs the bridge as its calling convention,
+    // a JS-free host does not. Standalone/WASI callers that DO inspect the
+    // module (the test262 harness) pass hostBridge: "always".
+    emitHostBridge:
+      (options?.hostBridge ?? "auto") === "auto"
+        ? !(options?.standalone || options?.wasi)
+        : options?.hostBridge === "always",
     suppressVecUsageFlag: false, // (#2083) true only during the two prereg calls below
     holeTypeIdx: -1, // (#2001 S1) $Hole struct type; lazily registered
     holeGlobalIdx: undefined, // (#2001 S1) $__hole singleton global
@@ -142,6 +151,7 @@ export function createCodegenContext(
     dynMemberGetHelpersEmitted: false, // (#3053 U0) ensureDynMemberGet idempotence latch
     classThrowsOnEval: new Set(),
     topLevelFunctionNames: new Set(), // (#1983) for class-member funcMap key collision detection
+    topLevelFunctionDeclarations: new Map(),
     classMethodSet: new Set(),
     deferredClassBodies: new Set(),
     classAccessorSet: new Set(),
@@ -175,9 +185,11 @@ export function createCodegenContext(
     nativeGeneratorResultTypeIdx: -1,
     nativeGenerators: new Map(),
     moduleGlobals: new Map(),
+    globalLexicalBindings: new Set(),
     liveFuncBindingGlobals: new Set(),
     moduleInitStatements: [],
     nestedFuncCaptures: new Map(),
+    funcMapOwnerDecl: new Map(),
     classParentMap: new Map(),
     classBuiltinParentMap: new Map(),
     classExternrefBackedSet: new Set(),
@@ -230,6 +242,8 @@ export function createCodegenContext(
     weakRefTypeIdx: -1,
     mapHelpers: new Map(),
     mapHelpersEmitted: false,
+    objectLiteralAssignedPropertyNames: new Set(),
+    objectLiteralAssignedPropertyTypes: new Map(),
     refCellTypeMap: new Map(),
     anyValueTypeIdx: -1,
     anyHelpers: new Map(),
@@ -273,6 +287,7 @@ export function createCodegenContext(
     funcRefWrapperCache: new Map(),
     constructibleFuncRefWrapperCache: new Map(),
     constructibleClosureTypeIdxs: new Set(),
+    nativeConstructProtoKey: new Map(),
     pendingInitBody: null,
     inlinableFunctions: new Map(),
     symbolCounterGlobalIdx: -1,

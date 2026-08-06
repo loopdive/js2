@@ -86,6 +86,8 @@ import {
   SENT_FIELD,
   STATE_FIELD,
   defaultSpillInstr,
+  initializeSpillLocals,
+  restoreSpills,
   sanitizeTypeName,
   setStateI32FromConst,
   storeSpills,
@@ -136,6 +138,14 @@ export interface HostAsyncImports {
   settleResolveIdx: number;
   /** `Promise_settle_reject(p, reason) -> externref(undefined)`. */
   settleRejectIdx: number;
+  /** Exact prepared Promise<void> fulfillment provider. */
+  undefinedIdx?: number;
+}
+
+function asyncUndefinedInstrs(hostImports: HostAsyncImports | undefined): Instr[] {
+  return hostImports?.undefinedIdx === undefined
+    ? [{ op: "ref.null.extern" }]
+    : [{ op: "call", funcIdx: hostImports.undefinedIdx }];
 }
 
 /**
@@ -260,8 +270,11 @@ export function asyncFnNeedsHostDrive(
 export interface AsyncFrameInfo {
   /** Source function name (the `__async_resume_f<name>` / struct name stem). */
   functionName: string;
-  /** The async function/method declaration this frame belongs to. */
-  decl: ts.FunctionLikeDeclaration;
+  /**
+   * The async function/method declaration this frame belongs to. Prepared IR
+   * frames omit it because their CFG and value carriers are already closed.
+   */
+  decl?: ts.FunctionLikeDeclaration;
   /** Per-frame `$AsyncFrame_<name>` state struct typeIdx. */
   stateTypeIdx: number;
   /** Field index of the i32 resume mode (`MODE_FIELD`). FrameLayout. */
@@ -1270,7 +1283,38 @@ function validateAsyncCfg(cfg: AsyncCfgPlan): string | null {
  * — a stale capture would otherwise repoint every baked `call`/`ref.func`. The
  * N-segment body widens that window (more helpers) but the discipline is the same.
  */
-export function ensureAsyncResumeFunction(ctx: CodegenContext, info: AsyncFrameInfo, plan: AsyncCpsPlan): number {
+function planAsyncResumeCfg(
+  ctx: CodegenContext,
+  info: AsyncFrameInfo,
+  plan: AsyncCpsPlan | null,
+  preparedCfg: AsyncCfgPlan | undefined,
+): AsyncCfgPlan | null {
+  if (preparedCfg) return preparedCfg;
+  if (!info.decl) return null;
+  if (info.asyncGen) {
+    // #2570: keep delegate mode on the same carrier split as admission.
+    return planAsyncGenCfg(
+      info.decl,
+      isStandalonePromiseActive(ctx) ? { oracle: ctx.oracle } : null,
+      asyncGenDelegatesForPlan(ctx, info.decl, isStandalonePromiseActive(ctx) ? "carrier" : "awaitFree"),
+    );
+  }
+  if (!plan) return null;
+  // #3587: both settlement backends admit try/catch across await; host still
+  // refuses return-in-try and loops until its suspension rounds are widened.
+  return planAsyncCfg(ctx, info.decl, plan, {
+    allowLoops: !info.host,
+    allowTryCatch: true,
+    allowReturnInTry: !info.host,
+  });
+}
+
+export function ensureAsyncResumeFunction(
+  ctx: CodegenContext,
+  info: AsyncFrameInfo,
+  plan: AsyncCpsPlan | null,
+  preparedCfg?: AsyncCfgPlan,
+): number {
   if (info.resumeFuncIdx !== undefined) return info.resumeFuncIdx;
 
   // (#2906 slice 3/3a) Build the general CFG plan the emitter drives.
@@ -1288,24 +1332,11 @@ export function ensureAsyncResumeFunction(ctx: CodegenContext, info: AsyncFrameI
   // (`isAsyncGenDriveCandidate`) keyed the body's shape check on, so gate and
   // planner always see the same segment split. Type queries go through
   // `ctx.oracle` (the #1930 boundary), not the raw checker.
-  const cfg = info.asyncGen
-    ? planAsyncGenCfg(
-        info.decl,
-        isStandalonePromiseActive(ctx) ? { oracle: ctx.oracle } : null,
-        // (#2570) Emit-time delegates mode (registry-backed helper resolution)
-        // on the same lane split as the admission gate, so gate and planner
-        // always see the same segment shape.
-        asyncGenDelegatesForPlan(ctx, info.decl, isStandalonePromiseActive(ctx) ? "carrier" : "awaitFree"),
-      )
-    : planAsyncCfg(ctx, info.decl, plan, {
-        allowLoops: !info.host,
-        // (#3587) try/catch-across-await is admitted on BOTH settle backends —
-        // the host gate (`asyncFnNeedsHostDrive`) mirrors this via
-        // `computeTryCatchSpills`, keeping predicate and producer in lockstep.
-        allowTryCatch: true,
-        allowReturnInTry: !info.host,
-      });
+  const cfg = planAsyncResumeCfg(ctx, info, plan, preparedCfg);
   if (cfg === null) {
+    if (!info.decl) {
+      throw new Error("internal: prepared async-frame resume has no closed CFG");
+    }
     reportError(ctx, info.decl, "internal: async-frame resume built on an unsupported body shape (#2906 slice 1/3a)");
     info.resumeFuncIdx = -1;
     return -1;
@@ -1313,6 +1344,7 @@ export function ensureAsyncResumeFunction(ctx: CodegenContext, info: AsyncFrameI
 
   const cfgError = validateAsyncCfg(cfg);
   if (cfgError !== null) {
+    if (!info.decl) throw new Error(`internal: prepared async CFG violates the emitter contract — ${cfgError}`);
     reportError(ctx, info.decl, `internal: async CFG plan violates the emitter contract — ${cfgError} (#2906)`);
     info.resumeFuncIdx = -1;
     return -1;
@@ -1453,33 +1485,10 @@ export function ensureAsyncResumeFunction(ctx: CodegenContext, info: AsyncFrameI
     });
     resumeFctx.body.push({ op: "local.set", index: idx });
   }
-  // Load spills from the frame into locals (overwritten by a segment's lead on
-  // first entry into its owning state; restored from the frame on resume).
-  // (#2967 phase 3a) A force-boxed spill restores the CELL ref and registers
-  // the name in `boxedCaptures`, so declaration-inits (#1177
-  // boxedForInitStore), reads/writes, and nested-closure capture aliasing all
-  // route through the cell. Clone the (outer-shared) capture map before
-  // adding resume-local entries so the activating fctx is not polluted.
-  if (info.spillCellInfo !== undefined) {
-    resumeFctx.boxedCaptures = new Map(resumeFctx.boxedCaptures ?? []);
-  }
-  for (let i = 0; i < info.spillNames.length; i++) {
-    const idx = allocLocal(resumeFctx, info.spillNames[i]!, info.spillTypes[i]!);
-    resumeFctx.body.push({ op: "local.get", index: frameLocal });
-    resumeFctx.body.push({
-      op: "struct.get",
-      typeIdx: info.stateTypeIdx,
-      fieldIdx: info.spillFieldOffset + i,
-    });
-    resumeFctx.body.push({ op: "local.set", index: idx });
-    const cell = info.spillCellInfo?.get(i);
-    if (cell !== undefined) {
-      (resumeFctx.boxedCaptures ??= new Map()).set(info.spillNames[i]!, {
-        refCellTypeIdx: cell.refCellTypeIdx,
-        valType: cell.valType,
-      });
-    }
-  }
+  // Prepared plans restore exact live subsets at state entry. AST plans keep
+  // eager hydration; frame-core also preserves force-boxed capture aliases.
+  const selectiveSpillRestores = cfg.states.some((state) => state.restoreSpillNames !== undefined);
+  initializeSpillLocals(info, resumeFctx, frameLocal, !selectiveSpillRestores, info.spillCellInfo);
   // (#2865) A lifted-CLOSURE body (arrow / fn-expr) keeps its captures in the
   // `__self` struct — closures.ts materializes each into a NAMED local in the
   // lifted body's prologue, and every identifier/call site in the body resolves
@@ -1675,9 +1684,7 @@ export function ensureAsyncResumeFunction(ctx: CodegenContext, info: AsyncFrameI
     }
   };
 
-  // One CFG state → its dispatch-arm body (#2906 slice 3). Every state emits:
-  // handler-region reset, the resume prelude (when this state is an await's
-  // `resumeState`), the handler-annotated lead statements, then its TERMINATOR.
+  // One CFG state → one dispatch arm: handler reset, resume prelude, lead, and terminator.
   // Suspend keeps the slice-1/2 emission verbatim (parameterized by
   // `resumeState`); `goto`/`condGoto` are `STATE=<target>; br <re-dispatch
   // loop>` — a target ≤ the current id is a loop back-edge, which is how
@@ -1695,10 +1702,10 @@ export function ensureAsyncResumeFunction(ctx: CodegenContext, info: AsyncFrameI
     // adding one block level — the single depth-accounting site.
     const loopDepth = st.id + (routedDispatch ? 3 : 2);
     try {
-      // Reset the handler-region local at arm entry (a resume enters here
-      // fresh; a fast-path advance may re-dispatch from an in-region state).
+      // Reset the handler region at arm entry, including fast re-dispatch.
       let curHandler = 0;
       if (hasHandlers) out.push(...setHandler(0));
+      out.push(...restoreSpills(info, resumeFctx, frameLocal, st.restoreSpillNames ?? []));
       if (st.resumeFrom) emitDeliver(out, st.resumeFrom);
       // (#3228) Destructuring for-await head: bind the settled element carrier
       // into the head's pattern AFTER delivery, BEFORE the leads read the bound
@@ -1774,7 +1781,7 @@ export function ensureAsyncResumeFunction(ctx: CodegenContext, info: AsyncFrameI
             out.push({ op: "call", funcIdx: hostImports!.promiseResolveIdx });
             out.push({ op: "local.set", index: pHostLocal });
             out.push(...setStateI32FromConst(info, frameLocal, STATE_FIELD, term.resumeState));
-            out.push(...storeSpills(info, resumeFctx, frameLocal));
+            out.push(...storeSpills(info, resumeFctx, frameLocal, term.spillNames));
             out.push({ op: "local.get", index: pHostLocal });
             out.push({ op: "i32.const", value: info.stepFulfillCbId! });
             out.push({ op: "local.get", index: frameLocal });
@@ -1900,7 +1907,7 @@ export function ensureAsyncResumeFunction(ctx: CodegenContext, info: AsyncFrameI
           // microtask resume enters it; advance → the re-dispatch enters it).
           out.push(...setStateI32FromConst(info, frameLocal, STATE_FIELD, term.resumeState));
           const suspendArm: Instr[] = [
-            ...storeSpills(info, resumeFctx, frameLocal),
+            ...storeSpills(info, resumeFctx, frameLocal, term.spillNames),
             // promise.callbacks = $PromiseCallback{stepFulfill, frame, stepReject, frame, promise.callbacks}
             { op: "local.get", index: pLocal },
             { op: "ref.func", funcIdx: info.stepFulfillFuncIdx! },
@@ -2009,7 +2016,7 @@ export function ensureAsyncResumeFunction(ctx: CodegenContext, info: AsyncFrameI
           // Fall off the body — fulfil with undefined. (`return v` inside the
           // lead already settles via the `asyncDriveReturn` hook and returns.)
           out.push({ op: "local.get", index: resultPromiseLocal });
-          out.push({ op: "ref.null.extern" });
+          out.push(...asyncUndefinedInstrs(hostImports));
           out.push({ op: "call", funcIdx: settleFulfillIdx });
           out.push({ op: "drop" });
           out.push({ op: "return" });
@@ -2493,9 +2500,23 @@ export function emitAsyncFrameStateMachine(
   info.boxedCaptures = fctx.boxedCaptures;
   info.readsCurrentThis = fctx.readsCurrentThis;
   info.selfCaptureLayout = fctx.selfCaptureLayout;
-  const resumeFuncIdx = ensureAsyncResumeFunction(ctx, info, plan);
+  emitAsyncFrameEntry(ctx, fctx, info, plan);
+}
+
+function emitAsyncFrameEntry(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  info: AsyncFrameInfo,
+  plan: AsyncCpsPlan | null,
+  preparedCfg?: AsyncCfgPlan,
+): void {
+  const host = info.host;
+  const hostImports = info.hostImports;
+  const promiseTypeIdx = info.promiseTypeIdx;
+  const resumeFuncIdx = ensureAsyncResumeFunction(ctx, info, plan, preparedCfg);
   if (resumeFuncIdx < 0) {
-    reportError(ctx, decl, "internal: async-frame resume function unavailable (#2895 slice 1)");
+    if (!info.decl) throw new Error("internal: prepared async-frame resume function unavailable");
+    reportError(ctx, info.decl, "internal: async-frame resume function unavailable (#2895 slice 1)");
     fctx.body.push({ op: "ref.null.extern" });
     return;
   }
@@ -2575,6 +2596,16 @@ export function emitAsyncFrameStateMachine(
   fctx.body.push({ op: "local.get", index: resultPromiseLocal });
   if (!host) fctx.body.push({ op: "extern.convert_any" });
   fctx.body.push({ op: "return" });
+}
+
+/** Emit a prepared, AST-free async CFG through the existing frame engine. */
+export function emitPreparedAsyncFrameStateMachine(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  info: AsyncFrameInfo,
+  cfg: AsyncCfgPlan,
+): void {
+  emitAsyncFrameEntry(ctx, fctx, info, null, cfg);
 }
 
 // ── async-generator PRODUCER core (#2906 slice 3d-i) ─────────────────────────

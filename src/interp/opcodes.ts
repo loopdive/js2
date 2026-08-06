@@ -94,10 +94,43 @@ export const Op = {
   // Native `>`/`>=` carry that flag correctly, so they get their own opcodes.
   Gt: 37, //       Gt r            ; acc = regs[r] >  acc
   Ge: 38, //       Ge r            ; acc = regs[r] >= acc
+  InitName: 39, // InitName c      ; initialize predeclared lexical name = acc
+  DeleteProp: 40, //DeleteProp c    ; acc = delete acc[consts[c]]
+  DeleteElem: 41, //DeleteElem r    ; acc = delete acc[regs[r]]
+  DeleteName: 42, //DeleteName c    ; acc = delete <resolved consts[c]>
+  Shl: 43, //       Shl r           ; acc = regs[r] << acc
+  Shr: 44, //       Shr r           ; acc = regs[r] >> acc
 } as const;
 
 /** The number of distinct opcodes (0..OP_COUNT-1). */
-export const OP_COUNT = 39;
+export const OP_COUNT = 45;
+
+/** Private CallBuiltin ids used by #2929 lexical-environment mechanics. They
+ * remain scalar exports instead of fields on the frozen `Builtin` object so
+ * separately compiled callable rec-groups keep their existing shape. */
+export const BUILTIN_PUSH_LEXICAL_ENV = 17;
+export const BUILTIN_SAVE_ENV = 18;
+export const BUILTIN_RESTORE_ENV = 19;
+export const BUILTIN_ASSIGN_OUTER_NAME = 20;
+export const BUILTIN_DEFINE_CLASS_METHOD = 21;
+export const BUILTIN_FINALIZE_CLASS = 22;
+/** Object.defineProperty is interpreter-intrinsic because mapped arguments
+ * must update/sever their hidden parameter correspondence after a successful
+ * ordinary property definition. */
+export const BUILTIN_OBJECT_DEFINE_PROPERTY = 23;
+/** Bounded Phase-1 enumeration carriers. Both return a boxed value vector;
+ * the emitter performs the actual loop and per-iteration binding mechanics. */
+export const BUILTIN_FOR_IN_KEYS = 24;
+export const BUILTIN_FOR_OF_VALUES = 25;
+/** Syntactic `eval(...)` dispatch. The emitter passes the resolved callee in
+ * window[0] followed by the evaluated source arguments. The loop performs the
+ * required SameValue check against the realm's intrinsic eval function before
+ * choosing direct evaluation; a shadow/reassignment remains an ordinary call. */
+export const BUILTIN_DIRECT_EVAL = 26;
+/** Enter an Object Environment Record for a sloppy `with` statement. The
+ * builtin returns the previous chain head so bytecode can restore it on normal
+ * and abrupt completion using the existing environment-scope machinery. */
+export const BUILTIN_PUSH_OBJECT_ENV = 27;
 
 // ── Encoding (doc §"Encoding" / ADR-0019) ────────────────────────────────────
 //
@@ -199,6 +232,12 @@ export const OP_INFO: OpInfo[] = [
   { name: "Throw", form: OperandForm.None }, // 36
   { name: "Gt", form: OperandForm.RegA }, // 37 (#3356)
   { name: "Ge", form: OperandForm.RegA }, // 38 (#3356)
+  { name: "InitName", form: OperandForm.ConstA }, // 39 (#2929)
+  { name: "DeleteProp", form: OperandForm.ConstA }, // 40 (#2929)
+  { name: "DeleteElem", form: OperandForm.RegA }, // 41 (#2929)
+  { name: "DeleteName", form: OperandForm.ConstA }, // 42 (#2929)
+  { name: "Shl", form: OperandForm.RegA }, // 43 (#4013)
+  { name: "Shr", form: OperandForm.RegA }, // 44 (#4013)
 ];
 
 // ── Builtin ids (CallBuiltin operand `a`) ────────────────────────────────────
@@ -247,4 +286,15 @@ export const BUILTIN_NAMES: string[] = [
   "Math.floor",
   "Math.ceil",
   "Math.round",
+  "PushLexicalEnv",
+  "SaveEnv",
+  "RestoreEnv",
+  "AssignOuterName",
+  "DefineClassMethod",
+  "FinalizeClass",
+  "ObjectDefineProperty",
+  "ForInKeys",
+  "ForOfValues",
+  "DirectEval",
+  "PushObjectEnv",
 ];

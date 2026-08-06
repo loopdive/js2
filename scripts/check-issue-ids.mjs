@@ -42,6 +42,7 @@ import { execSync } from "child_process";
 import { readFileSync, readdirSync, statSync } from "fs";
 import { join } from "path";
 import { openPrIssueFiles, findOpenPrCollisions } from "./lib/open-pr-issue-files.mjs";
+import { resolveMainRef } from "./lib/change-scope.mjs";
 
 const args = process.argv.slice(2);
 const mode = args.includes("--against-main")
@@ -183,7 +184,7 @@ function introducedIssueFiles(base) {
 }
 
 function checkAgainstMain() {
-  const base = process.env.GATE_BASE || "origin/main";
+  const base = process.env.GATE_BASE || resolveMainRef(process.cwd()).ref;
   const r = introducedIssueFiles(base);
   if (r === null) {
     // Base ref unavailable (shallow clone without it). Skip cleanly rather than
@@ -240,7 +241,7 @@ function checkAgainstMain() {
 // the PR raced. FAIL-OPEN when the scan can't run (network gate must not be
 // able to freeze all of CI); the merge_group dup gate stays the hard backstop.
 function checkAgainstOpenPrs() {
-  const base = process.env.GATE_BASE || "origin/main";
+  const base = process.env.GATE_BASE || resolveMainRef(process.cwd()).ref;
   const r = introducedIssueFiles(base);
   if (r === null) {
     console.log(
@@ -291,7 +292,13 @@ function checkAgainstOpenPrs() {
   console.error("Two open PRs claim the same issue id. If neither renumbers, the one that");
   console.error("merges second gets auto-parked in the merge queue (`hold` label) and strands.");
   console.error("Tie-break: the merged/queued PR keeps the id; otherwise the EARLIER");
-  console.error("reservation on origin/issue-assignments wins. The losing branch renumbers:");
+  // (#4045/#4117) Named `origin/issue-assignments` until 2026-08-03. In agent
+  // worktrees `origin` is the FORK, so this instruction pointed the loser of a
+  // collision at the very book whose separateness caused it. There is one book
+  // now and it is upstream's; `claim-issue.mjs --check` prints which ref
+  // answered, so the tie-break can be settled from its output.
+  console.error("reservation on the issue-assignments ref (upstream's — `claim-issue.mjs --check <id>`");
+  console.error("prints which book answered) wins. The losing branch renumbers:");
   console.error("  NEW=$(node scripts/claim-issue.mjs --allocate)   # prints the reserved id");
   console.error("  git mv plan/issues/<old>-<slug>.md plan/issues/$NEW-<slug>.md");
   console.error("  # then update the file's frontmatter id: to $NEW");

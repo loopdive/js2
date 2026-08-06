@@ -21,6 +21,7 @@ import {
 } from "./property-access.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { compileExpression, ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { emitRuntimeEvalSharedValueUnwrap } from "./global-environment.js";
 
 function isStructuralObjectContract(ctx: CodegenContext, objType: ts.Type, typeName?: string): boolean {
   if (typeName !== undefined && ctx.classSet.has(typeName)) return false;
@@ -82,6 +83,9 @@ function emitStructuralExternrefFieldGet(
   addStringConstantGlobal(ctx, propName);
   fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
   fctx.body.push({ op: "call", funcIdx: getIdx });
+  if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+    emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+  }
   if (resultType.kind === "f64" && unboxIdx !== undefined) {
     fctx.body.push({ op: "call", funcIdx: unboxIdx });
   } else if (resultType.kind === "i32" && unboxIdx !== undefined) {
@@ -150,7 +154,7 @@ export function tryEmitExactStructFieldGet(
     return fieldType.kind === "ref" ? { kind: "ref_null", typeIdx: fieldType.typeIdx } : fieldType;
   }
   if (objResult?.kind === "externref") {
-    if (ctx.standalone && isStructuralObjectContract(ctx, objType, typeName)) {
+    if ((!ctx.standalone && !ctx.wasi) || isStructuralObjectContract(ctx, objType, typeName)) {
       const structuralResult = emitStructuralExternrefFieldGet(ctx, fctx, expr, propName);
       if (structuralResult !== undefined) return structuralResult;
     }

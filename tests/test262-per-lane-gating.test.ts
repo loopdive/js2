@@ -213,6 +213,14 @@ describe("test262 per-lane gating — workflow wiring", () => {
     expect(s).toContain('if [ "$RUN_STANDALONE" != "false" ]');
   });
 
+  it("the merge_group matrix cannot cascade-skip through the provider's skipped probe ancestor", () => {
+    const shardJob = job("test262-shard-mg");
+    expect(shardJob).toContain("needs: [changes, runtime-eval-provider]");
+    expect(shardJob).toMatch(/if: \|\n\s+always\(\) &&/);
+    expect(shardJob).toContain("needs.changes.result == 'success'");
+    expect(shardJob).toContain("needs.runtime-eval-provider.result == 'success'");
+  });
+
   it("every lane flag treats a missing output as 'ran' (`!= 'false'`, never `== 'true'`)", () => {
     for (const [jobName, flag] of [
       ["merge-report", "HOST_RAN"],

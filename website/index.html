@@ -1130,6 +1130,29 @@
       .feat-tables {
         margin-top: 16px;
       }
+      /* Each edition section collapses independently, collapsed by default —
+         click the edition headline to expand just that edition's rows. */
+      .feat-section:not(.expanded) .feat-row,
+      .feat-section:not(.expanded) .feat-note {
+        display: none;
+      }
+      .feat-edition {
+        cursor: pointer;
+        user-select: none;
+      }
+      .feat-edition:hover .feat-edition-label {
+        color: #fff;
+      }
+      .feat-edition-label::before {
+        content: "▸";
+        display: inline-block;
+        margin-right: 8px;
+        color: rgba(255, 255, 255, 0.35);
+        transition: transform 0.15s ease;
+      }
+      .feat-section.expanded .feat-edition-label::before {
+        transform: rotate(90deg);
+      }
 
       .feat-panel {
         columns: 2;
@@ -1735,7 +1758,7 @@
           ></t262-edition-timeline>
         </div>
 
-        <div class="feat-tables">
+        <div class="feat-tables" id="feat-tables">
           <div class="feat-panel">
             <div class="feat-section">
               <div class="feat-edition">ES3 / Core</div>
@@ -3188,6 +3211,112 @@ nums().filter(x =&gt; x &gt; 1)
 // v === "b"</pre
                   >
                   <div class="feat-explain">Same named group in alternatives. Requires regex engine update.</div>
+                </details>
+              </div>
+            </div>
+            <div class="feat-section">
+              <div class="feat-edition">ES2026</div>
+              <div class="feat-row" data-t262-paths="built-ins/Error/isError">
+                <span class="feat-badge partial">⚠</span>
+                <span class="feat-name">Error.isError</span>
+                <span class="feat-desc">Cross-realm-safe branded check for Error objects</span>
+
+                <details>
+                  <summary></summary>
+                  <pre>
+Error.isError(new TypeError("boom")); // true
+Error.isError({ name: "TypeError" }); // false</pre
+                  >
+                  <div class="feat-explain">
+                    Brand check, not a shape check — a plain object that looks like an error is rejected.
+                  </div>
+                </details>
+              </div>
+              <div class="feat-row" data-t262-paths="built-ins/Map/prototype/getOrInsert">
+                <span class="feat-badge partial">⚠</span>
+                <span class="feat-name">Upsert (Map.getOrInsert)</span>
+                <span class="feat-desc">Insert-if-absent then read, in one Map lookup</span>
+
+                <details>
+                  <summary></summary>
+                  <pre>
+const counts = new Map&lt;string, number&gt;();
+counts.getOrInsert("a", 0);</pre
+                  >
+                  <div class="feat-explain">Replaces the has/get/set dance with a single lookup.</div>
+                </details>
+              </div>
+              <div class="feat-row" data-t262-paths="built-ins/Array/fromAsync">
+                <span class="feat-badge partial">⚠</span>
+                <span class="feat-host">host</span>
+                <span class="feat-name">Array.fromAsync</span>
+                <span class="feat-desc">Build an array from an async iterable</span>
+
+                <details>
+                  <summary></summary>
+                  <pre>const rows = await Array.fromAsync(stream); // not yet</pre>
+                  <div class="feat-explain">
+                    Compiles, but the returned promise resolves to an empty array — async iteration drain is not wired
+                    up.
+                  </div>
+                </details>
+              </div>
+              <div class="feat-row" data-t262-paths="built-ins/Math/sumPrecise">
+                <span class="feat-badge none">✗</span>
+                <span class="feat-name">Math.sumPrecise</span>
+                <span class="feat-desc">Exactly-rounded sum of a list of numbers</span>
+
+                <details>
+                  <summary></summary>
+                  <pre>const total = Math.sumPrecise([0.1, 0.2, 0.3]); // not yet</pre>
+                  <div class="feat-explain">
+                    Compiles, but throws
+                    <code>sumPrecise is not a function</code>
+                    — the runtime helper is not implemented.
+                  </div>
+                </details>
+              </div>
+              <div class="feat-row" data-t262-paths="built-ins/Iterator/concat">
+                <span class="feat-badge partial">⚠</span>
+                <span class="feat-host">host</span>
+                <span class="feat-name">Iterator sequencing (Iterator.concat)</span>
+                <span class="feat-desc">Concatenate iterators lazily</span>
+
+                <details>
+                  <summary></summary>
+                  <pre>const all = Iterator.concat(a.values(), b.values()).toArray(); // not yet</pre>
+                  <div class="feat-explain">
+                    Compiles, but yields an empty sequence — Iterator.concat is not implemented in the runtime.
+                  </div>
+                </details>
+              </div>
+              <div
+                class="feat-row"
+                data-t262-paths="built-ins/Uint8Array/fromBase64,built-ins/Uint8Array/prototype/toBase64"
+              >
+                <span class="feat-badge none">✗</span>
+                <span class="feat-name">Uint8Array to/from Base64</span>
+                <span class="feat-desc">Base64 and hex codecs on Uint8Array</span>
+
+                <details>
+                  <summary></summary>
+                  <pre>const bytes = Uint8Array.fromBase64("SGVsbG8="); // not yet</pre>
+                  <div class="feat-explain">
+                    Compiles, but throws
+                    <code>fromBase64 is not a function</code>
+                    — the codec is not reachable at runtime.
+                  </div>
+                </details>
+              </div>
+              <div class="feat-row" data-t262-paths="built-ins/JSON/rawJSON,built-ins/JSON/isRawJSON">
+                <span class="feat-badge partial">⚠</span>
+                <span class="feat-name">JSON.parse source text access</span>
+                <span class="feat-desc">Preserve exact number source through parse/stringify</span>
+
+                <details>
+                  <summary></summary>
+                  <pre>const big = JSON.rawJSON("12345678901234567890"); // not yet</pre>
+                  <div class="feat-explain">Compiles, but JSON.stringify of a rawJSON box returns undefined.</div>
                 </details>
               </div>
             </div>
@@ -4889,167 +5018,184 @@ console.log(instance.exports.run()); // &rarr; 55</pre
 
       // Conformance diagrams are now rendered by <t262-donut> and <t262-edition-bars> web components.
 
-      (async function hydrateConformanceHistoryChart() {
+      // Primary trend graph (next to the donut) — scope-aware. Called once at
+      // load for the default "overall" / js-host scope, then re-called by
+      // applyScopeFromDetail() whenever the ES-edition timeline slider or the
+      // standalone/host toggle changes, so it always matches the donut.
+      const conformanceHistoryProjectStart = new Date("2026-02-27T00:00:00Z");
+      const parseRunTimestamp = (value) => {
+        const raw = String(value || "");
+        if (!raw) return null;
+        const isoDate = new Date(raw);
+        if (Number.isFinite(isoDate.getTime())) return isoDate;
+        const compact = raw.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/);
+        if (compact) {
+          const [, y, m, d, hh, mm, ss] = compact;
+          return new Date(`${y}-${m}-${d}T${hh}:${mm}:${ss}Z`);
+        }
+        return null;
+      };
+      const formatHistoryLabel = (date) =>
+        `${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+
+      const fetchJsonSafe = async (url) => {
+        try {
+          const resp = await fetch(url);
+          if (!resp.ok) return null;
+          const data = await resp.json();
+          return Array.isArray(data) ? data : null;
+        } catch {
+          return null;
+        }
+      };
+
+      // Builds trend-chart points from an arbitrary runs[] history array.
+      // `extract(run)` returns `{ pass, total, timestampRaw }` for a run, or
+      // null/undefined to skip it — this is what lets the same point-building
+      // (gap-filling, stale-endpoint extension, sparse-run filtering) serve
+      // the overall/standalone histories AND a single ES edition's slice of
+      // editions-index.json. Returns null when there isn't enough real data.
+      const buildHistoryPoints = (runs, extract) => {
+        if (!Array.isArray(runs)) return null;
+
+        const extracted = runs
+          .map((run) => extract(run))
+          .filter((r) => r && Number(r.total ?? 0) > 1 && Number(r.pass ?? 0) >= 0)
+          .map((r) => ({ pass: Number(r.pass || 0), total: Number(r.total || 0), timestampRaw: r.timestampRaw }))
+          .sort((a, b) => {
+            const ta = parseRunTimestamp(a.timestampRaw)?.getTime() ?? Number.POSITIVE_INFINITY;
+            const tb = parseRunTimestamp(b.timestampRaw)?.getTime() ?? Number.POSITIVE_INFINITY;
+            return ta - tb;
+          });
+
+        const rawPoints = extracted
+          .map((run) => {
+            const ts = String(run.timestampRaw || "");
+            const date = parseRunTimestamp(ts);
+            return {
+              label: date ? formatHistoryLabel(date) : "",
+              timestamp: ts,
+              time: date?.getTime() ?? 0,
+              pass: run.pass,
+              total: run.total,
+              rate: run.total > 0 ? (run.pass / run.total) * 100 : 0,
+            };
+          })
+          .filter((point) => point.total > 0 && point.rate >= 5);
+
+        const points = [];
+        for (const point of rawPoints) {
+          const prev = points.at(-1);
+          if (prev && point.total < prev.total * 0.75) continue;
+          points.push(point);
+        }
+
+        const firstPoint = points[0];
+        if (firstPoint?.timestamp) {
+          const firstDate = new Date(firstPoint.timestamp);
+          if (
+            Number.isFinite(firstDate.getTime()) &&
+            firstDate.getTime() - conformanceHistoryProjectStart.getTime() > 12 * 60 * 60 * 1000
+          ) {
+            points.unshift({
+              label: formatHistoryLabel(conformanceHistoryProjectStart),
+              timestamp: conformanceHistoryProjectStart.toISOString(),
+              time: conformanceHistoryProjectStart.getTime(),
+              pass: 0,
+              total: 0,
+              rate: 0,
+            });
+          }
+        }
+
+        const lastRun = extracted.at(-1);
+        if (lastRun) {
+          const ts = String(lastRun.timestampRaw || "");
+          const lastRate = lastRun.total > 0 ? (lastRun.pass / lastRun.total) * 100 : 0;
+          const lastDate = ts ? new Date(ts) : null;
+          const now = new Date();
+          if (
+            Number.isFinite(lastRate) &&
+            lastRate >= 5 &&
+            lastDate instanceof Date &&
+            Number.isFinite(lastDate.getTime()) &&
+            now.getTime() - lastDate.getTime() > 12 * 60 * 60 * 1000
+          ) {
+            points.push({
+              label: formatHistoryLabel(now),
+              timestamp: now.toISOString(),
+              time: now.getTime(),
+              pass: lastRun.pass,
+              total: lastRun.total,
+              rate: lastRate,
+            });
+          }
+        }
+
+        if (points.length < 2) return null;
+        return points;
+      };
+
+      const CONFORMANCE_HISTORY_SERIES = JSON.stringify([
+        { key: "rate", color: "#ffffff", fill: true },
+        { key: "pass", color: "rgba(255,255,255,0.82)", axis: "right", lineWidth: 1, lineOpacity: 0.5 },
+        {
+          key: "total",
+          color: "rgba(141, 154, 184, 1)",
+          axis: "right",
+          lineWidth: 1,
+          lineOpacity: 1,
+          dasharray: "1 3",
+        },
+      ]);
+
+      async function updateConformanceHistoryChart(scope, hostEnabled) {
         const chart = document.getElementById("conformance-history-chart");
         if (!chart) return;
         try {
-          const projectStart = new Date("2026-02-27T00:00:00Z");
-          const parseRunTimestamp = (value) => {
-            const raw = String(value || "");
-            if (!raw) return null;
-            const isoDate = new Date(raw);
-            if (Number.isFinite(isoDate.getTime())) return isoDate;
-            const compact = raw.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/);
-            if (compact) {
-              const [, y, m, d, hh, mm, ss] = compact;
-              return new Date(`${y}-${m}-${d}T${hh}:${mm}:${ss}Z`);
-            }
-            return null;
-          };
-          const formatLabel = (date) =>
-            `${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-          const resp = await fetch("./benchmarks/results/runs/index.json");
-          if (!resp.ok) return;
-          const runs = await resp.json();
-          if (!Array.isArray(runs)) return;
+          const isOverallScope = !scope || scope === "overall" || scope === "overall+proposal";
+          let points = null;
 
-          const rawPoints = runs
-            .filter((run) => Number(run?.total ?? 0) > 1 && Number(run?.pass ?? 0) >= 0)
-            .sort((a, b) => {
-              const ta = parseRunTimestamp(a.timestamp)?.getTime() ?? Number.POSITIVE_INFINITY;
-              const tb = parseRunTimestamp(b.timestamp)?.getTime() ?? Number.POSITIVE_INFINITY;
-              return ta - tb;
-            })
-            .map((run) => {
-              const total = Number(run.total || 0);
-              const pass = Number(run.pass || 0);
-              const ts = String(run.timestamp || "");
-              const date = parseRunTimestamp(ts);
-              return {
-                label: date ? formatLabel(date) : "",
-                timestamp: ts,
-                time: date?.getTime() ?? 0,
-                pass,
-                total,
-                rate: total > 0 ? (pass / total) * 100 : 0,
-              };
-            })
-            .filter((point) => point.total > 0 && point.rate >= 5);
-
-          const points = [];
-          for (const point of rawPoints) {
-            const prev = points.at(-1);
-            if (prev && point.total < prev.total * 0.75) continue;
-            points.push(point);
-          }
-
-          const firstPoint = points[0];
-          if (firstPoint?.timestamp) {
-            const firstDate = new Date(firstPoint.timestamp);
-            if (
-              Number.isFinite(firstDate.getTime()) &&
-              firstDate.getTime() - projectStart.getTime() > 12 * 60 * 60 * 1000
-            ) {
-              points.unshift({
-                label: formatLabel(projectStart),
-                timestamp: projectStart.toISOString(),
-                time: projectStart.getTime(),
-                pass: 0,
-                total: 0,
-                rate: 0,
-              });
-            }
-          }
-
-          const lastRun = runs
-            .filter((run) => Number(run?.total ?? 0) > 1 && Number(run?.pass ?? 0) >= 0)
-            .sort((a, b) => {
-              const ta = parseRunTimestamp(a.timestamp)?.getTime() ?? Number.POSITIVE_INFINITY;
-              const tb = parseRunTimestamp(b.timestamp)?.getTime() ?? Number.POSITIVE_INFINITY;
-              return ta - tb;
-            })
-            .at(-1);
-
-          if (lastRun) {
-            const ts = String(lastRun.timestamp || "");
-            const total = Number(lastRun.total || 0);
-            const pass = Number(lastRun.pass || 0);
-            const lastRate = total > 0 ? (pass / total) * 100 : 0;
-            const lastDate = ts ? new Date(ts) : null;
-            const now = new Date();
-            if (
-              Number.isFinite(lastRate) &&
-              lastRate >= 5 &&
-              lastDate instanceof Date &&
-              Number.isFinite(lastDate.getTime()) &&
-              now.getTime() - lastDate.getTime() > 12 * 60 * 60 * 1000
-            ) {
-              points.push({
-                label: formatLabel(now),
-                timestamp: now.toISOString(),
-                time: now.getTime(),
-                pass,
-                total,
-                rate: lastRate,
-              });
-            }
-          }
-
-          if (points.length === 0) {
-            const now = new Date();
-            points.push(
-              {
-                label: formatLabel(projectStart),
-                timestamp: projectStart.toISOString(),
-                time: projectStart.getTime(),
-                pass: 0,
-                total: 0,
-                rate: 0,
-              },
-              {
-                label: formatLabel(now),
-                timestamp: now.toISOString(),
-                time: now.getTime(),
-                pass: 0,
-                total: 0,
-                rate: 0,
-              },
+          if (isOverallScope) {
+            const runs = await fetchJsonSafe(
+              hostEnabled ? "./benchmarks/results/runs/index.json" : "./benchmarks/results/runs/standalone-index.json",
             );
+            points = buildHistoryPoints(runs, (run) => ({
+              pass: run?.pass,
+              total: run?.total,
+              timestampRaw: run?.timestamp,
+            }));
+          } else if (!hostEnabled) {
+            // Specific ES edition + standalone: no per-edition standalone
+            // history exists yet (only an overall standalone series) — leave
+            // the chart hidden rather than substitute a misleading series.
+            points = null;
+          } else {
+            const runs = await fetchJsonSafe("./benchmarks/results/runs/editions-index.json");
+            const label = normalizeEditionLabel(scope);
+            points = buildHistoryPoints(runs, (run) => {
+              if (!Array.isArray(run?.editions)) return null;
+              const entry = run.editions.find((e) => normalizeEditionLabel(String(e?.edition || "")) === label);
+              if (!entry) return null;
+              return { pass: entry.pass, total: entry.total, timestampRaw: run.timestamp };
+            });
           }
 
-          if (points.length < 2) return;
+          if (!points) {
+            chart.hidden = true;
+            return;
+          }
 
           chart.setAttribute("labels-key", "label");
-          chart.setAttribute(
-            "series",
-            JSON.stringify([
-              {
-                key: "rate",
-                color: "#ffffff",
-                fill: true,
-              },
-              {
-                key: "pass",
-                color: "rgba(255,255,255,0.82)",
-                axis: "right",
-                lineWidth: 1,
-                lineOpacity: 0.5,
-              },
-              {
-                key: "total",
-                color: "rgba(141, 154, 184, 1)",
-                axis: "right",
-                lineWidth: 1,
-                lineOpacity: 1,
-                dasharray: "1 3",
-              },
-            ]),
-          );
+          chart.setAttribute("series", CONFORMANCE_HISTORY_SERIES);
           chart.data = points;
+          chart.hidden = false;
         } catch {
-          // Leave the chart empty when the historical run index is unavailable.
+          chart.hidden = true;
         }
-      })();
+      }
+
+      updateConformanceHistoryChart("overall", true);
 
       const PROPOSAL_LABEL = "Proposals";
       const isEditionScope = (edition) =>
@@ -5509,6 +5655,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
 
             const currentScope = detail.scope || "overall";
             window.__conformanceEditionScope = currentScope;
+            updateConformanceHistoryChart(currentScope, hostToggle ? hostToggle.checked : true);
             if (currentScope === "overall") {
               renderSelectedConformance("overall", overall, "ECMAScript", { exactStrictSummary: strictSummary });
               applyFeatureEditionScope("overall");
@@ -5572,6 +5719,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
         ["ES2024", 13],
         ["ES2025", 14],
         ["ES2026", 15],
+        ["ES2027", 16],
         ["Legacy / Deprecated", 98],
         ["Proposals", 99],
       ]);
@@ -5654,6 +5802,18 @@ console.log(instance.exports.run()); // &rarr; 55</pre
 
       sortFeatureSectionsChronologically();
       applyFeatureEditionScope();
+
+      // Each edition section (below the timeline slider) collapses
+      // independently, collapsed by default — click its headline to expand
+      // just that edition's feature rows. Delegated so it also covers
+      // sections added later by updateEditionPassBars().
+      document.addEventListener("click", (event) => {
+        const header = event.target.closest(".feat-edition");
+        if (!header) return;
+        const section = header.closest(".feat-section");
+        if (!section) return;
+        section.classList.toggle("expanded");
+      });
 
       (function hydrateEditionPassBars() {
         const strictToggle = document.getElementById("strict-only-toggle");

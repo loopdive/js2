@@ -1,9 +1,14 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
-import type { IrIntegrationLoweringPlans } from "../ir/ast-lowering-plans.js";
+import {
+  collectIrDirectCallLoweringPlans,
+  type IrDirectCallTarget,
+  type IrIntegrationLoweringPlans,
+} from "../ir/ast-lowering-plans.js";
 import { irUnitFuncRef } from "../ir/callable-bindings.js";
 import type { IrUnitId } from "../ir/identity.js";
+import { irVal } from "../ir/nodes.js";
 import {
   makeIrIdentityImportedFunctionResolver,
   projectIrIdentityImportedFunctionResolverToLegacy,
@@ -277,7 +282,7 @@ export function projectIrIntegrationLoweringPlans(
     readonly directCalls?: IrIntegrationLoweringPlans["directCalls"];
   } & Pick<
     IrIntegrationLoweringPlans,
-    "importedCalls" | "topLevelFunctionValues" | "hostVoidCallbacks" | "promiseDelays"
+    "importedCalls" | "topLevelFunctionValues" | "hostVoidCallbacks" | "promiseDelays" | "suspendingAsyncUnitIds"
   >,
   selection: {
     readonly funcs: ReadonlySet<string>;
@@ -289,16 +294,49 @@ export function projectIrIntegrationLoweringPlans(
   const ownerUnitIdByLegacyName = new Map(
     ownerProjection.entries.map(({ legacyName, unitId }) => [legacyName, unitId]),
   );
+  const activeOwnerUnitIds = new Set(ownerProjection.entries.map(({ unitId }) => unitId));
+  const signaturesByUnitId = new Map(plan.overrideMapByUnitId);
+  const callableSignaturesByUnitId = new Map(signaturesByUnitId);
+  for (const unitId of plan.suspendingAsyncUnitIds) {
+    if (!activeOwnerUnitIds.has(unitId)) continue;
+    const signature = callableSignaturesByUnitId.get(unitId);
+    if (signature) callableSignaturesByUnitId.set(unitId, { ...signature, returnType: irVal({ kind: "externref" }) });
+  }
+  const directCallTargets = new Map<string, IrDirectCallTarget>();
+  for (const { unitId, legacyName } of ownerProjection.entries) {
+    const signature = callableSignaturesByUnitId.get(unitId);
+    if (!signature) continue;
+    directCallTargets.set(legacyName, {
+      target: irUnitFuncRef({ unitId, name: legacyName }),
+      signature,
+    });
+  }
+  const directCalls = new Map(plan.directCalls ?? []);
+  for (const { unitId } of ownerProjection.entries) {
+    const declaration = plan.identityPlan.identityContext.declarationByUnitId.get(unitId);
+    if (!declaration) continue;
+    for (const [call, directCall] of collectIrDirectCallLoweringPlans(declaration, unitId, directCallTargets)) {
+      // The projected callable ABI is authoritative for every exact active
+      // source edge. In particular, a prepared suspending async target keeps
+      // its numeric fulfillment type in `signaturesByUnitId`, while calls to
+      // its source slot observe the Promise-returning externref ABI. A stale
+      // pre-projection plan would otherwise unbox that Promise as a number.
+      directCalls.set(call, directCall);
+    }
+  }
   return {
     identityContext: plan.identityPlan.identityContext,
     ownerProjection,
     ownerUnitIdByLegacyName,
-    directCalls: plan.directCalls ?? new Map(),
-    signaturesByUnitId: plan.overrideMapByUnitId,
+    directCalls,
+    signaturesByUnitId,
     importedCalls: plan.importedCalls,
     topLevelFunctionValues: plan.topLevelFunctionValues,
     hostVoidCallbacks: plan.hostVoidCallbacks,
     promiseDelays: plan.promiseDelays,
+    suspendingAsyncUnitIds: new Set(
+      [...plan.suspendingAsyncUnitIds].filter((unitId) => activeOwnerUnitIds.has(unitId)),
+    ),
   };
 }
 
@@ -311,10 +349,10 @@ export function buildIrIntegrationOwnerProjection(
     readonly moduleInit?: { readonly stmtCount: number; readonly reason: string | null };
   },
 ): IrLegacyUnitProjection {
-  return buildPreparedOwnerProjection(identityPlan, selection, false);
+  return buildPreparedOwnerProjection(identityPlan, selection, true);
 }
 
-/** Structural membership for terminal reconciliation, including static-member policy rows. */
+/** Structural membership for terminal reconciliation. */
 export function collectIrPreparedSelectionUnitIds(
   identityPlan: IrOverlayIdentityPlan,
   selection: {

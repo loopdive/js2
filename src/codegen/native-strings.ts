@@ -22,6 +22,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3) stable-regime minting
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
+import { nativeStringLiteralInstrs } from "./native-string-literals.js";
 import { addImport, addUnionImports } from "./registry/imports.js";
 import {
   addFuncType,
@@ -29,189 +30,19 @@ import {
   getOrRegisterArrayType,
   getOrRegisterErrorStructType,
   getOrRegisterVecType,
+  withSuppressedVecUsage,
 } from "./registry/types.js";
+
+export {
+  nativeStringLiteralHash,
+  nativeStringLiteralInstrs,
+  nativeStringLiteralMaterialization,
+  type NativeStringLiteralMaterialization,
+  type StringEncoding,
+} from "./native-string-literals.js";
 
 export function nativeStringType(ctx: CodegenContext): ValType {
   return { kind: "ref", typeIdx: ctx.anyStrTypeIdx };
-}
-
-/**
- * Build the inline instruction sequence that materializes a string literal as
- * a NativeString (FlatString) struct ref. Mirrors `compileNativeStringLiteral`
- * but returns an `Instr[]` for callers that build instruction streams without
- * a `FunctionContext` (e.g. throw-instr builders that return `Instr[]`).
- *
- * (#3673) The literal is INTERNED: materialized once in an immutable module
- * global (array.new_fixed / struct.new are GC constant expressions) and read
- * back with a single `global.get`. Before this, every EXECUTION of a literal
- * site re-allocated the backing array + struct — the `__extern_get` member
- * ladder alone allocated its comparison literal per candidate per call,
- * making literal allocation + GC the dominant cost of a standalone
- * compiled-acorn parse. Interning also gives all literal sites one shared
- * identity, which makes the `__str_equals` `ref.eq` fast path effective.
- * The 10,000-element `array.new_fixed` cap applies to constant expressions
- * as well, so oversized literals (rare) stay inline exactly as before.
- */
-const ARRAY_NEW_FIXED_MAX = 10000;
-
-export function nativeStringLiteralInstrs(ctx: CodegenContext, value: string, encoding?: StringEncoding): Instr[] {
-  // #1588 PR-B: when `--utf8-storage` is on and the literal is proven
-  // `ascii`/`utf8-guaranteed`, materialize an i8-backed `Utf8String` instead
-  // of the i16 `NativeString`. When off (or the literal is `wtf16`/unknown),
-  // this is byte-identical to before.
-  if (ctx.utf8Storage && ctx.utf8StrTypeIdx >= 0 && (encoding === "ascii" || encoding === "utf8-guaranteed")) {
-    const inline = utf8StringLiteralInstrs(ctx, value);
-    if (utf8Encode(value).length > ARRAY_NEW_FIXED_MAX) return inline;
-    return [{ op: "global.get", index: internNativeStringLiteral(ctx, `u8:${value}`, ctx.utf8StrTypeIdx, inline) }];
-  }
-
-  const inline = nativeStringLiteralInitInstrs(ctx, value);
-  if (value.length > ARRAY_NEW_FIXED_MAX) return inline;
-  return [{ op: "global.get", index: internNativeStringLiteral(ctx, `u16:${value}`, ctx.nativeStrTypeIdx, inline) }];
-}
-
-/**
- * (#3673 round 9) FNV-1a over UTF-16 code units, in the STORED `$HashedString`
- * encoding: `(fnv & 0x7fffffff) | 0x80000000` — the sign bit marks "computed"
- * (0 = uncomputed sentinel). MUST match `__obj_hash`'s wasm loop exactly
- * (offset 0x811c9dc5, prime 0x01000193, xor-then-mul, i32 wraparound).
- */
-export function nativeStringLiteralHash(value: string): number {
-  let h = 0x811c9dc5 | 0;
-  for (let i = 0; i < value.length; i++) {
-    h = Math.imul(h ^ value.charCodeAt(i), 0x01000193);
-  }
-  return (h & 0x7fffffff) | 0x80000000 | 0;
-}
-
-/** The raw (uninterned) init sequence for an i16 `NativeString` literal. */
-function nativeStringLiteralInitInstrs(ctx: CodegenContext, value: string): Instr[] {
-  const strDataTypeIdx = ctx.nativeStrDataTypeIdx;
-  const strTypeIdx = ctx.nativeStrTypeIdx;
-  const instrs: Instr[] = [];
-  // len (i32), off (i32) = 0
-  instrs.push({ op: "i32.const", value: value.length });
-  instrs.push({ op: "i32.const", value: 0 });
-  // code units, then array.new_fixed
-  for (let i = 0; i < value.length; i++) {
-    instrs.push({ op: "i32.const", value: value.charCodeAt(i) });
-  }
-  instrs.push({
-    op: "array.new_fixed",
-    typeIdx: strDataTypeIdx,
-    length: value.length,
-  });
-  // (#3673 round 9) struct.new $HashedString(len, off, data, bakedHash) — the
-  // literal's FNV-1a hash is a compile-time constant, so `__obj_hash` on a
-  // constant key becomes a single struct.get. Subtype of $NativeString: every
-  // existing consumer accepts it unchanged. Falls back to plain $NativeString
-  // when the hashed subtype isn't registered (host mode never gets here).
-  if (ctx.hashedStrTypeIdx >= 0) {
-    instrs.push({ op: "i32.const", value: nativeStringLiteralHash(value) });
-    // proto-lookup cache slots (round 9b): gen 0 = never populated.
-    instrs.push({ op: "i32.const", value: 0 });
-    instrs.push({ op: "ref.null", typeIdx: -18 }); // ref.null any
-    instrs.push({ op: "ref.null", typeIdx: -18 });
-    instrs.push({ op: "ref.null", typeIdx: -18 }); // cacheProps (round 21)
-    instrs.push({ op: "struct.new", typeIdx: ctx.hashedStrTypeIdx });
-    return instrs;
-  }
-  // struct.new $NativeString(len, off, data)
-  instrs.push({ op: "struct.new", typeIdx: strTypeIdx });
-  return instrs;
-}
-
-/**
- * (#3673) Get-or-create the immutable module global holding an interned
- * native-string literal. `key` is the encoding-prefixed literal value;
- * `initInstrs` is the constant-expression init (built by the caller so the
- * i8/i16 variants share this). Returns the ABSOLUTE global index
- * (imports + defined position), the same convention `ensureHoleType` uses —
- * late import-global additions are fixed up by the existing
- * `fixupModuleGlobalIndices` walk over emitted bodies.
- */
-function internNativeStringLiteral(ctx: CodegenContext, key: string, refTypeIdx: number, initInstrs: Instr[]): number {
-  const existing = ctx.nativeStrLiteralGlobals.get(key);
-  if (existing !== undefined) return existing;
-  const globalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
-  ctx.mod.globals.push({
-    name: `__strlit_${ctx.nativeStrLiteralGlobals.size}`,
-    type: { kind: "ref", typeIdx: refTypeIdx },
-    mutable: false,
-    init: initInstrs,
-  });
-  ctx.nativeStrLiteralGlobals.set(key, globalIdx);
-  return globalIdx;
-}
-
-/** #1588 PR-B: encoding annotation values the lowering sites consume. Mirrors
- *  `Encoding` in `src/ir/analysis/encoding.ts` (kept as a local string-union to
- *  avoid a codegen→ir import cycle). */
-export type StringEncoding = "ascii" | "utf8-guaranteed" | "wtf16";
-
-/**
- * #1588 PR-B: materialize a string literal as an i8-backed `Utf8String`.
- * Precondition (asserted): `value` contains no lone surrogate — guaranteed by
- * the encoding classifier (a lone surrogate is always `wtf16`, never reaches
- * here). The assert is a defensive guard against a future classifier bug
- * emitting malformed UTF-8 bytes.
- */
-function utf8StringLiteralInstrs(ctx: CodegenContext, value: string): Instr[] {
-  const bytes = utf8Encode(value);
-  const instrs: Instr[] = [];
-  // len = code-unit (UTF-16) length, byteLen = UTF-8 byte length, off = 0.
-  instrs.push({ op: "i32.const", value: value.length });
-  instrs.push({ op: "i32.const", value: bytes.length });
-  instrs.push({ op: "i32.const", value: 0 });
-  for (const b of bytes) {
-    instrs.push({ op: "i32.const", value: b });
-  }
-  instrs.push({
-    op: "array.new_fixed",
-    typeIdx: ctx.utf8StrDataTypeIdx,
-    length: bytes.length,
-  });
-  // struct.new $Utf8String(len, byteLen, off, data)
-  instrs.push({ op: "struct.new", typeIdx: ctx.utf8StrTypeIdx });
-  return instrs;
-}
-
-/**
- * Encode a JS (WTF-16) string to UTF-8 bytes. Asserts no lone surrogate — the
- * caller only invokes this for `ascii`/`utf8-guaranteed` strings, which the
- * classifier guarantees are well-formed. Uses code points (handles
- * well-formed surrogate pairs for astral scalars).
- */
-function utf8Encode(value: string): number[] {
-  const out: number[] = [];
-  for (let i = 0; i < value.length; i++) {
-    let cp = value.charCodeAt(i);
-    if (cp >= 0xd800 && cp <= 0xdbff) {
-      const lo = i + 1 < value.length ? value.charCodeAt(i + 1) : -1;
-      if (lo >= 0xdc00 && lo <= 0xdfff) {
-        cp = 0x10000 + ((cp - 0xd800) << 10) + (lo - 0xdc00);
-        i++;
-      } else {
-        throw new Error(
-          `#1588 utf8Encode: lone high surrogate in a string annotated utf8-guaranteed/ascii — classifier bug`,
-        );
-      }
-    } else if (cp >= 0xdc00 && cp <= 0xdfff) {
-      throw new Error(
-        `#1588 utf8Encode: lone low surrogate in a string annotated utf8-guaranteed/ascii — classifier bug`,
-      );
-    }
-    if (cp <= 0x7f) {
-      out.push(cp);
-    } else if (cp <= 0x7ff) {
-      out.push(0xc0 | (cp >> 6), 0x80 | (cp & 0x3f));
-    } else if (cp <= 0xffff) {
-      out.push(0xe0 | (cp >> 12), 0x80 | ((cp >> 6) & 0x3f), 0x80 | (cp & 0x3f));
-    } else {
-      out.push(0xf0 | (cp >> 18), 0x80 | ((cp >> 12) & 0x3f), 0x80 | ((cp >> 6) & 0x3f), 0x80 | (cp & 0x3f));
-    }
-  }
-  return out;
 }
 
 /**
@@ -286,24 +117,33 @@ export function ensureNativeStringHelpers(ctx: CodegenContext): void {
   // by name in ctx.nativeStrHelpers, so this fixed order preserves every
   // baked-in sibling funcIdx and mintDefinedFunc/addFuncType side-effect.
   const methodShared = makeNativeStrShared(ctx, strTypeIdx, strDataTypeIdx, anyStrTypeIdx, consStrTypeIdx);
-  emitStrFlattenHelpers(methodShared);
-  emitStrToUtf8Helper(methodShared);
-  emitStrConcatHelpers(methodShared);
-  emitStrCompareHelpers(methodShared);
-  emitStrSliceCharHelpers(methodShared);
-  emitStrSearchHelpers(methodShared);
-  emitSelfHostedStringHelpers(methodShared); // #3256 — trim/affix/pad/repeat from TS source (stdlib/strings.ts)
-  emitStrCaseHelpers(methodShared);
-  emitStrReplaceHelpers(methodShared);
-  emitStrSplitHelper(methodShared);
-  emitStrConstructHelpers(methodShared);
-  emitStrRegexEscapeHelper(methodShared);
+  // (#4034) This is a PRELUDE, not a usage site: `emitStrSplitHelper` registers a
+  // vec type for split's result array, which flipped `usesVecValue` and made every
+  // arith-only module look like an array user — cascading into ~21 kB of
+  // unstrippable standalone exports (#2083's fix, one level down). Types are still
+  // registered (only the flag is pinned), so no type index moves. Full chain +
+  // measurements in plan/issues/4034-*.md; guarded by
+  // tests/issue-4034-standalone-prelude-size.test.ts.
+  withSuppressedVecUsage(ctx, () => {
+    emitStrFlattenHelpers(methodShared);
+    emitStrToUtf8Helper(methodShared);
+    emitStrConcatHelpers(methodShared);
+    emitStrCompareHelpers(methodShared);
+    emitStrSliceCharHelpers(methodShared);
+    emitStrSearchHelpers(methodShared);
+    emitSelfHostedStringHelpers(methodShared); // #3256 — trim/affix/pad/repeat from TS source (stdlib/strings.ts)
+    emitStrCaseHelpers(methodShared);
+    emitStrReplaceHelpers(methodShared);
+    emitStrSplitHelper(methodShared);
+    emitStrConstructHelpers(methodShared);
+    emitStrRegexEscapeHelper(methodShared);
 
-  // (#3069) Annex B §B.2.2 HTML string-wrapper methods — the `__str_html_escape_quot`
-  // helper (CreateHTML step-4.b `"`→`&quot;` escaping). Emitted here, AFTER
-  // __str_flatten/__str_concat are registered. The tag/attribute concatenation
-  // is built inline at each call site in string-ops.ts via __str_concat.
-  emitNativeHtmlWrapperHelpers(ctx, strTypeIdx, strDataTypeIdx, anyStrTypeIdx);
+    // (#3069) Annex B §B.2.2 HTML string-wrapper methods — the `__str_html_escape_quot`
+    // helper (CreateHTML step-4.b `"`→`&quot;` escaping). Emitted here, AFTER
+    // __str_flatten/__str_concat are registered. The tag/attribute concatenation
+    // is built inline at each call site in string-ops.ts via __str_concat.
+    emitNativeHtmlWrapperHelpers(ctx, strTypeIdx, strDataTypeIdx, anyStrTypeIdx);
+  });
 }
 
 /**
@@ -1555,6 +1395,47 @@ export function ensureStrToCharVecHelper(ctx: CodegenContext): { funcIdx: number
     exported: false,
   });
   return { funcIdx, vecTypeIdx: nstrVecTypeIdx };
+}
+
+/**
+ * (#3912) Can the `__str_to_extern` / `__str_from_extern` bridge be emitted in
+ * this module at all?
+ *
+ * ## Why this is NOT `ctx.nativeStrings`
+ *
+ * The bridge is the only way to convert between a WasmGC `$AnyString` and a
+ * REAL JS string, and it does that by copying UTF-16 code units through linear
+ * memory using three **JS-host imports** — `__str_from_mem`, `__str_to_mem`,
+ * `__str_extern_len` (see `ensureNativeStringExternBridge` below). There is no
+ * pure-Wasm way to manufacture a JS string, so the bridge is *inherently*
+ * host-dependent even though it is part of the NATIVE string subsystem.
+ *
+ * That makes "strings are native here" (`ctx.nativeStrings`) exactly the wrong
+ * question — it is true in six lanes, three of which have no usable host:
+ *
+ *     nativeStrings = fast || wasi || standalone || strictNoHostImports || utf8Storage
+ *
+ * `wasi` / `standalone` have no JS runtime at all, and `strictNoHostImports`
+ * has one but **forbids** host imports — the strict gate DROPS them, and
+ * because `ensureNativeStringExternBridge` bakes the three funcidxs into
+ * compiled helper bodies before the drop, the result is not a clean refusal but
+ * a hard `absoluteFuncIndex: unresolved call target` codegen error.
+ *
+ * So the real question is "is there a JS host AND are host imports allowed?".
+ * Callers that can degrade (hand the host an externref some other way, or skip
+ * the marshal) MUST consult this first.
+ *
+ * ## Known pre-existing violation, deliberately not fixed here
+ *
+ * `console.log(<string>)` reaches the bridge unguarded, so it already fails to
+ * compile under `strictNoHostImports` on `main` today with this exact error
+ * (verified directly). Fixing that needs a decision about what `console.log`
+ * should *do* with no host — it cannot both refuse to marshal and still call
+ * the host console — so it is left alone rather than guessed at. This predicate
+ * exists so that decision has a name to hang on.
+ */
+export function hostStringBridgeUsable(ctx: CodegenContext): boolean {
+  return !ctx.wasi && !ctx.standalone && !ctx.strictNoHostImports;
 }
 
 export function ensureNativeStringExternBridge(ctx: CodegenContext): void {

@@ -27,7 +27,30 @@ export const PROGRAM_ABI_CALLABLE_ROLE = Object.freeze({
   closureHostBridge: 9,
   dateCivilSupport: 10,
   dataStructHostBridge: 11,
+  // (#4033) Callable providers (`runtime-provider` / `intrinsic-provider`) used
+  // a bare `PROGRAM_ABI_PROVIDER_ROLE_ORDINAL = 5` literal in
+  // program-abi-provider-planning.ts, duplicating `moduleInit: 5` above.
+  // Nothing tied the two together, so nothing kept them distinct: a provider
+  // and a `legacy-module-init-pass` support callable anchored to the same entry
+  // source both landed on structural order `<src>:0:0:5:0` and the session's
+  // duplicate-order check aborted the compile. Every role ordinal now lives in
+  // this one table, and `programAbiCallableRoleOrdinalsAreDistinct()` below is
+  // the guard that keeps it that way.
+  callableProvider: 12,
 } as const);
+
+/**
+ * (#4033) True iff every role in {@link PROGRAM_ABI_CALLABLE_ROLE} has a unique
+ * ordinal. Structural order is `(source, declaration, domain, role, derived)`,
+ * so two roles sharing an ordinal are indistinguishable whenever their other
+ * components coincide — which is exactly how #4033 aborted the ESLint compile.
+ * Exported so a test can assert it directly rather than waiting for a graph
+ * large enough to collide.
+ */
+export function programAbiCallableRoleOrdinalsAreDistinct(): boolean {
+  const ordinals = Object.values(PROGRAM_ABI_CALLABLE_ROLE);
+  return new Set(ordinals).size === ordinals.length;
+}
 
 export const PROGRAM_ABI_GLOBAL_ROLE = Object.freeze({
   moduleValue: 0,
@@ -203,7 +226,12 @@ export function planProgramAbiUnitCallable(
   const unitId = plan.ref.binding.unitId;
   if (!session.hasKnownUnit(unitId)) return undefined;
   const derived = session.registeredDerivedUnit(unitId);
-  if (derived && derived.role !== "lifted-closure" && derived.role !== "monomorphization-clone") {
+  if (
+    derived &&
+    derived.role !== "lifted-closure" &&
+    derived.role !== "ir-async-state" &&
+    derived.role !== "monomorphization-clone"
+  ) {
     return undefined;
   }
   const bindingId = irUnitCallableBindingId(unitId);

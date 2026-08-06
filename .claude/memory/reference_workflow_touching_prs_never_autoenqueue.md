@@ -1,6 +1,6 @@
 ---
 name: reference_workflow_touching_prs_never_autoenqueue
-description: "CORRECTED TWICE. Neither workflow-touching alone NOR fork-head alone blocks auto-enqueue — the failing cell is the CONJUNCTION (fork-head AND touching .github/workflows/). Always check the queue before enqueuing."
+description: "FALSIFIED as stated — workflow-touching PRs CAN auto-enqueue. The three original cases were all FORK-head; the blocker correlates with fork-head, not with touching .github/workflows/. Always check the queue before enqueuing."
 metadata:
   node_type: memory
   type: reference
@@ -33,49 +33,6 @@ better-correlated variable (consistent with GitHub refusing to let an app token
 trust workflow changes arriving from a fork). n=3 vs n=1 — that is a corrected
 attribution, **not** a proven mechanism. Do not promote it to a new "never."
 
----
-
-## ⚠ THE CORRECTION ABOVE IS ALSO WRONG. Measured 2026-07-31 (#3584).
-
-**Fork-head alone does NOT block either.** Filling in the missing cell of the
-2×2 kills that attribution too:
-
-| head repo | touches workflows | app-token auto-enqueue | evidence |
-| --- | --- | --- | --- |
-| fork | yes | **NO — 4/4 needed a human** | #3567, #3590, #3602, #3609 |
-| fork | **no** | **YES**, `js2-merge-queue-bot` | **#3887, #3889, #3890 (2026-07-31)** |
-| upstream | yes | YES, `js2-merge-queue-bot` | #3690, #3843, #3833 |
-
-**The failing cell is the CONJUNCTION**: fork-head **AND** touching
-`.github/workflows/**`. Neither variable alone predicts anything. Each earlier
-version of this note generalised from whichever single variable the then-known
-cases happened to share — twice.
-
-**Still NOT measured, after two corrections:** *why*. "The app installation
-lacks `workflows` (verified: `gh api /apps/js2-merge-queue-bot` returns
-actions/checks/contents/issues/metadata/pull_requests only) and GitHub treats a
-fork-authored workflow change differently from a same-repo one" fits the counts
-and is probably right. It has never been tested. Do not act as if it were —
-that is exactly how the two wrong versions of this note got written.
-
-**A counter-example that isn't one.** #3884 (fork-head, workflow-touching)
-merged unaided-looking on 2026-07-31. It was hand-enqueued at 10:42:56Z, six
-minutes after going green at 10:36:28Z, and — filtering
-`workflows/auto-enqueue.yml/runs` server-side — **no sweep ran between 10:35:01Z
-and 11:01:30Z**. The app never saw it green, so it tested nothing. Its one
-`skip (BLOCKED)` reading was taken with checks still pending. Do not read a
-merged PR as evidence the enqueuer worked; check *who enqueued it*
-(`gh api repos/loopdive/js2/issues/<n>/timeline`, `added_to_merge_queue`).
-
-**Also: an admin PAT reading `CLEAN` proves nothing.** Ruleset 16700772 grants
-`RepositoryRole 5` (admin) `bypass_mode: always`. `mergeStateStatus` is
-token-relative; a bypass actor's `CLEAN` is not the enqueuer's view.
-
-**Since #3584 the sweep says which kind of BLOCKED it is.** A permanent stall
-now logs `skip (BLOCKED — SUSPECTED PERMANENT (...))` plus a
-`needs-manual-enqueue` label; ordinary in-flight BLOCKED logs
-`skip (BLOCKED — transient (...))`. Diagnose from that, not from this table.
-
 **The safe operational rule, correct under every hypothesis:**
 
 > **Check the queue BEFORE enqueuing, always. Never enqueue from a belief
@@ -102,6 +59,29 @@ and note that an admin/PAT `CLEAN` really is a bypass artifact
 (ruleset grants `current_user_can_bypass: "always"`), so `CLEAN` from a human
 token still does not tell you the enqueuer's view. That part of the original
 note survives.
+
+## RE-CONFIRMED LIVE 2026-08-02 (#4046) — the FALSIFIED marking is itself falsified
+
+The App-token `enqueuePullRequest` was refused with the exact string
+`Pull request refusing to allow a GitHub App to create or update workflow
+'.github/workflows/baseline-summary-sync.yml'` — attribution clean, not
+correlational: same mutation, same PR, same instant, refused for the App,
+**accepted for the user PAT** (scope `workflow` present). The old entry
+attributed the effect to fork-head; the refusal string names the App and the
+file, so the mechanism is now unambiguous.
+
+**Scope of the restriction — measured end-to-end, and narrower than feared:**
+
+> **The App block applies to the ENQUEUE mutation only. Once enqueued (by
+> PAT), the merge queue MERGES workflow-touching PRs fine** — #4046 went
+> position 3 → merge_group green → merged 18:06:02Z with no further friction.
+
+So the shepherd's one-shot PAT enqueue is a **complete remedy** for this
+class, not a step that moves the block to merge time. Standing rule until an
+admin grants the App the `workflows` permission: every workflow-touching PR
+needs the shepherd's manual one-shot; `auto-enqueue` will refuse it and —
+because the run still concludes `success` — the refusal is visible only in
+the job log (via #4038's telemetry; before that, nothing printed at all).
 
 Related: [[reference_never_push_to_a_queued_pr_it_ejects_to_the_back]] ·
 [[reference_autoenqueue_grace0_races_mergestate_recompute]] ·

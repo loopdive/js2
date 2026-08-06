@@ -461,7 +461,15 @@ describe("#3880 claim-issue.mjs — preserved behaviour", () => {
 
     const check = run(fx, ["--check", "3000"]);
     expect(check.code).toBe(0);
-    expect(check.stdout).toMatch(/is UNASSIGNED/);
+    // (#4133/#4117) The wording changed and the assertion moved with it,
+    // deliberately. This used to require `is UNASSIGNED`, which conflated two
+    // different questions: the LOCK is free (what this test is about) but the
+    // ID is still taken (what the sibling test below is about). `--check` now
+    // answers both separately, so assert the property rather than the old
+    // sentence — exit 0, no live claim, and the id still reported as taken.
+    expect(check.stdout).toMatch(/NO ACTIVE CLAIM/);
+    expect(check.stdout).toMatch(/id is TAKEN/);
+    expect(check.stdout).not.toMatch(/is CLAIMED by/);
     expect(run(fx, ["--list"]).stdout).toMatch(/No active claims/);
     // ...and the next agent can take it.
     expect(run(fx, ["3000", "bob"]).code).toBe(0);

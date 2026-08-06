@@ -18,6 +18,7 @@ const INTERP_FILES = [
   "opcodes.ts",
   "encoder.ts",
   "runtime-ops.ts",
+  "eval-environment.ts",
   "emitter.ts",
   "loop.ts",
   "dynamic-function.ts",

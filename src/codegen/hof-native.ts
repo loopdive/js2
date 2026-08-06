@@ -90,6 +90,7 @@ export function ensureNativeArrayHof(ctx: CodegenContext, methodName: string): n
   const applyClosureIdx = reserveApplyClosure(ctx);
   const externLengthIdx = ctx.funcMap.get("__extern_length");
   const externGetIdxIdx = ctx.funcMap.get("__extern_get_idx");
+  const externHasIdxIdx = ctx.funcMap.get("__extern_has_idx");
   const objVecNewIdx = ctx.funcMap.get("__objvec_new");
   const objVecPushIdx = ctx.funcMap.get("__objvec_push");
   const boxNumIdx = ctx.funcMap.get("__box_number");
@@ -109,6 +110,23 @@ export function ensureNativeArrayHof(ctx: CodegenContext, methodName: string): n
 
   const isReduce = NATIVE_HOF_REDUCE.has(methodName);
   const backward = methodName === "findLast" || methodName === "findLastIndex" || methodName === "reduceRight";
+
+  // (#4160) Per-iteration HasProperty gate. §23.1.3's presence-sensitive
+  // methods (forEach/map/filter/some/every/reduce/reduceRight — NOT the
+  // find* family, which visits every index) run `HasProperty(O, ToString(k))`
+  // before each Get and SKIP absent indices; the chain-inclusive check is what
+  // makes an index inherited from `Object.prototype[i] = v` visitable while a
+  // genuinely absent own index on an array-like is skipped. Emitted ONLY when
+  // the module dirtied a prototype index (`ctx.protoIndexDirty`, a pre-scan
+  // flag fixed before any body compiles) — the flag-clear helper body is
+  // byte-identical by construction. The own-absent-visit-with-undefined
+  // behaviour of flag-CLEAR modules is #3185/#2001 scope, deliberately not
+  // widened here.
+  const PRESENCE_SENSITIVE = new Set(["forEach", "map", "filter", "some", "every", "reduce", "reduceRight"]);
+  const hasGateIdx =
+    ctx.protoIndexDirty && PRESENCE_SENSITIVE.has(methodName) && externHasIdxIdx !== undefined
+      ? externHasIdxIdx
+      : undefined;
 
   // (#2872 slice 5) S1-producer discipline for every "returns `undefined`"
   // result of these helpers (`find`/`findLast` miss, `forEach`'s void result,
@@ -300,6 +318,70 @@ export function ensureNativeArrayHof(ctx: CodegenContext, methodName: string): n
     }
     prologue.push(...(backward ? iInitBackward : iInitForward));
   } else {
+    // (#4160) Flag-dirty no-init seed: §23.1.3.24 step 8.b scans for the FIRST
+    // PRESENT index in iteration order (skipping absent ones through the
+    // HasProperty gate) before consuming it as the accumulator; running off
+    // the end without a present element is the spec's TypeError, kept as the
+    // documented return-undefined boundary (see module header). The scan's
+    // range test also covers the empty receiver, so the explicit `len <= 0`
+    // preflight of the ungated body is subsumed.
+    const reduceSeedScan = (): Instr[] => [
+      ...(backward
+        ? ([
+            { op: "local.get", index: L.len },
+            { op: "f64.const", value: 1 },
+            { op: "f64.sub" },
+            { op: "local.set", index: L.i },
+          ] satisfies Instr[])
+        : ([
+            { op: "f64.const", value: 0 },
+            { op: "local.set", index: L.i },
+          ] satisfies Instr[])),
+      {
+        op: "block",
+        blockType: { kind: "empty" },
+        body: [
+          {
+            op: "loop",
+            blockType: { kind: "empty" },
+            body: [
+              // out of range → no present element anywhere → undefined boundary
+              ...((backward
+                ? [{ op: "local.get", index: L.i }, { op: "f64.const", value: 0 }, { op: "f64.lt" }]
+                : [
+                    { op: "local.get", index: L.i },
+                    { op: "local.get", index: L.len },
+                    { op: "f64.ge" },
+                  ]) satisfies Instr[]),
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [...(undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }]), { op: "return" }],
+              },
+              // present? → seed found, exit the scan
+              { op: "local.get", index: 0 },
+              { op: "local.get", index: L.i },
+              { op: "call", funcIdx: hasGateIdx! },
+              { op: "br_if", depth: 1 },
+              { op: "local.get", index: L.i },
+              { op: "f64.const", value: 1 },
+              { op: backward ? "f64.sub" : "f64.add" },
+              { op: "local.set", index: L.i },
+              { op: "br", depth: 0 },
+            ],
+          },
+        ],
+      },
+      // acc = Get(recv, i) ; advance i past the seed
+      { op: "local.get", index: 0 },
+      { op: "local.get", index: L.i },
+      { op: "call", funcIdx: externGetIdxIdx },
+      { op: "local.set", index: L.acc },
+      { op: "local.get", index: L.i },
+      { op: "f64.const", value: 1 },
+      { op: backward ? "f64.sub" : "f64.add" },
+      { op: "local.set", index: L.i },
+    ];
     // hasInit ? (acc = init; i = first) : (empty → undefined; acc = first elem; i = second)
     prologue.push(
       { op: "local.get", index: 3 },
@@ -311,43 +393,73 @@ export function ensureNativeArrayHof(ctx: CodegenContext, methodName: string): n
           { op: "local.set", index: L.acc },
           ...(backward ? iInitBackward : iInitForward),
         ],
-        else: [
-          // len <= 0 → return undefined (boundary: spec TypeError, see header)
-          { op: "local.get", index: L.len },
-          { op: "f64.const", value: 0 },
-          { op: "f64.le" },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [...undefExtern, { op: "return" }],
-          },
-          // acc = first-in-iteration-order element; i = the next one
-          ...((backward
-            ? [
-                { op: "local.get", index: 0 },
-                { op: "local.get", index: L.len },
-                { op: "f64.const", value: 1 },
-                { op: "f64.sub" },
-                { op: "call", funcIdx: externGetIdxIdx },
-                { op: "local.set", index: L.acc },
-                { op: "local.get", index: L.len },
-                { op: "f64.const", value: 2 },
-                { op: "f64.sub" },
-                { op: "local.set", index: L.i },
-              ]
+        else:
+          hasGateIdx !== undefined
+            ? reduceSeedScan()
             : [
-                { op: "local.get", index: 0 },
+                // len <= 0 → return undefined (boundary: spec TypeError, see header)
+                { op: "local.get", index: L.len },
                 { op: "f64.const", value: 0 },
-                { op: "call", funcIdx: externGetIdxIdx },
-                { op: "local.set", index: L.acc },
-                { op: "f64.const", value: 1 },
-                { op: "local.set", index: L.i },
-              ]) satisfies Instr[]),
-        ],
+                { op: "f64.le" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [...undefExtern, { op: "return" }],
+                },
+                // acc = first-in-iteration-order element; i = the next one
+                ...((backward
+                  ? [
+                      { op: "local.get", index: 0 },
+                      { op: "local.get", index: L.len },
+                      { op: "f64.const", value: 1 },
+                      { op: "f64.sub" },
+                      { op: "call", funcIdx: externGetIdxIdx },
+                      { op: "local.set", index: L.acc },
+                      { op: "local.get", index: L.len },
+                      { op: "f64.const", value: 2 },
+                      { op: "f64.sub" },
+                      { op: "local.set", index: L.i },
+                    ]
+                  : [
+                      { op: "local.get", index: 0 },
+                      { op: "f64.const", value: 0 },
+                      { op: "call", funcIdx: externGetIdxIdx },
+                      { op: "local.set", index: L.acc },
+                      { op: "f64.const", value: 1 },
+                      { op: "local.set", index: L.i },
+                    ]) satisfies Instr[]),
+              ],
       },
     );
   }
 
+  // (#4160) Under the gate, each iteration's Get + callback runs only when
+  // `HasProperty(recv, k)` holds; an absent index is SKIPPED (map keeps its
+  // result aligned by pushing the undefined the hole reads back as — the
+  // dense `$ObjVec` carrier cannot represent a result hole). Gate-off (the
+  // flag-clear default) emits the exact pre-existing sequence.
+  const iterCore: Instr[] = [...readVal, ...buildArgs, ...invoke, ...perIter];
+  const iterBody: Instr[] =
+    hasGateIdx === undefined
+      ? iterCore
+      : [
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: L.i },
+          { op: "call", funcIdx: hasGateIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: iterCore,
+            else:
+              methodName === "map"
+                ? [
+                    { op: "local.get", index: L.out },
+                    ...(undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" } satisfies Instr]),
+                    { op: "call", funcIdx: objVecPushIdx },
+                  ]
+                : [],
+          },
+        ];
   const body: Instr[] = [
     ...prologue,
     {
@@ -357,16 +469,7 @@ export function ensureNativeArrayHof(ctx: CodegenContext, methodName: string): n
         {
           op: "loop",
           blockType: { kind: "empty" },
-          body: [
-            ...loopExitTest,
-            { op: "br_if", depth: 1 },
-            ...readVal,
-            ...buildArgs,
-            ...invoke,
-            ...perIter,
-            ...loopStep,
-            { op: "br", depth: 0 },
-          ],
+          body: [...loopExitTest, { op: "br_if", depth: 1 }, ...iterBody, ...loopStep, { op: "br", depth: 0 }],
         },
       ],
     },

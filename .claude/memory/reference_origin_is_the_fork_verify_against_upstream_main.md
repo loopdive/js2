@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: reference
   originSessionId: 31a336a9-7fce-4c41-9a15-3e10d02eca44
-  modified: 2026-07-26T20:40:57.868Z
+  modified: 2026-07-28T12:08:50.744Z
 ---
 
 **CLAUDE.md says `origin` is upstream (`loopdive/js2`). In the `/workspace`
@@ -61,7 +61,35 @@ merge-to-main and demands test proof. Do not bypass it; the lag is cosmetic
 as long as you verify against `upstream/main` refs directly, which works
 regardless of local HEAD.
 
-Related: [[reference_fork_origin_behind_upstream]] ·
+## Third manifestation: the issue-id reservation ledger is SPLIT-BRAIN
+
+**Verified 2026-07-28.** `scripts/claim-issue.mjs:74` reads
+
+```js
+const REMOTE = process.env.CLAIM_ASSIGN_REMOTE || "origin";
+```
+
+and its own comment says the `issue-assignments` orphan ref "lives on the FORK
+(origin)". But **CI's collision gate and other lanes read the UPSTREAM ledger.**
+Measured: fork ref `0f90e2311`, upstream ref `31a3427d2` — **different SHAs, two
+disjoint books.**
+
+Consequence: a reservation made in a fork-origin worktree is **invisible** to
+everyone else. On 2026-07-28 three PRs collided in a chain — #3715 reserved
+3750/3751/3752 on the fork ledger; #3723 took 3750/3751 via upstream and merged;
+#3719 took 3752 — forcing #3715 to renumber **twice** (→3753/3754/3755 with
+`CLAIM_ASSIGN_REMOTE=upstream`).
+
+**Workaround until fixed:** `CLAIM_ASSIGN_REMOTE=upstream node scripts/claim-issue.mjs --allocate`
+(and mirror to the fork ledger so both books agree).
+
+Note the script *already* knows about the fork problem for `main` — line ~86
+picks `upstream` when the remote exists, and lines 76-77 warn that `origin/main`
+lags "by thousands of commits". The assignments ref simply never got the same
+treatment. That inconsistency is the bug.
+
+Related: [[reference_issue_id_collides_while_pr_is_open]] ·
+[[reference_fork_origin_behind_upstream]] ·
 [[project_fork_origin_behind_upstream_pr_base]] ·
 [[project_dup_prs_upstream_vs_fork_same_branch_name]] ·
 [[feedback_branch_from_upstream_main_not_fork]]

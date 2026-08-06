@@ -200,3 +200,23 @@ proto-member wiring affect ES2015+ members too), so this is the blast-radius
 number, not just the ES5 cluster. No conformance claim is outstanding on this
 issue any more; the remaining open item is the coercion-sites-allow vs
 coercion-engine decision recorded above.
+
+
+## Merge resolution (2026-08-05): mostly superseded upstream; two pieces survive
+
+Upstream's #3992 landed the same root causes in refactored form
+(`string-proto-tostring.ts`: `NO_ARG_STRING_MEMBER_HELPER` +
+`emitStringProtoToStringFlat` — the ToPrimitive-first ToString shared helper).
+Upstream's modules win in the merge. Surviving from this branch:
+
+1. `char-at-transfer.ts` generalisation (upstream never touched it — dispatch
+   was still hard-coded to `charAt`).
+2. The §7.1.17 SYMBOL rejection, re-grafted INTO upstream's shared
+   `emitStringProtoToStringFlat` — their #3992 body lacked it, caught by this
+   issue's test (`toLowerCase.call(Symbol())` must throw; it printed). Placing
+   it in the shared helper also covers the search family's
+   `ToString(searchString)` operands.
+
+All 16 behavior tests pass on the merged tree. The +39/0 measurement above was
+taken on this branch's pre-merge implementation; the merged tree shares the
+mechanism, and the upstream merge_group re-validation is the final arbiter.

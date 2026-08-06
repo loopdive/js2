@@ -92,6 +92,7 @@ export function resolveUncurriedBuiltinPrototypeMethod(
 }
 
 export type StoredObjectStaticMethod =
+  | "assign"
   | "defineProperty"
   | "defineProperties"
   | "freeze"
@@ -115,6 +116,7 @@ export function resolveStoredObjectStaticMethod(
     return undefined;
   }
   switch (init.name.text) {
+    case "assign":
     case "defineProperty":
     case "defineProperties":
     case "freeze":

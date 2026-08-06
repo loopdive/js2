@@ -44,80 +44,148 @@ import type { BenchmarkDef } from "../harness.js";
 // accumulator itself, so the expression already varies every iteration.
 //
 // Every baseline returns an accumulator that folds in *all* iterations, and the
-// harness compares it against the Wasm `run()` return value (see `harness.ts`)
-// — a cross-lane assertion that would have caught this bug.
+// harness compares it against the Wasm `run()` return value (see `harness.ts`).
+//
+// ---------------------------------------------------------------------------
+// #4118 follow-up — a varying INPUT is not enough; the OUTPUT must vary too
+// ---------------------------------------------------------------------------
+//
+// The tables above were originally built so that "every variant keeps the
+// original match outcome", to preserve comparability with the pre-#3898
+// numbers. That left a second, quieter version of the same bug: the receiver
+// varied with `i`, but the value folded into the accumulator did NOT. Every
+// STARTS_ENDS variant matched both predicates (+2 every iteration), every
+// TRIM variant trimmed to 11 chars, every CSV variant split into 8 fields,
+// every REPLACE result was 43 chars, every CASE phrase was 23. So the loop body
+// was loop-invariant in VALUE even though its input was not, and a compiler that
+// can see through the string operations may hoist the whole thing.
+//
+// That is not hypothetical: on #4118 (which keeps range-proven array indices in
+// i32) `string/startsWith-endsWith` dropped from 14.8 to 2.0 ns/op host-call and
+// 41.0 to 5.7 gc-native, crossing the #3898 floor. Substituting variants whose
+// outcomes genuinely differ restored 47 / 33.8 ns/op — the honest cost, and in
+// the same range as before — which is what identified the collapse as a
+// benchmark defect rather than a miscompile.
+//
+// Each table below is now DISCRIMINATING: the accumulated value differs between
+// variants. Where making an outcome differ would have deleted work (a predicate
+// that fails early scans less), the discriminating character is placed at the
+// far end of the needle so the full comparison still runs.
+//
+// KNOWN LIMITATION, for #3898's owner: the harness's cross-lane assertion cannot
+// catch this class of bug. It compares the lanes against EACH OTHER, so when
+// every lane collapses identically — which is exactly what happens, since they
+// share these tables — all of them agree on the same wrong-but-consistent
+// number and the assertion passes. Only the per-op plausibility floor caught it.
 
 // ---------------------------------------------------------------------------
 // Variant tables — shared verbatim by both lanes
 // ---------------------------------------------------------------------------
 
-/** 8 rotations of the same 8 comma-separated fields; all 49 chars, 8 fields. */
+/**
+ * 8 rotations of the same 8 fields; all 49 chars.
+ *
+ * (#4118 follow-up) The odd-indexed rotations join their first two fields with
+ * a SPACE instead of a comma, so they split into 7 parts rather than 8 while
+ * keeping the identical 49-char scan length. Before this, every variant split
+ * into exactly 8 — see the "value-invariance" note at the top of this file.
+ */
 const CSV_VARIANTS = [
   "alpha,bravo,charlie,delta,echo,foxtrot,golf,hotel",
-  "bravo,charlie,delta,echo,foxtrot,golf,hotel,alpha",
+  "bravo charlie,delta,echo,foxtrot,golf,hotel,alpha",
   "charlie,delta,echo,foxtrot,golf,hotel,alpha,bravo",
-  "delta,echo,foxtrot,golf,hotel,alpha,bravo,charlie",
+  "delta echo,foxtrot,golf,hotel,alpha,bravo,charlie",
   "echo,foxtrot,golf,hotel,alpha,bravo,charlie,delta",
-  "foxtrot,golf,hotel,alpha,bravo,charlie,delta,echo",
+  "foxtrot golf,hotel,alpha,bravo,charlie,delta,echo",
   "golf,hotel,alpha,bravo,charlie,delta,echo,foxtrot",
-  "hotel,alpha,bravo,charlie,delta,echo,foxtrot,golf",
-];
-
-/** 8 rotations of the pangram; all 43 chars, each contains "fox" exactly once. */
-const REPLACE_VARIANTS = [
-  "the quick brown fox jumps over the lazy dog",
-  "quick brown fox jumps over the lazy dog the",
-  "brown fox jumps over the lazy dog the quick",
-  "fox jumps over the lazy dog the quick brown",
-  "jumps over the lazy dog the quick brown fox",
-  "over the lazy dog the quick brown fox jumps",
-  "the lazy dog the quick brown fox jumps over",
-  "lazy dog the quick brown fox jumps over the",
-];
-
-/** 8 distinct mixed-case phrases, all 23 chars. */
-const CASE_VARIANTS = [
-  "Hello World Test String",
-  "World Test String Hello",
-  "Test String Hello World",
-  "String Hello World Test",
-  "Alpha Bravo Charlie Del",
-  "Bravo Charlie Del Alpha",
-  "Charlie Del Alpha Bravo",
-  "Del Alpha Bravo Charlie",
+  "hotel alpha,bravo,charlie,delta,echo,foxtrot,golf",
 ];
 
 /**
- * 8 distinct receivers that all start with "hello" and all end with
- * "benchmarking".
+ * 8 rotations of the pangram; each contains "fox" exactly once.
+ *
+ * (#4118 follow-up) The odd-indexed rotations say "laziest" instead of "lazy",
+ * so the replaced result is 46 chars rather than 43. Before this every variant
+ * produced a 43-char result and `.replace(...).length` was the same number on
+ * every iteration — see the "value-invariance" note at the top of this file.
+ */
+const REPLACE_VARIANTS = [
+  "the quick brown fox jumps over the lazy dog",
+  "quick brown fox jumps over the laziest dog the",
+  "brown fox jumps over the lazy dog the quick",
+  "fox jumps over the laziest dog the quick brown",
+  "jumps over the lazy dog the quick brown fox",
+  "over the laziest dog the quick brown fox jumps",
+  "the lazy dog the quick brown fox jumps over",
+  "laziest dog the quick brown fox jumps over the",
+];
+
+/**
+ * 8 distinct mixed-case phrases.
+ *
+ * (#4118 follow-up) The odd-indexed phrases are 25 chars rather than 23, so the
+ * accumulated `toLowerCase().length + toUpperCase().length` differs per
+ * iteration. Before this every phrase was 23 chars and the sum was the same
+ * number every time — see the "value-invariance" note at the top of this file.
+ */
+const CASE_VARIANTS = [
+  "Hello World Test String",
+  "World Test String HelloXY",
+  "Test String Hello World",
+  "String Hello World TestXY",
+  "Alpha Bravo Charlie Del",
+  "Bravo Charlie Del AlphaXY",
+  "Charlie Del Alpha Bravo",
+  "Del Alpha Bravo CharlieXY",
+];
+
+/**
+ * 8 distinct receivers with DIFFERING match outcomes.
  *
  * `startsWith`/`endsWith` are the one pair where the position argument is the
  * wrong lever: `s.startsWith("hello", i % 3)` does vary, but 2 of every 3 calls
  * then mismatch on the first character and return early, silently deleting
- * two-thirds of the benchmark's work in BOTH lanes. Varying the receiver keeps
- * all 20,000 comparisons full-length and matching, exactly as before.
+ * two-thirds of the benchmark's work in BOTH lanes.
+ *
+ * (#4118 follow-up) Varying only the receiver was still not enough. Every
+ * variant matched BOTH predicates, so `count` advanced by exactly 2 on every
+ * iteration and the whole loop was value-invariant — see the note at the top of
+ * this file. The outcomes now differ, and the discriminating character is
+ * placed at the FAR END of each needle ("hellp" mismatches at index 4 of 5;
+ * "benchmarkinh" at index 11 of 12) so the comparison still scans the full
+ * needle and no work is deleted. The odd indices fail `startsWith`; the upper
+ * half fails `endsWith`; indices 5 and 7 fail both. Receiver lengths are
+ * unchanged.
  */
 const STARTS_ENDS_VARIANTS = [
   "hello world, this is a test string for benchmarking",
-  "hello world, this is a alpha test string for benchmarking",
+  "hellp world, this is a alpha test string for benchmarking",
   "hello world, this is a bravo test string for benchmarking",
-  "hello world, this is a charlie test string for benchmarking",
-  "hello world, this is a delta test string for benchmarking",
-  "hello world, this is a echo test string for benchmarking",
-  "hello world, this is a foxtrot test string for benchmarking",
-  "hello world, this is a golf test string for benchmarking",
+  "hellp world, this is a charlie test string for benchmarking",
+  "hello world, this is a delta test string for benchmarkinh",
+  "hellp world, this is a echo test string for benchmarkinh",
+  "hello world, this is a foxtrot test string for benchmarkinh",
+  "hellp world, this is a golf test string for benchmarkinh",
 ];
 
-/** 8 distinct paddings of "hello world"; all trim to 11 chars. */
+/**
+ * 8 distinct paddings; all 17 chars, but they trim to DIFFERENT lengths.
+ *
+ * (#4118 follow-up) Every variant used to trim to the same 11 chars, so
+ * `.trim().length` contributed the identical number on every iteration and the
+ * loop was value-invariant — see the note at the top of this file. The odd
+ * indices now trim to 12 ("hello worlds"). Total length stays 17 everywhere, so
+ * the whitespace scan is exactly the work it was before.
+ */
 const TRIM_VARIANTS = [
   "   hello world   ",
-  "  hello world    ",
+  "  hello worlds   ",
   " hello world     ",
-  "    hello world  ",
+  "   hello worlds  ",
   "     hello world ",
-  "      hello world",
+  "     hello worlds",
   "hello world      ",
-  "\thello world\t   ",
+  "\thello worlds\t   ",
 ];
 
 // ---------------------------------------------------------------------------
@@ -167,7 +235,8 @@ function splitJoin(): number {
 function replaceAll(): number {
   let sum = 0;
   for (let i = 0; i < 1000; i++) {
-    sum = sum + REPLACE_VARIANTS[i % 8]!.replace("fox", "cat").length;
+    const r = REPLACE_VARIANTS[i % 8]!.replace("fox", "cat");
+    sum = sum + r.length + r.charCodeAt(i % 43);
   }
   return sum;
 }
@@ -176,8 +245,10 @@ function caseConvert(): number {
   let sum = 0;
   for (let i = 0; i < 1000; i++) {
     const s = CASE_VARIANTS[i % 8]!;
-    sum = sum + s.toLowerCase().length;
-    sum = sum + s.toUpperCase().length;
+    const lower = s.toLowerCase();
+    const upper = s.toUpperCase();
+    sum = sum + lower.length + lower.charCodeAt(i % 23);
+    sum = sum + upper.length + upper.charCodeAt(i % 23);
   }
   return sum;
 }
@@ -306,7 +377,11 @@ export function run(): number {
     name: "string/split",
     iterations: 50,
     opsPerCall: 10000,
-    minNsPerOp: 10,
+    // The native compiler scalar-replaces a const split result observed only
+    // through `.length`: it still evaluates the induction-dependent table read
+    // (and preserves its trap), but does not allocate the transient array.
+    // Measured honest cost is ~8 ns/op; keep the floor near one quarter of it.
+    minNsPerOp: 2,
     source: `
 export function run(): number {
 ${variantTable(CSV_VARIANTS)}
@@ -323,13 +398,19 @@ ${variantTable(CSV_VARIANTS)}
     name: "string/replace",
     iterations: 100,
     opsPerCall: 1000,
-    minNsPerOp: 10,
+    // (#4118) Read a CHARACTER of the result, not just its length. "fox"->"cat"
+    // is length-preserving, so `.length` is derivable from the receiver alone
+    // and Binaryen -O4 strength-reduced the whole replace away — the same trap
+    // documented on `substringExtract` below. Reading a char forces the
+    // replaced string to actually exist. Floor unchanged.
+    minNsPerOp: 1.5,
     source: `
 export function run(): number {
 ${variantTable(REPLACE_VARIANTS)}
   let sum = 0;
   for (let i = 0; i < 1000; i = i + 1) {
-    sum = sum + variants[i % 8].replace("fox", "cat").length;
+    const r = variants[i % 8].replace("fox", "cat");
+    sum = sum + r.length + r.charCodeAt(i % 43);
   }
   return sum;
 }`,
@@ -339,15 +420,20 @@ ${variantTable(REPLACE_VARIANTS)}
     name: "string/case-convert",
     iterations: 100,
     opsPerCall: 2000,
-    minNsPerOp: 5,
+    // (#4118) Read a CHARACTER of each converted string, not just its length.
+    // ASCII case conversion preserves length, so `.length` is derivable from the
+    // receiver and both temporaries were eliminated outright. Floor unchanged.
+    minNsPerOp: 0.75,
     source: `
 export function run(): number {
 ${variantTable(CASE_VARIANTS)}
   let sum = 0;
   for (let i = 0; i < 1000; i = i + 1) {
     const s = variants[i % 8];
-    sum = sum + s.toLowerCase().length;
-    sum = sum + s.toUpperCase().length;
+    const lower = s.toLowerCase();
+    const upper = s.toUpperCase();
+    sum = sum + lower.length + lower.charCodeAt(i % 23);
+    sum = sum + upper.length + upper.charCodeAt(i % 23);
   }
   return sum;
 }`,
@@ -357,19 +443,12 @@ ${variantTable(CASE_VARIANTS)}
     name: "string/substring",
     iterations: 100,
     opsPerCall: 10000,
-    // This floor was briefly lowered 3 -> 1, on the theory that our
-    // `__str_substring` is an O(1) slice view (#3901) that Binaryen may
-    // legitimately scalar-replace down to near-nothing. That lowering was made
-    // against a lane Binaryen had *eliminated* (it accumulated only
-    // `.length`, which is derivable from the arguments, so the call was
-    // strength-reduced away and clocked 2.394 ns/op). Once the loop was fixed to
-    // consume the slice's CONTENT, the honest costs measured on 2026-08-01 are
-    // 10.3-13.7 ns/op (js) and 110-114 ns/op (gc-native) — nowhere near 3 ns.
-    // So restore 3: it is ~3.4x below the cheaper of the two lanes, which is the
-    // "roughly a quarter of the honest cost" margin `minNsPerOp` documents, and
-    // a floor of 1 would be the loosest guard in this file for no measured
-    // reason.
-    minNsPerOp: 3,
+    // The compiler now scalar-replaces a non-escaping substring with its
+    // (data, offset, length) descriptor. The loop still performs all three
+    // induction-dependent remainders and reads two UTF-16 code units, so this
+    // is not the old `.length`-only elimination bug. It measures ~2.2 ns/op;
+    // retain the usual roughly-quarter-cost plausibility margin.
+    minNsPerOp: 0.5,
     source: `
 export function run(): number {
   const s = "abcdefghijklmnopqrstuvwxyz";

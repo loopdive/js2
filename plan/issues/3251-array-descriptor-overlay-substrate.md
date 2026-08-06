@@ -14,7 +14,7 @@ area: codegen, runtime, standalone
 language_feature: arrays, property-descriptors
 goal: standalone-mode
 umbrella: 1781
-related: [3246, 2042, 2992, 3116, 2668]
+related: [3246, 2042, 2992, 3116, 2668, 4159]
 horizon: xl
 epic: true
 # (#3102 LOC ratchet) S1 grows only the unavoidable arm/wiring lines in these
@@ -418,3 +418,30 @@ Filed from the #3246 follow-up scope-first analysis (tech-lead-directed). The
 compile-time-`definedPropertyFlags`-for-indices interim was explicitly declined
 (flips only the few index throw-only tests that don't read back — not worth the
 complexity). This epic is the correct-sized fix.
+
+## Known hole in the S1 coherence strategy — #4159 (confirmed 2026-08-04)
+
+The "data-define VALUES written back INTO the vec, so the typed inline
+`array.get` fast path stays coherent with zero read overhead" trick is sound
+**for data descriptors only**. An accessor define has no value to write back,
+and the typed lane is documented here as "NOT hookable cheaply" — so the
+accessor arm reaches the dynamic lane and nothing else.
+
+Confirmed on this tree, `--target standalone`:
+
+```ts
+const arr: number[] = [10, 20, 30];
+Object.defineProperty(arr, "1", { get: () => 99, configurable: true });
+arr[1]        // 20  — stale element, getter never invoked
+(arr as any)[1] // 99 — dynamic lane is correct
+```
+
+The setter write is dropped the same way. The `writable:false` typed-write case
+throws and is inconclusive (may be the correct strict-mode TypeError).
+
+This matters for the epic's own acceptance criteria: *"dense-array fast path
+unchanged (no perf/behaviour regression)"* is satisfied **while this hole is
+open** — the fast path is unchanged, and that is precisely the bug. So the epic
+can be closed as done without closing this. Tracked separately as **#4159**;
+the OOB-index mitigation recorded above ("accessor defines do NOT extend the vec
+length") does not cover it, because the failing index is in-bounds.

@@ -99,9 +99,10 @@ export class CompilerPool {
   }
 
   private forkProcess(): ChildProcess {
+    const maxOldSpaceSize = process.env.TEST262_WORKER_MAX_OLD_SPACE_SIZE ?? "512";
     return fork(this.workerPath, [], {
       stdio: ["pipe", "pipe", "pipe", "ipc"],
-      execArgv: ["--expose-gc", "--max-old-space-size=512"],
+      execArgv: ["--expose-gc", `--max-old-space-size=${maxOldSpaceSize}`],
       // Test262 baselines are produced on UTC CI hosts. Pin worker time-zone
       // semantics locally as well so Date parsing/formatting verdicts do not
       // depend on the developer machine. TEST262_TZ remains an explicit

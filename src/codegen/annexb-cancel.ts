@@ -1,5 +1,5 @@
 /**
- * (#4166) Annex B B.3.3 — "the web-compat extension is NOT observed when
+ * (#3980) Annex B B.3.3 — "the web-compat extension is NOT observed when
  * creating the var binding would produce an Early Error".
  *
  * B.3.3.1 / B.3.3.2 give a block-nested sloppy-mode `function F` a *var-scoped*
@@ -123,12 +123,24 @@ function catchParamCancels(node: ts.Node, name: string): boolean {
  * as the "declaring block" — reads inside it still resolve to the block-local
  * function — or `null` when `fd` is a plain scope-level declaration.
  */
-function annexBDeclaringRange(fd: ts.FunctionDeclaration): ts.Node | null {
+export function annexBDeclaringRange(fd: ts.FunctionDeclaration): ts.Node | null {
   const parent = fd.parent;
   if (!parent) return null;
   if (ts.isBlock(parent)) {
-    // The function body of the enclosing var scope is NOT a block-nested position.
-    if (isVarScopeBoundary(parent.parent)) return null;
+    // Only an ACTUAL function body is a scope-level declaration list. A user
+    // BlockStatement directly under a SourceFile is still a block-nested
+    // Annex-B position; treating SourceFile as the block's owner used to make
+    // eval("{ function f() {} }") look like a plain script declaration.
+    const owner = parent.parent;
+    if (
+      owner &&
+      !ts.isSourceFile(owner) &&
+      !ts.isModuleBlock(owner) &&
+      isVarScopeBoundary(owner) &&
+      (owner as ts.FunctionLikeDeclarationBase).body === parent
+    ) {
+      return null;
+    }
     return parent;
   }
   // `switch (x) { case 1: function f() {} }` — the whole CaseBlock is one
@@ -234,7 +246,7 @@ function hasInterveningLexicalBinder(from: ts.Node, name: string, scope: ts.Node
  * observable way (reading `F` outside the block throws), so strict mode is not
  * gated here.
  *
- * (#4166) This is the narrow, per-`FunctionContext` detector used by the hoist
+ * (#3980) This is the narrow, per-`FunctionContext` detector used by the hoist
  * pass; `collectAnnexBCancelSites` below is the whole-`SourceFile` superset that
  * also covers `if`-clause / `switch`-clause declaration positions, lexical loop
  * heads, destructuring `catch` parameters, and reads inside nested closures.
@@ -246,9 +258,18 @@ export function annexBHoistCancels(fnDecl: ts.FunctionDeclaration): ts.Block | n
   // Must be directly inside a Block (not the function body itself, not a case
   // clause statement list, etc.). A direct function-body decl keeps its hoist.
   if (!ts.isBlock(block)) return null;
-  if (isVarScopeBoundary(block.parent)) return null; // block IS the fn body → direct decl
+  const owner = block.parent;
+  if (
+    owner &&
+    !ts.isSourceFile(owner) &&
+    !ts.isModuleBlock(owner) &&
+    isVarScopeBoundary(owner) &&
+    (owner as ts.FunctionLikeDeclarationBase).body === block
+  ) {
+    return null; // block IS the fn body → direct decl
+  }
 
-  // (#4166) Annex B declining to create the web-compat var binding does NOT make
+  // (#3980) Annex B declining to create the web-compat var binding does NOT make
   // the name unbound when the enclosing var scope ALREADY binds it — a parameter
   // (`*-skip-param`), a `var f`, or a scope-top-level `let f` (`*-skip-early-err`
   // without a suffix). The pre-existing binding stays readable, so cancelling
@@ -272,15 +293,98 @@ export function annexBHoistCancels(fnDecl: ts.FunctionDeclaration): ts.Block | n
   return null;
 }
 
+/**
+ * (#4131) B.3.3.1 step 3 — the half of Annex B that is an *assignment*, not a
+ * declaration.
+ *
+ * `collectAnnexBCancelSites` below answers "does this name read as UNBOUND?".
+ * This answers the complementary question: when the enclosing var scope ALREADY
+ * binds the name, B.3.3.1 step 3.f still requires that *evaluating* the
+ * block-nested `function F` perform `fenvRec.SetMutableBinding(F, fobj, false)`
+ * on that existing binding. The compiler modelled only the "create a new
+ * web-compat binding" half (`annexBBlockNestedEligible` in
+ * `statements/nested-declarations.ts`, which bails outright when the name
+ * already has a local) — so `var f = 123` in the same scope never saw the
+ * function object, and every `annexB/language/*-existing-var-update` test read
+ * the var's own value instead.
+ *
+ * Restricted to FUNCTION var scopes on purpose. A script-scope `var` is a module
+ * GLOBAL, not a local, and its representation is decided by a different path;
+ * widening the local carrier for it produced `local.tee expected (ref null N),
+ * found global.get of type f64` (measured on the 5 `global-code/if-*` files).
+ * Global-scope B.3.3.1 step 3 is real and still unimplemented — see #4131.
+ *
+ * Deliberately shares `annexBDeclaringRange` with the cancellation collector, so
+ * the Block / `if`-clause / `switch`-clause position set is defined exactly once.
+ * The `if` and `switch` positions are why this could not simply be added to
+ * `annexBBlockNestedEligible`, which only recognises a direct `Block` parent.
+ */
+export function annexBUpdatesExistingVarBinding(fd: ts.FunctionDeclaration): boolean {
+  const name = fd.name?.text;
+  if (!name || !fd.body) return false;
+  if (annexBDeclaringRange(fd) === null) return false;
+  const scope = enclosingVarScope(fd);
+  if (!scope || ts.isSourceFile(scope) || ts.isModuleBlock(scope)) return false;
+  // A cancelled extension creates NO binding and updates none either (B.3.3.1
+  // step 1.a.ii skips the whole step-3 replacement).
+  if (hasInterveningLexicalBinder(fd.parent, name, scope)) return false;
+  return scopeBindsName(scope, name);
+}
+
+const SCOPE_UPDATE_CACHE = new WeakMap<ts.Node, Set<string>>();
+
+/**
+ * (#4131) The names in `scope` that some Annex B statement-position `function`
+ * declaration must write back to an ALREADY-EXISTING var binding. Memoized per
+ * var scope; the result is almost always empty, so ordinary code pays one walk
+ * per scope and no allocation beyond the shared empty set.
+ */
+export function annexBExistingVarUpdateNames(scope: ts.Node): ReadonlySet<string> {
+  const cached = SCOPE_UPDATE_CACHE.get(scope);
+  if (cached) return cached;
+  const names = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    // Test the node BEFORE the boundary guard: a `FunctionDeclaration` IS a var
+    // scope boundary, so guarding first would skip the very declarations this
+    // walk is looking for (measured: the set came back empty for every case).
+    if (ts.isFunctionDeclaration(node) && node.name && node.body && annexBUpdatesExistingVarBinding(node)) {
+      names.add(node.name.text);
+    }
+    // Do not descend into a nested var scope — its own Annex B declarations
+    // belong to ITS binding set, not this one.
+    if (node !== scope && isVarScopeBoundary(node)) return;
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(scope, visit);
+  SCOPE_UPDATE_CACHE.set(scope, names);
+  return names;
+}
+
 const CACHE = new WeakMap<ts.SourceFile, AnnexBCancelSite[]>();
+
+/** Shared empty result for callers with no SourceFile — never mutated. */
+const NO_SITES: AnnexBCancelSite[] = [];
 
 /**
  * Collect every Annex B B.3.3 site in `sf` whose web-compat var binding is
  * cancelled AND whose enclosing scope has no other binding for the name — i.e.
  * every name that must read as *unbound* outside its declaring block.
  * Memoized per SourceFile; the result is almost always empty.
+ *
+ * `sf` is OPTIONAL because the only caller derives it from
+ * `identifier.getSourceFile()`, which returns `undefined` for a **synthesized**
+ * identifier — one the compiler manufactured during a desugaring, with no
+ * `parent` chain to walk up. Those are common (`with`, `eval`, receiver and
+ * `this` rewrites, …) and they carry no source position, so no Annex B question
+ * can be asked about them: answer "no sites" and, critically, do NOT touch the
+ * `WeakMap`. `CACHE.set(undefined, …)` throws `TypeError: Invalid value used as
+ * weak map key`, which `compileExpressionBody`'s speculative catch converts into
+ * `Internal error compiling expression` — i.e. a **compile_error for the whole
+ * file**. Un-guarded, this fired on 666 test262 files that have nothing to do
+ * with Annex B (152 of them `pass` → `compile_error`); see #4091.
  */
-export function collectAnnexBCancelSites(sf: ts.SourceFile): AnnexBCancelSite[] {
+export function collectAnnexBCancelSites(sf: ts.SourceFile | undefined): AnnexBCancelSite[] {
+  if (!sf) return NO_SITES;
   const cached = CACHE.get(sf);
   if (cached) return cached;
   const sites: AnnexBCancelSite[] = [];

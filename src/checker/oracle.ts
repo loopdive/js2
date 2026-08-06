@@ -97,6 +97,28 @@ export interface TypeOracle {
    *  builtin name, or undefined. Standardizes the `symName !== "Date"`-class
    *  gates (#2767 family). */
   builtinReceiverOf(node: ts.Node): string | undefined;
+  /**
+   * (#4016) Does this node's type carry the WELL-KNOWN SYMBOL member
+   * `[Symbol.<name>]`? Three-valued on purpose:
+   *
+   *   - `true`      the member is present (e.g. `RegExp` carries all five of
+   *                 `@@match`/`@@matchAll`/`@@replace`/`@@search`/`@@split`);
+   *   - `false`     PROVABLY absent — every constituent of the type was
+   *                 resolvable and none declared the member;
+   *   - `undefined` unknowable (`any` / `unknown` / a union with such a part).
+   *
+   * The distinction is load-bearing for the §22.1.3 `String.prototype`
+   * search-value dispatch: only a **provable** `false` licenses lowering the
+   * spec's plain-`ToString` path, because a value that MIGHT carry `@@split`
+   * must reach the symbol-protocol dispatch instead. `undefined` and `true`
+   * are both "do not take the ToString shortcut".
+   *
+   * This is a genuine type-shape fact, not a `ts.Type` identity leak: the
+   * answer is a tri-state boolean and no checker object escapes. It lives here
+   * rather than at the call site precisely so `src/codegen/**` need not reach
+   * for the raw checker (#1930 / #3273).
+   */
+  wellKnownSymbolMemberOf(node: ts.Node, name: string): boolean | undefined;
   /** Stable identity token for the node's checker type (Slice 5). */
   typeKeyOf(node: ts.Node): OracleTypeKey;
   /** Declared type NAME when the node's type has a named symbol. */
@@ -126,6 +148,8 @@ export interface TypeOracle {
    * boundary without exposing the checker Symbol.
    */
   valueDeclarationOf(id: ts.Node): ts.Declaration | undefined;
+  /** All declarations for an exact binding, without exposing its Symbol. */
+  declarationsOf(node: ts.Node): readonly ts.Declaration[];
   /**
    * Variable declaration for a plain identifier binding. Returning the AST
    * declaration (rather than the checker Symbol) keeps binding-identity
@@ -272,6 +296,52 @@ export class TsCheckerOracle implements TypeOracle {
     return fact.kind === "builtin" ? fact.name : undefined;
   }
 
+  wellKnownSymbolMemberOf(node: ts.Node, name: string): boolean | undefined {
+    try {
+      const t = this.checker.getTypeAtLocation(node);
+      return t ? this.wellKnownSymbolOnType(t, name, 0) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * (#4016) Recursive worker for {@link wellKnownSymbolMemberOf}.
+   *
+   * TypeScript models a `[Symbol.foo]` member as a late-bound property whose
+   * ESCAPED name is `__@foo@<declId>` (the trailing id disambiguates distinct
+   * `unique symbol` declarations); older/ambient shapes can appear as bare
+   * `__@foo`. Both spellings are matched. A union answers `true` if ANY
+   * constituent carries the member (the runtime value could be that one) and
+   * `undefined` if any constituent was itself unknowable.
+   */
+  private wellKnownSymbolOnType(t: ts.Type, name: string, depth: number): boolean | undefined {
+    if (depth > 6) return undefined;
+    if (t.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) return undefined;
+    if (t.isUnion?.()) {
+      let unknowable = false;
+      for (const part of (t as ts.UnionType).types) {
+        const answer = this.wellKnownSymbolOnType(part, name, depth + 1);
+        if (answer === true) return true;
+        if (answer === undefined) unknowable = true;
+      }
+      return unknowable ? undefined : false;
+    }
+    let props: readonly ts.Symbol[];
+    try {
+      props = this.checker.getPropertiesOfType(t);
+    } catch {
+      return undefined;
+    }
+    const suffixed = `__@${name}@`;
+    const bare = `__@${name}`;
+    for (const prop of props) {
+      const escaped = prop.escapedName as string;
+      if (escaped === bare || escaped.startsWith(suffixed)) return true;
+    }
+    return false;
+  }
+
   typeKeyOf(node: ts.Node): OracleTypeKey {
     const t = this.checker.getTypeAtLocation(node) as unknown as object;
     let key = this.keyCache.get(t);
@@ -340,6 +410,14 @@ export class TsCheckerOracle implements TypeOracle {
       return sym?.valueDeclaration ?? sym?.declarations?.[0];
     } catch {
       return undefined;
+    }
+  }
+
+  declarationsOf(node: ts.Node): readonly ts.Declaration[] {
+    try {
+      return [...(this.checker.getSymbolAtLocation(node)?.declarations ?? [])];
+    } catch {
+      return [];
     }
   }
 

@@ -22,7 +22,7 @@
 // `Boolean` flag so `boolean[]` stays on the fast path.
 
 import { describe, expect, it } from "vitest";
-import { compile } from "../src/index.js";
+import { compile, type IrObservedOutcome } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 import { analyzeSource } from "../src/checker/index.js";
 import { planIrCompilation } from "../src/ir/select.js";
@@ -40,8 +40,14 @@ function isClaimed(source: string, fn: string): boolean {
 async function compileRun(
   source: string,
   fn: string,
-): Promise<{ value: unknown; wideningDemotions: number; success: boolean }> {
-  const r = await compile(source, { experimentalIR: true });
+): Promise<{
+  value: unknown;
+  wideningDemotions: number;
+  success: boolean;
+  wat: string;
+  outcome?: IrObservedOutcome;
+}> {
+  const r = await compile(source, { experimentalIR: true, trackIrOutcomes: true, emitWat: true });
   if (!r.success) {
     throw new Error(`compile failed: ${r.errors[0]?.message ?? "unknown"}`);
   }
@@ -53,7 +59,13 @@ async function compileRun(
   );
   const f = (instance.exports as Record<string, unknown>)[fn];
   if (typeof f !== "function") throw new Error(`export ${fn} missing`);
-  return { value: (f as () => unknown)(), wideningDemotions, success: r.success };
+  return {
+    value: (f as () => unknown)(),
+    wideningDemotions,
+    success: r.success,
+    wat: r.wat,
+    outcome: r.irOutcomes?.find((candidate) => candidate.displayName === fn),
+  };
 }
 
 describe("#2780 — IR ArrayLiteral widening-escape check", () => {
@@ -62,9 +74,16 @@ describe("#2780 — IR ArrayLiteral widening-escape check", () => {
     it("no-annotation number[] (no contextual sink) sums via the IR vec", async () => {
       const src = `export function sum(): number { const a = [1,2,3]; let t = 0; for (const x of a) { t += x; } return t; }`;
       expect(isClaimed(src, "sum"), "function IR-claimed").toBe(true);
-      const { value, wideningDemotions } = await compileRun(src, "sum");
+      const { value, wideningDemotions, wat, outcome } = await compileRun(src, "sum");
       expect(value).toBe(6);
       expect(wideningDemotions, "no widening demotion on the FAST path").toBe(0);
+      expect(wat).toContain("array.new_fixed");
+      expect(outcome).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+        preparedComponentId: expect.stringMatching(/^prepared-component:/),
+      });
     });
 
     it("no-annotation number[] indexed + length", async () => {

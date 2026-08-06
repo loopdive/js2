@@ -67,7 +67,8 @@ class TrendChart extends HTMLElement {
 
     if (seriesDef.length === 0) return;
 
-    const PAD = { top: 20, right: 40, bottom: 40, left: 60 };
+    const isSparkline = mode === "sparkline";
+    const PAD = isSparkline ? { top: 3, right: 3, bottom: 3, left: 3 } : { top: 20, right: 40, bottom: 40, left: 60 };
     const plotW = W - PAD.left - PAD.right;
     const plotH = H - PAD.top - PAD.bottom;
     const n = data.length;
@@ -76,9 +77,67 @@ class TrendChart extends HTMLElement {
 
     if (mode === "stacked") {
       this._renderStacked(data, seriesDef, W, H, PAD, plotW, plotH, n, x, labelsKey);
+    } else if (isSparkline) {
+      this._renderSparkline(data, seriesDef, W, H, PAD, plotW, plotH, n, x);
     } else {
       this._renderLine(data, seriesDef, W, H, PAD, plotW, plotH, n, x, labelsKey, mode === "step");
     }
+  }
+
+  // Compact, axis-free rendering for small inline trend indicators (e.g. next
+  // to a per-edition stat row). Single series only; no grid/labels/peak text.
+  _renderSparkline(data, seriesDef, W, H, PAD, plotW, plotH, n, x) {
+    const s = seriesDef[0];
+    if (!s) {
+      this.shadowRoot.innerHTML = `<style>:host { display: block; }</style>`;
+      return;
+    }
+
+    const values = data.map((d) => Number(d[s.key] || 0));
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const range = max - min || 1;
+    const y = (v) => PAD.top + plotH - ((v - min) / range) * plotH;
+
+    let path = `M ${x(0)} ${y(values[0])}`;
+    for (let i = 1; i < n; i++) path += ` L ${x(i)} ${y(values[i])}`;
+
+    // White line/fill, matching the primary trend chart — brightening and
+    // glowing towards the right (the latest point), like the edition
+    // timeline bar.
+    const lastIdx = n - 1;
+    const fillPath =
+      s.fill === false ? "" : `${path} L ${x(lastIdx)} ${PAD.top + plotH} L ${x(0)} ${PAD.top + plotH} Z`;
+
+    // Dashed reference line at the first point's level — lets the eye judge
+    // at a glance whether the series ended above or below where it started,
+    // the way a stock sparkline shows the previous-close line.
+    const baselineY = y(values[0]);
+    const baseline = `<line x1="${PAD.left}" y1="${baselineY}" x2="${W - PAD.right}" y2="${baselineY}" stroke="#fff" stroke-opacity="0.25" stroke-width="1" stroke-dasharray="2 2"/>`;
+
+    this.shadowRoot.innerHTML = `
+      <style>:host { display: block; }</style>
+      <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:100%;display:block">
+        <defs>
+          <linearGradient id="sparkFill" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stop-color="#fff" stop-opacity="0.04"/>
+            <stop offset="70%" stop-color="#fff" stop-opacity="0.2"/>
+            <stop offset="100%" stop-color="#fff" stop-opacity="0.5"/>
+          </linearGradient>
+          <linearGradient id="sparkLine" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stop-color="#fff" stop-opacity="0.5"/>
+            <stop offset="100%" stop-color="#fff" stop-opacity="1"/>
+          </linearGradient>
+          <filter id="sparkGlow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur in="SourceGraphic" stdDeviation="1.1" result="blur"/>
+            <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+        </defs>
+        ${fillPath ? `<path d="${fillPath}" fill="url(#sparkFill)"/>` : ""}
+        ${baseline}
+        <path d="${path}" fill="none" stroke="url(#sparkLine)" stroke-width="${s.lineWidth ?? 1.5}" stroke-linejoin="round" stroke-linecap="round" filter="url(#sparkGlow)"/>
+        <circle cx="${x(lastIdx)}" cy="${y(values[lastIdx])}" r="2.5" fill="#fff" filter="url(#sparkGlow)"/>
+      </svg>`;
   }
 
   _buildXAccessor(data, xKey, left, plotW, n) {

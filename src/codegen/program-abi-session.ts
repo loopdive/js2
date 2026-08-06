@@ -518,7 +518,7 @@ interface PreparedProgramAbiScopeRecord {
   readonly requestedBindingIds: ReadonlySet<IrBindingId>;
   readonly bindingIds: ReadonlySet<IrBindingId>;
   readonly bindingTerminalOwnerIds: ReadonlyMap<IrBindingId, IrUnitId | null>;
-  readonly drafts: ReadonlyMap<IrBindingId, ProgramAbiDraft>;
+  readonly drafts: Map<IrBindingId, ProgramAbiDraft>;
   readonly locators: ReadonlyMap<IrBindingId, PreparedProgramAbiLocatorSnapshot>;
   readonly structuralReferences: ReadonlyMap<IrBindingId, string>;
   readonly callableTypeContracts: Map<IrBindingId, ProgramAbiCallableTypeContract>;
@@ -530,6 +530,45 @@ interface PreparedProgramAbiScopeRecord {
 
 function validOrdinal(value: number): boolean {
   return Number.isSafeInteger(value) && value >= 0;
+}
+
+function isLeafFinalizationOnly(previousLayout: string, currentLayout: string): boolean {
+  let previous: unknown;
+  let current: unknown;
+  try {
+    previous = JSON.parse(previousLayout);
+    current = JSON.parse(currentLayout);
+  } catch {
+    return false;
+  }
+  let changed = false;
+  const compare = (left: unknown, right: unknown, key?: string): boolean => {
+    if (left === right) return true;
+    if (key === "final" && left === false && right === true) {
+      changed = true;
+      return true;
+    }
+    if (Array.isArray(left) || Array.isArray(right)) {
+      return (
+        Array.isArray(left) &&
+        Array.isArray(right) &&
+        left.length === right.length &&
+        left.every((value, index) => compare(value, right[index]))
+      );
+    }
+    if (typeof left !== "object" || left === null || typeof right !== "object" || right === null) return false;
+    const leftRecord = left as Record<string, unknown>;
+    const rightRecord = right as Record<string, unknown>;
+    const leftKeys = Object.keys(leftRecord);
+    const rightKeys = Object.keys(rightRecord);
+    return (
+      leftKeys.length === rightKeys.length &&
+      leftKeys.every(
+        (field) => Object.hasOwn(rightRecord, field) && compare(leftRecord[field], rightRecord[field], field),
+      )
+    );
+  };
+  return compare(previous, current) && changed;
 }
 
 interface ProgramAbiDerivedPath {
@@ -842,7 +881,7 @@ export class ProgramAbiSession {
   private readonly inventorySourceIds = new Set<IrSourceId>();
   private readonly inventoryUnitIds = new Set<IrUnitId>();
   private readonly inventoryClassIds = new Set<IrClassId>();
-  private readonly preparedFreeFunctionUnitIds = new Set<IrUnitId>();
+  private readonly preparedTerminalUnitIds = new Set<IrUnitId>();
   private readonly drafts = new Map<IrBindingId, ProgramAbiDraft>();
   private readonly draftOrderOwners = new Map<string, IrBindingId>();
   private readonly derivedUnits = new Map<IrUnitId, ProgramAbiDerivedUnitRecord>();
@@ -856,7 +895,7 @@ export class ProgramAbiSession {
   private readonly preparedScopes = new Map<string, PreparedProgramAbiScopeRecord>();
   private readonly preparedScopeByUnitId = new Map<IrUnitId, string>();
   private readonly preparedScopeByClassId = new Map<IrClassId, string>();
-  private readonly preparedScopeByBindingId = new Map<IrBindingId, string>();
+  private readonly preparedScopeIdsByBindingId = new Map<IrBindingId, Set<string>>();
   private readonly openPreparedScopeIds = new Set<string>();
   private applyingPreparedTypeLayoutRemap = false;
   private state: SessionState = "planning";
@@ -875,9 +914,7 @@ export class ProgramAbiSession {
     }
     for (const unit of inventory.allUnits) this.inventoryUnitIds.add(unit.id);
     for (const classRecord of inventory.classes) this.inventoryClassIds.add(classRecord.id);
-    for (const unit of inventory.terminalUnits) {
-      if (unit.kind === "top-level-function") this.preparedFreeFunctionUnitIds.add(unit.id);
-    }
+    for (const unit of inventory.terminalUnits) this.preparedTerminalUnitIds.add(unit.id);
     this.structuralOrder = new ProgramAbiStructuralOrder(inventory);
   }
 
@@ -896,7 +933,7 @@ export class ProgramAbiSession {
   }
 
   /**
-   * Start exact dependency discovery for one prepared free-function component.
+   * Start exact dependency discovery for one prepared executable component.
    *
    * Source and derived callables are inferred from terminal ownership. The
    * caller adds only already-discovered external/support dependencies; alias
@@ -921,10 +958,10 @@ export class ProgramAbiSession {
       );
     }
     for (const unitId of exactTerminalUnitIds) {
-      if (!this.preparedFreeFunctionUnitIds.has(unitId)) {
+      if (!this.preparedTerminalUnitIds.has(unitId)) {
         throw new ProgramAbiInvariantError(
           "unknown-inventory-unit",
-          `prepared ABI scope ${scopeId} references non-R2 or unknown terminal ${unitId}`,
+          `prepared ABI scope ${scopeId} references an unknown terminal ${unitId}`,
         );
       }
       const owner = this.preparedScopeByUnitId.get(unitId);
@@ -1140,7 +1177,7 @@ export class ProgramAbiSession {
       }
       return;
     }
-    const preparedScopeId = this.preparedScopeByBindingId.get(id);
+    const preparedScopeId = this.preparedScopeForBinding(id);
     if (preparedScopeId !== undefined) {
       throw new ProgramAbiInvariantError(
         "planning-sealed",
@@ -1178,7 +1215,7 @@ export class ProgramAbiSession {
       }
       return;
     }
-    const preparedScopeId = this.preparedScopeByBindingId.get(id);
+    const preparedScopeId = this.preparedScopeForBinding(id);
     if (preparedScopeId !== undefined) {
       throw new ProgramAbiInvariantError(
         "planning-sealed",
@@ -1388,6 +1425,7 @@ export class ProgramAbiSession {
     for (const [id, contract] of remappedCallableContracts) this.callableTypeContracts.set(id, contract);
     this.globalTypeContracts.clear();
     for (const [id, contract] of remappedGlobalContracts) this.globalTypeContracts.set(id, contract);
+    const remappedTypeDrafts = new Map<IrBindingId, ProgramAbiDraft>();
     for (const scope of this.preparedScopes.values()) {
       for (const id of scope.callableTypeContracts.keys()) {
         const draft = this.drafts.get(id);
@@ -1407,7 +1445,14 @@ export class ProgramAbiSession {
       for (const id of scope.typeLayouts.keys()) {
         const locator = this.locators.get(id);
         if (locator?.kind === "type-cell" && locator.cell.current !== null) {
-          scope.typeLayouts.set(id, canonicalProgramAbiTypeDef(locator.cell.current));
+          const currentLayout = canonicalProgramAbiTypeDef(locator.cell.current);
+          scope.typeLayouts.set(id, currentLayout);
+          const draft = this.drafts.get(id);
+          if (draft?.intent.kind === "type") {
+            remappedTypeDrafts.set(id, { ...draft, intent: { ...draft.intent, shapeKey: currentLayout } });
+          } else if (draft?.intent.kind === "class") {
+            remappedTypeDrafts.set(id, { ...draft, intent: { ...draft.intent, layoutKey: currentLayout } });
+          }
         }
       }
       const remappedReachableLayouts = new Map<number, string>();
@@ -1425,6 +1470,120 @@ export class ProgramAbiSession {
       for (const [index, layoutValue] of remappedReachableLayouts) {
         scope.reachableTypeLayouts.set(index, layoutValue);
       }
+    }
+    for (const [id, draft] of remappedTypeDrafts) this.drafts.set(id, draft);
+    for (const scope of this.preparedScopes.values()) {
+      for (const [id, draft] of remappedTypeDrafts) {
+        if (scope.drafts.has(id)) scope.drafts.set(id, cloneDraft(draft));
+      }
+    }
+  }
+
+  /**
+   * Record the backend's deterministic leaf-struct finalization pass.
+   *
+   * Finality is a physical type property, so prepared scopes must not observe
+   * it as an unexplained in-place mutation. This narrowly accepts only
+   * `final: false -> true` changes at indices reported by
+   * `markLeafStructsFinal`. Explicit support-type roots participate in the
+   * same refresh because finality is a backend layout optimization applied
+   * after scope sealing. Source class layouts use the same exact type cells,
+   * so a reported leaf-only transition is safe for them as well.
+   */
+  recordLeafTypeFinalization(finalizedTypeIndices: readonly number[]): void {
+    this.assertLayoutMutable("record leaf type finalization");
+    if (finalizedTypeIndices.length === 0 || this.preparedScopes.size === 0) return;
+    const finalized = new Set(finalizedTypeIndices);
+    for (const index of finalized) {
+      if (!Number.isSafeInteger(index) || index < 0 || index >= this.module.types.length) {
+        throw new ProgramAbiInvariantError(
+          "type-remap-mismatch",
+          `leaf type finalization reports invalid module type index ${index}`,
+        );
+      }
+    }
+
+    const refreshedDrafts = new Map<IrBindingId, ProgramAbiDraft>();
+    const refreshed: Array<{
+      readonly scope: PreparedProgramAbiScopeRecord;
+      readonly typeLayouts: Map<IrBindingId, string>;
+      readonly reachableTypeLayouts: Map<number, string>;
+    }> = [];
+    for (const scope of this.preparedScopes.values()) {
+      const typeLayouts = new Map(scope.typeLayouts);
+      for (const [id, expectedLayout] of scope.typeLayouts) {
+        const locator = this.locators.get(id);
+        if (locator?.kind !== "type-cell" || locator.cell.current === null) {
+          throw new ProgramAbiInvariantError(
+            "type-remap-mismatch",
+            `leaf finalization changed explicit prepared type/class binding ${id}`,
+          );
+        }
+        const currentLayout = canonicalProgramAbiTypeDef(locator.cell.current);
+        if (currentLayout === expectedLayout) continue;
+        const draft = this.drafts.get(id);
+        const index = this.module.types.indexOf(locator.cell.current);
+        if (
+          (draft?.intent.kind !== "type" && draft?.intent.kind !== "class") ||
+          index < 0 ||
+          !finalized.has(index) ||
+          !isLeafFinalizationOnly(expectedLayout, currentLayout)
+        ) {
+          throw new ProgramAbiInvariantError(
+            "type-remap-mismatch",
+            `leaf finalization changed explicit prepared type/class binding ${id}`,
+          );
+        }
+        typeLayouts.set(id, currentLayout);
+        const refreshedDraft: ProgramAbiDraft =
+          draft.intent.kind === "type"
+            ? { ...draft, intent: { ...draft.intent, shapeKey: currentLayout } }
+            : { ...draft, intent: { ...draft.intent, layoutKey: currentLayout } };
+        const previousRefresh = refreshedDrafts.get(id);
+        if (previousRefresh && !draftsEqual(previousRefresh, refreshedDraft)) {
+          throw new ProgramAbiInvariantError(
+            "type-remap-mismatch",
+            `leaf finalization produced conflicting prepared draft refreshes for ${id}`,
+          );
+        }
+        refreshedDrafts.set(id, refreshedDraft);
+      }
+      const current = this.collectPreparedReachableTypeLayouts(
+        this.module,
+        scope.typeLayouts.keys(),
+        scope.callableTypeContracts,
+        scope.globalTypeContracts,
+      );
+      if (
+        current.size !== scope.reachableTypeLayouts.size ||
+        [...scope.reachableTypeLayouts.keys()].some((index) => !current.has(index))
+      ) {
+        throw new ProgramAbiInvariantError(
+          "type-remap-mismatch",
+          `leaf finalization changed the reachable type denominator for prepared scope ${scope.scopeId}`,
+        );
+      }
+      for (const [index, previousLayout] of scope.reachableTypeLayouts) {
+        const currentLayout = current.get(index)!;
+        if (currentLayout === previousLayout) continue;
+        if (!finalized.has(index) || !isLeafFinalizationOnly(previousLayout, currentLayout)) {
+          throw new ProgramAbiInvariantError(
+            "type-remap-mismatch",
+            `leaf finalization changed prepared type ${index} beyond final: false -> true`,
+          );
+        }
+      }
+      refreshed.push({ scope, typeLayouts, reachableTypeLayouts: current });
+    }
+    for (const [id, draft] of refreshedDrafts) this.drafts.set(id, draft);
+    for (const { scope, typeLayouts, reachableTypeLayouts } of refreshed) {
+      for (const [id, draft] of refreshedDrafts) {
+        if (scope.drafts.has(id)) scope.drafts.set(id, cloneDraft(draft));
+      }
+      scope.typeLayouts.clear();
+      for (const [id, layout] of typeLayouts) scope.typeLayouts.set(id, layout);
+      scope.reachableTypeLayouts.clear();
+      for (const [index, layout] of reachableTypeLayouts) scope.reachableTypeLayouts.set(index, layout);
     }
   }
 
@@ -1763,8 +1922,13 @@ export class ProgramAbiSession {
           `prepared ABI scope ${scopeId} reaches source global ${id} owned by another component`,
         );
       }
-      const previousScope = this.preparedScopeByBindingId.get(id);
-      if (previousScope !== undefined) {
+      const previousScope = this.preparedScopeForBinding(id);
+      const structuralOwnerId = this.assertCanonicalPreparedBindingId(draft);
+      const dependencyTerminalOwnerId = this.terminalOwnerForPreparedDraft(draft, structuralOwnerId);
+      // Entry/runtime-owned dependencies are immutable compilation-wide
+      // snapshots and may be consumed by more than one component. Anything
+      // with a terminal source owner remains exclusive to that component.
+      if (previousScope !== undefined && dependencyTerminalOwnerId !== null) {
         throw new ProgramAbiInvariantError(
           "duplicate-session-draft",
           `prepared ABI binding ${id} overlaps sealed scope ${previousScope}`,
@@ -1890,7 +2054,7 @@ export class ProgramAbiSession {
       requestedBindingIds: readonlySet(requestedBindingIds),
       bindingIds: readonlySet(exactBindingIds),
       bindingTerminalOwnerIds: readonlyMap(bindingTerminalOwnerIds),
-      drafts: readonlyMap(drafts.map((draft) => [draft.id, cloneDraft(draft)] as const)),
+      drafts: new Map(drafts.map((draft) => [draft.id, cloneDraft(draft)] as const)),
       locators: readonlyMap(locatorSnapshots),
       structuralReferences: readonlyMap(structuralReferences),
       callableTypeContracts,
@@ -1906,7 +2070,7 @@ export class ProgramAbiSession {
     this.preparedScopes.set(scopeId, record);
     for (const unitId of unitIds) this.preparedScopeByUnitId.set(unitId, scopeId);
     for (const classId of classIds) this.preparedScopeByClassId.set(classId, scopeId);
-    for (const bindingId of exactBindingIds) this.preparedScopeByBindingId.set(bindingId, scopeId);
+    for (const bindingId of exactBindingIds) this.addPreparedScopeBinding(bindingId, scopeId);
     return view;
   }
 
@@ -2240,9 +2404,14 @@ export class ProgramAbiSession {
         currentReachableLayouts.size !== scope.reachableTypeLayouts.size ||
         [...scope.reachableTypeLayouts].some(([index, layout]) => currentReachableLayouts.get(index) !== layout)
       ) {
+        const changed = [...scope.reachableTypeLayouts]
+          .filter(([index, layout]) => currentReachableLayouts.get(index) !== layout)
+          .map(([index]) => index);
+        const added = [...currentReachableLayouts.keys()].filter((index) => !scope.reachableTypeLayouts.has(index));
         throw new ProgramAbiInvariantError(
           "type-remap-mismatch",
-          `prepared type graph for scope ${scope.scopeId} drifted before exact layout remapping`,
+          `prepared type graph for scope ${scope.scopeId} drifted before exact layout remapping ` +
+            `(changed/missing: ${changed.slice(0, 8).join(",") || "none"}; added: ${added.slice(0, 8).join(",") || "none"})`,
         );
       }
     }
@@ -2336,8 +2505,18 @@ export class ProgramAbiSession {
     }
   }
 
+  private preparedScopeForBinding(id: IrBindingId): string | undefined {
+    return this.preparedScopeIdsByBindingId.get(id)?.values().next().value;
+  }
+
+  private addPreparedScopeBinding(id: IrBindingId, scopeId: string): void {
+    const scopeIds = this.preparedScopeIdsByBindingId.get(id) ?? new Set<string>();
+    scopeIds.add(scopeId);
+    this.preparedScopeIdsByBindingId.set(id, scopeIds);
+  }
+
   private preparedScopeAffectedByDraft(draft: ProgramAbiDraft): string | undefined {
-    const exactOwner = this.preparedScopeByBindingId.get(draft.id);
+    const exactOwner = this.preparedScopeForBinding(draft.id);
     if (exactOwner !== undefined) return exactOwner;
     if (draft.intent.kind === "callable" && draft.intent.unitId) {
       const unitOwner = this.preparedScopeByUnitId.get(draft.intent.unitId);
@@ -2352,11 +2531,11 @@ export class ProgramAbiSession {
       if (classOwner !== undefined) return classOwner;
     }
     if (draft.slotPolicy === "alias") {
-      const aliasOwner = this.preparedScopeByBindingId.get(draft.aliasOf);
+      const aliasOwner = this.preparedScopeForBinding(draft.aliasOf);
       if (aliasOwner !== undefined) return aliasOwner;
     }
     if (draft.intent.kind === "export") {
-      const exportOwner = this.preparedScopeByBindingId.get(draft.intent.targetId);
+      const exportOwner = this.preparedScopeForBinding(draft.intent.targetId);
       if (exportOwner !== undefined) return exportOwner;
     }
     for (const [unitId, scopeId] of this.preparedScopeByUnitId) {
@@ -2777,7 +2956,7 @@ export class ProgramAbiSession {
     replacement: T,
   ): void {
     this.assertLayoutMutable(`replace slot locator for ${id}`);
-    const preparedScopeId = this.preparedScopeByBindingId.get(id);
+    const preparedScopeId = this.preparedScopeForBinding(id);
     if (preparedScopeId !== undefined) {
       throw new ProgramAbiInvariantError(
         "locator-remap-mismatch",

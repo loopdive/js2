@@ -10,7 +10,7 @@ import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { addUnionImports } from "../index.js";
 import { addStringConstantGlobal, ensureExnTag } from "../registry/imports.js";
 import { coerceType, compileExpression, compileStatement, ensureLateImport, flushLateImportShifts } from "../shared.js";
-import { walkChildren } from "../walk-instructions.js";
+import { walkChildren, walkInstructions } from "../walk-instructions.js";
 import {
   compileExternrefArrayDestructuringDecl,
   compileExternrefObjectDestructuringDecl,
@@ -79,6 +79,23 @@ function bumpOuterBranchDepths(instrs: Instr[], outerDepths: Set<number>, delta:
     const childLocalDepth = isLabelOp ? localDepth + 1 : localDepth;
     walkChildren(instr, (children) => bumpOuterBranchDepths(children, outerDepths, delta, childLocalDepth));
   }
+}
+
+/** Deep-clone an instruction tree while retaining finalize-time flag fixups. */
+function cloneInstructions(ctx: CodegenContext, instrs: Instr[]): Instr[] {
+  const cloned = structuredClone(instrs) as Instr[];
+  const trackedReads = ctx.inModuleInitFlagReads;
+  if (!trackedReads || trackedReads.length === 0) return cloned;
+
+  const tracked = new Set(trackedReads);
+  const originals: Instr[] = [];
+  const copies: Instr[] = [];
+  walkInstructions(instrs, (instr) => originals.push(instr));
+  walkInstructions(cloned, (instr) => copies.push(instr));
+  for (let i = 0; i < originals.length; i++) {
+    if (tracked.has(originals[i]!)) trackedReads.push(copies[i]!);
+  }
+  return cloned;
 }
 
 function compileExternrefCatchDestructure(
@@ -306,7 +323,7 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
 
   /** Return a deep clone of the pre-compiled finally instructions. */
   function cloneFinally(): Instr[] {
-    return structuredClone(finallyInstrs!);
+    return cloneInstructions(ctx, finallyInstrs!);
   }
 
   /**
@@ -318,7 +335,7 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
    * finally was compiled at +1.
    */
   function cloneFinallyAtDepth(extraDepth: number): Instr[] {
-    const cloned = structuredClone(finallyInstrs!);
+    const cloned = cloneInstructions(ctx, finallyInstrs!);
     if (extraDepth === 0 || outerBreakDepths.size === 0) return cloned;
     bumpOuterBranchDepths(cloned, outerBreakDepths, extraDepth);
     return cloned;
@@ -505,7 +522,7 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
 
     /** Deep-clone the catch body instructions for reuse in catch_all. */
     function cloneCatchBody(): Instr[] {
-      return structuredClone(catchBodyInstrs);
+      return cloneInstructions(ctx, catchBodyInstrs);
     }
 
     // Build "catch $exn" body: receives the externref value on the stack

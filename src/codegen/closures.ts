@@ -140,6 +140,12 @@ import {
   emitClosureConstruction,
   registerClosureBindingInfo,
 } from "./closures/arrow-phases.js"; // (#3278) arrow/fn-expr closure phase helpers
+import {
+  collectDirectEvalActivationBindingNames,
+  collectDirectEvalBindingNames,
+  functionMayReachDirectEval,
+  reifyCurrentDirectEvalBindings,
+} from "./direct-eval-environment.js";
 import { initializeFunctionPoisonPillContext } from "./function-poison-pill.js";
 import {
   emitObjectMethodAsClosure,
@@ -2048,6 +2054,16 @@ export function compileLiftedClosureBody(
     // native struct → the #2681/#2686 throw).
     thisStructName: resolveLiftedMethodThisStruct(ctx, arrow),
   };
+  const reachesDirectEval = functionMayReachDirectEval(arrow, ctx.oracle);
+  if (reachesDirectEval) {
+    liftedFctx.directEvalBindingNames = collectDirectEvalBindingNames(arrow);
+    liftedFctx.directEvalActivationBindingNames = collectDirectEvalActivationBindingNames(arrow);
+    liftedFctx.directEvalOuterBindingNames = new Set<string>();
+    for (const capture of captures) {
+      liftedFctx.directEvalBindingNames.add(capture.name);
+      liftedFctx.directEvalOuterBindingNames.add(capture.name);
+    }
+  }
   initializeFunctionPoisonPillContext(ctx, liftedFctx, arrow);
 
   // (#1384) Track liftedFctx.body in liveBodies BEFORE any emission so
@@ -2261,7 +2277,7 @@ export function compileLiftedClosureBody(
 
   // Set up `arguments` object for function expressions (not arrow functions).
   // Arrow functions don't have their own `arguments` binding in JS.
-  if (ts.isFunctionExpression(arrow) && ts.isBlock(body) && closureBodyUsesArguments(body)) {
+  if (ts.isFunctionExpression(arrow) && ts.isBlock(body) && (closureBodyUsesArguments(body) || reachesDirectEval)) {
     // Ensure __box_number is available for boxing numeric params
     const hasNumericParam = arrowParams.some((pt) => pt.kind === "f64" || pt.kind === "i32");
     if (hasNumericParam) {
@@ -2320,6 +2336,7 @@ export function compileLiftedClosureBody(
   // accesses before the declaration site throw ReferenceError (#790).
   if (ts.isBlock(body)) {
     hoistLetConstWithTdz(ctx, liftedFctx, body.statements);
+    reifyCurrentDirectEvalBindings(ctx, liftedFctx);
   }
 
   // (#3164) Native generator FUNCTION EXPRESSION (standalone/wasi). When the
@@ -2610,6 +2627,71 @@ export function compileLiftedClosureBody(
   return { liftedFctx, closureReturnType, liftedFuncTypeIdx };
 }
 
+/** (#4134) Report a lifted closure whose body escapes its own local frame. */
+function reportClosureFrameBreach(
+  ctx: CodegenContext,
+  arrow: ts.ArrowFunction | ts.FunctionExpression,
+  closureName: string,
+  liftedFuncTypeIdx: number,
+  liftedFctx: FunctionContext,
+): void {
+  const type = ctx.mod.types[liftedFuncTypeIdx];
+  if (!type || type.kind !== "func") return;
+  const frame = type.params.length + liftedFctx.locals.length;
+  const localOps = new Set(["local.get", "local.set", "local.tee"]);
+  let worst = -1;
+  const walk = (instrs: readonly Instr[]): void => {
+    for (const instr of instrs) {
+      if (localOps.has(instr.op)) {
+        const index = (instr as { index?: number }).index;
+        if (typeof index === "number" && index >= frame && index > worst) worst = index;
+      }
+      for (const key of ["body", "then", "else", "catchAll"] as const) {
+        const nested = (instr as unknown as Record<string, unknown>)[key];
+        if (Array.isArray(nested)) walk(nested as Instr[]);
+      }
+      const catches = (instr as { catches?: { body?: Instr[] }[] }).catches;
+      if (Array.isArray(catches)) for (const c of catches) if (Array.isArray(c.body)) walk(c.body);
+    }
+  };
+  walk(liftedFctx.body);
+  if (worst < 0) return;
+  if (process.env?.JS2WASM_FRAME_OPS) {
+    const flat: string[] = [];
+    const dump = (instrs: readonly Instr[], depth: number): void => {
+      for (const instr of instrs) {
+        const idx = (instr as { index?: number }).index;
+        flat.push(
+          `${"  ".repeat(depth)}${instr.op}${idx === undefined ? "" : ` ${idx}`}${typeof idx === "number" && idx >= frame ? "   <<<< OUT OF FRAME" : ""}`,
+        );
+        for (const key of ["body", "then", "else", "catchAll"] as const) {
+          const nested = (instr as unknown as Record<string, unknown>)[key];
+          if (Array.isArray(nested)) dump(nested as Instr[], depth + 1);
+        }
+      }
+    };
+    dump(liftedFctx.body, 0);
+    const stale = [...liftedFctx.localMap.entries()].filter(([, v]) => v >= frame);
+    process.stderr.write(
+      `[js2:frame-ops] ${closureName} params=${type.params.map((p) => p.kind).join(",")} locals=${liftedFctx.locals.map((l) => `${l.name}:${l.type.kind}`).join(",")}` +
+        ` STALE-localMap=${stale.map(([k, v]) => `${k}->${v}`).join(",") || "none"}\n`,
+    );
+    for (const line of flat) process.stderr.write(`[js2:frame-ops]   ${line}\n`);
+  }
+  let text = "<unavailable>";
+  try {
+    text = arrow.getText().replace(/\s+/g, " ").slice(0, 200);
+  } catch {
+    // A synthesized node has no source text; the name and frame still localise it.
+  }
+  const file = arrow.getSourceFile?.()?.fileName ?? "<unknown>";
+  process.stderr.write(
+    `[js2:closure-frame] ${closureName} frame=${frame} (${type.params.length} params + ` +
+      `${liftedFctx.locals.length} locals) worst=${worst}\n` +
+      `[js2:closure-frame]   at ${file}\n[js2:closure-frame]   source: ${text}\n`,
+  );
+}
+
 /** Compile an arrow function as a first-class closure value (Wasm GC struct + funcref) */
 export function compileArrowAsClosure(
   ctx: CodegenContext,
@@ -2663,7 +2745,14 @@ export function compileArrowAsClosure(
 
   // 2. Analyze captured variables (referenced/written free vars, outer-write +
   //    TDZ-flag boxing) and the self-recursive binding — see planClosureCaptures.
-  const { captures, selfBindingName } = planClosureCaptures(ctx, fctx, arrow, body);
+  const reachesDirectEval = functionMayReachDirectEval(arrow, ctx.oracle);
+  const { captures, selfBindingName } = planClosureCaptures(
+    ctx,
+    fctx,
+    arrow,
+    body,
+    reachesDirectEval ? fctx.boxedCaptures?.keys() : undefined,
+  );
 
   // 3. Create struct type: field 0 = funcref, fields 1..N = captured vars
   //    For mutable captures, the field type is a ref cell (struct { value: T })
@@ -2713,6 +2802,14 @@ export function compileArrowAsClosure(
   liftedFuncTypeIdx = generic.liftedFuncTypeIdx;
 
   const liftedFuncIdx = mintDefinedFunc(ctx);
+  // (#4134) `JS2WASM_CHECK_FRAMES=1` reports a lifted closure body that reads or
+  // writes a local its own frame never declares, AT THE MOMENT IT IS CREATED,
+  // together with the offending source text. The end-of-codegen checker can only
+  // say which function is broken; this says which ARROW produced it, which is
+  // the last link needed to reduce a fixture. Inert unless set.
+  if (typeof process !== "undefined" && process.env?.JS2WASM_CHECK_FRAMES) {
+    reportClosureFrameBreach(ctx, arrow, closureName, liftedFuncTypeIdx, liftedFctx);
+  }
   pushProgramAbiNestedCallable(ctx, arrow, liftedFuncIdx, {
     name: closureName,
     typeIdx: liftedFuncTypeIdx,
@@ -2872,9 +2969,85 @@ export function compileArrowAsClosure(
   }
 
   // 8. Register closure info so call sites can emit call_ref — see registerClosureBindingInfo.
-  registerClosureBindingInfo(ctx, arrow, structTypeIdx, liftedFuncTypeIdx, closureReturnType, arrowParams);
+  registerClosureBindingInfo(
+    ctx,
+    arrow,
+    structTypeIdx,
+    liftedFuncTypeIdx,
+    closureReturnType,
+    arrowParams,
+    captureFreeNumericInlineBody(arrow, captures.length, liftedFctx, arrowParams.length),
+  );
 
   return { kind: "ref", typeIdx: structTypeIdx };
+}
+
+const NUMERIC_CLOSURE_INLINE_OPS = new Set<string>([
+  "i32.const",
+  "i32.add",
+  "i32.sub",
+  "i32.mul",
+  "i32.div_s",
+  "i32.rem_s",
+  "i32.eq",
+  "i32.ne",
+  "i32.lt_s",
+  "i32.le_s",
+  "i32.gt_s",
+  "i32.ge_s",
+  "i32.eqz",
+  "f64.const",
+  "f64.add",
+  "f64.sub",
+  "f64.mul",
+  "f64.div",
+  "f64.rem",
+  "f64.eq",
+  "f64.ne",
+  "f64.lt",
+  "f64.le",
+  "f64.gt",
+  "f64.ge",
+  // Numeric helpers such as JS remainder lower to a direct Wasm function
+  // call. The surrounding body remains straight-line and is copied once at
+  // the original call site, so effects/traps and evaluation order are intact.
+  "call",
+]);
+const NUMERIC_CLOSURE_INLINE_MAX_INSTRS = 10;
+
+/**
+ * Extract the tiny expression-shaped numeric callbacks that array HOF loops
+ * can inline without materializing call-site state. The body must be
+ * capture-free, local-free, and consist only of parameter reads plus scalar
+ * arithmetic/comparisons. Anything scope-, heap-, trap-, or call-sensitive
+ * retains the ordinary closure call_ref path.
+ */
+function captureFreeNumericInlineBody(
+  arrow: ts.ArrowFunction | ts.FunctionExpression,
+  captureCount: number,
+  liftedFctx: FunctionContext,
+  paramCount: number,
+): Instr[] | undefined {
+  if (
+    captureCount !== 0 ||
+    liftedFctx.locals.length !== 0 ||
+    arrow.parameters.some((param) => param.dotDotDotToken || param.initializer) ||
+    (ts.isBlock(arrow.body) && closureBodyUsesArguments(arrow.body))
+  ) {
+    return undefined;
+  }
+  const body = liftedFctx.body.filter((instr) => instr.op !== "nop");
+  if (body.at(-1)?.op === "return") body.pop();
+  if (body.length === 0 || body.length > NUMERIC_CLOSURE_INLINE_MAX_INSTRS) return undefined;
+  for (const instr of body) {
+    if (instr.op === "local.get") {
+      const index = (instr as { index: number }).index;
+      if (index < 1 || index > paramCount) return undefined;
+      continue;
+    }
+    if (!NUMERIC_CLOSURE_INLINE_OPS.has(instr.op)) return undefined;
+  }
+  return body.map((instr) => ({ ...instr }));
 }
 
 /** Compile an arrow function as a host callback via __make_callback.
@@ -2940,6 +3113,27 @@ export function compileArrowAsCallback(
   // initializer / binding-pattern element default / computed key (see the
   // rationale on the identical scan in `compileArrowAsClosure`).
   collectParamDefaultReferences(arrow.parameters, referencedNames, ownLocals);
+
+  // A host callback can call a capturing nested declaration. Its callback
+  // frame must carry that declaration's environment just like a lifted Wasm
+  // closure does; otherwise the direct call reads owner-frame local indices
+  // from the callback frame.
+  const captureWorklist = [...referencedNames];
+  const visitedCaptureFunctions = new Set<string>();
+  while (captureWorklist.length > 0) {
+    const referencedName = captureWorklist.pop()!;
+    if (visitedCaptureFunctions.has(referencedName)) continue;
+    visitedCaptureFunctions.add(referencedName);
+    const transitiveCaptures = ctx.nestedFuncCaptures.get(referencedName);
+    if (!transitiveCaptures) continue;
+    for (const capture of transitiveCaptures) {
+      if (ownLocals.has(capture.name)) continue;
+      if (!referencedNames.has(capture.name)) {
+        referencedNames.add(capture.name);
+        captureWorklist.push(capture.name);
+      }
+    }
+  }
 
   // Detect which captured variables are written inside the callback body (#859)
   const writtenInCallback = new Set<string>();
@@ -3312,6 +3506,16 @@ export function compileArrowAsCallback(
         }
       } else {
         // Immutable capture or already-boxed: push directly
+        if (process.env?.JS2WASM_FRAME_OPS) {
+          const liveFrame = fctx.params.length + fctx.locals.length;
+          if (cap.localIdx >= liveFrame) {
+            process.stderr.write(
+              `[js2:cap-emit] '${cap.name}' localIdx=${cap.localIdx} >= liveFrame=${liveFrame} ` +
+                `(params=${fctx.params.length} locals=${fctx.locals.length}) in ${fctx.name} ` +
+                `mapNow=${fctx.localMap.get(cap.name)} alreadyBoxed=${cap.alreadyBoxed}\n`,
+            );
+          }
+        }
         fctx.body.push({ op: "local.get", index: cap.localIdx });
       }
     }

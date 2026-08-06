@@ -16,12 +16,11 @@ import { compile } from "../src/index.js";
 //     it as tag 5 (string) via its fallback arm.
 // That regressed ~793 standalone test262 cases (concentrated in class dstr).
 //
-// The fix: `__any_to_extern` unwraps ONLY the numeric/boolean carriers (tags
-// 2/3/4 — the values a host/numeric consumer needs raw); for tags 0/1/5/6 it
-// keeps the WHOLE `$AnyValue` box wrapped via `extern.convert_any`, which
-// `__any_from_extern` recovers exactly through its `ref.test $AnyValue` arm —
-// preserving the tag and reference identity. Standalone has no JS host that
-// needs the unwrapped value, so wrapping is always safe.
+// The fix: `__any_to_extern` unwraps numeric/boolean carriers (tags 2/3/4) and
+// a tag-5 payload only after proving it is a native string. For tags 0/1/6 and
+// overloaded non-string tag 5 it keeps the WHOLE `$AnyValue` box wrapped via
+// `extern.convert_any`, which `__any_from_extern` recovers exactly through its
+// `ref.test $AnyValue` arm — preserving null/object tags and identity.
 
 const BANNED_STANDALONE_IMPORTS = [
   /^env::__get_builtin$/,
@@ -66,7 +65,7 @@ describe("#1888 any⇄externref bridge round-trip safety", () => {
   // ── Structural regression guard ─────────────────────────────────────────
   // Locks the helper shape so a future change can't silently re-introduce the
   // tag-5/tag-6 unwrap that broke null/object/string round-trips.
-  it("__any_to_extern unwraps only numeric/boolean tags and keeps the box for the rest", async () => {
+  it("__any_to_extern unwraps only primitive carriers and keeps object/null boxes", async () => {
     // `a + b` over open-any method args forces the numeric dispatch path that
     // materialises the bridge.
     const r = await compileStandalone(`
@@ -80,11 +79,12 @@ describe("#1888 any⇄externref bridge round-trip safety", () => {
 
     // Field 0 = tag, field 1 = i32val (tags 2/4), field 2 = f64val (tag 3),
     // field 3 = refval (eqref, tag 6), field 4 = externval (string, tag 5).
-    // The fix MUST NOT read field 3 or field 4 — those unwrap arms are gone.
+    // Tag 6 must never unwrap. Field 4 is read only by the guarded native-string
+    // arm; non-string tag-5 overloads still reach the wrapped tail.
     const readsField3 = body.some((l) => /struct\.get \d+ 3\b/.test(l));
     const readsField4 = body.some((l) => /struct\.get \d+ 4\b/.test(l));
     expect(readsField3, "tag-6 (GC ref) must NOT be unwrapped via field 3").toBe(false);
-    expect(readsField4, "tag-5 (string) must NOT be unwrapped via field 4").toBe(false);
+    expect(readsField4, "tag-5 native strings should use the guarded field-4 arm").toBe(true);
 
     // The non-numeric tail keeps the whole $AnyValue box: the body ends with
     // `local.get 0 / ref.as_non_null / extern.convert_any` (no per-tag unwrap).
@@ -112,6 +112,21 @@ describe("#1888 any⇄externref bridge round-trip safety", () => {
           const o: any = {};
           o["two"] = (a: any, b: any) => a + b;
           return o.two(2.5, 3.25) === 5.75 ? 1 : 0;
+        }
+      `),
+    ).toBe(1);
+  });
+
+  it("keeps a computed string primitive across consecutive any-external hops", async () => {
+    expect(
+      await runStandalone(`
+        function add(a: any, b: any): any {
+          return a + b;
+        }
+        export function run(): number {
+          const first: any = add("", "a");
+          const second: any = add(first, "b");
+          return typeof second === "string" && second === "ab" ? 1 : 0;
         }
       `),
     ).toBe(1);

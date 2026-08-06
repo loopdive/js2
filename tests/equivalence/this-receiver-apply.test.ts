@@ -2,7 +2,7 @@ import { describe, it } from "vitest";
 import { assertEquivalent } from "./helpers.js";
 
 /**
- * (#4168) `fn.apply(thisArg[, argsArray])` on a stable named FunctionDeclaration
+ * (#3983) `fn.apply(thisArg[, argsArray])` on a stable named FunctionDeclaration
  * whose body reads `this` used to evaluate `thisArg` and DROP it, so `this`
  * inside the callee was the ambient receiver rather than the requested one —
  * a silent wrong answer, not a refusal.
@@ -12,7 +12,7 @@ import { assertEquivalent } from "./helpers.js";
  * same path. The `.call` and null-receiver cases are covered here as guards so
  * the previously-correct lowerings cannot regress.
  */
-describe("#4168 — .apply() installs the receiver as `this`", () => {
+describe("#3983 — .apply() installs the receiver as `this`", () => {
   it("apply(obj) — receiver identity", async () => {
     await assertEquivalent(
       `

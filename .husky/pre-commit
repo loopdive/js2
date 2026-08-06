@@ -1,5 +1,16 @@
-npx lint-staged &&
-  pnpm run test:changed-root &&
+npx lint-staged || exit 1
+
+# Fast lane (#4100 post-mortem): the slow chain below takes minutes and exceeds
+# agent tool timeouts, which drove wholesale `git commit --no-verify` — losing
+# the seconds-cheap prettier/biome gate above along with the slow checks.
+# SKIP_SLOW_PRECOMMIT=1 keeps the format gate unconditional and skips only the
+# slow checks (CI runs them all regardless). Never use `--no-verify`; use this.
+if [ -n "$SKIP_SLOW_PRECOMMIT" ]; then
+  echo "pre-commit: fast gate passed (lint-staged: prettier + biome); slow checks skipped (SKIP_SLOW_PRECOMMIT=1) — CI still runs them"
+  exit 0
+fi
+
+pnpm run test:changed-root &&
   pnpm run check:oracle-ratchet &&
   pnpm run check:loc-budget &&
   pnpm run check:func-budget

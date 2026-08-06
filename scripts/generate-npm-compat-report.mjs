@@ -37,10 +37,13 @@ import { runHarness as runAcornOfficialSuite } from "../tests/dogfood/acorn-offi
 import { runHarness as runMarked } from "../tests/dogfood/marked-harness.mjs";
 import { runHarness as runClsx } from "../tests/dogfood/clsx-harness.mjs";
 import { runHarness as runCookie } from "../tests/dogfood/cookie-harness.mjs";
+import { correctnessRollup, correctnessVerdict } from "./lib/npm-compat-correctness.mjs"; // (#4127)
 import { runHarness as runEslint } from "../tests/dogfood/eslint-harness.mjs";
 import { runHarness as runPrettier } from "../tests/dogfood/prettier-harness.mjs";
 import { runHarness as runReact } from "../tests/dogfood/react-harness.mjs";
 import { runHarness as runReactUpstreamSuite } from "../tests/dogfood/react-upstream-suite.mjs";
+import { runHarness as runLitUpstreamSuite } from "../tests/dogfood/lit-upstream-suite.mjs";
+import { runHarness as runReactDomUpstreamSuite } from "../tests/dogfood/react-dom-upstream-suite.mjs";
 import { NPM_COMPAT_CATALOG, NPM_COMPAT_CATALOG_NAMES } from "../tests/dogfood/npm-compat-catalog.mjs";
 import { runNpmCompatCatalogHarness } from "../tests/dogfood/npm-compat-catalog-harness.mjs";
 
@@ -77,6 +80,7 @@ const NPM_DOWNLOADS_SNAPSHOT = {
     tailwindcss: 117_155_768,
     axios: 112_353_408,
     clsx: 104_930_549,
+    jsdom: 89_317_829,
     marked: 60_496_071,
     webpack: 55_617_769,
     hono: 53_123_258,
@@ -1312,7 +1316,7 @@ function knownBugsFor(name) {
   return map[name] ?? [];
 }
 
-async function buildPackageEntry({ name, version, issue, entryFile, shape, report, tests, perf }) {
+async function buildPackageEntry({ name, version, issue, entryFile, shape, report, tests, perf, entryIsBarrel }) {
   return {
     name,
     version,
@@ -1321,7 +1325,17 @@ async function buildPackageEntry({ name, version, issue, entryFile, shape, repor
     shape,
     compile: report.compile,
     validation: report.validation,
+    // True when the published entry module is a re-export barrel with no
+    // implementation of its own, so `compile`/`validation` above describe the
+    // barrel rather than the package's code. Consumers must not present that
+    // as evidence the package compiles (#3977).
+    ...(entryIsBarrel ? { entryIsBarrel: true } : {}),
     tests,
+    // (#4127) The correctness axis, kept separate from compile/validation so a
+    // package that compiles to a valid module but computes the WRONG ANSWER
+    // cannot read as green. `unverified` means nothing is known — it is never
+    // a synonym for "fine".
+    correctness: correctnessVerdict(tests, { compiles: report?.compile?.success !== false }),
     perf,
     knownBugs: knownBugsFor(name),
   };
@@ -1527,8 +1541,94 @@ if (selectedPackages.has("react")) {
   );
 }
 
+if (selectedPackages.has("lit")) {
+  console.log("[npm-compat] lit — package entry + lit's own upstream unit tests...");
+  const litEntry = NPM_COMPAT_CATALOG.find((entry) => entry.name === "lit");
+  const litReport = await runNpmCompatCatalogHarness("lit", { quiet: true });
+  const litSuite = await runLitUpstreamSuite({ quiet: true });
+  packages.push(
+    await buildPackageEntry({
+      name: "lit",
+      version: litEntry.version,
+      issue: 3977,
+      entryFile: litEntry.entryModule.replace(/^package\//, ""),
+      shape: litEntry.shape,
+      report: litReport,
+      // (#3977) The compile/validate numbers on this card come from
+      // `lit/index.js`, which is a FOUR-LINE BARREL — it re-exports
+      // `lit-element` and `lit-html` and contains no implementation, so
+      // "201 bytes, validates" was never a statement about lit. The test
+      // numbers come from the three PUBLISHED packages that actually carry
+      // lit's code, running lit's own upstream suite. `entryIsBarrel` exists
+      // so the card can say that out loud rather than letting the two numbers
+      // be read as being about the same thing.
+      entryIsBarrel: true,
+      tests: {
+        kind: "upstream-suite",
+        passed: litSuite.results?.passed ?? null,
+        total: litSuite.results?.scored ?? null,
+        passRatePct: litSuite.summary?.passRatePct ?? null,
+        admitted: litSuite.extraction?.admitted ?? null,
+        upstreamTestsSeen: litSuite.extraction?.upstreamTestsSeen ?? null,
+        harnessIncompatible: litSuite.results?.harnessIncompatible ?? null,
+        // The headline finding, and the reason the pass rate is low: most of
+        // lit's corpus sits behind an implementation module the validator
+        // rejects (#3978), so those tests never ran against Wasm at all.
+        implementationInvalidTests: litSuite.summary?.implementationInvalidTests ?? null,
+        sourceIssue: 3977,
+      },
+      perf: null,
+    }),
+  );
+}
+
+if (selectedPackages.has("react-dom")) {
+  console.log("[npm-compat] react-dom — package entry + react-dom's own upstream unit tests...");
+  const reactDomEntry = NPM_COMPAT_CATALOG.find((entry) => entry.name === "react-dom");
+  const reactDomReport = await runNpmCompatCatalogHarness("react-dom", { quiet: true });
+  const reactDomSuite = await runReactDomUpstreamSuite({ quiet: true });
+  packages.push(
+    await buildPackageEntry({
+      name: "react-dom",
+      version: reactDomEntry.version,
+      issue: 3982,
+      entryFile: reactDomEntry.entryModule.replace(/^package\//, ""),
+      shape: reactDomEntry.shape,
+      report: reactDomReport,
+      // (#3982) The suite landed in PR #4079 but this card kept saying
+      // "not-integrated" — the same failure mode as lit/#3977: a suite that
+      // exists in tests/dogfood/ is invisible to the dashboard until THIS
+      // generator runs it, because the refresh workflow regenerates from this
+      // file alone. Denominator is `scored`, not the admitted count, matching
+      // the react card: a test the harness cannot reproduce natively says
+      // nothing about the compiler.
+      tests: {
+        kind: "upstream-suite",
+        passed: reactDomSuite.results?.passed ?? null,
+        total: reactDomSuite.results?.scored ?? null,
+        passRatePct: reactDomSuite.summary?.passRatePct ?? null,
+        admitted: reactDomSuite.extraction?.admitted ?? null,
+        upstreamTestsSeen: reactDomSuite.extraction?.upstreamTestsSeen ?? null,
+        harnessIncompatible: reactDomSuite.results?.harnessIncompatible ?? null,
+        // Why 0 can be scored while 1,942 are admitted: while #3982 is open the
+        // implementation module itself may be rejected, and the suite's OWN
+        // test file pins that this is REPORTED with the compiler's message,
+        // never a silent zero. Carry that explanation onto the card (the lit
+        // card does the same via implementationInvalidTests, #3977/#3978).
+        implementationInvalidTests: reactDomSuite.summary?.implementationInvalidTests ?? null,
+        implementationError: reactDomSuite.summary?.implementationError ?? null,
+        sourceIssue: 3982,
+      },
+      perf: null,
+    }),
+  );
+}
+
 for (const entry of NPM_COMPAT_CATALOG) {
   if (!selectedPackages.has(entry.name)) continue;
+  // Handled above with its own upstream suite rather than as a bare
+  if (entry.name === "lit") continue;
+  if (entry.name === "react-dom") continue;
   console.log(`[npm-compat] ${entry.name} — bounded published package-entry compile/validate...`);
   const report = await runNpmCompatCatalogHarness(entry.name, { quiet: true });
   packages.push(
@@ -1560,6 +1660,10 @@ packages.sort(
 
 const summary = {
   generatedAt: new Date().toISOString(),
+  // (#4127) How much of the corpus carries correctness evidence at all. The
+  // `unverified` list is named, not just counted, so the size of the blind spot
+  // is legible rather than implied.
+  correctness: correctnessRollup(packages),
   note: "Only packages with a committed, reproducible tests/dogfood harness are listed. Original upstream tests are preferred; when npm omits them, the card says so instead of substituting harness-authored tests.",
   popularity: {
     metric: "weekly npm downloads",

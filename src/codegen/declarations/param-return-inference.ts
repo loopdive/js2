@@ -93,8 +93,40 @@ export function inferParamTypeFromCallSites(
   let sawCallSite = false;
   let sawUnderApplied = false;
 
+  const isRecursiveCall = (call: ts.CallExpression | ts.NewExpression): boolean => {
+    const target = ctx.oracle.valueDeclarationOf(call.expression);
+    for (let owner: ts.Node | undefined = call.parent; owner; owner = owner.parent) {
+      if (!ts.isFunctionLike(owner)) continue;
+      return (
+        owner === target || (target !== undefined && ts.isVariableDeclaration(target) && target.initializer === owner)
+      );
+    }
+    return false;
+  };
+
   function visit(node: ts.Node) {
-    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === funcName) {
+    // (#743) `new F(…)` is a call site for F's PARAMETERS exactly as `F(…)` is —
+    // same arity rules, same argument-to-parameter mapping, same under-application
+    // semantics. Until now only `isCallExpression` matched, so every
+    // function-style constructor's parameters were invisible to this inference:
+    // acorn's `new Parser(options, input, startPos)` contributed nothing, and its
+    // ctor params stayed `any`, which is what seeds 43 of its 96 fnctor field
+    // slots as `externref` (#4155 census). Widening the node test is the whole
+    // change — the agreement, conflict, under-application (#3548) and recursion
+    // (#3961) soundness rules below are shared verbatim.
+    //
+    // Gated with the field half (`fnctor-ctor-param-types.ts`) on the SAME
+    // variable, and checked inline rather than imported to avoid a module cycle
+    // (that module imports this one). The two must not be separable: narrowing
+    // the parameter while the slot stays `externref` re-boxes on every store and
+    // measured strictly WORSE than doing nothing (+27 bytes on a one-field
+    // fixture). Default off — see that module for the acorn numbers.
+    const ctorSitesEnabled = process.env.JS2WASM_FNCTOR_CTOR_PARAM_TYPES === "1";
+    if (
+      (ts.isCallExpression(node) || (ctorSitesEnabled && ts.isNewExpression(node))) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === funcName
+    ) {
       // A matching call exists regardless of arg types — the function IS invoked
       // internally, so its params are determined by runtime call args, not the
       // body-usage fallback. Record this before any conflict short-circuit.
@@ -106,9 +138,13 @@ export function inferParamTypeFromCallSites(
       // zero-arg call site's pad could only satisfy with `ref.null` +
       // `ref.as_non_null` — an unconditional runtime trap on the (usually
       // passing) zero-arg path.
-      if (node.arguments.length <= paramIndex) sawUnderApplied = true;
+      // `new F` with no parens has NO argument list at all (`arguments` is
+      // undefined, not empty) — that is an under-applied site for every
+      // parameter, so treat a missing list as length 0 rather than skipping it.
+      const callArgs = node.arguments;
+      if ((callArgs?.length ?? 0) <= paramIndex) sawUnderApplied = true;
       if (!conflict) {
-        const arg = node.arguments[paramIndex];
+        const arg = callArgs?.[paramIndex];
         if (arg) {
           const argType = ctx.checker.getTypeAtLocation(arg);
           // Skip if the argument itself is also `any` — no useful info
@@ -131,7 +167,15 @@ export function inferParamTypeFromCallSites(
                 const wasmType: ValType = { kind: "f64" };
                 if (agreed === null) agreed = wasmType;
                 else if (agreed.kind !== wasmType.kind) conflict = true;
+              } else if (isRecursiveCall(node)) {
+                // (#3961) A dynamic value forwarded recursively is part of the
+                // callee's runtime domain. React's `mapIntoArray(children, …)`
+                // also has a proven-array call; ignoring the recursive value
+                // narrows `children` to a vec and destroys element arguments.
+                conflict = true;
               }
+            } else if (isRecursiveCall(node)) {
+              conflict = true;
             }
           } else {
             const wasmType = resolveWasmType(ctx, argType);

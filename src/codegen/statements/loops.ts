@@ -94,6 +94,42 @@ function compileLoopBodyWithShadows(ctx: CodegenContext, fctx: FunctionContext, 
   }
 }
 
+/** Emit the unobserved step of an already-promoted i32 induction variable. */
+function emitPromotedI32Increment(fctx: FunctionContext, stmt: ts.ForStatement): boolean {
+  const loop = detectI32LoopVar(stmt);
+  const incrementor = stmt.incrementor;
+  if (!loop || !incrementor) return false;
+  const localIdx = fctx.localMap.get(loop.name);
+  if (localIdx === undefined || getLocalType(fctx, localIdx)?.kind !== "i32") return false;
+
+  let step: number | undefined;
+  if (ts.isPostfixUnaryExpression(incrementor) || ts.isPrefixUnaryExpression(incrementor)) {
+    step = incrementor.operator === ts.SyntaxKind.PlusPlusToken ? 1 : -1;
+  } else if (ts.isBinaryExpression(incrementor) && ts.isNumericLiteral(incrementor.right)) {
+    const magnitude = Number(incrementor.right.text.replace(/_/g, ""));
+    if (incrementor.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken) step = magnitude;
+    if (incrementor.operatorToken.kind === ts.SyntaxKind.MinusEqualsToken) step = -magnitude;
+  } else if (
+    ts.isBinaryExpression(incrementor) &&
+    incrementor.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    ts.isBinaryExpression(incrementor.right) &&
+    ts.isNumericLiteral(incrementor.right.right)
+  ) {
+    const magnitude = Number(incrementor.right.right.text.replace(/_/g, ""));
+    step = incrementor.right.operatorToken.kind === ts.SyntaxKind.PlusToken ? magnitude : -magnitude;
+  }
+  if (step === undefined || !Number.isInteger(step)) return false;
+
+  // The incrementor's value is discarded by ForBodyEvaluation, so update the
+  // proven i32 slot directly instead of round-tripping it through f64 JS-number
+  // addition and truncation on every iteration.
+  fctx.body.push({ op: "local.get", index: localIdx });
+  fctx.body.push({ op: "i32.const", value: step });
+  fctx.body.push({ op: "i32.add" });
+  fctx.body.push({ op: "local.set", index: localIdx });
+  return true;
+}
+
 export function compileWhileStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.WhileStatement): void {
   // block $break
   //   loop $continue
@@ -701,8 +737,10 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
   ctx.liveBodies.add(incrInstrs);
   fctx.body = incrInstrs;
   if (stmt.incrementor) {
-    const resultType = compileExpression(ctx, fctx, stmt.incrementor);
-    if (resultType !== null) fctx.body.push({ op: "drop" });
+    if (!emitPromotedI32Increment(fctx, stmt)) {
+      const resultType = compileExpression(ctx, fctx, stmt.incrementor);
+      if (resultType !== null) fctx.body.push({ op: "drop" });
+    }
   }
 
   fctx.breakStack.pop();
@@ -3432,7 +3470,15 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
     // Fallback: static unrolling. Used in standalone for a closed-shape receiver
     // (WasmGC struct) — the static key set is exact — and as the historical
     // fallback when no enumeration primitive is available.
-    const exprType = ctx.checker.getTypeAtLocation(stmt.expression);
+    // (#4138) Strip null/undefined before reading the static shape: a receiver
+    // that flowed through `Array.pop()` / an optional access types as
+    // `T | undefined`, and a UNION's getProperties() is the COMMON property
+    // set — empty here — so the loop silently enumerated nothing (the runtime
+    // null case is already handled by the guards the loop emits). This is the
+    // narrow slice of #4138; a receiver that is genuinely POLYMORPHIC at
+    // runtime still unrolls one static shape, and closed structs remain
+    // non-enumerable through the dynamic runtime — both stay open in #4138.
+    const exprType = ctx.checker.getTypeAtLocation(stmt.expression).getNonNullableType();
     const props = exprType.getProperties();
     if (props.length === 0) return;
     for (const prop of props) {

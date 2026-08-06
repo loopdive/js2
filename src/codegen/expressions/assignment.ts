@@ -60,10 +60,11 @@ import { tryCompileFnctorPrototypeAssign } from "./fnctor-prototype.js";
 import { reserveAccessorSetDriver } from "../accessor-driver.js";
 import { S5C_STRUCT_ACCESSOR_CLOSURE } from "../struct-accessor-closure.js";
 import {
-  emitGlobalEnvironmentKey,
-  emitGlobalEnvironmentObject,
-  ensureGlobalEnvironmentOperation,
-} from "../global-environment.js";
+  findUnresolvableInArrayPattern,
+  findUnresolvableInObjectPattern,
+  NOT_UNRESOLVABLE,
+  tryCompileUnresolvableIdentifierAssign,
+} from "./unresolvable-assign.js";
 import {
   arrayIteratorOverrideGlobalIdx,
   emitArrayProtoIteratorDrive,
@@ -111,6 +112,7 @@ import {
 import { isStrictContext } from "../helpers/is-strict-function.js";
 import { tryCompileStrictFunctionPoisonAssignment } from "../function-poison-pill-access.js";
 import { emitRuntimeEvalAotCallableAdapter } from "../runtime-eval-callable.js";
+import { tryEmitStaticI32Expression } from "../i32-static-range-expr.js";
 
 /**
  * Emit a null/undefined guard for an externref-typed destructuring source.
@@ -565,40 +567,32 @@ export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, ex
       } else if (globalType && !valTypesMatch(resultType, globalType)) {
         coerceType(ctx, fctx, resultType, globalType);
       }
+      const runtimeEvalAotFunctionWrite =
+        ctx.runtimeEvalGlobalFunctionBindings === true &&
+        ctx.liveFuncBindingGlobals?.has(name) === true &&
+        (ts.isFunctionExpression(expr.right) ||
+          ts.isArrowFunction(expr.right) ||
+          (ts.isIdentifier(expr.right) && ctx.funcMap.has(expr.right.text)));
+      if (runtimeEvalAotFunctionWrite) emitRuntimeEvalAotCallableAdapter(ctx, fctx);
       // Re-read index: RHS compilation may shift globals via addStringConstantGlobal
       const moduleIdxPost = ctx.moduleGlobals.get(name)!;
       fctx.body.push({ op: "global.set", index: moduleIdxPost });
       fctx.body.push({ op: "global.get", index: moduleIdxPost });
       return globalType ?? resultType;
     }
-    // §6.2.5.6 PutValue: a sloppy unresolvable assignment creates/updates a
-    // configurable property on the realm's global object. Host and host-free
-    // targets share the same target-aware carrier (#2726).
-    if (!isStrictContext(expr.left, ctx.inferModuleStrictArguments) && isUnresolvableIdent(ctx, fctx, expr.left)) {
-      (ctx.sloppyImplicitGlobals ??= new Set()).add(name);
-      const resultType = compileExpression(ctx, fctx, expr.right);
-      if (!resultType) return null;
-      const resultTmp = allocLocal(fctx, `__implicit_global_rhs_${fctx.locals.length}`, resultType);
-      fctx.body.push({ op: "local.set", index: resultTmp });
-
-      if (!emitGlobalEnvironmentObject(ctx, fctx)) return null;
-      emitGlobalEnvironmentKey(ctx, fctx, name);
-      fctx.body.push({ op: "local.get", index: resultTmp });
-      if (resultType.kind !== "externref") {
-        coerceType(ctx, fctx, resultType, { kind: "externref" });
-      }
-      const setIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__extern_set");
-      if (setIdx === undefined) return null;
-      fctx.body.push({ op: "call", funcIdx: setIdx });
-      fctx.body.push({ op: "local.get", index: resultTmp });
-      return resultType;
-    }
+    // §6.2.5.6 PutValue step 6 — sloppy creates a global-object property,
+    // strict throws ReferenceError. Both arms live in `unresolvable-assign.ts`
+    // (#3985): they are one decision sharing one predicate and one carrier, and
+    // splitting them is how the strict half stayed missing.
+    const unresolvable = tryCompileUnresolvableIdentifierAssign(ctx, fctx, expr.left, expr.right);
+    if (unresolvable !== NOT_UNRESOLVABLE) return unresolvable;
 
     // Graceful fallback for other unresolved identifiers: auto-allocate a
     // local so compilation can continue. This handles class/object method
-    // bodies that reference outer-scope variables not yet captured. Strict
-    // unresolvable-reference throws and standalone implicit-global semantics
-    // are tracked separately.
+    // bodies that reference outer-scope variables not yet captured (those
+    // resolve in the TS checker, so `isUnresolvableIdent` is false for them and
+    // the strict arm above does not claim them). Standalone implicit-global
+    // semantics are tracked separately.
     {
       const resultType = compileExpression(ctx, fctx, expr.right);
       if (!resultType) return null;
@@ -885,93 +879,6 @@ function objectLiteralInitializerHasProperty(ctx: CodegenContext, receiver: ts.I
     }
     return ts.isComputedPropertyName(name) && resolveComputedKeyExpression(ctx, name.expression) === propName;
   });
-}
-
-/**
- * True if `id` is an identifier that cannot be resolved to any binding the
- * compiler knows about. Mirrors the check in identifiers.ts:393 for reads
- * but also excludes bindings that only exist in the codegen (locals, captures,
- * globals, func imports).
- */
-export function isUnresolvableIdent(ctx: CodegenContext, fctx: FunctionContext, id: ts.Identifier): boolean {
-  const name = id.text;
-  if (fctx.localMap.has(name)) return false;
-  if (fctx.boxedCaptures?.has(name)) return false;
-  if (ctx.capturedGlobals.has(name)) return false;
-  if (ctx.moduleGlobals.has(name)) return false;
-  if (ctx.funcMap.has(name)) return false;
-  // For shorthand property assignments `{x}` the checker returns the synthetic
-  // property symbol (SymbolFlags.Property = 4) even when `x` has no value
-  // binding in scope. The real value lookup is via getShorthandAssignmentValueSymbol.
-  if (id.parent && ts.isShorthandPropertyAssignment(id.parent) && id.parent.name === id) {
-    const valSym = (
-      ctx.checker as unknown as {
-        getShorthandAssignmentValueSymbol?: (n: ts.Node) => ts.Symbol | undefined;
-      }
-    ).getShorthandAssignmentValueSymbol?.(id.parent);
-    return !valSym;
-  }
-  const sym = ctx.checker.getSymbolAtLocation(id);
-  if (!sym) return true;
-  const decls = sym.declarations;
-  if (!decls || decls.length === 0) return true;
-  for (const d of decls) {
-    if (d !== id) return false;
-  }
-  return true;
-}
-
-export function findUnresolvableInObjectPattern(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  target: ts.ObjectLiteralExpression,
-): boolean {
-  for (const prop of target.properties) {
-    if (ts.isShorthandPropertyAssignment(prop)) {
-      if (isUnresolvableIdent(ctx, fctx, prop.name)) return true;
-    } else if (ts.isPropertyAssignment(prop)) {
-      let targetExpr = prop.initializer;
-      if (ts.isBinaryExpression(targetExpr) && targetExpr.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-        targetExpr = targetExpr.left;
-      }
-      if (ts.isIdentifier(targetExpr) && isUnresolvableIdent(ctx, fctx, targetExpr)) return true;
-      if (ts.isObjectLiteralExpression(targetExpr) && findUnresolvableInObjectPattern(ctx, fctx, targetExpr))
-        return true;
-      if (ts.isArrayLiteralExpression(targetExpr) && findUnresolvableInArrayPattern(ctx, fctx, targetExpr)) return true;
-    } else if (ts.isSpreadAssignment(prop)) {
-      if (ts.isIdentifier(prop.expression) && isUnresolvableIdent(ctx, fctx, prop.expression)) return true;
-    }
-  }
-  return false;
-}
-
-export function findUnresolvableInArrayPattern(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  target: ts.ArrayLiteralExpression,
-): boolean {
-  for (const element of target.elements) {
-    if (ts.isOmittedExpression(element)) continue;
-    if (ts.isIdentifier(element) && isUnresolvableIdent(ctx, fctx, element)) return true;
-    if (
-      ts.isSpreadElement(element) &&
-      ts.isIdentifier(element.expression) &&
-      isUnresolvableIdent(ctx, fctx, element.expression)
-    ) {
-      return true;
-    }
-    if (
-      ts.isBinaryExpression(element) &&
-      element.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isIdentifier(element.left) &&
-      isUnresolvableIdent(ctx, fctx, element.left)
-    ) {
-      return true;
-    }
-    if (ts.isArrayLiteralExpression(element) && findUnresolvableInArrayPattern(ctx, fctx, element)) return true;
-    if (ts.isObjectLiteralExpression(element) && findUnresolvableInObjectPattern(ctx, fctx, element)) return true;
-  }
-  return false;
 }
 
 /**
@@ -3595,7 +3502,7 @@ function compilePropertyAssignment(
     return { kind: "f64" }; // unreachable, but need a type
   }
 
-  // Handle static property assignment: ClassName.staticProp = value
+  // Handle declared and dynamically-added static properties on a class value.
   if (ts.isIdentifier(target.expression) && ctx.classSet.has(target.expression.text)) {
     const clsName = target.expression.text;
     const propName = ts.isPrivateIdentifier(target.name) ? "__priv_" + target.name.text.slice(1) : target.name.text;
@@ -3612,8 +3519,8 @@ function compilePropertyAssignment(
       fctx.body.push({ op: "local.get", index: tmpVal });
       return valType;
     }
+    return compilePropertyAssignmentExternSet(ctx, fctx, target, value, propName, true);
   }
-
   // #1697: `this.X = v` / `this.#X = v` inside a static method body —
   // mirror the read path's ThisKeyword+staticContext arm in
   // property-access.ts:1427. Without this, the LHS is `this` (not an
@@ -4662,12 +4569,12 @@ function compileElementAssignment(
         else: [],
       });
     }
-    // #1179: hint i32 directly so an i32 loop index doesn't take an f64 round-trip.
-    // compileExpression with i32 hint emits i32.trunc_sat_f64_s for non-i32 results
-    // via coerceType, matching the previous behavior for f64 indices.
-    const idxResult = compileExpression(ctx, fctx, target.argumentExpression, {
-      kind: "i32",
-    });
+    // Preserve range-proven counted-loop index arithmetic as i32. Fall back to
+    // the existing conversion path when constants, bounds, or overflow safety
+    // cannot be established.
+    const idxResult = tryEmitStaticI32Expression(ctx, fctx, target.argumentExpression)
+      ? ({ kind: "i32" } as const)
+      : compileExpression(ctx, fctx, target.argumentExpression, { kind: "i32" });
     if (!idxResult) {
       reportError(ctx, target, "Failed to compile element index");
       return null;

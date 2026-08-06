@@ -105,7 +105,7 @@ export function emitStringSubstringMemberBody(
     { op: "call", funcIdx: anyToStrIdx },
     { op: "call", funcIdx: flattenIdx },
   );
-  const flatLocal = allocLocal(fctx, `__str_pm_substring_${fctx.locals.length}`, flatStringType(ctx));
+  const flatLocal = allocLocal(fctx, `__str_pm_${member}_${fctx.locals.length}`, flatStringType(ctx));
   fctx.body.push({ op: "local.set", index: flatLocal });
 
   const startLocal = unboxBoundToI32(ctx, fctx, 2);

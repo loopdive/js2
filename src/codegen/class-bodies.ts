@@ -34,7 +34,7 @@ import {
 } from "./destructuring-params.js";
 import { emitThrowReferenceError, getFuncParamTypes } from "./expressions/helpers.js";
 import { pushDefaultValue } from "./type-coercion.js";
-import { bodyUsesArguments } from "./helpers/body-uses-arguments.js";
+import { bodyNeedsArgumentsObject, bodyUsesArguments } from "./helpers/body-uses-arguments.js";
 import {
   compileNativeGeneratorFunction,
   isNativeGeneratorCandidate,
@@ -1571,12 +1571,28 @@ export function collectDeclaredFuncRefs(ctx: CodegenContext): void {
   }
 }
 
-/** Compile constructor and method bodies for a class declaration */
+export interface ClassBodyCompileRouting {
+  /** Exact physical member names whose direct emitter must not run. */
+  readonly skipBodies: ReadonlySet<string>;
+  /** Prepared slots whose already-installed IR bodies must remain untouched. */
+  readonly preserveSkippedBodies?: ReadonlySet<string>;
+  /** Correlation sink populated only after an exact class slot is found. */
+  readonly skippedNames: string[];
+}
+
+function assertDirectClassBodyAllowed(name: string): void {
+  const poisoned = process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY;
+  if (!poisoned || !poisoned.split(",").includes(name)) return;
+  throw new Error(`injected direct class-body poison: ${name}`);
+}
+
+/** Compile the class bodies that were not already installed by Prepared IR. */
 export function compileClassBodies(
   ctx: CodegenContext,
   decl: ts.ClassDeclaration | ts.ClassExpression,
   funcByName: Map<string, number>,
   syntheticName?: string,
+  routing?: ClassBodyCompileRouting,
 ): void {
   const className = syntheticName ?? decl.name?.text;
   if (!className) {
@@ -1606,7 +1622,7 @@ export function compileClassBodies(
     ctx.parentBodiesStack.push(enclosingFunc.body);
   }
   try {
-    compileClassBodiesInner(ctx, decl, funcByName, className, structTypeIdx, fields);
+    compileClassBodiesInner(ctx, decl, funcByName, className, structTypeIdx, fields, routing);
   } finally {
     if (enclosingFunc) {
       ctx.funcStack.pop();
@@ -1623,12 +1639,14 @@ function compileClassBodiesInner(
   className: string,
   structTypeIdx: number,
   fields: FieldDef[],
+  routing?: ClassBodyCompileRouting,
 ): void {
   // Compile constructor
   const ctor = decl.members.find(ts.isConstructorDeclaration) as ts.ConstructorDeclaration | undefined;
   const ctorName = `${className}_new`;
   const ctorLocalIdx = funcByName.get(classMemberFuncKey(ctx, ctorName)); // (#1983)
   if (ctorLocalIdx !== undefined) {
+    assertDirectClassBodyAllowed(ctorName);
     const func = ctx.mod.functions[ctorLocalIdx]!;
     const params: { name: string; type: ValType }[] = [];
     // (#2086) Match the synthetic forwarder params added during pre-registration
@@ -2204,6 +2222,19 @@ function compileClassBodiesInner(
       if (methodLocalIdx === undefined) continue;
 
       const func = ctx.mod.functions[methodLocalIdx]!;
+      // (#3522) Methods whose complete ABI component was sealed and
+      // installed before direct emission own this exact slot. A prepared body
+      // stays intact; an invariant-owned failure receives only a non-shipping
+      // placeholder. Constructors deliberately remain on the established
+      // direct-then-overlay route in this slice.
+      if (routing?.skipBodies.has(fullName)) {
+        if (!routing.preserveSkippedBodies?.has(fullName)) {
+          func.body = [{ op: "unreachable" }];
+        }
+        routing.skippedNames.push(fullName);
+        continue;
+      }
+      assertDirectClassBodyAllowed(fullName);
       const sig = ctx.checker.getSignatureFromDeclaration(member);
       const retType = sig ? ctx.checker.getReturnTypeOfSignature(sig) : undefined;
 
@@ -2429,7 +2460,7 @@ function compileClassBodiesInner(
         // stem-collision rules.
         !genBodyReferencesSuper(member.body) &&
         !(isStatic && genBodyReferencesThis(member.body)) &&
-        !bodyUsesArguments(member.body) &&
+        !bodyNeedsArgumentsObject(member.body) &&
         isAsyncGenDriveCandidate(ctx, member)
       ) {
         emitAsyncGenerator(ctx, fctx, member);
@@ -2570,6 +2601,14 @@ function compileClassBodiesInner(
       if (getterLocalIdx === undefined) continue;
 
       const func = ctx.mod.functions[getterLocalIdx]!;
+      if (routing?.skipBodies.has(getterName)) {
+        if (!routing.preserveSkippedBodies?.has(getterName)) {
+          func.body = [{ op: "unreachable" }];
+        }
+        routing.skippedNames.push(getterName);
+        continue;
+      }
+      assertDirectClassBodyAllowed(getterName);
       const sig = ctx.checker.getSignatureFromDeclaration(member);
       const retType = sig ? ctx.checker.getReturnTypeOfSignature(sig) : undefined;
 
@@ -2668,6 +2707,14 @@ function compileClassBodiesInner(
       if (setterLocalIdx === undefined) continue;
 
       const func = ctx.mod.functions[setterLocalIdx]!;
+      if (routing?.skipBodies.has(setterName)) {
+        if (!routing.preserveSkippedBodies?.has(setterName)) {
+          func.body = [{ op: "unreachable" }];
+        }
+        routing.skippedNames.push(setterName);
+        continue;
+      }
+      assertDirectClassBodyAllowed(setterName);
 
       // First param is self, remaining are the setter parameters
       const params: { name: string; type: ValType }[] = [

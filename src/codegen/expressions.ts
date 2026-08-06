@@ -78,6 +78,7 @@ import { compileArrayLiteral, compileObjectLiteral } from "./literals.js";
 import { compileElementAccess, compilePropertyAccess, maybeWrapAnyReadEqualityCarrier } from "./property-access.js";
 import { compileTaggedTemplateExpression, compileTemplateExpression } from "./string-ops.js";
 import { compileDeleteExpression, compileRegExpLiteral, compileTypeofExpression } from "./typeof-delete.js";
+import { describeInternalError } from "./internal-error.js";
 
 // ── Public re-exports (preserves the external API) ────────────────────
 
@@ -624,7 +625,15 @@ function wrapAsyncCallInTryCatch(ctx: CodegenContext, fctx: FunctionContext, sta
   const getCaughtIdx = ensureLateImport(ctx, "__get_caught_exception", [], [{ kind: "externref" }]);
   flushLateImportShifts(ctx, fctx);
   if (rejectIdx === undefined || getCaughtIdx === undefined) return;
+  const tagIdx = ensureExnTag(ctx);
   const inner = fctx.body.splice(start);
+  // A compiler-native JS throw uses the module's `$exn` tag and carries the
+  // original JS value as its externref payload. Feed that payload directly to
+  // Promise.reject. `__get_caught_exception` is only populated by a throwing
+  // host import, so using catch_all for both forms leaked a stale/undefined
+  // value (or the raw WebAssembly.Exception) after direct eval began emitting
+  // native SyntaxErrors.
+  const catchExn: Instr[] = [{ op: "call", funcIdx: rejectIdx }];
   const catchAll: Instr[] = [
     { op: "call", funcIdx: getCaughtIdx },
     { op: "call", funcIdx: rejectIdx },
@@ -633,7 +642,7 @@ function wrapAsyncCallInTryCatch(ctx: CodegenContext, fctx: FunctionContext, sta
     op: "try",
     blockType: { kind: "val", type: { kind: "externref" } },
     body: inner,
-    catches: [],
+    catches: [{ tagIdx, body: catchExn }],
     catchAll,
   });
 }
@@ -862,8 +871,9 @@ function compileExpressionBody(
     result = compileExpressionInner(ctx, fctx, expr, expectedType);
   } catch (e) {
     rollbackSpeculative(ctx, fctx, snap);
-    const msg = e instanceof Error ? e.message : String(e);
-    reportErrorNoNode(ctx, `Internal error compiling expression: ${msg}`);
+    // (#4030) Name the innermost `src/` frame. An exception here is a compiler
+    // bug, and the bare message alone is not actionable — see #4038.
+    reportErrorNoNode(ctx, `Internal error compiling expression: ${describeInternalError(e)}`);
     const fallbackType = expectedType ?? { kind: "f64" as const };
     pushDefaultValue(fctx, fallbackType, ctx);
     return fallbackType;
@@ -1153,7 +1163,14 @@ function compileExpressionInner(
       const savedBody = fctx.body;
       const thenBody: Instr[] = [];
       fctx.body = thenBody;
-      emitUndefined(ctx, fctx);
+      if (fctx.directEvalSloppyThisFallback) {
+        const globalType = compileIdentifier(ctx, fctx, ts.factory.createIdentifier("globalThis"));
+        if (globalType && globalType.kind !== "externref") {
+          coerceType(ctx, fctx, globalType, { kind: "externref" });
+        }
+      } else {
+        emitUndefined(ctx, fctx);
+      }
       fctx.body = savedBody;
       fctx.body.push({
         op: "if",
@@ -1163,6 +1180,9 @@ function compileExpressionInner(
       });
       releaseTempLocal(fctx, thisTmp);
       return { kind: "externref" };
+    }
+    if (fctx.directEvalSloppyThisFallback) {
+      return compileIdentifier(ctx, fctx, ts.factory.createIdentifier("globalThis"));
     }
     emitUndefined(ctx, fctx);
     return { kind: "externref" };

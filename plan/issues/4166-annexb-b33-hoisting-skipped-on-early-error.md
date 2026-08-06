@@ -155,7 +155,7 @@ Gates: `tsc --noEmit`, `biome lint`, `prettier --check`, `check:loc-budget`,
 
 The remaining 113 standalone failures in the same two directories:
 
-- **24** — `js2wasm:runtime-eval` unsupported (eval-gated, #2928 / #3974).
+- **24** — `js2wasm:runtime-eval` unsupported (eval-gated, #2928 / #4171).
 - **15** `Initialized binding created prior to evaluation` + **8**
   `SameValue(«function …», «undefined»)` — the _positive_ B.3.3 lifecycle: the
   outer var binding must exist as `undefined` before the block is evaluated and
