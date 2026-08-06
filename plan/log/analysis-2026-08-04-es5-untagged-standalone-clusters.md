@@ -265,3 +265,78 @@ and #3185 share the MOP substrate, so a substrate fix moves both.
   read once) are inferred from test descriptions plus compiler source
   (`src/codegen/array-object-proto.ts`, `src/codegen/object-runtime-descriptors.ts`)
   and were **not** confirmed by a local repro.
+
+---
+
+## METHOD CORRECTION (2026-08-06) — this report's clustering was wrong six times out of six
+
+Six lanes were dispatched against levers cut from this report's method (error
+signature + path). **Every one of them refuted its lever's framing after
+measuring.** That is not six unlucky guesses; it is one systematic flaw, and it
+is the most important thing this file now records.
+
+### The flaw
+
+**Signature clustering groups by WHERE A FAILURE SURFACED, not by WHAT PRODUCED
+IT.** Assertion text is written by the test author to describe a spec
+expectation, so tests sharing an assertion string routinely share nothing
+mechanically. Worse, whole families are generated from one template, which makes
+several unrelated mechanisms look like a single large lever.
+
+The sharpest single case: a 185-file "annexB B.3.3 hoisting" cluster turned out
+to be **three** mechanisms, two of which had nothing to do with Annex B — a
+standalone ABI bug (a `Map`/`WeakMap` miss whose value type is a class reads
+back as `null`, not `undefined`) and an interpreter scoping bug (the catch
+parameter had no Environment Record). They shared a test-generator template.
+
+### The cheap discriminator, available before any code is written
+
+> **Frames point at mechanisms; assertion strings point at symptoms.**
+
+A `null_deref … [in setEvalVariableEnvironmentBinding()]` names an
+implementation location. `Expected a TypeError to be thrown` names a spec
+behaviour that a hundred unrelated defects can produce. Bucket by frame first,
+then by explicit compiler refusal, and only then fall back to shape.
+
+### What replaced it
+
+1. **Frame-bearing failures first** — `error_signature`'s `[in fn()]` frame.
+2. **Explicit compiler refusals second** — the compiler naming its own gap
+   ("… is not yet implemented in --target standalone") is the highest-certainty
+   bucket that exists.
+3. **`description:` frontmatter third** — test262 authors name the mechanism
+   outright ("… of prototype object", "… inherited data property"). Normalise
+   and tally SHAPES.
+4. **Read bodies for anything that matters.** The decomposition that re-aimed
+   the whole campaign (76 reassigned-`.prototype` / 51 expando-on-builtin /
+   34 `Math`/`JSON`-as-descriptor / 12 `Object.prototype`-invisible) came from
+   reading test bodies, not from any automated cut.
+
+That re-cut found **prototype-chain plumbing at 219 files — the largest single
+mechanism in the tail** — which this report had scattered across four different
+clusters. A lane then landed +95 on it.
+
+### Two sizing traps, both measured
+
+- **Signature clustering merges mechanisms, so counts are upper bounds.** A
+  lever sized here at ~297 measured **+0**, because a different mechanism
+  (own-accessor descriptors) failed first and the sized mechanism never got to
+  matter. Always ask *what fails first*.
+- **The instrument was lying.** `tests/test262-runner.ts` omits the
+  `js2wasm:runtime-eval` provider that `scripts/test262-worker.mjs` supplies, so
+  `includes: [propertyHelper.js]` standalone tests die at instantiate **and the
+  link error overwrites the real signature** — 82/162 and 44/152 on two levers.
+  Filed as **#4162**. Any analysis built on the in-process runner without that
+  shim is measuring the harness. Three lanes hit it independently in one day.
+
+### Result
+
+Six merged PRs, 0 regressions: ES5 standalone **76.90% → 78.87%** (6,868 →
+7,044 of 8,931), **+176 measured**. Note that the per-PR deltas summed to +225 —
+lever lists overlap, so **only a fresh full cut is a real number**; never add
+per-PR deltas and report the total.
+
+Live lever lists live in `.tmp/levers/` and are regenerated per wave; the
+per-mechanism residue as of 2026-08-06 is descriptor family 558, dynamic scope
+308, `Function.prototype` 80, `String.prototype` 64, explicit refusals 91,
+frame-bearing crashes 110.
