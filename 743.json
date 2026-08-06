@@ -1,11 +1,10 @@
 {
   "id": "743",
-  "assignee": "ttraenkler/sendev-dts-seeds",
-  "requested_by": "ttraenkler@users.noreply.github.com",
-  "status": "released",
-  "branch": "claude/issue-743-dts-entrypoint-seeds",
-  "claimed_at": "2026-08-06T09:25:41Z",
-  "updated_at": "2026-08-06T10:15:30Z",
-  "write_id": "23983-6zb0idcb",
-  "released_at": "2026-08-06T10:15:30Z"
+  "assignee": "ttraenkler/claude-fable-6",
+  "requested_by": "ttraenkler/claude-fable-6",
+  "status": "in-progress",
+  "branch": "claude/issue-743-graph-edges",
+  "claimed_at": "2026-08-06T21:22:52Z",
+  "updated_at": "2026-08-06T21:22:52Z",
+  "write_id": "2387-z6ayfgn4"
 }
