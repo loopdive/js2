@@ -28,6 +28,17 @@ loc-budget-allow:
   - src/codegen/object-ops.ts
   - src/codegen/registry/imports.ts
   - src/codegen/object-runtime.ts
+  # S2-residual+S3 port (2026-08-06): ArraySetLength (§10.4.2.1) + the
+  # accessor-setter write arm live in the overlay's finalize fill by design —
+  # the fork-validated implementation is instruction-list emission (~+420
+  # lines), all inside the existing standalone-gated subsystem module.
+  - src/codegen/vec-overlay.ts
+# The S3 length arms are body fills of the SAME reserved natives
+# (__vec_dp_value/__vec_dp_accessor/__vec_gopd) that fillVecOverlayHelpers
+# already owns; splitting the fill across modules would break the
+# emission-order discipline documented in the module header.
+func-budget-allow:
+  - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
 # (#2108 coercion-sites ratchet) vec-overlay's number_toString uses are NOT a
 # hand-rolled coercion matrix — they canonicalise an array index to its
 # property key (§7.1.19, the same number_toString pattern __extern_get_idx's
@@ -357,6 +368,50 @@ byte-identical (the #1917 discipline).
     validation detail, probe lists) than this on-main copy — read them first.
 - The on-main Resume State below predates the release; ignore its "fable-1
   holds the claim-issue lock" line.
+
+## S2-residual + S3 port notes (L2-fable-array-exotic, 2026-08-06, branch `issue-3251-s2-port`)
+
+The fork's S2/S3 was ported by RE-DERIVING against current main, not blind
+patch application — main had moved substantially since the fork base:
+
+- **S2 was already ~80% on main.** The #4010 vec-bag work gave `__extern_set`
+  a write prologue (deleted-index recreate, non-writable drop, writable →
+  `__vec_dp_value` routing). The ONLY S2 gap left was the accessor arm, which
+  silently `return`ed instead of invoking the setter. This PR replaces that
+  `return` with a `__call_accessor_set(vec, e.set, v)` invoke (null setter =
+  sloppy no-op). Do NOT port the fork's whole 177-line S2 prologue — it would
+  duplicate and fight the #4010 one.
+- **S3 (ArraySetLength §10.4.2.1) ported onto the three `lengthKeyGuard` bail
+  sites** (`__vec_dp_value` / `__vec_dp_accessor` / `__vec_gopd`) plus a
+  `notLengthWrap` skip on the `__extern_get` companion consult. Two
+  deliberate divergences from the fork version:
+  1. **Full ToNumber for the length value** (`__to_primitive` number-hint →
+     `__str_to_number` for a string primitive, else `__unbox_number`). The
+     fork used raw `__unbox_number`, which RangeErrors on `{value: "2"}` and
+     `{value: {toString(){…}}}` — the 15.2.3.6-4-142..151 family (measured:
+     9 spurious RangeErrors without this).
+  2. **The inline static ArraySetLength (`maybeEmitVecLengthDefine`,
+     array-length-define.ts) is now STANDALONE-GATED OFF** in
+     `compileObjectDefineProperty` — it fired for statically-typed array
+     receivers with literal descriptors BEFORE the runtime native could run,
+     and it has no companion knowledge, so it silently shrank past
+     non-configurable indices (the whole static-lane TypeError cluster).
+     Host mode unchanged.
+- **gOPD("length") synthesis reads the value from the LIVE vec length field**;
+  only the writable bit comes from the companion entry — a companion length
+  value goes stale on push/pop/plain writes and must never be authoritative.
+- Measured on the L2 lever list (162 ES5-label standalone array-exotic
+  failures, CI-aligned shimmed instrument): **1 → 42 pass** (see PR body for
+  the exact per-round A/B; rounds: setter+S3 = 20, +ToNumber = 30, +static
+  gate = 42). Zero regressions in any round; host lane byte-identical.
+- **Residual failure roots (measured, NOT this PR's scope)**: (a) #4164 —
+  runtime-eval-consumer mode miscompiles mixed-type ternaries, which caps
+  every propertyHelper `verifyProperty(arr, "length", {writable:…})` (the
+  harness's `isWritable` writes an incoherent box); (b) #4159 — typed-lane
+  `array.get` reads bypass the overlay accessor (`arr2[1]` with a defined
+  getter answers the vec element in the static lane); (c) a pre-existing
+  `illegal cast` trap reading `d.value`/`d.configurable` off a gOPD result in
+  the JS static lane (also traps on main).
 
 ## Resume State (keep current — session-kill insurance)
 
