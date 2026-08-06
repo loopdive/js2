@@ -72,8 +72,11 @@ export function buildIrOverlayIdentityMaps(
   sourceFile: ts.SourceFile,
   checker: ts.TypeChecker,
   identityContext: IrPlanningIdentityContext,
+  // (#743) Shared `.d.ts` entrypoint seed map (flag-gated upstream) — the same
+  // object the legacy lane consults, so IR/legacy seed facts cannot diverge.
+  entrypointSeeds?: import("../checker/dts-entrypoint-seeds.js").DtsEntrypointSeeds,
 ): IrOverlayIdentityMaps {
-  const unitTypeMap = buildIrUnitTypeMap([sourceFile], checker, identityContext);
+  const unitTypeMap = buildIrUnitTypeMap([sourceFile], checker, identityContext, entrypointSeeds);
   const projectedTypeMap = projectIrUnitTypeMapToLegacy([sourceFile], unitTypeMap, identityContext);
   return { unitTypeMap, projectedTypeMap };
 }

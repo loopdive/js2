@@ -34,8 +34,13 @@ mix their counts (they are distinct conformance metrics on different targets):
 The standalone lane measures pure-Wasm conformance (no JS runtime). Its failures
 are dominated by **host-import leaks** — features that silently fall back to a JS
 host import in the default lane but are *refused* in standalone mode. The
-standalone records carry an extra classifier field, `host_import_leak_class`,
-that the default lane does not.
+standalone lane's dominant signal is the `#NNNN` citation embedded in each
+refusal's error string (see step 2). NOTE (verified 2026-08-01): the
+`host_import_leak_class` field appears in BOTH lanes and is actually far more
+common on the DEFAULT lane (41,276 records, single value
+`dynamic_object_property`) than on standalone (2,679 records, four values) — an
+earlier revision of this doc claimed the reverse. Do not use that field to tell
+the lanes apart.
 
 ## Steps
 
@@ -99,10 +104,13 @@ categories file, then emit the two summary tables (step 8).
      (#1472 Phase…)`. Extract every `#\d{3,4}` from each failing record's
      `error` (dedupe per record) and rank issues by record count — this is the
      most accurate standalone cross-reference and needs no guessing. Typical
-     ranking (verify live): **#1472 Proxy** (by far the largest — Proxy is used
-     pervasively in test262 abrupt-completion harness patterns, so it cascades),
-     #1474 RegExp, #682 dual-RegExp-backend, #681 dual-string-backend, #1387
-     with-statement, #1599 JSON, #1525 ToPrimitive, #1696 eval/dynamic-import.
+     ranking (verify live — it MOVES): on 2026-08-01 the top citations were
+     **#2961** (2,125 — the strict leak-guard naming the leaked imports),
+     #2928 (558, dynamic eval), #680 (320, native generators), #1472 (155,
+     Proxy), #1474 (99, RegExp). An earlier revision predicted "#1472 by far
+     the largest (~27k)"; that was stale by two orders of magnitude — most
+     Proxy-harness cascades had been retired. Treat any ranking written here
+     as a hypothesis to re-verify, never as the expected answer.
    - **Secondary: `host_import_leak_class`** (only ~10–15k records carry it;
      many refusals don't). Actual field values today (verify — they evolve):
      `host_import` (generic #1524 gate, catch-all), `dynamic_object_property`,

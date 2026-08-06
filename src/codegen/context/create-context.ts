@@ -370,6 +370,7 @@ export function createCodegenContext(
     wasiEnvironGetIdx: -1,
     wasiEnvGetStrIdx: -1,
     wasiNodeFsFuncs: options?.wasiNodeFsFuncs ?? new Set(),
+    ...(options?.dtsEntrypointSeeds ? { dtsEntrypointSeeds: options.dtsEntrypointSeeds } : {}),
     wasiRawImports: options?.wasiRawImports ?? new Set(),
     wasiMemAccessors: options?.wasiMemAccessors ?? new Set(),
     allowFs: options?.allowFs ?? false,

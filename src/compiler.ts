@@ -10,6 +10,11 @@ import {
   type MultiTypedAST,
   type ProjectModuleResolutions,
 } from "./checker/index.js";
+import {
+  collectDtsEntrypointSeeds,
+  DTS_ENTRY_DECLS_NAME,
+  resolveDtsEntryDeclarations,
+} from "./checker/dts-entrypoint-seeds.js";
 import { getNullablePrimitiveInfo } from "./checker/type-mapper.js";
 import { generateLinearModule, generateLinearMultiModule } from "./codegen-linear/index.js";
 import { resetCompileDepth } from "./codegen/expressions.js";
@@ -692,6 +697,7 @@ function buildCodegenOptions(
     wasiRawImports?: Set<string>;
     wasiMemAccessors?: Set<string>;
     jsxRuntime?: import("./import-resolver.js").JsxRuntimeImport;
+    dtsEntrypointSeeds?: import("./checker/dts-entrypoint-seeds.js").DtsEntrypointSeeds;
   },
 ): CodegenOptions {
   // (#86) Measurement-integrity guard. The standalone / wasi codegen regime is
@@ -761,6 +767,7 @@ function buildCodegenOptions(
     wasiMemAccessors: prep?.wasiMemAccessors,
     allowFs: options.allowFs ?? false,
     jsxRuntime: prep?.jsxRuntime,
+    dtsEntrypointSeeds: prep?.dtsEntrypointSeeds,
   };
 }
 
@@ -1318,8 +1325,13 @@ export function compileSourceSync(
     irInventory = elision.inventoryOptions;
   }
 
+  // (#743) Flag-gated (`JS2WASM_DTS_ENTRYPOINT_SEEDS=1`): resolve the entry's
+  // shipped sibling `.d.ts` (explicit option or on-disk sibling); undefined —
+  // the default — leaves every path below byte-identical.
+  const dtsEntryDecls = resolveDtsEntryDeclarations(options.fileName, options.entryDeclarations);
+
   let ast: TypedAST;
-  if (languageService) {
+  if (languageService && dtsEntryDecls === undefined) {
     // Incremental path: reuse cached lib files via the language service
     languageService.updateSource(processedSource, effectiveFileName, forceTsGrammar);
     ast = languageService.analyze({
@@ -1338,6 +1350,7 @@ export function compileSourceSync(
       emulateNode: options.emulateNode,
       forceTsGrammar,
       ...(options.platform ? { platform: options.platform } : {}),
+      ...(dtsEntryDecls !== undefined ? { entryDeclarationsText: dtsEntryDecls } : {}),
     });
   }
 
@@ -1460,6 +1473,14 @@ export function compileSourceSync(
     return failResult(errors);
   }
 
+  // (#743) Seed map consumed verbatim by BOTH inference lanes (IR fixpoint and
+  // legacy call-site scan) — one shared object, so the lanes cannot see
+  // different seeds. Undefined whenever the flag is off or nothing is seedable.
+  const dtsSeeds =
+    dtsEntryDecls !== undefined
+      ? collectDtsEntrypointSeeds(ast.program.getSourceFile(DTS_ENTRY_DECLS_NAME), ast.sourceFile)
+      : undefined;
+
   // #1927 — everything from ES early-error detection through emit is shared.
   // This single-source path runs the full rewrite prologue and threads its data
   // into codegen; the synchronous eval contract stops before wasm-opt.
@@ -1477,6 +1498,7 @@ export function compileSourceSync(
       wasiRawImports,
       wasiMemAccessors,
       jsxRuntime: preprocessed.jsxRuntime,
+      ...(dtsSeeds ? { dtsEntrypointSeeds: dtsSeeds } : {}),
     }),
     ...(irInventory ? { irInventoryOptions: irInventory } : {}),
     sourcesContent,
