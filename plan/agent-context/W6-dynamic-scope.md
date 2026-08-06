@@ -94,6 +94,30 @@ with main's `declarations.ts` swapped in.
 - `tests/issue-2663*.test.ts` / `issue-1387*`: 5 failures pre-existing,
   verified identical with main's `declarations.ts` swapped in.
 
+## Remaining lever buckets (post-fix, 41/308), sharpest-first
+
+- **11× `null pointer in __str_concat (via __module_init)`** (`S12.10_A3.*`):
+  NOT part of the #4179 drop — these tests wrap the `with` in a top-level
+  `try`, and nested withs were always compiled (`compileStatement` handles
+  them; only DIRECT top-level withs were dropped). Probed the exact shape:
+  a `throw value;` from inside the with body **escapes the enclosing
+  top-level `catch`** (uncaught `WebAssembly.Exception` at module init in a
+  clean probe; the published `__str_concat` deref is the harness variant of
+  the same escape). Mechanism: module-init exception plumbing around a with
+  body, not string concat and not dynamic scope.
+- **29× Tier-2 refusal** (`body contains a nested function or class`): the
+  #2663-deferred closure-capture-of-object-environment tier. Hard; grew from
+  12 because previously-dropped withs now honestly reach the refusal.
+- **27+13+15+13× annexB decl-update/init families** ("first declaration" /
+  "outer declaration" / "Initialized binding created prior to evaluation" /
+  "binding is initialized to undefined"): L3's ground — #2200 Phase 2 +
+  B.3.3 update semantics; the 15 `Initialized binding` ones are the AOT
+  twins L3 flagged as needing #2200 Phase 2 (last attempt −1180, do not
+  retry without a local slice over the regressed buckets).
+- **24× `SyntaxError: NaN`**: L3's two-layer diagnosis stands (#4178 fix
+  alone will not flip them; a compiled-acorn scope-tracking defect sits
+  behind the message).
+
 ## Substrate gaps found and deliberately NOT fixed here
 
 - **`__extern_has` has no closed-struct field arm** (`object-runtime.ts`
