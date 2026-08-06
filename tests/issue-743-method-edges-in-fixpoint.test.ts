@@ -135,6 +135,52 @@ describe("#743 — method-call and new-this edges (fnctor graph fixpoint)", () =
     expect(map.get("P")?.[0]?.kind ?? "absent").not.toBe("f64");
   });
 
+  it("the API-mirror literal (Parser.acorn shape) is boundary-only, not an escape", () => {
+    const map = facts(`
+      export {};
+      var P = function P(options, input, startPos) { this.pos = startPos; };
+      P.parse = function parse(input, startPos) { return new this({}, input, startPos); };
+      P.acorn = { P: P, version: "1" };
+      function top() { return P.parse("code", 42); }
+    `);
+    expect(map.get("P")?.[2]).toEqual({ kind: "f64" });
+  });
+
+  it("a mirror whose holding property is read elsewhere is a REAL escape", () => {
+    const map = facts(`
+      export {};
+      var P = function P(options, input, startPos) { this.pos = startPos; };
+      P.parse = function parse(input, startPos) { return new this({}, input, startPos); };
+      P.acorn = { P: P };
+      function top() { return P.parse("code", 42); }
+      function other(x) { return x.acorn; }
+    `);
+    expect(map.get("P")?.[2]).not.toEqual({ kind: "f64" });
+  });
+
+  it("a dynamic-key call on an UNTRACKED base (acorn's plugins[i](cls)) does not drop methods", () => {
+    const map = facts(`
+      export {};
+      var P = function P(options, input, startPos) { this.pos = startPos; };
+      P.parse = function parse(input, startPos) { return new this({}, input, startPos); };
+      function ext(plugins) { for (var i = 0; i < plugins.length; i++) { plugins[i](1); } }
+      function top() { return P.parse("code", 42); }
+    `);
+    expect(map.get("P")?.[2]).toEqual({ kind: "f64" });
+  });
+
+  it("a dynamic-key access on a TRACKED base drops that owner's methods", () => {
+    const map = facts(`
+      export {};
+      var Q = function Q(n) { this.n = n; };
+      var qq = Q.prototype;
+      qq.mk = function (k) { return new Q(k); };
+      function go(q) { return q.mk(7); }
+      function peek(k) { return qq[k]; }
+    `);
+    expect(map.get("Q")?.[0]).not.toEqual({ kind: "f64" });
+  });
+
   it("a method assigned twice is not write-once and relays nothing", () => {
     const map = facts(`
       export {};

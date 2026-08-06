@@ -617,3 +617,120 @@ owned by a concurrently-running measurement (binding-retype); run it after
 that lane frees. Multi-file (`compileMulti`/project) and linear-backend seed
 plumbing are out of scope for this slice (single-source path only — the
 dogfood/measurement lane).
+
+## 2026-08-06 — call-graph COMPLETENESS slice (method-call + `new this` edges) IMPLEMENTED: the chain closes, census moves 41 → 40, and the remaining 40 are now precisely characterized
+
+Branch `claude/issue-743-graph-edges`. This is the slice both measured nulls
+above named: prototype/static-method call edges and `new this(…)` edges, plus
+the population widening for function-EXPRESSION constructors
+(`var Parser = function Parser(…)`).
+
+### Architecture — WHY a satellite fixpoint, not a wider `buildIrUnitTypeMap`
+
+`src/ir/fnctor-method-edges.ts` runs a SECOND, self-contained fixpoint over a
+wider population (top-level fn decls + top-level `var F = function(){}` ctors +
+write-once static/prototype methods, incl. the `var pp = F.prototype` alias
+form), reusing the exact lattice core exported from propagate.ts
+(`_propagationCore`). The main `IrUnitTypeMap` is untouched — proven by the
+gates below — because its entries feed IR selection and the legacy-parity
+seams: widening its population or edges would shift IR claims/ABIs, the exact
+#1712-class typeIdx-demotion hazard. The satellite's facts feed exactly ONE
+consumer — the f64-only fnctor field-slot narrowing in
+`src/codegen/fnctor-ctor-param-types.ts` (fallback when the #4117 single-hop
+scan is inconclusive), under the SAME `JS2WASM_FNCTOR_CTOR_PARAM_TYPES` flag.
+Parity is by construction: both backends read field shapes through the shared
+`deriveFnctorFields`, and no compiled SIGNATURE consumes the satellite facts
+(deliberately — the ctor-ABI half stays externref exactly as #4117 shipped it;
+the field store unboxes). The oracle-ratchet stays clean because the checker
+access lives in src/ir; the codegen consumer passes `ctx` as a structural
+`{ checker }` host.
+
+### Soundness (widening beats guessing — the rules that made the edges honest)
+
+- Method edges are NAME-BASED over-approximations: any `recv.m(…)` site feeds
+  every write-once method named `m` unless the receiver is provably the
+  constructor object (then only that ctor's static slot). A site that
+  dispatches elsewhere only widens; a site that reaches the method but is
+  unmatched is structurally impossible for named calls.
+- Value escapes poison: a ctor/fn referenced outside callee/property-base/
+  export positions gets all-DYNAMIC params (aliases like `var C2 = F` would
+  construct it unseen). ONE boundary-only shape is admitted — acorn's API
+  mirror `Parser.acorn = { Parser: Parser, … }`, where the holding property is
+  used nowhere else in the module (same trust class as `export { Parser }`).
+- A method name READ in value position anywhere publishes no method nodes;
+  dynamic-key access on a TRACKED base (`pp[k]`, `F[k]`, `this[k]`) drops the
+  owner (or everything for `this[k]`); Symbol-keyed access is exempt
+  (`pp[Symbol.iterator] = …` cannot collide with string-keyed slots).
+  Dynamic-key calls on UNTRACKED bases (acorn's `plugins[i](cls)`) are the one
+  DOCUMENTED gap, shared with dynamic instance reads — family-consistent (the
+  legacy #4117 scan has no escape analysis at all), bounded by the f64-only
+  consumer (a violating value coerces at the store, never reinterprets).
+- `new this(…)` is an edge only inside a write-once STATIC method (`this` is
+  the ctor); in prototype methods `this` is an instance (skip); in a plain
+  function `this` is rebindable → ALL ctor facts drop.
+
+### Measurements (acorn-standalone-compile, `-O3`, `JS2WASM_FNCTOR_FIELD_PROVENANCE=1 JS2WASM_FNCTOR_CTOR_PARAM_TYPES=1`)
+
+- Census: **55 typed / 1 discarded / 40 unknown** (baseline 54/1/41). The slot
+  that moved is `Parser.pos`: canary literal `3` → `parseExpressionAt.pos`
+  (fn-decl edge) → static `Parser.parseExpressionAt.pos` (METHOD edge) →
+  `new this(options, input, pos)` (NEW-THIS edge) → ctor `startPos` →
+  `this.pos = startPos` → f64 slot. The two-hop-through-a-method chain the
+  previous nulls could not cross now carries end-to-end (also pinned by
+  tests/issue-743-method-edges-in-fixpoint.test.ts).
+- Canaries 2,3,4,5; imports `[]`; exactly the 3 pre-existing parity
+  IR-FALLBACKs (parse/parseExpressionAt/tokenizer) — no growth.
+- Binary: 874,228 B flag-on, unchanged from the pre-slice flag-on run (the
+  single slot flip is size-neutral after Binaryen). Flag-off byte-identity vs
+  origin/main asserted by hash (sha256 `326b2873…`, 861,712 B on a 1-canary
+  fixture, this branch's files vs origin/main's files — identical).
+- Compile time: 67.8 s vs 73.2 s baseline on the same box — the satellite
+  (270 method nodes, 1,472 edges on acorn) is invisible in compile noise.
+- Graph diagnostics (inert, `JS2WASM_LOG_FNCTOR_GRAPH=1`): callables=56
+  (poisoned: only the two predicates used through a conditional-expression
+  callee), methods=270, edges=1472, no space poisons.
+
+### The honest number is 40, not <20 — WHY, per slot (the #4157 target needs three MORE levers)
+
+Full per-slot table measured via `fnctorFieldProvenanceRecords()`:
+
+1. **`this`-field-read arguments (~14 slots, the dominant bucket)**:
+   `Parser.start/end/lastTokStart/lastTokEnd` (`this.start = this.end =
+   this.pos`), `Node.start` (`startNodeAt(this.start, …)` → `new Node(this,
+   pos, loc)`), `SourceLocation.start/end` + `Parser.startLoc/endLoc/
+   lastTok*Loc` (Position instances from `this.curPosition()`),
+   `Token.type/value/start/end` (`new Token(this)` then `p.start` reads),
+   `BranchID.parent` (`this.branchID` forward). The args are field READS of a
+   receiver, which `inferExpr` types DYNAMIC — narrowing them needs a
+   this-scope fed by the very field facts being derived: a MUTUAL fixpoint
+   between field types and param facts. That is the next slice, and several of
+   these are Position/SourceLocation REFS that also need ref-typed (not
+   f64-only) consumption.
+2. **Bitwise-numeric blocked by the shared lattice (1-2 slots)**:
+   `Scope.flags` — every producer is `a | b` / `functionFlags(…)`, and the
+   lattice types bitwise ops DYNAMIC while `JS2WASM_IR_I32_DOMAIN` (Stage 3
+   emitter pending, #1126) is off. JS bitwise is ALWAYS numeric, so a
+   satellite-local producer rule would be sound — deliberately NOT forked in
+   this slice to keep one lattice; recorded as the cheap follow-up.
+3. **Non-f64 atoms the consumer excludes (~5 slots)**: the graph already
+   PROVES `TokenType.label: string`, `TokContext.token: string` (facts
+   `TokenType(string, dynamic)`, `TokContext(string, bool, bool, dynamic,
+   bool)`) — consuming them is the native-string-ABI question the `.d.ts`
+   slice documented, not a graph question. `TokenType.keyword`,
+   `TokContext.override` similar.
+4. **Genuinely dynamic (~19 slots)**: RegExp-object fields
+   (`keywords/reservedWords*`), `value = null` seeds, arrays (`context`),
+   config-object reads (`binop = conf.binop || null`), `regexpState = null`,
+   `RegExpValidationState.parser/unicodeProperties/groupNames`. Honest boxes.
+
+**Flag verdict: `JS2WASM_FNCTOR_CTOR_PARAM_TYPES` stays OFF.** The graph
+completeness this issue's measured nulls asked for now exists and carries
+facts end-to-end, but one recovered slot is not a consumer. The bucket's next
+levers are (1) the field↔param mutual fixpoint, (2) ref/string-typed slot
+consumption, (3) the bitwise producer rule — in that order of expected yield.
+
+Known pre-existing issue encountered (NOT introduced here, reproduced
+flag-off): the minimal `P.parse("code", 42)` static-method fixture returns
+null at runtime in standalone through the dynamic static-dispatch path — the
+E2E test therefore pins flag-on ≡ flag-off behavior plus the f64 slot, not an
+absolute value.
