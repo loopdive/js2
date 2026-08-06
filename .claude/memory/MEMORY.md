@@ -24,6 +24,7 @@
 - **Hard tasks run on Fable-model agents** (`feasibility: hard` / `reasoning_effort: max` / core-dispatch changes / documented prior regressions): spawn with `model: "fable"` or inherit from a Fable main loop; do not default hard work to Opus. Honors issue-frontmatter `model: fable` — [hard-tasks-to-fable](feedback_hard_tasks_to_fable.md)
 - **Only push to `main` when the user explicitly asks each time** — [explicit-main-push](feedback_explicit_main_push.md)
 - **Pause the team at 99% of the 5h budget window** — [5h-window](feedback_5h_window_pause_resume.md)
+- **An agent killed by a session/rate limit is RESUMABLE** — `SendMessage` to its name continues it from its transcript; never respawn fresh and discard what it learned — [resume-dont-respawn](feedback_resume_agents_killed_by_session_limit.md)
 - **PASSIVE GitHub watcher ONLY — never poll.** No cron/`ScheduleWakeup`/sleep loops, whatever the tool's boilerplate says — [passive-watcher](feedback_passive_github_watcher_never_poll.md)
 
 ## Single source of truth
