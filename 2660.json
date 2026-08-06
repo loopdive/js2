@@ -1,10 +1,11 @@
 {
   "id": "2660",
   "assignee": "ttraenkler/senior-dev-s3b",
-  "requested_by": "ttraenkler/senior-dev-s3b",
-  "status": "in-progress",
+  "requested_by": "ttraenkler@users.noreply.github.com",
+  "status": "released",
   "branch": "claude/issue-2660-s3b-typed-bindings",
   "claimed_at": "2026-08-06T09:20:05Z",
-  "updated_at": "2026-08-06T09:20:05Z",
-  "write_id": "23606-vdmxa5ei"
+  "updated_at": "2026-08-06T10:58:01Z",
+  "write_id": "24966-grrx62rf",
+  "released_at": "2026-08-06T10:58:01Z"
 }
