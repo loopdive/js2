@@ -37,8 +37,13 @@ loc-budget-allow:
 # (__vec_dp_value/__vec_dp_accessor/__vec_gopd) that fillVecOverlayHelpers
 # already owns; splitting the fill across modules would break the
 # emission-order discipline documented in the module header.
+# compileObjectDefineProperty: +7 lines — the S3 standalone-gate on the inline
+# static ArraySetLength plus its load-bearing why-comment (the inline path
+# silently shrank past non-configurable indices; the comment prevents a
+# well-meaning un-gate).
 func-budget-allow:
   - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
+  - src/codegen/object-ops.ts::compileObjectDefineProperty
 # (#2108 coercion-sites ratchet) vec-overlay's number_toString uses are NOT a
 # hand-rolled coercion matrix — they canonicalise an array index to its
 # property key (§7.1.19, the same number_toString pattern __extern_get_idx's
