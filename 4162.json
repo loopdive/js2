@@ -1,10 +1,11 @@
 {
   "id": "4162",
   "assignee": "ttraenkler/W8-instrument-4162",
-  "requested_by": "ttraenkler/W8-instrument-4162",
-  "status": "in-progress",
+  "requested_by": "noreply@anthropic.com",
+  "status": "done",
   "branch": "issue-4162-shared-test262-imports",
   "claimed_at": "2026-08-06T19:40:04Z",
-  "updated_at": "2026-08-06T19:40:04Z",
-  "write_id": "24775-r0gog2aq"
+  "updated_at": "2026-08-06T20:12:29Z",
+  "write_id": "17119-yeoonlcw",
+  "released_at": "2026-08-06T20:12:29Z"
 }
