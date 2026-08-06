@@ -345,6 +345,11 @@ import {
   wasmParamIndexForSourceParam,
 } from "../linear-uint8-signatures.js";
 import { resolveNamedThisCallTarget, tryReshapeApplyToNamedThisCall } from "../named-this-call.js";
+import {
+  emitClosureReceiverInstall,
+  finishClosureReceiverCall,
+  planClosureReceiverInstall,
+} from "../closure-receiver-install.js";
 import { isStrictContext } from "../helpers/is-strict-function.js";
 
 // Registry extracted to its own leaf module (#1793; LOC ratchet #3102) —
@@ -7045,6 +7050,18 @@ function compileCallExpression(
           }
         }
 
+        // (#4192) A CLOSURE callee (`var fe = function () { … this … }`) never
+        // reached the named-`this` trampoline above — that arm is gated on
+        // `!closureInfo` — so its receiver was evaluated and DROPPED. Install
+        // it in `__current_this`, which the lifted body already reads. Load-
+        // bearing invariant: every `closureInfo` sub-path below returns through
+        // a `finishClosureReceiverCall`, so the restore is always reachable.
+        // See closure-receiver-install.ts.
+        const closureReceiver =
+          closureInfo !== undefined && expr.arguments.length > 0
+            ? planClosureReceiverInstall(ctx, fctx, innerExpr)
+            : undefined;
+
         if (closureInfo || funcIdx !== undefined) {
           // Evaluate thisArg first. The receiver-correct named trampoline owns
           // it as leading externref param; every other existing path keeps the
@@ -7054,9 +7071,11 @@ function compileCallExpression(
               ctx,
               fctx,
               expr.arguments[0]!,
-              namedThisCall ? { kind: "externref" } : undefined,
+              namedThisCall || closureReceiver ? { kind: "externref" } : undefined,
             );
-            if (thisType && !namedThisCall) {
+            if (thisType && closureReceiver) {
+              emitClosureReceiverInstall(fctx, closureReceiver);
+            } else if (thisType && !namedThisCall) {
               fctx.body.push({ op: "drop" });
             }
           }
@@ -7074,7 +7093,11 @@ function compileCallExpression(
               );
               // Copy source file info for error reporting
               (syntheticCall as any).parent = expr.parent;
-              return compileClosureCall(ctx, fctx, syntheticCall as ts.CallExpression, funcName, closureInfo);
+              return finishClosureReceiverCall(
+                fctx,
+                closureReceiver,
+                compileClosureCall(ctx, fctx, syntheticCall as ts.CallExpression, funcName, closureInfo),
+              );
             }
 
             // Check for rest parameters on the callee
@@ -7180,7 +7203,11 @@ function compileCallExpression(
                   elements as unknown as readonly ts.Expression[],
                 );
                 (syntheticCall as any).parent = expr.parent;
-                return compileClosureCall(ctx, fctx, syntheticCall as ts.CallExpression, funcName, closureInfo);
+                return finishClosureReceiverCall(
+                  fctx,
+                  closureReceiver,
+                  compileClosureCall(ctx, fctx, syntheticCall as ts.CallExpression, funcName, closureInfo),
+                );
               }
               const applyRestInfo = ctx.funcRestParams.get(funcName);
               if (applyRestInfo) {
@@ -7249,7 +7276,11 @@ function compileCallExpression(
             if (closureInfo) {
               const syntheticCall = ts.factory.createCallExpression(innerExpr, undefined, []);
               (syntheticCall as any).parent = expr.parent;
-              return compileClosureCall(ctx, fctx, syntheticCall as ts.CallExpression, funcName, closureInfo);
+              return finishClosureReceiverCall(
+                fctx,
+                closureReceiver,
+                compileClosureCall(ctx, fctx, syntheticCall as ts.CallExpression, funcName, closureInfo),
+              );
             }
             const applyNoArgsRestInfo = ctx.funcRestParams.get(funcName);
             if (applyNoArgsRestInfo) {
