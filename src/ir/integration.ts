@@ -2621,6 +2621,11 @@ export function compileIrPathFunctions(
       // dedups on shape, so the IR-lowered void unit lands on the same
       // index; a mismatch means the lowering went wrong — keep legacy.
       if (wasmFunc.typeIdx !== existing.typeIdx) {
+        if (process.env.JS2WASM_DEBUG_ABI_PARITY === "1") {
+          console.error(
+            `[abi-parity-debug] ${name}: IR=${wasmFunc.typeIdx} ${JSON.stringify(ctx.mod.types[wasmFunc.typeIdx])} legacy=${existing.typeIdx} ${JSON.stringify(ctx.mod.types[existing.typeIdx])}`,
+          );
+        }
         if (entry.classMember || entry.moduleInit) {
           // Pre-#3536 semantics unchanged: for these units a mismatch means
           // the lowering itself went wrong — a hard invariant.
