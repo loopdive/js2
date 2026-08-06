@@ -1,7 +1,8 @@
 ---
 id: 4181
 title: "module-init collection: non-assign binary statements skip the #3623 drop telemetry (uncounted silent drops), and `**=` is missing from the assignment-operator list entirely"
-status: in-review
+status: done
+completed: 2026-08-06
 assignee: ttraenkler/W6-dynamic-scope
 sprint: current
 created: 2026-08-06
