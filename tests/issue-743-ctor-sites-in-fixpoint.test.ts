@@ -84,6 +84,7 @@ beforeEach(() => {
   process.env.JS2WASM_FNCTOR_CTOR_PARAM_TYPES = "1";
 });
 afterEach(() => {
+  // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
   if (saved === undefined) delete process.env.JS2WASM_FNCTOR_CTOR_PARAM_TYPES;
   else process.env.JS2WASM_FNCTOR_CTOR_PARAM_TYPES = saved;
 });
