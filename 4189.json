@@ -1,11 +1,10 @@
 {
   "id": "4189",
-  "assignee": "",
+  "assignee": "ttraenkler/W11-with-tier2-residue",
   "requested_by": "ttraenkler/W11-with-tier2-residue",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-08-06T20:49:59Z",
-  "updated_at": "2026-08-06T20:49:59Z",
-  "write_id": "21292-7nsaswdh",
-  "pr_scan": "off"
+  "status": "in-progress",
+  "branch": "issue-4189-string-global-any-widening",
+  "claimed_at": "2026-08-06T20:50:09Z",
+  "updated_at": "2026-08-06T20:50:09Z",
+  "write_id": "24658-xoy3kvrj"
 }
