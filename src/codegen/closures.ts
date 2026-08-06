@@ -2692,6 +2692,30 @@ function reportClosureFrameBreach(
   );
 }
 
+/**
+ * (#4157) `JS2WASM_CLOSURE_NAME_MAP=1` prints one line per lifted closure
+ * mapping the opaque emitted name (`__closure_N`, and by suffix its
+ * `__closure_N__typed_this` twin) back to the source function it came from.
+ * CPU profiles of compiled packages surface hot frames only under the emitted
+ * name; without this map "which package function is hot" is guesswork.
+ * Consumed by `scripts/profile-buckets.mjs`.
+ */
+function reportClosureNameMap(arrow: ts.ArrowFunction | ts.FunctionExpression, closureName: string): void {
+  if (typeof process === "undefined" || !process.env?.JS2WASM_CLOSURE_NAME_MAP) return;
+  let label = ts.isFunctionExpression(arrow) && arrow.name ? arrow.name.text : "";
+  if (!label) {
+    const parent = arrow.parent;
+    if (ts.isBinaryExpression(parent) && parent.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      label = parent.left.getText();
+    } else if (ts.isPropertyAssignment(parent) || ts.isVariableDeclaration(parent)) {
+      label = parent.name.getText();
+    }
+  }
+  const sourceFile = arrow.getSourceFile();
+  const { line } = sourceFile.getLineAndCharacterOfPosition(arrow.getStart());
+  console.error(`[js2:closure-map] ${closureName} <- ${label || "(anonymous)"} @${line + 1}`);
+}
+
 /** Compile an arrow function as a first-class closure value (Wasm GC struct + funcref) */
 export function compileArrowAsClosure(
   ctx: CodegenContext,
@@ -2701,6 +2725,7 @@ export function compileArrowAsClosure(
   const closureId = ctx.closureCounter++;
   const closureName = `__closure_${closureId}`;
   const body = arrow.body;
+  reportClosureNameMap(arrow, closureName);
 
   // Check if this is a generator function expression (function*() { ... })
   const isGenerator = ts.isFunctionExpression(arrow) && arrow.asteriskToken !== undefined;
