@@ -1,11 +1,10 @@
 ---
 id: 4160
 title: "Per-call \"clean elements\" protector cell for Array.prototype traversal — make prototype-chain index inheritance correct without taxing the dense loop (~297 ES5+untagged)"
-status: in-progress
-assignee: ttraenkler/sendev-4160-read
+status: ready
 sprint: current
 created: 2026-08-05
-updated: 2026-08-05
+updated: 2026-08-06
 priority: high
 horizon: l
 feasibility: hard
@@ -64,6 +63,39 @@ func-budget-allow:
 ---
 
 # #4160 — "clean elements" protector cell for Array.prototype traversal
+
+## Status (2026-08-06) — partially landed, UNOWNED, claimable
+
+Back to `ready`. The frontmatter said `in-progress` / `assignee:
+ttraenkler/sendev-4160-read`, but that agent no longer exists and its work
+merged; the claim on `origin/issue-assignments` was **released** on 2026-08-06
+so the remainder can be picked up. Nobody is working on this right now.
+
+**Landed** (merged to main):
+
+- **Slice 1** — the widened pre-scan (`protoIndexDirty` over `Object.prototype`
+  as well as `Array.prototype`, plus `dynamicCodeDirty`). PR #4128. Details in
+  `## Slice 1 — LANDED 2026-08-05`.
+- **Slice 2, standalone read side** — `src/codegen/proto-index-store.ts` and its
+  consult hooks; the per-iteration `HasProperty` gate on the seven visiting
+  HOFs. PR #4129. Details and boundaries in `## Implementation notes — S1+S2
+  read side`.
+
+**Remaining** — three independent pieces, none of them started:
+
+1. **Write side / `#4159` dependency.** The typed-lane write half is blocked on
+   #3251 S2; see #4159.
+2. **The JS-host lane.** Everything landed is gated `ctx.standalone &&
+   ctx.protoIndexDirty`. The host lane is untouched, so the "on both lanes"
+   acceptance criterion is not met.
+3. **Slice 3, `LengthOfArrayLike` as a real `[[Get]]`** (`15.4.4.19-2-9`).
+   Independent of the flag, much smaller, can land in parallel.
+
+**Do not re-derive a target count from the ~297 figure.** The measured scoped
+A/B for the read side was **+0**, because the own-accessor-descriptor path fails
+first — see `### Sizing correction`. Re-measure only after the #3251/#2668/#4161
+own-descriptor family lands. The acceptance criterion "≥ 200 of the ~297 pass"
+below is stale for the same reason.
 
 ## Problem
 
