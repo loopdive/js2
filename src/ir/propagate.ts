@@ -617,6 +617,25 @@ function buildCallGraph(
           sites.push({ callee, argExprs: node.arguments.slice() });
         }
       }
+      // (#743) `new F(…)` feeds F's params exactly as `F(…)` does, and via
+      // this graph the fixpoint makes that TRANSITIVE — the thing the
+      // single-hop legacy scan (#4117: 2 acorn slots) structurally cannot do.
+      // Graph only: `inferExpr` keeps typing the `new` expression `dynamic`.
+      // SAME flag as the legacy halves, or IR/legacy would infer different
+      // signatures and demote through the typeIdx-parity IR fallback.
+      // `new F` without parens has NO argument list → empty argExprs
+      // (all-params-under-applied). Full rationale + transitive proof:
+      // tests/issue-743-ctor-sites-in-fixpoint.test.ts.
+      if (
+        process.env.JS2WASM_FNCTOR_CTOR_PARAM_TYPES === "1" &&
+        ts.isNewExpression(node) &&
+        ts.isIdentifier(node.expression)
+      ) {
+        const callee = resolveCallTarget(node.expression);
+        if (callee && decls.has(callee)) {
+          sites.push({ callee, argExprs: node.arguments === undefined ? [] : node.arguments.slice() });
+        }
+      }
       forEachChild(node, visit);
     };
     forEachChild(fn.body, visit);
