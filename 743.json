@@ -1,10 +1,11 @@
 {
   "id": "743",
   "assignee": "ttraenkler/sendev-dts-seeds",
-  "requested_by": "ttraenkler/sendev-dts-seeds",
-  "status": "in-progress",
+  "requested_by": "ttraenkler@users.noreply.github.com",
+  "status": "released",
   "branch": "claude/issue-743-dts-entrypoint-seeds",
   "claimed_at": "2026-08-06T09:25:41Z",
-  "updated_at": "2026-08-06T09:25:41Z",
-  "write_id": "32603-d03nfxub"
+  "updated_at": "2026-08-06T10:15:30Z",
+  "write_id": "23983-6zb0idcb",
+  "released_at": "2026-08-06T10:15:30Z"
 }
