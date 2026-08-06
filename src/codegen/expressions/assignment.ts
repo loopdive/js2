@@ -3242,6 +3242,24 @@ function tryEmitPinnedStructMemberSet(
 
   // Evaluate the receiver (reference before value), coerce to externref.
   const objResult = compileExpression(ctx, fctx, target.expression);
+  // (#2660 S3b) A receiver whose COMPILED ValType is already the pinned
+  // `$__fnctor_<F>` struct (a retyped binding) skips the box + `ref.test`
+  // dispatcher round-trip: one `struct.set` (+ presence bit when tracked).
+  // Same hook as `compilePropertyAssignmentExternSet`; declines fall through
+  // byte-identically (the reserve above is idempotent and shared).
+  {
+    const fnctorTypedSet = tryEmitFnctorTypedFieldSet(
+      ctx,
+      fctx,
+      target,
+      propName,
+      objResult,
+      value,
+      () => typeErrorThrowInstrs(ctx, target),
+      (valType) => ensureI32Condition(fctx, valType, ctx),
+    );
+    if (fnctorTypedSet !== undefined) return fnctorTypedSet;
+  }
   if (objResult && objResult.kind !== "externref") {
     coerceType(ctx, fctx, objResult, { kind: "externref" });
   } else if (!objResult) {
