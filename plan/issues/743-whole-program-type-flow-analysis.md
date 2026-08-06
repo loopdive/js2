@@ -419,3 +419,34 @@ test262 corpus; no test262 regression.
   `globalTypes` slot, joined on every write site.
 - **Ship behind `ctx.useTypeFlow` flag**; soak-test in CI for a week
   before defaulting to on.
+
+## 2026-08-06 — fixpoint measured on acorn: ZERO slots beyond single-hop; the bucket needs entrypoint seeds, not more propagation
+
+With all three `JS2WASM_FNCTOR_CTOR_PARAM_TYPES` consumers enabled (legacy
+scan #4117, field slots, IR fixpoint `new`-edges #4131), the acorn census is
+`typed 54 / discarded 1 / unknown 41` — the unknown bucket did not move by a
+single slot relative to single-hop (+181 B binary). Canaries 2,3,4,5, zero
+imports, the usual 3 IR-FALLBACKs.
+
+**Root cause, confirmed from two directions.** The #4155 Phase 2 census
+independently established that first-hop receivers are erased to externref
+before any read compiles; the census here shows the same starvation at the
+seed level: acorn's `new Parser(options, input, startPos)` arguments trace to
+the parameters of EXPORTED entry points (`parse`, `parseExpressionAt`,
+`tokenizer`) that are only called from OUTSIDE the module. An internal-only
+fixpoint has no call sites for them, so every chain bottoms out at `dynamic`
+regardless of how many hops propagation can cross. Transitivity was never the
+missing piece on this corpus — SEEDS are.
+
+**The lever this exposes: seed exported-function parameters from the shipped
+`.d.ts` (#4074).** acorn's own type declarations say `parse(input: string,
+options: Options)`. A declared-signature seed for exported entrypoints is
+exactly the information the fixpoint is starving for, and it composes with
+the propagation machinery this issue already landed (the seeds flow through
+`mk → new Parser` chains that #4131's edges now carry). This is also the
+first #743 sub-lever with a plausible claim on the 41-slot bucket, since both
+internal-only approaches are now measured at 2 slots.
+
+Consequence for the flag: `JS2WASM_FNCTOR_CTOR_PARAM_TYPES` stays OFF — two
+measured nulls (single-hop, fixpoint) and no consumer until entrypoint
+seeding exists.
