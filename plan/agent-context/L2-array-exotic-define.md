@@ -345,7 +345,8 @@ adding S3.
 ## 5. What I would do next, in order
 
 1. Fetch the three fork branches (§1). Read `fork/issue-3251-s2-write-enforcement`'s
-   **branch copy of `plan/issues/3251-*.md`** first — the on-main copy says the
+   **branch copy of `plan/issues/3251-array-descriptor-overlay-substrate.md`**
+   first — the on-main copy says the
    branch copies "carry fuller resume notes (S2/S3 validation detail, probe
    lists) than this on-main copy". I did not read them; do.
 2. Port the S2 `vec-overlay.ts` hunks only (drop the `object-runtime-descriptors.ts`
