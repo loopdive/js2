@@ -1,10 +1,13 @@
 ---
 id: 3926
 title: "perf: `__extern_get` generic property lookup is the largest non-parser function in the standalone parse and is unowned"
-status: ready
+status: in-progress
+assignee: ttraenkler/claude-fable
 sprint: current
 created: 2026-07-31
-updated: 2026-07-31
+updated: 2026-08-06
+loc-budget-allow:
+  - src/codegen/object-runtime.ts
 priority: high
 horizon: l
 feasibility: medium
