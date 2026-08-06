@@ -33,8 +33,17 @@ Three things are load-bearing and were sharpened from the earlier version:
    then terminates. See `SUSPEND` in CLAUDE.md → "Controlling agents".
 2. **The TECH LEAD is included**, not just the teammates. The lead records its
    own in-flight state before stopping.
-3. **The alarm is 1 MINUTE AFTER the reset**, and it resumes the **whole team**
-   — re-spawn teammates from their `## Suspended Work` handoffs.
+3. **The alarm is 1 MINUTE AFTER the reset**, and it resumes the **whole team**.
+
+   ⚠ **Correction, 2026-08-06: prefer RESUMING over re-spawning.** This bullet
+   used to say "re-spawn teammates from their `## Suspended Work` handoffs".
+   An agent killed by a session limit is still **resumable** — `SendMessage` to
+   its name/`agentId` continues it *from its transcript*, with its measured
+   baselines, probe inventory and ruled-out dead ends intact. A fresh `Agent`
+   spawn throws all of that away and re-derives it on the user's tokens. The
+   `## Suspended Work` handoff is the **fallback** for when the agent is
+   genuinely gone, not the default path.
+   See [[feedback_resume_agents_killed_by_session_limit]].
 
 *(Earlier phrasing, 2026-07-26: "always pause the team when the 5h window budget
 is 99% used and set a wake up for the team right after the window resets." Both
