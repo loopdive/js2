@@ -1574,6 +1574,12 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       walkModuleStmtForVars(stmt.statement);
       return;
     }
+    // (#4179) `with (o) { var v = …; }` hoists `v` to module scope like any
+    // other control-flow statement (see the collection allow-list below).
+    if (ts.isWithStatement(stmt)) {
+      walkModuleStmtForVars(stmt.statement);
+      return;
+    }
     if (ts.isTryStatement(stmt)) {
       for (const s of stmt.tryBlock.statements) walkModuleStmtForVars(s);
       if (stmt.catchClause) {
@@ -1636,7 +1642,13 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       ts.isIfStatement(stmt) ||
       ts.isTryStatement(stmt) ||
       ts.isSwitchStatement(stmt) ||
-      ts.isLabeledStatement(stmt)
+      ts.isLabeledStatement(stmt) ||
+      // (#4179) Top-level `with (o) { … }` matched NO arm of this allow-list,
+      // so the ENTIRE statement was silently dropped from `__module_init` —
+      // the body never executed. Same collection-gap family as #2992 (top-level
+      // `delete`), #3592 (`throw`), #3615 (bare property read); the tiering in
+      // compileWithStatement (#1387/#3025/#2663) was never at fault.
+      ts.isWithStatement(stmt)
     ) {
       walkModuleStmtForVars(stmt);
       ctx.moduleInitStatements.push(stmt);
