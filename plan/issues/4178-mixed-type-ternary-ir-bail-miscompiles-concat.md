@@ -177,6 +177,75 @@ Whoever picks this up: measure the lever first, with the #4162 shim, before
 committing to a plan. Five of five levers this session had their framing
 refuted by the agent working them, and this issue is itself the sixth.
 
+## 2026-08-06 — W3: the root cause above is REFUTED for the population that matters; PART of this landed
+
+Branch `issue-4178-mixed-ternary-ir-box`. Full write-up:
+`plan/agent-context/W3-runtime-eval-ternary.md`.
+
+### What actually breaks concat (fixed on that branch)
+
+Two **legacy-path** defects, neither of which is the IR bail:
+
+- **(A)** `coerceType`'s `ref → ref_null` arm was the only one of its four
+  same-function siblings missing the `$AnyValue` **unbox** case.
+  `compileAnyBinaryDispatch` returns exactly `{kind:"ref", typeIdx:$AnyValue}`,
+  so an `any`-operand `+` result assigned to a NULLABLE slot fell through to the
+  generic guarded `ref.cast`, which tests the BOX against the target, always
+  fails, and stores `ref.null`. The next `__str_concat`/`.length` dereferenced
+  null and trapped.
+- **(B)** `tryStaticToNumber` traced `const` initializers for an operand's VALUE
+  but not for its STRING-NESS, so `const a: any = "1"; const b: any = 2; a + b`
+  folded to `f64.const 3`.
+
+### Why the IR bail is not the cause
+
+Every unit in the failing shapes is rejected at IR **SELECT** stage
+(`body-shape-rejected` / `call-graph-closure` — read with `trackIrOutcomes`) and
+never reaches `lowerConditional`. Module-init, which is what test262 top-level
+statements compile to, is always in that class. The two behaviours this issue
+describes as "the same mechanism, two outcomes" are two different mechanisms:
+the hard `IR-FALLBACK` error is the bail; the wrong answer / trap is (A).
+**Fixing the bail alone would have moved zero measured failures.**
+
+### The acceptance criterion was also mis-attributed — and is met anyway
+
+The 8 `coercion/arithmetic-add` rows contain **no ternary**. They are (B) plus
+(A). All 8 now pass; `equivalence-gate` reports **12** baseline known-failures
+fixed (those 8 + `#1197`'s i32 peephole row + the Math.pow test262 pattern +
+two `Symbol` rows) with **no new regressions**.
+
+### The `emitBox` route was implemented and REVERTED — measured, not abandoned
+
+- **Correctness regression:** `"" + (c ? someBoolean : "s")` IR-compiles to
+  `"1"`, not `"true"` — the boolean brand on the arm's `i32` does not reach
+  `emitBox`, so it boxes tag-2 instead of tag-4. A silent wrong answer replacing
+  a loud compile error.
+- **The bail just moves:** with it retired the same functions immediately hit
+  `local 'g' annotated as string but initializer is dynamic`, then
+  `arg 0 of call to len is dynamic, expected string`.
+
+So the remaining slice is **(a)** carry the boolean/symbol brand onto the arm
+IrType (or derive the partition from the arm's TS type at the lowering site),
+**(b)** teach annotated-local writes and call-arg positions to accept a
+`dynamic` producer via an explicit unbox/ToString, **then** **(c)** retire the
+bail. That is an **L**, not an M. `tests/issue-4178.test.ts` pins the bail's
+current behaviour so the boundary is visible.
+
+### Adjacent defects found, not filed
+
+- **`$AnyValue === nativeString` inline** answers false:
+  `const g = a + b; g === "12"` is true but `(a + b) === "12"` is false.
+- **Eval-consumer `$AnyValue`/externref mismatch.**
+  `registerReassignedFunctionGlobals` (`src/codegen/index.ts:6006-6027`) widens
+  every top-level binding to `externref`; consumers still expect
+  `ref_null $AnyValue` from `resolveWasmType`; nothing coerces; and
+  `stack-balance.ts:1504` papers over it with a blind
+  `any.convert_extern; ref.cast_null $AnyValue`. Traps for a `$BoxedNumber`,
+  mis-tags (tag-5 "string", the #1888 lie) for an `$AnyValue`. Fixing the boxer
+  alone converts the wrong answer into a trap — the read site must go first.
+  This is the real home of the "739 ES5-label standalone failures in
+  eval-consumer modules" number, which is **not** this issue's population.
+
 ## Notes
 
 - **Id provenance:** reserved via `claim-issue.mjs --allocate`. The open-PR scan
