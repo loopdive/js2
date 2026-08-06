@@ -341,17 +341,15 @@ function resolvesToStringConstant(ctx: CodegenContext, expr: ts.Expression, visi
     return resolvesToStringConstant(ctx, expr.left, visited) || resolvesToStringConstant(ctx, expr.right, visited);
   }
   if (ts.isIdentifier(expr)) {
-    const sym = ctx.checker.getSymbolAtLocation(expr);
-    const decl = sym?.valueDeclaration;
-    if (!decl || !ts.isVariableDeclaration(decl) || !decl.initializer) return false;
-    const declList = decl.parent;
-    // `let`/`var` are reassignable — the initializer is not the value. Mirrors
-    // the identical restriction on the value-resolving arm below.
-    if (!ts.isVariableDeclarationList(declList) || (declList.flags & ts.NodeFlags.Const) === 0) return false;
+    // `ctx.oracle.constInitializerOf` is the checker boundary for exactly this
+    // query (#1930) and enforces the `const`-only restriction itself — `let`/
+    // `var` are reassignable, so their initializer is not their value.
+    const init = ctx.oracle.constInitializerOf(expr);
+    if (!init) return false;
     const seen = visited ?? new Set<ts.Node>();
-    if (seen.has(decl)) return false; // #1607 self-referential initializer
-    seen.add(decl);
-    return resolvesToStringConstant(ctx, decl.initializer, seen);
+    if (seen.has(init)) return false; // #1607 self-referential initializer
+    seen.add(init);
+    return resolvesToStringConstant(ctx, init, seen);
   }
   return false;
 }
