@@ -970,7 +970,14 @@ export function compileObjectDefineProperty(
   // ArraySetLength) — RangeError on a non-uint32 length value, TypeError on an
   // illegal attribute change / accessor descriptor, else set `vec.length`. When
   // it fully handles the define, return immediately (the receiver is the result).
-  {
+  //
+  // (#3251 S3) STANDALONE-GATED OFF: the native `__vec_dp_value` length arm now
+  // implements the FULL ArraySetLength — including the per-index-configurable
+  // shrink stop (step 15) and the non-writable length bit that this inline
+  // path deliberately deferred — over the overlay companion. The inline path
+  // has no companion knowledge, so letting it win here silently shrank past
+  // non-configurable indices in the static lane. Host mode is unchanged.
+  if (!ctx.standalone) {
     const lenDef = maybeEmitVecLengthDefine(ctx, fctx, objArg, propArg, descArg);
     if (lenDef !== false) return lenDef;
   }
