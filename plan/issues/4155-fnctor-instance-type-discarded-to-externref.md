@@ -4,7 +4,7 @@ title: "why acorn's types cannot be inferred: 96.6% of `this.<field>` reads are 
 status: ready
 sprint: current
 created: 2026-08-02
-updated: 2026-08-04
+updated: 2026-08-06
 priority: high
 horizon: xl
 feasibility: hard
@@ -42,6 +42,20 @@ loc-budget-allow:
   # logic (flag, standalone check, gate-approval check, reserved-index lookup)
   # is in the new `fnctor-typed-instances.ts` module.
   - src/codegen/index.ts
+  # Phase 2 wiring (2026-08-06): all decision + emission logic lives in the new
+  # `fnctor-typed-reads.ts` module; the god-files get only the hook calls, and
+  # the hooks can live nowhere else — the admission is on the receiver's
+  # COMPILED ValType, so each call must sit at the exact point where the
+  # dynamic path is about to erase that type to externref:
+  # +11: `finalizeStructAndDynamicMemberGet`'s isExternObj arm (import + one
+  # try-call between the receiver compile and `extern.convert_any`).
+  - src/codegen/property-access-dispatch.ts
+  # +9: `tryEmitPinnedStructMemberGet`, before `reserveMemberGetDispatch`
+  # (import + one try-call).
+  - src/codegen/property-access.ts
+  # +20: `compilePropertyAssignmentExternSet` write twin (import + one guarded
+  # try-call; the guard keeps `forceRuntimeSet`/runtime-eval routes dynamic).
+  - src/codegen/expressions/assignment.ts
 func-budget-allow:
   # +1 line in `resolveWasmType` (354 > 353). Same two-line hook as the LOC
   # grant above: the #1712 `return { kind: "externref" }` becomes
@@ -51,6 +65,11 @@ func-budget-allow:
   # doing it under a flag-gated behavior change would make both harder to
   # review. All decision logic lives in `fnctor-typed-instances.ts`.
   - src/codegen/index.ts::resolveWasmType
+  # +10 (Phase 2): the read hook in the isExternObj arm — see the
+  # `property-access-dispatch.ts` LOC grant above. The arm is inside this one
+  # (already-oversized, #3399) function; splitting it is a separate refactor
+  # that should not ride along with a flag-gated behavior change.
+  - src/codegen/property-access-dispatch.ts::finalizeStructAndDynamicMemberGet
 ---
 
 # #4155 — the type is known and thrown away
@@ -576,6 +595,101 @@ parks, attribution is unambiguous — and the reason
    claim that instance typing works.
 3. **Phase 3/4 as written**, with the census's `discarded` bucket measured on
    real acorn rather than a fixture.
+
+## 2026-08-06 — Phase 2 implemented (typed fnctor field reads), census-first
+
+**Verdict: coverage is real but small (78 sites) and the A/B is a wash →
+`JS2WASM_FNCTOR_TYPED_READS` stays OFF by default.** The lever is
+representation-correct and fully wired/tested; it just does not move the acorn
+benchmark, because the sites it converts are not where the time goes.
+
+### What landed
+
+`src/codegen/fnctor-typed-reads.ts` (written at the 90b26f5ef checkpoint) is
+now wired at three call sites, all admission-after-receiver-compile, all
+flag-gated, all census-instrumented independently of the flag
+(`JS2WASM_FNCTOR_TYPED_READS_DEBUG=1`):
+
+- read: `finalizeStructAndDynamicMemberGet`'s `isExternObj` arm
+  (`property-access-dispatch.ts`), between the receiver compile and the
+  `extern.convert_any` erase;
+- read: `tryEmitPinnedStructMemberGet` (`property-access.ts`), before
+  `reserveMemberGetDispatch`;
+- write: `compilePropertyAssignmentExternSet` (`expressions/assignment.ts`),
+  gated on `!forceRuntimeSet && !wrapRuntimeEvalCallable` so the
+  accessor-descriptor and runtime-eval routes stay dynamic.
+
+Flag-off byte-identity was asserted, not assumed: unoptimized standalone acorn
+sha256 `e820698f…baa8` (1,578,609 B) identical between the wired tree
+(flag off) and the unwired checkpoint.
+
+### Census (standalone acorn 8.16.0, flag-independent)
+
+74 candidate gets + 4 sets. Every one is a SECOND-HOP access through a
+Phase-1-typed slot — the predecessor's hypothesis, confirmed:
+
+| site | count | field slot |
+| --- | --- | --- |
+| get `TokenType.keyword` | 40 | externref |
+| get `TokenType.binop` | 8 | externref |
+| get `SourceLocation.start` | 8 | f64 |
+| get `TokenType.isLoop`/`prefix`/`postfix`/`startsExpr` | 4 each | i32 |
+| get `TokenType.isAssign` | 2 | i32 |
+| set `RegExpValidationState.switchN` | 4 | i32 |
+
+Declines are exclusively `nofield:__fnctor_Parser.*` (ctor-unseeded flags like
+`inAsync`, `canAwait` — correctly refused; #743 territory). The counts are all
+even (each site visited twice by the dual/speculative compile), so ~39 distinct
+emission sites. First-hop receivers (`this.options.*`, 95 sites) remain
+#2937-externref and never reach the hook — the receiver-representation story
+from the checkpoint's WAT sampling stands.
+
+### Why the reads reach the dynamic path at all (fixture recipe)
+
+The checker cannot bind `this` in acorn's `var pp = Parser.prototype;
+pp.m = function () { … this.type.keyword … }` idiom, so the read compiles down
+the DYNAMIC member path — but codegen's typed-this twin still compiles the
+receiver (`this.type`) to `(ref null $__fnctor_TokenType)`. That mismatch
+(static any / compiled struct) is exactly what the fast path consumes.
+`tests/issue-4155-phase2-typed-reads.test.ts` reproduces it in six behaviors:
+fast-path read (WAT drops `__get_member_*`, mutation-checked against flag-off),
+write twin (assignment evaluates to RHS), member call stays dynamic,
+ctor-unseeded property stays dynamic, presence-tracked/conditional field still
+answers undefined, null receiver still throws the catchable TypeError.
+
+### A/B (`benchmark:acorn:standalone-dynamic`, 3 pairs back-to-back, same container)
+
+| run | flag OFF ratio (std) | flag ON ratio (std) |
+| --- | --- | --- |
+| 1 | 0.1142 (±0.026) | 0.1107 (±0.023) |
+| 2 | 0.1141 (±0.024) | 0.1185 (±0.041) |
+| 3 | 0.1251 (±0.027) | 0.1175 (±0.014) |
+| mean | **0.1178** | **0.1156** |
+
+Statistically indistinguishable (mean delta −1.9%, per-run std ±12–35%).
+Dogfood canaries flag-on: unchanged (2, 3, 4, 5), `functionImports: []`,
+errors exactly the 3 pre-existing IR-FALLBACKs. Optimized binary 866,718 →
+867,182 B (+464 B, +0.05%) — the per-site null guards, no dispatcher bodies
+saved because other props still reserve them.
+
+Suites flag-on, all green: the 4 × #2660 fnctor suites + Phase 0 shape
+regression (54), `issue-4123` + 17 object/struct/proto/super/private
+equivalence files (110), plus the 6 new Phase 2 tests.
+
+### Default decision and the successor lever
+
+Per this module's own rule — the default is set by measurement — a wash does
+not justify ON: it buys no measured perf, costs +464 B, and adds
+standalone-test262 exposure that only the `merge_group` can validate. The flag
+stays available as a one-variable enable for future coverage growth.
+
+The reason coverage is small is upstream of this hook: at most member sites the
+receiver has ALREADY been erased to externref (locals, params, `this.options.*`)
+before any read is compiled, so the admission — correctly — never sees a struct
+type. The next lever is retyping those BINDINGS (#2660 S3b territory: locals /
+params / return slots carrying `(ref null $__fnctor_F)` instead of externref),
+which would multiply the sites this already-wired fast path converts. Phase 2's
+hook then becomes the consumer that makes binding retype pay.
 
 ## Scope
 

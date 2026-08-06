@@ -36,6 +36,7 @@ import { buildDestructureNullThrow, patternIteratorStepCount } from "../destruct
 import { resolveComputedKeyExpression } from "../literals.js";
 import { resolveReceiverStruct } from "../fnctor-escape-gate.js"; // (#2681/#2686 A3) pinned-struct write dispatch
 import { presenceSetInstrs, presenceSlotOf } from "../fnctor-presence-bits.js"; // (#3780) packed own-presence flags
+import { tryEmitFnctorTypedFieldSet } from "../fnctor-typed-reads.js"; // (#4155 Phase 2) struct-typed fnctor receiver
 import { tryEmitTypedThisFieldSet } from "../typed-this.js"; // (#3683 S2) typed-`this` field write
 import { reserveMemberSetDispatch } from "../member-set-dispatch.js"; // (#2681/#2686 A3) pre-check set dispatcher
 import { reserveMemberGetDispatch } from "../member-get-dispatch.js"; // (#2681/#2686) symmetric struct read for compound
@@ -3933,6 +3934,25 @@ function compilePropertyAssignmentExternSet(
   // Compile object expression and convert to externref
   const objResult = compileExpression(ctx, fctx, target.expression);
   if (!objResult) return null;
+  // (#4155 Phase 2) Struct-typed receiver + own mutable data slot → one
+  // `struct.set` instead of the externref hop + `__extern_set` ladder. Never
+  // when a runtime accessor descriptor forced this path (`forceRuntimeSet`) or
+  // the runtime-eval callable wrap is needed — those must stay dynamic.
+  // Flag-gated (declines are byte-identical); flag-independent census under
+  // JS2WASM_FNCTOR_TYPED_READS_DEBUG.
+  if (!forceRuntimeSet && !wrapRuntimeEvalCallable) {
+    const fnctorTypedSet = tryEmitFnctorTypedFieldSet(
+      ctx,
+      fctx,
+      target,
+      propName,
+      objResult,
+      value,
+      () => typeErrorThrowInstrs(ctx, target),
+      (valType) => ensureI32Condition(fctx, valType, ctx),
+    );
+    if (fnctorTypedSet !== undefined) return fnctorTypedSet;
+  }
   if (objResult.kind === "externref") {
     // already externref
   } else if (objResult.kind === "ref" || objResult.kind === "ref_null") {

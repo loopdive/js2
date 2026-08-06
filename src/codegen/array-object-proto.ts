@@ -828,6 +828,13 @@ function emitStringProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, m
 
   const IN_SCOPE = new Set(["at", "charCodeAt", "codePointAt"]);
   if (member === "substring") return emitStringSubstringMemberBody(ctx, fctx);
+  // (#2875 slice C) `slice` (§22.1.3.22) shares `substring`'s closure ABI —
+  // `this`/start/end, same `0x7fffffff` absent-end sentinel — and `__str_slice`
+  // has the identical helper signature, differing only in resolving negative
+  // indices rather than swapping reversed bounds. Without this it fell through
+  // to `emitProtoMemberBodyRefusal`, so a borrowed `slice` threw
+  // "not yet implemented in --target standalone".
+  if (member === "slice") return emitStringSubstringMemberBody(ctx, fctx, "slice");
   // (#2875 slice 3a) The number-returning search family — `indexOf` /
   // `lastIndexOf` — has a DIFFERENT closure ABI from the index accessors
   // (param 2 is the search STRING, not an integer position; the optional

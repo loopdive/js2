@@ -18,14 +18,14 @@ import { ensureObjectRuntime } from "./object-runtime.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { flushLateImportShifts } from "./shared.js";
 
-function emitRefusal(ctx: CodegenContext, fctx: FunctionContext): null {
-  emitThrowTypeError(ctx, fctx, "String.prototype.substring is not yet implemented in --target standalone");
+function emitRefusal(ctx: CodegenContext, fctx: FunctionContext, member: string): null {
+  emitThrowTypeError(ctx, fctx, `String.prototype.${member} is not yet implemented in --target standalone`);
   return null;
 }
 
-function emitRequireObjectCoercible(ctx: CodegenContext, fctx: FunctionContext): void {
+function emitRequireObjectCoercible(ctx: CodegenContext, fctx: FunctionContext, member: string): void {
   const rocThrow: Instr[] = [];
-  emitBrandCheckTypeError(ctx, rocThrow, "String.prototype.substring called on null or undefined");
+  emitBrandCheckTypeError(ctx, rocThrow, `String.prototype.${member} called on null or undefined`);
   fctx.body.push({ op: "local.get", index: 1 }, { op: "ref.is_null" });
   const isUndefIdx = undefinedSingletonActive(ctx) ? ctx.funcMap.get("__extern_is_undefined") : undefined;
   if (isUndefIdx !== undefined) {
@@ -48,12 +48,24 @@ function unboxBoundToI32(ctx: CodegenContext, fctx: FunctionContext, paramIdx: n
 }
 
 /**
- * Native body for a reflective `String.prototype.substring` closure.
+ * Native body for a reflective `String.prototype.{substring,slice}` closure.
  * Closure ABI: `this` = param 1, start = param 2, end = param 3. The body
  * preserves receiver/bound coercion order and delegates clamping plus swapped
  * bounds to the existing native substring core.
+ *
+ * `slice` shares this body: `__str_slice` has the IDENTICAL
+ * `(ref $NativeString, i32 start, i32 end) -> ref $NativeString` shape and the
+ * same `0x7fffffff` "absent end" sentinel as `__str_substring` — it only
+ * resolves negative indices instead of swapping reversed bounds, which is
+ * exactly the §22.1.3.22-vs-§22.1.3.24 difference. Both direct paths in
+ * `string-ops.ts` already emit the same call sequence with only the helper
+ * name differing, so the reflective closure can do the same.
  */
-export function emitStringSubstringMemberBody(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
+export function emitStringSubstringMemberBody(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  member: "substring" | "slice" = "substring",
+): ValType | null {
   ensureNativeStringHelpers(ctx);
   ensureObjectRuntime(ctx);
   if (undefinedSingletonActive(ctx)) flushLateImportShifts(ctx, fctx);
@@ -65,12 +77,12 @@ export function emitStringSubstringMemberBody(ctx: CodegenContext, fctx: Functio
   const anyToStrIdx = ensureAnyToStringHelper(ctx);
   const toPrimitiveIdx = getToPrimitiveProvider(ctx);
   const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
-  const substringIdx = ctx.nativeStrHelpers.get("__str_substring");
+  const substringIdx = ctx.nativeStrHelpers.get(member === "slice" ? "__str_slice" : "__str_substring");
   if (toPrimitiveIdx === undefined || flattenIdx === undefined || substringIdx === undefined) {
-    return emitRefusal(ctx, fctx);
+    return emitRefusal(ctx, fctx, member);
   }
 
-  emitRequireObjectCoercible(ctx, fctx);
+  emitRequireObjectCoercible(ctx, fctx, member);
 
   // The abstract ToString operation rejects Symbols, unlike the printable
   // fallback intentionally provided by __any_to_string.
@@ -94,7 +106,7 @@ export function emitStringSubstringMemberBody(ctx: CodegenContext, fctx: Functio
     { op: "call", funcIdx: anyToStrIdx },
     { op: "call", funcIdx: flattenIdx },
   );
-  const flatLocal = allocLocal(fctx, `__str_pm_substring_${fctx.locals.length}`, flatStringType(ctx));
+  const flatLocal = allocLocal(fctx, `__str_pm_${member}_${fctx.locals.length}`, flatStringType(ctx));
   fctx.body.push({ op: "local.set", index: flatLocal });
 
   const startLocal = unboxBoundToI32(ctx, fctx, 2);

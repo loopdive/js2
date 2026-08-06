@@ -170,6 +170,7 @@ import {
 } from "./property-access.js";
 import { tryEmitExactStructFieldGet, tryEmitStructuralContractReadFromLocal } from "./property-access-exact-shapes.js";
 import { tryEmitProvenReceiverFieldGet, tryEmitTypedThisFieldGet } from "./typed-this.js"; // (#3683 S2 / #3685 S2) inline field reads
+import { tryEmitFnctorTypedFieldGet } from "./fnctor-typed-reads.js"; // (#4155 Phase 2) struct-typed fnctor receiver
 import { emitRuntimeEvalSharedValueUnwrap, runtimeEvalSharedValueUnwrapInstrs } from "./global-environment.js";
 
 /**
@@ -3705,6 +3706,16 @@ export function finalizeStructAndDynamicMemberGet(
       let unboxIdx = ensureScalarUnbox(ctx, fctx, accessWasm);
       if (getIdx !== undefined) {
         const objExprType = compileExpression(ctx, fctx, expr.expression);
+        // (#4155 Phase 2) The receiver's compiled ValType is already a
+        // `$__fnctor_<Name>` struct ref and `propName` is one of its plain data
+        // slots: read it with one `struct.get` instead of erasing the type one
+        // instruction later and round-tripping through `__extern_get`'s
+        // ref.test ladder. Flag-gated (declines → byte-identical fallthrough);
+        // flag-independent census under JS2WASM_FNCTOR_TYPED_READS_DEBUG.
+        const fnctorTypedGet = tryEmitFnctorTypedFieldGet(ctx, fctx, expr, propName, objExprType, () =>
+          typeErrorThrowInstrs(ctx, expr),
+        );
+        if (fnctorTypedGet !== undefined) return fnctorTypedGet;
         // If the expression produced a ref/ref_null (struct), convert to externref
         // so that __extern_get (which expects externref) can be used.
         if (objExprType && (objExprType.kind === "ref" || objExprType.kind === "ref_null")) {
