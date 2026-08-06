@@ -16,6 +16,35 @@ goal: spec-completeness
 depends_on: [1387, 2580]
 needs_arch_spec: false
 sprint: 67
+loc-budget-allow:
+  # Slice 3 (`with` read-modify-write) needs a dispatch hook at the two places
+  # the compiler decides how an identifier LHS is updated. Both are the sole
+  # entry points for their node kind, so the hook cannot live anywhere else; all
+  # of the new LOGIC is in the new file src/codegen/with-rmw.ts (0 god-file
+  # growth). operator-assignment.ts: +8 (compound-assign dispatch + import).
+  - src/codegen/expressions/operator-assignment.ts
+  # unary-updates.ts: +17 (++/-- prefix and postfix dispatch + import).
+  - src/codegen/expressions/unary-updates.ts
+func-budget-allow:
+  # Same two dispatch hooks. Both functions are the single switch over how an
+  # identifier LHS is updated, and the `with` Object Environment Record must be
+  # consulted BEFORE the const/local/global arms they already contain — so the
+  # check has to sit inside them (+7 / +10 lines). The body it dispatches to is
+  # in src/codegen/with-rmw.ts.
+  - src/codegen/expressions/operator-assignment.ts::compileCompoundAssignment
+  - src/codegen/expressions/unary-updates.ts::compilePrefixUpdate
+# (#1917/#2108 coercion-sites gate) with-rmw.ts: 0 -> 1 (__unbox_number).
+# A read-modify-write through a `with` scope reads an externref out of the
+# Object Environment Record, applies an f64 operator, and writes it back — so
+# the unbox is intrinsic to the operation, not incidental. It DELEGATES to the
+# engine's existing helper by funcMap name (`__unbox_number`, paired with
+# `__box_number` on the way out) and hand-rolls no ToString/ToNumber/ToPrimitive
+# matrix, which is what the gate actually guards against; the gate counts the
+# reference. This follows the #4160 precedent for delegating-by-name rather
+# than the discouraged pattern. If the single coercion engine grows an entry
+# point for "unbox, apply numeric op, rebox", this is a one-call rewrite.
+coercion-sites-allow:
+  - src/codegen/with-rmw.ts
 ---
 
 # #2663 — `with` statement Tier 2: dynamic-scope fallback
