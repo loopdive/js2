@@ -1,10 +1,11 @@
 {
   "id": "4175",
   "assignee": "ttraenkler/W3-runtime-eval-ternary",
-  "requested_by": "ttraenkler/W3-runtime-eval-ternary",
-  "status": "in-progress",
+  "requested_by": "noreply@anthropic.com",
+  "status": "released",
   "branch": "issue-4175-runtime-eval-ternary",
   "claimed_at": "2026-08-06T11:59:56Z",
-  "updated_at": "2026-08-06T11:59:56Z",
-  "write_id": "24156-9a10t3gx"
+  "updated_at": "2026-08-06T14:34:52Z",
+  "write_id": "12052-tjuc41o9",
+  "released_at": "2026-08-06T14:34:52Z"
 }
