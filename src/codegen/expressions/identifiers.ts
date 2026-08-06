@@ -561,7 +561,7 @@ function compileIdentifierCore(ctx: CodegenContext, fctx: FunctionContext, id: t
     if (!insideDeclaringBlock) return emitAnnexBUnboundReferenceError(ctx, fctx, name);
   }
 
-  // (#3980, Annex B B.3.3) The `fctx.annexBCancelled` map above is per-
+  // (#4166, Annex B B.3.3) The `fctx.annexBCancelled` map above is per-
   // FunctionContext, so it is invisible inside NESTED function bodies — yet that
   // is exactly where the 96 `annexB/language/*-skip-early-err-*` reads live
   // (`assert.throws(ReferenceError, function () { f; })`). It also only sees a

@@ -1,5 +1,5 @@
 ---
-id: 3977
+id: 4163
 title: "UMBRELLA: es5 standalone → 90% — census on fresh data (66.3%, not the published 59%), reachability ceiling 92.4%, and the prioritised lever list"
 status: ready
 sprint: current
@@ -13,11 +13,11 @@ task_type: umbrella
 area: codegen, conformance
 language_feature: n/a
 goal: es5
-related: [3892, 3626, 3628, 1906, 2992, 3251, 2928, 1387, 671, 3983]
+related: [3892, 3626, 3628, 1906, 2992, 3251, 2928, 1387, 671, 4168]
 origin: "2026-08-01, goal directive: 90% test262 standalone pass rate for es5-tagged tests. Census recomputed from baselines-repo run 20260801-090441 because the committed editions artifact is frozen (#3892)."
 ---
 
-# #3977 — es5 standalone to 90%: census, ceiling, and lever list
+# #4163 — es5 standalone to 90%: census, ceiling, and lever list
 
 ## The number is 66.3%, not 59%
 
@@ -88,7 +88,7 @@ grind.
 | --- | --- | --- | --- |
 | **Property descriptors** — `Object/defineProperty` 331, `defineProperties` 264, `create` 142, `getOwnPropertyDescriptor` 35, `prototype` 22, `isExtensible` 16, `preventExtensions` 15, `Array/length` 18, `types/object` 14 | **857** | **37 %** | the one dominant theme |
 | `built-ins/String/prototype` | 194 | 8 % | |
-| `built-ins/Function/prototype` | 117 | 5 % | overlaps #3983 |
+| `built-ins/Function/prototype` | 117 | 5 % | overlaps #4168 |
 | annexB hoisting (`global-code` 111, `function-code` 96) | 207 | 9 % | B.3.3 semantics |
 | `language/statements/function` | 58 | 2 % | |
 | `built-ins/Array/prototype` | 53 | 2 % | |
@@ -119,7 +119,7 @@ not deleting the guard.
 1. **#3892** — unfreeze the editions artifact. Without it the goal has no gauge.
 2. **#2992 / #3251** — exotic-receiver own-key MOP; unlocks the 857-test
    property-descriptor family (37 % of the gap).
-3. **#3983** — `this` receiver identity; 200-test family, lane-independent, so
+3. **#4168** — `this` receiver identity; 200-test family, lane-independent, so
    it pays into the ES5 *host* target too.
 4. Decide explicitly: **#2928 (`eval`)** to lift the ceiling to ~98 %, versus
    grinding the last ~500 of the long tail against a 92.4 % ceiling.

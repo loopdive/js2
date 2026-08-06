@@ -123,7 +123,7 @@ export function emitThrowRangeError(ctx: CodegenContext, fctx: FunctionContext, 
 }
 
 /**
- * (#2200 / #3980) Emit `<name> is not defined` for an Annex B B.3.3 name whose
+ * (#2200 / #4166) Emit `<name> is not defined` for an Annex B B.3.3 name whose
  * web-compat var binding was NOT created (creating it would have been an Early
  * Error), and leave an `externref` on the stack for the caller's type contract.
  * Shared by the per-FunctionContext detector (`fctx.annexBCancelled`) and the

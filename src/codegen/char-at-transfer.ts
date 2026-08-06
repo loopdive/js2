@@ -9,7 +9,7 @@
  * the closure's `thisValue` param would receive the first user argument, or (for
  * a 0-arity method) nothing at all. Hence the exact arms here.
  *
- * (#3978) This started as a charAt-only exception and is now driven by
+ * (#4164) This started as a charAt-only exception and is now driven by
  * {@link TRANSFERRED_STRING_PROTO_MEMBERS}. The discriminator is the builtin
  * metadata id (`bfnid`), NOT `ref.test`: WasmGC canonicalizes structurally
  * equivalent meta types, so two same-shape member closures share one runtime
@@ -176,7 +176,7 @@ export function buildTransferredCharAtMethodArm(
 }
 
 /**
- * (#3978) The `String.prototype` members whose TRANSFERRED (property-assigned)
+ * (#4164) The `String.prototype` members whose TRANSFERRED (property-assigned)
  * closure gets an exact dispatch arm:
  *
  *   `obj.<m> = String.prototype.<m>; obj.<m>(…)`

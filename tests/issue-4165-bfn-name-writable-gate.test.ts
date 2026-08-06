@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * #3979 regression — a plain write to a LIVE builtin `name`/`length` own
+ * #4165 regression — a plain write to a LIVE builtin `name`/`length` own
  * property must be a sloppy no-op (§17: writable:false), never a bag store.
  *
  * `__closure_prop_set` used to store unconditionally into the #3468 side-table
@@ -31,7 +31,7 @@ export function test(): number { return __r; }
   return ex.test();
 }
 
-describe("#3979 — builtin fn name/length writable gate", () => {
+describe("#4165 — builtin fn name/length writable gate", () => {
   it("write to live builtin .name no-ops; delete then reports absent (the regressed cycle)", async () => {
     const mask = await run(`
       var f: any = Object.defineProperty;

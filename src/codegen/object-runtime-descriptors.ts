@@ -37,7 +37,7 @@ import { emitSelfHostedFunc } from "./stdlib-selfhost.js";
 import { SELF_HOSTED_OBJECT_RUNTIME } from "../stdlib/object-runtime.js";
 import { getOrRegisterVecBaseType } from "./registry/types.js";
 import { reserveVecOverlayHelpers } from "./vec-overlay.js";
-// (#3979) reflective-MOP own-property bag substitution (#3468 closures / #3537 arrays).
+// (#4165) reflective-MOP own-property bag substitution (#3468 closures / #3537 arrays).
 import {
   bagSubstitutionArm,
   closureBagEnsureInstrs,
@@ -373,7 +373,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       },
     ];
 
-    // (#3979) closure-receiver bag substitution; bag local appended at index 13.
+    // (#4165) closure-receiver bag substitution; bag local appended at index 13.
     const dpValueClosureArm = closureBagSubstitutionArm(ctx, {
       recvLocalIdx: 0,
       anyLocalIdx: 5,
@@ -393,7 +393,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       {
         op: "if",
         blockType: { kind: "empty" },
-        // (#3979) A CLOSURE receiver's own-property table is the #3468
+        // (#4165) A CLOSURE receiver's own-property table is the #3468
         // side-table bag; define into it (creating it on demand) and fall out of
         // this arm into the unchanged `$Object` path — including the #2042-S4
         // ValidateAndApplyPropertyDescriptor preflight, which a function object
@@ -609,7 +609,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
         { name: "seq", type: { kind: "i32" } },
         { name: "e", type: entryRefNull }, // #2042 S4 — existing entry (local 11)
         { name: "efl", type: { kind: "i32" } }, // #2042 S4 — existing flags (local 12)
-        // (#3979) closure own-property bag (local 13) — standalone/wasi only.
+        // (#4165) closure own-property bag (local 13) — standalone/wasi only.
         ...(dpValueClosureArm
           ? ([{ name: "bag", type: { kind: "externref" } }] as { name: string; type: ValType }[])
           : []),
@@ -699,7 +699,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       { op: "i32.const", value: 0 },
       { op: "i32.ne" },
     ];
-    // (#3979) closure-receiver bag substitution; bag local appended at index 16.
+    // (#4165) closure-receiver bag substitution; bag local appended at index 16.
     const dpAccessorClosureArm = closureBagSubstitutionArm(ctx, {
       recvLocalIdx: 0,
       anyLocalIdx: 6,
@@ -709,7 +709,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     const body: Instr[] = [
       // any = any.convert_extern(obj) ; if !$Object → vec receivers route to
       // the #3251 overlay; a CLOSURE receiver defines into its #3468
-      // own-property bag (#3979); anything else keeps the lenient no-op.
+      // own-property bag (#4165); anything else keeps the lenient no-op.
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "local.tee", index: 6 },
@@ -1058,7 +1058,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
         { name: "efl", type: { kind: "i32" } },
         { name: "getSpec", type: { kind: "i32" } },
         { name: "setSpec", type: { kind: "i32" } },
-        // (#3979) closure own-property bag (local 16) — standalone/wasi only.
+        // (#4165) closure own-property bag (local 16) — standalone/wasi only.
         ...(dpAccessorClosureArm
           ? ([{ name: "bag", type: { kind: "externref" } }] as { name: string; type: ValType }[])
           : []),
@@ -1087,9 +1087,9 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     emitWasiErrorConstructor(ctx, "TypeError", 1);
     const typeErrorCtorIdx = ctx.funcMap.get("__new_TypeError")!;
     const exnTagIdx = ensureExnTag(ctx);
-    // (#3979) §6.2.5.6 field presence is HasProperty, not HasOwnProperty — see
+    // (#4165) §6.2.5.6 field presence is HasProperty, not HasOwnProperty — see
     // `hasField` below. Falls back to the own-only helper when `__extern_has`
-    // is somehow absent (keeps the pre-#3979 encoding).
+    // is somehow absent (keeps the pre-#4165 encoding).
     const descHasFieldIdx = ctx.funcMap.get("__hasOwnProperty")!;
     const isTruthyIdx = ctx.funcMap.get("__is_truthy")!;
     const typeofFunctionIdx = ctx.funcMap.get("__typeof_function")!;
@@ -1126,7 +1126,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     const L_SETTER = 21;
 
     const keyRef = (key: string): Instr[] => [...nativeStringLiteralInstrs(ctx, key), { op: "extern.convert_any" }];
-    // (#3979 — INVESTIGATED, DELIBERATELY NOT CHANGED) §6.2.5.6
+    // (#4165 — INVESTIGATED, DELIBERATELY NOT CHANGED) §6.2.5.6
     // ToPropertyDescriptor probes each field with **HasProperty**
     // (proto-walking), not HasOwnProperty, so a descriptor object that INHERITS
     // `value`/`get`/`enumerable`/… is legal and this own-only probe reads it as
@@ -1288,7 +1288,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       },
     ];
 
-    // ── (#3979) Non-`$Object` `O` / `Properties` — narrow, substrate-backed
+    // ── (#4165) Non-`$Object` `O` / `Properties` — narrow, substrate-backed
     // widenings of the two #1906 fail-loud gates. Every widening below either
     // routes to machinery that is already correct for that receiver, or is an
     // exact §20.1.2.3.1/§7.1.18 no-op. Anything else KEEPS the loud throw: the
@@ -1803,7 +1803,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
         { name: "value", type: { kind: "externref" } },
         { name: "getter", type: { kind: "externref" } },
         { name: "setter", type: { kind: "externref" } },
-        // (#3979) own-property bag local — appended last, standalone/wasi only.
+        // (#4165) own-property bag local — appended last, standalone/wasi only.
         ...(dpSubstrate ? ([{ name: "bag", type: { kind: "externref" } }] as { name: string; type: ValType }[]) : []),
       ],
       body,
@@ -1838,9 +1838,9 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     emitWasiErrorConstructor(ctx, "TypeError", 1);
     const typeErrorCtorIdx = ctx.funcMap.get("__new_TypeError")!;
     const exnTagIdx = ensureExnTag(ctx);
-    // (#3979) §6.2.5.6 field presence is HasProperty, not HasOwnProperty — see
+    // (#4165) §6.2.5.6 field presence is HasProperty, not HasOwnProperty — see
     // `hasField` below. Falls back to the own-only helper when `__extern_has`
-    // is somehow absent (keeps the pre-#3979 encoding).
+    // is somehow absent (keeps the pre-#4165 encoding).
     const descHasFieldIdx = ctx.funcMap.get("__hasOwnProperty")!;
     const isTruthyIdx = ctx.funcMap.get("__is_truthy")!;
     const typeofFunctionIdx = ctx.funcMap.get("__typeof_function")!;
@@ -1879,7 +1879,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     const L_DEFINE_RESULT = 11; // (#3177 slice 4) dyn-view rejection-sentinel thread-out
 
     const keyRef = (key: string): Instr[] => [...nativeStringLiteralInstrs(ctx, key), { op: "extern.convert_any" }];
-    // (#3979 — INVESTIGATED, DELIBERATELY NOT CHANGED) §6.2.5.6
+    // (#4165 — INVESTIGATED, DELIBERATELY NOT CHANGED) §6.2.5.6
     // ToPropertyDescriptor probes each field with **HasProperty** (proto-walking),
     // not HasOwnProperty, so an INHERITED `value`/`get`/`enumerable` should be
     // honoured. Switching this call (and its `__defineProperties` twin) to
@@ -2525,7 +2525,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
           ]
         : [{ op: "ref.null.extern" } as Instr, { op: "return" } as Instr];
 
-    // (#3979) Own-property side-table bag substitution. The bag local is
+    // (#4165) Own-property side-table bag substitution. The bag local is
     // APPENDED to the local vector (index 7, or 13 when the #2987 String-exotic
     // arm's six locals are present) so no existing local index shifts; it is
     // only added when the substrate exists (standalone/wasi), keeping the
@@ -2571,7 +2571,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       {
         op: "if",
         blockType: { kind: "empty" },
-        // (#3979) A closure (#3468) / array (#3537) receiver keeps its NAMED
+        // (#4165) A closure (#3468) / array (#3537) receiver keeps its NAMED
         // own properties in an identity-keyed side-table `$Object` bag that
         // `__extern_get`/`__extern_set` already serve. Substituting the bag for
         // the receiver lets gOPD answer from that same store — falling out of
@@ -2672,7 +2672,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
               { name: "kIdx", type: { kind: "i32" } },
             ] as { name: string; type: ValType }[])
           : []),
-        // (#3979) own-property bag local — appended last, standalone/wasi only.
+        // (#4165) own-property bag local — appended last, standalone/wasi only.
         ...(gopdBagArm ? ([{ name: "bag", type: { kind: "externref" } }] as { name: string; type: ValType }[]) : []),
       ],
       body,

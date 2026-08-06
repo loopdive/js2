@@ -90,7 +90,7 @@ import {
   buildVecOrClosurePropSetMissArm,
   reserveVecPropHelpers,
 } from "./vec-props.js";
-// (#3979) reflective-MOP half of the same substrate — hasOwnProperty /
+// (#4165) reflective-MOP half of the same substrate — hasOwnProperty /
 // propertyIsEnumerable / delete / gOPD substitute the side-table bag for a
 // non-`$Object` receiver instead of answering "absent".
 import { bagSubstitutionArm } from "./own-prop-bag.js";
@@ -2706,7 +2706,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   //
   // params: 0=obj(externref) 1=key(externref)
   // locals: 2=any(anyref) 3=o(ref null $Object) 4=e(ref null $PropEntry)
-  //         5=bag(externref, #3979 — appended, standalone only)
+  //         5=bag(externref, #4165 — appended, standalone only)
   {
     const deleteBagArm = bagSubstitutionArm(ctx, {
       recvLocalIdx: 0,
@@ -2731,7 +2731,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
             },
           ] satisfies Instr[])
         : []),
-      // any = any.convert_extern(obj) ; if !ref.test $Object → (#3979) a
+      // any = any.convert_extern(obj) ; if !ref.test $Object → (#4165) a
       // closure/array receiver deletes out of its own-property side-table bag
       // (so a `verifyProperty`-style define→delete→redefine cycle over a
       // function/array expando is coherent); otherwise return 1 (no-op success).
@@ -2997,7 +2997,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // __obj_find on the own props table; present iff the returned entry is
   // non-null (find already skips tombstones). Object.hasOwn shares the exact
   // own-only predicate, so both names register the same body.
-  // (#3979) Own-property BAG substitution for the reflective MOP helpers. A
+  // (#4165) Own-property BAG substitution for the reflective MOP helpers. A
   // closure (#3468) / array (#3537) receiver keeps its named own properties in
   // an identity-keyed side-table `$Object`; these helpers previously answered
   // "absent" for any non-`$Object` receiver, so a function/array expando was
@@ -3082,7 +3082,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // This replaces the standalone #1472-Phase-B refusal with a native lowering
   // over the same $Object/$PropEntry runtime; host mode keeps its JS import.
   {
-    // (#3979) same bag substitution as __hasOwnProperty; bag local appended at
+    // (#4165) same bag substitution as __hasOwnProperty; bag local appended at
     // index 4 so `e` keeps index 3.
     const pieBagArm = bagSubstitutionArm(ctx, {
       recvLocalIdx: 0,
@@ -3151,7 +3151,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // confirmed an object-shaped externref; this never throws into Wasm).
   //
   // params: 0=obj(externref) 1=key(externref)
-  // locals: 2=o(ref null $Object) 3=any(anyref) 4=bag(externref, #3979)
+  // locals: 2=o(ref null $Object) 3=any(anyref) 4=bag(externref, #4165)
   {
     const externHasBagArm = bagSubstitutionArm(ctx, {
       recvLocalIdx: 0,
@@ -3160,7 +3160,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       fallback: [{ op: "i32.const", value: 0 }, { op: "return" }],
     });
     const body: Instr[] = [
-      // any = any.convert_extern(obj); if !ref.test $Object → (#3979) consult the
+      // any = any.convert_extern(obj); if !ref.test $Object → (#4165) consult the
       // closure/array own-property side-table bag before answering "absent".
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },

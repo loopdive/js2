@@ -256,7 +256,7 @@ export function resolveNamedThisCallTarget(
 }
 
 /**
- * (#3983) `.apply(thisArg[, argsArray])` counterpart to the `.call` path above.
+ * (#4168) `.apply(thisArg[, argsArray])` counterpart to the `.call` path above.
  *
  * `.apply` used to fall through to a lowering that evaluated `thisArg` and
  * DROPPED it, so the callee's `this` was the ambient receiver rather than the

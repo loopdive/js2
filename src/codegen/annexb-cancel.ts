@@ -1,5 +1,5 @@
 /**
- * (#3980) Annex B B.3.3 — "the web-compat extension is NOT observed when
+ * (#4166) Annex B B.3.3 — "the web-compat extension is NOT observed when
  * creating the var binding would produce an Early Error".
  *
  * B.3.3.1 / B.3.3.2 give a block-nested sloppy-mode `function F` a *var-scoped*
@@ -234,7 +234,7 @@ function hasInterveningLexicalBinder(from: ts.Node, name: string, scope: ts.Node
  * observable way (reading `F` outside the block throws), so strict mode is not
  * gated here.
  *
- * (#3980) This is the narrow, per-`FunctionContext` detector used by the hoist
+ * (#4166) This is the narrow, per-`FunctionContext` detector used by the hoist
  * pass; `collectAnnexBCancelSites` below is the whole-`SourceFile` superset that
  * also covers `if`-clause / `switch`-clause declaration positions, lexical loop
  * heads, destructuring `catch` parameters, and reads inside nested closures.
@@ -248,7 +248,7 @@ export function annexBHoistCancels(fnDecl: ts.FunctionDeclaration): ts.Block | n
   if (!ts.isBlock(block)) return null;
   if (isVarScopeBoundary(block.parent)) return null; // block IS the fn body → direct decl
 
-  // (#3980) Annex B declining to create the web-compat var binding does NOT make
+  // (#4166) Annex B declining to create the web-compat var binding does NOT make
   // the name unbound when the enclosing var scope ALREADY binds it — a parameter
   // (`*-skip-param`), a `var f`, or a scope-top-level `let f` (`*-skip-early-err`
   // without a suffix). The pre-existing binding stays readable, so cancelling

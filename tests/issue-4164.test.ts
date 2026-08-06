@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-// #3978 — borrowed `String.prototype.<m>` on a NON-string receiver, standalone.
+// #4164 — borrowed `String.prototype.<m>` on a NON-string receiver, standalone.
 //
 // Two dispatch shapes reach a borrowed String.prototype method, and both were
 // broken for most of the member set:
@@ -46,7 +46,7 @@ async function runStandalone(src: string): Promise<number> {
   return (instance.exports as { test(): number }).test();
 }
 
-describe("#3978 — transferred String.prototype.<m> on a non-string receiver (standalone)", () => {
+describe("#4164 — transferred String.prototype.<m> on a non-string receiver (standalone)", () => {
   // ── (A) transferred / property-assigned ────────────────────────────────
   it("new Object(true).toUpperCase = String.prototype.toUpperCase → 'TRUE'", async () => {
     expect(

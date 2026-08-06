@@ -6581,7 +6581,7 @@ function compileCallExpression(
           closureInfo = resolveClosureInfoFromLocal(ctx, fctx, funcName);
         }
 
-        // (#3983) `.apply(thisArg, …)` dropped the receiver; reshape it onto
+        // (#4168) `.apply(thisArg, …)` dropped the receiver; reshape it onto
         // the receiver-correct `.call` path (see named-this-call.ts).
         if (!isCall && !closureInfo && funcIdx !== undefined) {
           const asCall = tryReshapeApplyToNamedThisCall(ctx, fctx, expr, innerExpr, funcIdx);

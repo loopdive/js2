@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * #3980 — Annex B B.3.3 web-compat function hoisting: the extension is NOT
+ * #4166 — Annex B B.3.3 web-compat function hoisting: the extension is NOT
  * observed when creating the var binding would produce an Early Error.
  *
  * A sloppy-mode `function F` nested in a block / `if` clause / `switch` case
@@ -59,7 +59,7 @@ function sitesFor(source: string) {
   return collectAnnexBCancelSites(sf);
 }
 
-describe("#3980 Annex B B.3.3 — extension skipped on Early Error", () => {
+describe("#4166 Annex B B.3.3 — extension skipped on Early Error", () => {
   // Declaration position × cancelling lexical binder. Each pair mirrors one of
   // the eight × six generated test262 `*-skip-early-err-*` shapes.
   const shapes: Array<[string, string]> = [
@@ -137,7 +137,7 @@ describe("#3980 Annex B B.3.3 — extension skipped on Early Error", () => {
   });
 });
 
-describe("#3980 Annex B B.3.3 — the extension is NOT cancelled when the scope already binds the name", () => {
+describe("#4166 Annex B B.3.3 — the extension is NOT cancelled when the scope already binds the name", () => {
   it("a same-named parameter keeps its value (*-skip-param)", () => {
     // `function (f) { { function f() {} } }` — B.3.3 skips creating a NEW
     // binding; the parameter is untouched and must stay readable.

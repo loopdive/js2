@@ -1,5 +1,5 @@
 ---
-id: 3980
+id: 4166
 title: "annexB B.3.3: web-compat function hoisting not skipped on Early Error — 96 ES5 standalone + host failures in annexB/language/{global,function}-code"
 status: done
 sprint: current
@@ -14,11 +14,11 @@ task_type: bugfix
 area: codegen
 language_feature: function-declarations
 goal: es5
-related: [3977, 3974, 2200, 2552, 3419]
-origin: "2026-08-01 es5 goal, cluster #3 of #3977 (annexB hoisting, 207 reachable ES5 standalone failures)"
+related: [4163, 3974, 2200, 2552, 3419]
+origin: "2026-08-01 es5 goal, cluster #3 of #4163 (annexB hoisting, 207 reachable ES5 standalone failures)"
 ---
 
-# #3980 — Annex B B.3.3 hoisting is not skipped when it would be an Early Error
+# #4166 — Annex B B.3.3 hoisting is not skipped when it would be an Early Error
 
 ## The semantics gap
 
@@ -77,7 +77,7 @@ __r += (typeof f === "undefined" ? 1 : 0) * 8; // want 8
 ```
 
 All eight declaration positions × six cancelling binders reproduce; see
-`tests/issue-3980.test.ts`.
+`tests/issue-4166.test.ts`.
 
 ## Lane
 
@@ -142,7 +142,7 @@ standalone: **FIXED 2, BROKE 0.** (The sweep initially reported 8 "BROKE"
 **unmodified `HEAD`** reproduces all 8 identically, so they are in-process-runner
 vs sharded-CI-baseline drift, not a regression from this change.)
 
-Suites: `tests/issue-3980.test.ts` (16 new), plus
+Suites: `tests/issue-4166.test.ts` (16 new), plus
 `issue-2200-annexb-block-fn-hoist`, `issue-2552-annexb-phase2`, `issue-3419`,
 `issue-2923-eval-const-broaden` and 17 scope/function/closure equivalence suites
 all green. (`tests/equivalence/arguments-nested-and-loops.test.ts:181` fails —
@@ -177,7 +177,7 @@ declaration`/`second declaration` — B.3.3 interaction with an existing
       regress into ReferenceError — both now pass.
 - [x] No regression in the 312-file annexB corpus, either lane.
 - [x] Blast radius verified to be exactly the target cluster across all of test262.
-- [x] `tests/issue-3980.test.ts` covers all eight declaration positions, the six
+- [x] `tests/issue-4166.test.ts` covers all eight declaration positions, the six
       cancelling binders, and the non-cancelling counterparts.
 
 

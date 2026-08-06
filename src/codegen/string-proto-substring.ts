@@ -53,7 +53,7 @@ function unboxBoundToI32(ctx: CodegenContext, fctx: FunctionContext, paramIdx: n
  * preserves receiver/bound coercion order and delegates clamping plus swapped
  * bounds to the existing native substring core.
  *
- * (#3978) `slice` shares this body: `__str_slice` has the IDENTICAL
+ * (#4164) `slice` shares this body: `__str_slice` has the IDENTICAL
  * `(ref $NativeString, i32 start, i32 end) -> ref $NativeString` shape and the
  * same `0x7fffffff` "absent end" sentinel as `__str_substring` — it only
  * resolves negative indices instead of swapping reversed bounds, exactly the

@@ -793,7 +793,7 @@ function emitStringRequireObjectCoercible(ctx: CodegenContext, fctx: FunctionCon
 }
 
 /**
- * (#3978) The §7.1.1.1 `ToPrimitive(value, "string")` pre-reduction that turns
+ * (#4164) The §7.1.1.1 `ToPrimitive(value, "string")` pre-reduction that turns
  * `$__any_to_string` into a real `ToString`.
  *
  * `$__any_to_string` dispatches on the WasmGC type of its argument and takes the
@@ -861,7 +861,7 @@ function emitStringProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, m
   if (SUPERSEDED_BY_BORROWED_PATH.has(member)) return emitProtoMemberBodyRefusal(ctx, fctx, "String", member);
 
   const IN_SCOPE = new Set(["at", "charCodeAt", "codePointAt"]);
-  // (#3978) `slice` shares the substring body — same closure ABI, same native
+  // (#4164) `slice` shares the substring body — same closure ABI, same native
   // helper shape, only the §22.1.3 negative-index rule differs.
   if (member === "substring" || member === "slice") return emitStringSubstringMemberBody(ctx, fctx, member);
   // (#2875 slice 3a) The number-returning search family — `indexOf` /
@@ -883,7 +883,7 @@ function emitStringProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, m
   // arg-2 slot the char/search bodies unbox (these closures have arity 0).
   const TRIM = new Set(["trim", "trimStart", "trimEnd"]);
   if (TRIM.has(member)) return emitStringTrimMemberBody(ctx, fctx, member);
-  // (#3978) The case-conversion family — `toUpperCase` / `toLowerCase` and
+  // (#4164) The case-conversion family — `toUpperCase` / `toLowerCase` and
   // their `toLocale*` aliases (§22.1.3.{26,28,27,29}). Same closure shape as
   // TRIM (arity 0, string in / string out), so it routes to the same shared
   // body with a different native helper. Without this arm every
@@ -911,7 +911,7 @@ function emitStringProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, m
   if (!IN_SCOPE.has(member)) return emitProtoMemberBodyRefusal(ctx, fctx, "String", member);
 
   ensureNativeStringHelpers(ctx);
-  ensureObjectRuntime(ctx); // (#3978) ToString(this) needs __to_primitive — register BEFORE the import batch
+  ensureObjectRuntime(ctx); // (#4164) ToString(this) needs __to_primitive — register BEFORE the import batch
   ensureStringRocUndefinedNative(ctx, fctx); // (#2875) register the undefined-sentinel predicate first
   const needsNumBox = member === "charCodeAt" || member === "codePointAt";
   // Do ALL late-import-adding ops FIRST (mirrors emitArrayProtoMemberBody), so
@@ -1146,7 +1146,7 @@ function emitStringSearchNumericMemberBody(ctx: CodegenContext, fctx: FunctionCo
   const isLast = member === "lastIndexOf";
   const helperName = isLast ? "__str_lastIndexOf" : "__str_indexOf";
 
-  ensureObjectRuntime(ctx); // (#3978) ToString needs __to_primitive — before the import batch
+  ensureObjectRuntime(ctx); // (#4164) ToString needs __to_primitive — before the import batch
   // (1) Do ALL late-import-adding ops FIRST (mirrors charCodeAt), so every helper
   // funcIdx fetched by NAME afterwards is post-shift-correct.
   //   fromIndex: unbox param 3 → i32 (null/undefined → 0 via NaN→trunc_sat).
@@ -1187,7 +1187,7 @@ function emitStringSearchNumericMemberBody(ctx: CodegenContext, fctx: FunctionCo
   }
 
   // (5) recv = flatten(ToString(this)); needle = flatten(ToString(searchString)).
-  // (#3978) Both go through `? ToPrimitive(v, "string")` first — `$__any_to_string`
+  // (#4164) Both go through `? ToPrimitive(v, "string")` first — `$__any_to_string`
   // alone answers "[object Object]" for a boxed-primitive / own-toString operand.
   const flattenExtern = (paramIdx: number, label: string): number => {
     fctx.body.push({ op: "local.get", index: paramIdx });
@@ -1239,7 +1239,7 @@ function emitStringSearchBooleanMemberBody(ctx: CodegenContext, fctx: FunctionCo
   const helperName =
     member === "includes" ? "__str_includes" : member === "startsWith" ? "__str_startsWith" : "__str_endsWith";
 
-  ensureObjectRuntime(ctx); // (#3978) ToString needs __to_primitive — before the import batch
+  ensureObjectRuntime(ctx); // (#4164) ToString needs __to_primitive — before the import batch
   // (1) Do ALL late-import-adding ops FIRST (mirrors the 3a body), so every
   // helper funcIdx fetched by NAME afterwards is post-shift-correct.
   //   position/endPosition: unbox param 3 → i32 (null/undefined → 0).
@@ -1279,7 +1279,7 @@ function emitStringSearchBooleanMemberBody(ctx: CodegenContext, fctx: FunctionCo
   }
 
   // (5) recv = flatten(ToString(this)); needle = flatten(ToString(searchString)).
-  // (#3978) Both go through `? ToPrimitive(v, "string")` first — `$__any_to_string`
+  // (#4164) Both go through `? ToPrimitive(v, "string")` first — `$__any_to_string`
   // alone answers "[object Object]" for a boxed-primitive / own-toString operand.
   const flattenExtern = (paramIdx: number, label: string): number => {
     fctx.body.push({ op: "local.get", index: paramIdx });
@@ -1326,7 +1326,7 @@ function emitStringTrimMemberBody(ctx: CodegenContext, fctx: FunctionContext, me
 }
 
 /**
- * (#3217 / #3978) Shared native body for every reflective `String.prototype.<m>`
+ * (#3217 / #4164) Shared native body for every reflective `String.prototype.<m>`
  * closure whose shape is "**arity 0, string in, string out**" — the trim family
  * and the case-conversion family. `<helperName>` names a standalone-native
  * `(ref $NativeString) -> ref $NativeString` helper in `ctx.nativeStrHelpers`
@@ -1346,7 +1346,7 @@ function emitStringUnaryStringMemberBody(
 ): ValType | null {
   ensureNativeStringHelpers(ctx);
   ensureStringRocUndefinedNative(ctx, fctx); // (#2875) register the undefined-sentinel predicate first
-  // (#3978) `$__any_to_string` alone is NOT ToString: on an OBJECT receiver it
+  // (#4164) `$__any_to_string` alone is NOT ToString: on an OBJECT receiver it
   // takes the `"[object Object]"` terminal instead of running §7.1.1.1
   // OrdinaryToPrimitive. That is wrong for every borrowed receiver that is an
   // object — a boxed primitive (`new Object(true)` → `"true"`), an array, a

@@ -1,5 +1,5 @@
 ---
-id: 3978
+id: 4164
 title: "fix(standalone): borrowed String.prototype.<m> on a non-string receiver — case-conversion family + slice, and the transferred-closure dispatch arm"
 status: in-progress
 sprint: current
@@ -11,7 +11,7 @@ feasibility: medium
 area: codegen
 language_feature: String.prototype
 goal: es5
-related: [3977, 2875, 3217, 3254, 1470]
+related: [4163, 2875, 3217, 3254, 1470]
 loc-budget-allow:
   - src/codegen/array-object-proto.ts
 coercion-sites-allow:
@@ -19,9 +19,9 @@ coercion-sites-allow:
 assignee: ttraenkler/es5-string
 ---
 
-# #3978 — borrowed `String.prototype.<m>` on a non-string receiver (standalone)
+# #4164 — borrowed `String.prototype.<m>` on a non-string receiver (standalone)
 
-Child of the #3977 ES5-standalone umbrella, lever
+Child of the #4163 ES5-standalone umbrella, lever
 `built-ins/String/prototype` (194–202 reachable failures).
 
 ## Census of the cluster (fresh baseline `20260801-090441`)
@@ -114,7 +114,7 @@ run caught exactly that as a single regression; the guard fixes it and two
 
 ## Test Results
 
-**Unit** — `tests/issue-3978.test.ts`, 16 cases through the literal-JavaScript
+**Unit** — `tests/issue-4164.test.ts`, 16 cases through the literal-JavaScript
 (`allowJs`) lane the test262 standalone runner actually uses: **8 fail on
 `HEAD`, 16/16 pass with the change.** (A `.ts`-lane probe does NOT reproduce the
 bug — an annotated receiver takes a different, statically-typed member-call
@@ -181,3 +181,22 @@ through the single coercion engine (#1917 / #2108,
 `plan/log/analysis-2026-06/03-coercion-engine-spec.md` §5). Before this issue
 merges, decide explicitly: route through the engine, or keep the allowance and
 record why. Do not let the allowance become the silent default.
+
+
+## MEASURED (2026-08-05): +39 / 0 regressions, full directory, all editions
+
+Hardened A/B (incremental per-file output, hang-skip wrapper — zero skips
+needed) over the FULL `built-ins/String/prototype` directory, 1,073 files,
+standalone lane, host-free pass rule:
+
+| | pass |
+| --- | --- |
+| BEFORE (three files at c40c9286) | 656 / 1,073 |
+| AFTER | **695 / 1,073** |
+| fixed / regressed | **+39 / 0** |
+
+Scope note: measured over ALL editions deliberately (char-at-transfer and the
+proto-member wiring affect ES2015+ members too), so this is the blast-radius
+number, not just the ES5 cluster. No conformance claim is outstanding on this
+issue any more; the remaining open item is the coercion-sites-allow vs
+coercion-engine decision recorded above.

@@ -1,5 +1,5 @@
 ---
-id: 3979
+id: 4165
 title: "standalone: wire the reflective MOP (hasOwnProperty / gOPD / delete / in / keys) onto the #3468 + #3537 own-property bags, and widen the two #1906 defineProperties gates"
 status: in-progress
 sprint: current
@@ -13,7 +13,7 @@ area: codegen, runtime, standalone
 language_feature: objects, property-descriptors
 goal: es5
 umbrella: 3977
-related: [3977, 1906, 2992, 3251, 3468, 3537, 3246, 3957]
+related: [4163, 1906, 2992, 3251, 3468, 3537, 3246, 3957]
 loc-budget-allow:
   - src/codegen/object-runtime-descriptors.ts
   - src/codegen/object-runtime.ts
@@ -21,10 +21,10 @@ func-budget-allow:
   - src/codegen/object-runtime-descriptors.ts::buildObjectDescriptorHelpers
   - src/codegen/object-runtime.ts::ensureObjectRuntime
   - src/codegen/object-runtime-enumeration.ts::buildObjectEnumerationHelpers
-origin: "2026-08-01 es5-standalone property-descriptor cluster census (#3977 lever 1, 857 ES5 standalone failures)."
+origin: "2026-08-01 es5-standalone property-descriptor cluster census (#4163 lever 1, 857 ES5 standalone failures)."
 ---
 
-# #3979 — reflective MOP over the own-property side-table bags (standalone)
+# #4165 — reflective MOP over the own-property side-table bags (standalone)
 
 ## The census that produced this (measured 2026-08-01, run `20260801-090441`)
 
@@ -32,7 +32,7 @@ origin: "2026-08-01 es5-standalone property-descriptor cluster census (#3977 lev
 (`Object/defineProperty` 331, `defineProperties` 264, `create` 142,
 `getOwnPropertyDescriptor` 35, `Object/prototype` 22, `Array/length` 18,
 `isExtensible` 16, `preventExtensions` 15, `language/types/object` 14) — 37 % of
-the whole reachable ES5 standalone gap (#3977).
+the whole reachable ES5 standalone gap (#4163).
 
 **The cluster is NOT mostly standalone-specific.** Cross-lane check against the
 same-day host baseline: **347 of the 857 pass on the host lane, 510 fail on both.**
@@ -231,7 +231,7 @@ BUILT-IN FUNCTION receiver**, asking for its own `name`/`length`. The eighth
 
 `buildGetOwnPropertyDescriptor` already has the **#2896 builtin-fn metadata
 arm** that synthesizes exactly those descriptors and returns early; it stores
-the synthesized descriptor with `local.tee index 6`. #3979 appends its bag local
+the synthesized descriptor with `local.tee index 6`. #4165 appends its bag local
 at `gopdBagLocalIdx = 7 + (strExotic ? 6 : 0)` and installs `bagSubstitutionArm`
 with `fallback: primitiveReceiverArm`.
 
@@ -256,23 +256,23 @@ having rather than reverting the slice.
 
 Reproduced the single failing test on both sides in **standalone**:
 
-- BEFORE (#3979 reverted): `built-ins/Object/defineProperty/name.js` **passes**
+- BEFORE (#4165 reverted): `built-ins/Object/defineProperty/name.js` **passes**
 - AFTER: fails with `Test262Error: obj['name'] descriptor should be configurable`
 
 `verifyProperty` proves `configurable` by **delete → re-check**, so the failure
 is in the delete/hasOwn cycle, not in the descriptor read.
 
-**gOPD is exonerated by elimination.** Before #3979 the non-`$Object` branch was
+**gOPD is exonerated by elimination.** Before #4165 the non-`$Object` branch was
 `primitiveReceiverArm`, which returns `undefined`; had gOPD gone down that path
 the test would have failed as "descriptor should exist", not "should be
 configurable". It passed, so the #2896 builtin-fn arm handles this receiver and
-returns early — and #3979 does not touch that arm.
+returns early — and #4165 does not touch that arm.
 
 **Therefore the regression is in `__delete` / `__hasOwnProperty`.** All three
 helpers run their #2896 arm first, but that arm returns null for *two different
 reasons*: "receiver is not a builtin function" and "property was deleted". After
 a successful `delete fn.name`, `bfnGetMeta` returns null for the second reason,
-execution falls into the #3979 bag arm, and if a bag exists for that function
+execution falls into the #4165 bag arm, and if a bag exists for that function
 receiver the bag answers instead of reporting absent — so `hasOwnProperty`
 still reports `true` and `verifyProperty` concludes non-configurable.
 
@@ -320,18 +320,18 @@ ordinary own property in the bag. Ordinary expandos are unaffected (get_meta is
 null for every other key/receiver).
 
 Re-run of the 8 regressed tests: **7 pass**, `15.2.3.6-4-594` still fails.
-Unit coverage added: `tests/issue-3979-bfn-name-writable-gate.test.ts` (4
+Unit coverage added: `tests/issue-4165-bfn-name-writable-gate.test.ts` (4
 tests: the regressed cycle, gOPD §17 attributes, post-delete assignment,
-user-function expandos). Neighbouring suites green (issue-3980, issue-3978,
+user-function expandos). Neighbouring suites green (issue-4166, issue-4164,
 this-receiver-apply, issue-3201-expando-method — 44 tests).
 
 ### The remaining regression: 15.2.3.6-4-594 — needs proto-chain [[Set]], do not hack
 
 `obj = foo.bind({}); obj.prop = "overrideData"` with an accessor defined on
 `Function.prototype` must invoke the inherited SETTER and create no own
-property. Pre-#3979 this passed by **two wrongs cancelling**: the write landed
+property. Pre-#4165 this passed by **two wrongs cancelling**: the write landed
 in the bag (hasOwn couldn't see bags, so `hasOwnProperty("prop")` was false
-vacuously) and the read found the bag value. #3979 made hasOwn honest, which
+vacuously) and the read found the bag value. #4165 made hasOwn honest, which
 exposed that the write path never consulted prototype-chain accessors.
 
 The correct fix is OrdinarySet fidelity for closure receivers — walk to the
@@ -339,7 +339,7 @@ The correct fix is OrdinarySet fidelity for closure receivers — walk to the
 falling back to an own bag store. That is #2992/#3251 MOP substrate territory.
 A shortcut (e.g. hiding bags from hasOwn for bound functions) would re-break
 real expandos, so this one regression is accepted as known until the substrate
-lands. Net effect of #3979 with the gate: **+29 / −1** on the six descriptor
+lands. Net effect of #4165 with the gate: **+29 / −1** on the six descriptor
 directories.
 
 

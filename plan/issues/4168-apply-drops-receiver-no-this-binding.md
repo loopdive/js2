@@ -1,5 +1,5 @@
 ---
-id: 3983
+id: 4168
 title: "`.apply(thisArg)` DROPS the receiver — no `this`-binding thunk is emitted, so `f.apply(o) === o` is false (`.call()` emits one and is correct)"
 status: in-progress
 sprint: current
@@ -22,7 +22,7 @@ func-budget-allow:
 origin: "2026-08-01, working the es5-standalone-90% goal: the 200-test language/function-code/10.4.3 family fails in BOTH lanes (116 standalone / 114 host); minimised to a 6-line identity control set."
 ---
 
-# #3983 — `this` is not identity-equal to its receiver (method call, `.apply()`)
+# #4168 — `this` is not identity-equal to its receiver (method call, `.apply()`)
 
 ## TL;DR
 
@@ -167,7 +167,7 @@ misread it as evidence of lane-independence.
 
 Re-measured on the fixed harness (201 files, `language/function-code/10.4.3`):
 
-| lane | reshape disabled | with #3983 | delta |
+| lane | reshape disabled | with #4168 | delta |
 | --- | --- | --- | --- |
 | standalone | 64 | **68** | **+4** |
 | host | 65 | **69** | **+4** |
