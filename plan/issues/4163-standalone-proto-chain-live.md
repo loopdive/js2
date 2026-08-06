@@ -15,6 +15,19 @@ area: codegen
 language_feature: prototype chain, constructor functions
 goal: standalone-gap
 related: [2660, 4008, 4055, 4160, 802]
+loc-budget-allow:
+  # clause-A widening belongs inside classifyUse's ladder — extracting one
+  # rung would split the single classification ladder #4123 unified
+  - src/codegen/fnctor-escape-gate.ts
+  # G4 module-global arm is the same slot-type check as the local arm and
+  # must read the ALLOCATED slot inside fnctorNewResultConsumedAsExternref
+  - src/codegen/expressions/new-super.ts
+  # one predicate line in moduleInitForcesExternref — the module-global twin
+  # of the two index.ts dynamicProtoLiteralNodes consults (lockstep set)
+  - src/codegen/declarations.ts
+  # registerDescriptorHasOwn moved after __extern_has (funcIdx ordering) +
+  # rationale comment; the logic lives in carrier-bag-hasown.ts (not a god-file)
+  - src/codegen/object-runtime.ts
 ---
 
 # Standalone: make the [[Prototype]] chain LIVE for `new F()` with reassigned `F.prototype`
