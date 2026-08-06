@@ -251,6 +251,7 @@ import {
   tryStaticEvalInline,
   tryStaticFunctionCtorCall,
 } from "./eval-inline.js";
+import { dynamicEvalRefusalMessages } from "./runtime-eval-provider.js";
 import {
   ensureRuntimeEvalInterpretedCallbackType,
   ensureRuntimeEvalValueType,
@@ -6320,20 +6321,15 @@ function compileCallExpression(
       // route that could not materialize its runtime ABI: refuse the
       // unsatisfiable host import with a catchable call-site throw.
       if (noJsHost(ctx)) {
-        reportError(
-          ctx,
-          expr,
-          "Warning: dynamic eval is not supported in --target standalone/wasi — no " +
-            "runtime-eval host is available; this eval call throws at runtime " +
-            "(tracking: runtime-eval goal, bytecode interpreter #2928)",
-          "warning",
-        );
+        // (#4195) Wording lives with the provider gate that decides it.
+        const refusal = dynamicEvalRefusalMessages(ctx);
+        reportError(ctx, expr, refusal.warning, "warning");
         // Evaluate the argument expressions for their side effects first.
         for (const a of expr.arguments) {
           const t = compileExpression(ctx, fctx, a);
           if (t !== null) fctx.body.push({ op: "drop" });
         }
-        emitThrowTypeError(ctx, fctx, "dynamic eval is not supported in standalone mode (#2928)");
+        emitThrowTypeError(ctx, fctx, refusal.thrown);
         // The throw is stack-polymorphic; return the nominal eval result type.
         return { kind: "externref" };
       }

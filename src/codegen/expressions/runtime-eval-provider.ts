@@ -709,3 +709,40 @@ export function emitStandaloneDirectEvalRuntime(
   fctx.body.push({ op: "call", funcIdx: liveIdx });
   return emitRuntimeEvalResultUnwrap(ctx, fctx);
 }
+
+/**
+ * (#4195) The user-facing wording for a dynamic-eval call that cannot be
+ * served, chosen by the condition that actually applies.
+ *
+ * `--standalone` is the ONE no-JS-host target that supports dynamic eval — the
+ * gate is `if (!ctx.standalone) return undefined` in this module, so a
+ * standalone build emits the `js2wasm:runtime-eval` imports and never reaches
+ * the refusal. Until this issue the refusal read "not supported in --target
+ * standalone/wasi", which named the working flag as broken and sent at least
+ * one user looking for a new release instead of a different target.
+ *
+ * `noJsHost()` is `wasi || standalone`, so the refusal IS reachable under
+ * standalone — but only on a genuine provider-materialization failure, which
+ * is a different condition and gets its own wording.
+ */
+export function dynamicEvalRefusalMessages(ctx: CodegenContext): { warning: string; thrown: string } {
+  if (ctx.wasi) {
+    return {
+      warning:
+        "Warning: dynamic eval is not supported by --target wasi — WASI has no " +
+        "runtime-eval host to import, so this eval call throws at runtime. " +
+        "Recompile with --standalone to emit the js2wasm:runtime-eval provider " +
+        "imports instead, if your embedder can supply them " +
+        "(tracking: runtime-eval goal, bytecode interpreter #2928)",
+      thrown: "dynamic eval is not supported by --target wasi (#2928)",
+    };
+  }
+  return {
+    warning:
+      "Warning: could not materialize the js2wasm:runtime-eval provider ABI for this " +
+      "dynamic eval call, so it throws at runtime. --standalone normally supports " +
+      "dynamic eval; reaching this path means the provider route bailed for this " +
+      "call site (tracking: runtime-eval goal, bytecode interpreter #2928)",
+    thrown: "dynamic eval provider ABI unavailable for this call site (#2928)",
+  };
+}

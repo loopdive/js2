@@ -1,7 +1,8 @@
 ---
 id: 4195
 title: "the dynamic-eval refusal names `--target standalone` (which supports it) and fires twice per top-level call site"
-status: ready
+status: done
+completed: 2026-08-06
 sprint: current
 created: 2026-08-06
 updated: 2026-08-06
@@ -14,6 +15,16 @@ area: codegen
 language_feature: eval
 goal: runtime-eval
 related: [2928, 2960, 3623, 3725, 4162]
+# +8 lines: the mark and the reconciliation call must sit in the function that
+# owns the two module-init passes — that is the whole subject of the fix, and
+# there is nowhere else the "between pass 1 and pass 2" point exists. All 38
+# lines of actual logic went to the subsystem modules that own them
+# (dedupeDiagnosticsFrom → context/errors.ts, dynamicEvalRefusalMessages →
+# expressions/runtime-eval-provider.ts), which took calls.ts from +21 to 0.
+loc-budget-allow:
+  - src/codegen/declarations.ts
+func-budget-allow:
+  - src/codegen/declarations.ts::compileDeclarations
 ---
 
 # Problem
@@ -68,18 +79,38 @@ condition and deserves a different message. Do not simply swap the string to
 
 ## B — the refusal fires TWICE per top-level call site
 
-`(2×)` for a file containing exactly one `eval(...)`. The multiplier is
-exact and it is **specific to module-init**:
+`(2×)` for a file containing exactly one `eval(...)`. The multiplier is exact:
+two top-level sites report `(4×)`. **Top-level statements are compiled twice**,
+and each pass re-emits the diagnostic. The warning is the visible symptom, not
+the defect.
 
-| where the `eval` lives | warnings |
-| --- | ---: |
-| inside a function body | **1** |
-| top level (`__module_init`) | **2** |
-| two top-level sites | **4** |
+Root-caused from two stack traces at the refusal, which are identical except
+for one frame:
 
-So the aggregator is not double-counting — **top-level statements are compiled
-twice**, and each pass re-emits the diagnostic. The warning is the visible
-symptom, not the defect.
+```
+compileModuleInitBody (declarations.ts:2560)
+  ← compileDeclarations (declarations.ts:2572)   ← pass 1
+  ← compileDeclarations (declarations.ts:2703)   ← pass 2
+```
+
+Pass 1 "seeds closure/setup discovery"; pass 2 recompiles the same statements
+against the final inlinable-function registry and is the one that emits. Pass
+1's **body** is discarded. `ctx.errors` was the one piece of pass-1 state
+nothing reconciled — note `restorePropOrderState()` sits immediately above
+pass 2 doing exactly this job for property state (#2965/#3872).
+
+⚠ **The obvious fix is wrong.** Truncating `ctx.errors` back to a pre-pass-1
+mark looks equivalent to deduping and is not. A callee reached from top level
+is inlined into module init during pass 1 and is *not* re-reported by pass 2,
+so truncation silently drops a refusal whose `throw` still ships — the #3725
+failure mode. Measured, on an `eval` inside a top-level-called function:
+
+| | `origin/main` | truncate | collapse duplicates |
+| --- | ---: | ---: | ---: |
+| eval inside a called function | 1 | **0** ← lost | 1 |
+| top-level eval | 2 | 1 | 1 |
+
+Collapse exact duplicates on (severity, line, column, message) instead.
 
 That matters well beyond this message: any diagnostic, refusal, or counter
 emitted while compiling top-level code is doubled. It should be checked
