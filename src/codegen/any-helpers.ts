@@ -15,6 +15,7 @@ import { addFuncType } from "./registry/types.js";
 import { addStringImportsDelegate, registerEnsureAnyHelpers } from "./shared.js";
 import { registerAnyBoxHelpers, registerAnyUnboxHelpers } from "./any-boxing-helpers.js";
 import { registerAnyEqHelpers } from "./any-eq-helpers.js";
+import { buildFastStrictEqDispatch } from "./extern-eq-fast.js";
 
 /**
  * Register the $AnyValue struct type for boxing `any` typed values.
@@ -590,6 +591,11 @@ export function ensureExternStrictEqHelper(ctx: CodegenContext): number | undefi
   );
   const funcIdx = mintDefinedFunc(ctx);
   const EQ_HEAP_TYPE = -19; // WasmGC `eq` abstract heap type
+  // (#4173) Fast tag-pair dispatch for the identity-MISS path — flag-gated
+  // (`ctx.fastStrictEq`, default ON), built in extern-eq-fast.ts. `[]` when
+  // the fast path cannot be built (flag off / missing box types / strings
+  // present without a native `__str_equals`).
+  const fastDispatch = buildFastStrictEqDispatch(ctx);
   const body: Instr[] = [
     // (#2734) Object/reference-identity fast path. `__any_from_extern` has no
     // dedicated Object tag — it folds an object externref into the tag-5 (string)
@@ -653,6 +659,10 @@ export function ensureExternStrictEqHelper(ctx: CodegenContext): number | undefi
                 ]
               : [{ op: "i32.const", value: 1 }, { op: "return" }],
         },
+        // (#4173) identity MISSED and both sides are eq-refs — the fast
+        // tag-pair dispatch (see canFastDispatch above) decides every
+        // non-$AnyValue pairing right here, alloc- and call-free.
+        ...fastDispatch,
       ],
     },
     // (#3173) $BigInt-box arm: two DISTINCT bigint boxes with the same i64

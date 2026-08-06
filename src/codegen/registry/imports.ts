@@ -1459,6 +1459,9 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
       // (§7.1.2); other wrapped tags (5 string / 6 object) keep the non-null-
       // ref default (truthy). Without this arm the non-null `$undefined`
       // singleton would be truthy — `if (undefined)` taking the then-branch.
+      // (#4173, flag-gated) The legacy body internalized the operand TWICE
+      // (once for this arm, once for the ladder below); with `fastStrictEq`
+      // on, convert once and let the teed value feed whichever test is next.
       ...(s1AnyValIdx >= 0
         ? ([
             { op: "local.get", index: 0 },
@@ -1479,10 +1482,15 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
             },
           ] satisfies Instr[])
         : []),
-      // any = any.convert_extern(param)
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "local.tee", index: 1 },
+      // any = any.convert_extern(param) — skipped under fastStrictEq when the
+      // $AnyValue arm above already converted (local 1 holds the anyref).
+      ...((ctx.fastStrictEq === true && s1AnyValIdx >= 0
+        ? [{ op: "local.get", index: 1 }]
+        : [
+            { op: "local.get", index: 0 },
+            { op: "any.convert_extern" },
+            { op: "local.tee", index: 1 },
+          ]) satisfies Instr[]),
       // (#3673) i31 small int → value !== 0 (no NaN possible in i31).
       { op: "ref.test", typeIdx: -20 },
       {
