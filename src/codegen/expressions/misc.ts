@@ -304,6 +304,58 @@ function compileYieldExpression(ctx: CodegenContext, fctx: FunctionContext, expr
   return { kind: "externref" } as ValType;
 }
 
+/**
+ * (#4178) Does this expression statically resolve to a STRING value?
+ *
+ * `tryStaticToNumber` refuses to fold `+` when an operand is a string (the
+ * operator is concatenation, not addition), but it only tested two things: the
+ * operand being a *syntactic* string literal, and the checker saying the
+ * operand's type is `string`. Neither fires for
+ *
+ *   const a: any = "1"; const b: any = 2; a + b
+ *
+ * — `a` is an identifier, and its declared type is `any`. Yet the identifier
+ * arm at the BOTTOM of `tryStaticToNumber` happily traces `a` back through its
+ * `const` initializer and answers `Number("1") === 1`, so the whole expression
+ * folded to `f64.const 3` instead of concatenating to `"12"`. The *value*
+ * resolution traced const bindings; the *string-ness* guard did not, and that
+ * asymmetry is the bug.
+ *
+ * This predicate closes it by tracing the same way, with the same `const`-only
+ * and self-reference (`#1607`) restrictions, so the guard can never be weaker
+ * than the folder it guards. Deliberately conservative — it answers `true` only
+ * for values it can prove are strings, so an unresolvable operand still folds
+ * exactly as before.
+ */
+function resolvesToStringConstant(ctx: CodegenContext, expr: ts.Expression, visited?: Set<ts.Node>): boolean {
+  if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) return true;
+  // A template with substitutions is always a string, however it evaluates.
+  if (ts.isTemplateExpression(expr)) return true;
+  if (ts.isParenthesizedExpression(expr)) return resolvesToStringConstant(ctx, expr.expression, visited);
+  if (ts.isAsExpression(expr) || ts.isTypeAssertionExpression(expr)) {
+    return resolvesToStringConstant(ctx, expr.expression, visited);
+  }
+  // `s1 + s2` is itself a string when either side is — concatenation is
+  // string-producing, so a nested concat poisons the enclosing fold too.
+  if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    return resolvesToStringConstant(ctx, expr.left, visited) || resolvesToStringConstant(ctx, expr.right, visited);
+  }
+  if (ts.isIdentifier(expr)) {
+    const sym = ctx.checker.getSymbolAtLocation(expr);
+    const decl = sym?.valueDeclaration;
+    if (!decl || !ts.isVariableDeclaration(decl) || !decl.initializer) return false;
+    const declList = decl.parent;
+    // `let`/`var` are reassignable — the initializer is not the value. Mirrors
+    // the identical restriction on the value-resolving arm below.
+    if (!ts.isVariableDeclarationList(declList) || (declList.flags & ts.NodeFlags.Const) === 0) return false;
+    const seen = visited ?? new Set<ts.Node>();
+    if (seen.has(decl)) return false; // #1607 self-referential initializer
+    seen.add(decl);
+    return resolvesToStringConstant(ctx, decl.initializer, seen);
+  }
+  return false;
+}
+
 /** Check if an expression is statically known to be NaN at compile time */
 /**
  * Try to statically determine the numeric value of an expression.
@@ -345,10 +397,7 @@ export function tryStaticToNumber(
     // Don't fold string + anything as numeric — JS semantics requires string concat
     if (
       expr.operatorToken.kind === ts.SyntaxKind.PlusToken &&
-      (ts.isStringLiteral(expr.left) ||
-        ts.isNoSubstitutionTemplateLiteral(expr.left) ||
-        ts.isStringLiteral(expr.right) ||
-        ts.isNoSubstitutionTemplateLiteral(expr.right))
+      (resolvesToStringConstant(ctx, expr.left) || resolvesToStringConstant(ctx, expr.right))
     ) {
       return undefined;
     }
