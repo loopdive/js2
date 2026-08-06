@@ -1,10 +1,11 @@
 {
   "id": "4160",
   "assignee": "ttraenkler/sendev-4160-read",
-  "requested_by": "ttraenkler/sendev-4160-read",
-  "status": "in-progress",
+  "requested_by": "noreply@anthropic.com",
+  "status": "released",
   "branch": "issue-4160-proto-index-read",
   "claimed_at": "2026-08-05T07:38:53Z",
-  "updated_at": "2026-08-05T07:38:53Z",
-  "write_id": "8590-0p1nawib"
+  "updated_at": "2026-08-06T08:03:56Z",
+  "write_id": "6521-ju337mf4",
+  "released_at": "2026-08-06T08:03:56Z"
 }
