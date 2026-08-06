@@ -65,8 +65,30 @@ Investigated while working the "L1 — ToPropertyDescriptor (ES5 §8.10.5)" leve
 mostly WRONG, and the sizing discipline note above applies again.** Measured
 baseline on that list: **1 / 232 passing**.
 
-Root causes, by reading bodies and probing each mechanism under
-`--target standalone` (not by clustering error strings):
+### How the split below was derived (this is why it is trustworthy)
+
+Not by clustering error strings. Error-string clustering is what produced the
+"117-file family" the ⚠ note above warns about, and it fails here for the same
+reason: `accessed !== true` is emitted by RegExp, Date, Math, JSON and
+inherited-property tests alike, so the signature census and the mechanism
+census disagree by ~3x. The method that worked, in order:
+
+1. **Reproduce one canonical failure first.** `15.2.3.6-3-40.js` and
+   `15.2.3.6-3-258-1.js`, both `--target standalone`, before writing any code.
+2. **Read the `description:` frontmatter of all 232 files**, normalise it
+   (strip the `Object.defineProperty - ` prefix and the `(8.10.5 step N)`
+   suffix, collapse the six field names to one token) and tally the *shapes*.
+   The descriptions state the mechanism outright — "'Attributes' is a Date
+   object …", "… of prototype object", "… is an inherited accessor property" —
+   so this partitions by mechanism, not by symptom.
+3. **Write one probe per candidate mechanism** and run it through the real
+   standalone pipeline (`runTest262File(abs, cat, ms, "standalone")` over a
+   file in `.tmp/`; leak values by `throw new Error("PROBE " + out)` since the
+   runner does not surface `print`). Each row below has a probe behind it.
+4. **Confirm the instrument responds** before believing a zero: the emitted
+   `wasm_sha` changes with the edit, and the A/B swap moved the score back.
+
+Root causes:
 
 | files | root cause | is it ToPropertyDescriptor? |
 | ---: | --- | --- |
@@ -97,7 +119,12 @@ Probe evidence (each reproduced standalone, 2026-08-06):
 Only the second row: `__is_closure_prop_carrier` (`src/codegen/closure-props.ts`)
 now also accepts the `__StandaloneRegExp` and `__Date` structs, so the #3468
 identity-keyed property bag covers them. **Measured 1 → 29 on the 232-file list,
-0 regressions on the list.** `$Error_struct` is deliberately excluded — it
+0 regressions on the list.** Blast-radius check: an 800-file deterministic
+sample of `built-ins/Date` + `built-ins/RegExp` (every test that can reach the
+widened `ref.test` chain) scored 590 pass with the change, and every one of the
+209 non-passes was re-run against `origin/main`'s `closure-props.ts` and scored
+**0 / 209** — i.e. nothing that passes on main fails with the change.
+`$Error_struct` is deliberately excluded — it
 already owns a `$props` side-slot (fieldIdx 5, #2101a R5) that the
 externref-backed-subclass own-field path writes directly, and bagging it would
 give one receiver two disagreeing stores. Wiring Error to `$props` from
@@ -114,6 +141,58 @@ is actually live, so it was **dropped from the PR** rather than shipped as
 unmeasured generality (the #4017 lesson: generality at a shared point IS blast
 radius). Re-land it together with the prototype work, where it can be shown to
 be load-bearing.
+
+### Pickup notes for the prototype-chain slice (88 files — the big one)
+
+Whoever takes this next: the two prototype rows (76 + 12) are **one substrate
+gap**, and it is the largest single lever left in this family.
+
+- **Reproduce it in four lines**, no descriptors involved:
+
+  ```js
+  var proto = {}; proto.foo = 1;
+  var F = function () {};
+  F.prototype = proto;
+  var child = new F();
+  // standalone: "foo" in child === false
+  //             Object.getPrototypeOf(child) === proto  === false
+  ```
+
+  and:
+
+  ```js
+  Object.prototype.zzz = 1;
+  ({}).zzz            // standalone: undefined
+  Object.getPrototypeOf({}) === Object.prototype   // standalone: TRUE
+  ```
+
+  That second pair is the trap to keep in mind: the identity comparison
+  **passes** while the chain is not live, so `getPrototypeOf` agreeing with
+  the spec is not evidence the chain works. Test presence (`in`) or a read,
+  never the identity.
+
+- **Where to start reading**: `src/codegen/expressions/fnctor-prototype.ts`
+  (#2660 S2 — the per-fnctor prototype `$Object`) and its `reconstruct`
+  classification via `resolveFnctorSymbol` /
+  `analyzeFnctorEscapeGate`. S2's own header says S3 will seed
+  `instance.$proto` from that object; the `new F()` half is what is missing.
+  Note the header also records that an **unscoped** interception there
+  previously cost −40 on the standalone floor, so the gate is deliberate —
+  do not widen it without measuring.
+
+- **Do NOT re-derive `__desc_has_own`.** A spec-correct widening of it from
+  HasOwnProperty to the full §7.3.12 HasProperty (delegate to `__extern_has`,
+  which already walks the chain and handles the carrier bag) is written,
+  correct, and measures **+0** on all 232 — because there is no chain for it
+  to walk. It becomes load-bearing the moment the chain is live, and should
+  land *with* the prototype work so it can be shown to be. The mechanics: move
+  the `registerDescriptorHasOwn(…)` call in `object-runtime.ts` to AFTER the
+  `__extern_has` `registerNative` (funcIdx ordering), pass `externHasIdx`, and
+  make it the final arm of the native in `carrier-bag-hasown.ts`. Prototype
+  pollution was checked and is a non-issue: none of
+  `value`/`writable`/`enumerable`/`configurable`/`get`/`set` is reachable via
+  `in` on a plain object, array, function, RegExp, Date, Error, Arguments
+  object or any primitive wrapper in standalone mode.
 
 ### Status of THIS issue's own two arms
 
