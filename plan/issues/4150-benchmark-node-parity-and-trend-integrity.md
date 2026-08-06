@@ -14,6 +14,22 @@ sprint: current
 horizon: m
 es_edition: n/a
 related: [3898, 3899, 3900, 3902, 3904, 3929]
+# The host-import wrapper work is arity SPECIALIZATION: the same guard body
+# repeated across five fixed signatures, and the extern_class method shim's
+# ordinary case inlined per arity. That repetition IS the optimization — the
+# measured regression when the arms were collapsed into a shared callee is
+# recorded in the commit — and it has to sit inside buildImports/resolveImport,
+# which own the closures being specialized.
+loc-budget-allow:
+  - src/runtime.ts
+# `<anonymous>#83` is the depth-guard wrapper block inside buildImports. The
+# gate keys anonymous functions positionally, so this entry is brittle by
+# nature — if it stops matching after an unrelated edit to buildImports, the
+# right response is to re-read the gate's own output for the new key, not to
+# widen the allowance.
+func-budget-allow:
+  - src/runtime.ts::resolveImport
+  - src/runtime.ts::<anonymous>#83
 ---
 
 # #4150 — finish Node parity and make trend data comparable
@@ -137,3 +153,96 @@ noise and comparability are fixed.
 - `benchmarks/suites/{arrays,dom,mixed,strings}.ts`
 - `scripts/benchmark-lifecycle.mjs`
 - `.github/workflows/benchmark-refresh.yml`
+
+---
+
+## Suspension RESOLVED — 2026-08-04
+
+PR #4106 was suspended mid-flight and handed over; it now has an owner again
+and the two open items below are closed. The original handover is kept because
+its "Traps for whoever picks this up" section is still live guidance.
+
+- **Branch**: `claude/js2-cross-frame-capture-slot` (lives on the fork,
+  `ttraenkler/js2` — NOT on `loopdive/js2`)
+- **PR**: <https://github.com/loopdive/js2/pull/4106>
+- The suspending session's checkout (`/home/user/js2-up`) and its `.tmp/`
+  probes (`propfn-min.mjs`, `propfn-gc.mjs`, `run262.mjs`, `gap.py`) are gone
+  with that container. Nothing depends on them; the #4149 and #4154 repros
+  were re-created and are now committed as real tests.
+
+### The decision that needed a human: taken — fix #4154, do not use the valve
+
+The merge queue had parked this PR on the #3189 uncatchable-trap ratchet
+(`illegal_cast` 48 → 50), resolved at the time with a **`trap-growth-allow`
+valve** in
+`plan/issues/4149-standalone-aliased-property-function-call-null.md` plus a
+follow-up issue (#4154) for the real fix.
+
+**The operator chose the strictly-better outcome: #4154 is fixed in this same
+PR and the valve is removed.** The prediction in the original handover held —
+each test's remaining assertion is exactly the `assert.throws(TypeError, …)`
+that a catchable throw satisfies, so both files are expected to flip
+`fail` → **pass** instead of `fail` → `fail`, and `illegal_cast` should not
+grow. Details and the measured root cause are in
+`plan/issues/4154-private-brand-check-uncatchable-illegal-cast.md`; the
+regression test is `tests/issue-4154-private-brand-check-typeerror.test.ts`.
+
+### `src/runtime.ts` merge conflict (resolved, worth knowing)
+
+Merging `origin/main` conflicted in exactly one hunk, in
+`__extern_method_call`'s `typeof fn !== "function"` recovery. Both sides were
+fixing the *same* root cause — a closure materialized while the module's
+`start` was running, before `setInstance` wired `callbackState` — but catching
+**different symptoms**, so the resolution keeps **both arms**:
+
+| side | guard | symptom it catches |
+| --- | --- | --- |
+| `origin/main` | `_isWasmStruct(obj)` | the cached host view MISSES the field; re-reads it via `_resolveHostField` |
+| this branch (#4149) | `_isWasmStruct(fn)` | the field READ fine, but the value is a RAW closure struct that was stored unwrapped |
+
+Taking either side alone would silently drop the other's fix.
+
+### What is done and verified
+
+Six commits of compiler work, three of them perf (#4150) and three the acorn
+chain (#4139/#4144/#4149), plus the tests and budget/valve declarations.
+`tests/issue-4150-fmod-integral-fast-path.test.ts` and
+`tests/issue-4150-split-single-pass.test.ts` are committed and green, and were
+mutation-checked to confirm they have teeth.
+
+Equivalence suite run in three batches (212 files) plus targeted re-runs; every
+failure reproduces with identical counts at the pre-change commit. Full list of
+known-pre-existing failures is in the PR body — do not re-investigate them.
+
+### Traps for whoever picks this up
+
+1. **Do not quote a ratio-vs-node from a single run on this box.** Absolute
+   numbers here run ~1.5–2× the published environment and several node
+   baselines are bimodal (V8 hoists loop-invariant work in some runs, not
+   others). `mixed/csv-parse` has *beaten* node in 18 of 220 historical runs.
+   Use `benchmarks/results/history.json` medians. An earlier version of this
+   PR's own description got this wrong and had to be rewritten — the failure
+   mode is the one §2/§5 of this issue already describes.
+2. **PR #4088 merged at `77f080d0`, the three-defect state, not its five.** Its
+   description lists five fixes; two (`2ef595b7` fnctor-twin, `659c0bf9`
+   stack-balance tee) never reached `main` and are carried by #4106. If #4106
+   is closed without merging, those two are lost again — re-check before
+   abandoning the branch.
+3. **The auto-park bot mis-parsed the batch.** Its comment named
+   "(#4139, #4144, #4106)" as merge-group members; #4139 and #4144 are not PRs
+   (`GET /pulls/4139` → 404) — the bot pulled issue refs out of this PR's own
+   title. There was no batch. Worth fixing in the bot; noted on the PR.
+4. **Benchmark runs dirty the tree.** `benchmarks/run.ts` writes
+   `benchmarks/results/` and `public/benchmarks/results/`; both contain TRACKED
+   files. `git checkout -- benchmarks/results public/benchmarks/results` after
+   a run, and do not `rm -rf` the public dir (I did once and had to restore).
+
+### Remaining #4150 work not attempted
+
+`string/case-convert` is near its structural floor and I deliberately left it —
+reasoning and the scaling measurement are in the PR body. The DOM
+benchmark-definition mismatch (`modify-text` does 10× the writes of its wasm
+source plus a concat; `read-attributes` tests `!== null` vs `.length > 0`) is
+diagnosed but unfixed; those two published rows compare different programs.
+The remaining P4 from the DOM investigation — caching `declared_global` reads
+in a module-level wasm global, ~1/3 of `modify-text`'s crossings — is untouched.

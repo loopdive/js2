@@ -16,6 +16,7 @@ import { reportError } from "../context/errors.js";
 import { reportSilentFallback } from "../fallback-telemetry.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { compileWithUpdateExpression } from "../with-rmw.js";
 import {
   addStringConstantGlobal,
   addUnionImports,
@@ -1003,6 +1004,11 @@ function compilePrefixUpdate(
     case ts.SyntaxKind.PlusPlusToken: {
       // Unwrap parenthesized expressions: ++(x) -> ++x
       const ppOperand = unwrapParens(expr.operand);
+      // (#2663 Slice 3) `with` Object Environment Record precedence.
+      if (ts.isIdentifier(ppOperand)) {
+        const w = compileWithUpdateExpression(ctx, fctx, ppOperand, /*increment*/ true, /*prefix*/ true);
+        if (w !== undefined) return w;
+      }
       if (ts.isIdentifier(ppOperand) && fctx.constBindings?.has(ppOperand.text)) {
         emitThrowTypeError(ctx, fctx, "Assignment to constant variable.");
         fctx.body.push({ op: "unreachable" });
@@ -1204,6 +1210,11 @@ function compilePrefixUpdate(
 
       // Unwrap parenthesized expressions: --(x) -> --x
       const mmOperand = unwrapParens(expr.operand);
+      // (#2663 Slice 3) `with` Object Environment Record precedence.
+      if (ts.isIdentifier(mmOperand)) {
+        const w = compileWithUpdateExpression(ctx, fctx, mmOperand, /*increment*/ false, /*prefix*/ true);
+        if (w !== undefined) return w;
+      }
       if (ts.isIdentifier(mmOperand) && fctx.constBindings?.has(mmOperand.text)) {
         emitThrowTypeError(ctx, fctx, "Assignment to constant variable.");
         fctx.body.push({ op: "unreachable" });
@@ -1419,6 +1430,12 @@ function compilePostfixUnary(
 
   // Unwrap parenthesized expressions: (x)++ -> x++
   const postOperand = unwrapParens(expr.operand);
+
+  // (#2663 Slice 3) `with` Object Environment Record precedence — see with-rmw.ts.
+  if (ts.isIdentifier(postOperand)) {
+    const w = compileWithUpdateExpression(ctx, fctx, postOperand, isIncrement, /*prefix*/ false);
+    if (w !== undefined) return w;
+  }
 
   if (!ts.isIdentifier(postOperand)) {
     // obj.prop++ or obj[idx]++ — delegate to member increment helper

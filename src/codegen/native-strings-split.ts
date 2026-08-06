@@ -43,7 +43,11 @@ const SLEN = 3,
   W = 16,
   N = 17,
   END = 18,
-  RARR = 19;
+  RARR = 19,
+  // (#4150) single-pass split: physical capacity of RARR, and the scratch
+  // holding the grown array while its contents are copied over.
+  CAP = 20,
+  GROWN = 21;
 
 /**
  * Emit `IDX = indexOf(sep, from POS)`, or -1 when there is no further
@@ -364,52 +368,30 @@ export function emitStrSplitHelper(shared: NativeStrShared): void {
         ],
       },
 
-      // --- Pass 1: count the pieces (= separator occurrences + 1), stopping
-      // as soon as `limit` pieces are accounted for. -------------------------
-      { op: "i32.const", value: 1 },
-      { op: "local.set", index: COUNT },
-      { op: "i32.const", value: 0 },
-      { op: "local.set", index: POS },
-      {
-        op: "block",
-        blockType: { kind: "empty" },
-        body: [
-          {
-            op: "loop",
-            blockType: { kind: "empty" },
-            body: [
-              // if (count >=u limit) break — already have as many as we can keep
-              { op: "local.get", index: COUNT },
-              { op: "local.get", index: LIMIT },
-              { op: "i32.ge_u" },
-              { op: "br_if", depth: 1 },
-              ...emitScan(strDataTypeIdx),
-              // if (idx < 0) break — no further separator
-              { op: "local.get", index: IDX },
-              { op: "i32.const", value: 0 },
-              { op: "i32.lt_s" },
-              { op: "br_if", depth: 1 },
-              { op: "local.get", index: COUNT },
-              { op: "i32.const", value: 1 },
-              { op: "i32.add" },
-              { op: "local.set", index: COUNT },
-              { op: "local.get", index: IDX },
-              { op: "local.get", index: SEPLEN },
-              { op: "i32.add" },
-              { op: "local.set", index: POS },
-              { op: "br", depth: 0 },
-            ],
-          },
-        ],
-      },
-      ...emitMinU(COUNT, LIMIT, N),
-
-      // --- Allocate the result array at EXACTLY the right size. -------------
-      { op: "local.get", index: N },
+      // --- (#4150) Single pass: scan once, writing pieces as they are found.
+      //
+      // This replaces a count-pass followed by a fill-pass. Two passes read
+      // EVERY input character twice, which is a flat 2x on the scan — the
+      // dominant term for any string longer than a few dozen characters
+      // (measured 2.66 ns per input character, ~59% of `mixed/csv-parse`, and
+      // the reason a 902-character split cost 24.6 ms against V8's flat 2.0).
+      //
+      // #3901 chose two passes to size the result array EXACTLY: "no doubling,
+      // no array.copy, no slack". That trade is inverted here. The vec struct
+      // stores its LOGICAL length in field 0, separate from the physical size
+      // of the backing array in field 1 — capacity beyond the length is the
+      // normal representation for a growable vec (it is exactly what `push`
+      // consumes), and every consumer bounds by the length field. So slack is
+      // free, while rescanning is not: copying at most a handful of refs on a
+      // doubling beats re-reading hundreds of characters.
+      //
+      // Growth starts at 8 — above the piece count of the overwhelmingly
+      // common splits (2-4 fields) so the usual call never grows at all.
+      { op: "i32.const", value: 8 },
+      { op: "local.set", index: CAP },
+      { op: "local.get", index: CAP },
       { op: "array.new_default", typeIdx: nstrArrTypeIdx },
       { op: "local.set", index: RARR },
-
-      // --- Pass 2: fill it with slice views. --------------------------------
       { op: "i32.const", value: 0 },
       { op: "local.set", index: POS },
       { op: "i32.const", value: 0 },
@@ -422,10 +404,40 @@ export function emitStrSplitHelper(shared: NativeStrShared): void {
             op: "loop",
             blockType: { kind: "empty" },
             body: [
+              // Stop once `limit` pieces have been produced. UNSIGNED compare:
+              // the unbounded sentinel is 0xFFFFFFFF, and `limit === 0` must
+              // yield the empty array (it breaks here on the first iteration).
               { op: "local.get", index: W },
-              { op: "local.get", index: N },
-              { op: "i32.ge_s" },
+              { op: "local.get", index: LIMIT },
+              { op: "i32.ge_u" },
               { op: "br_if", depth: 1 },
+              // Grow when the next write would not fit.
+              { op: "local.get", index: W },
+              { op: "local.get", index: CAP },
+              { op: "i32.ge_s" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "local.get", index: CAP },
+                  { op: "i32.const", value: 1 },
+                  { op: "i32.shl" },
+                  { op: "local.set", index: CAP },
+                  { op: "local.get", index: CAP },
+                  { op: "array.new_default", typeIdx: nstrArrTypeIdx },
+                  { op: "local.set", index: GROWN },
+                  { op: "local.get", index: GROWN },
+                  { op: "ref.as_non_null" },
+                  { op: "i32.const", value: 0 },
+                  { op: "local.get", index: RARR },
+                  { op: "ref.as_non_null" },
+                  { op: "i32.const", value: 0 },
+                  { op: "local.get", index: W },
+                  { op: "array.copy", dstTypeIdx: nstrArrTypeIdx, srcTypeIdx: nstrArrTypeIdx },
+                  { op: "local.get", index: GROWN },
+                  { op: "local.set", index: RARR },
+                ],
+              },
               ...emitScan(strDataTypeIdx),
               // end = idx < 0 ? sLen : idx  (idx < 0 only on the final piece)
               { op: "local.get", index: SLEN },
@@ -435,7 +447,7 @@ export function emitStrSplitHelper(shared: NativeStrShared): void {
               { op: "i32.lt_s" },
               { op: "select" },
               { op: "local.set", index: END },
-              // result[w] = view(s, pos, end)   — bounds are in range by
+              // result[w] = view(s, pos, end) — bounds are in range by
               // construction, so no clamp/swap is needed.
               { op: "local.get", index: RARR },
               { op: "local.get", index: W },
@@ -445,23 +457,29 @@ export function emitStrSplitHelper(shared: NativeStrShared): void {
                 POS,
               ),
               { op: "array.set", typeIdx: nstrArrTypeIdx },
-              // pos = idx + sepLen (only read again when idx >= 0)
-              { op: "local.get", index: IDX },
-              { op: "local.get", index: SEPLEN },
-              { op: "i32.add" },
-              { op: "local.set", index: POS },
               { op: "local.get", index: W },
               { op: "i32.const", value: 1 },
               { op: "i32.add" },
               { op: "local.set", index: W },
+              // The piece just written was the last one — no further separator.
+              { op: "local.get", index: IDX },
+              { op: "i32.const", value: 0 },
+              { op: "i32.lt_s" },
+              { op: "br_if", depth: 1 },
+              // pos = idx + sepLen
+              { op: "local.get", index: IDX },
+              { op: "local.get", index: SEPLEN },
+              { op: "i32.add" },
+              { op: "local.set", index: POS },
               { op: "br", depth: 0 },
             ],
           },
         ],
       },
 
-      // return struct.new(n, resultArr)
-      { op: "local.get", index: N },
+      // return struct.new(w, resultArr) — `w` is the LOGICAL piece count; the
+      // backing array may be larger (see the slack note above).
+      { op: "local.get", index: W },
       { op: "local.get", index: RARR },
       { op: "ref.as_non_null" },
       { op: "struct.new", typeIdx: nstrVecTypeIdx },
@@ -491,6 +509,8 @@ export function emitStrSplitHelper(shared: NativeStrShared): void {
           name: "resultArr",
           type: { kind: "ref_null", typeIdx: nstrArrTypeIdx },
         },
+        { name: "cap", type: { kind: "i32" } },
+        { name: "grown", type: { kind: "ref_null", typeIdx: nstrArrTypeIdx } },
       ],
       body: wrapBodyWithFlatten(body, [0, 1]),
       exported: false,

@@ -228,6 +228,50 @@ export function reserveClosurePropHelpers(ctx: CodegenContext): void {
 }
 
 /**
+ * (#4008) Standalone BUILTIN-INSTANCE carriers for the same identity-keyed
+ * side table.
+ *
+ * `new RegExp()` / `new Date()` are lowered to dedicated WasmGC structs
+ * (`__StandaloneRegExp`, `__Date`), not `$Object`s — so, exactly like a
+ * closure before #3468, `d.foo = 1` fell off the end of `__extern_set`'s
+ * `ref.test $Object` gate and `d.foo` read back `undefined`. Measured
+ * 2026-08-06 under `--target standalone`: expando write-then-read works on a
+ * plain object, array, function, Arguments object and every primitive
+ * wrapper, and is silently dropped on exactly RegExp and Date.
+ *
+ * That is a general expando gap, but the reason it is being closed HERE is
+ * ES §6.2.5.6: test262 spells "an arbitrary object used as a property
+ * descriptor" as `var regObj = new RegExp(); regObj.enumerable = true;
+ * Object.defineProperty(obj, "p", regObj)`. ToPropertyDescriptor then reads
+ * the field through the same `__extern_has`/`__extern_get` pair, so a
+ * descriptor built on one of these objects came out empty and
+ * CompletePropertyDescriptor filled in all-false defaults — silently, with no
+ * refusal.
+ *
+ * The bag itself needs no change: it is keyed by `ref.eq` on the carrier's
+ * identity, which any GC struct satisfies. Only the `ref.test` gate was
+ * closure-shaped.
+ *
+ * Deliberately a NAMED, CLOSED list rather than "every non-`$Object` struct".
+ * Two exclusions are load-bearing:
+ *   - the vec/`$Vec` carriers own a separate overlay (#3537/#4010/#3251) whose
+ *     numeric keys are array ELEMENTS, not bag entries;
+ *   - `$Error_struct` has its own `$props` side-slot (fieldIdx 5, #2101a R5)
+ *     that the externref-backed-subclass own-field path writes directly, so
+ *     bagging it would give one receiver two disagreeing stores.
+ * Types absent from the module are skipped, so a program that never
+ * constructs a Date emits the identical `ref.test` chain as before.
+ */
+function builtinInstanceCarrierTypeIdxs(ctx: CodegenContext): number[] {
+  const out: number[] = [];
+  for (const name of ["__StandaloneRegExp", "__Date"]) {
+    const idx = ctx.structMap.get(name);
+    if (idx !== undefined) out.push(idx);
+  }
+  return out;
+}
+
+/**
  * Fill the reserved closure-own-property helper bodies at FINALIZE, after
  * every closure root is registered and `__extern_get`/`__extern_set`/
  * `__new_plain_object` are in `funcMap`. No-op when the helpers were never
@@ -271,7 +315,7 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
   // harness assertions FIRE (honest floor de-inflation; see the issue file).
   // Constant 0 when the module has no closures.
   {
-    const carrierTypeIdxs = collectClosureBaseWrapperTypeIdxs(ctx);
+    const carrierTypeIdxs = [...collectClosureBaseWrapperTypeIdxs(ctx), ...builtinInstanceCarrierTypeIdxs(ctx)];
     const body: Instr[] = [
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },

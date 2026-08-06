@@ -2150,7 +2150,16 @@ function updateTypeStack(
 
   // Pop 1, push 1 (type-changing or type-preserving)
   if (op === "local.tee") {
-    // Type doesn't change, just peek
+    // NOT a pass-through: wasm types a tee's result as the LOCAL's declared
+    // type (it is set-then-get), which may be a SUPERTYPE of the value that
+    // went in — storing a $NativeString through an $AnyString-typed local
+    // re-reads as $AnyString. Keeping the incoming type here made the
+    // struct.new fixup type its save-temp too narrowly and emit a local.set
+    // the engine rejects (acorn UMD, __closure_0:
+    // "local.set[0] expected (ref null 7), found local.tee of (ref null 6)").
+    const idx = (instr as any).index as number;
+    stack.pop();
+    stack.push(localTypes[idx] ?? null);
     return;
   }
   if (op === "extern.convert_any") {

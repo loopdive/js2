@@ -13,6 +13,7 @@ import type { FieldDef, Instr, ValType } from "../../ir/types.js";
 import { emitBoundsCheckedArrayGet } from "../array-methods.js";
 import { tryEmitLinearU8ElementCompound } from "../linear-uint8-codegen.js";
 import { emitAnyAdd, emitAnyAddFromExternTemps, emitModulo, emitToInt32 } from "../binary-ops.js";
+import { compileWithCompoundAssignment } from "../with-rmw.js";
 import { pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
@@ -1624,6 +1625,13 @@ export function compileCompoundAssignment(
 
   const name = expr.left.text;
 
+  // (#2663 Slice 3) An Object Environment Record pushed by `with` is consulted
+  // BEFORE the surrounding function/global environment, so this must precede the
+  // const / boxed-capture / local paths below. Declines (returns undefined) when
+  // no `with` scope binds the name — then the pre-existing lowering runs.
+  const withCompound = compileWithCompoundAssignment(ctx, fctx, expr.left, expr.right, op);
+  if (withCompound !== undefined) return withCompound;
+
   // const bindings — compound assignment throws TypeError at runtime
   if (fctx.constBindings?.has(name)) {
     const rhsType = compileExpression(ctx, fctx, expr.right);
@@ -2119,7 +2127,7 @@ function emitBitwiseCompoundOp(fctx: FunctionContext, op: ts.SyntaxKind): void {
 
 /** Emit the arithmetic/bitwise operation for a compound assignment operator.
  *  Stack must contain [left_f64, right_f64]. Replaces with result f64. */
-function emitCompoundOp(ctx: CodegenContext, fctx: FunctionContext, op: ts.SyntaxKind): void {
+export function emitCompoundOp(ctx: CodegenContext, fctx: FunctionContext, op: ts.SyntaxKind): void {
   switch (op) {
     case ts.SyntaxKind.PlusEqualsToken:
       fctx.body.push({ op: "f64.add" });

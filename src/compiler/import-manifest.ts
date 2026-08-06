@@ -259,11 +259,19 @@ function buildImportManifest(mod: WasmModule): ImportDescriptor[] {
   const manifest: ImportDescriptor[] = [];
   for (const imp of mod.imports) {
     if (imp.module !== "env") continue;
+    // (#4150) Carry the declared parameter count for func imports so the host
+    // side can build fixed-arity wrappers (see ImportDescriptor.paramCount).
+    let paramCount: number | undefined;
+    if (imp.desc.kind === "func") {
+      const t = mod.types[imp.desc.typeIdx];
+      if (t && t.kind === "func") paramCount = t.params.length;
+    }
     manifest.push({
       module: "env",
       name: imp.name,
       kind: imp.desc.kind === "func" ? "func" : "global",
       intent: classifyImport(imp.name, mod),
+      paramCount,
     });
   }
   return manifest;

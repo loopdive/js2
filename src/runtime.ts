@@ -8331,6 +8331,10 @@ function resolveImport(
   callbackState?: { getExports: () => Record<string, Function> | undefined },
   globalSandbox?: Record<string, any>,
   instanceState?: InstanceState,
+  // (#4150) Declared parameter count from the wasm import signature, including
+  // the leading `self` for `extern_class` members. Lets the generic method shim
+  // below drop its rest parameter. Undefined when unknown → rest form kept.
+  paramCount?: number,
 ): Function {
   switch (intent.type) {
     case "string_literal":
@@ -8783,13 +8787,50 @@ function resolveImport(
           };
         }
       }
+      // (#4150) `extern_class` get/set has a STATIC string member name and a
+      // receiver that is almost always an ordinary host object (a DOM node, a
+      // host record). For that shape `_safeGet`/`_safeSet` reduce to a plain
+      // property access — every other branch in them is keyed on the receiver
+      // being a WasmGC struct or the key needing ToPropertyKey coercion, and
+      // neither can happen here. Taking the direct access first skips the whole
+      // preamble; the helpers still run for struct receivers, host-proxy views,
+      // sidecar-only properties and failed writes, so behaviour is unchanged.
+      // Measured: `_safeSet` alone was ~2/3 of `dom/modify-text`'s runtime.
       if (intent.action === "get") {
         const member = intent.member!;
-        return (self: any) => _safeGet(self, member);
+        return (self: any) => {
+          if (self !== null && typeof self === "object" && !_isWasmStruct(self)) {
+            // Mirrors `_safeGet`'s own non-struct tail: native read first, and
+            // only `undefined` falls through to the sidecar lookup.
+            const direct = self[member];
+            if (direct !== undefined) return direct;
+          }
+          return _safeGet(self, member);
+        };
       }
       if (intent.action === "set") {
         const member = intent.member!;
-        return (self: any, v: any) => _safeSet(self, member, v);
+        return (self: any, v: any) => {
+          // `_unwrapForHost(self) === self` is the explicit form of "the helper's
+          // proxy-unwrap step would be a no-op", so a `_wrapForHost` view still
+          // takes the full path and writes through to its raw vec.
+          if (
+            self !== null &&
+            typeof self === "object" &&
+            !_isWasmStruct(self) &&
+            !_isWasmStruct(v) &&
+            _unwrapForHost(self) === self
+          ) {
+            try {
+              self[member] = v;
+              return;
+            } catch {
+              // Frozen/sealed/accessor/proxy-trap failure — the helper owns the
+              // sidecar fallback and the rethrow rules.
+            }
+          }
+          _safeSet(self, member, v);
+        };
       }
       const m = intent.member!;
       // (#1352) Set's new methods (union, intersection, difference,
@@ -8876,7 +8917,17 @@ function resolveImport(
           return undefined;
         };
       }
-      return (self: any, ...args: any[]) => {
+      // (#4150) The generic method shim is the DOM lane's hot path — 5,000 of
+      // `dom/set-attributes`'s 7,000 crossings land here — and its rest
+      // parameter allocated a fresh args array on every one of them. #3903
+      // removed the inner spread but left the rest param and the `.apply`.
+      // The wasm import signature fixes the argument count exactly
+      // (`paramCount` counts `self` plus the method's own parameters), so build
+      // a fixed-signature closure for the common arities and route the args
+      // through the SAME body. `genericMethodCall` below is that shared body,
+      // unchanged in behaviour: null check, sidecar fallback, wasm-struct arg
+      // wrapping, the #3903 arity switch, and the #1333 legacy-RegExp hook.
+      const invokeMethod = (self: any, args: any[]): any => {
         if (self == null) return undefined;
         // Method call — check sidecar if direct method missing
         const fn = self[m] ?? _sidecarGet(self, m);
@@ -8950,6 +9001,57 @@ function resolveImport(
         }
         return undefined;
       };
+      // Fixed-signature wrappers over the SAME body. `paramCount` includes
+      // `self`, so a 0-arg method has paramCount 1.
+      //
+      // These do not merely forward into `invokeMethod` — boxing the arguments
+      // into an array literal to do that measured WORSE than the rest form
+      // (dom/set-attributes 2.54x -> 3.31x), because the literal escapes into a
+      // non-inlined callee and becomes a real heap allocation where V8 had been
+      // sinking the rest array. Instead each arm inlines the ordinary case —
+      // resolve the method, confirm no argument is a WasmGC struct, call it
+      // directly — and hands anything unusual to the shared body, which still
+      // owns the sidecar fallback, the `_wrapForHost` argument wrapping and the
+      // #1333 legacy-RegExp hook. The array is then allocated only on the paths
+      // that were already doing extra work.
+      const needsLegacyRegExpHook = m === "exec" || m === "test";
+      if (!needsLegacyRegExpHook) {
+        switch (paramCount) {
+          case 1:
+            return (self: any) => {
+              if (self != null) {
+                const fn = self[m];
+                if (typeof fn === "function") return fn.call(self);
+              }
+              return invokeMethod(self, []);
+            };
+          case 2:
+            return (self: any, a: any) => {
+              if (self != null && !_isWasmStruct(a)) {
+                const fn = self[m];
+                if (typeof fn === "function") return fn.call(self, a);
+              }
+              return invokeMethod(self, [a]);
+            };
+          case 3:
+            return (self: any, a: any, b: any) => {
+              if (self != null && !_isWasmStruct(a) && !_isWasmStruct(b)) {
+                const fn = self[m];
+                if (typeof fn === "function") return fn.call(self, a, b);
+              }
+              return invokeMethod(self, [a, b]);
+            };
+          case 4:
+            return (self: any, a: any, b: any, c: any) => {
+              if (self != null && !_isWasmStruct(a) && !_isWasmStruct(b) && !_isWasmStruct(c)) {
+                const fn = self[m];
+                if (typeof fn === "function") return fn.call(self, a, b, c);
+              }
+              return invokeMethod(self, [a, b, c]);
+            };
+        }
+      }
+      return (self: any, ...args: any[]) => invokeMethod(self, args);
     }
     case "builtin": {
       const name = intent.name;
@@ -11484,6 +11586,24 @@ assert._isSameValue = isSameValue;
               const resolved = _maybeWrapCallableUnknownArity(_unwrapForHost(rawMethod), callbackState);
               if (typeof resolved === "function") {
                 const ret = resolved.apply(obj, wrappedArgs);
+                return ret === obj || ret === wrappedObj ? obj : _unwrapForHost(ret);
+              }
+            }
+            // (#4149) Sibling case of the recovery above, and NOT covered by
+            // it: here the field READ succeeded — `fn` is the stored value —
+            // but it is a RAW closure struct rather than a callable. A closure
+            // stored via __extern_set/__extern_set_strict while the module's
+            // `start` was still running (module_init runs inside
+            // WebAssembly.instantiate, BEFORE setInstance wires callbackState)
+            // was saved unwrapped, because _maybeWrapCallableUnknownArity had
+            // no exports to consult at store time. The alias-write shape
+            // (`e.f = function…; m.exports.f()`) hits exactly this, including
+            // when `obj` is not itself a wasm struct so the arm above never
+            // ran. Wrap it lazily at call time, when exports ARE reachable.
+            if (_isWasmStruct(fn)) {
+              const resolved = _maybeWrapCallableUnknownArity(fn, callbackState);
+              if (typeof resolved === "function") {
+                const ret = resolved.apply(wrappedObj, wrappedArgs);
                 return ret === obj || ret === wrappedObj ? obj : _unwrapForHost(ret);
               }
             }
@@ -15900,7 +16020,7 @@ export function buildImports(
       continue;
     }
 
-    fn = resolveImport(imp.intent, deps, callbackState, options?.globalSandbox, instanceState);
+    fn = resolveImport(imp.intent, deps, callbackState, options?.globalSandbox, instanceState, imp.paramCount);
 
     // DOM containment wrapping
     if (options?.domRoot) {
@@ -15912,21 +16032,20 @@ export function buildImports(
       }
     }
 
-    // Wrap host imports with recursion depth guard + exception capture for catch_all
+    // Wrap host imports with recursion depth guard + exception capture for catch_all.
+    //
+    // (#4150) Arity-specialized. This wrapper sits on EVERY host import, so its
+    // cost is paid on every wasm->JS crossing in every program — 7,000 times in
+    // one `dom/set-attributes` call alone. The rest-parameter form allocated a
+    // fresh args array per crossing and dispatched through `Function.apply`,
+    // which V8 cannot inline as well as a fixed-arity direct call. Specializing
+    // on the callee's declared arity removes both. Semantics are identical: the
+    // counter, the depth check, `lastCaughtException` and the decrement are the
+    // same in every arm, and a variadic or higher-arity callee still gets the
+    // original rest form. Measured on dom/set-attributes: ~20-25% of the lane.
     {
       const original = fn;
-      // (#4156) Dispatch on `arguments.length` to a direct `.call` rather than
-      // collecting `...args` and using `.apply`: the rest parameter allocates an
-      // array on EVERY host import call, and this wrapper is on the path of all
-      // of them. Wasm-side A/B: ~4% (66.2/69.5 -> 64.9/65.4 ns/op) and steadier.
-      //
-      // Two traps, both recorded in #4156. (1) A JS->JS microbenchmark of these
-      // shapes claims -41%; that is MISLEADING, because V8's wasm->JS entry
-      // already materialises the argument list. (2) The switch must key off
-      // arguments RECEIVED, never `original.length` — that is 0 for a variadic
-      // or defaulted callee, so an arity-specialised wrapper built from it would
-      // silently drop arguments.
-      fn = function (this: any) {
+      const guardEnter = (): void => {
         if (importCounts) importCounts[importIndex]++;
         if (hostCallDepth >= MAX_HOST_RECURSION_DEPTH) {
           const err = new RangeError("Maximum call stack size exceeded");
@@ -15934,29 +16053,101 @@ export function buildImports(
           throw err;
         }
         hostCallDepth++;
-        try {
-          switch (arguments.length) {
-            case 0:
-              return original.call(this);
-            case 1:
-              return original.call(this, arguments[0]);
-            case 2:
-              return original.call(this, arguments[0], arguments[1]);
-            case 3:
-              return original.call(this, arguments[0], arguments[1], arguments[2]);
-            case 4:
-              return original.call(this, arguments[0], arguments[1], arguments[2], arguments[3]);
-            default:
-              // Exact forwarding for the rare >4-argument import; no array literal.
-              return original.apply(this, arguments as unknown as any[]);
-          }
-        } catch (e) {
-          lastCaughtException = e;
-          throw e;
-        } finally {
-          hostCallDepth--;
-        }
       };
+      // The arity comes from the WASM IMPORT SIGNATURE (`paramCount`), not from
+      // `original.length`. The wasm side is what does the calling and its call
+      // sites are fixed-arity, so this count is exactly how many arguments the
+      // wrapper can ever receive. `original.length` would be wrong: it excludes
+      // rest and defaulted parameters, so a variadic callee under-reports
+      // (`Math.max.length` is 2) and a wrapper sized from it would silently
+      // drop arguments. Anything without a declared count keeps the rest form.
+      const arity = imp.paramCount ?? -1;
+      const variadic = arity < 0 || arity > 4;
+      if (variadic) {
+        fn = function (this: any, ...args: any[]) {
+          guardEnter();
+          try {
+            return original.apply(this, args);
+          } catch (e) {
+            lastCaughtException = e;
+            throw e;
+          } finally {
+            hostCallDepth--;
+          }
+        };
+      } else if (arity === 0) {
+        fn = function (this: any) {
+          guardEnter();
+          try {
+            return original.call(this);
+          } catch (e) {
+            lastCaughtException = e;
+            throw e;
+          } finally {
+            hostCallDepth--;
+          }
+        };
+      } else if (arity === 1) {
+        fn = function (this: any, a: any) {
+          guardEnter();
+          try {
+            return original.call(this, a);
+          } catch (e) {
+            lastCaughtException = e;
+            throw e;
+          } finally {
+            hostCallDepth--;
+          }
+        };
+      } else if (arity === 2) {
+        fn = function (this: any, a: any, b: any) {
+          guardEnter();
+          try {
+            return original.call(this, a, b);
+          } catch (e) {
+            lastCaughtException = e;
+            throw e;
+          } finally {
+            hostCallDepth--;
+          }
+        };
+      } else if (arity === 3) {
+        fn = function (this: any, a: any, b: any, c: any) {
+          guardEnter();
+          try {
+            return original.call(this, a, b, c);
+          } catch (e) {
+            lastCaughtException = e;
+            throw e;
+          } finally {
+            hostCallDepth--;
+          }
+        };
+      } else if (arity === 4) {
+        fn = function (this: any, a: any, b: any, c: any, d: any) {
+          guardEnter();
+          try {
+            return original.call(this, a, b, c, d);
+          } catch (e) {
+            lastCaughtException = e;
+            throw e;
+          } finally {
+            hostCallDepth--;
+          }
+        };
+      } else {
+        fn = function (this: any, ...args: any[]) {
+          guardEnter();
+          try {
+            return original.apply(this, args);
+          } catch (e) {
+            lastCaughtException = e;
+            throw e;
+          } finally {
+            hostCallDepth--;
+          }
+        };
+      }
     }
 
     env[imp.name] = fn;
