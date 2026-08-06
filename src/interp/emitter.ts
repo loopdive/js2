@@ -73,6 +73,24 @@ interface LoopCtx {
 const LEXICAL_SCOPE_LABEL = "\u0000lexical-env";
 
 /**
+ * The same kind of marker, for the declarative record of a **simple**
+ * `catch (e)` parameter. It is a real lexical environment for every purpose
+ * except one: B.3.5 says a simple `CatchParameter: BindingIdentifier` does NOT
+ * cancel the B.3.3 web-compat var binding of a same-named function declared
+ * inside the catch block — `try {} catch (f) { { function f(){} } }` must still
+ * update the enclosing var `f`. A *destructuring* parameter does cancel, and
+ * `emitTry` rejects those before reaching here, so this label always means
+ * "does not cancel". Distinguishing it at the marker keeps that exemption in
+ * one place instead of re-deriving the catch shape at each Annex B site.
+ */
+const SIMPLE_CATCH_SCOPE_LABEL = LEXICAL_SCOPE_LABEL + "catch-param";
+
+/** Both markers denote a pushed environment record on the control stack. */
+function isEnvScopeLabel(label: string | null): boolean {
+  return label === LEXICAL_SCOPE_LABEL || label === SIMPLE_CATCH_SCOPE_LABEL;
+}
+
+/**
  * Emits one function/script body. Construct with the params + body, then call
  * {@link emit} to get the {@link FuncMeta}.
  */
@@ -479,7 +497,7 @@ class FunctionEmitter {
         if (inner.id) {
           lexicalNames.push(inner.id.name);
           functions.push(inner);
-          let outerLexicalConflict = this.isActiveBlockLexical(inner.id.name);
+          let outerLexicalConflict = this.cancelsAnnexBVarBinding(inner.id.name);
           if (!outerLexicalConflict) {
             for (const rootLexical of this.hoistedLexicals) {
               if (rootLexical === inner.id.name) {
@@ -613,6 +631,23 @@ class FunctionEmitter {
   private isActiveBlockLexical(name: string): boolean {
     for (let i = this.loopTop - 1; i >= 0; i -= 1) {
       const ctx = this.loops[i]!;
+      if (!isEnvScopeLabel(ctx.label)) continue;
+      for (let j = ctx.continues.length - 1; j >= 0; j -= 1) {
+        if (ctx.continues[j] === name) return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * The Annex B B.3.3 cancellation test. Identical to
+   * {@link isActiveBlockLexical} except that a **simple** catch parameter does
+   * not count: B.3.5 exempts it, so the web-compat var binding is still created
+   * and updated through it.
+   */
+  private cancelsAnnexBVarBinding(name: string): boolean {
+    for (let i = this.loopTop - 1; i >= 0; i -= 1) {
+      const ctx = this.loops[i]!;
       if (ctx.label !== LEXICAL_SCOPE_LABEL) continue;
       for (let j = ctx.continues.length - 1; j >= 0; j -= 1) {
         if (ctx.continues[j] === name) return true;
@@ -625,7 +660,7 @@ class FunctionEmitter {
     let depth = 0;
     for (let i = 0; i < this.loopTop; i += 1) {
       const ctx = this.loops[i]!;
-      if (ctx.label === LEXICAL_SCOPE_LABEL) depth += 1;
+      if (isEnvScopeLabel(ctx.label)) depth += 1;
     }
     return depth;
   }
@@ -636,7 +671,7 @@ class FunctionEmitter {
     let currentDepth = 0;
     for (let i = 0; i < this.loopTop; i += 1) {
       const ctx = this.loops[i]!;
-      if (ctx.label !== LEXICAL_SCOPE_LABEL) continue;
+      if (!isEnvScopeLabel(ctx.label)) continue;
       if (currentDepth === depth) {
         this.enc.emitCallBuiltin(BUILTIN_RESTORE_ENV, ctx.breaks[0]!, 1);
         return;
@@ -894,7 +929,7 @@ class FunctionEmitter {
       }
     }
     for (const fn of functions) {
-      let outerLexicalConflict = this.isActiveBlockLexical(fn.id.name);
+      let outerLexicalConflict = this.cancelsAnnexBVarBinding(fn.id.name);
       if (!outerLexicalConflict) {
         for (const rootLexical of this.hoistedLexicals) {
           if (rootLexical === fn.id.name) {
@@ -1011,18 +1046,58 @@ class FunctionEmitter {
     if (s.handler) {
       const handlerPc = this.enc.here();
       this.enc.emitCallBuiltin(BUILTIN_RESTORE_ENV, handlerEnvReg, 1);
-      // Bind the caught value: the loop has already stored it into handlerReg.
+      // The loop has already stored the caught value into handlerReg.
+      //
+      // §14.15.3 CatchClauseEvaluation gives the CatchParameter its OWN
+      // declarative Environment Record, pushed on entry and popped on exit.
+      // `bind()` cannot express that: `names` is a FLAT, function-wide
+      // name→register map with no pop, so `catch (f)` shadowed `f` for the rest
+      // of the function body. Every name resolution emitted AFTER the catch
+      // clause read the catch register instead of the enclosing binding — which
+      // is exactly what B.3.3's `no-skip-try` family checks (`try { throw null }
+      // catch (f) { { function f(){} } }`: after the clause `f` must be the
+      // block function, not the caught `null`).
+      //
+      // Route it through the same lexical-scope machinery blocks already use, so
+      // `emitLoadName` / `storeName` / `initializeName` / the `typeof` fast path
+      // all see the binding via `isActiveBlockLexical` and stop seeing it the
+      // moment the clause ends.
       let handlerReg: number;
+      let catchSaveReg = -1;
       if (s.handler.param) {
         if (s.handler.param.type !== "Identifier") {
           throw new UnsupportedNodeError(`catch destructuring (${s.handler.param.type})`, s.handler.param.type);
         }
-        handlerReg = this.bind(s.handler.param.name);
+        const catchName: string = s.handler.param.name;
+        handlerReg = this.allocReg(); // scratch sink for the thrown value
+        const namesReg = this.allocReg();
+        catchSaveReg = this.allocReg();
+        this.enc.emitConst(Op.LdaConst, this.enc.internConst([catchName]));
+        this.enc.emitReg(Op.Star, namesReg);
+        this.enc.emitCallBuiltin(BUILTIN_PUSH_LEXICAL_ENV, namesReg, 1);
+        this.enc.emitReg(Op.Star, catchSaveReg);
+        const catchScope: LoopCtx = {
+          label: SIMPLE_CATCH_SCOPE_LABEL,
+          breaks: [catchSaveReg],
+          continues: [catchName],
+          isLoop: false,
+        };
+        if (this.loopTop < this.loops.length) this.loops[this.loopTop] = catchScope;
+        else this.loops.push(catchScope);
+        this.loopTop += 1;
+        // BindingInitialization of the CatchParameter: the record's cell starts
+        // in TDZ, so this must be an initialize, not a store.
+        this.enc.emitReg(Op.Ldar, handlerReg);
+        this.initializeName(catchName);
       } else {
         handlerReg = this.allocReg(); // optional-catch-binding: scratch sink
       }
       this.enc.addExnRow(start, end, handlerPc, handlerReg);
       this.emitStatement(s.handler.body);
+      if (catchSaveReg >= 0) {
+        this.enc.emitCallBuiltin(BUILTIN_RESTORE_ENV, catchSaveReg, 1);
+        this.loopTop -= 1;
+      }
       // A throw inside the try with a catch lands here, then falls through to the
       // finalizer below (catch → finally ordering).
     }
@@ -1136,7 +1211,7 @@ class FunctionEmitter {
   private findLoop(label: string | null, needLoop: boolean): LoopCtx {
     for (let i = this.loopTop - 1; i >= 0; i -= 1) {
       const ctx = this.loops[i]!;
-      if (ctx.label === LEXICAL_SCOPE_LABEL) continue;
+      if (isEnvScopeLabel(ctx.label)) continue;
       if (label === null) {
         if (!needLoop || ctx.isLoop) return ctx;
       } else if (ctx.label === label) {
