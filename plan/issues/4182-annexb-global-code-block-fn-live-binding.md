@@ -1,10 +1,11 @@
 ---
 id: 4182
 title: "annexB B.3.3.2 global-code: top-level block-nested function declarations bind STATICALLY (funcMap) instead of through a live module-global — ~38 ES5 standalone files"
-status: in-progress
+status: done
 assignee: ttraenkler/W7-annexb-global-blockfn
 sprint: current
 created: 2026-08-06
+completed: 2026-08-06
 priority: high
 loc-budget-allow:
   # Each arm below is position-dependent inside an existing dispatch and cannot
@@ -120,3 +121,34 @@ block-nested `function f`:
   the binding visible on the global object (enumerable, non-configurable) —
   the standalone globalThis reflection may cap the yield below 38; measure
   per-file, some may only get past assert #1.
+
+## Implementation notes (2026-08-06, W7 — why, not just what)
+
+Implemented exactly per the design above (`src/codegen/annexb-global-live-binding.ts`
++ gated arms in statements/typeof-delete/call-identifier/declarations/exceptions).
+Measured: **lever 98 → 144 of 153** (full `annexB/language/global-code`,
+standalone, fresh #4162 provider), **exposure 151 → 191 of 246** (every
+non-strict non-module test262 file with a module-scope Annex-B-position fn),
+**zero regressions in both, zero vacuous-pass conversions**. Remaining 9 are
+`$262.evalScript` interpreter-side (#4137-adjacent). Three findings the design
+did not fully anticipate:
+
+1. **The seed must be the `$undefined` singleton, standalone-only.** A
+   `ref.null.extern` init reads back as JS `null` under the #2106
+   `undefinedSingleton` regime (`«null» ≠ «undefined»`, 24 lever files), while
+   in the HOST lane the singleton surfaces to host helpers as an opaque
+   object (`typeof` → "object", `=== undefined` → false) — so the seed arm
+   gates on `ctx.standalone || ctx.wasi` and the typeof arm branches on
+   `ref.is_null` before dispatching `__typeof`.
+2. **The catch parameter LEAKS in the flat localMap** when it shadows nothing:
+   the restore path only handled the had-a-previous-local case, so
+   `*-no-skip-try`'s post-try reads resolved the leaked `catch (f)` local
+   forever. Fixed with a delete scoped to `annexBModuleBindings` names — the
+   general leak is pre-existing surface other resolution paths may lean on
+   (follow-up candidate).
+3. **The reassignment exclusion must scan INTO nested function bodies** —
+   `*-block-scoping`'s write (`f = 123`) sits inside the block fn's own body,
+   which #2552's function-scope scan deliberately skips. One shared global
+   cannot model the block-local/var-binding split, so any name written
+   anywhere inside its declaring range stays on the legacy path
+   (byte-identical, keeps `*-block-scoping` passing).
