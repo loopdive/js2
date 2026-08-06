@@ -127,6 +127,15 @@ Ideal end state is one pass with two front-ends: declarations when present,
 inference otherwise. Landing the declaration front-end first also gives #3927 a
 ready-made oracle to validate its inference against on a real package.
 
+> **2026-08-06 (#3927 pad probe)**: the byte-share bound below UNDERSTATES the
+> lever — +36 ref slots/Node measured +28-30% wall (pointer-slot scan + mutator
+> locality, not just allocated bytes; #3927 Results §5-§6). But two structural
+> facts CAP what a declared partition can deliver on acorn regardless: the tag
+> is applied at `finishNode` (after allocation), and `toAssignable` mutates
+> shapes in place across the declared partition — see #3927 Results §3. The
+> declared catalogue remains useful as the field-set oracle for the hot/cold
+> split's ranking, not as an instance partition.
+
 ## Honest payoff bound — do not oversell this
 
 `__fnctor_Node` is 32,468 instances × 292 B ≈ **9.5 MB** of the **43.9 MB**
