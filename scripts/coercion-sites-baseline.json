@@ -70,6 +70,7 @@
   "codegen/type-coercion.ts": 34,
   "codegen/typed-this.ts": 3,
   "codegen/vec-access-exports.ts": 1,
-  "codegen/vec-overlay.ts": 2,
-  "codegen/wasi.ts": 1
+  "codegen/vec-overlay.ts": 5,
+  "codegen/wasi.ts": 1,
+  "codegen/with-rmw.ts": 1
 }

@@ -47,6 +47,7 @@ import {
   ensureExtrasArgvGlobal,
   maybeSetArgcForKnownCall,
 } from "../statements/nested-declarations.js";
+import { emitStringExternResultFlatten, emitStringRefResultFlatten } from "../string-materialize.js";
 import { compileStringLiteral, emitBoolToString, emitNativeStringToHostExternref } from "../string-ops.js";
 import { usesNativeNumberFormat } from "../number-format-native.js";
 import { emitSymbolToString } from "../symbol-native.js";
@@ -791,7 +792,8 @@ export function compileIdentifierCall(
           return compileStringLiteral(ctx, fctx, "undefined", strArg0) ?? { kind: "externref" };
         }
         if (isStringType(argTsType)) {
-          // Already a string — return as-is
+          // Already a string — (#4174) flatten once at this materialization point.
+          emitStringExternResultFlatten(ctx, fctx);
           return { kind: "externref" };
         }
         // Other externref — coerce via __extern_toString, which routes
@@ -807,6 +809,9 @@ export function compileIdentifierCall(
         flushLateImportShifts(ctx, fctx);
         if (toStrIdx !== undefined) {
           fctx.body.push({ op: "call", funcIdx: toStrIdx });
+          // (#4174) `__extern_toString`'s string arm is identity — a rope comes
+          // back unchanged; flatten it here (acorn's `this.input = String(input)`).
+          emitStringExternResultFlatten(ctx, fctx);
         }
         return { kind: "externref" };
       }
@@ -815,8 +820,9 @@ export function compileIdentifierCall(
         // Check if it's a native string type
         const argTsType = ctx.checker.getTypeAtLocation(strArg0);
         if (isStringType(argTsType)) {
-          // Already a native string — return as-is
-          return argType;
+          // Already a native string — (#4174) flatten a possible `$AnyString`
+          // rope once here; ValType preserved exactly, identity if inapplicable.
+          return emitStringRefResultFlatten(ctx, fctx, argType) ?? argType;
         }
         // Native/standalone object ToString needs a real `$AnyString` result.
         // The coercion engine dispatches a statically-known toString/valueOf
