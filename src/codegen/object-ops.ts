@@ -320,7 +320,28 @@ export function emitDefinePropertyDescRuntime(
       : undefined;
   const reifyStructName = descStructTypeIdx !== undefined ? ctx.typeIdxToStructName.get(descStructTypeIdx) : undefined;
   const reifyFields = reifyStructName ? ctx.structFields.get(reifyStructName) : undefined;
-  if (descType && descStructTypeIdx !== undefined && reifyFields && reifyFields.length > 0) {
+  // (#4176) Carrier-backed descriptor receivers must NOT be reified. The reify
+  // copies only the STATIC struct fields into a fresh `$Object`, which severs
+  // both the #3468/#3537 carrier-bag OWN expandos and the proto-property-store
+  // INHERITED keys (`Array.prototype.value = "x"; Object.defineProperty(o,
+  // "p", [])` — the §8.10.5 inherited-descriptor idiom; measured: the Date /
+  // Array / RegExp rows of 15.2.3.6-3-{139..149,218..228,248..258}-1 all read
+  // empty descriptors). `__obj_define_from_desc`'s ToPropertyDescriptor reads
+  // (`__desc_has_own` + `__extern_get`) resolve these receivers directly —
+  // own bag first, then the per-brand companions — so pass the ORIGINAL
+  // through as externref instead. A vec/Date/RegExp struct's static fields
+  // (length/data/internals) are not descriptor field names, so nothing the
+  // reify used to surface is lost.
+  const isCarrierBackedDescriptor =
+    reifyStructName !== undefined &&
+    (reifyStructName.startsWith("__vec_") || reifyStructName === "__StandaloneRegExp" || reifyStructName === "__Date");
+  if (
+    descType &&
+    descStructTypeIdx !== undefined &&
+    reifyFields &&
+    reifyFields.length > 0 &&
+    !isCarrierBackedDescriptor
+  ) {
     emitDescriptorStructReify(ctx, fctx, descStructTypeIdx, reifyFields);
     // emitDescriptorStructReify consumes the struct ref on the stack and leaves
     // a `$Object` externref in its place.

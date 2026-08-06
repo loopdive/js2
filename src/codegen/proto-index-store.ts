@@ -103,7 +103,8 @@ import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { BUILTIN_BRAND_BASE, BUILTIN_BRAND_COUNT, builtinBrandOffsetOf } from "./native-proto.js";
+import { BUILTIN_BRAND_BASE, BUILTIN_BRAND_COUNT, builtinBrandOffsetOf } from "./builtin-brands.js";
+import { nativeStringLiteralInstrs } from "./native-strings.js"; // (#4176) wrapper-slot key at FILL time
 import { addFuncType } from "./registry/types.js";
 
 /** Reserved helper names (all internal, never exported from the module). */
@@ -125,6 +126,20 @@ const FUN_OFF = builtinBrandOffsetOf("Function")!;
 const REGEXP_OFF = builtinBrandOffsetOf("RegExp")!;
 const DATE_OFF = builtinBrandOffsetOf("Date")!;
 const ERROR_OFF = builtinBrandOffsetOf("Error")!;
+const STRING_OFF = builtinBrandOffsetOf("String")!;
+const NUMBER_OFF = builtinBrandOffsetOf("Number")!;
+const BOOLEAN_OFF = builtinBrandOffsetOf("Boolean")!;
+
+/**
+ * (#4176) The boxed-primitive wrapper internal-slot key — MUST equal
+ * `WRAPPER_PRIMITIVE_KEY` in object-runtime.ts (not imported: object-runtime
+ * imports this module, and a value import back would close an ESM cycle).
+ * A standalone wrapper (`new String()` …) is a plain `$Object` carrying its
+ * [[StringData]]/[[NumberData]]/[[BooleanData]] under this key, so the brand
+ * classifier recovers the wrapper's prototype brand from the slot value's box
+ * type.
+ */
+const WRAPPER_PRIMITIVE_KEY = "[[PrimitiveValue]]";
 
 /** `$PropEntry` field indices (object-runtime.ts layout — value/flags/get). */
 const ENTRY_VALUE = 1;
@@ -204,44 +219,6 @@ export function reserveProtoIndexStore(ctx: CodegenContext): void {
   // (#4176) receiver-aware consults for the non-$Object miss chokepoints.
   reserve(PROTOIDX_HAS_R, [ext, ext], [i32], zero);
   reserve(PROTOIDX_GET_R, [ext, ext], [ext], nullExt);
-}
-
-/**
- * Registration-time consult for `__extern_get`'s terminal proto-walk miss:
- * `[recv, key, OBJ_OFF] -> call __protoidx_get_k` (tail position — the
- * caller's body ends with an externref). The implicit end of every `$Object`
- * chain is `Object.prototype`. Returns `undefined` when the store is not
- * reserved (flags clear / host mode) so the caller emits its exact
- * pre-existing miss.
- */
-export function protoIndexGetKeyMissInstrs(
-  ctx: CodegenContext,
-  recvLocal: number,
-  keyLocal: number,
-): Instr[] | undefined {
-  const getKIdx = ctx.funcMap.get(PROTOIDX_GET_K);
-  if (getKIdx === undefined) return undefined;
-  return [
-    { op: "local.get", index: recvLocal },
-    { op: "local.get", index: keyLocal },
-    { op: "i32.const", value: OBJ_OFF },
-    { op: "call", funcIdx: getKIdx },
-  ];
-}
-
-/**
- * Registration-time consult for `__extern_has`'s terminal proto-walk miss:
- * `[key, OBJ_OFF] -> call __protoidx_has_k` (tail i32). `undefined` when
- * unreserved.
- */
-export function protoIndexHasKeyMissInstrs(ctx: CodegenContext, keyLocal: number): Instr[] | undefined {
-  const hasKIdx = ctx.funcMap.get(PROTOIDX_HAS_K);
-  if (hasKIdx === undefined) return undefined;
-  return [
-    { op: "local.get", index: keyLocal },
-    { op: "i32.const", value: OBJ_OFF },
-    { op: "call", funcIdx: hasKIdx },
-  ];
 }
 
 /**
@@ -750,6 +727,77 @@ function fillBrandOffBody(ctx: CodegenContext): void {
         ],
       },
     );
+  }
+  // Boxed-primitive WRAPPER (`new String()` / `new Number()` / `new
+  // Boolean()`) — a plain `$Object` carrying the [[PrimitiveValue]] internal
+  // slot (see WRAPPER_PRIMITIVE_KEY above). Classify by the slot value's box
+  // type so the wrapper's chain starts at its OWN prototype brand
+  // (`String.prototype.enumerable = true; Object.defineProperty(o, "p",
+  // new String())` — the 15.2.3.6-3-{35,141,220,250}-1 family). An ordinary
+  // `$Object` (no slot) falls through to the OBJ default. The key is built
+  // with `nativeStringLiteralInstrs` — finalize-safe (no import-global adds).
+  {
+    const types = ctx.objectRuntimeTypes;
+    const objFindIdx = ctx.funcMap.get("__obj_find");
+    const anyStr = ctx.anyStrTypeIdx;
+    if (types && objFindIdx !== undefined && anyStr >= 0) {
+      const entryRefNull: ValType = { kind: "ref_null", typeIdx: types.propEntryTypeIdx };
+      const eLocal = fn.locals.length + 1; // params: 1 → locals start at 1
+      fn.locals.push({ name: "we", type: entryRefNull });
+      const slotValue = (): Instr[] => [
+        { op: "local.get", index: eLocal },
+        { op: "ref.as_non_null" },
+        { op: "struct.get", typeIdx: types.propEntryTypeIdx, fieldIdx: ENTRY_VALUE },
+      ];
+      const boxNum = ctx.nativeBoxNumberTypeIdx;
+      const boxBool = ctx.nativeBoxBooleanTypeIdx;
+      body.push(
+        { op: "local.get", index: 1 },
+        { op: "ref.test", typeIdx: types.objectTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: 1 },
+            { op: "ref.cast", typeIdx: types.objectTypeIdx },
+            ...nativeStringLiteralInstrs(ctx, WRAPPER_PRIMITIVE_KEY),
+            { op: "extern.convert_any" },
+            { op: "call", funcIdx: objFindIdx },
+            { op: "local.set", index: eLocal },
+            { op: "local.get", index: eLocal },
+            { op: "ref.is_null" },
+            { op: "i32.eqz" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                ...slotValue(),
+                { op: "ref.test", typeIdx: anyStr },
+                { op: "if", blockType: { kind: "empty" }, then: ret(STRING_OFF) },
+                ...(boxNum >= 0
+                  ? ([
+                      ...slotValue(),
+                      { op: "ref.test", typeIdx: boxNum },
+                      ...slotValue(),
+                      { op: "ref.test", typeIdx: I31_HEAP_TYPE },
+                      { op: "i32.or" },
+                      { op: "if", blockType: { kind: "empty" }, then: ret(NUMBER_OFF) },
+                    ] satisfies Instr[])
+                  : []),
+                ...(boxBool >= 0
+                  ? ([
+                      ...slotValue(),
+                      { op: "ref.test", typeIdx: boxBool },
+                      { op: "if", blockType: { kind: "empty" }, then: ret(BOOLEAN_OFF) },
+                    ] satisfies Instr[])
+                  : []),
+              ],
+            },
+            ...ret(OBJ_OFF),
+          ],
+        },
+      );
+    }
   }
   body.push(...testArm(ctx.vecPropBaseTypeIdx, ARR_OFF));
   body.push(...testArm(ctx.structMap.get("__StandaloneRegExp"), REGEXP_OFF));

@@ -42,7 +42,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import type { Instr, StructTypeDef } from "../ir/types.js";
 import { allocTempLocal } from "./context/locals.js";
 import { emitUndefined } from "./expressions/late-imports.js";
-import { isBrandedBuiltinName } from "./native-proto.js"; // (#4176) named proto-write pre-scan
+import { isBrandedBuiltinName } from "./builtin-brands.js"; // (#4176) named proto-write pre-scan
 
 /**
  * Cheap AST pre-scan: set `ctx.usesArrayHoles` when the program contains any
