@@ -10,6 +10,10 @@ horizon: m
 created: 2026-08-03
 requested_by: ttraenkler/claude-bench
 related: [4088, 2043]
+loc-budget-allow:
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/context/types.ts
+  - src/codegen/closures.ts
 ---
 
 # #4139 — `__fnctor_<C>_new` forwards captures its frame does not hold
@@ -70,6 +74,26 @@ So the fallback is not a safe landing zone; only capture threading fixes this.
 An adjacent silent-miscompile exists in the same family: a fnctor ctor calling
 a sibling that reads a captured `hasOwn`-style binding through `.call` returns
 wrong values (probe expected 20, got null) without any validation error.
+
+## Progress
+
+**Capture threading landed 2026-08-03** (standalone): the twin's prologue
+casts the `__constructor_identity` param — which call sites already load with
+the constructor's closure VALUE — to the closure struct recorded per AST node
+(`ctx.closureStructByNode`) and spills every capture field into a frame local
+registered under the capture's own name (cells register in `boxedCaptures`).
+Sibling-call prepends then resolve in-frame via `capture-source-slot.ts`.
+Guarded by `ref.test`; a null/foreign identity keeps the old behaviour.
+acorn UMD's `__fnctor_Parser_new` validation failure is gone; the 39
+fnctor/new/constructor test files show byte-identical failure lists with and
+without the change (25 pre-existing). gc-target twins remain uncovered (no
+identity param there).
+
+acorn UMD now proceeds to the NEXT defect in its chain: `__closure_0` fails
+validation with `local.set[0] expected (ref null 7), found local.tee of type
+(ref null 6)` — a stack-balance arg-coercion temp (`$sn_tmp_*`,
+stack-balance.ts) typed off inference that disagrees with the real value type.
+Separate defect, not this issue.
 
 ## Acceptance
 

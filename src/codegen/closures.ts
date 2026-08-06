@@ -2778,6 +2778,9 @@ export function compileArrowAsClosure(
   });
   let { structTypeIdx, liftedFuncTypeIdx, liftedParams } = mintedTypes;
   const { liftedSelfTypeIdx } = mintedTypes;
+  // (#4139) Record the node -> closure-struct mapping for the fnctor twin
+  // build, which materializes the ctor's sibling captures from this struct.
+  (ctx.closureStructByNode ??= new WeakMap()).set(arrow, { structTypeIdx });
 
   // 5. Build the lifted function body — extracted to compileLiftedClosureBody
   //    (#3683 S2) so the same AST can also be compiled as a typed-`this` twin.
