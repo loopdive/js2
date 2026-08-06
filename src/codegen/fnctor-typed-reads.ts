@@ -79,6 +79,8 @@ import { ts } from "../ts-api.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { allocLocal } from "./context/locals.js";
+import { presenceSetInstrs, presenceSlotOf, presenceTestInstrs, type PresenceSlot } from "./fnctor-presence-bits.js";
+import { undefinedExternInstrs } from "./any-helpers.js";
 // `shared.js` holds the late-bound engine delegates precisely so a feature
 // module can reach the expression/coercion engines without a cycle back through
 // property-access.ts / index.ts.
@@ -89,8 +91,17 @@ import { coerceType, compileExpression } from "./shared.js";
  * identity, function name). Mirrors `RESERVED_PROPS` in `typed-this.ts` and the
  * identical carve-out in `tryEmitPinnedStructMemberGet`, so this path never
  * claims an access the dynamic paths would have refused.
+ *
+ * (#2660 S3b) `name` is the ONE conditional entry: the blanket refusal exists
+ * for *Function*.name, but on a fnctor INSTANCE struct a declared `name` DATA
+ * FIELD is an ordinary slot (acorn's `Identifier.name` — 32 read sites, the
+ * largest bucket the S3b binding retype exposed). `resolveFnctorTypedField`
+ * admits `name` only when the receiver's struct declares that field — the
+ * admission below the carve-out — which a function value's struct never does.
+ * `length`/`constructor`/`__proto__`/`prototype` stay unconditionally refused.
  */
-const RESERVED_PROPS: ReadonlySet<string> = new Set(["length", "constructor", "__proto__", "prototype", "name"]);
+const RESERVED_PROPS: ReadonlySet<string> = new Set(["length", "constructor", "__proto__", "prototype"]);
+const RESERVED_UNLESS_DECLARED_FIELD: ReadonlySet<string> = new Set(["name"]);
 
 /**
  * OFF by default. `JS2WASM_FNCTOR_TYPED_READS=1` enables the direct
@@ -156,6 +167,15 @@ export interface FnctorTypedField {
   mutable: boolean;
   /** The receiver ValType was `ref_null` — the caller must null-check. */
   nullable: boolean;
+  /**
+   * (#2660 S3b) Set for a #2847 presence-tracked EXTERNREF slot: the read
+   * tests the bit and answers the semantic `undefined` when absent (the same
+   * inline shape #3685's `tryEmitProvenReceiverFieldGet` ships); the write
+   * stores the slot AND sets the bit (`presenceSetInstrs`). Non-externref
+   * presence-tracked slots stay refused — `undefined` has no representation in
+   * an f64/i32 lane (#3685's hard correctness condition).
+   */
+  presenceSlot?: PresenceSlot;
 }
 
 /**
@@ -203,13 +223,26 @@ export function resolveFnctorTypedField(
   if (fieldIdx < 0) {
     // Not an own slot ⇒ a prototype method, an accessor installed at runtime,
     // or a genuinely dynamic property. All three are the dynamic path's.
-    note(fnctorTypedReadStats.declines, `nofield:${structName}.${propName}`);
+    note(
+      fnctorTypedReadStats.declines,
+      RESERVED_UNLESS_DECLARED_FIELD.has(propName) ? `reserved:${propName}` : `nofield:${structName}.${propName}`,
+    );
     return undefined;
   }
   const field = fields[fieldIdx]!;
+  let presenceSlot: PresenceSlot | undefined;
   if (field.presenceTracked) {
-    note(fnctorTypedReadStats.declines, `presence:${structName}.${propName}`);
-    return undefined;
+    // Externref slots only — `undefined` has no f64/i32 representation
+    // (#3685's hard correctness condition, mirrored exactly).
+    if (field.type.kind !== "externref") {
+      note(fnctorTypedReadStats.declines, `presence-nonextern:${structName}.${propName}`);
+      return undefined;
+    }
+    presenceSlot = presenceSlotOf(fields, propName);
+    if (presenceSlot === undefined) {
+      note(fnctorTypedReadStats.declines, `presence-noslot:${structName}.${propName}`);
+      return undefined;
+    }
   }
   return {
     structName,
@@ -218,6 +251,7 @@ export function resolveFnctorTypedField(
     fieldType: field.type,
     mutable: field.mutable,
     nullable: recvType.kind === "ref_null",
+    presenceSlot,
   };
 }
 
@@ -284,10 +318,36 @@ export function tryEmitFnctorTypedFieldGet(
     note(fnctorTypedReadStats.declines, `node-refused:${f.structName}.${propName}`);
     return undefined;
   }
-  note(fnctorTypedReadStats.sites, `get:${f.structName}.${propName}:${f.fieldType.kind}`);
+  note(
+    fnctorTypedReadStats.sites,
+    `get:${f.structName}.${propName}:${f.fieldType.kind}${f.presenceSlot === undefined ? "" : ":presence"}`,
+  );
   if (!fnctorTypedReadsEnabled()) return undefined;
   if (f.nullable) emitReceiverNullGuard(fctx, recvType as ValType, throwInstrs());
-  fctx.body.push({ op: "struct.get", typeIdx: f.structTypeIdx, fieldIdx: f.fieldIdx });
+  if (f.presenceSlot === undefined) {
+    fctx.body.push({ op: "struct.get", typeIdx: f.structTypeIdx, fieldIdx: f.fieldIdx });
+  } else {
+    // Presence-tracked externref slot: bit set → the slot; absent → the
+    // semantic `undefined` — the exact inline shape #3685 ships
+    // (`tryEmitProvenReceiverFieldGet`), minus its cast (the receiver is
+    // already the struct type here).
+    const recvTmp = allocLocal(fctx, `__ftr_prs_${fctx.locals.length}`, {
+      kind: "ref_null",
+      typeIdx: f.structTypeIdx,
+    });
+    fctx.body.push({ op: "local.tee", index: recvTmp });
+    fctx.body.push(...presenceTestInstrs(f.structTypeIdx, f.presenceSlot));
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: f.fieldType },
+      then: [
+        { op: "local.get", index: recvTmp },
+        { op: "struct.get", typeIdx: f.structTypeIdx, fieldIdx: f.fieldIdx },
+      ],
+      // Absent ⇒ semantic `undefined`, never the slot's raw contents.
+      else: undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }],
+    });
+  }
   fnctorTypedReadStats.gets++;
   return f.fieldType;
 }
@@ -320,9 +380,22 @@ export function tryEmitFnctorTypedFieldSet(
     note(fnctorTypedReadStats.declines, `node-refused-set:${f.structName}.${propName}`);
     return undefined;
   }
-  note(fnctorTypedReadStats.sites, `set:${f.structName}.${propName}:${f.fieldType.kind}`);
+  note(
+    fnctorTypedReadStats.sites,
+    `set:${f.structName}.${propName}:${f.fieldType.kind}${f.presenceSlot === undefined ? "" : ":presence"}`,
+  );
   if (!fnctorTypedReadsEnabled()) return undefined;
   if (f.nullable) emitReceiverNullGuard(fctx, recvType as ValType, throwInstrs());
+  // A presence-tracked write is a read-modify-write of the shared presence
+  // word, so the receiver must live in a (repeatable) local.
+  let presenceRecvTmp: number | undefined;
+  if (f.presenceSlot !== undefined) {
+    presenceRecvTmp = allocLocal(fctx, `__ftr_psr_${fctx.locals.length}`, {
+      kind: "ref_null",
+      typeIdx: f.structTypeIdx,
+    });
+    fctx.body.push({ op: "local.tee", index: presenceRecvTmp });
+  }
 
   let valType = compileExpression(ctx, fctx, value);
   if (valType === null) {
@@ -354,6 +427,11 @@ export function tryEmitFnctorTypedFieldSet(
     coerceType(ctx, fctx, valType, f.fieldType);
   }
   fctx.body.push({ op: "struct.set", typeIdx: f.structTypeIdx, fieldIdx: f.fieldIdx });
+  if (f.presenceSlot !== undefined && presenceRecvTmp !== undefined) {
+    // Mark the slot present — the typed read (above) and every dynamic
+    // reader/`in`/`hasOwnProperty` path test this same bit.
+    fctx.body.push(...presenceSetInstrs(f.structTypeIdx, f.presenceSlot, presenceRecvTmp));
+  }
   fctx.body.push({ op: "local.get", index: valTmp });
   fnctorTypedReadStats.sets++;
   return valType;

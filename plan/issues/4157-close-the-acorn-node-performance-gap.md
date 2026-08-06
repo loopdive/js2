@@ -59,13 +59,22 @@ The gap decomposes into two unequal parts (#3780):
 
 ### Workstream 1 — finish the representation lever (bounded ~2.7x total)
 
-- [ ] **#4155 Phase 2 — read side**: emit `struct.get`/`struct.set` for data
-      fields on a struct-typed receiver; member CALLS stay dynamic (that
-      default is where the #1712 attempt regressed). Insertion point pinned:
-      `property-access.ts:656` re-boxes a `ref` receiver into the dispatcher.
-      Precedent: #3753 S1c ("promoting the slot alone moved nothing because
-      the READ never consulted it"). **This converts the −8.1% into speed or
-      proves the slot lever dead — either result reshapes the program.**
+- [x] **#4155 Phase 2 — read side**: LANDED flag-gated
+      (`JS2WASM_FNCTOR_TYPED_READS`, default OFF). 78 candidate sites on
+      acorn, A/B a wash — see #4155 "Phase 2 implemented".
+- [x] **#2660 S3b — binding retype** (the convergence lever this umbrella
+      predicted): LANDED flag-gated (`JS2WASM_FNCTOR_TYPED_BINDINGS`, default
+      OFF). 43 acorn bindings retyped, Phase-2 candidate sites 78 → 424
+      (5.4x), all suites green — **and the `standaloneDynamic` A/B is STILL a
+      wash** (ON 0.1167 vs OFF 0.1185 mean over 3 pairs, inside noise,
+      divergent 0). The null result is now well-characterized: the converted
+      sites are AST-node field writes whose VALUES stay boxed either way;
+      removing the dispatch ladder does not move the profile. See #4155
+      "2026-08-06 — #2660 S3b binding retype implemented". **Consequence for
+      this program: the receiver-representation half of Workstream 1 is
+      exhausted as a speed lever on this corpus; the remaining representation
+      upside is VALUE typing (#743), and the remaining speed levers are
+      Workstream 2 (#3926/#3927).**
 - [ ] **#743 transitive fixpoint**: 43 of 96 slots are `unknown` because ctor
       args are themselves untyped values forwarded from untyped params.
       Single-hop is measured worthless; the fixpoint must propagate through

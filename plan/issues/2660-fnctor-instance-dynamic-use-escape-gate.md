@@ -12,7 +12,38 @@ task_type: infra
 area: codegen, value-rep, analysis
 language_feature: constructor functions, prototype chain, dynamic property access
 goal: test262-conformance
-related: [2580, 1888, 1712, 1100, 2009, 747]
+related: [2580, 1888, 1712, 1100, 2009, 747, 4155, 4157, 3683]
+assignee: "ttraenkler/senior-dev-s3b"
+oracle-ratchet-allow:
+  # (S3b, +1 ctx.checker in fnctor-typed-bindings.ts) The Slice-2 admission
+  # needs the escape gate's write-once prototype-method resolution
+  # (`writeOnceThisCallReturnStruct` → `resolveEnclosingFnctorOwner` +
+  # `resolveFnctorSymbol`), which is symbol/declaration-identity resolution
+  # through the raw checker — the class of query issue #1930 D3 puts explicitly
+  # OUT of the oracle's scope (and the gate's own machinery takes a bare
+  # `checker` param for exactly that reason). Everything else in the module
+  # (use-site resolution, declaration identity) goes through `ctx.oracle`.
+  - src/codegen/fnctor-typed-bindings.ts
+loc-budget-allow:
+  # (S3b, +18) The pinned member-SET path gains the same receiver-typed hook
+  # the pinned GET already carries (#4155 Phase 2's own grant pattern): the
+  # admission is on the receiver's COMPILED ValType, so the call must sit at
+  # the exact point where `tryEmitPinnedStructMemberSet` is about to erase
+  # that type to externref. All decision/emission logic lives in
+  # fnctor-typed-reads.ts; this file gets only the guarded try-call.
+  - src/codegen/expressions/assignment.ts
+  # (S3b, +8) One import plus the cascade tail `resolveFnctorTypedBindingType
+  # ?? wasmTypeBase` — the declaration compile is one of the three slot-minting
+  # sites and must agree with the pre-hoisted slot; the hook can live nowhere
+  # else. Decision logic is all in fnctor-typed-bindings.ts.
+  - src/codegen/statements/variables.ts
+func-budget-allow:
+  # (S3b, +7) The cascade-tail hook above lands inside this (already-oversized,
+  # #3399) function because the slot-type cascade IS this function; splitting
+  # it is the #3399 refactor and must not ride along with a flag-gated
+  # behavior change. Same rationale as #4155 Phase 2's grant for
+  # finalizeStructAndDynamicMemberGet.
+  - src/codegen/statements/variables.ts::compileVariableStatement
 ---
 
 # #2660 — Whole-program escape/dynamic-use gate for `new F()` instance reconstruction (value-rep infra)
@@ -793,3 +824,30 @@ cross-session sync point. sd-s3a standing down.**
 ## Residual (as of #2199, PO reconcile 2026-06-28)
 
 NOT done — hard infra. S1 (inert A∧B whole-program escape/dynamic-use gate) + S2 (per-fnctor prototype $Object, standalone) landed. The remaining slices — reconstructing new F() instances as $Object behind the gate, the floor-risk full merge_group slice — remain. Stays in-progress.
+
+## S3b — LANDED (fnctor-typed bindings, 2026-08-06, senior-dev-s3b, max-reasoning)
+
+The 2026-06-26 S3b park is superseded: S3b shipped as the BINDING-RETYPE lever
+under umbrella #4157 Workstream 1, flag-gated `JS2WASM_FNCTOR_TYPED_BINDINGS`
+(default OFF — set by measurement), branch `claude/issue-2660-s3b-typed-bindings`
+(stacked on the #4155 Phase 2 branch).
+
+- `src/codegen/fnctor-typed-bindings.ts`: admission (Slice 1 direct `new F()`,
+  Slice 2 write-once-proven `this.m()` single-return chains via the new
+  `writeOnceThisCallReturnStruct` in fnctor-escape-gate.ts), consulted by all
+  THREE slot-minting sites (var hoister, let/const pre-hoister, decl compile).
+- The #4155 Phase 2 machinery is the consumer: presence-tracked externref
+  slots admitted (read: bit-test → slot : undefined; write: struct.set +
+  presenceSetInstrs), pinned member-SET hook added, `name` reserved-prop
+  carve-out narrowed to require-declared-field.
+- Acorn: 43 bindings retyped, Phase-2 candidates 78 → 424; canaries/imports/
+  IR-fallbacks unchanged; flag-off byte-identical (866,718 B).
+- **A/B (`standaloneDynamic`, 3 pairs): wash** — ON 0.1167 vs OFF 0.1185 mean,
+  inside noise. Numbers + interpretation in
+  `plan/issues/4155-…md` § "2026-08-06 — #2660 S3b binding retype implemented".
+- Tests: `tests/issue-2660-s3b-typed-bindings.test.ts` (11) + all fnctor/
+  equivalence suites green flags-on. The #4155 Phase 0 `it.fails` are NOT
+  promoted (their fnctors are gate-unapproved; S3b correctly refuses).
+
+Remaining #2660 scope (S3c ctor-body reconstruction, the floor-risk full
+merge_group slice) is untouched by this lap.

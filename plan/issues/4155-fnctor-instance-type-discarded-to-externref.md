@@ -691,6 +691,100 @@ params / return slots carrying `(ref null $__fnctor_F)` instead of externref),
 which would multiply the sites this already-wired fast path converts. Phase 2's
 hook then becomes the consumer that makes binding retype pay.
 
+## 2026-08-06 — #2660 S3b binding retype implemented; the multiplier is real, the A/B is still a wash
+
+**Verdict: candidate sites 78 → 424 (5.4x), suites green, and the
+`standaloneDynamic` A/B is STILL statistically indistinguishable →
+`JS2WASM_FNCTOR_TYPED_BINDINGS` (and the reads flag) stay OFF.** The
+representation lever now covers the bindings; the remaining time is not in the
+member-access ladders these convert.
+
+### What landed (`src/codegen/fnctor-typed-bindings.ts`, branch `claude/issue-2660-s3b-typed-bindings`)
+
+A function-local binding whose every write provably yields ONE gate-approved
+fnctor's instance gets the reserved `(ref null $__fnctor_F)` slot instead of
+externref. Admission (all sound-by-refusal, census under
+`JS2WASM_FNCTOR_TYPED_BINDINGS_DEBUG=1`):
+
+- Slice 1: direct `new F(...)` initializer, callee resolved by DECLARATION
+  IDENTITY (shadows can't spoof), F approved + reserved, S3a
+  empty-body-reconstruct sites carved out.
+- Slice 2: `this.m(...)` initializer where `m` has a #3683 S1 WRITE-ONCE
+  verdict on the enclosing prototype's fnctor and single-returns a direct
+  `new F(...)`. The own-shadow half is NOT the global `otherNameWrites`
+  sentinel (acorn trips it with `keywordTypes[name] = …`) but the
+  closed-struct receiver argument #3683 S3 documents in typed-this.ts —
+  standalone fnctor instances are closed structs with no expando sidecar, so
+  a shadow can only be a declared field/accessor, rejected by name. Owners
+  with empty ctor bodies ($Object-reppable) and class-extended owners refuse.
+- Uses: linear dominance (same statement list, at-or-after the decl — admits
+  loop/block bodies, declines sibling-branch/post-loop/catch/cross-clause
+  reads, which would otherwise observe null instead of undefined once the
+  hoisted seed is dropped), same-function only, every write same-F-proven;
+  compound/destructuring/for-in-of/++/redecl/eval refuse. **Null reassignment
+  refuses the retype** (test-pinned) — the slot stays externref, semantics
+  untouched.
+
+Consumers (the Phase 2 machinery, extended):
+
+- presence-tracked EXTERNREF slots are now ADMITTED by the typed read
+  (presence-bit test → slot : `undefined` — #3685's exact inline shape) and
+  the typed write (`struct.set` + `presenceSetInstrs`); non-externref
+  presence slots stay refused (`undefined` has no f64/i32 representation).
+- the pinned member-SET path (`tryEmitPinnedStructMemberSet`) gets the same
+  receiver-typed hook the pinned GET already had.
+- the `name` reserved-prop refusal narrowed to require-declared-field: the
+  blanket rule protects *Function*.name; an instance struct's declared `name`
+  field (acorn `Identifier.name`, 32 sites) is an ordinary slot.
+
+### Measured on real acorn (standalone, 2026-08-06)
+
+| | flags off | flags on (bindings+reads) |
+| --- | ---: | ---: |
+| bindings retyped | 0 | **43** (all `Node`, all Slice-2 `this.startNode()`-shape) |
+| Phase-2 sites | 78 (74 get + 4 set) | **424 (86 get + 338 set)** |
+| optimized binary | 866,718 B | 891,749 B (+25,031, +2.9% — presence RMW inline) |
+| canaries / imports / IR-fallbacks | 2,3,4,5 / [] / 3 | 2,3,4,5 / [] / 3 |
+
+Remaining declines: `presence-nonextern:__fnctor_Node.loc` (f64-adjacent,
+correctly refused) and `nofield:__fnctor_Parser.*` (#743 ctor-unseeded
+flags). The `call-not-proven:*` census bucket (~50 bindings:
+`parseExpression` etc.) is chain-returning methods whose single return is
+another call — a depth-2 write-once fixpoint would be the next coverage
+lever, but see the verdict below before building it.
+
+### The decisive A/B (`benchmark:acorn:standalone-dynamic`, 3 back-to-back pairs)
+
+| pair | flags ON ratio (std) | flags OFF ratio (std) |
+| --- | --- | --- |
+| 1 | 0.1184 (±0.017) | 0.1165 (±0.005) |
+| 2 | 0.1133 (±0.009) | 0.1212 (±0.014) |
+| 3 | 0.1185 (±0.014) | 0.1178 (±0.011) |
+| mean | **0.1167** | **0.1185** |
+
+Statistically indistinguishable (mean delta −1.5%, inside every per-run std;
+differential workload `divergent: 0` both ways). **Converting 5.4x more sites
+moved nothing** — consistent with the Phase 2 wash and with #3780's profile:
+the converted sites are AST-node field writes whose VALUES stay boxed
+externref either way; only the dispatch ladder is removed. The dominant costs
+remain `__extern_get` on Parser's #743-territory fields, casts/conversions on
+VALUES (not receivers), and string internals. Workstream 1's slot/receiver
+levers are now BOTH implemented and BOTH measured null on this corpus — the
+next speed lever is Workstream 2 (#3926 `__extern_get` dispatch, #3927
+per-shape splitting) and #743 value typing, not more receiver coverage.
+
+### Suites (flags on): all green
+
+4 × #2660 fnctor suites + Phase 0 + Phase 2 + provenance (68), 33 targeted
+object/struct/proto/super/private equivalence files (219 tests), new
+`tests/issue-2660-s3b-typed-bindings.test.ts` (11: representation pins
+mutation-checked, hook fire-count deltas, dynamic member call, null/foreign
+reassignment refusal, externref-position boxing, dominance refusal,
+presence round-trip, 3 Phase-0 shapes flag-invariant). The three Phase 0
+`it.fails` are NOT promoted — their fnctors are gate-unapproved by
+construction, so S3b correctly refuses them; they remain #2660-S3/#4155
+correctness work.
+
 ## Scope
 
 - [ ] Reproduce the #1712 regression as a committed failing test (the acorn
