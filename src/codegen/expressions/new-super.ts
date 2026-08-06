@@ -1,4 +1,5 @@
 import type { FieldDef, Instr, ValType } from "../../ir/types.js";
+import { materializeFnctorTwinCaptures } from "../fnctor-twin-captures.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * new/super/class expression compilation.
@@ -1582,6 +1583,18 @@ function compileNewFunctionDeclaration(
   if (savedFunc) ctx.parentBodiesStack.push(savedFunc.body);
   if (savedFunc) ctx.funcStack.push(savedFunc);
   ctx.currentFunc = ctorFctx;
+  // (#4139) A function-EXPRESSION constructor compiled as a closure carries
+  // the transitive captures of every sibling it calls as struct fields; the
+  // standalone identity param holds that closure value. Spill the fields into
+  // frame locals named after the captures BEFORE the body compiles, so
+  // sibling-call prepends and direct reads resolve in-frame instead of
+  // addressing the declaring frame's dead slots.
+  if (ctx.standalone) {
+    const closureRecord = ctx.closureStructByNode?.get(funcDecl);
+    if (closureRecord) {
+      materializeFnctorTwinCaptures(ctx, ctorFctx, closureRecord.structTypeIdx, ctorIdentityParamIdx);
+    }
+  }
   for (const stmt of body.statements) {
     compileStatement(ctx, ctorFctx, stmt);
   }

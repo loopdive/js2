@@ -105,6 +105,19 @@ export interface ImportDescriptor {
   kind: "func" | "global";
   /** The host capability this import provides (see {@link ImportIntent}). */
   intent: ImportIntent;
+  /**
+   * (#4150) Declared parameter count of a `func` import, read off the wasm
+   * function type. Undefined for globals.
+   *
+   * Wasm import call sites are fixed-arity, so this is the exact number of
+   * arguments the host wrapper will ever receive — which lets `buildImports`
+   * build a fixed-signature wrapper instead of one with a rest parameter that
+   * allocates an args array on every crossing. The host function's own
+   * `.length` cannot substitute: it excludes rest and defaulted parameters, so
+   * a variadic callee under-reports and a wrapper sized from it would silently
+   * drop arguments.
+   */
+  paramCount?: number;
 }
 
 export type { ExportSignature, TypedArrayKind } from "./ir/types.js";
