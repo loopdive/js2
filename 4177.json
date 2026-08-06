@@ -1,10 +1,10 @@
 {
   "id": "4177",
-  "assignee": "ttraenkler/claude-fable",
-  "requested_by": "ttraenkler/claude-fable",
+  "assignee": "ttraenkler/claude-fable-5",
+  "requested_by": "ttraenkler/claude-fable-5",
   "status": "in-progress",
-  "branch": "claude/acorn-performance-optimization-hagjht",
-  "claimed_at": "2026-08-06T13:04:00Z",
-  "updated_at": "2026-08-06T13:04:00Z",
-  "write_id": "4380-zp67z583"
+  "branch": "claude/issue-4177-lattice-plus",
+  "claimed_at": "2026-08-06T15:51:50Z",
+  "updated_at": "2026-08-06T15:51:50Z",
+  "write_id": "18086-exy890f4"
 }
