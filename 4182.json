@@ -1,10 +1,11 @@
 {
   "id": "4182",
   "assignee": "ttraenkler/W7-annexb-global-blockfn",
-  "requested_by": "ttraenkler/W7-annexb-global-blockfn",
-  "status": "in-progress",
+  "requested_by": "noreply@anthropic.com",
+  "status": "done",
   "branch": "issue-4182-annexb-global-blockfn",
   "claimed_at": "2026-08-06T14:34:39Z",
-  "updated_at": "2026-08-06T14:34:39Z",
-  "write_id": "10132-9ew3u2r9"
+  "updated_at": "2026-08-06T16:22:23Z",
+  "write_id": "7239-z7ofhefw",
+  "released_at": "2026-08-06T16:22:23Z"
 }
