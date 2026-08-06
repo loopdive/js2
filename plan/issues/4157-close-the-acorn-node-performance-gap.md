@@ -245,15 +245,17 @@ hot path.
 4. **Regexp `.test` residue (6.6 %)** — the "scanner/string tuning" line item,
    now scoped: it is `__regex_search` reached via the test carrier on
    tokenizer regexes. Rounds 1-2 already took the easy wins; treat as bounded.
-5. **#3927 per-shape fnctor splitting — demotion RETRACTED 2026-08-06**: the
-   "capped at ~19 % of allocation" arithmetic priced the lever by allocated
-   bytes; the #3927 pad-probe A/B (`JS2WASM_FNCTOR_PAD_SLOTS`, 3/3 pairs)
-   measured **+36 ref slots per Node → +28-30 % wall** (GC bucket 20.7 → 24.9 %,
-   absolute GC +57 %, plus a uniform mutator locality tax) — retained
-   POINTER-SLOT count is a first-order cost the byte-share estimate missed.
-   Removal-direction payoff bracketed −5 %…−25 %; the affordable design is the
-   shape-agnostic hot/cold tail split, priced + risk-enumerated in #3927
-   Results §7. Splitting itself is still unlanded and still not a one-pass PR.
+5. **#3927 per-shape fnctor splitting — demotion CONFIRMED with a measured
+   coefficient (2026-08-06)**: the #3927 pad probe (`JS2WASM_FNCTOR_PAD_SLOTS`)
+   measured d(wall)/d(ref-slot) ≈ 0.1 %/slot (+36 slots → GC bucket
+   20.7 → 24.9 %, ≈ +3-4 % wall point estimate; quiet A/B blocks scatter
+   −1…+24 %, ambient variance dominates — the profile share shift is the
+   instrument). Best affordable removal (hot/cold tail split, −37 of 62 union ref
+   slots) prices at ≈ −3-4 % wall — behind #3926 and the dynamic-eq item.
+   Design + dispatcher-chokepoint enumeration recorded in #3927 Results §7.
+   Cautionary note: an uncontrolled first A/B block read +29 % (3/3 pairs) and
+   was pure concurrent-load contamination — order-reversal control caught it
+   (#3927 Results §5-§6).
 
 **What Workstream 2 cannot reach (and the profile says out loud):** GC 18.5 %
 + dynamic-eq 7.1 % + cast-convert 6.1 % ≈ **32 % is the boxed-VALUES tax** —

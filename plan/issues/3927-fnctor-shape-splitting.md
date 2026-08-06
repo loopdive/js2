@@ -110,8 +110,11 @@ inside `appendFnctorInternalFields`) — an env-gated layout probe in the
 `tests/issue-3927-fnctor-pad-probe.test.ts`. Default OFF = byte-identical
 (pinned by test). The probe exists to measure d(wall)/d(slot) of the `Node`
 union BEFORE paying any splitting slice's dispatcher-surface risk. The
-headline: **that derivative is ~10x larger than the allocation-share
-arithmetic that demoted this issue predicted.**
+headline: **measured under controlled conditions the derivative is small —
+~+3-4% wall for +36 ref slots (profile-verified through the GC bucket), which
+CONFIRMS the #4157 demotion** — and §5 documents how an uncontrolled first
+block read +29% and would have flipped that verdict if the order-reversal
+control hadn't caught the contamination.
 
 ### 1. Re-profile, main @ 431ea77d5 (post-#4174 scanner-flatten)
 
@@ -175,50 +178,65 @@ K=20 → 92.4%, **K=24 → 97.3%**, K=32 → 99.7%. Repro: `.tmp/field-freq.mjs`
 (session scratch; recreate from this table's method: walk the native AST,
 tally own enumerable fields minus type/start/end/loc/range/sourceFile).
 
-### 5. The measured sensitivity — pad A/B (the number that reprices this issue)
+### 5. The sensitivity A/B — including the contaminated block that almost flipped the verdict
 
-`standaloneDynamic`, 3 back-to-back pairs, base vs `JS2WASM_FNCTOR_PAD_SLOTS=36`
-(+36 externref slots = +144 B and +58% pointer slots per Node ≈ +4.7 MB/parse
-retained; binary +1,587 B):
+Four blocks, all `standaloneDynamic` back-to-back pairs, base vs
+`JS2WASM_FNCTOR_PAD_SLOTS` (pad36 = +36 externref slots = +144 B and +58%
+pointer slots per Node ≈ +4.7 MB/parse retained; binary +1,587 B; checksum
+422 in every run):
 
-| pair | base wasmUs | pad36 wasmUs | Δ |
-| --- | ---: | ---: | ---: |
-| 1 | 180,261 | 235,051 | **+30.4%** |
-| 2 | 180,822 | 233,991 | **+29.4%** |
-| 3 | 169,134 | 216,346 | **+27.9%** |
+| block (UTC) | order | pairs | base wasmUs | pad wasmUs | pad cost within pair |
+| --- | --- | --- | ---: | ---: | ---: |
+| A 17:26-17:40 | base→pad36, **this agent running suites concurrently** | 3 | 180,261 / 180,822 / 169,134 | 235,051 / 233,991 / 216,346 | **+30.4 / +29.4 / +27.9%** |
+| B 17:47-17:57 | base→pad18, agent idle | 2 | 198,154 / 194,839 | 184,045 / 186,755 | **−7.1 / −4.1%** |
+| C 17:58-18:08 | **pad36→base** (order control), agent idle | 2 | 187,420 / 196,217 | 185,255 / 205,009 | **−1.2 / +4.5%** |
+| D 18:09-18:19 | base→pad36, agent idle | 2 | 166,930 / 174,358 | 190,020 / 216,187 | **+13.8 / +24.0%** |
 
-3/3 pairs, far outside the ±2.5% noise band. Checksum 422 in every run.
-(Contamination note: `nodeUs` in the same padded processes also rose ~13% —
-the native baseline shares the V8 heap with the padded Wasm GC heap; the
-wasm-side delta is 2x larger and directionally robust, but treat +29% as
-including some shared-process amplification.)
+**What the four blocks establish, in order of confidence:**
 
-**GC-bucket profile delta** (300-parse profile, padded): gc-engine
-**20.66% → 24.87%**. In absolute per-parse terms (bucket share × A/B wall):
-GC ≈37 ms → ≈58 ms (**+57%**), while every mutator bucket also grew ~15-20%
-in absolute time — a locality/cache tax from the +50% AST working set, on top
-of the GC scan cost. `__fnctor_Node_new` self 1.14 → 1.57% (init cost of 36
-extra `ref.null` operands: minor).
+1. **This box cannot resolve the effect by A/B alone.** Quiet pad36 samples
+   scatter −1.2 / +4.5 / +13.8 / +24.0%; quiet pad18 samples −7.1 / −4.1%
+   (expected ≈ +2% if linear). Base runs alone moved 167-198 kµs (±9%)
+   across blocks; other agent lanes were active on the box throughout and
+   cannot be quiesced. Ambient variance is the same order as the effect.
+2. **Block A's tight +29% (3/3) is NOT trustworthy despite its consistency** —
+   it was measured while this agent ran multi-core vitest suites/gates
+   concurrently, and its `nodeUs` rose ~13% in every pad run (shared-process
+   load signature). A 3/3-consistent far-outside-noise A/B can still be an
+   artifact; the order-reversal control (block C) and the quiet re-runs are
+   what exposed it. The pooled quiet evidence is compatible with a real
+   positive cost well below +29%.
+3. **The profile is the reliable instrument, because bucket SHARES are robust
+   to uniform ambient load.** 300-parse profiles, base vs pad36: gc-engine
+   **20.66% → 24.87%**, every other bucket diluted roughly proportionally,
+   `__fnctor_Node_new` 1.14 → 1.57% (the 36 extra `ref.null` operands:
+   minor). That share shift is **≈ +25-30% GC self-time ≈ +3-4% of wall** as
+   the mechanism-consistent point estimate, sitting inside the quiet-A/B
+   scatter, and consistent with #3780 round 4 (−24.8% allocation bought
+   −7.4% wall).
 
-### 6. Interpretation — what this does to the issue's pricing
+### 6. Interpretation — the demotion stands, now with a measured coefficient
 
-- The #4157 demotion ("payoff routes through the GC bucket only, capped at
-  ~19% of allocation") priced the lever by allocated **bytes**. The probe
-  shows the union's cost is dominated by **retained pointer-slot count**
-  (GC marking/scavenge scans every ref slot of every live node, every cycle)
-  plus **mutator locality**, and the measured addition-direction slope is
-  ~0.2%/B — an order of magnitude above the allocation-share estimate.
-- **Asymmetry caveat, stated plainly**: the only removal-direction datum is
-  #3780 round 4, where −244 B/instance of **i32** presence words (plus
-  boolean interning) bought −7.4% median wall. i32 slots are not scanned as
-  pointers, so that undersells ref-slot removal; still, do NOT read +29% as
-  a promised −29%. Honest bracket for removing ~37 of the 62 ref slots:
-  **−5% (round-4-style floor) to −25% (mirror ceiling)** — even the floor
-  beats every other single Workstream-2 lever except #3926.
-- The pad18 linearity point (see addendum below) tests whether the slope is
-  linear or threshold-driven.
+- **Point estimate d(wall)/d(ref-slot) ≈ 0.1%/slot** at the current operating
+  point (profile mechanism: +36 slots → ~+3-4% wall via GC), with the quiet
+  A/B bracketing the +36-slot cost at **[0, +25%]** — the box cannot narrow
+  it further. Linear extrapolation for the best affordable removal (−37 of
+  the 62 union ref slots): **≈ −3-4% wall point estimate**, optimistic tail
+  ~−10%, corroborated by round 4 (−24.8% alloc → −7.4%).
+- Even the optimistic tail does not outrank #3926 (16.1% dynamic-lookup
+  bucket, one helper, no dispatcher-surface risk) or #4173 (7.1%
+  dynamic-eq) on expected value once the silent-undefined risk surface of
+  splitting is priced. **The #4157 demotion of this issue was correct**; it
+  now rests on a measured coefficient instead of an allocation-share guess.
+- **Measurement lesson, recorded because block A nearly shipped a false 10x
+  repricing:** a 3/3-consistent, far-outside-noise A/B was still an artifact
+  of concurrent load. On a shared box: keep the measuring agent idle, run an
+  **order-reversal control block**, and trust bucket-share deltas over wall
+  deltas. This is the manual form of the interleaved-pairs contamination
+  flagging #4173's plan calls for; the harness does not do it automatically
+  today.
 
-### 7. The slice this prices IN, for the next pass: shape-AGNOSTIC hot/cold split
+### 7. The slice this prices, for whenever the GC bucket is the last one standing: shape-AGNOSTIC hot/cold split
 
 The one design that survives facts 1-3 (no shape-at-allocation needed, immune
 to `toAssignable`): keep the top-K≈24 union fields inline (97.3% of nodes
@@ -226,11 +244,12 @@ fully covered), move the cold ~38 to a lazily-allocated tail struct behind one
 `(ref null $__fnctor_Node__cold)` slot. Per-instance: 292 → ~148 B avg
 (−37 ref slots on every node; 2.7% of nodes pay a ~160 B tail). Presence bits
 stay in the main struct (word count unchanged); reference identity is
-untouched (the tail is owned, never escapes).
+untouched (the tail is owned, never escapes). **Measured expected payoff:
+≈ −3-4% wall (§6) — do NOT schedule it ahead of #3926/#4173/#743.**
 
 **The risk is dispatcher completeness — the 9th-dogfood-wall class** (silent
 `undefined` on any consumer that misses the tail hop). Chokepoints that must
-ALL learn the hop, enumerated now so the next pass doesn't rediscover them:
+ALL learn the hop, enumerated now so a future pass doesn't rediscover them:
 `member-get-dispatch.ts` / `member-set-dispatch.ts` (finalize fills — the set
 side must lazy-alloc the tail), `property-access.ts` inline primaries +
 `findAlternateStructsForField`, `fnctor-presence-bits.ts` helpers, typed-this
@@ -240,8 +259,8 @@ enumeration/`in`/`hasOwnProperty` (object-runtime consumers of
 `exposedClosedStructFieldName`), delete/tombstones, host marshalling
 (gc/host lane), destructuring/spread reads. Static field ranking must be
 corpus-independent (static write-site count per name); ties broken
-deterministically. Do it as its own flag-gated slice with this probe as the
-paired control, and A/B against the bracket above.
+deterministically. If ever built: its own flag-gated slice with this probe as
+the paired control, measured with order-reversal blocks per §6.
 
 **Flag decision for this PR**: `JS2WASM_FNCTOR_PAD_SLOTS` ships **default
 OFF** — it is a measurement diagnostic (deliberately a pessimization when on),
