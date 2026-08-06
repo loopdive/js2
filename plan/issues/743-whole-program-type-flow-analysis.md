@@ -29,6 +29,13 @@ files:
     breaking:
       - "use narrowed parameter/return types from whole-program analysis"
 loc-budget-allow:
+  # +19 (1483 → 1502, crossing the 1500 god-file threshold by 2): the
+  # `new F(…)` call-graph edge in `buildCallGraph` — 8 lines of code and a
+  # compressed rationale comment. The site collector is the ONE place
+  # call-graph edges exist, so the widening cannot live in a satellite
+  # module; the full rationale and the transitive-proof tests were placed in
+  # tests/issue-743-ctor-sites-in-fixpoint.test.ts instead of comment bulk.
+  - src/ir/propagate.ts
   # +6: a three-line comment and one call in `deriveFnctorFields`, which is the
   # single place a fnctor field slot is chosen and therefore the only place this
   # narrowing can be applied. All of the decision logic — the flag, the
