@@ -200,6 +200,11 @@ export interface CodegenOptions {
   /** Set of function names imported from node:fs (detected pre-preprocessing).
    *  Used by both the WASI fs syscall path (#1035) and the JS-host fs imports (#1491). */
   wasiNodeFsFuncs?: Set<string>;
+  /** (#743) Declared-parameter seeds for exported entrypoints, collected from
+   *  the entry's shipped sibling `.d.ts` (flag-gated upstream). ONE shared map
+   *  consumed by both the IR fixpoint and the legacy call-site inference so the
+   *  lanes cannot diverge on seed facts. Absent → no seeding anywhere. */
+  dtsEntrypointSeeds?: import("../../checker/dts-entrypoint-seeds.js").DtsEntrypointSeeds;
   /** (#2657) Set of LOCAL names imported from `"wasi_snapshot_preview1"`
    *  (detected pre-preprocessing). The raw-WASI fd_read/fd_write passthrough
    *  binds these identifiers directly to the WASI import funcs — the most honest
@@ -3189,6 +3194,8 @@ export interface CodegenContext {
   wasiPendingStdinReactor?: boolean;
   /** Set of node:fs functions used in this compilation unit (both WASI and JS-host fs paths). */
   wasiNodeFsFuncs: Set<string>;
+  /** (#743) Shared `.d.ts` entrypoint seed map — see the CodegenOptions field. */
+  dtsEntrypointSeeds?: import("../../checker/dts-entrypoint-seeds.js").DtsEntrypointSeeds;
   /** (#2657) Local names imported from `"wasi_snapshot_preview1"` — the raw-WASI
    *  fd_read/fd_write passthrough bindings (loopdive/js2#389). Empty for any
    *  program that does not import the raw WASI module. */

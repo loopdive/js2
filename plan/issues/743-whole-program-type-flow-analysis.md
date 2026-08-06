@@ -3,7 +3,7 @@ id: 743
 title: "Whole-program type flow analysis"
 status: ready
 created: 2026-03-22
-updated: 2026-07-18
+updated: 2026-08-06
 priority: critical
 horizon: xl
 feasibility: hard
@@ -35,6 +35,11 @@ loc-budget-allow:
   # call-graph edges exist, so the widening cannot live in a satellite
   # module; the full rationale and the transitive-proof tests were placed in
   # tests/issue-743-ctor-sites-in-fixpoint.test.ts instead of comment bulk.
+  # Plus +31 (1502 → 1533) for the `.d.ts` entrypoint-seed slice: the seed
+  # APPLICATION (`applyDtsEntrypointSeeds`) must run inside the seeding loop
+  # of `buildIrUnitTypeMap` — the one place fixpoint seeds are formed. All
+  # collection/discovery logic lives in the new
+  # src/checker/dts-entrypoint-seeds.ts.
   - src/ir/propagate.ts
   # +6: a three-line comment and one call in `deriveFnctorFields`, which is the
   # single place a fnctor field slot is chosen and therefore the only place this
@@ -42,12 +47,35 @@ loc-budget-allow:
   # parameter-resolution checks, the call-site query and the f64-only
   # restriction — lives in the new `fnctor-ctor-param-types.ts`.
   - src/codegen/fnctor-escape-gate.ts
+  # +5 (9565 → 9570): threading `ctx.dtsEntrypointSeeds` as the 4th argument of
+  # the single `buildIrOverlayIdentityMaps` call (formatter wrapped the call).
+  # No logic added to the god-file.
+  - src/codegen/index.ts
+  # +22 (1736 → 1758): flag-gated `.d.ts` resolution + seed collection in
+  # `compileSourceSync` — the one place the single-source Program is built, so
+  # the extra-root text and the shared seed map must be produced here. The
+  # actual logic lives in src/checker/dts-entrypoint-seeds.ts; this is plumbing
+  # plus doc comments.
+  - src/compiler.ts
+  # +7 (3423 → 3430): one optional field each on CodegenOptions and
+  # CodegenContext (`dtsEntrypointSeeds`) with their doc comments.
+  - src/codegen/context/types.ts
 func-budget-allow:
   # `deriveFnctorFields` 300 -> 301, crossing the threshold by one line for the
   # call described above. Splitting it is a real refactor (#3399) and doing it
   # underneath a flag-gated inference change would make both harder to review;
   # the function is not growing in complexity, only in one delegation.
   - src/codegen/fnctor-escape-gate.ts::deriveFnctorFields
+  # ~295 → ~307: the `.d.ts`-seed plumbing (resolve → analyze option → collect →
+  # codegen option) lives on the single-source compile path this function IS.
+  # Decomposing the compile entry is #3399-class work, not something to smuggle
+  # under a flag-gated inference change.
+  - src/compiler.ts::compileSourceSync
+  # 549 → 554: the ONE `buildIrOverlayIdentityMaps` call gains the seed-map
+  # argument and the formatter wraps it to one-arg-per-line. No new logic.
+  - src/codegen/index.ts::planIrOverlay
+  # 409 → 410: one optional-field spread wiring `dtsEntrypointSeeds` onto ctx.
+  - src/codegen/context/create-context.ts::createCodegenContext
 ---
 
 # #743 — Whole-program type flow analysis
@@ -419,3 +447,168 @@ test262 corpus; no test262 regression.
   `globalTypes` slot, joined on every write site.
 - **Ship behind `ctx.useTypeFlow` flag**; soak-test in CI for a week
   before defaulting to on.
+
+## 2026-08-06 — fixpoint measured on acorn: ZERO slots beyond single-hop; the bucket needs entrypoint seeds, not more propagation
+
+With all three `JS2WASM_FNCTOR_CTOR_PARAM_TYPES` consumers enabled (legacy
+scan #4117, field slots, IR fixpoint `new`-edges #4131), the acorn census is
+`typed 54 / discarded 1 / unknown 41` — the unknown bucket did not move by a
+single slot relative to single-hop (+181 B binary). Canaries 2,3,4,5, zero
+imports, the usual 3 IR-FALLBACKs.
+
+**Root cause, confirmed from two directions.** The #4155 Phase 2 census
+independently established that first-hop receivers are erased to externref
+before any read compiles; the census here shows the same starvation at the
+seed level: acorn's `new Parser(options, input, startPos)` arguments trace to
+the parameters of EXPORTED entry points (`parse`, `parseExpressionAt`,
+`tokenizer`) that are only called from OUTSIDE the module. An internal-only
+fixpoint has no call sites for them, so every chain bottoms out at `dynamic`
+regardless of how many hops propagation can cross. Transitivity was never the
+missing piece on this corpus — SEEDS are.
+
+**The lever this exposes: seed exported-function parameters from the shipped
+`.d.ts` (#4074).** acorn's own type declarations say `parse(input: string,
+options: Options)`. A declared-signature seed for exported entrypoints is
+exactly the information the fixpoint is starving for, and it composes with
+the propagation machinery this issue already landed (the seeds flow through
+`mk → new Parser` chains that #4131's edges now carry). This is also the
+first #743 sub-lever with a plausible claim on the 41-slot bucket, since both
+internal-only approaches are now measured at 2 slots.
+
+Consequence for the flag: `JS2WASM_FNCTOR_CTOR_PARAM_TYPES` stays OFF — two
+measured nulls (single-hop, fixpoint) and no consumer until entrypoint
+seeding exists.
+
+### Implementation sketch — `.d.ts` entrypoint seeding (the next #743 slice)
+
+Mechanism, staying inside the existing architecture:
+
+1. **Load the shipped declarations.** When compiling a `.js`/`.mjs` entry whose
+   package carries a sibling `.d.ts` (acorn: `dist/acorn.d.ts`), add it to the
+   Program (the language service already accepts extra roots). Zero effect on
+   files without declarations.
+2. **Match exported symbols.** For each EXPORTED function in the compiled
+   module with an implicit-`any` parameter, look up the same-named export in
+   the `.d.ts` and take its declared parameter types (`parse(input: string,
+   options: Options)`); interfaces resolve through the existing checker.
+3. **Seed, do not force.** Feed the declared types into `seedFromDeclaration`
+   in `src/ir/propagate.ts` as SEEDS for exported functions' params (today
+   they seed `dynamic` for lack of call sites). The fixpoint — including the
+   #4131 `new`-edges — propagates them inward; a conflicting internal call
+   site still widens per the lattice. Legacy lane: the same seed consulted by
+   `inferParamTypeFromCallSites` where `sawCallSite === false` (the
+   exported-entrypoint case it explicitly distinguishes, #3471), keeping
+   IR/legacy parity.
+4. **Trust boundary, stated honestly:** a `.d.ts` is a CLAIM, not a proof —
+   external callers may violate it. Seeded params therefore need the same
+   guarded-entry treatment as any externref→typed boundary (guard at the
+   export wrapper, not blind trust in the body). That is the main design
+   cost and the reason this is its own slice, not an evening patch.
+
+Expected effect (to be measured, not assumed): `input: string` alone types
+`this.input` (`String(input)` already native) plus every position derived
+from it; `options: Options` collides with the #2937 hash-consumer routing for
+`getOptions` and may be unseedable — check before promising the bucket moves.
+
+## 2026-08-06 — `.d.ts` entrypoint seeding IMPLEMENTED (flag `JS2WASM_DTS_ENTRYPOINT_SEEDS`, default OFF): mechanism lands, acorn census does NOT move
+
+Implemented per the sketch above (branch `claude/issue-743-dts-entrypoint-seeds`):
+
+1. **Load**: `resolveDtsEntryDeclarations` (src/checker/dts-entrypoint-seeds.ts) —
+   explicit `CompileOptions.entryDeclarations` text or the on-disk sibling
+   (`x.mjs` → `x.d.mts`/`x.d.ts`) of a `.js`/`.mjs`/`.cjs` entry; the text is
+   added to the single-source Program as an extra root
+   (`__entry_declarations__.d.ts`) whose own diagnostics are filtered.
+2. **Match**: `collectDtsEntrypointSeeds` — `export function` declarations in
+   the `.d.ts` matched against the entry's exported top-level function
+   declarations (export modifier or `export { local as pub }` specifiers),
+   keyed by LOCAL name; per-param atoms `f64` (`number`) / `string` (`string`),
+   `null` for everything else (interfaces, optionals, rest).
+3. **Seed, both lanes, ONE map**: IR fixpoint — `applyDtsEntrypointSeeds` in
+   `buildIrUnitTypeMap` replaces only `unknown` seed positions; call-site
+   evidence still joins on top (conflict ⇒ widen; proven by test). Legacy —
+   `inferImplicitAnyParamType` consults the seed strictly in the
+   `sawCallSite === false` arm (#3471), ahead of the body-usage heuristic;
+   plus a **one-hop arg-forwarding** in `inferParamTypeFromCallSites`'s
+   any-identifier arm (a seeded entrypoint's own param passed directly to
+   `f(…)`/`new F(…)` types as the seed, only while the entrypoint has zero
+   internal call sites). **Recorded deviation/extension**: the sketch named
+   only the `sawCallSite === false` consult; without the one-hop forwarding
+   the IR fixpoint types a downstream fnctor param that the single-hop legacy
+   scan cannot, and the claim demotes through the "function typeIdx parity
+   mismatch" fallback — the exact hazard the sketch warns about. The
+   forwarding mirrors precisely the fixpoint's first hop, under the same
+   no-internal-evidence condition.
+4. **Trust boundary (narrowed scope, as pre-authorized)**: seeds are limited to
+   `string`/`number`, the two types whose export boundary already guards:
+   f64 params sit behind the Wasm JS API's ToNumber (a violating `{}` crosses
+   as NaN, never as a reinterpreted reference — pinned by test); native-string
+   ref params REJECT a violating external call with TypeError at the boundary
+   (pinned). In externref-string lanes the string seed is a deliberate ABI
+   no-op. `boolean` was considered and excluded: ToInt32 at an i32 boundary
+   ("abc" → 0) diverges from JS truthiness, so a violating call would change
+   observable behavior rather than merely coerce.
+
+### Measurements (2026-08-06, standalone dogfood, `-O3`)
+
+Baseline (flag off, `JS2WASM_FNCTOR_CTOR_PARAM_TYPES=1
+JS2WASM_FNCTOR_FIELD_PROVENANCE=1`): census **54 / 1 / 41**, canaries
+2,3,4,5, imports `[]`, exactly the 3 pre-existing parity IR-FALLBACKs
+(parse/parseExpressionAt/tokenizer), 866,808 B.
+
+Flag on (same env + `JS2WASM_DTS_ENTRYPOINT_SEEDS=1`, `dist/acorn.d.mts`
+supplied): census **54 / 1 / 41 — unchanged**, canaries 2,3,4,5, imports `[]`,
+same 3 IR-FALLBACKs, 867,144 B (+336 B).
+
+Per-param seeding on acorn's entrypoints (all four seedable exports):
+
+| export              | param     | declared | seed   | effect on acorn                                                             |
+| ------------------- | --------- | -------- | ------ | --------------------------------------------------------------------------- |
+| `parse`             | `input`   | string   | string | joins with the 4 in-module canary call sites (already string) — no new fact |
+| `parse`             | `options` | Options  | null   | unseedable (interface), as pre-registered                                   |
+| `parseExpressionAt` | `input`   | string   | string | same as `parse.input`                                                       |
+| `parseExpressionAt` | `pos`     | number   | f64    | joins with the canary literal `3` — no new fact                             |
+| `parseExpressionAt` | `options` | Options  | null   | unseedable                                                                  |
+| `tokenizer`         | `input`   | string   | string | same as `parse.input`                                                       |
+| `tokenizer`         | `options` | Options  | null   | unseedable                                                                  |
+| `getLineInfo`       | `input`   | string   | string | has internal call sites (`raise` path) — evidence governs, seed inert       |
+| `getLineInfo`       | `offset`  | number   | f64    | same                                                                        |
+
+**Why the census did not move (root cause, honest):** the chain from every
+seeded entrypoint into `Parser`'s constructor breaks at a **property call**
+(`parse` → `Parser.parse(input, options)`) followed by **`new this(options,
+input)`** — neither is an identifier call/new, so neither lane's call graph
+carries the seed across. `var Parser = function Parser(...)` is additionally a
+function *expression*, outside the propagation population. On this corpus the
+canaries also already provide string/f64 evidence for the entrypoints'
+seedable params, so the seeds add no new facts at all. The `.d.ts` seed lever
+is real (proven end-to-end on the fixture: declared `number` → fixpoint →
+`new`-edge → fnctor field slot emits `f64`, both lanes in parity, zero parity
+demotions) but the acorn bucket needs the NEXT lever: **static-method /
+property-call edges** (`Parser.parse`, `new this`) in the call graph. The
++336 B flag-on delta comes from lattice changes on positions with no
+conclusive internal evidence (`unknown` → seeded atom) shifting IR selection
+slightly; canaries and IR-FALLBACK count are unchanged.
+
+**Flag verdict: stays OFF** — measured null on the target corpus; no consumer
+until property-call edges exist.
+
+### Known pre-existing issues encountered (NOT introduced here; reproduced on untouched origin/main)
+
+- `function addOne(n) { return n + 1; } export function top(k: number): number
+  { return addOne(k); }` (pkg.ts, standalone) **hard-fails** under default
+  IR-first: selection claims `addOne` off the lattice f64 fact, but from-ast's
+  `+` provability does not consume lattice param facts →
+  "'+' operands not provably both-number or both-string" after the legacy body
+  was skipped. Flag-on seeding can steer additional functions into this
+  pre-existing trap (same trigger as call-site narrowing) — one more reason
+  the flag stays OFF until the from-ast gap is fixed.
+- `tests/issue-3486-fnctor-constructor-identity.test.ts` ("own fields and
+  enumeration are untouched…") fails on untouched origin/main (ownKeys returns
+  `''`), unrelated to this change.
+
+**Deferred**: the `benchmark:acorn:standalone-dynamic` perf A/B — the lane is
+owned by a concurrently-running measurement (binding-retype); run it after
+that lane frees. Multi-file (`compileMulti`/project) and linear-backend seed
+plumbing are out of scope for this slice (single-source path only — the
+dogfood/measurement lane).

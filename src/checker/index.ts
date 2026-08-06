@@ -9,6 +9,7 @@ import {
   type ProjectModuleResolutions,
 } from "./multi-file-paths.js";
 import { getDefaultEnvironment } from "../env.js";
+import { DTS_ENTRY_DECLS_NAME } from "./dts-entrypoint-seeds.js";
 import { buildModuleDecls } from "./node-capability-map.js";
 
 // All Node builtin access goes through the environment adapter (#1096).
@@ -363,6 +364,17 @@ export interface AnalyzeOptions {
    * + the `emulateNode ||= platform ∈ {node,deno}` composition in #2645/#2736.
    */
   platform?: "web" | "node" | "deno";
+  /**
+   * (#743) Source text of the entry's sibling `.d.ts` declaration file, added
+   * to the Program as an extra root under the synthetic name
+   * `DTS_ENTRY_DECLS_NAME` so exported-entrypoint parameter seeds can be
+   * collected from checker-owned declarations. The extra root contributes NO
+   * user-visible diagnostics (its own diagnostics are filtered — a shipped
+   * declaration file must never block compiling the package). Only supplied
+   * when `JS2WASM_DTS_ENTRYPOINT_SEEDS=1` resolved a declaration source;
+   * absent → byte-identical behavior.
+   */
+  entryDeclarationsText?: string;
   /**
    * Force TypeScript GRAMMAR for the parse even when the input file is named
    * `.js`/`.mjs`/`.cjs` (#2752). When the compiler prepends an injected source
@@ -893,6 +905,10 @@ export function analyzeSource(source: string, fileName = "input.ts", analyzeOpti
   // drops the DOM ambient surface.
   const defaultLibName = defaultLibNameForPlatform(analyzeOptions);
 
+  // (#743) Optional extra root: the entry's shipped sibling `.d.ts` (flag-gated
+  // upstream — undefined means byte-identical behavior). See AnalyzeOptions.
+  const entryDeclsText = analyzeOptions?.entryDeclarationsText;
+
   const compilerHost: ts.CompilerHost = {
     getSourceFile(name, languageVersion) {
       if (name === fileName) {
@@ -900,6 +916,9 @@ export function analyzeSource(source: string, fileName = "input.ts", analyzeOpti
       }
       if (injectNodeEnv && name === NODE_ENV_DTS_NAME) {
         return ts.createSourceFile(name, nodeEnvDtsCombined, languageVersion, true, ts.ScriptKind.TS);
+      }
+      if (entryDeclsText !== undefined && name === DTS_ENTRY_DECLS_NAME) {
+        return ts.createSourceFile(name, entryDeclsText, languageVersion, true, ts.ScriptKind.TS);
       }
       const libSf = getLibSourceFile(name, languageVersion);
       if (libSf) return libSf;
@@ -911,7 +930,11 @@ export function analyzeSource(source: string, fileName = "input.ts", analyzeOpti
     getCanonicalFileName: (f) => f,
     useCaseSensitiveFileNames: () => true,
     getNewLine: () => "\n",
-    fileExists: (name) => name === fileName || (injectNodeEnv && name === NODE_ENV_DTS_NAME) || isKnownLibName(name),
+    fileExists: (name) =>
+      name === fileName ||
+      (injectNodeEnv && name === NODE_ENV_DTS_NAME) ||
+      (entryDeclsText !== undefined && name === DTS_ENTRY_DECLS_NAME) ||
+      isKnownLibName(name),
     readFile: () => undefined,
     getDirectories: () => [],
     directoryExists: () => true,
@@ -929,11 +952,16 @@ export function analyzeSource(source: string, fileName = "input.ts", analyzeOpti
   // rebuild without it, so we never turn a benign warning into a hard error.
   function buildProgram(withNodeEnv: boolean) {
     const rootNames = withNodeEnv ? [fileName, NODE_ENV_DTS_NAME] : [fileName];
+    if (entryDeclsText !== undefined) rootNames.push(DTS_ENTRY_DECLS_NAME);
     const prog = ts.createProgram(rootNames, compilerOptions, compilerHost);
-    const syn = prog.getSyntacticDiagnostics();
+    // (#743) The shipped declaration root's own diagnostics never surface: it
+    // exists purely as a seed source and must not block compiling the package.
+    const dropEntryDecls = (diags: readonly ts.Diagnostic[]): readonly ts.Diagnostic[] =>
+      entryDeclsText === undefined ? diags : diags.filter((d) => d.file?.fileName !== DTS_ENTRY_DECLS_NAME);
+    const syn = dropEntryDecls(prog.getSyntacticDiagnostics());
     const sem = analyzeOptions?.skipSemanticDiagnostics
       ? ([] as readonly ts.Diagnostic[])
-      : prog.getSemanticDiagnostics();
+      : dropEntryDecls(prog.getSemanticDiagnostics());
     return { prog, syn, sem };
   }
 

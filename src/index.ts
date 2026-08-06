@@ -305,6 +305,17 @@ export interface CompileOptions {
    *  `env` JS-host string imports. */
   target?: "gc" | "linear" | "wasi" | "standalone";
   /**
+   * (#743) Declaration source text for the entry module's shipped sibling
+   * `.d.ts` (e.g. acorn's `dist/acorn.d.ts` when compiling `dist/acorn.mjs`).
+   * Only consulted when `JS2WASM_DTS_ENTRYPOINT_SEEDS=1`: exported functions
+   * with implicit-`any` parameters take their declared `string`/`number`
+   * parameter types as inference SEEDS (claims joined against internal
+   * call-site evidence, guarded at the export boundary — see
+   * `src/checker/dts-entrypoint-seeds.ts`). When unset, an on-disk sibling of
+   * `fileName` is probed instead. Flag off → byte-identical output.
+   */
+  entryDeclarations?: string;
+  /**
    * (#4035) Host-bridge export policy — whether the module exposes the
    * inspection/interop surface a **JavaScript** host uses to reach inside
    * WasmGC values: `__vec_*`, `__sget_*`/`__sset_*`, `__call_fn*`,

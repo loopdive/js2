@@ -2009,7 +2009,12 @@ function planIrOverlay(
     if (process.env.JS2WASM_TEST_INJECT_IR_TYPEMAP_THROW === "1") {
       throw new Error("injected TypeMap failure");
     }
-    identityMaps = irOverlayIdentity.buildIrOverlayIdentityMaps(ast.sourceFile, ast.checker, identityContext);
+    identityMaps = irOverlayIdentity.buildIrOverlayIdentityMaps(
+      ast.sourceFile,
+      ast.checker,
+      identityContext,
+      ctx.dtsEntrypointSeeds,
+    );
   } catch (error) {
     throw new IrInvariantError(
       "type-map-failure",
