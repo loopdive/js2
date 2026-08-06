@@ -454,6 +454,28 @@ function classifyUse(
   if (ts.isCallExpression(parent)) {
     const argIdx = parent.arguments.indexOf(useNode);
     if (argIdx >= 0) {
+      // (#4163) ANY argument of a builtin `Object.*` / `Reflect.*` namespace
+      // call is a DYNAMIC consumer: the standalone lowering of every such
+      // builtin consumes the value through the externref `$Object` runtime
+      // (descriptor field reads via `__desc_has_own`/`__extern_get`, proto
+      // seeds via `__object_create`, key walks, integrity checks …). The
+      // lib.d.ts parameter types are CONCRETE (`PropertyDescriptor`,
+      // `object`), so the any/unknown check below never fires for them, and
+      // the dominant test262 idiom — `Object.defineProperty(obj, "p", attr)`
+      // with `attr = new Con()` carrying INHERITED descriptor fields — was
+      // classified keep-static, leaving the instance a closed struct the
+      // descriptor reader cannot walk. Clause B (typed own-field consumer ⇒
+      // keep-typed) still applies unchanged, and the S3a lowering gate (empty
+      // body, no args, externref slot) is unaffected, so a typed fnctor
+      // cannot be moved off its struct by this widening.
+      const callee = parent.expression;
+      if (
+        ts.isPropertyAccessExpression(callee) &&
+        ts.isIdentifier(callee.expression) &&
+        (callee.expression.text === "Object" || callee.expression.text === "Reflect")
+      ) {
+        return "dynamic";
+      }
       const sig = checker.getResolvedSignature(parent);
       const paramSym = sig?.parameters[argIdx];
       if (paramSym) {

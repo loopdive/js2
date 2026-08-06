@@ -63,6 +63,7 @@ import { getFuncRefWrapperRootTypeIdx } from "./closures/funcref-wrapper-types.j
 import {
   ensureAnyToStringHelper,
   ensureNativeStringHelpers,
+  nativeStringLiteralHash,
   nativeStringLiteralInstrs,
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
@@ -3061,18 +3062,9 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   emitHasOwn("__hasOwnProperty");
   emitHasOwn("__object_hasOwn");
 
-  // (#4055) ToPropertyDescriptor's HasProperty step, and ONLY it, must also see
-  // the #3468 closure own-property bag — a function used as a descriptor keeps
-  // its `value`/`enumerable`/… there, and gating each field on a bag-blind
-  // HasProperty yielded an empty descriptor with all-false defaults. Deliberately
-  // a separate native rather than a widening of `__hasOwnProperty`: #4017 tried
-  // the latter and cost 684 host-free passes via `propertyHelper.js`. See
-  // carrier-bag-hasown.ts.
-  registerDescriptorHasOwn(ctx, registerNative, {
-    hasOwnIdx: ctx.funcMap.get("__hasOwnProperty")!,
-    objFindIdx,
-    objectTypeIdx,
-  });
+  // (#4055/#4163) `registerDescriptorHasOwn` moved to AFTER the `__extern_has`
+  // registration below, so the §7.3.12 chain-walk arm can bake `__extern_has`'s
+  // funcIdx. See carrier-bag-hasown.ts.
 
   // ── __propertyIsEnumerable(externref obj, externref key) -> i32 (#2541) ─────
   //
@@ -3204,6 +3196,26 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       body,
     );
   }
+
+  // (#4055) ToPropertyDescriptor's HasProperty step, and ONLY it, must also see
+  // the #3468 closure own-property bag — a function used as a descriptor keeps
+  // its `value`/`enumerable`/… there, and gating each field on a bag-blind
+  // HasProperty yielded an empty descriptor with all-false defaults. Deliberately
+  // a separate native rather than a widening of `__hasOwnProperty`: #4017 tried
+  // the latter and cost 684 host-free passes via `propertyHelper.js`. See
+  // carrier-bag-hasown.ts.
+  // (#4163) Registered AFTER `__extern_has` so the widening to the full §7.3.12
+  // HasProperty (own + carrier bag + prototype chain) can delegate to it as the
+  // final arm — ToPropertyDescriptor's spec step IS HasProperty, and with the
+  // #2660 S3a chain now live (approved fnctor reconstruction + proto-source
+  // `$Object` promotion) an INHERITED descriptor field must be seen. Measured
+  // +0 while the chain was dead (per the #4008 pickup notes); load-bearing now.
+  registerDescriptorHasOwn(ctx, registerNative, {
+    hasOwnIdx: ctx.funcMap.get("__hasOwnProperty")!,
+    objFindIdx,
+    objectTypeIdx,
+    externHasIdx: ctx.funcMap.get("__extern_has"),
+  });
 
   // ── __to_primitive(externref input, externref hint) -> externref ─────────
   //
@@ -6857,89 +6869,119 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
     return receiverArms;
   };
 
-  // (#3673) The key is flattened ONCE into a scratch local (its length into a
-  // second), and the arms are grouped into LENGTH BUCKETS: one inline length
-  // compare per distinct name length (~15 for acorn), each guarding the
-  // `__str_equals` probes of just that bucket. The old shape — a linear ladder
-  // with per-arm `flatten(key)` + equals call over one arm per distinct field
-  // name in the program (hundreds for acorn) — was the dominant cost of a
-  // standalone dynamic property read.
+  // (#3926) The key is flattened ONCE into a scratch local and dispatched by
+  // HASH, replacing #3673's length/first-char bucket ladder. Interned literal
+  // keys (every `obj.name` member read) carry a compile-time-baked FNV-1a hash
+  // in `$HashedString` field 3 (0 = uncomputed), so the common case pays one
+  // `struct.get`; any other key takes one `__obj_hash` call (which flattens
+  // memoized and writes the hash back for next time). The masked hash then
+  // indexes ONE `br_table` over the statically-known field-name buckets —
+  // O(1) selection instead of a linear scan over ~15 length guards + c0
+  // guards. Equality remains the arbiter: the hash only prunes, and every
+  // bucket still verifies with `__str_equals` (which itself fast-paths
+  // identity and hash-rejects collisions), so same-slot collisions and
+  // foreign keys landing in a live slot fall through exactly like a ladder
+  // miss — into the builtin-meta arm / `__obj_find` walk / proto chain below.
+  const objHashIdx = ctx.funcMap.get("__obj_hash");
   const fkeyLocal = 2 + fn.locals.length;
-  const fkeyLenLocal = fkeyLocal + 1;
-  const fkeyC0Local = fkeyLocal + 2;
+  const fkeyHashLocal = fkeyLocal + 1;
   fn.locals.push(
     { name: "__fkey_ladder", type: { kind: "ref_null", typeIdx: ctx.nativeStrTypeIdx } },
-    { name: "__fkey_len", type: { kind: "i32" } },
-    { name: "__fkey_c0", type: { kind: "i32" } },
+    { name: "__fkey_hash", type: { kind: "i32" } },
   );
-  const byLen = new Map<number, Map<number, Array<[string, Entry[]]>>>();
-  for (const [fieldName, entries] of byField) {
-    let lenGroup = byLen.get(fieldName.length);
-    if (!lenGroup) {
-      lenGroup = new Map();
-      byLen.set(fieldName.length, lenGroup);
-    }
-    const c0 = fieldName.length > 0 ? fieldName.charCodeAt(0) : -1;
-    let c0Group = lenGroup.get(c0);
-    if (!c0Group) {
-      c0Group = [];
-      lenGroup.set(c0, c0Group);
-    }
-    c0Group.push([fieldName, entries]);
-  }
+  const buildNameProbe = (fieldName: string, entries: Entry[]): Instr[] => [
+    { op: "local.get", index: fkeyLocal },
+    { op: "ref.as_non_null" },
+    ...nativeStringLiteralInstrs(ctx, fieldName),
+    { op: "call", funcIdx: equalsIdx },
+    { op: "if", blockType: { kind: "empty" }, then: buildReceiverArms(entries) },
+  ];
   const stringKeyArms: Instr[] = [
     { op: "local.get", index: 1 },
     { op: "any.convert_extern" },
     { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
     { op: "call", funcIdx: flattenIdx },
     { op: "local.tee", index: fkeyLocal },
-    { op: "struct.get", typeIdx: ctx.nativeStrTypeIdx, fieldIdx: 0 },
-    { op: "local.tee", index: fkeyLenLocal },
-    // c0 = len > 0 ? data[off] : -1 — one array read per lookup, shared by
-    // every first-char sub-bucket guard below.
-    {
-      op: "if",
-      blockType: { kind: "val", type: { kind: "i32" } },
-      then: [
-        { op: "local.get", index: fkeyLocal },
-        { op: "ref.as_non_null" },
-        { op: "struct.get", typeIdx: ctx.nativeStrTypeIdx, fieldIdx: 2 },
-        { op: "local.get", index: fkeyLocal },
-        { op: "ref.as_non_null" },
-        { op: "struct.get", typeIdx: ctx.nativeStrTypeIdx, fieldIdx: 1 },
-        { op: "array.get_u", typeIdx: ctx.nativeStrDataTypeIdx },
-      ],
-      else: [{ op: "i32.const", value: -1 }],
-    },
-    { op: "local.set", index: fkeyC0Local },
   ];
-  for (const [len, lenGroup] of byLen) {
-    const lenBucket: Instr[] = [];
-    for (const [c0, c0Group] of lenGroup) {
-      const c0Bucket: Instr[] = [];
-      for (const [fieldName, entries] of c0Group) {
-        const receiverArms = buildReceiverArms(entries);
-        c0Bucket.push(
-          { op: "local.get", index: fkeyLocal },
-          { op: "ref.as_non_null" },
-          ...nativeStringLiteralInstrs(ctx, fieldName),
-          { op: "call", funcIdx: equalsIdx },
-          { op: "if", blockType: { kind: "empty" }, then: receiverArms },
-        );
-      }
-      lenBucket.push(
-        { op: "local.get", index: fkeyC0Local },
-        { op: "i32.const", value: c0 },
-        { op: "i32.eq" },
-        { op: "if", blockType: { kind: "empty" }, then: c0Bucket },
-      );
-    }
+  if (ctx.hashedStrTypeIdx < 0 || objHashIdx === undefined) {
+    // Defensive shape only — both are registered unconditionally whenever
+    // `__extern_get` itself is. Without a runtime hash for arbitrary (plain
+    // `$NativeString`) keys a hash dispatch would FALSE-MISS, so degrade to
+    // the plain linear probe ladder, which is dispatch-order-identical.
+    stringKeyArms.push({ op: "drop" });
+    for (const [fieldName, entries] of byField) stringKeyArms.push(...buildNameProbe(fieldName, entries));
+  } else {
+    // hash = flat is $HashedString ? flat.hash : 0 ; 0 (uncomputed) → one
+    // `__obj_hash` call. Low bits of the stored `(fnv & 0x7fffffff) | signbit`
+    // encoding equal the raw FNV low bits, so masking with tableMask needs no
+    // sign-bit normalization on either path.
     stringKeyArms.push(
-      { op: "local.get", index: fkeyLenLocal },
-      { op: "i32.const", value: len },
-      { op: "i32.eq" },
-      { op: "if", blockType: { kind: "empty" }, then: lenBucket },
+      { op: "ref.test", typeIdx: ctx.hashedStrTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [
+          { op: "local.get", index: fkeyLocal },
+          { op: "ref.cast", typeIdx: ctx.hashedStrTypeIdx },
+          { op: "struct.get", typeIdx: ctx.hashedStrTypeIdx, fieldIdx: 3 },
+        ],
+        else: [{ op: "i32.const", value: 0 }],
+      },
+      { op: "local.tee", index: fkeyHashLocal },
+      { op: "i32.eqz" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 1 },
+          { op: "call", funcIdx: objHashIdx },
+          { op: "local.set", index: fkeyHashLocal },
+        ],
+      },
     );
+    // Power-of-two table at load factor ≤ 0.5 so most live slots hold exactly
+    // one name; the br_table cost is size-only (~2 bytes/slot), not time.
+    let tableSize = 4;
+    while (tableSize < byField.size * 2) tableSize *= 2;
+    const tableMask = tableSize - 1;
+    const buckets = new Map<number, Array<[string, Entry[]]>>();
+    for (const [fieldName, entries] of byField) {
+      const slot = nativeStringLiteralHash(fieldName) & tableMask;
+      let bucket = buckets.get(slot);
+      if (!bucket) {
+        bucket = [];
+        buckets.set(slot, bucket);
+      }
+      bucket.push([fieldName, entries]);
+    }
+    const orderedBuckets = [...buckets.entries()].sort((a, b) => a[0] - b[0]);
+    const bucketCount = orderedBuckets.length;
+    // br_table depth map: bucket ordinal j breaks out of the j-th nested
+    // block (landing on that bucket's probes); an empty slot takes depth
+    // `bucketCount` — the wrapper block — skipping every arm (a miss).
+    const targets: number[] = new Array<number>(tableSize).fill(bucketCount);
+    orderedBuckets.forEach(([slot], ordinal) => {
+      targets[slot] = ordinal;
+    });
+    let dispatchTree: Instr[] = [
+      { op: "local.get", index: fkeyHashLocal },
+      { op: "i32.const", value: tableMask },
+      { op: "i32.and" },
+      { op: "br_table", targets, defaultDepth: bucketCount },
+    ];
+    for (let ordinal = 0; ordinal < bucketCount; ordinal++) {
+      const probes: Instr[] = [];
+      for (const [fieldName, entries] of orderedBuckets[ordinal]![1])
+        probes.push(...buildNameProbe(fieldName, entries));
+      dispatchTree = [
+        { op: "block", blockType: { kind: "empty" }, body: dispatchTree },
+        ...probes,
+        // Probes exhausted without a hit: skip the outer buckets' probes. The
+        // last bucket falls through to the wrapper block end naturally.
+        ...(ordinal === bucketCount - 1 ? [] : ([{ op: "br", depth: bucketCount - 1 - ordinal }] satisfies Instr[])),
+      ];
+    }
+    stringKeyArms.push({ op: "block", blockType: { kind: "empty" }, body: dispatchTree });
   }
   const numericKeyArms: Instr[] = [];
   const i31NumericKeyArms: Instr[] = [];
