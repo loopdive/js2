@@ -1417,8 +1417,32 @@ function emitAnnexBModuleTypeofRead(ctx: CodegenContext, fctx: FunctionContext, 
   addUnionImports(ctx);
   const typeofIdx = ctx.funcMap.get("__typeof");
   if (typeofIdx === undefined) return null;
+  // Materialise the "undefined" constant into the MAIN stream first (any lazy
+  // NativeString setup must not land inside an if-arm — mirrors
+  // emitAnnexBTypeofFlagBranch), then branch on ref.is_null: a null-extern
+  // binding is the HOST-lane pre-evaluation state, and the host `__typeof`
+  // would answer `typeof null` = "object" for it. Standalone seeds the
+  // `$undefined` singleton, whose tag `__typeof` reports as "undefined", so
+  // the null arm is simply never taken there.
+  const strType = compileStringLiteral(ctx, fctx, "undefined") ?? { kind: "externref" };
+  const undefStrLocal = allocLocal(fctx, `__typeof_undef_${fctx.locals.length}`, strType);
+  fctx.body.push({ op: "local.set", index: undefStrLocal });
+  const valLocal = allocLocal(fctx, `__typeof_val_${fctx.locals.length}`, { kind: "externref" });
   fctx.body.push({ op: "global.get", index: globalIdx });
-  fctx.body.push({ op: "call", funcIdx: typeofIdx });
+  fctx.body.push({ op: "local.tee", index: valLocal });
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "externref" } },
+    then: [
+      { op: "local.get", index: undefStrLocal },
+      ...(strType.kind === "externref" ? [] : [{ op: "extern.convert_any" } as const]),
+    ],
+    else: [
+      { op: "local.get", index: valLocal },
+      { op: "call", funcIdx: typeofIdx },
+    ],
+  });
   return { kind: "externref" };
 }
 

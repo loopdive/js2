@@ -2503,8 +2503,13 @@ export function compileDeclarations(
         // not `null`, so seed the `$undefined` singleton rather than leaving
         // the `ref.null.extern` global init.
         if (!annexBModuleGlobalSeedsFromTopLevel(ctx, liveName)) {
+          // Standalone/WASI only: the host lane's `undefined` IS the null
+          // extern (a host boundary crossing reads it back as undefined),
+          // while the tag-1 singleton would surface to host helpers as an
+          // opaque object (`typeof` → "object", `=== undefined` → false).
           const annexBGlobalIdx = ctx.moduleGlobals.get(liveName);
           if (
+            (ctx.standalone || ctx.wasi) &&
             annexBGlobalIdx !== undefined &&
             !seededGlobals.has(annexBGlobalIdx) &&
             emitUndefinedExtern(ctx, initFctx)
