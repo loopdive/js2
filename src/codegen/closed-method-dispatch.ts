@@ -53,6 +53,7 @@ import { addUnionImportsViaRegistry } from "./shared.js";
 import { ensureArgcGlobal } from "./statements/nested-declarations.js"; // (#3673 round 13) direct-call argc preset
 import { CLOSURE_ARITY_FIELD_IDX, getFuncRefWrapperRootTypeIdx } from "./closures/funcref-wrapper-types.js"; // (#3673 round 13) under-application gate
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
+import { wrapClosureCallFastArm } from "./closure-call-fast.js"; // (#4185) closure-receiver fast `.call` arm
 import { buildFnctorArrayHofTargetTest } from "./fnctor-array-prototype.js";
 import { resolveVecHostBridgeHelper } from "./vec-access-exports.js";
 
@@ -1363,6 +1364,11 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     if (process.env.JS2WASM_REGEXP_TEST_OUTER_BRAND !== "0" && wrapNativeRegExpTest !== undefined) {
       current = wrapNativeRegExpTest(current);
     }
+
+    // (#4185) Closure-receiver fast `.call` arm, outermost (see
+    // closure-call-fast.ts) — appends its own scratch local BEFORE the
+    // round-13 patch below computes its slot, so both stay distinct.
+    current = wrapClosureCallFastArm(ctx, methodName, arity, anyLocalIdx, current, locals);
 
     // (#3673 round 13) Patch the cached-direct-call arm's scratch-local slot
     // now that the locals array is final.
