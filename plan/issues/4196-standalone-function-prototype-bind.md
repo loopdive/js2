@@ -12,7 +12,21 @@ feasibility: hard
 reasoning_effort: max
 sprint: current
 horizon: l
-related: [3140, 4192, 2928, 4163]
+related: [3140, 4192, 2928, 4163, 4201]
+assignee: ttraenkler/W19
+# Slice 1 ([[Construct]] through $__bound_fn) adds `src/codegen/construct-bound.ts`
+# — a new subsystem module carrying the whole 300-line driver. What is left in the
+# god-files is irreducible: the DISPATCH decision belongs to `compileNewExpression`
+# (+4 lines) and the reserve-then-fill contract requires the fill to be called from
+# the two finalize paths in `index.ts` (+3 lines). There is no subsystem module that
+# can host either.
+loc-budget-allow:
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/index.ts
+func-budget-allow:
+  - src/codegen/expressions/new-super.ts::compileNewExpression
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
 ---
 
 # #4196 — `Function.prototype.bind` in `--target standalone`
@@ -101,3 +115,113 @@ of all 80 ES5 `built-ins/Function/prototype/bind` files **plus** the
 the interpreter runtime-eval tier and rebuild the provider after every `src/`
 edit (#4191) — a stale provider cache silently reports the refusal tier and will
 make a correct fix look like a 10-file regression.
+
+---
+
+## Slice 1 RESULT (W19, 2026-08-07) — `[[Construct]]` through `$__bound_fn`
+
+**Shipped. `FIXED 2 / BROKE 0`** measured base-vs-head over all 100 files of
+`built-ins/Function/prototype/bind/`, on the **INTERPRETER** runtime-eval tier
+(`key 28ef51749bf42e4c`, rebuilt from an empty provider cache for this run —
+3,960,183 bytes, a different artifact from the 3,970,785-byte one that was
+cached, so the instrument was demonstrably live). Base 52 → head 54 pass.
+
+Absolute positions fixed:
+
+- `built-ins/Function/prototype/bind/15.3.4.5.2-4-1.js`
+- `built-ins/Function/prototype/bind/15.3.4.5.2-4-2.js`
+
+**Control sweep: `built-ins/TypedArrayConstructors/` — 738 files, FIXED 0,
+BROKE 0, and ZERO error-message changes** (base 318 pass = head 318 pass). That
+population was chosen deliberately: the retry hangs off the #2872
+dynamic-`$__ta_ctor` arm, and `testTypedArray.js` calls `.bind`, so these files
+are *inside* the byte-neutrality gate rather than trivially excluded by it.
+
+**The control earned its keep on its first run.** It caught a real regression
+the bind directory could not see: 7 previously-passing
+`…/use-default-proto-if-custom-proto-is-not-object.js` files died with
+`Internal error compiling expression: Invalid value used as weak map key`.
+`Reflect.construct(...)` desugars to a **synthesized** `NewExpression` with no
+parent chain, so `getSourceFile()` on it is `undefined`, and handing that to the
+gate's memo `WeakMap` kills the whole compile. Fixed (unknown provenance now
+reads as "cannot mint a bound fn" — the same fail-safe direction as the
+cross-file case), all 7 verified restored, regression test committed.
+
+### The 13-file sizing of the construct row does not survive contact — and the row is really 14
+
+`15.3.4.5.2-4-*` is **14** files, all failing, not 13; the census split
+`-4-5` off by its distinct assertion text.
+
+More importantly, **the construct path was only the FIRST of two stacked
+defects for 12 of the 14.** After this slice every one of the 14 constructs
+correctly — the whole family moved from
+
+```
+newInstance.valueOf() Expected SameValue («null», «true»)   ← new returned NULL
+```
+to
+```
+newInstance.valueOf() Expected SameValue («true», «true»)   ← construct CORRECT
+```
+
+They still fail because `<primitive wrapper>.valueOf()` in standalone returns
+**the wrapper**, not `[[PrimitiveValue]]`. The render prints «true» on both
+sides (the wrapper stringifies as `"true"`), so the message reads like a value
+bug and is a **type** bug. That residual is filed as **#4201** and is
+independent of `bind` entirely:
+`new Boolean(true).valueOf() === new Boolean(true)`, and `new Number(5)`,
+`new String("x")` behave the same.
+
+Only `-4-1` / `-4-2` assert with `hasOwnProperty` instead of `valueOf`, which is
+exactly why the yield here is 2 and not 14. **The census bucketed by
+first-assertion message, so one downstream mechanism was distributed across a
+construct-shaped row.** Anyone sizing the remaining rows should assume the same
+can be true of them.
+
+`-4-5` additionally regressed its *failure mode* (clean assertion → a
+`float unrepresentable in integer range` trap in `__call_fn_method_2`) because
+it now reaches a real object and trips the same wrapper-`valueOf` path. Status
+is `fail` on both arms, so it is not a conformance regression, but it is worth
+knowing #4201 owns it.
+
+### The "IsCallable throw (5)" row is two mechanisms, not one
+
+Re-read of the five files: **1** is IsCallable (`15.3.4.5-2-1`, `f.bind()` on a
+non-callable). The other four (`-20-2`, `-20-3`, `-21-2`, `-21-3`, plus
+`BoundFunction_restricted-properties.js`) want `obj.caller` / `obj.arguments`
+on a bound function to throw — that is the **%ThrowTypeError% restricted-property
+accessor on `Function.prototype`**, which has nothing to do with `bind` and
+applies to every function. Size and slice it as its own thing.
+
+### What landed
+
+- `src/codegen/construct-bound.ts` (new subsystem module) — the
+  `__construct_bound(callee, args)` driver, reserve-then-fill.
+- Two call-site lines in `compileNewExpression` + two fill calls in
+  `index.ts` (the `loc-budget-allow` / `func-budget-allow` above).
+- `tests/issue-4196.test.ts` — 8 cases, verify-first: **5 RED on the base
+  commit, 8 green on the branch**, with the two that pass on BOTH arms being
+  the explicit **precondition** (the carrier exists and its CALL side already
+  works — without this the rest would be vacuous) and the **control**.
+
+Design points worth keeping if this is extended:
+
+- `[[BoundThis]]` is IGNORED on the construct path (§10.4.1.2 threads
+  `newTarget`). This is the one place that must NOT reuse `__apply_closure`'s
+  front guard, which deliberately lets `[[BoundThis]]` beat the caller-supplied
+  receiver (§10.4.1.1, the CALL rule). Hence the explicit unwrap loop.
+- `.prototype` is read from the innermost TARGET; a bound function has none.
+- **Byte-neutrality gate**: the retry hangs off the #2872 dynamic-`$__ta_ctor`
+  arm, which *every* host-free `new <any-typed binding>(…)` in the corpus goes
+  through. A per-source-file "does this file contain a `.bind` property access"
+  memo keeps bind-free modules byte-identical; gating on
+  `ctx.boundFnTypeIdx >= 0` does **not** work, because a `new` site can compile
+  before the `.bind` site that mints the type.
+
+### Still open on #4196 after this slice
+
+Rows 2–6 are untouched: builtin-ctor targets (8), IsCallable (1) +
+restricted-property accessors (4), `this` not applied (3), the 3 null-derefs,
+the `__get_builtin` CE, and `S15.3.4.5_A5`'s bare refusal
+(`Function.prototype.bind.apply` — a distinct route from `.bind` and
+`.bind.call`). Issue stays `ready`.
