@@ -86,7 +86,12 @@ import { registerDescriptorHasOwn } from "./carrier-bag-hasown.js"; // (#4055) d
 import { buildNonObjectDeleteArms, reserveCarrierBagDelete } from "./carrier-bag-delete.js"; // (#4010 S2) OrdinaryDelete over the carrier bags
 import { bagHasIfAbsent, bagKeysTail, reserveCarrierBagVisibility } from "./carrier-bag-visibility.js";
 import { reserveClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
-import { buildTombstoneScreen, buildTombstoneSkip, reserveInstanceTombstones } from "./instance-tombstones.js"; // (#4098 G1 s1)
+import {
+  INSTANCE_FIELD_DELETED,
+  buildTombstoneScreen,
+  buildTombstoneSkip,
+  reserveInstanceTombstones,
+} from "./instance-tombstones.js"; // (#4098 G1 s1)
 import { OBJECT_INTEGRITY_OBJ_PREDICATES } from "./object-integrity-carrier.js"; // (#4032)
 // (#3537) array ($Vec) expando side table — composes AROUND the #3468 closure
 // arms (vec test first, unchanged closure arm as fallthrough).
@@ -124,6 +129,7 @@ import { buildObjectEnumerationHelpers } from "./object-runtime-enumeration.js";
 import { buildObjectPrototypeHelpers } from "./object-runtime-prototype.js"; // (#3274 wave-B) prototype-chain helper builders
 import * as fnctorArray from "./fnctor-array-prototype.js";
 import { isSyntheticStructName } from "./emit-helpers.js";
+import { isUserDeclaredStruct } from "./user-declared-structs.js"; // (#3920) user shape vs builtin carrier
 import {
   type ColdFieldLocation,
   coldFieldNameAt,
@@ -6541,25 +6547,45 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
   // Factory, not a shared Instr tree: finalize remaps every function body in
   // place, so sharing these objects between the two predicates would remap all
   // embedded type indices twice (#1719 reserve/fill discipline).
-  const buildPrologue = (flatLocalIdx: number): Instr[] => {
+  // (#3920) `mode` is the own-vs-`in` semantic difference, and it is the whole
+  // reason `__extern_has` could not simply be appended to the target list.
+  //
+  //   "own"          — `hasOwnProperty` / `Object.hasOwn` /
+  //                    `propertyIsEnumerable`. A shape match is the FINAL
+  //                    answer: a clear presence bit means "absent", full stop.
+  //   "hasProperty"  — the `in` operator (§7.3.12 HasProperty), which is own
+  //                    OR inherited. Here a shape match may only answer 1;
+  //                    a miss must FALL THROUGH to the caller's existing
+  //                    prototype-chain walk. Returning 0 would short-circuit
+  //                    the chain and turn `"toString" in obj` false.
+  //
+  // Same reasoning for the tombstone screen: `delete o.x` makes `x` absent as
+  // an OWN property, but if the prototype carries `x` then `"x" in o` is still
+  // true — so in `hasProperty` mode a tombstone suppresses the arms rather
+  // than answering 0.
+  const buildPrologue = (flatLocalIdx: number, mode: "own" | "hasProperty" = "own"): Instr[] => {
+    const answerPresent: Instr[] = [{ op: "i32.const", value: 1 }, { op: "return" }];
+    /** Turn a 0/1 presence expression into this mode's answer. */
+    const answerFromPresence = (presence: Instr[]): Instr[] =>
+      mode === "own"
+        ? [...presence, { op: "return" }]
+        : [...presence, { op: "if", blockType: { kind: "empty" }, then: answerPresent }];
     const keyArms: Instr[] = [];
     for (const [fieldName, entries] of byField) {
       const receiverArms: Instr[] = [];
       for (const entry of entries) {
         const returnPresence: Instr[] = entry.cold
-          ? [
-              ...coldFieldPresenceInstrs(entry.cold, [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }]),
-              { op: "return" },
-            ]
+          ? answerFromPresence(
+              coldFieldPresenceInstrs(entry.cold, [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }]),
+            )
           : entry.presenceSlot === undefined
-            ? [{ op: "i32.const", value: 1 }, { op: "return" }]
-            : [
+            ? answerPresent
+            : answerFromPresence([
                 { op: "local.get", index: 0 },
                 { op: "any.convert_extern" },
                 { op: "ref.cast", typeIdx: entry.typeIdx },
                 ...presenceTestInstrs(entry.typeIdx, entry.presenceSlot),
-                { op: "return" },
-              ];
+              ]);
         const exactThen: Instr[] =
           entry.shapeFieldIdx === undefined || entry.shapeId === undefined
             ? returnPresence
@@ -6608,10 +6634,7 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
             { op: "i32.eqz" },
           ]
         : [{ op: "i32.const", value: 1 }];
-    return [
-      // (#4098 G1 s1) BEFORE the field arms: each arm below returns unconditionally
-      // on a name match, so a screen after them could never run. Narrowing only.
-      ...buildTombstoneScreen(ctx, [{ op: "i32.const", value: 0 }, { op: "return" }]),
+    const armBlock: Instr[] = [
       ...structReceiverGuard,
       {
         op: "if",
@@ -6635,17 +6658,51 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
         ],
       },
     ];
+    if (mode === "hasProperty") {
+      // (#3920) A tombstone SUPPRESSES the own-property arms and lets the
+      // caller's prototype walk decide — `delete o.x` does not make
+      // `"x" in o` false when the prototype still carries `x`.
+      const deletedIdx = ctx.funcMap.get(INSTANCE_FIELD_DELETED);
+      if (deletedIdx === undefined) return armBlock;
+      return [
+        { op: "local.get", index: 0 },
+        { op: "local.get", index: 1 },
+        { op: "call", funcIdx: deletedIdx },
+        { op: "i32.eqz" },
+        { op: "if", blockType: { kind: "empty" }, then: armBlock },
+      ];
+    }
+    return [
+      // (#4098 G1 s1) BEFORE the field arms: each arm below returns unconditionally
+      // on a name match, so a screen after them could never run. Narrowing only.
+      ...buildTombstoneScreen(ctx, [{ op: "i32.const", value: 0 }, { op: "return" }]),
+      ...armBlock,
+    ];
   };
   // Closed compiler fields are ordinary own data properties and therefore
   // enumerable by default. Define/reflag paths that need live descriptor flags
   // are already widened to the open `$Object` runtime rather than remaining on
   // this physical-field path.
-  for (const name of ["__object_hasOwn", "__hasOwnProperty", "__propertyIsEnumerable"]) {
+  // (#3920) `__extern_has` joins them in `hasProperty` mode. It backs BOTH the
+  // `in` operator and — less obviously, and this is what kept `for…in` broken
+  // after `__object_keys_forin` was already fixed — the per-visit liveness
+  // re-check the dynamic for-in loop performs on every key it enumerates
+  // (`statements/loops.ts`). With no closed-struct arm it answered "absent" for
+  // each of the names the key vector had just correctly produced, so the loop
+  // skipped every one and enumerated zero. Fixing the key source alone was
+  // measurably not enough; both halves are required.
+  const targets: [name: string, mode: "own" | "hasProperty"][] = [
+    ["__object_hasOwn", "own"],
+    ["__hasOwnProperty", "own"],
+    ["__propertyIsEnumerable", "own"],
+    ["__extern_has", "hasProperty"],
+  ];
+  for (const [name, mode] of targets) {
     const fn = ctx.mod.functions.find((candidate) => candidate.name === name);
     if (fn) {
-      const flatLocalIdx = 2 + fn.locals.length; // 2 params on all three
+      const flatLocalIdx = 2 + fn.locals.length; // 2 params on all four
       fn.locals.push({ name: "__ho_flatkey", type: { kind: "ref_null", typeIdx: ctx.nativeStrTypeIdx } });
-      fn.body.unshift(...buildPrologue(flatLocalIdx));
+      fn.body.unshift(...buildPrologue(flatLocalIdx, mode));
     }
   }
 }
@@ -6673,36 +6730,55 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
  * spellings. `Object.keys` is enumerable-only and builtin internals are not own
  * enumerable properties.
  *
- * That leak is ALREADY LATENT here: `Object.getOwnPropertyNames(/ab/)` returns
- * those same 7 internal fields in standalone today (host answers 1). Fixing it
- * needs a principled user-declared-vs-builtin struct predicate, which does not
- * exist yet — `isSyntheticStructName` only screens `Wrapper*` / `$AnyValue` /
- * `__vec_*` / `__arr_*`. Tracked separately; do not re-share these arms until
- * that predicate lands.
+ * (#3920) **That predicate now exists** — `isUserDeclaredStruct`
+ * (`user-declared-structs.ts`) — and this pass applies it, so the leak the
+ * paragraph above describes as "ALREADY LATENT here" is closed:
+ * `Object.getOwnPropertyNames(/ab/)` answered **7** in standalone and now
+ * answers 1; `…(new Date(0))` answered 1 and now answers 0. The arms ARE now
+ * shared, via {@link fillClosedStructEnumerationArms}, with `__object_keys`
+ * and `__object_keys_forin` — which is what makes `Object.keys` and `for…in`
+ * over a dynamically-typed closed-struct receiver stop enumerating zero
+ * properties. Keep the screen: sharing without it is what #4071 correctly
+ * reverted.
  */
-export function fillClosedStructOwnPropertyNamesArms(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
-  const targets = ["__getOwnPropertyNames"]
-    .map((name) => ctx.mod.functions.find((candidate) => candidate.name === name))
-    .filter((f): f is NonNullable<typeof f> => f !== undefined);
-  const objVecPushIdx = ctx.funcMap.get("__objvec_push");
-  if (targets.length === 0 || objVecPushIdx === undefined) return;
+type EnumOwnField = { name: string; presenceSlot?: PresenceSlot; cold?: ColdFieldLocation };
+type EnumShapeEntry = {
+  typeIdx: number;
+  fields: EnumOwnField[];
+  shapeFieldIdx?: number;
+  shapeId?: number;
+};
 
-  type OwnField = { name: string; presenceSlot?: PresenceSlot; cold?: ColdFieldLocation };
-  type ShapeEntry = {
-    typeIdx: number;
-    fields: OwnField[];
-    shapeFieldIdx?: number;
-    shapeId?: number;
-  };
-  const entries: ShapeEntry[] = [];
-
+/**
+ * (#3920) The ONE authority for "which names does a closed struct enumerate".
+ *
+ * Extracted so `Object.getOwnPropertyNames`, `Object.keys` and `for…in` cannot
+ * drift apart. They previously could: only `__getOwnPropertyNames` had arms, so
+ * the other two answered zero on every closed-struct receiver, and any fix that
+ * hand-copied the derivation would have re-opened that gap on the next change.
+ *
+ * The name list comes from the struct's FIELD list; per-name liveness comes
+ * from the base PRESENCE words (`presenceSlotOf` / `presenceTestInstrs`) and,
+ * for #3927's split shapes, from the cold tail's presence. That division is
+ * deliberate and is what keeps enumeration independent of where a value is
+ * physically stored: presence words live in the base struct at fixed indices,
+ * so a per-type layout split moves values without moving the answer. (Deriving
+ * the NAMES from presence words is not possible — a presence word holds bits,
+ * not names, and unconditionally-assigned fields have no presence bit at all.)
+ */
+function collectClosedStructEnumerationEntries(ctx: CodegenContext): EnumShapeEntry[] {
+  const entries: EnumShapeEntry[] = [];
   for (const [structName, fields] of ctx.structFields) {
     if (isSyntheticStructName(structName)) continue;
+    // (#3920) Builtin carriers (`__Date.timestamp`, the 7 internal RegExp
+    // fields, …) are internal slots, not own properties. Without this screen
+    // the arms answer `Object.keys(new Date(0)) === ["timestamp"]` — the exact
+    // wrong answer that made #4071 revert sharing them.
+    if (!isUserDeclaredStruct(ctx, structName)) continue;
     const typeIdx = ctx.structMap.get(structName);
     if (typeIdx === undefined) continue;
 
-    const byName = new Map<string, OwnField>();
+    const byName = new Map<string, EnumOwnField>();
     for (const field of fields) {
       if (!field?.name || field.name.startsWith("$") || field.name.startsWith("__")) continue;
       const presenceSlot = presenceSlotOf(fields, field.name);
@@ -6729,72 +6805,107 @@ export function fillClosedStructOwnPropertyNamesArms(ctx: CodegenContext): void 
       ...(shapeFieldIdx >= 0 && shapeId !== undefined ? { shapeFieldIdx, shapeId } : {}),
     });
   }
+  return entries;
+}
+
+/**
+ * (#3920) The ONE emitter for closed-struct enumeration arms.
+ *
+ * Emits, per shape, a `ref.test`-guarded block that pushes that shape's live
+ * own names into an `$ObjVec` and returns it. Shared by
+ * `Object.getOwnPropertyNames`, `Object.keys` and `for…in` so the three cannot
+ * answer differently for the same receiver.
+ *
+ * `vecLocalIdx` / `vecInit` are the only things that vary between callers.
+ * `__getOwnPropertyNames` initialises its result vector in its own preamble
+ * (local 7) and passes an empty `vecInit`; `__object_keys` / `__object_keys_forin`
+ * have no such preamble, so they pass an appended local plus the two
+ * instructions that allocate into it. `vecInit` is emitted INSIDE the matched
+ * arm, not ahead of the arms, so a receiver that matches no shape never pays an
+ * `$ObjVec` allocation — these helpers are on the dynamic-property hot path.
+ *
+ * Every arm falls through when its `ref.test` misses, so a non-closed-struct
+ * receiver reaches the caller's original body untouched.
+ */
+function buildClosedStructEnumerationArms(
+  ctx: CodegenContext,
+  entries: EnumShapeEntry[],
+  objVecPushIdx: number,
+  vecLocalIdx: number,
+  vecInit: Instr[],
+): Instr[] {
+  const arms: Instr[] = [];
+  for (const entry of entries) {
+    const pushFields: Instr[] = [];
+    for (const field of entry.fields) {
+      const pushName: Instr[] = [
+        { op: "local.get", index: vecLocalIdx },
+        ...nativeStringLiteralInstrs(ctx, field.name),
+        { op: "extern.convert_any" },
+        { op: "call", funcIdx: objVecPushIdx },
+      ];
+      // (#4098 G1 s1) A tombstoned field is not an own property ⇒ not enumerated.
+      const pushLive = buildTombstoneSkip(
+        ctx,
+        [...nativeStringLiteralInstrs(ctx, field.name), { op: "extern.convert_any" }],
+        pushName,
+      );
+      if (field.cold !== undefined) {
+        pushFields.push(
+          ...coldFieldPresenceInstrs(field.cold, [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }]),
+          { op: "if", blockType: { kind: "empty" }, then: pushLive },
+        );
+      } else if (field.presenceSlot === undefined) {
+        pushFields.push(...pushLive);
+      } else {
+        pushFields.push(
+          { op: "local.get", index: 0 },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: entry.typeIdx },
+          ...presenceTestInstrs(entry.typeIdx, field.presenceSlot),
+          { op: "if", blockType: { kind: "empty" }, then: pushLive },
+        );
+      }
+    }
+    const returnNames: Instr[] = [...vecInit, ...pushFields, { op: "local.get", index: vecLocalIdx }, { op: "return" }];
+    const exactThen: Instr[] =
+      entry.shapeFieldIdx === undefined || entry.shapeId === undefined
+        ? returnNames
+        : [
+            { op: "local.get", index: 0 },
+            { op: "any.convert_extern" },
+            { op: "ref.cast", typeIdx: entry.typeIdx },
+            { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: entry.shapeFieldIdx },
+            { op: "i32.const", value: entry.shapeId },
+            { op: "i32.eq" },
+            { op: "if", blockType: { kind: "empty" }, then: returnNames },
+          ];
+    arms.push(
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: entry.typeIdx },
+      { op: "if", blockType: { kind: "empty" }, then: exactThen },
+    );
+  }
+  return arms;
+}
+
+export function fillClosedStructOwnPropertyNamesArms(ctx: CodegenContext): void {
+  if (!ctx.standalone) return;
+  const targets = ["__getOwnPropertyNames"]
+    .map((name) => ctx.mod.functions.find((candidate) => candidate.name === name))
+    .filter((f): f is NonNullable<typeof f> => f !== undefined);
+  const objVecPushIdx = ctx.funcMap.get("__objvec_push");
+  if (targets.length === 0 || objVecPushIdx === undefined) return;
+
+  const entries = collectClosedStructEnumerationEntries(ctx);
   if (entries.length === 0) return;
 
   // (#4071) Built fresh PER TARGET, never cloned. `structuredClone` preserves
   // internal aliasing, so a shared `Instr` object reachable from two function
   // bodies would be remapped twice by `shiftLateImportIndices` (the #1302
   // hazard). Re-running the builder is cheap and sidesteps that entirely.
-  const buildArms = (): Instr[] => {
-    const arms: Instr[] = [];
-    for (const entry of entries) {
-      const pushFields: Instr[] = [];
-      for (const field of entry.fields) {
-        const pushName: Instr[] = [
-          { op: "local.get", index: 7 },
-          ...nativeStringLiteralInstrs(ctx, field.name),
-          { op: "extern.convert_any" },
-          { op: "call", funcIdx: objVecPushIdx },
-        ];
-        // (#4098 G1 s1) A tombstoned field is not an own property ⇒ not enumerated.
-        const pushLive = buildTombstoneSkip(
-          ctx,
-          [...nativeStringLiteralInstrs(ctx, field.name), { op: "extern.convert_any" }],
-          pushName,
-        );
-        if (field.cold !== undefined) {
-          pushFields.push(
-            ...coldFieldPresenceInstrs(field.cold, [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }]),
-            { op: "if", blockType: { kind: "empty" }, then: pushLive },
-          );
-        } else if (field.presenceSlot === undefined) {
-          pushFields.push(...pushLive);
-        } else {
-          pushFields.push(
-            { op: "local.get", index: 0 },
-            { op: "any.convert_extern" },
-            { op: "ref.cast", typeIdx: entry.typeIdx },
-            ...presenceTestInstrs(entry.typeIdx, field.presenceSlot),
-            { op: "if", blockType: { kind: "empty" }, then: pushLive },
-          );
-        }
-      }
-      const returnNames: Instr[] = [...pushFields, { op: "local.get", index: 7 }, { op: "return" }];
-      const exactThen: Instr[] =
-        entry.shapeFieldIdx === undefined || entry.shapeId === undefined
-          ? returnNames
-          : [
-              { op: "local.get", index: 0 },
-              { op: "any.convert_extern" },
-              { op: "ref.cast", typeIdx: entry.typeIdx },
-              { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: entry.shapeFieldIdx },
-              { op: "i32.const", value: entry.shapeId },
-              { op: "i32.eq" },
-              { op: "if", blockType: { kind: "empty" }, then: returnNames },
-            ];
-      arms.push(
-        { op: "local.get", index: 0 },
-        { op: "any.convert_extern" },
-        { op: "ref.test", typeIdx: entry.typeIdx },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: exactThen,
-        },
-      );
-    }
-    return arms;
-  };
+  const buildArms = (): Instr[] => buildClosedStructEnumerationArms(ctx, entries, objVecPushIdx, 7, []);
 
   // Other finalize fills may already have prepended family classifiers. Anchor
   // to the semantic provider's actual result-vector initialization rather than
@@ -6815,6 +6926,77 @@ export function fillClosedStructOwnPropertyNamesArms(ctx: CodegenContext): void 
     if (initIdx < 0) continue;
     // Each target owns its own instruction objects — see `buildArms` above.
     fn.body.splice(initIdx + 2, 0, ...buildArms());
+  }
+}
+
+/**
+ * (#3920) Teach `Object.keys` and `for…in` about closed compiler structs.
+ *
+ * THE DEFECT THIS CLOSES. Six dynamic helpers back the reflective surfaces in
+ * the standalone object runtime. Three had closed-struct arms
+ * (`__object_hasOwn`/`__hasOwnProperty`/`__propertyIsEnumerable`,
+ * `__getOwnPropertyNames`, `__extern_get`) and three did not (`__object_keys`,
+ * `__object_keys_forin`, `__extern_has`). The three without treat any
+ * non-`$Object` receiver as having no properties, so once a class or
+ * constructor-function instance arrived through a dynamically-typed binding —
+ * an `any` local, or any call boundary — `for…in` enumerated **zero** of its
+ * properties and `Object.keys` returned an empty array. No throw, no
+ * refusal: a silently wrong answer. Measured on `main`, standalone, for a
+ * 3-property instance:
+ *
+ *   receiver spelling            for…in   Object.keys   gOPN   hasOwnProperty
+ *   statically typed at the use     3          3          3          1
+ *   via an `any` local              0          0          3          1
+ *   via a parameter                 0          0          3          1
+ *
+ * The statically-typed row passes because it never reaches these helpers at
+ * all — codegen resolves the field set at compile time. That row is why the
+ * bug reads as "works" if measured with the wrong fixture.
+ *
+ * WHY THE ARMS WERE NOT SIMPLY SHARED BEFORE. #4071 tried exactly that and
+ * reverted it: `ctx.structFields` includes builtin carriers whose internal
+ * fields are not `$`/`__`-prefixed, so sharing made `Object.keys(new Date(0))`
+ * answer `["timestamp"]` — trading a real gain for a new silent wrong answer.
+ * `isUserDeclaredStruct` (#3920) is the predicate that note asked for; with it
+ * the sharing is sound, and it also closes the same leak where it had ALREADY
+ * shipped through `__getOwnPropertyNames` (`Object.getOwnPropertyNames(/ab/g)`
+ * answered 7 internal fields).
+ *
+ * ORDER OF THE PREPEND MATTERS. These arms go at body index 0, ahead of the
+ * `$__vec_base` index-key arm installed by {@link fillObjectRuntimeVecArms}.
+ * The two are disjoint by construction — a receiver cannot be both a user
+ * struct and a vec — so the order is not a correctness question between them;
+ * index 0 is chosen so the arms sit ahead of the eager `$Object`-only body,
+ * which would otherwise return an empty result first.
+ *
+ * Standalone-only: host mode's JS `__object_keys` sees a real JS object and
+ * needs none of this.
+ */
+export function fillClosedStructEnumerationArms(ctx: CodegenContext): void {
+  if (!ctx.standalone) return;
+  const objVecNewIdx = ctx.funcMap.get("__objvec_new");
+  const objVecPushIdx = ctx.funcMap.get("__objvec_push");
+  if (objVecNewIdx === undefined || objVecPushIdx === undefined) return;
+
+  const entries = collectClosedStructEnumerationEntries(ctx);
+  if (entries.length === 0) return;
+
+  for (const name of ["__object_keys", "__object_keys_forin"]) {
+    const fn = ctx.mod.functions.find((candidate) => candidate.name === name);
+    if (!fn) continue;
+    // `(externref obj) -> externref`: one param, so the first appended local
+    // sits at 1 + locals.length. Locals are APPENDED, never renumbered, so
+    // every previously-baked index in this body stays valid.
+    const vecLocalIdx = 1 + fn.locals.length;
+    fn.locals.push({ name: "__enum_out", type: { kind: "externref" } });
+    // Fresh instruction objects per target — a shared `Instr` reachable from
+    // two bodies is remapped twice by `shiftLateImportIndices` (#1302).
+    fn.body.unshift(
+      ...buildClosedStructEnumerationArms(ctx, entries, objVecPushIdx, vecLocalIdx, [
+        { op: "call", funcIdx: objVecNewIdx },
+        { op: "local.set", index: vecLocalIdx },
+      ]),
+    );
   }
 }
 
