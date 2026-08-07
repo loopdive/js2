@@ -317,3 +317,32 @@ Also: the pool worker imports `scripts/compiler-bundle.mjs` and
 `scripts/run-test262-vitest.sh` does) or the arm measures the previous compiler.
 This is the same family as the provider-cache trap and is not yet in
 `.claude/memory/reference_standalone_eval_instrument_reports_unmeasured_failures.md`.
+
+---
+
+## Handoff — 2026-08-07
+
+The Tier-2 HasBinding fix landed (PR #4197) and the issue stays `ready` on
+purpose: yield was **0**, and ~105 files remain.
+
+**The real head of this cluster is NOT `with`, and it still has no issue.**
+The 19-file `p1 === null` bucket is blocked by a defect that reproduces with no
+`with` anywhere:
+
+```js
+this.p1 = 1;
+p1 = 'x1';   // bare `p1` and `this.p1` use different storage
+```
+
+Re-verified on the merged tip **after #4205 landed** — still fails. That is
+**global-binding unification**, ≥19 files, unowned and unfiled. File it before
+staffing any more `with` work.
+
+Also settled here, so it is not re-derived: cohort A (the 39 `#1387` gate
+refusals) is measured **downstream** of cohort D — `S12.10_A1.7_T1` is
+`A1.1_T1`'s body wrapped in a function expression, and `A1.12`/`A1.8`/`A3.7`/`A3.8`
+stand in the same relation. Implementing closure capture of the object
+environment would land those 39 on exactly the failures cohort D already has, so
+expected yield ≈ 0. Sequence it after D, or not at all until D moves.
+
+Session-wide context: `plan/agent-context/session-2026-08-07-lead-handoff.md`.

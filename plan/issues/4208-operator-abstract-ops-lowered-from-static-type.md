@@ -388,3 +388,38 @@ Highest-value next slice is **S3** (16 files): one `OrdinaryToPrimitive` engine
 covering the relational operators, `+`, and the unary numeric operators. S7's 2
 files are the same engine reached from the unary path, so S3 and S7 are one
 piece of work worth 18.
+
+---
+
+## Handoff — 2026-08-07 (S3+S7 lane killed by a container restart)
+
+**Unmerged work exists on `issue-4208-s3s7-ordinarytoprimitive` @ `5a2b4f04b0`,
+fully pushed (local == remote), no open PR.** The lane started late and was
+killed early, so **its contents are UNASSESSED** — read the two-dot diff against
+`main` before assuming any part is complete. Do not assume it is empty either.
+
+Two constraints inherited from S1 that must survive whoever picks this up:
+
+1. **Do NOT re-do S1.** `src/codegen/strict-eq-type-disjoint.ts` is on main and
+   owns both the strict-equality fold *and* the i32/f64 promotion whose **order**
+   was the actual fix.
+2. **Do NOT remove the Boolean `++`/`--` guard `isUpdateRetypedBoolean` on the
+   assumption it is redundant.** It was proven load-bearing by a kill-switch
+   experiment — with #4204's widening present on main and *only* the guard
+   disabled, `var x = true; x--` fails again on both
+   `postfix-decrement/S11.3.2_A3_T1.js` and `prefix-decrement/S11.4.5_A3_T1.js`.
+   It can only be removed by repeating that proof.
+
+   It **should** be removed by the S2 PR (extending #4204's
+   `heterogeneous-scalar-var-widening` predicate to UpdateExpression targets),
+   because at that point those files pass because `x` holds a real Number rather
+   than because a fold declined. A guard left behind then is a dead constraint
+   that reads as live. That removal is recorded as an acceptance criterion on S2
+   with its reason, not just as an instruction.
+
+**S2 remains blocked** on that predicate extension: `var x = "1"; x--` is a
+*no-op*, not a mis-coercion — the ref-typed local arm computes the value and
+never stores it, so it cannot be fixed inside the update operator.
+
+Session-wide context, including the census-reliability record that bears on this
+issue's own file counts: `plan/agent-context/session-2026-08-07-lead-handoff.md`.
