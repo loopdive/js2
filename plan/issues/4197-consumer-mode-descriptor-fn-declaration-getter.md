@@ -99,6 +99,18 @@ goal) owns this seam per `plan/method/lane-partition.md`.
   plain-object receivers in a consumer-mode module.
 - The `15.2.3.6-4-2xx` accessor family moves on the 558-file descriptor lever
   (expect on the order of +50..119; re-census, don't assume).
+
+> **Sizing caveat — re-measure the +50..119 AFTER #4163 lands (tech-lead
+> directive, 2026-08-07).** Until the runner seam fix merges, the in-process
+> `tests/test262-runner.ts` omits the `js2wasm:runtime-eval` namespace that
+> `scripts/test262-worker.mjs` supplies, and the link error OVERWRITES the real
+> per-file signature — for precisely the consumer-mode modules this estimate
+> covers. The figure above was measured through W5's instantiate-hook shim
+> (`.tmp/w5-child.mts`), which papers over that seam; an unshimmed re-measure,
+> or any measure across the #4163 boundary, can move for reasons unrelated to
+> a fix. Sequence this issue after #4163, and validate the instrument
+> two-sided before quoting a delta (see
+> `.claude/memory/reference_standalone_eval_instrument_reports_unmeasured_failures.md`).
 - Non-consumer modules byte-identical.
 - Secondary (same census, smaller): consumer-mode boolean results surface as
   `1`/`0` instead of `true`/`false` (`captureWorks=1` in p19), which fails
