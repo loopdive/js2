@@ -1,5 +1,44 @@
 # ES5 standalone lever census — 2026-08-07 (W23)
 
+> ## ⚠ CORRECTION, 2026-08-07 — lever #1 and the whole masking analysis (§4) are WRONG
+>
+> W25 implemented #4205 and measured it. Two load-bearing claims below do not
+> survive contact:
+>
+> **1. Lever #1 is not 133 files. It is 7.** The root cause this census
+> attributed to it **does not reproduce**: `this.p1 = 1; if (!(p1 === 1)) throw`
+> compiles and runs clean in `--target standalone` on unmodified main, 0
+> imports. The `!ctx.standalone` conjunct in `isScriptGlobalThisReceiver` is
+> **gOPD-local** and is not on that path. **"Standalone has no realm global
+> object" has been false since #2996** (`emitNativeGlobalThisObject` — a real,
+> identity-stable `$Object` singleton); #3956 + #3365 + #2996 already compose
+> into a working script-goal global object. Result: **FIXED 7 · BROKE 0**
+> (PR #4192).
+>
+> **2. §4's masking claim is false, and it was the most consequential thing in
+> this document.** Predicted: ~96 `with` files reclassify once #4205 lands.
+> Measured across 388 files, per file: **ZERO changed error signature.**
+> Delta-debugging `with/S12.10_A1.1_T1.js` isolates a **pure `with` defect** —
+> drop one `valueOf` member from the with-object and the same file fails on
+> `p1='x1'` instead of `p1=null`, i.e. the with-scoped assignment wrote through
+> to the global.
+>
+> **Consequences for anyone steering from this document:**
+> - **Estimate #4206 from its own mechanism, UNDISCOUNTED.** The "+68 masked"
+>   adjustment and the "sequence #4205 before #4206" instruction in §4, §7 and
+>   §8 are void. There is no sequencing dependency.
+> - Do not inherit any count in the table without re-deriving it. §0 already
+>   says **no local compile was run**; lever #1 is what that limitation looks
+>   like in practice — a shape predicate matched 133 files, and 126 of them were
+>   failing for other reasons entirely.
+> - The method failure is specific and worth naming: **co-occurrence was read as
+>   causation.** "128 of the 133 also match another mechanism, and the
+>   global-`this` assertion appears on an earlier line" is evidence of textual
+>   ordering, not of one failure blocking another. The line-number argument in
+>   §4 felt like a measurement and was not one.
+>
+> Everything below is left as originally written, for provenance.
+
 Ranked, mechanism-bucketed census of the **ES5-label `--target standalone`**
 failing residue, produced to steer the "90 % ES5 standalone" goal. Bucketing is
 by **mechanism** (established by reading the failing source and locating the
@@ -148,6 +187,11 @@ files against it.
 
 ## 4. Masking — the most consequential structural fact
 
+> **⚠ THIS ENTIRE SECTION IS RETRACTED — see the correction at the top.**
+> Measured per file across 388 files: **0 reclassified**, not 96. `with` is an
+> independent mechanism; there is no #4205 → #4206 sequencing dependency. The
+> reasoning below mistook co-occurrence and line ordering for causation.
+
 **128 of the 133 script-goal-global-object files also match another
 mechanism**, and 96 of them are `with` tests. In every one inspected, the
 global-`this` assertion fires *first*:
@@ -223,8 +267,14 @@ Two forms, both measured:
 
 ## 7. Recommended sequencing
 
-1. **#4205 script-goal global object** (133) — first, because it unmasks 96
-   `with` files and 41 others. Unowned.
+> **⚠ Item 1 is spent and item 5's `+68 after #4205` is void — see the
+> correction at the top.** #4205 measured **7 files**, not 133, and unmasked
+> **nothing**. Revised head of the queue: **#4206 `with`** (sized from its own
+> mechanism, undiscounted), then #2928, #2668, #4208, #4207.
+
+1. ~~**#4205 script-goal global object** (133) — first, because it unmasks 96
+   `with` files and 41 others. Unowned.~~ **DONE, PR #4192 — 7 files, unmasked
+   nothing.**
 2. **#2928 interpreter lane** (164 union) — one substrate, one number, and the
    only lever whose payoff is not entangled with any other. Currently
    `released`, not claimed.
@@ -236,15 +286,15 @@ Two forms, both measured:
 4. **#4208 operator abstract-ops** (55) — high value beyond ES5: it is the
    root of ~16 files currently mis-filed as crashes, and 45 of its 55 fail in
    host too.
-5. **#4207 transferred proto method** (59) and **#4206 `with`** (39 + 11, then
-   +68 after #4205).
+5. **#4207 transferred proto method** (59) and **#4206 `with`** (39 + 11; the
+   "+68 after #4205" adjustment is **void** — measured 0 reclassified).
 
 ## 8. New issues filed by this census
 
 | id | lever | files | why it was not already filed |
 | --- | --- | --- | --- |
-| #4205 | script-goal global object | 133 | #2727 covers only `typeof this === "object"`; the binding-creation half was never sized |
-| #4206 | `with` statement residue | 39 + 11 (+68 masked) | #671 is a 2026-03 backlog stub with no sizing; #1387/#3025 are done |
+| #4205 | script-goal global object | ~~133~~ → **7 measured** | #2727 covers only `typeof this === "object"`; the binding-creation half was never sized. **The 133 was wrong — see the correction at the top.** |
+| #4206 | `with` statement residue | 39 + 11 (~~+68 masked~~ — **void**, 0 measured) | #671 is a 2026-03 backlog stub with no sizing; #1387/#3025 are done |
 | #4207 | transferred builtin proto method | 70 (59 primary) | #3992 fixed the argument slot, #4076 fixed the `.call` form; the transfer form's `this` handling is uncovered |
 | #4208 | operator abstract-ops from static type | 55–59 | #3055/#4183 cover only `===` on boxed values |
 

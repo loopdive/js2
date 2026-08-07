@@ -1,6 +1,6 @@
 ---
 id: 4206
-title: "`with` statement: the closed-object-literal-shape gate hard-refuses 39 ES5 standalone files and 11 more mis-resolve — 68 further files are blocked behind #4205, not behind `with`"
+title: "`with` statement: the closed-object-literal-shape gate hard-refuses 39 ES5 standalone files and 11 more mis-resolve — plus 68 previously mis-attributed to #4205 that are measured to be `with`'s own"
 status: ready
 sprint: current
 created: 2026-08-07
@@ -29,18 +29,36 @@ the lever.** Splitting by what actually fails first:
 | --- | --- | --- |
 | Compiler hard-refuses at the gate | **39** | error text is literally `#1387: with statement requires a proven closed object-literal shape before codegen` |
 | Runtime scope-chain misresolution, no `this.x=` contamination | **11** | `Scope chain disturbed`, `with(null) x = 2 must throw TypeError`, `o.foo` wrong |
-| Also carry a script top-level `this.x = …` — **first failure is #4205, not `with`** | **68** | e.g. `S12.10_A1.1_T1.js` dies on line 61 (`p1 === 1. Actual: null`), `with` block is on line 42 |
+| Also carry a script top-level `this.x = …` — ~~first failure is #4205, not `with`~~ **MEASURED: these are `with`'s own** | **68** | see the correction below |
 | total | 118 | |
 
 Only **12 of the 118 pass in the host lane**, so this is a general semantics
 gap, not a standalone-lowering gap.
 
-**Do not quote 118 as this issue's yield.** The honest expectation is 39 + 11 =
-**50**, plus up to 68 more *after* #4205 lands. Per
-`[[reference_error_signature_is_not_a_bucket_boundary]]`, a masked file counts
-toward neither fix until both land — and when #4205 lands first, those 68 will
-surface as *fresh* `with` failures, which reads as a regression to anyone who
-did not write this down.
+### ⚠ CORRECTION (2026-08-07, W25 — supersedes the masking claim above)
+
+The original text said those 68 were blocked behind #4205 and that this issue
+should be discounted to **50** until #4205 landed. **That is measured false.**
+
+#4205 was implemented (PR #4192) and A/B'd over 388 files, per file:
+**ZERO changed error signature.** Not 96, not 68 — zero.
+
+Delta-debugging the canonical `with/S12.10_A1.1_T1.js` against the runner's own
+message as invariant isolates a **pure `with` defect**: remove one `valueOf`
+member from the with-object and the same file fails on `p1='x1'` instead of
+`p1=null` — i.e. the with-scoped assignment wrote **through to the global**.
+That is this issue's mechanism, not a global-`this` binding failure.
+
+**So: size this issue from its own mechanism, undiscounted. There is no #4205
+sequencing dependency, and nothing here counts toward another issue's yield.**
+
+The original inference was that the global-`this` assertion appears on an
+earlier *line* than the `with` block, so it must fail first. That is textual
+ordering, not causation — it reads like a measurement and is not one. Re-derive
+the population with the compiler's own predicates over effective source rather
+than inheriting any count on this page; the census that produced them ran **no
+local compiles**, and its lever #1 was wrong by a factor of 19 for exactly that
+reason.
 
 ## Root cause
 
@@ -97,7 +115,11 @@ Representative: `language/statements/with/S12.10_A1.12_T1.js`,
 - [ ] The 5 `S10.2.2_A1_T*` scope-chain files resolve identifiers through the
       object environment record.
 - [ ] `with(null)` / `with(undefined)` throw TypeError.
-- [ ] A/B reports the 50-file cohort and the 68 #4205-masked files **separately**.
+- [ ] A/B reports the **gate-refusal** cohort (the `#1387` path) and the
+      **runtime wrong-answer** cohort separately — they are plausibly different
+      work with different risk, and one PR may not want to carry both.
+      (The old "report the 68 #4205-masked files separately" criterion is void:
+      measured 0 masked.)
 
 ## Measurement provenance
 
