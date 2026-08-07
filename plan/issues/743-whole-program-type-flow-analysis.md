@@ -2,7 +2,7 @@
 id: 743
 title: "Whole-program type flow analysis"
 status: in-progress
-assignee: ttraenkler/opus-impl-3
+assignee: ttraenkler/opus-impl-4
 created: 2026-03-22
 updated: 2026-08-07
 priority: critical
@@ -1562,3 +1562,264 @@ levers are unchanged in rank: (1) ref/string-typed slot consumption for the ≈5
 atoms the graph already proves, (2) `this`-field-read arguments beyond what the
 mutual fixpoint reaches. Neither is an evaluator-precision question, which is
 what this slice and the one above it have now exhausted.
+
+## Implementation Plan — ref/string consumer ABI (Fable spec, 2026-08-07)
+
+Spec for re-ranked **lever 2** — extend the fnctor field-slot consumer beyond
+f64 to ref (`(ref null $__fnctor_F)`) and native-string (`(ref null $AnyString)`)
+slots, for the "≈5 non-f64 atoms the graph already PROVES" bucket the 2026-08-06
+method-edges section named. Measured against `origin/main` + this branch
+(`claude/issue-743-i32-producer` @ `ffc8ca8bf`, i.e. PR #4202's rules included);
+line anchors are from that revision.
+
+### 0. Verdict first (pricing): **DO NOT BUILD.** The bucket is 1 slot, not 5, and that 1 slot is worth ZERO bytes — measured, not predicted
+
+Three numbers decide it, all measured on the pinned acorn 8.16.0 dist in this
+worktree:
+
+1. **The bucket is 1, not ≈5.** Cross-referencing the census's 39 `unknown`
+   rows against the satellite's per-owner **FIELD** facts (`JS2WASM_LOG_FNCTOR_GRAPH=1`,
+   `src/ir/fnctor-method-edges.ts:262`), exactly **two** unknown slots carry a
+   non-`dynamic` field fact: `TokContext.token` (`string`) and
+   `RegExpValidationState.parser` (`object`). `object` is a **structural** atom
+   with no nominal identity, so it cannot name a struct type (§2). That leaves
+   **one** typeable slot on the whole corpus.
+2. **The ≈5 figure was read off PARAM facts, and params are the wrong
+   quantity.** The 2026-08-06 section cited `TokenType(string, dynamic)` /
+   `TokContext(string, bool, bool, dynamic, bool)` — those are ctor-parameter
+   facts, and they predate the mutual fixpoint (2026-08-07), which is what first
+   made per-field facts exist. A slot must agree with **every** write the
+   analysis can see, not just the constructor's. Measured, `TokenType.label`'s
+   param fact is `string` while its FIELD fact is `dynamic` (§3.1). Pricing a
+   slot lever off param facts overcounts it by 5×.
+3. **Flipping the one typeable slot changes the emitted binary by 0 bytes.**
+   A/B'd by file copy in one worktree (`JS2WASM_TMP_TOKCTX=1` forcing
+   `TokContext.token` into the #3753 `$AnyString` promotion at
+   `fnctor-escape-gate.ts:1808`, verified applied by instrumenting the
+   post-promotion field list → `token:ref_null,isExpr:i32,preserveSpace:i32,
+   override:externref,generator:i32`): **937,301 B before and after**, canaries
+   2,3,4,5, imports `[]`, exactly the 3 pre-existing IR-FALLBACKs. The slot is
+   constructed 10× at module init and read 4× module-wide; `-O3` normalises the
+   difference away completely.
+
+Under the program's own rule (< ~5 movers ⇒ say so), the recommendation is **do
+not implement**. This is the third consecutive slice to price out, and the
+reason has now converged: the bucket that remains is not gated on which ABI the
+consumer can express, it is gated on `Parser.pos`'s field fact (lever 3 of the
+locals spec's §8 list — the XL string-builtin/provenance program).
+
+### 1. Baseline re-verified in this lane (do not take it on trust)
+
+`JS2WASM_FNCTOR_FIELD_PROVENANCE=1 JS2WASM_FNCTOR_CTOR_PARAM_TYPES=1`,
+standalone acorn `-O3`, via a probe over
+`tests/dogfood/acorn-standalone-compile.mjs` reading
+`fnctorFieldProvenanceRecords()`:
+
+- census **56 typed / 1 discarded / 39 unknown** (96 rows), binary **937,301 B**,
+  compile 64.4 s, canaries **2,3,4,5**, imports `[]`, errors = exactly the 3
+  parity IR-FALLBACKs (`parse` / `parseExpressionAt` / `tokenizer`).
+
+Matches PR #4202's stated numbers exactly. The single `discarded` row is
+`Parser.options` (the #2937 object-hash-consumer path), unchanged since #4155.
+
+### 2. The REF half — every slot fails, and for TWO independent reasons
+
+The prompt's premise was that #4155 Phase 1's machinery
+(`resolveFnctorInstanceType`, `fnctor-typed-instances.ts:74`) makes ref slots
+cheap: it already maps an instance type onto a reserved `$__fnctor_F` with
+guarded casts and presence tracking. That machinery is real and it already
+fires — it is exactly what took the `discarded` bucket 4 → 1 and typed
+`Parser.type`, `Node.loc`, `Token.loc`. **The excluded-comment's recorded fears
+(`fnctor-ctor-param-types.ts:32-34`, "refs … carry their own null and identity
+questions at a struct field") are therefore SOLVED for the case they cover.**
+`Node.loc` is `ref_null` **and** presence-tracked today, which settles the
+`Node.loc` interplay question directly: presence bits (#2847) are orthogonal to
+the slot type, and the #3683/#3753 carve-outs on `onlyConditional` exist because
+those are POST-derivation promotions of a slot whose dispatcher arm must still
+answer `undefined` — a checker-derived ref slot never had that problem.
+
+What is NOT solved is getting a *name* for the type when the checker has
+nothing. Measured per slot (probe: run `analyzeFnctorEscapeGate` over the dist,
+print each ctor's first `this.<f> = …` carrier and
+`receiverStruct.get(carrier)`):
+
+| slot | ctor carrier (acorn dist) | why no `(ref null $__fnctor_F)` |
+| --- | --- | --- |
+| `Parser.startLoc`, `Parser.endLoc` | `this.curPosition()` | **(a)** `Position` is **not an approved fnctor** — gate classification `{"keep-static":3}`, `approvedNames = TokenType, SourceLocation, Parser, Node, BranchID, RegExpValidationState`. No reserved struct exists to name. **(b)** `curPosition` is guarded by `if (this.options.locations)`, so it is not the single-return chain `inferReturnStruct` requires |
+| `Parser.lastTokStartLoc`, `Parser.lastTokEndLoc` | `null` | same (a); the later writes are Positions |
+| `SourceLocation.start`, `SourceLocation.end` | bare params `start` / `end` | same (a); plus no provenance — the call args are `p.startLoc` / `p.endLoc`, property reads that `buildReceiverStructMap` (`:1157`) does not bind |
+| `Token.type`, `Token.value`, `Token.start`, `Token.end` | `p.type` / `p.value` / `p.start` / `p.end` | `Token` not approved; and `p` is unpinned because the site is `new Token(this)` and `inferExprStruct` (`:1188`) has **no bare-`this` rule** (it handles `this` only inside `new this(…)`, `:1202`). Even pinned, the carriers are field READS, not the instance |
+| `BranchID.parent`, `BranchID.base` | `parent`, `base \|\| this` | field facts `dynamic`; `this` unhandled as above |
+| `RegExpValidationState.parser` | bare param `parser` | field fact is `object` — **structural, not nominal**. Site is `new RegExpValidationState(this)`, so `receiverStruct` binds nothing for the same bare-`this` gap. The ONE slot where a bounded extension exists (§2.1) |
+| `Node.sourceFile`, `Parser.sourceFile` | `parser.options.directSourceFile`, `options.sourceFile` | not ref-class — string-or-undefined config reads, field fact `dynamic` |
+
+`receiverStruct` on this corpus has 1,128 entries and pins **exactly one**
+constructor carrier: `Parser.type = types$1.eof → __fnctor_TokenType` — the slot
+that is already typed. Zero ref-class unknowns are reachable through it.
+
+#### 2.1 The one extension that would work, and why it is still a no
+
+Teaching `inferExprStruct` a bare-`this`-inside-a-lifted-proto-method rule
+(`resolveEnclosingFnctorOwner`, already used at `:1203`) would pin
+`RegExpValidationState`'s `parser` param to `__fnctor_Parser`. Do not do it as
+part of a *slot* lever:
+
+- `receiverStruct` is a **use-site flow map with ambiguity invalidation**
+  (`:1252-1269`), not a write-set join. It answers "this expression is an F" for
+  a dispatch pin, where a wrong answer costs nothing because the pin is checked.
+  A **slot type** must hold every value ever written to the field, which is a
+  different obligation and one this map never took on.
+- The failure mode is materially worse than the family's accepted bound. For
+  f64 a violating write is ToNumber-coerced to NaN; for `$AnyString` it becomes
+  `ref.null`. Both are *coercions* in the sense that the store is total and the
+  value class is preserved-or-degraded predictably. For a **specific struct**
+  target there is no JS coercion at all: `type-coercion.ts:2290` emits
+  `local.tee / any.convert_extern / local.tee / ref.test T / if` and the else
+  arm is `ref.null` (`:2340`) — a wrong value is silently **destroyed**, and the
+  field reads back as absent. That is a new failure class, not an extension of
+  an accepted one.
+- Payoff: `.parser` has 5 syntactic accesses in the whole dist, none in the
+  tokenizer.
+
+### 3. The STRING half — one slot, and the lane split is already precedent
+
+#### 3.1 Why four of the five "proven string" slots are not proven
+
+| slot | param fact | FIELD fact | why the field widens |
+| --- | --- | --- | --- |
+| `TokContext.token` | `string` | **`string`** | only write is `this.token = token` (dist `:2428`) — **TYPEABLE** |
+| `TokenType.label` | `string` | `dynamic` | name-based `"all"` attribution: `node.label = null` (`:1054`), `node.label = this.parseIdent()` (`:1057`), `node.label = expr` (`:1340`) are writes to a *Node*, and the sound over-approximation drags every owner's `label`. Same shape as the `err.pos = pos` pin the mutual-fixpoint section measured |
+| `TokenType.keyword` | — | `dynamic` | the ctor write is `this.keyword = conf.keyword` (`:112`) — a property read on an untracked base, which `inferExpr` types DYNAMIC. (`options.keyword = name` at `:136` would contribute `string`; it is not the binding write) |
+| `TokContext.override` | `dynamic` | `dynamic` | ctor param 3 is a function-or-`undefined` (`this.override = override`, `:2431`) |
+| `SourceLocation.source` | — | `dynamic?` | `p.sourceFile` property read, **and** presence-tracked |
+
+So the string bucket is **1**, and it is a slot #3753's own name-keyed analysis
+already declines: `analyzeStringPropertyNames` requires ≥1 *provably* string
+write, and `this.token = token` is a bare parameter read, which that analysis
+classifies as opaque by design. The satellite's contribution is real — it is the
+only thing on the corpus that can prove that parameter is a string — it is just
+worth one cold slot.
+
+#### 3.2 Lane split (unchanged from the dts-seeds precedent, if ever built)
+
+The existing #3753 gate at `fnctor-escape-gate.ts:1808` is already exactly the
+required split: `ctx.nativeStrings && ctx.anyStrTypeIdx >= 0 &&
+JS2WASM_STRING_FIELDS !== "0"`. In externref-string lanes the promotion is a
+deliberate ABI **no-op**, mirroring the `.d.ts` string seed. Verified live on
+this corpus: `nativeStrings=true anyStrTypeIdx=6` at TokContext derivation time,
+so the lazy-type hazard the comment warns about does not bite here.
+
+#### 3.3 Conversion costs, at both ends
+
+- **Write** (`externref → ref_null $AnyString`, `type-coercion.ts:2290`):
+  `local.tee` + `any.convert_extern` + `local.tee` + `ref.test` + an `if` whose
+  else arm is TWO further nested test/cast ladders — the `new String(…)` wrapper
+  recovery (`:2312`, via `__wrapper_string_value`) and the `$AnyValue` tag-5
+  payload arm (`:2348`). ≈20 instructions and 2 temp locals **per store site**.
+- **Read** (`ref_null $AnyString → externref`): `ref.is_null` + `extern.convert_any`
+  with an `undefined`-singleton arm (`:1701`), or nothing at all when the
+  consumer wants the native string.
+
+#3753's own justification is that "the cost this removes is per-ACCESS, not
+per-write". `TokContext` inverts that ratio: 10 construction sites against 4
+accesses. That is the arithmetic behind the measured 0-byte delta.
+
+### 4. The payoff question this lever exists for — answered NO on both halves
+
+- **Hot paths.** Syntactic `.name` counts on the dist: `type` 204, `pos` 245,
+  `input` 116 — and all three of those slots are **already typed**
+  (`Parser.type` `ref_null $__fnctor_TokenType` via #4155 Phase 1;
+  `Parser.pos` f64; `Parser.input` `ref` string from the checker). The
+  ref/string candidates are `token` 4, `override` 3, `parser` 5, `label` 7,
+  `startLoc` 20, `endLoc` 4, `branchID` 10. The tokenizer's hot fields are not
+  in this bucket; the ones that are (`Parser.start/end/lastTokStart/lastTokEnd`)
+  are **f64**-class and blocked on `Parser.pos`'s field fact.
+- **`updateContext` specifically.** `TokenType.updateContext` is
+  **method-valued**, and #4155 Phase 2 refuses a property access in callee
+  position outright and by design (`fnctor-typed-reads.ts`, "A member CALL is
+  NEVER static off the struct type" — the rule that killed the #1712 attempt).
+  A typed slot there can never feed it.
+- **Do the dormant flags get values?** No. #4155 Phase 2 needs a receiver whose
+  compiled ValType is a `$__fnctor_F`; a *string* field is not one, so the
+  string half feeds it nothing. The one ref candidate's receiver chain
+  (`this.regexpState`) is itself `externref`, so the chain breaks upstream of
+  the slot. **The default-off question for `JS2WASM_FNCTOR_TYPED_READS` and the
+  #2660 S3b binding retype does NOT reopen on this lever.**
+
+### 5. Soundness rules, recorded for whoever builds this later
+
+If a future corpus makes the bucket worth it, these are the obligations:
+
+1. **Consult the FIELD fact, never the param fact.** A slot must agree with the
+   join over every write `deriveFnctorFields` *and* the satellite's write scan
+   can see — including `"all"`-attributed writes on untracked receivers. The
+   satellite computes exactly this (`runFieldPass`,
+   `src/ir/fnctor-field-lattice.ts:212`) but does **not export it**; a builder
+   must add a `computeFnctorGraphFieldFacts` export beside the two at
+   `fnctor-method-edges.ts:137/:154`.
+2. **Presence-tracked fields keep their carrier** for a *promotion*, but a
+   checker-derived ref slot may be presence-tracked (`Node.loc` is both today).
+   The rule is about where the type is chosen, not about the type.
+3. **External/violating writes.** The ctor ABI stays `externref` by design
+   (#4166), so every store goes through the guarded coercion above. For f64 that
+   is ToNumber; for `$AnyString` it is test-or-null; for a named struct it is
+   test-or-null with no coercion semantics at all (§2.1). Only the first two are
+   inside the family's accepted bound.
+4. **Do not reuse `receiverStruct` as a slot-type oracle** (§2.1).
+
+### 6. Correction to the measurement protocol: the CENSUS CANNOT SEE THIS LEVER
+
+`recordFnctorFieldProvenance` is called from `recordThisField`
+(`fnctor-escape-gate.ts:1595`), which runs during
+`collectThisAssignments(body.statements)` (`:1706`) — **before** the #3683
+numeric promotion (`:1778`) and the #3753 string promotion (`:1808`). The census
+is therefore a **pre-promotion** measure of the slot choice.
+
+Consequences, both load-bearing for the next slice:
+
+- The `Scope.flags` 55 → 56 move was census-visible only because the ctor-param
+  consumer is invoked at `:1579`, *inside* `recordThisField`. A ref/string
+  consumer implemented as a promotion is invisible to the census even when it
+  changes the struct.
+- Conversely, routing the same slot flip through
+  `inferFnctorFieldTypeFromCtorParam` **would** print 57/1/38 — while emitting a
+  byte-identical binary. **A census delta from this lever would be an artifact
+  of where the hook sits, not evidence of value.** Anyone reporting "+1 slot"
+  here must also report the binary delta, or the number means nothing.
+
+### 7. Files / anchors, if it is ever scheduled
+
+- `src/ir/fnctor-field-lattice.ts:212` (`runFieldPass`) → new export of
+  `solved.fieldFacts` through `fnctor-method-edges.ts` `GraphFacts`
+  (`fnctor-graph-model.ts:140`).
+- `src/codegen/fnctor-ctor-param-types.ts:71` — the consumer; needs the FIELD
+  NAME, which it does not currently receive (derive it from
+  `valueExpr.parent`'s LHS, or widen the call at `fnctor-escape-gate.ts:1579`).
+- `src/codegen/fnctor-escape-gate.ts:1808` — the string lane gate to mirror.
+- Do **not** touch `fnctor-typed-instances.ts:74`; the instance-type path is
+  orthogonal and already correct.
+
+### 8. Re-ranked levers after this measurement
+
+1. **`Parser.pos`'s field fact** — string-builtin rules + `||`-caching +
+   null-tolerant joins + nominal provenance as ONE priced XL program (unchanged
+   from the locals spec's §8 item 3). It gates 7 dependent f64 slots and is the
+   only path left to the tokenizer's remaining boxes.
+2. **A second corpus.** Three levers in a row have now priced out on acorn
+   specifically, each for a corpus-shaped reason (entry-point seeds inert
+   because canaries already supply the facts; locals blocked by string builtins;
+   ref/string blocked because acorn's non-f64 fields are written from property
+   reads). Before spending XL on item 1, measure whether a second dogfood
+   package shows the same shape — the answer changes what item 1 is worth.
+3. **This lever** — build only as a rider on item 1, and only after re-measuring
+   the field-fact bucket on that corpus.
+
+Verified assumptions: (a) the satellite probe runs over the extracted
+`tests/dogfood/.acorn/package/dist/acorn.mjs` under a synthetic
+`ts.ScriptKind.JS` program, matching the technique the i32-producer slice used —
+its facts agreed with the in-compile census on every cross-checkable row;
+(b) `approvedNames` / gate classifications are from
+`analyzeFnctorEscapeGate` on that same source; (c) the 0-byte A/B forced the
+promotion at the #3753 site rather than through the flag's own consumer, because
+the two produce the same struct shape and the former needs no plumbing — §6
+explains why that choice does not weaken the conclusion.

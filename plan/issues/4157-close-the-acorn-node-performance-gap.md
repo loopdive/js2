@@ -285,6 +285,95 @@ node scripts/profile-buckets.mjs .tmp/acorn.cpuprofile .tmp/closure-map.log 25 \
   --detail --callers=__extern_get
 ```
 
+## 2026-08-07 — re-profile after the landed Workstream-2 slices
+
+Same recipe as §Reproduction, same lane, same 300 iterations, on
+`claude/issue-743-i32-producer` (main + #4202). **The three Workstream-2 items
+this file called out have landed, and the profile has moved — but the share
+they gave up went to GC, not to the floor.**
+
+### Bucket shift, 2026-08-06 → 2026-08-07
+
+| bucket | 08-06 | 08-07 | note |
+| --- | ---: | ---: | --- |
+| **gc-engine** | 18.5 % | **23.1 %** | **grew — now the largest single bucket** |
+| scanner + compiled | — | 32.1 % | (08-06 did not split scanner out) |
+| dynamic-lookup | 16.1 % | 13.5 % | #3926 hash dispatch landed |
+| call-dispatch | — | 8.1 % | |
+| regexp | 6.6 % | 7.3 % | grew in share |
+| dynamic-eq | 7.1 % | 5.2 % | strict-eq tag-pair dispatch landed |
+| cast-convert | 6.1 % | 4.6 % | |
+| string-runtime | 5.6 % | 4.3 % | `charCodeAt`-on-rope guard landed |
+
+Top frames: `(garbage collector)` 23.05, `__regex_search` 6.07,
+`__extern_get` 5.92, `__is_truthy` 2.92, `pp.next` 2.66, `__str_flatten` 2.42,
+`pp.getTokenFromCode` 2.37, `pp$5.parseSubscript` 2.29, `pp.fullCharCodeAt`
+2.05, `__extern_strict_eq` 2.05, `__box_number` 1.99.
+
+Lane ratio this run: **0.141** (≈ 7.1× slower than Node), from 0.122 —
+directionally consistent with the three landed slices. Single unreplicated
+measurement on a shared box, well inside §6's unresolvable band; quoted as
+context, not as a result.
+
+### What this changes about the program
+
+**Every helper bucket the umbrella named has now shrunk, and the total did not
+fall proportionally, because GC absorbed the difference.** Allocation volume is
+now the binding constraint — which is what #3921 measured directly
+(~43.6 MB per 226 KB source, only ~10 MB of it the returned AST).
+
+Workstream 1's diagnosis ("GC + dynamic-eq + cast-convert ≈ 32 % is the boxed-
+VALUES tax") stands, and the 08-07 figure is **32.9 %** — but the *route* it
+prescribed has now priced out four times in a row on this corpus:
+
+| lever | result |
+| --- | --- |
+| #4155 four receiver-side levers | null on wall |
+| #4202 evaluator precision (3 rules) | **1 slot**, +27 B |
+| #4205 ref/string consumer ABI | **1 candidate**, **0 bytes** |
+| #3927 per-shape splitting | ≈ 0.1 %/slot, priced 3-4 % at highest risk |
+
+The receiver-side program is not wrong, it is **exhausted for acorn**: acorn's
+types bottom out at untyped exported-entrypoint parameters, so each lever
+converts a handful of slots and the values stay boxed.
+
+### Redirect: attack allocation directly, not via slot typing
+
+#4185 already enumerated the remaining streams by count and **priced one it did
+not take**:
+
+| stream | count | status |
+| --- | ---: | --- |
+| `$AnyString` substring/concat headers | 58 k | string VALUES — not elidable |
+| **`__regexp_test_carrier` capture scratch** | **29 k** | **priced M, NOT TAKEN** |
+| **`__regex_run` state** | **18.7 k** | **priced M, NOT TAKEN** |
+| `__fnctor_Node` | 32.5 k | the real AST — inherent |
+| `__vec_externref` closure arg vecs | ~25 k | spread wide, no chokepoint |
+| `$AnyValue` residual | ~22 k | honest boxing — #743 territory |
+
+**The regex pair is the largest remaining ELIDABLE stream (47.7 k allocations
+per parse) and it is unowned.** It is also the only candidate that hits two
+grown buckets at once: it feeds GC (23.1 %) *and* it is the `regexp` bucket
+(7.3 %, `__regex_search` the #2 frame overall), reached almost entirely via
+`__regexp_test_carrier`/`__call_m_test_1` on tokenizer `.test` calls — a
+narrow, enumerable call set, not a spread-wide helper.
+
+It was deferred for scope ("touches the regex engine"), not for size. That
+tradeoff should be re-taken now that it is the top elidable stream rather than
+one of six.
+
+**Recommended next slice: reuse the `.test`-path scratch** (captures array +
+run state) instead of allocating per call, guarded so anything that can escape
+or observe identity falls back to a fresh allocation. Pre-register the census
+delta as the primary instrument (deterministic), with the GC bucket share as
+the secondary — per §6, a wall A/B on this box cannot resolve the expected move
+on its own.
+
+**Second recommendation, from #4205:** measure a **second dogfood corpus**
+before the next representation lever. Four levers have now priced out for
+reasons specific to acorn's shape; a corpus with declared types would say
+whether the representation program is exhausted generally or only here.
+
 ## Dupe check
 
 #3780 stays open as the measurement/goal issue; this umbrella is its
