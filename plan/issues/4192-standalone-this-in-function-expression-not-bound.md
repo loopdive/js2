@@ -1,16 +1,17 @@
 ---
 id: 4192
 title: "`this` is dead inside a variable-held function EXPRESSION — .call/.apply/.bind and method invocation all drop the receiver (BOTH lanes)"
-status: in-progress
+status: ready
 created: 2026-08-06
-updated: 2026-08-06
+updated: 2026-08-07
 priority: high
 task_type: bug
 area: codegen
 goal: es5
 feasibility: hard
 reasoning_effort: max
-assignee: ttraenkler/W13-builtin-proto-residue
+# assignee cleared 2026-08-07 (W22): `ttraenkler/W13-builtin-proto-residue` is a
+# dead lane; slice 1 landed, the remainder below is unowned.
 sprint: current
 horizon: l
 related: [4025, 3983, 3796, 2152, 1636, 4163]
@@ -193,6 +194,41 @@ the flat tail #4163 describes. Do not staff it as a lever; fold rows 3/6 in
 opportunistically if someone is already inside `call-receiver-method.ts`. Rows
 7 and 9 are a separate closed-struct question and deserve their own probe before
 anyone sizes them.
+
+## Status after #4203 (W22, 2026-08-07) — the `.bind` third is STILL OPEN
+
+#4203 added `tryReshapeBindToNamedThisCall`, which puts immediate
+`f.bind(t, …)(…)` onto the receiver-correct `.call` trampoline. That closes the
+`.bind` gap for a function **DECLARATION** callee — but **not for this issue's
+shape**. The reshape is deliberately gated on `!closureInfo`, mirroring slice
+1's own gate: `var fe = function () {…}` has a `closureMap` entry, so it takes
+the `closureInfo` branch of the immediate bind-and-call arm and never reaches
+the trampoline.
+
+Re-measured on `origin/main` @ `b28970e206` + #4203, both lanes identical:
+
+| repro row | result |
+| --- | --- |
+| `fe.call(o1)` | ✅ (slice 1) |
+| `fe.apply(o3)` | ✅ (slice 1) |
+| `ge.call({v:9})` | ✅ (slice 1) |
+| `fd.call(o2)` — declaration control | ✅ |
+| **`fe.bind(o4)()`** | **❌ still drops the receiver** |
+| **`var o5 = { m: fe }; o5.m()`** | **❌ still drops the receiver** (the row #4168 also has) |
+
+### The `.bind` slice is now small and fully specified
+
+`call-tail-dispatch.ts`, the `identifier.bind(…)(…)` arm: the `closureInfo`
+branch currently evaluates `thisArg`, DROPS it, and builds a `syntheticCall`
+for `compileClosureCall`. Reshape it to `fe.call(t, …partial, …rest)` instead
+and let the existing `calls.ts` closure arm handle it — that arm already calls
+`planClosureReceiverInstall` / `emitClosureReceiverInstall`, i.e. slice 1's own
+machinery, so no new mechanism is needed. Admission is slice 1's
+`planClosureReceiverInstall` gate verbatim (function expression, not an arrow,
+non-generator, non-async, body references own `this`).
+
+Expected yield is small — slice 1's whole `.call`/`.apply` half measured +2 ES5
+— so size it as tail filler, not a lever.
 
 ## Coordination
 

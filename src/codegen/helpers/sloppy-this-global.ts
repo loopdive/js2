@@ -63,13 +63,40 @@ export function unboundThisIsGlobalObject(ctx: CodegenContext, expr: ts.Node): b
  */
 export function emitUnboundThis(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Node): void {
   if (fctx.directEvalSloppyThisFallback || unboundThisIsGlobalObject(ctx, expr)) {
-    const globalType = compileIdentifier(ctx, fctx, ts.factory.createIdentifier("globalThis"));
-    if (globalType && globalType.kind !== "externref") {
-      coerceType(ctx, fctx, globalType, { kind: "externref" });
-    }
+    emitGlobalObjectAsThis(ctx, fctx);
     return;
   }
   emitUndefined(ctx, fctx);
+}
+
+/**
+ * (#4203) The §10.4.3 answer for a receiver the caller passed **explicitly as
+ * `null`**, which is NOT the same question as `emitUnboundThis`'s.
+ *
+ * Strict code observes the thisArg verbatim, so it gets `null` — where an
+ * *absent* receiver would get `undefined`. That difference is the entire point
+ * of the marker in `explicit-null-receiver.ts`; without it the two states share
+ * one spelling and the strict rows (`10.4.3-1-{67,72,77}`) cannot pass.
+ *
+ * The sloppy answer is deliberately IDENTICAL to the unbound one — §10.4.3
+ * substitutes the global object for `null` and `undefined` alike — so this must
+ * NOT be read as "stop coercing null". Sloppy `f.call(null)` is still the global
+ * object, and getting that wrong is the trap this split exists to avoid.
+ */
+export function emitExplicitNullThis(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Node): void {
+  if (fctx.directEvalSloppyThisFallback || unboundThisIsGlobalObject(ctx, expr)) {
+    emitGlobalObjectAsThis(ctx, fctx);
+    return;
+  }
+  fctx.body.push({ op: "ref.null.extern" });
+}
+
+/** Push the global object as an `externref` — the sloppy arm of both answers. */
+function emitGlobalObjectAsThis(ctx: CodegenContext, fctx: FunctionContext): void {
+  const globalType = compileIdentifier(ctx, fctx, ts.factory.createIdentifier("globalThis"));
+  if (globalType && globalType.kind !== "externref") {
+    coerceType(ctx, fctx, globalType, { kind: "externref" });
+  }
 }
 
 /**
@@ -139,4 +166,43 @@ export function thisReceiverIsGlobalObject(ctx: CodegenContext, fctx: FunctionCo
   if (fctx.localMap.get("this") !== undefined) return false;
   if (fctx.isStaticContext) return false;
   return fctx.name === "__module_init" && !ctx.sourceIsModule && thisBelongsToTopLevelCode(receiver);
+}
+
+/**
+ * (#4205) True when a MEMBER-ACCESS receiver provably evaluates to the realm
+ * global object — script top-level `this` (per {@link thisReceiverIsGlobalObject})
+ * or a `globalThis` that nothing shadows.
+ *
+ * Why any caller needs this: the TypeScript checker types both of those as
+ * `typeof globalThis`, which `resolveStructName` happily resolves to the large
+ * static global-interface struct. Every member fast path keyed on "did I get a
+ * struct name?" then treats the realm global object as that struct and answers
+ * from its declared fields — so a property created at runtime by
+ * `this.n = 1` / `globalThis.n = 1` is simply not there, and the fast path
+ * emits its missing-field fallback (`f64.const NaN`, `undefined`, a `ref.cast`
+ * that traps) instead of consulting the object.
+ *
+ * The same hazard is already called out, gOPD-locally, on
+ * `isScriptGlobalThisReceiver` in `expressions/call-builtin-static.ts`; this is
+ * the shared predicate that lets other member paths opt out of the struct fast
+ * path for the same reason, in every target (the object is real in standalone
+ * too — `emitNativeGlobalThisObject`'s `$Object` singleton, #2996).
+ */
+export function receiverIsRealmGlobalObject(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  receiver: ts.Expression,
+): boolean {
+  let cur: ts.Expression = receiver;
+  while (
+    ts.isParenthesizedExpression(cur) ||
+    ts.isAsExpression(cur) ||
+    ts.isNonNullExpression(cur) ||
+    ts.isTypeAssertionExpression(cur)
+  ) {
+    cur = cur.expression;
+  }
+  if (cur.kind === ts.SyntaxKind.ThisKeyword) return thisReceiverIsGlobalObject(ctx, fctx, cur);
+  if (!ts.isIdentifier(cur) || cur.text !== "globalThis") return false;
+  return fctx.localMap.get("globalThis") === undefined && !ctx.moduleGlobals.has("globalThis");
 }
