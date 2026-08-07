@@ -2625,6 +2625,27 @@ export function compileIrPathFunctions(
           console.error(
             `[abi-parity-debug] ${name}: IR=${wasmFunc.typeIdx} ${JSON.stringify(ctx.mod.types[wasmFunc.typeIdx])} legacy=${existing.typeIdx} ${JSON.stringify(ctx.mod.types[existing.typeIdx])}`,
           );
+          // (#4186) Also name the heap types the two signatures reference —
+          // "IR=(ref 465) vs legacy=externref" is unactionable without knowing
+          // WHAT type 465 is (a lattice-derived `__anon_N` shape struct vs a
+          // fnctor struct vs a vec changes the diagnosis entirely).
+          const referenced = new Set<number>();
+          for (const t of [ctx.mod.types[wasmFunc.typeIdx], ctx.mod.types[existing.typeIdx]]) {
+            if (t?.kind !== "func") continue;
+            for (const v of [...t.params, ...t.results]) {
+              if ((v.kind === "ref" || v.kind === "ref_null") && typeof v.typeIdx === "number") {
+                referenced.add(v.typeIdx);
+              }
+            }
+          }
+          for (const idx of referenced) {
+            const t = ctx.mod.types[idx] as { kind?: string; name?: string; fields?: unknown[] } | undefined;
+            console.error(
+              `[abi-parity-debug]   type ${idx}: kind=${t?.kind} name=${t?.name ?? "<unnamed>"} fields=${
+                Array.isArray(t?.fields) ? JSON.stringify(t.fields) : "n/a"
+              }`,
+            );
+          }
         }
         if (entry.classMember || entry.moduleInit) {
           // Pre-#3536 semantics unchanged: for these units a mismatch means
