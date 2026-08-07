@@ -2806,6 +2806,17 @@ export interface CodegenContext {
    * to short-circuit the struct-resolution chain back to `undefined`.
    */
   externrefAccessorVars: Set<string>;
+  /**
+   * (#4189) Module-level string-typed `var`s whose wasm global was WIDENED to
+   * externref because they are re-assigned from a sloppy implicit global
+   * (`this.p1 = 1; var result = "r"; … result = p1;`). Their static `string`
+   * type is not a representation invariant, so equality lowering must not
+   * constant-fold on it (the same stale-static-type hazard as
+   * `forInIdentifierVars`); comparisons dispatch on the boxed runtime value
+   * instead. Populated by `moduleGlobalWasmType` (declarations.ts); consulted
+   * by the strict-equality flags in binary-ops-typed-dispatch.ts.
+   */
+  dynamicWidenedStringVars?: Set<string>;
   /** Math methods that need inline Wasm implementations */
   pendingMathMethods: Set<string>;
   /**

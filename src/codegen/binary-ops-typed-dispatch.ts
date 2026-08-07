@@ -555,8 +555,23 @@ export function compileTypedBinaryDispatch(
     // from that stale static type; compare the actual boxed value.
     const leftIsDynamicForIn = ts.isIdentifier(expr.left) && fctx.forInIdentifierVars?.has(expr.left.text) === true;
     const rightIsDynamicForIn = ts.isIdentifier(expr.right) && fctx.forInIdentifierVars?.has(expr.right.text) === true;
-    const leftIsString = !leftIsDynamicForIn && isStringType(leftTsType);
-    const rightIsString = !rightIsDynamicForIn && isStringType(rightTsType);
+    // (#4189) A module string `var` rep-widened to externref (re-assigned from
+    // a sloppy implicit global) carries an arbitrary dynamic value — its static
+    // `string` type is stale exactly like the for-in case above, so it must not
+    // enable the cross-JS-kind constant fold below; the comparison dispatches
+    // on the boxed runtime value (host: `__host_eq`; standalone: tag dispatch).
+    // Gated on the operand actually compiling to externref so a shadowing local
+    // (which keeps a genuine string representation) is unaffected.
+    const leftIsWidenedDynamic =
+      leftType.kind === "externref" &&
+      ts.isIdentifier(expr.left) &&
+      ctx.dynamicWidenedStringVars?.has(expr.left.text) === true;
+    const rightIsWidenedDynamic =
+      rightType.kind === "externref" &&
+      ts.isIdentifier(expr.right) &&
+      ctx.dynamicWidenedStringVars?.has(expr.right.text) === true;
+    const leftIsString = !leftIsDynamicForIn && !leftIsWidenedDynamic && isStringType(leftTsType);
+    const rightIsString = !rightIsDynamicForIn && !rightIsWidenedDynamic && isStringType(rightTsType);
     const leftIsNumber = !leftIsDynamicForIn && isNumberType(leftTsType);
     const rightIsNumber = !rightIsDynamicForIn && isNumberType(rightTsType);
     const leftIsBool = !leftIsDynamicForIn && isBooleanType(leftTsType);

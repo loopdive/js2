@@ -23,6 +23,7 @@ import { collectShapes } from "../shape-inference.js";
 // allow-list's fall-through leaves evidence instead of silently dropping an
 // observable statement (the #1268/#2671/#2992/#3366/#3468/#3592/#3615 class).
 import { classifyTopLevelExpressionStatement, createsGlobalObjectBinding } from "./module-init-collection.js";
+import { collectImplicitGlobalAssignedVarDecls } from "./module-global-widening.js"; // (#4189)
 import { ensureWrapperTypes } from "./any-helpers.js";
 import { ASYNC_CPS_ENABLED, analyzeAsyncBody, asyncFnNeedsCps } from "./async-cps.js";
 import { asyncFnNeedsHostDrive, asyncGenDrivableUnderCarrier, asyncGenStem } from "./async-frame.js";
@@ -1485,6 +1486,10 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     return false;
   }
 
+  // (#4189) Lazily-computed, per-collectDeclarations memo of the module-level
+  // var declarations that receive a `name = <implicitGlobal>` assignment.
+  let implicitAssignedVarDecls: Set<ts.VariableDeclaration> | undefined;
+
   /**
    * Resolve the module-global wasm type for a simple identifier declaration,
    * honoring the accessor-literal externref override (#2011) and tagging the
@@ -1496,6 +1501,27 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     if (moduleInitForcesExternref(decl) && ts.isIdentifier(decl.name)) {
       ctx.externrefAccessorVars.add(decl.name.text);
       return { kind: "externref" };
+    }
+    // (#4189) A string-typed module `var` re-assigned from a sloppy implicit
+    // global (`this.p1 = 1; var result = "r"; … result = p1;`) must NOT be
+    // monomorphized to the string representation — the implicit-global read is
+    // an externref carrying any dynamic value, and storing it through a
+    // string-typed global nullifies/ToStrings it while `result !== 1` folds on
+    // the (now-broken) representation invariant. Widen to externref; every
+    // consumer of an externref-held string already exists. See
+    // module-global-widening.ts for the measured scope.
+    if (ts.isIdentifier(decl.name) && isStringType(varType)) {
+      implicitAssignedVarDecls ??= collectImplicitGlobalAssignedVarDecls(
+        sourceFile,
+        ctx.oracle,
+        ctx.sloppyImplicitGlobals,
+      );
+      if (implicitAssignedVarDecls.has(decl)) {
+        // Tag the name so equality lowering treats its static `string` type as
+        // dynamic (no cross-type constant-fold) — see dynamicWidenedStringVars.
+        (ctx.dynamicWidenedStringVars ??= new Set()).add(decl.name.text);
+        return { kind: "externref" };
+      }
     }
     // (#2837) A module-level `var V = {non-empty literal}` marked growable by the
     // detection pre-pass (later out-of-shape / nested write, e.g. acorn's
