@@ -116,3 +116,73 @@ landing order.
 - An enforcement loop for issue-tests.yml red-on-main (e.g. auto-filing a
   `[CI-FIX]` task) — detection without a consumer is how today's red runs
   went unnoticed.
+
+## 2026-08-07 — root-test CI coverage, stated accurately
+
+Recorded because an earlier claim in the same session got this wrong in the
+"CI is blind to root tests" direction, and the opposite overstatement is just
+as easy. Both halves matter.
+
+**The population and what gates it.** `tests/` root holds **2,702**
+`*.test.ts` files today (measured on main; a previously-circulated ~2,697 is
+close but not the number, and this issue's own §"Why not gate the whole root
+suite" still says ~2,100 — all three are just different dates). `ci.yml` runs
+**8** of them by explicit name — `host-import-allowlist-{budget,gate}`,
+`issue-{1580,3004,3303}`, `c-abi`, `simd`, `simd-wat` — plus the
+`tests/linear-*.test.ts` glob (21 files), so **29 root files run
+unconditionally per PR**. Everything else is reached only by
+`test:changed-root`, which selects `--diff-filter=AM` against the merge base:
+**only root tests the branch itself adds or modifies**. A root test that goes
+red because of a *source* change is therefore in **no** PR-level required
+check. That is exactly the gap this issue's guard suite (14 manifest entries)
+was cut to narrow, and it is still narrow.
+
+**But CI is not blind to them.** `.github/workflows/issue-tests.yml` (#3008)
+shards the whole root suite post-merge on every push to `main`, plus a
+6-hourly cron, gated against a known-failures baseline
+(`issue-tests-baseline.json` in `loopdive/js2wasm-baselines`). Its header
+records the two numbers that force the two-layer design: the full suite is
+**~9 CPU-hours** single-fork, and **~40 % of files sampled were already
+failing** when the baseline was established.
+
+**Two root tests observed red on main today**, both reproduced here on
+`origin/main` single-fork:
+
+| file | failure |
+| --- | --- |
+| `tests/issue-1712-standalone.test.ts` | asserts `report.errors` deep-equals `[]`; gets 3 `[IR-FALLBACK]` entries — `function typeIdx parity mismatch: IR=466, legacy=101` for `parse`, `parseExpressionAt`, `tokenizer` |
+| `tests/issue-3156.test.ts` | 2 of 35 fail: `ir/from-ast: method call .charCodeAt(...) on string not in slice 4 (test)` |
+
+Neither is in the guard-suite manifest, so neither is required-gated —
+consistent with them being baselined known-rot rather than new breakage.
+**That is an inference, not a check: the baseline itself was NOT read.** It
+lives in a separate repo cloned over SSH by the workflow, and this container
+has no `gh` and no access to that remote. Confirming it means reading
+`issue-tests-baseline.json` and looking for both paths.
+
+**Sampling the rot rate — bounded, not pinned.** A 30-file deterministic
+sample (`ls tests/*.test.ts | shuf --random-source=<(yes 42) | head -30`, run
+single-fork) gave **3 failed, 12 passed, and 15 unaccounted for** in vitest's
+summary line, because the run's output was truncated by a `tail` *inside* the
+command — so whether those 15 were skipped or merely unsummarised is
+unrecoverable. That bounds the current failure rate at **10–20 %**, materially
+below the ~40 % at baseline, but it **must not be quoted as a number**. What
+would pin it: re-run the same sample without truncating the output and count
+the summary line. The sample list is reproducible (the `shuf` seed is fixed);
+it was **not** re-run here.
+
+Two things that run bled that are worth carrying:
+
+- The sample surfaced a **vitest-level unhandled error** (`TypeError: errors
+  is not iterable` inside vitest's own `failTask`), which vitest itself warns
+  "might cause false positive tests". It appeared in a plain 30-file sample,
+  so it is not exotic — distrust *pass* results in any run where it shows up.
+- Truncating a command's output *inside* the command loses the rest
+  permanently. Same family as the repo's "never pipe a command whose exit
+  status you need" rule, and it cost a whole sample here.
+
+**The gap this issue's own follow-up list names is still open**, and today is
+its second data point: *"an enforcement loop for issue-tests.yml red-on-main
+(e.g. auto-filing a `[CI-FIX]` task) — detection without a consumer is how
+today's red runs went unnoticed."* Detection exists and works; nothing acts on
+it, so red-on-main still depends on someone happening to look.
