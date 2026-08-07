@@ -237,6 +237,23 @@ So the repair is real and measured; it converts no *files* because each
 `S12.10_A1.*` file asserts ~19 things and dies on assertion #1, which this does
 not touch.
 
+### Base-sha caveat, stated rather than glossed
+
+The 201-file A/B above was cut at `origin/main@1f613276d8`. Main then advanced
+(#4203/#4204/**#4205** and others landed) and the branch merged it at
+`a22a44a1c3`. The **arms were not re-run** on that tip; what WAS re-run there is
+the unit matrix, and it reproduces every claim above:
+
+- `s1` (with-scoped write lands in the object) — still **pass** with the fix;
+- `s2` (`p1 === 1`) — still **fail** (`null`), so #4205's landed work does not
+  unblock the lever;
+- `s5` (the `with`-free `this.p1 = 1` vs bare `p1` split) — still **fail** on
+  current main, so the blocker is intact and the 0-conversion reading is not a
+  stale-base artefact of the kind that made #4201 read `FIXED 0`.
+
+Anyone re-sizing this issue should still re-cut both arms rather than inherit
+the 105/96 split — main is moving fast.
+
 ## Why the yield is 0 — and why it is NOT `with`'s fault
 
 The 19-file `p1 === null` bucket (the largest in cohort 2) is blocked by a defect
