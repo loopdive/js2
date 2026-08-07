@@ -7,6 +7,26 @@ sprint: current
 created: 2026-08-06
 completed: 2026-08-06
 priority: high
+# (#3596) Auto-parked from the merge_group on 2026-08-07 (batched with the
+# already-merged #4137, so the delta is attributable here). The ONLY hard gate
+# failure was the #3189 uncatchable-trap ratchet: illegal_cast 44 → 45 (+1).
+# Both newly-trapping files were `fail` on the baseline — this is a change of
+# failure MODE, not a conformance regression, which is exactly the #3596
+# baseline-did-testify branch rather than the #3595 never-instantiated class.
+# Mechanism: this change makes a module-scope sloppy block-function bind
+# through a live module-global instead of statically through funcMap, so a
+# sloppy assignment to an UNRESOLVABLE reference inside async destructuring now
+# executes further than it previously did and reaches a pre-existing latent
+# illegal_cast rather than stopping earlier. The trap is not introduced by this
+# PR; it is reached by it. All other trap categories are flat in the same run
+# (null_deref 1626→1621, oob 44→44, unreachable 3→3) and the run is net
+# +56 pass (32040 → 32096), host stable-path fine-gate net +102.
+trap-growth-allow:
+  count: 2
+  reason: "#3596 reclassification, fail -> fail (flavour only; neither test has ever passed). Live module-global binding for module-scope block functions lets the sloppy put-to-unresolvable in these two async destructuring tests run past the point it previously stopped, reaching a pre-existing latent illegal_cast. Growth is +1 net on the category with both newly-trapping files named below, as #3596 requires. No other trap category moved (null_deref 1626->1621, oob 44->44, unreachable 3->3); run net +56 pass, fine-gate net +102, and the PR's own exposure population measured ZERO pass->fail conversions."
+  tests:
+    - test/language/statements/for-await-of/async-func-decl-dstr-obj-id-put-unresolvable-no-strict.js
+    - test/language/statements/for-await-of/async-func-decl-dstr-obj-prop-put-unresolvable-no-strict.js
 loc-budget-allow:
   # Each arm below is position-dependent inside an existing dispatch and cannot
   # live in the new subsystem module (src/codegen/annexb-global-live-binding.ts,
