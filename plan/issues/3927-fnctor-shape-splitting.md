@@ -503,12 +503,32 @@ standalone acorn is **byte-identical with the flag ON** (937,273 B, canaries
 **Headline: the shapes ARE separable, by a lot, and the plan is empirically
 sound on the motivating corpus.**
 
-| | today (union struct) | #4211 hot/cold, K=24 | per-type layouts (this plan) |
-| --- | ---: | ---: | ---: |
-| `__fnctor_Node` B/instance | 292 (model: 300) | 206.6 | **98.0** |
-| Node stream, MB/parse | 9.74 | 6.71 | **3.18** |
-| vs the union struct | — | −31.1 % | **−67.3 %** |
-| share of ALL struct bytes/parse (12.23 MB) | — | −21.6 % | **−53.6 %** |
+| | union struct | #4211 K=24 (flag-OFF) | slice C K=20 (default-ON) | per-type layouts (this plan) |
+| --- | ---: | ---: | ---: | ---: |
+| `__fnctor_Node` B/instance | 292 | 206.6 | ~181 | **98.0** |
+| Node stream, MB/parse | 9.48 | 6.71 | 5.89 | **3.10** |
+| vs the union struct | — | −31.1 % | −37.9 % | **−67.3 %** |
+
+**⚠ Baseline correction (2026-08-07, after slice C).** The first draft of this
+section quoted "−53.6 % of ALL struct bytes", measured against the UNION-struct
+baseline. That baseline is gone: slice C
+(`claude/issue-3927-ranking-and-generator`) makes the hot/cold split
+**default-ON in the standalone lane at K=20** and measures 12.69 → 9.10 MB of
+struct bytes per parse (−28.3 %). Against that new default the marginal figure
+is smaller, and it is the one that should be quoted:
+
+| comparison | struct bytes/parse | |
+| --- | ---: | ---: |
+| slice C default (the new baseline) | 9.10 MB | — |
+| + per-type layouts | **6.31 MB** | **−30.7 %** |
+| both, vs the pre-split union struct | 6.31 MB | −50.3 % |
+
+Read on the Node stream alone, per-type layouts remove a further **−47.4 %** of
+what slice C leaves. The two techniques **overlap rather than compose** for this
+fnctor: §4 measures a 0 % residual rate for per-type layouts, so where a layout
+is proved the cold tail has nothing left to move (slice C's tail rate is 28.1 %).
+The cold tail stays valuable exactly where the layout analysis returns a
+non-`split` verdict.
 
 ### 1. Why §3's "the shape is not knowable at the `struct.new`" was right but not fatal
 
@@ -666,17 +686,49 @@ arm, 16 need 2, 9 need 3, one needs 4, `body` needs 6 and `expressions` needs
 11 (the one remaining blur). `type`/`end` are base fields ⇒ 1 arm. So the
 arm-count blow-up that kills the naive per-shape version does not materialise.
 
+**The chokepoint that will bite, named in advance — the consumer-side narrowing
+VOTE, not the `ref.test` arms.** Slice C traced the §4 `generator` defect to
+`finalizeStructAndDynamicMemberGet` (the #1269 Phase-3 narrowing in
+`property-access-dispatch.ts`, around the `fieldKinds` set): to decide whether an
+`any`-receiver read can drop its boxing, it asks whether *every candidate struct*
+carries the field with the same scalar kind — and its candidate set is
+`findAlternateStructsForField`, which hides `$…__cold`. Hiding a carrier from
+that **vote** is wrong even though hiding it from the `ref.test` **arms** is
+right; the vote narrowed to `i32` and pushed a correct boxed value through
+`__unbox_number`.
+
+Per-type layouts hit the same seam twice over, and worse:
+
+1. the residual `$resid` carrier must be hidden from the arms (it is a private
+   payload, never a receiver) but MUST be visible to the vote — the identical
+   bug;
+2. the vote's candidate set grows from 1 struct to N layouts, so a field whose
+   inferred scalar kind differs across layouts now makes the vote *unanimous by
+   accident* only when it happens to agree. A layout that simply lacks the field
+   must not be read as "agrees".
+
+Treat "which set answers the narrowing vote" as a distinct question from "which
+set gets a `ref.test` arm" at every consumer, and enumerate both before writing
+any emission code.
+
 ### 7. Honest translation to wall clock, and why it is an extrapolation
 
 #4211 measured the mechanism: **−21.6 % of allocated struct bytes ⇒ −3.92 pp of
 the 15.71 % gc-engine bucket** (−25 % of the bucket itself), every other bucket
 diluting proportionally upward — the signature of a single absolute reduction.
-This plan projects **−53.6 %** of allocated struct bytes, ~2.5× further along
-the same axis. If the bucket stays proportional to allocated bytes, that scales
-to roughly **−9 to −10 pp of wall**.
+Slice C then measured a second point on the same axis — −28.3 % of struct bytes
+for **−4.51 pp** of the gc-engine bucket in an order-reversed ON/OFF/OFF/ON
+block — which is consistent with #4211's slope and strengthens the mechanism.
 
-**That is an extrapolation 2.5× beyond the only measured point, not a
-measurement**, and this box cannot resolve anything under ~10 % by wall A/B
+This plan's **marginal** figure over slice C's new default is −30.7 % of
+allocated struct bytes, i.e. roughly one more step of the size both measured
+points already cover, projecting to about **−4 to −5 pp of wall on top of slice
+C**. (Against the pre-split union baseline the combined figure is −50.3 % of
+struct bytes; the earlier draft of this section quoted the combined number as if
+it were marginal, which overstated what this slice adds.)
+
+**That is still an extrapolation, not a measurement**, and this box cannot
+resolve anything under ~10 % by wall A/B
 (§6 of the 2026-08-06 slice — an uncontrolled block there read +29 % and was
 pure load contamination). Treat −9 % as an upper-ish estimate whose mechanism
 is sound and whose magnitude is unverified. What IS measured here: the bytes
@@ -711,3 +763,13 @@ are untouched`, reproduces on `origin/main` with this branch's
 Standalone acorn with the flag ON: 937,273 B — byte-identical to the flag-OFF
 baseline — canaries 2/3/4/5, `functionImports []`, exactly the 3 pre-existing
 IR-FALLBACKs.
+
+**Interaction with slice C's flag change.** Slice C makes the hot/cold split
+default-ON in standalone and moves the disable token to
+`JS2WASM_FNCTOR_HOT_FIELDS=off` (a bare unset now means ON). Every byte-identity
+assertion in this slice is **relative** — `JS2WASM_FNCTOR_LAYOUTS` set vs unset,
+with the cold-tail state held equal on both sides — so none of them assumes
+"unset ⇒ no split" and none needs the new token. The one figure that is
+*absolute*, the 937,273 B, is a cold-tail-OFF measurement and will move when
+slice C lands; it is quoted only as the two sides of an equality, not as a
+tracked artifact size.
