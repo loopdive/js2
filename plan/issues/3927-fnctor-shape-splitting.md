@@ -875,12 +875,51 @@ but checked nowhere. Both the cold-type RESERVATION and the split itself go
 through `coldTailHotFieldLimitFor(ctx)`, and a test asserts a JS-host build is
 byte-identical for every flag value.
 
-### 4. What is still NOT measured
+### 4. Profile bucket share — four blocks, ORDER-REVERSED
 
-- **Wall clock.** Unchanged position from §6 of the 2026-08-06 slice: this box
-  cannot resolve anything under ~10 %, and an uncontrolled A/B here once read
-  a 3/3-consistent +29 % that was pure ambient-load contamination. The
-  byte→bucket translation is the estimate; it is not a timing claim.
+`scripts/profile-buckets.mjs`, 300 parses each, `standalone-dynamic`, run as
+**ON → OFF → OFF → ON** so the sign cannot be an order artifact:
+
+| block | order | gc-engine | dynamic-lookup | alloc-helpers | wall |
+| --- | --- | ---: | ---: | ---: | ---: |
+| onA | 1 (default ON) | **13.65 %** | 15.29 % | 1.26 % | 36,974 ms |
+| offA | 2 (`off`) | **16.76 %** | 14.88 % | 1.67 % | 36,788 ms |
+| offB | 3 (`off`) | **16.41 %** | 14.72 % | 1.57 % | 36,349 ms |
+| onB | 4 (default ON) | **10.50 %** | 16.00 % | 1.30 % | 34,281 ms |
+
+**Both ON samples sit below both OFF samples**, in an order-reversed sequence:
+mean 12.08 % vs 16.59 %, **−4.51 pp — about a quarter of the bucket's own
+share** — against a measured −28.3 % of allocated struct bytes. `alloc-helpers`
+also drops (1.62 → 1.28 %, fewer `struct.new` operands) and every other bucket
+dilutes upward, which is the signature of a single absolute reduction.
+
+Translating with the same arithmetic the previous slice used: GC self-time
+≈ 27 % smaller × a 16.6 %-of-wall bucket ⇒ **≈ −4.5 % of wall**. That is
+larger than the −3.9 % the K=24/site-count variant estimated, in the ratio the
+byte numbers predict.
+
+**Two caveats on this table.** (a) The OFF blocks replicate tightly (16.76 /
+16.41, 0.35 pp apart) while the ON blocks scatter (13.65 / 10.50, 3.15 pp) —
+the effect's SIGN is solid, its magnitude is bracketed at roughly −3 to −6 pp.
+(b) The absolute shares are **not** comparable to the previous slice's table:
+this run did not attach the closure name map, so `scanner` is folded into
+`compiled` and every other share is inflated accordingly. Only the
+within-session OFF-vs-ON comparison is meaningful.
+
+Wall was 35,628 ms (ON) vs 36,569 ms (OFF), −2.6 % — **below this box's
+resolvability (§6) and quoted only for consistency of sign. It is not
+evidence.**
+
+### 5. What is still NOT measured
+
+- **Wall clock, properly.** Unchanged position from §6 of the 2026-08-06 slice:
+  this box cannot resolve anything under ~10 %, and an uncontrolled A/B here
+  once read a 3/3-consistent +29 % that was pure ambient-load contamination.
+  The byte→bucket translation is the estimate; it is not a timing claim.
 - **test262.** The merge-queue re-validation covers it. Note this is the first
   slice where that matters — the flag is ON, so the standalone lane's emitted
   code genuinely changes.
+- **Non-acorn standalone programs.** The ranking is corpus-independent by
+  construction and the differential is corpus-independent in method, but K=20
+  was tuned against one program's field population. A second dogfood package
+  with a widened fnctor would be the natural next check.
