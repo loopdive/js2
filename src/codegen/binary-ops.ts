@@ -53,6 +53,7 @@ import {
 } from "./coercion-engine.js";
 import { compileInstanceOf, compileTypeofComparison } from "./typeof-delete.js";
 import { compileTypedBinaryDispatch } from "./binary-ops-typed-dispatch.js";
+import { tryFoldStrictEqTypeDisjoint } from "./strict-eq-type-disjoint.js";
 import { compileInOperator } from "./binary-ops-in.js";
 import { emitIsUndefF64 } from "./value-tags.js";
 
@@ -2031,6 +2032,17 @@ export function compileBinaryExpression(
   }
 
   if (!leftType || !rightType) return null;
+
+  // (#4208 S1) §7.2.16 step 1 — "If Type(x) is different from Type(y), return
+  // false" — MUST run BEFORE the i32↔f64 promotion directly below. That
+  // promotion was written for `string.length:i32 !== 8:f64`, where both sides
+  // really are Numbers, but it fires on ANY i32/f64 pair — so a Boolean operand
+  // is silently merged into the f64 slot and `1 === true` answers `true`. The
+  // fold refuses unless the *representation* and the static type agree; see
+  // strict-eq-type-disjoint.ts for why that is sound in an issue about static
+  // types being untrustworthy.
+  const eqDisjoint = tryFoldStrictEqTypeDisjoint(fctx, expr, op, leftType, rightType, leftTsType, rightTsType);
+  if (eqDisjoint !== undefined) return eqDisjoint;
 
   // Promote i32↔f64 mismatch (e.g. string.length:i32 !== 8:f64)
   if (leftType.kind === "i32" && rightType.kind === "f64") {
