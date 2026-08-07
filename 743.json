@@ -1,11 +1,10 @@
 {
   "id": "743",
-  "assignee": "ttraenkler/opus-impl-3",
-  "requested_by": "ttraenkler@users.noreply.github.com",
-  "status": "released",
-  "branch": "claude/issue-743-i32-producer",
-  "claimed_at": "2026-08-07T16:00:20Z",
-  "updated_at": "2026-08-07T16:47:45Z",
-  "write_id": "780-dupbgqtm",
-  "released_at": "2026-08-07T16:47:45Z"
+  "assignee": "ttraenkler/opus-impl-4",
+  "requested_by": "ttraenkler/opus-impl-4",
+  "status": "in-progress",
+  "branch": "claude/issue-743-consumer-abi",
+  "claimed_at": "2026-08-07T16:47:56Z",
+  "updated_at": "2026-08-07T16:47:56Z",
+  "write_id": "1447-es7p64bn"
 }
