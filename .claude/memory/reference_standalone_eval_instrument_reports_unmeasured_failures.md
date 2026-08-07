@@ -78,6 +78,23 @@ Same family, different layer — neither is about the provider:
    do with your change. Worktree cleanup is routine, so this is a scheduled
    failure, not a hypothetical one.
 
+### ⚠ The pre-scan "dirty" gates cannot bound a blast radius in THIS corpus
+
+A tempting safety claim is "my change is gated on `protoNamedDirty` (or another
+pre-scan dirty flag), so every file that fails the gate is byte-identical."
+True in principle. Worth **0.07 %** of the corpus in practice.
+
+The js2wasm host-globals shim that `assembleOriginalHarness` prepends to
+**every** file contains `return eval(sourceText);`, so `isDynamicCodeUse` sets
+`dynamicCodeDirty` ⇒ `protoNamedDirty`. Measured 2026-08-07 over the effective
+source of all 48,619 baseline rows: **48,587 have the gate SET; 32 are provably
+clear.**
+
+So the gate is not a filter, it is a constant. Size exposure by the **real
+trigger** — the syntactic shape that actually reaches your modified code path —
+and byte-hash the emitted modules to prove the rest untouched. Any reviewer
+seeing "gated on X ⇒ safe" should ask what fraction of the corpus fails gate X.
+
 ## The rule
 
 **Build a two-sided instrument before believing any number**: the failing lever
