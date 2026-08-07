@@ -1,11 +1,12 @@
 ---
 id: 4168
 title: "`.apply(thisArg)` DROPS the receiver — no `this`-binding thunk is emitted, so `f.apply(o) === o` is false (`.call()` emits one and is correct)"
-status: in-progress
+status: ready
 sprint: current
 created: 2026-08-01
-updated: 2026-08-01
-assignee: "ttraenkler/claude-harvest"
+updated: 2026-08-07
+# assignee cleared 2026-08-07 (W22): `ttraenkler/claude-harvest` is a dead lane
+# and the claim had been stale since 2026-08-01.
 priority: high
 horizon: l
 feasibility: medium
@@ -176,3 +177,31 @@ So the +4 stands and the lane-independence claim happens to hold — but it was
 right by accident, not by measurement. Anyone re-running this must pass the
 target as the FOURTH positional argument and verify the two lanes actually
 differ before trusting a lane-specific number.
+
+## Re-measured 2026-08-07 (W22, on `origin/main` @ `b28970e206` + #4203)
+
+**The title is now WRONG and the issue is nearly closed.** Five of the six
+repro rows pass, on **both** lanes:
+
+| # | row | standalone | host |
+| --- | --- | --- | --- |
+| 1 | `o === o` | ✅ | ✅ |
+| 2 | `id(o) === o` | ✅ | ✅ |
+| 3 | `var o = { m: function(){return this} }; o.m() === o` | **❌** | **❌** |
+| 4 | `f.apply(o) === o` | ✅ | ✅ |
+| 5 | `f.call(o) === o` | ✅ | ✅ |
+| 6 | strict `f.apply(o) === o` | ✅ | ✅ |
+
+Row 4/6 — the headline — was closed by **#3983**'s `.apply` → `.call` reshape
+onto the `named-this-call.ts` trampoline, not by anything in this issue.
+
+**Row 3 is the whole remainder, and it is not an `.apply` bug at all**: an
+object literal whose property value is a function EXPRESSION, invoked as a
+method. This issue already flagged it as "listed separately on purpose … may
+be a distinct mechanism" — that instinct was right. It is the *same* row #4192
+sized independently as its rows 3/6 and measured at **~2–4 ES5 files**, with
+the explicit conclusion "do not staff it as a lever; fold it in
+opportunistically if someone is already inside `call-receiver-method.ts`".
+
+So: **retitle or close-and-fold into #4192.** Do not dispatch this as a
+200-test `10.4.3` lever — that framing is three fixes out of date.

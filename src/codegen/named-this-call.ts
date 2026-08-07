@@ -22,8 +22,10 @@ import { ts } from "../ts-api.js";
 import type { TypeFact } from "../checker/oracle.js";
 import type { FuncHandle, Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { explicitNullReceiverLane, explicitNullThisExternInstrs } from "./explicit-null-receiver.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { bodyReferencesOwnThis } from "./helpers/body-references-own-this.js";
+import { isStrictContext } from "./helpers/is-strict-function.js";
 import { thisReceiverIsGlobalObject } from "./helpers/sloppy-this-global.js";
 import { addFuncType } from "./registry/types.js";
 import { ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
@@ -82,7 +84,31 @@ function factIsStaticallyNullish(fact: TypeFact): boolean {
   return fact.kind === "null" || fact.kind === "undefined" || fact.kind === "void";
 }
 
-function receiverIsAdmitted(ctx: CodegenContext, fctx: FunctionContext, receiver: ts.Expression): boolean {
+/**
+ * (#4203) Nullish through and through AND never `undefined`/`void` — i.e. the
+ * receiver is provably the value `null`.
+ *
+ * `factIsStaticallyNullish` above lumps `null` and `undefined` together because
+ * the legacy lowering answered the same thing for both. It no longer does: a
+ * STRICT callee must see `null` for `f.call(null)` and `undefined` for
+ * `f.call(undefined)`. Only the first is admitted to the trampoline, because
+ * only the first has a marker; `undefined` keeps the legacy drop-and-fall-
+ * through, which already produces the right answer through the body's
+ * `ref.is_null` arm.
+ */
+function factIsStaticallyNull(fact: TypeFact): boolean {
+  if (fact.kind === "union") {
+    return fact.parts.length > 0 && fact.parts.every((part) => factIsStaticallyNull(part));
+  }
+  return fact.kind === "null";
+}
+
+function receiverIsAdmitted(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  receiver: ts.Expression,
+  explicitNullAdmitted: boolean,
+): boolean {
   const inner = unwrap(receiver);
   // Acorn's exact wrappers use `finishNodeAt.call(this, ...)`. A body whose
   // own `this` is live reads the receiver installed by the enclosing method
@@ -91,7 +117,14 @@ function receiverIsAdmitted(ctx: CodegenContext, fctx: FunctionContext, receiver
   if (inner.kind === ts.SyntaxKind.ThisKeyword) {
     return fctx.readsCurrentThis === true || thisReceiverIsGlobalObject(ctx, fctx, inner);
   }
-  return !factIsStaticallyNullish(ctx.oracle.typeFactOf(inner));
+  const fact = ctx.oracle.typeFactOf(inner);
+  if (!factIsStaticallyNullish(fact)) return true;
+  // (#4203) A provably-null receiver is worth a trampoline only when the null
+  // arm now says something new — i.e. the target is strict and the marker is
+  // available. For a sloppy target the trampoline's null arm and the legacy
+  // lowering agree (both end at the global object), so admitting it would be
+  // pure cost and a gratuitous byte diff.
+  return explicitNullAdmitted && factIsStaticallyNull(fact);
 }
 
 function resolveDeclaration(ctx: CodegenContext, callee: ts.Identifier): ts.FunctionDeclaration | undefined {
@@ -149,6 +182,9 @@ function ensureNamedThisCallTrampoline(
   targetFunc: WasmFunction,
   params: readonly ValType[],
   results: readonly ValType[],
+  // (#4203) Emit the marker-installing null arm instead of the plain unbound
+  // call. True only for a STRICT target on the standalone/native-strings lane.
+  markerNullArm: boolean,
 ): FuncHandle {
   let byTarget = trampolineCache.get(ctx);
   if (!byTarget) {
@@ -175,10 +211,12 @@ function ensureNamedThisCallTrampoline(
   const resultLocal = resultType === undefined ? -1 : prevThisLocal + 1;
   const exactCall = callTarget(targetFuncIdx, params.length);
 
-  const liveCall: Instr[] = [
+  // Save the ambient receiver, install `receiver`, run the exact call, restore
+  // on both the normal and the unwinding exit.
+  const installAndCall = (receiver: readonly Instr[]): Instr[] => [
     { op: "global.get", index: currentThisGlobalIdx },
     { op: "local.set", index: prevThisLocal },
-    { op: "local.get", index: 0 },
+    ...receiver,
     { op: "global.set", index: currentThisGlobalIdx },
     {
       op: "try",
@@ -197,13 +235,25 @@ function ensureNamedThisCallTrampoline(
     ...(resultLocal < 0 ? [] : ([{ op: "local.get", index: resultLocal }] satisfies Instr[])),
   ];
 
+  const liveCall: Instr[] = installAndCall([{ op: "local.get", index: 0 }]);
+
+  // (#4203) Param 0 is null at runtime. The trampoline is only ever reached
+  // from a `.call`/`.apply`/`.bind` site that PASSED an argument, so this is
+  // not "no receiver" — it is "the receiver is `null`", and §10.4.3 makes a
+  // strict callee observe exactly that. Install the marker so the callee's
+  // `this` reader can tell the two apart. A sloppy target keeps the plain
+  // unbound call: its answer (the global object) is already correct and the
+  // emitted bytes stay identical.
+  const markerReceiver = markerNullArm ? explicitNullThisExternInstrs(ctx) : undefined;
+  const nullArm: Instr[] = markerReceiver ? installAndCall(markerReceiver) : callTarget(targetFuncIdx, params.length);
+
   const body: Instr[] = [
     { op: "local.get", index: 0 },
     { op: "ref.is_null" },
     {
       op: "if",
       blockType: resultType === undefined ? { kind: "empty" } : { kind: "val", type: resultType },
-      then: callTarget(targetFuncIdx, params.length),
+      then: nullArm,
       else: liveCall,
     },
   ];
@@ -235,6 +285,14 @@ export function resolveNamedThisCallTarget(
   userArguments: readonly ts.Expression[],
 ): NamedThisCallTarget | undefined {
   const declaration = resolveDeclaration(ctx, callee);
+  // (#4203) Strictness of the TARGET, not of the call site: §10.4.3 keys the
+  // receiver's treatment on the callee's own code. Only a strict target can
+  // observe explicit-null differently from absent, so only a strict target
+  // needs (or gets) the marker.
+  const markerNullArm =
+    declaration?.body !== undefined &&
+    explicitNullReceiverLane(ctx) &&
+    isStrictContext(declaration.body, ctx.inferModuleStrictArguments);
   if (
     !declaration?.body ||
     ctx.liveFuncBindingGlobals?.has(callee.text) === true ||
@@ -246,7 +304,7 @@ export function resolveNamedThisCallTarget(
       ts.isIdentifier(declaration.parameters[0].name) &&
       declaration.parameters[0].name.text === "this") ||
     !bodyReferencesOwnThis(declaration.body) ||
-    !receiverIsAdmitted(ctx, fctx, receiver)
+    !receiverIsAdmitted(ctx, fctx, receiver, markerNullArm)
   ) {
     return undefined;
   }
@@ -268,6 +326,7 @@ export function resolveNamedThisCallTarget(
     targetFunc,
     signature.params,
     signature.results,
+    markerNullArm,
   );
   return { trampolineFuncIdx };
 }
@@ -321,5 +380,47 @@ export function tryReshapeApplyToNamedThisCall(
   );
   ts.setTextRange(reshaped, expr);
   (reshaped as { parent?: ts.Node }).parent = expr.parent;
+  return reshaped;
+}
+
+/**
+ * (#4203) `f.bind(thisArg, ...partial)(...rest)` counterpart to the two above.
+ *
+ * The immediate bind-and-call form in `call-tail-dispatch.ts` reshapes to a
+ * direct `call $f` and evaluates `thisArg` only for its side effects — the same
+ * evaluate-and-DROP wrong answer #4025 removed for `.call` and #3983 for
+ * `.apply`, still standing for the third surface. It is `10.4.3-1-{77,79,80,98}`
+ * and their `gs` twins.
+ *
+ * For an immediately-invoked bind, `f.bind(t, p)(a)` IS `f.call(t, p, a)`: the
+ * bound function object is never observed, so its `.length`/`.name`/
+ * [[Construct]] cannot be either. Reshaping is therefore exact, not an
+ * approximation — and it inherits the trampoline's admission gate wholesale,
+ * so any shape the gate refuses keeps its current lowering.
+ *
+ * `f.bind()()` (no thisArg at all) is deliberately NOT reshaped: that is an
+ * ABSENT receiver, which the legacy path already answers correctly.
+ */
+export function tryReshapeBindToNamedThisCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  outer: ts.CallExpression,
+  bindCall: ts.CallExpression,
+  callee: ts.Identifier,
+  targetFuncIdx: FuncHandle,
+): ts.CallExpression | undefined {
+  if (bindCall.arguments.length === 0) return undefined;
+  const receiver = bindCall.arguments[0]!;
+  const args = [...bindCall.arguments.slice(1), ...outer.arguments];
+  if (resolveNamedThisCallTarget(ctx, fctx, callee, targetFuncIdx, receiver, args) === undefined) {
+    return undefined;
+  }
+  const reshaped = ts.factory.createCallExpression(
+    ts.factory.createPropertyAccessExpression(callee, "call"),
+    undefined,
+    [receiver, ...args],
+  );
+  ts.setTextRange(reshaped, outer);
+  (reshaped as { parent?: ts.Node }).parent = outer.parent;
   return reshaped;
 }
