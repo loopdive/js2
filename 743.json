@@ -1,11 +1,10 @@
 {
   "id": "743",
-  "assignee": "ttraenkler/opus-impl-1",
-  "requested_by": "ttraenkler@users.noreply.github.com",
-  "status": "released",
-  "branch": "claude/issue-743-mutual-fixpoint",
-  "claimed_at": "2026-08-07T02:04:01Z",
-  "updated_at": "2026-08-07T03:35:34Z",
-  "write_id": "29806-zrat685n",
-  "released_at": "2026-08-07T03:35:34Z"
+  "assignee": "ttraenkler/opus-impl-2",
+  "requested_by": "ttraenkler/opus-impl-2",
+  "status": "in-progress",
+  "branch": "claude/issue-743-i32-producer",
+  "claimed_at": "2026-08-07T03:35:51Z",
+  "updated_at": "2026-08-07T03:35:51Z",
+  "write_id": "31178-5bnwzeuk"
 }
