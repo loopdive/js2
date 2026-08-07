@@ -65,6 +65,19 @@ Same family, different layer — neither is about the provider:
    is spending an hour bisecting your own diff. **A total failure with a 0-byte
    jsonl is an instrument failure until proven otherwise.**
 
+   **The REPAIRED run has its own trap, and this one is silent.** A second lane
+   hit the no-op, re-ran with `JS2_WORKTREE_SOURCE`, and the repaired run linked
+   `node_modules` and a per-entry `test262/` symlink farm into **another agent's
+   worktree** rather than the main checkout. Point it at `/home/user/js2` and
+   verify where the links actually landed (`ls -l node_modules test262`).
+
+   A dep tree living inside another lane's worktree is a **delayed** version of
+   the clobber that once took a census from 1,609 attributed to 0: it works
+   perfectly until that lane's worktree is removed after its PR merges, and then
+   your next run fails — or worse, half-fails — for reasons that have nothing to
+   do with your change. Worktree cleanup is routine, so this is a scheduled
+   failure, not a hypothetical one.
+
 ## The rule
 
 **Build a two-sided instrument before believing any number**: the failing lever
