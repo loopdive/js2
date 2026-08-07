@@ -131,29 +131,42 @@ describe("#4210 — standalone Error own-property store", () => {
     expect(mask).toBe(31);
   });
 
-  it("preventExtensions refuses the write — NOT a vacuous pass any more", async () => {
-    // The shape of built-ins/Object/preventExtensions/15.2.3.10-3-20.js. Bit 1
-    // is the part that was WRONG on base: `Object.isExtensible` on an Error
-    // answered false, because there was no bag to read `[[Extensible]]` from
-    // and the terminal rule is the non-object one. Bits 4/8 pass on base too —
-    // vacuously, because the write was dropped rather than refused.
+  it("preventExtensions on an Error behaves exactly like a plain object", async () => {
+    // The shape of built-ins/Object/preventExtensions/15.2.3.10-3-20.js, which
+    // passes on unfixed main BECAUSE the write is dropped — a vacuous pass a
+    // working write side alone would convert into a failure.
+    //
+    // Asserted as PARITY with a plain object rather than in absolute terms, on
+    // purpose. A `compile()` source with an `export` is a MODULE, so every
+    // assignment here is strict-mode: a write to a non-extensible object
+    // throws TypeError instead of no-opping, for EVERY receiver kind. Measured
+    // 2026-08-07: plain object, function and Error all answer `TypeError` for
+    // both the add and the update case. Writing the sloppy-mode expectations
+    // here would fail against correct behaviour; writing the strict ones would
+    // pin an unrelated (and, for the update case, pre-existing and wrong)
+    // detail. Parity is the invariant this change actually owes.
     const mask = await run(`
-      var err: any = new Error("x");
-      __r += (Object.isExtensible(err) ? 1 : 0) * 1;
-      Object.preventExtensions(err);
-      __r += (!Object.isExtensible(err) ? 1 : 0) * 2;
-      err.exName = 5;
-      __r += (err.exName === undefined ? 1 : 0) * 4;
-      __r += (!err.hasOwnProperty("exName") ? 1 : 0) * 8;
-      // …and a non-extensible Error still accepts an UPDATE of an existing own
-      // key, which is what distinguishes "sealed" from "dropped on the floor".
-      var e2: any = new Error("y");
-      e2.k = 1;
-      Object.preventExtensions(e2);
-      e2.k = 2;
-      __r += (e2.k === 2 ? 1 : 0) * 16;
+      function probe(o: any): number {
+        var m: number = 0;
+        m += (Object.isExtensible(o) ? 1 : 0) * 1;
+        Object.preventExtensions(o);
+        m += (!Object.isExtensible(o) ? 1 : 0) * 2;
+        try { o.exName = 5; m += 4; } catch (e) { m += (e instanceof TypeError) ? 8 : 16; }
+        m += (o.exName === undefined ? 1 : 0) * 32;
+        m += (!o.hasOwnProperty("exName") ? 1 : 0) * 64;
+        return m;
+      }
+      var want: number = probe({});
+      // PRECONDITION: green on both arms — the plain-object oracle is
+      // isExtensible true -> false, strict add throws TypeError, key absent.
+      __r += (want === 1 + 2 + 8 + 32 + 64 ? 1 : 0) * 1;
+      // On base an Error answers 0 for bit 1 (isExtensible was FALSE — no bag
+      // to read [[Extensible]] from, so the non-object terminal rule applied)
+      // and 4 instead of 8 (the write was silently dropped, never refused).
+      __r += (probe(new Error("x")) === want ? 1 : 0) * 2;
+      __r += (probe(new TypeError("x")) === want ? 1 : 0) * 4;
     `);
-    expect(mask).toBe(31);
+    expect(mask).toBe(7);
   });
 
   it("an Error works as the descriptor argument of defineProperty (#4165 family)", async () => {
