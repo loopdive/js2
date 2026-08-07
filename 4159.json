@@ -1,11 +1,10 @@
 {
   "id": "4159",
-  "assignee": "ttraenkler/claude-fable",
-  "requested_by": "ttraenkler@users.noreply.github.com",
-  "status": "released",
-  "branch": "claude/acorn-performance-optimization-hagjht",
-  "claimed_at": "2026-08-06T11:23:03Z",
-  "updated_at": "2026-08-06T11:23:42Z",
-  "write_id": "28883-mn6asx62",
-  "released_at": "2026-08-06T11:23:42Z"
+  "assignee": "ttraenkler/W15",
+  "requested_by": "ttraenkler/W15",
+  "status": "in-progress",
+  "branch": "issue-4159-typed-lane-overlay-routing",
+  "claimed_at": "2026-08-07T01:02:57Z",
+  "updated_at": "2026-08-07T01:02:57Z",
+  "write_id": "23745-rhepf9xi"
 }
