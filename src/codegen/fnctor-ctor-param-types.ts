@@ -37,7 +37,7 @@
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
 import type { ValType } from "../ir/types.js";
-import { computeFnctorGraphCtorParamFacts } from "../ir/fnctor-method-edges.js";
+import { computeFnctorGraphCtorParamFacts, computeFnctorGraphCtorThisReadFacts } from "../ir/fnctor-method-edges.js";
 import { inferParamTypeFromCallSites } from "./declarations/param-return-inference.js";
 
 /**
@@ -77,13 +77,34 @@ export function inferFnctorFieldTypeFromCtorParam(
   if (!fnctorCtorParamTypesEnabled()) return null;
   // Only rescue a slot the checker could not type; never perturb a typed one.
   if (rhsWasm.kind !== "externref") return null;
-  if (!ts.isIdentifier(valueExpr)) return null;
+
+  // (#743) `deriveFnctorFields` hands us the value flowing into THIS slot, which
+  // for a chain (`this.start = this.end = this.pos`) is the inner ASSIGNMENT,
+  // not the value. Unwrap exactly the way its carrier loop does before deciding
+  // what kind of carrier this is.
+  let carrier: ts.Expression = valueExpr;
+  while (ts.isBinaryExpression(carrier) && carrier.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+    carrier = carrier.right;
+  }
+
+  // (#743) A `this.<y>` READ: the value is a FIELD of the instance under
+  // construction, which no parameter fact can express. The satellite's mutual
+  // field↔param fixpoint has already applied definiteness and statement
+  // ordering, so a read that could observe `undefined` never carries a numeric
+  // fact here. Node-keyed so this cannot drift from what was proven.
+  if (ts.isPropertyAccessExpression(carrier) && carrier.expression.kind === ts.SyntaxKind.ThisKeyword) {
+    const fact = computeFnctorGraphCtorThisReadFacts(funcDecl.getSourceFile(), ctx).get(carrier);
+    if (fact === undefined) return null;
+    return fact.kind === "f64" || fact.kind === "i32" || fact.kind === "u32" ? { kind: "f64" } : null;
+  }
+
+  if (!ts.isIdentifier(carrier)) return null;
   const name = funcDecl.name?.text;
   if (name === undefined) return null;
 
   // The identifier must resolve to a PARAMETER OF THIS constructor — not a
   // same-named outer binding, and not a local that shadows one.
-  const decl = ctx.oracle.valueDeclarationOf(valueExpr);
+  const decl = ctx.oracle.valueDeclarationOf(carrier);
   if (decl === undefined || !ts.isParameter(decl)) return null;
   if (decl.parent !== funcDecl) return null;
   // A defaulted or rest parameter does not have the plain positional
