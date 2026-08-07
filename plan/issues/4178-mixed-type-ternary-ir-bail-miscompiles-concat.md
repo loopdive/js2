@@ -15,6 +15,13 @@ loc-budget-allow:
   # across two files, which is what let the fourth arm silently diverge in the
   # first place. Most of the +35 is the comment recording why.
   - src/codegen/type-coercion.ts
+# Same +35 lines, same reason: they are all inside `coerceType`, so the file
+# gate and the function gate are measuring one change, not two. Splitting the
+# function to satisfy R-FUNC would mean splitting the four-way `from.kind` /
+# `to.kind` dispatch across two units — the precise structure whose fourth arm
+# silently diverged and caused this bug.
+func-budget-allow:
+  - src/codegen/type-coercion.ts::coerceType
 priority: high
 horizon: m
 feasibility: hard
