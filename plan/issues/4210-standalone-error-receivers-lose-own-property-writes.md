@@ -224,6 +224,116 @@ amount. Re-derive before sizing a fix.
 comprehensively stale: the mechanism it described no longer reproduces for any
 receiver kind except this one.
 
+## Measured (W31, 2026-08-07) — base `origin/main@8f119536ae`, head `issue-4210-error-carrier-bag`
+
+Real standalone lane, provider rebuilt per arm at the **INTERPRETER** tier
+(`TEST262_FULL_RUNTIME_EVAL=1`). The provider `.wasm` was deleted before each
+build because the cache key is worthless — both arms report key
+`854c120ce015d507` while emitting **4,141,686** (base) and **4,142,021** (head)
+bytes. The base arm is a SEPARATE worktree at `origin/main`, so no tree was
+ever left holding the base of an A/B.
+
+### Channel probe
+
+| receiver | base | head |
+| --- | --- | --- |
+| `new Error("x")`, RHDEIKX | `rhdeikX` (the X vacuous — nothing to delete) | `RHDEIKX` |
+| `new Error` / `new TypeError` / `new Error()` / `Error()`, `RHD\|VH` | `rhd\|vh` ×4 | `RHD\|VH` ×4, identical to `{}` |
+| subclass own-field writer + plain expando on one instance | `code=1 other=2 hasCode=0 hasOther=0` | values and reflection agree |
+| integrity (`Eewh`) | `plain/fn/date/regexp = Eewh`, **`err = eewh`** | `err = Eewh` — same answers as every other carrier |
+| static/dynamic/computed write | `staticLit=0 dynParam=0 staticComputed=0` | `1 1 1` |
+
+That last base row answers the question this issue could not: `err.p = 7` on a
+statically-Error-typed receiver **does** reach `__extern_set`. The arm is not
+dead code.
+
+### LEVER — 71 files, re-derived
+
+**Not the 58 this issue filed, and the reason matters more than the number.**
+The original scan took each file's body plus its `includes:` harness files. The
+runner (`assembleOriginalHarness`) **always** prepends `assert.js` and `sta.js`
+regardless of `includes:`, so any population derived that way is
+systematically under-counted. Scanning the true effective source gives 71
+(`W` write 47 · `M` message/name/stack write 11 · `R` reflection 33, union 71).
+
+| | base | head |
+| --- | ---: | ---: |
+| pass | 6 | **27** |
+
+**fail→pass 21 · pass→fail 0 · status-changed 0 · signature-changed 1.**
+
+- **Byte-hash exposure: 71/71 modules changed, 0 byte-identical.**
+  Byte-identity is **not available** as a safety argument for this change:
+  `__extern_set`'s body moves for every standalone module with an object
+  runtime. Safety comes from execution over the full control below, not from
+  hashes.
+- **Instrument validation:** the base arm reproduces the published standalone
+  baseline **56/71**. All 15 disagreements are ONE cause and are identical in
+  both arms — the baseline records them as
+  `compile_error: standalone target emitted host imports: env::__new_SuppressedError (#2961)`,
+  a leak since fixed on `main`, so the baseline is simply older than the base.
+  **0 unexplained.**
+- The one signature change is fail→fail:
+  `built-ins/Object/defineProperties/15.2.3.7-2-15.js` moves from the loud
+  `[SITE-PROPS-BAG-NOT-AUTHORITATIVE]` refusal to a real `Test262Error`. Cause,
+  named rather than hidden: the `Properties`-map arm SUBSTITUTES the bag, so a
+  getter on the map is invoked with the bag as `this` and `this instanceof
+  Error` is false. **Pre-existing in kind** — `closurePropertiesBagArm` (#4161)
+  has the identical `this` binding for a function used as a Properties map. See
+  the residue below.
+
+### Refusal-vacuous-pass at-risk set (the #4209 question, for Error)
+
+**The #4207 mechanism does not apply to this change.** That mechanism is "a
+not-yet-implemented refusal throws the `TypeError` the test wanted, so
+implementing the feature converts a pass into a failure". Dropped Error writes
+were **silent** — never a refusal, never a throw — so this change removes no
+throw and can convert no `assert.throws(TypeError, …)` pass.
+
+The analogous risk here is "passes **because** the write was dropped". That set
+is exactly the 6 baseline-`pass` files inside the 71-file lever:
+
+| file | at risk? |
+| --- | --- |
+| `Object/preventExtensions/15.2.3.10-3-20.js` | **YES** — `verifyNotWritable` + `assert(!hasOwnProperty)` on an Error |
+| `Object/preventExtensions/15.2.3.10-3-10.js` | **YES** — same shape |
+| `Object/defineProperty/15.2.3.6-4-583.js` | no — reflection only |
+| `Object/defineProperty/15.2.3.6-4-407.js` | no — reflection only |
+| `Array/prototype/reduce/15.4.4.21-1-14.js` | no — write, never re-read |
+| `Object/defineProperties/15.2.3.7-5-b-160.js` | no — write, never re-read |
+
+Both YES entries are handled by the `__integrity_bag` arm, and both still pass
+— now for the right reason. Nothing here needs routing to #4209.
+
+## Residue — what this issue does NOT fix
+
+1. **`err.message` / `err.name` / `err.stack` READS do not honour the write →
+   split out as #4213.** After this change `e.message = "x"` stores and
+   `e.hasOwnProperty("message")` is `true`, but `e.message` still answers the
+   struct field. **This is a known, deliberate, temporary inconsistency.**
+   Cause: `tryNativeErrorMemberRead`
+   (`property-access-dispatch.ts`) and `__error_to_string`
+   (`native-strings.ts`) are fast paths that predate #3130's `$props`-first
+   rule and never learned it; only `__extern_get` knows it. Bound: `message` /
+   `name` / `stack` reads only, 11 reachable files, **none of them currently
+   passing**, so 0 regression risk and ≤4 files of upside. Full analysis and
+   fix direction in `plan/issues/4213-…md`.
+2. **A getter on an Error used as a `Properties` MAP runs with the bag as
+   `this`** (the signature change above). Second instance of the same defect —
+   `closurePropertiesBagArm` (#4161) does it too — which makes it a property of
+   the SUBSTITUTION pattern, not of either site. Worth its own issue if a third
+   carrier ever joins; recorded here rather than papered over.
+3. **`delete err.message` still resurrects the field value.** The bag entry is
+   removed, the read falls back to field 1. Unchanged by this issue (there was
+   never a bag entry to delete) and out of #4213's scope too — it needs a
+   tombstone on the field surface.
+4. **`new Error("x")` reports `hasOwnProperty("message") === false` until some
+   write creates the bag.** Per spec `message` IS an own non-enumerable
+   property of such an instance. Pre-existing; unchanged. Seeding the bag with
+   the spec attributes at construction was **considered and rejected**: it
+   allocates an `$Object` per Error on the throw path, and the measured
+   population that would benefit is 0 currently-passing files.
+
 ## Acceptance
 
 - `err.x = 7` then `err.x` reads `7`; `err.hasOwnProperty("x")` is `true`;
