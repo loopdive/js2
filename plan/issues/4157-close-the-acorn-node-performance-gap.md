@@ -403,3 +403,122 @@ Two results from that run that change what the NEXT slice should target:
    `$AnyValue` boxing streams outweigh what is left after that. That points the
    residual GC bucket squarely back at **Workstream 1** (value representation:
    #4155 / #743), not at further plumbing elision.
+
+## 2026-08-07 — the `i31` lever is already spent, and the byte-ranked table
+
+All numbers below re-measured on `origin/main` today (post-PR #4211),
+standalone-dynamic acorn self-parse, checksum 422:
+
+```
+JS2WASM_ALLOC_CENSUS=1 npx tsx scripts/generate-npm-compat-report.mjs \
+  --only acorn --no-write --perf-only --lane standalone-dynamic \
+  --inspect-binary <out.wasm>
+```
+
+then instantiate, call `__module_init`, snapshot every `__alloc_count_*`
+global, run `__npmCompatStandaloneBenchmark(1, 3780)`, and diff.
+(`tests/issue-3921-alloc-census.test.ts` shows the idiom.) Adding
+`JS2WASM_ALLOC_CENSUS_CALLS=<substr>` (#4185) adds per-(caller→callee) call
+counters for matching callees — that is what §1 below rests on.
+
+### 1. Packing small ints into `i31` is dead twice over
+
+The plausible future lever — "JS numbers in dynamic fields heap-allocate a
+boxed struct, so pack signed-31-bit integers into `i31ref` and skip the
+allocation" — is closed on both ends.
+
+**(a) It already exists.** `src/codegen/registry/imports.ts:1113-1160`
+registers `__box_number` with an `i31` fast path (#3673): a value that
+survives an `i32.trunc_sat_f64_s` round-trip *and* a `shl 1 / shr_s 1`
+round-trip becomes `ref.i31` with no allocation; everything else falls through
+to `struct.new`. The exclusion list is the reusable part, and the comment
+carries the *why*:
+
+> Excluded: `-0` (i31 cannot carry the sign — `1/x` and `Object.is` would lose
+> it), NaN and infinities (fail the trunc round-trip), and values outside
+> `[-2^30, 2^30-1]` (fail the shl/shr round-trip).
+
+**(b) The remaining prize is 0.06 MB/parse.** The boxed-number struct is
+`type_67` — `struct, 1 fields (1×f64), ~16 B/instance` — allocated **3,862
+times per parse, 1.79 % of 215,286 allocations, ≈0.06 MB**, against a parse
+allocating **12.34 MB** of struct bytes. Even eliminating it entirely is
+0.5 % of struct bytes.
+
+**(c) It resolves the `__box_number` puzzle.** The 08-07 profile above puts
+`__box_number` at **1.99 %** self-time while it barely allocates. Measured
+cause, via the call census:
+
+| | per parse |
+| --- | ---: |
+| `__box_number` calls | **556,923** (70 call sites) |
+| …that allocate (`type_67`) | 3,862 |
+| …that take the `i31` path | **553,061 — 99.31 %** |
+
+So it is called **2.6× more often than the parse allocates anything at all**,
+and 99.31 % of those calls never touch the heap. Its 1.99 % is call overhead
+plus the range test — **not** allocation. The lever that would move it is
+inlining/call elimination at the top callers (one closure alone accounts for
+163,778 calls), not anything in the allocator.
+
+### 2. The byte-ranked table — and why count-ranking misleads
+
+PR #4208's lesson generalised: **rank allocation streams by count × instance
+size, not by count.** It removed 18.2 % of allocation *events* for ~0.4 pp of
+runtime because the streams it took were the smallest objects in the census
+(this is already recorded in the preceding section; the table is what was
+missing).
+
+Shapes come from the census build's own stderr dump, joined to the counts **by
+export name** (see §3a):
+
+| type | count/parse | size | bytes/parse | byte share |
+| --- | ---: | ---: | ---: | ---: |
+| `__fnctor_Node_18` — struct, 69 fields (62×externref, 3×ref_null, 2×f64, 2×i32) | 32,468 | 292 B | **9.48 MB** | **76.8 %** |
+| `type_7` — struct, 3 fields (2×i32, 1×ref) | 54,818 | 20 B | 1.10 MB | 8.9 % |
+| `type_75` — struct, 5 fields (2×i32, 1×f64, 1×eqref, 1×externref) | 22,008 | 32 B | 0.70 MB | 5.7 % |
+| `__vec_externref_2` — struct, 2 fields (1×i32, 1×ref) | 31,414 | 16 B | 0.50 MB | 4.1 % |
+| `type_235` — struct, 6 fields (5×f64, 1×externref) | 7,252 | 52 B | 0.38 MB | 3.1 % |
+| `type_67` — boxed number, 1×f64 | 3,862 | 16 B | 0.06 MB | 0.5 % |
+| `type_1` / `type_5` | 27,361 / 26,064 | arrays (4 B and 2 B per element) | payload-dependent | — |
+
+The inversion is the point: by **count** the node struct is 15.1 % and ranks
+*second*; by **bytes** it is three quarters of everything. Array types are
+excluded from the byte total because the census records per-element size, not
+length.
+
+**Caveat — the struct-byte denominator does not currently agree with itself.**
+This run measures **12.34 MB / node at 76.8 %**, over 215,286 allocations
+baselined *after* `__module_init`. #3927 §1 records **12.23 MB / 77.5 %** in
+its table but **12,827,613 B over 270,062 allocations** in the adjacent prose
+— and 9,480,656 / 12,827,613 is 73.9 %, not 77.5 %. The count gap is most
+likely the `__module_init` baseline (this reader excludes module-init
+allocations; a whole-instance snapshot does not). The three figures cannot all
+be right; resolving them belongs to #3927, which owns that measurement. What
+is **not** in doubt and is safe to quote: the node struct is between three
+quarters and 78 % of struct bytes, and this supersedes the older **43.6 MB**
+figure, which came from `--trace-gc` and also counts array payload (both are
+right about different quantities — quote the census when ranking struct-shape
+levers).
+
+Note the counts themselves are **unchanged** from the pre-#4211 measurement,
+so the table is current on today's main.
+
+### 3. Two instrument traps, each of which nearly produced a wrong conclusion
+
+**(a) Type numbering: the census and `wasm-dis` do not share it.** Census
+counters are named in the **compiler's** type numbering
+(`__alloc_count_type_67`); `wasm-dis` shows **post-`wasm-opt`** indices, and
+the optimizer renumbers types. Reading a struct's shape off a disassembly and
+matching it to a census counter by index gives a wrong answer — doing exactly
+that nearly recorded the AST node struct as 7 fields when it has **69**. The
+only correct join key is the census build's own stderr shape dump, keyed by
+export name. `src/codegen/alloc-census.ts:26-27` already states the reason
+("`wasm-opt` renumbers types, so a `typeIdx`-keyed reader would go stale,
+while export names survive"); this is its concrete failure mode.
+
+**(b) Never pipe a command whose exit status — or whose output — you need.**
+Already a repo rule, and it bit twice more today: a gate piped to `tail -3`
+showed only trailing advisory text and hid its `FAILED` line, so a broken PR
+shipped. The output half is the less-documented one: truncating with `tail -N`
+*inside* the command loses the rest **permanently**, which is how a 30-file
+test sample was rendered uninterpretable (see #3552, 2026-08-07).
