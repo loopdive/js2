@@ -1,10 +1,11 @@
 {
   "id": "743",
   "assignee": "ttraenkler/opus-impl-4",
-  "requested_by": "ttraenkler/opus-impl-4",
-  "status": "in-progress",
+  "requested_by": "ttraenkler@users.noreply.github.com",
+  "status": "released",
   "branch": "claude/issue-743-consumer-abi",
   "claimed_at": "2026-08-07T16:47:56Z",
-  "updated_at": "2026-08-07T16:47:56Z",
-  "write_id": "1447-es7p64bn"
+  "updated_at": "2026-08-07T17:07:22Z",
+  "write_id": "32464-8nkjg5g4",
+  "released_at": "2026-08-07T17:07:22Z"
 }
