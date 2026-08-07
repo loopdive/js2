@@ -42,6 +42,29 @@ and no populated `test262/`** (`bash scripts/provision-worktree-deps.sh`). A
 hand-made `ln -s test262` was clobbered mid-session and a census went from
 1,609 attributed to **0** with no error at all.
 
+### Two MORE ways the harness measures the wrong compiler (2026-08-07, W26)
+
+Same family, different layer — neither is about the provider:
+
+4. **The pool worker imports `scripts/compiler-bundle.mjs` and
+   `scripts/runtime-bundle.mjs` — NOT `src/`.** Edit `src/`, re-run through the
+   pool worker, and you measure the **previous compiler**. Both bundles must be
+   rebuilt for **each arm** of an A/B. Fails exactly like the provider-cache
+   trap: a plausible result, no error, nothing saying the arm never saw your
+   change.
+
+5. **`scripts/provision-worktree-deps.sh` silently no-ops on a container with
+   no `/workspace`.** `SOURCE_ROOT` resolves to the agent's own worktree and the
+   script **exits 0 having done nothing**. The pool worker then dies importing
+   the missing `scripts/compiler-bundle.mjs`, every test times out at 90 s, and
+   the run reports **everything FAILED with a 0-byte jsonl**. Workaround:
+   `JS2_WORKTREE_SOURCE=/home/user/js2`. Cost one lane ~1 h.
+
+   This one at least fails loudly — but *implausibly* loudly. A 201/201 wipeout
+   reads as "my change broke the world", so the danger is not believing it; it
+   is spending an hour bisecting your own diff. **A total failure with a 0-byte
+   jsonl is an instrument failure until proven otherwise.**
+
 ## The rule
 
 **Build a two-sided instrument before believing any number**: the failing lever
