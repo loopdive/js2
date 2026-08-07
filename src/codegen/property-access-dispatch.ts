@@ -121,6 +121,7 @@ import {
 } from "./shared.js";
 import { tryEmitJsonParsePropertyAccess } from "./json-standalone.js";
 import { resolveReceiverStruct } from "./fnctor-escape-gate.js";
+import { findColdStructsForField } from "./fnctor-cold-tail.js"; // (#3927) hot/cold fnctor split
 import { tryCompileTemporalPropertyAccess } from "./temporal-native.js";
 import {
   BUILTIN_CTOR_ARITY,
@@ -3792,6 +3793,21 @@ export function finalizeStructAndDynamicMemberGet(
             accessWasm.kind === "f64" || accessWasm.kind === "i32" ? accessWasm : ({ kind: "externref" } as const);
           if (resultWasm.kind === "externref") {
             const fieldKinds = new Set(structCandidates.map((c) => c.fieldType.kind));
+            // (#3927) A hot/cold-split fnctor carries `propName` in its
+            // lazily-allocated tail, and `findAlternateStructsForField`
+            // deliberately cannot see the tail (an arm keyed on `ref.test
+            // $…__cold` would be dead at best and, under WasmGC's structural
+            // canonicalization, wrongly live at worst). Those slots are always
+            // `externref`, so narrowing on the VISIBLE candidates alone is
+            // unsound the moment a split moved the last externref carrier out:
+            // the terminal `__get_member_<name>` (which DOES know the hop)
+            // returns the boxed tail value, and the narrowing then drags it
+            // through `__unbox_number` + `i32.trunc_sat_f64_s`. Measured on the
+            // standalone acorn lane: with `generator` cold, its only remaining
+            // VISIBLE carrier was `$__fnctor_TokContext`'s boolean-branded i32,
+            // so every `node.generator` read answered a constant `false` —
+            // 32,506 of 32,506 AST nodes, one wrong field out of 64.
+            for (const cold of findColdStructsForField(ctx, propName)) fieldKinds.add(cold.fieldType.kind);
             if (fieldKinds.size === 1) {
               const k = [...fieldKinds][0];
               if (k === "f64" || k === "i32") {

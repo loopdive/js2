@@ -19,12 +19,19 @@ loc-budget-allow:
   - src/codegen/context/types.ts
   - src/codegen/index.ts
   - src/codegen/property-access.ts
+  # (2026-08-07) The §4 `generator` defect lives INSIDE the Phase-3 (#1269)
+  # consumer-side narrowing in `compilePropertyAccess`. The veto has to be
+  # where the narrowing decision is made; there is no seam to move it to.
+  - src/codegen/property-access-dispatch.ts
 func-budget-allow:
   - src/codegen/fnctor-escape-gate.ts::deriveFnctorFields
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
   - src/codegen/member-get-dispatch.ts::fillMemberGetDispatch
   - src/codegen/object-runtime.ts::fillClosedStructExternGetArms
+  # (2026-08-07) Same seam as the loc-budget grant above — the Phase-3
+  # narrowing decision lives inside this function.
+  - src/codegen/property-access-dispatch.ts::finalizeStructAndDynamicMemberGet
 priority: medium
 horizon: xl
 feasibility: hard
