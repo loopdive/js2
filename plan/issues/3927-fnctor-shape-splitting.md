@@ -397,38 +397,73 @@ boolean-brand or typed-twin read path not yet taught the hop (the typed
 dispatcher this slice did not wire). **Do not raise the split past K≈13 until
 that is found.** K=24, the setting these numbers are quoted at, is unaffected.
 
-### 5. What is NOT measured, and why
+### 5. Profile bucket share — the mechanism check, and it holds
 
-- **No wall-clock A/B.** §6 established this box cannot resolve anything under
-  ~10 %, and the predicted effect is −3-4 %. A number would have been noise
-  dressed as evidence; block A of §5 is the cautionary case.
-- **No profile bucket share.** Worth running as the mechanism check (does the
-  gc-engine bucket shrink by roughly the byte fraction?) but not run here.
-  Recommended as the first measurement of the next slice, with §6's
-  order-reversal control.
+`scripts/profile-buckets.mjs`, 300 parses, `standalone-dynamic`,
+`--preserve-debug-names` + `JS2WASM_CLOSURE_NAME_MAP=1`, OFF vs K=24:
+
+| bucket | OFF | K=24 | |
+| --- | ---: | ---: | --- |
+| **gc-engine** | **15.71 %** | **11.79 %** | **−3.92 pp (−25 % of its own share)** |
+| compiled | 18.12 | 19.89 | diluted up |
+| scanner | 16.31 | 17.16 | diluted up |
+| dynamic-lookup | 16.38 | 16.78 | diluted up |
+| call-dispatch | 9.46 | 10.33 | diluted up |
+| regexp | 7.41 | 7.55 | diluted up |
+| dynamic-eq | 5.65 | 5.70 | diluted up |
+| cast-convert | 4.89 | 5.09 | diluted up |
+| string-runtime | 4.46 | 4.27 | ~flat |
+| alloc-helpers | 1.37 | 1.21 | fewer `struct.new` operands |
+
+**One bucket shrinks and every other one dilutes proportionally upward — the
+exact signature of a single absolute reduction with the rest unchanged.** The
+top frame `(garbage collector)` falls 15.70 → (out of the top-25 head) and the
+bucket loses a quarter of itself, against a measured **−21.6 % of allocated
+struct bytes**. Cause and effect line up: the GC bucket on this workload is
+close to proportional to allocated bytes.
+
+Translating with §6's own arithmetic: GC self-time ≈ 25 % smaller × a
+15.7 %-of-wall bucket ⇒ **≈ −3.9 % of wall**, landing on §6's −3-4 % point
+estimate from the pad probe. Two independent instruments (the pad probe's
+d(wall)/d(slot), and this byte→bucket measurement) now agree.
+
+Wall for the two profiled runs was 42,981 ms → 41,038 ms (−4.5 %). **That is a
+single unreplicated pair with no order-reversal control and is BELOW this
+box's resolvability bar (§6) — it is quoted only because it is consistent with
+the bucket shift, and it is not evidence on its own.** The bucket shares are;
+per §6.3 they are robust to uniform ambient load in a way wall deltas are not.
+
+### 5b. What is NOT measured
+
+- **No replicated / order-reversed wall A/B.** Deliberate: §5 of the
+  2026-08-06 slice records a 3/3-consistent +29 % reading that was pure load
+  contamination. The bucket share is the instrument here.
 - **Standalone lane only.** The split is gated on `ctx.standalone` by
   construction (flow-grown fields are the host-free replacement for the host
   sidecar), so host mode is untouched.
+- **No test262 run.** Flag-OFF ⇒ byte-identical, so the merge-queue gates cover
+  it; a conformance run of the flag-ON build is the next slice's job, after §4
+  closes.
 
 ### 6. Flag decision: ships **default OFF**
 
-Three reasons, in order:
+Two reasons, and note that "the payoff is unproven" is **no longer** one of
+them — §5's bucket shift is a real, mechanism-level positive result:
 
-1. **A defect is open** (§4). Shipping ON with a known one-field divergence at
-   part of the range is not defensible, even though the recommended setting is
-   outside it.
-2. **The payoff is not yet demonstrated in time**, only in bytes. −21.6 % of
-   struct bytes is a large, deterministic, real number, but §6's coefficient
-   translates it to ≈ −3-4 % wall — under this box's resolution. The
-   evidence rule's "wash ships OFF" applies until a profile or a quieter box
-   converts bytes into a measured bucket shift.
-3. **The overflow rate says the design is not yet at its best point** (§2). A
-   better ranking is cheap and would improve both the bytes and the risk (fewer
+1. **A defect is open** (§4). Shipping ON with a known one-field divergence
+   over part of the range is not defensible even though the recommended setting
+   sits outside it. This is the blocking reason.
+2. **The overflow rate says the design is not at its best point** (§2). A
+   better hotness proxy is cheap and improves the bytes AND the risk (fewer
    fields cold ⇒ smaller reflective surface). Landing ON now would freeze the
-   worse variant.
+   worse variant, and the ranking change would then have to be re-validated
+   against a shipped default rather than against OFF.
 
-The mechanism, the measurement harness idiom, and the corrected arithmetic are
-the deliverable; the switch is one line when §4 closes and §2's ranking lands.
+So this is a **deferred ON, not a wash**: −21.6 % of allocated struct bytes and
+−3.92 pp of the largest profile bucket, for ≈ −3.9 % of wall by the
+byte→bucket translation. The switch is one line once §4 closes and §2's
+ranking lands; the mechanism, the harness idiom, and the corrected arithmetic
+are this slice's deliverable.
 
 ### 7. Gates
 
