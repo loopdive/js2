@@ -37,6 +37,7 @@
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
 import type { ValType } from "../ir/types.js";
+import { computeFnctorGraphCtorParamFacts } from "../ir/fnctor-method-edges.js";
 import { inferParamTypeFromCallSites } from "./declarations/param-return-inference.js";
 
 /**
@@ -93,9 +94,27 @@ export function inferFnctorFieldTypeFromCtorParam(
   if (paramIndex < 0) return null;
 
   const inferred = inferParamTypeFromCallSites(ctx, name, paramIndex, funcDecl.getSourceFile());
-  // `sawCallSite && type === null` is the polymorphic/conflicting case — the
-  // scan's own signal that narrowing would be unsound. No call sites at all is
-  // equally inconclusive here (an exported ctor invoked from outside).
-  if (!inferred.sawCallSite || inferred.type === null) return null;
-  return inferred.type.kind === "f64" ? { kind: "f64" } : null;
+  // Legacy single-hop first: a conclusive direct-site agreement keeps exactly
+  // its #4117 behaviour (f64 or nothing — a ref/string agreement never touches
+  // a field slot here).
+  if (inferred.sawCallSite && inferred.type !== null) {
+    return inferred.type.kind === "f64" ? { kind: "f64" } : null;
+  }
+  // (#743) Graph-completeness fallback for the two cases the single-hop scan
+  // cannot decide: NO identifier sites at all (acorn's `Parser` is only ever
+  // constructed via `new this(…)` in its write-once static methods), or sites
+  // whose args are themselves untyped forwards. The satellite fixpoint
+  // (src/ir/fnctor-method-edges.ts) carries prototype/static METHOD call edges
+  // and `new this(…)` edges to convergence, so a fact here has joined every
+  // construction path the module contains — including the transitive
+  // entrypoint → static-method → `new this` chain. Consumption stays f64-only,
+  // mirroring this function's existing restriction: the numeric unbox at the
+  // export boundary is the family's accepted guard for a violating external
+  // caller. `i32`/`u32` are numeric subdomains of f64 (propagate.ts lattice)
+  // and lower to the same f64 slot.
+  const fact = computeFnctorGraphCtorParamFacts(funcDecl.getSourceFile(), ctx).get(name)?.[paramIndex];
+  if (fact !== undefined && (fact.kind === "f64" || fact.kind === "i32" || fact.kind === "u32")) {
+    return { kind: "f64" };
+  }
+  return null;
 }
