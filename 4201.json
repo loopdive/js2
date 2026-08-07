@@ -1,11 +1,10 @@
 {
   "id": "4201",
-  "assignee": "",
-  "requested_by": "ttraenkler/W19",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-08-07T06:09:56Z",
-  "updated_at": "2026-08-07T06:09:56Z",
-  "write_id": "24353-2bew4l87",
-  "pr_scan": "degraded"
+  "assignee": "ttraenkler/W20",
+  "requested_by": "ttraenkler/W20",
+  "status": "in-progress",
+  "branch": "issue-4201-standalone-wrapper-valueof",
+  "claimed_at": "2026-08-07T07:55:35Z",
+  "updated_at": "2026-08-07T07:55:35Z",
+  "write_id": "9419-jiukk9kd"
 }
