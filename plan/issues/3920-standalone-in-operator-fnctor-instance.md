@@ -106,7 +106,7 @@ plausible multi-test bucket rather than a one-off.
       with its own repro rather than left implied.
 - [ ] No standalone test262 regression.
 
-## Measured 2026-08-07 (from #3927) — scope item 2 answered, and it is NOT one hole
+## Measured 2026-08-07 (from #3927) — wider than filed; the grouping is CONTESTED
 
 Found while validating #3927's hot/cold split: an in-wasm differential over the
 acorn self-parse showed `for…in` yielding keys on **15 of 32,506** walked
@@ -114,32 +114,53 @@ objects (the 15 are plain RegExp-ish objects, not AST nodes), against **32,487**
 for the reference implementation. Scoped afterwards with small standalone
 programs — `.tmp/forin-scope.mjs` / `forin-scope2.mjs`, recreate from the table:
 
-| program (`--target standalone`) | answer | correct |
-| --- | ---: | ---: |
-| `for…in` over an `any` object literal (open `$Object`) | 3 | 3 ✓ |
-| `for…in` over a class instance, receiver statically typed AT THE LOOP | 3 | 3 ✓ |
-| `for…in` over a class instance, receiver reaches the loop as `any` | **0** | 3 ✗ |
-| `for…in` over a fnctor instance, even statically typed | **0** | 3 ✗ |
-| `Object.keys(objectLiteral).length` | 3 | 3 ✓ |
-| `Object.keys(classInstance).length` | **0** | 3 ✗ |
-| `classInstance.hasOwnProperty("a")` | **1** | 1 ✓ |
-| `"a" in classInstance` | **0** | 1 ✗ |
+Two lanes ran the matrix independently. **Six of eight rows agree; two do not,
+and they are unresolved** — see the warning under the table before acting on it.
 
-**Three things this settles or changes:**
+| program (`--target standalone`) | lane A | lane B | correct |
+| --- | ---: | ---: | ---: |
+| `for…in` over an `any` object literal (open `$Object`) | 3 ✓ | 3 ✓ | 3 |
+| `for…in` over a class instance, receiver statically typed AT THE LOOP | 3 ✓ | 3 ✓ | 3 |
+| `for…in` over a class instance, receiver reaches the loop as `any` | **0 ✗** | **0 ✗** | 3 |
+| `for…in` over a fnctor instance | **0 ✗** | **0 ✗** | 3 |
+| `Object.keys(objectLiteral).length` | 3 ✓ | 3 ✓ | 3 |
+| **`Object.keys(classInstance).length`** | **0 ✗** | **3 ✓** | 3 |
+| `classInstance.hasOwnProperty("a")` | 1 ✓ | 1 ✓ | 1 |
+| **`"a" in classInstance`** | **0 ✗** | **1 ✓** | 1 |
 
-1. **Scope item 2's answer is "not one hole".** `hasOwnProperty` **works** on the
-   very receiver where `in`, `for…in` and `Object.keys` all answer nothing. So
-   `hasOwnProperty` reaches a working predicate and the other three do not —
-   which narrows the search to what those three share and `hasOwnProperty` does
-   not, rather than a single presence-read bug. The §7 grouping was indeed an
-   observation, and one quarter of it is wrong.
-2. **This is wider than fnctor instances.** A **class** instance and a
-   shape-inferred object literal fail identically once the receiver reaches the
-   consumer as `externref`. The static-unroll path over a statically-typed
-   receiver is fine; everything that goes through the dynamic path over a closed
-   struct is not. The title's "fnctor instance" is the narrowest case, not the
-   boundary.
-3. **It makes a whole class of test vacuous, silently.** #3927's differential
+**⚠ The two disagreeing rows are exactly the two that decide how to group the
+failures, so DO NOT pick a starting point from this table until they are
+settled.** The two readings are:
+
+- lane A: `hasOwnProperty` works, `in` / `for…in` / `Object.keys` are broken ⇒
+  start from what those three share;
+- lane B: `for…in` on a dynamic receiver is broken, the other three work ⇒
+  start from `for…in` alone.
+
+**What has been eliminated** (lane A, 24 configurations, all giving the lane-A
+column): the probe's prelude (with/without a same-field-named constructor
+function — the structural-canonicalization hypothesis, **rejected**), the
+optimize level (unset / 0 / 3), the class-shape spelling (field initialisers /
+constructor assignment / fnctor / object literal), and **the branch** — the
+lane-A column reproduces byte-for-byte with lane A's three changed source files
+replaced by their `origin/main` blobs, so #3927's default-ON split is not the
+cause. Lane B separately checked `JS2WASM_FNCTOR_HOT_FIELDS=20` against its own
+fixtures and also saw no effect, though on fixtures where the flag is inert.
+**Settling it needs the two fixture files run against each other, not two
+summaries.** Lane A's are `.tmp/forin-scope2.mjs` and
+`.tmp/forin-fixture-artifact2.mjs`; lane B's is `.tmp/enum-matrix.mjs`.
+
+**What the agreeing rows do settle:**
+
+1. **This is wider than fnctor instances.** A **class** instance fails
+   identically to a fnctor instance once the receiver reaches the consumer as
+   `externref`, while the same instance typed at the loop enumerates correctly
+   and an object literal enumerates correctly. The static-unroll path is fine;
+   the dynamic path over a **closed struct** is not. The title's "fnctor
+   instance" is the narrowest case, not the boundary — so a fix's name-list
+   source (receiver's struct field list ⇒ layout-dependent; base presence words
+   ⇒ not) binds every closed-struct receiver kind.
+2. **It makes a whole class of test vacuous, silently.** #3927's differential
    grew an enumeration mode specifically to cover the reflective surface; it
    reported *identical* across all 64 property names, which is `undefined`
    compared against `undefined`. Any enumeration-based differential over a

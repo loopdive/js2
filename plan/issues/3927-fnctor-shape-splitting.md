@@ -945,11 +945,20 @@ evidence.**
   Do not file a new one. Scoped afterwards with small standalone programs: a
   **class** instance and a shape-inferred object literal enumerate 0 exactly
   like a fnctor instance once the receiver reaches the consumer as `externref`;
-  a statically-typed receiver at the loop is fine. And it is **not one hole** —
-  `hasOwnProperty` answers correctly on the very receiver where `in`, `for…in`
-  and `Object.keys` all answer nothing, which discharges #3920's own open scope
-  item ("check whether they share the root cause") with a *no*. The full matrix
-  is recorded in #3920 rather than duplicated here.
+  a statically-typed receiver at the loop is fine. That part replicated across
+  two lanes.
+
+  **What did NOT replicate: how the failures group.** This slice read
+  `hasOwnProperty` as working while `in` / `for…in` / `Object.keys` all fail;
+  the per-type-layouts lane measures `Object.keys` and `in` **passing** on its
+  own fixtures, i.e. `for…in` alone failing. Six of eight rows agree — including
+  both `for…in` failures, which is the part this design rests on — but the two
+  that disagree are exactly the two that decide where a fixer should start.
+  Eliminated on this side across 24 configurations (prelude, optimize level,
+  class-shape spelling, and **branch** — it reproduces on `origin/main`'s own
+  sources, so the default-ON split is not the cause). **Unresolved; the full
+  two-column matrix and the elimination list live in #3920.** Do not quote the
+  grouping from here.
 
   **It also contradicts a record in the 2026-08-06 slice.** That slice
   attributes the pre-wiring K=52 divergence to acorn's `copyNode`
