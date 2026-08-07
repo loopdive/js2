@@ -322,12 +322,23 @@ Both YES entries are handled by the `__integrity_bag` arm, and both still pass
    `this`** (the signature change above). Second instance of the same defect —
    `closurePropertiesBagArm` (#4161) does it too — which makes it a property of
    the SUBSTITUTION pattern, not of either site. Worth its own issue if a third
-   carrier ever joins; recorded here rather than papered over.
-3. **`delete err.message` still resurrects the field value.** The bag entry is
+   carrier ever joins. **Explicit trigger, so this is a rule and not a
+   one-off: if a THIRD carrier adopts the same substitution, it stops being a
+   coincidence of two sites and gets its own issue.** Until then it is
+   documented at both sites rather than tracked.
+3. **Update-after-`preventExtensions` is refused for EVERY receiver kind →
+   filed as #4214.** §10.1.9 says an existing *writable* own property stays
+   writable on a non-extensible object; standalone refuses the write (sloppy
+   no-op, strict `TypeError`) for plain objects, functions and Errors alike.
+   The uniformity is what proves it is not this issue's — Error only reached
+   the same code path the others were already on. Found because #4210's
+   fixture asserts PARITY with a plain-object oracle rather than an absolute,
+   which forced the plain answer to be computed instead of assumed.
+4. **`delete err.message` still resurrects the field value.** The bag entry is
    removed, the read falls back to field 1. Unchanged by this issue (there was
    never a bag entry to delete) and out of #4213's scope too — it needs a
    tombstone on the field surface.
-4. **`new Error("x")` reports `hasOwnProperty("message") === false` until some
+5. **`new Error("x")` reports `hasOwnProperty("message") === false` until some
    write creates the bag.** Per spec `message` IS an own non-enumerable
    property of such an instance. Pre-existing; unchanged. Seeding the bag with
    the spec attributes at construction was **considered and rejected**: it
