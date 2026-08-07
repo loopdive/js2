@@ -507,6 +507,109 @@ function ensureRuntimeEvalInterpretedCallableTrampoline(
   return carrier as RuntimeEvalAotCallableCarrier & { interpretedTrampolineFuncIdx: number };
 }
 
+/**
+ * Explicit value slots in the carrier's `code` signature — see the header
+ * comment and `ensureRuntimeEvalAotCallableCarrierTypes`. A dispatcher wider
+ * than this forwards only the first `RUNTIME_EVAL_AOT_CALLABLE_ARGS` values,
+ * exactly as `__apply_closure`'s carrier arm does.
+ */
+const RUNTIME_EVAL_AOT_CALLABLE_ARGS = 8;
+
+/**
+ * (#4197) Carrier front-guard for the `__call_fn_method_<arity>` dispatchers.
+ *
+ * In runtime-eval CONSUMER mode every top-level function DECLARATION becomes a
+ * live binding (`ctx.liveFuncBindingGlobals`), and `__module_init` seeds its
+ * module global with the closure wrapped in this carrier
+ * (`emitRuntimeEvalAotCallableAdapter`). Reading the name as a VALUE therefore
+ * yields the CARRIER, not a closure struct.
+ *
+ * `__call_fn_method_<arity>` dispatches by `ref.test`ing the operand against
+ * the closure wrapper root and the per-shape ladder (`buildFuncrefExtraction`).
+ * The carrier has `superTypeIdx: -1` and a field 0 typed
+ * `(ref $RuntimeEvalAotCallableCode)`, so it matches NOTHING and the dispatcher
+ * falls through to `ref.null.extern`. Every consumer of that dispatcher then
+ * reads `undefined`: `__call_accessor_get` / `__call_accessor_set` (so
+ * `Object.defineProperty(o, k, { get: fnDecl })` answers null on a reference
+ * receiver and 0 after a numeric unbox on a plain object, and a setter write is
+ * dropped), plus the JSON reviver / `toJSON` / replacer drivers.
+ *
+ * `__apply_closure` already carries exactly this guard (`object-runtime.ts`,
+ * #2928) — which is precisely why a DIRECT call of the same declaration works
+ * while the accessor lane does not, and why a function EXPRESSION getter (never
+ * carrier-wrapped) works in the very same module. This mirrors that guard for
+ * the method-dispatch lane.
+ *
+ * Returns `null` when the module minted no carrier — i.e. every non-consumer
+ * module, which therefore stays byte-identical.
+ *
+ * Emission contract: splice the result in AFTER the closure operand has been
+ * stored into `closureAnyLocal` (anyref) and BEFORE `__current_this` is
+ * saved/installed. The guard `return`s on a hit and the carrier's `code` routes
+ * through `__apply_closure`, which installs the receiver itself — so taking the
+ * early exit ahead of the save leaves no `__current_this` bookkeeping to unwind.
+ */
+export function buildRuntimeEvalCarrierMethodDispatch(
+  ctx: CodegenContext,
+  arity: number,
+  closureAnyLocal: number,
+  thisValLocal: number,
+): Instr[] | null {
+  const carrier = ctx.runtimeEvalAotCallableCarrier;
+  if (carrier === undefined) return null;
+
+  // `argc` is the dispatcher's declared arity: the same "caller supplied no
+  // exact count" convention the ordinary entries fall back to when `__argc`
+  // holds its -1 sentinel. Reading `__argc` here instead would be actively
+  // wrong — nothing seeds it on the accessor path, so a stale 0 would drop a
+  // setter's value argument.
+  const forwarded = Math.min(arity, RUNTIME_EVAL_AOT_CALLABLE_ARGS);
+  const castCarrier: Instr[] = [
+    { op: "local.get", index: closureAnyLocal },
+    { op: "ref.cast", typeIdx: carrier.structTypeIdx },
+  ];
+  const brandEq = (fieldIdx: number, brand: number): Instr[] => [
+    ...castCarrier,
+    { op: "struct.get", typeIdx: carrier.structTypeIdx, fieldIdx },
+    { op: "i32.const", value: brand },
+    { op: "i32.eq" },
+  ];
+  const args: Instr[] = [];
+  for (let i = 0; i < RUNTIME_EVAL_AOT_CALLABLE_ARGS; i++) {
+    // User args occupy locals [2 .. arity+1] in every `__call_fn_method_N`
+    // body; slots past the dispatcher's arity are genuinely absent.
+    args.push(i < forwarded ? { op: "local.get", index: i + 2 } : { op: "ref.null.extern" });
+  }
+  return [
+    { op: "local.get", index: closureAnyLocal },
+    { op: "ref.test", typeIdx: carrier.structTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        ...brandEq(3, RUNTIME_EVAL_AOT_CALLABLE_BRAND_A),
+        ...brandEq(4, RUNTIME_EVAL_AOT_CALLABLE_BRAND_B),
+        { op: "i32.and" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            // code(self, receiver, argc, arg0, …, arg7)
+            ...castCarrier,
+            { op: "local.get", index: thisValLocal },
+            { op: "i32.const", value: forwarded },
+            ...args,
+            ...castCarrier,
+            { op: "struct.get", typeIdx: carrier.structTypeIdx, fieldIdx: 0 },
+            { op: "call_ref", typeIdx: carrier.funcTypeIdx },
+            { op: "return" },
+          ],
+        },
+      ],
+    },
+  ];
+}
+
 /** Replace an externref callable on the stack with the canonical carrier. */
 export function emitRuntimeEvalAotCallableAdapter(ctx: CodegenContext, fctx: FunctionContext): ValType {
   const carrier = ensureRuntimeEvalAotCallableTrampoline(ctx);
