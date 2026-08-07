@@ -171,7 +171,12 @@ const CASES: Record<string, [string, number]> = {
     }`,
     0,
   ],
-  "D2 DATE receiver O -> still refuses loudly (no substrate) [2]": [
+  // Flipped from the [2] refusal pin: Date GAINED a substrate when
+  // `builtinInstanceCarrierTypeIdxs` (src/codegen/closure-props.ts) added
+  // `__Date`/`__StandaloneRegExp` to the closure-bag carrier chain. The define
+  // now lands and the read-back is correct, so the old "(no substrate)" premise
+  // has expired — same shape as F3 below.
+  "D2 DATE receiver O -> bag carrier, define lands [0]": [
     `export function test(): number {
       try {
         const d: any = new Date(0);
@@ -181,7 +186,7 @@ const CASES: Record<string, [string, number]> = {
         return d.p === 1 ? 0 : 1;
       } catch (e) { return 2; }
     }`,
-    2,
+    0,
   ],
   "D3 primitive receiver O -> TypeError [2]": [
     `export function test(): number {
@@ -189,14 +194,17 @@ const CASES: Record<string, [string, number]> = {
     }`,
     2,
   ],
-  "E1 DATE Properties -> still refuses loudly (no substrate) [2]": [
+  // Flipped from the [2] refusal pin, same mechanism as D2: a Date used AS the
+  // `Properties` map is now a bag carrier, so its own properties enumerate and
+  // the define lands on the target.
+  "E1 DATE Properties -> bag enumerated, define lands [0]": [
     `export function test(): number {
       const obj: any = {};
       const props: any = new Date(0);
       props.prop = { value: 1, enumerable: true };
       try { Object.defineProperties(obj, props); return obj.hasOwnProperty("prop") ? 0 : 1; } catch (e) { return 2; }
     }`,
-    2,
+    0,
   ],
   "F1 Object.create(proto, undefined) -> skips, returns obj [0]": [
     `export function test(): number {
