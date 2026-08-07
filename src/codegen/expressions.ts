@@ -58,6 +58,7 @@ import { emitUndefined, ensureLateImport, flushLateImportShifts } from "./expres
 
 import { compileHostInstanceOf, compileIdentifier, resolveInstanceOfRHS } from "./expressions/identifiers.js";
 import { emitLazyClassObjectGet } from "./expressions/extern.js";
+import { emitUnboundThis, thisBelongsToTopLevelCode } from "./helpers/sloppy-this-global.js"; // (#4190)
 
 import { compilePostfixUnary, compilePrefixUnary } from "./expressions/unary.js";
 
@@ -1102,7 +1103,11 @@ function compileExpressionInner(
     // `this`. The old generic no-binding fallback emitted undefined for both,
     // so `var global = this; global.Infinity = 42` threw a null-access payload
     // instead of the spec TypeError from writing the global's read-only prop.
-    if (fctx.name === "__module_init" && !ctx.sourceIsModule) {
+    // (#4190) …but only for a `this` that lexically BELONGS to top-level code:
+    // a top-level IIFE is inlined into `__module_init`, so its body's `this`
+    // took this arm and became the global object even under `"use strict"`
+    // (the `10.4.3-1-*gs` family). An inlined callee falls through instead.
+    if (fctx.name === "__module_init" && !ctx.sourceIsModule && thisBelongsToTopLevelCode(expr)) {
       return compileIdentifier(ctx, fctx, ts.factory.createIdentifier("globalThis"));
     }
     // (#1636-S1) Host-dispatched-closure fallback: when no local `this`
@@ -1163,14 +1168,9 @@ function compileExpressionInner(
       const savedBody = fctx.body;
       const thenBody: Instr[] = [];
       fctx.body = thenBody;
-      if (fctx.directEvalSloppyThisFallback) {
-        const globalType = compileIdentifier(ctx, fctx, ts.factory.createIdentifier("globalThis"));
-        if (globalType && globalType.kind !== "externref") {
-          coerceType(ctx, fctx, globalType, { kind: "externref" });
-        }
-      } else {
-        emitUndefined(ctx, fctx);
-      }
+      // (#4190) Null here means "direct call, no receiver installed" — ES5
+      // §10.4.3 splits that on the callee's own strictness.
+      emitUnboundThis(ctx, fctx, expr);
       fctx.body = savedBody;
       fctx.body.push({
         op: "if",
@@ -1181,10 +1181,10 @@ function compileExpressionInner(
       releaseTempLocal(fctx, thisTmp);
       return { kind: "externref" };
     }
-    if (fctx.directEvalSloppyThisFallback) {
-      return compileIdentifier(ctx, fctx, ts.factory.createIdentifier("globalThis"));
-    }
-    emitUndefined(ctx, fctx);
+    // (#4190) Terminal fallback: no receiver binding of any kind. Sloppy code
+    // binds the global object, strict binds `undefined` — both used to get
+    // `undefined`, which is the whole `10.4.3-1-*` family.
+    emitUnboundThis(ctx, fctx, expr);
     return { kind: "externref" };
   }
 

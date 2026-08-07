@@ -25,6 +25,25 @@ export function appendFnctorInternalFields(
   // `$presence_<n>` slot and the struct regains the pre-#3780 footprint. Read
   // and write lowering is byte-for-byte the same in both modes, which is the
   // point — the A/B then isolates the LAYOUT from the instruction mix.
+  // (#3927) GC-sensitivity probe — OFF unless `JS2WASM_FNCTOR_PAD_SLOTS=<N>`.
+  // Appends N never-referenced `externref` slots to every derived fnctor
+  // struct, inflating the per-instance footprint by exactly 4·N bytes (V8
+  // compressed refs) plus N `ref.null` operands at each `struct.new`. The
+  // paired A/B (base vs padded) measures d(wall-clock)/d(slot) on the
+  // standalone acorn lane, which bounds the payoff of every proposed
+  // union-shrinking slice (per-shape splitting, hot/cold tail) BEFORE its
+  // dispatcher-surface risk is paid — the same layout-isolation idiom as
+  // `JS2WASM_PACKED_PRESENCE_BITS=0` below. The `__pad` prefix keeps the
+  // slots invisible to property lookup, `for…in`/`Object.keys` and host
+  // marshalling (`exposedClosedStructFieldName` hides `__`-prefixed fields);
+  // they are not presence-tracked, so presence-word count is unchanged and
+  // the delta is purely the slots themselves.
+  const padSlots = Number(process.env.JS2WASM_FNCTOR_PAD_SLOTS ?? "0");
+  if (Number.isInteger(padSlots) && padSlots > 0) {
+    for (let i = 0; i < padSlots; i++) {
+      fields.push({ name: `__pad${i}`, type: { kind: "externref" }, mutable: true });
+    }
+  }
   const stride = process.env.JS2WASM_PACKED_PRESENCE_BITS === "0" ? 32 : 1;
   const tracked = fields.filter((candidate) => onlyConditional.get(candidate.name) === true);
   tracked.forEach((field, index) => {

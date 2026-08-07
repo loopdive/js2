@@ -1,0 +1,114 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+/**
+ * (#4190) ES5 §10.4.3 "Entering Function Code" — the unbound-receiver `this`.
+ *
+ * When a function is called with no receiver (`f()`, `f.call(null)`,
+ * `f.apply(undefined)`, `f.bind(null)()`), the value bound to `this` inside
+ * the callee depends ONLY on the callee's own strictness:
+ *
+ *   1. If the function code is strict code, `this` is the passed thisArg
+ *      verbatim — `undefined` / `null` stay `undefined` / `null`.
+ *   2. Otherwise (sloppy code), `this` is the **global object**.
+ *
+ * (ES2015+ restates this as OrdinaryCallBindThis §10.2.1.2 step 5: sloppy code
+ * substitutes the global object for `undefined`/`null` and `ToObject`s a
+ * primitive; the observable answer for the unbound case is identical.)
+ *
+ * The codegen's ThisKeyword arm falls through to `undefined` whenever it finds
+ * no receiver binding. That is correct for (1) and wrong for (2), which is the
+ * entire `language/function-code/10.4.3-1-*` family plus the
+ * `Function.prototype.{call,apply}` thisArg shapes.
+ *
+ * This predicate is deliberately narrow: it answers only "is the code around
+ * this `this` sloppy?", and every caller applies it strictly *after* exhausting
+ * the real receiver-binding paths (typed-this param, `localMap`, static class
+ * context, `__module_init`, a live `__current_this`). It never widens WHICH
+ * bodies consult a receiver — it only changes the value of the terminal
+ * fallback, from `undefined` to `globalThis`, for sloppy code.
+ *
+ * Why not just always read `__current_this`: #1636-S1 tried that and regressed
+ * 171 tests, because a directly-called function never has it installed and so
+ * observes the global's `ref.null.extern` initial value as `null` rather than
+ * the spec value. The null-guard added by #1702 fixed the strict half; this is
+ * the sloppy half, which was never supplied.
+ */
+import { ts } from "../../ts-api.js";
+import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { compileIdentifier } from "../expressions/identifiers.js";
+import { emitUndefined } from "../expressions/late-imports.js";
+import { coerceType } from "../shared.js";
+import { isStrictContext } from "./is-strict-function.js";
+
+/**
+ * True when an unbound `this` at `expr` must evaluate to the global object
+ * rather than `undefined` — i.e. `expr` sits in sloppy (non-strict) code.
+ *
+ * `inferModuleStrictArguments` is threaded through so the test262 harness's
+ * synthetic `export function test()` wrapper does not make a genuinely sloppy
+ * script look like strict module code (the same flag every other strictness
+ * consumer in codegen passes; see #2119).
+ */
+export function unboundThisIsGlobalObject(ctx: CodegenContext, expr: ts.Node): boolean {
+  return !isStrictContext(expr, ctx.inferModuleStrictArguments);
+}
+
+/**
+ * (#4190) Emit the value of an unbound `this` as an `externref`, per the split
+ * above: `globalThis` for sloppy code (and for a sloppy direct-eval body, which
+ * already had this answer), `undefined` for strict code.
+ *
+ * Both call sites in the `ThisKeyword` arm delegate here so the strict/sloppy
+ * decision exists in exactly one place, and so the god-file driver
+ * (`expressions.ts`) does not grow the emission logic.
+ */
+export function emitUnboundThis(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Node): void {
+  if (fctx.directEvalSloppyThisFallback || unboundThisIsGlobalObject(ctx, expr)) {
+    const globalType = compileIdentifier(ctx, fctx, ts.factory.createIdentifier("globalThis"));
+    if (globalType && globalType.kind !== "externref") {
+      coerceType(ctx, fctx, globalType, { kind: "externref" });
+    }
+    return;
+  }
+  emitUndefined(ctx, fctx);
+}
+
+/**
+ * (#4190) True when `expr` — a `this` — belongs **lexically** to top-level
+ * Script code, i.e. no `this`-binding construct encloses it before the
+ * SourceFile. Arrow functions are transparent (they inherit `this`); every
+ * other function form, and any class body, introduces its own binding.
+ *
+ * This guards the §3365 "Script-goal top-level `this` is the global object"
+ * arm. That arm keys on `fctx.name === "__module_init"`, which is a statement
+ * about the *emitted* function, not about the source. An IIFE at top level is
+ * INLINED into `__module_init` (`compileIIFE`), so its body's `this` — which
+ * belongs to the function expression, not to the script — was taking the
+ * top-level arm and evaluating to the global object even under a
+ * `"use strict"` prologue. That is the whole `10.4.3-1-*gs` family:
+ *
+ *     (function () { "use strict"; return typeof this; })()   // "object", want "undefined"
+ *     var f = function () { "use strict"; return typeof this; }; f()   // already correct
+ *
+ * — the only difference between the two lines being whether the callee was
+ * inlined. Verified pre-existing: the same divergence reproduces with this
+ * file's other change reverted.
+ */
+export function thisBelongsToTopLevelCode(expr: ts.Node): boolean {
+  for (let node: ts.Node | undefined = expr.parent; node; node = node.parent) {
+    if (ts.isSourceFile(node)) return true;
+    if (ts.isArrowFunction(node)) continue; // transparent — inherits `this`
+    if (
+      ts.isFunctionDeclaration(node) ||
+      ts.isFunctionExpression(node) ||
+      ts.isMethodDeclaration(node) ||
+      ts.isConstructorDeclaration(node) ||
+      ts.isGetAccessorDeclaration(node) ||
+      ts.isSetAccessorDeclaration(node) ||
+      ts.isClassDeclaration(node) ||
+      ts.isClassExpression(node)
+    ) {
+      return false;
+    }
+  }
+  return false;
+}

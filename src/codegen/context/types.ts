@@ -159,6 +159,11 @@ export interface CodegenOptions {
    *  see the `CompileOptions.tag5ValueEqClassifier` doc. Default TRUE
    *  (#2040 flip); `JS2WASM_TAG5_CLASSIFIER=0` forces the legacy regime. */
   tag5ValueEqClassifier?: boolean;
+  /** (#4173) Fast tag-pair dispatch in `__extern_strict_eq` (identity-miss →
+   *  direct f64/string/bool/bigint compare or fast-false, no `$AnyValue`
+   *  allocation) + single-convert `__is_truthy` ladder. Default TRUE;
+   *  `JS2WASM_FAST_STRICT_EQ=0` forces the legacy bodies. */
+  fastStrictEq?: boolean;
   /** (#2106 S1) Standalone `$undefined` tag-1 singleton regime — see the
    *  `CompileOptions.undefinedSingleton` doc. Default TRUE (#2106 flip);
    *  `JS2WASM_UNDEF_SINGLETON=0` forces the legacy regime. */
@@ -3057,6 +3062,10 @@ export interface CodegenContext {
    *  site stays standalone/wasi-gated so host mode is byte-identical.
    *  `JS2WASM_TAG5_CLASSIFIER=0` forces the legacy always-`0` arm. */
   tag5ValueEqClassifier: boolean;
+  /** (#4173) Fast tag-pair dispatch in the dynamic-eq helpers — see the
+   *  `CodegenOptions.fastStrictEq` doc. Default TRUE;
+   *  `JS2WASM_FAST_STRICT_EQ=0` forces the legacy bodies. */
+  fastStrictEq: boolean;
   /** (#2106 S1) Standalone `$undefined` tag-1 singleton regime flag — see the
    *  `CompileOptions.undefinedSingleton` doc. Default TRUE (#2106 flip);
    *  `=0` forces legacy. Only meaningful under standalone/nativeStrings;

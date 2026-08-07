@@ -1,10 +1,11 @@
 ---
 id: 3927
 title: "perf: a widened fnctor struct is the union of every shape its constructor ever takes — acorn's `Node` is 292 B for a 3-6 property object"
-status: ready
+status: in-progress
+assignee: "ttraenkler/claude-fable-6"
 sprint: current
 created: 2026-07-31
-updated: 2026-07-31
+updated: 2026-08-06
 priority: medium
 horizon: xl
 feasibility: hard
@@ -99,3 +100,177 @@ typed-and-reachable, which is exactly when the guard becomes live.
       every split shape — see #3920, which shows this surface is already
       lane-divergent and must not be made worse.
 - [ ] No standalone test262 regression.
+
+## Results — 2026-08-06 slice: re-profile + measured GC-sensitivity probe (splitting itself NOT landed)
+
+**What landed**: `JS2WASM_FNCTOR_PAD_SLOTS=<N>` (src/codegen/fnctor-identity-fields.ts,
+inside `appendFnctorInternalFields`) — an env-gated layout probe in the
+`JS2WASM_PACKED_PRESENCE_BITS=0` idiom that appends N never-referenced
+`externref` slots to every derived fnctor struct, plus
+`tests/issue-3927-fnctor-pad-probe.test.ts`. Default OFF = byte-identical
+(pinned by test). The probe exists to measure d(wall)/d(slot) of the `Node`
+union BEFORE paying any splitting slice's dispatcher-surface risk. The
+headline: **measured under controlled conditions the derivative is small —
+~+3-4% wall for +36 ref slots (profile-verified through the GC bucket), which
+CONFIRMS the #4157 demotion** — and §5 documents how an uncontrolled first
+block read +29% and would have flipped that verdict if the order-reversal
+control hadn't caught the contamination.
+
+### 1. Re-profile, main @ 431ea77d5 (post-#4174 scanner-flatten)
+
+`scripts/profile-buckets.mjs`, 300 parses, 48,854 samples: **gc-engine
+20.66%** — the largest bucket, GROWN from the 18.49% in #4157's 2026-08-06
+table because #4174 shrank string-runtime (flatten 3.73 → 2.78%).
+`__fnctor_Node_new` self 1.14%. Full ranking: gc 20.66 / dynamic-lookup 15.03
+/ compiled 14.70 / scanner 12.64 / call-dispatch 10.50 / regexp 8.06 /
+dynamic-eq 6.79 / cast-convert 5.63 / string-runtime 4.38 / alloc-helpers 1.39.
+
+### 2. Allocation census, current main (`JS2WASM_ALLOC_CENSUS=1`, 3 parses)
+
+607,469 allocations/parse, checksum 422·iters intact. Top rows (census
+type-index → shape verified against the optimize:0 type section):
+
+| count/parse | share | type | what it is |
+| ---: | ---: | --- | --- |
+| 283,370 | 46.7% | type_75 | `$AnyValue` box (5 fields, ~32 B, transient) — #3685/#743 |
+| 54,623 | 9.0% | type_7 | `$AnyString` header |
+| 41,811 ×2 | 13.8% | type_123/124 | `__objvec_new` key/value pair (#3921 Q1, ~once per token) |
+| 33,727 | 5.6% | `__anon_14` | open `$Object` (per token) |
+| 32,468 | 5.3% | `__fnctor_Node` | **the retained AST — 292 B/instance ≈ 9.5 MB/parse** |
+| 31,414 + 27,361 | 9.7% | vec headers + arg arrays | call/array plumbing |
+
+`__fnctor_Node` today: **69 fields = 62 externref + 3 ref_null + 2 f64 + 2 i32**
+(unchanged from the round-4 measurement; verified in the emitted type section).
+292 B = 65 compressed 4 B refs + 2×8 f64 + 2×4 i32 + 8 header — exact.
+
+### 3. Why the three sketched slices price at ~zero on the motivating corpus
+
+Three structural facts, all verified in `tests/dogfood/.acorn/package/dist/acorn.mjs`:
+
+1. **One allocation-site class.** Exactly 3 `new Node` sites (`startNode`
+   :3882, `startNodeAt` :3886, `copyNode` :3912), all inside shape-agnostic
+   factory methods. The shape is chosen by the ~100 *callers* of
+   `startNode()`, after allocation.
+2. **The tag is applied at `finishNode`,** i.e. after the variant fields are
+   already written — the discriminant is not knowable at the `struct.new`.
+3. **`toAssignable` (:2094) rewrites `node.type` and fields IN PLACE** on live
+   nodes (ObjectExpression→ObjectPattern, AssignmentExpression→AssignmentPattern).
+   Any static partition of instances must put expressions and their pattern
+   twins in the same member, collapsing the split exactly where the mass is.
+
+Hence: **(a) trailing-zero-field elision per allocation-site class** — one
+site class whose downstream union is the full union ⇒ zero elidable fields.
+**(b) two-way stmt/expr split keyed on statically-known downstream `type`** —
+never statically known at the ctor site; pushing the key to `startNode`'s
+callers requires interprocedural cloning of the startNode→finishNode flows
+(this issue's XL analysis), and fact 3 still merges the expr/pattern halves.
+**(c) full #4074 declared partition** — supplies the per-TAG field sets but
+not the per-instance tag at allocation; same obstacle as (b) plus the `.d.ts`
+plumbing. None is affordable-with-payoff in one pass.
+
+### 4. Field-population distribution (native acorn, same 226 KB corpus)
+
+32,468 nodes (matches the census count exactly); 47 of the 62 union fields
+populated; median instance populates **1** union field (0 fields 6.9%, one
+43.9%, two 14.6%, three 18.1%, four 14.6%, six 1.9%). Top-K coverage (nodes
+whose EVERY populated field is in the top-K by instance count): K=16 → 87.9%,
+K=20 → 92.4%, **K=24 → 97.3%**, K=32 → 99.7%. Repro: `.tmp/field-freq.mjs`
+(session scratch; recreate from this table's method: walk the native AST,
+tally own enumerable fields minus type/start/end/loc/range/sourceFile).
+
+### 5. The sensitivity A/B — including the contaminated block that almost flipped the verdict
+
+Four blocks, all `standaloneDynamic` back-to-back pairs, base vs
+`JS2WASM_FNCTOR_PAD_SLOTS` (pad36 = +36 externref slots = +144 B and +58%
+pointer slots per Node ≈ +4.7 MB/parse retained; binary +1,587 B; checksum
+422 in every run):
+
+| block (UTC) | order | pairs | base wasmUs | pad wasmUs | pad cost within pair |
+| --- | --- | --- | ---: | ---: | ---: |
+| A 17:26-17:40 | base→pad36, **this agent running suites concurrently** | 3 | 180,261 / 180,822 / 169,134 | 235,051 / 233,991 / 216,346 | **+30.4 / +29.4 / +27.9%** |
+| B 17:47-17:57 | base→pad18, agent idle | 2 | 198,154 / 194,839 | 184,045 / 186,755 | **−7.1 / −4.1%** |
+| C 17:58-18:08 | **pad36→base** (order control), agent idle | 2 | 187,420 / 196,217 | 185,255 / 205,009 | **−1.2 / +4.5%** |
+| D 18:09-18:19 | base→pad36, agent idle | 2 | 166,930 / 174,358 | 190,020 / 216,187 | **+13.8 / +24.0%** |
+
+**What the four blocks establish, in order of confidence:**
+
+1. **This box cannot resolve the effect by A/B alone.** Quiet pad36 samples
+   scatter −1.2 / +4.5 / +13.8 / +24.0%; quiet pad18 samples −7.1 / −4.1%
+   (expected ≈ +2% if linear). Base runs alone moved 167-198 kµs (±9%)
+   across blocks; other agent lanes were active on the box throughout and
+   cannot be quiesced. Ambient variance is the same order as the effect.
+2. **Block A's tight +29% (3/3) is NOT trustworthy despite its consistency** —
+   it was measured while this agent ran multi-core vitest suites/gates
+   concurrently, and its `nodeUs` rose ~13% in every pad run (shared-process
+   load signature). A 3/3-consistent far-outside-noise A/B can still be an
+   artifact; the order-reversal control (block C) and the quiet re-runs are
+   what exposed it. The pooled quiet evidence is compatible with a real
+   positive cost well below +29%.
+3. **The profile is the reliable instrument, because bucket SHARES are robust
+   to uniform ambient load.** 300-parse profiles, base vs pad36: gc-engine
+   **20.66% → 24.87%**, every other bucket diluted roughly proportionally,
+   `__fnctor_Node_new` 1.14 → 1.57% (the 36 extra `ref.null` operands:
+   minor). That share shift is **≈ +25-30% GC self-time ≈ +3-4% of wall** as
+   the mechanism-consistent point estimate, sitting inside the quiet-A/B
+   scatter, and consistent with #3780 round 4 (−24.8% allocation bought
+   −7.4% wall).
+
+### 6. Interpretation — the demotion stands, now with a measured coefficient
+
+- **Point estimate d(wall)/d(ref-slot) ≈ 0.1%/slot** at the current operating
+  point (profile mechanism: +36 slots → ~+3-4% wall via GC), with the quiet
+  A/B bracketing the +36-slot cost at **[0, +25%]** — the box cannot narrow
+  it further. Linear extrapolation for the best affordable removal (−37 of
+  the 62 union ref slots): **≈ −3-4% wall point estimate**, optimistic tail
+  ~−10%, corroborated by round 4 (−24.8% alloc → −7.4%).
+- Even the optimistic tail does not outrank #3926 (16.1% dynamic-lookup
+  bucket, one helper, no dispatcher-surface risk) or #4173 (7.1%
+  dynamic-eq) on expected value once the silent-undefined risk surface of
+  splitting is priced. **The #4157 demotion of this issue was correct**; it
+  now rests on a measured coefficient instead of an allocation-share guess.
+- **Measurement lesson, recorded because block A nearly shipped a false 10x
+  repricing:** a 3/3-consistent, far-outside-noise A/B was still an artifact
+  of concurrent load. On a shared box: keep the measuring agent idle, run an
+  **order-reversal control block**, and trust bucket-share deltas over wall
+  deltas. This is the manual form of the interleaved-pairs contamination
+  flagging #4173's plan calls for; the harness does not do it automatically
+  today.
+
+### 7. The slice this prices, for whenever the GC bucket is the last one standing: shape-AGNOSTIC hot/cold split
+
+The one design that survives facts 1-3 (no shape-at-allocation needed, immune
+to `toAssignable`): keep the top-K≈24 union fields inline (97.3% of nodes
+fully covered), move the cold ~38 to a lazily-allocated tail struct behind one
+`(ref null $__fnctor_Node__cold)` slot. Per-instance: 292 → ~148 B avg
+(−37 ref slots on every node; 2.7% of nodes pay a ~160 B tail). Presence bits
+stay in the main struct (word count unchanged); reference identity is
+untouched (the tail is owned, never escapes). **Measured expected payoff:
+≈ −3-4% wall (§6) — do NOT schedule it ahead of #3926/#4173/#743.**
+
+**The risk is dispatcher completeness — the 9th-dogfood-wall class** (silent
+`undefined` on any consumer that misses the tail hop). Chokepoints that must
+ALL learn the hop, enumerated now so a future pass doesn't rediscover them:
+`member-get-dispatch.ts` / `member-set-dispatch.ts` (finalize fills — the set
+side must lazy-alloc the tail), `property-access.ts` inline primaries +
+`findAlternateStructsForField`, `fnctor-presence-bits.ts` helpers, typed-this
+twins + `fnctor-typed-reads.ts` (decline cold fields or learn the hop),
+compound updates (`expressions/assignment.ts`, `unary-updates.ts`),
+enumeration/`in`/`hasOwnProperty` (object-runtime consumers of
+`exposedClosedStructFieldName`), delete/tombstones, host marshalling
+(gc/host lane), destructuring/spread reads. Static field ranking must be
+corpus-independent (static write-site count per name); ties broken
+deterministically. If ever built: its own flag-gated slice with this probe as
+the paired control, measured with order-reversal blocks per §6.
+
+**Flag decision for this PR**: `JS2WASM_FNCTOR_PAD_SLOTS` ships **default
+OFF** — it is a measurement diagnostic (deliberately a pessimization when on),
+not an optimization; the evidence rule's "wash ships OFF" applies a fortiori.
+
+**Gates**: typecheck 0, lint 0, oracle-ratchet 0, loc-budget 0 (probe moved
+into fnctor-identity-fields.ts rather than growing the fnctor-escape-gate.ts
+god-file), func-budget 0, dead-exports 0, coercion-sites 0, stack-balance 0,
+check:ir-fallbacks 0, format 0. Suites: #2660 fnctor suites 58/58,
+#4155 Phase 0 + Phase 2 + provenance 25/25, s3b typed bindings (in the 58),
+targeted equivalence object/struct/shape 75/75, probe test 3/3. Dogfood
+canaries 2/3/4/5, `functionImports: []`, exactly the 3 pre-existing
+IR-FALLBACKs (typeIdx parity on parse/parseExpressionAt/tokenizer).
