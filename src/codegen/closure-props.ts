@@ -69,6 +69,7 @@ import { collectClosureBaseWrapperTypeIdxs } from "./closure-classifier.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
+import { protoIndexRecvGetMissInstrs } from "./proto-index-store.js"; // (#4176) inherited proto-named consult
 import { addFuncType } from "./registry/types.js";
 
 /** WasmGC `eq` abstract heap type (used for `ref.cast`/`ref.null` to eqref). */
@@ -414,6 +415,13 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
   // ── __closure_prop_get(externref obj, externref key) -> externref ──
   // if is_closure(obj) { bag = lookup(obj); if bag != null return __extern_get(bag,key) }
   // ; return getMiss()  (the same undefined-read sentinel __extern_get uses)
+  //
+  // (#4176) The final miss consults the proto-property companions RECEIVER-
+  // AWARE (`__protoidx_get_r`: closure ⇒ Function.prototype's companion, then
+  // Object.prototype's) — `Function.prototype.value = "x"; funObj.value` is
+  // the §8.10.5 inherited-descriptor-field idiom. The builder returns
+  // `undefined` unless the store was reserved, so a flag-clear module keeps
+  // this body byte-identical.
   if (isClosureIdx !== undefined && bagLookupIdx !== undefined && externGetIdx !== undefined) {
     const body: Instr[] = [
       { op: "local.get", index: 0 },
@@ -439,7 +447,7 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
           },
         ],
       },
-      ...getMiss(),
+      ...(protoIndexRecvGetMissInstrs(ctx, 0, 1) ?? getMiss()),
     ];
     setBody(CLOSURE_PROP_GET, [{ name: "__bag", type: { kind: "externref" } }], body);
   } else {
