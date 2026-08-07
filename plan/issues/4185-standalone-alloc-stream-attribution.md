@@ -5,7 +5,7 @@ status: done
 assignee: "ttraenkler/claude-fable-7"
 sprint: current
 created: 2026-08-06
-updated: 2026-08-06
+updated: 2026-08-07
 priority: high
 horizon: l
 feasibility: hard
@@ -16,6 +16,7 @@ goal: performance
 related: [4157, 3927, 3921, 4173, 4174, 3685, 743]
 loc-budget-allow:
   - src/codegen/closed-method-dispatch.ts
+  - src/codegen/regexp-standalone.ts
 func-budget-allow:
   - src/codegen/closed-method-dispatch.ts::fillClosedMethodDispatch
 origin: "#4157 umbrella — GC/alloc bucket is 20.66% of parse self-time (largest); #3927's census counted 607,469 allocs/parse with only 32,468 attributed to __fnctor_Node"
@@ -208,3 +209,178 @@ tokenizer).
       flag-off parity
 - [x] Dogfood canaries 2/3/4/5, `functionImports: []`, 3 pre-existing
       IR-FALLBACKs unchanged
+
+## 2026-08-07 — the regexp scratch streams (second slice off this ledger)
+
+Takes the two streams the section above priced and left ("engine-internal;
+… priced M, not taken here"). **Shipped default ON, but the honest headline is
+small: the runtime effect is ~0.4 pp of parse self-time, not the 18 % the
+allocation-count number suggests.** Read the "count is the wrong denominator"
+subsection before picking the next lever off this ledger — it is the part of
+this run most likely to change what someone does next.
+
+### Baseline first — the ledger has moved a lot
+
+Re-censused on `origin/main` @ `fa3d1c07e`, standalone-dynamic acorn,
+checksum 422×3 intact: **262,711 allocations per parse**, down from the
+614,820 recorded above (#4173 + #4185 both landed). The two regexp streams are
+therefore a much larger SHARE of what is left than the earlier table implied:
+
+| count/parse | share of remainder | site (per-function census) |
+| ---: | ---: | --- |
+| 29,117 | 11.1 % | `__regexp_test_carrier` — per-`.test` capture-slot array |
+| 18,722 |  7.1 % | `__regex_run` — one `$__ReFrame` per SPLIT (backtrack) push |
+| **47,839** | **18.2 %** | combined |
+
+Also worth recording, because it retires a line from the earlier table:
+`__regex_run`'s per-push capture SNAPSHOT allocates **zero** times in the acorn
+parse. Every pattern acorn puts through the VM has `nSlots <= 2`, so #3673
+round 23's shared zero-length dummy already covers it. The 33.7 k `__anon_14`
+i32 arrays were the `.test` scratch plus ~4.6 k from other closures, not
+snapshots.
+
+### The change
+
+`src/codegen/regex-scratch-pool.ts` (new, self-contained), plus a 4-line edit
+in `emitRegExpTestFromLocals` (`regexp-standalone.ts`, hence the
+`loc-budget-allow` above: +2 net on a grandfathered god-file) and a `splitArm()`
+body swap in `ensureRegexRun` (`native-regex.ts`, which SHRINKS — the
+already-1,107-line function got smaller, so no func-budget grant was needed).
+
+- **`.test` capture scratch** → a module-global pool, `JS2WASM_REGEXP_TEST_CAPS_POOL`.
+  Checkout-null on acquire, check-in after the last read, take the pooled array
+  only when `array.len >= nSlots` (so the pool converges upward to the largest
+  slot count the program ever needs and then stops allocating).
+- **Backtrack frames** → recycled in place, `JS2WASM_REGEXP_FRAME_REUSE`. A stack
+  slot at or above `top` is dead by definition, and #3673 round 22's stack pool
+  already carries the array across runs, so after warm-up every push finds a
+  frame to overwrite.
+
+Both `=0` restore the previous instruction sequence exactly (pinned by a
+byte-identity assertion in the test).
+
+**Why checkout-null rather than a plain shared global.** A shared global would
+be correct only as long as nothing re-enters `.test` while the scratch is live —
+true today, but true by AUDIT of the call graph, which is not a property that
+survives the next feature. Checkout-null makes it safe by construction: a
+re-entrant caller finds an empty pool and allocates fresh, and a trap between
+checkout and check-in (the #2091 step-cap `RangeError`) just leaves the pool
+empty. Same idiom, same reasoning, as round 22.
+
+**Not pooled, deliberately.** `.exec`, `match`/`matchAll`/`replace`/`split` and
+the `Symbol.*` protocol entries keep their per-call allocation: they publish
+capture VALUES into a result object and some of them call user code while the
+array is live. The one pooled entry point is the one whose result is a boolean.
+`lastIndex` is untouched — it lives on the RegExp struct, and `__regex_search`
+re-fills the slots it uses (`array.fill(caps, 0, -1, nSlots)`) before every
+attempt, so a pooled array arrives indistinguishable from a fresh one.
+
+### Results
+
+**Census (primary, deterministic).** Standalone-dynamic acorn, checksum 422×3
+intact both sides, counts identical at 1 and 3 iterations:
+
+| | OFF | ON | delta |
+| --- | ---: | ---: | ---: |
+| total allocations/parse | 262,711 | **214,873** | **−47,838 (−18.2 %)** |
+| `__anon_14` (regex i32 arrays) | 33,727 | 4,611 | −29,116 (−86 %) |
+| `$__ReFrame` | 18,722 | **0** | −100 % |
+| every other counter | — | byte-identical | isolation clean |
+
+Binary 1,544,308 → 1,544,411 B (**+103 B**).
+
+**Profile buckets (secondary), 300 parses per run, three order-balanced pairs:**
+
+| pair | order | gc-engine ON | gc-engine OFF | Δ | regexp ON | regexp OFF | Δ |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | ON→OFF | 22.71 | 23.31 | −0.60 | 6.84 | 7.18 | −0.34 |
+| 2 | OFF→ON | 23.10 | 23.49 | −0.39 | 6.90 | 7.26 | −0.36 |
+| 3 | ON→OFF | 22.95 | 23.29 | −0.34 | 7.58 | 7.41 | **+0.17** |
+
+gc-engine favours ON **3/3, both orders, mean −0.44 pp** — that is the
+trustworthy finding. The `regexp` bucket is 2/3 and reverses in pair 3; it is
+inside the noise and no claim is made on it.
+
+**Wall: UNRESOLVABLE today, and stated as such.** Four order-balanced pairs
+gave 3/4 for ON (−4.1 %, −3.1 %, −5.3 %, **+5.4 %**), pooled mean −1.9 % — far
+under this box's ~10 % bar (#3927 §6). The direct evidence that the box could
+not resolve it: the NODE median in the same eight runs, running identical code
+throughout, ranged 13,141–19,807 µs — a **51 % spread**. The noise floor was
+larger than any effect. No wall claim is made, and none is needed.
+
+### Count is the wrong denominator — the finding that should steer the next slice
+
+An 18.2 % cut in allocation COUNT bought ~0.4 pp of parse time. That is not a
+disappointment, it is arithmetic, and the ledger above invites the mistake:
+
+| stream | count/parse | ~bytes each | ~bytes/parse |
+| --- | ---: | ---: | ---: |
+| `__fnctor_Node` (retained AST) | 32,468 | 292 B | **9.5 MB** |
+| `type_7` `$AnyString` headers | 54,623 | 20 B | 1.1 MB |
+| `type_75` `$AnyValue` residual | 22,008 | 32 B | 0.70 MB |
+| **`.test` caps (this slice)** | 29,117 | ~16 B | **0.47 MB** |
+| **`$__ReFrame` (this slice)** | 18,722 | 20 B | **0.37 MB** |
+
+The two streams taken here are the SMALLEST objects in the census. They are
+18.2 % of allocation events and roughly **2–3 % of allocated bytes**. Whoever
+picks the next lever off this ledger should rank by **count × instance size**,
+not by count: on that ranking `__fnctor_Node` alone outweighs every remaining
+elidable stream combined, and the `$AnyString`/`$AnyValue` boxing streams
+(Workstream 1 / #743 / #4155 territory) outweigh anything left in the plumbing.
+
+### Semantics finding — a PRE-EXISTING sticky `.test` bug, not from this change
+
+While building the parity fixture: on the erased-receiver path
+(`__regexp_test_carrier`), a **sticky (`/y`) `.test` does not anchor** — it
+scans forward from `lastIndex` like a global regexp.
+
+```js
+const sticky = /ab/y;
+sticky.lastIndex = 4;
+carrierTest(sticky, "zzabzzab"); // Node: false, lastIndex → 0
+                                 // standalone: true,  lastIndex → 8
+```
+
+Confirmed **pre-existing on `origin/main`** by re-running the probe against
+pristine `HEAD` files (identical wrong answer), and identical with both new
+flags off. The static expression path is unaffected. Not fixed here — out of
+scope for an allocation slice, and fixing it inside a perf PR would make the
+perf A/B unreadable. Flagged to the tech lead; the fixture in
+`tests/issue-4185-regex-scratch-reuse.test.ts` deliberately exercises a sticky
+HIT (which is correct) and avoids encoding the wrong answer as expected.
+
+Separately, `tests/issue-2175-regexp-proto-readers.test.ts` has **3 failures on
+pristine `origin/main`** (the `.flags` / `.source` / boolean-getter dispatch
+tests). Also pre-existing, also verified by baseline swap before attributing.
+
+### Flag decision
+
+Both flags ship **default ON**. The mechanism is deterministic and provably
+identity-free, the isolation is clean to the counter, the target bucket moves
+the right way in 3/3 order-balanced profile pairs, and `=0` restores the prior
+bytes. The effect is small and the wall cannot see it — that is stated first,
+not buried, and it is the reason this section leads with the size of the win
+rather than with the −18.2 %.
+
+### Priced and NOT taken (updated)
+
+- The `.test` **expression** fast path (`emitRegexSearchCall`) still allocates
+  its caps per call — 4,611/parse, 1.8 %. Same pooling argument applies, but the
+  emitter is shared with `.exec`, so it needs a method discriminator first.
+  Small; not worth the shared-emitter risk on its own.
+- `__regex_run`'s per-push capture snapshot: **zero in this corpus** (see
+  above). Nothing to take.
+- Everything else remaining is either a retained value (`__fnctor_Node`) or
+  boxing (`$AnyString`, `$AnyValue`) — see the bytes table.
+
+### Gates (all by exit code)
+
+tsc 0 · biome lint 0 · prettier 0 · oracle-ratchet 0 · loc-budget 0 (granted:
+`regexp-standalone.ts` +2) · func-budget 0 (`ensureRegexRun` shrank) ·
+dead-exports 0 · coercion-sites 0 · stack-balance 0 · check:ir-fallbacks 0.
+Suites: new issue-4185 scratch-reuse 3/3; 13 regexp/standalone-regexp files
+405 passed / 17 skipped; equivalence shards 1, 4, 7 of 8 — no new regressions
+(CI runs all eight). Dogfood: `acorn-harness` 7/7 fixtures equal, 0 divergent;
+standalone canaries **2 / 3 / 4 / 5**, `functionImports: []`, exactly the 3
+pre-existing IR-FALLBACKs (typeIdx parity on parse / parseExpressionAt /
+tokenizer).

@@ -24,6 +24,7 @@ import { addFuncType, getOrRegisterArrayType, getOrRegisterVecType } from "./reg
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3) stable-regime minting
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ReOp } from "./regex/bytecode.js";
+import { frameStackPushInstrs } from "./regex-scratch-pool.js";
 import { REGEX_STEP_CAP, REGEX_STEP_CAP_LEN_SATURATION, REGEX_STEP_CAP_PER_UNIT } from "./regex/vm.js";
 
 /**
@@ -973,22 +974,16 @@ export function ensureRegexRun(ctx: CodegenContext): number {
     return [
       ...growStackIfFull(),
       ...snapshotCaps(SNAP),
-      // FRAME = struct.new $__ReFrame(b, sp, SNAP)
-      { op: "local.get", index: B },
-      { op: "local.get", index: SP },
-      { op: "local.get", index: SNAP },
-      { op: "struct.new", typeIdx: frameIdx },
-      { op: "local.set", index: FRAME },
-      // STACK[TOP] = FRAME
-      { op: "local.get", index: STACK },
-      { op: "local.get", index: TOP },
-      { op: "local.get", index: FRAME },
-      { op: "array.set", typeIdx: frameArrIdx },
-      // TOP++
-      { op: "local.get", index: TOP },
-      { op: "i32.const", value: 1 },
-      { op: "i32.add" },
-      { op: "local.set", index: TOP },
+      ...frameStackPushInstrs({
+        frameTypeIdx: frameIdx,
+        frameArrTypeIdx: frameArrIdx,
+        stackLocal: STACK,
+        topLocal: TOP,
+        frameLocal: FRAME,
+        pcValueLocal: B,
+        spLocal: SP,
+        snapLocal: SNAP,
+      }),
       // pc = a
       { op: "local.get", index: A },
       { op: "local.set", index: PC },
