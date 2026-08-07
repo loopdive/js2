@@ -18,7 +18,14 @@ import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 
 import { compile } from "../src/index.js";
-import { coldTailHotFieldLimit, coldTailStructName, selectColdFieldNames } from "../src/codegen/fnctor-cold-tail.js";
+import type { CodegenContext } from "../src/codegen/context/types.js";
+import {
+  COLD_TAIL_FIELD,
+  coldTailHotFieldLimit,
+  coldTailStructName,
+  findColdStructsForField,
+  selectColdFieldNames,
+} from "../src/codegen/fnctor-cold-tail.js";
 
 const FIXTURE = `
 function Node() { this.type = "?"; this.start = 0; }
@@ -99,5 +106,63 @@ describe("#3927 — fnctor hot/cold tail split", () => {
 
   it("derives the tail struct name from the owner, so the two never collide", () => {
     expect(coldTailStructName("__fnctor_Node")).toBe("__fnctor_Node__cold");
+  });
+
+  /**
+   * (2026-08-07) Regression guard for the §4 `generator` defect.
+   *
+   * `findAlternateStructsForField` deliberately hides `$…__cold` tails from
+   * every consumer that keys arms on `ref.test`. One consumer does not want
+   * arms — the Phase-3 (#1269) consumer-side narrowing in
+   * `finalizeStructAndDynamicMemberGet` wants to know whether EVERY carrier of
+   * the property is the same scalar kind, so it can strip the boxing off an
+   * `any`-receiver read. Hiding the tail from THAT question made the narrowing
+   * fire on a property whose only visible carrier was a boolean-branded `i32`
+   * (`TokContext.generator`), and the correct boxed value the dispatcher
+   * returned was then dragged through `__unbox_number` — every
+   * `node.generator` read on acorn's AST answered a constant `false`.
+   *
+   * The narrowing therefore consults `findColdStructsForField`. What this pins
+   * is the property that makes that veto SUFFICIENT: a tail location is
+   * reported, and it reports its slot as `externref`, which can never form a
+   * scalar-kind singleton with a visible scalar candidate.
+   */
+  it("reports cold-tail locations, as externref, so the read narrowing can veto on them", () => {
+    const ctx = {
+      structFields: new Map([
+        [
+          "__fnctor_Node",
+          [
+            { name: "type", type: { kind: "externref" }, mutable: true },
+            { name: COLD_TAIL_FIELD, type: { kind: "ref_null", typeIdx: 21 }, mutable: true },
+          ],
+        ],
+        ["__fnctor_Node__cold", [{ name: "generator", type: { kind: "externref" }, mutable: true }]],
+        ["__fnctor_TokContext", [{ name: "generator", type: { kind: "i32", boolean: true }, mutable: true }]],
+      ]),
+      structMap: new Map([
+        ["__fnctor_Node", 20],
+        ["__fnctor_Node__cold", 21],
+        ["__fnctor_TokContext", 22],
+      ]),
+      typeIdxToStructName: new Map([
+        [20, "__fnctor_Node"],
+        [21, "__fnctor_Node__cold"],
+        [22, "__fnctor_TokContext"],
+      ]),
+      fnctorColdTailStructName: new Map([["__fnctor_Node", "__fnctor_Node__cold"]]),
+    } as unknown as CodegenContext;
+
+    const locs = findColdStructsForField(ctx, "generator");
+    expect(locs).toHaveLength(1);
+    expect(locs[0]!.mainStructTypeIdx).toBe(20);
+    expect(locs[0]!.coldStructTypeIdx).toBe(21);
+    // The load-bearing bit: an `externref` here can never collapse into a
+    // scalar-kind singleton alongside `TokContext`'s branded `i32`.
+    expect(locs[0]!.fieldType.kind).toBe("externref");
+
+    // And with nothing split (the default), the veto is a strict no-op.
+    const unsplit = { ...ctx, fnctorColdTailStructName: undefined } as unknown as CodegenContext;
+    expect(findColdStructsForField(unsplit, "generator")).toEqual([]);
   });
 });
