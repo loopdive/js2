@@ -211,7 +211,7 @@ import {
   recordScriptGlobalLexicalBindingNames,
   recordScriptVarBindingNames,
   sourceContainsClass,
-  sourceContainsDelete,
+  scanModuleMemberDeletes,
   sourceHasDynamicTaConstruct,
   sourceContainsBindingPattern,
   sourceOverridesArrayIterator,
@@ -3516,7 +3516,15 @@ export function generateModule(
   // be routed through the tombstone-aware `__extern_get` host helper instead of
   // the inline struct.get fast-path (which reads the live field and ignores the
   // runtime delete tombstone). Delete-free modules keep byte-identical output.
-  ctx.moduleUsesDelete = sourceContainsDelete(ast.sourceFile);
+  // (#4187) ONE walk answers both: the #2179 boolean above and the receiver
+  // names the standalone hasOwnProperty const-fold gate needs (it only diverges
+  // from runtime state for a receiver that is both defineProperty-widened and
+  // deleted from). Only standalone reads the names, and collecting them forfeits
+  // the boolean's short-circuit — worth +3,847 on the #3437 harness budget — so
+  // host mode asks for the boolean alone and keeps main's exact traversal.
+  const memberDeletes = scanModuleMemberDeletes(ast.sourceFile, ctx.standalone === true);
+  ctx.moduleUsesDelete = memberDeletes.any;
+  ctx.memberDeleteReceiverNames = memberDeletes.receiverNames;
   // (#2660 S1) Whole-program escape / dynamic-use classification of `new F()`
   // fnctor instances. INERT: the result is stored for the future S3
   // reconstruction lowering but is NOT yet consumed, so emitted Wasm is
