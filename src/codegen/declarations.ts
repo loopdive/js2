@@ -1790,6 +1790,11 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           opKind === ts.SyntaxKind.PlusEqualsToken ||
           opKind === ts.SyntaxKind.MinusEqualsToken ||
           opKind === ts.SyntaxKind.AsteriskEqualsToken ||
+          // (#4181) `**=` was missing from this list (its 15 siblings are all
+          // here), so a top-level `x **= 2` was dropped — and because the
+          // #3623 classifier calls every assignment operator "keep", the drop
+          // was invisible to the telemetry too.
+          opKind === ts.SyntaxKind.AsteriskAsteriskEqualsToken ||
           opKind === ts.SyntaxKind.SlashEqualsToken ||
           opKind === ts.SyntaxKind.PercentEqualsToken ||
           opKind === ts.SyntaxKind.AmpersandEqualsToken ||
@@ -1806,7 +1811,21 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           opKind === ts.SyntaxKind.QuestionQuestionEqualsToken ||
           opKind === ts.SyntaxKind.BarBarEqualsToken ||
           opKind === ts.SyntaxKind.AmpersandAmpersandEqualsToken;
-        if (!isAssignOp) continue;
+        if (!isAssignOp) {
+          // (#4181) This `continue` used to skip the #3623 classifier at the
+          // end of the block, so non-assignment binary statements (`a, b`,
+          // `x && f()`, `p || q()`, `c ?? d()`, comparisons) were dropped
+          // UNCOUNTED — invisible even to the telemetry built to make drops
+          // loud. Record the drop before skipping. Behaviour is unchanged.
+          const c = classifyTopLevelExpressionStatement(stmt.expression);
+          if (c.disposition === "unhandled") {
+            (ctx.droppedModuleInitShapes ??= new Map()).set(
+              c.shape,
+              (ctx.droppedModuleInitShapes.get(c.shape) ?? 0) + 1,
+            );
+          }
+          continue;
+        }
         // (#3366) A destructuring-assignment LHS has no single root identifier,
         // so getAssignmentRootIdentifier below returns undefined and the whole
         // top-level statement used to be dropped. Keep it unconditionally:
