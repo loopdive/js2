@@ -636,6 +636,39 @@ something in it mattered; **the mechanism is unknown.** Anything derived from
 "copyNode did it" — including the risk ordering in §6 — is derived from an
 unsupported story and should be re-derived.
 
+**Replication of the enumeration matrix, and a partial DISAGREEMENT worth
+settling before anyone builds on it** (this branch = `origin/main` + this
+slice's inert analysis; `.tmp/enum-matrix.mjs`, `--target standalone`,
+`optimize: 0`, 3-field fixtures, no host imports):
+
+| case | slice C | this branch |
+| --- | ---: | ---: |
+| `for…in` over an object literal | 3 ✓ | 3 ✓ |
+| `for…in`, class instance typed AT the loop | 3 ✓ | 3 ✓ |
+| `for…in`, class instance arriving as `any` | 0 ✗ | **0 ✗** |
+| `for…in` over a fnctor instance | 0 ✗ | **0 ✗** |
+| `Object.keys(objectLiteral).length` | 3 ✓ | 3 ✓ |
+| `Object.keys(classInstance).length` | **0 ✗** | **3 ✓ — disagrees** |
+| `classInstance.hasOwnProperty("a")` | 1 ✓ | 1 ✓ |
+| `"a" in classInstance` | **0 ✗** | **1 ✓ — disagrees** |
+
+Six of eight agree, and the two `for…in` failures — the ones this design
+actually depends on — replicate exactly. The two that disagree both **pass**
+here. Consequences:
+
+- The **grouping** conclusion differs. Slice C reads the split as
+  "`hasOwnProperty` works, `in`/`for…in`/`Object.keys` do not". On this branch's
+  evidence the split is "**`for…in` (on a dynamic receiver) is broken, the other
+  three work**". A fixer starting from the wrong grouping starts from the wrong
+  shared predicate, so #3920 should settle this before the fix is scoped.
+- **Cause of the divergence is not yet known.** The obvious hypothesis —
+  slice C's default-ON hot/cold split — was tested and **rejected**:
+  `JS2WASM_FNCTOR_HOT_FIELDS=20` reproduces this branch's column exactly.
+  But that test is weak evidence, because these 3-field fixtures are entirely
+  constructor-assigned, so no field is split-eligible and the flag is inert on
+  them. Fixture shape remains the leading explanation. Settling it needs the two
+  fixture sets compared directly, not two summaries compared.
+
 ### 5. Retyping needs no special case, and here is the argument
 
 `toAssignable` mutates in place through a reference the code cannot replace
@@ -699,13 +732,22 @@ Three properties fall out, and each removes a class of #4211's risk:
 - **presence bits live in the BASE at fixed indices**, so `hasOwnProperty`,
   `in`, `Object.keys`, for-in and the delete/tombstone path *can* stay
   layout-INDEPENDENT — only the value's storage location varies. **Read this as
-  a CONSTRAINT on the enumeration fix, not as a property already held.** Slice C
-  measured `for…in` over a standalone closed fnctor struct yielding zero own
-  properties today (§4's correction), so the claim is untestable as things
-  stand, and whatever repairs that bug decides whether it holds: an enumeration
-  that derives its name list from the receiver's **struct field list** becomes
-  layout-DEPENDENT and re-inherits #4211's per-carrier-arm problem, whereas one
-  that derives it from the base presence words does not. Say which, in the fix;
+  a CONSTRAINT on the enumeration fix (#3920), not as a property already held.**
+  `for…in` over these structs yields zero own properties today (§4's
+  correction), so the claim is untestable as things stand, and whatever repairs
+  that bug decides whether it holds: an enumeration that derives its name list
+  from the receiver's **struct field list** becomes layout-DEPENDENT and
+  re-inherits #4211's per-carrier-arm problem, whereas one that derives it from
+  the base presence words does not. Say which, in the fix.
+
+  **And the constraint binds wider than this issue.** Independently replicated
+  on this branch (`.tmp/enum-matrix.mjs`, `--target standalone`, `optimize: 0`):
+  a **class** instance that reaches the loop as `any` enumerates 0 of 3 keys,
+  exactly like a fnctor instance, while the same class instance typed AT the
+  loop enumerates 3, and an object literal enumerates 3. So the boundary is not
+  "fnctor" — it is **the dynamic path over any closed struct**, and the
+  name-list-source rule above therefore applies to every closed-struct receiver
+  kind, not only the ones per-type layouts touches;
 - layouts are **siblings, not nested**, so arm order in the dispatchers cannot
   matter. (A prefix-CHAIN design was evaluated and rejected for this reason
   plus worse bytes: −60.9 % vs −67.3 %, because a label needing one
@@ -785,6 +827,12 @@ label) and the 0 % overflow rate.
    pre-existing `for…in` bug is a **prerequisite** for the emission slice, not a
    parallel nicety: until enumeration works, no differential can distinguish a
    correct split from a broken one.
+
+   **That bug is already filed as #3920** (`status: ready`, `priority: high`,
+   `sprint: current`, unclaimed as of 2026-08-07) — whose Problem section
+   already names the wider hole. It needs an OWNER, not a new file. Neither this
+   lane nor slice C may allocate ids in this container, which is a second reason
+   not to re-file it.
 3. **No test262 / no host-lane work.** Flag-OFF is byte-identical and the
    analysis is standalone-oriented; the emission slice owns conformance.
 4. **The 18.8 % slot occupancy is left on the table** (§4). A
