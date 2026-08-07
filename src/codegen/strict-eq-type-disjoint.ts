@@ -41,12 +41,16 @@
  *   one is never given a scalar slot. It is boxed — `externref` in the JS-host
  *   lane, `$AnyValue` in standalone — precisely because the representation has
  *   to carry a tag. Those operands never reach this arm.
- * - The two known escapes where a scalar slot outlives a truthful static type
- *   are both excluded: a bare `var` used as a **for-in target** (dynamically a
+ * - The three known escapes where a scalar slot outlives a truthful static type
+ *   are all excluded: a bare `var` used as a **for-in target** (dynamically a
  *   property-key string while TypeScript still reports the initializer's type
- *   — the same `forInIdentifierVars` guard the `#296` externref arm carries),
- *   and a **heterogeneously-assigned binding**, which #4204 routes onto the
- *   `(mut externref)` path and therefore also cannot arrive here as `i32`/`f64`.
+ *   — the same `forInIdentifierVars` guard the `#296` externref arm carries);
+ *   a **heterogeneously-assigned binding**, which #4204 routes onto the
+ *   `(mut externref)` path and therefore also cannot arrive here as `i32`/`f64`;
+ *   and a **Boolean binding that is a `++`/`--` target**, which §13.4 turns into
+ *   a Number at runtime while the slot stays `i32` (see
+ *   {@link isUpdateRetypedBoolean} — that one was found by measurement, not by
+ *   reasoning, and it is the only guard here that a plain A/B would have caught).
  * - `i32` is not a boolean marker on its own: a `type i32 = number` annotation
  *   and `string.length` both produce `i32` with a *number* static type. The
  *   boolean side therefore demands `isBooleanType` **and** the absence of every
@@ -99,6 +103,65 @@ export function isDynamicForInOperand(fctx: FunctionContext, expr: ts.Expression
   return ts.isIdentifier(expr) && fctx.forInIdentifierVars?.has(expr.text) === true;
 }
 
+/** Names used as the operand of a `++`/`--` anywhere in a given scope, cached per scope node. */
+const updateTargetsByScope = new WeakMap<ts.Node, Set<string>>();
+
+function enclosingScope(node: ts.Node): ts.Node {
+  let n: ts.Node = node;
+  while (n.parent && !ts.isSourceFile(n) && !ts.isFunctionLike(n)) n = n.parent;
+  return n;
+}
+
+function updateTargetNames(scope: ts.Node): Set<string> {
+  const cached = updateTargetsByScope.get(scope);
+  if (cached) return cached;
+  const names = new Set<string>();
+  const visit = (n: ts.Node): void => {
+    if (
+      (ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) &&
+      (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken) &&
+      ts.isIdentifier(n.operand)
+    ) {
+      names.add(n.operand.text);
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(scope);
+  updateTargetsByScope.set(scope, names);
+  return names;
+}
+
+/**
+ * A Boolean-typed identifier that is ALSO the operand of a `++`/`--` somewhere
+ * in the same scope has a **stale** static type, and the fold must decline.
+ *
+ * §13.4 defines `x--` as `x = ToNumeric(x) - 1`, so after it runs `x` holds a
+ * *Number* no matter what TypeScript inferred from the initializer. The
+ * compiler currently keeps such a binding in its initializer-derived `i32`
+ * boolean slot (that is #4208's own S2 defect, which needs #4204's binding
+ * widening to fix), so the representation-agreement argument this module rests
+ * on does not hold for it: the slot is `i32`, the static type says Boolean, and
+ * the runtime value is a Number.
+ *
+ * Measured, not anticipated: without this guard,
+ * `postfix-decrement/S11.3.2_A3_T1.js` and `prefix-decrement/S11.4.5_A3_T1.js`
+ * flip pass→fail. Both were passing *vacuously* — `var x = true; x--` left `x`
+ * as the boolean `false` and `x !== 0` was answered by the very f64 collapse
+ * this module removes. Folding there would trade one wrong answer for another,
+ * so the honest move is to refuse until S2 lands and makes the binding a real
+ * Number.
+ *
+ * Name-keyed within the scope, like the `forInIdentifierVars` guard. That
+ * over-approximates (a same-named binding in a nested scope also suppresses the
+ * fold), and over-approximating means *refusing* a fold, which is the safe
+ * direction.
+ */
+export function isUpdateRetypedBoolean(tsType: ts.Type, expr: ts.Expression): boolean {
+  if (!ts.isIdentifier(expr)) return false;
+  if (!isBooleanType(tsType)) return false;
+  return updateTargetNames(enclosingScope(expr)).has(expr.text);
+}
+
 /**
  * Emit the §7.2.16 step-1 constant when the two SCALAR operands are provably
  * of different §6.1 types, or return `undefined` to let the caller proceed.
@@ -121,9 +184,11 @@ function tryFoldStrictEqTypeDisjoint(
   const isStrictNeq = op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
   if (!isStrictEq && !isStrictNeq) return undefined;
 
-  const leftClass = scalarJsTypeClass(leftTsType, leftType, isDynamicForInOperand(fctx, expr.left));
+  const leftStale = isDynamicForInOperand(fctx, expr.left) || isUpdateRetypedBoolean(leftTsType, expr.left);
+  const leftClass = scalarJsTypeClass(leftTsType, leftType, leftStale);
   if (leftClass === undefined) return undefined;
-  const rightClass = scalarJsTypeClass(rightTsType, rightType, isDynamicForInOperand(fctx, expr.right));
+  const rightStale = isDynamicForInOperand(fctx, expr.right) || isUpdateRetypedBoolean(rightTsType, expr.right);
+  const rightClass = scalarJsTypeClass(rightTsType, rightType, rightStale);
   if (rightClass === undefined) return undefined;
   if (leftClass === rightClass) return undefined;
 
