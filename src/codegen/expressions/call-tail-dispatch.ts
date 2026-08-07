@@ -1502,10 +1502,9 @@ export function compileTailDispatch(
         const closureInfo = ctx.closureMap.get(funcName);
         const funcIdx = ctx.funcMap.get(funcName);
 
-        // (#4203) `f.bind(t, …)(…)` on a stable named FunctionDeclaration whose
-        // body reads `this`: route it onto the receiver-correct `.call`
-        // trampoline instead of the drop-thisArg lowering just below. Same
-        // reshape #3983 did for `.apply`; see named-this-call.ts.
+        // (#4203) Route `f.bind(t, …)(…)` onto the receiver-correct `.call`
+        // trampoline instead of the drop-thisArg lowering below (see
+        // named-this-call.ts) — the reshape #3983 did for `.apply`.
         if (!closureInfo && funcIdx !== undefined) {
           const asCall = tryReshapeBindToNamedThisCall(ctx, fctx, expr, bindCall, bindTarget, funcIdx);
           if (asCall !== undefined) return compileCallExpression(ctx, fctx, asCall);

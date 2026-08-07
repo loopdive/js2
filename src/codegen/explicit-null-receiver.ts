@@ -54,8 +54,9 @@
 import type { Instr } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import { ensureAnyValueType } from "./any-helpers.js";
-import type { CodegenContext } from "./context/types.js";
+import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { isStrictContext } from "./helpers/is-strict-function.js";
+import { emitExplicitNullThis } from "./helpers/sloppy-this-global.js";
 import { nextModuleGlobalIdx } from "./registry/imports.js";
 
 /** WasmGC `eq` abstract heap type (mirrors `any-helpers.ts`). */
@@ -160,21 +161,38 @@ export function explicitNullThisExternInstrs(ctx: CodegenContext): Instr[] | und
 }
 
 /**
- * Build the NON-NULL arm of the `__current_this` reader: normally just "yield
- * the installed receiver", but with the marker discriminated out and answered
- * by `nullAnswer` instead.
+ * Build the NON-NULL arm of the `ThisKeyword` reader's `__current_this` split.
  *
  * `thisTmpLocal` is the externref temp the reader already `local.tee`d the
- * global into; `nullAnswer` is the pre-built §10.4.3 answer for an explicitly
- * null receiver (strict → `null`, sloppy → the global object). Returns
- * `undefined` when the marker cannot be reserved, so the caller keeps its
- * existing one-instruction arm.
+ * global into. Normally the arm is one instruction — yield the installed
+ * receiver — and off the regime that is exactly what comes back, byte for
+ * byte. Under the regime the marker is discriminated out and answered per
+ * §10.4.3: `null` in strict code, the global object in sloppy code.
  *
- * Deliberately uses no scratch local: `any.convert_extern` is re-emitted in the
- * inner arm rather than teed, which keeps this a pure `Instr[]` builder that a
- * caller with no local allocator can use.
+ * The sloppy answer is deliberately the same as the ABSENT one. Getting that
+ * backwards ("null now stays null") would fix the handful of strict rows and
+ * break every sloppy `f.call(null)`.
  */
-export function buildExplicitNullThisElseArm(
+export function buildCurrentThisNonNullArm(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.Node,
+  thisTmpLocal: number,
+): Instr[] {
+  const yieldOnly: Instr[] = [{ op: "local.get", index: thisTmpLocal }];
+  if (!explicitNullReceiverActive(ctx, expr)) return yieldOnly;
+  // `emitExplicitNullThis` writes through `fctx.body`; capture it into a
+  // standalone sequence with the established swap.
+  const nullAnswer: Instr[] = [];
+  const outerBody = fctx.body;
+  fctx.body = nullAnswer;
+  emitExplicitNullThis(ctx, fctx, expr);
+  fctx.body = outerBody;
+  return buildExplicitNullThisElseArm(ctx, thisTmpLocal, nullAnswer) ?? yieldOnly;
+}
+
+/** Discrimination core of `buildCurrentThisNonNullArm`; no scratch local needed. */
+function buildExplicitNullThisElseArm(
   ctx: CodegenContext,
   thisTmpLocal: number,
   nullAnswer: readonly Instr[],
