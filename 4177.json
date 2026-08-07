@@ -1,10 +1,11 @@
 {
   "id": "4177",
   "assignee": "ttraenkler/claude-fable-5",
-  "requested_by": "ttraenkler/claude-fable-5",
-  "status": "in-progress",
+  "requested_by": "ttraenkler@users.noreply.github.com",
+  "status": "done",
   "branch": "claude/issue-4177-lattice-plus",
   "claimed_at": "2026-08-06T15:51:50Z",
-  "updated_at": "2026-08-06T15:51:50Z",
-  "write_id": "18086-exy890f4"
+  "updated_at": "2026-08-07T01:44:25Z",
+  "write_id": "3347-oudprpst",
+  "released_at": "2026-08-07T01:44:25Z"
 }
