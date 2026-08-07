@@ -353,4 +353,5 @@ members that *are* implemented.
 The decisive experiment is one extra A/B arm and does not need this issue:
 make the refusal body throw a **RangeError** instead of a TypeError, re-run,
 and every currently-passing file that flips was passing *because* the feature
-is missing. Filed separately at the tech lead's request.
+is missing. **Filed as #4209** — the 825 above is the candidate pool it should
+start from, and it is an upper bound, not a count.
