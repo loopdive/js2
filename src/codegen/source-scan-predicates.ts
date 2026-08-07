@@ -28,18 +28,6 @@ export function sourceContainsClass(sourceFile: ts.SourceFile): boolean {
 }
 
 /**
- * (#2179) True when the source contains a `delete` operating on a property or
- * element access (`delete o.a` / `delete o[k]`). `delete x` of a bare
- * identifier and `delete <other expr>` (no-op deletes) do NOT count — only
- * member deletes can leave a runtime tombstone that the inline struct.get
- * read fast-path would bypass. Used to gate the tombstone-aware read routing
- * so delete-free modules emit byte-identical wasm.
- */
-export function sourceContainsDelete(sourceFile: ts.SourceFile): boolean {
-  return scanMemberDeletes(sourceFile, false).any;
-}
-
-/**
  * (#4187) The single member-delete walk, answering both questions the module
  * setup asks: **whether** any member delete exists (#2179) and **which
  * identifiers** are deleted from.
@@ -58,7 +46,7 @@ export function sourceContainsDelete(sourceFile: ts.SourceFile): boolean {
  * @returns `any` — a `delete o.a` / `delete o[k]` occurs somewhere (a no-op
  *   `delete x` of a bare identifier does NOT count: it leaves no tombstone for
  *   the inline `struct.get` read fast-path to miss).
- * @returns `receiverNames` — see {@link collectMemberDeleteReceiverNames}; empty
+ * @returns `receiverNames` — see {@link scanModuleMemberDeletes}; empty
  *   when `collectReceivers` is false. A strict subset of what sets `any`:
  *   `delete a.b.c` and `delete f().x` have no identifier receiver, so they set
  *   `any` and contribute no name.
@@ -89,8 +77,25 @@ function scanMemberDeletes(
 }
 
 /**
- * (#4187) Identifier names used as the RECEIVER of a member delete anywhere in
- * the program — `delete r.k` / `delete r[e]` yields `r`.
+ * Both member-delete answers from ONE walk — the module-setup entry point.
+ * Pass `collectReceivers: false` outside `--target standalone`; nothing reads
+ * the names there and the boolean-only walk short-circuits (see
+ * {@link scanMemberDeletes} for the measured cost).
+ *
+ * ---
+ *
+ * (#2179) `any` is true when the source contains a `delete` operating on a
+ * property or element access (`delete o.a` / `delete o[k]`). `delete x` of a
+ * bare identifier and `delete <other expr>` (no-op deletes) do NOT count — only
+ * member deletes can leave a runtime tombstone that the inline `struct.get`
+ * read fast-path would bypass. Gates the tombstone-aware read routing so
+ * delete-free modules emit byte-identical wasm.
+ *
+ * ---
+ *
+ * (#4187) `receiverNames` holds identifier names used as the RECEIVER of a
+ * member delete anywhere in the program — `delete r.k` / `delete r[e]` yields
+ * `r`.
  *
  * Consumed by `compilePropertyIntrospection` to decide whether a STANDALONE
  * `r.hasOwnProperty(k)` / `r.propertyIsEnumerable(k)` on a receiver that also
@@ -116,16 +121,6 @@ function scanMemberDeletes(
  * That is the safe direction — a missed name simply keeps today's fold, which is
  * exactly main's behaviour, whereas a spurious name would cost a runtime call on
  * a receiver that never needed one.
- */
-export function collectMemberDeleteReceiverNames(sourceFile: ts.SourceFile): Set<string> {
-  return scanMemberDeletes(sourceFile, true).receiverNames;
-}
-
-/**
- * Both member-delete answers from ONE walk — the module-setup entry point.
- * Pass `collectReceivers: false` outside `--target standalone`; nothing reads
- * the names there and the boolean-only walk short-circuits (see
- * {@link scanMemberDeletes} for the measured cost).
  */
 export function scanModuleMemberDeletes(
   sourceFile: ts.SourceFile,

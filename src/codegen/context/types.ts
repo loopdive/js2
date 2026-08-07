@@ -3109,7 +3109,7 @@ export interface CodegenContext {
   moduleUsesDelete?: boolean;
   /** (#4187) Identifier names appearing as the receiver of a member delete
    *  (`delete r.k` / `delete r[e]`), pre-scanned by
-   *  `collectMemberDeleteReceiverNames`. Consulted ONLY by the standalone arm of
+   *  `scanModuleMemberDeletes`. Consulted ONLY by the standalone arm of
    *  the `hasOwnProperty`/`propertyIsEnumerable` routing gate in
    *  `compilePropertyIntrospection`: a receiver that saw `Object.defineProperty`
    *  AND appears here can have its const-fold disagree with runtime state, so it

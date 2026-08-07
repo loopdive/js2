@@ -9,7 +9,7 @@
  * The fold answers from the defineProperty-widened struct SHAPE, which no
  * runtime delete retracts. `compilePropertyIntrospection` now routes to the
  * runtime helper when the receiver both saw an `Object.defineProperty` and
- * appears in the whole-program `collectMemberDeleteReceiverNames` pre-scan.
+ * appears in the whole-program `scanModuleMemberDeletes` pre-scan.
  *
  * Two invariants beyond "the bug is fixed":
  *   - the read BEFORE the delete must still answer `true` — it precedes the

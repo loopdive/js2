@@ -4621,7 +4621,7 @@ export function compilePropertyIntrospection(
       // succeeded everywhere except the folded `hasOwnProperty` call site.
       // Pre-scan, not record-as-you-compile: the repro's first read precedes the
       // delete textually and must still answer `true`, so both reads must come
-      // from the same mechanism. See `collectMemberDeleteReceiverNames`.
+      // from the same mechanism. See `scanModuleMemberDeletes`.
       const standaloneDeleteObserved =
         ctx.standalone && recvVarName !== undefined && (ctx.memberDeleteReceiverNames?.has(recvVarName) ?? false);
       if (!needsRuntime && (!ctx.standalone || standaloneDeleteObserved)) {
