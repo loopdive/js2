@@ -99,6 +99,7 @@ import { ensureObjectRuntime } from "../object-runtime.js";
 import { compileCoercionRhs } from "../char-at-transfer.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { resolveEffectiveStructName } from "../property-access.js";
+import { emitOverlayRoutedElementSet, overlayRouteActive } from "../typed-lane-overlay-route.js"; // (#4159 S5)
 import {
   compileStringBuilderAppend,
   emitStringBuilderAppendCodeUnit,
@@ -4703,6 +4704,19 @@ function compileElementAssignment(
     if (!arrDef || arrDef.kind !== "array") {
       reportError(ctx, target, "Assignment: vec data is not array");
       return null;
+    }
+    // (#4159 S5) Overlay-aware routed WRITE — twin of the S3 read routing;
+    // rationale + exclusions in typed-lane-overlay-route.ts. `arguments` keeps
+    // the legacy path (mapped-args reverse sync #849); TA views keep theirs.
+    if (
+      overlayRouteActive(ctx) &&
+      elementAccessTypedArrayName(ctx, target.expression) === undefined &&
+      !(ts.isIdentifier(target.expression) && target.expression.text === "arguments")
+    ) {
+      const routed = emitOverlayRoutedElementSet(ctx, fctx, target.argumentExpression, value, (e, h) =>
+        compileExpression(ctx, fctx, e, h),
+      );
+      if (routed) return routed;
     }
     // Save vec ref and index in locals for reuse
     const vecLocal = allocLocal(fctx, `__vec_${fctx.locals.length}`, arrType);

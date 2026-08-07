@@ -1,10 +1,12 @@
 ---
 id: 4159
 title: "SOUNDNESS: typed-lane array element access bypasses the #3251 vec overlay — a defineProperty accessor index reads the stale element and drops the setter write (standalone, confirmed)"
-status: ready
+status: done
+completed: 2026-08-07
+assignee: ttraenkler/W15
 sprint: current
 created: 2026-08-04
-updated: 2026-08-04
+updated: 2026-08-07
 priority: high
 horizon: m
 feasibility: hard
@@ -20,13 +22,32 @@ origin: "Design review of #3251's fast-path guard, 2026-08-04"
 # declaration site — so the growth is the irreducible cost of the flags
 # themselves, not logic added to a barrel. Comments were trimmed first; the
 # full rationale lives in this issue instead.
+# S3/S5 (2026-08-07): all emission logic lives in the NEW subsystem module
+# src/codegen/typed-lane-overlay-route.ts. The residual growth at the two
+# call sites (+20 / +14 after comment-trimming) is the dispatch decision
+# itself — the gate + exclusion predicates + the routed call, which must sit
+# where the receiver-shape facts (taClass, regexp-vec, arguments-rooted)
+# already exist; re-deriving them inside the module would need raw checker
+# queries the oracle ratchet forbids.
 loc-budget-allow:
   - src/codegen/context/types.ts
+  - src/codegen/property-access.ts
+  - src/codegen/expressions/assignment.ts
 # (#3400 func ratchet) +2 lines in createCodegenContext: the two new flags need
 # an initialiser each, next to the existing protoIndexDirty. Same reasoning as
 # the LOC grant — a context field's initialiser has exactly one legal home.
+# S3/S5: compileElementAccessBody +19 / compileElementAssignment +13 — the
+# dispatch gates described above; emission is in typed-lane-overlay-route.ts.
 func-budget-allow:
   - src/codegen/context/create-context.ts::createCodegenContext
+  - src/codegen/property-access.ts::compileElementAccessBody
+  - src/codegen/expressions/assignment.ts::compileElementAssignment
+# (#1917 coercion engine) __unbox_number +1 in the new module: same native and
+# same shape as the #3169 any-key retry arm this emission mirrors — (a) the
+# numeric-retry NaN gate, (b) unboxing a getter's boxed return for a
+# numeric-hint consumer. No new ToString/ToNumber matrix is introduced.
+coercion-sites-allow:
+  - src/codegen/typed-lane-overlay-route.ts
 ---
 
 # #4159 — typed-lane array element access bypasses the vec overlay (accessor arm)
@@ -634,3 +655,42 @@ The lesson worth keeping is about the *method*, not the outcome: the epic's pros
 turned out to be accurate, but it was still a report about external state, and a
 checkout that cannot see the fork cannot confirm it. Verify against the remote
 that owns the ref, or say plainly that you could not.
+
+## Test Results — S3+S5 implementation (W15, 2026-08-07)
+
+Implemented per the architect spec, with one deliberate widening: S3 routes
+BOTH numeric-provable keys (`__extern_get_idx` direct) and everything else
+(externref key → `__extern_get`, miss-retry positionally — the #3169 arm's
+exact order + string gate), because the test262-relevant shape is a
+STRING-spelled index on a vec-typed receiver (the propertyHelper
+monomorphization: a helper whose `obj` param only ever receives arrays gets
+the vec type, and its `obj[name]` read took the typed lane). All emission in
+`src/codegen/typed-lane-overlay-route.ts`; dispatch gates at
+`compileElementAccessBody` (vec arm) and `compileElementAssignment`
+(isVecStruct arm), `ctx.standalone && ctx.vecAccessorDescriptorDirty` only.
+
+**Chokepoint health was measured BEFORE routing into them** (probe chain
+`.tmp/p1..p10`, worktree `agent-a29d9657414900b64`): `__extern_get_idx`
+invokes companion getters for numeric keys; `__extern_get` for string keys;
+`__extern_set` invokes setters, enforces `writable:false` (#3251-S2 / PR
+#4142) and grows on OOB index writes. One pre-existing dynamic-lane hole is
+NOT fixed here (deliberately): a `number|string` UNION-typed key on an
+externref receiver reaches `__extern_get` as a boxed number and misses
+(`isAnyTypedIndexExpression` excludes unions from the #3169 retry by design —
+widening it is a separate decision with its own blast radius).
+
+| measurement | result |
+| --- | --- |
+| tests/issue-4159.test.ts on origin/main (file-copy A/B) | 4 repros RED, 4 controls green |
+| tests/issue-4159.test.ts on branch | 8/8 green |
+| 558-file descriptor lever, post-#4155 base | 178/558 |
+| 558-file descriptor lever, this branch | **185/558 — FIXED 7, BROKE 0** |
+| gates | tsc, oracle-ratchet +0/+0, loc/func-budget (granted, see frontmatter), coercion-sites (granted), ir-fallbacks all OK |
+
+The modest lever delta is EXPLAINED, not unexpected: 172 of the 373 remaining
+lever failures compile in runtime-eval CONSUMER mode (propertyHelper's
+`Function.prototype.call.bind` primordial captures flip the whole module), and
+there a function-DECLARATION getter is a broken callable before any
+read-routing matters — root-caused and filed as **#4197** with the full probe
+chain. This fix's primary value is soundness for real typed input (the
+lane-incoherence wrong-answer) plus the non-consumer-mode slice of the lever.
