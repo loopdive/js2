@@ -288,7 +288,7 @@ node scripts/profile-buckets.mjs .tmp/acorn.cpuprofile .tmp/closure-map.log 25 \
 ## 2026-08-07 — re-profile after the landed Workstream-2 slices
 
 Same recipe as §Reproduction, same lane, same 300 iterations, on
-`claude/issue-743-i32-producer` (main + #4202). **The three Workstream-2 items
+`claude/issue-743-i32-producer` (main + PR #4202). **The three Workstream-2 items
 this file called out have landed, and the profile has moved — but the share
 they gave up went to GC, not to the floor.**
 
@@ -329,8 +329,8 @@ prescribed has now priced out four times in a row on this corpus:
 | lever | result |
 | --- | --- |
 | #4155 four receiver-side levers | null on wall |
-| #4202 evaluator precision (3 rules) | **1 slot**, +27 B |
-| #4205 ref/string consumer ABI | **1 candidate**, **0 bytes** |
+| PR #4202 evaluator precision (3 rules) | **1 slot**, +27 B |
+| PR #4205 ref/string consumer ABI | **1 candidate**, **0 bytes** |
 | #3927 per-shape splitting | ≈ 0.1 %/slot, priced 3-4 % at highest risk |
 
 The receiver-side program is not wrong, it is **exhausted for acorn**: acorn's
@@ -369,7 +369,7 @@ delta as the primary instrument (deterministic), with the GC bucket share as
 the secondary — per §6, a wall A/B on this box cannot resolve the expected move
 on its own.
 
-**Second recommendation, from #4205:** measure a **second dogfood corpus**
+**Second recommendation, from PR #4205:** measure a **second dogfood corpus**
 before the next representation lever. Four levers have now priced out for
 reasons specific to acorn's shape; a corpus with declared types would say
 whether the representation program is exhausted generally or only here.
