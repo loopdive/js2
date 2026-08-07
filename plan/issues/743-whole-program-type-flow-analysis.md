@@ -51,6 +51,14 @@ loc-budget-allow:
   # would bind) is provably inert for the main fixpoint. `inferExpr` is the one
   # place an expression's lattice value is decided, so a satellite cannot host
   # it; everything else lives in the satellite's four modules.
+  # Plus +34 (1568 → 1602) for the satellite i32/bitwise producer slice: the
+  # `InferExtension` hook. Two lines of it are the hook consult; the rest is one
+  # optional `ext` parameter threaded through `inferExpr`, its three atom
+  # helpers and `walkBodyForReturns` (11 recursion sites — a site that DROPS it
+  # answers the pre-extension type silently, so the threading is exhaustive by
+  # construction rather than by review), plus the doc comment that states the
+  # flag-off byte-identity argument. The rule ITSELF is a new satellite module,
+  # src/ir/fnctor-i32-producers.ts; nothing about the rule lives here.
   - src/ir/propagate.ts
   # +6: a three-line comment and one call in `deriveFnctorFields`, which is the
   # single place a fnctor field slot is chosen and therefore the only place this
@@ -1285,3 +1293,110 @@ end-to-end on synthetic cycles, and pays nothing on acorn. The honest reading is
 that the remaining 40 are not gated on graph reach or on field↔param mutuality —
 they are gated on how precisely a value expression can be evaluated once the
 graph gets you there.
+
+## 2026-08-07 — satellite i32/bitwise producer rule IMPLEMENTED: the rule and the evaluator-extension hook land; the acorn census does NOT move, and the missing two levers are now measured, not guessed
+
+Branch `claude/issue-743-i32-producer`, stacked on `claude/issue-743-mutual-fixpoint`
+(PR #4175, not yet on main). Implements re-ranked lever 1 from the locals spec's
+§8 — "1–2 slots, S-horizon, sound" — via the `InferExtension` hook that spec's
+§3.3 designed.
+
+### What shipped
+
+- **`InferExtension`** (`src/ir/propagate.ts`): an optional trailing `ext` on
+  `inferExpr`, its three atom helpers and `walkBodyForReturns`, consulted once
+  at the top of `inferExpr`'s dispatch. A satellite gets first refusal on every
+  node; returning `undefined` falls through to the unchanged shared dispatch.
+  The always-on `buildIrUnitTypeMap` path passes nothing, so main-map parity
+  holds **by construction**, not by measurement. This is the substrate the
+  locals spec asked for, and it is now in place independent of whether the
+  locals slice is ever scheduled.
+- **`src/ir/fnctor-i32-producers.ts`**: the producer rule. `& | ^ << >>` and
+  their compound twins → `i32`; `>>>`/`>>>=` → `u32`; `~` → `i32`. The
+  satellite's consumer collapses `i32`/`u32`/`f64` into one f64 slot, which is
+  why the satellite may take a fact the MAIN map withholds behind
+  `JS2WASM_IR_I32_DOMAIN` (there an `i32` is an instruction-selection promise
+  Stage 3 has not shipped).
+
+**The rule is deliberately WIDER than the core's**, and this is the one piece of
+new soundness reasoning in the slice. The core demands `f64Compatible` on BOTH
+operands; the semantics need much less. `ApplyStringOrNumericBinaryOperator`
+takes `ToNumeric` of both operands and throws a TypeError if the two results
+differ in type, so **one provably-Number operand is sufficient**: the expression
+either throws (no value flows) or both were Numbers and the result is an
+Int32. `"abc" | 0`, `undefined | 0` and `({}) | 0` are all Int32s the core
+calls DYNAMIC. Three consequences worth stating once:
+
+- `string` and `bool` operands count as proof (`ToNumeric` of either is a
+  Number); `object` does **NOT**, because `ToPrimitive` runs user code and the
+  satellite's `object` atoms include instance shapes of constructors in the
+  module under analysis, which can define `Symbol.toPrimitive`. `unknown` is
+  lattice BOTTOM and is never evidence.
+- Two unproven operands stay DYNAMIC: both could be BigInts, and a BigInt
+  reaching an f64 field slot is the miscompile this guard exists to prevent.
+- `>>>` needs **no** guard at all — `BigInt::unsignedRightShift` throws
+  unconditionally, so the operator has no BigInt-producing form.
+
+### Measurements (acorn-standalone-compile, `-O3`, `JS2WASM_FNCTOR_FIELD_PROVENANCE=1 JS2WASM_FNCTOR_CTOR_PARAM_TYPES=1`)
+
+- **Census 55 typed / 1 discarded / 40 unknown — UNCHANGED. Zero slots moved**,
+  verified row-by-row (all 96 rows compared on `slot` and `verdict` against a
+  baseline run of the same probe on the unpatched base). Binary 874,370 B,
+  byte-count unchanged. Canaries 2,3,4,5; imports `[]`; exactly the 3
+  pre-existing parity IR-FALLBACKs (parse / parseExpressionAt / tokenizer).
+- **Flag-off byte-identity**: sha256 of the standalone acorn binary is
+  `f54ecf75af4f62227af4abb7e002224d243b1fd3e5253a081b85bd0620c463f5`
+  (874,280 B) — identical with the branch's sources and with the base's,
+  A/B'd by file copy in one worktree.
+- Wall A/B **not run** (pre-registered at ≥5 movers; 0 moved).
+
+### Why 0 — measured per lever on the dist, not argued
+
+The locals spec's §7 named `Scope.flags` as the row this lever would move. It
+is the right row and the lever is not sufficient. Running the satellite over
+`tests/dogfood/.acorn/package/dist/acorn.mjs` and over edited copies — each
+edit *simulating* one candidate lever — and reading `Scope`'s ctor param fact:
+
+| variant | `Scope` param0 |
+| --- | --- |
+| A — as shipped, with this slice's producer rule | `dynamic` |
+| B — A + module-level numeric consts (`SCOPE_TOP = 1`, …) bound in scope | `dynamic` |
+| C — B + condition-agnostic conditionals | **`f64`** |
+| Z — upper bound: every `enterScope` argument replaced by a literal | `f64` |
+
+C reaching the same answer as the Z upper bound is the load-bearing part:
+nothing beyond those three rules pins the slot. So `Scope.flags` needs
+**exactly three** evaluator rules and **any two of them move nothing**:
+
+1. **the bitwise producer rule** (this slice) — it is what makes
+   `functionFlags(…) | SCOPE_SUPER | (allowDirectSuper ? … : 0)` and
+   `SCOPE_CLASS_FIELD_INIT | SCOPE_SUPER` numeric, and what carries
+   `functionFlags`' own body (`SCOPE_FUNCTION | (async ? SCOPE_ASYNC : 0) | …`,
+   left-associative, so the literal on the far left proves the whole chain);
+2. **module-level numeric constants in scope** — acorn calls
+   `this.enterScope(SCOPE_SWITCH)` with a bare module `var`, and the satellite's
+   scope is params-only, so `scope.get(name)` answers DYNAMIC;
+3. **condition-agnostic conditionals** — 2 of the 8 `enterScope` sites are
+   `cond ? A : B` with a DYNAMIC `cond`. The core bails on
+   `!boolCompatible(cond)`, but **ToBoolean is total and never throws, so the
+   condition's type cannot affect the RESULT type**: `join(whenTrue, whenFalse)`
+   is correct whatever the condition is. This one is a strict soundness
+   *improvement* over the existing guard, not a relaxation of it.
+
+That table is the actionable output of this slice. It is also a correction to
+the spec's §8 pricing: lever 1 was costed at "1–2 slots" standalone, and
+standalone it is worth 0 — the `Scope.flags` chain was priced without checking
+what the other seven `enterScope` arguments evaluate to.
+
+### Gates / suites
+
+`tsc` 0 · biome lint 0 · prettier 0 · oracle-ratchet 0 · loc-budget 0 (grant:
+propagate.ts +34) · func-budget 0 · dead-exports 0 · coercion-sites 0 ·
+stack-balance 0 · check:ir-fallbacks 0. Suites: new
+`tests/issue-743-i32-producers.test.ts` 27/27 (per-operator arms, the BigInt
+guard incl. the `object`-is-not-proof negative, 8 nesting-depth fixtures for the
+threading failure mode, main-map inertness, and an E2E where a bitwise-only slot
+goes `externref` → `f64` with identical runtime behaviour); `issue-743-*` 50/50;
+`issue-4155-fnctor-field-provenance` 8/8.
+
+**Flag verdict: `JS2WASM_FNCTOR_CTOR_PARAM_TYPES` STAYS OFF.**
