@@ -503,12 +503,32 @@ standalone acorn is **byte-identical with the flag ON** (937,273 B, canaries
 **Headline: the shapes ARE separable, by a lot, and the plan is empirically
 sound on the motivating corpus.**
 
-| | today (union struct) | #4211 hot/cold, K=24 | per-type layouts (this plan) |
-| --- | ---: | ---: | ---: |
-| `__fnctor_Node` B/instance | 292 (model: 300) | 206.6 | **98.0** |
-| Node stream, MB/parse | 9.74 | 6.71 | **3.18** |
-| vs the union struct | — | −31.1 % | **−67.3 %** |
-| share of ALL struct bytes/parse (12.23 MB) | — | −21.6 % | **−53.6 %** |
+| | union struct | #4211 K=24 (flag-OFF) | slice C K=20 (default-ON) | per-type layouts (this plan) |
+| --- | ---: | ---: | ---: | ---: |
+| `__fnctor_Node` B/instance | 292 | 206.6 | ~181 | **98.0** |
+| Node stream, MB/parse | 9.48 | 6.71 | 5.89 | **3.10** |
+| vs the union struct | — | −31.1 % | −37.9 % | **−67.3 %** |
+
+**⚠ Baseline correction (2026-08-07, after slice C).** The first draft of this
+section quoted "−53.6 % of ALL struct bytes", measured against the UNION-struct
+baseline. That baseline is gone: slice C
+(`claude/issue-3927-ranking-and-generator`) makes the hot/cold split
+**default-ON in the standalone lane at K=20** and measures 12.69 → 9.10 MB of
+struct bytes per parse (−28.3 %). Against that new default the marginal figure
+is smaller, and it is the one that should be quoted:
+
+| comparison | struct bytes/parse | |
+| --- | ---: | ---: |
+| slice C default (the new baseline) | 9.10 MB | — |
+| + per-type layouts | **6.31 MB** | **−30.7 %** |
+| both, vs the pre-split union struct | 6.31 MB | −50.3 % |
+
+Read on the Node stream alone, per-type layouts remove a further **−47.4 %** of
+what slice C leaves. The two techniques **overlap rather than compose** for this
+fnctor: §4 measures a 0 % residual rate for per-type layouts, so where a layout
+is proved the cold tail has nothing left to move (slice C's tail rate is 28.1 %).
+The cold tail stays valuable exactly where the layout analysis returns a
+non-`split` verdict.
 
 ### 1. Why §3's "the shape is not knowable at the `struct.new`" was right but not fatal
 
@@ -584,12 +604,120 @@ ObjectPattern / ArrayPattern / RestElement / AssignmentPattern nodes via the
 four in-place `toAssignable` conversions, and none of them has a property
 outside its allocation label's set.
 
+**Why this check is not the vacuous kind.** Slice C nearly shipped an
+enumeration-based differential that passed by comparing `undefined` to
+`undefined`, and warns that on this receiver class *any* enumeration-based
+check passes for free. This one is a different instrument and carries its own
+non-vacuity witnesses: it runs against **native acorn in Node**, not in wasm, so
+`Object.keys` is the language's; the denominator is non-trivial (32,468 nodes,
+matching the census exactly); and the occupancy numerator is non-trivial
+(64,008 populated slots). A degenerate plan would fail loudly rather than
+silently — empty planned sets would make *every* property overflow, i.e. ~100 %
+rather than 0 %.
+
 **What this check does NOT cover, stated plainly: `copyNode` never fires on
-this corpus** (0 of the 25 executing sites). `copyNode` is
+this corpus** (0 of the 25 executing sites). It is
 `for (var prop in node) { newNode[prop] = node[prop] }` — enumeration plus a
-COMPUTED write — and it is precisely the reflective surface that silently
-corrupted #4211's first cut. The emission slice must route it through the
-residual carrier and must validate on a corpus that triggers it.
+COMPUTED write. The emission slice must route it through the residual carrier
+and must validate on a corpus that triggers it.
+
+⚠ **Correction (2026-08-07, after slice C): do not build on the recorded
+`copyNode` story.** An earlier draft of this section, and the 2026-08-07
+hot/cold slice's §3 above, attribute the pre-wiring K=52 divergence to
+`copyNode`. Slice C measured, in-wasm on this same self-parse, that **`for…in`
+over a standalone closed fnctor struct enumerates ZERO own properties** (keys on
+15 of 32,506 walked objects, none of them AST nodes; the reference
+implementation yields keys on all 32,487). It is identical with the split
+disabled, so it is pre-existing and belongs to neither slice. A routine that
+enumerates nothing cannot copy anything — and this slice independently measured
+`copyNode` executing zero times. Two independent lines of evidence against the
+named cause. Wiring the three reflective passes *did* resolve the divergence, so
+something in it mattered; **the mechanism is unknown.** Anything derived from
+"copyNode did it" — including the risk ordering in §6 — is derived from an
+unsupported story and should be re-derived.
+
+**The enumeration matrix, SETTLED — the discriminator is the RECEIVER'S STATIC
+TYPE, not the operation** (`.tmp/enum-settle.mjs`, `--target standalone`,
+`optimize: 0`, no host imports; want = keys 3, in 1, for…in 3, hasOwn 1):
+
+| receiver | `Object.keys` | `in` | `for…in` | `hasOwnProperty` |
+| --- | ---: | ---: | ---: | ---: |
+| `const o = new C()` (statically typed) | 3 ✓ | 1 ✓ | 3 ✓ | 1 ✓ |
+| `const o: any = new C()` | **0 ✗** | **0 ✗** | **0 ✗** | 1 ✓ |
+| laundered through `id(x): any` | **0 ✗** | **0 ✗** | **0 ✗** | 1 ✓ |
+
+Identical for both class spellings (field initialisers and constructor
+assignment), so the class shape is not a factor.
+
+This **resolves a disagreement between the two lanes, in slice C's favour, and
+the error was on this side.** An earlier draft of this section reported
+`Object.keys(classInstance)` and `"a" in classInstance` *passing* and treated
+slice C's failing column as unreproduced. The cause was a fixture confound
+here: those two probes used a **statically typed** receiver (`var o = new C()`)
+while the `for…in` probe laundered through `id(x)`. Slice C's fixture used
+`const o: any = new C()` throughout — i.e. it measured the dynamic path
+consistently, and this lane did not. Its grouping conclusion stands:
+
+> `hasOwnProperty` reaches a working predicate on a receiver where `in`,
+> `for…in` and `Object.keys` all answer nothing.
+
+The cross product adds the axis that unifies both columns and is the actionable
+statement for #3920: **every one of the four works on a statically-typed
+closed-struct receiver; three of the four break the moment the receiver is
+`any`.** So the defect lives on the DYNAMIC path, and `hasOwnProperty` is the
+one dynamic operation that still reaches a correct answer — that asymmetry, not
+"the presence read is broken", is where a fix should start.
+
+**The mechanism under the axis, and why "make the broken three match the working
+ones" is a trap.** Six dynamic helpers back these surfaces; three were given
+closed-struct arms at finalize (`src/codegen/index.ts` :4450-4452) and three were
+not, and the split is 3-for-3: `hasOwnProperty`, `Object.getOwnPropertyNames`
+and computed `obj[k]` have arms; `Object.keys`, `for…in` and `in` do not. So the
+dynamic path is not uniformly broken — half the helpers were taught closed
+structs and half were not.
+
+**But the working half is not a template to copy, because it is the same bug
+already live.** Those arms enumerate `ctx.structFields`, which includes BUILTIN
+carriers whose internal fields carry no `$`/`__` prefix. Sharing them with
+`__object_keys` was implemented, measured and **reverted** (#4071). Verified
+independently here (`.tmp/gopn-leak.mjs`, `--target standalone`, `optimize: 0`,
+no host imports; "host" = the reference answer):
+
+| probe | standalone | host | |
+| --- | ---: | ---: | --- |
+| `Object.getOwnPropertyNames(classInst as any).length` | 3 | 3 | ✓ the 4th working surface |
+| `Object.getOwnPropertyNames(/ab/).length` | **7** | 1 | ✗ leaks 6 internal RegExp fields |
+| `Object.getOwnPropertyNames(/ab/)[0][0]` | `'f'` | `'l'` | ✗ not even `lastIndex` first |
+| `Object.getOwnPropertyNames(new Date(0)).length` | **1** | 0 | ✗ leaks — *not previously reported* |
+| `Object.keys(new Date(0)).length` | 0 | 0 | ✓ — **accidentally**, see below |
+
+The last row is the point. `Object.keys` is correct on a builtin *precisely
+because* it is broken on user classes: having no closed-struct arms, it
+enumerates nothing, and nothing is the right answer for `Date`. Copying the
+working arms onto it would fix the user-class case and simultaneously break the
+builtin case — which is exactly what #4071 measured
+(`Object.keys(new Date(0))` → `["timestamp"]`) and why it was reverted. **The
+fix is "build the user-declared-vs-builtin predicate, then share", not "share
+the arms".** A helper that reads as passing is where that gets missed.
+
+**This is the strongest available corroboration of §6's name-list-source
+constraint, and it upgrades it from a design preference to an observed failure
+mode**: the surfaces that source their names from the receiver's struct field
+list are leaking internals in production today. Per-type layouts would multiply
+that field list per label, so the constraint tightens rather than relaxes.
+
+Two further notes for whoever takes it:
+
+- slice C separately eliminated 24 configurations (structural canonicalization
+  of an identically-shaped sibling struct, `optimize` 0/3/unset, class-shape
+  spelling, and — by swapping its three changed files for their `origin/main`
+  blobs — its own branch), so none of those is the cause either;
+- seen in passing and **not** an enumeration bug: laundering a
+  field-initialiser class through `id(x): any` and calling `hasOwnProperty`
+  fails the COMPILE with `IR-FALLBACK … arg 0 of call to id is class<C>,
+  expected dynamic`. Distinct signature, IR admission rather than reflection;
+  the constructor-assignment spelling of the same program compiles and answers
+  correctly.
 
 ### 5. Retyping needs no special case, and here is the argument
 
@@ -652,10 +780,31 @@ Three properties fall out, and each removes a class of #4211's risk:
 - `ref.test $__fnctor_Node` still matches every layout, so every existing
   consumer of base fields is untouched;
 - **presence bits live in the BASE at fixed indices**, so `hasOwnProperty`,
-  `in`, `Object.keys`, for-in and the delete/tombstone path stay
-  layout-INDEPENDENT — only the value's storage location varies. That is
-  strictly simpler than #4211, where the reflective passes each needed a cold
-  arm;
+  `in`, `Object.keys`, for-in and the delete/tombstone path *can* stay
+  layout-INDEPENDENT — only the value's storage location varies. **Read this as
+  a CONSTRAINT on the enumeration fix (#3920), not as a property already held.**
+  `for…in` over these structs yields zero own properties today (§4's
+  correction), so the claim is untestable as things stand, and whatever repairs
+  that bug decides whether it holds: an enumeration that derives its name list
+  from the receiver's **struct field list** becomes layout-DEPENDENT and
+  re-inherits #4211's per-carrier-arm problem, whereas one that derives it from
+  the base presence words does not. Say which, in the fix. **§4 now shows the
+  struct-field-list route is not merely layout-fragile but already leaking
+  internals in production** (`getOwnPropertyNames(/ab/)` answers 7 where the
+  host answers 1), so the constraint has a measured failure mode behind it and
+  needs a user-declared-vs-builtin predicate either way;
+
+  **And the constraint binds wider than this issue.** Independently replicated
+  on this branch (§4's settled matrix): a **class** instance reaching the site
+  as `any` answers 0 for `Object.keys` / `in` / `for…in`, exactly like a fnctor
+  instance, while the same instance statically typed answers correctly on all
+  four, and an object literal enumerates 3. So the boundary is not "fnctor" — it
+  is **the dynamic path over any closed struct**, and the name-list-source rule
+  above therefore applies to every closed-struct receiver kind, not only the
+  ones per-type layouts touches. That matters here specifically because a
+  per-type layout receiver is *usually* dynamic: the analysis publishes a
+  single-label pin only where one label is provable, and every unpinned
+  receiver takes exactly the path that is broken today;
 - layouts are **siblings, not nested**, so arm order in the dispatchers cannot
   matter. (A prefix-CHAIN design was evaluated and rejected for this reason
   plus worse bytes: −60.9 % vs −67.3 %, because a label needing one
@@ -666,17 +815,57 @@ arm, 16 need 2, 9 need 3, one needs 4, `body` needs 6 and `expressions` needs
 11 (the one remaining blur). `type`/`end` are base fields ⇒ 1 arm. So the
 arm-count blow-up that kills the naive per-shape version does not materialise.
 
+**The chokepoint that will bite, named in advance — the consumer-side narrowing
+VOTE, not the `ref.test` arms.** Slice C traced the §4 `generator` defect to
+`finalizeStructAndDynamicMemberGet` (the #1269 Phase-3 narrowing in
+`property-access-dispatch.ts`, around the `fieldKinds` set): to decide whether an
+`any`-receiver read can drop its boxing, it asks whether *every candidate struct*
+carries the field with the same scalar kind — and its candidate set is
+`findAlternateStructsForField`, which hides `$…__cold`. Hiding a carrier from
+that **vote** is wrong even though hiding it from the `ref.test` **arms** is
+right; the vote narrowed to `i32` and pushed a correct boxed value through
+`__unbox_number`.
+
+Per-type layouts hit the same seam twice over, and worse:
+
+1. the residual `$resid` carrier must be hidden from the arms (it is a private
+   payload, never a receiver) but MUST be visible to the vote — the identical
+   bug;
+2. the vote's candidate set grows from 1 struct to N layouts, so a field whose
+   inferred scalar kind differs across layouts now makes the vote *unanimous by
+   accident* only when it happens to agree. A layout that simply lacks the field
+   must not be read as "agrees".
+
+Treat "which set answers the narrowing vote" as a distinct question from "which
+set gets a `ref.test` arm" at every consumer, and enumerate both before writing
+any emission code.
+
 ### 7. Honest translation to wall clock, and why it is an extrapolation
 
 #4211 measured the mechanism: **−21.6 % of allocated struct bytes ⇒ −3.92 pp of
 the 15.71 % gc-engine bucket** (−25 % of the bucket itself), every other bucket
 diluting proportionally upward — the signature of a single absolute reduction.
-This plan projects **−53.6 %** of allocated struct bytes, ~2.5× further along
-the same axis. If the bucket stays proportional to allocated bytes, that scales
-to roughly **−9 to −10 pp of wall**.
+Slice C then measured a second point on the same axis — −28.3 % of struct bytes
+for **−4.51 pp** of the gc-engine bucket in an order-reversed ON/OFF/OFF/ON
+block — consistent with #4211's slope. Two caveats it supplied about its own
+number, which matter to anyone leaning on the pair:
 
-**That is an extrapolation 2.5× beyond the only measured point, not a
-measurement**, and this box cannot resolve anything under ~10 % by wall A/B
+- the ON-side scatter is **3.15 pp** against an OFF-side replication of 0.35 pp,
+  so −4.51 pp is a **bracket of roughly −3 to −6 pp**, not a point;
+- its absolute bucket shares are **not** comparable with #4211's table (no
+  closure name map attached, so `scanner` folds into `compiled`). Only the
+  **delta** is cross-session sound.
+
+This plan's **marginal** figure over slice C's new default is −30.7 % of
+allocated struct bytes, i.e. roughly one more step of the size both measured
+points already cover, projecting to about **−4 to −5 pp of wall on top of slice
+C** — and given the endpoint bracket above, **−3 to −7 pp** is the honest range.
+(Against the pre-split union baseline the combined figure is −50.3 % of struct
+bytes; the earlier draft of this section quoted the combined number as if it
+were marginal, which overstated what this slice adds.)
+
+**That is still an extrapolation, not a measurement**, and this box cannot
+resolve anything under ~10 % by wall A/B
 (§6 of the 2026-08-06 slice — an uncontrolled block there read +29 % and was
 pure load contamination). Treat −9 % as an upper-ish estimate whose mechanism
 is sound and whose magnitude is unverified. What IS measured here: the bytes
@@ -686,7 +875,21 @@ label) and the 0 % overflow rate.
 ### 8. What is NOT done
 
 1. **The emission.** §6 is a design with the keystone resolved, not code.
-2. **`copyNode` is unexercised** (§4). It is the highest-risk surface.
+2. **The whole enumeration surface is unvalidated, by anyone.** `copyNode` is
+   unexercised on this corpus (§4), and slice C's in-wasm enumeration
+   differential is vacuous today because `for…in` over these structs yields
+   nothing. So the risk §7 of the 2026-08-06 slice named as this design's
+   principal one — a consumer silently reading `undefined` through a reflective
+   path — is currently covered by **no** evidence in either lane. Repairing the
+   pre-existing `for…in` bug is a **prerequisite** for the emission slice, not a
+   parallel nicety: until enumeration works, no differential can distinguish a
+   correct split from a broken one.
+
+   **That bug is already filed as #3920** (`status: ready`, `priority: high`,
+   `sprint: current`, unclaimed as of 2026-08-07) — whose Problem section
+   already names the wider hole. It needs an OWNER, not a new file. Neither this
+   lane nor slice C may allocate ids in this container, which is a second reason
+   not to re-file it.
 3. **No test262 / no host-lane work.** Flag-OFF is byte-identical and the
    analysis is standalone-oriented; the emission slice owns conformance.
 4. **The 18.8 % slot occupancy is left on the table** (§4). A
@@ -711,3 +914,13 @@ are untouched`, reproduces on `origin/main` with this branch's
 Standalone acorn with the flag ON: 937,273 B — byte-identical to the flag-OFF
 baseline — canaries 2/3/4/5, `functionImports []`, exactly the 3 pre-existing
 IR-FALLBACKs.
+
+**Interaction with slice C's flag change.** Slice C makes the hot/cold split
+default-ON in standalone and moves the disable token to
+`JS2WASM_FNCTOR_HOT_FIELDS=off` (a bare unset now means ON). Every byte-identity
+assertion in this slice is **relative** — `JS2WASM_FNCTOR_LAYOUTS` set vs unset,
+with the cold-tail state held equal on both sides — so none of them assumes
+"unset ⇒ no split" and none needs the new token. The one figure that is
+*absolute*, the 937,273 B, is a cold-tail-OFF measurement and will move when
+slice C lands; it is quoted only as the two sides of an equality, not as a
+tracked artifact size.
