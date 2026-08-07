@@ -2094,6 +2094,12 @@ export interface CodegenContext {
    * previous `undefined` fallback. -1 = not yet created.
    */
   currentThisGlobalIdx: number;
+  /**
+   * (#4203) Global index of the immutable `__this_explicit_null` marker: "the
+   * caller passed `null`", as distinct from `__current_this`'s `ref.null.extern`
+   * "no receiver installed". See `explicit-null-receiver.ts`.
+   */
+  explicitNullThisGlobalIdx?: number;
   /** Mutable i32 hand-off used by ES5 Function `caller` poison semantics. */
   callerStrictGlobalIdx: number;
   /** Source function name → source strictness, consumed by the final call-site pass. */

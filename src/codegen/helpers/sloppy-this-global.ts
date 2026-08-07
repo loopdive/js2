@@ -63,13 +63,40 @@ export function unboundThisIsGlobalObject(ctx: CodegenContext, expr: ts.Node): b
  */
 export function emitUnboundThis(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Node): void {
   if (fctx.directEvalSloppyThisFallback || unboundThisIsGlobalObject(ctx, expr)) {
-    const globalType = compileIdentifier(ctx, fctx, ts.factory.createIdentifier("globalThis"));
-    if (globalType && globalType.kind !== "externref") {
-      coerceType(ctx, fctx, globalType, { kind: "externref" });
-    }
+    emitGlobalObjectAsThis(ctx, fctx);
     return;
   }
   emitUndefined(ctx, fctx);
+}
+
+/**
+ * (#4203) The §10.4.3 answer for a receiver the caller passed **explicitly as
+ * `null`**, which is NOT the same question as `emitUnboundThis`'s.
+ *
+ * Strict code observes the thisArg verbatim, so it gets `null` — where an
+ * *absent* receiver would get `undefined`. That difference is the entire point
+ * of the marker in `explicit-null-receiver.ts`; without it the two states share
+ * one spelling and the strict rows (`10.4.3-1-{67,72,77}`) cannot pass.
+ *
+ * The sloppy answer is deliberately IDENTICAL to the unbound one — §10.4.3
+ * substitutes the global object for `null` and `undefined` alike — so this must
+ * NOT be read as "stop coercing null". Sloppy `f.call(null)` is still the global
+ * object, and getting that wrong is the trap this split exists to avoid.
+ */
+export function emitExplicitNullThis(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Node): void {
+  if (fctx.directEvalSloppyThisFallback || unboundThisIsGlobalObject(ctx, expr)) {
+    emitGlobalObjectAsThis(ctx, fctx);
+    return;
+  }
+  fctx.body.push({ op: "ref.null.extern" });
+}
+
+/** Push the global object as an `externref` — the sloppy arm of both answers. */
+function emitGlobalObjectAsThis(ctx: CodegenContext, fctx: FunctionContext): void {
+  const globalType = compileIdentifier(ctx, fctx, ts.factory.createIdentifier("globalThis"));
+  if (globalType && globalType.kind !== "externref") {
+    coerceType(ctx, fctx, globalType, { kind: "externref" });
+  }
 }
 
 /**

@@ -448,6 +448,10 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
   if (ctx.currentThisGlobalIdx >= threshold) {
     ctx.currentThisGlobalIdx += delta;
   }
+  // (#4203) Explicit-null receiver marker — same reason as `currentThisGlobalIdx`.
+  if (ctx.explicitNullThisGlobalIdx !== undefined && ctx.explicitNullThisGlobalIdx >= threshold) {
+    ctx.explicitNullThisGlobalIdx += delta;
+  }
   if (ctx.callerStrictGlobalIdx >= threshold) {
     ctx.callerStrictGlobalIdx += delta;
   }
