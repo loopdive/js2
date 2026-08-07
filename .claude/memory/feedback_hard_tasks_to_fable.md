@@ -17,3 +17,10 @@ Context: on 2026-08-04 the #4155 Phase 2 agent (member-dispatch fast path —
 exactly the place #1712 once regressed) was spawned on Opus out of habit from
 two earlier Opus successes; the lead corrected that hard tasks belong on
 Fable. Applied from then on.
+
+## SUPERSEDED (project lead, 2026-08-07)
+
+The lead reversed this: agent work now runs on **Opus** (`model: "opus"`),
+including hard tasks, until further notice. The Fable preference above is
+historical context, not current policy. Applied immediately: the in-flight
+mutual-fixpoint agent was rotated to Opus at a checkpoint.
