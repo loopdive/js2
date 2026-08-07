@@ -12,7 +12,21 @@ feasibility: hard
 reasoning_effort: max
 sprint: current
 horizon: l
-related: [3140, 4192, 2928, 4163]
+related: [3140, 4192, 2928, 4163, 4201]
+assignee: ttraenkler/W19
+# Slice 1 ([[Construct]] through $__bound_fn) adds `src/codegen/construct-bound.ts`
+# — a new subsystem module carrying the whole 300-line driver. What is left in the
+# god-files is irreducible: the DISPATCH decision belongs to `compileNewExpression`
+# (+4 lines) and the reserve-then-fill contract requires the fill to be called from
+# the two finalize paths in `index.ts` (+3 lines). There is no subsystem module that
+# can host either.
+loc-budget-allow:
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/index.ts
+func-budget-allow:
+  - src/codegen/expressions/new-super.ts::compileNewExpression
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
 ---
 
 # #4196 — `Function.prototype.bind` in `--target standalone`

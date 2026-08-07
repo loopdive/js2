@@ -87,6 +87,53 @@ const DRIVER_NAME = "__construct_bound";
  */
 const PROTO_KEY_BY_CTX = new WeakMap<CodegenContext, Instr[]>();
 
+/** Memo for {@link fileCanMintBoundFn} — one AST walk per source file. */
+const MENTIONS_BIND_BY_FILE = new WeakMap<ts.SourceFile, boolean>();
+
+/**
+ * Could this source file mint a `$__bound_fn` at all?
+ *
+ * BYTE-NEUTRALITY GATE. The carrier only ever comes from a `.bind(…)` property
+ * call — the typed `compileFunctionBind` route or the dynamic `__bind_dyn` one
+ * — so a file with no `bind` property access anywhere can never produce one,
+ * and emitting the retry at its `new` sites would change the module's bytes for
+ * a branch that provably never taken. Without this gate EVERY host-free
+ * `new <any-typed binding>(…)` site in the corpus would move, which is a far
+ * wider blast radius than the fix needs.
+ *
+ * The alternative — gate on `ctx.boundFnTypeIdx >= 0` — does not work: a `new`
+ * site can compile BEFORE the `.bind` site that mints the type.
+ *
+ * A cross-file bound function (minted in another module of a multi-file
+ * program) is a conservative MISS: the site keeps its pre-#4196 null. That is
+ * the fail-safe direction — never a wrong construct, only a missing one.
+ */
+function fileCanMintBoundFn(file: ts.SourceFile): boolean {
+  const memo = MENTIONS_BIND_BY_FILE.get(file);
+  if (memo !== undefined) return memo;
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isPropertyAccessExpression(node) && node.name.text === "bind") {
+      found = true;
+      return;
+    }
+    if (
+      ts.isElementAccessExpression(node) &&
+      node.argumentExpression !== undefined &&
+      ts.isStringLiteralLike(node.argumentExpression) &&
+      node.argumentExpression.text === "bind"
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(file, visit);
+  MENTIONS_BIND_BY_FILE.set(file, found);
+  return found;
+}
+
 /**
  * Reserve `__construct_bound(callee, args) -> externref`.
  *
@@ -114,70 +161,6 @@ export function reserveConstructBoundDriver(ctx: CodegenContext, protoKeyInstrs:
 }
 
 /**
- * Emit a host-free `new <dynamic callee>(...)` site as a `__construct_bound`
- * call, leaving the constructed value (or `null`, for a callee that turns out
- * not to be a bound function) on the stack.
- *
- * The caller is `compileNewExpression`'s terminal unknown-constructor
- * fallthrough, which in a host-free target has no `__new_<name>` import to call
- * and therefore emitted `ref.null.extern`. Routing that dead end through the
- * driver is a pure addition: a non-`$__bound_fn` callee still yields null.
- *
- * Declines (returns `false`, emitting nothing) on a spread argument — the
- * driver takes an already-built `$ObjVec`, and a runtime-length argument list
- * needs the general spread packer, which this slice does not cover.
- */
-export function emitBoundConstructSite(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  callee: ts.Expression,
-  args: readonly ts.Expression[],
-): boolean {
-  if (args.some((a) => ts.isSpreadElement(a))) return false;
-
-  ensureObjectRuntime(ctx);
-  ensureObjVecBuilders(ctx);
-  reserveApplyClosure(ctx);
-  // Register every helper the driver body calls and flush ONCE, before any
-  // emission — the driver bakes `call <funcIdx>` values that a later import
-  // insertion would otherwise shift (#608/#794).
-  ensureLateImport(ctx, "__extern_get", [EXTERNREF, EXTERNREF], [EXTERNREF]);
-  ensureLateImport(ctx, "__object_create", [EXTERNREF], [EXTERNREF]);
-  flushLateImportShifts(ctx, fctx);
-  const objVecNewIdx = ctx.funcMap.get("__objvec_new");
-  const objVecPushIdx = ctx.funcMap.get("__objvec_push");
-  if (objVecNewIdx === undefined || objVecPushIdx === undefined) return false;
-
-  addStringConstantGlobal(ctx, "prototype");
-  const driverIdx = reserveConstructBoundDriver(ctx, stringConstantExternrefInstrs(ctx, "prototype"));
-
-  const pushAsExternref = (expr: ts.Expression): void => {
-    const ty = compileExpression(ctx, fctx, expr, EXTERNREF);
-    if (ty === null) fctx.body.push({ op: "ref.null.extern" });
-    else if (ty.kind !== "externref") coerceType(ctx, fctx, ty, EXTERNREF);
-  };
-
-  // Callee first, then each argument, exactly once and in source order.
-  pushAsExternref(callee);
-  const calleeLocal = allocLocal(fctx, `__cb_callee_${fctx.locals.length}`, EXTERNREF);
-  fctx.body.push({ op: "local.set", index: calleeLocal });
-
-  fctx.body.push({ op: "call", funcIdx: objVecNewIdx });
-  const argvLocal = allocLocal(fctx, `__cb_argv_${fctx.locals.length}`, EXTERNREF);
-  fctx.body.push({ op: "local.set", index: argvLocal });
-  for (const arg of args) {
-    fctx.body.push({ op: "local.get", index: argvLocal });
-    pushAsExternref(arg);
-    fctx.body.push({ op: "call", funcIdx: objVecPushIdx });
-  }
-
-  fctx.body.push({ op: "local.get", index: calleeLocal });
-  fctx.body.push({ op: "local.get", index: argvLocal });
-  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(DRIVER_NAME) ?? driverIdx });
-  return true;
-}
-
-/**
  * Retry an already-emitted host-free `new` as §10.4.1.2 [[Construct]] when the
  * value on the stack is null.
  *
@@ -192,15 +175,19 @@ export function emitBoundConstructSite(
  * constructor. A `$__bound_fn` is never a `$__ta_ctor`, so it always lands in
  * that null. Retrying on null keeps the TypedArray arm authoritative where it
  * applies and is a pure addition everywhere else: a callee that is neither a TA
- * constructor nor a bound function still ends as null, byte-for-byte the
- * pre-#4196 value.
+ * constructor nor a bound function still ends as null.
+ *
+ * Emits NOTHING (leaving the module byte-identical) when `site`'s file cannot
+ * mint a bound function — see {@link fileCanMintBoundFn}.
  */
 export function emitBoundConstructOnNull(
   ctx: CodegenContext,
   fctx: FunctionContext,
+  site: ts.Node,
   calleeAnyLocal: number,
   argLocals: readonly number[],
 ): void {
+  if (!fileCanMintBoundFn(site.getSourceFile())) return;
   ensureObjectRuntime(ctx);
   ensureObjVecBuilders(ctx);
   reserveApplyClosure(ctx);
