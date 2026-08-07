@@ -668,7 +668,45 @@ closed-struct receiver; three of the four break the moment the receiver is
 one dynamic operation that still reaches a correct answer — that asymmetry, not
 "the presence read is broken", is where a fix should start.
 
-Two notes for whoever takes it:
+**The mechanism under the axis, and why "make the broken three match the working
+ones" is a trap.** Six dynamic helpers back these surfaces; three were given
+closed-struct arms at finalize (`src/codegen/index.ts` :4450-4452) and three were
+not, and the split is 3-for-3: `hasOwnProperty`, `Object.getOwnPropertyNames`
+and computed `obj[k]` have arms; `Object.keys`, `for…in` and `in` do not. So the
+dynamic path is not uniformly broken — half the helpers were taught closed
+structs and half were not.
+
+**But the working half is not a template to copy, because it is the same bug
+already live.** Those arms enumerate `ctx.structFields`, which includes BUILTIN
+carriers whose internal fields carry no `$`/`__` prefix. Sharing them with
+`__object_keys` was implemented, measured and **reverted** (#4071). Verified
+independently here (`.tmp/gopn-leak.mjs`, `--target standalone`, `optimize: 0`,
+no host imports; "host" = the reference answer):
+
+| probe | standalone | host | |
+| --- | ---: | ---: | --- |
+| `Object.getOwnPropertyNames(classInst as any).length` | 3 | 3 | ✓ the 4th working surface |
+| `Object.getOwnPropertyNames(/ab/).length` | **7** | 1 | ✗ leaks 6 internal RegExp fields |
+| `Object.getOwnPropertyNames(/ab/)[0][0]` | `'f'` | `'l'` | ✗ not even `lastIndex` first |
+| `Object.getOwnPropertyNames(new Date(0)).length` | **1** | 0 | ✗ leaks — *not previously reported* |
+| `Object.keys(new Date(0)).length` | 0 | 0 | ✓ — **accidentally**, see below |
+
+The last row is the point. `Object.keys` is correct on a builtin *precisely
+because* it is broken on user classes: having no closed-struct arms, it
+enumerates nothing, and nothing is the right answer for `Date`. Copying the
+working arms onto it would fix the user-class case and simultaneously break the
+builtin case — which is exactly what #4071 measured
+(`Object.keys(new Date(0))` → `["timestamp"]`) and why it was reverted. **The
+fix is "build the user-declared-vs-builtin predicate, then share", not "share
+the arms".** A helper that reads as passing is where that gets missed.
+
+**This is the strongest available corroboration of §6's name-list-source
+constraint, and it upgrades it from a design preference to an observed failure
+mode**: the surfaces that source their names from the receiver's struct field
+list are leaking internals in production today. Per-type layouts would multiply
+that field list per label, so the constraint tightens rather than relaxes.
+
+Two further notes for whoever takes it:
 
 - slice C separately eliminated 24 configurations (structural canonicalization
   of an identically-shaped sibling struct, `optimize` 0/3/unset, class-shape
@@ -750,7 +788,11 @@ Three properties fall out, and each removes a class of #4211's risk:
   that bug decides whether it holds: an enumeration that derives its name list
   from the receiver's **struct field list** becomes layout-DEPENDENT and
   re-inherits #4211's per-carrier-arm problem, whereas one that derives it from
-  the base presence words does not. Say which, in the fix.
+  the base presence words does not. Say which, in the fix. **§4 now shows the
+  struct-field-list route is not merely layout-fragile but already leaking
+  internals in production** (`getOwnPropertyNames(/ab/)` answers 7 where the
+  host answers 1), so the constraint has a measured failure mode behind it and
+  needs a user-declared-vs-builtin predicate either way;
 
   **And the constraint binds wider than this issue.** Independently replicated
   on this branch (§4's settled matrix): a **class** instance reaching the site
