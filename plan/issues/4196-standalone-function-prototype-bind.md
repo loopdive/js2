@@ -12,7 +12,7 @@ feasibility: hard
 reasoning_effort: max
 sprint: current
 horizon: l
-related: [3140, 4192, 2928, 4163, 4201]
+related: [3140, 4192, 2928, 4163, 4201, 4203]
 assignee: ttraenkler/W19
 # Slice 1 ([[Construct]] through $__bound_fn) adds `src/codegen/construct-bound.ts`
 # — a new subsystem module carrying the whole 300-line driver. What is left in the
@@ -225,3 +225,21 @@ restricted-property accessors (4), `this` not applied (3), the 3 null-derefs,
 the `__get_builtin` CE, and `S15.3.4.5_A5`'s bare refusal
 (`Function.prototype.bind.apply` — a distinct route from `.bind` and
 `.bind.call`). Issue stays `ready`.
+
+### Row 4 (`this` not applied) is a SUBSTRATE defect — see #4203
+
+W21's §10.4.3 residue census handed over 8 more `.bind` files outside this
+directory (`language/function-code/10.4.3-1-{77,79,80,98}{-s,gs}.js`), all
+verified still failing on `issue-4196-bind-construct`. They are not a `bind`
+bug: `__current_this` spells "no receiver installed" and "receiver is
+explicitly `null`" with the SAME value (`ref.null.extern`), so a strict callee
+answers `undefined` where §10.4.3 requires `null`. The identical gap blocks
+`f.call(null)` / `f.apply(null)` in strict code (4 more files), so 12 come
+together. Filed as **#4203**, with the lead that the substrate is closer than it
+looks — the #2106 `undefinedSingleton` regime already gives standalone an
+externref `undefined` distinct from `null`, and `$__bound_fn.thisArg` already
+has the slot; `emitBoundFnValueFromLocals` (`calls.ts:2096`) is the one line
+that currently discards boundness on the bind path.
+
+Do **not** start #4203 before W21's top-level-`this`-as-receiver admission fix
+lands (`named-this-call.ts` + `helpers/sloppy-this-global.ts`) — same files.
