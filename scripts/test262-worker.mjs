@@ -23,13 +23,13 @@ import { negativeCompileErrorMatches, negativeCompileSucceededVerdict } from "./
 // runner that was missing the tryNativeExnRender step.
 import { safeStringifyThrown, tryNativeExnRender } from "./lib/wasm-exn-render.mjs";
 import { SANDBOX_GLOBAL_NAMES } from "./test262-sandbox-globals.mjs";
-// (#2928 E6) Standalone runtime-eval provider — cached-binary loading + fresh
-// per-test namespace instantiation for `js2wasm:runtime-eval` imports.
-import {
-  RUNTIME_EVAL_IMPORT_MODULE,
-  instantiateRuntimeEvalNamespace,
-  selectCachedRuntimeEvalProvider,
-} from "./runtime-eval-provider.mjs";
+// (#4162) ONE import-object finaliser, shared with tests/test262-runner.ts and
+// tests/test262-shared.ts. It owns the #2928 E6 standalone runtime-eval
+// provider attachment (cached-binary loading + a fresh per-test namespace for
+// `js2wasm:runtime-eval` imports). This worker used to own that logic alone;
+// the in-process lanes did not have it, so their standalone runs died at
+// instantiate and MASKED the tests' real error signatures.
+import { instantiateTest262Module } from "./test262-import-object.mjs";
 
 // ── Bundle hash (#1521) ────────────────────────────────────────────────
 // Each cache entry written below carries a `bundle_hash` field. When the
@@ -57,55 +57,16 @@ function computeBundleHash() {
 }
 const BUNDLE_HASH = computeBundleHash();
 
-// ── Standalone runtime-eval provider (#2928 E6) ────────────────────────
+// ── Standalone runtime-eval provider (#2928 E6/E7, now shared — #4162) ──
 // A standalone module whose ONLY dynamic-code dependency is the core-Wasm
 // `js2wasm:runtime-eval` namespace links against a separately compiled
-// Acorn+interpreter provider. The provider binary is PREBUILT into
-// .test262-cache by scripts/build-runtime-eval-provider.mjs (wired into
-// run-test262-vitest.sh for TEST262_TARGET=standalone); the worker only ever
-// LOADS the cached binary — compiling Acorn takes minutes and the pool kills
-// jobs at 30s, so a cache miss deliberately degrades, never an in-worker
-// compile.
-//
-// (#2928 E7) A cache miss no longer degrades all the way to an unresolvable
-// import. The provider import is MODULE-LEVEL, so with no namespace supplied a
-// standalone file that merely MENTIONS dynamic `new Function` / indirect eval
-// cannot instantiate at all and loses every assertion it has — including the
-// majority that never reach the dynamic call (§20.2.1.1.1 argument ToString
-// runs AOT at the call site, so e.g. a throwing `toString` throws first).
-// The REFUSAL provider — a js2wasm-compiled, zero-import core-Wasm module with
-// the same `[ok, value]` envelope ABI and no capability — is the fallback: the
-// file runs, and only the dynamic-code call itself throws a typed, catchable
-// TypeError, which is the #2960 Tier-3 contract direct eval already reports.
-// It is prebuilt in seconds (`--refusal-only`), so CI can afford it per shard.
-// TEST262_DISABLE_RUNTIME_EVAL_PROVIDER=1 is the measurement kill-switch: it
-// disables BOTH tiers and restores the exact pre-wiring behavior for A/B runs.
-let runtimeEvalProviderModule; // undefined = untried, null = unavailable
-let runtimeEvalProviderNoteShown = false;
-
-/**
- * (#2928 E7) Announce WHICH tier this run selected — on EVERY path, including
- * the successful one.
- *
- * This is the root defect being fixed, stated generally: a harness that
- * SILENTLY selects a capability invalidates every cross-lane comparison made
- * against it. CI now publishes the full provider once and sets the explicit
- * flag in every standalone shard; local refusal-only runs remain a fast
- * diagnostic tier. This line keeps that provenance attached to every number.
- */
-function announceRuntimeEvalTier(message) {
-  if (runtimeEvalProviderNoteShown) return;
-  runtimeEvalProviderNoteShown = true;
-  console.error(`[test262-worker] runtime-eval tier: ${message}`);
-}
-
-function getRuntimeEvalProviderModule() {
-  if (runtimeEvalProviderModule !== undefined) return runtimeEvalProviderModule;
-  const selection = selectCachedRuntimeEvalProvider();
-  announceRuntimeEvalTier(selection.message);
-  runtimeEvalProviderModule = selection.module;
-  return runtimeEvalProviderModule;
-}
+// Acorn+interpreter provider (or, on a miss, the REFUSAL provider). Tier
+// selection, the per-test fresh instance, and the stderr provenance line all
+// live in scripts/test262-import-object.mjs now, so the in-process lanes cannot
+// diverge from this worker again. `TEST262_DISABLE_RUNTIME_EVAL_PROVIDER=1`
+// remains the measurement kill-switch.
+// This worker's provenance prefix is passed at the call site below.
+const RUNTIME_EVAL_PROVIDER_LABEL = "test262-worker";
 
 // (#3441) The sandbox-globals list is now the single shared source in
 // scripts/test262-sandbox-globals.mjs — imported by BOTH this worker and
@@ -1496,7 +1457,14 @@ async function buildInvalidBinaryError(source, sourceMapUrl, result, target) {
   let detailErr;
   try {
     const imports = buildImports(result.imports, undefined, result.stringPool);
-    await WebAssembly.instantiate(result.binary, imports);
+    // (#4162) Same shared seam. This path exists to name WHY a binary is
+    // invalid; without the provider a standalone module would report the
+    // unresolved `js2wasm:runtime-eval` import as the reason and bury the
+    // actual validation error.
+    await instantiateTest262Module(result.binary, imports, {
+      target,
+      providerLabel: RUNTIME_EVAL_PROVIDER_LABEL,
+    });
   } catch (err) {
     detailErr = err;
   }
@@ -1838,25 +1806,15 @@ process.on("message", async (msg) => {
     }
 
     try {
-      if (target === "standalone") {
-        // (#2928 E6) Module-first so the import list is inspectable before
-        // instantiation. A synchronous CompileError here lands in the same
-        // catch arm as the old binary-form instantiate — classification is
-        // unchanged. When the module links `js2wasm:runtime-eval`, supply a
-        // FRESH provider instance (per-test isolation: the interpreter roots
-        // dynamic functions at global env records).
-        const wasmModule = new WebAssembly.Module(result.binary);
-        if (WebAssembly.Module.imports(wasmModule).some((imp) => imp.module === RUNTIME_EVAL_IMPORT_MODULE)) {
-          const providerModule = getRuntimeEvalProviderModule();
-          if (providerModule) {
-            importObj[RUNTIME_EVAL_IMPORT_MODULE] = instantiateRuntimeEvalNamespace(providerModule);
-          }
-        }
-        instance = await WebAssembly.instantiate(wasmModule, importObj);
-      } else {
-        const wasmResult = await WebAssembly.instantiate(result.binary, importObj);
-        instance = wasmResult.instance;
-      }
+      // (#4162) The ONE shared instantiate seam. Standalone goes module-first
+      // (import list inspectable → #2928 E6 provider attachment); the host lane
+      // keeps the binary-form instantiate. A synchronous CompileError from the
+      // module-first path lands in the same catch arm as the old binary-form
+      // instantiate — classification is unchanged.
+      instance = await instantiateTest262Module(result.binary, importObj, {
+        target,
+        providerLabel: RUNTIME_EVAL_PROVIDER_LABEL,
+      });
     } catch (err) {
       const execMs = performance.now() - execStart;
       // Real Wasm compile/link failures stay as compile_error. A throw from

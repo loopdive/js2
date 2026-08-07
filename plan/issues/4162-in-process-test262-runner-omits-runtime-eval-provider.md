@@ -1,10 +1,12 @@
 ---
 id: 4162
 title: "In-process test262 runner omits the `js2wasm:runtime-eval` provider the worker supplies — standalone measurements silently die at instantiate and MASK their real signature"
-status: ready
+status: done
 sprint: current
 created: 2026-08-06
 updated: 2026-08-06
+completed: 2026-08-06
+assignee: ttraenkler/W8-instrument-4162
 priority: high
 horizon: s
 feasibility: medium
@@ -94,6 +96,83 @@ this is filed rather than silently fixed.
   are unchanged.
 - Regression guard: a test asserting the two lanes construct the same import
   namespace set for the same binary.
+
+## Resolution (2026-08-06)
+
+`scripts/test262-import-object.mjs` is now the ONE seam every test262 lane calls
+to turn a compiled binary into an instance. All five instantiate sites route
+through it: the worker's main path and its `buildInvalidBinaryError` diagnostic,
+the fixture-graph lane, `runOriginalHarnessVariant`, `runSyntheticTest262File`,
+and `handleNegativeTest`'s validation probe. Tier selection, the fresh-per-test
+provider instance and the stderr provenance line live there; the lanes only pass
+`{ target, providerLabel }`.
+
+The seam also normalises the return shape — `WebAssembly.instantiate` resolves
+to an `Instance` for a `Module` argument but to `{ module, instance }` for a
+`BufferSource`, and every lane was open-coding that distinction differently.
+
+### Measured, not estimated
+
+A/B on the 162-file L2 lever list, in-process runner, `--target standalone`.
+`TEST262_DISABLE_RUNTIME_EVAL_PROVIDER=1` reproduces the pre-fix behaviour
+exactly (no provider ⇒ unresolvable import), so both arms run the same binary:
+
+| arm | pass | files reporting a `js2wasm:runtime-eval` link error |
+| --- | ---: | ---: |
+| pre-fix behaviour (provider disabled) | 26 | **82** |
+| post-fix (refusal tier) | **44** | **0** |
+
+- The pre-fix arm reproduces the reported **82 / 162** exactly — the instrument
+  demonstrably responds, so the zero in the second row is believable.
+- **18 of the 82 were already PASSING** and were being counted as failures. The
+  instrument was eating +18 on one 162-file lever.
+- `pass → non-pass` regressions: **0**.
+- The recovered signatures are the predicted ones: 13 × `Expected obj[#] to be
+  writable, but was not`, 12 × `Expected obj[#] to equal #, actually null`, etc.
+- Local runs select the REFUSAL tier; CI standalone shards set
+  `TEST262_FULL_RUNTIME_EVAL=1`, so the CI-side recovery is at least this large.
+
+### Correction: the trigger named above is NOT the trigger
+
+`propertyHelper.js:31`'s `Function.prototype.call.bind(...)` does **not** trip
+`sourceUsesRuntimeEvalBoundary` — `isGlobalFunctionValueReference`
+(`src/codegen/index.ts:3186`) explicitly excludes an identifier whose parent is a
+property access, and that source compiles to **zero** imports. Verified directly.
+
+The real trigger is the runner's own `$262.evalScript` shim — `return
+eval(sourceText)` — which `assembleOriginalHarness` emits into **every**
+assembled test, not only `includes: [propertyHelper.js]` ones. The blast radius
+is therefore wider than "the descriptor corpus" and is bounded by which tests
+keep that shim reachable after dead-code elimination rather than by their
+`includes:` list. The measured 82/162 stands; the mechanism behind it does not.
+
+### Second defect found while fixing this — same class
+
+`handleNegativeTest` (`tests/test262-runner.ts`) built its compile options from a
+bare `target` identifier that **was never bound in that scope**. The
+`ReferenceError` was thrown inside the `try` whose `catch` reports
+`status: "pass"`, so every parse/early/resolution-phase negative test routed
+through it passed **vacuously, without compiling anything** (`compileMs` ≈ 0.05
+was the tell). Fixed by threading the caller's `target` through as a real
+parameter and constructing the options OUTSIDE the try, so a harness defect
+crashes loudly instead of laundering itself into a conformance pass. This flipped
+the two long-red assertions in `tests/issue-338.test.ts` to green.
+
+### Guarded by
+
+`tests/issue-4162.test.ts` — the bare-instantiate control, the seam's namespace
+attachment, cross-lane namespace-set equality, an end-to-end
+`includes: [propertyHelper.js]` run through `runTest262File`, the vacuity
+regression, and a **structural routing guard** asserting no lane file calls
+`WebAssembly.instantiate` on a test binary itself. The structural one is what
+prevents a fourth instance of the drift class; behavioural parity between lanes
+that already share an implementation is tautological.
+
+### Validator
+
+`pnpm run test:262:validate-baseline` (`SAMPLE_SIZE=50 FAIL_SAMPLE_SIZE=25
+SEED=4162`) run on clean `main` and on this branch with the identical seed —
+same sampled entries, same verdicts. See the PR body for the paired output.
 
 ## Notes
 
