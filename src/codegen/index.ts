@@ -10,6 +10,7 @@ import { isLinearU8RepresentableNew } from "./linear-uint8-signatures.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 import { fillHostFnctorMethodDrivers, maxHostFnctorMethodArity } from "./host-fnctor-method-driver.js";
 import { fillNativeConstructDrivers, maxReservedNativeConstructArity } from "./native-construct.js";
+import { fillConstructBoundDriver } from "./construct-bound.js"; // (#4196)
 import { emitVecDefineWritebackExports } from "./vec-define-writeback.js"; // (#3116)
 import { detectArrayReduceFusion } from "./array-reduce-fusion.js";
 import type { MultiTypedAST, TypedAST } from "../checker/index.js";
@@ -4325,6 +4326,12 @@ export function generateModule(
     // `new <function value>` site).
     fillNativeConstructDrivers(ctx);
 
+    // (#4196) Fill the reserved `__construct_bound` driver ([[Construct]]
+    // through a `$__bound_fn`, §10.4.1.2) now that the closure dispatchers
+    // `__apply_closure` bridges to are registered. No-op when no host-free
+    // `new <dynamic callee>` site reserved one.
+    fillConstructBoundDriver(ctx);
+
     // (#1719 CPR read-drive) Fill the reserved `__drive_proto_iterator` driver
     // body now that `__call_fn_method_0` is registered. No-op when no read-drive
     // site reserved a driver (brand clear / no Array.prototype @@iterator override).
@@ -6775,6 +6782,12 @@ export function generateMultiModule(
       for (let n = 0; n <= constructArity; n++) emitClosureMethodCallExportN(ctx, n);
       fillNativeConstructDrivers(ctx);
     }
+
+    // (#4196) Same reserve-then-fill hazard as the block above: a bound-construct
+    // site on this path must not be left holding the bare `unreachable` stub.
+    // The fill degrades to `ref.null.extern` when the receiver dispatchers this
+    // path does not emit are absent, which is the pre-#4196 value for the site.
+    fillConstructBoundDriver(ctx);
 
     // (#1716) Emit __call_@@toPrimitive(self, hint) for runtime ToPrimitive
     // dispatch of a class's [Symbol.toPrimitive] *method* on opaque structs.

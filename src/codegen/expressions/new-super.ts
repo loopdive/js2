@@ -56,6 +56,7 @@ import { classMemberFuncKey } from "../class-member-keys.js"; // (#1983) collisi
 import { compileObjectLiteralAsExternref, resolveComputedKeyExpression } from "../literals.js";
 import { stringConstantExternrefInstrs, ensureAnyToStringHelper } from "../native-strings.js";
 import { MAX_NATIVE_CONSTRUCT_ARITY, reserveNativeConstructDriver } from "../native-construct.js"; // (#3981)
+import { emitBoundConstructOnNull, emitBoundConstructSite } from "../construct-bound.js"; // (#4196) §10.4.1.2
 import { emitNativeNumberFormat } from "../number-format-native.js";
 import {
   compileStandaloneRegExpConstructor,
@@ -4173,6 +4174,9 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
             taArgLocals.push(aLocal);
           }
           emitTaDynCtorConstructFromLocals(ctx, fctx, taDescLocal, taArgLocals);
+          // (#4196) A `$__bound_fn` is not a `$__ta_ctor`, so the arm above
+          // yields null for it. Retry as §10.4.1.2 [[Construct]] on null.
+          emitBoundConstructOnNull(ctx, fctx, taDescLocal, taArgLocals);
           return { kind: "externref" };
         }
       }
@@ -4238,6 +4242,20 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
 
     const importName = `__new_${ctorName}`;
     const funcIdx = ctx.funcMap.get(importName);
+
+    // (#4196) Host-free `new <bound function>(...)` — §10.4.1.2. Reaching here
+    // with a non-constructable-LOOKING callee means a `.bind`/`.call`/`.apply`
+    // initializer (the "provable" strength already returned above), which is
+    // exactly the shape that can hold a bound function. See construct-bound.ts.
+    if (
+      funcIdx === undefined &&
+      noJsHost(ctx) &&
+      ts.isIdentifier(s1Callee) &&
+      resolvesToNonConstructableValue(ctx, s1Callee) &&
+      emitBoundConstructSite(ctx, fctx, s1Callee, args)
+    ) {
+      return { kind: "externref" };
+    }
 
     if (funcIdx !== undefined) {
       // Compile arguments as externref
