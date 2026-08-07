@@ -1,11 +1,10 @@
 {
   "id": "4187",
-  "assignee": "ttraenkler/W9-descriptor-proto-residue",
-  "requested_by": "noreply@anthropic.com",
-  "status": "released",
-  "branch": "issue-4187-standalone-hasown-delete-fold",
-  "claimed_at": "2026-08-06T20:15:21Z",
-  "updated_at": "2026-08-07T15:54:19Z",
-  "write_id": "20176-56uwiwhz",
-  "released_at": "2026-08-07T15:54:19Z"
+  "assignee": "ttraenkler/W29",
+  "requested_by": "ttraenkler/W29",
+  "status": "in-progress",
+  "branch": "issue-4165-reflective-mop-bags",
+  "claimed_at": "2026-08-07T15:54:29Z",
+  "updated_at": "2026-08-07T15:54:29Z",
+  "write_id": "20279-brp1z3y4"
 }
