@@ -154,3 +154,74 @@ Two things to check before assuming symmetry:
 - All four Error spellings above (`new Error`, `new TypeError`, `new Error()`,
   `Error()`) behave identically.
 - No regression on the other nine receiver kinds, byte-hashed.
+
+---
+
+## Handoff — 2026-08-07 (lane killed by a container restart, mid-control)
+
+**Implementation is COMPLETE and pushed** on `issue-4210-error-carrier-bag` @
+`778b35e459` (local == remote). **No open PR, and it should not get one yet.**
+
+### Measured
+
+- **Lever: +21, pass→fail 0**, over a re-derived **71**-file population. The
+  issue's original 58 under-counted because that scan used body + `includes:`,
+  while the runner **always** prepends `assert.js` + `sta.js` — a systematic
+  error in any census derived the same way.
+- Base arm reproduces the published standalone baseline **56/71**; all 15
+  disagreements are one cause (`compile_error: env::__new_SuppressedError`,
+  #2961, since fixed on main — the baseline is simply older than the base) and
+  are identical in both arms. 0 unexplained.
+- 1 signature change, fail→fail, cause documented: the `Properties`-map arm
+  substitutes the bag, so a getter on the map runs with the bag as `this` and
+  `this instanceof Error` is false. Pre-existing in kind — `closurePropertiesBagArm`
+  (#4161) has the identical `this` binding.
+
+### What is missing: the CONTROL
+
+A trimmed 4,221-file control was ~1,129 rows in per arm when the restart killed
+it. **Do not open a PR on the lever number alone.**
+
+**Byte-identity is NOT available as a safety argument here** — 71/71 modules
+change, because `__extern_set`'s body moves for every standalone module with an
+object runtime. Safety rests entirely on execution.
+
+Re-run shape, as the lane scoped it:
+
+- **2 shards per arm**, not 12. See the box note below.
+- **Complete over 3,936 files**: the Error / NativeErrors / AggregateError /
+  SuppressedError trees, the whole `Object` descriptor + integrity surface,
+  `Reflect`, and every non-Array lever directory. Not a sample.
+- Plus a **separately-labelled, unmerged** 285-file deterministic sample of the
+  dropped `Array/prototype` region.
+- `Array/prototype` (2,004 files) was dropped on a **reachability** argument,
+  not on size: a vec receiver never reaches this code — the vec arm returns
+  first in `__extern_set`, `vecOverlayArm` runs before the define substitution,
+  and `__integrity_bag` tests vec first. Keep that reasoning next to the
+  numbers; "dropped 34 % of the population" is not defensible without it.
+
+### Do not lose these two
+
+- **The `__integrity_bag` Error arm belongs in this change, not a follow-up.**
+  `preventExtensions/15.2.3.10-3-{10,20}.js` pass today *because the write is
+  dropped*; a working write side alone converts both to failures. The integrity
+  arm is what makes them pass for the right reason.
+- **The known-rejected variant:** adding `__Error_struct` to
+  `builtinInstanceCarrierTypeIdxs()` alongside `__Date`/`__StandaloneRegExp` is a
+  documented dead end — `closure-props.ts:305-308` records that `$Error_struct`
+  has its own `$props` side-slot written directly by the externref-backed-subclass
+  own-field path, so bagging it would give one receiver two disagreeing stores.
+  The shipped design avoids that by having `__carrier_bag_of` read the same
+  field 5 the write goes into: one store.
+
+### Deliberate residue
+
+`#4213` — the read path. `err.message` now stores and `hasOwnProperty` is true,
+but a *read* still answers the struct field (`tryNativeErrorMemberRead` and
+`__error_to_string` predate #3130's `$props`-first rule). This is a **known,
+deliberate, temporary** self-contradiction, bounded to `err.message` reads over
+11 files of which **0 currently pass** — so 0 regression risk, and shipping half
+a read-path fix across 2–3 surfaces would leave the same contradiction with more
+code in the way.
+
+Session-wide context: `plan/agent-context/session-2026-08-07-lead-handoff.md`.
