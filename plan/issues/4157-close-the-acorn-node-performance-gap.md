@@ -291,3 +291,26 @@ node scripts/profile-buckets.mjs .tmp/acorn.cpuprofile .tmp/closure-map.log 25 \
 execution program. #4155/#743/#3926/#3927 are the children and keep their own
 acceptance criteria; this file only sequences them and pins the measurement
 rules.
+
+## 2026-08-07 — regexp scratch slice landed (record in #4185)
+
+The `.test`-path capture scratch and the `__regex_run` backtrack frames — the
+last two elidable allocation streams the #4185 ledger had priced and left — are
+now reused instead of re-allocated (`JS2WASM_REGEXP_TEST_CAPS_POOL`,
+`JS2WASM_REGEXP_FRAME_REUSE`, both default ON). Full measurement, flag
+rationale and gates: **#4185, section "2026-08-07 — the regexp scratch streams"**.
+
+Two results from that run that change what the NEXT slice should target:
+
+1. **−47,838 allocations per parse (−18.2 % of the post-#4173/#4185 total of
+   262,711) bought ~0.4 pp of parse self-time**, not ~18 %. gc-engine drops
+   0.44 pp, 3/3 order-balanced profile pairs; wall was unresolvable (the
+   same-code Node baseline swung 51 % across the eight runs on this box).
+2. **Rank allocation streams by count × instance size, not by count.** The two
+   streams taken were the smallest objects in the census (~16 B and 20 B):
+   18.2 % of allocation EVENTS, roughly 2–3 % of allocated BYTES.
+   `__fnctor_Node` alone (32,468 × 292 B ≈ 9.5 MB/parse) outweighs every
+   remaining elidable plumbing stream combined, and the `$AnyString` /
+   `$AnyValue` boxing streams outweigh what is left after that. That points the
+   residual GC bucket squarely back at **Workstream 1** (value representation:
+   #4155 / #743), not at further plumbing elision.
