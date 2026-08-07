@@ -146,19 +146,45 @@ descriptor — but only when the receiver is written as a **direct syntactic**
 synthesis can ever fire there. These need the native proto to become a
 runtime-queryable object — the #3251/#3596 substrate, not a table extension.
 
-**The 11 global-object files have a working mechanism that is gated one step
-too tightly.** `emitGlobalThisGopdFold` (`dyn-read.ts`) already synthesizes the
-§19.1 descriptor for `NaN`/`Infinity`/`undefined`, but its gate is
-`arg0.kind === ts.SyntaxKind.ThisKeyword` — a *direct* `this` — while every one
-of the 11 fixtures writes `var global = this;` first. `builtin-static-gopd.ts`
-already contains exactly the alias-following resolver this needs
-(`resolveBuiltinReceiverName`, #2984 bucket-1). Extending the fold to (a) trace
-the one-level alias and (b) cover the §15.1 function properties
-(`eval`/`parseInt`/`parseFloat`/`isNaN`/`isFinite`/`decodeURI(Component)`/
-`encodeURIComponent`, `{w:true,e:false,c:true}`) looks like the next-largest
-tractable slice in this family. Note `isScriptGlobalThisReceiver`
-(`call-builtin-static.ts`) is explicitly `!ctx.standalone`, so there is no
-reified global object to fall back on.
+### The 11 global-object files — DO NOT take this as an alias-gate fix
+
+An earlier revision of this file claimed these were "one mechanism gated one
+step too tightly": `emitGlobalThisGopdFold` (`dyn-read.ts`) gates on
+`arg0.kind === ts.SyntaxKind.ThisKeyword` while the fixtures write
+`var global = this;` first, so relax the gate with the alias resolver that
+already exists. **That was measured and is WRONG.** Recording it because the
+wrong version is the attractive one and someone will re-derive it.
+
+Three files (15.2.3.3-4-178/179/180) use a **direct `this`**, not an alias — so
+the alias gate was never their blocker. And in **module** goal the existing fold
+already answers all five of their assertions **strictly correctly**
+(`writable`/`enumerable`/`configurable` all strictly `false`,
+`hasOwnProperty("get"/"set")` strictly `false`). They still fail.
+
+The actual blocker, isolated with two hand-written fixtures run through
+`runTest262File(…, "standalone")`:
+
+| fixture | goal | receiver | result |
+| --- | --- | --- | --- |
+| `gOPD(this,"NaN")` | **script** | direct `this` | `desc === undefined` |
+| `var g=this; gOPD(g,"NaN")` | **script** | alias | `desc === undefined` |
+| same, with `export` | module | direct `this` | correct descriptor |
+
+So the discriminator is **script vs module goal**, not direct vs aliased
+receiver. In script goal top-level `this` is the realm global object (§10.4.1.1)
+and standalone has no reified one — `isScriptGlobalThisReceiver`
+(`call-builtin-static.ts`) is explicitly `!ctx.standalone`, and its own comment
+defers general script-`this` lowering to **#3365**. All 11 sit behind that.
+
+The 8 function-property files need three further things on top, none of which
+exist: a §15.1 function-property table, an identity-stable carrier per global
+function, and the `global.<fn>` VALUE read — measured, `typeof g.parseInt` is
+not `"function"` today, so `desc.value === global.parseInt` cannot hold even
+with a correct descriptor. That is the same two-arm carrier problem this issue
+solved for `constructor`, but ×8 with no carriers to reuse.
+
+**Verdict: this slice fragments — a substrate dependency (#3365) plus 8 files of
+new-carrier work. It is not a cheap follow-up and should not be scoped as one.**
 
 **`undefined.writable` does not throw** (carried over from #4199). It is why
 all 41 report `desc.writable Expected SameValue(«undefined», …)` rather than a
