@@ -636,38 +636,50 @@ something in it mattered; **the mechanism is unknown.** Anything derived from
 "copyNode did it" — including the risk ordering in §6 — is derived from an
 unsupported story and should be re-derived.
 
-**Replication of the enumeration matrix, and a partial DISAGREEMENT worth
-settling before anyone builds on it** (this branch = `origin/main` + this
-slice's inert analysis; `.tmp/enum-matrix.mjs`, `--target standalone`,
-`optimize: 0`, 3-field fixtures, no host imports):
+**The enumeration matrix, SETTLED — the discriminator is the RECEIVER'S STATIC
+TYPE, not the operation** (`.tmp/enum-settle.mjs`, `--target standalone`,
+`optimize: 0`, no host imports; want = keys 3, in 1, for…in 3, hasOwn 1):
 
-| case | slice C | this branch |
-| --- | ---: | ---: |
-| `for…in` over an object literal | 3 ✓ | 3 ✓ |
-| `for…in`, class instance typed AT the loop | 3 ✓ | 3 ✓ |
-| `for…in`, class instance arriving as `any` | 0 ✗ | **0 ✗** |
-| `for…in` over a fnctor instance | 0 ✗ | **0 ✗** |
-| `Object.keys(objectLiteral).length` | 3 ✓ | 3 ✓ |
-| `Object.keys(classInstance).length` | **0 ✗** | **3 ✓ — disagrees** |
-| `classInstance.hasOwnProperty("a")` | 1 ✓ | 1 ✓ |
-| `"a" in classInstance` | **0 ✗** | **1 ✓ — disagrees** |
+| receiver | `Object.keys` | `in` | `for…in` | `hasOwnProperty` |
+| --- | ---: | ---: | ---: | ---: |
+| `const o = new C()` (statically typed) | 3 ✓ | 1 ✓ | 3 ✓ | 1 ✓ |
+| `const o: any = new C()` | **0 ✗** | **0 ✗** | **0 ✗** | 1 ✓ |
+| laundered through `id(x): any` | **0 ✗** | **0 ✗** | **0 ✗** | 1 ✓ |
 
-Six of eight agree, and the two `for…in` failures — the ones this design
-actually depends on — replicate exactly. The two that disagree both **pass**
-here. Consequences:
+Identical for both class spellings (field initialisers and constructor
+assignment), so the class shape is not a factor.
 
-- The **grouping** conclusion differs. Slice C reads the split as
-  "`hasOwnProperty` works, `in`/`for…in`/`Object.keys` do not". On this branch's
-  evidence the split is "**`for…in` (on a dynamic receiver) is broken, the other
-  three work**". A fixer starting from the wrong grouping starts from the wrong
-  shared predicate, so #3920 should settle this before the fix is scoped.
-- **Cause of the divergence is not yet known.** The obvious hypothesis —
-  slice C's default-ON hot/cold split — was tested and **rejected**:
-  `JS2WASM_FNCTOR_HOT_FIELDS=20` reproduces this branch's column exactly.
-  But that test is weak evidence, because these 3-field fixtures are entirely
-  constructor-assigned, so no field is split-eligible and the flag is inert on
-  them. Fixture shape remains the leading explanation. Settling it needs the two
-  fixture sets compared directly, not two summaries compared.
+This **resolves a disagreement between the two lanes, in slice C's favour, and
+the error was on this side.** An earlier draft of this section reported
+`Object.keys(classInstance)` and `"a" in classInstance` *passing* and treated
+slice C's failing column as unreproduced. The cause was a fixture confound
+here: those two probes used a **statically typed** receiver (`var o = new C()`)
+while the `for…in` probe laundered through `id(x)`. Slice C's fixture used
+`const o: any = new C()` throughout — i.e. it measured the dynamic path
+consistently, and this lane did not. Its grouping conclusion stands:
+
+> `hasOwnProperty` reaches a working predicate on a receiver where `in`,
+> `for…in` and `Object.keys` all answer nothing.
+
+The cross product adds the axis that unifies both columns and is the actionable
+statement for #3920: **every one of the four works on a statically-typed
+closed-struct receiver; three of the four break the moment the receiver is
+`any`.** So the defect lives on the DYNAMIC path, and `hasOwnProperty` is the
+one dynamic operation that still reaches a correct answer — that asymmetry, not
+"the presence read is broken", is where a fix should start.
+
+Two notes for whoever takes it:
+
+- slice C separately eliminated 24 configurations (structural canonicalization
+  of an identically-shaped sibling struct, `optimize` 0/3/unset, class-shape
+  spelling, and — by swapping its three changed files for their `origin/main`
+  blobs — its own branch), so none of those is the cause either;
+- seen in passing and **not** an enumeration bug: laundering a
+  field-initialiser class through `id(x): any` and calling `hasOwnProperty`
+  fails the COMPILE with `IR-FALLBACK … arg 0 of call to id is class<C>,
+  expected dynamic`. Distinct signature, IR admission rather than reflection;
+  the constructor-assignment spelling of the same program compiles and answers
+  correctly.
 
 ### 5. Retyping needs no special case, and here is the argument
 
@@ -741,13 +753,16 @@ Three properties fall out, and each removes a class of #4211's risk:
   the base presence words does not. Say which, in the fix.
 
   **And the constraint binds wider than this issue.** Independently replicated
-  on this branch (`.tmp/enum-matrix.mjs`, `--target standalone`, `optimize: 0`):
-  a **class** instance that reaches the loop as `any` enumerates 0 of 3 keys,
-  exactly like a fnctor instance, while the same class instance typed AT the
-  loop enumerates 3, and an object literal enumerates 3. So the boundary is not
-  "fnctor" — it is **the dynamic path over any closed struct**, and the
-  name-list-source rule above therefore applies to every closed-struct receiver
-  kind, not only the ones per-type layouts touches;
+  on this branch (§4's settled matrix): a **class** instance reaching the site
+  as `any` answers 0 for `Object.keys` / `in` / `for…in`, exactly like a fnctor
+  instance, while the same instance statically typed answers correctly on all
+  four, and an object literal enumerates 3. So the boundary is not "fnctor" — it
+  is **the dynamic path over any closed struct**, and the name-list-source rule
+  above therefore applies to every closed-struct receiver kind, not only the
+  ones per-type layouts touches. That matters here specifically because a
+  per-type layout receiver is *usually* dynamic: the analysis publishes a
+  single-label pin only where one label is provable, and every unpinned
+  receiver takes exactly the path that is broken today;
 - layouts are **siblings, not nested**, so arm order in the dispatchers cannot
   matter. (A prefix-CHAIN design was evaluated and rejected for this reason
   plus worse bytes: −60.9 % vs −67.3 %, because a label needing one
