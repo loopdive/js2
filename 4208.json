@@ -1,10 +1,11 @@
 {
   "id": "4208",
   "assignee": "ttraenkler/W27",
-  "requested_by": "ttraenkler/W27",
-  "status": "in-progress",
+  "requested_by": "noreply@anthropic.com",
+  "status": "released",
   "branch": "issue-4208-operator-abstract-ops",
   "claimed_at": "2026-08-07T13:14:20Z",
-  "updated_at": "2026-08-07T13:14:20Z",
-  "write_id": "32400-olyu1uu6"
+  "updated_at": "2026-08-07T19:50:59Z",
+  "write_id": "6384-v6xxxzat",
+  "released_at": "2026-08-07T19:50:59Z"
 }
