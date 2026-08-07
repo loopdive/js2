@@ -969,12 +969,33 @@ evidence.**
   `Object.keys(new Date(0))` answer `["timestamp"]`. The missing piece is a
   user-declared-vs-builtin struct predicate that does not exist yet.
 
-  **One caveat worth carrying, from that same comment:** `getOwnPropertyNames`
-  "works" only on the user-declared receivers in the matrix — it is *already*
-  wrong on builtins (`Object.getOwnPropertyNames(/ab/)` returns 7 internal
-  RegExp fields in standalone today, host answers 1). So the fix is not "share
-  the arms with the other three"; it is "build the predicate, then share" — and
-  the leak it prevents is latent in a helper that currently reads as passing.
+  **One caveat worth carrying, and it is bigger than the source comment says.**
+  `getOwnPropertyNames` "works" only on the user-declared receivers in the
+  matrix — it is *already* wrong on builtins. Verified independently in two
+  lanes (`--target standalone`, `optimize: 0`, zero host imports):
+
+  | probe | standalone | host |
+  | --- | ---: | ---: |
+  | `gOPN(classInstance).length` | 3 | 3 ✓ |
+  | `gOPN(/ab/).length` | **7** | 1 ✗ |
+  | `gOPN(/ab/)[0]` | starts `'f'` | starts `'l'` ✗ |
+  | **`gOPN(new Date(0)).length`** | **1** (a `t…` name) | **0** ✗ |
+  | `Object.keys(new Date(0)).length` | 0 | 0 ✓ |
+  | `Object.keys(/ab/).length` | 0 | 0 ✓ |
+
+  The **Date** row is not in the source comment, which records only RegExp for
+  `gOPN` and mentions Date only as what *would* break if `Object.keys` shared
+  the arms. It leaks today.
+
+  **The structural point, which is the version that survives skim-reading the
+  3-for-3 table** (per-type-layouts lane's framing, confirmed here):
+  `Object.keys` is correct on a builtin **precisely because** it is broken on
+  user classes — it has no arms, so it enumerates nothing, and nothing is the
+  right answer for `Date`. Sharing the arms fixes the user-class case and
+  breaks the builtin case *in the same move*. So #4071's revert was not a
+  tuning failure, and "build the user-declared-vs-builtin predicate, **then**
+  share" is the only ordering that works. Anyone who reads the split as "copy
+  the working three onto the failing three" ships the Date/RegExp leak.
 
   **It also contradicts a record in the 2026-08-06 slice.** That slice
   attributes the pre-wiring K=52 divergence to acorn's `copyNode`
