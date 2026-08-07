@@ -98,19 +98,29 @@ untouched (they keep the genuine `Object_get_constructor` read).
 
 ## Verification
 
-`tests/issue-4200.test.ts` — 31 cases. The 20 descriptor/identity cases are RED
-on the unpatched base and green on this branch. Green on **both** sides, and
-load-bearing:
+`tests/issue-4200.test.ts` — 31 cases. A/B'd by file copy against
+`git show origin/main:<path>` (never `git stash`), then restored byte-identical
+to the commit: **18 fail on the unpatched base, 31 pass on this branch.**
+
+The 18 RED are all 10 gOPD descriptor cases, the 7 Error-family value reads, and
+the enumerable check. The 13 green on BOTH are load-bearing, not filler:
 
 - `new Error().constructor === Error` — already worked, which is what makes
   this a builtin-PROTOTYPE member gap rather than a missing-carrier bug. A
   fixture built only on the instance form would have passed on unpatched main.
 - `gOPD(Array.prototype,"indexOf")` keeps its #2885 method descriptor.
-- `Error.prototype.constructor !== TypeError` and
-  `Object.prototype.constructor !== Array` — distinct singletons, so the
-  identity is not a `null === null` tautology.
+- `Object`/`Array`/`RegExp`'s VALUE read already resolved before this change
+  (#3133/#3006) — only their gOPD arm was missing. Those three value-read cases
+  are green on both sides, which is why the count is 18 RED and not 20.
 - The five declined builtins still answer `undefined`.
 - A user `var Error = {...}` shadow keeps its own `constructor`.
+
+The two cross-checks (`Error.prototype.constructor !== TypeError`,
+`Object.prototype.constructor !== Array`) also pass on both sides — on base
+vacuously, since the left side is `undefined`. They are not evidence on their
+own; paired with the `=== <Ctor>` cases passing on the branch they establish
+that the branch's identity is a genuine `ref.eq` over two DISTINCT live
+singletons rather than a `null === null` tautology.
 
 ## Findings for the next lane — the rest of M4, re-bucketed by TRUE root cause
 
