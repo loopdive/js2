@@ -106,11 +106,19 @@ export function recordSloppyImplicitGlobalNames(
  *
  * Deliberately narrow, because a false positive here turns a currently-silent
  * wrong answer into a thrown `ReferenceError`:
- *   - TOP-LEVEL statements only — a `this.x = …` inside a function is a write to
- *     that function's receiver, not to the global object.
- *   - Root must be `this` or a non-shadowed `globalThis`, reached only through
- *     parens / casts, with exactly one member step (`this.p1`, `this["p1"]`);
- *     a deeper chain like `this.o.k` writes into `o`, not the global object.
+ *   - TOP-LEVEL CODE only — a `this.x = …` inside a function is a write to that
+ *     function's receiver, not to the global object. "Top-level code" is the
+ *     §9.4.2 sense used by {@link thisBelongsToTopLevelCode} and the #3365
+ *     `ThisKeyword` lowering: the walk descends through `if` / loops / `try` /
+ *     blocks and stops at a function or class boundary. (#4205 — the original
+ *     #3956 cut looked only at DIRECT SourceFile ExpressionStatements, so
+ *     `if (c) { this.r = 2; }` performed the write but never registered the
+ *     name, and the bare `r` read fell back to the silent `0`.)
+ *   - Root must be `this`, a non-shadowed `globalThis`, or a top-level alias
+ *     of one of those ({@link collectGlobalObjectAliasNames}), reached only
+ *     through parens / casts, with exactly one member step (`this.p1`,
+ *     `this["p1"]`); a deeper chain like `this.o.k` writes into `o`, not the
+ *     global object.
  *   - Static property names only (identifier or string literal); a computed key
  *     is not knowable here.
  *   - No strict-mode gate: unlike an unresolvable bare assignment, a write
@@ -126,39 +134,128 @@ export function collectGlobalObjectPropertyNames(
   moduleGlobals: ReadonlySet<string>,
 ): Set<string> {
   const names = new Set<string>();
-  const unwrap = (e: ts.Expression): ts.Expression => {
-    let cur = e;
-    while (
-      ts.isParenthesizedExpression(cur) ||
-      ts.isAsExpression(cur) ||
-      ts.isNonNullExpression(cur) ||
-      ts.isTypeAssertionExpression(cur)
-    ) {
-      cur = cur.expression;
-    }
-    return cur;
-  };
+  const aliases = collectGlobalObjectAliasNames(sourceFile, moduleGlobals);
   const isGlobalObjectReceiver = (e: ts.Expression): boolean => {
-    const cur = unwrap(e);
+    const cur = unwrapAssignmentTarget(e);
+    if (cur.kind === ts.SyntaxKind.ThisKeyword) return true;
+    if (!ts.isIdentifier(cur)) return false;
+    if (cur.text === "globalThis") return !moduleGlobals.has("globalThis");
+    return aliases.has(cur.text);
+  };
+  const recordTarget = (target: ts.Expression): void => {
+    const lhs = unwrapAssignmentTarget(target);
+    if (ts.isPropertyAccessExpression(lhs)) {
+      if (!isGlobalObjectReceiver(lhs.expression)) return;
+      if (ts.isPrivateIdentifier(lhs.name)) return;
+      names.add(lhs.name.text);
+    } else if (ts.isElementAccessExpression(lhs)) {
+      if (!isGlobalObjectReceiver(lhs.expression)) return;
+      const key = unwrapAssignmentTarget(lhs.argumentExpression);
+      if (ts.isStringLiteral(key) || ts.isNoSubstitutionTemplateLiteral(key)) names.add(key.text);
+    }
+  };
+  walkTopLevelCode(sourceFile, (node) => {
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      recordTarget(node.left);
+    }
+  });
+  return names;
+}
+
+/** Strip parens / casts / non-null assertions from an assignment target. */
+function unwrapAssignmentTarget(e: ts.Expression): ts.Expression {
+  let cur = e;
+  while (
+    ts.isParenthesizedExpression(cur) ||
+    ts.isAsExpression(cur) ||
+    ts.isNonNullExpression(cur) ||
+    ts.isTypeAssertionExpression(cur)
+  ) {
+    cur = cur.expression;
+  }
+  return cur;
+}
+
+/**
+ * Visit every node of the source file's TOP-LEVEL CODE — the §9.4.2 region in
+ * which `this` is the realm global object. Descends through statements and
+ * expressions but never enters a function or class body, matching
+ * {@link thisBelongsToTopLevelCode} (`sloppy-this-global.ts`), which is what the
+ * `ThisKeyword` lowering itself consults. Keeping the two in step is the point:
+ * a scan narrower than the lowering registers no name for a write that really
+ * happens (#4205), and one wider registers a name for a receiver that is not
+ * the global object.
+ */
+function walkTopLevelCode(sourceFile: ts.SourceFile, visit: (node: ts.Node) => void): void {
+  const walk = (node: ts.Node): void => {
+    if (node !== sourceFile && (ts.isFunctionLike(node) || ts.isClassDeclaration(node) || ts.isClassExpression(node))) {
+      return;
+    }
+    visit(node);
+    forEachChild(node, walk);
+  };
+  walk(sourceFile);
+}
+
+/**
+ * (#4205) Top-level `var g = this;` / `var g = globalThis;` alias names.
+ *
+ * `var g = this; g.q = 7;` creates the global-object property `q` exactly as
+ * `this.q = 7` does — the ES5 `fnGlobalObject()`-style idiom test262 uses
+ * throughout. The write already lands on the right object (the checker types
+ * the alias as `typeof globalThis`); only the NAME registration was missing,
+ * so the bare `q` read fell back to the silent `0`.
+ *
+ * Conservative by construction — an alias qualifies only when:
+ *   - it is declared in top-level code (never inside a function/class), and
+ *   - EVERY declaration of that name in the file initialises it to `this` /
+ *     `globalThis` (so a later `var g = somethingElse` disqualifies it), and
+ *   - the name is never the target of an assignment or an update operator
+ *     anywhere in the file (including inside functions).
+ *
+ * A name that fails any of these keeps today's behaviour exactly.
+ */
+export function collectGlobalObjectAliasNames(
+  sourceFile: ts.SourceFile,
+  moduleGlobals: ReadonlySet<string>,
+): ReadonlySet<string> {
+  const candidates = new Set<string>();
+  const disqualified = new Set<string>();
+  const isGlobalObjectValue = (e: ts.Expression | undefined): boolean => {
+    if (!e) return false;
+    const cur = unwrapAssignmentTarget(e);
     if (cur.kind === ts.SyntaxKind.ThisKeyword) return true;
     return ts.isIdentifier(cur) && cur.text === "globalThis" && !moduleGlobals.has("globalThis");
   };
-  for (const stmt of sourceFile.statements) {
-    if (!ts.isExpressionStatement(stmt)) continue;
-    const expr = unwrap(stmt.expression);
-    if (!ts.isBinaryExpression(expr) || expr.operatorToken.kind !== ts.SyntaxKind.EqualsToken) continue;
-    const lhs = unwrap(expr.left);
-    if (ts.isPropertyAccessExpression(lhs)) {
-      if (!isGlobalObjectReceiver(lhs.expression)) continue;
-      if (ts.isPrivateIdentifier(lhs.name)) continue;
-      names.add(lhs.name.text);
-    } else if (ts.isElementAccessExpression(lhs)) {
-      if (!isGlobalObjectReceiver(lhs.expression)) continue;
-      const key = unwrap(lhs.argumentExpression);
-      if (ts.isStringLiteral(key) || ts.isNoSubstitutionTemplateLiteral(key)) names.add(key.text);
+  walkTopLevelCode(sourceFile, (node) => {
+    if (!ts.isVariableDeclaration(node) || !ts.isIdentifier(node.name)) return;
+    if (isGlobalObjectValue(node.initializer)) candidates.add(node.name.text);
+    else disqualified.add(node.name.text);
+  });
+  if (candidates.size === 0) return candidates;
+  // A reassignment anywhere — including inside a function body — breaks the
+  // alias, so this second walk deliberately covers the WHOLE file.
+  const disqualifyWrites = (node: ts.Node): void => {
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+      ts.isIdentifier(node.left)
+    ) {
+      disqualified.add(node.left.text);
     }
-  }
-  return names;
+    if ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) && ts.isIdentifier(node.operand)) {
+      disqualified.add(node.operand.text);
+    }
+    // A second declaration of the same name with a non-global initializer.
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && !isGlobalObjectValue(node.initializer)) {
+      disqualified.add(node.name.text);
+    }
+    forEachChild(node, disqualifyWrites);
+  };
+  forEachChild(sourceFile, disqualifyWrites);
+  for (const name of disqualified) candidates.delete(name);
+  return candidates;
 }
 
 /** Script `var` binding names, including declarations nested in top-level control flow. */

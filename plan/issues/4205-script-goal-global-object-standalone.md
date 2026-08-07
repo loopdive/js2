@@ -1,10 +1,13 @@
 ---
 id: 4205
 title: "Script-goal global object: top-level `this.x = v` creates no readable global binding in standalone — 137 ES5 files, and it MASKS 96 of the 118 `with` tests"
-status: ready
+status: in-progress
+assignee: ttraenkler/sendev-w25
 sprint: current
 created: 2026-08-07
 updated: 2026-08-07
+loc-budget-allow:
+  - src/codegen/expressions/unary-updates.ts
 priority: high
 horizon: xl
 feasibility: hard
