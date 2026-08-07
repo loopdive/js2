@@ -1,11 +1,10 @@
 {
   "id": "743",
-  "assignee": "ttraenkler/claude-fable-7",
-  "requested_by": "ttraenkler@users.noreply.github.com",
-  "status": "released",
+  "assignee": "ttraenkler/opus-impl-1",
+  "requested_by": "ttraenkler/opus-impl-1",
+  "status": "in-progress",
   "branch": "claude/issue-743-mutual-fixpoint",
-  "claimed_at": "2026-08-07T01:46:00Z",
-  "updated_at": "2026-08-07T02:02:11Z",
-  "write_id": "22101-ddcq5czm",
-  "released_at": "2026-08-07T02:02:11Z"
+  "claimed_at": "2026-08-07T02:04:01Z",
+  "updated_at": "2026-08-07T02:04:01Z",
+  "write_id": "26382-0le7mxs1"
 }
