@@ -106,11 +106,26 @@ export function recordSloppyImplicitGlobalNames(
  *
  * Deliberately narrow, because a false positive here turns a currently-silent
  * wrong answer into a thrown `ReferenceError`:
- *   - TOP-LEVEL statements only — a `this.x = …` inside a function is a write to
- *     that function's receiver, not to the global object.
- *   - Root must be `this` or a non-shadowed `globalThis`, reached only through
- *     parens / casts, with exactly one member step (`this.p1`, `this["p1"]`);
- *     a deeper chain like `this.o.k` writes into `o`, not the global object.
+ *   - TOP-LEVEL CODE only — a `this.x = …` inside a function is a write to that
+ *     function's receiver, not to the global object. "Top-level code" is the
+ *     §9.4.2 sense used by {@link thisBelongsToTopLevelCode} and the #3365
+ *     `ThisKeyword` lowering: the walk descends through `if` / loops / `try` /
+ *     blocks and stops at a function or class boundary. (#4205 — the original
+ *     #3956 cut looked only at DIRECT SourceFile ExpressionStatements, so
+ *     `if (c) { this.r = 2; }` performed the write but never registered the
+ *     name, and the bare `r` read fell back to the silent `0`.)
+ *   - Root must be `this`, a non-shadowed `globalThis`, or a top-level ALIAS of
+ *     one of those (`var g = this; g.q = 7` — the ES5 `fnGlobalObject()` idiom;
+ *     any top-level reassignment of the alias name disqualifies it), reached
+ *     only through parens / casts, with exactly one member step (`this.p1`,
+ *     `this["p1"]`); a deeper chain like `this.o.k` writes into `o`, not the
+ *     global object.
+ *
+ *     A reassignment INSIDE a function body does not disqualify — deliberately,
+ *     because ruling it out costs a whole-file traversal (#3437) and buys
+ *     nothing observable: if such a reassignment ran, the write landed on some
+ *     other object, the global object has no such property, and the bare read
+ *     throws the `ReferenceError` the spec asks for anyway.
  *   - Static property names only (identifier or string literal); a computed key
  *     is not knowable here.
  *   - No strict-mode gate: unlike an unresolvable bare assignment, a write
@@ -126,39 +141,153 @@ export function collectGlobalObjectPropertyNames(
   moduleGlobals: ReadonlySet<string>,
 ): Set<string> {
   const names = new Set<string>();
-  const unwrap = (e: ts.Expression): ts.Expression => {
-    let cur = e;
-    while (
-      ts.isParenthesizedExpression(cur) ||
-      ts.isAsExpression(cur) ||
-      ts.isNonNullExpression(cur) ||
-      ts.isTypeAssertionExpression(cur)
-    ) {
-      cur = cur.expression;
-    }
-    return cur;
-  };
-  const isGlobalObjectReceiver = (e: ts.Expression): boolean => {
-    const cur = unwrap(e);
+  // (#4205 / #3437) Cheap total precondition. Every receiver this scan can
+  // accept is spelled `this`, `globalThis`, or an alias initialised from one of
+  // those — so if NEITHER token occurs in the source, no walk can find anything
+  // and the scan is skippable outright. Same idiom as
+  // `sourceUsesRuntimeEvalBoundary`; sound because it only skips on definite
+  // absence. Both spellings are required: `globalThis` contains `This`, not
+  // `this`, so a single lowercase test silently dropped every `globalThis`-only
+  // file (caught by the alias case in tests/issue-4205-*).
+  const text = sourceFile.text;
+  if (!text.includes("this") && !text.includes("globalThis")) return names;
+
+  // ONE walk collects both halves — the alias candidates and the pending
+  // assignment targets — because a target's receiver can only be classified
+  // once the alias set is known, and a second traversal is pure cost (#3437).
+  const aliasCandidates = new Set<string>();
+  const aliasDisqualified = new Set<string>();
+  const pendingTargets: ts.Expression[] = [];
+  const isGlobalObjectValue = (e: ts.Expression | undefined): boolean => {
+    if (!e) return false;
+    const cur = unwrapAssignmentTarget(e);
     if (cur.kind === ts.SyntaxKind.ThisKeyword) return true;
     return ts.isIdentifier(cur) && cur.text === "globalThis" && !moduleGlobals.has("globalThis");
   };
-  for (const stmt of sourceFile.statements) {
-    if (!ts.isExpressionStatement(stmt)) continue;
-    const expr = unwrap(stmt.expression);
-    if (!ts.isBinaryExpression(expr) || expr.operatorToken.kind !== ts.SyntaxKind.EqualsToken) continue;
-    const lhs = unwrap(expr.left);
+
+  walkTopLevelCode(sourceFile, (node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+      if (isGlobalObjectValue(node.initializer)) aliasCandidates.add(node.name.text);
+      else aliasDisqualified.add(node.name.text);
+      return;
+    }
+    if (!ts.isBinaryExpression(node)) return;
+    const op = node.operatorToken.kind;
+    if (op < ts.SyntaxKind.FirstAssignment || op > ts.SyntaxKind.LastAssignment) return;
+    if (op === ts.SyntaxKind.EqualsToken) pendingTargets.push(node.left);
+    // `g = somethingElse` re-points an alias, so a later `g.q = 7` is not
+    // provably a write through the global object.
+    if (ts.isIdentifier(node.left)) aliasDisqualified.add(node.left.text);
+  });
+  for (const name of aliasDisqualified) aliasCandidates.delete(name);
+
+  const isGlobalObjectReceiver = (e: ts.Expression): boolean => {
+    const cur = unwrapAssignmentTarget(e);
+    if (cur.kind === ts.SyntaxKind.ThisKeyword) return true;
+    if (!ts.isIdentifier(cur)) return false;
+    if (cur.text === "globalThis") return !moduleGlobals.has("globalThis");
+    return aliasCandidates.has(cur.text);
+  };
+  for (const target of pendingTargets) {
+    const lhs = unwrapAssignmentTarget(target);
     if (ts.isPropertyAccessExpression(lhs)) {
       if (!isGlobalObjectReceiver(lhs.expression)) continue;
       if (ts.isPrivateIdentifier(lhs.name)) continue;
       names.add(lhs.name.text);
     } else if (ts.isElementAccessExpression(lhs)) {
       if (!isGlobalObjectReceiver(lhs.expression)) continue;
-      const key = unwrap(lhs.argumentExpression);
+      const key = unwrapAssignmentTarget(lhs.argumentExpression);
       if (ts.isStringLiteral(key) || ts.isNoSubstitutionTemplateLiteral(key)) names.add(key.text);
     }
   }
   return names;
+}
+
+/** Strip parens / casts / non-null assertions from an assignment target. */
+function unwrapAssignmentTarget(e: ts.Expression): ts.Expression {
+  let cur = e;
+  while (
+    ts.isParenthesizedExpression(cur) ||
+    ts.isAsExpression(cur) ||
+    ts.isNonNullExpression(cur) ||
+    ts.isTypeAssertionExpression(cur)
+  ) {
+    cur = cur.expression;
+  }
+  return cur;
+}
+
+/**
+ * Does the traversal descend THROUGH this node?
+ *
+ * (#3437) This is a compile-WORK decision as much as a correctness one. The
+ * budget gate meters shared-helper `forEachChild` invocations against a
+ * harness-shaped fixture, and a walk that descends into every expression pays
+ * one invocation per AST node — which is how the first cut of #4205 added
+ * +21,263 (+21.7 %) on a corpus where the harness prelude is prepended to all
+ * ~43k tests. Statement CONTAINERS are the only nodes that can hold another
+ * top-level statement, so descending through exactly those makes the walk
+ * O(statements) instead of O(nodes).
+ *
+ * The three expression forms at the end are the only ones that can still hold a
+ * top-level assignment this scan must see: an `ExpressionStatement`'s
+ * expression, a parenthesised one, and the arms of a comma sequence.
+ *
+ * Deliberately NOT descended, and therefore deliberately missed: an assignment
+ * buried in another expression position — `f(this.x = 1)`, `if (this.x = 1)`,
+ * `[this.x = 1]`. Those perform the write but register no name, which is the
+ * SAFE side of the invariant on {@link walkTopLevelCode}: a missing name reads
+ * exactly as it does on main, whereas a spurious one throws a `ReferenceError`
+ * that should not happen.
+ */
+function descendsThrough(node: ts.Node): boolean {
+  if (ts.isSourceFile(node) || ts.isBlock(node)) return true;
+  switch (node.kind) {
+    case ts.SyntaxKind.IfStatement:
+    case ts.SyntaxKind.ForStatement:
+    case ts.SyntaxKind.ForInStatement:
+    case ts.SyntaxKind.ForOfStatement:
+    case ts.SyntaxKind.WhileStatement:
+    case ts.SyntaxKind.DoStatement:
+    case ts.SyntaxKind.TryStatement:
+    case ts.SyntaxKind.CatchClause:
+    case ts.SyntaxKind.SwitchStatement:
+    case ts.SyntaxKind.CaseBlock:
+    case ts.SyntaxKind.CaseClause:
+    case ts.SyntaxKind.DefaultClause:
+    case ts.SyntaxKind.LabeledStatement:
+    case ts.SyntaxKind.WithStatement:
+    case ts.SyntaxKind.VariableStatement:
+    case ts.SyntaxKind.VariableDeclarationList:
+    case ts.SyntaxKind.ExpressionStatement:
+    case ts.SyntaxKind.ParenthesizedExpression:
+      return true;
+    case ts.SyntaxKind.BinaryExpression:
+      return (node as ts.BinaryExpression).operatorToken.kind === ts.SyntaxKind.CommaToken;
+    default:
+      return false;
+  }
+}
+
+/**
+ * Visit the source file's TOP-LEVEL CODE — the §9.4.2 region in which `this` is
+ * the realm global object. Descends through statement containers (see
+ * {@link descendsThrough}) and never enters a function or class body, matching
+ * {@link thisBelongsToTopLevelCode} (`sloppy-this-global.ts`), which is what the
+ * `ThisKeyword` lowering itself consults. Keeping the two in step is the point:
+ * a scan narrower than the lowering registers no name for a write that really
+ * happens (#4205), and one wider registers a name for a receiver that is not
+ * the global object. Where they must differ, this one stays NARROWER.
+ */
+function walkTopLevelCode(sourceFile: ts.SourceFile, visit: (node: ts.Node) => void): void {
+  const walk = (node: ts.Node): void => {
+    if (node !== sourceFile && (ts.isFunctionLike(node) || ts.isClassDeclaration(node) || ts.isClassExpression(node))) {
+      return;
+    }
+    visit(node);
+    if (descendsThrough(node)) forEachChild(node, walk);
+  };
+  walk(sourceFile);
 }
 
 /** Script `var` binding names, including declarations nested in top-level control flow. */

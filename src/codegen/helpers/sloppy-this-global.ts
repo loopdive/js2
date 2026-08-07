@@ -167,3 +167,42 @@ export function thisReceiverIsGlobalObject(ctx: CodegenContext, fctx: FunctionCo
   if (fctx.isStaticContext) return false;
   return fctx.name === "__module_init" && !ctx.sourceIsModule && thisBelongsToTopLevelCode(receiver);
 }
+
+/**
+ * (#4205) True when a MEMBER-ACCESS receiver provably evaluates to the realm
+ * global object — script top-level `this` (per {@link thisReceiverIsGlobalObject})
+ * or a `globalThis` that nothing shadows.
+ *
+ * Why any caller needs this: the TypeScript checker types both of those as
+ * `typeof globalThis`, which `resolveStructName` happily resolves to the large
+ * static global-interface struct. Every member fast path keyed on "did I get a
+ * struct name?" then treats the realm global object as that struct and answers
+ * from its declared fields — so a property created at runtime by
+ * `this.n = 1` / `globalThis.n = 1` is simply not there, and the fast path
+ * emits its missing-field fallback (`f64.const NaN`, `undefined`, a `ref.cast`
+ * that traps) instead of consulting the object.
+ *
+ * The same hazard is already called out, gOPD-locally, on
+ * `isScriptGlobalThisReceiver` in `expressions/call-builtin-static.ts`; this is
+ * the shared predicate that lets other member paths opt out of the struct fast
+ * path for the same reason, in every target (the object is real in standalone
+ * too — `emitNativeGlobalThisObject`'s `$Object` singleton, #2996).
+ */
+export function receiverIsRealmGlobalObject(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  receiver: ts.Expression,
+): boolean {
+  let cur: ts.Expression = receiver;
+  while (
+    ts.isParenthesizedExpression(cur) ||
+    ts.isAsExpression(cur) ||
+    ts.isNonNullExpression(cur) ||
+    ts.isTypeAssertionExpression(cur)
+  ) {
+    cur = cur.expression;
+  }
+  if (cur.kind === ts.SyntaxKind.ThisKeyword) return thisReceiverIsGlobalObject(ctx, fctx, cur);
+  if (!ts.isIdentifier(cur) || cur.text !== "globalThis") return false;
+  return fctx.localMap.get("globalThis") === undefined && !ctx.moduleGlobals.has("globalThis");
+}

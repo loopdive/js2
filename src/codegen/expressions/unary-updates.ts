@@ -35,6 +35,7 @@ import {
 import { reserveMemberGetDispatch } from "../member-get-dispatch.js"; // (#2681/#2686) symmetric struct read for inc/dec
 import { resolveReceiverStruct } from "../fnctor-escape-gate.js"; // (#2681/#2686) pinned reconstructed-fnctor receiver gate
 import { tryEmitTypedThisIncDec } from "../typed-this.js"; // (#3683 S2) typed-`this` inc/dec
+import { receiverIsRealmGlobalObject } from "../helpers/sloppy-this-global.js"; // (#4205) realm global object receiver
 import { coerceType, compileExpression, skipTransparentExpressions } from "../shared.js";
 import { compileStringLiteral } from "../string-ops.js";
 import { defaultValueInstrs } from "../type-coercion.js";
@@ -495,7 +496,12 @@ function compileMemberIncDec(
     const objType = ctx.checker.getTypeAtLocation(operand.expression);
     // Ensure anonymous types are registered as structs before resolving
     ensureStructForType(ctx, objType);
-    let typeName = resolveStructName(ctx, objType);
+    // (#4205) The realm global object is NOT the checker's `typeof globalThis`
+    // struct — declining it here routes `this.n++` to the externref RMW below
+    // instead of the struct's missing-field arm, which NaN-dropped the write.
+    let typeName = receiverIsRealmGlobalObject(ctx, fctx, operand.expression)
+      ? undefined
+      : resolveStructName(ctx, objType);
     // Fallback: check widened variable struct map (matches compilePropertyAssignment)
     // (#3364) keyed per-declaration, not by bare name.
     if (!typeName && ts.isIdentifier(operand.expression)) {
