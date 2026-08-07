@@ -4608,9 +4608,23 @@ export function compilePropertyIntrospection(
       // built-ins/Object/{defineProperty,prototype/hasOwnProperty,getOwnPropertyNames}).
       // Gate these two broad signals to host mode; standalone keeps the
       // const-fold (correct for the no-delete case, unchanged from origin/main).
-      // The narrower delete-tombstone benefit in standalone awaits the standalone
-      // `__hasOwnProperty` sidecar-awareness substrate work.
-      if (!needsRuntime && !ctx.standalone) {
+      //
+      // (#4187) …EXCEPT when this very receiver is also deleted from. The
+      // awaited substrate has landed (#1629 S6 / #2042 S4 real `$Object`
+      // entries, the #3468/#3537/#4010 carrier bags, #4098 tombstones, the
+      // closed-struct field arms), but widening the gate WHOLESALE is still the
+      // PR #2177 park — so admit only receivers where the fold is unsound. The
+      // fold answers from the defineProperty-widened struct SHAPE, which no
+      // runtime `delete` retracts: with no delete the two agree and folding
+      // stays (byte-identical, cheaper); with one they diverge, as in
+      // `Object/defineProperty/15.2.3.6-3-86-1.js` where `delete obj.property`
+      // succeeded everywhere except the folded `hasOwnProperty` call site.
+      // Pre-scan, not record-as-you-compile: the repro's first read precedes the
+      // delete textually and must still answer `true`, so both reads must come
+      // from the same mechanism. See `scanModuleMemberDeletes`.
+      const standaloneDeleteObserved =
+        ctx.standalone && recvVarName !== undefined && (ctx.memberDeleteReceiverNames?.has(recvVarName) ?? false);
+      if (!needsRuntime && (!ctx.standalone || standaloneDeleteObserved)) {
         for (const k of ctx.definePropertyReceiverKeys) {
           if (k.startsWith(prefix)) {
             needsRuntime = true;

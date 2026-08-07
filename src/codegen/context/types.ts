@@ -3107,6 +3107,14 @@ export interface CodegenContext {
    *  a post-delete read returned the stale value (#2179). Delete-free modules
    *  keep the byte-identical inline fast-path (zero overhead). */
   moduleUsesDelete?: boolean;
+  /** (#4187) Identifier names appearing as the receiver of a member delete
+   *  (`delete r.k` / `delete r[e]`), pre-scanned by
+   *  `scanModuleMemberDeletes`. Consulted ONLY by the standalone arm of
+   *  the `hasOwnProperty`/`propertyIsEnumerable` routing gate in
+   *  `compilePropertyIntrospection`: a receiver that saw `Object.defineProperty`
+   *  AND appears here can have its const-fold disagree with runtime state, so it
+   *  routes to the runtime helper. Empty for nearly every module. */
+  memberDeleteReceiverNames?: ReadonlySet<string>;
   /** (#1472 Phase A) Set of dynamic-shape object/property host-import names
    *  already refused under `--target standalone`, used to deduplicate the
    *  compile-error so a single source construct emits at most one error per
