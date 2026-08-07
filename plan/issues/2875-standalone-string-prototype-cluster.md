@@ -457,3 +457,40 @@ counts is signature-derived.
 RegExp-gated ~16 belong to the standalone RegExp engine (#4016/#4065 — #4065
 already refuted the "51-file RegExp lever inside String.prototype" framing);
 `concat` (4) is variadic and needs a different closure ABI.
+
+## Re-measure + decomposition (W13, 2026-08-06)
+
+Full ES5-label sweep of `built-ins/String/prototype` on 2026-08-06 main, with
+the in-process runner patched to attach the `js2wasm:runtime-eval` provider (the
+fix that PR **#4163** lands properly, at a shared seam across all five
+instantiate sites) and `TEST262_FULL_RUNTIME_EVAL=1` (the CI-comparable
+interpreter tier): **630 files, 528 pass, 102 fail.** The `split` count above is
+**23, not 11** — the earlier figure was taken through a runner whose
+`js2wasm:runtime-eval` link error overwrote the real signatures.
+
+**67 of the 102 are ONE idiom**: `x.m = String.prototype.m; x.m(…)` — a borrowed
+`String.prototype` method on a non-String receiver. But that idiom is **three
+different defects**, and the previous "Next slice" note conflated them and
+under-sized the whole thing at 12–17:
+
+| # | sub-mechanism | probe | ES5 files | owner |
+| --- | --- | --- | ---: | --- |
+| **b1** | receiver is a **builtin prototype** (`Number.prototype.m = …`) — the write itself is a silent no-op; nothing to dispatch to | `Number.prototype.foo = f; typeof Number.prototype.foo === "undefined"` | ~23 | **#4176 / PR #4155** (not this issue) |
+| **a** | member has **no reflective glue body** → `emitProtoMemberBodyRefusal` → *"not yet implemented in --target standalone"* | `new Boolean().split = String.prototype.split; …split()` throws | ~19 (`split` 10, `concat` 3, `search` 2, `replace` 2, `match` 2) | **this issue** |
+| **b2** | glue exists but **ToString of an exotic receiver** is wrong — `__any_to_string` answers `"[object Object]"` instead of the brand's `toString` | `fn.slice(0,8)` → `"[object "` (want `"function"`); `regExp.toUpperCase()` → `"[OBJECT OBJECT]"` (want `"/ABC/"`) | ~6 | this issue (or #2862) |
+
+The remaining 35 are: RegExp-engine-gated `replace`/`match` (#4016/#4065, ~16,
+do not re-litigate), `String.hasOwnProperty('prototype')` static reflection (4),
+`delete String.prototype.toString` (3), and a long tail.
+
+**The 12-file `Number.prototype.<caseMethod>` matrix named in the previous
+"Next slice" is b1, i.e. #4176 / PR #4155 — it is NOT fixable inside the String
+glue, and it is already implemented there.** The
+`null` return that section observed is not the glue's refusal signal reaching a
+String receiver; it is the *assignment never having happened*. Confirmed by the
+brand-independent probe: `Object.prototype.qux = fn; ({}).qux()` is `null` too,
+with no String involvement anywhere.
+
+So the honest next slice for **this** issue is (a) — wire `split` and `concat`
+reflective glue bodies, ~13 ES5 files — with (b2) as a small follow-up. That is
+a genuinely ~15-file lever, not a 67-file one.
