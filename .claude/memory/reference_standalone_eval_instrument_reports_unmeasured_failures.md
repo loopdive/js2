@@ -42,6 +42,59 @@ and no populated `test262/`** (`bash scripts/provision-worktree-deps.sh`). A
 hand-made `ln -s test262` was clobbered mid-session and a census went from
 1,609 attributed to **0** with no error at all.
 
+### Two MORE ways the harness measures the wrong compiler (2026-08-07, W26)
+
+Same family, different layer — neither is about the provider:
+
+4. **The pool worker imports `scripts/compiler-bundle.mjs` and
+   `scripts/runtime-bundle.mjs` — NOT `src/`.** Edit `src/`, re-run through the
+   pool worker, and you measure the **previous compiler**. Both bundles must be
+   rebuilt for **each arm** of an A/B. Fails exactly like the provider-cache
+   trap: a plausible result, no error, nothing saying the arm never saw your
+   change.
+
+5. **`scripts/provision-worktree-deps.sh` silently no-ops on a container with
+   no `/workspace`.** `SOURCE_ROOT` resolves to the agent's own worktree and the
+   script **exits 0 having done nothing**. The pool worker then dies importing
+   the missing `scripts/compiler-bundle.mjs`, every test times out at 90 s, and
+   the run reports **everything FAILED with a 0-byte jsonl**. Workaround:
+   `JS2_WORKTREE_SOURCE=/home/user/js2`. Cost one lane ~1 h.
+
+   This one at least fails loudly — but *implausibly* loudly. A 201/201 wipeout
+   reads as "my change broke the world", so the danger is not believing it; it
+   is spending an hour bisecting your own diff. **A total failure with a 0-byte
+   jsonl is an instrument failure until proven otherwise.**
+
+   **The REPAIRED run has its own trap, and this one is silent.** A second lane
+   hit the no-op, re-ran with `JS2_WORKTREE_SOURCE`, and the repaired run linked
+   `node_modules` and a per-entry `test262/` symlink farm into **another agent's
+   worktree** rather than the main checkout. Point it at `/home/user/js2` and
+   verify where the links actually landed (`ls -l node_modules test262`).
+
+   A dep tree living inside another lane's worktree is a **delayed** version of
+   the clobber that once took a census from 1,609 attributed to 0: it works
+   perfectly until that lane's worktree is removed after its PR merges, and then
+   your next run fails — or worse, half-fails — for reasons that have nothing to
+   do with your change. Worktree cleanup is routine, so this is a scheduled
+   failure, not a hypothetical one.
+
+### ⚠ The pre-scan "dirty" gates cannot bound a blast radius in THIS corpus
+
+A tempting safety claim is "my change is gated on `protoNamedDirty` (or another
+pre-scan dirty flag), so every file that fails the gate is byte-identical."
+True in principle. Worth **0.07 %** of the corpus in practice.
+
+The js2wasm host-globals shim that `assembleOriginalHarness` prepends to
+**every** file contains `return eval(sourceText);`, so `isDynamicCodeUse` sets
+`dynamicCodeDirty` ⇒ `protoNamedDirty`. Measured 2026-08-07 over the effective
+source of all 48,619 baseline rows: **48,587 have the gate SET; 32 are provably
+clear.**
+
+So the gate is not a filter, it is a constant. Size exposure by the **real
+trigger** — the syntactic shape that actually reaches your modified code path —
+and byte-hash the emitted modules to prove the rest untouched. Any reviewer
+seeing "gated on X ⇒ safe" should ask what fraction of the corpus fails gate X.
+
 ## The rule
 
 **Build a two-sided instrument before believing any number**: the failing lever

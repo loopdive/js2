@@ -14,6 +14,7 @@ import { widenedVarKeyFromDecl } from "../widened-var-key.js";
 import type { FieldDef, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { createDeclaredNestedWriteClassifier } from "./declared-nested-write.js";
+import { markStandaloneDynamicWithTargets } from "./dynamic-with-shape.js";
 
 function isUnboxedPrimitiveCarrier(type: ValType): boolean {
   return ["f64", "f32", "i64", "i32", "i16", "i8"].includes(type.kind);
@@ -611,11 +612,15 @@ export function collectGrowableObjectLiterals(
           // struct path") is a HOST-lane discipline — in standalone the struct
           // path is precisely what cannot serve these consumers, so this arm
           // runs first. Host lane is untouched (byte-inert).
+          // (#4206) A Tier-2-bound `with (varName)` joins the same set — the
+          // native `$Object` helpers that serve it cannot see a WasmGC struct.
+          // Rationale + measured repro: ./dynamic-with-shape.ts.
           if (ctx.standalone) {
             const mopSet = new Set<string>();
             for (const s of stmts) {
               markStandaloneDeleteTargets(s, varName, mopSet);
               markStandaloneAccessorDefineTargets(s, varName, mopSet);
+              markStandaloneDynamicWithTargets(s, varName, mopSet);
             }
             // Consumer-safety (#1897/#2837): when the var ALSO flows into a
             // CONCRETE nominal-struct-typed position (call/new arg, return,

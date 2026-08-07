@@ -1,6 +1,6 @@
 ---
 id: 4206
-title: "`with` statement: the closed-object-literal-shape gate hard-refuses 39 ES5 standalone files and 11 more mis-resolve — plus 68 previously mis-attributed to #4205 that are measured to be `with`'s own"
+title: "`with` statement, ES5 standalone: 105 failing files (39 `#1387` gate refusals + 66 runtime wrong-answers). Tier-2 dynamic `with` was measured BLIND in standalone and is fixed; the residue is blocked by a non-`with` global-binding defect"
 status: ready
 sprint: current
 created: 2026-08-07
@@ -16,6 +16,14 @@ language_feature: with-statement
 goal: es5
 related: [671, 1387, 3025, 4179, 4205, 1472]
 origin: "2026-08-07 W23 census of the ES5 standalone failing residue (published standalone baseline 20260807, oracle v13). Supersedes the 2026-03 stub #671."
+loc-budget-allow:
+  # +5 lines of WIRING only (one import, one call, a 3-line pointer comment).
+  # The 130 lines of new logic went to a NEW subsystem module,
+  # src/codegen/declarations/dynamic-with-shape.ts — i.e. this change already
+  # did what the ratchet asks for. The file sits exactly at its 1511 cap, so
+  # any hook at all trips it; moving an unrelated sibling marker out purely to
+  # buy back 5 lines would enlarge the diff for a budget technicality.
+  - src/codegen/declarations/object-shape-widening.ts
 ---
 
 # #4206 — the `with` statement residue, correctly sized
@@ -110,18 +118,202 @@ Representative: `language/statements/with/S12.10_A1.12_T1.js`,
 
 ## Acceptance criteria
 
-- [ ] The 39 gate-refusal files either compile or the gate's rejection reason
-      set is reduced with a measured count per reason.
+- [x] **Measured count per rejection reason** for the 39 gate-refusal files:
+      39/39 are `body contains a nested function or class`; the predicted
+      ~6 spread/accessor/computed-key/non-literal-target files do not exist.
+      Not compiled — cohort A is measured DOWNSTREAM of cohort D (see the W26
+      record), so it is deliberately deferred rather than attempted.
 - [ ] The 5 `S10.2.2_A1_T*` scope-chain files resolve identifiers through the
-      object environment record.
-- [ ] `with(null)` / `with(undefined)` throw TypeError.
-- [ ] A/B reports the **gate-refusal** cohort (the `#1387` path) and the
-      **runtime wrong-answer** cohort separately — they are plausibly different
-      work with different risk, and one PR may not want to carry both.
-      (The old "report the 68 #4205-masked files separately" criterion is void:
-      measured 0 masked.)
+      object environment record. **Not attempted.**
+- [ ] `with(null)` / `with(undefined)` throw TypeError. **Not attempted**
+      (1 file, `12.10-2-5.js`).
+- [x] A/B reports the **gate-refusal** and **runtime wrong-answer** cohorts
+      separately — done, plus the lowering path each file actually takes.
+      One PR carries only the Tier-2 slice; the reasoning is recorded.
+
+**Not yet satisfied — this issue stays open.** The PR fixes a real standalone
+unsoundness (RED-on-base regression test) but converts **0 test262 files**,
+because the whole `S12.10_A1.*` family dies on an earlier assertion owned by a
+`with`-free defect. Remaining work is enumerated under "Deferred, precisely
+located" below and is now scoped from measurement rather than from the census.
 
 ## Measurement provenance
 
 Same as #4205: `classifyEdition() === 5` over the standalone baseline
 (48,619 rows, oracle v13, 2026-08-07), 8,931 files / 7,566 pass / 1,365 fail.
+
+---
+
+# W26 implementation record (2026-08-07)
+
+**Headline: 0 test262 conversions, 0 regressions — and the reason is measured,
+not guessed.** A real unsoundness in the standalone `with` lowering is fixed and
+locked in by a RED-on-base regression test, but every affected file also fails
+an EARLIER assertion caused by a defect that is **not** `with`'s.
+
+## Re-derived population (undiscounted, from the change's own reachability)
+
+Population derived by parsing each file's **effective source** (body + `assert.js`
++ `sta.js` + `includes:`) and asking the compiler's own dispatch predicate — does
+a `ts.WithStatement` node exist — **not** by error-string grep.
+
+| | files |
+| --- | --- |
+| ES5 standalone total | 8,931 (pass 7,574 / fail 1,357) |
+| **FAILING + `with`-reachable** (the lever) | **105** |
+| **PASSING + `with`-reachable** (the control) | **96** |
+
+Not 118 (the census figure) and not 50 (the discounted one).
+
+### Cohort 1 — gate refusals (`#1387`): 39
+
+The issue file predicted "~33 nested function/class + ~6 other proof failures".
+**Measured: 39 of 39 are the nested-function/class boundary.** Zero are spread,
+accessor, method, computed key or non-literal target. This is ONE mechanism, not
+a family of proof gates.
+
+### Cohort 2 — runtime wrong-answers: 66
+
+Which lowering path each lever file actually takes, instrumented through
+`compileWithStatement`'s own dispatch:
+
+| path taken | lever files |
+| --- | --- |
+| `CE-nested-fn` — hard `#1387` refusal | 39 |
+| **`T2-dynamic`** (30 of them via a bare-identifier `delete`) | **41** |
+| `T1-struct` only | 24 |
+| no `with` reached (harness-only match) | 1 |
+
+## Root cause found and fixed: Tier-2 dynamic `with` is BLIND in standalone
+
+Tier-2 resolves the Object Environment Record through `__extern_has` (HasBinding),
+`__extern_get`, `__extern_set` and `__delete_property`. Standalone binds those to
+the **native `$Object` open-hash helpers**, which walk `$Object` links — and a
+WasmGC struct is not an `$Object`. The walk terminates immediately, **HasBinding
+answers 0 for every name**, and the `with` degrades to a silent no-op whose
+writes cascade past the object onto the outer/global binding.
+
+This is unsoundness, not a coverage gap: Tier-2 is supposed to be the semantic
+backstop for everything Tier-1 declines, and there it is structurally blind.
+
+It also explains a census anomaly: the **standalone host-import-leak cohort
+measured ZERO** across this entire family. Not because nothing leaks — because
+the failure is silent. The module compiles clean with `imports: []`.
+
+**Fix**: `src/codegen/declarations/dynamic-with-shape.ts` pins a `with` target
+whose body contains a bare-identifier `delete` (the exact Tier-1 disqualifier, and
+recognisable without type info) to the `$Object` representation, joining the
+existing standalone `$Object`-hash-consumer set. Narrow by design — a target that
+already proves Tier-1 keeps the zero-overhead struct path.
+
+## A/B — two-sided, instrument validated
+
+Base cut on `origin/main@1f613276d8`. Provider rebuilt at the FULL interpreter
+tier per arm after **deleting the cache file** (keys did move: base
+`89023379b8934c3e` → head `bb901ab226f8c791`; artifact byte size identical at
+3,995,550 both arms, confirming size is not evidence).
+
+**Base agreement: 201/201 file-by-file against the published *standalone*
+baseline, 0 disagreements.** Lever 0/105 at base, control 96/96 at base.
+
+| | base | head |
+| --- | --- | --- |
+| lever (105 failing, `with`-reachable) | 0/105 | **0/105** |
+| control (96 passing, `with`-reachable) | 96/96 | **96/96** |
+| fail→pass | — | **0** |
+| pass→fail | — | **0** |
+| still-failing, signature changed | — | **0** |
+
+Unit-level A/B on the exact test262 object shape (RED-on-base verified):
+
+| repro | base | head |
+| --- | --- | --- |
+| with-scoped write lands in the object (`myObj.p1 === 'x1'`) | **fail** (`a`) | **pass** |
+| with-scoped bare `delete` removes the property | **fail** (`c`) | **pass** |
+| with-scoped write does not clobber the outer binding | fail | **pass** |
+| global assertion `p1 === 1` | fail (`null`) | fail (`null`) |
+
+So the repair is real and measured; it converts no *files* because each
+`S12.10_A1.*` file asserts ~19 things and dies on assertion #1, which this does
+not touch.
+
+### Base-sha caveat, stated rather than glossed
+
+The 201-file A/B above was cut at `origin/main@1f613276d8`. Main then advanced
+(#4203/#4204/**#4205** and others landed) and the branch merged it at
+`a22a44a1c3`. The **arms were not re-run** on that tip; what WAS re-run there is
+the unit matrix, and it reproduces every claim above:
+
+- `s1` (with-scoped write lands in the object) — still **pass** with the fix;
+- `s2` (`p1 === 1`) — still **fail** (`null`), so #4205's landed work does not
+  unblock the lever;
+- `s5` (the `with`-free `this.p1 = 1` vs bare `p1` split) — still **fail** on
+  current main, so the blocker is intact and the 0-conversion reading is not a
+  stale-base artefact of the kind that made #4201 read `FIXED 0`.
+
+Anyone re-sizing this issue should still re-cut both arms rather than inherit
+the 105/96 split — main is moving fast.
+
+## Why the yield is 0 — and why it is NOT `with`'s fault
+
+The 19-file `p1 === null` bucket (the largest in cohort 2) is blocked by a defect
+that **reproduces with no `with` anywhere**:
+
+```js
+this.p1 = 1;
+p1 = 'x1';
+// bare `p1` and `this.p1` use DIFFERENT storage — the bare read does not see it
+```
+
+A script-top-level `this.p1 =` global-object property and a bare-identifier
+read/write of the same name are not unified. That is #4205's mechanism.
+
+This **refines** the 2026-08-07 census correction rather than reverting it. That
+correction was right that #4205's *implementation* changed zero signatures here,
+and right to reject the line-ordering inference. But "#4205's patch did not move
+these" is not the same claim as "the blocking mechanism is `with`'s" — and the
+delta-debug above shows it is not: it reproduces `with`-free. The `with`-side
+defects are real and now fixed; they are simply **downstream** of the global
+binding-unification defect, which fires first.
+
+## Cohort A (39) is downstream of cohort D — do not size it independently
+
+`S12.10_A1.7_T1` is byte-for-byte `S12.10_A1.1_T1`'s body wrapped in
+`var f = function(){ … }; f();`; `A1.12`, `A1.8` and `A3.7`/`A3.8` are the same
+relation. So implementing closure capture of the object environment record —
+substantial work — would move those 39 files onto exactly the failures cohort D
+already has. **Expected yield ≈ 0 until cohort D's blocker lands.** Sequence A
+after D; do not staff it as an independent lever.
+
+## Deferred, precisely located (not attempted here)
+
+1. **Global-binding unification** (`this.p1 = 1` vs bare `p1`) — the actual
+   blocker for ≥19 files, and `with`-free. Belongs with #4205.
+2. **With-scoped `delete` result is not a boolean.** `del = delete p3` inside a
+   Tier-2 `with` yields `1`, not `true` (base yielded `0` because the delete did
+   not happen at all). `emitDynamicWithDelete` returns `{kind:"i32"}` and the
+   with-write path coerces i32→externref as a **number** (`f64.convert_i32_s` +
+   `__box_number`). A plain `delete o.p` is unaffected (its consumer is
+   boolean-typed, so no boxing occurs). In scope for `with`, but unmeasured for
+   yield, so deliberately left out of this PR.
+3. **Cohort A** (39 files, nested function/class) — see above.
+4. **The 24 `T1-struct`-only failures** — a separate mechanism from this one
+   (includes the 11 `__str_concat` null-pointer files and `12.10-0-8`'s
+   uninvoked setter). Not diagnosed here.
+
+## Instrument note worth keeping (cost: ~1h)
+
+`scripts/provision-worktree-deps.sh` **silently no-ops on this container**: with
+no `/workspace`, `SOURCE_ROOT` resolves to the agent's *own* worktree, so it
+"skips" every dep and exits **0**. Then the test262 pool worker dies at import on
+a missing `scripts/compiler-bundle.mjs`, every test times out at 90 s, and the
+run reports **201/201 FAILED with a 0-byte jsonl** — a uniform all-fail
+indistinguishable from a catastrophic regression. Workaround:
+`JS2_WORKTREE_SOURCE=/home/user/js2 bash scripts/provision-worktree-deps.sh <wt>`.
+
+Also: the pool worker imports `scripts/compiler-bundle.mjs` and
+`scripts/runtime-bundle.mjs`, **not `src/`**. Both MUST be rebuilt per A/B arm
+(`esbuild src/index.ts …` / `esbuild src/runtime.ts …`, exactly as
+`scripts/run-test262-vitest.sh` does) or the arm measures the previous compiler.
+This is the same family as the provider-cache trap and is not yet in
+`.claude/memory/reference_standalone_eval_instrument_reports_unmeasured_failures.md`.

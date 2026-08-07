@@ -53,6 +53,7 @@ import {
 } from "./coercion-engine.js";
 import { compileInstanceOf, compileTypeofComparison } from "./typeof-delete.js";
 import { compileTypedBinaryDispatch } from "./binary-ops-typed-dispatch.js";
+import { foldTypeDisjointThenPromote } from "./strict-eq-type-disjoint.js";
 import { compileInOperator } from "./binary-ops-in.js";
 import { emitIsUndefF64 } from "./value-tags.js";
 
@@ -2032,18 +2033,12 @@ export function compileBinaryExpression(
 
   if (!leftType || !rightType) return null;
 
-  // Promote i32↔f64 mismatch (e.g. string.length:i32 !== 8:f64)
-  if (leftType.kind === "i32" && rightType.kind === "f64") {
-    const tmpR = allocTempLocal(fctx, { kind: "f64" });
-    fctx.body.push({ op: "local.set", index: tmpR });
-    fctx.body.push({ op: "f64.convert_i32_s" });
-    fctx.body.push({ op: "local.get", index: tmpR });
-    releaseTempLocal(fctx, tmpR);
-    leftType = { kind: "f64" };
-  } else if (leftType.kind === "f64" && rightType.kind === "i32") {
-    fctx.body.push({ op: "f64.convert_i32_s" });
-    rightType = { kind: "f64" };
-  }
+  // (#4208 S1) §7.2.16 step 1, then the i32↔f64 promotion — one helper, because
+  // the ORDER is the fix: promoting first erases Type() for a Boolean operand.
+  const promoted = foldTypeDisjointThenPromote(fctx, expr, op, leftType, rightType, leftTsType, rightTsType);
+  if (promoted.folded !== undefined) return promoted.folded;
+  leftType = promoted.leftType;
+  rightType = promoted.rightType;
 
   return compileTypedBinaryDispatch(
     ctx,
