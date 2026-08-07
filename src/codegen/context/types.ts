@@ -2094,6 +2094,15 @@ export interface CodegenContext {
    * previous `undefined` fallback. -1 = not yet created.
    */
   currentThisGlobalIdx: number;
+  /**
+   * (#4203) Absolute Wasm global index of the immutable `__this_explicit_null`
+   * marker — the non-null `$AnyValue` that spells "the caller passed `null` as
+   * the receiver", as distinct from `__current_this`'s `ref.null.extern` "no
+   * receiver installed". §10.4.3 gives those two states different answers in a
+   * strict callee, and one value cannot carry both. `undefined` = not
+   * reserved; see `explicit-null-receiver.ts`.
+   */
+  explicitNullThisGlobalIdx?: number;
   /** Mutable i32 hand-off used by ES5 Function `caller` poison semantics. */
   callerStrictGlobalIdx: number;
   /** Source function name → source strictness, consumed by the final call-site pass. */

@@ -58,7 +58,8 @@ import { emitUndefined, ensureLateImport, flushLateImportShifts } from "./expres
 
 import { compileHostInstanceOf, compileIdentifier, resolveInstanceOfRHS } from "./expressions/identifiers.js";
 import { emitLazyClassObjectGet } from "./expressions/extern.js";
-import { emitUnboundThis, thisBelongsToTopLevelCode } from "./helpers/sloppy-this-global.js"; // (#4190)
+import { emitExplicitNullThis, emitUnboundThis, thisBelongsToTopLevelCode } from "./helpers/sloppy-this-global.js"; // (#4190/#4203)
+import { buildExplicitNullThisElseArm, explicitNullReceiverActive } from "./explicit-null-receiver.js"; // (#4203)
 
 import { compilePostfixUnary, compilePrefixUnary } from "./expressions/unary.js";
 
@@ -1164,7 +1165,19 @@ function compileExpressionInner(
       fctx.body.push({ op: "global.get", index: ctx.currentThisGlobalIdx });
       fctx.body.push({ op: "local.tee", index: thisTmp });
       fctx.body.push({ op: "ref.is_null" });
-      const elseBody: Instr[] = [{ op: "local.get", index: thisTmp }];
+      let elseBody: Instr[] = [{ op: "local.get", index: thisTmp }];
+      // (#4203) A NON-null global is normally just "the installed receiver" —
+      // except for the one value that means "the caller passed `null`". Split
+      // that out here so a strict callee can answer `null` where an absent
+      // receiver answers `undefined`. See explicit-null-receiver.ts.
+      if (explicitNullReceiverActive(ctx, expr)) {
+        const nullAnswer: Instr[] = [];
+        const outerBody = fctx.body;
+        fctx.body = nullAnswer;
+        emitExplicitNullThis(ctx, fctx, expr);
+        fctx.body = outerBody;
+        elseBody = buildExplicitNullThisElseArm(ctx, thisTmp, nullAnswer) ?? elseBody;
+      }
       const savedBody = fctx.body;
       const thenBody: Instr[] = [];
       fctx.body = thenBody;

@@ -58,6 +58,7 @@ import {
 } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { resolveStructName } from "./misc.js";
+import { tryReshapeBindToNamedThisCall } from "../named-this-call.js"; // (#4203)
 import { compileSuperElementMethodCall } from "./new-super.js";
 import { compileCallDispatchTail } from "./stored-member-closure-call.js";
 import {
@@ -1500,6 +1501,15 @@ export function compileTailDispatch(
         const funcName = bindTarget.text;
         const closureInfo = ctx.closureMap.get(funcName);
         const funcIdx = ctx.funcMap.get(funcName);
+
+        // (#4203) `f.bind(t, …)(…)` on a stable named FunctionDeclaration whose
+        // body reads `this`: route it onto the receiver-correct `.call`
+        // trampoline instead of the drop-thisArg lowering just below. Same
+        // reshape #3983 did for `.apply`; see named-this-call.ts.
+        if (!closureInfo && funcIdx !== undefined) {
+          const asCall = tryReshapeBindToNamedThisCall(ctx, fctx, expr, bindCall, bindTarget, funcIdx);
+          if (asCall !== undefined) return compileCallExpression(ctx, fctx, asCall);
+        }
 
         if (closureInfo || funcIdx !== undefined) {
           // Evaluate and drop thisArg (first bind argument) for side effects

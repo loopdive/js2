@@ -448,6 +448,13 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
   if (ctx.currentThisGlobalIdx >= threshold) {
     ctx.currentThisGlobalIdx += delta;
   }
+  // (#4203) The explicit-null receiver marker, for the same reason as
+  // `currentThisGlobalIdx` directly above: `shiftGlobalIndices` rewrites the
+  // `global.get`s already emitted into bodies, so the recorded index has to
+  // move with them or the next emission reads a stale slot.
+  if (ctx.explicitNullThisGlobalIdx !== undefined && ctx.explicitNullThisGlobalIdx >= threshold) {
+    ctx.explicitNullThisGlobalIdx += delta;
+  }
   if (ctx.callerStrictGlobalIdx >= threshold) {
     ctx.callerStrictGlobalIdx += delta;
   }
