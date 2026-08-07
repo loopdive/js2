@@ -1,7 +1,7 @@
 {
   "generated": "2026-08-07",
   "threshold": 1500,
-  "totalCeiling": 560903,
+  "totalCeiling": 561288,
   "files": {
     "src/codegen-linear/index.ts": 5614,
     "src/codegen-linear/runtime.ts": 4306,
@@ -12,7 +12,7 @@
     "src/codegen/async-frame.ts": 3262,
     "src/codegen/async-scheduler.ts": 4441,
     "src/codegen/binary-ops-typed-dispatch.ts": 1504,
-    "src/codegen/binary-ops.ts": 3336,
+    "src/codegen/binary-ops.ts": 3331,
     "src/codegen/class-bodies.ts": 3257,
     "src/codegen/closed-method-dispatch.ts": 1718,
     "src/codegen/closures.ts": 3623,
@@ -20,7 +20,7 @@
     "src/codegen/dataview-native.ts": 5892,
     "src/codegen/declarations.ts": 2874,
     "src/codegen/declarations/import-collector.ts": 2039,
-    "src/codegen/declarations/object-shape-widening.ts": 1511,
+    "src/codegen/declarations/object-shape-widening.ts": 1516,
     "src/codegen/destructuring-params.ts": 2405,
     "src/codegen/dyn-read.ts": 1679,
     "src/codegen/expressions.ts": 1666,
