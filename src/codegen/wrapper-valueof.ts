@@ -53,15 +53,51 @@
  * struct, vec, closure) returns unchanged — identical to the blanket fallback
  * this replaces, so nothing that worked before moves.
  */
+import type { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
-import type { CodegenContext } from "./context/types.js";
+import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { flushLateImportShifts } from "./expressions/late-imports.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { FLAG_INTERNAL, WRAPPER_PRIMITIVE_KEY, ensureObjectRuntime } from "./object-runtime.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
+import { compileExpression } from "./shared.js";
 
 const HELPER = "__dyn_valueOf";
+
+/**
+ * Emit `<recv>.valueOf()` for a receiver whose type the ORACLE cannot pin down
+ * (`any` / `unknown`) under `--target standalone`. Returns the result ValType
+ * when it took the call, or `undefined` to leave the caller's historical
+ * blanket-identity fallback in place.
+ *
+ * The caller has already established `propAccess.name.text === "valueOf"` with
+ * zero arguments, so this is the ONLY syntactic shape that can change: a module
+ * with no zero-arg `<expr>.valueOf()` property-access call site compiles
+ * byte-identically. That bound is what makes the change's regression surface
+ * enumerable rather than estimated.
+ *
+ * Gated on the oracle fact rather than the raw checker type / physical carrier
+ * that `compileReceiverMethodCall` resolves further down, so no existing
+ * receiver-resolution ordering moves (`resolveWasmType` registers module
+ * types — reordering it would perturb far more than this call site).
+ */
+export function tryEmitDynamicValueOfCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+): ValType | undefined {
+  if (!ctx.standalone) return undefined;
+  const fact = ctx.oracle.typeFactOf(propAccess.expression).kind;
+  if (fact !== "any" && fact !== "unknown") return undefined;
+  const helperIdx = ensureDynamicValueOfHelper(ctx);
+  if (helperIdx < 0) return undefined;
+  flushLateImportShifts(ctx, fctx);
+  compileExpression(ctx, fctx, propAccess.expression, { kind: "externref" });
+  fctx.body.push({ op: "call", funcIdx: helperIdx });
+  return { kind: "externref" };
+}
 
 /**
  * Register (idempotently) the dynamic-`valueOf` helper and return its func
