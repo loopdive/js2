@@ -1,10 +1,10 @@
 {
   "id": "3920",
-  "assignee": "ttraenkler/opus-forin",
-  "requested_by": "ttraenkler/opus-forin",
+  "assignee": "ttraenkler/opus-forin-2",
+  "requested_by": "ttraenkler/opus-forin-2",
   "status": "in-progress",
-  "branch": "claude/issue-3920-standalone-closed-struct-reflection",
-  "claimed_at": "2026-08-07T23:22:00Z",
-  "updated_at": "2026-08-07T23:22:00Z",
-  "write_id": "17960-epx6hhbv"
+  "branch": "issue-3920-closed-struct-reflection",
+  "claimed_at": "2026-08-07T23:50:34Z",
+  "updated_at": "2026-08-07T23:50:34Z",
+  "write_id": "98738-ij3cy8jx"
 }
