@@ -1,11 +1,10 @@
 {
   "id": "743",
-  "assignee": "ttraenkler/opus-impl-2",
-  "requested_by": "ttraenkler@users.noreply.github.com",
-  "status": "released",
+  "assignee": "ttraenkler/opus-impl-3",
+  "requested_by": "ttraenkler/opus-impl-3",
+  "status": "in-progress",
   "branch": "claude/issue-743-i32-producer",
-  "claimed_at": "2026-08-07T03:35:51Z",
-  "updated_at": "2026-08-07T15:57:37Z",
-  "write_id": "2278-jzi32nfw",
-  "released_at": "2026-08-07T15:57:37Z"
+  "claimed_at": "2026-08-07T16:00:20Z",
+  "updated_at": "2026-08-07T16:00:20Z",
+  "write_id": "6207-alc2kj4q"
 }
