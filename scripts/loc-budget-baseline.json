@@ -1,7 +1,7 @@
 {
   "generated": "2026-08-07",
   "threshold": 1500,
-  "totalCeiling": 563233,
+  "totalCeiling": 563918,
   "files": {
     "src/codegen-linear/index.ts": 5614,
     "src/codegen-linear/runtime.ts": 4306,
@@ -39,7 +39,7 @@
     "src/codegen/expressions/operator-assignment.ts": 3144,
     "src/codegen/expressions/unary-updates.ts": 1904,
     "src/codegen/extern-declarations.ts": 1656,
-    "src/codegen/fnctor-escape-gate.ts": 1852,
+    "src/codegen/fnctor-escape-gate.ts": 1863,
     "src/codegen/generators-native.ts": 4197,
     "src/codegen/index.ts": 9642,
     "src/codegen/iterator-native.ts": 3056,
