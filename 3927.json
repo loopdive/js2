@@ -1,10 +1,10 @@
 {
   "id": "3927",
-  "assignee": "ttraenkler/claude-fable-6",
-  "requested_by": "ttraenkler/claude-fable-6",
+  "assignee": "ttraenkler/opus-shape-split",
+  "requested_by": "ttraenkler/opus-shape-split",
   "status": "in-progress",
-  "branch": "claude/issue-3927-shape-split",
-  "claimed_at": "2026-08-06T17:06:36Z",
-  "updated_at": "2026-08-06T17:06:36Z",
-  "write_id": "28708-jc9xxkh4"
+  "branch": "claude/issue-3927-shape-split-impl",
+  "claimed_at": "2026-08-07T18:54:30Z",
+  "updated_at": "2026-08-07T18:54:30Z",
+  "write_id": "12414-x8km2vz8"
 }
