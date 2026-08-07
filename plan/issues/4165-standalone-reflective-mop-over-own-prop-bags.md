@@ -1,9 +1,13 @@
 ---
 id: 4165
 title: "standalone: wire the reflective MOP (hasOwnProperty / gOPD / delete / in / keys) onto the #3468 + #3537 own-property bags, and widen the two #1906 defineProperties gates"
-status: in-progress
+status: done
+completed: 2026-08-07
+closed-by: "upstream #4010 S2/S3, #4017, #4055, #4161 — verified by re-derivation, see the 2026-08-07 section"
+residue: 4210
 sprint: current
 created: 2026-08-01
+updated: 2026-08-07
 priority: high
 horizon: l
 feasibility: hard
@@ -14,6 +18,9 @@ language_feature: objects, property-descriptors
 goal: es5
 umbrella: 3977
 related: [4163, 1906, 2992, 3251, 3468, 3537, 3246, 3957]
+# SPENT — these grants were consumed by this issue's own (since superseded)
+# implementation. They are NOT headroom for a future change; a new PR needing
+# room in these files must justify and grant it in its own issue file.
 loc-budget-allow:
   - src/codegen/object-runtime-descriptors.ts
   - src/codegen/object-runtime.ts
@@ -367,3 +374,67 @@ pass against upstream's implementation (4/4)** — including the regressed
 verifyProperty write→delete→hasOwn cycle — so the supersession is verified
 equivalent-or-better, not assumed. The measured history above (+29/−1 on this
 branch's own implementation) remains valid for what it measured.
+
+
+## CLOSED 2026-08-07 (W29) — re-derived on current main; the mechanism no longer reproduces
+
+Dispatched to implement this issue, the lane re-ran **this issue's own RHDE
+census probe** on `origin/main@78683628d2` before writing any code. Real
+standalone lane (`runTest262File(…, target:"standalone")`), runtime-eval provider
+at the **INTERPRETER** tier (`TEST262_FULL_RUNTIME_EVAL=1`, key
+`854c120ce015d507`) so the results are CI-comparable rather than the
+link-error/refusal substitute.
+
+Uppercase = correct (`R`ead · `H`asOwnProperty · gOP`D` · for-in `E` · `I`n ·
+`K`eys · deleted-then-absent `X`; the last three are new columns this probe
+added):
+
+| receiver | filed 2026-08-01 | measured 2026-08-07 |
+| --- | --- | --- |
+| `plainObj` | `RHDE` | `RHDEIKX` |
+| `fnObj` | `Rhde` | **`RHDEIKX`** |
+| `arrObj` | `Rhde` | **`RHDEIKX`** |
+| `dateObj` | `rhde` | **`RHDEIKX`** |
+| `regexpObj` | `rhde` | **`RHDEIKX`** |
+| `boolObj` / `strObj` / `numObj` / `objObj` | `RHDE` | `RHDEIKX` |
+| **`errObj`** | `rhde` | **`rhdeik`** ← only survivor |
+
+**"State 2" — the entire premise of this issue — is gone.** The function (#3468)
+and array (#3537) bags are fully visible to the reflective half of the MOP:
+`hasOwnProperty`, gOPD, for-in, `in`, `Object.keys` and `delete` all answer
+correctly. **"State 3" is 3/4 closed too** — Date and RegExp now store and
+reflect expandos.
+
+This matches the "SUPERSEDED upstream" section immediately above: #4010 S2/S3
+(carrier-bag delete + visibility), #4017, #4055 (descriptor-scoped HasProperty)
+and #4161 landed this territory, `src/codegen/carrier-bag-{define,delete,hasown,visibility}.ts`
+are on main, and `__hasOwnProperty` consults `__carrier_bag_has` at
+`object-runtime.ts:3155` and `:7575`. This issue's own behaviour test,
+`tests/issue-4165-bfn-name-writable-gate.test.ts`, is already on main.
+
+The status was left at `in-progress`, which is the only reason the work was
+re-dispatched — a stale status costs the next lane the entire re-derivation.
+
+### The 857 headline is stale — do not carry it forward
+
+The `origin:` figure (857 ES5 standalone failures, #4163 lever 1) predates all
+of the above and describes a mechanism that no longer exists. It sits alongside
+four other 2026-08-01/08-06 census entries that were overturned when their lanes
+measured (#4205 filed 133 → actual 7; #4206 118 → the headline bucket was not a
+`with` defect; #4207 70 → 19, with the filed mechanism wrong; #2668's headline
+3× stale). Re-derive before quoting any of them.
+
+### Residue: #4210
+
+Error receivers lose **all** own-property writes — `err.x = 7` and
+`Object.defineProperty(err, k, {value})` alike — silently, with no throw and no
+refusal. `__carrier_bag_of` has exactly two arms (closure, vec) and no Error
+arm. Sized by AST reachability over all 53,575 corpus files: **58** have an
+Error instance receiving an own property (upper bound, not a predicted yield).
+Filed as **#4210** with the full probe output and fix direction.
+
+### Also still open, unchanged from the table above
+
+`15.2.3.6-4-594` (OrdinarySet proto-setter fidelity for closure receivers),
+array-index/`length` descriptor attribute MOP (#3251 S2/S3), closed-struct
+receivers (#2992 S6), gOPD over built-in intrinsics.
