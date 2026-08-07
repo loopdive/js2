@@ -493,21 +493,18 @@ function compileMemberIncDec(
       if (typed !== undefined) return typed;
     }
 
-    // (#4205) The realm global object is NOT the checker's `typeof globalThis`
-    // struct. `this.n++` / `globalThis.n++` in script code used to resolve that
-    // struct, find no field `n` (it was created at runtime by `this.n = 1`) and
-    // take the missing-field arm — `f64.const NaN`, silently DROPPING the write.
-    // Decline the struct path so the externref read-modify-write below handles
-    // it against the real object, exactly as `this.n += 1` already does.
-    const globalObjectReceiver = receiverIsRealmGlobalObject(ctx, fctx, operand.expression);
-
     const objType = ctx.checker.getTypeAtLocation(operand.expression);
     // Ensure anonymous types are registered as structs before resolving
     ensureStructForType(ctx, objType);
-    let typeName = globalObjectReceiver ? undefined : resolveStructName(ctx, objType);
+    // (#4205) The realm global object is NOT the checker's `typeof globalThis`
+    // struct — declining it here routes `this.n++` to the externref RMW below
+    // instead of the struct's missing-field arm, which NaN-dropped the write.
+    let typeName = receiverIsRealmGlobalObject(ctx, fctx, operand.expression)
+      ? undefined
+      : resolveStructName(ctx, objType);
     // Fallback: check widened variable struct map (matches compilePropertyAssignment)
     // (#3364) keyed per-declaration, not by bare name.
-    if (!typeName && !globalObjectReceiver && ts.isIdentifier(operand.expression)) {
+    if (!typeName && ts.isIdentifier(operand.expression)) {
       const key = resolveWidenedVarKey(ctx, operand.expression);
       if (key !== undefined) typeName = ctx.widenedVarStructMap.get(key);
     }
