@@ -9,6 +9,7 @@ import type { IrUnitId } from "./identity.js";
 import { type AnalysisState, F64, type FieldWrite, NO_FIELDS, STRING, unwrap } from "./fnctor-graph-model.js";
 import {
   _propagationCore as core,
+  type InferExtension,
   LATTICE_OBJECT_SHAPE_MAX_DEPTH,
   type LatticeAtom,
   type LatticeType,
@@ -37,6 +38,12 @@ export interface FixpointCtx {
   readonly atoms: Map<IrUnitId, LatticeType>;
   readonly resolver: (identifier: ts.Identifier) => IrUnitId | undefined;
   readonly buildScope: (chain: readonly ts.SignatureDeclaration[]) => Map<string, LatticeType>;
+  /**
+   * (#743) Satellite-only evaluator precision, passed to every `core.inferExpr`
+   * call this module makes. Absent for the post-convergence read-back context
+   * (`collectThisReadFacts`), which never evaluates an expression.
+   */
+  readonly ext?: InferExtension;
 }
 
 function isAtom(t: LatticeType): t is LatticeAtom {
@@ -148,7 +155,7 @@ export function evalValueExpr(
     const name = thisPropertyRead(e);
     if (name !== undefined) return readFieldFact(fx, thisCtx.owner, name, thisCtx.snapshot);
   }
-  return core.inferExpr(e, scope, fx.entries, fx.resolver);
+  return core.inferExpr(e, scope, fx.entries, fx.resolver, fx.ext);
 }
 
 /**

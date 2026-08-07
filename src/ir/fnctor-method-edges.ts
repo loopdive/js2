@@ -120,7 +120,8 @@ import {
   instanceAtomFor,
   runFieldPass,
 } from "./fnctor-field-lattice.js";
-import { _propagationCore as core, type LatticeType } from "./propagate.js";
+import { createSatelliteInferExtension } from "./fnctor-eval-extensions.js";
+import { _propagationCore as core, type InferExtension, type LatticeType } from "./propagate.js";
 
 const memo = new WeakMap<ts.SourceFile, GraphFacts>();
 
@@ -856,7 +857,18 @@ function runFixpoint(state: AnalysisState): FixpointResult {
     for (const name of names) facts.set(name, core.UNKNOWN);
     fieldFacts.set(owner, facts);
   }
-  const fx: FixpointCtx = { state, entries, fieldFacts, atoms: new Map(), resolver, buildScope };
+  // (#743) The satellite's evaluator precision rules (bitwise/shift producers,
+  // module-level numeric constants, condition-agnostic conditionals). `ext`
+  // closes over itself so a nested operand gets the same rules as a top-level
+  // one; the reference is only dereferenced when `tryInfer` runs, which is
+  // strictly after the binding is initialised.
+  const ext: InferExtension = createSatelliteInferExtension({
+    sourceFile: state.sourceFile,
+    checker: state.checker,
+    evaluate: (expr, scope) => core.inferExpr(expr, scope, entries, resolver, ext),
+  });
+
+  const fx: FixpointCtx = { state, entries, fieldFacts, atoms: new Map(), resolver, buildScope, ext };
   const writeIndex = buildWriteIndex(state);
 
   const MAX_ITERS = 50;
@@ -898,10 +910,17 @@ function runFixpoint(state: AnalysisState): FixpointResult {
           seed.returnType.kind === "bool" ||
           seed.returnType.kind === "string" ||
           seed.returnType.kind === "object";
-        core.walkBodyForReturns(node.fn.body, ownScope, entries, resolver, (t) => {
-          if (seedConcrete && t.kind === "dynamic") return;
-          newReturn = core.join(newReturn, t);
-        });
+        core.walkBodyForReturns(
+          node.fn.body,
+          ownScope,
+          entries,
+          resolver,
+          (t) => {
+            if (seedConcrete && t.kind === "dynamic") return;
+            newReturn = core.join(newReturn, t);
+          },
+          ext,
+        );
       }
       if (!core.paramsEqual(cur.params, newParams) || !core.typesEqual(cur.returnType, newReturn)) {
         entries.set(node.id, { params: newParams, returnType: newReturn });

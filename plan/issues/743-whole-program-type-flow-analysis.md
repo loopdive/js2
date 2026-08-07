@@ -1,9 +1,10 @@
 ---
 id: 743
 title: "Whole-program type flow analysis"
-status: ready
+status: in-progress
+assignee: ttraenkler/opus-impl-3
 created: 2026-03-22
-updated: 2026-08-06
+updated: 2026-08-07
 priority: critical
 horizon: xl
 feasibility: hard
@@ -51,6 +52,14 @@ loc-budget-allow:
   # would bind) is provably inert for the main fixpoint. `inferExpr` is the one
   # place an expression's lattice value is decided, so a satellite cannot host
   # it; everything else lives in the satellite's four modules.
+  # Plus +34 (1568 → 1602) for the satellite i32/bitwise producer slice: the
+  # `InferExtension` hook. Two lines of it are the hook consult; the rest is one
+  # optional `ext` parameter threaded through `inferExpr`, its three atom
+  # helpers and `walkBodyForReturns` (11 recursion sites — a site that DROPS it
+  # answers the pre-extension type silently, so the threading is exhaustive by
+  # construction rather than by review), plus the doc comment that states the
+  # flag-off byte-identity argument. The rule ITSELF is a new satellite module,
+  # src/ir/fnctor-i32-producers.ts; nothing about the rule lives here.
   - src/ir/propagate.ts
   # +6: a three-line comment and one call in `deriveFnctorFields`, which is the
   # single place a fnctor field slot is chosen and therefore the only place this
@@ -1285,3 +1294,271 @@ end-to-end on synthetic cycles, and pays nothing on acorn. The honest reading is
 that the remaining 40 are not gated on graph reach or on field↔param mutuality —
 they are gated on how precisely a value expression can be evaluated once the
 graph gets you there.
+
+## 2026-08-07 — satellite i32/bitwise producer rule IMPLEMENTED: the rule and the evaluator-extension hook land; the acorn census does NOT move, and the missing two levers are now measured, not guessed
+
+Branch `claude/issue-743-i32-producer`, stacked on `claude/issue-743-mutual-fixpoint`
+(PR #4175, not yet on main). Implements re-ranked lever 1 from the locals spec's
+§8 — "1–2 slots, S-horizon, sound" — via the `InferExtension` hook that spec's
+§3.3 designed.
+
+### What shipped
+
+- **`InferExtension`** (`src/ir/propagate.ts`): an optional trailing `ext` on
+  `inferExpr`, its three atom helpers and `walkBodyForReturns`, consulted once
+  at the top of `inferExpr`'s dispatch. A satellite gets first refusal on every
+  node; returning `undefined` falls through to the unchanged shared dispatch.
+  The always-on `buildIrUnitTypeMap` path passes nothing, so main-map parity
+  holds **by construction**, not by measurement. This is the substrate the
+  locals spec asked for, and it is now in place independent of whether the
+  locals slice is ever scheduled.
+- **`src/ir/fnctor-i32-producers.ts`**: the producer rule. `& | ^ << >>` and
+  their compound twins → `i32`; `>>>`/`>>>=` → `u32`; `~` → `i32`. The
+  satellite's consumer collapses `i32`/`u32`/`f64` into one f64 slot, which is
+  why the satellite may take a fact the MAIN map withholds behind
+  `JS2WASM_IR_I32_DOMAIN` (there an `i32` is an instruction-selection promise
+  Stage 3 has not shipped).
+
+**The rule is deliberately WIDER than the core's**, and this is the one piece of
+new soundness reasoning in the slice. The core demands `f64Compatible` on BOTH
+operands; the semantics need much less. `ApplyStringOrNumericBinaryOperator`
+takes `ToNumeric` of both operands and throws a TypeError if the two results
+differ in type, so **one provably-Number operand is sufficient**: the expression
+either throws (no value flows) or both were Numbers and the result is an
+Int32. `"abc" | 0`, `undefined | 0` and `({}) | 0` are all Int32s the core
+calls DYNAMIC. Three consequences worth stating once:
+
+- `string` and `bool` operands count as proof (`ToNumeric` of either is a
+  Number); `object` does **NOT**, because `ToPrimitive` runs user code and the
+  satellite's `object` atoms include instance shapes of constructors in the
+  module under analysis, which can define `Symbol.toPrimitive`. `unknown` is
+  lattice BOTTOM and is never evidence.
+- Two unproven operands stay DYNAMIC: both could be BigInts, and a BigInt
+  reaching an f64 field slot is the miscompile this guard exists to prevent.
+- `>>>` needs **no** guard at all — `BigInt::unsignedRightShift` throws
+  unconditionally, so the operator has no BigInt-producing form.
+
+### Measurements (acorn-standalone-compile, `-O3`, `JS2WASM_FNCTOR_FIELD_PROVENANCE=1 JS2WASM_FNCTOR_CTOR_PARAM_TYPES=1`)
+
+- **Census 55 typed / 1 discarded / 40 unknown — UNCHANGED. Zero slots moved**,
+  verified row-by-row (all 96 rows compared on `slot` and `verdict` against a
+  baseline run of the same probe on the unpatched base). Binary 874,370 B,
+  byte-count unchanged. Canaries 2,3,4,5; imports `[]`; exactly the 3
+  pre-existing parity IR-FALLBACKs (parse / parseExpressionAt / tokenizer).
+- **Flag-off byte-identity**: sha256 of the standalone acorn binary is
+  `f54ecf75af4f62227af4abb7e002224d243b1fd3e5253a081b85bd0620c463f5`
+  (874,280 B) — identical with the branch's sources and with the base's,
+  A/B'd by file copy in one worktree.
+- Wall A/B **not run** (pre-registered at ≥5 movers; 0 moved).
+
+### Why 0 — measured per lever on the dist, not argued
+
+The locals spec's §7 named `Scope.flags` as the row this lever would move. It
+is the right row and the lever is not sufficient. Running the satellite over
+`tests/dogfood/.acorn/package/dist/acorn.mjs` and over edited copies — each
+edit *simulating* one candidate lever — and reading `Scope`'s ctor param fact:
+
+| variant | `Scope` param0 |
+| --- | --- |
+| A — as shipped, with this slice's producer rule | `dynamic` |
+| B — A + module-level numeric consts (`SCOPE_TOP = 1`, …) bound in scope | `dynamic` |
+| C — B + condition-agnostic conditionals | **`f64`** |
+| Z — upper bound: every `enterScope` argument replaced by a literal | `f64` |
+
+C reaching the same answer as the Z upper bound is the load-bearing part:
+nothing beyond those three rules pins the slot. So `Scope.flags` needs
+**exactly three** evaluator rules and **any two of them move nothing**:
+
+1. **the bitwise producer rule** (this slice) — it is what makes
+   `functionFlags(…) | SCOPE_SUPER | (allowDirectSuper ? … : 0)` and
+   `SCOPE_CLASS_FIELD_INIT | SCOPE_SUPER` numeric, and what carries
+   `functionFlags`' own body (`SCOPE_FUNCTION | (async ? SCOPE_ASYNC : 0) | …`,
+   left-associative, so the literal on the far left proves the whole chain);
+2. **module-level numeric constants in scope** — acorn calls
+   `this.enterScope(SCOPE_SWITCH)` with a bare module `var`, and the satellite's
+   scope is params-only, so `scope.get(name)` answers DYNAMIC;
+3. **condition-agnostic conditionals** — 2 of the 8 `enterScope` sites are
+   `cond ? A : B` with a DYNAMIC `cond`. The core bails on
+   `!boolCompatible(cond)`, but **ToBoolean is total and never throws, so the
+   condition's type cannot affect the RESULT type**: `join(whenTrue, whenFalse)`
+   is correct whatever the condition is. This one is a strict soundness
+   *improvement* over the existing guard, not a relaxation of it.
+
+That table is the actionable output of this slice. It is also a correction to
+the spec's §8 pricing: lever 1 was costed at "1–2 slots" standalone, and
+standalone it is worth 0 — the `Scope.flags` chain was priced without checking
+what the other seven `enterScope` arguments evaluate to.
+
+### Gates / suites
+
+`tsc` 0 · biome lint 0 · prettier 0 · oracle-ratchet 0 · loc-budget 0 (grant:
+propagate.ts +34) · func-budget 0 · dead-exports 0 · coercion-sites 0 ·
+stack-balance 0 · check:ir-fallbacks 0. Suites: new
+`tests/issue-743-i32-producers.test.ts` 27/27 (per-operator arms, the BigInt
+guard incl. the `object`-is-not-proof negative, 8 nesting-depth fixtures for the
+threading failure mode, main-map inertness, and an E2E where a bitwise-only slot
+goes `externref` → `f64` with identical runtime behaviour); `issue-743-*` 50/50;
+`issue-4155-fnctor-field-provenance` 8/8.
+
+**Flag verdict: `JS2WASM_FNCTOR_CTOR_PARAM_TYPES` STAYS OFF.**
+
+## 2026-08-07 — levers 2 and 3 IMPLEMENTED: the three-rule prediction holds, `Scope.flags` flips, census 55/1/40 → 56/1/39
+
+Same branch (`claude/issue-743-i32-producer`), continuing the slice above. The
+producer rule's probe predicted that `Scope.flags` needs **exactly three**
+evaluator rules and that any two move nothing; this slice implements the other
+two and the prediction is confirmed to the slot, with real guards rather than
+the probe's edited-source simulation.
+
+### What shipped
+
+- **`src/ir/fnctor-module-consts.ts` — lever 2, module-level numeric constants.**
+  Resolves a top-level `var`/`let`/`const` to `f64` when it can prove the
+  binding only ever holds a Number. **Three obligations, none optional**, and the
+  third is the one that is easy to miss:
+  1. **VALUE** — the initializer is a constant numeric expression built from
+     numeric literals, `- + ~`, the numeric binary operators and *previously
+     accepted* constants (so acorn's `SCOPE_VAR = SCOPE_TOP | SCOPE_FUNCTION | …`
+     resolves and a forward reference does not). Deliberately **not** "the
+     checker says `number`": in an untyped `.mjs` that is an inference over code
+     TypeScript never type-checks, and a later `X = "s"` is a silent error rather
+     than a widened type. `BigIntLiteral` falls through and is refused.
+  2. **STABILITY** — one write ANYWHERE in the module poisons, including
+     compound assignment, `++`/`--`, `for…of` targets and destructuring targets
+     (`[X] = a`, `({X} = o)`, `({p: X} = o)`). `with` and direct `eval` anywhere
+     poison every constant in the module: both can name a binding without
+     leaving an identifier occurrence for the write scan to see. A **script**
+     (non-module) is refused outright — its top-level `var` is a writable
+     global-object property, reachable as `globalThis.X` with no identifier
+     occurrence at all. That module-only restriction is the same one
+     `directTopLevelDeclaration` (`src/ir/module-bindings.ts`, #2949) already
+     applies to fix a unique top-level `var` to one scalar slot.
+  3. **INITIALISEDNESS** — no read may observe the binding's hoisted
+     `undefined`. `var X = 1` holds `undefined` from module instantiation until
+     its own statement runs, and an `f64` fact for a read in that window turns
+     `undefined` into NaN at a coercing store. **This is not a residual we
+     accepted; it is proved per binding**, and the satellite is already on
+     record refusing exactly this hazard elsewhere — `readFieldFact` answers
+     DYNAMIC for a field outside its definiteness snapshot with the same
+     one-line justification.
+  Resolution is by **symbol**, never by name: a parameter or local that shadows
+  a module constant keeps its own (more precise) fact. The name set is only a
+  pre-filter in front of the checker call.
+- **The conditional-join rule** (`src/ir/fnctor-eval-extensions.ts`) — lever 3,
+  and the single factory that composes all three rules onto the one
+  `InferExtension` the core accepts. The three answer on disjoint node kinds
+  (binary/`~` · identifier · conditional), so composition order is not a
+  semantic choice.
+
+### Obligation 3's machinery, and why the obvious shortcut costs the whole lever
+
+The init-order bound rests on one hard JavaScript guarantee — **a function
+cannot be invoked before the code that creates its closure has run** — plus one
+consequence: a method installed by `pp.enterScope = function (…) {…}` at
+statement 610 does not exist at statement 100, so no receiver can dispatch to it
+there. That is why property dispatch, which this analysis does not model at all,
+cannot break the bound.
+
+HOISTED top-level function declarations are the one shape with no creation
+bound. Their bound comes from their **references** instead — a hoisted function
+runs only if something names it, and every name sits in a context with a bound
+of its own; the equations are solved by a greatest fixpoint (initialise to
+"never runs during init", relax downward), which correctly answers "never" for a
+mutually-recursive group nothing else references. Costing a hoisted declaration
+at 0 instead — the obvious conservative shortcut — rejects acorn's
+`functionFlags` (`SCOPE_FUNCTION | (async ? SCOPE_ASYNC : 0) | …`), and with it
+`SCOPE_FUNCTION`/`SCOPE_ASYNC`/`SCOPE_GENERATOR`, and with those the entire
+lever: the producer rule then has no proven operand anywhere in that chain.
+Both directions are pinned by test.
+
+Two escapes are handled bluntly because they are rare and unbounded: `with` /
+direct `eval` (above), and a **cyclic import**, which can call an exported
+function before this module's top level has run — so with any `import` present
+every hoisted declaration drops to 0 and the bound propagates outward through
+the same equations.
+
+### Lever 3's soundness — ToBoolean TOTALITY (read this before "restoring" the guard)
+
+The core answers DYNAMIC whenever `!boolCompatible(cond)`, and `boolCompatible`
+is `bool || unknown` — so even `1 ? 2 : 3` was DYNAMIC. **That guard is
+over-conservative, not soundness-required.** `A ? B : C` evaluates the
+condition, applies `ToBoolean`, and then evaluates exactly one branch, so the
+value is B's or C's and `join(B, C)` covers both. `ToBoolean` is a **total**
+function defined by a table over the whole type domain (Undefined/Null → false,
+Boolean → itself, Number/BigInt → zero-or-NaN, String → emptiness, Symbol →
+true, Object → true). It has no abrupt-completion path and it invokes **no user
+code** — in particular it does not go through `ToPrimitive`, so no `valueOf` /
+`Symbol.toPrimitive` can run and no third value can be produced. There is
+therefore no assignment of a type to the condition under which the RESULT type
+could differ from `join(B, C)`. (If the condition itself throws, no value flows
+and any fact is vacuously sound — the same reasoning the previous slice's BigInt
+guard uses.)
+
+The rule is a strict **refinement**: where the core's guard passes it already
+computes exactly this join; where it fails it answers DYNAMIC, which is above
+the join in the lattice. It can only lower a fact, never raise one. The rationale
+is stated at length on the function itself so the next reader does not "fix" it
+back.
+
+### Measurements (acorn-standalone-compile, `-O3`, `JS2WASM_FNCTOR_FIELD_PROVENANCE=1 JS2WASM_FNCTOR_CTOR_PARAM_TYPES=1`)
+
+Per-slot movement, all 96 rows compared on `slot` and `verdict` against a
+baseline run of the same probe on this branch's tip before the slice:
+
+| slot           | before               | after           |
+| -------------- | -------------------- | --------------- |
+| `Scope.flags`  | `externref`/`unknown` | `f64`/`typed`  |
+| (95 others)    | unchanged             | unchanged      |
+
+- **Census 55 typed / 1 discarded / 40 unknown → 56 / 1 / 39.** Exactly the
+  predicted slot, and only it. Nothing predicted failed to move: the producer
+  slice named `Scope.flags` alone, and the remaining 39 are the buckets the
+  method-edges slice characterised (≈14 `this`-field-read arguments, ≈5 non-f64
+  atoms the f64-only consumer excludes, ≈19 genuinely dynamic) — all of which
+  need *different* levers, not more evaluator precision.
+- Binary 937,274 B → **937,301 B** (+27 B). Canaries 2,3,4,5; imports `[]`;
+  exactly the 3 pre-existing parity IR-FALLBACKs (parse / parseExpressionAt /
+  tokenizer), unchanged from baseline.
+- **Flag-off byte-identity**: sha256
+  `fc51f61f426ade114fb1a00c03e3a5d591ab4a23ff21de4f375641e5b667d946`
+  (923,976 B), measured on the pinned acorn dist with the branch's satellite
+  sources and again with **origin/main's** — identical. A/B'd by file copy in
+  one worktree, so the claim covers the whole branch (both slices), not just
+  this one.
+- Wall A/B **not run** (pre-registered at ≥5 movers; 1 moved).
+
+### Per-lever attribution — the three-rule claim, re-measured against the real implementation
+
+Reading `Scope`'s ctor param-0 fact over the real acorn dist, dropping one rule
+at a time from the composition:
+
+| composition                          | `Scope` param0 |
+| ------------------------------------ | -------------- |
+| levers 1 + 2 + 3 (shipped)           | **`f64`**      |
+| levers 1 + 3 (no module constants)   | `dynamic`      |
+| levers 1 + 2 (no conditional join)   | `dynamic`      |
+
+This reproduces the producer slice's A/B/C probe table with guarded rules rather
+than edited sources — including the guards, which is the part the simulation
+could not test. It also completes the correction to the locals spec's §8
+pricing: lever 1 alone was worth 0, and all three together are worth **1 slot**,
+the bottom of the "1–2" the spec estimated for lever 1 by itself.
+
+### Gates / suites
+
+`tsc` 0 · biome lint 0 · prettier 0 · oracle-ratchet 0 · loc-budget 0 (no new
+grant — both rules are new satellite modules; `propagate.ts` is untouched by
+this slice) · func-budget 0 · dead-exports 0 · coercion-sites 0 · stack-balance 0
+· check:ir-fallbacks 0. Suites: new `tests/issue-743-eval-extensions.test.ts`
+32/32 (one negative per obligation, both directions of the hoisted-reader bound,
+the shadowing-parameter case, the `object`-is-not-proof boundary re-pinned under
+the new rules, and an E2E whose slot needs BOTH new rules and no bitwise
+operator at all); `issue-743-*` + `issue-4155-*` + `issue-2660-*` +
+`ir-propagate-i32*` + `ir-frontend-widening` **300/300**.
+
+**Flag verdict: `JS2WASM_FNCTOR_CTOR_PARAM_TYPES` STILL STAYS OFF.** One slot on
+the dogfood corpus is a working lever, not a consumer. The bucket's remaining
+levers are unchanged in rank: (1) ref/string-typed slot consumption for the ≈5
+atoms the graph already proves, (2) `this`-field-read arguments beyond what the
+mutual fixpoint reaches. Neither is an evaluator-precision question, which is
+what this slice and the one above it have now exhausted.
