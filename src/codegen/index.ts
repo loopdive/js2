@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts, forEachChild } from "../ts-api.js";
+import { registerAnnexBGlobalLiveBindings } from "./annexb-global-live-binding.js";
 import { emitToBoolean } from "./coercion-engine.js";
 import { emitWasiErrorConstructor, fillExternGetErrorProps } from "./registry/error-types.js";
 import { analyzeLinearUint8 } from "./linear-uint8-analysis.js";
@@ -10,6 +11,7 @@ import { isLinearU8RepresentableNew } from "./linear-uint8-signatures.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 import { fillHostFnctorMethodDrivers, maxHostFnctorMethodArity } from "./host-fnctor-method-driver.js";
 import { fillNativeConstructDrivers, maxReservedNativeConstructArity } from "./native-construct.js";
+import { fillConstructBoundDriver } from "./construct-bound.js"; // (#4196)
 import { emitVecDefineWritebackExports } from "./vec-define-writeback.js"; // (#3116)
 import { detectArrayReduceFusion } from "./array-reduce-fusion.js";
 import type { MultiTypedAST, TypedAST } from "../checker/index.js";
@@ -3887,6 +3889,11 @@ export function generateModule(
     // No-op unless a function declaration is reassigned.
     registerReassignedFunctionGlobals(ctx, [ast.sourceFile]);
 
+    // (#4182) Back module-scope Annex B B.3.3.2 block-nested function names
+    // with live-binding globals. No-op unless the (sloppy, script-mode) source
+    // has a top-level block/`if`/`switch`-nested `function` declaration.
+    registerAnnexBGlobalLiveBindings(ctx, [ast.sourceFile]);
+
     // (#3523 R4/C1) Build the semantic top-level plan independently from the
     // direct front-end's three mutable queues. This first landing observes and
     // reports parity only; body routing remains unchanged until R3 ownership
@@ -4324,6 +4331,8 @@ export function generateModule(
     // one (every JS-host module, and any standalone module with no
     // `new <function value>` site).
     fillNativeConstructDrivers(ctx);
+
+    fillConstructBoundDriver(ctx); // (#4196) §10.4.1.2 [[Construct]] through $__bound_fn
 
     // (#1719 CPR read-drive) Fill the reserved `__drive_proto_iterator` driver
     // body now that `__call_fn_method_0` is registered. No-op when no read-drive
@@ -6435,6 +6444,10 @@ export function generateMultiModule(
     // (#2930) copies the live global too. No-op unless a function is reassigned.
     registerReassignedFunctionGlobals(ctx, multiAst.sourceFiles);
 
+    // (#4182) Module-scope Annex B B.3.3.2 live bindings (see the single-source
+    // site above). Runs before aliasing/bodies for the same reason as #2931.
+    registerAnnexBGlobalLiveBindings(ctx, multiAst.sourceFiles);
+
     // (#2930) Register import-binding aliases (default / renamed / anonymous-default
     // imports whose LOCAL name differs from the imported target's declaration name)
     // so their reads and calls resolve to the target instead of the graceful-null
@@ -6774,6 +6787,7 @@ export function generateMultiModule(
       const constructArity = maxReservedNativeConstructArity(ctx);
       for (let n = 0; n <= constructArity; n++) emitClosureMethodCallExportN(ctx, n);
       fillNativeConstructDrivers(ctx);
+      fillConstructBoundDriver(ctx); // (#4196) same stub hazard; degrades to null
     }
 
     // (#1716) Emit __call_@@toPrimitive(self, hint) for runtime ToPrimitive

@@ -26,6 +26,7 @@ import { popBody, pushBody } from "./context/bodies.js";
 import { resolveWidenedVarKey, integrityVarKey } from "./widened-var-key.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
+import { emitOverlayRoutedElementGet, overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4159 S3)
 import { snapshotSpeculative, rollbackSpeculative } from "./context/speculative.js";
 import { emitDynGet, widenBooleanDynamicAccess } from "./dyn-read.js"; // (#2580 M2 slice 1) (#2984)
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -5277,6 +5278,25 @@ export function compileElementAccessBody(
     // i32) correctly; defers packed-number / other i32 / externref. Computed even
     // when `oobUndefined` is false (cheap).
     const f1BoxType = f1ElementBoxType(ctx, expr, arrDef.element);
+    // (#4159 S3) Overlay-aware routed READ — rationale, exclusions and the
+    // byte-identity argument live in typed-lane-overlay-route.ts. Deliberately
+    // NOT exempting `isSafeBoundsEliminated` (architect spec).
+    if (
+      overlayRouteActive(ctx) &&
+      !isRegexMatchVec &&
+      taClass === "other" &&
+      !isArgumentsRootedExpression(fctx, expr.expression)
+    ) {
+      const routed = emitOverlayRoutedElementGet(
+        ctx,
+        fctx,
+        expr.argumentExpression,
+        isNumericIndexExpression(ctx, expr.argumentExpression, fctx),
+        numericHint,
+        (e, h) => compileExpression(ctx, fctx, e, h),
+      );
+      if (routed) return routed;
+    }
     // (#2773 S7) Bound the unproven read by the vec's LOGICAL length (field 0),
     // not the backing-array capacity. A grow (`a[idx]=v` / `a.push`) over-allocates
     // (capacity = max(idx+1, cap*2, 4)), and `a.pop()` decrements only the length —

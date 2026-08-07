@@ -1919,6 +1919,41 @@ export function coerceType(
         return;
       }
     }
+    // (#4178) Unboxing: ref $AnyValue → ref_null $X. The three SIBLING arms
+    // (`ref_null→ref_null` above, `ref_null→ref` and `ref→ref` below) all carry
+    // this case; this one did NOT, so a non-null `$AnyValue` flowing into a
+    // NULLABLE target fell through to the generic guarded `ref.cast` below —
+    // which tests the BOX against the target type, always fails, and stores
+    // `ref.null`. `compileAnyBinaryDispatch` returns exactly `{kind:"ref",
+    // typeIdx:$AnyValue}`, so every `any`-operand `+`/`-`/`*` result assigned to
+    // a nullable native-string (or any other) slot became null — the value is
+    // then dereferenced by the next `__str_concat`/`.length` and TRAPS
+    // ("dereferencing a null pointer"). That is the whole of the
+    // `coercion/arithmetic-add` any-concat family and of the mixed-type-ternary
+    // `"" + v` report in #4178. Mirrors the `ref_null → ref` arm verbatim except
+    // for `nonNull: false` (the target is nullable here).
+    if (isAnyValue(from, ctx) && !isAnyValue(to, ctx)) {
+      ensureAnyHelpers(ctx);
+      const toUnboxIdx = (to as { typeIdx: number }).typeIdx;
+      // A native string lives in `externval` (field 4), NOT `refval` (field 3) —
+      // the same #1988 split the sibling arms document.
+      const isNativeStrTargetHere =
+        ctx.nativeStrings &&
+        (toUnboxIdx === ctx.anyStrTypeIdx || (ctx.nativeStrTypeIdx >= 0 && toUnboxIdx === ctx.nativeStrTypeIdx));
+      if (isNativeStrTargetHere) {
+        fctx.body.push({ op: "struct.get", typeIdx: ctx.anyValueTypeIdx, fieldIdx: 4 }); // externval
+        fctx.body.push({ op: "any.convert_extern" });
+        fctx.body.push(
+          ...guardedRefCastInstrs(fctx, toUnboxIdx, { tempType: { kind: "anyref" } as ValType, nonNull: false }),
+        );
+        return;
+      }
+      fctx.body.push({ op: "struct.get", typeIdx: ctx.anyValueTypeIdx, fieldIdx: 3 }); // refval
+      fctx.body.push(
+        ...guardedRefCastInstrs(fctx, toUnboxIdx, { tempType: { kind: "eqref" } as ValType, nonNull: false }),
+      );
+      return;
+    }
     // ref $X is a subtype of ref_null $X for same typeIdx — no coercion needed.
     // For different typeIdx, cast to target type (handles subtypes/related structs).
     const fromRefIdx = (from as { typeIdx: number }).typeIdx;
