@@ -35,7 +35,7 @@ import {
 } from "./closures.js";
 import { nativeTypeFromTypeNode, nativeTypeOfDeclaration } from "./native-type-annotations.js";
 import { addFunctionOwnLocals } from "./binding-info.js"; // (#2103) memoized own-locals oracle
-import { reportError } from "./context/errors.js";
+import { dedupeDiagnosticsFrom, reportError } from "./context/errors.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
 import { compileFunctionBody, dumpFrameBreach, registerInlinableFunction } from "./function-body.js";
 import { _hasRuntimeComputedKey } from "./literals.js"; // (#3024) module-global externref routing for runtime-computed-key literals
@@ -2534,6 +2534,12 @@ export function compileDeclarations(
     ctx.nonExtensibleVars = new Set(propOrderStateSnapshot.nonExtensibleVars);
   }
 
+  // (#4195) Both module-init passes record into `ctx.errors`, so every
+  // top-level diagnostic was reported twice. Reconciled after pass 2 by
+  // `dedupeDiagnosticsFrom` — see its doc-comment for why that collapses
+  // duplicates rather than truncating pass 1's range.
+  let pass1DiagnosticMark = 0;
+
   function compileModuleInitBody(): FunctionContext {
     const initFctx: FunctionContext = {
       name: "__module_init",
@@ -2624,6 +2630,7 @@ export function compileDeclarations(
   // the same complete statement list.
   if ((hasModuleInits || hasStaticInits) && moduleInitMode !== "skip") {
     profileCount("module-init-statements", ctx.moduleInitStatements.length);
+    pass1DiagnosticMark = ctx.errors.length; // (#4195) see dedupeDiagnosticsFrom
     compiledInitFctx = profilePhase("module-init-pass1", () => compileModuleInitBody());
     // Expose the pending init body so fixupModuleGlobalIndices can adjust it
     // when addStringConstantGlobal is called during function body compilation.
@@ -2757,6 +2764,7 @@ export function compileDeclarations(
     restorePropOrderState();
     compiledInitFctx = profilePhase("module-init-pass2", () => compileModuleInitBody());
     ctx.pendingInitBody = compiledInitFctx.body;
+    dedupeDiagnosticsFrom(ctx, pass1DiagnosticMark); // (#4195) after pass 2, never before
   }
 
   // Clear pendingInitBody before injection (it lands in mod.functions after this)
