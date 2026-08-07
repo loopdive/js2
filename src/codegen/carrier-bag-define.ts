@@ -56,6 +56,7 @@
  */
 import type { Instr } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { ERROR_BAG_ENSURE, ERROR_BAG_LOOKUP, IS_ERROR_PROP_CARRIER } from "./error-props.js"; // (#4210)
 
 /** Reserved helper names owned by `closure-props.ts` (#3468). */
 const IS_CLOSURE_PROP_CARRIER = "__is_closure_prop_carrier";
@@ -112,6 +113,130 @@ export function closureBagSubstitutionArm(
     { op: "local.get", index: opts.bagLocalIdx },
     { op: "any.convert_extern" },
     { op: "local.set", index: opts.anyLocalIdx },
+  ];
+}
+
+/**
+ * (#4210) The Error twin of {@link closureBagSubstitutionArm}. Same
+ * SUBSTITUTION mechanism, but the bag is `$Error_struct.$props` (fieldIdx 5) —
+ * the slot the receiver already owns, so `Object.defineProperty(err, k, d)`
+ * and `err.k = v` land in ONE store and gOPD cannot disagree with the read.
+ *
+ * `__error_bag_ensure` self-tests the receiver and answers null (without
+ * allocating) for anything that is not an `$Error_struct`, so no separate
+ * predicate call is needed here. Chain it AHEAD of the closure arm by passing
+ * that arm as `fallback`.
+ */
+export function errorBagSubstitutionArm(
+  ctx: CodegenContext,
+  opts: { recvLocalIdx: number; anyLocalIdx: number; bagLocalIdx: number; fallback: Instr[] },
+): Instr[] | undefined {
+  const ensureIdx = ctx.funcMap.get(ERROR_BAG_ENSURE);
+  if (ensureIdx === undefined) return undefined;
+  return [
+    { op: "local.get", index: opts.recvLocalIdx },
+    { op: "call", funcIdx: ensureIdx },
+    { op: "local.tee", index: opts.bagLocalIdx },
+    { op: "ref.is_null" },
+    { op: "if", blockType: { kind: "empty" }, then: opts.fallback },
+    { op: "local.get", index: opts.bagLocalIdx },
+    { op: "any.convert_extern" },
+    { op: "local.set", index: opts.anyLocalIdx },
+  ];
+}
+
+/**
+ * (#4210) The Error twin of {@link closurePropertiesBagArm} — an Error used as
+ * the `Properties` MAP of `Object.defineProperties(O, errObj)`. LOOKUP, never
+ * ensure (this is a read).
+ *
+ * Sound for the same reason the closure case is: with the write + define arms
+ * above, the bag is the complete own-**enumerable**-named-property store of an
+ * Error. The builtin surface it does not hold — `message`, `name`, `stack` —
+ * is non-enumerable, so §20.1.2.3.1's key walk must skip it anyway, and an
+ * Error with no bag has no own enumerable keys at all, making the empty walk
+ * the complete spec answer rather than a degraded one.
+ */
+export function errorPropertiesBagArm(
+  ctx: CodegenContext,
+  opts: {
+    propsLocalIdx: number;
+    descsAnyLocalIdx: number;
+    bagLocalIdx: number;
+    emptyMapFallback: Instr[];
+    nonErrorFallback: Instr[];
+  },
+): Instr[] | undefined {
+  const isErrorIdx = ctx.funcMap.get(IS_ERROR_PROP_CARRIER);
+  const lookupIdx = ctx.funcMap.get(ERROR_BAG_LOOKUP);
+  if (isErrorIdx === undefined || lookupIdx === undefined) return undefined;
+  return [
+    { op: "local.get", index: opts.propsLocalIdx },
+    { op: "call", funcIdx: isErrorIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: opts.propsLocalIdx },
+        { op: "call", funcIdx: lookupIdx },
+        { op: "local.tee", index: opts.bagLocalIdx },
+        { op: "ref.is_null" },
+        { op: "if", blockType: { kind: "empty" }, then: opts.emptyMapFallback },
+        { op: "local.get", index: opts.bagLocalIdx },
+        { op: "any.convert_extern" },
+        { op: "local.set", index: opts.descsAnyLocalIdx },
+      ],
+      else: opts.nonErrorFallback,
+    },
+  ];
+}
+
+/**
+ * (#4210) The applier's FULL non-`$Object` carrier arm: Error first, the
+ * closure arm as its fallback, the applier's lenient no-op under both. One
+ * bag local serves both — they are mutually exclusive and each tees it before
+ * reading it. `undefined` only when NEITHER substrate exists (gc/host), which
+ * is the signal to emit the pre-#4161 body and local vector unchanged.
+ */
+export function carrierBagSubstitutionArm(
+  ctx: CodegenContext,
+  opts: { recvLocalIdx: number; anyLocalIdx: number; bagLocalIdx: number; fallback: Instr[] },
+): Instr[] | undefined {
+  const closureArm = closureBagSubstitutionArm(ctx, opts);
+  return errorBagSubstitutionArm(ctx, { ...opts, fallback: closureArm ?? opts.fallback }) ?? closureArm;
+}
+
+/**
+ * (#4210) The FULL non-`$Object` `Properties`-map arm: Error first, closure as
+ * its fallback, the caller's refusal under both. `undefined` only when NEITHER
+ * substrate exists.
+ */
+export function carrierPropertiesBagArm(
+  ctx: CodegenContext,
+  opts: {
+    propsLocalIdx: number;
+    descsAnyLocalIdx: number;
+    bagLocalIdx: number;
+    emptyMapFallback: Instr[];
+    refusal: () => Instr[];
+  },
+): Instr[] | undefined {
+  const closureArm = closurePropertiesBagArm(ctx, { ...opts, nonClosureFallback: opts.refusal() });
+  return errorPropertiesBagArm(ctx, { ...opts, nonErrorFallback: closureArm ?? opts.refusal() }) ?? closureArm;
+}
+
+/**
+ * (#4210) Emit `[] -> [i32]`: is the value in `localIdx` an `$Error_struct`?
+ * Used by the `Object.defineProperties(O, …)` admission gate, which must let a
+ * receiver through exactly when some applier arm can store for it.
+ * `undefined` when the substrate is absent.
+ */
+export function isErrorCarrierInstrs(ctx: CodegenContext, localIdx: number): Instr[] | undefined {
+  const isErrorIdx = ctx.funcMap.get(IS_ERROR_PROP_CARRIER);
+  if (isErrorIdx === undefined) return undefined;
+  return [
+    { op: "local.get", index: localIdx },
+    { op: "call", funcIdx: isErrorIdx },
   ];
 }
 

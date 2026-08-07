@@ -42,7 +42,12 @@ import { buildObjectIntegrityMutationHelpers } from "./object-runtime-integrity.
 import { bagGopdBetween, bagKeysIf } from "./carrier-bag-visibility.js"; // (#4010 S3) visibility over the bags
 // (#4161) DEFINE-side closure-bag arms — Object.defineProperty/defineProperties
 // on a FUNCTION receiver store into the #3468 own-property bag.
-import { closureBagSubstitutionArm, closurePropertiesBagArm, isClosureCarrierInstrs } from "./carrier-bag-define.js";
+import {
+  carrierBagSubstitutionArm,
+  carrierPropertiesBagArm,
+  isClosureCarrierInstrs,
+  isErrorCarrierInstrs,
+} from "./carrier-bag-define.js";
 
 /**
  * Everything the descriptor/integrity block reads from the enclosing
@@ -370,11 +375,11 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       },
     ];
 
-    // (#4161) Closure-receiver bag substitution; bag local APPENDED at index 13
-    // (standalone/wasi only — `undefined` in gc/host keeps the body and local
-    // vector byte-identical). Runs AFTER the vec overlay (#3251 owns vec
-    // receivers) and carries the lenient no-op as its bag-absent fallback.
-    const dpValueClosureArm = closureBagSubstitutionArm(ctx, {
+    // (#4161 closure / #4210 Error) receiver bag substitution; bag local
+    // APPENDED at index 13 (standalone/wasi only — `undefined` in gc/host keeps
+    // the body and local vector byte-identical). Runs AFTER the vec overlay
+    // (#3251 owns vec receivers) and carries the lenient no-op as its fallback.
+    const dpValueCarrierArm = carrierBagSubstitutionArm(ctx, {
       recvLocalIdx: 0,
       anyLocalIdx: 5,
       bagLocalIdx: 13,
@@ -400,7 +405,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
         blockType: { kind: "empty" },
         then: [
           ...vecOverlayArm(5, vecOverlay?.dpValueIdx ?? -1, 4),
-          ...(dpValueClosureArm ?? [{ op: "local.get", index: 0 }, { op: "return" }]),
+          ...(dpValueCarrierArm ?? [{ op: "local.get", index: 0 }, { op: "return" }]),
         ],
       },
       // o = cast<$Object>(any)
@@ -609,8 +614,8 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
         { name: "seq", type: { kind: "i32" } },
         { name: "e", type: entryRefNull }, // #2042 S4 — existing entry (local 11)
         { name: "efl", type: { kind: "i32" } }, // #2042 S4 — existing flags (local 12)
-        // (#4161) closure own-property bag (local 13) — standalone/wasi only.
-        ...(dpValueClosureArm
+        // (#4161/#4210) carrier own-property bag (local 13) — standalone/wasi only.
+        ...(dpValueCarrierArm
           ? ([{ name: "bag", type: { kind: "externref" } }] as { name: string; type: ValType }[])
           : []),
       ],
@@ -699,9 +704,9 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       { op: "i32.const", value: 0 },
       { op: "i32.ne" },
     ];
-    // (#4161) Closure-receiver bag substitution; bag local APPENDED at index 16
-    // (standalone/wasi only) — same shape as the `__defineProperty_value` arm.
-    const dpAccessorClosureArm = closureBagSubstitutionArm(ctx, {
+    // (#4161/#4210) receiver bag substitution; bag local APPENDED at index 16
+    // — same shape as the `__defineProperty_value` arm.
+    const dpAccessorCarrierArm = carrierBagSubstitutionArm(ctx, {
       recvLocalIdx: 0,
       anyLocalIdx: 6,
       bagLocalIdx: 16,
@@ -724,7 +729,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
           // The closure arm carries the lenient-no-op return as its own
           // bag-absent fallback and otherwise FALLS THROUGH to the `$Object`
           // path — so it must not be followed by an unconditional return.
-          ...(dpAccessorClosureArm ?? [{ op: "local.get", index: 0 }, { op: "return" }]),
+          ...(dpAccessorCarrierArm ?? [{ op: "local.get", index: 0 }, { op: "return" }]),
         ],
       },
       // o = cast<$Object>(any)
@@ -1059,8 +1064,8 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
         { name: "efl", type: { kind: "i32" } },
         { name: "getSpec", type: { kind: "i32" } },
         { name: "setSpec", type: { kind: "i32" } },
-        // (#4161) closure own-property bag (local 16) — standalone/wasi only.
-        ...(dpAccessorClosureArm
+        // (#4161/#4210) carrier own-property bag (local 16) — standalone/wasi only.
+        ...(dpAccessorCarrierArm
           ? ([{ name: "bag", type: { kind: "externref" } }] as { name: string; type: ValType }[])
           : []),
       ],
@@ -1171,15 +1176,15 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     const throwPropertiesNotCoercible = (): Instr[] =>
       throwTypeError("TypeError: Cannot convert undefined or null to object");
 
-    // (#4161) closure `Properties` bag substitution (LOOKUP, never ensure).
-    // `undefined` when the #3468 substrate is absent — the gate then keeps its
-    // pre-existing refusal and the local vector stays byte-identical.
-    const propsClosureArm = closurePropertiesBagArm(ctx, {
+    // (#4161 closure / #4210 Error) `Properties` bag substitution (LOOKUP,
+    // never ensure). `undefined` when both substrates are absent — the gate
+    // then keeps its refusal and the local vector stays byte-identical.
+    const propsCarrierArm = carrierPropertiesBagArm(ctx, {
       propsLocalIdx: 1,
       descsAnyLocalIdx: L_DESCS_ANY,
       bagLocalIdx: L_BAG,
       emptyMapFallback: [{ op: "local.get", index: 0 }, { op: "return" }],
-      nonClosureFallback: throwUnsupported(" [SITE-PROPS-BAG-NOT-AUTHORITATIVE]"),
+      refusal: () => throwUnsupported(" [SITE-PROPS-BAG-NOT-AUTHORITATIVE]"),
     });
 
     const readBooleanFlag = (key: string, specifiedBit: number, valueBit: number, marksData: boolean): Instr[] => [
@@ -1355,7 +1360,12 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
           // the appliers' terminal arm for a carrier-less receiver is a LENIENT
           // NO-OP, and letting one through would trade a loud refusal for a
           // silent wrong answer.
-          ...(isVecCarrierIdx === undefined && isClosureCarrierInstrs(ctx, 0) === undefined
+          // (#4210) The Error carrier joins the admitted set — the appliers
+          // now have an Error arm, so refusing here would reject a receiver
+          // they can store for.
+          ...(isVecCarrierIdx === undefined &&
+          isClosureCarrierInstrs(ctx, 0) === undefined &&
+          isErrorCarrierInstrs(ctx, 0) === undefined
             ? throwUnsupported(" [SITE-O-NO-CARRIER]")
             : ([
                 ...(isVecCarrierIdx === undefined
@@ -1365,6 +1375,8 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
                       { op: "call", funcIdx: isVecCarrierIdx },
                     ] satisfies Instr[])),
                 ...(isClosureCarrierInstrs(ctx, 0) ?? ([{ op: "i32.const", value: 0 }] satisfies Instr[])),
+                { op: "i32.or" },
+                ...(isErrorCarrierInstrs(ctx, 0) ?? ([{ op: "i32.const", value: 0 }] satisfies Instr[])),
                 { op: "i32.or" },
                 { op: "i32.eqz" },
                 {
@@ -1516,10 +1528,10 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
           //     (`tests/issue-3957.test.ts`'s Array invariant case catches
           //     it). That arm becomes sound the moment ONE store is
           //     authoritative for a vec's own properties (#4010).
-          ...(propsClosureArm === undefined
+          ...(propsCarrierArm === undefined
             ? throwUnsupported(" [SITE-PROPS-BAG-NOT-AUTHORITATIVE]")
             : ([
-                ...propsClosureArm,
+                ...propsCarrierArm,
                 // Reached only on the substituted-bag path (the other arms
                 // return/throw): mirror the `$Object` branch's cast so the key
                 // walk below reads a non-null L_DESCS.
@@ -1801,8 +1813,10 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
         { name: "value", type: { kind: "externref" } },
         { name: "getter", type: { kind: "externref" } },
         { name: "setter", type: { kind: "externref" } },
-        // (#4161) closure Properties bag (local 22) — standalone/wasi only.
-        ...(propsClosureArm
+        // (#4161/#4210) closure- or Error-`Properties` bag (local 22) —
+        // standalone/wasi only. One local serves both arms: they are mutually
+        // exclusive and each tees it before reading it.
+        ...(propsCarrierArm
           ? ([{ name: "bag", type: { kind: "externref" } }] as { name: string; type: ValType }[])
           : []),
       ],

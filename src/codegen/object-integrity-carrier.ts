@@ -62,6 +62,7 @@
 import type { Instr, ValType } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
+import { ERROR_BAG_ENSURE } from "./error-props.js"; // (#4210) Error arm of the bag resolver
 import { ensureLateImport } from "./expressions/late-imports.js";
 import { noJsHost } from "./js-errors.js";
 import { integrityVarKey } from "./widened-var-key.js";
@@ -94,6 +95,7 @@ export const OBJECT_INTEGRITY_OBJ_PREDICATES: readonly string[] = [
  * Register `__integrity_bag(externref v) -> externref`:
  *   vec carrier     → `__vec_bag_ensure(v)`
  *   closure carrier → `__closure_bag_ensure(v)`
+ *   Error carrier   → `__error_bag_ensure(v)`   (#4210)
  *   otherwise       → `ref.null.extern`
  *
  * Returns `undefined` when the bag substrates are absent (host mode), which is
@@ -104,6 +106,9 @@ export function registerIntegrityBagResolver(ctx: CodegenContext, registerNative
   const vecBagEnsureIdx = ctx.funcMap.get("__vec_bag_ensure");
   const isClosureCarrierIdx = ctx.funcMap.get("__is_closure_prop_carrier");
   const closureBagEnsureIdx = ctx.funcMap.get("__closure_bag_ensure");
+  // (#4210) Optional — a module compiled before the Error helpers were
+  // reserved keeps the two-arm body exactly.
+  const errorBagEnsureIdx = ctx.funcMap.get(ERROR_BAG_ENSURE);
   if (
     isVecCarrierIdx === undefined ||
     vecBagEnsureIdx === undefined ||
@@ -116,7 +121,9 @@ export function registerIntegrityBagResolver(ctx: CodegenContext, registerNative
     INTEGRITY_BAG_HELPER,
     [{ kind: "externref" }],
     [{ kind: "externref" }],
-    [],
+    // (#4210) local 1 = the Error bag. Appended; the two pre-existing arms use
+    // no locals, so nothing renumbers.
+    errorBagEnsureIdx === undefined ? [] : [{ name: "errBag", type: { kind: "externref" } }],
     [
       { op: "local.get", index: 0 },
       { op: "call", funcIdx: isVecCarrierIdx },
@@ -132,6 +139,32 @@ export function registerIntegrityBagResolver(ctx: CodegenContext, registerNative
         blockType: { kind: "empty" },
         then: [{ op: "local.get", index: 0 }, { op: "call", funcIdx: closureBagEnsureIdx }, { op: "return" }],
       },
+      // (#4210) Error carrier → `$Error_struct.$props`. Same ENSURE rule and,
+      // critically, the SAME bag `__extern_set` now writes through — so
+      // `Object.preventExtensions(err); err.p = 1` is refused by the bag's own
+      // NON_EXTENSIBLE flag rather than by the write being dropped on the
+      // floor. Without this arm, giving Error a working write side would
+      // convert `built-ins/Object/preventExtensions/15.2.3.10-3-20.js` (and
+      // `-3-10.js`) from a vacuous pass into a real failure. It also corrects
+      // the pristine-direction reading these two had: measured on
+      // origin/main@5534c3e8e8, `Object.isExtensible(err)` answered FALSE for
+      // an any-typed Error; with a bag it answers true (fresh flags == 0).
+      // `__error_bag_ensure` answers null when the module has no
+      // `$Error_struct`, so the arm is a runtime no-op there.
+      ...(errorBagEnsureIdx === undefined
+        ? []
+        : ([
+            { op: "local.get", index: 0 },
+            { op: "call", funcIdx: errorBagEnsureIdx },
+            { op: "local.tee", index: 1 },
+            { op: "ref.is_null" },
+            { op: "i32.eqz" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [{ op: "local.get", index: 1 }, { op: "return" }],
+            },
+          ] satisfies Instr[])),
       { op: "ref.null.extern" },
     ],
   );

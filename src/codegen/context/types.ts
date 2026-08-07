@@ -1694,6 +1694,12 @@ export interface CodegenContext {
    */
   vecPropHelpersReserved?: boolean;
   /**
+   * (#4210) Set when `ensureObjectRuntime` reserved the Error own-property
+   * helpers — the ERROR arm of the #3468 family. Adds NO side table: the bag
+   * is `$Error_struct.$props`. See `error-props.ts`. Standalone/wasi only.
+   */
+  errorPropHelpersReserved?: boolean;
+  /**
    * (#3537) Type index of the `$VecPropEntry` linked-list node
    * `{ next: (ref null $VecPropEntry); key: eqref; bag: externref }`.
    */

@@ -66,6 +66,7 @@
  */
 import type { Instr } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { ERROR_BAG_LOOKUP, IS_ERROR_PROP_CARRIER } from "./error-props.js"; // (#4210) Error arm
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { buildInstanceTombstoneDeleteArm } from "./instance-tombstones.js"; // (#4098 G1 s1)
 import { addFuncType } from "./registry/types.js";
@@ -229,12 +230,23 @@ export function fillCarrierBagDelete(ctx: CodegenContext): void {
 
   const closureArm = lookupArm(ctx.funcMap.get(IS_CLOSURE_PROP_CARRIER), ctx.funcMap.get(CLOSURE_BAG_LOOKUP));
   const vecArm = lookupArm(ctx.funcMap.get(IS_VEC_PROP_CARRIER), ctx.funcMap.get(VEC_BAG_LOOKUP));
-  if (closureArm.length === 0 && vecArm.length === 0) return;
+  // (#4210) The Error arm. Without it, giving Error a working WRITE side would
+  // leave `delete err.p` claiming success while the property stayed — the exact
+  // shape this module's header calls "the worst shape a gate can have", and it
+  // would be NEW because before the write side there was never anything to
+  // delete. #4010's ordering law (visibility not before deletability) applies to
+  // this receiver kind too, so the two ship together.
+  const errorArm =
+    ctx.errorStructTypeIdx >= 0
+      ? lookupArm(ctx.funcMap.get(IS_ERROR_PROP_CARRIER), ctx.funcMap.get(ERROR_BAG_LOOKUP))
+      : [];
+  if (closureArm.length === 0 && vecArm.length === 0 && errorArm.length === 0) return;
 
   const notHandled: Instr[] = [{ op: "i32.const", value: -1 }, { op: "return" }];
   fn.body = [
     ...closureArm,
     ...vecArm,
+    ...errorArm,
     { op: "local.get", index: BAG },
     { op: "ref.is_null" },
     { op: "if", blockType: { kind: "empty" }, then: notHandled.map((i) => ({ ...i })) },

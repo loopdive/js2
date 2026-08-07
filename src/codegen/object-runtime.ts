@@ -86,6 +86,10 @@ import { registerDescriptorHasOwn } from "./carrier-bag-hasown.js"; // (#4055) d
 import { buildNonObjectDeleteArms, reserveCarrierBagDelete } from "./carrier-bag-delete.js"; // (#4010 S2) OrdinaryDelete over the carrier bags
 import { bagHasIfAbsent, bagKeysTail, reserveCarrierBagVisibility } from "./carrier-bag-visibility.js";
 import { reserveClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
+import { buildErrorPropSetMissArm, reserveErrorPropHelpers } from "./error-props.js"; // (#4210) Error arm — `$Error_struct.$props`, no new side table
+
+/** (#4210) `__extern_set`'s APPENDED `errBag` local (params 0..2, locals 3..9 predate it). */
+const EXTERN_SET_ERR_BAG_LOCAL = 10;
 import { buildTombstoneScreen, buildTombstoneSkip, reserveInstanceTombstones } from "./instance-tombstones.js"; // (#4098 G1 s1)
 import { OBJECT_INTEGRITY_OBJ_PREDICATES } from "./object-integrity-carrier.js"; // (#4032)
 // (#3537) array ($Vec) expando side table — composes AROUND the #3468 closure
@@ -849,6 +853,8 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // (#3537) reserve the array-expando side table right after — same
     // reserve-before-arms-bake discipline, appended indices only.
     reserveVecPropHelpers(ctx);
+    // (#4210) …and the Error arm — NO side table, it names `$Error_struct.$props`.
+    reserveErrorPropHelpers(ctx);
     reserveCarrierBagVisibility(ctx); // (#4010 S3) visibility over both bags — see that module
     reserveInstanceTombstones(ctx); // (#4098 G1 s1) per-instance delete over the SAME bag
     // (#4160) Prototype-index store — self-gated on `ctx.standalone &&
@@ -2419,6 +2425,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // params: 0=obj 1=key 2=value
   // locals: 3=o(ref null $Object) 4=cap 5=load 6=any(anyref) 7=seq
   //         8=accEntry(ref null $PropEntry) 9=setter(externref) — (#1888 S5b)
+  //         10=errBag(externref) — (#4210) `$Error_struct.$props` substitution
   {
     // (#1888 S5b) Reserve the `__call_accessor_set` driver funcIdx BEFORE the
     // body bakes its `call`; body filled in finalize (fillAccessorDrivers) once
@@ -2430,13 +2437,18 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       { op: "any.convert_extern" },
       { op: "local.tee", index: 6 },
       // if !ref.test $Object → silently no-op (host import is lenient too), OR
-      // (#3468 C-core) route a closure receiver's write into the side table.
+      // (#3468) route a closure write into the side table, OR (#4210)
+      // substitute an Error's `$props` bag and fall through into the path below.
       { op: "ref.test", typeIdx: objectTypeIdx },
       { op: "i32.eqz" },
       {
         op: "if",
         blockType: { kind: "empty" },
-        then: buildVecOrClosurePropSetMissArm(ctx),
+        then: buildErrorPropSetMissArm(ctx, {
+          bagLocalIdx: EXTERN_SET_ERR_BAG_LOCAL,
+          anyLocalIdx: 6,
+          fallback: buildVecOrClosurePropSetMissArm(ctx),
+        }),
       },
       // o = cast<$Object>(any)
       { op: "local.get", index: 6 },
@@ -2605,6 +2617,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         { name: "seq", type: { kind: "i32" } },
         { name: "accEntry", type: entryRefNull }, // (#1888 S5b) own entry for accessor probe
         { name: "setter", type: { kind: "externref" } }, // (#1888 S5b) accessor $set
+        { name: "errBag", type: { kind: "externref" } }, // (#4210) APPENDED — never renumber the seven above
       ],
       body,
     );

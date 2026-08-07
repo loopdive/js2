@@ -91,6 +91,7 @@
  */
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { ERROR_BAG_LOOKUP, IS_ERROR_PROP_CARRIER } from "./error-props.js"; // (#4210) Error arm
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
 
@@ -357,8 +358,21 @@ export function fillCarrierBagVisibility(ctx: CodegenContext): void {
     };
     const closureArm = arm(IS_CLOSURE_PROP_CARRIER, CLOSURE_BAG_LOOKUP);
     const vecArm = arm(IS_VEC_PROP_CARRIER, VEC_BAG_LOOKUP);
-    if (closureArm.length === 0 && vecArm.length === 0) return;
-    setFn(CARRIER_BAG_OF, [{ name: "bag", type: EXT }], [...closureArm, ...vecArm, { op: "ref.null.extern" }]);
+    // (#4210) The ERROR arm. Not a third side table — `__error_bag_lookup` is
+    // one `struct.get` of `$Error_struct.$props` (fieldIdx 5), the slot the
+    // read path (`fillExternGetErrorProps`) and the compile-time own-field
+    // writer (`expressions/assignment.ts`) already share. Because it is the
+    // same store the WRITE side uses, hasOwnProperty / gOPD / delete / keys
+    // cannot disagree with what `err.p` reads back. Empty when the module
+    // registered no `$Error_struct` — `fillErrorPropHelpers` then answers the
+    // constants and this arm is skipped, keeping such modules byte-identical.
+    const errorArm = ctx.errorStructTypeIdx >= 0 ? arm(IS_ERROR_PROP_CARRIER, ERROR_BAG_LOOKUP) : [];
+    if (closureArm.length === 0 && vecArm.length === 0 && errorArm.length === 0) return;
+    setFn(
+      CARRIER_BAG_OF,
+      [{ name: "bag", type: EXT }],
+      [...closureArm, ...vecArm, ...errorArm, { op: "ref.null.extern" }],
+    );
   }
 
   /** `bag = __carrier_bag_of(obj); if (bag == null) <miss>;` */

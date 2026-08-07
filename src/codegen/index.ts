@@ -235,6 +235,7 @@ import {
   unshiftExternGetProtoCacheArm,
 } from "./object-runtime.js";
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
+import { fillErrorPropHelpers } from "./error-props.js"; // (#4210) Error own-property arm — `$Error_struct.$props`
 import { fillInstanceTombstones } from "./instance-tombstones.js"; // (#4098 G1 s1) per-instance own-property deletability
 import { fillVecPropHelpers } from "./vec-props.js"; // (#3537) array ($Vec) expando side table
 import { fillProtoIndexStore } from "./proto-index-store.js"; // (#4160) prototype-index companions
@@ -4367,6 +4368,10 @@ export function generateModule(
     // object-runtime funcIdxs are all in funcMap by finalize).
     fillVecPropHelpers(ctx);
 
+    // (#4210) Error own-property helpers — MUST be finalize-time:
+    // `ctx.errorStructTypeIdx` settles only once some site mints a native error.
+    fillErrorPropHelpers(ctx);
+
     // (#3140) Fill the reserved `__bind_dyn` dynamic-bind helper now that every
     // closure root is registered (the callable gate needs the COMPLETE
     // classifier list). No-op when no standalone `.bind`-on-any site reserved it.
@@ -6649,6 +6654,9 @@ export function generateMultiModule(
 
     // (#3537) Same for the array-expando side table.
     fillVecPropHelpers(ctx);
+
+    // (#4210) …and the Error own-property helpers (any source may mint one).
+    fillErrorPropHelpers(ctx);
 
     // (#3371/#3496) Constructible function-expression wrappers are nominal
     // subtypes of the ordinary closure wrapper. Multi-source harness methods
