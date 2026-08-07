@@ -16,6 +16,7 @@
  */
 import { ts } from "../ts-api.js";
 import { annexBUpdatesExistingVarBinding } from "./annexb-cancel.js";
+import { tryCompileAnnexBModuleBlockFnEvaluation } from "./annexb-global-live-binding.js";
 import { emitCachedFuncClosureAccess } from "./closures.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { getLocalType } from "./context/locals.js";
@@ -251,6 +252,15 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
       }
       // The function body itself was already compiled during the hoist pre-pass;
       // nothing else to emit at this textual position.
+      return;
+    }
+    // (#4182) Module-scope Annex B B.3.3.2: while compiling `__module_init`, a
+    // block/`if`/`switch`-nested declaration of a live-bound name compiles as
+    // its OWN function and `global.set`s its closure here — the B.3.3.2.c
+    // evaluation step. Placed BEFORE the `funcMap.has` early-return, which
+    // otherwise silently skips every same-named later declaration. Gated on the
+    // normally-empty `annexBModuleBindings` set.
+    if (funcName && tryCompileAnnexBModuleBlockFnEvaluation(ctx, fctx, stmt)) {
       return;
     }
     // (#4131) B.3.3.1 step 3.f on an ALREADY-EXISTING var binding. The branch

@@ -617,6 +617,16 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
       const varName = stmt.catchClause.variableDeclaration.name.text;
       if (savedCatchVarIdx !== undefined) {
         fctx.localMap.set(varName, savedCatchVarIdx);
+      } else if (fctx.name === "__module_init" && ctx.annexBModuleBindings?.has(varName)) {
+        // (#4182) With no prior local to restore, the catch parameter used to
+        // LEAK in the flat localMap past the catch scope, shadowing the
+        // module-scope Annex B live-binding global forever after the `try`
+        // (`annexB/language/global-code/*-no-skip-try`: post-try `typeof f`
+        // read the leaked catch local instead of the updated global). Delete
+        // it so resolution falls back to the module global. Scoped to the
+        // normally-empty `annexBModuleBindings` set — the general leak is
+        // pre-existing behavior other resolution paths may lean on.
+        fctx.localMap.delete(varName);
       }
     }
   }

@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts, forEachChild } from "../ts-api.js";
+import { registerAnnexBGlobalLiveBindings } from "./annexb-global-live-binding.js";
 import { emitToBoolean } from "./coercion-engine.js";
 import { emitWasiErrorConstructor, fillExternGetErrorProps } from "./registry/error-types.js";
 import { analyzeLinearUint8 } from "./linear-uint8-analysis.js";
@@ -3887,6 +3888,11 @@ export function generateModule(
     // No-op unless a function declaration is reassigned.
     registerReassignedFunctionGlobals(ctx, [ast.sourceFile]);
 
+    // (#4182) Back module-scope Annex B B.3.3.2 block-nested function names
+    // with live-binding globals. No-op unless the (sloppy, script-mode) source
+    // has a top-level block/`if`/`switch`-nested `function` declaration.
+    registerAnnexBGlobalLiveBindings(ctx, [ast.sourceFile]);
+
     // (#3523 R4/C1) Build the semantic top-level plan independently from the
     // direct front-end's three mutable queues. This first landing observes and
     // reports parity only; body routing remains unchanged until R3 ownership
@@ -6434,6 +6440,10 @@ export function generateMultiModule(
     // live-binding module global BEFORE aliasing, so an import of such a function
     // (#2930) copies the live global too. No-op unless a function is reassigned.
     registerReassignedFunctionGlobals(ctx, multiAst.sourceFiles);
+
+    // (#4182) Module-scope Annex B B.3.3.2 live bindings (see the single-source
+    // site above). Runs before aliasing/bodies for the same reason as #2931.
+    registerAnnexBGlobalLiveBindings(ctx, multiAst.sourceFiles);
 
     // (#2930) Register import-binding aliases (default / renamed / anonymous-default
     // imports whose LOCAL name differs from the imported target's declaration name)

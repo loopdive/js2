@@ -31,7 +31,7 @@
  * version or a date. Two runs with the same ORACLE_VERSION are guaranteed to
  * apply identical verdict logic, so their rows are directly comparable.
  */
-export const ORACLE_VERSION = 12;
+export const ORACLE_VERSION = 13;
 
 /**
  * Append-only log of what each oracle version means. Newest last.
@@ -305,6 +305,48 @@ export const ORACLE_VERSION_HISTORY: ReadonlyArray<{ version: number; note: stri
       "regexes (verified against the real classifier, including adversarial " +
       "messages embedding trap vocabulary), so the #3189 trap ratchet is NOT " +
       "superseded by this bump and still applies in full.",
+  },
+  {
+    version: 13,
+    note:
+      "#4162 in-process-lane de-masking. Two independent harness defects in " +
+      "tests/test262-runner.ts, both of which SUBSTITUTED a verdict rather than " +
+      "measuring one — the same class as v2/#3086 and v12/#3603, and like those " +
+      "the flips are EXPOSED by this change, not caused by it. (1) The lane " +
+      "instantiated the test binary directly instead of through the shared " +
+      "import-object finaliser, so a standalone module linking " +
+      "`js2wasm:runtime-eval` died at instantiate and the LINK error OVERWROTE " +
+      "the test's real signature. Not niche: the `$262.evalScript` shim " +
+      "assembleOriginalHarness injects into EVERY assembled test contains a " +
+      "direct `eval`, so the blast radius is bounded by which tests keep that " +
+      "shim reachable after DCE, not by their `includes:` list. Measured on one " +
+      "162-file ES5 lever: 82 files masked, 18 of them ACTUALLY PASSING — so " +
+      "this arm moves rows in the fail→pass direction. (2) handleNegativeTest " +
+      "built its compile options from a bare `target` identifier NEVER BOUND in " +
+      "that scope; the ReferenceError was thrown inside the `try` whose `catch` " +
+      'reports `status: "pass"`, so every parse/early/resolution-phase ' +
+      "negative test routed through it passed VACUOUSLY without compiling " +
+      "anything (compileMs ≈ 0.05 was the tell). This arm moves rows in the " +
+      "pass→fail direction and is the reason the published number is EXPECTED " +
+      "TO DROP: those passes were never earned. Fixed by threading the caller's " +
+      "target through as a real parameter and building the options OUTSIDE the " +
+      "try, so a harness defect crashes loudly instead of laundering itself " +
+      "into a conformance pass. Guarded by tests/issue-4162.test.ts, including " +
+      "a STRUCTURAL routing assertion that no lane file calls " +
+      "WebAssembly.instantiate on a test binary itself — behavioural parity " +
+      "between lanes that already share an implementation is tautological, the " +
+      "structural check is what prevents a fourth instance of the drift class. " +
+      "NO classifyError change and no negative-expectation-matching change in " +
+      "v13: the verdict POLICY is untouched, what changes is that the policy is " +
+      "now actually reached. The bump exists because a mass reclassification is " +
+      "indistinguishable from oracle skew to diff-test262.ts, and without it " +
+      "the #1668 catastrophic guard fires on the push-to-main run, " +
+      "promote-baseline never runs and the queue wedges (#3003). NO " +
+      "regressions-allow ceiling is declared here deliberately: the true flip " +
+      "count for arm (2) has not been measured corpus-wide, and guessing a " +
+      "ceiling would widen the guard by exactly the amount nobody verified. If " +
+      "the merge_group exceeds the rebase drift tolerance, read the count it " +
+      "reports and declare THAT number in the #4162 issue file.",
   },
 ];
 
