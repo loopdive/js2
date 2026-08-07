@@ -46,6 +46,7 @@ import { ts, forEachChild } from "../ts-api.js";
 import type { FieldDef } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { appendFnctorInternalFields } from "./fnctor-identity-fields.js";
+import { type AllocLabelResult, analyzeFnctorAllocLabels, fnctorLayoutsEnabled } from "./fnctor-alloc-labels.js"; // (#3927) per-type layout plan
 import { applyColdTailSplit } from "./fnctor-cold-tail.js";
 import { recordFnctorFieldProvenance } from "./fnctor-field-provenance.js";
 import { inferFnctorFieldTypeFromCtorParam } from "./fnctor-ctor-param-types.js";
@@ -132,6 +133,13 @@ export interface FnctorEscapeGateResult {
    * it. See {@link analyzeProtoMethodWriteOnce}.
    */
   readonly protoMethodWriteOnce: ProtoMethodWriteOnceResult;
+  /**
+   * (#3927) Allocation-site-sensitive shape plan per fnctor — the per-type
+   * layout analysis. `undefined` unless `JS2WASM_FNCTOR_LAYOUTS` is set, so an
+   * unflagged build does not pay for it and is byte-identical. See
+   * `fnctor-alloc-labels.ts`.
+   */
+  readonly allocLabels?: AllocLabelResult;
 }
 
 /**
@@ -1507,6 +1515,9 @@ export function analyzeFnctorEscapeGate(checker: ts.TypeChecker, sourceFile: ts.
     // (#3683 S1) inert write-once verdicts — consumed by the S2 typed-twin
     // emission, no lowering reads them yet.
     protoMethodWriteOnce: analyzeProtoMethodWriteOnce(sourceFile),
+    // (#3927) Per-type layout plan. Runs only under the flag: the fixpoint is a
+    // second whole-program pass and an unflagged build must not pay for it.
+    ...(fnctorLayoutsEnabled() ? { allocLabels: analyzeFnctorAllocLabels(checker, sourceFile, ctorDeclByName) } : {}),
   };
 }
 

@@ -141,3 +141,19 @@ able to hold it.
 - [ ] Byte-identity reported for modules with no under-supplied call, so the
       regression surface is an enumeration rather than an estimate.
 - [ ] The host lane is fixed too, or the PR states why it is standalone-gated.
+
+---
+
+## Handoff — 2026-08-07
+
+Unowned and unstarted. Filed the same day it was found; nothing has been done
+since, and the repro was re-verified on `origin/main` **after** that day's 16
+merges (#4203/#4204/#4207/#4208 all landed and none of them changes it).
+
+The one thing not to lose: **test262 impact is deliberately unmeasured.** This
+came from reading emitted WAT, not from triage. Do not inherit a number from
+this file — there isn't one. Derive the population from the compiler's own
+predicates over each file's *effective* source (body + `includes:` harness, which
+the runner always prepends), as the acceptance criteria describe.
+
+Session-wide context: `plan/agent-context/session-2026-08-07-lead-handoff.md`.

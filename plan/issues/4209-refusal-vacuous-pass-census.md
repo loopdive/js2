@@ -119,3 +119,24 @@ SET; only 32 are provably clear.**
 Any "gated on `protoNamedDirty`, therefore byte-identical" safety claim is true
 in principle and worth **0.07 %** of the corpus in practice. Size exposure by the
 real trigger instead.
+
+---
+
+## Handoff — 2026-08-07
+
+Unowned and unstarted. Two data points arrived after filing, both worth having
+before anyone runs the census:
+
+1. **The #4207 lane's estimate of 825 candidates is an UPPER BOUND, not a
+   count**, and it said so. The cheap predicate (currently-`pass` files asserting
+   a TypeError against a refused member) over-counts, because a file can assert
+   TypeError for a reason the refusal coincidentally satisfies and still pass
+   once the feature is implemented. Only the RangeError swap distinguishes them.
+2. **The #4210 lane found a second flavour that this issue's predicate does NOT
+   catch**: files passing because a *write is silently dropped*, with no refusal
+   and no throw anywhere (`preventExtensions/15.2.3.10-3-{10,20}.js` on an Error
+   receiver). Same class — "passes because the feature is missing" — but the
+   RangeError swap will not surface it, because nothing throws. Worth deciding
+   whether this issue owns that flavour too, or whether it needs its own probe.
+
+Session-wide context: `plan/agent-context/session-2026-08-07-lead-handoff.md`.

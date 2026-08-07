@@ -15,6 +15,11 @@ loc-budget-allow:
   # must be declared on the context type, index.ts gains one call, and
   # property-access.ts gains one `continue`.
   - src/codegen/object-runtime.ts
+  # (2026-08-07 per-type-layouts slice) The analysis hook must sit in the gate:
+  # `analyzeFnctorEscapeGate` is the single place that already owns the
+  # whole-program walk, the proto index and `ctorDeclByName`, which the label
+  # fixpoint keys off. The analysis itself (≈450 LOC) lives in the NEW
+  # `fnctor-alloc-labels.ts`; only the ~12-line call + result field are here.
   - src/codegen/fnctor-escape-gate.ts
   - src/codegen/context/types.ts
   - src/codegen/index.ts
@@ -101,13 +106,18 @@ typed-and-reachable, which is exactly when the guard becomes live.
 
 ## Scope
 
-- [ ] Whole-program shape-set analysis: per constructor, the set of reachable
+- [x] Whole-program shape-set analysis: per constructor, the set of reachable
       property sets, with an explicit "unknown / too many" verdict.
+      **Landed 2026-08-07** — `src/codegen/fnctor-alloc-labels.ts`; see the
+      results section below.
 - [ ] Emit per-shape structs sharing a common prefix where the set is small and
-      separable; keep the union struct otherwise.
-- [ ] Fold in the `objectIrTypeFromTsType` ↔ `tsTypeToFieldIr` seen-set, with
-      the repro that proves it — the same PR that makes the shape reachable is
-      the one that can supply it.
+      separable; keep the union struct otherwise. **Designed and priced below
+      (§8.4); not built.**
+- [x] Fold in the `objectIrTypeFromTsType` ↔ `tsTypeToFieldIr` seen-set, with
+      the repro that proves it. **Already on main** — #4019 added the
+      path-scoped `onPath` set to both functions (`src/codegen/index.ts`
+      :1176/:1216) with exactly this rationale. Nothing to add; re-verified
+      2026-08-07.
 
 ## Acceptance criteria
 
@@ -479,3 +489,225 @@ at K=24. `tests/issue-3927-fnctor-cold-tail.test.ts` pins the OFF byte-identity
 (including that a malformed flag value cannot half-enable the split — a bare
 `Number("")` is `0`, which would have moved EVERY eligible field) and the
 total-order property of the ranking.
+
+## Results — 2026-08-07 slice: the PER-TYPE LAYOUT analysis, built and validated (emission designed, not built)
+
+**What landed**: `src/codegen/fnctor-alloc-labels.ts` +
+`tests/issue-3927-fnctor-alloc-labels.test.ts`, behind
+`JS2WASM_FNCTOR_LAYOUTS` (`JS2WASM_FNCTOR_LAYOUT_DIAG=1` prints the plan).
+This is the first scope item — the whole-program shape-set analysis with an
+explicit "unknown / too many" verdict. Nothing consumes the plan yet;
+standalone acorn is **byte-identical with the flag ON** (937,273 B, canaries
+2/3/4/5, `functionImports []`).
+
+**Headline: the shapes ARE separable, by a lot, and the plan is empirically
+sound on the motivating corpus.**
+
+| | today (union struct) | #4211 hot/cold, K=24 | per-type layouts (this plan) |
+| --- | ---: | ---: | ---: |
+| `__fnctor_Node` B/instance | 292 (model: 300) | 206.6 | **98.0** |
+| Node stream, MB/parse | 9.74 | 6.71 | **3.18** |
+| vs the union struct | — | −31.1 % | **−67.3 %** |
+| share of ALL struct bytes/parse (12.23 MB) | — | −21.6 % | **−53.6 %** |
+
+### 1. Why §3's "the shape is not knowable at the `struct.new`" was right but not fatal
+
+§3 established that a `new`-site partition is trivial here: three `new Node`
+sites, all inside shape-agnostic factories, tag applied later at `finishNode`.
+That remains true. What it missed is that **one level of call-site context
+(k=1) moves the label off the `new` and onto the factory CALL SITE**, and that
+population is small: acorn has 2 allocation-transparent factories
+(`startNode` :3881, `startNodeAt` :3885 — every `return` is a direct
+`new Node(…)`) and 59 static call sites, 25 of which execute on the corpus.
+
+### 2. The identity summary is the whole ballgame — without it the analysis is worthless
+
+Parser combinators are `pp.finishNode = function (node, type) { …; return node }`
+with every builder written as
+`parseX(node, …) { … return this.finishNode(node, "X") }`. A plain return-value
+join therefore makes **every `parseX()` call evaluate to "any node ever
+allocated"**, and any one shared write blurs its property onto every label.
+Summarising pass-through functions as *identity in parameter i* (so a call
+yields ITS OWN argument, not the join of every caller's) removes the join:
+
+| | mean fields per label | universal fields |
+| --- | ---: | --- |
+| return-value join | 14.5 | 13 (`async body elements end expression expressions generator id params raw regex type value`) |
+| identity summaries | **6.3** | 2 — `type`/`end`, both constructor-assigned |
+
+The de-blurred layouts read like ESTree node kinds, which is the sanity check
+that the analysis is finding real structure: `{end,expressions,name,type}` at
+:3677 is `parseIdent` (32.5 % of all allocations);
+`{computed,end,object,optional,property,…}` at :2928 is MemberExpression;
+`{end,left,operator,right,…}` at :2802/:2717 is the binary/assignment family.
+
+### 3. In-compiler verdicts, current main + this branch
+
+`JS2WASM_FNCTOR_LAYOUTS=1 JS2WASM_FNCTOR_LAYOUT_DIAG=1`, standalone acorn:
+
+| fnctor | verdict | labels | layouts | union | mean label / union |
+| --- | --- | ---: | ---: | ---: | ---: |
+| **Node** | **split** | 59 | 40 | 62 | **0.102** |
+| RegExpValidationState | single-site | 1 | 1 | 9 | 1.000 |
+| DestructuringErrors | not-separable | 4 | 1 | 5 | 1.000 |
+| Token / TokenType / Position | no-sites | 4 / 1 / 1 | — | 0 | — |
+
+Every non-`split` verdict is a real path back to today's union struct, and all
+of them are exercised (three by acorn, `too-many-shapes` by the unit test).
+
+### 4. Ground-truth soundness check — 0 of 32,468 nodes overflow
+
+The projection above assumes each label's planned set covers every property an
+instance from that site actually ends up with. The analysis is a may-flow
+over-approximation of where an object *goes*, so it can be too WIDE (a wasted
+slot) but it can also MISS flow, and a missed flow is a property with no inline
+slot. That residual rate is what decides whether the saving survives — it is
+the exact analogue of the 36.6 % tail rate that halved #4211's win, and #4211
+did not have this check.
+
+Method (`.tmp/validate-plan.mjs` idiom): patch native acorn's
+`startNode`/`startNodeAt`/`copyNode` to tag every node with its allocating call
+site, parse the same 226 KB corpus, walk the resulting AST and compare each
+node's OWN properties against its label's planned set.
+
+- **32,468 tagged nodes walked — exactly the census's allocation count, so no
+  allocation escaped the walk.**
+- **0 nodes (0.00 %) carry a property outside their label's planned set.** No
+  residual carrier would be allocated on this corpus.
+- Slot occupancy 64,008 / 340,713 = **18.8 %** — the plan is ~5× wider than
+  strictly necessary. That is the over-approximation, in the safe direction,
+  and it is the headroom a more precise analysis would recover: a perfect
+  analysis (≈2.0 populated slots/node) projects ≈64 B/instance instead of 98.
+
+This also validates the retype claim empirically: the corpus produces real
+ObjectPattern / ArrayPattern / RestElement / AssignmentPattern nodes via the
+four in-place `toAssignable` conversions, and none of them has a property
+outside its allocation label's set.
+
+**What this check does NOT cover, stated plainly: `copyNode` never fires on
+this corpus** (0 of the 25 executing sites). `copyNode` is
+`for (var prop in node) { newNode[prop] = node[prop] }` — enumeration plus a
+COMPUTED write — and it is precisely the reflective surface that silently
+corrupted #4211's first cut. The emission slice must route it through the
+residual carrier and must validate on a corpus that triggers it.
+
+### 5. Retyping needs no special case, and here is the argument
+
+`toAssignable` mutates in place through a reference the code cannot replace
+(`toAssignableList` does `var elt = exprList[i]; this.toAssignable(elt, …)` and
+never writes back), so copy-on-retype is unavailable and the layout must be
+chosen at allocation. The analysis is **flow-INSENSITIVE**: a label's field set
+is the union of every write reachable from it, whenever it happens. A retype is
+just more writes to the same object, so it cannot introduce a name outside the
+set. The analysis therefore needs no retype-specific rule; what it does is
+**report** the retypes so the property is auditable rather than assumed
+(`retypeSites` / `mergedByRetype`).
+
+On acorn it finds 9 retype sites, including exactly the four the design hinged
+on — dist :2109 / :2136 / :2142 / :2150 — each writing only `type`, a
+constructor-assigned base field. So the 32-label merge they force costs **zero**
+widening. Consistent with the pre-existing table (all four conversions ≤1 slot
+apart), and confirmed by §4's zero overflow.
+
+**Be honest about the payoff of the proving component: on acorn it buys
+approximately nothing.** Its value is soundness in general. The win is in the
+per-type layouts themselves.
+
+### 6. Where the emission has to be careful — the design, with the keystone resolved
+
+The blocker every previous pass hit is: `startNode` is ONE function containing
+ONE `struct.new`, so per-label layouts need per-label allocation, and
+`this.startNode()` lowers to a trampoline (`__dc_<F>_<m>_<n>`, #3683 S3) keyed
+by (class, method, arity) — **not** by call site. The three candidate
+mechanisms, priced:
+
+1. **Clone the factory per layout** and route calls — needs per-call-site
+   trampoline reservation on top of #3683's twin machinery. Most invasive.
+2. **Inline the transparent factory at the call site** — needs the callee's
+   `new` arguments compiled in the caller's frame with parameter substitution.
+   Independently worth ~32 k calls/parse, but couples to `this`-lowering.
+3. **A layout-hint module global (recommended).** Emit
+   `<args>; i32.const <layoutId>; global.set $__fnctor_layout_hint; call` at a
+   qualifying call site; `__fnctor_<F>_new` branches on the hint and
+   `struct.new`s the corresponding subtype. No cloning, no trampoline change,
+   no inlining. It is safe **because the factory is allocation-transparent**:
+   between the `global.set` and the `struct.new` only the factory body runs,
+   and that body cannot allocate another instance of the same fnctor.
+   **The fail direction is the safe one**: hint `0` = the widest layout, and
+   the ctor resets the hint to `0` after reading it, so a lost or stale hint
+   degrades to today's union struct — fat, never narrow.
+
+Structure the layouts as **declared WasmGC subtypes of the existing
+`$__fnctor_<Name>`** (`superTypeIdx`, already used for class inheritance; give
+the base `superTypeIdx: -1` so it emits as a non-final `(sub (struct …))`):
+
+```
+base   = [ctor-assigned fields][internal identity][presence words sized for
+          the FULL union][$resid]
+layout = base ++ [that label's flow-grown fields]
+```
+
+Three properties fall out, and each removes a class of #4211's risk:
+
+- `ref.test $__fnctor_Node` still matches every layout, so every existing
+  consumer of base fields is untouched;
+- **presence bits live in the BASE at fixed indices**, so `hasOwnProperty`,
+  `in`, `Object.keys`, for-in and the delete/tombstone path stay
+  layout-INDEPENDENT — only the value's storage location varies. That is
+  strictly simpler than #4211, where the reflective passes each needed a cold
+  arm;
+- layouts are **siblings, not nested**, so arm order in the dispatchers cannot
+  matter. (A prefix-CHAIN design was evaluated and rejected for this reason
+  plus worse bytes: −60.9 % vs −67.3 %, because a label needing one
+  late-ranked field must carry everything before it.)
+
+Dispatcher cost, measured over the 20 live layouts: 24 property names need 1
+arm, 16 need 2, 9 need 3, one needs 4, `body` needs 6 and `expressions` needs
+11 (the one remaining blur). `type`/`end` are base fields ⇒ 1 arm. So the
+arm-count blow-up that kills the naive per-shape version does not materialise.
+
+### 7. Honest translation to wall clock, and why it is an extrapolation
+
+#4211 measured the mechanism: **−21.6 % of allocated struct bytes ⇒ −3.92 pp of
+the 15.71 % gc-engine bucket** (−25 % of the bucket itself), every other bucket
+diluting proportionally upward — the signature of a single absolute reduction.
+This plan projects **−53.6 %** of allocated struct bytes, ~2.5× further along
+the same axis. If the bucket stays proportional to allocated bytes, that scales
+to roughly **−9 to −10 pp of wall**.
+
+**That is an extrapolation 2.5× beyond the only measured point, not a
+measurement**, and this box cannot resolve anything under ~10 % by wall A/B
+(§6 of the 2026-08-06 slice — an uncontrolled block there read +29 % and was
+pure load contamination). Treat −9 % as an upper-ish estimate whose mechanism
+is sound and whose magnitude is unverified. What IS measured here: the bytes
+(deterministic census model, 100 % of runtime allocations attributed to a plan
+label) and the 0 % overflow rate.
+
+### 8. What is NOT done
+
+1. **The emission.** §6 is a design with the keystone resolved, not code.
+2. **`copyNode` is unexercised** (§4). It is the highest-risk surface.
+3. **No test262 / no host-lane work.** Flag-OFF is byte-identical and the
+   analysis is standalone-oriented; the emission slice owns conformance.
+4. **The 18.8 % slot occupancy is left on the table** (§4). A
+   context-sensitive refinement (k=2, or a per-callee summary for the widest
+   remaining blur — `parseStatement`'s 32-field label at :959, and the 11-arm
+   `expressions`) projects ≈64 B/instance instead of 98.
+
+### 9. Gates
+
+typecheck 0, lint 0, format 0, oracle-ratchet 0 (`getTypeAtLocation +0`,
+`ctx.checker +0` — the analysis uses only `getSymbolAtLocation` via a `checker`
+parameter, which the ratchet deliberately does not count), loc-budget 0
+(allowance for the ~12-line hook in `fnctor-escape-gate.ts` granted in this
+file's frontmatter; the ~490-LOC analysis lives in the new module), func-budget
+0 (the worker was split into `indexSourceFile` / `findTransparentFactories` /
+`buildPlan` / `writeLayoutDiag` rather than granted an allowance).
+`tests/issue-3927-fnctor-alloc-labels.test.ts` 8/8; the #2660/#2674/#3486/#4155
+fnctor suites 46/47 — the one failure,
+`issue-3486-fnctor-constructor-identity.test.ts > own fields and enumeration
+are untouched`, reproduces on `origin/main` with this branch's
+`fnctor-escape-gate.ts` swapped back to the base blob, so it is pre-existing.
+Standalone acorn with the flag ON: 937,273 B — byte-identical to the flag-OFF
+baseline — canaries 2/3/4/5, `functionImports []`, exactly the 3 pre-existing
+IR-FALLBACKs.
