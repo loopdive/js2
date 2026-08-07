@@ -122,13 +122,77 @@ conformance delta.
 
 ## Remaining (NOT this PR)
 
-1. **Method invocation** — `var o = { m: fe }; o.m()` still drops the receiver.
-   Different call path (`call-receiver-method.ts`), same missing install. This
-   is the commonest shape and worth the most.
-2. **`.bind`** — `fe.bind(o)()` still drops it; the `$__bound_fn` carrier
-   (#3140) is a third path. It is also entangled with the 34-file
-   `Function.prototype.bind` bucket (construct-through-`bind`,
-   `<Builtin>.bind(null)`), which wants its own issue.
+1. **`.bind`** — `fe.bind(o)()` still drops the receiver; the `$__bound_fn`
+   carrier (#3140) is a third path. Folded into **#4196**, where it is 3 of the
+   34-file `Function.prototype.bind` bucket.
+2. **Method invocation** — `var o = { m: fe }; o.m()`. **Sized after slice 1 and
+   it is SMALL — see below. My earlier "probably the most valuable follow-up"
+   was wrong.**
+
+### Sizing the method-invocation shape (2026-08-07) — it is not a lever
+
+I claimed method invocation was the commonest shape and the biggest remaining
+half. Measured, it is neither.
+
+**Behaviour matrix** (10 shapes, post-slice-1, both lanes identical):
+
+| # | shape | result |
+| --- | --- | --- |
+| 1 | inline fn-expr in a literal, **number** prop read | ✅ |
+| 2 | same, call in argument position | ✅ |
+| 3 | **variable-held fn-expr** as a literal property | ❌ `NaN` |
+| 4 | variable-held fn-expr assigned AFTER (`o.m = fe`) | ✅ |
+| 5 | method shorthand `{ m() {…} }` | ✅ |
+| 6 | **function DECLARATION** as a literal property | ❌ `NaN` |
+| 7 | inline fn-expr **writing** `this.touched = true` | ❌ lost |
+| 8 | variable-held fn-expr writing through `this` | ❌ lost |
+| 9 | inline fn-expr, **string** prop read | ❌ `undefined` |
+| 10 | any of the above nested inside a function scope | ✅ |
+
+So "method invocation is broken" is false. Only rows 3 and 6 are the missing
+receiver install — a function defined **elsewhere** used as a method, where
+`this` is untyped and therefore reads `__current_this`. Rows 7 and 9 are a
+different defect entirely (a *closed-struct* one: `touched` is not a declared
+field of the literal, and a `string` field read answers `undefined`), and rows
+1/2/4/5 already work because TypeScript types `this` as the literal and the read
+lowers to `struct.get`.
+
+**Corpus count.** 155 ES5 files contain a method-shaped function expression
+whose body mentions `this` (brace-matched scan, not a bare grep); 86 fail
+standalone. Subtracting mechanisms that already have owners:
+
+| n | mechanism |
+| ---: | --- |
+| 26 | `with` (#1387 / #671) |
+| 23 | 10.4.3 sloppy-`this` cluster (W12) |
+| 19 | descriptor MOP (#1906 / #2992 / #3251) |
+| 3 | `Function.prototype` census (#4192 / #4196) |
+| 3 | `String.prototype` census (#2875) |
+| **12** | **residue** |
+
+And the 12-file residue does **not** survive causality spot-checks as method
+invocation:
+
+- `language/statements/function/S13.2.2_A15_T3/T4` — `new __FACTORY()`, a
+  **constructor** `this`, not a method call.
+- `built-ins/Object/create/15.2.3.5-4-11` and friends — an accessor `get`
+  invoked with an exotic receiver (`this instanceof Date`); descriptor-MOP
+  receiver binding, already counted above where the path matched.
+- `language/statements/try/12.14-15`/`-16` — `e()`, a **bare** call whose
+  sloppy-mode `this` must be the global object: W12's 10.4.3 cluster.
+- `language/statements/function/S13.2.2_A4_T2` — fails at `printShape ===
+undefined`, i.e. `__FACTORY.prototype = {…}` is not visible on the instance:
+  prototype-chain lookup (#4176 territory), never reaching a receiver question.
+- `language/expressions/call/11.2.3-3_*` — expects a TypeError from calling a
+  non-callable; an IsCallable gap, the same one as #4196's 5-file bucket.
+
+**Verdict: the genuine "method call on a function defined elsewhere does not
+install the receiver" population is ~2–4 ES5 files.** That is smaller than the
+43-file `.call`/`.apply` population slice 1 addressed, and it is squarely inside
+the flat tail #4163 describes. Do not staff it as a lever; fold rows 3/6 in
+opportunistically if someone is already inside `call-receiver-method.ts`. Rows
+7 and 9 are a separate closed-struct question and deserve their own probe before
+anyone sizes them.
 
 ## Coordination
 
