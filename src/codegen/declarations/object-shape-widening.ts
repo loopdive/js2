@@ -14,6 +14,7 @@ import { widenedVarKeyFromDecl } from "../widened-var-key.js";
 import type { FieldDef, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { createDeclaredNestedWriteClassifier } from "./declared-nested-write.js";
+import { markStandaloneDynamicWithTargets } from "./dynamic-with-shape.js";
 
 function isUnboxedPrimitiveCarrier(type: ValType): boolean {
   return ["f64", "f32", "i64", "i32", "i16", "i8"].includes(type.kind);
@@ -611,22 +612,9 @@ export function collectGrowableObjectLiterals(
           // struct path") is a HOST-lane discipline — in standalone the struct
           // path is precisely what cannot serve these consumers, so this arm
           // runs first. Host lane is untouched (byte-inert).
-          //
-          // (#4206) `with (varName) { … delete <bareName> … }` joins the same
-          // set for the same reason, one layer up. A bare-identifier `delete` in
-          // the body is the exact syntactic condition under which
-          // `proveStructTypedWithTarget` (with-scope.ts) declines Tier-1, so the
-          // statement lowers on the Tier-2 dynamic path — whose object
-          // environment record IS `__extern_has`/`__extern_get`/`__extern_set`/
-          // `__delete_property`. Standalone binds those to the native `$Object`
-          // helpers, which walk `$Object` links; a WasmGC struct is not an
-          // `$Object`, so the walk terminates at once and HasBinding answers 0
-          // for EVERY name. The `with` degrades to a silent no-op whose writes
-          // cascade past the object onto the outer binding — measured:
-          // `with(o){ p1 = 'x1' }` wrote the GLOBAL `p1` and left `o.p1`
-          // untouched. That is unsoundness, not a coverage gap: Tier-2 is meant
-          // to be the semantic backstop and here it is structurally blind.
-          // Keeping the var a `$Object` gives those helpers a store they can see.
+          // (#4206) A Tier-2-bound `with (varName)` joins the same set — the
+          // native `$Object` helpers that serve it cannot see a WasmGC struct.
+          // Rationale + measured repro: ./dynamic-with-shape.ts.
           if (ctx.standalone) {
             const mopSet = new Set<string>();
             for (const s of stmts) {
@@ -951,85 +939,6 @@ function markStandaloneDeleteTargets(node: ts.Node, varName: string, poisonSet: 
     ts.forEachChild(n, visit);
   };
   visit(node);
-}
-
-/**
- * (#4206, standalone-only caller) Poison `varName` when it is the target of a
- * `with (varName)` whose body contains a BARE-IDENTIFIER `delete` — the exact
- * syntactic condition under which `proveStructTypedWithTarget` (with-scope.ts)
- * declines Tier-1 and the statement lowers on the Tier-2 dynamic path.
- *
- * Tier-2 resolves the object environment record through `__extern_has` /
- * `__extern_get` / `__extern_set` / `__delete_property`. Standalone binds those
- * to the NATIVE `$Object` open-hash helpers, which walk `$Object` links — a
- * WasmGC struct is not an `$Object`, so the walk terminates immediately and
- * HasBinding answers 0 for every name. The `with` becomes a silent no-op whose
- * writes cascade past the object and clobber the outer/global binding. Staying
- * a `$Object` gives those helpers a store they can see.
- *
- * Matched shapes (`delete` of a bare name, parentheses unwrapped like the
- * sibling collectors):
- *   with (o) { delete p; }          → poison `o`
- *   with (o) { x = delete (p); }    → poison `o`
- * NOT matched — a member delete is not a with-binding delete and does not
- * disqualify Tier-1:
- *   with (o) { delete o.p; }        → `markStandaloneDeleteTargets` handles it
- *
- * A nested function/class in the body is deliberately NOT matched: that shape
- * is a hard `#1387` refusal before any lowering runs, so demoting the var would
- * change representation for a module that never compiles.
- *
- * Name-based, matching the rest of the widening pre-pass (aliasing is the same
- * shared, documented limitation).
- */
-function markStandaloneDynamicWithTargets(node: ts.Node, varName: string, poisonSet: Set<string>): void {
-  const bodyHasBareIdentifierDelete = (body: ts.Statement): boolean => {
-    let found = false;
-    const walk = (n: ts.Node): void => {
-      if (found) return;
-      // Stop at a function/class boundary: a `delete` inside a nested function
-      // is not this `with` body's DeleteBinding, and such a body is refused
-      // upstream anyway.
-      if (n !== body && isFunctionOrClassBoundaryNode(n)) return;
-      if (ts.isDeleteExpression(n)) {
-        let operand: ts.Expression = n.expression;
-        while (ts.isParenthesizedExpression(operand)) operand = operand.expression;
-        if (ts.isIdentifier(operand)) {
-          found = true;
-          return;
-        }
-      }
-      ts.forEachChild(n, walk);
-    };
-    walk(body);
-    return found;
-  };
-
-  const visit = (n: ts.Node): void => {
-    if (ts.isWithStatement(n)) {
-      let target: ts.Expression = n.expression;
-      while (ts.isParenthesizedExpression(target)) target = target.expression;
-      if (ts.isIdentifier(target) && target.text === varName && bodyHasBareIdentifierDelete(n.statement)) {
-        poisonSet.add(varName);
-      }
-    }
-    ts.forEachChild(n, visit);
-  };
-  visit(node);
-}
-
-/** Function/class boundary test — mirrors `isFunctionOrClassBoundary` in with-scope.ts. */
-function isFunctionOrClassBoundaryNode(node: ts.Node): boolean {
-  return (
-    ts.isFunctionDeclaration(node) ||
-    ts.isFunctionExpression(node) ||
-    ts.isArrowFunction(node) ||
-    ts.isMethodDeclaration(node) ||
-    ts.isGetAccessorDeclaration(node) ||
-    ts.isSetAccessorDeclaration(node) ||
-    ts.isClassDeclaration(node) ||
-    ts.isClassExpression(node)
-  );
 }
 
 /**
