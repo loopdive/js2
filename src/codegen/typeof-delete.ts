@@ -10,6 +10,7 @@ import { resolveWidenedVarKey } from "./widened-var-key.js";
 import { isBooleanType, isStringType, isSymbolType } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { reportError } from "./context/errors.js";
+import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { isStrictContext } from "./expressions/assignment.js";
@@ -1641,6 +1642,11 @@ export function compileTypeofExpression(
     if (runtimeEvalMayRebindIdentifier(ctx, bareTdz)) {
       forceRuntimeTypeof = true;
     }
+    // (#4204) Slot is externref, checker still says primitive — folding
+    // `typeof x` would report the initializer's type forever.
+    if (ts.isIdentifier(bareTdz) && moduleGlobalIsDynamicButStaticallyPrimitive(ctx, bareTdz)) {
+      forceRuntimeTypeof = true;
+    }
     // (#2623 P-7) `typeof x` where x's FLOW-narrowed type is null/undefined but
     // the binding is ASSIGNED elsewhere in the source must NOT const-fold: TS
     // does not apply assignments made inside nested closures to the outer flow,
@@ -1851,6 +1857,10 @@ export function compileTypeofComparison(
     staticTypeof = staticTypeofForType(ctx, tsType);
   }
   if (staticTypeof !== null && runtimeEvalMayRebindIdentifier(ctx, operand)) {
+    staticTypeof = null;
+  }
+  // (#4204) Same unsound-fold guard as compileTypeofExpression.
+  if (staticTypeof !== null && ts.isIdentifier(operand) && moduleGlobalIsDynamicButStaticallyPrimitive(ctx, operand)) {
     staticTypeof = null;
   }
   // (#2623 P-7) Same unsound-fold guard as compileTypeofExpression: a
