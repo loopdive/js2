@@ -340,3 +340,69 @@ Live lever lists live in `.tmp/levers/` and are regenerated per wave; the
 per-mechanism residue as of 2026-08-06 is descriptor family 558, dynamic scope
 308, `Function.prototype` 80, `String.prototype` 64, explicit refusals 91,
 frame-bearing crashes 110.
+
+---
+
+## METHOD CORRECTION #2 (2026-08-06, later) — use `es5id`, not frames, not `description:`
+
+The correction above is superseded in its *ordering*. A full re-census on current
+main attributed **1,766 / 1,766 = 100 %** of ES5-label standalone failures
+without reading a single test body, and it did so on the **third** cut, not the
+first.
+
+### `es5id` IS the mechanism
+
+Every ES5-label test carries an `es5id`, and an `es5id` **is a spec-clause
+pointer** — the name of the algorithm the test exercises, assigned by the test
+author. `description:` is *prose about* a mechanism; `es5id` *is* the mechanism,
+pre-labelled and machine-readable.
+
+The 1,376-file "described, unmatched" residue this file previously reported
+**dissolves entirely** under an `es5id` cut. The only files it does not
+attribute are **157 with no `es5id` at all, and they are 100 % `annexB/`** —
+which reach the ES5 label through the path heuristic rather than an id.
+
+### Frames are a dead end at this corpus size
+
+"Frames point at mechanisms" is true per-file and useless in aggregate: only
+**103 of 1,766 (5.8 %)** carry an `[in fn()]` frame at all, and **56 of those
+name `__module_init()`**, which is not a mechanism — it is "top-level code".
+Keep the frame heuristic for triaging an individual failure; do not build a
+census on it.
+
+### The strategic finding
+
+**There is no unowned mechanism above ~170 files.** Ranked by `es5id` clause:
+
+| files | mechanism |
+| ---: | --- |
+| 481 | descriptor family (15.2.3.6/.7/.5/.3/.4/.14/.9) |
+| 168 | **10.4.3 Entering Function Code — the `this` binding** (+15.3.4.4 call, 15.3.4.3 apply, 11.2.3) |
+| 153 | annexB, no `es5id` (global-code 55, function-code 49, eval-code 42, comments 7) |
+| 99 | 12.10 `with` |
+| 45 | 15.5.4.14 split + 15.5.4.11 replace |
+| 321 | **long tail: 141 clauses averaging 2.3 files each** |
+
+Those top four are ≈ 900 files and the gap to 90 % is ≈ 873. **They are the
+whole ballgame** — the remainder genuinely fragments, so plan for four
+mechanisms plus a long grind, not for more big levers.
+
+### Instrument, re-confirmed the hard way
+
+`runTest262File` still does **not** supply `js2wasm:runtime-eval` (#4162's fix
+is not on main as of this census) — verified by observation, 3 of the first 6
+files dying at `Import #0`. Two further points that were not previously written
+down:
+
+- **Only the FULL interpreter provider tier is CI-comparable.** The refusal tier
+  makes those files throw `dynamic code evaluation is not supported`, which is
+  not what the baseline says, so a refusal-tier run silently disagrees with CI.
+  Build it with `node --import tsx scripts/build-runtime-eval-provider.mjs`
+  (~99 s).
+- **Validate the instrument on BOTH sides before trusting it**: the lever list
+  should reproduce the baseline's failures (0/168 here) *and* a control list of
+  currently-passing files in the same clauses should pass (138/138 here). One
+  side alone cannot distinguish a working instrument from a blind one.
+- A fresh worktree has neither `node_modules` nor `test262`;
+  `scripts/provision-worktree-deps.sh` is the fix, and a bare symlink can be
+  clobbered mid-session.
