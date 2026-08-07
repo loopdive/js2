@@ -57,10 +57,39 @@ Concretely, from the lanes that did it right:
 - lever 1/42 at base + control 427/427 → same shape, full control population,
   not a sample. Then `+16 / 0 regressed` means something.
 
-Cross-check the base run against the published standalone jsonl file-by-file
-and state the disagreement count (one lane: 41 of 42 agree, the one outlier a
-CI `compile_timeout` that passes locally). A base run that does not reproduce
-the baseline is a broken instrument, not a discovery.
+Cross-check the base run against a **same-mode** jsonl file-by-file and state
+the disagreement count (one lane: 41 of 42 agree, the one outlier a CI
+`compile_timeout` that passes locally). A base run that does not reproduce its
+same-mode baseline is a broken instrument, not a discovery.
+
+### ⚠ There is no published STANDALONE jsonl — do not cross-check against it
+
+`.test262-cache/test262-current.jsonl`, the artifact
+`scripts/fetch-baseline-jsonl.mjs` hands you, is the **HOST lane**. Verified
+2026-08-06 over all 48,619 rows: the only import namespace that appears
+anywhere is **`env`** (2,145,612 occurrences, zero `js2wasm:runtime-eval`), and
+there is no `mode`/`target` field to warn you.
+
+**`oracle_lane: "honest"` is NOT a mode marker.** It is the honest-vs-fast
+*oracle* axis (#3462) and it is on 100% of rows. It reads like "the real lane",
+which is exactly why this is easy to get wrong.
+
+Consequence: diffing a standalone run against it produces a large disagreement
+count that **is the host-vs-standalone gap itself** (one lane measured ~219),
+not instrument error. A lane that follows the "cross-check against the
+published baseline" instruction literally will either distrust a working
+instrument or — far worse — tune its runner until it agrees with the host
+lane's answers. Use a same-mode jsonl instead (e.g. a prior standalone lane's,
+such as W5's, which agreed 558/558 modulo the twelve #4180 flips).
+
+### Rebuilding the provider can silently HIT the cache
+
+`node --import tsx scripts/build-runtime-eval-provider.mjs` is **not** by itself
+proof the provider was rebuilt: the cache key is `no-bundle`-static in this
+configuration, so a plain rebuild can no-op while reporting success — which
+leaves you in the very refusal tier you were trying to escape. **Delete the
+cache first, then verify the emitted binary actually changed** (one lane:
+3,970,936 → 3,970,952 bytes, which is what confirmed the rebuild mattered).
 
 ## The trap has a false-NEGATIVE form too, and it is worse
 
