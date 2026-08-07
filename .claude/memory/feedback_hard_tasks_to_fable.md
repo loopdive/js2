@@ -12,6 +12,22 @@ So the split is now by **phase**, not by difficulty:
 | implementation, all tiers | **Opus** |
 | implementation spec for a **really hard** issue | **Fable**, written first |
 
+### ⚠ Fable can be OUT OF CREDITS — check before routing (2026-08-07)
+
+A Fable architect spawn for #4203 died on its first turn:
+`You've reached your Fable 5 limit. Run /usage-credits to continue`. The spawn
+**fails immediately**, so the cost is only a wasted pane — but if you have
+stalled an implementer waiting for the spec, you have stalled it forever.
+
+This is the concrete reason for the "do not stall the implementer" rule below,
+and it argues for keeping it: the Opus lane had already been told its own
+measurement outranks the spec, so it continued unaffected.
+
+When Fable is exhausted, do **not** substitute a parallel Opus architect onto an
+issue an Opus lane is already implementing — a second opinion arriving mid-flight
+into the same files buys little and can contradict the implementer's own
+measurements. Let the implementer run; spec only what nobody has started.
+
 For a `feasibility: hard` / `reasoning_effort: max` issue: spawn a **Fable
 architect** to write the `## Implementation Plan` into the issue file, and an
 **Opus** lane to implement it. They can run **in parallel** — the implementer's

@@ -91,62 +91,38 @@
 
 import { forEachChild, ts } from "../ts-api.js";
 import type { IrUnitId } from "./identity.js";
+import {
+  type AnalysisState,
+  type Edge,
+  EMPTY_FACTS,
+  type GraphFacts,
+  type GraphNode,
+  NO_FIELDS,
+  enclosingThisBinder,
+  isClassMemberLike,
+  isFunctionLikeNode,
+  isSymbolKeyed,
+  mkId,
+  scopeChainOf,
+  spaceOfBase,
+  symOf,
+  unwrap,
+  writeKey,
+} from "./fnctor-graph-model.js";
+import { computeDefiniteCtorFields, scanFieldWrites } from "./fnctor-field-writes.js";
+import {
+  type FieldFacts,
+  type FixpointCtx,
+  type ThisContext,
+  buildWriteIndex,
+  collectThisReadFacts,
+  evalValueExpr,
+  instanceAtomFor,
+  runFieldPass,
+} from "./fnctor-field-lattice.js";
 import { _propagationCore as core, type LatticeType } from "./propagate.js";
 
-interface GraphNode {
-  readonly id: IrUnitId;
-  /** "callable" = top-level fn decl or `var F = function(){}` ctor. */
-  readonly kind: "callable" | "static-method" | "proto-method";
-  /** callable: binding name; methods: the method (property) name. */
-  readonly name: string;
-  /** methods: owning callable's node id. */
-  readonly ownerId?: IrUnitId;
-  readonly fn: ts.FunctionDeclaration | ts.FunctionExpression;
-  poisoned: boolean;
-}
-
-interface Edge {
-  readonly callee: IrUnitId;
-  readonly argExprs: readonly ts.Expression[];
-  /** Enclosing function-like chain, outermost first (empty at top level). */
-  readonly scopeChain: readonly ts.SignatureDeclaration[];
-}
-
-interface MethodWriteState {
-  decl?: ts.FunctionExpression;
-  bad: boolean;
-}
-
-/** Mutable working state threaded through the analysis phases. */
-interface AnalysisState {
-  readonly sourceFile: ts.SourceFile;
-  readonly checker: ts.TypeChecker;
-  readonly nodes: Map<IrUnitId, GraphNode>;
-  readonly nodeIdBySymbol: Map<ts.Symbol, IrUnitId>;
-  readonly nodeIdByFn: Map<ts.Node, IrUnitId>;
-  readonly protoAliasOwner: Map<ts.Symbol, IrUnitId>;
-  readonly protoPoisoned: Set<IrUnitId>;
-  readonly staticPoisoned: Set<IrUnitId>;
-  /** "<ownerId> <space> <name>" → write-once state. */
-  readonly methodWrites: Map<string, MethodWriteState>;
-  readonly runtimeDefinedProtoKeys: Map<IrUnitId, Set<string>>;
-  readonly valueReadNames: Set<string>;
-  /** Every property NAME used anywhere except as an install (write) target. */
-  readonly propertyNameUses: Set<string>;
-  /** Callable identifier refs in disallowed positions, adjudicated post-scan. */
-  readonly escapeCandidates: { nodeId: IrUnitId; id: ts.Identifier }[];
-  readonly callSites: ts.CallExpression[];
-  readonly newSites: ts.NewExpression[];
-  readonly methodNodesByName: Map<string, GraphNode[]>;
-  /** "<ownerId> <name>" → static method node. */
-  readonly staticMethodNode: Map<string, GraphNode>;
-  readonly edges: Edge[];
-  poisonAllMethods: boolean;
-  poisonAllCtors: boolean;
-  nextId: number;
-}
-
-const memo = new WeakMap<ts.SourceFile, ReadonlyMap<string, readonly LatticeType[]>>();
+const memo = new WeakMap<ts.SourceFile, GraphFacts>();
 
 /**
  * Post-fixpoint per-parameter lattice facts for every non-poisoned top-level
@@ -161,6 +137,27 @@ export function computeFnctorGraphCtorParamFacts(
   sourceFile: ts.SourceFile,
   host: { checker: ts.TypeChecker },
 ): ReadonlyMap<string, readonly LatticeType[]> {
+  return graphFacts(sourceFile, host).paramFacts;
+}
+
+/**
+ * Post-fixpoint lattice value of every `this.<y>` READ that carries a
+ * constructor field write, keyed by the read's `PropertyAccessExpression`.
+ *
+ * This is the field↔param mutual fixpoint's output for the shape
+ * `this.start = this.end = this.pos`, which the parameter facts alone cannot
+ * express: the value is a field of the instance under construction, not a
+ * parameter. Definiteness and statement ordering are already applied — a read
+ * that could observe `undefined` never appears with a numeric fact.
+ */
+export function computeFnctorGraphCtorThisReadFacts(
+  sourceFile: ts.SourceFile,
+  host: { checker: ts.TypeChecker },
+): ReadonlyMap<ts.Node, LatticeType> {
+  return graphFacts(sourceFile, host).thisReadFacts;
+}
+
+function graphFacts(sourceFile: ts.SourceFile, host: { checker: ts.TypeChecker }): GraphFacts {
   const cached = memo.get(sourceFile);
   if (cached) return cached;
   const result = analyze(sourceFile, host.checker);
@@ -168,59 +165,7 @@ export function computeFnctorGraphCtorParamFacts(
   return result;
 }
 
-function unwrap(e: ts.Expression): ts.Expression {
-  let cur = e;
-  while (ts.isParenthesizedExpression(cur) || ts.isAsExpression(cur) || ts.isNonNullExpression(cur)) {
-    cur = cur.expression;
-  }
-  return cur;
-}
-
-/**
- * `Symbol.<wellKnown>` computed-key test — symbol keys cannot collide with the
- * string-keyed method slots this analysis reasons about (same allowance as the
- * escape gate's write-once pass).
- */
-function isSymbolKeyed(idx: ts.Expression | undefined): boolean {
-  if (idx === undefined) return false;
-  const e = unwrap(idx);
-  return ts.isPropertyAccessExpression(e) && ts.isIdentifier(e.expression) && e.expression.text === "Symbol";
-}
-
-function isFunctionLikeNode(node: ts.Node): node is ts.SignatureDeclaration {
-  return (
-    ts.isFunctionDeclaration(node) ||
-    ts.isFunctionExpression(node) ||
-    ts.isArrowFunction(node) ||
-    ts.isMethodDeclaration(node) ||
-    ts.isConstructorDeclaration(node) ||
-    ts.isGetAccessor(node) ||
-    ts.isSetAccessor(node)
-  );
-}
-
-function isClassMemberLike(node: ts.Node): boolean {
-  return (
-    ts.isMethodDeclaration(node) ||
-    ts.isConstructorDeclaration(node) ||
-    ts.isGetAccessor(node) ||
-    ts.isSetAccessor(node)
-  );
-}
-
-function symOf(state: AnalysisState, node: ts.Node): ts.Symbol | undefined {
-  return state.checker.getSymbolAtLocation(node);
-}
-
-function mkId(state: AnalysisState): IrUnitId {
-  return `__fnctor_graph_${state.nextId++}` as IrUnitId;
-}
-
-function writeKey(ownerId: IrUnitId, space: "static" | "proto", name: string): string {
-  return `${ownerId} ${space} ${name}`;
-}
-
-function analyze(sourceFile: ts.SourceFile, checker: ts.TypeChecker): ReadonlyMap<string, readonly LatticeType[]> {
+function analyze(sourceFile: ts.SourceFile, checker: ts.TypeChecker): GraphFacts {
   const state: AnalysisState = {
     sourceFile,
     checker,
@@ -240,6 +185,13 @@ function analyze(sourceFile: ts.SourceFile, checker: ts.TypeChecker): ReadonlyMa
     edges: [],
     propertyNameUses: new Set(),
     escapeCandidates: [],
+    fieldWrites: [],
+    fieldNamesByOwner: new Map(),
+    definiteCtorFields: new Map(),
+    fieldDynamicNames: new Set(),
+    fieldDynamicPerOwner: new Map(),
+    fieldPoisonedOwners: new Set(),
+    poisonAllFields: false,
     poisonAllMethods: false,
     poisonAllCtors: false,
     nextId: 0,
@@ -250,9 +202,17 @@ function analyze(sourceFile: ts.SourceFile, checker: ts.TypeChecker): ReadonlyMa
   scanFile(state);
   adjudicateEscapes(state);
   materializeMethodNodes(state);
+  scanFieldWrites(state);
+  computeDefiniteCtorFields(state);
   buildEdges(state);
-  if (state.poisonAllCtors) return new Map();
-  const entries = runFixpoint(state);
+  if (state.poisonAllCtors) return EMPTY_FACTS;
+  const solved = runFixpoint(state);
+  // Non-convergence is NOT "use what we have": the atom-mediated reads are not
+  // monotone (a fact rising `unknown → f64` makes a field ENTER the instance
+  // atom, which can make a dependent fact DROP), so an unconverged intermediate
+  // state is unsound to consume. Empty output is strictly safe.
+  if (!solved.converged) return EMPTY_FACTS;
+  const entries = solved.entries;
 
   // Output: per-callable param facts, unique names only.
   const nameCounts = new Map<string, number>();
@@ -264,6 +224,7 @@ function analyze(sourceFile: ts.SourceFile, checker: ts.TypeChecker): ReadonlyMa
     if (node.kind !== "callable" || node.poisoned || nameCounts.get(node.name) !== 1) continue;
     out.set(node.name, entries.get(node.id)!.params);
   }
+  const thisReadFacts = collectThisReadFacts(state, solved.fieldFacts, nameCounts);
 
   // Inert diagnostics (JS2WASM_LOG_FNCTOR_GRAPH=1) — mirrors the escape gate's
   // JS2WASM_LOG_FNCTOR_GATE pattern; zero effect on output.
@@ -280,17 +241,33 @@ function analyze(sourceFile: ts.SourceFile, checker: ts.TypeChecker): ReadonlyMa
         `protoPoisoned=${state.protoPoisoned.size} staticPoisoned=${state.staticPoisoned.size} ` +
         `valueReadNames=${state.valueReadNames.size}`,
       `[#743 fnctor-graph] method nodes: ${methods.map((m) => m.name).join(",") || "none"}`,
+      `[#743 fnctor-graph] fieldWrites=${state.fieldWrites.length} ` +
+        `owners=${state.fieldNamesByOwner.size} poisonAllFields=${state.poisonAllFields} ` +
+        `fieldPoisonedOwners=${state.fieldPoisonedOwners.size} thisReads=${thisReadFacts.size} ` +
+        `dynamicNames=[${[...state.fieldDynamicNames].join(",")}]`,
     ];
+    for (const [owner, definite] of state.definiteCtorFields) {
+      const facts = solved.fieldFacts.get(owner);
+      if (facts === undefined || facts.size === 0) continue;
+      const rows = [...facts].map(([n, t]) => `${n}:${t.kind}${definite.has(n) ? "" : "?"}`);
+      lines.push(`[#743 fnctor-graph]   fields ${state.nodes.get(owner)?.name ?? owner}: ${rows.join(" ")}`);
+    }
     for (const [name, params] of out) {
       const kinds = params.map((p) => p.kind);
       if (kinds.some((k) => k !== "unknown" && k !== "dynamic")) {
         lines.push(`[#743 fnctor-graph]   ${name}(${kinds.join(", ")})`);
       }
     }
+    for (const [owner, facts] of solved.fieldFacts) {
+      const named = [...facts].filter(([, t]) => t.kind !== "unknown" && t.kind !== "dynamic");
+      if (named.length === 0) continue;
+      const ownerName = state.nodes.get(owner)?.name ?? owner;
+      lines.push(`[#743 fnctor-graph]   ${ownerName}{${named.map(([n, t]) => `${n}:${t.kind}`).join(", ")}}`);
+    }
     // eslint-disable-next-line no-console
     console.error(lines.join("\n"));
   }
-  return out;
+  return { paramFacts: out, thisReadFacts };
 }
 
 // ── Phase 1: top-level callables ──────────────────────────────────────────────
@@ -361,33 +338,6 @@ function collectProtoAliases(state: AnalysisState): void {
 }
 
 // ── Phase 3: whole-file scan ──────────────────────────────────────────────────
-
-/** Resolve a member-access BASE to the method space it addresses, if any. */
-function spaceOfBase(
-  state: AnalysisState,
-  baseExpr: ts.Expression,
-): { ownerId: IrUnitId; space: "static" | "proto" } | undefined {
-  const base = unwrap(baseExpr);
-  if (ts.isPropertyAccessExpression(base) && base.name.text === "prototype") {
-    const inner = unwrap(base.expression);
-    if (ts.isIdentifier(inner)) {
-      const sym = symOf(state, inner);
-      const ownerId = sym ? state.nodeIdBySymbol.get(sym) : undefined;
-      if (ownerId !== undefined) return { ownerId, space: "proto" };
-    }
-    return undefined;
-  }
-  if (ts.isIdentifier(base)) {
-    const sym = symOf(state, base);
-    if (sym) {
-      const aliasOwner = state.protoAliasOwner.get(sym);
-      if (aliasOwner !== undefined) return { ownerId: aliasOwner, space: "proto" };
-      const ownerId = state.nodeIdBySymbol.get(sym);
-      if (ownerId !== undefined) return { ownerId, space: "static" };
-    }
-  }
-  return undefined;
-}
 
 function recordMethodWrite(
   state: AnalysisState,
@@ -492,7 +442,23 @@ function isAllowedCallableRef(id: ts.Identifier): boolean {
   if (parent === undefined) return false;
   if (ts.isCallExpression(parent) && parent.expression === node) return true;
   if (ts.isNewExpression(parent) && parent.expression === node) return true;
-  if (ts.isPropertyAccessExpression(parent) && parent.expression === node) return true;
+  if (ts.isPropertyAccessExpression(parent) && parent.expression === node) {
+    // (#743) `F.call` / `F.apply` / `F.bind` INVOKE F — a property-base use is
+    // not an inert read here. Acorn's `finishNodeAt` is reached ONLY through
+    // `finishNodeAt.call(this, …)`, so treating that as a plain base use left
+    // its params seeded `unknown` (lattice BOTTOM) forever, and its
+    // `node.end = pos` write then contributed nothing instead of widening —
+    // optimism, not conservatism. `.call`/`.apply` in direct-callee position
+    // are handled as real edges in `buildEdges`; anything else (an extracted
+    // `var f = F.call`, any `.bind`) is an unseen invocation alias and poisons.
+    const method = ts.isPrivateIdentifier(parent.name) ? "" : parent.name.text;
+    if (method === "bind") return false;
+    if (method === "call" || method === "apply") {
+      const grandparent = parent.parent;
+      return grandparent !== undefined && ts.isCallExpression(grandparent) && grandparent.expression === parent;
+    }
+    return true;
+  }
   if (ts.isVariableDeclaration(parent) && parent.name === id) return true;
   if (ts.isFunctionDeclaration(parent) || ts.isFunctionExpression(parent)) return true; // its own name
   if (ts.isExportSpecifier(parent)) return true; // export boundary — family trust model
@@ -531,6 +497,39 @@ function scanAssignment(state: AnalysisState, n: ts.BinaryExpression): void {
     const aliasOwner = sym ? state.protoAliasOwner.get(sym) : undefined;
     if (aliasOwner !== undefined) state.protoPoisoned.add(aliasOwner); // alias reassigned
   }
+}
+
+/**
+ * (#743) `F.prototype.constructor === F` by default, so `new x.constructor(…)`
+ * — or any value-position read of `.constructor`, which can be constructed
+ * later — reaches EVERY tracked constructor with arguments no edge can see.
+ * That invalidates all ctor param facts, hence all field facts derived from
+ * them. Comparison operands (`x.constructor === Foo`) are the common type-check
+ * idiom and cannot construct anything, so they stay safe. Measured cost on the
+ * acorn dist: zero occurrences.
+ */
+function noteConstructorUse(state: AnalysisState, access: ts.Expression, name: string): void {
+  if (name !== "constructor") return;
+  let node: ts.Node = access;
+  while (
+    node.parent !== undefined &&
+    (ts.isParenthesizedExpression(node.parent) || ts.isAsExpression(node.parent) || ts.isNonNullExpression(node.parent))
+  ) {
+    node = node.parent;
+  }
+  const parent = node.parent;
+  if (parent !== undefined && ts.isBinaryExpression(parent)) {
+    const op = parent.operatorToken.kind;
+    if (
+      op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
+      op === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
+      op === ts.SyntaxKind.EqualsEqualsToken ||
+      op === ts.SyntaxKind.ExclamationEqualsToken
+    ) {
+      return;
+    }
+  }
+  state.poisonAllCtors = true;
 }
 
 function scanFile(state: AnalysisState): void {
@@ -576,6 +575,7 @@ function scanFile(state: AnalysisState): void {
           parent.left === n;
         if (!isDirectCallee && !isInstallTarget) state.valueReadNames.add((key as ts.StringLiteral).text);
         if (!isInstallTarget) state.propertyNameUses.add((key as ts.StringLiteral).text);
+        if (!isInstallTarget) noteConstructorUse(state, n, (key as ts.StringLiteral).text);
       }
     }
     if (ts.isNewExpression(n)) state.newSites.push(n);
@@ -589,6 +589,7 @@ function scanFile(state: AnalysisState): void {
         parent.left === n;
       if (!isDirectCallee && !isInstallTarget) state.valueReadNames.add(n.name.text);
       if (!isInstallTarget) state.propertyNameUses.add(n.name.text);
+      if (!isInstallTarget) noteConstructorUse(state, n, n.name.text);
     }
     if (ts.isIdentifier(n)) {
       const sym = symOf(state, n);
@@ -685,30 +686,60 @@ function materializeMethodNodes(state: AnalysisState): void {
 
 // ── Phase 5: edges ────────────────────────────────────────────────────────────
 
-function scopeChainOf(site: ts.Node): ts.SignatureDeclaration[] {
-  const chain: ts.SignatureDeclaration[] = [];
-  for (let cur: ts.Node | undefined = site.parent; cur !== undefined; cur = cur.parent) {
-    if (isFunctionLikeNode(cur)) chain.unshift(cur);
-  }
-  return chain;
-}
-
-/** Nearest `this`-binding enclosing function (arrows are transparent). */
-function enclosingThisBinder(site: ts.Node): ts.Node | undefined {
-  for (let cur: ts.Node | undefined = site.parent; cur !== undefined; cur = cur.parent) {
-    if (ts.isFunctionExpression(cur) || ts.isFunctionDeclaration(cur)) return cur;
-    if (isClassMemberLike(cur)) return cur; // class semantics — `this` is never a fnctor here
-  }
-  return undefined;
+/**
+ * Owner whose INSTANCE `this` is at a site — i.e. only inside a materialized
+ * prototype method. A static method's `this` is the constructor object and a
+ * plain function's is rebindable, so neither carries instance field facts.
+ */
+function instanceThisOwnerAt(state: AnalysisState, site: ts.Node): IrUnitId | undefined {
+  const binder = enclosingThisBinder(site);
+  if (binder === undefined || isClassMemberLike(binder)) return undefined;
+  const nodeId = state.nodeIdByFn.get(binder);
+  const node = nodeId !== undefined ? state.nodes.get(nodeId) : undefined;
+  return node?.kind === "proto-method" ? node.ownerId : undefined;
 }
 
 function buildEdges(state: AnalysisState): void {
-  const addEdge = (callee: IrUnitId, site: ts.CallExpression | ts.NewExpression): void => {
+  const addEdge = (
+    callee: IrUnitId,
+    site: ts.CallExpression | ts.NewExpression,
+    argExprs?: readonly ts.Expression[],
+  ): void => {
+    const thisOwner = instanceThisOwnerAt(state, site);
     state.edges.push({
       callee,
-      argExprs: site.arguments === undefined ? [] : site.arguments.slice(),
+      argExprs: argExprs ?? (site.arguments === undefined ? [] : site.arguments.slice()),
       scopeChain: scopeChainOf(site),
+      ...(thisOwner !== undefined ? { thisOwner } : {}),
     });
+  };
+
+  /**
+   * (#743 §7) `F.call(this, a, b)` / `F.apply(this, args)` in direct-callee
+   * position. Without this the callee lookup finds nothing (the property is
+   * named `call`) and the arguments are silently dropped — the ES5 subclass
+   * pattern and, on acorn, the ONLY way `finishNodeAt` is ever invoked.
+   * `.apply`'s argument list is a runtime array, so its params are unknowable:
+   * poison rather than guess. (Extracted `.call`/`.apply` and any `.bind`
+   * already poison in `isAllowedCallableRef`.)
+   */
+  const forwardedTarget = (call: ts.CallExpression): boolean => {
+    const callee = unwrap(call.expression);
+    if (!ts.isPropertyAccessExpression(callee) || ts.isPrivateIdentifier(callee.name)) return false;
+    const method = callee.name.text;
+    if (method !== "call" && method !== "apply") return false;
+    const base = unwrap(callee.expression);
+    if (!ts.isIdentifier(base)) return false;
+    const sym = symOf(state, base);
+    const targetId = sym ? state.nodeIdBySymbol.get(sym) : undefined;
+    if (targetId === undefined) return false;
+    if (method === "apply") {
+      const target = state.nodes.get(targetId);
+      if (target) target.poisoned = true;
+      return true;
+    }
+    addEdge(targetId, call, call.arguments.slice(1));
+    return true;
   };
 
   const methodTargets = (name: string, receiver: ts.Expression): readonly GraphNode[] => {
@@ -733,6 +764,7 @@ function buildEdges(state: AnalysisState): void {
       if (target !== undefined) addEdge(target, call);
       continue;
     }
+    if (forwardedTarget(call)) continue;
     let name: string | undefined;
     let receiver: ts.Expression | undefined;
     if (ts.isPropertyAccessExpression(callee) && !ts.isPrivateIdentifier(callee.name)) {
@@ -776,9 +808,13 @@ function buildEdges(state: AnalysisState): void {
   }
 }
 
-// ── Phase 6: fixpoint (propagate.ts lattice core) ─────────────────────────────
+interface FixpointResult {
+  readonly converged: boolean;
+  readonly entries: Map<IrUnitId, { params: LatticeType[]; returnType: LatticeType }>;
+  readonly fieldFacts: FieldFacts;
+}
 
-function runFixpoint(state: AnalysisState): Map<IrUnitId, { params: LatticeType[]; returnType: LatticeType }> {
+function runFixpoint(state: AnalysisState): FixpointResult {
   const entries = new Map<IrUnitId, { params: LatticeType[]; returnType: LatticeType }>();
   const seeds = new Map<IrUnitId, { params: LatticeType[]; returnType: LatticeType }>();
   for (const node of state.nodes.values()) {
@@ -814,9 +850,24 @@ function runFixpoint(state: AnalysisState): Map<IrUnitId, { params: LatticeType[
     return scope;
   };
 
+  const fieldFacts: FieldFacts = new Map();
+  for (const [owner, names] of state.fieldNamesByOwner) {
+    const facts = new Map<string, LatticeType>();
+    for (const name of names) facts.set(name, core.UNKNOWN);
+    fieldFacts.set(owner, facts);
+  }
+  const fx: FixpointCtx = { state, entries, fieldFacts, atoms: new Map(), resolver, buildScope };
+  const writeIndex = buildWriteIndex(state);
+
   const MAX_ITERS = 50;
+  let converged = false;
   for (let iter = 0; iter < MAX_ITERS; iter++) {
-    let changed = false;
+    // Instance atoms are frozen at the top of the iteration so every consumer
+    // in this pass sees the same shape (an atom rebuilt mid-pass would make
+    // the result depend on `nodes` iteration order).
+    fx.atoms.clear();
+    for (const owner of state.definiteCtorFields.keys()) fx.atoms.set(owner, instanceAtomFor(fx, owner));
+    let changed = runFieldPass(fx, writeIndex);
     for (const node of state.nodes.values()) {
       if (node.poisoned) continue;
       const cur = entries.get(node.id)!;
@@ -824,8 +875,13 @@ function runFixpoint(state: AnalysisState): Map<IrUnitId, { params: LatticeType[
       const newParams = seed.params.map((t) => t);
       for (const site of inbound.get(node.id) ?? []) {
         const scope = buildScope(site.scopeChain);
+        let thisCtx: ThisContext | undefined;
+        if (site.thisOwner !== undefined) {
+          scope.set("<this>", fx.atoms.get(site.thisOwner) ?? core.DYNAMIC);
+          thisCtx = { owner: site.thisOwner, snapshot: state.definiteCtorFields.get(site.thisOwner) ?? NO_FIELDS };
+        }
         for (let i = 0; i < newParams.length && i < site.argExprs.length; i++) {
-          newParams[i] = core.join(newParams[i]!, core.inferExpr(site.argExprs[i]!, scope, entries, resolver));
+          newParams[i] = core.join(newParams[i]!, evalValueExpr(fx, site.argExprs[i]!, scope, thisCtx));
         }
       }
       const ownScope = new Map<string, LatticeType>();
@@ -852,7 +908,10 @@ function runFixpoint(state: AnalysisState): Map<IrUnitId, { params: LatticeType[
         changed = true;
       }
     }
-    if (!changed) break;
+    if (!changed) {
+      converged = true;
+      break;
+    }
   }
-  return entries;
+  return { converged, entries, fieldFacts };
 }
