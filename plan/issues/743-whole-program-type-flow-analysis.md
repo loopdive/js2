@@ -1,9 +1,10 @@
 ---
 id: 743
 title: "Whole-program type flow analysis"
-status: ready
+status: in-progress
+assignee: ttraenkler/opus-impl-4
 created: 2026-03-22
-updated: 2026-08-06
+updated: 2026-08-07
 priority: critical
 horizon: xl
 feasibility: hard
@@ -51,6 +52,14 @@ loc-budget-allow:
   # would bind) is provably inert for the main fixpoint. `inferExpr` is the one
   # place an expression's lattice value is decided, so a satellite cannot host
   # it; everything else lives in the satellite's four modules.
+  # Plus +34 (1568 → 1602) for the satellite i32/bitwise producer slice: the
+  # `InferExtension` hook. Two lines of it are the hook consult; the rest is one
+  # optional `ext` parameter threaded through `inferExpr`, its three atom
+  # helpers and `walkBodyForReturns` (11 recursion sites — a site that DROPS it
+  # answers the pre-extension type silently, so the threading is exhaustive by
+  # construction rather than by review), plus the doc comment that states the
+  # flag-off byte-identity argument. The rule ITSELF is a new satellite module,
+  # src/ir/fnctor-i32-producers.ts; nothing about the rule lives here.
   - src/ir/propagate.ts
   # +6: a three-line comment and one call in `deriveFnctorFields`, which is the
   # single place a fnctor field slot is chosen and therefore the only place this
@@ -1285,3 +1294,979 @@ end-to-end on synthetic cycles, and pays nothing on acorn. The honest reading is
 that the remaining 40 are not gated on graph reach or on field↔param mutuality —
 they are gated on how precisely a value expression can be evaluated once the
 graph gets you there.
+
+## Implementation Plan — satellite local-variable typing (Fable spec, 2026-08-07)
+
+Spec for the locals lever the 2026-08-07 Results section ranked #2, designed to
+land WITH lever #1 (method-return facts) and with the `raise` attribution
+question resolved. Everything below was verified against the branch
+`claude/issue-743-mutual-fixpoint` @ `39dd7b543` (line anchors are that
+revision) and against the acorn 8.16.0 dist
+(`tests/dogfood/.acorn/package/dist/acorn.mjs`, extracted from
+`tests/dogfood/fixtures/acorn-8.16.0.tgz` — dist line anchors below). Facts I
+could not execute-check are labeled ASSUMPTION.
+
+### 0. Verdict first (pricing): predicted acorn movers ≈ 0 — recommend AGAINST implementing this slice now; pivot
+
+Read §7 for the per-slot chains. The one-line version: every f64-class slot in
+the 40-unknown bucket chains through `Parser.pos`'s FIELD fact, and `Parser.pos`
+is pinned `dynamic` by **at least five independent write families**, of which
+the three ranked levers (locals, method returns, `raise` attribution) retire at
+most two. Two of the surviving pins bottom out in **string-builtin calls**
+(`this.input.indexOf(…)`, `.charCodeAt(…)`, `.match(…)[0].length`) that no
+locals model can type, and one — the 22 `state.pos = <local>` regexp writes —
+requires **nominal instance provenance** for an untracked receiver, a
+qualitatively bigger analysis than anything in this family. Locals typing alone
+moves **0** of the 40; locals + raise fix moves **0**; locals + raise + method
+returns moves **0**. A spec that predicts zero movers should not be implemented
+for the acorn census goal; §8 re-ranks. The design below is still written out in
+full because (a) the evaluator-extension architecture (§3–§5) is the right
+substrate for ANY future satellite precision work and settles the byte-identity
+question once, and (b) the soundness analysis kills one UNSOUND suggestion the
+2026-08-07 Results section's ranked-lever list contains (§5 — name-based
+method-RETURN joins are not sound; the predecessor's §7 lesson repeats).
+
+### 1. Scope and constraints (unchanged from the family, all load-bearing)
+
+- SATELLITE ONLY. Main `IrUnitTypeMap` byte-identical (#1712 parity). One
+  consumer: `src/codegen/fnctor-ctor-param-types.ts`, f64-only, flag
+  `JS2WASM_FNCTOR_CTOR_PARAM_TYPES` default OFF.
+- Flag-off byte-identity vs origin/main asserted by sha256 on the standalone
+  acorn binary (the mutual-fixpoint slice's procedure, baseline
+  `11aa8e230bca8223…`, 861,854 B — re-derive on whatever main is current).
+- Census baseline: **55 typed / 1 discarded / 40 unknown**; canaries 2,3,4,5;
+  imports `[]`; 3 pre-existing parity IR-FALLBACKs.
+- The shared lattice core stays ONE implementation. No forked evaluator: any
+  new rule enters `inferExpr` behind an explicit extensions hook (§3.3) that
+  the always-on main fixpoint never passes — that is how flag-off
+  byte-identity survives without duplicating operator semantics.
+
+### 2. Measured root cause, re-verified write-by-write on the dist
+
+Every dist claim below was re-checked by grep/read on
+`tests/dogfood/.acorn/package/dist/acorn.mjs` (acorn 8.16.0):
+
+- VERIFIED `var Parser = function Parser(options, input, startPos)` :510;
+  `this.input = String(input)` :523; `this.pos = startPos` :534;
+  `this.pos = this.lineStart = 0` :538.
+- VERIFIED `pp$4.raise = function(pos, message)` :3754 with
+  `var err = new SyntaxError(message); err.pos = pos; …` :3760–3761 — the
+  receiver is a single-assignment local whose initializer is
+  `new SyntaxError(…)`, a global-builtin construction; `SyntaxError` is never
+  assigned or shadowed anywhere in the dist (grep: the only occurrences are
+  the two `new SyntaxError` sites, :3760 and the `RegExpValidationState`-path
+  reuse via `raiseRecoverable = raise` :3765).
+- VERIFIED the regexp family: 22 × `var start = state.pos` /
+  20 × `state.pos = start` (plus `state.pos = pos` :4139-adjacent shapes,
+  `state.pos = leadSurrogateEnd` :4791, `state.pos = 0` :4199) across
+  `pp$1.regexp_*` methods :4281–5388. `state` is always a PARAM of the
+  method, fed by name-based edges whose root is readRegexp's local
+  `var state = this.regexpState || (this.regexpState = new
+  RegExpValidationState(this))` :5823, with `this.regexpState = null` in the
+  Parser ctor :592.
+- VERIFIED `this.pos = end + 2` :5494 where
+  `var start = this.pos, end = this.input.indexOf("*/", this.pos += 2)` :5492.
+- VERIFIED `this.pos += octalStr.length - 1` :6125 where
+  `var octalStr = this.input.substr(this.pos - 1, 3).match(/^[0-7]+/)[0]`
+  :6119, reassigned `octalStr = octalStr.slice(0, -1)` :6122.
+- VERIFIED `this.pos += ch <= 0xffff ? 1 : 2` :6169 where
+  `var ch = this.fullCharCodeAtPos()` :6166 — a this-method call whose own
+  return chains through `this.fullCharCodeAt(this.pos)` :5487 into
+  `charCodeAt`.
+- VERIFIED `RegExpValidationState.prototype.advance`:
+  `this.pos = this.nextIndex(this.pos, forceU)` :4113; `nextIndex` :4085
+  returns `l` / `i + 1` / `i + 2` where `var s = this.source; var l =
+  s.length` — the return bottoms out in `.length` on a field whose own fact
+  cannot become `string` (see §5, last paragraph).
+- VERIFIED benign sites that already work with the params-only scope:
+  `this.pos += startSkip` :5509 (`startSkip` is a param), `this.pos += size`
+  :5798 (`size` is a param), all integer-literal `+=`/`++` sites.
+
+### 3. Design — local-binding lattice inside tracked bodies
+
+#### 3.1 Model: flow-insensitive join over ALL assignments, with an eligibility gate
+
+A local's lattice value is the JOIN of every contribution that can ever be
+stored in it. This is the widen-only direction the whole family uses: a read
+bounded by the join of all writes is sound wherever the read observes an
+assigned value. Flow-sensitivity (SSA-lite, last-write-wins) is REJECTED:
+last-write-wins is unsound across loop back-edges without a CFG, and SSA-lite
+buys nothing here — §7 shows the acorn stalls are not ordering-precision
+losses, they are missing-rule losses (builtins, provenance). Loops therefore
+need no special handling at all: the join is order-free.
+
+Per function-like body, a declared local (identifier-named `var`/`let`/`const`)
+is **eligible** iff ALL of:
+
+1. Its declaration carries an initializer. (A bare `var x;` makes `undefined`
+   observable at reads the position rule below cannot exclude.)
+2. No read of its symbol occurs lexically BEFORE the declaration within the
+   enclosing function — where any reference inside a nested
+   **FunctionDeclaration** counts as lexically-prior regardless of position
+   (function-declaration hoisting lets a textually-later body run before the
+   initializer; function EXPRESSIONS and arrows are values and cannot execute
+   before their own definition site, so the position argument holds for them).
+   With (1)+(2), every read the analysis can be asked about observes a value
+   some recorded contribution produced — never `undefined`. Reassignments do
+   NOT disqualify; they contribute to the join.
+3. It is not a destructuring binding, not a `for-in`/`for-of` binding, not a
+   catch-clause binding, and not a parameter (params are already modeled).
+4. The enclosing function contains no direct `eval` identifier-call and no
+   `with` statement (either can write var-scoped locals invisibly). Cheap
+   per-function boolean computed during the scan.
+
+Ineligible locals bind DYNAMIC (explicitly, so they shadow any outer binding
+of the same name — see trap T6).
+
+Contributions of an eligible local, mirroring the FieldWrite taxonomy
+(`src/ir/fnctor-field-writes.ts:35–53`):
+
+- declaration initializer and every `x = rhs` → eval(rhs) (chain-unwrapped);
+- `x -= *= /= %= **= <<= >>= >>>= &= |= ^=`, `x++`/`x--` → F64;
+- `x += rhs` → plus-join of the local's own running join with eval(rhs) —
+  reuse `plusJoin` (`src/ir/fnctor-field-lattice.ts:159`), hoisting it to the
+  shared model module;
+- `x &&= ||= ??=` → eval(rhs) joined in (old value already in the join).
+
+Closure capture needs NO extra poison: assignments inside nested
+function-likes are assignments to the same symbol and enter the join like any
+other (widening). What DOES need care is which SCOPE their RHS is evaluated
+in — see §3.2.
+
+#### 3.2 Evaluation scope and iteration mechanics
+
+Two phases:
+
+- **Scan phase** (once, alongside `scanFieldWrites`): build
+  `localSpecs: Map<ts.SignatureDeclaration, LocalSpec[]>` on `AnalysisState`
+  (`src/ir/fnctor-graph-model.ts:94`), where `LocalSpec = { name, eligible,
+  contributions: { kind, expr?, declaringFn }[] }`, in declaration-position
+  order. Contribution RHS evaluation is deferred; only shapes are recorded.
+- **Per-iteration phase**: `buildScope` (`src/ir/fnctor-method-edges.ts:839`)
+  currently binds params along the scope chain, outermost first. Extend it:
+  after binding a chain link's params, evaluate that link's `LocalSpec`s in
+  position order and bind each local into the same map before moving inward.
+  Position order is closed under the eligibility rule: an eligible local's
+  initializer cannot read a later-declared local (that read would be
+  lexically-prior for the later local, making IT ineligible → DYNAMIC, which
+  is what the partially-built scope answers anyway via the explicit DYNAMIC
+  binding). Contributions whose `declaringFn` is a nested function are
+  evaluated against the scope built so far plus DYNAMIC for the nested
+  function's own params when it is not in the chain (exactly the existing
+  params rule at :847).
+- Local values are DERIVED per iteration from the current param/field/return
+  facts (same recompute-from-seeds discipline as fields), so they are not new
+  lattice variables and add no convergence obligations beyond the existing
+  ones. Cache per iteration: `fx.localScopes: Map<ts.Node, Map<string,
+  LatticeType>>`, cleared at the top of each iteration next to `fx.atoms`
+  (`src/ir/fnctor-method-edges.ts:868`). NOT caching across iterations is
+  load-bearing (trap T5).
+- `<this>` inside local initializers: a proto-method's locals may read
+  `this.x`. `buildScope` has no this-context today; thread the optional
+  `thisCtx` that `writeContext` (`src/ir/fnctor-field-lattice.ts:167`) and the
+  edge loop (:879–881) already possess into the locals evaluation, so a local
+  init's DIRECT `this.<x>` read is answered by `readFieldFact` via the same
+  extension hook (§3.3) that fixes nested reads.
+
+#### 3.3 The evaluator extension hook (the architectural piece)
+
+`evalValueExpr` (`src/ir/fnctor-field-lattice.ts:137`) special-cases only
+TOP-LEVEL direct `this.<x>` reads; anything nested delegates to
+`core.inferExpr`, which recurses internally — so satellite-only precision
+(direct field reads at depth, method-call returns, any future builtin rule)
+is structurally unreachable today. Fix at the core, compatibly:
+
+- Add an optional trailing parameter to `inferExpr` and `walkBodyForReturns`
+  (`src/ir/propagate.ts:691, :1369`):
+  `ext?: { tryInfer(expr, scope): LatticeType | undefined }`.
+- At the top of `inferExpr`'s dispatch (after the parenthesis unwrap, before
+  the literal cases): `if (ext) { const t = ext.tryInfer(expr, scope); if (t
+  !== undefined) return t; }`. Thread `ext` through EVERY internal recursion
+  site (`inferObjectLiteralAtom` :914, `inferPropertyAccessAtom` :961,
+  `inferElementAccessAtom` :981, the `walkBodyForReturns` var/return arms
+  :1396–1409) — a partially-threaded hook produces wrong answers silently,
+  not crashes (trap T4).
+- Main-fixpoint call sites pass nothing → the always-on path is
+  byte-identical by construction (assert via the existing binary-hash
+  procedure).
+- The satellite's `tryInfer` handles, in order: (a) direct `this.<x>` reads
+  when a thisCtx is in force (subsuming the current top-level special case —
+  keep the top-level path too so behavior without hooks is unchanged);
+  (b) owner-resolved method-call returns (§5); (c) nothing else in this
+  slice. Export via `_propagationCore` unchanged members plus the new
+  parameter.
+
+### 4. Decision — the `raise` `"all"`-attribution carve-out: YES, narrowable soundly; NO, it does not change the outcome
+
+`err.pos = pos` (:3761) is an `"all"`-attributed write because `err` is an
+untracked receiver. Carve-out: drop a write from the all-bucket when the
+receiver is an identifier resolving to a local/var binding whose assignments
+are ALL of the form `new B(…)` where `B` is an identifier whose symbol has
+**no value declaration in this SourceFile** (a lib/global builtin) and whose
+name is **never written** anywhere in the file (no `B = …`, no `var B`, no
+shadowing declaration on the path — cheapest sound check: no in-file
+declaration at all per the checker symbol, plus no in-file assignment to the
+name). Soundness:
+
+- In-module: a host builtin's construction result predates the module and
+  cannot be an instance of a tracked fnctor; `new B(…)` where B is a plain
+  in-file function could return a tracked instance (ctor-return-object
+  semantics), which is why the carve-out requires B to be OUT-OF-FILE, not
+  merely untracked.
+- Cross-module: `globalThis.SyntaxError = Parser` after importing the module
+  would defeat it. That attack lands in the SAME damage class the family
+  already accepts at the export boundary (module header,
+  `src/ir/fnctor-method-edges.ts:85–90`): the consumer is f64-only, a
+  violating write coerces through the numeric unbox path to a NaN-class
+  value, never a reinterpreted reference. State this in the carve-out's
+  comment; it is a trust extension, not a proof.
+
+So the answer to the posed question is: attribution CAN be narrowed soundly —
+`err.pos = pos` does NOT legitimately widen `Parser.pos` forever. But
+implementing it retires ONE of ≥5 independent pins on `Parser.pos` (§7), so
+it re-ranks nothing by itself.
+
+### 5. Decision — method-call returns on `this` receivers: owner-resolved ONLY; the Results section's "name-based join" suggestion is UNSOUND
+
+The 2026-08-07 ranked-lever list says a "name-based join over write-once
+methods of that name is sound (widening)". That transplants the WRITE-side
+argument to the READ side, where it inverts. Feeding a method's params from
+every same-name site over-approximates (extra feeds only widen the fact — the
+sound direction). But CONSUMING a return fact requires the fact to
+over-approximate every possible callee's return, and the name-based set
+contains only TRACKED methods of that name: `recv.m()` where `recv` is an
+untracked object with its own `m` (a user options object, an out-of-module
+value) returns something no tracked node bounds. That is optimism in exactly
+the direction the module header forbids — the same failure shape as the
+predecessor spec's §7 error. Do NOT implement name-based return joins.
+
+Sound rule — resolve the callee's OWNER, then read that one node's return
+fact from `entries`:
+
+- `this.m(args)` where the site's this-binder is a materialized proto-method
+  of owner O (reuse `instanceThisOwnerAt`, `src/ir/fnctor-method-edges.ts:694`):
+  dispatch resolves through O's prototype iff ALL of — O not `protoPoisoned`,
+  `m` not in `runtimeDefinedProtoKeys(O)`, `m` not in `valueReadNames`,
+  `methodWrites` has a good write-once proto entry for (O, m), AND `m` cannot
+  be shadowed by an own property: `m` ∉ `fieldNamesByOwner(O)`, ∉ the
+  all-bucket names (any `"all"` FieldWrite named `m`), ∉
+  `fieldDynamicNames`/`fieldDynamicPerOwner(O)`, O ∉ `fieldPoisonedOwners`,
+  and `!poisonAllFields`. Then return `entries.get(nodeOf(O,"proto",m)).returnType`.
+- `C.m(args)` where `C` is an identifier resolving to a tracked ctor: the
+  static slot via `staticMethodNode`, same poison checks on the static space.
+- Anything else (untracked receiver, element-access callee, optional
+  chaining): no answer — fall through to the core's DYNAMIC.
+
+Honest yield note, so the implementer is not surprised: this rule DOES
+resolve the shape `this.pos = this.nextIndex(this.pos, forceU)` (:4113,
+thisOwner = RegExpValidationState) — but on acorn the resolved fact is still
+DYNAMIC, because `nextIndex`'s own return joins `l` where `var l = s.length`,
+`var s = this.source`, and (a) `.length` on a string-valued fact has no rule
+in the shared lattice, (b) `this.source`'s fact cannot even reach `string`:
+its reset write is `this.source = pattern + ""` (:4047) and `inferExpr`'s `+`
+rule (`src/ir/propagate.ts:774–779`) is f64-or-DYNAMIC — there is no
+string-concatenation producer in the shared core (only the field-level
+`plusJoin` knows string-plus). Adding string rules to the shared core is a
+main-map behavior change (NOT flag-gated) and is out of scope; adding them
+satellite-side via the hook is possible future work but is NOT in this slice
+(§8).
+
+### 6. What is deliberately NOT in this slice
+
+- No string-builtin return table (`String(x)`, `.length`, `.indexOf`,
+  `.charCodeAt`, `.slice`, …) — each is individually sound only when the
+  receiver's fact is provably `string`, which on acorn it never is (see §5);
+  building the table without the string-fact substrate yields nothing and
+  invites receiver-unsound shortcuts.
+- No nominal instance provenance (typing `new Tracked(…)` results as
+  owner-tagged references and narrowing untracked-receiver write attribution
+  by provenance). This is the ONLY lever that can retire the 22
+  `state.pos = <local>` all-bucket writes, and it is a new lattice dimension
+  (structural object atoms are deliberately NOT nominal — two same-shape
+  owners merge, so attribution-by-atom is unsound). Pricing it honestly: it
+  needs a provenance atom, join rules, escape rules, and a re-audit of every
+  attribution site — an XL-class follow-on that should only be considered if
+  a corpus census justifies it. On acorn it is NECESSARY-but-not-sufficient
+  for `Parser.pos` (the string-builtin pins remain).
+- No `||`-caching-idiom rule (`this.regexpState || (this.regexpState = new
+  …)`) and no null-bearing lattice atom — required for the `state` param's
+  fact, same follow-on bucket.
+
+### 7. Per-slot prediction for the 40 unknowns (pre-registered)
+
+Chains verified per §2. "L" = locals (§3), "R" = raise carve-out (§4), "M" =
+owner-resolved method returns (§5).
+
+| Slot(s) | L alone | L+R | L+R+M | Chain (why) |
+| --- | --- | --- | --- | --- |
+| `Parser.pos` (typed in census via ctor path; its SATELLITE field fact is the gate for the rows below) | dynamic | dynamic | dynamic | Pins: (1) 22 × all-bucket `state.pos = start` — `start = state.pos`, `state` param DYNAMIC (regexpState `\|\|`-idiom + null write), so L evaluates the local to DYNAMIC; retiring the pin needs nominal provenance (§6). (2) `this.pos = end + 2` — `end = this.input.indexOf(…)`: string-builtin, no rule. (3) `this.pos += octalStr.length - 1` — `.match(…)[0]` then `.length`: no rule, plus-join drags DYNAMIC. (4) `this.pos += ch <= 0xffff ? 1 : 2` — `ch = this.fullCharCodeAtPos()`: M resolves the callee but its return bottoms in `charCodeAt` → DYNAMIC → condition DYNAMIC. (5) `err.pos = pos` — retired by R. Net: 4 of 5 pins survive |
+| `Parser.start/end/lastTokStart/lastTokEnd` (4) | stall | stall | stall | `this.start = this.end = this.pos` — reads `Parser.pos` field fact (row above) |
+| `Node.start` (1) | stall | stall | stall | `startNodeAt(this.start, …)` → `Parser.start` dynamic |
+| `Token.start/end` (2) | stall | stall | stall | instance-atom path proven; `start`/`end` not IN the atom while dynamic |
+| `Token.type/value`, `SourceLocation.start/end`, `Parser.startLoc/endLoc/lastTokStartLoc/lastTokEndLoc`, `BranchID.parent` (~9) | stall | stall | stall | ref-typed (TokenType/Position/BranchID refs); consumer is f64-only — no evaluator lever applies |
+| `Scope.flags` (1–2) | stall | stall | stall | bitwise producers; needs the satellite i32 producer rule (different, cheap lever — §8) |
+| `TokenType.label/keyword`, `TokContext.token/override` (+1) (~5) | stall | stall | stall | facts already proven string/bool; blocked on string-ABI consumption, not on evaluation |
+| genuinely dynamic (~19) | stall | stall | stall | RegExp-object fields, `null` seeds, arrays, config reads — honest boxes |
+
+**Predicted movers: 0 / 0 / 0.** Pre-registered wall-A/B trigger: run the
+perf A/B only if ≥ 5 slots move (predicted: not run). Pre-registered census
+gate: if implementation contradicts this table by moving ≥ 1 slot, record
+which chain the table got wrong before celebrating — a mover this table
+missed means a soundness argument above is likely wrong somewhere, and that
+matters more than the slot.
+
+### 8. Pricing verdict and re-ranked levers
+
+This slice, as ranked by the 2026-08-07 Results section, prices at ~0 acorn
+slots even bundled with lever 1 and the raise fix, because the ranked list
+under-modeled two things this spec verified on the dist: the string-builtin
+bottom of every tokenizer chain, and the provenance requirement behind the
+regexp all-bucket writes. Under the program's own rule (< ~5 movers ⇒ say so),
+the recommendation is: **do not implement; pivot.** Re-ranked by measured
+yield per unit risk:
+
+1. **Satellite i32/bitwise producer rule** (§7 row `Scope.flags`; the
+   2026-08-06 section already called it "the cheap follow-up"): 1–2 slots,
+   S-horizon, sound (JS bitwise is always numeric), implementable via the §3.3
+   hook without touching the shared core's flag-off behavior.
+2. **Ref/string-typed slot consumption** (bucket 3, ~5 slots already PROVEN
+   by the graph; plus it is the entry ramp to the boxed-value 32% by a
+   consumer-ABI route rather than an analysis route). This is
+   Workstream-2-adjacent consumer work, not satellite analysis.
+3. **String-builtin rules + `||`-caching + null-tolerant joins + nominal
+   provenance as ONE priced program** (the only path to `Parser.pos` and its
+   7 dependent f64 slots) — XL, only worth scheduling if a second corpus
+   shows the same shape with fewer pins, since on acorn ALL of it is needed
+   before the FIRST slot moves.
+4. This locals slice — implement only as substrate (§3.3 hook + locals) if
+   and when item 3 is scheduled; alone it moves nothing.
+
+### 9. Files / functions to touch (anchors on `claude/issue-743-mutual-fixpoint` @ `39dd7b543`)
+
+If implemented (per §8, deferred):
+
+- `src/ir/propagate.ts` — `inferExpr` :691 (add `ext` param + top-of-dispatch
+  consult; thread through :698, :736, :759–760, :841–845, :870-adjacent,
+  :882, :889, :892 and the three atom helpers :914/:961/:981),
+  `walkBodyForReturns` :1369 (`ext` threading in :1400/:1408),
+  `_propagationCore` :1537 (no member changes; signatures widen).
+- `src/ir/fnctor-graph-model.ts` — `AnalysisState` :94 (+`localSpecs`),
+  hoist `plusJoin` here from `fnctor-field-lattice.ts:159`, add `LocalSpec`.
+- NEW `src/ir/fnctor-local-bindings.ts` — scan (`scanLocalBindings(state)`,
+  called from `analyze` next to `scanFieldWrites`
+  `src/ir/fnctor-method-edges.ts:205`) + per-iteration
+  `localScopeFor(fx, fnLike, outerScope, thisCtx)`. New module keeps the
+  LOC ratchet honest (the 4-file split precedent).
+- `src/ir/fnctor-method-edges.ts` — `buildScope` :839 (merge locals per chain
+  link; accept optional `thisCtx`), `runFixpoint` :817 (clear
+  `fx.localScopes` next to `fx.atoms` :868; construct the satellite `ext` and
+  pass it at :884 and :901), `buildEdges`/`instanceThisOwnerAt` :694
+  (unchanged; reused by §5).
+- `src/ir/fnctor-field-lattice.ts` — `FixpointCtx` :32 (+`localScopes`,
+  +`ext`), `evalValueExpr` :137 (pass `ext` to `core.inferExpr` :151),
+  `writeContext` :167 (thread `thisCtx` into locals evaluation).
+- `src/ir/fnctor-field-writes.ts` — §4 carve-out in `classifyFieldReceiver`
+  :68 (before the `"all"` return :81) gated on the receiver-provenance check;
+  the check itself lives in the new module.
+
+### 10. Test fixtures the implementer must write
+
+Extend the `tests/issue-743-*` pattern (`tests/issue-743-mutual-fixpoint.test.ts`
+is the template — synthetic sources through `computeFnctorGraphCtorParamFacts`):
+
+1. const-init local feeding a ctor field write → slot f64.
+2. Reassigned local: `var a = 1; a = "s"` → join drags the fed slot off f64.
+3. Declared-without-initializer local → DYNAMIC (and SHADOWS an outer
+   same-name param — assert the inner binding wins).
+4. Read-before-decl (`use(x); var x = 1`) → DYNAMIC.
+5. Read inside a hoisted nested FunctionDeclaration, textually after the
+   decl → DYNAMIC (the hoisting rule); same shape with an arrow → typed.
+6. Closure reassignment (`var n = 1; arr.forEach(function(){ n = "s" })`) →
+   join includes the nested write.
+7. Destructuring / for-of binding → DYNAMIC.
+8. Direct `eval` in the body → all locals of that function DYNAMIC.
+9. Local in an EDGE argument position (not just a field-write RHS).
+10. `this.m(…)` owner-resolved return typing a field; NEGATIVE twin where
+    `m` is also an all-bucket field name (own-property shadow) → DYNAMIC.
+11. NEGATIVE: same-name method on a second owner + untracked receiver call —
+    assert the return fact is NOT consulted (no name-based return join).
+12. §4 carve-out: `var e = new SyntaxError(m); e.f = arg` does not drag
+    owner fields named `f`; twin with in-file `function SyntaxError(){}` →
+    carve-out disabled; twin with `SyntaxError = Foo` in-file → disabled.
+13. Flag-off byte-identity + census + canary assertions per the family's
+    standing measurement protocol (§11 of the mutual-fixpoint spec).
+
+### 11. Traps
+
+- **T1 (soundness, repeats the predecessor's §7 lesson): no name-based
+  RETURN joins** (§5). The ranked-lever list in the Results section above
+  contains this exact unsound suggestion; it must not be implemented as
+  written.
+- **T2: function-declaration hoisting breaks lexical-position reasoning** —
+  reads inside nested FunctionDeclarations are always-prior (§3.1 rule 2).
+- **T3: `arguments` aliases PARAMS in sloppy mode** — a pre-existing,
+  family-wide gap in the params-only scope (unmodeled today; the dist is
+  sloppy-mode code). Locals are not aliasable by `arguments`, so this slice
+  neither fixes nor worsens it; do not silently "fix" it here (it would
+  change existing param facts and invalidate the baseline table).
+- **T4: partial `ext` threading fails silently.** A recursion site that
+  drops `ext` answers DYNAMIC for nested shapes and nothing crashes. Pin
+  with fixture 5/9/10 variants that place the interesting read 2+ levels
+  deep in an expression.
+- **T5: per-iteration cache discipline.** Local scopes derive from facts
+  that change per iteration; caching across iterations reintroduces the
+  order-dependence the frozen-atoms rule (:864–869) exists to prevent. Clear
+  with `fx.atoms`.
+- **T6: an ineligible local must bind DYNAMIC explicitly**, not be omitted —
+  omission lets an outer param/local of the same name leak through
+  `scope.get(name)` (`src/ir/propagate.ts:732–734` falls back to DYNAMIC
+  only when the name is entirely absent).
+- **T7: do not add string rules to the shared core** (`+`-concatenation,
+  `.length`) to make a fixture pass — that changes the always-on main map
+  (flag-off identity break, #1712 hazard). Satellite-side only, via `ext`,
+  and NOT in this slice (§6).
+- **T8: `new <TrackedCtor>(…)` as a VALUE stays DYNAMIC** in this slice.
+  Typing it as the instance atom looks free but is provenance work (§6) —
+  the structural atom cannot carry attribution, and half-adding it invites
+  the unsound attribution-by-shape shortcut.
+- **T9: monotonicity.** Locals add derived reads through atoms and field
+  facts, both non-monotone sources; the converged-or-EMPTY rule
+  (`src/ir/fnctor-method-edges.ts:210–214`) already covers this — do not
+  weaken it to "use best iteration".
+
+ASSUMPTIONS for the implementer to check (none affect the §7 verdict's
+direction, only its margins): (a) the exact membership of the ~19
+"genuinely dynamic" bucket 4 is taken from the 2026-08-06 provenance table,
+not re-measured here; (b) the census's `Parser.pos` "typed" status (via the
+legacy ctor-path consumer) coexisting with a dynamic satellite field fact was
+taken from the 2026-08-07 Results section, not re-run; (c) dist line anchors
+are from the extracted `.acorn/package/dist/acorn.mjs` of the pinned 8.16.0
+tarball — re-extract if `.acorn/` is absent in a fresh worktree.
+## 2026-08-07 — satellite i32/bitwise producer rule IMPLEMENTED: the rule and the evaluator-extension hook land; the acorn census does NOT move, and the missing two levers are now measured, not guessed
+
+Branch `claude/issue-743-i32-producer`, stacked on `claude/issue-743-mutual-fixpoint`
+(PR #4175, not yet on main). Implements re-ranked lever 1 from the locals spec's
+§8 — "1–2 slots, S-horizon, sound" — via the `InferExtension` hook that spec's
+§3.3 designed.
+
+### What shipped
+
+- **`InferExtension`** (`src/ir/propagate.ts`): an optional trailing `ext` on
+  `inferExpr`, its three atom helpers and `walkBodyForReturns`, consulted once
+  at the top of `inferExpr`'s dispatch. A satellite gets first refusal on every
+  node; returning `undefined` falls through to the unchanged shared dispatch.
+  The always-on `buildIrUnitTypeMap` path passes nothing, so main-map parity
+  holds **by construction**, not by measurement. This is the substrate the
+  locals spec asked for, and it is now in place independent of whether the
+  locals slice is ever scheduled.
+- **`src/ir/fnctor-i32-producers.ts`**: the producer rule. `& | ^ << >>` and
+  their compound twins → `i32`; `>>>`/`>>>=` → `u32`; `~` → `i32`. The
+  satellite's consumer collapses `i32`/`u32`/`f64` into one f64 slot, which is
+  why the satellite may take a fact the MAIN map withholds behind
+  `JS2WASM_IR_I32_DOMAIN` (there an `i32` is an instruction-selection promise
+  Stage 3 has not shipped).
+
+**The rule is deliberately WIDER than the core's**, and this is the one piece of
+new soundness reasoning in the slice. The core demands `f64Compatible` on BOTH
+operands; the semantics need much less. `ApplyStringOrNumericBinaryOperator`
+takes `ToNumeric` of both operands and throws a TypeError if the two results
+differ in type, so **one provably-Number operand is sufficient**: the expression
+either throws (no value flows) or both were Numbers and the result is an
+Int32. `"abc" | 0`, `undefined | 0` and `({}) | 0` are all Int32s the core
+calls DYNAMIC. Three consequences worth stating once:
+
+- `string` and `bool` operands count as proof (`ToNumeric` of either is a
+  Number); `object` does **NOT**, because `ToPrimitive` runs user code and the
+  satellite's `object` atoms include instance shapes of constructors in the
+  module under analysis, which can define `Symbol.toPrimitive`. `unknown` is
+  lattice BOTTOM and is never evidence.
+- Two unproven operands stay DYNAMIC: both could be BigInts, and a BigInt
+  reaching an f64 field slot is the miscompile this guard exists to prevent.
+- `>>>` needs **no** guard at all — `BigInt::unsignedRightShift` throws
+  unconditionally, so the operator has no BigInt-producing form.
+
+### Measurements (acorn-standalone-compile, `-O3`, `JS2WASM_FNCTOR_FIELD_PROVENANCE=1 JS2WASM_FNCTOR_CTOR_PARAM_TYPES=1`)
+
+- **Census 55 typed / 1 discarded / 40 unknown — UNCHANGED. Zero slots moved**,
+  verified row-by-row (all 96 rows compared on `slot` and `verdict` against a
+  baseline run of the same probe on the unpatched base). Binary 874,370 B,
+  byte-count unchanged. Canaries 2,3,4,5; imports `[]`; exactly the 3
+  pre-existing parity IR-FALLBACKs (parse / parseExpressionAt / tokenizer).
+- **Flag-off byte-identity**: sha256 of the standalone acorn binary is
+  `f54ecf75af4f62227af4abb7e002224d243b1fd3e5253a081b85bd0620c463f5`
+  (874,280 B) — identical with the branch's sources and with the base's,
+  A/B'd by file copy in one worktree.
+- Wall A/B **not run** (pre-registered at ≥5 movers; 0 moved).
+
+### Why 0 — measured per lever on the dist, not argued
+
+The locals spec's §7 named `Scope.flags` as the row this lever would move. It
+is the right row and the lever is not sufficient. Running the satellite over
+`tests/dogfood/.acorn/package/dist/acorn.mjs` and over edited copies — each
+edit *simulating* one candidate lever — and reading `Scope`'s ctor param fact:
+
+| variant | `Scope` param0 |
+| --- | --- |
+| A — as shipped, with this slice's producer rule | `dynamic` |
+| B — A + module-level numeric consts (`SCOPE_TOP = 1`, …) bound in scope | `dynamic` |
+| C — B + condition-agnostic conditionals | **`f64`** |
+| Z — upper bound: every `enterScope` argument replaced by a literal | `f64` |
+
+C reaching the same answer as the Z upper bound is the load-bearing part:
+nothing beyond those three rules pins the slot. So `Scope.flags` needs
+**exactly three** evaluator rules and **any two of them move nothing**:
+
+1. **the bitwise producer rule** (this slice) — it is what makes
+   `functionFlags(…) | SCOPE_SUPER | (allowDirectSuper ? … : 0)` and
+   `SCOPE_CLASS_FIELD_INIT | SCOPE_SUPER` numeric, and what carries
+   `functionFlags`' own body (`SCOPE_FUNCTION | (async ? SCOPE_ASYNC : 0) | …`,
+   left-associative, so the literal on the far left proves the whole chain);
+2. **module-level numeric constants in scope** — acorn calls
+   `this.enterScope(SCOPE_SWITCH)` with a bare module `var`, and the satellite's
+   scope is params-only, so `scope.get(name)` answers DYNAMIC;
+3. **condition-agnostic conditionals** — 2 of the 8 `enterScope` sites are
+   `cond ? A : B` with a DYNAMIC `cond`. The core bails on
+   `!boolCompatible(cond)`, but **ToBoolean is total and never throws, so the
+   condition's type cannot affect the RESULT type**: `join(whenTrue, whenFalse)`
+   is correct whatever the condition is. This one is a strict soundness
+   *improvement* over the existing guard, not a relaxation of it.
+
+That table is the actionable output of this slice. It is also a correction to
+the spec's §8 pricing: lever 1 was costed at "1–2 slots" standalone, and
+standalone it is worth 0 — the `Scope.flags` chain was priced without checking
+what the other seven `enterScope` arguments evaluate to.
+
+### Gates / suites
+
+`tsc` 0 · biome lint 0 · prettier 0 · oracle-ratchet 0 · loc-budget 0 (grant:
+propagate.ts +34) · func-budget 0 · dead-exports 0 · coercion-sites 0 ·
+stack-balance 0 · check:ir-fallbacks 0. Suites: new
+`tests/issue-743-i32-producers.test.ts` 27/27 (per-operator arms, the BigInt
+guard incl. the `object`-is-not-proof negative, 8 nesting-depth fixtures for the
+threading failure mode, main-map inertness, and an E2E where a bitwise-only slot
+goes `externref` → `f64` with identical runtime behaviour); `issue-743-*` 50/50;
+`issue-4155-fnctor-field-provenance` 8/8.
+
+**Flag verdict: `JS2WASM_FNCTOR_CTOR_PARAM_TYPES` STAYS OFF.**
+
+## 2026-08-07 — levers 2 and 3 IMPLEMENTED: the three-rule prediction holds, `Scope.flags` flips, census 55/1/40 → 56/1/39
+
+Same branch (`claude/issue-743-i32-producer`), continuing the slice above. The
+producer rule's probe predicted that `Scope.flags` needs **exactly three**
+evaluator rules and that any two move nothing; this slice implements the other
+two and the prediction is confirmed to the slot, with real guards rather than
+the probe's edited-source simulation.
+
+### What shipped
+
+- **`src/ir/fnctor-module-consts.ts` — lever 2, module-level numeric constants.**
+  Resolves a top-level `var`/`let`/`const` to `f64` when it can prove the
+  binding only ever holds a Number. **Three obligations, none optional**, and the
+  third is the one that is easy to miss:
+  1. **VALUE** — the initializer is a constant numeric expression built from
+     numeric literals, `- + ~`, the numeric binary operators and *previously
+     accepted* constants (so acorn's `SCOPE_VAR = SCOPE_TOP | SCOPE_FUNCTION | …`
+     resolves and a forward reference does not). Deliberately **not** "the
+     checker says `number`": in an untyped `.mjs` that is an inference over code
+     TypeScript never type-checks, and a later `X = "s"` is a silent error rather
+     than a widened type. `BigIntLiteral` falls through and is refused.
+  2. **STABILITY** — one write ANYWHERE in the module poisons, including
+     compound assignment, `++`/`--`, `for…of` targets and destructuring targets
+     (`[X] = a`, `({X} = o)`, `({p: X} = o)`). `with` and direct `eval` anywhere
+     poison every constant in the module: both can name a binding without
+     leaving an identifier occurrence for the write scan to see. A **script**
+     (non-module) is refused outright — its top-level `var` is a writable
+     global-object property, reachable as `globalThis.X` with no identifier
+     occurrence at all. That module-only restriction is the same one
+     `directTopLevelDeclaration` (`src/ir/module-bindings.ts`, #2949) already
+     applies to fix a unique top-level `var` to one scalar slot.
+  3. **INITIALISEDNESS** — no read may observe the binding's hoisted
+     `undefined`. `var X = 1` holds `undefined` from module instantiation until
+     its own statement runs, and an `f64` fact for a read in that window turns
+     `undefined` into NaN at a coercing store. **This is not a residual we
+     accepted; it is proved per binding**, and the satellite is already on
+     record refusing exactly this hazard elsewhere — `readFieldFact` answers
+     DYNAMIC for a field outside its definiteness snapshot with the same
+     one-line justification.
+  Resolution is by **symbol**, never by name: a parameter or local that shadows
+  a module constant keeps its own (more precise) fact. The name set is only a
+  pre-filter in front of the checker call.
+- **The conditional-join rule** (`src/ir/fnctor-eval-extensions.ts`) — lever 3,
+  and the single factory that composes all three rules onto the one
+  `InferExtension` the core accepts. The three answer on disjoint node kinds
+  (binary/`~` · identifier · conditional), so composition order is not a
+  semantic choice.
+
+### Obligation 3's machinery, and why the obvious shortcut costs the whole lever
+
+The init-order bound rests on one hard JavaScript guarantee — **a function
+cannot be invoked before the code that creates its closure has run** — plus one
+consequence: a method installed by `pp.enterScope = function (…) {…}` at
+statement 610 does not exist at statement 100, so no receiver can dispatch to it
+there. That is why property dispatch, which this analysis does not model at all,
+cannot break the bound.
+
+HOISTED top-level function declarations are the one shape with no creation
+bound. Their bound comes from their **references** instead — a hoisted function
+runs only if something names it, and every name sits in a context with a bound
+of its own; the equations are solved by a greatest fixpoint (initialise to
+"never runs during init", relax downward), which correctly answers "never" for a
+mutually-recursive group nothing else references. Costing a hoisted declaration
+at 0 instead — the obvious conservative shortcut — rejects acorn's
+`functionFlags` (`SCOPE_FUNCTION | (async ? SCOPE_ASYNC : 0) | …`), and with it
+`SCOPE_FUNCTION`/`SCOPE_ASYNC`/`SCOPE_GENERATOR`, and with those the entire
+lever: the producer rule then has no proven operand anywhere in that chain.
+Both directions are pinned by test.
+
+Two escapes are handled bluntly because they are rare and unbounded: `with` /
+direct `eval` (above), and a **cyclic import**, which can call an exported
+function before this module's top level has run — so with any `import` present
+every hoisted declaration drops to 0 and the bound propagates outward through
+the same equations.
+
+### Lever 3's soundness — ToBoolean TOTALITY (read this before "restoring" the guard)
+
+The core answers DYNAMIC whenever `!boolCompatible(cond)`, and `boolCompatible`
+is `bool || unknown` — so even `1 ? 2 : 3` was DYNAMIC. **That guard is
+over-conservative, not soundness-required.** `A ? B : C` evaluates the
+condition, applies `ToBoolean`, and then evaluates exactly one branch, so the
+value is B's or C's and `join(B, C)` covers both. `ToBoolean` is a **total**
+function defined by a table over the whole type domain (Undefined/Null → false,
+Boolean → itself, Number/BigInt → zero-or-NaN, String → emptiness, Symbol →
+true, Object → true). It has no abrupt-completion path and it invokes **no user
+code** — in particular it does not go through `ToPrimitive`, so no `valueOf` /
+`Symbol.toPrimitive` can run and no third value can be produced. There is
+therefore no assignment of a type to the condition under which the RESULT type
+could differ from `join(B, C)`. (If the condition itself throws, no value flows
+and any fact is vacuously sound — the same reasoning the previous slice's BigInt
+guard uses.)
+
+The rule is a strict **refinement**: where the core's guard passes it already
+computes exactly this join; where it fails it answers DYNAMIC, which is above
+the join in the lattice. It can only lower a fact, never raise one. The rationale
+is stated at length on the function itself so the next reader does not "fix" it
+back.
+
+### Measurements (acorn-standalone-compile, `-O3`, `JS2WASM_FNCTOR_FIELD_PROVENANCE=1 JS2WASM_FNCTOR_CTOR_PARAM_TYPES=1`)
+
+Per-slot movement, all 96 rows compared on `slot` and `verdict` against a
+baseline run of the same probe on this branch's tip before the slice:
+
+| slot           | before               | after           |
+| -------------- | -------------------- | --------------- |
+| `Scope.flags`  | `externref`/`unknown` | `f64`/`typed`  |
+| (95 others)    | unchanged             | unchanged      |
+
+- **Census 55 typed / 1 discarded / 40 unknown → 56 / 1 / 39.** Exactly the
+  predicted slot, and only it. Nothing predicted failed to move: the producer
+  slice named `Scope.flags` alone, and the remaining 39 are the buckets the
+  method-edges slice characterised (≈14 `this`-field-read arguments, ≈5 non-f64
+  atoms the f64-only consumer excludes, ≈19 genuinely dynamic) — all of which
+  need *different* levers, not more evaluator precision.
+- Binary 937,274 B → **937,301 B** (+27 B). Canaries 2,3,4,5; imports `[]`;
+  exactly the 3 pre-existing parity IR-FALLBACKs (parse / parseExpressionAt /
+  tokenizer), unchanged from baseline.
+- **Flag-off byte-identity**: sha256
+  `fc51f61f426ade114fb1a00c03e3a5d591ab4a23ff21de4f375641e5b667d946`
+  (923,976 B), measured on the pinned acorn dist with the branch's satellite
+  sources and again with **origin/main's** — identical. A/B'd by file copy in
+  one worktree, so the claim covers the whole branch (both slices), not just
+  this one.
+- Wall A/B **not run** (pre-registered at ≥5 movers; 1 moved).
+
+### Per-lever attribution — the three-rule claim, re-measured against the real implementation
+
+Reading `Scope`'s ctor param-0 fact over the real acorn dist, dropping one rule
+at a time from the composition:
+
+| composition                          | `Scope` param0 |
+| ------------------------------------ | -------------- |
+| levers 1 + 2 + 3 (shipped)           | **`f64`**      |
+| levers 1 + 3 (no module constants)   | `dynamic`      |
+| levers 1 + 2 (no conditional join)   | `dynamic`      |
+
+This reproduces the producer slice's A/B/C probe table with guarded rules rather
+than edited sources — including the guards, which is the part the simulation
+could not test. It also completes the correction to the locals spec's §8
+pricing: lever 1 alone was worth 0, and all three together are worth **1 slot**,
+the bottom of the "1–2" the spec estimated for lever 1 by itself.
+
+### Gates / suites
+
+`tsc` 0 · biome lint 0 · prettier 0 · oracle-ratchet 0 · loc-budget 0 (no new
+grant — both rules are new satellite modules; `propagate.ts` is untouched by
+this slice) · func-budget 0 · dead-exports 0 · coercion-sites 0 · stack-balance 0
+· check:ir-fallbacks 0. Suites: new `tests/issue-743-eval-extensions.test.ts`
+32/32 (one negative per obligation, both directions of the hoisted-reader bound,
+the shadowing-parameter case, the `object`-is-not-proof boundary re-pinned under
+the new rules, and an E2E whose slot needs BOTH new rules and no bitwise
+operator at all); `issue-743-*` + `issue-4155-*` + `issue-2660-*` +
+`ir-propagate-i32*` + `ir-frontend-widening` **300/300**.
+
+**Flag verdict: `JS2WASM_FNCTOR_CTOR_PARAM_TYPES` STILL STAYS OFF.** One slot on
+the dogfood corpus is a working lever, not a consumer. The bucket's remaining
+levers are unchanged in rank: (1) ref/string-typed slot consumption for the ≈5
+atoms the graph already proves, (2) `this`-field-read arguments beyond what the
+mutual fixpoint reaches. Neither is an evaluator-precision question, which is
+what this slice and the one above it have now exhausted.
+
+## Implementation Plan — ref/string consumer ABI (Fable spec, 2026-08-07)
+
+Spec for re-ranked **lever 2** — extend the fnctor field-slot consumer beyond
+f64 to ref (`(ref null $__fnctor_F)`) and native-string (`(ref null $AnyString)`)
+slots, for the "≈5 non-f64 atoms the graph already PROVES" bucket the 2026-08-06
+method-edges section named. Measured against `origin/main` + this branch
+(`claude/issue-743-i32-producer` @ `ffc8ca8bf`, i.e. PR #4202's rules included);
+line anchors are from that revision.
+
+### 0. Verdict first (pricing): **DO NOT BUILD.** The bucket is 1 slot, not 5, and that 1 slot is worth ZERO bytes — measured, not predicted
+
+Three numbers decide it, all measured on the pinned acorn 8.16.0 dist in this
+worktree:
+
+1. **The bucket is 1, not ≈5.** Cross-referencing the census's 39 `unknown`
+   rows against the satellite's per-owner **FIELD** facts (`JS2WASM_LOG_FNCTOR_GRAPH=1`,
+   `src/ir/fnctor-method-edges.ts:262`), exactly **two** unknown slots carry a
+   non-`dynamic` field fact: `TokContext.token` (`string`) and
+   `RegExpValidationState.parser` (`object`). `object` is a **structural** atom
+   with no nominal identity, so it cannot name a struct type (§2). That leaves
+   **one** typeable slot on the whole corpus.
+2. **The ≈5 figure was read off PARAM facts, and params are the wrong
+   quantity.** The 2026-08-06 section cited `TokenType(string, dynamic)` /
+   `TokContext(string, bool, bool, dynamic, bool)` — those are ctor-parameter
+   facts, and they predate the mutual fixpoint (2026-08-07), which is what first
+   made per-field facts exist. A slot must agree with **every** write the
+   analysis can see, not just the constructor's. Measured, `TokenType.label`'s
+   param fact is `string` while its FIELD fact is `dynamic` (§3.1). Pricing a
+   slot lever off param facts overcounts it by 5×.
+3. **Flipping the one typeable slot changes the emitted binary by 0 bytes.**
+   A/B'd by file copy in one worktree (`JS2WASM_TMP_TOKCTX=1` forcing
+   `TokContext.token` into the #3753 `$AnyString` promotion at
+   `fnctor-escape-gate.ts:1808`, verified applied by instrumenting the
+   post-promotion field list → `token:ref_null,isExpr:i32,preserveSpace:i32,
+   override:externref,generator:i32`): **937,301 B before and after**, canaries
+   2,3,4,5, imports `[]`, exactly the 3 pre-existing IR-FALLBACKs. The slot is
+   constructed 10× at module init and read 4× module-wide; `-O3` normalises the
+   difference away completely.
+
+Under the program's own rule (< ~5 movers ⇒ say so), the recommendation is **do
+not implement**. This is the third consecutive slice to price out, and the
+reason has now converged: the bucket that remains is not gated on which ABI the
+consumer can express, it is gated on `Parser.pos`'s field fact (lever 3 of the
+locals spec's §8 list — the XL string-builtin/provenance program).
+
+### 1. Baseline re-verified in this lane (do not take it on trust)
+
+`JS2WASM_FNCTOR_FIELD_PROVENANCE=1 JS2WASM_FNCTOR_CTOR_PARAM_TYPES=1`,
+standalone acorn `-O3`, via a probe over
+`tests/dogfood/acorn-standalone-compile.mjs` reading
+`fnctorFieldProvenanceRecords()`:
+
+- census **56 typed / 1 discarded / 39 unknown** (96 rows), binary **937,301 B**,
+  compile 64.4 s, canaries **2,3,4,5**, imports `[]`, errors = exactly the 3
+  parity IR-FALLBACKs (`parse` / `parseExpressionAt` / `tokenizer`).
+
+Matches PR #4202's stated numbers exactly. The single `discarded` row is
+`Parser.options` (the #2937 object-hash-consumer path), unchanged since #4155.
+
+### 2. The REF half — every slot fails, and for TWO independent reasons
+
+The prompt's premise was that #4155 Phase 1's machinery
+(`resolveFnctorInstanceType`, `fnctor-typed-instances.ts:74`) makes ref slots
+cheap: it already maps an instance type onto a reserved `$__fnctor_F` with
+guarded casts and presence tracking. That machinery is real and it already
+fires — it is exactly what took the `discarded` bucket 4 → 1 and typed
+`Parser.type`, `Node.loc`, `Token.loc`. **The excluded-comment's recorded fears
+(`fnctor-ctor-param-types.ts:32-34`, "refs … carry their own null and identity
+questions at a struct field") are therefore SOLVED for the case they cover.**
+`Node.loc` is `ref_null` **and** presence-tracked today, which settles the
+`Node.loc` interplay question directly: presence bits (#2847) are orthogonal to
+the slot type, and the #3683/#3753 carve-outs on `onlyConditional` exist because
+those are POST-derivation promotions of a slot whose dispatcher arm must still
+answer `undefined` — a checker-derived ref slot never had that problem.
+
+What is NOT solved is getting a *name* for the type when the checker has
+nothing. Measured per slot (probe: run `analyzeFnctorEscapeGate` over the dist,
+print each ctor's first `this.<f> = …` carrier and
+`receiverStruct.get(carrier)`):
+
+| slot | ctor carrier (acorn dist) | why no `(ref null $__fnctor_F)` |
+| --- | --- | --- |
+| `Parser.startLoc`, `Parser.endLoc` | `this.curPosition()` | **(a)** `Position` is **not an approved fnctor** — gate classification `{"keep-static":3}`, `approvedNames = TokenType, SourceLocation, Parser, Node, BranchID, RegExpValidationState`. No reserved struct exists to name. **(b)** `curPosition` is guarded by `if (this.options.locations)`, so it is not the single-return chain `inferReturnStruct` requires |
+| `Parser.lastTokStartLoc`, `Parser.lastTokEndLoc` | `null` | same (a); the later writes are Positions |
+| `SourceLocation.start`, `SourceLocation.end` | bare params `start` / `end` | same (a); plus no provenance — the call args are `p.startLoc` / `p.endLoc`, property reads that `buildReceiverStructMap` (`:1157`) does not bind |
+| `Token.type`, `Token.value`, `Token.start`, `Token.end` | `p.type` / `p.value` / `p.start` / `p.end` | `Token` not approved; and `p` is unpinned because the site is `new Token(this)` and `inferExprStruct` (`:1188`) has **no bare-`this` rule** (it handles `this` only inside `new this(…)`, `:1202`). Even pinned, the carriers are field READS, not the instance |
+| `BranchID.parent`, `BranchID.base` | `parent`, `base \|\| this` | field facts `dynamic`; `this` unhandled as above |
+| `RegExpValidationState.parser` | bare param `parser` | field fact is `object` — **structural, not nominal**. Site is `new RegExpValidationState(this)`, so `receiverStruct` binds nothing for the same bare-`this` gap. The ONE slot where a bounded extension exists (§2.1) |
+| `Node.sourceFile`, `Parser.sourceFile` | `parser.options.directSourceFile`, `options.sourceFile` | not ref-class — string-or-undefined config reads, field fact `dynamic` |
+
+`receiverStruct` on this corpus has 1,128 entries and pins **exactly one**
+constructor carrier: `Parser.type = types$1.eof → __fnctor_TokenType` — the slot
+that is already typed. Zero ref-class unknowns are reachable through it.
+
+#### 2.1 The one extension that would work, and why it is still a no
+
+Teaching `inferExprStruct` a bare-`this`-inside-a-lifted-proto-method rule
+(`resolveEnclosingFnctorOwner`, already used at `:1203`) would pin
+`RegExpValidationState`'s `parser` param to `__fnctor_Parser`. Do not do it as
+part of a *slot* lever:
+
+- `receiverStruct` is a **use-site flow map with ambiguity invalidation**
+  (`:1252-1269`), not a write-set join. It answers "this expression is an F" for
+  a dispatch pin, where a wrong answer costs nothing because the pin is checked.
+  A **slot type** must hold every value ever written to the field, which is a
+  different obligation and one this map never took on.
+- The failure mode is materially worse than the family's accepted bound. For
+  f64 a violating write is ToNumber-coerced to NaN; for `$AnyString` it becomes
+  `ref.null`. Both are *coercions* in the sense that the store is total and the
+  value class is preserved-or-degraded predictably. For a **specific struct**
+  target there is no JS coercion at all: `type-coercion.ts:2290` emits
+  `local.tee / any.convert_extern / local.tee / ref.test T / if` and the else
+  arm is `ref.null` (`:2340`) — a wrong value is silently **destroyed**, and the
+  field reads back as absent. That is a new failure class, not an extension of
+  an accepted one.
+- Payoff: `.parser` has 5 syntactic accesses in the whole dist, none in the
+  tokenizer.
+
+### 3. The STRING half — one slot, and the lane split is already precedent
+
+#### 3.1 Why four of the five "proven string" slots are not proven
+
+| slot | param fact | FIELD fact | why the field widens |
+| --- | --- | --- | --- |
+| `TokContext.token` | `string` | **`string`** | only write is `this.token = token` (dist `:2428`) — **TYPEABLE** |
+| `TokenType.label` | `string` | `dynamic` | name-based `"all"` attribution: `node.label = null` (`:1054`), `node.label = this.parseIdent()` (`:1057`), `node.label = expr` (`:1340`) are writes to a *Node*, and the sound over-approximation drags every owner's `label`. Same shape as the `err.pos = pos` pin the mutual-fixpoint section measured |
+| `TokenType.keyword` | — | `dynamic` | the ctor write is `this.keyword = conf.keyword` (`:112`) — a property read on an untracked base, which `inferExpr` types DYNAMIC. (`options.keyword = name` at `:136` would contribute `string`; it is not the binding write) |
+| `TokContext.override` | `dynamic` | `dynamic` | ctor param 3 is a function-or-`undefined` (`this.override = override`, `:2431`) |
+| `SourceLocation.source` | — | `dynamic?` | `p.sourceFile` property read, **and** presence-tracked |
+
+So the string bucket is **1**, and it is a slot #3753's own name-keyed analysis
+already declines: `analyzeStringPropertyNames` requires ≥1 *provably* string
+write, and `this.token = token` is a bare parameter read, which that analysis
+classifies as opaque by design. The satellite's contribution is real — it is the
+only thing on the corpus that can prove that parameter is a string — it is just
+worth one cold slot.
+
+#### 3.2 Lane split (unchanged from the dts-seeds precedent, if ever built)
+
+The existing #3753 gate at `fnctor-escape-gate.ts:1808` is already exactly the
+required split: `ctx.nativeStrings && ctx.anyStrTypeIdx >= 0 &&
+JS2WASM_STRING_FIELDS !== "0"`. In externref-string lanes the promotion is a
+deliberate ABI **no-op**, mirroring the `.d.ts` string seed. Verified live on
+this corpus: `nativeStrings=true anyStrTypeIdx=6` at TokContext derivation time,
+so the lazy-type hazard the comment warns about does not bite here.
+
+#### 3.3 Conversion costs, at both ends
+
+- **Write** (`externref → ref_null $AnyString`, `type-coercion.ts:2290`):
+  `local.tee` + `any.convert_extern` + `local.tee` + `ref.test` + an `if` whose
+  else arm is TWO further nested test/cast ladders — the `new String(…)` wrapper
+  recovery (`:2312`, via `__wrapper_string_value`) and the `$AnyValue` tag-5
+  payload arm (`:2348`). ≈20 instructions and 2 temp locals **per store site**.
+- **Read** (`ref_null $AnyString → externref`): `ref.is_null` + `extern.convert_any`
+  with an `undefined`-singleton arm (`:1701`), or nothing at all when the
+  consumer wants the native string.
+
+#3753's own justification is that "the cost this removes is per-ACCESS, not
+per-write". `TokContext` inverts that ratio: 10 construction sites against 4
+accesses. That is the arithmetic behind the measured 0-byte delta.
+
+### 4. The payoff question this lever exists for — answered NO on both halves
+
+- **Hot paths.** Syntactic `.name` counts on the dist: `type` 204, `pos` 245,
+  `input` 116 — and all three of those slots are **already typed**
+  (`Parser.type` `ref_null $__fnctor_TokenType` via #4155 Phase 1;
+  `Parser.pos` f64; `Parser.input` `ref` string from the checker). The
+  ref/string candidates are `token` 4, `override` 3, `parser` 5, `label` 7,
+  `startLoc` 20, `endLoc` 4, `branchID` 10. The tokenizer's hot fields are not
+  in this bucket; the ones that are (`Parser.start/end/lastTokStart/lastTokEnd`)
+  are **f64**-class and blocked on `Parser.pos`'s field fact.
+- **`updateContext` specifically.** `TokenType.updateContext` is
+  **method-valued**, and #4155 Phase 2 refuses a property access in callee
+  position outright and by design (`fnctor-typed-reads.ts`, "A member CALL is
+  NEVER static off the struct type" — the rule that killed the #1712 attempt).
+  A typed slot there can never feed it.
+- **Do the dormant flags get values?** No. #4155 Phase 2 needs a receiver whose
+  compiled ValType is a `$__fnctor_F`; a *string* field is not one, so the
+  string half feeds it nothing. The one ref candidate's receiver chain
+  (`this.regexpState`) is itself `externref`, so the chain breaks upstream of
+  the slot. **The default-off question for `JS2WASM_FNCTOR_TYPED_READS` and the
+  #2660 S3b binding retype does NOT reopen on this lever.**
+
+### 5. Soundness rules, recorded for whoever builds this later
+
+If a future corpus makes the bucket worth it, these are the obligations:
+
+1. **Consult the FIELD fact, never the param fact.** A slot must agree with the
+   join over every write `deriveFnctorFields` *and* the satellite's write scan
+   can see — including `"all"`-attributed writes on untracked receivers. The
+   satellite computes exactly this (`runFieldPass`,
+   `src/ir/fnctor-field-lattice.ts:212`) but does **not export it**; a builder
+   must add a `computeFnctorGraphFieldFacts` export beside the two at
+   `fnctor-method-edges.ts:137/:154`.
+2. **Presence-tracked fields keep their carrier** for a *promotion*, but a
+   checker-derived ref slot may be presence-tracked (`Node.loc` is both today).
+   The rule is about where the type is chosen, not about the type.
+3. **External/violating writes.** The ctor ABI stays `externref` by design
+   (#4166), so every store goes through the guarded coercion above. For f64 that
+   is ToNumber; for `$AnyString` it is test-or-null; for a named struct it is
+   test-or-null with no coercion semantics at all (§2.1). Only the first two are
+   inside the family's accepted bound.
+4. **Do not reuse `receiverStruct` as a slot-type oracle** (§2.1).
+
+### 6. Correction to the measurement protocol: the CENSUS CANNOT SEE THIS LEVER
+
+`recordFnctorFieldProvenance` is called from `recordThisField`
+(`fnctor-escape-gate.ts:1595`), which runs during
+`collectThisAssignments(body.statements)` (`:1706`) — **before** the #3683
+numeric promotion (`:1778`) and the #3753 string promotion (`:1808`). The census
+is therefore a **pre-promotion** measure of the slot choice.
+
+Consequences, both load-bearing for the next slice:
+
+- The `Scope.flags` 55 → 56 move was census-visible only because the ctor-param
+  consumer is invoked at `:1579`, *inside* `recordThisField`. A ref/string
+  consumer implemented as a promotion is invisible to the census even when it
+  changes the struct.
+- Conversely, routing the same slot flip through
+  `inferFnctorFieldTypeFromCtorParam` **would** print 57/1/38 — while emitting a
+  byte-identical binary. **A census delta from this lever would be an artifact
+  of where the hook sits, not evidence of value.** Anyone reporting "+1 slot"
+  here must also report the binary delta, or the number means nothing.
+
+### 7. Files / anchors, if it is ever scheduled
+
+- `src/ir/fnctor-field-lattice.ts:212` (`runFieldPass`) → new export of
+  `solved.fieldFacts` through `fnctor-method-edges.ts` `GraphFacts`
+  (`fnctor-graph-model.ts:140`).
+- `src/codegen/fnctor-ctor-param-types.ts:71` — the consumer; needs the FIELD
+  NAME, which it does not currently receive (derive it from
+  `valueExpr.parent`'s LHS, or widen the call at `fnctor-escape-gate.ts:1579`).
+- `src/codegen/fnctor-escape-gate.ts:1808` — the string lane gate to mirror.
+- Do **not** touch `fnctor-typed-instances.ts:74`; the instance-type path is
+  orthogonal and already correct.
+
+### 8. Re-ranked levers after this measurement
+
+1. **`Parser.pos`'s field fact** — string-builtin rules + `||`-caching +
+   null-tolerant joins + nominal provenance as ONE priced XL program (unchanged
+   from the locals spec's §8 item 3). It gates 7 dependent f64 slots and is the
+   only path left to the tokenizer's remaining boxes.
+2. **A second corpus.** Three levers in a row have now priced out on acorn
+   specifically, each for a corpus-shaped reason (entry-point seeds inert
+   because canaries already supply the facts; locals blocked by string builtins;
+   ref/string blocked because acorn's non-f64 fields are written from property
+   reads). Before spending XL on item 1, measure whether a second dogfood
+   package shows the same shape — the answer changes what item 1 is worth.
+3. **This lever** — build only as a rider on item 1, and only after re-measuring
+   the field-fact bucket on that corpus.
+
+Verified assumptions: (a) the satellite probe runs over the extracted
+`tests/dogfood/.acorn/package/dist/acorn.mjs` under a synthetic
+`ts.ScriptKind.JS` program, matching the technique the i32-producer slice used —
+its facts agreed with the in-compile census on every cross-checkable row;
+(b) `approvedNames` / gate classifications are from
+`analyzeFnctorEscapeGate` on that same source; (c) the 0-byte A/B forced the
+promotion at the #3753 site rather than through the flag's own consumer, because
+the two produce the same struct shape and the former needs no plumbing — §6
+explains why that choice does not weaken the conclusion.

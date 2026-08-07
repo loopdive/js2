@@ -802,6 +802,21 @@ function fillBrandOffBody(ctx: CodegenContext): void {
   body.push(...testArm(ctx.vecPropBaseTypeIdx, ARR_OFF));
   body.push(...testArm(ctx.structMap.get("__StandaloneRegExp"), REGEXP_OFF));
   body.push(...testArm(ctx.structMap.get("__Date"), DATE_OFF));
+  // (#4207) BARE primitive receiver — a native string / boxed number / boxed
+  // boolean that never went through `ToObject`. The wrapper arm above only
+  // classifies a `$Object` carrying [[PrimitiveValue]]; a primitive reaching a
+  // consult site directly (`Number.prototype.m = f; (5).m()`, which lowers to
+  // `__extern_method_call(__box_number(5), "m", …)`) fell through every test
+  // and answered `Object`, so `Number.prototype`'s companion was never
+  // consulted and the inherited method was invisible. §10.4.3 says the
+  // receiver's implicit chain starts at its OWN wrapper prototype, so this is
+  // the same rule the wrapper arm states, applied one representation earlier.
+  // Ordered boolean-before-number because the boxes are distinct struct types
+  // and i31 is claimed by Number (a boxed boolean is never an i31 here).
+  body.push(...testArm(ctx.nativeBoxBooleanTypeIdx >= 0 ? ctx.nativeBoxBooleanTypeIdx : undefined, BOOLEAN_OFF));
+  body.push(...testArm(ctx.nativeBoxNumberTypeIdx >= 0 ? ctx.nativeBoxNumberTypeIdx : undefined, NUMBER_OFF));
+  body.push(...testArm(I31_HEAP_TYPE, NUMBER_OFF));
+  body.push(...testArm(ctx.anyStrTypeIdx >= 0 ? ctx.anyStrTypeIdx : undefined, STRING_OFF));
   body.push(...testArm(ctx.errorStructTypeIdx >= 0 ? ctx.errorStructTypeIdx : undefined, ERROR_OFF));
   const isClosureCarrierIdx = ctx.funcMap.get("__is_closure_prop_carrier");
   if (isClosureCarrierIdx !== undefined) {

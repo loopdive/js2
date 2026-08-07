@@ -172,8 +172,11 @@ jobs:
           node --experimental-strip-types scripts/generate-editions.ts \
             --results /tmp/js2wasm-baselines/test262-current.jsonl || \
             echo "WARN: generate-editions failed (non-fatal) — edition buckets may lag"
-          node scripts/sync-conformance-numbers.mjs || \
-            echo "WARN: sync-conformance-numbers failed (non-fatal) — docs may drift"
+          # NOTE: sync-conformance-numbers is deliberately NOT run here. It
+          # derives the standalone line from the high-water mark, which is not
+          # raised until further down — running it now would sync the docs to
+          # the PRE-raise value and commit that alongside the POST-raise mark.
+          # See the call sited after the raise below.
           # #2108 — coercion-site drift baseline (pure source-grep). The
           # promote-baseline job in test262-sharded.yml is the primary refresher
           # on every push to main; this hourly fallback re-anchors it too so a
@@ -221,6 +224,18 @@ jobs:
           node scripts/check-standalone-highwater.mjs \
             --report "$SA_REPORT" --update ${HW_SHA:+--sha "$HW_SHA"} || \
             echo "WARN: high-water raise failed (non-fatal) — mark may lag"
+
+          # Sync the prose docs LAST, after BOTH inputs are final: the JS-host
+          # number from test262-current.json (copied above) and the standalone
+          # line from the high-water mark (raised immediately above). Running it
+          # before the raise — as this job did until #4211 — committed a NEW mark
+          # next to a README synced from the OLD one, so main shipped internally
+          # inconsistent and every open PR then failed the `quality` gate's
+          # sync:conformance:check until some unrelated PR happened to carry the
+          # repair commit. Observed three times on 2026-08-07 and it parked nine
+          # PRs that morning.
+          node scripts/sync-conformance-numbers.mjs || \
+            echo "WARN: sync-conformance-numbers failed (non-fatal) — docs may drift"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -319,6 +334,16 @@ jobs:
               --report "$SA_REPORT" --update ${HW_SHA:+--sha "$HW_SHA"} || \
               echo "WARN: high-water recompute on re-anchored tip failed (non-fatal)"
             git add -f benchmarks/results/test262-standalone-highwater.json 2>/dev/null || true
+            # (#4211) The re-apply loop restored the README we synced against
+            # our ORIGINAL mark, and the recompute immediately above may have
+            # landed on a different one (main's tip is max(ours, main's)). So
+            # re-sync against the mark that is actually about to be committed,
+            # and re-stage the prose docs. Without this the re-anchor path
+            # commits the same old-mark/new-mark mismatch the fresh path used to.
+            node scripts/sync-conformance-numbers.mjs || \
+              echo "WARN: sync-conformance-numbers on re-anchored tip failed (non-fatal)"
+            git add -f README.md ROADMAP.md CLAUDE.md plan/goals/goal-graph.md \
+              2>/dev/null || true
             if git diff --cached --quiet; then
               echo "Summary already current on main after re-anchor — nothing to push."
               PUSHED=1
