@@ -923,3 +923,35 @@ evidence.**
   construction and the differential is corpus-independent in method, but K=20
   was tuned against one program's field population. A second dogfood package
   with a widened fnctor would be the natural next check.
+
+### 6. Gates
+
+typecheck 0, lint 0, format 0, oracle-ratchet 0 (3 changed codegen files),
+loc-budget / func-budget allowed by this file's frontmatter (the Phase-3 veto
+has to sit where the narrowing decision is made).
+
+Suites, all with the flag at its new default:
+
+- `tests/issue-3927-fnctor-cold-tail.test.ts` 6/6, now including the
+  standalone-only gate and the `off` escape hatch;
+- targeted object / struct / shape equivalence **107/107** across 20 files
+  (`object-keys`, `object-create`, `object-define-property*`,
+  `shape-inference`, `struct-*`, `self-referencing-struct`,
+  `issue-799-prototype-chain`, `issue-4123-param-receiver-proto-method`,
+  `wrapper-constructors`, class/private-member files);
+- fnctor suites (#2586/#2660/#2674/#3486/#3927/#4155) **118/123**. The 5
+  failures — 4 in `issue-2608-new-this-fnctor-static.test.ts`, 1 in
+  `issue-3486-fnctor-constructor-identity.test.ts` — **reproduce identically
+  with `JS2WASM_FNCTOR_HOT_FIELDS=off` AND with this branch's three changed
+  source files replaced by their `origin/main` blobs**, so they are
+  pre-existing on the merge base, not caused by the default flip;
+- reflective surface (for-in / hasOwnProperty / own-property) 30/33; the 3
+  failures in `issue-3420-standalone-array-own-property.test.ts` are the
+  container's missing prebuilt runtime-eval refusal provider
+  (`[test262-in-process] runtime-eval tier: NONE`) and reproduce with the
+  split disabled.
+
+**Baselining method, since it is the rule that this slice leaned on hardest:**
+every failure above was re-run under `off` before being attributed, and the
+fnctor ones were additionally re-run against `origin/main`'s own sources via
+file copies (never `git stash` — it is one shared stack across every worktree).
