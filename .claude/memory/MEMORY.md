@@ -89,6 +89,7 @@ Team setup/budget/spawn/comms: **`plan/method/team-setup.md`**. Agent defs: **`.
 - **[cached-baseline-jsonl-stale-within-hours](reference_cached_baseline_jsonl_goes_stale_within_hours.md)** — `.test262-cache` JSONL is a SNAPSHOT; 16h stale reproduced its own checks EXACTLY and cost a 4-agent dispatch. `--force` before sizing; a vanished bucket usually MOVED (138→0, only 4 flipped)
 - **[goal-scope-is-not-the-es5-bucket](reference_goal_scope_is_not_the_landing_page_es5_bucket.md)** — 8,544 goal scope ≠ 8,930 ES5 bucket; both correct. "untagged" means TWO different populations (430 vs 5,444)
 - [long-single-process-sweep-overcounts](reference_long_single_process_sweep_overcounts_failures.md) — one long-lived process accumulates state; re-run every apparent regression SOLO before believing it
+- **[standalone-eval-instrument-reports-unmeasured-failures](reference_standalone_eval_instrument_reports_unmeasured_failures.md)** — 3 mechanisms substitute a FAKE uniform error for the real one (missing namespace / provider cache silently downgraded by any `src/` edit / non-interpreter tier). Hit 3 lanes in one session; one read a correct `+2` as `−10`. Always pair the lever with a currently-PASSING control
 - [shape-matrix-is-not-a-population-estimate](reference_shape_matrix_is_not_a_population_estimate.md) — a matrix of shapes says which shapes exist, never how many files have them
 
 ### Development methodology & codegen hazards
