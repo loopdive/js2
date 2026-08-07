@@ -1,10 +1,11 @@
 {
   "id": "4206",
   "assignee": "ttraenkler/W25",
-  "requested_by": "ttraenkler/W25",
-  "status": "in-progress",
+  "requested_by": "noreply@anthropic.com",
+  "status": "released",
   "branch": "issue-4206-with-statement-residue",
   "claimed_at": "2026-08-07T12:26:19Z",
-  "updated_at": "2026-08-07T12:26:19Z",
-  "write_id": "5746-td7r0j0j"
+  "updated_at": "2026-08-07T13:13:58Z",
+  "write_id": "30578-r3jxmqh4",
+  "released_at": "2026-08-07T13:13:58Z"
 }
