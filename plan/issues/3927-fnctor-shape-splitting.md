@@ -941,6 +941,16 @@ evidence.**
   design's main risk is, on this corpus, **not exercised by anything** — not by
   this differential, not by the dogfood canaries.
 
+  **This already has an issue — it is #3920, and it is wider than stated here.**
+  Do not file a new one. Scoped afterwards with small standalone programs: a
+  **class** instance and a shape-inferred object literal enumerate 0 exactly
+  like a fnctor instance once the receiver reaches the consumer as `externref`;
+  a statically-typed receiver at the loop is fine. And it is **not one hole** —
+  `hasOwnProperty` answers correctly on the very receiver where `in`, `for…in`
+  and `Object.keys` all answer nothing, which discharges #3920's own open scope
+  item ("check whether they share the root cause") with a *no*. The full matrix
+  is recorded in #3920 rather than duplicated here.
+
   **It also contradicts a record in the 2026-08-06 slice.** That slice
   attributes the pre-wiring K=52 divergence to acorn's `copyNode`
   (`for (var prop in node) { newNode[prop] = node[prop] }`). `copyNode` cannot

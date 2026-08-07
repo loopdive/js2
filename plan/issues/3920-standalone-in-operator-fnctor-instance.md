@@ -105,3 +105,51 @@ plausible multi-test bucket rather than a one-off.
       cause is fixed in the same change; anything that does NOT is split out
       with its own repro rather than left implied.
 - [ ] No standalone test262 regression.
+
+## Measured 2026-08-07 (from #3927) — scope item 2 answered, and it is NOT one hole
+
+Found while validating #3927's hot/cold split: an in-wasm differential over the
+acorn self-parse showed `for…in` yielding keys on **15 of 32,506** walked
+objects (the 15 are plain RegExp-ish objects, not AST nodes), against **32,487**
+for the reference implementation. Scoped afterwards with small standalone
+programs — `.tmp/forin-scope.mjs` / `forin-scope2.mjs`, recreate from the table:
+
+| program (`--target standalone`) | answer | correct |
+| --- | ---: | ---: |
+| `for…in` over an `any` object literal (open `$Object`) | 3 | 3 ✓ |
+| `for…in` over a class instance, receiver statically typed AT THE LOOP | 3 | 3 ✓ |
+| `for…in` over a class instance, receiver reaches the loop as `any` | **0** | 3 ✗ |
+| `for…in` over a fnctor instance, even statically typed | **0** | 3 ✗ |
+| `Object.keys(objectLiteral).length` | 3 | 3 ✓ |
+| `Object.keys(classInstance).length` | **0** | 3 ✗ |
+| `classInstance.hasOwnProperty("a")` | **1** | 1 ✓ |
+| `"a" in classInstance` | **0** | 1 ✗ |
+
+**Three things this settles or changes:**
+
+1. **Scope item 2's answer is "not one hole".** `hasOwnProperty` **works** on the
+   very receiver where `in`, `for…in` and `Object.keys` all answer nothing. So
+   `hasOwnProperty` reaches a working predicate and the other three do not —
+   which narrows the search to what those three share and `hasOwnProperty` does
+   not, rather than a single presence-read bug. The §7 grouping was indeed an
+   observation, and one quarter of it is wrong.
+2. **This is wider than fnctor instances.** A **class** instance and a
+   shape-inferred object literal fail identically once the receiver reaches the
+   consumer as `externref`. The static-unroll path over a statically-typed
+   receiver is fine; everything that goes through the dynamic path over a closed
+   struct is not. The title's "fnctor instance" is the narrowest case, not the
+   boundary.
+3. **It makes a whole class of test vacuous, silently.** #3927's differential
+   grew an enumeration mode specifically to cover the reflective surface; it
+   reported *identical* across all 64 property names, which is `undefined`
+   compared against `undefined`. Any enumeration-based differential over a
+   closed-struct receiver passes for free today. Two lanes nearly banked that as
+   coverage. `tests/dogfood/cold-tail-differential.mjs` now reports
+   `enumeratingNodes` and warns VACUOUS; whoever fixes this should expect other
+   green enumeration checks to be equally empty.
+
+**Related retraction.** #3927's 2026-08-06 slice attributed a divergence to
+acorn's `copyNode` (`for (var prop in node) …`). That routine cannot copy
+anything if `for…in` yields nothing, and the per-type-layouts slice separately
+measured `copyNode` executing zero times on that corpus. The mechanism there is
+unknown; do not carry it into this issue's diagnosis.
