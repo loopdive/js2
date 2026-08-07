@@ -128,6 +128,7 @@ export function createCodegenContext(
     dynProtoSentinelGlobalIdx: undefined, // (#802) "explicit null proto" sentinel global
     usesArrayHoles: false, // (#2001 S1) set by the scanForArrayHoles pre-scan
     protoIndexDirty: false, // (#2001 S2, widened #4160) scanForArrayHoles: Array/Object.prototype index write
+    protoNamedDirty: false, // (#4176) scanForArrayHoles: named write onto a branded builtin's .prototype
     vecAccessorDescriptorDirty: false, // (#4159) scanForArrayHoles: a non-data descriptor may exist somewhere
     dynamicCodeDirty: false, // (#4159/#4160) scanForArrayHoles: eval/Function present ⇒ both flags above forced
     usesVecValue: false, // (#2083) flipped by genuine getOrRegisterVecType usage
@@ -338,6 +339,11 @@ export function createCodegenContext(
     // standalone/wasi-gated (any-helpers.ts) — host lane byte-identical.
     // Set JS2WASM_TAG5_CLASSIFIER=0 to force the legacy always-false arm.
     tag5ValueEqClassifier: options?.tag5ValueEqClassifier ?? process.env.JS2WASM_TAG5_CLASSIFIER !== "0",
+    // (#4173) Fast tag-pair dispatch in `__extern_strict_eq` + single-convert
+    // `__is_truthy` ladder — default ON (A/B-validated on the standalone acorn
+    // lane, see the issue's Results). Set JS2WASM_FAST_STRICT_EQ=0 to force
+    // the legacy always-slow-path bodies for A/B control.
+    fastStrictEq: options?.fastStrictEq ?? process.env.JS2WASM_FAST_STRICT_EQ !== "0",
     // (#2106 S1 default-flip) standalone $undefined tag-1 singleton regime —
     // default ON. The complete lockstep producer+consumer sweep landed behind
     // this flag in PR #2633; this flip makes the singleton the default

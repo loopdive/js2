@@ -554,7 +554,10 @@ function seedParamType(param: ts.ParameterDeclaration, checker: ts.TypeChecker |
   return tsTypeToLattice(ty, checker);
 }
 
-function seedReturnType(fn: ts.FunctionDeclaration, checker: ts.TypeChecker | undefined): LatticeType {
+function seedReturnType(
+  fn: ts.FunctionDeclaration | ts.FunctionExpression,
+  checker: ts.TypeChecker | undefined,
+): LatticeType {
   if (fn.type) {
     const t = typeNodeToLattice(fn.type);
     if (t !== null) return t;
@@ -680,6 +683,31 @@ function buildCallGraph(
 // ---------------------------------------------------------------------------
 
 /**
+ * (#743) Optional precision extension for a SATELLITE evaluation.
+ *
+ * The shared lattice core is ONE implementation — a forked evaluator would have
+ * to re-derive every operator's semantics and would drift. Instead a satellite
+ * hands `inferExpr` a `tryInfer` that gets first refusal on each node: returning
+ * a `LatticeType` overrides the shared dispatch for that node, `undefined` (the
+ * only thing a satellite says for nodes it has no rule for) falls through
+ * unchanged.
+ *
+ * The always-on `buildIrUnitTypeMap` path passes NOTHING, so `ext === undefined`
+ * on every main-map call and the main `IrUnitTypeMap` is byte-identical by
+ * construction (#1712 parity) rather than by measurement. The measurement is
+ * still taken — see the issue's Results sections — but it confirms an invariant
+ * the type signature already guarantees.
+ *
+ * `ext` MUST be threaded through every internal recursion site. A site that
+ * drops it does not crash; it silently answers the pre-extension type for that
+ * subtree, which is a wrong-but-plausible fact. See the nesting-depth fixtures
+ * in `tests/issue-743-i32-producers.test.ts`.
+ */
+export interface InferExtension {
+  tryInfer(expr: ts.Expression, scope: ReadonlyMap<string, LatticeType>): LatticeType | undefined;
+}
+
+/**
  * Structural type of an expression, using the given param/local scope and
  * the current TypeMap iteration state for cross-function return types.
  *
@@ -690,9 +718,14 @@ function inferExpr(
   scope: ReadonlyMap<string, LatticeType>,
   entries: ReadonlyMap<IrUnitId, { params: LatticeType[]; returnType: LatticeType }>,
   resolveCallTarget: CallTargetResolver,
+  ext?: InferExtension,
 ): LatticeType {
   if (ts.isParenthesizedExpression(expr)) {
-    return inferExpr(expr.expression, scope, entries, resolveCallTarget);
+    return inferExpr(expr.expression, scope, entries, resolveCallTarget, ext);
+  }
+  if (ext !== undefined) {
+    const extended = ext.tryInfer(expr, scope);
+    if (extended !== undefined) return extended;
   }
   if (ts.isNumericLiteral(expr)) {
     // #1126 Stage 2 — integer-literal classification. JavaScript numeric
@@ -730,7 +763,7 @@ function inferExpr(
     return scope.get(expr.text) ?? DYNAMIC;
   }
   if (ts.isPrefixUnaryExpression(expr)) {
-    const rand = inferExpr(expr.operand, scope, entries, resolveCallTarget);
+    const rand = inferExpr(expr.operand, scope, entries, resolveCallTarget, ext);
     switch (expr.operator) {
       case ts.SyntaxKind.MinusToken:
       case ts.SyntaxKind.PlusToken:
@@ -753,8 +786,8 @@ function inferExpr(
     }
   }
   if (ts.isBinaryExpression(expr)) {
-    const l = inferExpr(expr.left, scope, entries, resolveCallTarget);
-    const r = inferExpr(expr.right, scope, entries, resolveCallTarget);
+    const l = inferExpr(expr.left, scope, entries, resolveCallTarget, ext);
+    const r = inferExpr(expr.right, scope, entries, resolveCallTarget, ext);
     switch (expr.operatorToken.kind) {
       // ─── Arithmetic ────────────────────────────────────────────────
       // #1126 Stage 2 — `+ - * / %` always widens to F64 even when both
@@ -835,11 +868,11 @@ function inferExpr(
     }
   }
   if (ts.isConditionalExpression(expr)) {
-    const cond = inferExpr(expr.condition, scope, entries, resolveCallTarget);
+    const cond = inferExpr(expr.condition, scope, entries, resolveCallTarget, ext);
     if (!boolCompatible(cond)) return DYNAMIC;
     return join(
-      inferExpr(expr.whenTrue, scope, entries, resolveCallTarget),
-      inferExpr(expr.whenFalse, scope, entries, resolveCallTarget),
+      inferExpr(expr.whenTrue, scope, entries, resolveCallTarget, ext),
+      inferExpr(expr.whenFalse, scope, entries, resolveCallTarget, ext),
     );
   }
   if (ts.isCallExpression(expr)) {
@@ -876,18 +909,27 @@ function inferExpr(
   // computed keys / duplicate keys also widen — those force the
   // function back to the legacy boxed path.
   if (ts.isObjectLiteralExpression(expr) && objectShapesEnabled()) {
-    return inferObjectLiteralAtom(expr, scope, entries, resolveCallTarget);
+    return inferObjectLiteralAtom(expr, scope, entries, resolveCallTarget, ext);
   }
   // #1231 Phase 1 — property / element access on a known object atom:
   // look up the field in the receiver's shape and return its atom.
   // When the receiver is a union or dynamic we can't pick a unique
   // field, so widen to dynamic.
   if (ts.isPropertyAccessExpression(expr)) {
-    return inferPropertyAccessAtom(expr, scope, entries, resolveCallTarget);
+    return inferPropertyAccessAtom(expr, scope, entries, resolveCallTarget, ext);
   }
   if (ts.isElementAccessExpression(expr)) {
-    return inferElementAccessAtom(expr, scope, entries, resolveCallTarget);
+    return inferElementAccessAtom(expr, scope, entries, resolveCallTarget, ext);
   }
+  // (#743) `this` resolves to whatever the CALLER bound under the reserved key
+  // `"<this>"`. Provably inert for the main fixpoint: `"<this>"` is not a legal
+  // identifier, and `buildScope`/`seedParamType` only ever key this map by
+  // `p.name.text`, so nothing here can bind it. (A key of `"this"` would NOT be
+  // inert — a TS `this` parameter declares a real parameter with that text.)
+  // The fnctor-graph satellite binds it to a per-owner instance atom so nested
+  // reads (`this.pos - this.lineStart`) and bare-`this` arguments
+  // (`new Token(this)`) carry field facts; see src/ir/fnctor-method-edges.ts.
+  if (expr.kind === ts.SyntaxKind.ThisKeyword) return scope.get("<this>") ?? DYNAMIC;
   return DYNAMIC;
 }
 
@@ -904,6 +946,7 @@ function inferObjectLiteralAtom(
   scope: ReadonlyMap<string, LatticeType>,
   entries: ReadonlyMap<IrUnitId, { params: LatticeType[]; returnType: LatticeType }>,
   resolveCallTarget: CallTargetResolver,
+  ext?: InferExtension,
 ): LatticeType {
   if (expr.properties.length === 0) return DYNAMIC;
   const fields: { name: string; type: LatticeAtom }[] = [];
@@ -924,7 +967,7 @@ function inferObjectLiteralAtom(
     }
     if (seen.has(name)) return DYNAMIC; // duplicate keys not in Phase 1
     seen.add(name);
-    const fieldType = inferExpr(valExpr, scope, entries, resolveCallTarget);
+    const fieldType = inferExpr(valExpr, scope, entries, resolveCallTarget, ext);
     if (!isAtomLattice(fieldType)) return DYNAMIC;
     fields.push({ name, type: fieldType });
   }
@@ -951,10 +994,11 @@ function inferPropertyAccessAtom(
   scope: ReadonlyMap<string, LatticeType>,
   entries: ReadonlyMap<IrUnitId, { params: LatticeType[]; returnType: LatticeType }>,
   resolveCallTarget: CallTargetResolver,
+  ext?: InferExtension,
 ): LatticeType {
   if (!ts.isIdentifier(expr.name)) return DYNAMIC;
   if (expr.questionDotToken) return DYNAMIC;
-  const recvType = inferExpr(expr.expression, scope, entries, resolveCallTarget);
+  const recvType = inferExpr(expr.expression, scope, entries, resolveCallTarget, ext);
   if (recvType.kind !== "object") return DYNAMIC;
   const propName = expr.name.text;
   const field = recvType.fields.find((f) => f.name === propName);
@@ -971,13 +1015,14 @@ function inferElementAccessAtom(
   scope: ReadonlyMap<string, LatticeType>,
   entries: ReadonlyMap<IrUnitId, { params: LatticeType[]; returnType: LatticeType }>,
   resolveCallTarget: CallTargetResolver,
+  ext?: InferExtension,
 ): LatticeType {
   if (expr.questionDotToken) return DYNAMIC;
   const arg = expr.argumentExpression;
   if (!(ts.isStringLiteral(arg) || arg.kind === ts.SyntaxKind.NoSubstitutionTemplateLiteral)) {
     return DYNAMIC;
   }
-  const recvType = inferExpr(expr.expression, scope, entries, resolveCallTarget);
+  const recvType = inferExpr(expr.expression, scope, entries, resolveCallTarget, ext);
   if (recvType.kind !== "object") return DYNAMIC;
   const propName = (arg as ts.StringLiteral | ts.NoSubstitutionTemplateLiteral).text;
   const field = recvType.fields.find((f) => f.name === propName);
@@ -1360,6 +1405,7 @@ function walkBodyForReturns(
   entries: ReadonlyMap<IrUnitId, { params: LatticeType[]; returnType: LatticeType }>,
   resolveCallTarget: CallTargetResolver,
   cb: (t: LatticeType) => void,
+  ext?: InferExtension,
 ): void {
   const walk = (node: ts.Node, scope: Map<string, LatticeType>): void => {
     if (
@@ -1385,7 +1431,7 @@ function walkBodyForReturns(
       for (const d of node.declarationList.declarations) {
         if (!ts.isIdentifier(d.name)) continue;
         if (!d.initializer) continue;
-        const t = inferExpr(d.initializer, scope, entries, resolveCallTarget);
+        const t = inferExpr(d.initializer, scope, entries, resolveCallTarget, ext);
         scope.set(d.name.text, t);
       }
       return;
@@ -1393,7 +1439,7 @@ function walkBodyForReturns(
 
     if (ts.isReturnStatement(node)) {
       if (!node.expression) return;
-      cb(inferExpr(node.expression, scope, entries, resolveCallTarget));
+      cb(inferExpr(node.expression, scope, entries, resolveCallTarget, ext));
       return;
     }
 
@@ -1510,6 +1556,29 @@ function inferLegacyExpressionForTests(
     return structuralEntries.has(legacyName) ? legacyName : undefined;
   });
 }
+
+// (#743) Shared propagation core for the flag-gated fnctor method-edge
+// satellite (src/ir/fnctor-method-edges.ts). The satellite runs a SECOND,
+// self-contained fixpoint over prototype/static methods and function-expression
+// constructors — a population this module's `collectIndexedFunctionDeclarations`
+// deliberately excludes — and reuses the exact lattice rules so the two
+// fixpoints cannot drift on operator/join semantics. Deliberately NOT widened
+// into `buildIrUnitTypeMap` itself: the main map feeds IR selection and the
+// legacy-parity seams, so any change to its entries shifts IR claims; the
+// satellite's facts feed only the fnctor field-slot consumer
+// (src/codegen/fnctor-ctor-param-types.ts) and therefore cannot cause
+// typeIdx-parity demotions. Rationale + measurements: plan/issues/743.
+export const _propagationCore = {
+  inferExpr,
+  walkBodyForReturns,
+  seedParamType,
+  seedReturnType,
+  join,
+  paramsEqual,
+  typesEqual,
+  UNKNOWN,
+  DYNAMIC,
+} as const;
 
 // Exported for tests — let them poke at the lattice without rebuilding
 // everything from scratch.

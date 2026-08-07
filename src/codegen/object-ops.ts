@@ -46,6 +46,7 @@ import {
   tryEmitVecLengthDefineForDefineProperties,
 } from "./array-length-define.js";
 import { isStaticDescWellFormed, isStaticallyNonObjectDescExpr } from "./descriptor-shape.js";
+import { isDescriptorTranscribableStruct } from "./property-descriptor-shape.js"; // (#4180) #2372 transcription gate
 import {
   descriptorFieldName,
   inheritedTrueDescriptorFlags,
@@ -320,7 +321,30 @@ export function emitDefinePropertyDescRuntime(
       : undefined;
   const reifyStructName = descStructTypeIdx !== undefined ? ctx.typeIdxToStructName.get(descStructTypeIdx) : undefined;
   const reifyFields = reifyStructName ? ctx.structFields.get(reifyStructName) : undefined;
-  if (descType && descStructTypeIdx !== undefined && reifyFields && reifyFields.length > 0) {
+  // (#4180) …but ONLY for a struct that is plausibly a descriptor RECORD. Any
+  // other typed struct — array `{length,data}`, `__Date` `{timestamp}`, a
+  // subview — would have its INTERNAL wasm fields transcribed as if they were
+  // the object's own properties, silently fabricating a descriptor and
+  // discarding the real one in the carrier bag. Rationale + measured repro:
+  // `isDescriptorTranscribableStruct`. Otherwise pass the externref through and
+  // let the applier run ToPropertyDescriptor over the actual object.
+  //
+  // (#4176) This test SUBSUMES the three-name skip list this branch used to
+  // carry (`__vec_*` / `__StandaloneRegExp` / `__Date`): none of those is
+  // `__anon_*` and none carries a §6.2.5.6 field name, so all three pass
+  // through, and the allow-test additionally covers every struct kind a
+  // denylist would have to be kept in sync with. The #4176 reason for wanting
+  // them passed through is BROADER than #4180's and is what this branch adds:
+  // the reify severs not only the #3468/#3537 carrier-bag OWN expandos but the
+  // proto-property-store INHERITED keys — `Array.prototype.value = "x";
+  // Object.defineProperty(o, "p", [])`, the §8.10.5 inherited-descriptor idiom.
+  // Measured: the Date / Array / RegExp rows of
+  // 15.2.3.6-3-{139..149,218..228,248..258}-1 all read empty descriptors.
+  // `__obj_define_from_desc`'s reads (`__desc_has_own` + `__extern_get`)
+  // resolve both — own bag first, then the per-brand companions.
+  const mayTranscribe =
+    reifyStructName !== undefined && !!reifyFields && isDescriptorTranscribableStruct(reifyStructName, reifyFields);
+  if (descType && descStructTypeIdx !== undefined && reifyFields && reifyFields.length > 0 && mayTranscribe) {
     emitDescriptorStructReify(ctx, fctx, descStructTypeIdx, reifyFields);
     // emitDescriptorStructReify consumes the struct ref on the stack and leaves
     // a `$Object` externref in its place.

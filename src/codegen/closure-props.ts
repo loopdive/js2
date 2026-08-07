@@ -69,6 +69,7 @@ import { collectClosureBaseWrapperTypeIdxs } from "./closure-classifier.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
+import { protoIndexRecvGetMissInstrs } from "./proto-index-store.js"; // (#4176) inherited proto-named consult
 import { addFuncType } from "./registry/types.js";
 
 /** WasmGC `eq` abstract heap type (used for `ref.cast`/`ref.null` to eqref). */
@@ -135,6 +136,7 @@ export function buildClosurePropMethodCallElseArm(
     {
       op: "if",
       blockType: { kind: "val", type: { kind: "externref" } },
+      else: buildProtoNamedMethodMissArm(ctx, applyClosureIdx),
       then:
         closureMethodCallIdx !== undefined
           ? ([
@@ -154,8 +156,53 @@ export function buildClosurePropMethodCallElseArm(
               { op: "local.get", index: 2 }, // args
               { op: "call", funcIdx: applyClosureIdx },
             ] satisfies Instr[]),
-      else: [{ op: "ref.null.extern" }],
     },
+  ];
+}
+
+/**
+ * (#4207) `__extern_method_call`'s TERMINAL miss — the receiver is neither a
+ * `$Object`, nor a vec, nor a closure carrier, i.e. a **bare primitive**
+ * (a boxed number/boolean or a native string that never went through
+ * `ToObject`). That arm returned the undefined sentinel unconditionally, so an
+ * inherited method installed on the receiver's wrapper prototype was invisible:
+ *
+ * ```js
+ * Number.prototype.zz = function () { return 42; };
+ * (5).zz();          // measured: null. Also null for a plain user function,
+ *                    // so this is a prototype-chain gap, not a `this` gap.
+ * Object.prototype.exec = RegExp.prototype.exec;
+ * (1.0).exec("m");   // must be TypeError; measured: null
+ * ```
+ *
+ * The #4176 proto-property store already holds those writes and already exposes
+ * a receiver-aware consult (`__protoidx_get_r`); the primitive-receiver call
+ * site was simply never wired to it. Consulting it here reuses the whole
+ * existing chain (own brand first, then `Object.prototype`) and hands the
+ * result to `__apply_closure` with the ORIGINAL receiver as `this` — which is
+ * what makes a *transferred* builtin method behave: the #3992 native-proto arm
+ * inside `__call_fn_method_N` threads that receiver into the closure's `this`
+ * param, so `RegExp.prototype.exec` runs its brand check and
+ * `String.prototype.toLowerCase` runs `ToString(this)`.
+ *
+ * No null test is needed: a miss answers the undefined sentinel and
+ * `__apply_closure`'s not-a-function path already returns undefined (the vec
+ * arm in vec-props.ts relies on the same contract). When the store is
+ * unreserved — every module that never writes a named property onto a builtin
+ * prototype — this returns `undefined` and the caller keeps its exact previous
+ * `ref.null.extern`, so the emission is byte-identical for those modules.
+ */
+function buildProtoNamedMethodMissArm(ctx: CodegenContext, applyClosureIdx: number): Instr[] {
+  const consult = protoIndexRecvGetMissInstrs(ctx, 0, 1);
+  if (!consult) return [{ op: "ref.null.extern" }];
+  return [
+    ...consult,
+    ...(ctx.funcMap.has("__nullish_to_null")
+      ? ([{ op: "call", funcIdx: ctx.funcMap.get("__nullish_to_null")! }] satisfies Instr[])
+      : []),
+    { op: "local.get", index: 0 }, // thisArg — the ORIGINAL primitive receiver
+    { op: "local.get", index: 2 }, // args
+    { op: "call", funcIdx: applyClosureIdx },
   ];
 }
 
@@ -414,6 +461,13 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
   // ── __closure_prop_get(externref obj, externref key) -> externref ──
   // if is_closure(obj) { bag = lookup(obj); if bag != null return __extern_get(bag,key) }
   // ; return getMiss()  (the same undefined-read sentinel __extern_get uses)
+  //
+  // (#4176) The final miss consults the proto-property companions RECEIVER-
+  // AWARE (`__protoidx_get_r`: closure ⇒ Function.prototype's companion, then
+  // Object.prototype's) — `Function.prototype.value = "x"; funObj.value` is
+  // the §8.10.5 inherited-descriptor-field idiom. The builder returns
+  // `undefined` unless the store was reserved, so a flag-clear module keeps
+  // this body byte-identical.
   if (isClosureIdx !== undefined && bagLookupIdx !== undefined && externGetIdx !== undefined) {
     const body: Instr[] = [
       { op: "local.get", index: 0 },
@@ -439,7 +493,7 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
           },
         ],
       },
-      ...getMiss(),
+      ...(protoIndexRecvGetMissInstrs(ctx, 0, 1) ?? getMiss()),
     ];
     setBody(CLOSURE_PROP_GET, [{ name: "__bag", type: { kind: "externref" } }], body);
   } else {

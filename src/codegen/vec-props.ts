@@ -56,6 +56,7 @@ import { buildBuiltinFnSetRefusalArm } from "./carrier-bag-visibility.js"; // (#
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
+import { protoIndexRecvGetMissInstrs } from "./proto-index-store.js"; // (#4176) inherited proto-named consult
 import { addFuncType, getOrRegisterVecBaseType } from "./registry/types.js";
 
 /** Reserved helper names (all internal, non-exported). */
@@ -372,6 +373,12 @@ export function fillVecPropHelpers(ctx: CodegenContext): void {
   }
 
   // ── __vec_prop_get(externref obj, externref key) -> externref ──
+  // (#4176) The final miss consults the proto-property companions RECEIVER-
+  // AWARE (`__protoidx_get_r`: vec ⇒ Array.prototype's companion, then
+  // Object.prototype's) — `Array.prototype.enumerable = true; arrObj.enumerable`
+  // is the §8.10.5 inherited-descriptor-field idiom. The builder returns
+  // `undefined` unless the store was reserved, so a flag-clear module keeps
+  // this body byte-identical.
   if (isVecIdx !== undefined && bagLookupIdx !== undefined && externGetIdx !== undefined) {
     setBody(
       VEC_PROP_GET,
@@ -400,7 +407,7 @@ export function fillVecPropHelpers(ctx: CodegenContext): void {
             },
           ],
         },
-        ...getMiss(),
+        ...(protoIndexRecvGetMissInstrs(ctx, 0, 1) ?? getMiss()),
       ],
     );
   } else {

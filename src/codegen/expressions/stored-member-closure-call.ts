@@ -72,9 +72,11 @@
 import ts from "typescript";
 
 import type { CodegenContext, FunctionContext } from "../context/types.js";
-import type { ValType } from "../../ir/types.js";
+import type { Instr, ValType } from "../../ir/types.js";
 import { allocLocal } from "../context/locals.js";
+import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
+import { addStringConstantGlobal } from "../registry/imports.js";
 import { coerceType, compileExpression } from "../shared.js";
 import { BUILTIN_CLASS_NAMES } from "./builtin-class-names.js";
 import { sourceHasMethodReassignment } from "./calls.js";
@@ -102,6 +104,14 @@ const APPLY_CLOSURE_MAX_ARITY = 8;
 export function compileCallDispatchTail(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallExpression): ValType {
   const stored = tryEmitStoredMemberClosureCall(ctx, fctx, expr);
   if (stored !== undefined) return stored;
+
+  // (#4207) The receiver was not an identifier (`(Number.NEGATIVE_INFINITY).m()`),
+  // so the arm above declined — but a module that installed a NAMED property on
+  // a builtin prototype can still resolve `m` through the receiver's implicit
+  // chain at run time. One evaluation of the receiver, so the "read twice"
+  // restriction that gates the arm above does not apply here.
+  const inherited = tryEmitProtoInheritedMethodCall(ctx, fctx, expr);
+  if (inherited !== undefined) return inherited;
 
   // Graceful fallback: compile the callee expression and all arguments for side
   // effects, then push `ref.null.extern`. This avoids hard compile errors for
@@ -212,9 +222,129 @@ function tryEmitStoredMemberClosureCall(
 
   // 4. `__apply_closure(fn, this, args)`. Re-read the index: compiling the
   //    receiver / member / arguments may have registered late imports.
+  //
+  //    (#4207) …unless the member read answered nullish AND this module wrote a
+  //    named property onto a builtin prototype. Then the callee may be an
+  //    INHERITED method that the static member read cannot see: a primitive
+  //    receiver has no own-property carrier, so `pushAsExternref(callee)` folds
+  //    to `ref.null.extern` and the call silently answers `undefined`:
+  //
+  //      Number.prototype.zz = function () { return 42; };
+  //      var n = 5; n.zz();            // measured: null (a PLAIN function —
+  //                                    // this is a prototype-chain gap, not a
+  //                                    // `this`-binding one)
+  //      Object.prototype.exec = RegExp.prototype.exec;
+  //      var i = false; i.exec("m");   // must be TypeError; measured: null
+  //
+  //    `__extern_method_call` resolves through the receiver's implicit chain
+  //    (own brand, then `Object.prototype`) via the #4176 proto-property store
+  //    and threads the ORIGINAL receiver as `this`, which is what lets a
+  //    *transferred* builtin method run its own brand check / `ToString(this)`.
+  //    Guarded on the nullish read, so every shape that resolves a callee today
+  //    keeps the exact `__apply_closure` sequence; and on `protoNamedDirty`, a
+  //    pre-scan flag, so a module with no such write emits byte-identically.
+  const methodCallIdx = ctx.standalone && ctx.protoNamedDirty ? ctx.funcMap.get("__extern_method_call") : undefined;
+  const applyCall: Instr[] = [
+    { op: "local.get", index: fnLocal },
+    { op: "local.get", index: thisLocal },
+    { op: "local.get", index: vecLocal },
+    { op: "call", funcIdx: ctx.funcMap.get("__apply_closure") ?? applyIdx },
+  ];
+  if (methodCallIdx === undefined) {
+    fctx.body.push(...applyCall);
+    return { kind: "externref" };
+  }
+  const nameKey = memberName;
+  addStringConstantGlobal(ctx, nameKey);
+  // nullish(fn) — `null` OR the #2106 `undefined` singleton, which is a
+  // DISTINCT non-null sentinel externref in standalone, so `ref.is_null` alone
+  // would miss the "member absent" answer this arm has to catch.
   fctx.body.push({ op: "local.get", index: fnLocal });
+  fctx.body.push({ op: "ref.is_null" });
+  const isUndefIdx = ctx.funcMap.get("__extern_is_undefined");
+  if (isUndefIdx !== undefined) {
+    fctx.body.push({ op: "local.get", index: fnLocal });
+    fctx.body.push({ op: "call", funcIdx: isUndefIdx });
+    fctx.body.push({ op: "i32.or" });
+  }
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "externref" } },
+    then: [
+      { op: "local.get", index: thisLocal },
+      ...stringConstantExternrefInstrs(ctx, nameKey),
+      { op: "local.get", index: vecLocal },
+      { op: "call", funcIdx: methodCallIdx },
+    ],
+    else: applyCall,
+  });
+  return { kind: "externref" };
+}
+
+/**
+ * (#4207) `<non-identifier receiver>.<m>(…)` for a module that installed a
+ * NAMED property on a builtin prototype — the shape
+ * {@link tryEmitStoredMemberClosureCall} declines because it would have to read
+ * the receiver twice. Here the receiver is evaluated ONCE into the
+ * `__extern_method_call` receiver slot, so there is no re-read to worry about
+ * and no ordering hazard.
+ *
+ * Same blast radius argument as the arm above: it sits immediately before the
+ * graceful fallback, so every shape it can claim answers `ref.null.extern`
+ * today, and `__extern_method_call` answers the same undefined sentinel on a
+ * miss. Gated on `ctx.protoNamedDirty` (a pre-scan flag), so a module that
+ * never writes a named property onto a builtin prototype emits byte-identically.
+ */
+function tryEmitProtoInheritedMethodCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+): ValType | undefined {
+  if (!ctx.standalone || !ctx.protoNamedDirty) return undefined;
+  const callee = expr.expression;
+  if (!ts.isPropertyAccessExpression(callee)) return undefined;
+  if (callee.questionDotToken !== undefined || expr.questionDotToken !== undefined) return undefined;
+  if (!ts.isIdentifier(callee.name)) return undefined;
+  // The identifier-receiver shape belongs to the arm above (it can still reach
+  // `__apply_closure` when the static member read resolves).
+  if (ts.isIdentifier(callee.expression)) return undefined;
+  if (BUILTIN_CLASS_NAMES.has(callee.expression.getText())) return undefined;
+  if (expr.arguments.some((a) => ts.isSpreadElement(a))) return undefined;
+  if (expr.arguments.length > APPLY_CLOSURE_MAX_ARITY) return undefined;
+
+  const memberName = callee.name.text;
+  if (!sourceHasMethodReassignment(ctx, expr, memberName)) return undefined;
+
+  // Same reserve-before-compile discipline as the arm above (#1839/#117/#1886).
+  reserveApplyClosure(ctx);
+  const { newIdx: vecNewIdx, pushIdx: vecPushIdx } = ensureObjVecBuilders(ctx);
+  flushLateImportShifts(ctx, fctx);
+  const methodCallIdx = ctx.funcMap.get("__extern_method_call");
+  if (methodCallIdx === undefined || vecNewIdx === undefined || vecPushIdx === undefined) return undefined;
+
+  const pushAsExternref = (e: ts.Expression): void => {
+    const t = compileExpression(ctx, fctx, e, { kind: "externref" });
+    if (t === null) fctx.body.push({ op: "ref.null.extern" });
+    else if (t.kind !== "externref") coerceType(ctx, fctx, t, { kind: "externref" });
+  };
+
+  const thisLocal = allocLocal(fctx, `__pim_this_${fctx.locals.length}`, { kind: "externref" });
+  pushAsExternref(callee.expression);
+  fctx.body.push({ op: "local.set", index: thisLocal });
+
+  const vecLocal = allocLocal(fctx, `__pim_args_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__objvec_new") ?? vecNewIdx });
+  fctx.body.push({ op: "local.set", index: vecLocal });
+  for (const arg of expr.arguments) {
+    fctx.body.push({ op: "local.get", index: vecLocal });
+    pushAsExternref(arg);
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__objvec_push") ?? vecPushIdx });
+  }
+
+  addStringConstantGlobal(ctx, memberName);
   fctx.body.push({ op: "local.get", index: thisLocal });
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, memberName));
   fctx.body.push({ op: "local.get", index: vecLocal });
-  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__apply_closure") ?? applyIdx });
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_method_call") ?? methodCallIdx });
   return { kind: "externref" };
 }

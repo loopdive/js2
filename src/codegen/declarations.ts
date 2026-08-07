@@ -23,7 +23,7 @@ import { collectShapes } from "../shape-inference.js";
 // allow-list's fall-through leaves evidence instead of silently dropping an
 // observable statement (the #1268/#2671/#2992/#3366/#3468/#3592/#3615 class).
 import { classifyTopLevelExpressionStatement, createsGlobalObjectBinding } from "./module-init-collection.js";
-import { ensureWrapperTypes } from "./any-helpers.js";
+import { emitUndefinedExtern, ensureWrapperTypes } from "./any-helpers.js";
 import { ASYNC_CPS_ENABLED, analyzeAsyncBody, asyncFnNeedsCps } from "./async-cps.js";
 import { asyncFnNeedsHostDrive, asyncGenDrivableUnderCarrier, asyncGenStem } from "./async-frame.js";
 import { collectClassDeclaration, compileClassBodies, type ClassBodyCompileRouting } from "./class-bodies.js";
@@ -35,7 +35,7 @@ import {
 } from "./closures.js";
 import { nativeTypeFromTypeNode, nativeTypeOfDeclaration } from "./native-type-annotations.js";
 import { addFunctionOwnLocals } from "./binding-info.js"; // (#2103) memoized own-locals oracle
-import { reportError } from "./context/errors.js";
+import { dedupeDiagnosticsFrom, reportError } from "./context/errors.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
 import { compileFunctionBody, dumpFrameBreach, registerInlinableFunction } from "./function-body.js";
 import { _hasRuntimeComputedKey } from "./literals.js"; // (#3024) module-global externref routing for runtime-computed-key literals
@@ -87,6 +87,7 @@ import {
 } from "./registry/types.js";
 import { isArrayProtoIteratorAssignTarget } from "./expressions/proto-override.js";
 import { isFnctorPrototypeAssignTarget } from "./expressions/fnctor-prototype.js";
+import { shouldKeepBuiltinReceiverWrite } from "./builtin-write-keeps.js"; // (#4176/#4199) builtin-receiver write keeps
 import { compileExpression, compileStatement } from "./shared.js";
 import { expandLinearU8ParamTypes } from "./linear-uint8-signatures.js";
 import { definedFuncAt, mintDefinedFunc } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
@@ -95,8 +96,10 @@ import {
   pushProgramAbiNestedFunctionDeclaration,
   pushProgramAbiTopLevelCallable,
 } from "./program-abi-source-callable-planning.js";
+import { heterogeneousWidenedModuleGlobalType } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import { prepareModuleTdzGlobals, registerModuleGlobal } from "./module-global-registration.js";
+import { annexBModuleGlobalSeedsFromTopLevel } from "./annexb-global-live-binding.js";
 import { emitRuntimeEvalAotCallableAdapter } from "./runtime-eval-callable.js";
 
 // ── Extracted subsystems (#3268) — re-exported for external consumers ─────
@@ -1513,7 +1516,12 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // match-vec ref type so indexed reads stay on the static vec path
     // (externref-widened globals round-trip through __extern_get_idx,
     // which can't see typed vecs and returns null).
-    return inferStandaloneRegExpMatchGlobalType(ctx, decl) ?? resolveWasmType(ctx, varType);
+    // (#4204) `var x = 2; x = this` cannot live in the `(mut f64)` slot.
+    return (
+      heterogeneousWidenedModuleGlobalType(ctx, sourceFile, decl) ??
+      inferStandaloneRegExpMatchGlobalType(ctx, decl) ??
+      resolveWasmType(ctx, varType)
+    );
   }
 
   /** Register var declarations from a variable declaration list as module globals. */
@@ -1748,6 +1756,11 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           opKind === ts.SyntaxKind.PlusEqualsToken ||
           opKind === ts.SyntaxKind.MinusEqualsToken ||
           opKind === ts.SyntaxKind.AsteriskEqualsToken ||
+          // (#4181) `**=` was missing from this list (its 15 siblings are all
+          // here), so a top-level `x **= 2` was dropped — and because the
+          // #3623 classifier calls every assignment operator "keep", the drop
+          // was invisible to the telemetry too.
+          opKind === ts.SyntaxKind.AsteriskAsteriskEqualsToken ||
           opKind === ts.SyntaxKind.SlashEqualsToken ||
           opKind === ts.SyntaxKind.PercentEqualsToken ||
           opKind === ts.SyntaxKind.AmpersandEqualsToken ||
@@ -1764,7 +1777,21 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           opKind === ts.SyntaxKind.QuestionQuestionEqualsToken ||
           opKind === ts.SyntaxKind.BarBarEqualsToken ||
           opKind === ts.SyntaxKind.AmpersandAmpersandEqualsToken;
-        if (!isAssignOp) continue;
+        if (!isAssignOp) {
+          // (#4181) This `continue` used to skip the #3623 classifier at the
+          // end of the block, so non-assignment binary statements (`a, b`,
+          // `x && f()`, `p || q()`, `c ?? d()`, comparisons) were dropped
+          // UNCOUNTED — invisible even to the telemetry built to make drops
+          // loud. Record the drop before skipping. Behaviour is unchanged.
+          const c = classifyTopLevelExpressionStatement(stmt.expression);
+          if (c.disposition === "unhandled") {
+            (ctx.droppedModuleInitShapes ??= new Map()).set(
+              c.shape,
+              (ctx.droppedModuleInitShapes.get(c.shape) ?? 0) + 1,
+            );
+          }
+          continue;
+        }
         // (#3366) A destructuring-assignment LHS has no single root identifier,
         // so getAssignmentRootIdentifier below returns undefined and the whole
         // top-level statement used to be dropped. Keep it unconditionally:
@@ -1796,6 +1823,17 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         // `$Object` is populated. Host/GC mode is byte-identical (gated, dropped
         // as before). Mirrors the Array.prototype CPR keep-in-init above.
         if (ctx.standalone && isFnctorPrototypeAssignTarget(ctx, expr.left)) {
+          ctx.moduleInitStatements.push(stmt);
+          continue;
+        }
+        // (#4176 / #4199) A top-level write whose RECEIVER is a builtin —
+        // `Object.prototype.zzz = 1` or `Math.value = "D"`. The root identifier
+        // is a builtin, so the generic check below dropped the whole statement
+        // and the write compiled to NOTHING. Both write arms are already
+        // correct (the identical statement inside a function body works), so
+        // keeping the statement is the whole fix. Scope + the cases that must
+        // STAY dropped: builtin-write-keeps.ts.
+        if (shouldKeepBuiltinReceiverWrite(ctx, expr.left)) {
           ctx.moduleInitStatements.push(stmt);
           continue;
         }
@@ -2479,6 +2517,12 @@ export function compileDeclarations(
     ctx.nonExtensibleVars = new Set(propOrderStateSnapshot.nonExtensibleVars);
   }
 
+  // (#4195) Both module-init passes record into `ctx.errors`, so every
+  // top-level diagnostic was reported twice. Reconciled after pass 2 by
+  // `dedupeDiagnosticsFrom` — see its doc-comment for why that collapses
+  // duplicates rather than truncating pass 1's range.
+  let pass1DiagnosticMark = 0;
+
   function compileModuleInitBody(): FunctionContext {
     const initFctx: FunctionContext = {
       name: "__module_init",
@@ -2504,6 +2548,32 @@ export function compileDeclarations(
     if (ctx.liveFuncBindingGlobals && ctx.liveFuncBindingGlobals.size > 0) {
       const seededGlobals = new Set<number>();
       for (const liveName of ctx.liveFuncBindingGlobals) {
+        // (#4182) A module-scope Annex B block-fn binding starts as `undefined`
+        // (B.3.3.2.b CreateGlobalFunctionBinding(F, undefined)) unless a real
+        // top-level `function f` also exists — GDI initializes only that one.
+        // Without this split, pass 2 of the #2965 two-pass init compile would
+        // seed the block function's closure (its funcMap entry exists by then),
+        // making the pre-evaluation read wrongly observe the function. Under
+        // the `undefinedSingleton` regime the binding must read as `undefined`,
+        // not `null`, so seed the `$undefined` singleton rather than leaving
+        // the `ref.null.extern` global init.
+        if (!annexBModuleGlobalSeedsFromTopLevel(ctx, liveName)) {
+          // Standalone/WASI only: the host lane's `undefined` IS the null
+          // extern (a host boundary crossing reads it back as undefined),
+          // while the tag-1 singleton would surface to host helpers as an
+          // opaque object (`typeof` → "object", `=== undefined` → false).
+          const annexBGlobalIdx = ctx.moduleGlobals.get(liveName);
+          if (
+            (ctx.standalone || ctx.wasi) &&
+            annexBGlobalIdx !== undefined &&
+            !seededGlobals.has(annexBGlobalIdx) &&
+            emitUndefinedExtern(ctx, initFctx)
+          ) {
+            initFctx.body.push({ op: "global.set", index: annexBGlobalIdx });
+            seededGlobals.add(annexBGlobalIdx);
+          }
+          continue;
+        }
         const liveGlobalIdx = ctx.moduleGlobals.get(liveName);
         const liveFuncIdx = ctx.funcMap.get(liveName);
         if (liveGlobalIdx === undefined || liveFuncIdx === undefined) continue;
@@ -2569,6 +2639,7 @@ export function compileDeclarations(
   // the same complete statement list.
   if ((hasModuleInits || hasStaticInits) && moduleInitMode !== "skip") {
     profileCount("module-init-statements", ctx.moduleInitStatements.length);
+    pass1DiagnosticMark = ctx.errors.length; // (#4195) see dedupeDiagnosticsFrom
     compiledInitFctx = profilePhase("module-init-pass1", () => compileModuleInitBody());
     // Expose the pending init body so fixupModuleGlobalIndices can adjust it
     // when addStringConstantGlobal is called during function body compilation.
@@ -2702,6 +2773,7 @@ export function compileDeclarations(
     restorePropOrderState();
     compiledInitFctx = profilePhase("module-init-pass2", () => compileModuleInitBody());
     ctx.pendingInitBody = compiledInitFctx.body;
+    dedupeDiagnosticsFrom(ctx, pass1DiagnosticMark); // (#4195) after pass 2, never before
   }
 
   // Clear pendingInitBody before injection (it lands in mod.functions after this)

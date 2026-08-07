@@ -446,6 +446,30 @@ function classifyUse(
     }
   }
 
+  // (#4176) `Object.create({}, { prop: inst })` / `Object.defineProperties(o,
+  // { p: inst })` — the instance is a property VALUE inside an object-literal
+  // argument of a builtin `Object.*`/`Reflect.*` call. The #4163 clause below
+  // only sees DIRECT arguments, so the nested descriptor-object idiom (the
+  // dominant `Object.create` spelling of the 15.2.3.5-4-* inherited-descriptor
+  // family) classified keep-static and the instance stayed a closed struct the
+  // descriptor reader cannot walk. One hop only, and only into the builtin
+  // namespaces whose standalone lowerings consume every nested value through
+  // the externref `$Object` runtime — a user call's object-literal argument is
+  // untouched.
+  if (ts.isPropertyAssignment(parent) && parent.initializer === useNode) {
+    const lit = parent.parent;
+    if (ts.isObjectLiteralExpression(lit) && ts.isCallExpression(lit.parent) && lit.parent.arguments.includes(lit)) {
+      const outerCallee = lit.parent.expression;
+      if (
+        ts.isPropertyAccessExpression(outerCallee) &&
+        ts.isIdentifier(outerCallee.expression) &&
+        (outerCallee.expression.text === "Object" || outerCallee.expression.text === "Reflect")
+      ) {
+        return "dynamic";
+      }
+    }
+  }
+
   // Passed as a call argument to a parameter typed `any`/`unknown` → dynamic
   // (the callee may read it dynamically). Conservative: only the explicit
   // any/unknown parameter counts as dynamic; a typed parameter is neutral here

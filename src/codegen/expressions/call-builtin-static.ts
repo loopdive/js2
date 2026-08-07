@@ -36,11 +36,13 @@ import {
 import { emitThrowRangeError } from "../js-errors.js";
 import {
   isSymbolSpeciesKeyExpression,
+  resolveBuiltinProtoGopdReceiver,
   resolveBuiltinReceiverName,
   tryEmitStandaloneBuiltinSpeciesGopd,
   tryEmitStandaloneBuiltinStaticGopd,
   tryEmitStandaloneStructGopdKeyDispatch,
 } from "../builtin-static-gopd.js";
+import { tryEmitBuiltinProtoConstructorDescriptor } from "../builtin-proto-constructor.js";
 import { compileArrowAsClosure } from "../closures.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
@@ -2593,20 +2595,15 @@ export function compileBuiltinStaticCall(
     // (#2901) Resolve the proto's builtin name from EITHER the syntactic
     // `<Ctor>.prototype` form OR the harness's dynamic %TypedArray%.prototype
     // receiver traced through intermediate vars.
-    let gopdProtoBuiltin: string | undefined;
-    if (ctx.standalone && propLiteral !== undefined) {
-      if (
-        ts.isPropertyAccessExpression(arg0) &&
-        !ts.isPrivateIdentifier(arg0.name) &&
-        arg0.name.text === "prototype" &&
-        ts.isIdentifier(arg0.expression) &&
-        BUILTIN_CTOR_NAMES.has(arg0.expression.text) &&
-        !(fctx.localMap.has(arg0.expression.text) || (fctx.boxedCaptures?.has(arg0.expression.text) ?? false))
-      ) {
-        gopdProtoBuiltin = arg0.expression.text;
-      } else if (tracesToTypedArrayIntrinsicProto(ctx, arg0)) {
-        gopdProtoBuiltin = "%TypedArray%";
-      }
+    const gopdProtoBuiltin = resolveBuiltinProtoGopdReceiver(ctx, fctx, arg0, propLiteral, BUILTIN_CTOR_NAMES, (e) =>
+      tracesToTypedArrayIntrinsicProto(ctx, e),
+    );
+    // (#4200) `constructor` is OWN on every builtin prototype but is NOT a
+    // method, so it misses the member-CSV gate below and answered `undefined`.
+    // Synthesized from the same carrier module as the VALUE read, before that
+    // gate — see builtin-proto-constructor.ts.
+    if (tryEmitBuiltinProtoConstructorDescriptor(ctx, fctx, gopdProtoBuiltin, propLiteral)) {
+      return { kind: "externref" };
     }
     if (gopdProtoBuiltin !== undefined && propLiteral !== undefined) {
       const protoBuiltin = gopdProtoBuiltin;

@@ -159,6 +159,11 @@ export interface CodegenOptions {
    *  see the `CompileOptions.tag5ValueEqClassifier` doc. Default TRUE
    *  (#2040 flip); `JS2WASM_TAG5_CLASSIFIER=0` forces the legacy regime. */
   tag5ValueEqClassifier?: boolean;
+  /** (#4173) Fast tag-pair dispatch in `__extern_strict_eq` (identity-miss →
+   *  direct f64/string/bool/bigint compare or fast-false, no `$AnyValue`
+   *  allocation) + single-convert `__is_truthy` ladder. Default TRUE;
+   *  `JS2WASM_FAST_STRICT_EQ=0` forces the legacy bodies. */
+  fastStrictEq?: boolean;
   /** (#2106 S1) Standalone `$undefined` tag-1 singleton regime — see the
    *  `CompileOptions.undefinedSingleton` doc. Default TRUE (#2106 flip);
    *  `JS2WASM_UNDEF_SINGLETON=0` forces the legacy regime. */
@@ -1411,6 +1416,18 @@ export interface CodegenContext {
    */
   protoIndexDirty: boolean;
   /**
+   * (#4176) Set by the same pre-scan when the module WRITES a NAMED property
+   * onto a branded builtin's `.prototype` (`Function.prototype.value = …`,
+   * `Object.prototype.zzz = …`, `Object.defineProperty(String.prototype, …)`).
+   * Consumer: the proto-property store reserve gate ONLY (`reserveProtoIndexStore`
+   * runs under `protoIndexDirty || protoNamedDirty`). Deliberately SEPARATE
+   * from `protoIndexDirty`: a named key can never be an inherited integer
+   * index, so the HOF hole visit-skip and the typed element fast lanes (which
+   * key on `protoIndexDirty`) stay enabled for the common polyfill idiom
+   * (`String.prototype.foo = …`).
+   */
+  protoNamedDirty: boolean;
+  /**
    * (#4159) A descriptor that is not provably data-only may exist somewhere in
    * the module. Consumers: the TYPED element read/write lanes only — #3251's
    * value write-back keeps `array.get` coherent for DATA descriptors, but an
@@ -1704,6 +1721,15 @@ export interface CodegenContext {
   protoIndexObjCompanionGlobalIdx?: number;
   /** (#4160) Global index of `__protoidx_arr_companion` (`(mut externref)`). */
   protoIndexArrCompanionGlobalIdx?: number;
+  /**
+   * (#4176) Global index of `__protoidx_companions` — the lazily-minted
+   * per-brand companion TABLE (`(mut (ref null $__protoidx_carr))`, one
+   * externref slot per builtin brand) that generalizes the two globals above
+   * to every branded builtin prototype (`Function.prototype.value = …`).
+   */
+  protoIndexCompanionsGlobalIdx?: number;
+  /** (#4176) Type index of `$__protoidx_carr` (`array (mut externref)`). */
+  protoIndexCompanionsArrTypeIdx?: number;
   /**
    * (#1100) Set when the standalone Proxy trap-dispatch runtime reserved its
    * `__proxy_call_{get,set,has}` driver placeholders (in `ensureProxyRuntime`).
@@ -2068,6 +2094,12 @@ export interface CodegenContext {
    * previous `undefined` fallback. -1 = not yet created.
    */
   currentThisGlobalIdx: number;
+  /**
+   * (#4203) Global index of the immutable `__this_explicit_null` marker: "the
+   * caller passed `null`", as distinct from `__current_this`'s `ref.null.extern`
+   * "no receiver installed". See `explicit-null-receiver.ts`.
+   */
+  explicitNullThisGlobalIdx?: number;
   /** Mutable i32 hand-off used by ES5 Function `caller` poison semantics. */
   callerStrictGlobalIdx: number;
   /** Source function name → source strictness, consumed by the final call-site pass. */
@@ -2295,6 +2327,22 @@ export interface CodegenContext {
    * declaration is ever reassigned), so non-affected programs stay byte-identical.
    */
   liveFuncBindingGlobals?: Set<string>;
+  /**
+   * (#4182) Names bound live at MODULE scope by Annex B B.3.3.2 (a sloppy
+   * block/`if`/`switch`-nested `function f` whose enclosing var scope is the
+   * SourceFile). Subset discipline: every member is also in
+   * `liveFuncBindingGlobals` and `moduleGlobals`. Reads/typeof/calls route
+   * through the backing externref global; the B.3.3.2.c evaluation step
+   * (`tryCompileAnnexBModuleBlockFnEvaluation`) `global.set`s it at the
+   * declaration's textual position in `__module_init`. Normally empty.
+   */
+  annexBModuleBindings?: Set<string>;
+  /**
+   * (#4182) Per-declaration compiled function index for module-scope Annex B
+   * block functions — keeps the #2965 two-pass `__module_init` compile from
+   * compiling the same declaration node twice.
+   */
+  annexBModuleFnIdxByDecl?: WeakMap<ts.FunctionDeclaration, number>;
   /** Deferred `export default <variable>` where variable is a module global (#1108).
    *  Resolved after all collectDeclarations calls when global indices are final. */
   deferredDefaultGlobalExport?: string;
@@ -3036,6 +3084,10 @@ export interface CodegenContext {
    *  site stays standalone/wasi-gated so host mode is byte-identical.
    *  `JS2WASM_TAG5_CLASSIFIER=0` forces the legacy always-`0` arm. */
   tag5ValueEqClassifier: boolean;
+  /** (#4173) Fast tag-pair dispatch in the dynamic-eq helpers — see the
+   *  `CodegenOptions.fastStrictEq` doc. Default TRUE;
+   *  `JS2WASM_FAST_STRICT_EQ=0` forces the legacy bodies. */
+  fastStrictEq: boolean;
   /** (#2106 S1) Standalone `$undefined` tag-1 singleton regime flag — see the
    *  `CompileOptions.undefinedSingleton` doc. Default TRUE (#2106 flip);
    *  `=0` forces legacy. Only meaningful under standalone/nativeStrings;
