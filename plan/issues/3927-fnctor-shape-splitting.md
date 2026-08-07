@@ -945,20 +945,36 @@ evidence.**
   Do not file a new one. Scoped afterwards with small standalone programs: a
   **class** instance and a shape-inferred object literal enumerate 0 exactly
   like a fnctor instance once the receiver reaches the consumer as `externref`;
-  a statically-typed receiver at the loop is fine. That part replicated across
-  two lanes.
+  a statically-typed receiver at the loop is fine. Replicated in all three
+  lanes.
 
-  **What did NOT replicate: how the failures group.** This slice read
-  `hasOwnProperty` as working while `in` / `for…in` / `Object.keys` all fail;
-  the per-type-layouts lane measures `Object.keys` and `in` **passing** on its
-  own fixtures, i.e. `for…in` alone failing. Six of eight rows agree — including
-  both `for…in` failures, which is the part this design rests on — but the two
-  that disagree are exactly the two that decide where a fixer should start.
-  Eliminated on this side across 24 configurations (prelude, optimize level,
-  class-shape spelling, and **branch** — it reproduces on `origin/main`'s own
-  sources, so the default-ON split is not the cause). **Unresolved; the full
-  two-column matrix and the elimination list live in #3920.** Do not quote the
-  grouping from here.
+  **SETTLED** (a third lane found the seam in the source; an earlier revision of
+  this note recorded the grouping as contested — that is stale, ignore it). The
+  axis is receiver **spelling**, not fixture shape: a receiver whose type is
+  statically known at the point of use never enters the dynamic runtime, so it
+  passes on every surface. Measuring that row and generalising from it is what
+  produced the disagreement — which is also why nothing on this side moved the
+  result across 24 configurations (prelude / optimize level / class-shape
+  spelling / **branch**, the last ruling out this slice's default-ON split by
+  re-running on `origin/main`'s own source blobs). The variable was never on an
+  axis this lane controlled.
+
+  Six dynamic helpers back these surfaces; three got closed-struct arms at
+  finalize and three never did, and that split matches the matrix 3-for-3:
+  `hasOwnProperty`, `getOwnPropertyNames` and `obj[k]` have arms; `Object.keys`,
+  `for…in` and `in` do not. `src/codegen/object-runtime.ts`
+  (`fillClosedStructOwnPropertyNamesArms`, #4071) records why sharing them was
+  implemented, measured and **reverted**: `ctx.structFields` includes builtin
+  carriers whose internal fields carry no `$`/`__` prefix, so sharing made
+  `Object.keys(new Date(0))` answer `["timestamp"]`. The missing piece is a
+  user-declared-vs-builtin struct predicate that does not exist yet.
+
+  **One caveat worth carrying, from that same comment:** `getOwnPropertyNames`
+  "works" only on the user-declared receivers in the matrix — it is *already*
+  wrong on builtins (`Object.getOwnPropertyNames(/ab/)` returns 7 internal
+  RegExp fields in standalone today, host answers 1). So the fix is not "share
+  the arms with the other three"; it is "build the predicate, then share" — and
+  the leak it prevents is latent in a helper that currently reads as passing.
 
   **It also contradicts a record in the 2026-08-06 slice.** That slice
   attributes the pre-wiring K=52 divergence to acorn's `copyNode`
