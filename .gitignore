@@ -49,7 +49,7 @@ benchmarks/results/test262-run.log
 .codex/ci-status/
 .codex/symphony/
 .codex/dispatch/
-.test262-cache/
+.test262-cache
 output/
 examples/native-messaging/out/
 scripts/compiler-bundle.mjs

@@ -442,6 +442,20 @@ export interface CompileOptions {
    */
   tag5ValueEqClassifier?: boolean;
   /**
+   * (#4173) Fast tag-pair dispatch in the standalone dynamic-eq helpers.
+   * When true, `__extern_strict_eq`'s identity-miss path classifies both
+   * operands by ref.test (number/i31, string, boolean, bigint, `$AnyValue`)
+   * and answers directly — `f64.eq` / `__str_equals` / normalized bool eq /
+   * `i64.eq`, or fast-false for identity-only pairs — instead of allocating
+   * two `$AnyValue` boxes via `__any_from_extern` and calling
+   * `__any_strict_eq`. `$AnyValue`-carrying operands keep the full legacy
+   * path (cross-representation identity, #2175). Also dedupes the second
+   * `any.convert_extern` in `__is_truthy`. Standalone/WASI only; host lane
+   * byte-identical. Default TRUE (A/B-validated, #4173 Results). Set
+   * `JS2WASM_FAST_STRICT_EQ=0` (or pass `false`) to force the legacy bodies.
+   */
+  fastStrictEq?: boolean;
+  /**
    * (#2106 S1) Standalone `$undefined` tag-1 singleton regime. When true (and
    * targeting standalone/nativeStrings), `undefined` is represented by the
    * S1.0 immutable tag-1 `$AnyValue` global (extern-wrapped at the externref

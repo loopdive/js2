@@ -114,22 +114,23 @@ describe("#4190 ES5 10.4.3 — unbound-receiver `this`", () => {
     ).toBeNull();
   });
 
-  it("KNOWN GAP: .call/.apply/.bind drop the thisArg for a function EXPRESSION", async () => {
-    // Canary for the follow-up slice. `named-this-call.ts` (#4025) installs the
-    // receiver only for a stable named FunctionDeclaration, so the declaration
-    // form works and the expression form silently loses the receiver. When the
-    // follow-up lands, the second `check` stops throwing and this expectation
-    // flips to `toBeNull()`.
+  // (#4202) CANARY DISCHARGED. This case asserted `.not.toBeNull()` — that a
+  // variable-held function EXPRESSION still LOST its `.call` receiver — as a
+  // tripwire for the follow-up slice, with the standing instruction "when the
+  // follow-up lands … this expectation flips to `toBeNull()`".
+  //
+  // #4192 landed that slice (`closure-receiver-install.ts`) and did not flip
+  // the canary, so `tests/issue-4190.test.ts` has been RED on `origin/main`
+  // ever since — verified here by A/B, running this exact file against
+  // `origin/main`'s `named-this-call.ts` + `sloppy-this-global.ts`: still red,
+  // so the flip is discharging #4192's tripwire and is unrelated to #4202's
+  // own change. Both forms now deliver the receiver, so both are asserted
+  // positively and the case becomes an ordinary regression guard.
+  it("both a function DECLARATION and a function EXPRESSION deliver the .call thisArg", async () => {
     const PRELUDE = `var o = { tag: 7 };
        function decl() { return this; }
        var expr = function () { return this; };\n`;
-    // The declaration form delivers the receiver …
     expect(await runScript(CHECK + PRELUDE + `check(decl.call(o) === o, "decl");`)).toBeNull();
-    // … the expression form does not. (A standalone throw surfaces as an opaque
-    // WasmGC exception, so the verdict is "threw", not the payload text.)
-    expect(
-      await runScript(CHECK + PRELUDE + `check(expr.call(o) === o, "expr");`),
-      "FunctionExpression .call now delivers its thisArg — drop this canary and re-measure the lever",
-    ).not.toBeNull();
+    expect(await runScript(CHECK + PRELUDE + `check(expr.call(o) === o, "expr");`)).toBeNull();
   });
 });
