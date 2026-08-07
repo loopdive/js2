@@ -116,6 +116,7 @@ import {
   tryExternClassMethodOnAny,
 } from "./calls-closures.js";
 import { compileExternMethodCall } from "./extern.js";
+import { ensureDynamicValueOfHelper } from "../wrapper-valueof.js"; // (#4201) dynamic-receiver valueOf
 import {
   buildThrowJsErrorInstrs,
   emitThrowTypeError,
@@ -2959,6 +2960,32 @@ export function compileReceiverMethodCall(
   // Fallback .valueOf() for any type not already handled above
   // valueOf() on non-primitive types typically returns the object itself
   if (propAccess.name.text === "valueOf" && expr.arguments.length === 0) {
+    // (#4201) …but that identity is `Object.prototype.valueOf`, and it is the
+    // right answer only when nothing EARLIER in the receiver's prototype chain
+    // overrides it. Every arm above resolves the overriding cases — primitive
+    // wrappers, user classes, Date, Symbol — from the receiver's STATIC type.
+    // A receiver the checker cannot pin down (`any`; i.e. every receiver in
+    // compiled JavaScript, which is what test262 is) reaches none of them, so
+    // this blanket identity swallowed BOTH overrides at once:
+    //   `var b = new Boolean(true); b.valueOf() === b`  answered TRUE, and
+    //   `({valueOf: function(){return 7}}).valueOf()`   answered the object.
+    // Route a dynamic receiver through the runtime helper instead, which
+    // probes own/inherited `valueOf` → wrapper [[PrimitiveValue]] slot →
+    // receiver. Deliberately gated on the ORACLE fact (not the raw checker /
+    // physical carrier resolved further below) so nothing about the existing
+    // receiver-resolution order moves: a module with no zero-arg
+    // `<expr>.valueOf()` call site is byte-identical.
+    const recvFact = ctx.standalone ? ctx.oracle.typeFactOf(propAccess.expression).kind : "";
+    if (recvFact === "any" || recvFact === "unknown") {
+      const dynValueOfIdx = ensureDynamicValueOfHelper(ctx);
+      if (dynValueOfIdx >= 0) {
+        flushLateImportShifts(ctx, fctx);
+        compileExpression(ctx, fctx, propAccess.expression, { kind: "externref" });
+        fctx.body.push({ op: "call", funcIdx: dynValueOfIdx });
+        return { kind: "externref" };
+      }
+      // Helper unavailable (no object runtime) → keep the historical identity.
+    }
     return compileExpression(ctx, fctx, propAccess.expression);
   }
 
