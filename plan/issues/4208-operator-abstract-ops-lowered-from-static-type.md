@@ -2,6 +2,7 @@
 id: 4208
 title: "Operator abstract-ops are lowered from the STATIC type: ToNumber / ToPrimitive / Type() are skipped for string, wrapper and `{valueOf}` operands — 59 ES5 files, `1 === true` answers true"
 status: in-progress
+completed_slice: "S1 (Type() for ===/!==, Number ⊥ Boolean) — 2026-08-07"
 sprint: current
 created: 2026-08-07
 updated: 2026-08-07
@@ -118,6 +119,23 @@ they are strictly narrower.
 - [ ] A/B over the 59-file set. **Report the 16 crash-signature files
       separately** and cross-check the delta against #3442/#3443's buckets so
       the two lanes do not double-count the same files.
+- [x] **S1 (`Type()` for `===`/`!==`) — DONE.** Scoped by measurement to
+      Number ⊥ Boolean, the only broken pair; see the W27 notes below.
+- [ ] **S2 must DELETE `isUpdateRetypedBoolean` from
+      `src/codegen/strict-eq-type-disjoint.ts` in the same PR.** S1 left that
+      guard in place so a Boolean binding that is a `++`/`--` target does not
+      get its `Type()` folded, because the binding's `i32` slot still holds a
+      Boolean after `x--` and folding there would trade one wrong answer for
+      another. Measured on `origin/main@745f6066b7`, with #4204 already merged
+      and the guard disabled behind a kill-switch: `S11.3.2_A3_T1.js` and
+      `S11.4.5_A3_T1.js` fail `#1: var x = true; x--; x === 0. Actual: false`.
+      Once #4204's `heterogeneous-scalar-var-widening` predicate grows an
+      **UpdateExpression-target** arm, `x` holds a real Number `0`, `x !== 0`
+      compares correctly at runtime, and those files pass *because the value is
+      right* rather than because a fold declined — at which point the guard
+      guards nothing and is a dead constraint that reads as live. The S2 work
+      happens in `heterogeneous-scalar-var-widening`, not in the fold's module,
+      so this is written here rather than only in that file's doc comment.
 
 ## Measurement provenance
 
@@ -242,40 +260,131 @@ not a Boolean marker — `type i32 = number` and `string.length` are i32 with a
 absence of every other primitive predicate. Loose equality is untouched:
 `1 == true` is genuinely `true`.
 
-## 6. Measurement
+## 6. Measurement — final, re-cut on the merged tip
+
+Main moved five times during this work (#4192, #4193, #4194, #4195, #4196).
+**Every number below was re-cut on `origin/main@745f6066b7`** with all five
+merged in; nothing from the earlier `1f613276d8` base survives here. Both arms
+differ only in the three source files this change touches, and the runtime-eval
+provider was rebuilt from a deleted cache for each arm (7 rebuilds total; key
+`854c120ce015d507` was identical on every one, and the artifact size moved
+`3,995,550 → 4,141,601` purely because main advanced — the key tracks neither).
+
+The measurement path imports `compile` from `src/index.js` under `tsx`. It does
+**not** go through the test262 pool worker, and `scripts/compiler-bundle.mjs` /
+`scripts/runtime-bundle.mjs` do not exist in this worktree at all, so the
+stale-bundle trap cannot apply.
 
 | arm | n | result |
 | --- | --- | --- |
-| base lever (59 filed files) | 59 | 0 pass / 59 fail; **59/59 agree with the standalone baseline** |
-| head lever | 59 | **FIXED 6, BROKE 0** — exactly the 6 predicted `S11.9.4_A8_T{1,2,3}` / `S11.9.5_A8_T{1,2,3}` |
-| base control (ALL 1,006 ES5 operator-family files the baseline calls `pass`) | 1,006 | 998 pass, **8 disagree** |
+| lever (the 59 filed files) | 59 | base 4 pass / head 10 pass → **FIXED 6, BROKE 0** |
+| control — **ALL 1,006** ES5 operator-family files the baseline calls `pass` | 1,006 | **FIXED 0, BROKE 0**, 1,006 unchanged |
 
-The 8 control disagreements are the `line-terminator-{carriage-return,line-feed,
-line-separator,paragraph-separator}` ASI negative tests under
-`postfix-increment`/`postfix-decrement`. They fail identically in *both* arms
-and on unmodified base, so they are an instrument artifact of `runTest262File`
-on parse-phase negatives, not a finding — but they are named here rather than
-dropped, because a 0.8 % blind spot that is silently excluded is how a real
-regression hides.
+The base arm already passes 4 of the 59: the `_A2.1_T1` files that #4192
+(#4205) fixed. Diffing head against the *pre-merge* base would have reported
+`FIXED 10` and claimed four of someone else's files.
 
-Unit coverage: `tests/issue-4208-strict-eq-type-disjoint.test.ts`, verified
-two-sided by A/B against the pre-fix `binary-ops.ts` — **10 of 15 RED on base,
-5 green on both arms**. Those 5 are the deliberate PRECONDITION set; `false` is
-the answer the fold produces, so a disjoint-only suite would also pass an
-implementation that folded *every* strict comparison.
+### Byte-level exposure — an enumeration, not an estimate
 
-## 7. Vacuous-pass conversions (no file regressed, but read this)
+Emitted module bytes hashed per file, base vs head, over three disjoint
+populations (2,265 files):
 
-Two files changed **which assertion** they die on, because an assertion that
-passed for the wrong reason now correctly fails:
+| population | n | byte-identical | changed |
+| --- | --- | --- | --- |
+| lever | 59 | 53 | **6** — exactly the 6 that flipped to pass |
+| control | 1,006 | 976 (+25 where the runner reports no sha on a `pass`) | **5** |
+| deterministic 1,200-file sample of the ES5 population *outside* the operator families | 1,200 | **1,200** | **0** |
 
-- `postfix-increment/S11.3.1_A3_T1.js`: was `#2: new Boolean(true); x++` →
-  now `#1: var x = false; x++; x === 0 + 1. Actual: true`
-- `prefix-increment/S11.4.4_A3_T1.js`: same movement
+So the change provably cannot have altered 2,229 of the 2,265 modules measured,
+and it altered exactly **11**. The 5 changed control files all still pass and
+are all the same shape: `strict-equals/S11.9.4_A4.1_T{1,2}`,
+`strict-does-not-equals/S11.9.5_A4.1_T{1,2}` (`Number.NaN === true`) and
+`unary-plus/S9.3_A5_T2`. They were passing *vacuously* — `f64.eq(NaN, 1)` is
+false for the wrong reason — and now pass for the right one. That is a
+conversion, not a regression, and it is why the exposure table is reported
+separately from the pass/fail table.
 
-On base, `x++` left `x` as the boolean `true`, and `true === 1` folded to
-`f64.eq(1,1)` → **true**, so CHECK#1 passed while the update operator was
-broken. Both files were already failing, so nothing flipped pass→fail — but
-this is the mechanism by which a Number ⊥ Boolean fix can *unmask* S2 elsewhere
-in the corpus. Any file whose only failure was masked this way flips pass→fail
-and must be read as an honest conversion, not a regression.
+### The 8 control disagreements with the baseline
+
+`line-terminator-{carriage-return,line-feed,line-separator,paragraph-separator}`
+under `postfix-increment`/`postfix-decrement` fail locally while the baseline
+calls them `pass`. They fail **identically in both arms** and on unmodified
+base, so they are an artifact of `runTest262File` on parse-phase negative tests,
+not a finding. Named rather than dropped: a 0.8 % blind spot that is silently
+excluded is how a real regression hides.
+
+### Unit coverage
+
+`tests/issue-4208-strict-eq-type-disjoint.test.ts`, verified two-sided by A/B
+against the pre-fix `binary-ops.ts`: **10 of 15 RED on base**, 5 green on both
+arms as the deliberate PRECONDITION set (16 tests now, with the update-guard
+case). `false` is the answer the fold produces, so a disjoint-only suite would
+also pass an implementation that folded *every* strict comparison; the controls
+are what distinguishes them. Run together with #4204's and #4205's suites on
+the merged tip: **61/61 green**, so the three compose.
+
+## 7. The guard is load-bearing — measured, not assumed
+
+The full control caught two regressions the 59-file lever could not:
+`postfix-decrement/S11.3.2_A3_T1.js` and `prefix-decrement/S11.4.5_A3_T1.js`
+flipped pass→fail. Both were passing **vacuously**: `var x = true; x--` leaves
+`x` as the boolean `false` (S2's defect), and the file's `x !== 0` was being
+answered by the very f64 collapse this change removes. The fold now declines on
+a Boolean binding that is a `++`/`--` target.
+
+`#4204` is on main and does **not** cover this — verified by disabling only the
+guard behind a temporary kill-switch, on the merged tip:
+
+```
+guard ENABLED    PASS S11.3.2_A3_T1.js   PASS S11.4.5_A3_T1.js
+guard DISABLED   FAIL #1: var x = true; x--; x === 0. Actual: false
+                 FAIL #1: var x = true; --x; x === 1 - 1. Actual: false
+```
+
+Both files being green on merged main was equally consistent with the guard
+being redundant; only removing it distinguished the two. See the S2 acceptance
+criterion above — the guard must be **deleted** when S2 lands.
+
+## 8. Hand-over to #3442 / #3443 — READ THIS BEFORE HARDENING ANY CAST
+
+21 of the filed 59 carry a crash signature. On the merged tip **17 belong to
+#4208 and 4 need no home at all**:
+
+| signature | n | disposition |
+| --- | --- | --- |
+| `illegal cast [in __str_to_number()]` | 8 | **#4208.** Re-verified still failing on `745f6066b7`. All 8 **PASS in the host lane** → standalone-only, not shared-semantics. |
+| `illegal cast [in __module_init()]` | 7 | 4 are `+=` mixed-type (#4208); **3 now PASS** (see below). |
+| `dereferencing a null pointer [in __module_init()]` | 5 | **#4208** — unary `~`/`-`/`+`/`>>>` on a `{valueOf}` object. |
+| `invalid Wasm binary` (`any.convert_extern` type error) | 1 | **#4208** — same `+=` defect, caught at validation. |
+
+**The 4 `_A2.1_T1` files are FIXED and closed**: `S11.3.1_A2.1_T1`,
+`S11.3.2_A2.1_T1`, `S11.4.4_A2.1_T1`, `S11.4.5_A2.1_T1` all PASS on the merged
+tip — measured through the real harness after #4192/#4196 landed, not inferred
+from "#4205 merged". Their CHECK#2 is `this.x = 1` at script top level, which
+is what #4205 fixed.
+
+**The load-bearing warning, for whoever picks up #3442/#3443:** for the 8
+`illegal cast [in __str_to_number()]` files the unchecked cast is the **only**
+thing currently stopping a `$BoxedBoolean` from being read as a string.
+Hardening or guarding that cast makes it return NaN and the comparison answer
+**wrong**, silently — strictly worse than the trap, and it would read as
+progress in the crash-count. Those 8 need the coercion fixed (S4), not the cast
+hardened.
+
+## 9. Residual after S1 — 45 files, attributed per file
+
+| bucket | n | owner |
+| --- | --- | --- |
+| S2 update-op ToNumber (string / wrapper operand) | 8 | #4208 — **blocked on extending #4204's predicate** |
+| S3 ToPrimitive on `{valueOf}`/`{toString}` operand | 16 | #4208 |
+| S4 abstract-`==` Object vs Boolean (illegal cast) | 8 | #4208 |
+| S5 compound assignment, mixed types | 5 | #4208 |
+| S6 ToPrimitive on Date / function operand | 2 | #4208 |
+| S7 unary ToPrimitive (null deref) | 2 | #4208 |
+| `_A2.1_T2` unresolvable-reference `ReferenceError` | 4 | **not this issue** |
+| `_A2.4_T2` evaluation-order / exception propagation | 4 | **not this issue** |
+
+Highest-value next slice is **S3** (16 files): one `OrdinaryToPrimitive` engine
+covering the relational operators, `+`, and the unary numeric operators. S7's 2
+files are the same engine reached from the unary path, so S3 and S7 are one
+piece of work worth 18.

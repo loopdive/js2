@@ -155,6 +155,15 @@ function updateTargetNames(scope: ts.Node): Set<string> {
  * over-approximates (a same-named binding in a nested scope also suppresses the
  * fold), and over-approximating means *refusing* a fold, which is the safe
  * direction.
+ *
+ * **DELETE THIS when #4208's S2 lands.** Verified load-bearing today, not
+ * assumed: on `origin/main@745f6066b7` with #4204 already merged, disabling
+ * only this guard makes both files fail again, so #4204's widening does not
+ * cover an update target. But once its predicate grows an UpdateExpression arm,
+ * `x` will hold a real Number `0`, `x !== 0` will compare correctly at runtime,
+ * and this guard will be a dead constraint that reads as live. The removal is
+ * also an acceptance criterion on #4208, because whoever does S2 will be
+ * working in `heterogeneous-scalar-var-widening` and would never open this file.
  */
 export function isUpdateRetypedBoolean(tsType: ts.Type, expr: ts.Expression): boolean {
   if (!ts.isIdentifier(expr)) return false;
