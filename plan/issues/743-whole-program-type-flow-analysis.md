@@ -1,9 +1,10 @@
 ---
 id: 743
 title: "Whole-program type flow analysis"
-status: ready
+status: in-progress
+assignee: ttraenkler/opus-impl-3
 created: 2026-03-22
-updated: 2026-08-06
+updated: 2026-08-07
 priority: critical
 horizon: xl
 feasibility: hard
@@ -1400,3 +1401,164 @@ goes `externref` → `f64` with identical runtime behaviour); `issue-743-*` 50/5
 `issue-4155-fnctor-field-provenance` 8/8.
 
 **Flag verdict: `JS2WASM_FNCTOR_CTOR_PARAM_TYPES` STAYS OFF.**
+
+## 2026-08-07 — levers 2 and 3 IMPLEMENTED: the three-rule prediction holds, `Scope.flags` flips, census 55/1/40 → 56/1/39
+
+Same branch (`claude/issue-743-i32-producer`), continuing the slice above. The
+producer rule's probe predicted that `Scope.flags` needs **exactly three**
+evaluator rules and that any two move nothing; this slice implements the other
+two and the prediction is confirmed to the slot, with real guards rather than
+the probe's edited-source simulation.
+
+### What shipped
+
+- **`src/ir/fnctor-module-consts.ts` — lever 2, module-level numeric constants.**
+  Resolves a top-level `var`/`let`/`const` to `f64` when it can prove the
+  binding only ever holds a Number. **Three obligations, none optional**, and the
+  third is the one that is easy to miss:
+  1. **VALUE** — the initializer is a constant numeric expression built from
+     numeric literals, `- + ~`, the numeric binary operators and *previously
+     accepted* constants (so acorn's `SCOPE_VAR = SCOPE_TOP | SCOPE_FUNCTION | …`
+     resolves and a forward reference does not). Deliberately **not** "the
+     checker says `number`": in an untyped `.mjs` that is an inference over code
+     TypeScript never type-checks, and a later `X = "s"` is a silent error rather
+     than a widened type. `BigIntLiteral` falls through and is refused.
+  2. **STABILITY** — one write ANYWHERE in the module poisons, including
+     compound assignment, `++`/`--`, `for…of` targets and destructuring targets
+     (`[X] = a`, `({X} = o)`, `({p: X} = o)`). `with` and direct `eval` anywhere
+     poison every constant in the module: both can name a binding without
+     leaving an identifier occurrence for the write scan to see. A **script**
+     (non-module) is refused outright — its top-level `var` is a writable
+     global-object property, reachable as `globalThis.X` with no identifier
+     occurrence at all. That module-only restriction is the same one
+     `directTopLevelDeclaration` (`src/ir/module-bindings.ts`, #2949) already
+     applies to fix a unique top-level `var` to one scalar slot.
+  3. **INITIALISEDNESS** — no read may observe the binding's hoisted
+     `undefined`. `var X = 1` holds `undefined` from module instantiation until
+     its own statement runs, and an `f64` fact for a read in that window turns
+     `undefined` into NaN at a coercing store. **This is not a residual we
+     accepted; it is proved per binding**, and the satellite is already on
+     record refusing exactly this hazard elsewhere — `readFieldFact` answers
+     DYNAMIC for a field outside its definiteness snapshot with the same
+     one-line justification.
+  Resolution is by **symbol**, never by name: a parameter or local that shadows
+  a module constant keeps its own (more precise) fact. The name set is only a
+  pre-filter in front of the checker call.
+- **The conditional-join rule** (`src/ir/fnctor-eval-extensions.ts`) — lever 3,
+  and the single factory that composes all three rules onto the one
+  `InferExtension` the core accepts. The three answer on disjoint node kinds
+  (binary/`~` · identifier · conditional), so composition order is not a
+  semantic choice.
+
+### Obligation 3's machinery, and why the obvious shortcut costs the whole lever
+
+The init-order bound rests on one hard JavaScript guarantee — **a function
+cannot be invoked before the code that creates its closure has run** — plus one
+consequence: a method installed by `pp.enterScope = function (…) {…}` at
+statement 610 does not exist at statement 100, so no receiver can dispatch to it
+there. That is why property dispatch, which this analysis does not model at all,
+cannot break the bound.
+
+HOISTED top-level function declarations are the one shape with no creation
+bound. Their bound comes from their **references** instead — a hoisted function
+runs only if something names it, and every name sits in a context with a bound
+of its own; the equations are solved by a greatest fixpoint (initialise to
+"never runs during init", relax downward), which correctly answers "never" for a
+mutually-recursive group nothing else references. Costing a hoisted declaration
+at 0 instead — the obvious conservative shortcut — rejects acorn's
+`functionFlags` (`SCOPE_FUNCTION | (async ? SCOPE_ASYNC : 0) | …`), and with it
+`SCOPE_FUNCTION`/`SCOPE_ASYNC`/`SCOPE_GENERATOR`, and with those the entire
+lever: the producer rule then has no proven operand anywhere in that chain.
+Both directions are pinned by test.
+
+Two escapes are handled bluntly because they are rare and unbounded: `with` /
+direct `eval` (above), and a **cyclic import**, which can call an exported
+function before this module's top level has run — so with any `import` present
+every hoisted declaration drops to 0 and the bound propagates outward through
+the same equations.
+
+### Lever 3's soundness — ToBoolean TOTALITY (read this before "restoring" the guard)
+
+The core answers DYNAMIC whenever `!boolCompatible(cond)`, and `boolCompatible`
+is `bool || unknown` — so even `1 ? 2 : 3` was DYNAMIC. **That guard is
+over-conservative, not soundness-required.** `A ? B : C` evaluates the
+condition, applies `ToBoolean`, and then evaluates exactly one branch, so the
+value is B's or C's and `join(B, C)` covers both. `ToBoolean` is a **total**
+function defined by a table over the whole type domain (Undefined/Null → false,
+Boolean → itself, Number/BigInt → zero-or-NaN, String → emptiness, Symbol →
+true, Object → true). It has no abrupt-completion path and it invokes **no user
+code** — in particular it does not go through `ToPrimitive`, so no `valueOf` /
+`Symbol.toPrimitive` can run and no third value can be produced. There is
+therefore no assignment of a type to the condition under which the RESULT type
+could differ from `join(B, C)`. (If the condition itself throws, no value flows
+and any fact is vacuously sound — the same reasoning the previous slice's BigInt
+guard uses.)
+
+The rule is a strict **refinement**: where the core's guard passes it already
+computes exactly this join; where it fails it answers DYNAMIC, which is above
+the join in the lattice. It can only lower a fact, never raise one. The rationale
+is stated at length on the function itself so the next reader does not "fix" it
+back.
+
+### Measurements (acorn-standalone-compile, `-O3`, `JS2WASM_FNCTOR_FIELD_PROVENANCE=1 JS2WASM_FNCTOR_CTOR_PARAM_TYPES=1`)
+
+Per-slot movement, all 96 rows compared on `slot` and `verdict` against a
+baseline run of the same probe on this branch's tip before the slice:
+
+| slot           | before               | after           |
+| -------------- | -------------------- | --------------- |
+| `Scope.flags`  | `externref`/`unknown` | `f64`/`typed`  |
+| (95 others)    | unchanged             | unchanged      |
+
+- **Census 55 typed / 1 discarded / 40 unknown → 56 / 1 / 39.** Exactly the
+  predicted slot, and only it. Nothing predicted failed to move: the producer
+  slice named `Scope.flags` alone, and the remaining 39 are the buckets the
+  method-edges slice characterised (≈14 `this`-field-read arguments, ≈5 non-f64
+  atoms the f64-only consumer excludes, ≈19 genuinely dynamic) — all of which
+  need *different* levers, not more evaluator precision.
+- Binary 937,274 B → **937,301 B** (+27 B). Canaries 2,3,4,5; imports `[]`;
+  exactly the 3 pre-existing parity IR-FALLBACKs (parse / parseExpressionAt /
+  tokenizer), unchanged from baseline.
+- **Flag-off byte-identity**: sha256
+  `fc51f61f426ade114fb1a00c03e3a5d591ab4a23ff21de4f375641e5b667d946`
+  (923,976 B), measured on the pinned acorn dist with the branch's satellite
+  sources and again with **origin/main's** — identical. A/B'd by file copy in
+  one worktree, so the claim covers the whole branch (both slices), not just
+  this one.
+- Wall A/B **not run** (pre-registered at ≥5 movers; 1 moved).
+
+### Per-lever attribution — the three-rule claim, re-measured against the real implementation
+
+Reading `Scope`'s ctor param-0 fact over the real acorn dist, dropping one rule
+at a time from the composition:
+
+| composition                          | `Scope` param0 |
+| ------------------------------------ | -------------- |
+| levers 1 + 2 + 3 (shipped)           | **`f64`**      |
+| levers 1 + 3 (no module constants)   | `dynamic`      |
+| levers 1 + 2 (no conditional join)   | `dynamic`      |
+
+This reproduces the producer slice's A/B/C probe table with guarded rules rather
+than edited sources — including the guards, which is the part the simulation
+could not test. It also completes the correction to the locals spec's §8
+pricing: lever 1 alone was worth 0, and all three together are worth **1 slot**,
+the bottom of the "1–2" the spec estimated for lever 1 by itself.
+
+### Gates / suites
+
+`tsc` 0 · biome lint 0 · prettier 0 · oracle-ratchet 0 · loc-budget 0 (no new
+grant — both rules are new satellite modules; `propagate.ts` is untouched by
+this slice) · func-budget 0 · dead-exports 0 · coercion-sites 0 · stack-balance 0
+· check:ir-fallbacks 0. Suites: new `tests/issue-743-eval-extensions.test.ts`
+32/32 (one negative per obligation, both directions of the hoisted-reader bound,
+the shadowing-parameter case, the `object`-is-not-proof boundary re-pinned under
+the new rules, and an E2E whose slot needs BOTH new rules and no bitwise
+operator at all); `issue-743-*` + `issue-4155-*` + `issue-2660-*` +
+`ir-propagate-i32*` + `ir-frontend-widening` **300/300**.
+
+**Flag verdict: `JS2WASM_FNCTOR_CTOR_PARAM_TYPES` STILL STAYS OFF.** One slot on
+the dogfood corpus is a working lever, not a consumer. The bucket's remaining
+levers are unchanged in rank: (1) ref/string-typed slot consumption for the ≈5
+atoms the graph already proves, (2) `this`-field-read arguments beyond what the
+mutual fixpoint reaches. Neither is an evaluator-precision question, which is
+what this slice and the one above it have now exhausted.
