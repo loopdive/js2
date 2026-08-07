@@ -46,6 +46,7 @@ import { ts, forEachChild } from "../ts-api.js";
 import type { FieldDef } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { appendFnctorInternalFields } from "./fnctor-identity-fields.js";
+import { applyColdTailSplit } from "./fnctor-cold-tail.js";
 import { recordFnctorFieldProvenance } from "./fnctor-field-provenance.js";
 import { inferFnctorFieldTypeFromCtorParam } from "./fnctor-ctor-param-types.js";
 import { resolveWasmType } from "./index.js";
@@ -1727,12 +1728,21 @@ export function deriveFnctorFields(
   // ESTree variants. Every flow-grown field is presence-tracked because an
   // individual instance may never receive it.
   let flowStructName: string | undefined;
+  let fnctorName: string | undefined;
   for (const [name, decl] of ctx.fnctorEscapeGate?.ctorDeclByName ?? []) {
     if (decl === funcDecl) {
+      fnctorName = name;
       flowStructName = `__fnctor_${name}`;
       break;
     }
   }
+  // (#3927) Everything appended by the receiver-flow loop below is FLOW-GROWN —
+  // never written by the constructor, always presence-tracked. That set is
+  // exactly the cold-split's eligibility class, and recording it here is the
+  // cheapest way to name it (the alternative, re-deriving "not constructor
+  // assigned" downstream, would have to reproduce this function's chained /
+  // conditional-assignment recursion).
+  const flowGrownNames = new Set<string>();
   // Host mode already has its fnctor sidecar for expando properties. Reserving
   // duplicate native slots there would shadow the sidecar during marshalling
   // while their presence bits remain unset. This native shape growth is the
@@ -1754,6 +1764,7 @@ export function deriveFnctorFields(
       if (fields.some((field) => field.name === fieldName)) continue;
       fields.push({ name: fieldName, type: { kind: "externref" }, mutable: true });
       onlyConditional.set(fieldName, true);
+      flowGrownNames.add(fieldName);
     }
   }
 
@@ -1825,6 +1836,14 @@ export function deriveFnctorFields(
         typeIdx: (field.type as { typeIdx: number }).typeIdx,
       };
     }
+  }
+
+  // (#3927) Move the cold flow-grown fields to the lazily-allocated tail struct
+  // BEFORE the internal fields are appended, so the main struct's packed
+  // presence words cover exactly the fields that stayed inline and the cold
+  // struct carries its own. No-op unless `JS2WASM_FNCTOR_HOT_FIELDS` is set.
+  if (fnctorName !== undefined && flowStructName !== undefined) {
+    applyColdTailSplit(ctx, fnctorName, flowStructName, fields, onlyConditional, flowGrownNames);
   }
 
   appendFnctorInternalFields(ctx, fields, onlyConditional);

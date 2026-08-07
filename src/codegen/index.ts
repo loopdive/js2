@@ -200,6 +200,7 @@ import { fillSetRecFieldGetters } from "./collections-es2025.js"; // (#3172)
 import { fillIterHofSteppers } from "./iter-hof-native.js"; // (#2903)
 import { fillLazyIterLadderArms } from "./iter-lazy-native.js"; // (#2903 R3)
 import { fillMemberSetDispatch, reserveVecFieldMaterializers } from "./member-set-dispatch.js";
+import { reserveColdTailAllocators } from "./fnctor-cold-tail.js"; // (#3927) hot/cold fnctor split
 import { fillMemberGetDispatch, fillTypedMemberGetF64Dispatch } from "./member-get-dispatch.js";
 import { emitUndefined, ensureGetUndefined, reconcileNativeStrFinalizeShift } from "./expressions/late-imports.js";
 import { fillProtoIteratorDriver } from "./expressions/proto-override.js";
@@ -4139,6 +4140,11 @@ export function generateModule(
     // emitStructFieldSetters + fillMemberSetDispatch + fillMemberGetDispatch.
     reserveVecFieldMaterializers(ctx);
 
+    // (#3927) Mint one `__cold_ensure_<Struct>` per hot/cold-split fnctor, in
+    // the same reserve-before-fill window and for the same reason: the write
+    // dispatcher's fill only `call`s it, so the fill stays funcMap-read-only.
+    reserveColdTailAllocators(ctx);
+
     // Emit exported struct field getter helpers for the runtime.
     // These allow JS host imports to read WasmGC struct fields that are
     // otherwise opaque to JS (V8 returns undefined for direct property access).
@@ -6633,6 +6639,7 @@ export function generateMultiModule(
     // `__sset_*` setters and deferred member dispatchers bake their value
     // coercions (mirrors the generateModule path).
     reserveVecFieldMaterializers(ctx);
+    reserveColdTailAllocators(ctx); // (#3927) mirrors the generateModule path
 
     // Emit exported struct field getter helpers for the runtime (mirrors
     // generateModule path — #1308 surfaced that multi-source projects

@@ -45,6 +45,7 @@ import { addUnionImportsViaRegistry, ensureLateImport, flushLateImportShifts } f
 import { buildVecFromExternMaterializer, coercionInstrs, getVecInfo } from "./type-coercion.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2/S3) positional-read chokepoint + stable-regime minting
 import { presenceSetInstrs } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
+import { coldFieldWriteArm, coldTailAllocatorName, findColdStructsForField } from "./fnctor-cold-tail.js"; // (#3927)
 
 /**
  * Mangle a property name + fallback strictness into the reserved dispatcher name.
@@ -169,8 +170,42 @@ export function fillMemberSetDispatch(ctx: CodegenContext): void {
           ]
         : [];
 
+    // (#3927) Cold-tail arms — a write to a flow-grown field this fnctor moved
+    // off the main struct. These are the arms that make the split SOUND: with
+    // the field gone from the main struct, an unwired write would fall to
+    // `__extern_set`, which in the standalone lane has no side table for a
+    // closed-struct receiver and would drop it. The arm allocates the tail on
+    // first write via `__cold_ensure_<Struct>` (minted by
+    // `reserveColdTailAllocators`, so this fill stays funcMap-read-only).
+    const coldLocs = findColdStructsForField(ctx, propName).filter((loc) => loc.mutable);
+    const COLD_LOCAL = 3; // params 0/1, `__any` 2, `__cold` 3
+    const buildColdArmChain = (idx: number): Instr[] => {
+      if (idx >= coldLocs.length) return fallback;
+      const loc = coldLocs[idx]!;
+      const mainStructName = ctx.typeIdxToStructName.get(loc.mainStructTypeIdx);
+      const ensureIdx =
+        mainStructName === undefined ? undefined : ctx.funcMap.get(coldTailAllocatorName(mainStructName));
+      if (ensureIdx === undefined) return buildColdArmChain(idx + 1);
+      return [
+        { op: "local.get", index: 2 }, // __any
+        { op: "ref.test", typeIdx: loc.mainStructTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: coldFieldWriteArm(
+            loc,
+            2,
+            1,
+            COLD_LOCAL,
+            ensureIdx,
+            coercionInstrs(ctx, { kind: "externref" }, loc.fieldType),
+          ),
+          else: buildColdArmChain(idx + 1),
+        },
+      ];
+    };
     const buildSetDispatch = (idx: number): Instr[] => {
-      if (idx >= candidates.length) return fallback;
+      if (idx >= candidates.length) return buildColdArmChain(0);
       const cand = candidates[idx]!;
       const next = buildSetDispatch(idx + 1);
       // Coerce the boxed externref value into the candidate field's wasm type via
@@ -253,7 +288,13 @@ export function fillMemberSetDispatch(ctx: CodegenContext): void {
       ];
     };
 
-    dispFn.locals = [{ name: "__any", type: { kind: "anyref" } }];
+    dispFn.locals =
+      coldLocs.length > 0
+        ? [
+            { name: "__any", type: { kind: "anyref" } },
+            { name: "__cold", type: { kind: "anyref" } }, // (#3927) tail scratch, local 3
+          ]
+        : [{ name: "__any", type: { kind: "anyref" } }];
     dispFn.body = [
       { op: "local.get", index: 0 }, // recv (externref)
       { op: "any.convert_extern" },
