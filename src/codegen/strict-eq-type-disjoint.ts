@@ -5,11 +5,11 @@
  *
  * ## The defect
  *
- * `1 === true` answered **true**. The dispatch in `binary-ops-typed-dispatch`
- * sees an `f64` left and an `i32` right, promotes the `i32` with
- * `f64.convert_i32_s`, and hands both to `compileNumericBinaryOp`, which emits
- * `f64.eq`. Boolean and Number share the f64 slot, so the promotion **erases
- * `Type()` before the comparison ever runs**:
+ * `1 === true` answered **true**. `compileBinaryExpression` sees an `f64` left
+ * and an `i32` right, promotes the `i32` with `f64.convert_i32_s`, and only
+ * then dispatches — reaching `compileNumericBinaryOp`, which emits `f64.eq`.
+ * Boolean and Number share the f64 slot, so the promotion **erases `Type()`
+ * before the comparison ever runs**:
  *
  * ```wat
  * f64.const 1        ;; 1
@@ -63,6 +63,7 @@
 import { ts } from "../ts-api.js";
 import { isBigIntType, isBooleanType, isNumberType, isStringType } from "../checker/type-mapper.js";
 import type { ValType } from "../ir/types.js";
+import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { FunctionContext } from "./context/types.js";
 
 /** The §6.1 language types this fold can decide from a scalar representation. */
@@ -102,12 +103,12 @@ export function isDynamicForInOperand(fctx: FunctionContext, expr: ts.Expression
  * Emit the §7.2.16 step-1 constant when the two SCALAR operands are provably
  * of different §6.1 types, or return `undefined` to let the caller proceed.
  *
- * Both operands are already on the stack (left below right, the shape the
- * mixed-`i64`/`f64` strict-eq arm directly above the call site relies on), so
- * the fold drops them in place to preserve their side effects and pushes the
- * `i32` result.
+ * Both operands are already on the stack (left below right), so the fold drops
+ * them in place to preserve their side effects and pushes the `i32` result —
+ * the same shape the mixed-`i64`/`f64` strict-eq arm in the typed dispatch uses
+ * for BigInt ⊥ Number.
  */
-export function tryFoldStrictEqTypeDisjoint(
+function tryFoldStrictEqTypeDisjoint(
   fctx: FunctionContext,
   expr: ts.BinaryExpression,
   op: ts.SyntaxKind,
@@ -131,4 +132,45 @@ export function tryFoldStrictEqTypeDisjoint(
   fctx.body.push({ op: "drop" });
   fctx.body.push({ op: "i32.const", value: isStrictNeq ? 1 : 0 });
   return { kind: "i32" };
+}
+
+/**
+ * The §7.2.16 step-1 fold **and** the i32↔f64 operand promotion that follows
+ * it, as one call — because their ORDER is the whole fix.
+ *
+ * The promotion (`f64.convert_i32_s` on whichever operand is `i32`) was written
+ * for `string.length:i32 !== 8:f64`, where both sides really are Numbers. It
+ * fires on every i32/f64 pair, so running it first merges a Boolean into the
+ * f64 slot and `Type()` is gone before any comparison can consult it. Keeping
+ * the two steps in separate places invites re-introducing the bug by moving
+ * one; keeping them here makes the sequence the module's contract.
+ *
+ * Returns `folded` when the operands are provably of different §6.1 types
+ * (caller returns it directly), otherwise the possibly-promoted operand types.
+ */
+export function foldTypeDisjointThenPromote(
+  fctx: FunctionContext,
+  expr: ts.BinaryExpression,
+  op: ts.SyntaxKind,
+  leftType: ValType,
+  rightType: ValType,
+  leftTsType: ts.Type,
+  rightTsType: ts.Type,
+): { folded?: ValType; leftType: ValType; rightType: ValType } {
+  const folded = tryFoldStrictEqTypeDisjoint(fctx, expr, op, leftType, rightType, leftTsType, rightTsType);
+  if (folded !== undefined) return { folded, leftType, rightType };
+
+  if (leftType.kind === "i32" && rightType.kind === "f64") {
+    const tmpR = allocTempLocal(fctx, { kind: "f64" });
+    fctx.body.push({ op: "local.set", index: tmpR });
+    fctx.body.push({ op: "f64.convert_i32_s" });
+    fctx.body.push({ op: "local.get", index: tmpR });
+    releaseTempLocal(fctx, tmpR);
+    return { leftType: { kind: "f64" }, rightType };
+  }
+  if (leftType.kind === "f64" && rightType.kind === "i32") {
+    fctx.body.push({ op: "f64.convert_i32_s" });
+    return { leftType, rightType: { kind: "f64" } };
+  }
+  return { leftType, rightType };
 }

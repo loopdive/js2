@@ -24,7 +24,6 @@ import { addStringImports, addUnionImports } from "./index.js";
 import type { InnerResult } from "./shared.js";
 import { coerceType, ensureAnyHelpers, flushLateImportShifts } from "./shared.js";
 import { emitAnyEqFromExternTemps, emitHostEqualityFromStack } from "./coercion-engine.js";
-import { tryFoldStrictEqTypeDisjoint } from "./strict-eq-type-disjoint.js";
 import {
   compileBooleanBinaryOp,
   compileI32BinaryOp,
@@ -461,16 +460,6 @@ export function compileTypedBinaryDispatch(
     }
     return compileNumericBinaryOp(ctx, fctx, op, expr);
   }
-
-  // (#4208 S1) §7.2.16 step 1 — "If Type(x) is different from Type(y), return
-  // false" — for operand pairs that arrive here still un-promoted. The primary
-  // guard is in `binary-ops.ts` immediately before the i32↔f64 promotion (that
-  // promotion runs first and would already have erased Type()); this is the
-  // second gate for the two coercion arms below, which also reach
-  // `f64.convert_i32_s`. The mixed-`i64`/`f64` arm just above is the same rule
-  // for BigInt ⊥ Number; this is its Number ⊥ Boolean twin.
-  const disjoint = tryFoldStrictEqTypeDisjoint(fctx, expr, op, leftType, rightType, leftTsType, rightTsType);
-  if (disjoint !== undefined) return disjoint;
 
   if (
     (isNumberType(leftTsType) || leftType.kind === "f64") &&
