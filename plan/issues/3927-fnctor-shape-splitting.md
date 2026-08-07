@@ -15,6 +15,11 @@ loc-budget-allow:
   # must be declared on the context type, index.ts gains one call, and
   # property-access.ts gains one `continue`.
   - src/codegen/object-runtime.ts
+  # (2026-08-07 per-type-layouts slice) The analysis hook must sit in the gate:
+  # `analyzeFnctorEscapeGate` is the single place that already owns the
+  # whole-program walk, the proto index and `ctorDeclByName`, which the label
+  # fixpoint keys off. The analysis itself (≈450 LOC) lives in the NEW
+  # `fnctor-alloc-labels.ts`; only the ~12-line call + result field are here.
   - src/codegen/fnctor-escape-gate.ts
   - src/codegen/context/types.ts
   - src/codegen/index.ts
