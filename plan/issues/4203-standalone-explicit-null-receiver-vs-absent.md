@@ -110,3 +110,56 @@ returns `undefined`/`null`). Verified still failing on
 `issue-4196-bind-construct`. It shares a root with #4196's own 1-file IsCallable
 row (`built-ins/Function/prototype/bind/15.3.4.5-2-1.js`) and should be sized
 and sliced together with it, separately from this issue.
+
+## Handoff from the #4202 lane — three things NOT to re-derive
+
+Contributed by the lane that owns `named-this-call.ts` (issue #4202), after it
+withdrew its own "this needs a new signal" conclusion. Recorded here because
+they were established by measurement and would otherwise have to be found again.
+
+### 1. Two states suffice, not three — and that is not obvious
+
+The reader must answer for `f.call(null)`, `f.call(undefined)`, and a bare
+`f()`. That looks like three spellings. It is not: **"absent" and "explicit
+`undefined`" are observationally identical** under §10.4.3 — strict binds
+`undefined` for both, sloppy binds the global object for both.
+
+So `$undefined` can carry **both**, and `ref.null.extern` can mean **only**
+explicit-null. That collapse is what makes the re-spelling tractable. Without
+noticing it, the natural conclusion is that a third sentinel is required, which
+is where the previous lane stalled.
+
+### 2. The reader becomes a THREE-way branch, not a flipped two-way
+
+Today the arm in `src/codegen/expressions.ts` (the `fctx.readsCurrentThis`
+block, ~line 1135) reads the global, tests `ref.is_null`, and routes null to
+`emitUnboundThis`, which itself splits strict/sloppy per #4190.
+
+After the re-spelling it needs:
+
+| observed | binding |
+| --- | --- |
+| `$undefined` | `emitUnboundThis` as today (strict → `undefined`, sloppy → global) |
+| `ref.null.extern` | strict keeps `null`; **sloppy still binds the global object** |
+| anything else | the value |
+
+**The sloppy row is the trap.** Sloppy `f.call(null)` must still be the global
+object, so this is emphatically *not* "stop coercing null".
+
+### 3. Availability gate — the host lane has no non-null `undefined`
+
+`undefinedSingletonActive` is `ctx.standalone || ctx.nativeStrings`, so the
+JS-host lane has no non-null `undefined` in the externref plane. The
+re-spelling therefore **cannot be unconditional**, and the host lane keeps
+today's answer unless something else is arranged.
+
+These rows fail on **both** lanes, so that is a decision to take deliberately
+rather than discover in CI.
+
+### File ordering
+
+#4202's diff touches `named-this-call.ts` (3 lines in `receiverIsAdmitted`) and
+`sloppy-this-global.ts` (one appended predicate). Once it lands, this issue's
+edit to `receiverIsAdmitted` is a clean one-line addition beside it — the
+`factIsStaticallyNullish` refusal is exactly the line to relax, and #4202 did
+not move it.
