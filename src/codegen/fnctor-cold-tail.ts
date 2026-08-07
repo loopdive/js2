@@ -50,14 +50,22 @@
  * `undefined`) tractable here.
  *
  * ## Ranking is corpus-independent
- * Hot fields are the top-K by STATIC write-site count (how many
- * `receiver.<name> = …` sites the flow analysis proved against this fnctor),
- * ties broken by name ascending. Nothing about the measured corpus enters the
+ * Hot fields are the top-K by the static hotness weight in
+ * {@link flowFieldHotnessWeights} — access sites on a flow-proved receiver of
+ * this fnctor, each weighted by how many places call the routine it sits in —
+ * ties broken by name ascending. Nothing about any measured corpus enters the
  * decision, so a different program gets a ranking derived from its own source.
+ * See that function's doc for why a bare site COUNT is a poor proxy and what
+ * the measured ceiling for any static proxy is.
  *
- * OFF unless `JS2WASM_FNCTOR_HOT_FIELDS=<K>` is set; with it unset the field
- * list is untouched and the emitted binary is byte-identical.
+ * ## Default: ON in the standalone lane, at K=20
+ * `JS2WASM_FNCTOR_HOT_FIELDS=<K>` overrides the limit;
+ * `JS2WASM_FNCTOR_HOT_FIELDS=off` disables the split entirely, which leaves the
+ * field list untouched and the emitted binary byte-identical to a build made
+ * with this module absent. Host mode is never split — see
+ * {@link coldTailHotFieldLimitFor}.
  */
+import { ts } from "../ts-api.js";
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import {
@@ -77,19 +85,61 @@ export const COLD_TAIL_FIELD = "$cold";
 export const COLD_TAIL_SUFFIX = "__cold";
 
 /**
- * Number of flow-grown fields kept INLINE, from
- * `JS2WASM_FNCTOR_HOT_FIELDS=<K>`. `undefined` (the default) disables the split
- * entirely — no cold struct is reserved and no field list changes, so the
- * binary is byte-identical to a build made with this module absent.
+ * Number of flow-grown fields kept INLINE by default.
+ *
+ * Chosen by measurement, not by interpolation — the curve is NOT smooth, and
+ * the neighbouring K is materially worse. Standalone acorn self-parse,
+ * deterministic census (`tests/dogfood/cold-tail-census.mjs`), bytes per
+ * `__fnctor_Node` including its share of `$cold` tails:
+ *
+ * | K  | inline | tail rate | effective |
+ * | -- | -----: | --------: | --------: |
+ * | 16 |  116 B |    62.3 % |   235.7 B |
+ * | **20** | **132 B** | **28.1 %** | **181.5 B** |
+ * | 24 |  148 B |    25.8 % |   189.3 B |
+ * | 28 |  164 B |    24.4 % |   198.2 B |
+ * | 32 |  184 B |    23.9 % |   213.7 B |
+ *
+ * Past K=20 the tail RATE keeps falling but each extra inline slot costs 4 B on
+ * every one of the 32,468 nodes, which the shrinking tail no longer repays.
+ * Unsplit is 292 B.
+ */
+export const COLD_TAIL_DEFAULT_HOT_FIELDS = 20;
+
+/**
+ * Number of flow-grown fields kept INLINE, from `JS2WASM_FNCTOR_HOT_FIELDS`.
+ *
+ * Default (unset) is {@link COLD_TAIL_DEFAULT_HOT_FIELDS} — the split is ON.
+ * `off` disables it entirely: no cold struct is reserved and no field list
+ * changes, so the binary is byte-identical to a build made with this module
+ * absent. Any other malformed value falls back to the DEFAULT and never to a
+ * bare `Number(raw)`; `Number("")` is `0`, which would silently move EVERY
+ * eligible field to the tail.
  *
  * `0` is a legal, meaningful value (move every flow-grown field to the tail).
  */
 export function coldTailHotFieldLimit(): number | undefined {
   const raw = process.env.JS2WASM_FNCTOR_HOT_FIELDS;
-  if (raw === undefined || raw === "") return undefined;
+  if (raw === undefined || raw === "") return COLD_TAIL_DEFAULT_HOT_FIELDS;
+  if (raw.trim().toLowerCase() === "off") return undefined;
   const parsed = Number(raw);
-  if (!Number.isInteger(parsed) || parsed < 0) return undefined;
+  if (!Number.isInteger(parsed) || parsed < 0) return COLD_TAIL_DEFAULT_HOT_FIELDS;
   return parsed;
+}
+
+/**
+ * The limit for THIS module, i.e. {@link coldTailHotFieldLimit} restricted to
+ * the standalone lane.
+ *
+ * The gate is explicit rather than inherited from "flow-grown fields only
+ * happen in standalone anyway". That argument was true and was written down,
+ * but it is the wrong kind of thing to rest a shipped default on: it is a
+ * property of another pass, checked nowhere, and a host build that ever did
+ * grow one would silently gain a reserved type and a changed binary. Both the
+ * type RESERVATION and the split itself go through here.
+ */
+export function coldTailHotFieldLimitFor(ctx: CodegenContext): number | undefined {
+  return ctx.standalone ? coldTailHotFieldLimit() : undefined;
 }
 
 /** Cold-tail struct name for a main fnctor struct name. */
@@ -98,13 +148,93 @@ export function coldTailStructName(mainStructName: string): string {
 }
 
 /**
- * Static write-site count per property name for one fnctor, from the SAME
- * `receiverStruct` flow map `deriveFnctorFields` grows the fields from. This is
- * the corpus-independent hotness proxy: a property assigned at many syntactic
- * sites is a property many node kinds carry.
+ * Name of the nearest enclosing function-like node, as a call target would
+ * spell it: `function f()`, `o.m = function …`, `var f = () => …`, `{ m() {} }`.
+ * `undefined` at top level or for a genuinely anonymous callee.
  */
-export function flowWriteSiteCounts(ctx: CodegenContext, flowStructName: string): Map<string, number> {
+function enclosingFunctionName(node: ts.Node): string | undefined {
+  for (let n: ts.Node | undefined = node; n !== undefined; n = n.parent) {
+    if (
+      !ts.isFunctionDeclaration(n) &&
+      !ts.isFunctionExpression(n) &&
+      !ts.isArrowFunction(n) &&
+      !ts.isMethodDeclaration(n)
+    ) {
+      continue;
+    }
+    const own = (n as { name?: ts.Node }).name;
+    if (own !== undefined && ts.isIdentifier(own)) return own.text;
+    const parent = n.parent;
+    if (parent && ts.isBinaryExpression(parent) && ts.isPropertyAccessExpression(parent.left)) {
+      return parent.left.name.text;
+    }
+    if (parent && ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) return parent.name.text;
+    if (parent && ts.isPropertyAssignment(parent) && ts.isIdentifier(parent.name)) return parent.name.text;
+    return undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Static call-site count per callee NAME, over the source files the flow map
+ * actually touches. Cached per context — one syntax walk, no checker.
+ */
+const callSiteCountCache = new WeakMap<CodegenContext, Map<string, number>>();
+
+function callSiteCounts(ctx: CodegenContext, files: ReadonlySet<ts.SourceFile>): Map<string, number> {
+  const cached = callSiteCountCache.get(ctx);
+  if (cached !== undefined) return cached;
   const counts = new Map<string, number>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      const name = ts.isPropertyAccessExpression(callee)
+        ? callee.name.text
+        : ts.isIdentifier(callee)
+          ? callee.text
+          : undefined;
+      if (name !== undefined) counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+    ts.forEachChild(node, visit);
+  };
+  for (const file of files) visit(file);
+  callSiteCountCache.set(ctx, counts);
+  return counts;
+}
+
+/**
+ * Hotness weight per property name for one fnctor, from the SAME
+ * `receiverStruct` flow map `deriveFnctorFields` grows the fields from.
+ *
+ * ## What the proxy has to predict, and why the obvious one fails
+ * A node needs a `$cold` tail iff ANY property it carries is cold, so the
+ * quantity worth predicting is a field's per-INSTANCE frequency. Counting
+ * syntactic sites — the first cut — predicts it badly, and measurably so
+ * (#3927, standalone acorn): `left`, `right`, `callee`, `object`, `optional`
+ * are on all but every expression node yet are each assigned at 2-4 places,
+ * while `declaration`, `source`, `exported`, `label`, `attributes` are assigned
+ * at 5-7 places and appear on a handful of nodes in a whole program. The raw
+ * counts also span only 1..25 over 60 fields, so the top-K cut lands inside a
+ * large tie group and is settled by the NAME tie-break rather than by any
+ * signal at all.
+ *
+ * ## The weighting, and why it is still corpus-independent
+ * Each access site is weighted by `1 + <static call sites of its enclosing
+ * function>`. The claim is about programs, not about acorn: **a property
+ * assigned inside a routine the rest of the program calls from many places is
+ * assigned to many more objects at run time than one assigned inside a routine
+ * called from one place.** Nothing about any measured input enters — a
+ * different program is ranked from its own call structure. It also spreads the
+ * 1..25 range out by an order of magnitude, so far fewer fields tie.
+ *
+ * Deliberately NOT done: ranking by observed instance counts from a corpus run.
+ * That predicts perfectly (2.7 % tail rate at K=24 vs 36.6 % measured here) and
+ * is exactly the corpus dependence §7 rules out — it would bake one program's
+ * node-kind mix into every other program's layout.
+ */
+export function flowFieldHotnessWeights(ctx: CodegenContext, flowStructName: string): Map<string, number> {
+  const sites: { field: string; node: ts.Node }[] = [];
+  const files = new Set<ts.SourceFile>();
   for (const [receiver, structName] of ctx.fnctorEscapeGate?.receiverStruct ?? []) {
     if (structName !== flowStructName) continue;
     const access = receiver.parent;
@@ -113,9 +243,17 @@ export function flowWriteSiteCounts(ctx: CodegenContext, flowStructName: string)
     if (propertyAccess.expression !== receiver) continue;
     const fieldName = propertyAccess.name?.text;
     if (!fieldName) continue;
-    counts.set(fieldName, (counts.get(fieldName) ?? 0) + 1);
+    sites.push({ field: fieldName, node: receiver });
+    files.add(receiver.getSourceFile());
   }
-  return counts;
+  const calls = callSiteCounts(ctx, files);
+  const weights = new Map<string, number>();
+  for (const site of sites) {
+    const fn = enclosingFunctionName(site.node);
+    const weight = 1 + (fn === undefined ? 0 : (calls.get(fn) ?? 0));
+    weights.set(site.field, (weights.get(site.field) ?? 0) + weight);
+  }
+  return weights;
 }
 
 /**
@@ -163,7 +301,7 @@ export function applyColdTailSplit(
   onlyConditional: Map<string, boolean>,
   flowGrownNames: ReadonlySet<string>,
 ): void {
-  const hotLimit = coldTailHotFieldLimit();
+  const hotLimit = coldTailHotFieldLimitFor(ctx);
   if (hotLimit === undefined) return;
   const coldTypeIdx = ctx.fnctorColdTailTypeIdx?.get(fnctorName);
   if (coldTypeIdx === undefined) return;
@@ -185,7 +323,7 @@ export function applyColdTailSplit(
     .map((field) => field.name);
   if (eligible.length <= hotLimit) return;
 
-  const coldNames = selectColdFieldNames(eligible, flowWriteSiteCounts(ctx, flowStructName), hotLimit);
+  const coldNames = selectColdFieldNames(eligible, flowFieldHotnessWeights(ctx, flowStructName), hotLimit);
   if (coldNames.size === 0) return;
 
   const coldFields: FieldDef[] = [];
@@ -201,10 +339,18 @@ export function applyColdTailSplit(
   // The split decision is the one thing that has to be auditable from outside:
   // "which 37 slots moved" is what a byte number cannot tell you, and it is the
   // first question when a consumer turns out not to know the hop.
+  // The split decision is the one thing that has to be auditable from outside:
+  // "which 37 slots moved" is what a byte number cannot tell you, and it is the
+  // first question when a consumer turns out not to know the hop. The RANK is
+  // printed alongside because the ordering is where the remaining headroom is
+  // (see the issue's ranking section) and because a cut that lands inside a
+  // large tie group is decided by the name tie-break, not by the proxy.
   if (process.env.JS2WASM_FNCTOR_COLD_DIAG === "1") {
+    const counts = flowFieldHotnessWeights(ctx, flowStructName);
     const hot = eligible.filter((name) => !coldNames.has(name));
+    const show = (names: readonly string[]): string => names.map((n) => `${n}:${counts.get(n) ?? 0}`).join(",");
     process.stderr.write(
-      `[cold-tail] ${flowStructName}: ${hot.length} hot [${hot.join(",")}] / ${coldNames.size} cold [${[...coldNames].join(",")}]\n`,
+      `[cold-tail] ${flowStructName}: ${hot.length} hot [${show(hot)}] / ${coldNames.size} cold [${show([...coldNames])}]\n`,
     );
   }
 

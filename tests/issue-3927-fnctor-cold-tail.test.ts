@@ -20,6 +20,7 @@ import { createHash } from "node:crypto";
 import { compile } from "../src/index.js";
 import type { CodegenContext } from "../src/codegen/context/types.js";
 import {
+  COLD_TAIL_DEFAULT_HOT_FIELDS,
   COLD_TAIL_FIELD,
   coldTailHotFieldLimit,
   coldTailStructName,
@@ -39,7 +40,10 @@ export function main() {
   return (p.alpha().alpha | 0) + (p.beta().beta | 0);
 }`;
 
-async function buildSha(hotFields: string | undefined): Promise<string> {
+async function buildSha(
+  hotFields: string | undefined,
+  target: "standalone" | "js-host" = "standalone",
+): Promise<string> {
   const saved = process.env.JS2WASM_FNCTOR_HOT_FIELDS;
   // `= undefined` coerces to the STRING "undefined", which the flag reader
   // would parse as NaN — only `delete` truly unsets an env var.
@@ -50,7 +54,7 @@ async function buildSha(hotFields: string | undefined): Promise<string> {
     const result = await compile(FIXTURE, {
       fileName: "t.mjs",
       skipSemanticDiagnostics: true,
-      target: "standalone",
+      target,
       optimize: 0,
     });
     if (!result.success) throw new Error(result.errors.map((e) => String(e.message ?? e)).join("; "));
@@ -63,28 +67,51 @@ async function buildSha(hotFields: string | undefined): Promise<string> {
 }
 
 describe("#3927 — fnctor hot/cold tail split", () => {
-  it("is OFF by default, and a malformed flag value cannot half-enable it", async () => {
-    const off = await buildSha(undefined);
-    expect(await buildSha(undefined)).toBe(off);
-    // A non-integer, a negative, and an empty value must all read as OFF —
-    // NOT as `NaN` slipping through into a `slice(NaN)` that silently moves
-    // EVERY eligible field to the tail.
+  it("a malformed flag value falls back to the DEFAULT, never half-enabling the split", async () => {
+    const byDefault = await buildSha(undefined);
+    expect(await buildSha(undefined)).toBe(byDefault);
+    expect(await buildSha(String(COLD_TAIL_DEFAULT_HOT_FIELDS))).toBe(byDefault);
+    // A non-integer, a negative and an empty value must all read as the
+    // default — NOT as `NaN`/`0` slipping through into a `slice()` that
+    // silently moves EVERY eligible field to the tail. `Number("")` is `0`.
     for (const bad of ["", "abc", "-1", "2.5"]) {
-      expect(await buildSha(bad)).toBe(off);
+      expect(await buildSha(bad)).toBe(byDefault);
     }
+    // `off` is the one value that disables it, and it must differ from the
+    // default — otherwise the default flip did not take.
+    expect(await buildSha("off")).not.toBe(byDefault);
   });
 
-  it("reads a well-formed limit, including the meaningful zero", () => {
+  it("reads a well-formed limit, including the meaningful zero and `off`", () => {
     const saved = process.env.JS2WASM_FNCTOR_HOT_FIELDS;
     try {
       process.env.JS2WASM_FNCTOR_HOT_FIELDS = "0";
       expect(coldTailHotFieldLimit()).toBe(0);
       process.env.JS2WASM_FNCTOR_HOT_FIELDS = "24";
       expect(coldTailHotFieldLimit()).toBe(24);
+      process.env.JS2WASM_FNCTOR_HOT_FIELDS = "off";
+      expect(coldTailHotFieldLimit()).toBeUndefined();
+      process.env.JS2WASM_FNCTOR_HOT_FIELDS = "OFF";
+      expect(coldTailHotFieldLimit()).toBeUndefined();
+      // biome-ignore lint/performance/noDelete: env vars need delete to unset
+      delete process.env.JS2WASM_FNCTOR_HOT_FIELDS;
+      expect(coldTailHotFieldLimit()).toBe(COLD_TAIL_DEFAULT_HOT_FIELDS);
     } finally {
       // biome-ignore lint/performance/noDelete: see above — env vars need delete
       if (saved === undefined) delete process.env.JS2WASM_FNCTOR_HOT_FIELDS;
       else process.env.JS2WASM_FNCTOR_HOT_FIELDS = saved;
+    }
+  });
+
+  /**
+   * The split is standalone-only. Before the default flip that held only by
+   * an argument about another pass ("flow-grown fields only happen in
+   * standalone"), checked nowhere; a shipped default needs the gate itself.
+   */
+  it("never splits a JS-host build, whatever the flag says", async () => {
+    const hostOff = await buildSha("off", "js-host");
+    for (const on of [undefined, "0", "20"]) {
+      expect(await buildSha(on, "js-host")).toBe(hostOff);
     }
   });
 

@@ -486,3 +486,169 @@ at K=24. `tests/issue-3927-fnctor-cold-tail.test.ts` pins the OFF byte-identity
 (including that a malformed flag value cannot half-enable the split — a bare
 `Number("")` is `0`, which would have moved EVERY eligible field) and the
 total-order property of the ranking.
+
+## Results — 2026-08-07 slice: §4 closed, §2 ranking replaced, ships default **ON**
+
+Both blockers closed. **The split is now ON by default in the standalone lane
+at K=20**, and the measured saving is **larger** than the one the previous
+slice deferred: **−28.3 % of every struct byte the acorn self-parse allocates**
+(was −21.6 %), for a **tail rate of 28.1 %** (was 36.6 %).
+
+| | OFF | old ranking, K=24 (#4211) | **new default: call-weighted, K=20** |
+| --- | ---: | ---: | ---: |
+| `__fnctor_Node` inline bytes | 292 B | 148 B | **132 B** |
+| cold tails per parse | — | 11,895 × 160 B | **9,125 × 176 B** |
+| **tail rate** | — | **36.64 %** | **28.10 %** |
+| effective bytes / node | 292 B | 206.6 B | **181.5 B** |
+| Node stream / parse | 9.48 MB | 6.71 MB (−29.2 %) | **5.89 MB (−37.9 %)** |
+| ALL struct bytes / parse | 12.69 MB | 9.92 MB (−21.6 %) | **9.10 MB (−28.3 %)** |
+
+All deterministic (`tests/dogfood/cold-tail-census.mjs`, checksum 422 in every
+run). The OFF column reproduces #4211's baseline to the byte
+(32,468 × 292 = 9,480,656 B), which is what validates the harness.
+
+### 1. The `generator` defect: root-caused, and it was NOT the recorded suspect
+
+§4's leading suspect was the typed numeric-read twin
+`__get_member_<name>__f64`. **It is not.** That twin resolves its candidates
+through `findAlternateStructsForField`, finds none for a cold field, and falls
+through to `__get_member_<name>` + `__to_primitive` + `__unbox_number` — which
+is exactly what an un-rewritten read site would emit. It declines correctly.
+
+The actual culprit is one level up, in `compilePropertyAccess`'s **Phase-3
+consumer-side specialization (#1269)** (`property-access-dispatch.ts`,
+`finalizeStructAndDynamicMemberGet`). For an `any`-typed receiver it narrows
+the read's result type to a scalar **when every struct candidate carries the
+property with the same scalar wasm kind** — and its candidate set is
+`findAlternateStructsForField`, which deliberately hides `$…__cold` tails.
+
+So moving a field into a tail *removes a carrier from that vote*. In acorn,
+`generator` lives on two fnctors: `Node` (flow-grown `externref`) and
+`TokContext` (`this.generator = !!generator` ⇒ boolean-branded `i32`). With
+`Node.generator` cold, the only visible carrier is the `i32`, the kind set
+becomes a singleton, the narrowing fires — and the terminal
+`__get_member_generator` call, **which does know the `$cold` hop and returns
+the right boxed value**, is then dragged through `__unbox_number` +
+`i32.trunc_sat_f64_s` + `__box_boolean`. A boxed `true` unboxes to NaN,
+truncates to 0, re-boxes as `false`.
+
+That is why it was exactly one field of 64: `generator` is the only ESTree
+property name in acorn that is *also* a scalar slot on another constructor.
+And it is why nothing structural ever diverged — the wrong answer was a
+constant `false`, which acorn's own scope logic treats as "not a generator".
+
+**Fix** (`property-access-dispatch.ts`): fold `findColdStructsForField` into
+the candidate kind set before deciding to narrow. Cold slots are `externref`
+by the split's own eligibility rule, so any cold carrier makes the set
+non-singleton and the read stays boxed. Disabled builds are unaffected —
+`findColdStructsForField` returns `[]` when nothing was split.
+
+**Verification.** Per-field differential, all 64 ESTree names, both read paths:
+
+| | before the fix | after |
+| --- | --- | --- |
+| K=8, computed reads | identical | identical |
+| K=8, named reads | **`generator` diverged**, presence 354 → 32,506 | identical |
+| K=0 (all 60 eligible fields cold), named | `generator` diverged | **identical** |
+
+K=0 is the strong statement: with *every* cold-eligible field in the tail, all
+64 per-field hashes, all 64 presence counts, the node count and `body.length`
+match the unsplit build. The whole K range is clean, not just K ≥ 13.
+
+**Two method notes, because both cost real time:**
+
+- The defect is **invisible to a computed (`node[key]`) read** and uniform in a
+  named (`node.generator`) one. A differential that exercises only the
+  reflective path reports all-clear. The committed harness runs both.
+- The #4211 probe was a `.tmp/` file and was gone. Rebuilding it consumed a
+  large share of this slice, and the first rebuild was itself wrong — it
+  accumulated per-field hashes into a module-level ARRAY and changed its
+  answers when unrelated exports were added, i.e. the instrument was less
+  reliable than the thing it measured. Both harnesses are now committed under
+  `tests/dogfood/` with those traps documented in their headers.
+
+### 2. The ranking: what a corpus-independent proxy can and cannot do
+
+§2 said the static write-site ranking was "badly wrong for hotness". Confirmed,
+with the mechanism. The diagnostic (`JS2WASM_FNCTOR_COLD_DIAG=1` now prints the
+weights) at K=24 under the old ranking:
+
+- the whole spread is **1..25 over 60 fields**, so the top-K cut lands *inside*
+  a tie group and is settled by the **name** tie-break — `attributes` (5) hot,
+  `specifiers` (5) cold, alphabetically;
+- the fields it pushed out are `left` (4), `right` (4), `consequent` (4),
+  `arguments` (3), `init` (3), `callee` (2), `object` (2), `optional` (2),
+  `alternate` (2), `prefix` (2) — i.e. most of the expression grammar;
+- the fields it kept in include `declaration` (7), `source` (7), `exported`
+  (6), `label` (6), `attributes` (5) — import/export/label machinery that acorn
+  touches at many syntactic sites and that appears on a handful of nodes.
+
+**Replacement, and the claim it rests on.** Each access site is now weighted by
+`1 + <static call sites of its enclosing routine>`
+(`flowFieldHotnessWeights`). The claim is about programs, not about acorn: *a
+property assigned inside a routine the rest of the program calls from many
+places is assigned to many more objects at run time than one assigned inside a
+routine called from one place.* Nothing about any measured input enters, so a
+different program is ranked from its own call structure. It also spreads the
+1..25 range by an order of magnitude, which is what stops the alphabet from
+deciding the cut.
+
+Measured, census, tail rate (and effective bytes/node):
+
+| K | old: site count | **new: call-weighted** |
+| ---: | ---: | ---: |
+| 16 | 49.6 % (211.1 B) | 62.3 % (235.7 B) |
+| **20** | 48.3 % (217.0 B) | **28.1 % (181.5 B)** |
+| 24 | **36.6 % (206.6 B)** | 25.8 % (189.3 B) |
+| 28 | — | 24.4 % (198.2 B) |
+| 32 | 27.3 % (217.9 B) | 23.9 % (213.7 B) |
+| 40 | 22.2 % (236.4 B) | — |
+
+Two things this table settles:
+
+1. **K must be chosen by measurement.** The curve is not smooth — the
+   call-weighted ranking is *worse* at K=16 than the old one and much better at
+   K=20, because a few high-weight fields enter together. Interpolating would
+   have picked wrong. K=20 is the measured optimum; past it the tail rate keeps
+   falling but 4 B × 32,468 nodes per extra inline slot stops being repaid.
+2. **The old ranking's own optimum was K=24**, so the default moves from
+   (site-count, 24) to (call-weighted, 20): 206.6 → 181.5 B/node, −12.2 %.
+
+**The honest ceiling, and why "−49 % available" is not reachable statically.**
+Ranking by *observed instance counts* from an acorn run gives a 2.7 % tail rate
+at K=24 — but that is precisely the corpus dependence §7 rules out; it bakes
+one program's node-kind mix into every other program's layout. Scoring several
+corpus-independent proxies against that ground truth (write sites, read sites,
+all accesses, distinct-writing-function count, transitive call-graph
+reachability, and greedy packing of per-routine co-written field *groups*),
+**none reached better than ~25 % tail rate**; call-weighting is the best of
+them. The residual gap is not a missing heuristic: the quantity being predicted
+is how often each node KIND occurs in the input, which is a property of the
+corpus and not of the program being compiled. So ~−38 % on the node stream is
+close to the static ceiling, and the remaining headroom needs a different
+design (a real per-shape partition, #4074-style declared partitions), not a
+better score function.
+
+### 3. Flag decision: ships **default ON**, standalone lane, K=20
+
+`JS2WASM_FNCTOR_HOT_FIELDS` now overrides the limit;
+`JS2WASM_FNCTOR_HOT_FIELDS=off` disables the split and restores a
+byte-identical binary. A malformed value falls back to the DEFAULT, never to a
+bare `Number(raw)` (`Number("")` is `0`, which would move every eligible
+field). Pinned by test.
+
+**The standalone gate is now explicit.** Previously it rested on an argument
+about a different pass ("flow-grown fields only happen in standalone"), true
+but checked nowhere. Both the cold-type RESERVATION and the split itself go
+through `coldTailHotFieldLimitFor(ctx)`, and a test asserts a JS-host build is
+byte-identical for every flag value.
+
+### 4. What is still NOT measured
+
+- **Wall clock.** Unchanged position from §6 of the 2026-08-06 slice: this box
+  cannot resolve anything under ~10 %, and an uncontrolled A/B here once read
+  a 3/3-consistent +29 % that was pure ambient-load contamination. The
+  byte→bucket translation is the estimate; it is not a timing claim.
+- **test262.** The merge-queue re-validation covers it. Note this is the first
+  slice where that matters — the flag is ON, so the standalone lane's emitted
+  code genuinely changes.

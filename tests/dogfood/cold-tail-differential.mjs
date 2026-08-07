@@ -24,12 +24,15 @@
 // were added — i.e. the instrument was less trustworthy than the thing it
 // measures. Do not "optimise" this back into one walk with an array.
 //
-// The same hash is computed in plain Node over the real acorn AST as an ORACLE,
-// so "the probe agrees with itself across builds" is backed by "the probe
-// agrees with the reference implementation". Four names are EXPECTED to
-// disagree with the oracle on current main and are unrelated to this feature:
-// `raw`, `test`, `source`, `flags` — the standalone lane does not descend into
-// RegExp-literal value objects the way the reference AST does.
+// ORACLE. The same walk runs in plain Node over the real acorn AST, so "the
+// probe agrees with itself across builds" is backed against a reference. Read
+// the `oracleSeen` (presence) columns, NOT `oracleMismatch`: on current main
+// the reference walk descends into 11 more objects than the standalone lane
+// does (RegExp-literal value objects), and 11 extra visits shift every rolling
+// hash, so `oracleMismatch` lists all 64 names and is not a finding. The
+// PRESENCE counts agree on 60 of 64; the four that do not — `raw`, `test`,
+// `source`, `flags` — are that same pre-existing RegExp gap and are unrelated
+// to this feature.
 //
 // Usage:
 //   node tests/dogfood/cold-tail-differential.mjs --json .tmp/off.json
