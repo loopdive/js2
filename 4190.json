@@ -1,10 +1,11 @@
 {
   "id": "4190",
   "assignee": "ttraenkler/W12-census-and-lever",
-  "requested_by": "ttraenkler/W12-census-and-lever",
-  "status": "in-progress",
+  "requested_by": "noreply@anthropic.com",
+  "status": "done",
   "branch": "issue-4190-sloppy-this-binding",
   "claimed_at": "2026-08-06T21:42:46Z",
-  "updated_at": "2026-08-06T21:42:46Z",
-  "write_id": "14082-vn7r8qwp"
+  "updated_at": "2026-08-07T05:12:58Z",
+  "write_id": "388-m4eckdcw",
+  "released_at": "2026-08-07T05:12:58Z"
 }
