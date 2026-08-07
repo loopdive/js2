@@ -87,6 +87,7 @@ import {
 } from "./registry/types.js";
 import { isArrayProtoIteratorAssignTarget } from "./expressions/proto-override.js";
 import { isFnctorPrototypeAssignTarget } from "./expressions/fnctor-prototype.js";
+import { isBrandedBuiltinName } from "./builtin-brands.js"; // (#4176) builtin-proto write keep
 import { compileExpression, compileStatement } from "./shared.js";
 import { expandLinearU8ParamTypes } from "./linear-uint8-signatures.js";
 import { definedFuncAt, mintDefinedFunc } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
@@ -155,6 +156,46 @@ const STANDALONE_FN_STATIC_KEEP_EXCLUDED = new Set([
   "caller",
   "arguments",
 ]);
+
+/**
+ * (#4176) Is this assignment LHS a write onto a branded builtin's `.prototype`
+ * — `Function.prototype.value` / `Object.prototype["zzz"]` (member or element
+ * form, unwrapped through parens/casts)? Used by the module-init collection to
+ * KEEP such top-level statements when the proto-property store is reserved;
+ * the receiver `<Builtin>.prototype` has no module-global root, so the generic
+ * root-identifier check would silently drop them. `F.prototype = …` (the whole
+ * reassign, name === "prototype") is NOT matched — that stays owned by the
+ * #2660 S2 fnctor arm.
+ */
+function isBuiltinProtoWriteTarget(left: ts.Expression): boolean {
+  let lhs: ts.Expression = left;
+  while (
+    ts.isParenthesizedExpression(lhs) ||
+    ts.isAsExpression(lhs) ||
+    ts.isNonNullExpression(lhs) ||
+    ts.isTypeAssertionExpression(lhs)
+  ) {
+    lhs = lhs.expression;
+  }
+  let receiver: ts.Expression | undefined;
+  if (ts.isPropertyAccessExpression(lhs) && !ts.isPrivateIdentifier(lhs.name)) receiver = lhs.expression;
+  else if (ts.isElementAccessExpression(lhs)) receiver = lhs.expression;
+  if (!receiver) return false;
+  while (
+    ts.isParenthesizedExpression(receiver) ||
+    ts.isAsExpression(receiver) ||
+    ts.isNonNullExpression(receiver) ||
+    ts.isTypeAssertionExpression(receiver)
+  ) {
+    receiver = receiver.expression;
+  }
+  return (
+    ts.isPropertyAccessExpression(receiver) &&
+    receiver.name.text === "prototype" &&
+    ts.isIdentifier(receiver.expression) &&
+    isBrandedBuiltinName(receiver.expression.text)
+  );
+}
 
 function recordExportSignature(
   ctx: CodegenContext,
@@ -1796,6 +1837,20 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         // `$Object` is populated. Host/GC mode is byte-identical (gated, dropped
         // as before). Mirrors the Array.prototype CPR keep-in-init above.
         if (ctx.standalone && isFnctorPrototypeAssignTarget(ctx, expr.left)) {
+          ctx.moduleInitStatements.push(stmt);
+          continue;
+        }
+        // (#4176) `<Builtin>.prototype.<name> = …` / `<Builtin>.prototype[k] = …`
+        // at top level (`Function.prototype.value = "x"`, `Object.prototype.zzz
+        // = 1`, `Array.prototype.enumerable = true` — the §8.10.5
+        // inherited-descriptor-field idiom): the root identifier is a BUILTIN,
+        // not a module global, so the generic check below dropped the whole
+        // statement and the write never reached the proto-property store's
+        // `$NativeProto` write arm — it compiled to NOTHING (measured: the
+        // statement is absent from `__module_init`). Keep it when the
+        // pre-scan reserved the store; byte-identical otherwise (the flags
+        // are set by `scanForArrayHoles`, which runs before this collection).
+        if (ctx.standalone && (ctx.protoNamedDirty || ctx.protoIndexDirty) && isBuiltinProtoWriteTarget(expr.left)) {
           ctx.moduleInitStatements.push(stmt);
           continue;
         }

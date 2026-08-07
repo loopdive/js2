@@ -84,12 +84,7 @@ import { addUnionImportsViaRegistry, flushLateImportShifts } from "./shared.js";
 import { reserveAccessorGetDriver, reserveAccessorSetDriver } from "./accessor-driver.js";
 import { registerDescriptorHasOwn } from "./carrier-bag-hasown.js"; // (#4055) descriptor-scoped HasProperty over the #3468 bag
 import { buildNonObjectDeleteArms, reserveCarrierBagDelete } from "./carrier-bag-delete.js"; // (#4010 S2) OrdinaryDelete over the carrier bags
-import {
-  bagHasElseAbsent,
-  bagHasIfAbsent,
-  bagKeysTail,
-  reserveCarrierBagVisibility,
-} from "./carrier-bag-visibility.js";
+import { bagHasIfAbsent, bagKeysTail, reserveCarrierBagVisibility } from "./carrier-bag-visibility.js";
 import { reserveClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { buildTombstoneScreen, buildTombstoneSkip, reserveInstanceTombstones } from "./instance-tombstones.js"; // (#4098 G1 s1)
 import { OBJECT_INTEGRITY_OBJ_PREDICATES } from "./object-integrity-carrier.js"; // (#4032)
@@ -106,9 +101,9 @@ import { ensureSymbolCarrier } from "./symbol-native.js";
 // (all resolve to `undefined` unless `ctx.standalone && ctx.protoIndexDirty`).
 import {
   protoIndexGetIdxMissInstrs,
-  protoIndexGetKeyMissInstrs,
   protoIndexHasIdxInstrs,
-  protoIndexHasKeyMissInstrs,
+  protoIndexRecvGetMissInstrs,
+  protoIndexRecvHasMissInstrs,
   reserveProtoIndexStore,
 } from "./proto-index-store.js";
 import { reserveArrayToPrimitiveString } from "./array-to-primitive.js";
@@ -1882,13 +1877,16 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         ],
       },
       // not found anywhere → miss (undefined under the S1 regime; legacy null).
-      // (#4160) Under `protoIndexDirty` the chain-exhausted miss consults the
-      // prototype-index companions first (an implicit-`Object.prototype`
-      // integer index written via `Object.prototype[i] = v`) — the helper
-      // itself answers the undefined miss when the companions have nothing.
+      // (#4160, receiver-aware since #4176) Under the store flags the
+      // chain-exhausted miss consults the proto-property companions — the
+      // helper itself answers the undefined miss when the companions have
+      // nothing. RECEIVER-aware (`__protoidx_get_r`): an ordinary `$Object`
+      // consults Object.prototype's companion as before, and a boxed-primitive
+      // WRAPPER (also a `$Object` — see WRAPPER_PRIMITIVE_KEY) consults its
+      // own brand first (`String.prototype.x` visible on `new String()`).
       // Consulted ONLY here, where own + every `$proto` link have missed, so
       // an own entry (even one holding `undefined`) still shadows (§7.3.2).
-      ...(protoIndexGetKeyMissInstrs(ctx, 0, 1) ?? getMiss()),
+      ...(protoIndexRecvGetMissInstrs(ctx, 0, 1) ?? getMiss()),
     ];
     registerNative(
       "__extern_get",
@@ -3133,13 +3131,44 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // locals: 2=o(ref null $Object) 3=any(anyref)
   {
     const body: Instr[] = [
-      // any = any.convert_extern(obj); if !ref.test $Object → carrier bag, else 0 (#4010 S3)
+      // any = any.convert_extern(obj); if !ref.test $Object → carrier bag,
+      // then (#4176) the RECEIVER-AWARE proto-companion consult, else 0.
+      // HasProperty (§7.3.12) is prototype-inclusive, so a closure/vec/struct
+      // receiver whose own carrier bag misses must still see a named key
+      // inherited from its builtin prototype (`Function.prototype.value` on a
+      // function used as a descriptor). This is deliberately NOT the shared
+      // `bagHasIfAbsent` — that arm also serves `__hasOwnProperty` /
+      // `__object_hasOwn`, which are OWN-only by spec (the #4017 −684 lesson:
+      // widening the own-only predicates is blast radius). Both consults
+      // degrade to the pre-existing `i32.const 0` when their substrate is
+      // absent, keeping flag-clear modules byte-identical.
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "local.tee", index: 3 },
       { op: "ref.test", typeIdx: objectTypeIdx },
       { op: "i32.eqz" },
-      bagHasIfAbsent(ctx),
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          // own carrier-bag hit → present (1)…
+          ...(ctx.funcMap.get("__carrier_bag_has") !== undefined
+            ? ([
+                { op: "local.get", index: 0 },
+                { op: "local.get", index: 1 },
+                { op: "call", funcIdx: ctx.funcMap.get("__carrier_bag_has")! },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [{ op: "i32.const", value: 1 }, { op: "return" }],
+                },
+              ] satisfies Instr[])
+            : []),
+          // …then the inherited proto-companion consult (or the legacy 0).
+          ...(protoIndexRecvHasMissInstrs(ctx, 0, 1) ?? [{ op: "i32.const", value: 0 } satisfies Instr]),
+          { op: "return" },
+        ],
+      },
       // o = cast<$Object>(any)
       { op: "local.get", index: 3 },
       { op: "ref.cast", typeIdx: objectTypeIdx },
@@ -3180,10 +3209,11 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         ],
       },
       // not found anywhere → 0.
-      // (#4160) Under `protoIndexDirty`, consult the prototype-index
-      // companions before answering absent — HasProperty (§7.3.12) is
-      // prototype-inclusive and the implicit chain end is Object.prototype.
-      ...(protoIndexHasKeyMissInstrs(ctx, 1) ?? [{ op: "i32.const", value: 0 } satisfies Instr]),
+      // (#4160, receiver-aware since #4176) Under the store flags, consult
+      // the proto-property companions before answering absent — HasProperty
+      // (§7.3.12) is prototype-inclusive; ordinary `$Object`s end at
+      // Object.prototype, boxed-primitive wrappers at their own brand first.
+      ...(protoIndexRecvHasMissInstrs(ctx, 0, 1) ?? [{ op: "i32.const", value: 0 } satisfies Instr]),
     ];
     registerNative(
       "__extern_has",
@@ -7535,8 +7565,27 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
             blockType: { kind: "empty" },
             then: strKeyBody,
           },
-          // vec receiver, non-string / non-index / non-length key → the #3537 bag, else absent (#4010 S3)
-          ...bagHasElseAbsent(ctx),
+          // vec receiver, non-string / non-index / non-length key → the #3537
+          // bag, then (#4176) the proto-property companions (Array.prototype →
+          // Object.prototype — HasProperty §7.3.12 is prototype-inclusive; the
+          // `Array.prototype.enumerable = true` descriptor idiom must be
+          // visible through `__desc_has_own`'s `__extern_has` arm), else
+          // absent. Both consults degrade to the pre-existing constant when
+          // their substrate is unreserved.
+          ...(ctx.funcMap.get("__carrier_bag_has") !== undefined
+            ? ([
+                { op: "local.get", index: 0 },
+                { op: "local.get", index: 1 },
+                { op: "call", funcIdx: ctx.funcMap.get("__carrier_bag_has")! },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [{ op: "i32.const", value: 1 }, { op: "return" }],
+                },
+              ] satisfies Instr[])
+            : []),
+          ...(protoIndexRecvHasMissInstrs(ctx, 0, 1) ?? [{ op: "i32.const", value: 0 } satisfies Instr]),
+          { op: "return" },
         ],
       },
     ];

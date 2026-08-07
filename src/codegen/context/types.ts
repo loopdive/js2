@@ -1411,6 +1411,18 @@ export interface CodegenContext {
    */
   protoIndexDirty: boolean;
   /**
+   * (#4176) Set by the same pre-scan when the module WRITES a NAMED property
+   * onto a branded builtin's `.prototype` (`Function.prototype.value = …`,
+   * `Object.prototype.zzz = …`, `Object.defineProperty(String.prototype, …)`).
+   * Consumer: the proto-property store reserve gate ONLY (`reserveProtoIndexStore`
+   * runs under `protoIndexDirty || protoNamedDirty`). Deliberately SEPARATE
+   * from `protoIndexDirty`: a named key can never be an inherited integer
+   * index, so the HOF hole visit-skip and the typed element fast lanes (which
+   * key on `protoIndexDirty`) stay enabled for the common polyfill idiom
+   * (`String.prototype.foo = …`).
+   */
+  protoNamedDirty: boolean;
+  /**
    * (#4159) A descriptor that is not provably data-only may exist somewhere in
    * the module. Consumers: the TYPED element read/write lanes only — #3251's
    * value write-back keeps `array.get` coherent for DATA descriptors, but an
@@ -1704,6 +1716,15 @@ export interface CodegenContext {
   protoIndexObjCompanionGlobalIdx?: number;
   /** (#4160) Global index of `__protoidx_arr_companion` (`(mut externref)`). */
   protoIndexArrCompanionGlobalIdx?: number;
+  /**
+   * (#4176) Global index of `__protoidx_companions` — the lazily-minted
+   * per-brand companion TABLE (`(mut (ref null $__protoidx_carr))`, one
+   * externref slot per builtin brand) that generalizes the two globals above
+   * to every branded builtin prototype (`Function.prototype.value = …`).
+   */
+  protoIndexCompanionsGlobalIdx?: number;
+  /** (#4176) Type index of `$__protoidx_carr` (`array (mut externref)`). */
+  protoIndexCompanionsArrTypeIdx?: number;
   /**
    * (#1100) Set when the standalone Proxy trap-dispatch runtime reserved its
    * `__proxy_call_{get,set,has}` driver placeholders (in `ensureProxyRuntime`).
