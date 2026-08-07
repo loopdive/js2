@@ -234,14 +234,58 @@ left out rather than done blind.
 
 ## 6. Result
 
-**FIXED 19 / BROKE 0 / signature-changed 5**, over the full 170-file population
-(60 lever + 38 method-missing + 72 control), no sampling.
+Two A/Bs, both full populations, no sampling.
 
-- control **72/72 held**;
-- the 5 signature changes are all wrong-answer/null-deref becoming the honest
+**(a) The 170-file issue population** (60 lever + 38 method-missing + 72
+transfer-idiom control): **FIXED 19 / BROKE 0 / signature-changed 5**, control
+72/72 held.
+
+**(b) The 1,344-file EXPOSURE population** — every file whose effective source
+contains a builtin-prototype write (1,223; see section 9) ∪ the 170 above:
+
+| | files | base pass | head pass |
+| --- | --- | --- | --- |
+| all rows | 1,344 | 559 | **578** |
+| lever | 60 | 0 | **19** |
+| method-missing (#2875) | 38 | 0 | 0 |
+| transfer-idiom control | 72 | 72 | **72** |
+| **proto-write control (currently passing)** | **492** | **492** | **492** |
+| proto-write, currently failing | 731 | 1 | 20 |
+
+**FIXED 19 / BROKE 0 / signature-changed 6.** Every one of the 19 is inside the
+proto-write trigger set, which is the reachability claim discharged by
+enumeration rather than by argument. The head arm was run twice (170-file and
+1,344-file lists, independent processes) and agreed on all 170 overlapping rows.
+
+The 6 signature changes:
+
+- 5 are wrong-answer/null-deref becoming the honest
   `"<X>.prototype.<m> is not yet implemented in --target standalone"` refusal:
   they now fail *at* the unimplemented member instead of silently answering
-  the wrong value, and move to #2875's ledger.
+  the wrong value, and move to #2875's ledger;
+- 1 (`Array/prototype/toLocaleString/S15.4.4.3_A3_T1`) is a **pre-existing**
+  invalid-Wasm compile error, unchanged in kind — same function
+  (`__module_init`), same type error (`fallthru[0] expected (ref null 6), got
+  (ref 76)`); only the reported byte offset moved (`@+110249` → `@+110307`)
+  because the module grew. Recorded, not claimed either way.
+
+**Byte-identity, by enumeration rather than assertion.** sha256 of the emitted
+module across both arms:
+
+| target | shape | base == head? |
+| --- | --- | --- |
+| gc (host) | builtin-proto write | **identical** (`54f31c0c…`, 2,401 B) |
+| gc (host) | transferred `RegExp.prototype.exec` | **identical** (`8ca7a60a…`, 2,309 B) |
+| gc (host) | no proto write | **identical** (`d1739701…`, 7,239 B) |
+| gc (host) | plain | **identical** (`08dcfdec…`, 3,745 B) |
+| standalone | no proto write | **identical** (`67581666…`, 95,719 B) |
+| standalone | plain | **identical** (`ea42a455…`, 54,929 B) |
+| standalone | builtin-proto write | differs (97,218 → 97,299 B) |
+| standalone | transferred `exec` | differs (100,239 → 100,322 B) |
+
+So the **host lane is provably untouched**, and standalone output moves only
+where a builtin-prototype write exists — exactly the trigger the exposure set
+was built from.
 
 ## 7. Measured residue — 41 of 60, why this issue stays `ready`
 
