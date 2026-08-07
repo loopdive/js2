@@ -11,6 +11,7 @@ import { isLinearU8RepresentableNew } from "./linear-uint8-signatures.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 import { fillHostFnctorMethodDrivers, maxHostFnctorMethodArity } from "./host-fnctor-method-driver.js";
 import { fillNativeConstructDrivers, maxReservedNativeConstructArity } from "./native-construct.js";
+import { fillConstructBoundDriver } from "./construct-bound.js"; // (#4196)
 import { emitVecDefineWritebackExports } from "./vec-define-writeback.js"; // (#3116)
 import { detectArrayReduceFusion } from "./array-reduce-fusion.js";
 import type { MultiTypedAST, TypedAST } from "../checker/index.js";
@@ -4331,6 +4332,8 @@ export function generateModule(
     // `new <function value>` site).
     fillNativeConstructDrivers(ctx);
 
+    fillConstructBoundDriver(ctx); // (#4196) §10.4.1.2 [[Construct]] through $__bound_fn
+
     // (#1719 CPR read-drive) Fill the reserved `__drive_proto_iterator` driver
     // body now that `__call_fn_method_0` is registered. No-op when no read-drive
     // site reserved a driver (brand clear / no Array.prototype @@iterator override).
@@ -6784,6 +6787,7 @@ export function generateMultiModule(
       const constructArity = maxReservedNativeConstructArity(ctx);
       for (let n = 0; n <= constructArity; n++) emitClosureMethodCallExportN(ctx, n);
       fillNativeConstructDrivers(ctx);
+      fillConstructBoundDriver(ctx); // (#4196) same stub hazard; degrades to null
     }
 
     // (#1716) Emit __call_@@toPrimitive(self, hint) for runtime ToPrimitive
