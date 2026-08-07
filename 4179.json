@@ -1,10 +1,11 @@
 {
   "id": "4179",
   "assignee": "ttraenkler/W6-dynamic-scope",
-  "requested_by": "ttraenkler/W6-dynamic-scope",
-  "status": "in-progress",
+  "requested_by": "noreply@anthropic.com",
+  "status": "done",
   "branch": "issue-4179-toplevel-with-module-init",
   "claimed_at": "2026-08-06T13:40:23Z",
-  "updated_at": "2026-08-06T13:40:23Z",
-  "write_id": "7483-sawwp147"
+  "updated_at": "2026-08-07T05:12:54Z",
+  "write_id": "31405-5by432fz",
+  "released_at": "2026-08-07T05:12:54Z"
 }
