@@ -62,6 +62,27 @@ and state the disagreement count (one lane: 41 of 42 agree, the one outlier a
 CI `compile_timeout` that passes locally). A base run that does not reproduce
 the baseline is a broken instrument, not a discovery.
 
+## The trap has a false-NEGATIVE form too, and it is worse
+
+Mechanism 2 does not only turn a good fix into an apparent regression. It also
+makes a **landed** fix look like it did nothing — and that reading is harder to
+doubt, because "the fix didn't help" is an ordinary outcome nobody
+double-checks.
+
+Worked case (W13, 2026-08-06): the 8-file `<Builtin>.bind(null)` bucket in
+#4196 fails with `dereferencing a null pointer in __module_init()`. That is
+**the same signature the stale-provider path manufactures**. The bucket is
+expected to move when #4176/#4155 lands, so someone will re-measure it — and if
+they re-measure on top of the new main *without rebuilding the provider*, they
+will see the bucket still failing with an unchanged signature and conclude
+#4176 did not touch it.
+
+So: **rebuild the provider before any re-measure, and be especially suspicious
+when the failure signature is one the trap can synthesise** (null-deref in
+`__module_init`, `dynamic code evaluation is not supported`, link/instantiate
+errors). Matching signatures before-and-after is evidence of nothing unless you
+know the instrument was live for both runs.
+
 ## Why this keeps happening
 
 All three mechanisms fail **toward a plausible-looking failure**, never toward
