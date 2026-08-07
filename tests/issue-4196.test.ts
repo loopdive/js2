@@ -174,6 +174,30 @@ describe("#4196 — [[Construct]] through a bound function (standalone)", () => 
     expect(withBind.wat).toContain("__construct_bound");
   });
 
+  it("REGRESSION: a SYNTHESIZED new node (Reflect.construct) must not crash the compile", async () => {
+    // `Reflect.construct(...)` desugars to a NewExpression with no parent chain,
+    // so `getSourceFile()` on it is `undefined` — and handing that to the
+    // byte-neutrality memo's WeakMap is a hard "Invalid value used as weak map
+    // key" that kills the whole compile. The `.bind` below arms the gate; the
+    // control sweep caught this on 7 previously-passing
+    // TypedArrayConstructors/.../use-default-proto-if-custom-proto-is-not-object.js.
+    const result = await compile(
+      `
+      function newTarget() {}
+      (newTarget as any).prototype = null;
+      export function test(): number {
+        const TA: any = Int8Array;
+        const bound: any = (newTarget as any).bind(null);
+        const ta: any = (Reflect as any).construct(TA, [], newTarget);
+        return ta === null || bound === null ? 1 : 100;
+      }
+    `,
+      { fileName: "synth-new.ts", target: "standalone" },
+    );
+    const internal = result.errors.filter((e) => /Internal error|weak map key/i.test(e.message));
+    expect(internal.map((e) => e.message)).toEqual([]);
+  });
+
   it("CONTROL: a dynamic non-bound callee is unaffected", async () => {
     // Green on BOTH arms. The driver's first act is a `ref.test $__bound_fn`
     // that declines, so every other dynamic-`new` callee keeps its pre-#4196

@@ -87,7 +87,7 @@ const DRIVER_NAME = "__construct_bound";
  */
 const PROTO_KEY_BY_CTX = new WeakMap<CodegenContext, Instr[]>();
 
-/** Memo for {@link fileCanMintBoundFn} — one AST walk per source file. */
+/** Memo for {@link nodeCanMintBoundFn} — one AST walk per source file. */
 const MENTIONS_BIND_BY_FILE = new WeakMap<ts.SourceFile, boolean>();
 
 /**
@@ -107,8 +107,19 @@ const MENTIONS_BIND_BY_FILE = new WeakMap<ts.SourceFile, boolean>();
  * A cross-file bound function (minted in another module of a multi-file
  * program) is a conservative MISS: the site keeps its pre-#4196 null. That is
  * the fail-safe direction — never a wrong construct, only a missing one.
+ *
+ * A **SYNTHESIZED** `new` node — one a codegen desugaring built, with no parent
+ * chain — has no source file at all, and `getSourceFile()` on it returns
+ * `undefined` rather than throwing. Feeding that to the memo `WeakMap` is a
+ * hard `Invalid value used as weak map key` crash that takes the whole compile
+ * down; it cost 7 passing `TypedArrayConstructors/…/
+ * use-default-proto-if-custom-proto-is-not-object.js` files before the control
+ * sweep caught it. Unknown provenance is treated as "cannot mint" — the same
+ * fail-safe direction as the cross-file case.
  */
-function fileCanMintBoundFn(file: ts.SourceFile): boolean {
+function nodeCanMintBoundFn(site: ts.Node): boolean {
+  const file = typeof site.getSourceFile === "function" ? site.getSourceFile() : undefined;
+  if (file === undefined || file === null || typeof file !== "object") return false;
   const memo = MENTIONS_BIND_BY_FILE.get(file);
   if (memo !== undefined) return memo;
   let found = false;
@@ -187,7 +198,7 @@ export function emitBoundConstructOnNull(
   calleeAnyLocal: number,
   argLocals: readonly number[],
 ): void {
-  if (!fileCanMintBoundFn(site.getSourceFile())) return;
+  if (!nodeCanMintBoundFn(site)) return;
   ensureObjectRuntime(ctx);
   ensureObjVecBuilders(ctx);
   reserveApplyClosure(ctx);
