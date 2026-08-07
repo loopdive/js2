@@ -25,6 +25,15 @@ import {
   tryNativeExnRender as sharedTryNativeExnRender,
 } from "../scripts/lib/wasm-exn-render.mjs";
 import { isModuleGoal } from "../scripts/test262-module-goal.mjs";
+// (#4162) ONE import-object finaliser, shared with scripts/test262-worker.mjs
+// and tests/test262-shared.ts. This lane used to instantiate the binary
+// directly, so a standalone module linking `js2wasm:runtime-eval` died at
+// instantiate and reported a LINK error in place of the test's real signature.
+// That is not a niche shape: the `$262.evalScript` shim `assembleOriginalHarness`
+// injects into EVERY test contains a direct `eval`, so any test keeping it
+// reachable carries the module-level import. Measured on one 162-file ES5 lever:
+// 82 files masked, 18 of them actually passing.
+import { instantiateTest262Module } from "../scripts/test262-import-object.mjs";
 import { restoreHostBuiltins } from "./test262-restore-builtins.js";
 import { assembleOriginalHarness, type OriginalHarnessVariant } from "./test262-original-harness.js";
 import { SANDBOX_GLOBAL_NAMES } from "../scripts/test262-sandbox-globals.mjs";
@@ -3542,6 +3551,9 @@ export const TEST_CATEGORIES = [
 
 const TEST262_ROOT = join(import.meta.dirname ?? ".", "..", "test262");
 
+/** Provenance prefix for this lane's runtime-eval tier announcement (#2928 E7). */
+const RUNTIME_EVAL_PROVIDER_LABEL = "test262-in-process";
+
 export function findTestFiles(category: string): string[] {
   const dir = join(TEST262_ROOT, "test", category);
   if (!existsSync(dir)) return [];
@@ -3660,6 +3672,13 @@ export async function handleNegativeTest(
   meta: Test262Meta,
   relPath: string,
   category: string,
+  // (#4162) The compile target. This parameter did not exist: the body below
+  // referenced a bare `target` identifier that was NEVER BOUND in this scope,
+  // so building the compile options threw `ReferenceError: target is not
+  // defined` — inside the `try` whose `catch` reports `status: "pass"`. Every
+  // parse/early/resolution-phase negative test routed here therefore passed
+  // VACUOUSLY, with `compileMs` ~0.05 because nothing was ever compiled.
+  target?: "standalone",
 ): Promise<TestResult | null> {
   if (!meta.negative) return null;
 
@@ -3676,14 +3695,21 @@ export async function handleNegativeTest(
     // strict-mode checks (eval/arguments binding, octal literals, etc.) apply.
     const minimalWrapped = buildNegativeCompileSource(source, meta, category);
 
+    // (#4162) Built OUTSIDE the try on purpose. The `catch` below reports
+    // `status: "pass"` for anything thrown, which is right for a `compile()`
+    // rejection and catastrophic for a harness bug — a ReferenceError from this
+    // very expression is what made this whole branch vacuous. A harness defect
+    // must crash loudly, never launder itself into a conformance pass.
+    const compileOptions = {
+      fileName: "test.ts",
+      emitWat: false,
+      ...(target ? { target } : {}),
+    };
+
     let compileMs = 0;
     const compileStart = performance.now();
     try {
-      const result = await compile(minimalWrapped, {
-        fileName: "test.ts",
-        emitWat: false,
-        ...(target ? { target } : {}),
-      });
+      const result = await compile(minimalWrapped, compileOptions);
       compileMs = performance.now() - compileStart;
       const totalMs = performance.now() - totalStart;
       const timing: TestTiming = {
@@ -3711,7 +3737,14 @@ export async function handleNegativeTest(
       try {
         const sandbox = getTestSandbox();
         const imports = buildImports(result.imports, undefined, result.stringPool, { globalSandbox: sandbox });
-        await WebAssembly.instantiate(result.binary, imports);
+        // (#4162) Shared seam: without it a standalone module linking
+        // `js2wasm:runtime-eval` throws a LINK error here, which this catch
+        // would score as "wasm validation rejected it" — a second way for the
+        // instrument's own gap to become a conformance pass.
+        await instantiateTest262Module(result.binary, imports, {
+          target,
+          providerLabel: RUNTIME_EVAL_PROVIDER_LABEL,
+        });
       } catch {
         // Instantiation failed — counts as expected error
         const totalMs2 = performance.now() - totalStart;
@@ -4239,7 +4272,10 @@ async function runOriginalHarnessVariant(
         globalSandbox: sandbox,
       }) as any;
       const instantiateStarted = performance.now();
-      ({ instance } = await WebAssembly.instantiate(result.binary, imports));
+      instance = await instantiateTest262Module(result.binary, imports, {
+        target,
+        providerLabel: RUNTIME_EVAL_PROVIDER_LABEL,
+      });
       instantiateMs = performance.now() - instantiateStarted;
       imports.setInstance?.(instance);
 
@@ -4470,7 +4506,7 @@ export async function runSyntheticTest262File(
     meta.negative &&
     (meta.negative.phase === "parse" || meta.negative.phase === "early" || meta.negative.phase === "resolution")
   ) {
-    const negResult = await handleNegativeTest(source, meta, relPath, category);
+    const negResult = await handleNegativeTest(source, meta, relPath, category, target);
     if (negResult) return negResult;
   }
 
@@ -4724,7 +4760,13 @@ export async function runSyntheticTest262File(
     const importResult = buildImports(result.imports, undefined, result.stringPool, { globalSandbox: sandbox });
     const imports = importResult as any;
     const instantiateStart = performance.now();
-    ({ instance } = await WebAssembly.instantiate(result.binary, imports));
+    // (#4162) Same shared seam as the original-harness lane — this legacy
+    // wrapper lane also accepts `target: "standalone"` (#2095), so it had the
+    // identical runtime-eval link hole.
+    instance = await instantiateTest262Module(result.binary, imports, {
+      target,
+      providerLabel: RUNTIME_EVAL_PROVIDER_LABEL,
+    });
     instantiateMs = performance.now() - instantiateStart;
     // Provide the branded instance so callbacks and host bridges are discoverable.
     importResult.setInstance?.(instance);

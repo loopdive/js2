@@ -116,6 +116,7 @@ import {
   tryExternClassMethodOnAny,
 } from "./calls-closures.js";
 import { compileExternMethodCall } from "./extern.js";
+import { tryEmitDynamicValueOfCall } from "../wrapper-valueof.js"; // (#4201) dynamic-receiver valueOf
 import {
   buildThrowJsErrorInstrs,
   emitThrowTypeError,
@@ -2956,10 +2957,9 @@ export function compileReceiverMethodCall(
     return { kind: "externref" };
   }
 
-  // Fallback .valueOf() for any type not already handled above
-  // valueOf() on non-primitive types typically returns the object itself
+  // Fallback .valueOf(): the receiver itself, except on a DYNAMIC receiver (#4201).
   if (propAccess.name.text === "valueOf" && expr.arguments.length === 0) {
-    return compileExpression(ctx, fctx, propAccess.expression);
+    return tryEmitDynamicValueOfCall(ctx, fctx, propAccess) ?? compileExpression(ctx, fctx, propAccess.expression);
   }
 
   const lateFnctorCall = tryCompileLateFnctorPrototypeMethodCall(ctx, fctx, expr, propAccess);

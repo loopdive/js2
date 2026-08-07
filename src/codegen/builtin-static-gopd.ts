@@ -225,6 +225,40 @@ export function resolveBuiltinReceiverName(
   return undefined;
 }
 
+/**
+ * Resolve the RECEIVER of a `gOPD(<Builtin>.prototype, "<member>")` call to its
+ * builtin name — either the syntactic unshadowed `<Ctor>.prototype` form, or
+ * (#2901) the harness's dynamic `%TypedArray%.prototype` receiver traced
+ * through intermediate vars. Returns `undefined` when arg0 is neither, or when
+ * the key is not a literal (the caller's synthesis arms are all key-driven).
+ *
+ * `builtinCtorNames` and `tracesToTypedArrayProto` are supplied by the caller:
+ * both live in modules that import this one, so taking them as parameters is
+ * what keeps this module free of a cycle (same discipline as
+ * `resolveBuiltinReceiverName`'s `builtinNames`).
+ */
+export function resolveBuiltinProtoGopdReceiver(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  arg0: ts.Expression,
+  propLiteral: string | undefined,
+  builtinCtorNames: ReadonlySet<string>,
+  tracesToTypedArrayProto: (e: ts.Expression) => boolean,
+): string | undefined {
+  if (!ctx.standalone || propLiteral === undefined) return undefined;
+  if (
+    ts.isPropertyAccessExpression(arg0) &&
+    !ts.isPrivateIdentifier(arg0.name) &&
+    arg0.name.text === "prototype" &&
+    ts.isIdentifier(arg0.expression) &&
+    builtinCtorNames.has(arg0.expression.text) &&
+    !(fctx.localMap.has(arg0.expression.text) || (fctx.boxedCaptures?.has(arg0.expression.text) ?? false))
+  ) {
+    return arg0.expression.text;
+  }
+  return tracesToTypedArrayProto(arg0) ? "%TypedArray%" : undefined;
+}
+
 /** Emit `__create_descriptor(box(value), flags)` for a numeric constant. */
 function emitNumericValueDescriptor(ctx: CodegenContext, fctx: FunctionContext, value: number, flags: number): boolean {
   const boxIdx = resolveBoxNumber(ctx, fctx);
