@@ -127,6 +127,16 @@ Ideal end state is one pass with two front-ends: declarations when present,
 inference otherwise. Landing the declaration front-end first also gives #3927 a
 ready-made oracle to validate its inference against on a real package.
 
+> **2026-08-06 (#3927 pad probe)**: the bound below now has a measured
+> coefficient — d(wall)/d(ref-slot) ≈ 0.1%/slot (+36 slots ≈ +3-4% wall via
+> the GC bucket; #3927 Results §5-§6), so the full best-case partition is
+> worth ≈ 3-5% wall, consistent with this section's estimate. Two structural
+> facts additionally CAP what a declared partition can deliver on acorn: the
+> tag is applied at `finishNode` (after allocation), and `toAssignable`
+> mutates shapes in place across the declared partition — see #3927 Results
+> §3. The declared catalogue remains useful as the field-set oracle for the
+> hot/cold split's field ranking, not as an instance partition.
+
 ## Honest payoff bound — do not oversell this
 
 `__fnctor_Node` is 32,468 instances × 292 B ≈ **9.5 MB** of the **43.9 MB**

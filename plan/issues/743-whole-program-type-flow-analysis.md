@@ -614,6 +614,13 @@ until property-call edges exist.
   was skipped. Flag-on seeding can steer additional functions into this
   pre-existing trap (same trigger as call-site narrowing) — one more reason
   the flag stays OFF until the from-ast gap is fixed.
+  **RESOLVED by #4177 (2026-08-06):** `proveAdditiveOperand` now consumes the
+  fixpoint's own facts (`src/ir/lattice-param-facts.ts` — never-written param
+  atoms + certified direct-call return atoms), so the fixture compiles and the
+  seeding flags no longer steer functions into this trap (verified: both #743
+  suites green with `JS2WASM_FNCTOR_CTOR_PARAM_TYPES=1
+  JS2WASM_DTS_ENTRYPOINT_SEEDS=1`). This blocker is off the flag-OFF list; the
+  remaining flag rationale is the measured-null verdict above.
 - `tests/issue-3486-fnctor-constructor-identity.test.ts` ("own fields and
   enumeration are untouched…") fails on untouched origin/main (ownKeys returns
   `''`), unrelated to this change.
