@@ -12,11 +12,31 @@
 // `acorn-corpus.mjs` runs in JS-HOST mode where flow-grown fields are never
 // reserved as native slots at all — it is structurally blind to this feature.
 //
-// TWO READ MODES, and the distinction is what found the #3927 §4 defect:
-//   PROBE_READ=computed  `node[key]`     → the reflective `__extern_get` path
+// THREE READ MODES, and the distinction is what found the #3927 §4 defect:
+//   PROBE_READ=computed  `node[key]`     → the computed `__extern_get` path
 //   PROBE_READ=named     `node.<key>`    → the per-name `__get_member_<n>`
 //                                          dispatcher and its typed twins
+//   PROBE_READ=reflect   `for…in` + `hasOwnProperty` + `node[k]` → the
+//                                          ENUMERATION arms
 // The defect was invisible in `computed` and uniform in `named`.
+//
+// ⚠ `reflect` IS CURRENTLY VACUOUS ON THIS CORPUS, AND SAYS SO. Measured
+// 2026-08-07: `for…in` over a standalone closed fnctor struct enumerates ZERO
+// own properties — only 15 of 32,506 walked objects yield any key at all, and
+// those 15 are the plain RegExp-ish objects, not AST nodes. The reference
+// implementation yields keys on all 32,487. So a `reflect` differential
+// compares `undefined` against `undefined` and passes no matter what. The
+// report therefore always carries `enumeratingNodes`; **if it is ~0 the run
+// proved nothing** and the harness warns on stderr. Keep the mode: it becomes
+// real the day standalone enumeration over these receivers does, and until
+// then it is the measurement of that gap.
+//
+// This also bears on a record in the issue: the split's first cut was said to
+// have been broken via acorn's `copyNode` (`for (var prop in node) …`). That
+// routine cannot copy anything if `for…in` yields nothing, and the per-type
+// layouts slice separately measured `copyNode` executing zero times on this
+// corpus. Two independent lines of evidence against that attribution — the fix
+// worked, but the named mechanism is unsupported. Do not build on it.
 //
 // ONE MUTABLE SCALAR, NOT AN ARRAY. Each field gets its own full walk and the
 // accumulator is a scalar module global. An earlier cut accumulated into a
@@ -134,7 +154,8 @@ const MOD = 50000017; // 33*MOD + MOD < 2^31 so i32 and f64 lowerings agree
 // literal `node.<key>` behind an if-chain (the per-name `__get_member_<n>`
 // dispatcher and its typed twins). Running both separates "the stored value is
 // wrong" from "this particular read path is wrong".
-const readMode = process.env.PROBE_READ === "named" ? "named" : "computed";
+const readMode =
+  process.env.PROBE_READ === "named" ? "named" : process.env.PROBE_READ === "reflect" ? "reflect" : "computed";
 
 /** The reference implementation of the in-wasm walk, for the oracle. */
 function oracleHash(root, key, childKeys) {
@@ -206,7 +227,20 @@ function __probeRead(node) {
 ${
   readMode === "named"
     ? `  var v = undefined;\n${ALL_FIELDS.map((f, i) => `  if (__probeKeyIdx === ${i}) { v = node.${f}; }`).join("\n")}\n  return v;`
-    : `  return node[__probeKey];`
+    : readMode === "reflect"
+      ? `  // Reach the value ONLY through the reflective surface: the key has to
+  // come out of \`for…in\` enumeration, and \`hasOwnProperty\` has to agree.
+  // A field the enumeration arms forgot answers \`undefined\` here even when
+  // the value arms are perfect.
+  var v = undefined;
+  for (var k in node) {
+    if (k === __probeKey) {
+      if (node.hasOwnProperty(k)) { v = node[k]; }
+      else { v = "HASOWN-DISAGREES"; }
+    }
+  }
+  return v;`
+      : `  return node[__probeKey];`
 }
 }
 
@@ -264,6 +298,38 @@ export function __probe_field(i) {
 /** @returns {number} */
 export function __probe_seen() { return __probeSeen; }
 
+/**
+ * Walked objects on which \`for…in\` yields at least one key. This is the
+ * VALIDITY number for \`PROBE_READ=reflect\`: near zero means that mode's
+ * differential compared undefined against undefined and proved nothing.
+ * @returns {number}
+ */
+export function __probe_enumerating_nodes() {
+  var count = 0;
+  __probeEnumCount(__probeAst);
+  count = __probeEnum;
+  return count;
+}
+
+var __probeEnum = 0;
+
+/** @param {*} node @returns {void} */
+function __probeEnumCount(node) {
+  if (node === null) { return; }
+  if (typeof node !== "object") { return; }
+  if (Array.isArray(node)) {
+    for (var ei = 0; ei < node.length; ei++) { __probeEnumCount(node[ei]); }
+    return;
+  }
+  var n = 0;
+  for (var k in node) { n = n + 1; }
+  if (n > 0) { __probeEnum = __probeEnum + 1; }
+  for (var eci = 0; eci < __probeChildKeys.length; eci++) {
+    var ec = node[__probeChildKeys[eci]];
+    if (ec !== null && typeof ec === "object") { __probeEnumCount(ec); }
+  }
+}
+
 /** @returns {number} */
 export function __probe_nodes() { return __probeNodes; }
 `;
@@ -288,6 +354,7 @@ export function __probe_nodes() { return __probeNodes; }
   }
   const { exports } = await WebAssembly.instantiate(module, {});
   const bodyLength = exports.__probe_parse();
+  const enumeratingNodes = exports.__probe_enumerating_nodes();
 
   const hashes = {};
   const seen = {};
@@ -318,6 +385,7 @@ export function __probe_nodes() { return __probeNodes; }
     binaryBytes: result.binary.length,
     bodyLength,
     nodes: nodes[FIELDS[0]],
+    enumeratingNodes,
     oracleMismatch,
     hashes,
     seen,
@@ -325,8 +393,18 @@ export function __probe_nodes() { return __probeNodes; }
     oracleSeen,
   };
   if (jsonOut) writeFileSync(jsonOut, `${JSON.stringify(report, null, 2)}\n`);
+  // A `reflect` run whose receivers enumerate nothing compares undefined
+  // against undefined. Say so loudly rather than let it read as coverage.
+  if (readMode === "reflect" && enumeratingNodes * 20 < report.nodes) {
+    process.stderr.write(
+      `[cold-tail] ⚠ VACUOUS reflect run — for…in yielded keys on only ${enumeratingNodes} of ` +
+        `${report.nodes} walked objects. This differential proves NOTHING about the enumeration ` +
+        `arms; see this file's header.\n`,
+    );
+  }
   process.stdout.write(
-    `[cold-tail] K=${report.k} nodes=${report.nodes} body=${bodyLength} bin=${result.binary.length} ` +
+    `[cold-tail] K=${report.k} nodes=${report.nodes} enumerating=${enumeratingNodes} ` +
+      `body=${bodyLength} bin=${result.binary.length} ` +
       `oracleMismatch=${oracleMismatch.length === 0 ? "(none)" : oracleMismatch.join(",")}\n`,
   );
   if (!jsonOut) process.stdout.write(`${JSON.stringify(report)}\n`);

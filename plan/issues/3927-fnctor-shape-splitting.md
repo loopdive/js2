@@ -924,6 +924,34 @@ evidence.**
   was tuned against one program's field population. A second dogfood package
   with a widened fnctor would be the natural next check.
 
+- **The ENUMERATION arms — and the reason is worse than "untested".** A third
+  differential mode was added (`PROBE_READ=reflect`: reach the value only
+  through `for…in` + `hasOwnProperty`) and it reports **identical** for
+  disabled-vs-default across all 64 names. **That result is VACUOUS and must
+  not be read as coverage.** Measured directly: `for…in` over a standalone
+  closed fnctor struct enumerates **zero** own properties — keys came back on
+  only **15 of 32,506** walked objects, and those 15 are the plain RegExp-ish
+  objects, not AST nodes. The reference implementation yields keys on all
+  32,487. So the mode compared `undefined` against `undefined`.
+
+  The harness now always reports `enumeratingNodes` and prints a loud VACUOUS
+  warning when it is near zero, so the next reader cannot mistake this for a
+  pass. The gap is **pre-existing and independent of the split** (identical
+  with it disabled), but it means the reflective surface §7 named as the
+  design's main risk is, on this corpus, **not exercised by anything** — not by
+  this differential, not by the dogfood canaries.
+
+  **It also contradicts a record in the 2026-08-06 slice.** That slice
+  attributes the pre-wiring K=52 divergence to acorn's `copyNode`
+  (`for (var prop in node) { newNode[prop] = node[prop] }`). `copyNode` cannot
+  copy anything if `for…in` yields nothing — and the per-type-layouts slice
+  separately measured `copyNode` executing **zero times** on this corpus. Two
+  independent lines of evidence against that attribution. The fix (wiring the
+  three reflective passes) demonstrably resolved the divergence, so something
+  in it mattered; the named mechanism is unsupported. **Do not build on it** —
+  re-derive it if it matters, and get a corpus that actually triggers
+  enumeration before trusting any result about these arms.
+
 ### 6. Gates
 
 typecheck 0, lint 0, format 0, oracle-ratchet 0 (3 changed codegen files),
