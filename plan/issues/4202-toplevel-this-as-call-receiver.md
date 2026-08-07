@@ -136,9 +136,57 @@ string:
 | 6 | `illegal cast in __module_init()` (`10.4.3-1-{100,101,102}{-s,gs}`) — passing a function to `String.prototype.replace`; unrelated mechanism sitting in the clause | unowned |
 | 4 | Strict callee + **explicit null** receiver (`10.4.3-1-{67,72}{-s,gs}`): `f.call(null)` must see `null`, sees `undefined`. Codegen cannot distinguish "no receiver installed" from "receiver installed as null" — both reach the body's `ref.is_null` guard. Needs a boundness signal (companion global, or a non-null null-sentinel); the sloppy answers coincide, so only strict code can observe it. Would also carry #4196's `f.bind(null)()` row | see #4196 |
 | 4 | `(function () { … }).call(o)` — an **inline** function-expression callee. `calls.ts` rewrites it to a direct invocation and explicitly drops the thisArg ("standalone functions ignore `this`"). #4192 fixed the *variable-held* form; the literal form still needs the inlining path to bind `this` lexically, which is a different seam | unowned |
-| 3 | Primitive thisArg not `ToObject`-boxed in sloppy code (`10.4.3-1-{1,2,4}-s`) — **3, not the ~10 previously recorded** | #4201 / W20 |
-| 3 | Accessor on `Object.prototype` reached through a primitive receiver (`10.4.3-1-{103,104,106}`) | #4201-adjacent |
+| 3 | Primitive thisArg not `ToObject`-boxed in sloppy code (`10.4.3-1-{1,2,4}-s`) — **3, not the ~10 previously recorded** | **unowned** |
+| 3 | Accessor on `Object.prototype` reached through a primitive receiver (`10.4.3-1-{103,104,106}`) | **unowned** |
 | ~7 | eval-goal / indirect-eval `this` (`10.4.3-1-{17,20,82}`, `A3_T10` pair) and long-tail singletons | runtime-eval |
+
+### Two rows re-attributed OFF #4201 (2026-08-07)
+
+Both primitive rows above were first recorded against #4201 / W20. W20's root
+cause turned out to be a blanket arm at the tail of
+`compileReceiverMethodCall` — `Object.prototype.valueOf` applied
+unconditionally to an `any` receiver — i.e. a `.valueOf()` **call-site**
+defect that never touches thisArg binding or member access. So:
+
+- `10.4.3-1-{1,2,4}-s` is a different seam: `OrdinaryCallBindThis` must
+  **create** a wrapper, whereas #4201's helper **reads** one.
+- `10.4.3-1-{103,104,106}` contain no `.valueOf()` call site at all.
+
+Both are **unowned**. They do share the `FLAG_INTERNAL WRAPPER_PRIMITIVE_KEY`
+slot format with #4201, so the two compose: boxing a primitive thisArg into a
+real `$Object` wrapper leaves `__dyn_valueOf` able to read it.
+
+Independent corroboration for `{103,104,106}` — **not** derived from #4201, and
+worth keeping separable so a later reader does not inherit a dependency that
+is not there: `103` is sloppy and wants `(5).x` boxed so `== 5` holds, while
+`104`/`106` are `onlyStrict` and want the raw `5` / `typeof "number"`. All
+three currently answer an object, i.e. they fail in **opposite directions**.
+That is what "the receiver is never derived from the primitive at all" looks
+like; a boxing bug would fail one direction only.
+
+### Re-measured at the true tip (2026-08-07) — no change, and that is the finding
+
+W20 (#4201) reported a stale base turning a real `FIXED 12` into `FIXED 0`,
+because its lever sat behind #4196's `[[Construct]]` slice. This census's base
+was cut at the **same commit** it names, `origin/main@50127992c8`, before that
+slice landed as `14cb0f08d1` — and four rows here are literally the
+`[[Construct]]` assertion (`Function/prototype/{call,apply}/S15.3.4.{4,3}_A{7,8}_T{5,6}`,
+"can't be used as `[[Construct]]` caller"). So the residue was a live candidate
+for being overstated.
+
+Re-ran the full 307-file lever on the true tip (`55828029bc`), provider deleted
+and rebuilt: **identical file-for-file to the stale-base run — 0 differences
+across all 307**, still `FIXED 4 / BROKE 0` against the published baseline.
+#4196's construct slice moved none of the six `A{7,8}_T{5,6}` rows; `A8_T5` /
+`A7_T5` still want a TypeError and `A8_T6` / `A7_T6` still die on a null
+deref. The residue is **105** and the table above stands.
+
+Recording the null result deliberately: "checked, unchanged" and "assumed
+unchanged" are different claims, and only one of them survives someone else
+re-cutting the base later. Note also that the two lanes' exposure ran in
+opposite directions — a stale base made W20's real fix read as zero, whereas
+here it could only have **inflated a residue**. A stale base distorts whichever
+side you did not re-cut.
 
 The largest inherited row — "~30 files: `.call`/`.apply`/`.bind` dropping the
 thisArg when the callee is a function EXPRESSION" — does **not** survive
