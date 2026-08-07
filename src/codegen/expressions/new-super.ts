@@ -56,6 +56,7 @@ import { classMemberFuncKey } from "../class-member-keys.js"; // (#1983) collisi
 import { compileObjectLiteralAsExternref, resolveComputedKeyExpression } from "../literals.js";
 import { stringConstantExternrefInstrs, ensureAnyToStringHelper } from "../native-strings.js";
 import { MAX_NATIVE_CONSTRUCT_ARITY, reserveNativeConstructDriver } from "../native-construct.js"; // (#3981)
+import { emitBoundConstructOnNull } from "../construct-bound.js"; // (#4196) §10.4.1.2
 import { emitNativeNumberFormat } from "../number-format-native.js";
 import {
   compileStandaloneRegExpConstructor,
@@ -4173,6 +4174,9 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
             taArgLocals.push(aLocal);
           }
           emitTaDynCtorConstructFromLocals(ctx, fctx, taDescLocal, taArgLocals);
+          // (#4196) A `$__bound_fn` is not a `$__ta_ctor`, so the arm above
+          // yields null for it. Retry as §10.4.1.2 [[Construct]] on null.
+          emitBoundConstructOnNull(ctx, fctx, expr, taDescLocal, taArgLocals);
           return { kind: "externref" };
         }
       }

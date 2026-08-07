@@ -60,6 +60,7 @@ import {
 } from "./array-object-proto.js";
 import { emitLazyNativeProtoGet, getBuiltinBrand, getNativeProtoBuiltinGlue } from "./native-proto.js";
 import { resolveStandaloneProtoMemberValueClosure } from "./native-proto-value-read.js";
+import { emitBuiltinProtoConstructorValue } from "./builtin-proto-constructor.js";
 import {
   BUILTIN_STATIC_METHOD_ARITY,
   ensureBuiltinFnMetaType,
@@ -778,6 +779,20 @@ function tryCompileStandaloneBuiltinProtoMemberRead(
   if (brand === undefined) return undefined;
 
   const member = expr.name.text;
+  // (#4200) `constructor` is an OWN data property of every builtin prototype,
+  // but it is not a METHOD, so it is absent from the per-brand method CSVs and
+  // fell to the unknown-member arm below → `undefined`. It cannot join those
+  // CSVs (the shared consumer would mint a method closure for it); it resolves
+  // instead to the identity-stable constructor carrier the bare `<Builtin>`
+  // identifier reads, so `Error.prototype.constructor === Error` is genuinely
+  // true. Same module backs the gOPD synthesis, so the descriptor's `.value`
+  // and this read cannot drift. Declines (falls through) for builtins with no
+  // carrier — see builtin-proto-constructor.ts.
+  if (member === "constructor") {
+    const ctorType = emitBuiltinProtoConstructorValue(ctx, fctx, builtinName);
+    if (ctorType !== null) return ctorType;
+    return undefined;
+  }
   // (#2984 Phase 2) Own-CSV gate + Object.prototype inheritance + un-wired-
   // member refusal fallback — policy lives in native-proto-value-read.ts.
   const resolved = resolveStandaloneProtoMemberValueClosure(ctx, brand, builtinName, member);
