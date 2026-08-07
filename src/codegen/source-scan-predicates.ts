@@ -53,6 +53,51 @@ export function sourceContainsDelete(sourceFile: ts.SourceFile): boolean {
 }
 
 /**
+ * (#4187) Identifier names used as the RECEIVER of a member delete anywhere in
+ * the program — `delete r.k` / `delete r[e]` yields `r`.
+ *
+ * Consumed by `compilePropertyIntrospection` to decide whether a STANDALONE
+ * `r.hasOwnProperty(k)` / `r.propertyIsEnumerable(k)` on a receiver that also
+ * saw an `Object.defineProperty` may keep its compile-time constant fold. The
+ * fold answers from the (defineProperty-widened) struct SHAPE, which no runtime
+ * `delete` can retract, so it and the runtime state diverge for exactly the
+ * receivers that appear here — and only for those. Receivers never deleted from
+ * keep folding, so the overwhelming majority of modules stay byte-identical.
+ *
+ * Why a whole-program PRE-SCAN and not record-as-you-compile: in the canonical
+ * repro the first read (`obj.hasOwnProperty("property")`, expected `true`)
+ * precedes the `delete` TEXTUALLY. An order-sensitive record would route the
+ * later read and fold the earlier one, so the two reads would answer from two
+ * different mechanisms. The pre-scan routes BOTH to the runtime helper, which is
+ * correct for both — it reports `true` before the delete and `false` after.
+ *
+ * Deliberately RECEIVER-scoped rather than receiver+key: `delete r[k]` with a
+ * computed key can remove any property of `r`, so a key-level gate would have to
+ * treat a computed delete as covering every key anyway. Bare `delete r` (a
+ * no-op delete of a binding) does NOT count — it removes no property.
+ *
+ * Deliberately NOT alias-aware: `var a = r; delete a.k` records `a`, not `r`.
+ * That is the safe direction — a missed name simply keeps today's fold, which is
+ * exactly main's behaviour, whereas a spurious name would cost a runtime call on
+ * a receiver that never needed one.
+ */
+export function collectMemberDeleteReceiverNames(sourceFile: ts.SourceFile): Set<string> {
+  const names = new Set<string>();
+  function walk(node: ts.Node): void {
+    if (ts.isDeleteExpression(node)) {
+      const target = node.expression;
+      if (ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)) {
+        const receiver = target.expression;
+        if (ts.isIdentifier(receiver)) names.add(receiver.text);
+      }
+    }
+    forEachChild(node, walk);
+  }
+  walk(sourceFile);
+  return names;
+}
+
+/**
  * Names that a simple sloppy assignment may create as configurable properties
  * of the global object. The pre-scan makes read lowering independent of
  * function/body compilation order (#2726).

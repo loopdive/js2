@@ -7,9 +7,27 @@ priority: medium
 horizon: s
 feasibility: medium
 goal: standalone-gap
-assignee:
+assignee: ttraenkler/W29
 created: 2026-08-06
+updated: 2026-08-07
 found-by: ttraenkler/W9-descriptor-proto-residue
+loc-budget-allow:
+  # The fix is ~5 lines of code in three god-files; the overage is the
+  # explanatory comments (already trimmed once, +23/+9/+7 -> +14/+8/+6).
+  # `object-ops.ts` is where the routing gate lives, `types.ts` is where a
+  # CodegenContext field must be declared, and `index.ts` is where every other
+  # whole-program pre-scan is wired. The reusable half — the pre-scan itself —
+  # went into the subsystem module `source-scan-predicates.ts`, not a god-file.
+  - src/codegen/object-ops.ts
+  - src/codegen/context/types.ts
+  - src/codegen/index.ts
+func-budget-allow:
+  # Same growth, same reason. The gate being fixed IS a clause inside
+  # `compilePropertyIntrospection`; the condition cannot be moved out of the
+  # function whose routing decision it changes. `generateModule` grows by the
+  # one pre-scan call line every other whole-program pre-scan also occupies.
+  - src/codegen/object-ops.ts::compilePropertyIntrospection
+  - src/codegen/index.ts::generateModule
 ---
 
 ## Problem

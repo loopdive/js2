@@ -212,6 +212,7 @@ import {
   recordScriptVarBindingNames,
   sourceContainsClass,
   sourceContainsDelete,
+  collectMemberDeleteReceiverNames,
   sourceHasDynamicTaConstruct,
   sourceContainsBindingPattern,
   sourceOverridesArrayIterator,
@@ -3516,6 +3517,11 @@ export function generateModule(
   // the inline struct.get fast-path (which reads the live field and ignores the
   // runtime delete tombstone). Delete-free modules keep byte-identical output.
   ctx.moduleUsesDelete = sourceContainsDelete(ast.sourceFile);
+  // (#4187) Receiver-scoped twin of the above: WHICH identifiers are deleted
+  // from, not merely whether any delete exists — the standalone hasOwnProperty
+  // const-fold only diverges for a receiver that is both defineProperty-widened
+  // and deleted from, so its routing gate needs names, not a boolean.
+  ctx.memberDeleteReceiverNames = collectMemberDeleteReceiverNames(ast.sourceFile);
   // (#2660 S1) Whole-program escape / dynamic-use classification of `new F()`
   // fnctor instances. INERT: the result is stored for the future S3
   // reconstruction lowering but is NOT yet consumed, so emitted Wasm is
