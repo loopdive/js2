@@ -604,12 +604,37 @@ ObjectPattern / ArrayPattern / RestElement / AssignmentPattern nodes via the
 four in-place `toAssignable` conversions, and none of them has a property
 outside its allocation label's set.
 
+**Why this check is not the vacuous kind.** Slice C nearly shipped an
+enumeration-based differential that passed by comparing `undefined` to
+`undefined`, and warns that on this receiver class *any* enumeration-based
+check passes for free. This one is a different instrument and carries its own
+non-vacuity witnesses: it runs against **native acorn in Node**, not in wasm, so
+`Object.keys` is the language's; the denominator is non-trivial (32,468 nodes,
+matching the census exactly); and the occupancy numerator is non-trivial
+(64,008 populated slots). A degenerate plan would fail loudly rather than
+silently — empty planned sets would make *every* property overflow, i.e. ~100 %
+rather than 0 %.
+
 **What this check does NOT cover, stated plainly: `copyNode` never fires on
-this corpus** (0 of the 25 executing sites). `copyNode` is
+this corpus** (0 of the 25 executing sites). It is
 `for (var prop in node) { newNode[prop] = node[prop] }` — enumeration plus a
-COMPUTED write — and it is precisely the reflective surface that silently
-corrupted #4211's first cut. The emission slice must route it through the
-residual carrier and must validate on a corpus that triggers it.
+COMPUTED write. The emission slice must route it through the residual carrier
+and must validate on a corpus that triggers it.
+
+⚠ **Correction (2026-08-07, after slice C): do not build on the recorded
+`copyNode` story.** An earlier draft of this section, and the 2026-08-07
+hot/cold slice's §3 above, attribute the pre-wiring K=52 divergence to
+`copyNode`. Slice C measured, in-wasm on this same self-parse, that **`for…in`
+over a standalone closed fnctor struct enumerates ZERO own properties** (keys on
+15 of 32,506 walked objects, none of them AST nodes; the reference
+implementation yields keys on all 32,487). It is identical with the split
+disabled, so it is pre-existing and belongs to neither slice. A routine that
+enumerates nothing cannot copy anything — and this slice independently measured
+`copyNode` executing zero times. Two independent lines of evidence against the
+named cause. Wiring the three reflective passes *did* resolve the divergence, so
+something in it mattered; **the mechanism is unknown.** Anything derived from
+"copyNode did it" — including the risk ordering in §6 — is derived from an
+unsupported story and should be re-derived.
 
 ### 5. Retyping needs no special case, and here is the argument
 
@@ -672,10 +697,15 @@ Three properties fall out, and each removes a class of #4211's risk:
 - `ref.test $__fnctor_Node` still matches every layout, so every existing
   consumer of base fields is untouched;
 - **presence bits live in the BASE at fixed indices**, so `hasOwnProperty`,
-  `in`, `Object.keys`, for-in and the delete/tombstone path stay
-  layout-INDEPENDENT — only the value's storage location varies. That is
-  strictly simpler than #4211, where the reflective passes each needed a cold
-  arm;
+  `in`, `Object.keys`, for-in and the delete/tombstone path *can* stay
+  layout-INDEPENDENT — only the value's storage location varies. **Read this as
+  a CONSTRAINT on the enumeration fix, not as a property already held.** Slice C
+  measured `for…in` over a standalone closed fnctor struct yielding zero own
+  properties today (§4's correction), so the claim is untestable as things
+  stand, and whatever repairs that bug decides whether it holds: an enumeration
+  that derives its name list from the receiver's **struct field list** becomes
+  layout-DEPENDENT and re-inherits #4211's per-carrier-arm problem, whereas one
+  that derives it from the base presence words does not. Say which, in the fix;
 - layouts are **siblings, not nested**, so arm order in the dispatchers cannot
   matter. (A prefix-CHAIN design was evaluated and rejected for this reason
   plus worse bytes: −60.9 % vs −67.3 %, because a label needing one
@@ -718,14 +748,22 @@ the 15.71 % gc-engine bucket** (−25 % of the bucket itself), every other bucke
 diluting proportionally upward — the signature of a single absolute reduction.
 Slice C then measured a second point on the same axis — −28.3 % of struct bytes
 for **−4.51 pp** of the gc-engine bucket in an order-reversed ON/OFF/OFF/ON
-block — which is consistent with #4211's slope and strengthens the mechanism.
+block — consistent with #4211's slope. Two caveats it supplied about its own
+number, which matter to anyone leaning on the pair:
+
+- the ON-side scatter is **3.15 pp** against an OFF-side replication of 0.35 pp,
+  so −4.51 pp is a **bracket of roughly −3 to −6 pp**, not a point;
+- its absolute bucket shares are **not** comparable with #4211's table (no
+  closure name map attached, so `scanner` folds into `compiled`). Only the
+  **delta** is cross-session sound.
 
 This plan's **marginal** figure over slice C's new default is −30.7 % of
 allocated struct bytes, i.e. roughly one more step of the size both measured
 points already cover, projecting to about **−4 to −5 pp of wall on top of slice
-C**. (Against the pre-split union baseline the combined figure is −50.3 % of
-struct bytes; the earlier draft of this section quoted the combined number as if
-it were marginal, which overstated what this slice adds.)
+C** — and given the endpoint bracket above, **−3 to −7 pp** is the honest range.
+(Against the pre-split union baseline the combined figure is −50.3 % of struct
+bytes; the earlier draft of this section quoted the combined number as if it
+were marginal, which overstated what this slice adds.)
 
 **That is still an extrapolation, not a measurement**, and this box cannot
 resolve anything under ~10 % by wall A/B
@@ -738,7 +776,15 @@ label) and the 0 % overflow rate.
 ### 8. What is NOT done
 
 1. **The emission.** §6 is a design with the keystone resolved, not code.
-2. **`copyNode` is unexercised** (§4). It is the highest-risk surface.
+2. **The whole enumeration surface is unvalidated, by anyone.** `copyNode` is
+   unexercised on this corpus (§4), and slice C's in-wasm enumeration
+   differential is vacuous today because `for…in` over these structs yields
+   nothing. So the risk §7 of the 2026-08-06 slice named as this design's
+   principal one — a consumer silently reading `undefined` through a reflective
+   path — is currently covered by **no** evidence in either lane. Repairing the
+   pre-existing `for…in` bug is a **prerequisite** for the emission slice, not a
+   parallel nicety: until enumeration works, no differential can distinguish a
+   correct split from a broken one.
 3. **No test262 / no host-lane work.** Flag-OFF is byte-identical and the
    analysis is standalone-oriented; the emission slice owns conformance.
 4. **The 18.8 % slot occupancy is left on the table** (§4). A
