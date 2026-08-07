@@ -112,9 +112,18 @@ Untouched by anything: **dynamic property lookup 13.5 % + call dispatch 8.1 %**.
 ## Process
 
 - **Issue-id allocation is broken in this container.** `claim-issue.mjs --allocate`
-  exits 6: the `fork` remote (`127.0.0.1:41729`) is unreachable, and allocating
-  past an unreadable assignment book risks a real collision. Everything this
-  session recorded went into existing issue files.
+  exits 6 twice over: the `fork` remote (`127.0.0.1:41729`) is unreachable, and
+  the open-PR scan needs `gh`, which is not installed. Everything this session
+  recorded went into existing issue files.
+- **#4215 is a BURNED id — reserved, no file, permanently taken.** It was
+  reserved for the `for…in` enumeration defect before a search found that bug
+  already filed as **#3920** (`priority: high`, `sprint: current`,
+  `status: ready`, whose Problem section already names it verbatim).
+  `--release` undoes *claims*, not *reservations*, so it cannot be given back —
+  the same hole that burned #3890/#3891. **Search `plan/issues/` for the
+  symptom before reserving an id**; the allocator cannot tell you a bug is
+  already filed under a different title.
+- **#3920 needs an owner** and is the real home for the enumeration work.
 - **A stale claim was force-taken.** #3927 was held by `ttraenkler/claude-fable-6`
   for >25 h with an empty branch, no PR, and that tier out of credits. Taken as
   `ttraenkler/opus-shape-split`. The fork-side assignment book was unreachable at
