@@ -84,6 +84,7 @@ import { nativeStringRepr } from "./builtin-scaffold.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
 import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "./regexp-runtime-contract.js";
+import { emitTestCapsAcquire, emitTestCapsRelease } from "./regex-scratch-pool.js";
 import {
   ensureDynamicPatternTokenDecoder,
   makeDynamicPatternAccessors,
@@ -3746,11 +3747,11 @@ export function emitRegExpTestFromLocals(
   const i32Arr = regexI32ArrayType(ctx);
   const strTypeIdx = ctx.nativeStrTypeIdx;
 
-  // caps = array.new_default(2 * nGroups + nScratch)
-  const capsLocal = allocLocal(fctx, `__re_tcaps_${fctx.locals.length}`, { kind: "ref", typeIdx: i32Arr });
+  // nSlots = 2 * nGroups + nScratch; the caps scratch is pooled across `.test`.
+  const nSlotsLocal = allocLocal(fctx, `__re_tnslots_${fctx.locals.length}`, { kind: "i32" });
   pushNSlots(fctx, regexpLocal, structTypeIdx);
-  fctx.body.push({ op: "array.new_default", typeIdx: i32Arr });
-  fctx.body.push({ op: "local.set", index: capsLocal });
+  fctx.body.push({ op: "local.set", index: nSlotsLocal });
+  const capsLocal = emitTestCapsAcquire(ctx, fctx, nSlotsLocal, i32Arr);
 
   // sticky = (flags & RE_FLAG_Y) != 0
   const stickyLocal = allocLocal(fctx, `__re_tsticky_${fctx.locals.length}`, { kind: "i32" });
@@ -3779,7 +3780,7 @@ export function emitRegExpTestFromLocals(
   fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_PROG });
   fctx.body.push({ op: "local.get", index: regexpLocal });
   fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_CLASS_TABLE });
-  pushNSlots(fctx, regexpLocal, structTypeIdx);
+  fctx.body.push({ op: "local.get", index: nSlotsLocal });
   fctx.body.push({ op: "local.get", index: subjStrLocal });
   fctx.body.push({ op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 2 }); // data
   fctx.body.push({ op: "local.get", index: subjStrLocal });
@@ -3826,6 +3827,7 @@ export function emitRegExpTestFromLocals(
       { op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX },
     ],
   });
+  emitTestCapsRelease(ctx, fctx, capsLocal); // last read of `caps` is above
   fctx.body.push({ op: "local.get", index: matchedLocal });
 }
 
