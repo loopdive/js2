@@ -60,6 +60,7 @@ import { coercionInstrs } from "./type-coercion.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2/S3) positional-read chokepoint + stable-regime minting
 import { undefinedExternInstrs } from "./any-helpers.js";
 import { presenceTestInstrs } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
+import { coldFieldReadArm, findColdStructsForField } from "./fnctor-cold-tail.js"; // (#3927) hot/cold fnctor split
 
 /** Mangle a property name into the reserved member-get dispatcher name. */
 function dispatcherName(propName: string): string {
@@ -544,14 +545,42 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
             ]
           : [{ op: "ref.null.extern" }];
 
+    // (#3927) Cold-tail arms — the hop for a flow-grown field this fnctor moved
+    // off the main struct. They come AFTER every inline struct candidate (a
+    // shape that still carries the field inline always wins) and BEFORE the
+    // host/sidecar fallback, which for a split field would answer `undefined`.
+    const coldLocs = findColdStructsForField(ctx, propName);
+    let coldLocalIdx = -1;
+
     let usedSentinelBox = false;
     // (#2963) Locals layout: 1 = __any (anyref); with method arms 2 = __mres
     // (externref scratch) and any sentinel f64 scratch shifts to 3; without
     // method arms the sentinel f64 scratch keeps its legacy slot 2
     // (byte-identical for every dispatcher with no method arm).
     const f64ScratchIdx = methodArms.length > 0 ? 3 : 2;
+    const buildColdArmChain = (idx: number): Instr[] => {
+      if (idx >= coldLocs.length || coldLocalIdx < 0) return fallback;
+      const loc = coldLocs[idx]!;
+      return [
+        { op: "local.get", index: 1 }, // __any
+        { op: "ref.test", typeIdx: loc.mainStructTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } as ValType },
+          then: coldFieldReadArm(
+            loc,
+            1,
+            coldLocalIdx,
+            { kind: "externref" },
+            undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }],
+            coercionInstrs(ctx, loc.fieldType, { kind: "externref" }),
+          ),
+          else: buildColdArmChain(idx + 1),
+        },
+      ];
+    };
     const buildGetDispatch = (idx: number): Instr[] => {
-      if (idx >= candidates.length) return fallback;
+      if (idx >= candidates.length) return buildColdArmChain(0);
       const cand = candidates[idx]!;
       // Read the slot, then box-coerce the field's wasm type UP to externref (the
       // dispatcher's uniform result). Via the single coercion engine (#1917 /
@@ -680,6 +709,15 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
     // scratch local (index 2) only when a (#2979) sentinel-aware gen-result arm
     // actually referenced it — keeps every dispatcher without such an arm
     // byte-identical (host mode never has gen-result structs).
+    // (#3927) The cold arms need an `anyref` scratch to hold the tail between
+    // the null test and the field read, and its index depends on which OPTIONAL
+    // locals precede it. `usedSentinelBox` is only known after a build, so build
+    // once to settle it, compute the index, then build for real. The builders
+    // are pure, so the discarded first build costs only time.
+    if (coldLocs.length > 0) {
+      buildAccessorArmChain(0);
+      coldLocalIdx = 2 + (methodArms.length > 0 ? 1 : 0) + (usedSentinelBox ? 1 : 0);
+    }
     const dispatchBody: Instr[] = [
       { op: "local.get", index: 0 }, // recv (externref)
       { op: "any.convert_extern" },
@@ -689,6 +727,7 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
     const locals: { name: string; type: ValType }[] = [{ name: "__any", type: { kind: "anyref" } }];
     if (methodArms.length > 0) locals.push({ name: "__mres", type: { kind: "externref" } }); // (#2963) local 2
     if (usedSentinelBox) locals.push({ name: "__f64tmp", type: { kind: "f64" } }); // local 2 legacy / 3 with arms
+    if (coldLocalIdx >= 0) locals.push({ name: "__cold", type: { kind: "anyref" } }); // (#3927) tail scratch
     dispFn.locals = locals;
     dispFn.body = dispatchBody;
   }

@@ -1224,6 +1224,12 @@ export function findAlternateStructsForField(
   for (const [typeName, fields] of ctx.structFields) {
     const sIdx = ctx.structMap.get(typeName);
     if (sIdx === undefined || sIdx === excludeTypeIdx) continue;
+    // (#3927) A hot/cold-split fnctor's `__cold` tail is a private payload, not
+    // a receiver shape: an arm keyed on `ref.test $…__cold` is dead at best and
+    // — because WasmGC canonicalizes structurally identical structs — capable
+    // of matching the WRONG shape at worst. Cold fields are reached through the
+    // owner's `$cold` slot (`findColdStructsForField`).
+    if (typeName.endsWith("__cold")) continue;
     const fIdx = fields.findIndex((f) => f.name === propName);
     if (fIdx !== -1) {
       const shapeId = ctx.shapeIdByStructName.get(typeName);

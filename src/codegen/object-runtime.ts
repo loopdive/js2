@@ -124,6 +124,13 @@ import { buildObjectEnumerationHelpers } from "./object-runtime-enumeration.js";
 import { buildObjectPrototypeHelpers } from "./object-runtime-prototype.js"; // (#3274 wave-B) prototype-chain helper builders
 import * as fnctorArray from "./fnctor-array-prototype.js";
 import { isSyntheticStructName } from "./emit-helpers.js";
+import {
+  type ColdFieldLocation,
+  coldFieldNameAt,
+  coldFieldPresenceInstrs,
+  coldFieldValueInstrs,
+  coldOwnFieldsFor,
+} from "./fnctor-cold-tail.js"; // (#3927) hot/cold fnctor split — reflective surfaces
 import { orderNamesByInsertion } from "./struct-field-exports.js";
 import {
   buildRuntimeEvalValueWrap,
@@ -6473,6 +6480,8 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
     presenceSlot?: PresenceSlot;
     shapeFieldIdx?: number;
     shapeId?: number;
+    /** (#3927) Field lives in the hot/cold-split tail — presence needs the hop. */
+    cold?: ColdFieldLocation;
   };
   const byField = new Map<string, Entry[]>();
   for (const [structName, fields] of ctx.structFields) {
@@ -6509,6 +6518,23 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
         ...(shapeFieldIdx >= 0 && shapeId !== undefined ? { shapeFieldIdx, shapeId } : {}),
       });
     }
+    // (#3927) The split moved these names off the main struct, so the loop above
+    // cannot see them; without an arm `hasOwnProperty`/`in` would answer false
+    // for a property the instance really carries.
+    for (const cold of coldOwnFieldsFor(ctx, structName)) {
+      const name = coldFieldNameAt(ctx, cold);
+      if (name === undefined) continue;
+      let entries = byField.get(name);
+      if (!entries) {
+        entries = [];
+        byField.set(name, entries);
+      }
+      entries.push({
+        typeIdx,
+        cold,
+        ...(shapeFieldIdx >= 0 && shapeId !== undefined ? { shapeFieldIdx, shapeId } : {}),
+      });
+    }
   }
   if (byField.size === 0) return;
 
@@ -6520,8 +6546,12 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
     for (const [fieldName, entries] of byField) {
       const receiverArms: Instr[] = [];
       for (const entry of entries) {
-        const returnPresence: Instr[] =
-          entry.presenceSlot === undefined
+        const returnPresence: Instr[] = entry.cold
+          ? [
+              ...coldFieldPresenceInstrs(entry.cold, [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }]),
+              { op: "return" },
+            ]
+          : entry.presenceSlot === undefined
             ? [{ op: "i32.const", value: 1 }, { op: "return" }]
             : [
                 { op: "local.get", index: 0 },
@@ -6658,7 +6688,7 @@ export function fillClosedStructOwnPropertyNamesArms(ctx: CodegenContext): void 
   const objVecPushIdx = ctx.funcMap.get("__objvec_push");
   if (targets.length === 0 || objVecPushIdx === undefined) return;
 
-  type OwnField = { name: string; presenceSlot?: PresenceSlot };
+  type OwnField = { name: string; presenceSlot?: PresenceSlot; cold?: ColdFieldLocation };
   type ShapeEntry = {
     typeIdx: number;
     fields: OwnField[];
@@ -6680,6 +6710,13 @@ export function fillClosedStructOwnPropertyNamesArms(ctx: CodegenContext): void 
         name: field.name,
         ...(presenceSlot ? { presenceSlot } : {}),
       });
+    }
+    // (#3927) Split-out names still enumerate — `for…in` / `Object.keys` over an
+    // AST node must not shrink because a slot moved to the tail. Acorn's
+    // `copyNode` is the concrete consumer: `for (var p in node) newNode[p] = node[p]`.
+    for (const cold of coldOwnFieldsFor(ctx, structName)) {
+      const name = coldFieldNameAt(ctx, cold);
+      if (name !== undefined && !byName.has(name)) byName.set(name, { name, cold });
     }
     if (byName.size === 0) continue;
 
@@ -6715,7 +6752,12 @@ export function fillClosedStructOwnPropertyNamesArms(ctx: CodegenContext): void 
           [...nativeStringLiteralInstrs(ctx, field.name), { op: "extern.convert_any" }],
           pushName,
         );
-        if (field.presenceSlot === undefined) {
+        if (field.cold !== undefined) {
+          pushFields.push(
+            ...coldFieldPresenceInstrs(field.cold, [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }]),
+            { op: "if", blockType: { kind: "empty" }, then: pushLive },
+          );
+        } else if (field.presenceSlot === undefined) {
           pushFields.push(...pushLive);
         } else {
           pushFields.push(
@@ -6799,6 +6841,8 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
     presenceSlot?: PresenceSlot;
     shapeFieldIdx?: number;
     shapeId?: number;
+    /** (#3927) Read through the hot/cold-split tail rather than a main slot. */
+    cold?: ColdFieldLocation;
   };
   const byField = new Map<string, Entry[]>();
   for (const [structName, fields] of ctx.structFields) {
@@ -6837,9 +6881,41 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
         ...(shapeFieldIdx >= 0 && shapeId !== undefined ? { shapeFieldIdx, shapeId } : {}),
       });
     }
+    // (#3927) The computed-read counterpart of the split's dispatcher arms:
+    // `node[prop]` resolves here, not through `__get_member_<prop>`, so without
+    // an arm a split field reads `undefined` through every computed access.
+    for (const cold of coldOwnFieldsFor(ctx, structName)) {
+      const name = coldFieldNameAt(ctx, cold);
+      if (name === undefined) continue;
+      let entries = byField.get(name);
+      if (!entries) {
+        entries = [];
+        byField.set(name, entries);
+      }
+      entries.push({
+        typeIdx,
+        fieldIdx: cold.coldFieldIdx,
+        fieldType: cold.fieldType,
+        jsBoolean: false,
+        cold,
+        ...(shapeFieldIdx >= 0 && shapeId !== undefined ? { shapeFieldIdx, shapeId } : {}),
+      });
+    }
   }
   if (byField.size === 0) return;
   const readAndBox = (entry: Entry): Instr[] => {
+    if (entry.cold !== undefined) {
+      return [
+        ...coldFieldValueInstrs(
+          entry.cold,
+          [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }],
+          { kind: "externref" },
+          undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }],
+          [],
+        ),
+        { op: "return" },
+      ];
+    }
     const read: Instr[] = [
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },

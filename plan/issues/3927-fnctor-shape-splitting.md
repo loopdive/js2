@@ -2,10 +2,29 @@
 id: 3927
 title: "perf: a widened fnctor struct is the union of every shape its constructor ever takes — acorn's `Node` is 292 B for a 3-6 property object"
 status: in-progress
-assignee: "ttraenkler/claude-fable-6"
+assignee: "ttraenkler/opus-shape-split"
 sprint: current
 created: 2026-07-31
-updated: 2026-08-06
+updated: 2026-08-07
+loc-budget-allow:
+  # The split's own code (≈500 LOC) lives in the NEW `fnctor-cold-tail.ts`.
+  # These five are the unavoidable in-place seams: the three reflective
+  # `fillClosedStruct*Arms` passes must gain their cold arms where they are
+  # (object-runtime), the split hook must sit inside `deriveFnctorFields`
+  # (that is the single source of truth for the field set), the two ctx maps
+  # must be declared on the context type, index.ts gains one call, and
+  # property-access.ts gains one `continue`.
+  - src/codegen/object-runtime.ts
+  - src/codegen/fnctor-escape-gate.ts
+  - src/codegen/context/types.ts
+  - src/codegen/index.ts
+  - src/codegen/property-access.ts
+func-budget-allow:
+  - src/codegen/fnctor-escape-gate.ts::deriveFnctorFields
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
+  - src/codegen/member-get-dispatch.ts::fillMemberGetDispatch
+  - src/codegen/object-runtime.ts::fillClosedStructExternGetArms
 priority: medium
 horizon: xl
 feasibility: hard
@@ -274,3 +293,189 @@ check:ir-fallbacks 0, format 0. Suites: #2660 fnctor suites 58/58,
 targeted equivalence object/struct/shape 75/75, probe test 3/3. Dogfood
 canaries 2/3/4/5, `functionImports: []`, exactly the 3 pre-existing
 IR-FALLBACKs (typeIdx parity on parse/parseExpressionAt/tokenizer).
+
+## Results — 2026-08-07 slice: §7's hot/cold split BUILT and MEASURED (ships flag-OFF)
+
+**What landed**: `src/codegen/fnctor-cold-tail.ts` + wiring, behind
+`JS2WASM_FNCTOR_HOT_FIELDS=<K>` (unset ⇒ OFF ⇒ byte-identical). This is §7's
+shape-AGNOSTIC design, built as specified: the top-K flow-grown fields stay
+inline, the rest move to a lazily-allocated `$__fnctor_<Name>__cold` tail
+reached through one `$cold` slot.
+
+**Headline, on the only quotable lane (`standalone-dynamic`, acorn self-parse,
+226 KB), all numbers deterministic:**
+
+| | OFF | K=24 |
+| --- | ---: | ---: |
+| `__fnctor_Node` fields | 69 (62 externref) | **33** (26 externref) |
+| `__fnctor_Node` bytes/instance | 292 B | **148 B** |
+| `__fnctor_Node` bytes/parse | 9.48 MB | 4.81 MB |
+| cold tails allocated/parse | — | 11,895 × 160 B = 1.90 MB |
+| **Node stream, net** | **9.48 MB** | **6.71 MB (−29.2 %)** |
+| **ALL struct bytes/parse** | **12.23 MB** | **9.59 MB (−21.6 %)** |
+| allocation COUNT/parse | 270,062 | 281,957 (+4.4 %) |
+
+§7 predicted 292 → ~148 B. It is **exactly 148 B**. The −37-ref-slot figure
+§6 priced at ≈ −3-4 % wall is realised as **−36 ref slots**.
+
+### 1. The census total is 12.23 MB, not 43.6 MB — and `Node` is 77.5 % of it
+
+`JS2WASM_ALLOC_CENSUS=1` on current main measures **270,062 allocations and
+12,827,613 struct BYTES per parse**, of which `__fnctor_Node` alone is
+**9,480,656 B — 77.5 %**. (The older 43.6 MB figure came from `--trace-gc`,
+which also counts array PAYLOAD bytes; the census's per-instance sizes cover
+structs only. Both are right about different quantities — quote the census
+when ranking struct-shape levers.) That reframes this issue: it is not "9.5 of
+43.6 MB", it is **three quarters of every struct byte the parse allocates**.
+
+### 2. The overflow rate is 37 %, not 2.7 % — §4's top-K coverage does NOT transfer
+
+§4 measured 97.3 % of nodes fully covered by the top-24 fields **by instance
+count**. The shipped ranking is by **static write-site count** (corpus-
+independent, as §7 requires), and the two orders disagree sharply: `left`,
+`right`, `callee`, `object`, `properties`, `elements` are runtime-hot but are
+each written at few syntactic sites, so they rank cold. Measured directly (the
+census counts tail allocations): **11,895 of 32,468 nodes — 36.6 % — allocate
+a tail at K=24.** That is why the net is −29 % rather than −49 %: a third of
+the saving is handed back as tails.
+
+**This is the actionable finding for whoever takes the next slice.** A better
+hotness proxy — static *read*-site count, or write-sites weighted by the
+enclosing method's call-graph reachability — should move `left`/`right`/
+`callee` back inline and cut the overflow rate, without giving up
+corpus-independence. Nothing else in this design has that much headroom left.
+
+### 3. Correctness: the reflective surfaces were the whole risk, exactly as §7 said
+
+Validated with a purpose-built standalone differential (`.tmp/cold-probe.mjs`
+idiom): compile the acorn self-parse, walk the resulting AST **inside wasm**,
+and accumulate **one rolling hash per ESTree property name** (64 of them),
+comparing against the OFF build. `JSON.stringify` is useless here — a closed
+fnctor struct serialises as `null` in the standalone lane — and the existing
+`tests/dogfood/acorn-corpus.mjs` differential cannot see this split at all,
+because it runs in JS-HOST mode where flow-grown fields are never reserved as
+native slots.
+
+| K | fields moved | 64 per-field hashes vs OFF |
+| ---: | ---: | --- |
+| 55 | 5 | identical |
+| 52 | 9 | **DIVERGED** (before the reflective wiring) |
+| 24 | 36 | **identical** |
+| 8 | 52 | 63 identical, `generator` differs |
+| 0 | 60 | 63 identical, `generator` differs |
+
+The first cut wired only the member get/set dispatchers and diverged at K=52.
+The mechanism was **acorn's `copyNode`** (dist :3911) —
+`for (var prop in node) { newNode[prop] = node[prop] }` — i.e. enumeration plus
+a COMPUTED read, neither of which routes through `__get_member_<name>`. Wiring
+the three standalone reflective passes (`fillClosedStructHasOwnArms`,
+`fillClosedStructOwnPropertyNamesArms`, `fillClosedStructExternGetArms`) made
+K=52 and K=24 bit-identical. §7's chokepoint list was right; the ones that
+actually bit were the reflective ones, not the dispatchers.
+
+**Two design decisions carried the rest of the risk:**
+
+1. A cold field is **removed** from the main struct's field list, so every
+   consumer that resolves by name (`fields.findIndex`) answers `-1` and takes
+   its existing not-a-slot path — the dynamic dispatcher, which IS wired. The
+   un-taught consumer degrades to a slower CORRECT path instead of reading a
+   wrong slot. (Verified in `fnctor-typed-reads.ts`, which declines on
+   `fieldIdx < 0`, and in `compilePropertyAssignmentExternSet`, whose
+   `fieldIdx === -1` branch already routes through `emitAlternateStructSetDispatch`.)
+2. The tail is hidden from `isSyntheticStructName` and from
+   `findAlternateStructsForField`. It is a private payload, never a receiver:
+   an arm keyed on `ref.test $…__cold` is dead at best and, under WasmGC's
+   structural canonicalization of same-shaped structs, wrongly live at worst.
+
+### 4. Known defect, reproducible: `generator` at K < 13
+
+At K=8 and K=0 exactly **one** of 64 field hashes differs, and it is the same
+one at both settings: `generator`. Every other field, including every
+structural one, is exact. It is a boolean-valued field, which points at a
+boolean-brand or typed-twin read path not yet taught the hop (the typed
+`__get_member_<name>__f64` twin is the leading suspect — it is the one
+dispatcher this slice did not wire). **Do not raise the split past K≈13 until
+that is found.** K=24, the setting these numbers are quoted at, is unaffected.
+
+### 5. Profile bucket share — the mechanism check, and it holds
+
+`scripts/profile-buckets.mjs`, 300 parses, `standalone-dynamic`,
+`--preserve-debug-names` + `JS2WASM_CLOSURE_NAME_MAP=1`, OFF vs K=24:
+
+| bucket | OFF | K=24 | |
+| --- | ---: | ---: | --- |
+| **gc-engine** | **15.71 %** | **11.79 %** | **−3.92 pp (−25 % of its own share)** |
+| compiled | 18.12 | 19.89 | diluted up |
+| scanner | 16.31 | 17.16 | diluted up |
+| dynamic-lookup | 16.38 | 16.78 | diluted up |
+| call-dispatch | 9.46 | 10.33 | diluted up |
+| regexp | 7.41 | 7.55 | diluted up |
+| dynamic-eq | 5.65 | 5.70 | diluted up |
+| cast-convert | 4.89 | 5.09 | diluted up |
+| string-runtime | 4.46 | 4.27 | ~flat |
+| alloc-helpers | 1.37 | 1.21 | fewer `struct.new` operands |
+
+**One bucket shrinks and every other one dilutes proportionally upward — the
+exact signature of a single absolute reduction with the rest unchanged.** The
+top frame `(garbage collector)` falls 15.70 → (out of the top-25 head) and the
+bucket loses a quarter of itself, against a measured **−21.6 % of allocated
+struct bytes**. Cause and effect line up: the GC bucket on this workload is
+close to proportional to allocated bytes.
+
+Translating with §6's own arithmetic: GC self-time ≈ 25 % smaller × a
+15.7 %-of-wall bucket ⇒ **≈ −3.9 % of wall**, landing on §6's −3-4 % point
+estimate from the pad probe. Two independent instruments (the pad probe's
+d(wall)/d(slot), and this byte→bucket measurement) now agree.
+
+Wall for the two profiled runs was 42,981 ms → 41,038 ms (−4.5 %). **That is a
+single unreplicated pair with no order-reversal control and is BELOW this
+box's resolvability bar (§6) — it is quoted only because it is consistent with
+the bucket shift, and it is not evidence on its own.** The bucket shares are;
+per §6.3 they are robust to uniform ambient load in a way wall deltas are not.
+
+### 5b. What is NOT measured
+
+- **No replicated / order-reversed wall A/B.** Deliberate: §5 of the
+  2026-08-06 slice records a 3/3-consistent +29 % reading that was pure load
+  contamination. The bucket share is the instrument here.
+- **Standalone lane only.** The split is gated on `ctx.standalone` by
+  construction (flow-grown fields are the host-free replacement for the host
+  sidecar), so host mode is untouched.
+- **No test262 run.** Flag-OFF ⇒ byte-identical, so the merge-queue gates cover
+  it; a conformance run of the flag-ON build is the next slice's job, after §4
+  closes.
+
+### 6. Flag decision: ships **default OFF**
+
+Two reasons, and note that "the payoff is unproven" is **no longer** one of
+them — §5's bucket shift is a real, mechanism-level positive result:
+
+1. **A defect is open** (§4). Shipping ON with a known one-field divergence
+   over part of the range is not defensible even though the recommended setting
+   sits outside it. This is the blocking reason.
+2. **The overflow rate says the design is not at its best point** (§2). A
+   better hotness proxy is cheap and improves the bytes AND the risk (fewer
+   fields cold ⇒ smaller reflective surface). Landing ON now would freeze the
+   worse variant, and the ranking change would then have to be re-validated
+   against a shipped default rather than against OFF.
+
+So this is a **deferred ON, not a wash**: −21.6 % of allocated struct bytes and
+−3.92 pp of the largest profile bucket, for ≈ −3.9 % of wall by the
+byte→bucket translation. The switch is one line once §4 closes and §2's
+ranking lands; the mechanism, the harness idiom, and the corrected arithmetic
+are this slice's deliverable.
+
+### 7. Gates
+
+typecheck 0, lint 0, format 0, oracle-ratchet 0 (no checker-usage growth across
+10 changed codegen files), dead-exports 0, coercion-sites 0, stack-balance 0,
+check:ir-fallbacks 0. loc-budget / func-budget: allowances granted in this
+file's frontmatter — the split's own ≈500 LOC live in the new
+`fnctor-cold-tail.ts`; the granted files are the unavoidable in-place seams.
+Dogfood canaries **2/3/4/5** at K=24, `functionImports: []`, exactly the 3
+pre-existing IR-FALLBACKs (typeIdx parity on
+parse/parseExpressionAt/tokenizer). Census checksum **1266** identical OFF and
+at K=24. `tests/issue-3927-fnctor-cold-tail.test.ts` pins the OFF byte-identity
+(including that a malformed flag value cannot half-enable the split — a bare
+`Number("")` is `0`, which would have moved EVERY eligible field) and the
+total-order property of the ranking.

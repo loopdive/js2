@@ -10,15 +10,24 @@ import type { WasmModule } from "../ir/types.js";
  * Is `structName` a compiler-synthetic / internal struct that must be skipped
  * when iterating `ctx.structFields` to emit host-facing field getters/setters
  * or classification exports? Matches the wrapper boxes (`Wrapper…`), the
- * `$AnyValue` any-box, and the `__vec_` / `__arr_` runtime array/vec structs.
+ * `$AnyValue` any-box, the `__vec_` / `__arr_` runtime array/vec structs, and
+ * (#3927) the `__cold` tails of hot/cold-split fnctor structs.
  * Factored out of ~9 byte-identical inline guards (#3272).
+ *
+ * The cold tail is listed here because it is a PRIVATE payload of its owner,
+ * never a receiver: no value of that type is ever handed to user code, so an
+ * arm keyed on `ref.test $…__cold` can only be dead — or, under WasmGC's
+ * structural canonicalization of same-shaped structs, WRONGLY live. Consumers
+ * reach a cold field through the owner's `$cold` slot
+ * (`findColdStructsForField`), never by enumerating the tail as a shape.
  */
 export function isSyntheticStructName(structName: string): boolean {
   return (
     structName.startsWith("Wrapper") ||
     structName === "$AnyValue" ||
     structName.startsWith("__vec_") ||
-    structName.startsWith("__arr_")
+    structName.startsWith("__arr_") ||
+    structName.endsWith("__cold")
   );
 }
 

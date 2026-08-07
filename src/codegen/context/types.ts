@@ -3364,6 +3364,22 @@ export interface CodegenContext {
    */
   fnctorReservedTypeIdx: Map<string, number>;
   /**
+   * (#3927) fnctor name → reserved `$__fnctor_<Name>__cold` tail-struct type
+   * index, reserved alongside the main struct in `reserveFnctorStructTypes` so
+   * both indices are pass-invariant. Present only when
+   * `JS2WASM_FNCTOR_HOT_FIELDS` is set; `deriveFnctorFields` declines the split
+   * entirely when the name is absent, which is what keeps the on-demand
+   * (non-reserved) fnctor path on the union struct.
+   */
+  fnctorColdTailTypeIdx?: Map<string, number>;
+  /**
+   * (#3927) main `__fnctor_<Name>` struct name → its cold-tail struct name, for
+   * the fnctors whose split actually took effect. This is the map the read/write
+   * dispatchers enumerate to find cold arms (`findColdStructsForField`); a
+   * fnctor whose eligible-field count never exceeded the hot limit is absent.
+   */
+  fnctorColdTailStructName?: Map<string, string>;
+  /**
    * #1886 Slice B — Func index of the lazily-emitted
    * `__lin_u8_alloc(len:i32)->i32` bump allocator for linear-backed Uint8Array
    * buffers (`undefined` = not yet emitted). Allocates from a dedicated page-4
