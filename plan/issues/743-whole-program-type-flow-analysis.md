@@ -45,6 +45,12 @@ loc-budget-allow:
   # rationale comment) so the method-edge satellite
   # (src/ir/fnctor-method-edges.ts) shares the EXACT join/inferExpr semantics
   # instead of forking them. All new analysis logic lives in the satellite.
+  # Plus +9 (1559 → 1568) for the field↔param mutual-fixpoint slice: ONE rule in
+  # `inferExpr` resolving `this` from the reserved scope key `"<this>"`, plus the
+  # comment explaining why that key (and not `"this"`, which a TS this-parameter
+  # would bind) is provably inert for the main fixpoint. `inferExpr` is the one
+  # place an expression's lattice value is decided, so a satellite cannot host
+  # it; everything else lives in the satellite's four modules.
   - src/ir/propagate.ts
   # +6: a three-line comment and one call in `deriveFnctorFields`, which is the
   # single place a fnctor field slot is chosen and therefore the only place this
@@ -1140,3 +1146,135 @@ dead-exports, coercion-sites, stack-balance, check:ir-fallbacks, prettier.
   with `node scripts/claim-issue.mjs 743 <agent> --branch
   claude/issue-743-mutual-fixpoint` before starting (the 2026-08-07 spec
   claim has been released).
+
+## 2026-08-07 — field↔param mutual fixpoint IMPLEMENTED: the mechanism lands and is proven E2E; the acorn census does NOT move, and the blocker is now measured per write
+
+Branch `claude/issue-743-mutual-fixpoint`. Implements the Fable spec above as
+written, with two deviations flagged below (one of them a spec error that would
+have shipped an UNSOUND fact, one an over-poison that zeroed the corpus).
+
+### What shipped
+
+Field slots are now lattice VARIABLES solved together with params inside the
+satellite. Both directions of the cycle carry end-to-end, pinned by
+`tests/issue-743-mutual-fixpoint.test.ts` (24 tests):
+
+- **edge (a)** — the full write taxonomy: plain assign, `+= -= *= /= %= **= <<=
+  >>= >>>= &= |= ^=`, `++`/`--`, `&&= ||= ??=`, name-based `"all"` attribution
+  for untracked receivers, and the poison set (`delete`, `this[k]`,
+  `Object.defineProperty/assign` on `this`, destructuring and for-in/of targets,
+  replaced/runtime-defined prototypes, escaped owners);
+- **edge (b)** — direct `this.<x>` reads answered from the field facts (raw
+  `unknown`, not DYNAMIC, so cycles start optimistic), and nested/bare-`this`
+  reads answered from a per-owner instance ATOM bound to scope key `"<this>"`;
+- the undefined-read guard: an ordered ctor walk with `if/else` intersection and
+  return-freezing, so a read that could observe `undefined` never carries a
+  numeric fact;
+- MAX_ITERS exhaustion returns EMPTY facts, never a partial state (the
+  atom-mediated reads are not monotone).
+
+The satellite was split from one file into four (`fnctor-graph-model.ts`,
+`fnctor-field-writes.ts`, `fnctor-field-lattice.ts`, `fnctor-method-edges.ts`)
+rather than granting a god-file allowance: the single file reached 1,720 LOC,
++220 over the ratchet, and the next slice would have inherited it.
+
+### Measurements (same env as #4166: acorn-standalone-compile, `-O3`, `JS2WASM_FNCTOR_FIELD_PROVENANCE=1 JS2WASM_FNCTOR_CTOR_PARAM_TYPES=1`)
+
+- **Census: 55 typed / 1 discarded / 40 unknown — UNCHANGED from the #4166
+  baseline. Zero slots moved.** Binary 874,370 B, byte-count unchanged. Canaries
+  2,3,4,5; imports `[]`; exactly the 3 pre-existing parity IR-FALLBACKs
+  (parse / parseExpressionAt / tokenizer).
+- Flag-off byte-identity vs `origin/main` asserted by sha256 on the standalone
+  acorn binary: `11aa8e230bca82234672bc5b1ea7f44817ffec0d1e44a67acfe70884b84ba89d`,
+  861,854 B — identical this-branch vs origin/main, before AND after the module
+  split.
+- Wall A/B **not run**: the spec pre-registered it at ≥10 movers; 0 moved.
+- Compile time 73.8 s — the field lattice is invisible in compile noise.
+
+### Per-slot verdict for the §9 bucket — every one traces to ONE root cause
+
+| Slot | Spec expectation | Measured | Why |
+| --- | --- | --- | --- |
+| `Parser.start/end/lastTokStart/lastTokEnd` | MOVE (if every write numeric — "verify `+=`") | **STALL** | `Parser.pos`'s FIELD fact is `dynamic`; these are all `this.x = … = this.pos` |
+| `Node.start` | MOVE | **STALL** | `startNodeAt(this.start, …)` — `Parser.start` is dynamic, so `Node`'s `pos` param is dynamic |
+| `Token.start/end` | MOVE (atom path) | **STALL** | `new Token(this)` DOES bind the instance atom (`Token(object)` is proven), but `start`/`end` are not IN the atom: only fields with an ATOM fact are, and they are dynamic |
+| `Token.type/value`, `SourceLocation.*`, `Parser.*Loc`, `BranchID.parent` | STALL | STALL | as predicted — non-f64 / ref-typed |
+
+**Root cause, measured write-by-write on `Parser.pos`** (the field every stalled
+slot reads through):
+
+1. `err.pos = pos` in `pp$9.raise` — an `"all"`-attributed write onto a
+   `SyntaxError`. `raise`'s `pos` param is DYNAMIC, and under the spec's
+   (correct, sound) name-based attribution that single write drags EVERY owner's
+   `pos` field to DYNAMIC.
+2. ~22 × `state.pos = start` in the `regexp_*` methods, where `start` is a LOCAL
+   (`var start = state.pos`). The shared scope model is **params-only**, so
+   every local infers DYNAMIC.
+3. `this.pos = end + 2`, `this.pos += size` — same locals problem; `+=` with a
+   DYNAMIC RHS is correctly DYNAMIC (`x + y` is string-or-number).
+4. `this.pos = this.nextIndex(this.pos, forceU)` — `inferExpr` resolves only
+   IDENTIFIER callees, so every METHOD call is DYNAMIC even though the satellite
+   holds that method's return fact.
+
+So the mutual fixpoint is not the binding constraint on this corpus; **the
+value-flow precision of the shared evaluator is**. Ranked next levers, with the
+evidence above:
+
+1. **Method-call return facts in `evalValueExpr`** — the satellite already has
+   per-method return lattice values; `core.inferExpr` cannot reach them. A
+   name-based join over write-once methods of that name is sound (widening) and
+   directly fixes (4).
+2. **Non-reassigned local bindings in `buildScope`** — fixes (2)/(3). Note the
+   cheap check: this alone does NOT unblock acorn, because `state.pos` is itself
+   dynamic; it must land WITH lever 1.
+3. **Per-name attribution refinement for `"all"` writes** — (1) is one write on
+   an object that is provably not a fnctor instance (`new SyntaxError`). A
+   "receiver's constructor is a known non-tracked builtin" carve-out would
+   retire it. This is the only one that needs new soundness argument.
+
+### Spec deviations (both material, both with evidence)
+
+1. **§7 says the `.call` sites in acorn are "on untracked receivers". They are
+   NOT, and the omission was UNSOUND, not merely imprecise.** `finishNodeAt`
+   (acorn `dist/acorn.mjs:3891`) is a top-level function DECLARATION — a tracked
+   callable — and it is invoked ONLY as `finishNodeAt.call(this, …)` (:3902,
+   :3908). Before this slice that shape produced no edge *and* no poison, so its
+   params stayed at lattice BOTTOM (`unknown`) forever, and its `node.end = pos`
+   write then contributed *nothing* to `end` instead of widening it. That is
+   optimism in the direction the whole design forbids. Implemented as specified
+   (`.call` → edge with `args.slice(1)`; `.apply` → poison; extracted
+   `.call`/`.apply`/`.bind` → poison; `.constructor` outside a comparison →
+   `poisonAllCtors`). Measured cost on acorn: `.constructor` 0 sites, `.bind` 0,
+   `.apply` 0, `.call` 6 of which exactly 2 hit a tracked callable.
+2. **§3.4's dynamic-key poison must NOT fire on non-`this` receivers.** Read
+   literally, `newNode[prop] = node[prop]` (acorn's `copyNode`) sets
+   `poisonAllFields`, which is a whole-module kill switch: measured, it zeroed
+   *every* acorn field fact (the first census run came back with
+   `poisonAllFields=true` and all 11 owners fully dynamic). The paragraph's own
+   next sentence names untracked non-`this` dynamic-key writes as the family's
+   DOCUMENTED GAP, so the poison is scoped to `this[k]`-form writes, where the
+   owner is localizable. Pinned by a test.
+
+Minor, where the spec was silent or redundant: the `"poison"` `FieldWrite.kind`
+and the `definite` flag are not carried (poisons live in the state's sets;
+definiteness is produced by §4's ordered walk, which is the only consumer);
+`.apply` uses the existing node-level poison rather than a params-only variant
+(strictly more conservative, and 0 sites on the corpus); direct this-reads match
+`PropertyAccessExpression` only, not string-literal element access.
+
+### Gates / suites
+
+`tsc` 0 · biome lint 0 · prettier 0 · oracle-ratchet 0 · loc-budget 0 (grant:
+propagate.ts +9) · func-budget 0 · dead-exports 0 · coercion-sites 0 ·
+stack-balance 0 · check:ir-fallbacks 0. Suites: new `issue-743-mutual-fixpoint`
+24/24; `issue-743-*` 49/49; `issue-4155-*`, `issue-2660-*`, `ir-*` green except
+`ir-scaffold` (1) and four `tests/equivalence/*` cases, all four A/B-confirmed
+PRE-EXISTING on `origin/main` sources in this same worktree. The nine
+`issue-3520-*` census failures are likewise pre-existing.
+
+**Flag verdict: `JS2WASM_FNCTOR_CTOR_PARAM_TYPES` STAYS OFF.** The lever the
+2026-08-06 measurement named as #1 by expected yield now exists, is proven
+end-to-end on synthetic cycles, and pays nothing on acorn. The honest reading is
+that the remaining 40 are not gated on graph reach or on field↔param mutuality —
+they are gated on how precisely a value expression can be evaluated once the
+graph gets you there.

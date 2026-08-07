@@ -891,6 +891,15 @@ function inferExpr(
   if (ts.isElementAccessExpression(expr)) {
     return inferElementAccessAtom(expr, scope, entries, resolveCallTarget);
   }
+  // (#743) `this` resolves to whatever the CALLER bound under the reserved key
+  // `"<this>"`. Provably inert for the main fixpoint: `"<this>"` is not a legal
+  // identifier, and `buildScope`/`seedParamType` only ever key this map by
+  // `p.name.text`, so nothing here can bind it. (A key of `"this"` would NOT be
+  // inert — a TS `this` parameter declares a real parameter with that text.)
+  // The fnctor-graph satellite binds it to a per-owner instance atom so nested
+  // reads (`this.pos - this.lineStart`) and bare-`this` arguments
+  // (`new Token(this)`) carry field facts; see src/ir/fnctor-method-edges.ts.
+  if (expr.kind === ts.SyntaxKind.ThisKeyword) return scope.get("<this>") ?? DYNAMIC;
   return DYNAMIC;
 }
 
