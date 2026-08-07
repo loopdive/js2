@@ -36,20 +36,56 @@ export function sourceContainsClass(sourceFile: ts.SourceFile): boolean {
  * so delete-free modules emit byte-identical wasm.
  */
 export function sourceContainsDelete(sourceFile: ts.SourceFile): boolean {
-  let found = false;
+  return scanMemberDeletes(sourceFile, false).any;
+}
+
+/**
+ * (#4187) The single member-delete walk, answering both questions the module
+ * setup asks: **whether** any member delete exists (#2179) and **which
+ * identifiers** are deleted from.
+ *
+ * Fused, and `collectReceivers` is a COST switch, not a convenience. #2179's
+ * boolean short-circuits on the first hit; collecting names cannot, because a
+ * later statement may delete from a different receiver. Giving up that
+ * short-circuit unconditionally cost **+3,847** on the #3437 harness
+ * compile-work budget (111,568 → 115,415), which meters shared-helper
+ * `forEachChild` invocations over a fixture whose prelude is prepended to all
+ * ~43k test262 files. Since `memberDeleteReceiverNames` is read only by the
+ * STANDALONE arm of the `hasOwnProperty` routing gate, host-mode callers pass
+ * `false` and keep main's exact traversal — the budget fixture compiles in host
+ * mode and returns to 111,568.
+ *
+ * @returns `any` — a `delete o.a` / `delete o[k]` occurs somewhere (a no-op
+ *   `delete x` of a bare identifier does NOT count: it leaves no tombstone for
+ *   the inline `struct.get` read fast-path to miss).
+ * @returns `receiverNames` — see {@link collectMemberDeleteReceiverNames}; empty
+ *   when `collectReceivers` is false. A strict subset of what sets `any`:
+ *   `delete a.b.c` and `delete f().x` have no identifier receiver, so they set
+ *   `any` and contribute no name.
+ */
+function scanMemberDeletes(
+  sourceFile: ts.SourceFile,
+  collectReceivers: boolean,
+): { any: boolean; receiverNames: Set<string> } {
+  let anyDelete = false;
+  const receiverNames = new Set<string>();
   function walk(node: ts.Node): void {
-    if (found) return;
-    if (
-      ts.isDeleteExpression(node) &&
-      (ts.isPropertyAccessExpression(node.expression) || ts.isElementAccessExpression(node.expression))
-    ) {
-      found = true;
-      return;
+    // Short-circuit only when the names are not wanted — otherwise the walk
+    // must run to completion to see every deleted-from receiver.
+    if (anyDelete && !collectReceivers) return;
+    if (ts.isDeleteExpression(node)) {
+      const target = node.expression;
+      if (ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)) {
+        anyDelete = true;
+        const receiver = target.expression;
+        if (collectReceivers && ts.isIdentifier(receiver)) receiverNames.add(receiver.text);
+        if (!collectReceivers) return;
+      }
     }
     forEachChild(node, walk);
   }
   walk(sourceFile);
-  return found;
+  return { any: anyDelete, receiverNames };
 }
 
 /**
@@ -82,19 +118,20 @@ export function sourceContainsDelete(sourceFile: ts.SourceFile): boolean {
  * a receiver that never needed one.
  */
 export function collectMemberDeleteReceiverNames(sourceFile: ts.SourceFile): Set<string> {
-  const names = new Set<string>();
-  function walk(node: ts.Node): void {
-    if (ts.isDeleteExpression(node)) {
-      const target = node.expression;
-      if (ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)) {
-        const receiver = target.expression;
-        if (ts.isIdentifier(receiver)) names.add(receiver.text);
-      }
-    }
-    forEachChild(node, walk);
-  }
-  walk(sourceFile);
-  return names;
+  return scanMemberDeletes(sourceFile, true).receiverNames;
+}
+
+/**
+ * Both member-delete answers from ONE walk — the module-setup entry point.
+ * Pass `collectReceivers: false` outside `--target standalone`; nothing reads
+ * the names there and the boolean-only walk short-circuits (see
+ * {@link scanMemberDeletes} for the measured cost).
+ */
+export function scanModuleMemberDeletes(
+  sourceFile: ts.SourceFile,
+  collectReceivers: boolean,
+): { any: boolean; receiverNames: Set<string> } {
+  return scanMemberDeletes(sourceFile, collectReceivers);
 }
 
 /**
