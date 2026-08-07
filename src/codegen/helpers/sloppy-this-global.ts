@@ -112,3 +112,31 @@ export function thisBelongsToTopLevelCode(expr: ts.Node): boolean {
   }
   return false;
 }
+
+/**
+ * (#4202) True when a `this` used as a **`.call`/`.apply` receiver** provably
+ * compiles to the global object, so the receiver-install trampoline in
+ * `named-this-call.ts` may take its live arm.
+ *
+ * This mirrors the `ThisKeyword` lowering's own #3365/#4190 arm rather than
+ * approximating it: the three earlier bindings that arm consults first (a
+ * typed-this parameter, a `this` in `localMap`, a static class context) are
+ * ruled out in the same order, and only then does top-level Script code
+ * answer `globalThis`. Keeping the two in one module is the point — a
+ * predicate that drifted from the lowering would install a receiver the
+ * callee does not read, or refuse one it does.
+ *
+ * The question is deliberately "does it evaluate to the global object?", NOT
+ * "is it non-null?". Widening to non-nullness would be wrong, not merely
+ * broad: a `this` that compiles through `emitUndefined` yields the
+ * `$__undefined` singleton, which IS a non-null externref. Installing that
+ * defeats the callee body's `ref.is_null` fallback — and for a **sloppy**
+ * callee that fallback is the only thing delivering §10.4.3's global object
+ * for an `undefined` thisArg. So the gate proves the value, not the pointer.
+ */
+export function thisReceiverIsGlobalObject(ctx: CodegenContext, fctx: FunctionContext, receiver: ts.Node): boolean {
+  if (process.env.JS2WASM_TWIN_RECEIVER_PARAM !== "0" && fctx.typedThisLocalIdx !== undefined) return false;
+  if (fctx.localMap.get("this") !== undefined) return false;
+  if (fctx.isStaticContext) return false;
+  return fctx.name === "__module_init" && !ctx.sourceIsModule && thisBelongsToTopLevelCode(receiver);
+}

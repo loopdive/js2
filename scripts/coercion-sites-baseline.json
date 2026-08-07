@@ -68,6 +68,7 @@
   "codegen/ta-dyn-mop.ts": 4,
   "codegen/ta-hof-map-filter.ts": 3,
   "codegen/type-coercion.ts": 34,
+  "codegen/typed-lane-overlay-route.ts": 1,
   "codegen/typed-this.ts": 3,
   "codegen/vec-access-exports.ts": 1,
   "codegen/vec-overlay.ts": 5,

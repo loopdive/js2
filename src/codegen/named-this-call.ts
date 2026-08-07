@@ -24,6 +24,7 @@ import type { FuncHandle, Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { bodyReferencesOwnThis } from "./helpers/body-references-own-this.js";
+import { thisReceiverIsGlobalObject } from "./helpers/sloppy-this-global.js";
 import { addFuncType } from "./registry/types.js";
 import { ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
 
@@ -87,7 +88,9 @@ function receiverIsAdmitted(ctx: CodegenContext, fctx: FunctionContext, receiver
   // own `this` is live reads the receiver installed by the enclosing method
   // dispatch. The trampoline still runtime-splits a null value to the legacy
   // unbound call, so a detached/nullish reach does not enter the fast arm.
-  if (inner.kind === ts.SyntaxKind.ThisKeyword) return fctx.readsCurrentThis === true;
+  if (inner.kind === ts.SyntaxKind.ThisKeyword) {
+    return fctx.readsCurrentThis === true || thisReceiverIsGlobalObject(ctx, fctx, inner);
+  }
   return !factIsStaticallyNullish(ctx.oracle.typeFactOf(inner));
 }
 
