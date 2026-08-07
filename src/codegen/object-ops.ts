@@ -46,6 +46,7 @@ import {
   tryEmitVecLengthDefineForDefineProperties,
 } from "./array-length-define.js";
 import { isStaticDescWellFormed, isStaticallyNonObjectDescExpr } from "./descriptor-shape.js";
+import { isDescriptorTranscribableStruct } from "./property-descriptor-shape.js"; // (#4180) #2372 transcription gate
 import {
   descriptorFieldName,
   inheritedTrueDescriptorFlags,
@@ -320,7 +321,16 @@ export function emitDefinePropertyDescRuntime(
       : undefined;
   const reifyStructName = descStructTypeIdx !== undefined ? ctx.typeIdxToStructName.get(descStructTypeIdx) : undefined;
   const reifyFields = reifyStructName ? ctx.structFields.get(reifyStructName) : undefined;
-  if (descType && descStructTypeIdx !== undefined && reifyFields && reifyFields.length > 0) {
+  // (#4180) …but ONLY for a struct that is plausibly a descriptor RECORD. Any
+  // other typed struct — array `{length,data}`, `__Date` `{timestamp}`, a
+  // subview — would have its INTERNAL wasm fields transcribed as if they were
+  // the object's own properties, silently fabricating a descriptor and
+  // discarding the real one in the carrier bag. Rationale + measured repro:
+  // `isDescriptorTranscribableStruct`. Otherwise pass the externref through and
+  // let the applier run ToPropertyDescriptor over the actual object.
+  const mayTranscribe =
+    reifyStructName !== undefined && !!reifyFields && isDescriptorTranscribableStruct(reifyStructName, reifyFields);
+  if (descType && descStructTypeIdx !== undefined && reifyFields && reifyFields.length > 0 && mayTranscribe) {
     emitDescriptorStructReify(ctx, fctx, descStructTypeIdx, reifyFields);
     // emitDescriptorStructReify consumes the struct ref on the stack and leaves
     // a `$Object` externref in its place.
