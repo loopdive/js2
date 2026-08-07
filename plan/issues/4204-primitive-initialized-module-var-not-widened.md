@@ -1,8 +1,9 @@
 ---
 id: 4204
 title: "standalone: a primitive-initialized module `var` reassigned to another JS type silently becomes NaN (slot pinned from the initializer)"
-status: in-progress
+status: done
 assignee: ttraenkler/W24
+completed: 2026-08-07
 sprint: current
 created: 2026-08-07
 updated: 2026-08-07
@@ -116,9 +117,86 @@ representation-vs-static-type disagreement rather than a #4204 flag — so it
 also covers the pre-existing externref overrides (#2011 / #2837 / #3369),
 which carry the same latent mismatch.
 
-## Measurement
+## Measured population
 
-See `## Measured population` and `## A/B` below.
+All numbers `--target standalone`, base re-cut on freshly-fetched
+`origin/main@d9feaef47c`, provider cache **deleted** per arm and rebuilt
+(`cache MISS`, 119 s, 3,995,550 bytes on both arms — the key is
+`854c120ce015d507` on both, which per
+`reference_standalone_eval_instrument_reports_unmeasured_failures` is expected
+and is *not* evidence either way; the deleted file is the control) and run with
+`TEST262_FULL_RUNTIME_EVAL=1`.
+
+**The population is derived from the change's own reachability, not from an
+error-string grep.** Three nested bounds, each computed over every file's
+**effective** source (the real `assembleOriginalHarness` primary variant —
+body + harness, not the raw body):
+
+| bound | what it is | ES5 | whole corpus |
+| --- | --- | --- | --- |
+| SUPERSET | module-scope `var`/`let` with a not-certainly-non-primitive initializer **and** some assignment to that name — a file outside this set cannot reach the modified code path | **831** | **7,617** |
+| TOUCHED | of those, the modules whose **emitted Wasm bytes actually differ** between the arms | **16** | not measured |
+| LEVER | syntactically *provable* tag disagreement (both tags certain and different) | 16 | 55 |
+
+### The regression surface is enumerable, and it is empty
+
+Byte-identity over the full ES5 SUPERSET (831 files, both arms, compile-only):
+
+```
+byte-IDENTICAL (provably untouched): 776  (+39 that fail to compile on both arms)
+TOUCHED (module bytes differ):        16
+  touched files by published standalone status: {"fail": 15, "compile_error": 1}
+```
+
+**Not one currently-passing ES5 file changes a byte.** So the change cannot
+regress an ES5 pass — that is an enumeration, not an estimate, and it also
+means the **vacuous-pass exposure in ES5 is zero**: there is no file passing
+today on a wrong value that this widening could flip.
+
+The 16 touched files are `10.4.3-1-{56,57,60,61,100,101,102}{-s,gs}` plus
+`language/expressions/{in/S11.8.7_A2.4_T1, instanceof/S11.8.6_A2.4_T1}.js`.
+
+## A/B
+
+**LEVER, whole corpus, 55 files, both arms:**
+
+```
+base arm: {compile_error: 1, fail: 28, pass: 26}
+head arm: {compile_error: 1, fail: 18, pass: 36}
+FIXED 10 / BROKE 0 / unchanged 45
+```
+
+FIXED: `10.4.3-1-{56,57,60,61}{-s,gs}` (the 8 this issue was cut for) plus two
+outside ES5 —
+`built-ins/Map/prototype/getOrInsertComputed/{append-value,returns-value}-if-key-is-not-present-different-key-types.js`.
+That pair is the answer to "how far does it reach beyond ES5": the mechanism is
+edition-independent, and the whole-corpus SUPERSET is 7,617 files.
+
+**Two-sided, per the instrument rules:**
+
+- The 26-file control arm (the lever files that PASS on base) stays at 26 —
+  the runner can see a pass, so `FIXED 10` is not "the runner can only report
+  failures".
+- The base arm reproduces the **standalone** jsonl
+  (`ensureStandaloneBaselineJsonl({ force: true })`, not the default host lane)
+  on **53 of 55**. The two disagreements are
+  `language/expressions/generators/scope-name-var-open-{non-,}strict.js`,
+  published `compile_error` and measured `fail` — a CI-vs-local compile
+  difference on files that fail either way, not a lever effect.
+- Every fixture in `tests/issue-4204-module-var-widening.test.ts` was verified
+  **RED on base by A/B**: 10 failed / 5 passed on the base arm, 15/15 on head.
+  The 5 that pass on both are the named PRECONDITION and NEGATIVE cases, which
+  exist so a green run cannot be a run that never reached the substrate.
+
+### Not measured, stated plainly
+
+- **Byte-identity outside ES5.** The 7,617-file whole-corpus SUPERSET was not
+  hashed (≈2 h of a 4-core box already at load 15). What IS measured outside
+  ES5 is the 55-file lever (FIXED 10 / BROKE 0) and the 39 non-ES5 lever files
+  within it.
+- **Host lane conformance.** The predicate is not gated on `ctx.standalone`, so
+  host-mode modules widen too. The host lane's own gate (`equivalence-gate`)
+  covers it; no host test262 A/B was run.
 
 ## Not in scope
 
