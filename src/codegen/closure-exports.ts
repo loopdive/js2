@@ -22,6 +22,7 @@ import {
 import { ensureArgcGlobal, ensureCurrentThisGlobal, ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
 import { ensureAnyToExternHelper, isAnyValue } from "./any-helpers.js";
 import { buildClosureResultBoxing } from "./closures/result-boxing.js";
+import { buildMethodDispatchPrologue } from "./closures/method-dispatch-prologue.js";
 import { isSyntheticStructName } from "./emit-helpers.js";
 export { buildTransferredCharAtApplyArm } from "./char-at-transfer.js";
 import {
@@ -746,17 +747,10 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
   const exportFuncTypeIdx = addFuncType(ctx, params, [{ kind: "externref" }], `$${exportName}_type`);
   const bwIdx = baseWrapperIdx;
 
-  // Convert closure externref → anyref (closure is at local index 1).
-  const body: Instr[] = [];
-  body.push({ op: "local.get", index: 1 });
-  body.push({ op: "any.convert_extern" });
-  body.push({ op: "local.set", index: anyLocal });
-
-  // Save previous __current_this for nesting safety, then install thisVal.
-  body.push({ op: "global.get", index: currentThisGlobalIdx });
-  body.push({ op: "local.set", index: prevThisLocal });
-  body.push({ op: "local.get", index: 0 });
-  body.push({ op: "global.set", index: currentThisGlobalIdx });
+  // Closure externref → anyref, then (#4197) the runtime-eval carrier
+  // front-guard, then the `__current_this` save/install. That order is a
+  // contract — see `buildMethodDispatchPrologue`.
+  const body: Instr[] = buildMethodDispatchPrologue(ctx, arity, anyLocal, prevThisLocal, currentThisGlobalIdx);
 
   const npArgs = {
     anyLocal,
