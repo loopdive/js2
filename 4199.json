@@ -3,8 +3,8 @@
   "assignee": "ttraenkler/W17",
   "requested_by": "ttraenkler/W17",
   "status": "in-progress",
-  "branch": "issue-4199-builtin-namespace-toplevel-expando",
-  "claimed_at": "2026-08-07T04:06:51Z",
-  "updated_at": "2026-08-07T04:06:51Z",
-  "write_id": "1315-7dldwa9r"
+  "branch": "issue-4199-namespace-expando-keep",
+  "claimed_at": "2026-08-07T05:00:32Z",
+  "updated_at": "2026-08-07T05:00:32Z",
+  "write_id": "27970-bcz3e7zj"
 }
