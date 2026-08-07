@@ -22,8 +22,13 @@ import { collectShapes } from "../shape-inference.js";
 // (#3623) Total classification of top-level ExpressionStatements, so the
 // allow-list's fall-through leaves evidence instead of silently dropping an
 // observable statement (the #1268/#2671/#2992/#3366/#3468/#3592/#3615 class).
-import { classifyTopLevelExpressionStatement, createsGlobalObjectBinding } from "./module-init-collection.js";
+import {
+  classifyTopLevelExpressionStatement,
+  createsGlobalObjectBinding,
+  isNamespaceCarrierExpandoWriteTarget,
+} from "./module-init-collection.js";
 import { ensureWrapperTypes } from "./any-helpers.js";
+import { isSupportedBuiltinNamespace } from "./builtin-static-globals.js";
 import { ASYNC_CPS_ENABLED, analyzeAsyncBody, asyncFnNeedsCps } from "./async-cps.js";
 import { asyncFnNeedsHostDrive, asyncGenDrivableUnderCarrier, asyncGenStem } from "./async-frame.js";
 import { collectClassDeclaration, compileClassBodies, type ClassBodyCompileRouting } from "./class-bodies.js";
@@ -1925,6 +1930,22 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
             ctx.moduleInitStatements.push(stmt);
             continue;
           }
+        }
+        // (#4188) Top-level `Math.<p> = …` / `JSON.<p> = …` — an expando write
+        // on a builtin namespace-carrier receiver (standalone). The tenth
+        // collection-gap shape; rationale + scoping in
+        // `isNamespaceCarrierExpandoWriteTarget` (module-init-collection.ts).
+        if (
+          ctx.standalone &&
+          isNamespaceCarrierExpandoWriteTarget(
+            expr.left,
+            opKind,
+            isSupportedBuiltinNamespace,
+            (name) => ctx.moduleGlobals.has(name) || ctx.topLevelFunctionNames.has(name) || ctx.classSet.has(name),
+          )
+        ) {
+          ctx.moduleInitStatements.push(stmt);
+          continue;
         }
         const targetName = getAssignmentRootIdentifier(expr.left);
         // (#3493) A top-level write through `globalThis` is observable realm

@@ -186,6 +186,49 @@ export function createsGlobalObjectBinding(
 }
 
 /**
+ * (#4188) `Math.<p> = …` / `JSON.<p> = …` — a top-level EXPANDO write on a
+ * builtin NAMESPACE-carrier receiver (standalone). `Math` is neither a module
+ * global nor a top-level function, so `collectDeclarations`' root-identifier
+ * arm dropped the statement — the tenth shape in this file's table. The write
+ * itself has been perfectly compilable since #2907: the bare identifier
+ * resolves to the native carrier `$Object` singleton (identifiers.ts →
+ * emitBuiltinNamespaceObject) and the write-arm routes through `__extern_set`
+ * onto it — the SAME write inside a function body already lands. Only the
+ * top-level collection dropped it, which is what made every
+ * `Object.defineProperty(obj, "p", Math)` descriptor-carrier test read an
+ * EMPTY descriptor (the 46-file Math/JSON cluster in #4180's residue census;
+ * W5 mis-attributed it to the #1907 read refusal, which only fires on a direct
+ * READ of the expando — a shape those tests never use).
+ *
+ * Scoped narrowly:
+ *   - plain `=` only — a compound `Math.foo += 1` needs the expando READ,
+ *     which IS the #1907 compile refusal; keeping it would flip a
+ *     silently-dropped statement into a module-wide CE.
+ *   - DIRECT `NS.<name> = …` bare-identifier receiver only, unshadowed
+ *     (mirrors the #2623 Promise keep's guards): a user `var Math` /
+ *     `function Math` is a module global / function and is caught by the
+ *     caller's other arms.
+ *   - the caller gates on `ctx.standalone` — host/GC keeps its existing
+ *     (dropped) lowering; the host-lane fix is the same one-line keep but is
+ *     separate, measured work (this cluster is standalone-measured: +38/46,
+ *     0 flips on the 23 adjacent shape-matched files).
+ *
+ * Kept ctx-free like the rest of this module: the namespace predicate and the
+ * shadow test come in as callbacks.
+ */
+export function isNamespaceCarrierExpandoWriteTarget(
+  left: ts.Expression,
+  opKind: ts.SyntaxKind,
+  isSupportedBuiltinNamespace: (name: string) => boolean,
+  isShadowed: (name: string) => boolean,
+): boolean {
+  if (opKind !== ts.SyntaxKind.EqualsToken) return false;
+  if (!ts.isPropertyAccessExpression(left) || ts.isPrivateIdentifier(left.name)) return false;
+  const receiver = unwrapTarget(left.expression);
+  return ts.isIdentifier(receiver) && isSupportedBuiltinNamespace(receiver.text) && !isShadowed(receiver.text);
+}
+
+/**
  * TOTAL classification of a top-level ExpressionStatement's expression.
  *
  * The caller (`collectDeclarations`) keeps its existing, richer handling for
