@@ -96,6 +96,7 @@ import {
   pushProgramAbiNestedFunctionDeclaration,
   pushProgramAbiTopLevelCallable,
 } from "./program-abi-source-callable-planning.js";
+import { heterogeneousWidenedModuleGlobalType } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import { prepareModuleTdzGlobals, registerModuleGlobal } from "./module-global-registration.js";
 import { annexBModuleGlobalSeedsFromTopLevel } from "./annexb-global-live-binding.js";
@@ -1515,7 +1516,12 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // match-vec ref type so indexed reads stay on the static vec path
     // (externref-widened globals round-trip through __extern_get_idx,
     // which can't see typed vecs and returns null).
-    return inferStandaloneRegExpMatchGlobalType(ctx, decl) ?? resolveWasmType(ctx, varType);
+    // (#4204) `var x = 2; x = this` cannot live in the `(mut f64)` slot.
+    return (
+      heterogeneousWidenedModuleGlobalType(ctx, sourceFile, decl) ??
+      inferStandaloneRegExpMatchGlobalType(ctx, decl) ??
+      resolveWasmType(ctx, varType)
+    );
   }
 
   /** Register var declarations from a variable declaration list as module globals. */
