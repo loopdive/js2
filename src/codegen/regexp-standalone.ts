@@ -80,6 +80,8 @@ import type { InnerResult } from "./shared.js";
 import { compileExpression } from "./shared.js";
 import { compileStringLiteral } from "./string-ops.js";
 import { tryCompileCoercedStringMatch, tryCompileCoercedStringSearch } from "./string-search-value.js";
+import { isPlainToStringReplacement } from "./string-proto-replace.js";
+import { tryCompileStandaloneRegExpFunctionReplace } from "./regex-replace-fn.js";
 import { nativeStringRepr } from "./builtin-scaffold.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
@@ -671,7 +673,7 @@ function compileStaticStandaloneRegExp(
  * SyntaxError into a spurious compile error, see #1912 `[b-ac-e]`). Used only
  * to thread the named-group map + `d` flag into the result-shape builders.
  */
-function staticRegExpGroupMeta(
+export function staticRegExpGroupMeta(
   ctx: CodegenContext,
   expr: ts.Expression,
 ): { groupNames: ReadonlyMap<string, number>; flags: number; nGroups: number } | null {
@@ -702,11 +704,11 @@ function staticRegExpGroupMeta(
  * i32 scalars first keeps the struct off that heuristic.
  */
 const RE_FIELD_FLAGS = 0;
-const RE_FIELD_NGROUPS = 1;
-const RE_FIELD_PROG = 2;
-const RE_FIELD_CLASS_TABLE = 3;
+export const RE_FIELD_NGROUPS = 1;
+export const RE_FIELD_PROG = 2;
+export const RE_FIELD_CLASS_TABLE = 3;
 const RE_FIELD_SOURCE = 4;
-const RE_FIELD_NSCRATCH = 5; // #1959 — scratch slots for PROGRESS guards
+export const RE_FIELD_NSCRATCH = 5; // #1959 — scratch slots for PROGRESS guards
 const RE_FIELD_LASTINDEX = 6;
 
 /**
@@ -818,7 +820,7 @@ export function ensureStandaloneRegExpStruct(ctx: CodegenContext): number {
  * two paths drifted apart in the first place, with only one of them actually
  * applying ToString. One resolver, two callers.
  */
-function ensureRuntimeToStringIdx(ctx: CodegenContext, fctx: FunctionContext | null): number | undefined {
+export function ensureRuntimeToStringIdx(ctx: CodegenContext, fctx: FunctionContext | null): number | undefined {
   const idx = ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
   flushLateImportShifts(ctx, fctx);
   if (idx === undefined) return undefined;
@@ -1860,7 +1862,7 @@ interface RegexSearchEmission {
  * Returns the local index and struct type index, or `null` after reporting a
  * narrowed refusal when the value was not created by this backend.
  */
-function loadStandaloneRegExpStruct(
+export function loadStandaloneRegExpStruct(
   ctx: CodegenContext,
   fctx: FunctionContext,
   regexpExpr: ts.Expression,
@@ -3133,6 +3135,25 @@ export function tryCompileStandaloneStringReplace(
     return undefined; // not a RegExp arg → generic string path
   }
 
+  // (#4224) A CALLABLE replacer re-emits the §22.2.6.11 walk at the call site,
+  // where the closure's `call_ref` is in scope (`regex-replace-fn.ts`). It
+  // declines for a runtime-only pattern or an unresolvable function value, which
+  // then reaches the refusal below unchanged. Standalone only: WASI has no
+  // native RegExp lowering here and must keep reporting the refusal.
+  const fnFlags = ctx.standalone ? staticRegExpFlags(ctx, reExpr) : null;
+  if (fnFlags !== null && !(method === "replaceAll" && !fnFlags.includes("g"))) {
+    const fnReplace = tryCompileStandaloneRegExpFunctionReplace(
+      ctx,
+      fctx,
+      propAccess.expression,
+      reExpr,
+      replExpr,
+      method === "replaceAll" || fnFlags.includes("g"),
+      receiverOverride,
+    );
+    if (fnReplace !== undefined) return fnReplace;
+  }
+
   // Function replacers require closure dispatch plus capture-argument
   // marshalling, which the host-free RegExp carrier does not implement yet.
   // Refuse before the standalone/WASI paths can diverge: standalone otherwise
@@ -3172,9 +3193,9 @@ export function tryCompileStandaloneStringReplace(
 
 /**
  * Commit the narrowed host-free refusal for a RegExp replacement value that
- * cannot use the native string-replacement path. Function replacers need
- * closure dispatch plus capture-argument marshalling; other non-string values
- * need ToString support. Neither is available on this carrier yet.
+ * cannot use the native string-replacement path. (#4224) The refusal is now the
+ * un-provable arm only: callable replacers route to `regex-replace-fn.ts` and
+ * provably non-callable ones take the spec's `ToString` path.
  *
  * The typed `unreachable` is intentional: a null result is a speculative miss
  * to compileExpression (#1919), which rolls back diagnostics. Returning a real
@@ -3187,6 +3208,13 @@ function tryRefuseHostFreeRegExpReplacer(
   diag: string,
 ): ValType | undefined {
   if (isStringLikeArg(ctx, replExpr)) return undefined;
+  // (#4224) §22.2.6.11 step 2 stringifies every NON-CALLABLE replacement, and
+  // `__regex_get_substitution` already consumes an arbitrary `$AnyString` — so a
+  // provably non-callable value (`void 0`, `1`, `null`) needs the ToString the
+  // caller emits, not a diagnostic. A value that is neither provably callable
+  // NOR provably non-callable (`any`/`unknown`) still refuses: guessing either
+  // way is a wrong answer rather than a missing feature.
+  if (isPlainToStringReplacement(ctx, replExpr)) return undefined;
   reportStandaloneRegExpUnsupported(
     ctx,
     replExpr,
@@ -3251,9 +3279,11 @@ function emitStandaloneRegExpReplaceCore(
   const subjLocal = allocLocal(fctx, `__re_subj_${fctx.locals.length}`, { kind: "ref", typeIdx: strTypeIdx });
   fctx.body.push({ op: "local.set", index: subjLocal });
 
-  // --- replacement: flatten ---
-  const replType = compileExpression(ctx, fctx, replExpr, nativeStringType(ctx));
-  if (replType?.kind === "ref_null") fctx.body.push({ op: "ref.as_non_null" });
+  // --- replacement: ToString (§22.2.6.11 step 2), then flatten ---
+  // (#4224) `emitArgAsNativeString` applies the SPEC ToString. `compileExpression`
+  // with a native-string expectation did not: for `1` it left a raw f64 in a
+  // `ref $AnyString` slot, producing a module that failed WebAssembly.compile.
+  if (!emitArgAsNativeString(ctx, fctx, stripStaticWrapper(replExpr), nativeStringType(ctx))) return null;
   fctx.body.push({ op: "call", funcIdx: flattenIdx });
   const replLocal = allocLocal(fctx, `__re_repl_${fctx.locals.length}`, { kind: "ref", typeIdx: strTypeIdx });
   fctx.body.push({ op: "local.set", index: replLocal });

@@ -40,7 +40,7 @@ import {
   tryCompileStandaloneStringSearch,
   tryCompileStandaloneStringSplit,
 } from "./regexp-standalone.js";
-import { tryCompileStandaloneSplitSeparator } from "./string-search-value.js";
+import { tryCompileStandaloneSplitSeparator, tryCompileStandaloneStringValueReplace } from "./string-search-value.js";
 import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
 import { staticConstStringValues } from "./analysis/static-string-values.js";
 import { staticIntegerRange } from "./analysis/static-numeric-range.js";
@@ -3316,6 +3316,15 @@ export function compileNativeStringMethodCall(
       }
       return false;
     })();
+
+  // (#4224) §22.1.3.19 steps 3-5 for the STRING search lane, standalone. The
+  // arms below assume BOTH operands are already native strings and compile them
+  // straight into `ref $AnyString` slots — a silent wrong answer for anything
+  // else. `string-search-value.ts` owns the decision and the coercions.
+  if (method === "replace" || method === "replaceAll") {
+    const rv = tryCompileStandaloneStringValueReplace(ctx, fctx, expr, method, emitReceiver, firstArgIsStringLike);
+    if (rv !== undefined) return rv;
+  }
 
   // replace(search, replacement): native helper
   if (method === "replace" && firstArgIsStringLike) {

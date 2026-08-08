@@ -127,21 +127,23 @@ describe("#1539/#3567 standalone/WASI replace narrowed refusals (Phase 2c)", () 
     expect(refusal.line).toBeGreaterThan(0);
   }
 
-  for (const target of ["standalone", "wasi"] as const) {
-    it(`${target}: refuses replace function replacer`, async () => {
-      await expectRefused(
-        `export function f(s: string): string { return s.replace(/\\d/, (m: string) => m + m); }`,
-        target,
-      );
-    });
+  // (#4224) STANDALONE function replacers are no longer refused — the
+  // §22.2.6.11 walk is re-emitted at the call site so the closure can be invoked
+  // per match (positive coverage in tests/es5-standalone-replace-fn.test.ts).
+  // WASI has no native RegExp lowering on this path and keeps the refusal.
+  it("wasi: refuses replace function replacer", async () => {
+    await expectRefused(
+      `export function f(s: string): string { return s.replace(/\\d/, (m: string) => m + m); }`,
+      "wasi",
+    );
+  });
 
-    it(`${target}: refuses replaceAll function replacer`, async () => {
-      await expectRefused(
-        `export function f(s: string): string { return s.replaceAll(/\\d/g, (m: string) => m + m); }`,
-        target,
-      );
-    });
-  }
+  it("wasi: refuses replaceAll function replacer", async () => {
+    await expectRefused(
+      `export function f(s: string): string { return s.replaceAll(/\\d/g, (m: string) => m + m); }`,
+      "wasi",
+    );
+  });
 
   for (const target of ["standalone", "wasi"] as const) {
     it(`${target}: refuses direct RegExp @@replace function replacer`, async () => {
