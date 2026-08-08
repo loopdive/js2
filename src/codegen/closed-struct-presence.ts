@@ -30,8 +30,13 @@ import type { Instr, ValType } from "../ir/types.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { coldFieldNameAt, coldFieldPresenceInstrs, coldOwnFieldsFor } from "./fnctor-cold-tail.js";
-import { presenceSlotOf, presenceTestInstrs } from "./fnctor-presence-bits.js";
+import {
+  type ColdFieldLocation,
+  coldFieldNameAt,
+  coldFieldPresenceInstrs,
+  coldOwnFieldsFor,
+} from "./fnctor-cold-tail.js";
+import { type PresenceSlot, presenceSlotOf, presenceTestInstrs } from "./fnctor-presence-bits.js";
 import { compileExpression } from "./shared.js";
 
 export interface ClosedStructPresence {
@@ -60,16 +65,59 @@ export interface ClosedStructPresence {
  * The redundant null test on a provably non-null receiver folds away in
  * `wasm-opt`.
  */
+/**
+ * (#4225) Where `key`'s storage lives on this fnctor family — the SINGLE source
+ * of truth both fold sites consult, and the seam #3927's per-type emission
+ * extends.
+ *
+ * `base` is a presence bit in the main struct's `$presence_<w>` words. `cold` is
+ * the #3927 hot/cold split's `$cold` hop. `undefined` means the family has no
+ * storage for this name anywhere, which is the only case where a folded answer
+ * is sound.
+ *
+ * **Why this must not be a base-field-list test.** The cold split REMOVES a
+ * moved field from the base struct's field list, so `structFieldNames
+ * .includes(key)` answers false for a name the instance really carries. A fold
+ * site that decides "genuinely absent" from the base list therefore emits a
+ * constant `false` for a present property. Add any new carrier HERE — never at
+ * the call sites, which is what let the two sites drift apart in the first
+ * place (#4225: one site had the fix and the other could not reach it).
+ *
+ * **Per-type layouts (#3927 `JS2WASM_FNCTOR_LAYOUT_EMIT`) are deliberately NOT
+ * an arm here yet, and that is a measurement, not an oversight.** That pass's
+ * own `reflectiveSurface` fixture probes `hasOwnProperty(present)`,
+ * `hasOwnProperty(absent)` and `key in recv` on a layout-split receiver and
+ * asserts flag-ON equals flag-OFF equals the spec answer; those tests pass with
+ * this module as written, so the layout case is already answered correctly and
+ * a speculative third arm would be untested duplication. If that ever changes,
+ * the shapes are ready: `LayoutFieldLocation` and `ResidFieldLocation` in
+ * `fnctor-layout-emit.ts` both carry a `presenceSlot`, and the layout one
+ * resolves into the BASE words at fixed indices — already layout-independent by
+ * construction. Extend {@link PresenceStorage} with a third variant and this
+ * function with a third lookup; every fold site inherits it for free.
+ */
+export type PresenceStorage =
+  | { readonly where: "base"; readonly slot: PresenceSlot }
+  | { readonly where: "cold"; readonly loc: ColdFieldLocation };
+
+export function findPresenceStorage(ctx: CodegenContext, structName: string, key: string): PresenceStorage | undefined {
+  const slot = presenceSlotOf(ctx.structFields.get(structName), key);
+  if (slot) return { where: "base", slot };
+  const loc = coldOwnFieldsFor(ctx, structName).find((c) => coldFieldNameAt(ctx, c) === key);
+  return loc ? { where: "cold", loc } : undefined;
+}
+
 export function closedStructPresenceInstrs(
   ctx: CodegenContext,
   fctx: FunctionContext,
   structName: string,
   structTypeIdx: number,
   key: string,
+  storage: PresenceStorage | undefined = findPresenceStorage(ctx, structName, key),
 ): ClosedStructPresence | undefined {
-  const slot = presenceSlotOf(ctx.structFields.get(structName), key);
-  const cold = slot ? undefined : coldOwnFieldsFor(ctx, structName).find((loc) => coldFieldNameAt(ctx, loc) === key);
-  if (!slot && !cold) return undefined;
+  if (!storage) return undefined;
+  const slot = storage.where === "base" ? storage.slot : undefined;
+  const cold = storage.where === "cold" ? storage.loc : undefined;
 
   const recvLocal = allocTempLocal(fctx, { kind: "ref_null", typeIdx: structTypeIdx } as ValType);
   const recv: Instr[] = [{ op: "local.get", index: recvLocal }, { op: "ref.as_non_null" }];
@@ -166,6 +214,21 @@ function closedStructTypeIdxOf(recvWasm: ValType | undefined): number {
  * constructor receiver, where the struct describes the *instance* layout. Those
  * must keep folding, so they are declined here rather than answered from a
  * presence bit that does not describe this receiver at all.
+ *
+ * (#4225) `foldedAnswer` selects WHICH unsound constant this replaces, and the
+ * two directions are not symmetric:
+ *
+ * - **`1`** — the fold said present from the base field list. Any storage
+ *   (base bit or cold hop) demotes it to a presence read, because a
+ *   conditionally-assigned field may never have been written.
+ * - **`0`** — the fold said absent. Demote **only** when the name has
+ *   OFF-BASE storage. That is the whole #4225 defect: the cold split removes a
+ *   moved field from the base list, so the fold cannot see it. A base-resident
+ *   name that folded to `0` did so for a reason the presence bit does not know
+ *   about — `propertyIsEnumerable` answering `0` for a non-enumerable field is
+ *   the live example — and reading the bit there would turn a correct `false`
+ *   into a wrong `true`. `findPresenceStorage` is the discriminator: a
+ *   non-enumerable base field has no cold location, so it never fires.
  */
 export function emitHasOwnPresence(
   ctx: CodegenContext,
@@ -175,9 +238,17 @@ export function emitHasOwnPresence(
   key: string,
   propAccess: ts.PropertyAccessExpression,
   argExpr: ts.Expression,
+  foldedAnswer: number,
 ): boolean {
   if (structFieldNames === null) return false;
-  return emitClosedStructPresence(ctx, fctx, closedStructTypeIdxOf(recvWasm), key, () => {
+  const structTypeIdx = closedStructTypeIdxOf(recvWasm);
+  if (structTypeIdx < 0) return false;
+  const structName = ctx.typeIdxToStructName.get(structTypeIdx);
+  if (structName === undefined) return false;
+  const storage = findPresenceStorage(ctx, structName, key);
+  if (!storage) return false;
+  if (foldedAnswer !== 1 && storage.where !== "cold") return false;
+  return emitClosedStructPresence(ctx, fctx, structTypeIdx, key, () => {
     const recv = compileExpression(ctx, fctx, propAccess.expression);
     if (compileExpression(ctx, fctx, argExpr)) fctx.body.push({ op: "drop" });
     return recv;
