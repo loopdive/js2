@@ -44,8 +44,8 @@ if echo "$CMD" | grep -q '\-\-ff-only'; then
   PROOF=""
   for candidate in \
     "/tmp/merge-proof.json" \
-    "/workspace/.claude/worktrees/$BRANCH/.claude/nonces/merge-proof.json" \
-    "/workspace/.claude/nonces/merge-proof.json"; do
+    "${CLAUDE_PROJECT_DIR:-/workspace}/.claude/worktrees/$BRANCH/.claude/nonces/merge-proof.json" \
+    "${CLAUDE_PROJECT_DIR:-/workspace}/.claude/nonces/merge-proof.json"; do
     if [ -f "$candidate" ]; then
       PROOF="$candidate"
       break

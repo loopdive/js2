@@ -14,7 +14,7 @@ source "${CLAUDE_PROJECT_DIR:-/workspace}"/.claude/hooks/event-log.sh
 log_event "agent_shutdown" "agent=$AGENT"
 
 # Check if context summary exists
-if [ -n "$AGENT" ] && [ ! -f "/workspace/plan/agent-context/${AGENT}.md" ]; then
+if [ -n "$AGENT" ] && [ ! -f "${CLAUDE_PROJECT_DIR:-/workspace}/plan/agent-context/${AGENT}.md" ]; then
   log_event "agent_shutdown_blocked" "agent=$AGENT" "reason=no_context_summary"
   echo "BLOCKED: No context summary at plan/agent-context/${AGENT}.md. Ask the agent to write one first." >&2
   exit 2
