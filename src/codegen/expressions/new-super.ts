@@ -1,5 +1,6 @@
 import type { FieldDef, Instr, ValType } from "../../ir/types.js";
 import { materializeFnctorTwinCaptures } from "../fnctor-twin-captures.js";
+import { emitLayoutSelectingStructNew, maybeEmitLayoutHint } from "../fnctor-layout-emit.js"; // (#3927) per-type layouts
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * new/super/class expression compilation.
@@ -1564,8 +1565,18 @@ function compileNewFunctionDeclaration(
     ctorFctx.localMap.set(ctorFctx.params[i]!.name, i);
   }
 
-  emitFnctorFieldInitializers(ctx, ctorFctx, fields, ctorIdentityParamIdx);
-  ctorFctx.body.push({ op: "struct.new", typeIdx: structTypeIdx });
+  // (#3927 per-type layouts) A split family allocates the layout the caller
+  // hinted (via the per-family hint global), defaulting to the full-union
+  // sibling on hint 0 — the ctor reads and RESETS the hint, so a stale hint is
+  // consumed at most once and every failure direction degrades to "fat, never
+  // narrow". Non-split fnctors keep the single-struct path byte-identically.
+  const layoutInfo = ctx.fnctorLayoutInfo?.get(structName);
+  if (layoutInfo !== undefined) {
+    emitLayoutSelectingStructNew(ctx, ctorFctx, layoutInfo, ctorIdentityParamIdx);
+  } else {
+    emitFnctorFieldInitializers(ctx, ctorFctx, fields, ctorIdentityParamIdx);
+    ctorFctx.body.push({ op: "struct.new", typeIdx: structTypeIdx });
+  }
 
   // Store in __self local
   const selfLocal = allocLocal(ctorFctx, "__self", {
@@ -3114,6 +3125,12 @@ function emitCoerceElemToAnyrefInto(ctx: CodegenContext, fctx: FunctionContext, 
 }
 
 function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: ts.NewExpression): ValType | null {
+  // (#3927 per-type layouts) Publish the allocation-label hint when this `new`
+  // is a recorded label site of a split family. BEFORE the arguments compile —
+  // a labelled allocation nested in them consumes and resets the hint, so the
+  // outer allocation degrades to the union layout (fat, never narrow).
+  maybeEmitLayoutHint(ctx, fctx, expr);
+
   // Handle `new function() { ... }(args)` — constructor with function expression
   if (ts.isFunctionExpression(expr.expression)) {
     return compileNewFunctionExpression(ctx, fctx, expr, expr.expression);

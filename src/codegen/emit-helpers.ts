@@ -27,7 +27,18 @@ export function isSyntheticStructName(structName: string): boolean {
     structName === "$AnyValue" ||
     structName.startsWith("__vec_") ||
     structName.startsWith("__arr_") ||
-    structName.endsWith("__cold")
+    structName.endsWith("__cold") ||
+    // (#3927 per-type layouts) `__lay<k>` sibling layouts and the `__resid`
+    // carrier of a split fnctor family. The resid is a private payload exactly
+    // like the cold tail. The layouts ARE receiver shapes, but their generic
+    // enumeration is wrong twice over: presence-only surfaces must answer from
+    // the BASE presence words (layout-independent, the issue §6 constraint),
+    // and value surfaces must dispatch by the `$shape` stamp because sibling
+    // layouts with identical field kinds share ONE canonical wasm type — a
+    // bare `ref.test` arm reads another field's slot. Layout-aware consumers
+    // get explicit arms via fnctor-layout-emit.ts instead.
+    structName.endsWith("__resid") ||
+    /__lay[0-9]+$/.test(structName)
   );
 }
 
