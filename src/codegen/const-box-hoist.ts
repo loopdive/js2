@@ -73,14 +73,31 @@
  *
  * ## What it is worth
  *
- * The boxed-number allocation stream goes to zero and ~13 % of boxing calls
+ * The boxed-number allocation stream goes to zero and ~12 % of boxing calls
  * disappear. It is NOT expected to move wall clock: #4157 priced the entire
  * helper — call, checks and all, at 100 % of calls — at ≲2 % of parse, with the
  * sign of a two-thirds-of-the-body probe flipping with run order. This is a
  * deterministic allocation/call result, not a timing one.
+ *
+ * ## Code size, and why there is no minimum-use threshold
+ *
+ * Per distinct constant this costs ~21 bytes (a global plus its three seed
+ * instructions) and saves ~8 bytes per SITE (a 9-byte `f64.const` plus a 2-byte
+ * `call` become a 2–3 byte `global.get`), so it breaks even at about three
+ * sites per constant. Acorn averages 14 (697 sites, 49 constants) and its
+ * binary shrinks by 1,040 bytes; a toy module with one site per constant grows
+ * by tens of bytes.
+ *
+ * A "only hoist constants used ≥3 times" threshold would remove that growth and
+ * is deliberately NOT applied: the site count is STATIC, and the highest-value
+ * case in the measured workload is the opposite shape — 12 static `Infinity`
+ * sites executing 3,862 times. Gating on static count would trade the actual
+ * deliverable (the allocation stream) for bytes on modules too small for the
+ * bytes to matter.
  */
 import type { Instr } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { nextModuleGlobalIdx } from "./registry/imports.js";
 import { walkChildren } from "./walk-instructions.js";
 
 /** Escape hatch: `JS2WASM_HOIST_CONST_BOXES=0` restores the pre-#4157 emission. */
@@ -169,7 +186,7 @@ export function hoistConstantBoxedNumbers(ctx: CodegenContext): void {
     const key = constKey(value);
     const existing = hoisted.get(key);
     if (existing) return existing.globalIdx;
-    const globalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
+    const globalIdx = nextModuleGlobalIdx(ctx);
     ctx.mod.globals.push({
       name: `__const_box_${key.replace(/[^A-Za-z0-9_]/g, "_")}`,
       type: { kind: "externref" },
@@ -240,7 +257,7 @@ export function hoistConstantBoxedNumbers(ctx: CodegenContext): void {
 
   // Seed flag — a dedicated i32 rather than a null test on one of the boxes, so
   // "seeded" never depends on `__box_number` being unable to return null.
-  const seededIdx = ctx.numImportGlobals + ctx.mod.globals.length;
+  const seededIdx = nextModuleGlobalIdx(ctx);
   ctx.mod.globals.push({
     name: "__const_box_seeded",
     type: { kind: "i32" },

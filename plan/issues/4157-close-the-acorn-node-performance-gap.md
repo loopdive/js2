@@ -570,6 +570,15 @@ instruction seed block cost less than the 697 `f64.const` (9 B) + `call` (2 B)
 pairs they replace with a 2–3 B `global.get`. This is the same arithmetic the
 provability section measured for inlining and reached the same sign.
 
+It breaks even at roughly **three sites per distinct constant** (~21 B fixed per
+constant, ~8 B saved per site); acorn averages 14. A toy module with one site
+per constant grows by tens of bytes — measured, a 5-site js-host probe went
+435 → 485 B. A "only hoist constants used ≥3 times" threshold would remove that
+and is deliberately **not** applied: the site count is STATIC, and the
+highest-value case in the measured workload is the opposite shape — 12 static
+`Infinity` sites executing 3,862 times. Gating on static count would trade the
+actual deliverable for bytes on modules too small for the bytes to matter.
+
 **No wall-clock number is quoted, deliberately.** The section above priced the
 *entire* helper at ≲2 % of parse, with a probe removing two-thirds of its body at
 100 % of calls producing a result whose sign flipped with run order. 11.9 % of
