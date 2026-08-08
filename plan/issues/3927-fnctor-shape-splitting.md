@@ -1485,15 +1485,34 @@ when the box is idle; not run here.)
    consulting `fnctorLayoutOwnFieldsFor` alongside
    `findColdStructsForField`; it gates default-ON here and is tracked by
    #4225's cross-check criterion. Related: the `for…in`
-   static unroll on struct-typed receivers enumerates nothing
-   (`plan/issues/4219-forin-static-unroll-ignores-presence.md`, on PR
-   #4229's branch) — that gap is receiver-spelling-specific and does NOT
-   block this slice's validation (every differential here runs the dynamic
-   path, non-vacuously), but a flag-ON conformance run will surface both.
+   static unroll on struct-typed receivers enumerates nothing — filed as
+   issue id 4219, whose file rides PR #4229's branch (not linkable from
+   here until that PR lands; the #1616 gate resolves issue-file paths
+   against the current tree). That gap is receiver-spelling-specific and
+   does NOT block this slice's validation (every differential here runs the
+   dynamic path, non-vacuously), but a flag-ON conformance run will surface
+   both.
 3. The wall-clock claim is an extrapolation either way (§7 of the analysis
    slice): −31.4 % of struct bytes projects, via the two measured
    byte→GC-bucket points, to roughly −4 to −5 pp of wall on top of the
    current default — unresolvable by A/B on this box.
+4. **Split-retirement decision input (run WITH the default-ON flip, not
+   after it).** Once layouts are default-ON, run the allocation census
+   grouped by PROOF VERDICT — `split` vs `single-site` / `not-separable` /
+   `no-sites` / `too-many-shapes` — across the FULL npm-compat corpus, not
+   only acorn. The struct bytes remaining in the bail-verdict families are
+   the ENTIRE residual value of the #4211/#4217 hot/cold split: on a
+   `split`-verdict fnctor the tail has nothing left to move (this slice
+   measures the cold-tail stream at exactly 0 with layouts ON — the −9,125
+   tail allocations line in §3), so the cold split earns its dispatcher
+   surface only on what the analysis bails on. On acorn that residue is ~0
+   (`Node` is the only widened fnctor and it splits), but acorn is one
+   corpus and the stakeholder question — "does #4217 become redundant once
+   layouts land?" — must be answered by that grouped census, not by
+   extrapolating from the motivating package. If the bail-family byte share
+   is negligible corpus-wide, retire the cold split (and its per-consumer
+   arm surface) in a follow-up; if not, the two verdicts partition cleanly
+   and both stay.
 
 The switch is one line (default the flag ON in `fnctorLayoutEmitEnabled`)
 once those close.
