@@ -1,7 +1,9 @@
 ---
 id: 4194
 title: "standalone: a constructed instance has no expando substrate — for-in/Object.keys/`in` see 0 keys and a dynamic write is DROPPED; this is what makes compiled acorn reject `{ f }` destructuring in every eval"
-status: in-progress
+status: done
+completed: 2026-08-08
+pr: 4232
 assignee: "ttraenkler/fable-3927-emission"
 sprint: current
 created: 2026-08-06
