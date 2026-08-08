@@ -3,6 +3,7 @@ id: 3927
 title: "perf: a widened fnctor struct is the union of every shape its constructor ever takes — acorn's `Node` is 292 B for a 3-6 property object"
 status: done
 completed: 2026-08-08
+pr: 4230
 assignee: "ttraenkler/fable-3927-emission"
 sprint: current
 created: 2026-07-31
