@@ -61,6 +61,10 @@ jobs:
     environment: baseline-promote
     permissions:
       contents: write
+      # actions:write lets the post-publish step dispatch deploy-pages (#4217).
+      # workflow_dispatch is one of the two event types the GITHUB_TOKEN is
+      # allowed to create runs for, so no PAT is needed.
+      actions: write
 
     steps:
       - name: Resolve immutable source revision
@@ -163,6 +167,7 @@ jobs:
         # cron) regenerates and promotes, and the staleness floor in the gate
         # bounds how long a permanently busy queue can hold the artifact back.
         if: steps.queue_gate.outputs.decision != 'defer'
+        id: promote
         env:
           MAIN_DEPLOY_KEY: ${{ secrets.MAIN_DEPLOY_KEY }}
           SOURCE_SHA: ${{ steps.refs.outputs.source_sha }}
@@ -268,6 +273,7 @@ jobs:
             push_err="$(mktemp)"
             if git push --no-verify deploykey HEAD:main 2>"$push_err"; then
               echo "Published npm-compat artifacts measured at ${SOURCE_SHA}."
+              echo "published=1" >> "$GITHUB_OUTPUT"
               exit 0
             fi
             cat "$push_err"
@@ -280,3 +286,22 @@ jobs:
 
           echo "::error::could not publish npm-compat artifacts after 5 replay attempts."
           exit 1
+
+      # (#4217) The artifact commit above carries `[skip ci]`, so it can never
+      # trigger its own Pages rebuild — the deployed npm-compat.html kept
+      # serving the previous JSON until the NEXT unrelated merge redeployed the
+      # site (observed 2026-08-08: artifact published 05:56, last deploy 05:34,
+      # page stale until a manual dispatch at 06:22). Dispatch the deploy
+      # explicitly after a real publish. Best-effort: the data is already
+      # safely on main, so a failed dispatch is a warning, not a job failure.
+      - name: Redeploy Pages so the site serves the fresh artifact
+        if: steps.queue_gate.outputs.decision != 'defer' && steps.promote.outputs.published == '1'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          if gh workflow run deploy-pages.yml -R "${GITHUB_REPOSITORY}" --ref main; then
+            echo "deploy-pages dispatched."
+          else
+            echo "::warning title=npm-compat-refresh::deploy-pages dispatch failed; the site stays on the previous build until the next merge to main."
+          fi
