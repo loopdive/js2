@@ -385,6 +385,26 @@ conditional/unconditional), so a predicate that has degenerated into a constant
 fails in either direction — an enumeration-shaped differential over this
 receiver class otherwise passes vacuously by comparing "nothing" to "nothing".
 
+### The two cells this does NOT close — split out as issue #4219
+
+The same surface matrix that attributes this slice also measures two cells it
+leaves untouched (verified: reverting only the two source files moves exactly
+the three `in`/`hasOwnProperty`/`propertyIsEnumerable` cells and nothing else):
+
+- **`for (k in bag)` on a STRUCT-TYPED receiver enumerates nothing** in
+  standalone — scores `0`, not `2`, so it is a different path
+  (`compileForInStatement`'s static-unroll fallback) failing open, not the
+  shape fold. It is also presence-BLIND, so sourcing its names from the struct
+  without gating each on its bit would convert this under-report into the
+  over-report just removed. Directly blocks #3927.
+- **Host-lane `Object.keys` under-reports** — the only cell where host is worse
+  than standalone. Opposite lane, `src/runtime.ts` marshalling.
+
+Filed together in issue id **#4219** (not to be confused with GitHub PR #4219,
+which is this issue's dynamic half), stated as two mechanisms rather than one
+bucket — repeating the original filing's grouping here is what made the first
+diagnosis take three passes.
+
 ### Process note
 
 Two lanes worked id #3920 concurrently. The `issue-assignments` claim ref was

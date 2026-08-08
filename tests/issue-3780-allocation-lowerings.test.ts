@@ -130,13 +130,19 @@ describe("#3780 — packed own-presence flags", () => {
    * for. Until then it was pinned to `EXPECTED_CROSS_WORD - 820 * 1000` on the
    * strength of `"pNN" in bag` answering `false` for a fnctor instance.
    *
-   * That pinned constant had since gone STALE IN THE OTHER DIRECTION and the
-   * test was red on `main`: the receiver had come to type as the closed struct,
-   * which routed `in` into the compile-time `structFieldNames.includes(key)`
-   * fold, so every one of the 40 keys answered `true` — present or not
-   * (1,650,660: 40 hits × 41 seeds instead of 820). A pin against the lane's own
-   * wrong answer cannot survive the answer changing, which is the argument for
-   * asserting the real one.
+   * That pinned constant went stale twice, in OPPOSITE directions, and the test
+   * has been red on `main` throughout. Measured, per base:
+   *
+   * | base | answer | why |
+   * | --- | ---: | --- |
+   * | `9ff693ddf` (before PR #4219) | 1,650,660 | the receiver types as the closed struct, so `in` took the compile-time `structFieldNames.includes(key)` fold and every one of the 40 keys answered `true` — 40 hits × 41 seeds instead of 820 |
+   * | `23ba5903b` (after PR #4219) | **830,660** | correct, and exactly `EXPECTED_CROSS_WORD` |
+   * | the pin | 10,660 | the ORIGINAL bug: presence dropped out entirely |
+   *
+   * So this is not an allocation-count change — the pin encoded a wrong answer,
+   * the wrong answer moved, and a pin against the lane's own bug cannot survive
+   * that. Hence asserting the real value. The credit for the behaviour reaching
+   * `EXPECTED_CROSS_WORD` is #4219's; this only repairs the assertion.
    *
    * Both layouts must still agree — that is the packing-is-layout-only claim,
    * and the 32-bit word boundary is where a single-word implementation would
