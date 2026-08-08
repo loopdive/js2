@@ -65,14 +65,22 @@ done
 # needed NO separate entry here and NO ruleset re-apply — it rides the
 # `merge shard reports` context. See docs/ci-policy.md §3.
 # -----------------------------------------------------------------------------
+# NOTE (#3934): `linear-tests` was listed here for months while the live
+# ruleset has NEVER contained it. That made this array a latent enforcement
+# change: running the script would have silently promoted a seventh gate that
+# nobody had decided to require. It is removed so this array states the policy
+# that is actually in force. `linear-tests` still runs in ci.yml — it just does
+# not gate, and ci.yml's `changes` job already treats it as optional. To promote
+# it, add it here AND move it out of the optional table in docs/ci-policy.md §1,
+# deliberately and in one reviewed change.
+# -----------------------------------------------------------------------------
 REQUIRED_CHECKS=(
   "cheap gate (main-ancestor + lint)"    # test262-sharded.yml — fast pre-flight reject
   "merge shard reports"                  # test262-sharded.yml — authoritative test262 gate (host + standalone, #1897)
   "quality"                              # ci.yml — lint, format, typecheck, IR budget
   "equivalence-gate"                     # ci.yml — merged equivalence shard gate
-  "linear-tests"                         # ci.yml — linear-backend + C-ABI + SIMD suites (#2139)
   "check for test262 regressions"        # test262-sharded.yml — full rolling-baseline regression diff
-  "cla-check"                            # cla-check.yml — external contributor CLA acceptance
+  "cla-check"                            # cla-check.yml — external contributor CLA acceptance (REQUIRED, #1660)
 )
 
 # Build the JSON payload from the live ruleset. Ruleset PUT is replace-style,
