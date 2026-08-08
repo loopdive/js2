@@ -178,13 +178,17 @@ export function residComputedWrite() {
     }
   });
 
-  it("pins the expando residual (no storage anywhere → still dropped; #4010/#4098 own it)", async () => {
+  it("expando writes on a closed struct are retained (the instance-props bag substrate)", async () => {
     const wasm = await buildStandalone();
     const native = await nativeModule();
     expect(native.expandoResidual!()).toBe(11);
-    // Documented residual: a true expando on a closed struct has no substrate
-    // in standalone. When the substrate lands this pin should FLIP to 11 —
-    // that is the point of pinning it.
-    expect(wasm.expandoResidual!()).toBe(0);
+    // This was the pinned residual ("no storage anywhere → still dropped");
+    // the pin's own comment said it should FLIP to 11 when the substrate
+    // lands. The instance-props expando bag (the #4194 bag half, reconciled
+    // with #4232's declared-field arms) is that substrate: a write that
+    // misses every declared ladder deposits into the identity-keyed bag and
+    // reads back. See tests/issue-4194-instance-expando.test.ts for the full
+    // surface matrix.
+    expect(wasm.expandoResidual!()).toBe(11);
   });
 });

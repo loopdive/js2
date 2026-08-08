@@ -117,6 +117,28 @@ function collectPatternName(pattern: Node, target: string[]): void {
   if (pattern.type === "Identifier") appendUnique(target, pattern.name);
 }
 
+/** Append every name a binding pattern binds. Used for a NON-simple catch
+ * parameter: B.3.5 exempts only `CatchParameter : BindingIdentifier`, so a
+ * destructuring parameter's bound names must shadow the handler descent and
+ * cancel B.3.3's synthetic var for those names. */
+export function appendPatternBoundNames(pattern: Node, target: string[]): void {
+  if (!pattern) return;
+  if (pattern.type === "Identifier") {
+    appendUnique(target, pattern.name);
+  } else if (pattern.type === "ObjectPattern") {
+    for (const property of pattern.properties) {
+      if (property.type === "RestElement") appendPatternBoundNames(property.argument, target);
+      else appendPatternBoundNames(property.value, target);
+    }
+  } else if (pattern.type === "ArrayPattern") {
+    for (const element of pattern.elements) appendPatternBoundNames(element, target);
+  } else if (pattern.type === "AssignmentPattern") {
+    appendPatternBoundNames(pattern.left, target);
+  } else if (pattern.type === "RestElement") {
+    appendPatternBoundNames(pattern.argument, target);
+  }
+}
+
 /** Collect only declarations that are var-scoped through a nested statement.
  * Lexical declarations belong to the nested block/loop/switch environment and
  * must not be installed in the eval body's top-level lexical environment. */
@@ -201,7 +223,15 @@ function collectNestedVarDeclarations(statement: Node, plan: EvalDeclarationPlan
   }
   if (statement.type === "TryStatement") {
     collectNestedVarDeclarations(statement.block, plan, lexicalAncestors);
-    if (statement.handler) collectNestedVarDeclarations(statement.handler.body, plan, lexicalAncestors);
+    if (statement.handler) {
+      // A SIMPLE catch parameter is B.3.5-exempt and deliberately does NOT
+      // shadow the handler descent; a destructuring one is not exempt.
+      const handlerLexicals: string[] = [];
+      for (const name of lexicalAncestors) handlerLexicals.push(name);
+      const param = statement.handler.param;
+      if (param && param.type !== "Identifier") appendPatternBoundNames(param, handlerLexicals);
+      collectNestedVarDeclarations(statement.handler.body, plan, handlerLexicals);
+    }
     if (statement.finalizer) collectNestedVarDeclarations(statement.finalizer, plan, lexicalAncestors);
     return;
   }
