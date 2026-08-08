@@ -119,6 +119,14 @@ export function ensureVecConstructorCarrier(ctx: CodegenContext): number | undef
  * it is the module's FIRST demand for `Array`: the singleton's lazy init rides
  * inside it. That case is not exotic — it is the argument order of
  * `assert.sameValue(a.constructor, Array)`.
+ *
+ * `constructor` is an ordinary writable INHERITED property, so an own write
+ * (`a.constructor = 5`) must shadow it (§7.3.2). Unlike the sibling `"length"`
+ * arm — whose key can never be an own expando — this one therefore consults the
+ * #3537 expando side table first and declines to answer when the array carries
+ * its own entry, letting the main body's `__vec_prop_get` miss arm return it.
+ * Without the bag helper the guard degrades to the unconditional answer, which
+ * is still strictly better than the `undefined` this replaces.
  */
 export function vecConstructorArmInstrs(
   ctx: CodegenContext,
@@ -126,12 +134,23 @@ export function vecConstructorArmInstrs(
 ): Instr[] {
   const carrierIdx = ctx.funcMap.get(VEC_CONSTRUCTOR_CARRIER_FN);
   if (carrierIdx === undefined || !keyEqualsConstructor) return [];
+  const bagHasIdx = ctx.funcMap.get("__carrier_bag_has");
+  const answer: Instr[] = [{ op: "call", funcIdx: carrierIdx }, { op: "return" }];
   return [
     ...keyEqualsConstructor,
     {
       op: "if",
       blockType: { kind: "empty" },
-      then: [{ op: "call", funcIdx: carrierIdx }, { op: "return" }],
+      then:
+        bagHasIdx === undefined
+          ? answer
+          : [
+              { op: "local.get", index: 0 },
+              { op: "local.get", index: 1 },
+              { op: "call", funcIdx: bagHasIdx },
+              { op: "i32.eqz" }, // no own `constructor` → the inherited carrier wins
+              { op: "if", blockType: { kind: "empty" }, then: answer },
+            ],
     },
   ];
 }
