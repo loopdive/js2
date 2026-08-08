@@ -9,9 +9,11 @@ updated: 2026-08-08
 # ENGINE for the WasmGC lane behind the existing js2wasm:runtime-eval provider
 # seam, with a code-grounded staged effort estimate and an ABI probe record.
 # 2026-08-08: acceptance box 1 (the link/identity/measurement spike) executed —
-# see "## Spike findings". Status stays `backlog`: the exploration's remaining
-# boxes (frontier A/B, strings, cycle policy, split-brain audit, version pin)
-# are untouched, and the WASI-standalone artifact is still blocked.
+# see "## Spike findings" — then slice 1 built the real WASI artifact and
+# re-proved the results on it, see "## Slice 1 — WASI artifact". Status stays
+# `backlog`: the exploration's remaining boxes (frontier A/B, strings, cycle
+# policy, split-brain audit, go/no-go) are untouched. The version pin is now
+# recorded (quickjs-ng v0.16.1 / 954dc53); the upgrade policy is not.
 priority: low
 horizon: xl
 feasibility: hard
@@ -120,8 +122,9 @@ reachable by dynamic code; everything else stays native.
       (expect ~+1.2 MB) and the API-call trampoline cost.
       → **Done 2026-08-08, see "Spike findings" below.** Identity + round-trip
       PROVEN over one shared memory (503 KB / 234 KB gz, 1.86 ns trampoline).
-      The *WASI-standalone* half is NOT proven — no wasi-sdk build was
-      obtainable in-sandbox; that is the next slice's blocker.
+      The *WASI-standalone* half is now proven too — see "Slice 1 — WASI
+      artifact" (2026-08-08): a wasi-sdk-style build importing only five
+      `wasi_snapshot_preview1` functions, with R2/R3/R4 reproduced on it.
 - [ ] Decide tainted-allocation vs exotic-wrapper for the object frontier
       (or the hybrid: tainted sites for known-escaping types, wrappers for
       the residue), with a measured A/B on an eval-heavy fixture.
@@ -795,3 +798,264 @@ the MVP**, and gated on #4194 landing plus the stage-1 callback probe.
   the last ~10-50×. Variant C's unique, non-recoverable advantage is eval'd-
   source language completeness — which only the MVP's QuickJS routing already
   captures for primitive-frontier code.
+## Slice 1 — WASI artifact (2026-08-08)
+
+Closes the spike's blocker. **The artifact exists, it is genuinely standalone,
+and every R2/R3/R4 result reproduces on it.** Rung reached: **S1–S5 complete.**
+
+### Verdict
+
+**Both halves of the design claim now hold.** The one-heap identity result was
+already proven; what was missing was that the pair can link with *no JS host*.
+It can:
+
+```
+IMPORTS (5): wasi_snapshot_preview1.{clock_time_get, fd_close, fd_fdstat_get,
+                                     fd_seek, fd_write}
+```
+
+Zero `env.*`, zero emscripten. That was the spike's sole disqualifier and it is
+gone. The peer module drives QuickJS over the shared memory and gets **42**,
+**411**, and correct tag/float64 decoding — same as the spike, now on a WASI
+artifact.
+
+The go/no-go blocker is therefore lifted. **The next blocker is not QuickJS, it
+is `src/codegen-linear/`** — see the slice-2 handoff.
+
+Deliverables landed: `scripts/quickjs-artifact/{qjs_shim.c, build.sh,
+extract-abi.mjs, wasi-stub.mjs, README.md, probe/{peer.c, probe.mjs}}` and the
+`workflow_dispatch`-only `.github/workflows/quickjs-wasi-artifact.yml`. The
+`.wasm` is not committed; its sha256 is below.
+
+### Build recipe (exact)
+
+Pins: **quickjs-ng `954dc53628e36891f93c359aa60895c2ae3dac6b` (v0.16.1)**,
+wasi-libc `8d8348ec24253d0638a693b8af82445c13d92d32`, builtins from
+wasi-sdk-34-rc.1. Toolchain: stock Ubuntu **clang 18.1.3** + `wasm-ld`/`llvm-ar`.
+**No wasi-sdk install.** Total cold build **~3 min** on 4 cores.
+
+```bash
+# S1 sysroot (~30 s build; wasi-libc has NO Makefile any more — CMake only)
+cmake -S wasi-libc -B build -DCMAKE_C_COMPILER=clang-18 -DCMAKE_AR=llvm-ar-18 \
+  -DCMAKE_RANLIB=llvm-ranlib-18 -DCMAKE_INSTALL_PREFIX=$SYSROOT \
+  -DTARGET_TRIPLE=wasm32-wasip1 -DMALLOC=dlmalloc -DBUILD_TESTS=OFF \
+  -DBUILD_SHARED=OFF -DBUILTINS_LIB=$BUILTINS
+cmake --build build -j4 && cmake --install build
+
+# S2 quickjs core: FOUR files, 19 s, zero patches, zero warnings
+clang-18 --target=wasm32-wasip1 --sysroot=$SYSROOT -resource-dir $RD \
+  -O2 -ffunction-sections -fdata-sections -fno-strict-aliasing -funsigned-char \
+  -D_GNU_SOURCE -D_WASI_EMULATED_PROCESS_CLOCKS -D_WASI_EMULATED_SIGNAL -DNDEBUG \
+  -c {dtoa,libregexp,libunicode,quickjs}.c
+
+# S3 link (~1 s). Memory is EXPORTED: this module owns the shared heap.
+clang-18 ... -mexec-model=reactor -Wl,--export-memory -Wl,--gc-sections \
+  -Wl,--strip-all -Wl,--export={malloc,free,realloc,calloc} \
+  -Wl,--initial-memory=16777216 -Wl,--max-memory=1073741824 -Wl,--stack-first \
+  -lwasi-emulated-process-clocks -lwasi-emulated-signal -o libquickjs.wasm ...
+```
+
+`sha256(libquickjs.wasm) = 550ebe4d88a5db7b32c93de7a5e6bc6389ade5d6daf837a60acce7851a2927c9`
+
+### Friction list (what actually cost time)
+
+1. **wasi-libc has no `Makefile`** — it is CMake-only now. Any recipe of the
+   form `make -C wasi-libc CC=clang AR=llvm-ar …` fails at "no such file".
+2. **Ubuntu's clang 18 ships no wasm32 `compiler-rt`**, and the link hard-fails:
+   `cannot open .../lib/wasip1/libclang_rt.builtins-wasm32.a`. Fixed by staging
+   a `-resource-dir` holding the builtins (with `include/` symlinked to the real
+   resource dir so `stddef.h` still resolves). wasi-libc's own CMake needs the
+   same library via `-DBUILTINS_LIB=`, otherwise it ExternalProject-downloads it.
+3. **The builtins ARE downloadable.** The spike concluded GitHub was gated after
+   a 403 on `/archive/refs/tags/…`; `/releases/download/…` returns **200**. Both
+   `git clone`s also succeed (~1 s each). The gating is narrower than recorded.
+4. **No setjmp anywhere** — QuickJS returns `JS_EXCEPTION` sentinels, so no
+   Asyncify, no `libsetjmp`, no exception-handling proposal needed. The one
+   `setjmp.h` mention in `dtoa.c` is commented out.
+5. Signals/clocks are quickjs-ng's own documented WASI knobs
+   (`_WASI_EMULATED_SIGNAL` / `_WASI_EMULATED_PROCESS_CLOCKS` + the matching
+   `-lwasi-emulated-*`), taken straight from its `CMAKE_SYSTEM_NAME STREQUAL
+   "WASI"` branch. Threads stay off.
+6. **Upstream already ships `qjs-wasi-reactor.c`** (a `QJS_WASI_REACTOR` CMake
+   option). It was *not* used: it pulls in `quickjs-libc` and
+   `-Wl,--export-dynamic`, which is a much wider syscall and export surface than
+   the thin wrapper set this design mandates. Worth knowing it exists.
+7. **Two measurement traps, both of which produce believable wrong numbers:**
+   - LLVM **closes a pure arithmetic baseline loop into a formula** — the
+     `acc += i & 1` baseline measured **0.05 ns/iter** because the loop was
+     deleted, which silently inflates any "gross minus baseline" call cost. The
+     baseline must be un-deletable (a `volatile` load). A local-call baseline is
+     *also* deleted (constant-returning callee), so `noinline` is not enough.
+   - **Benchmark ordering**: whichever eval driver runs first pays a one-off
+     ~2.7 ms warm-up. Straight A-then-B read as "wasm-driven eval is 1.6×
+     slower than JS-driven" (6.01 vs 3.79 ms). Alternating the drivers shows
+     them **equal** (3.85 vs 3.81). The spike's equality result replicates only
+     if you alternate.
+8. **No `wasm-opt`/binaryen on the box** (no `node_modules`), so that size lever
+   is untested — see the size table.
+
+### Sizes — vs the spike's emscripten numbers
+
+| artifact | raw | gzip |
+| --- | ---: | ---: |
+| **this build, `-O2` + gc-sections + strip (default)** | **1,011,134** | **350,017** |
+| this build, `-Oz` + gc-sections + strip | 626,104 | 261,243 |
+| this build, `-O2`, no strip/gc | 1,037,624 | 359,626 |
+| emscripten release-sync (spike) | 503,134 | 233,588 |
+| emscripten release-asyncify (spike) | 1,027,523 | 362,445 |
+| `peer.wasm` (the js2wasm stand-in) | 1,896 | 1,064 |
+
+`--gc-sections` is worthless without `-ffunction-sections -fdata-sections`
+(1,037,630 → 1,037,639, i.e. nothing); the 26 KB it appears to save is really
+`--strip-all` dropping the `name` section.
+
+**`-Oz` is not free: it costs ~23% on both eval (3.85 → 5.03 ms) and per-property
+cost (66.6 → 82.0 ns).** The boxed tier is by definition the tier running code we
+could *not* compile, so `-O2` is the default and `OPT=-Oz` is the documented
+knob. The residual gap to emscripten's 503 KB is mostly `wasm-opt`, which
+emscripten runs and this build does not — untested, and the obvious next lever
+if size matters.
+
+### R2/R3/R4 re-measured on THIS artifact
+
+All PASS. `peer.wasm` is a separate module that imports the artifact's **memory
+object** plus 17 `qjs_*` functions; JS appears only as the instantiation harness
+and the timer.
+
+| check | result |
+| --- | --- |
+| R2 `eval("40+2")`, source bytes authored by the peer | **42** |
+| R3 identity round-trip (`x*10 + identityBit`) | **411** |
+| R3 object tag via `qjs_tag` wrapper | −1 = `JS_TAG_OBJECT` |
+| R3 object tag **open-coded** (`i32.load offset=4`) | −1 — matches |
+| R3 float64 decoded from the raw NaN-boxed JSValue | 3.75 |
+| peer module data segments | **none** |
+
+| measurement | spike (emscripten, JS-hosted) | **this artifact (WASI, glue-free)** |
+| --- | ---: | ---: |
+| wasm→wasm trampoline, net | 1.86 ns | **2.34 ns** |
+| JS host→QuickJS, net | 8.77 ns | **4.56 ns** |
+| GetProp+ToFloat64+Free, wasm-driven | 62.1 ns | **66.6 ns** |
+| GetProp+ToFloat64+Free, JS-driven | 85.9 ns | **77.5 ns** |
+| eval(100k loop), wasm-driven | 3.30–3.45 ms | **3.85 ms** |
+| eval(100k loop), JS-driven | 3.29–3.37 ms | **3.81 ms** |
+| Node/V8 indirect eval (same box, same session) | 0.123 ms | **0.251 ms** |
+
+**Read the last row before the others.** The V8 baseline is 2× slower than the
+spike's, so this box is under materially more load; against that, the WASI
+artifact's eval being only 15% slower than the emscripten one means it is *at
+least as fast* per unit of machine. Two conclusions survive intact:
+
+- **Driving `JS_Eval` from wasm costs nothing** vs driving it from JS (3.85 vs
+  3.81 — within noise, and only once the ordering artifact is removed).
+- The boundary is **not** the limit: one property op is ~28× the trampoline. The
+  cost is set by how much of the program lands in the boxed tier, which is the
+  frontier analysis, which is still the real risk.
+
+vs the Phase-1 interpreter's 1857 ms, the boxed tier is **~480×** faster here.
+
+### The tag-extraction shim (the build-time trick, implemented)
+
+QuickJS layouts are explicitly not a stable ABI, so nothing is hardcoded in the
+compiler: the artifact **exports** its own constants and `extract-abi.mjs` reads
+them out of the built module into `qjs-abi.json`. A version or flag change shows
+up as different JSON, not as silent miscompilation.
+
+```json
+{ "quickjs": { "major": 0, "minor": 16, "patch": 1 },
+  "value": { "nanBoxing": true, "jsValueSize": 8, "handleSize": 4,
+             "tagOffset": 4, "payloadOffset": 0,
+             "float64TagAddend": 2146959370 },
+  "tags": { "FIRST": -9, "BIG_INT": -9, "SYMBOL": -8, "STRING": -7,
+            "STRING_ROPE": -6, "MODULE": -3, "FUNCTION_BYTECODE": -2,
+            "OBJECT": -1, "INT": 0, "BOOL": 1, "NULL": 2, "UNDEFINED": 3,
+            "UNINITIALIZED": 4, "CATCH_OFFSET": 5, "EXCEPTION": 6,
+            "SHORT_BIG_INT": 7, "FLOAT64": 8 },
+  "isFloat64Predicate": { "kind": "unsigned-ge", "subtrahend": -9, "threshold": 17 } }
+```
+
+Exports: `qjs_abi_{version,qjs_version_major/minor/patch,nan_boxing,jsvalue_size,
+handle_size,tag_offset,payload_offset,float64_tag_addend}` plus one
+`qjs_abi_tag_*` per tag. What codegen buys with them, verified by the probe:
+
+- **tag test with no call** — `i32.load offset=tagOffset` on the handle, compare
+  against the exported constant (`r3_open_coded_tag` returns the same −1 as the
+  wrapper).
+- **number unboxing with no call** — `double bits == rawJSValue + (addend << 32)`
+  (probe decodes 3.75 from the raw i64).
+- `isFloat64Predicate` is stated once so codegen does not re-derive
+  `(unsigned)(tag − TAG_FIRST) >= 17`.
+
+### Two ABI decisions worth reviewing
+
+1. **Handles, not raw JSValues** (adopting variant C's recommendation). A handle
+   is an i32 pointer to an 8-byte cell. i64 JSValues do cross wasm→wasm natively
+   — `qjs_handle_raw` is exported and used by the probe — but an i32 is uniform
+   at every boundary and is a stable identity codegen can park in a local or a
+   struct field.
+2. **The shim converts QuickJS's MOVE semantics into BORROW semantics.** Raw
+   `JS_SetPropertyStr` consumes its value; the spike's R3 probe only worked
+   because it hand-inserted a `JS_DupValue`. Every wrapper here borrows its
+   arguments and returns owned handles, so the codegen obligation collapses from
+   per-callsite ownership knowledge to one rule: **free every returned handle
+   exactly once.** This retires R5 gap 6 as a codegen problem.
+
+### Slice-2 handoff — `src/codegen-linear/`
+
+R5's gap list, restated against what slice 1 changed:
+
+| R5 gap | status |
+| --- | --- |
+| 5. no standalone artifact | **CLOSED** — this slice |
+| 6. refcount discipline | **CLOSED** — shim borrows; one destructor rule |
+| 1. lane emits zero imports | open — now needs 17 + a memory import |
+| 2. `c-abi.ts` is export-direction only | open — but the handle type is just i32 |
+| 3. memory ownership | open, and the **direction is now fixed** |
+| 4. arena vs QuickJS malloc | open, **collision confirmed and measured** |
+| 7. linear-lane coverage | open, unchanged (`return "n=" + n` still fails validation) |
+
+Ordered work:
+
+1. **Import direction in `c-abi.ts`** — an extern-C declaration table. Cheap
+   because every wrapper is `(i32…) -> i32 | f64 | i64`: the opaque handle needs
+   no new ValType.
+2. **Emit imports at all** (`index.ts:144`/`311` hard-code `ctx.numImportFuncs
+   = 0`). Add them **before** codegen starts; the index arithmetic is already
+   parameterised. Do **not** replicate WasmGC's late `addUnionImports` shifting.
+3. **Import the memory instead of defining it.** `codegen-linear/runtime.ts:84-95`
+   unconditionally pushes and exports `(memory 1 256)`. The artifact **exports**
+   memory, so js2wasm must import it — the `--link node:fs` shape at
+   `codegen/wasi.ts:97` is exactly this topology and has no analogue in
+   `codegen-linear/`. Note `max 256` pages (16 MiB) is also below what a QuickJS
+   heap wants; the artifact ships `initial 256 / max 16384` pages.
+4. **Relocate the arena — the collision is real.** Measured on this build: the
+   artifact's first `malloc` returns **171,696 (0x29EB0)**, with a 64 KiB
+   `--stack-first` shadow stack at 0 and ~105 KiB of static data above it.
+   js2wasm's linear `__heap_ptr` initialises to a hard-coded **1024**, i.e.
+   *inside the artifact's shadow stack*. The boxed tier must allocate from the
+   artifact's `malloc`; the native arena must sit above `__heap_base` or be
+   dynamic. Two independent growers over one memory stays a corruption hazard.
+5. **No active data segments, no shadow-stack traffic.** `probe/peer.c` proves a
+   peer module can share the heap safely, but only by construction: it links to
+   **zero `DATA` section and zero `global.get`/`global.set`**, so the only bytes
+   it touches are ones it got from `malloc`. A js2wasm module emitting an active
+   data segment writes at a link-time offset straight through QuickJS's static
+   data. Three options, in preference order: (a) passive segments + `memory.init`
+   into a `malloc`'d pointer (what the spike's WAT did — local to codegen, no
+   link-time negotiation); (b) `--global-base` above the artifact's heap base
+   (fragile: the heap grows); (c) PIC/side-module dynamic linking (correct, much
+   larger).
+6. **A handle-scope / destructor-insertion pass.** The one rule is simple but it
+   is still a rule codegen must implement on every path, including exceptional
+   ones.
+
+Not attempted, still open from the original acceptance list: the object-frontier
+A/B (tainted-alloc vs exotic wrappers), the string story, cross-heap cycles, the
+split-brain builtins audit, and the honest go/no-go against #4157 / #3288.
+
+### Repro
+
+```bash
+bash scripts/quickjs-artifact/build.sh          # ~3 min cold -> .tmp/quickjs-artifact/
+node scripts/quickjs-artifact/probe/probe.mjs   # R2/R3/R4; exits non-zero on any failure
+```
