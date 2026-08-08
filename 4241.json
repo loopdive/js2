@@ -1,11 +1,10 @@
 {
   "id": "4241",
-  "assignee": "",
-  "requested_by": "ttraenkler/lead",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-08-08T20:04:36Z",
-  "updated_at": "2026-08-08T20:04:36Z",
-  "write_id": "92412-9g3h9xbu",
-  "pr_scan": "ok"
+  "assignee": "ttraenkler/opus-4237-bagslot",
+  "requested_by": "ttraenkler/opus-4237-bagslot",
+  "status": "in-progress",
+  "branch": "issue-4237-receiver-stamp-dispatch",
+  "claimed_at": "2026-08-08T20:05:15Z",
+  "updated_at": "2026-08-08T20:05:15Z",
+  "write_id": "98459-690o2jx4"
 }
