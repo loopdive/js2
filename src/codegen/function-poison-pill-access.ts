@@ -9,6 +9,7 @@ import { emitThrowTypeError } from "./expressions/helpers.js";
 import { emitUndefined } from "./expressions/late-imports.js";
 import {
   ensureCallerStrictSnapshot,
+  isBoundFunctionValue,
   isCurrentSourceFunctionValue,
   sourceFunctionForValue,
 } from "./function-poison-pill.js";
@@ -44,8 +45,11 @@ export function tryCompileFunctionPoisonRead(
   if (!member || (member.name !== "caller" && member.name !== "arguments")) return undefined;
 
   const sourceFunction = sourceFunctionForValue(ctx, member.receiver);
+  // (#4221) A bound function poisons `caller`/`arguments` unconditionally
+  // (§15.3.4.5 steps 20-21) — the same terminal throw as the strict case.
   const strictFunction =
-    sourceFunction !== undefined && isStrictFunction(sourceFunction, ctx.inferModuleStrictArguments);
+    (sourceFunction !== undefined && isStrictFunction(sourceFunction, ctx.inferModuleStrictArguments)) ||
+    isBoundFunctionValue(ctx, member.receiver);
   const currentSloppyCallerRead =
     member.name === "caller" && !strictFunction && isCurrentSourceFunctionValue(ctx, fctx, member.receiver);
   if (!strictFunction && !currentSloppyCallerRead) return undefined;
@@ -91,9 +95,11 @@ export function tryCompileStrictFunctionPoisonAssignment(
   const member = poisonMember(target);
   if (!member || (member.name !== "caller" && member.name !== "arguments")) return undefined;
   const sourceFunction = sourceFunctionForValue(ctx, member.receiver);
-  if (!sourceFunction || !isStrictFunction(sourceFunction, ctx.inferModuleStrictArguments)) {
-    return undefined;
-  }
+  const poisoned =
+    (sourceFunction !== undefined && isStrictFunction(sourceFunction, ctx.inferModuleStrictArguments)) ||
+    // (#4221) `boundFn.arguments = 12` hits the same [[ThrowTypeError]] setter.
+    isBoundFunctionValue(ctx, member.receiver);
+  if (!poisoned) return undefined;
 
   const receiverType = compileExpression(ctx, fctx, member.receiver);
   if (receiverType) fctx.body.push({ op: "drop" });

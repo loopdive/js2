@@ -69,6 +69,7 @@ import {
 } from "./native-strings.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
+import { buildThrowJsErrorInstrs, noJsHost } from "./js-errors.js"; // (#4221) absent-callee TypeError
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import {
@@ -4685,6 +4686,55 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       ];
     })();
 
+    const methodCallLocals: { name: string; type: ValType }[] =
+      strFastPath.length > 0
+        ? [
+            { name: "any", type: { kind: "anyref" } },
+            // (#3673 round 9) string fast-path scratch (locals 4-8).
+            { name: "nflat", type: { kind: "ref_null", typeIdx: ctx.nativeStrTypeIdx } },
+            { name: "argc", type: { kind: "i32" } },
+            { name: "arg0", type: { kind: "externref" } },
+            { name: "arg1", type: { kind: "externref" } },
+            { name: "argsAny", type: { kind: "anyref" } },
+          ]
+        : [{ name: "any", type: { kind: "anyref" } }];
+
+    // (#4221) §13.3.6.2 EvaluateCall step 5 — a method call whose resolved
+    // callee is ABSENT must throw TypeError, not silently answer `undefined`.
+    // `fillApplyClosure` documents this throw as its deferred "S2", carved out
+    // because pulling the error machinery in at FINALIZE shifts func indices.
+    // Emitting it HERE sidesteps that: `ensureObjectRuntime` runs during
+    // codegen, where minting the in-module `__new_TypeError` only APPENDS a
+    // defined func — the same discipline the `__to_primitive` TypeError
+    // already uses in this file.
+    //
+    // Scope is deliberately the resolved-method-is-null case only. A non-null
+    // but non-callable value keeps the legacy `__apply_closure` answer: the
+    // callable-brand classifier does not recognise every callable shape, and a
+    // false positive here turns a working call into a hard throw.
+    //
+    // Standalone/WASI only — with a JS host this call is a host import where
+    // the engine already throws, so the gc lane stays byte-identical.
+    const throwNotAFunctionInstrs: Instr[] = noJsHost(ctx)
+      ? (() => {
+          emitWasiErrorConstructor(ctx, "TypeError", 1);
+          return buildThrowJsErrorInstrs(ctx, "TypeError", "called value is not a function", {
+            forceInModuleCtor: true,
+          });
+        })()
+      : [];
+    let resolvedMethodGuard: Instr[] = [];
+    if (throwNotAFunctionInstrs.length > 0) {
+      const methodLocalIdx = 3 + methodCallLocals.length;
+      methodCallLocals.push({ name: "resolvedMethod", type: { kind: "externref" } });
+      resolvedMethodGuard = [
+        { op: "local.tee", index: methodLocalIdx },
+        { op: "ref.is_null" },
+        { op: "if", blockType: { kind: "empty" }, then: throwNotAFunctionInstrs },
+        { op: "local.get", index: methodLocalIdx },
+      ];
+    }
+
     const body: Instr[] = [
       // any = any.convert_extern(recv); if null → return undefined
       { op: "local.get", index: 0 },
@@ -4714,6 +4764,9 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
           ...(ctx.funcMap.has("__nullish_to_null")
             ? ([{ op: "call", funcIdx: ctx.funcMap.get("__nullish_to_null")! }] satisfies Instr[])
             : []),
+          // (#4221) an ABSENT callee is a TypeError, not `undefined`. Empty off
+          // the standalone lane (see the guard builder above).
+          ...resolvedMethodGuard,
           // __apply_closure(m, recv, args)
           { op: "local.get", index: 0 },
           { op: "local.get", index: 2 },
@@ -4730,17 +4783,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       "__extern_method_call",
       [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
       [{ kind: "externref" }],
-      strFastPath.length > 0
-        ? [
-            { name: "any", type: { kind: "anyref" } },
-            // (#3673 round 9) string fast-path scratch (locals 4-8).
-            { name: "nflat", type: { kind: "ref_null", typeIdx: ctx.nativeStrTypeIdx } },
-            { name: "argc", type: { kind: "i32" } },
-            { name: "arg0", type: { kind: "externref" } },
-            { name: "arg1", type: { kind: "externref" } },
-            { name: "argsAny", type: { kind: "anyref" } },
-          ]
-        : [{ name: "any", type: { kind: "anyref" } }],
+      methodCallLocals,
       body,
     );
   }
