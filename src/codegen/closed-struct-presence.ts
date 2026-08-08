@@ -25,11 +25,14 @@
  * the `__hasOwnProperty` runtime ladder use. Sharing them is what keeps the
  * three surfaces from disagreeing again.
  */
+import type { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
-import { allocTempLocal } from "./context/locals.js";
+import { popBody, pushBody } from "./context/bodies.js";
+import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { coldFieldNameAt, coldFieldPresenceInstrs, coldOwnFieldsFor } from "./fnctor-cold-tail.js";
 import { presenceSlotOf, presenceTestInstrs } from "./fnctor-presence-bits.js";
+import { compileExpression } from "./shared.js";
 
 export interface ClosedStructPresence {
   /** Consume the receiver already on the stack, leave one `i32`. */
@@ -97,8 +100,104 @@ export function closedStructPresenceInstrs(
  * is an INVALID MODULE, so the presence path is entered only when the compiled
  * value is confirmed.
  */
-export function isClosedStructOperand(result: ValType | null | undefined, structTypeIdx: number): boolean {
+function isClosedStructOperand(result: ValType | null | undefined, structTypeIdx: number): boolean {
   if (!result) return false;
   if (result.kind !== "ref" && result.kind !== "ref_null") return false;
   return (result as { typeIdx: number }).typeIdx === structTypeIdx;
+}
+
+/**
+ * The whole per-instance-presence emission, for a call site that has already
+ * decided its fold would answer `true`.
+ *
+ * `emitOperands` must emit BOTH operands in spec-evaluation order and leave the
+ * RECEIVER (and nothing else) on the stack, returning the receiver's compiled
+ * type. It is run into a SCRATCH body, so a site whose receiver turns out not to
+ * be the expected struct reference pays nothing and falls back to its constant —
+ * which is why the whole sequence lives here rather than being open-coded at
+ * each caller.
+ *
+ * Returns `true` when the runtime answer was emitted and the caller is done;
+ * `false` when the caller must emit its own fold (nothing has been written to
+ * `fctx.body` in that case).
+ */
+export function emitClosedStructPresence(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  structTypeIdx: number,
+  key: string,
+  emitOperands: () => ValType | null | undefined,
+): boolean {
+  if (structTypeIdx < 0) return false;
+  const structName = ctx.typeIdxToStructName.get(structTypeIdx);
+  if (structName === undefined) return false;
+  const presence = closedStructPresenceInstrs(ctx, fctx, structName, structTypeIdx, key);
+  if (!presence) return false;
+
+  const saved = pushBody(fctx);
+  const receiverType = emitOperands();
+  const operandInstrs = fctx.body;
+  popBody(fctx, saved);
+
+  const confirmed = isClosedStructOperand(receiverType, structTypeIdx);
+  if (confirmed) {
+    for (const instr of operandInstrs) fctx.body.push(instr);
+    for (const instr of presence.instrs) fctx.body.push(instr);
+  }
+  releaseTempLocal(fctx, presence.recvLocal);
+  return confirmed;
+}
+
+/** The closed-struct type index a receiver's resolved Wasm type names, or -1. */
+function closedStructTypeIdxOf(recvWasm: ValType | undefined): number {
+  if (!recvWasm) return -1;
+  if (recvWasm.kind !== "ref" && recvWasm.kind !== "ref_null") return -1;
+  return (recvWasm as { typeIdx: number }).typeIdx;
+}
+
+/**
+ * `obj.hasOwnProperty(key)` / `obj.propertyIsEnumerable(key)` call site.
+ *
+ * Evaluation order is receiver, then argument (whose value is unused — the key
+ * is already known statically, but it must still run for its side effects).
+ *
+ * `structFieldNames === null` means the caller has already decided the
+ * receiver's struct fields are NOT its own properties — a `C.prototype` or
+ * constructor receiver, where the struct describes the *instance* layout. Those
+ * must keep folding, so they are declined here rather than answered from a
+ * presence bit that does not describe this receiver at all.
+ */
+export function emitHasOwnPresence(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  recvWasm: ValType | undefined,
+  structFieldNames: readonly string[] | null,
+  key: string,
+  propAccess: ts.PropertyAccessExpression,
+  argExpr: ts.Expression,
+): boolean {
+  if (structFieldNames === null) return false;
+  return emitClosedStructPresence(ctx, fctx, closedStructTypeIdxOf(recvWasm), key, () => {
+    const recv = compileExpression(ctx, fctx, propAccess.expression);
+    if (compileExpression(ctx, fctx, argExpr)) fctx.body.push({ op: "drop" });
+    return recv;
+  });
+}
+
+/**
+ * `key in obj` call site. §13.10.1 evaluates the LHS (key) before the RHS
+ * (object), so the key is compiled and dropped first.
+ */
+export function emitInPresence(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  recvWasm: ValType | undefined,
+  key: string,
+  keyExpr: ts.Expression,
+  recvExpr: ts.Expression,
+): boolean {
+  return emitClosedStructPresence(ctx, fctx, closedStructTypeIdxOf(recvWasm), key, () => {
+    if (compileExpression(ctx, fctx, keyExpr)) fctx.body.push({ op: "drop" });
+    return compileExpression(ctx, fctx, recvExpr);
+  });
 }

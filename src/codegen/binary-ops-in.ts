@@ -23,7 +23,7 @@ import { ensureLateImport } from "./expressions/late-imports.js";
 import { resolveWasmType } from "./index.js";
 // (#3920) Own-presence is a per-instance bit, never a shape property — the `in`
 // answer must come from the same presence machinery the value read uses.
-import { closedStructPresenceInstrs, isClosedStructOperand } from "./closed-struct-presence.js";
+import { emitInPresence } from "./closed-struct-presence.js";
 import type { InnerResult } from "./shared.js";
 import { coerceType, compileExpression, flushLateImportShifts } from "./shared.js";
 import { inRhsIsExclusivelyPrimitive } from "./binary-ops.js";
@@ -191,10 +191,7 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
   let structFieldNames: string[] | null = null;
   let isVecType = false;
   let vecTypeIdx = -1;
-  // (#3920) The receiver's closed-struct identity, kept alongside the name list
-  // so the static fold below can ask the PER-INSTANCE presence question.
-  let structTypeIdx = -1;
-  let structName: string | undefined;
+  let structWasm: ValType | undefined; // (#3920) receiver's closed-struct type
   if (rightWasm.kind === "ref" || rightWasm.kind === "ref_null") {
     const typeIdx = (rightWasm as { typeIdx: number }).typeIdx;
     const structDef = ctx.mod.types[typeIdx];
@@ -204,8 +201,7 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
         vecTypeIdx = typeIdx;
       } else {
         structFieldNames = structDef.fields.map((f) => f.name).filter((n): n is string => n !== undefined);
-        structTypeIdx = typeIdx;
-        structName = ctx.typeIdxToStructName.get(typeIdx) ?? structDef.name;
+        structWasm = rightWasm;
       }
     }
   }
@@ -321,38 +317,10 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     }
   }
 
-  // (#3920) BEFORE the compile-time fold: a closed-struct field that is
-  // CONDITIONALLY assigned is not a static property of the shape, it is a
-  // per-instance bit. `structFieldNames.includes(key)` answers the SHAPE
-  // question and folded `"p" in bag` to a constant `true` for an instance that
-  // never got `p` — a silent wrong answer that survived because the value read
-  // (`bag.p`) has always consulted the bit and therefore looked consistent.
-  // The answer here comes from the same source the read uses: the
-  // `$presence_<w>` word (`presenceTestInstrs`), or the `$cold` hop for a
-  // hot/cold-split field (#3927), NEVER from the field list.
-  if (staticKey !== null && structName !== undefined && structTypeIdx >= 0) {
-    const presence = closedStructPresenceInstrs(ctx, fctx, structName, structTypeIdx, staticKey);
-    if (presence) {
-      // Compile both operands into a SCRATCH body first (§13.10.1 order: LHS
-      // key, then RHS object) and commit only once the receiver is confirmed to
-      // be the expected struct reference. The checker type and the compiled
-      // value can disagree, and committing a mismatch would be an invalid
-      // module rather than a wrong answer — so the fallback below must stay
-      // reachable after the operands have been compiled.
-      const saved = pushBody(fctx);
-      const leftResult = compileExpression(ctx, fctx, expr.left);
-      if (leftResult) fctx.body.push({ op: "drop" });
-      const rightResult = compileExpression(ctx, fctx, expr.right);
-      const operandInstrs = fctx.body;
-      popBody(fctx, saved);
-      if (isClosedStructOperand(rightResult, structTypeIdx)) {
-        for (const instr of operandInstrs) fctx.body.push(instr);
-        for (const instr of presence.instrs) fctx.body.push(instr);
-        releaseTempLocal(fctx, presence.recvLocal);
-        return { kind: "i32" };
-      }
-      releaseTempLocal(fctx, presence.recvLocal);
-    }
+  // (#3920) BEFORE the fold below: a conditionally-assigned field is a
+  // per-instance bit, not a shape property — see `closed-struct-presence.ts`.
+  if (staticKey !== null && emitInPresence(ctx, fctx, structWasm, staticKey, expr.left, expr.right)) {
+    return { kind: "i32" };
   }
 
   // Static resolution: key is known at compile time

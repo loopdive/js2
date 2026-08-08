@@ -22,12 +22,24 @@ loc-budget-allow:
   # sites. The new predicate lives in its own module.
   - src/codegen/object-runtime.ts
   - src/codegen/index.ts
+  # (#3920 second slice) +6 in object-ops: one import and the four-line call
+  # site that hands `hasOwnProperty`/`propertyIsEnumerable`'s folded `1` to
+  # the new module. The whole emission — presence resolution, scratch-compile,
+  # operand confirmation — lives in `closed-struct-presence.ts`; what remains
+  # here is the call itself, which cannot be moved out of the caller.
+  - src/codegen/object-ops.ts
 func-budget-allow:
   - src/codegen/object-runtime.ts::fillClosedStructHasOwnArms
   - src/codegen/object-runtime.ts::fillClosedStructOwnPropertyNamesArms
   # One line each: the new finalize pass must be called at both finalize sites.
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
+  # (#3920 second slice) The two folding call sites. Each gains its guarded
+  # call plus, in `compileInOperator`, the one local that carries the
+  # receiver's struct type from where it is resolved to where it is asked.
+  # The emission itself is in `closed-struct-presence.ts`.
+  - src/codegen/binary-ops-in.ts::compileInOperator
+  - src/codegen/object-ops.ts::compilePropertyIntrospection
 origin: "found while writing #3780 round 4's presence-packing regression test — the fixture disagreed across lanes and reproduced identically with the change disabled"
 ---
 
