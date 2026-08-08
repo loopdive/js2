@@ -999,6 +999,42 @@ export function tryStaticEvalInline(
     if (collidesWithCaller || readsBeforeDeclaration || unsupportedGlobalShape) return undefined;
   }
 
+  // EvalDeclarationInstantiation §19.2.1.3 step 16 / CanDeclareGlobal* (buckets
+  // C+D): when the sloppy eval's varEnv is the GlobalEnvironmentRecord, var and
+  // function declarations must become own (configurable, D=true) properties of
+  // the realm global object, gated by IsExtensible — runtime state the splice
+  // cannot know. The interpreter implements all of it
+  // (`prepareGlobalDeclarations`, `src/interp/eval-environment.ts`); route
+  // there rather than re-deriving the CanDeclare* preflight, the
+  // descriptor-preserving redefinition rules and a `delete`-severing read path
+  // in emitted Wasm.
+  //
+  // Direct eval's varEnv is global exactly when the caller fctx is the module
+  // initializer (blocks/case/catch change the LexicalEnvironment, never the
+  // VariableEnvironment — same predicate precedent as `unsupportedGlobalShape`
+  // above); sloppy INDIRECT eval's varEnv is ALWAYS the realm global,
+  // regardless of call site.
+  //
+  // `declarationNames.varNames` already covers top-level FunctionDeclaration
+  // names, so one predicate serves var + function + generator bodies.
+  // `blockFunctionNames` are deliberately NOT counted — B.3.3 keeps its own arm
+  // above. `evalIsStrict` excludes strict bodies and strict direct-eval callers
+  // (strict eval vars live in a private varEnv, never on the global), which
+  // preserves the #1102 AC2 TS-module lane. Standalone only: WASI has no
+  // provider (a bail would degrade splice into refusal) and host/gc keeps its
+  // existing dynamic `eval` fallback.
+  //
+  // Ordered AFTER the bucket-A global-lexical collision guard above: that error
+  // is statically certain and also covers host mode, so it wins.
+  if (
+    ctx.standalone &&
+    !evalIsStrict &&
+    declarationNames.varNames.size > 0 &&
+    (directEval ? fctx.name === "__module_init" : true)
+  ) {
+    return undefined; // provider owns EvalDeclarationInstantiation here
+  }
+
   // A direct nested `eval(...)` can recurse through this same constant-fold
   // path. An eval Identifier used as a VALUE cannot: foreign AST identifiers
   // have no checker binding, so the ordinary identifier emitter materializes
