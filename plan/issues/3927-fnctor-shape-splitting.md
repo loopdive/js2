@@ -1468,6 +1468,27 @@ when the box is idle; not run here.)
 2. **No test262 run on the flag-ON build yet.** Flag-OFF is byte-identical,
    so the merge-queue gates cover this PR; a conformance run of the ON build
    is the default-ON slice's job.
+2b. **The compile-time `in`/`hasOwnProperty` FOLD on struct-typed receivers
+   is presence-blind to the split (flag-ON only, flagged 2026-08-08 while
+   PR #4229 was in flight).** The static fold sources its name list from the
+   BASE struct's field list; the split removes the flow-grown value slots
+   from that list, so `"left" in typedNode` folds to a constant FALSE for a
+   name the instance may carry (inline in its layout, or in resid). PR
+   #4229 replaces only the folded-1 side with base-presence-word reads —
+   which this emission's fixed-index constraint deliberately keeps working —
+   but the folded-0 side keeps its constant, and under the split folded-0 is
+   no longer sound. **The same latent class already exists on main for the
+   cold tail** (cold-moved names are also absent from the base list, with
+   the split default-ON at K=20); it is narrow there because struct-typed
+   receivers of widened fnctors are rare. Fix shape for the default-ON
+   slice: before folding 0 for a split/cold fnctor, consult the family's
+   union (the `fnctorLayoutOwnFieldsFor` side table / `findColdStructsForField`)
+   and demote the fold to the presence-word read. Related: the `for…in`
+   static unroll on struct-typed receivers enumerates nothing
+   (`plan/issues/4219-forin-static-unroll-ignores-presence.md`, on PR
+   #4229's branch) — that gap is receiver-spelling-specific and does NOT
+   block this slice's validation (every differential here runs the dynamic
+   path, non-vacuously), but a flag-ON conformance run will surface both.
 3. The wall-clock claim is an extrapolation either way (§7 of the analysis
    slice): −31.4 % of struct bytes projects, via the two measured
    byte→GC-bucket points, to roughly −4 to −5 pp of wall on top of the

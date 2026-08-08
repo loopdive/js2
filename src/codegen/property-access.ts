@@ -208,6 +208,7 @@ export {
 } from "./builtin-value-read.js";
 import { tryBuiltinPrototypeGetterBrandThrow } from "./builtin-prototype-brand.js";
 import { tryCompileFunctionPoisonRead } from "./function-poison-pill-access.js";
+import { isFnctorLayoutStructName } from "./fnctor-layout-emit.js"; // (#3927) per-type layouts
 import {
   finalizeStructAndDynamicMemberGet,
   PA_FALLTHROUGH,
@@ -1240,7 +1241,7 @@ export function findAlternateStructsForField(
     // feed the Phase-3 narrowing vote via `findFnctorLayoutStructsForField` /
     // `findFnctorResidStructsForField` — hiding a carrier from the arms is
     // correct; hiding it from the vote is the #4217 `generator` defect.
-    if (typeName.endsWith("__resid") || /__lay[0-9]+$/.test(typeName)) continue;
+    if (typeName.endsWith("__resid") || isFnctorLayoutStructName(typeName)) continue;
     const fIdx = fields.findIndex((f) => f.name === propName);
     if (fIdx !== -1) {
       const shapeId = ctx.shapeIdByStructName.get(typeName);
