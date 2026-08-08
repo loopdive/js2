@@ -16,6 +16,15 @@ assignee: "ttraenkler/claude-fable"
 related: [3780, 4155, 743, 3926, 3927, 4074, 2860]
 loc-budget-allow:
   - src/codegen/closures.ts
+  # (#4157 const-box hoist) +8 lines in the driver: one import and two
+  # one-line pass invocations, one per compile pipeline. The pass itself is a
+  # new subsystem module (src/codegen/const-box-hoist.ts); there is no smaller
+  # way to WIRE a finalize pass than to call it from the finalize sequence.
+  - src/codegen/index.ts
+func-budget-allow:
+  # Same +8 lines, seen per-function: the two finalize sequences.
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
 origin: "2026-08-04 — synthesis of the #3780/#4155 measurement campaign into a scheduled program"
 ---
 
@@ -567,6 +576,11 @@ Three things in that table are worth more than the totals:
   finding: one hoisted module global would take this workload's `__box_number`
   allocation count to **zero**. (It is 3,862 allocations out of 262,711 — 1.5 %
   — so it is a tidiness win, not a perf one. Noted, not recommended.)
+  → **Built anyway, in the general form, and it was cheap: see "constant boxes
+  hoisted to module globals: LANDED" below.** The "not recommended" verdict was
+  about *perf*, and it stands — no wall-clock claim is made. What changed the
+  cost side is that the general form turned out to need no new machinery and to
+  make the binary *smaller*.
 
 ### Top call sites by dynamic count
 
@@ -679,6 +693,125 @@ makes faster is already ≲2 % of the parse.
   are actually allocated and their size (`__fnctor_Node` at 292 B), i.e.
   Workstream 1 (#4155 / #743), not the boxing plumbing.
 
+## 2026-08-07 — constant boxes hoisted to module globals: LANDED
+
+Follows directly from the `__box_number` provability section above, which
+recorded as an aside that "one hoisted module global would take this workload's
+`__box_number` allocation count to zero". Built as the **general** form — every
+boxing site whose operand is a compile-time constant, not an `Infinity` special
+case — in `src/codegen/const-box-hoist.ts`, wired into both finalize sequences
+in `src/codegen/index.ts`. Lane `standalone-dynamic`, acorn 226 KB self-parse,
+**checksum 422 on every build**.
+
+`f64.const K; call $__box_number` becomes one `global.get` of a module global
+that `__module_init` seeds once by calling the same helper. (`i32.const N;
+f64.convert_i32_s; call` — the `type-coercion.ts:414` round trip on a constant —
+is the same population and is rewritten the same way.)
+
+### The result
+
+| | before | after | Δ |
+| --- | ---: | ---: | ---: |
+| **boxed-number allocations** (`type_67`) per parse | 3,862 | **0** | **−3,862** |
+| all allocations per parse | 215,286 | 211,424 | −3,862 |
+| every other allocation stream (25 of them) | — | — | **byte-identical** |
+| `__box_number` calls per parse | 556,923 | 490,598 | **−66,325 (−11.9 %)** |
+| static emission sites rewritten | — | 697 → 49 globals | — |
+| static `call __box_number` sites | 2,466 | 1,818 | −648 (+49 in the seed block) |
+| binary, `--lane standalone-dynamic` | 1,544,411 B | 1,543,371 B | **−1,040 B (−0.07 %)** |
+| binary, dogfood standalone acorn | 937,273 B | 936,139 B | −1,134 B |
+
+The allocation delta is **exactly** the whole boxed-number stream and **exactly**
+nothing else — which is the same statement the provability section made from the
+other direction (every allocating box in this parse is the constant `Infinity`),
+now confirmed by construction.
+
+**Code size goes DOWN, which was not guaranteed.** 49 globals plus a 148-
+instruction seed block cost less than the 697 `f64.const` (9 B) + `call` (2 B)
+pairs they replace with a 2–3 B `global.get`. This is the same arithmetic the
+provability section measured for inlining and reached the same sign.
+
+It breaks even at roughly **three sites per distinct constant** (~21 B fixed per
+constant, ~8 B saved per site); acorn averages 14. A toy module with one site
+per constant grows by tens of bytes — measured, a 5-site js-host probe went
+435 → 485 B. A "only hoist constants used ≥3 times" threshold would remove that
+and is deliberately **not** applied: the site count is STATIC, and the
+highest-value case in the measured workload is the opposite shape — 12 static
+`Infinity` sites executing 3,862 times. Gating on static count would trade the
+actual deliverable for bytes on modules too small for the bytes to matter.
+
+**No wall-clock number is quoted, deliberately.** The section above priced the
+*entire* helper at ≲2 % of parse, with a probe removing two-thirds of its body at
+100 % of calls producing a result whose sign flipped with run order. 11.9 % of
+that is far below what this box can resolve. What this change buys is the
+deterministic allocation and call result above.
+
+### Is the identity of a boxed number observable? (checked, not assumed)
+
+Hoisting collapses two boxes of the same constant into ONE reference, so this is
+the load-bearing question. Three findings, in increasing order of usefulness:
+
+1. **For i31-able values shared identity is ALREADY the regime.** `ref.i31` is
+   not a heap object — two `ref.i31` with the same payload are already
+   `ref.eq`-equal. #3673 puts 99.31 % of this workload's boxing on that path, so
+   the majority of boxed numbers have had shared identity since #3673 landed.
+2. **Every consumer compares boxed numbers BY VALUE, and each was written that
+   way because distinct boxes of equal values exist.** `__extern_strict_eq`
+   (`any-helpers.ts`) takes `ref.eq` as a fast path but EXCLUDES the
+   `$BoxedNumber` carrier from it (#3174) and falls through to `f64.eq`; the
+   standalone `===` tag dispatch (`binary-ops-typed-dispatch.ts`, #1776) tries
+   "both typeof number → unbox + f64 compare" BEFORE any identity arm;
+   `__same_value_zero` (`map-runtime.ts`) takes identity ⇒ equal, which is what
+   SameValueZero wants.
+3. **The direction of the change is the safe one.** Sharing can only turn two
+   distinct refs into one, i.e. flip an identity test from false to true — and
+   for every constant except one that is the answer the spec already requires
+   (`Infinity === Infinity` is true, `-0 === -0` is true). A consumer that
+   trusted `ref.eq` gets *more* correct, not less.
+
+**The one exception is `NaN`**, where `NaN === NaN` must be FALSE even for the
+same reference — precisely the case #3174 exists for. Both `===` paths handle a
+self-identical NaN box correctly today, so this is belt-and-braces, but NaN is
+the single value where sharing is a semantic *risk* rather than a semantic
+*improvement*, and the census found **no NaN at all** in the constant population
+(bucket A3 was entirely `Infinity`). So the pass excludes NaN: it buys nothing
+and its carve-out removes a whole risk class. `+0` and `-0` are keyed apart by
+`Object.is`, so `-0` never collapses into `+0`.
+
+### Why `__module_init` seeding rather than a constant global initializer
+
+`ref.i31` / `struct.new` / `extern.convert_any` are all valid constant
+instructions, so the boxes *could* be built in each global's own init
+expression. That would require the pass to re-derive #3673's i31-ability rule
+(integral, in `[-2^30, 2^30-1]`, not `-0`) — a **second encoding of a rule that
+lives in `registerNative("__box_number", …)`**, and a silent miscompilation the
+day the two drift. Seeding by CALLING the helper keeps exactly one boxing
+implementation in the compiler. The cost is a three-instruction flag test per
+`__module_init` entry.
+
+### Gates
+
+`tests/issue-4157-const-box-hoist.test.ts`. The mechanism half is the one worth
+noting: the first draft of the fixture had no top-level state, so the module had
+no `__module_init` to seed from, the pass correctly bailed, and ON/OFF produced
+**byte-identical binaries** — a parity-only test would have passed while
+measuring nothing. The test now asserts the binaries differ, and pins the
+per-iteration slope of both censuses: a loop whose only boxing is of constants
+drops from 4 `__box_number` calls per iteration to **0** while a control
+function boxing non-constants is untouched, and the allocation stream falls by
+exactly 3 (the three constants that are not i31-able — `42` is, and never
+allocated). Answers are checked against native Node, not against the OFF build.
+
+Dogfood: canaries 2/3/4/5, `functionImports: []`, exactly the 3 pre-existing
+IR-FALLBACKs — all unchanged from the baseline measured on the same tree.
+
+`JS2WASM_HOIST_CONST_BOXES=0` restores the pre-change emission byte-for-byte
+(the pass returns before mutating anything);
+`JS2WASM_HOIST_CONST_BOXES_DEBUG=1` prints the site/global counts and a
+histogram of DECLINED sites keyed by producer shape — which is what answers
+"is the residual population genuinely non-constant, or merely not adjacent?"
+for anyone extending this.
+
 ## 2026-08-07 — session record, and where the next lane should start
 
 Full write-up: **`plan/agent-context/session-2026-08-07-acorn-perf-handoff.md`**.
@@ -714,6 +847,13 @@ split from a broken one. Its transferable lesson is recorded in the handoff:
 `Object.keys` was correct on builtins *precisely because* it was broken on user
 classes, which makes #4071's revert structural and forces
 predicate-before-arms ordering.
+
+Also landed: **PR #4221** hoists constant number boxes to module globals —
+boxed-number allocations **3,862 → 0**, `__box_number` calls **−11.9 %**, and the
+binary **shrinks** 1,040 B. Justified on determinism and size, not wall clock;
+#4216's DON'T-BUILD verdict was about *specializing the call for speed* and still
+stands. `NaN` is excluded, because it is the one constant whose shared identity
+is observable (`NaN === NaN` must stay false for the same reference).
 
 **Still untouched by anything: dynamic property lookup 13.5 % + call dispatch
 8.1 %.** Nothing in this umbrella currently targets either.
