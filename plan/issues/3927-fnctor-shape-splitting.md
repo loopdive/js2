@@ -1477,13 +1477,14 @@ when the box is idle; not run here.)
    #4229 replaces only the folded-1 side with base-presence-word reads —
    which this emission's fixed-index constraint deliberately keeps working —
    but the folded-0 side keeps its constant, and under the split folded-0 is
-   no longer sound. **The same latent class already exists on main for the
-   cold tail** (cold-moved names are also absent from the base list, with
-   the split default-ON at K=20); it is narrow there because struct-typed
-   receivers of widened fnctors are rare. Fix shape for the default-ON
-   slice: before folding 0 for a split/cold fnctor, consult the family's
-   union (the `fnctorLayoutOwnFieldsFor` side table / `findColdStructsForField`)
-   and demote the fold to the presence-word read. Related: the `for…in`
+   no longer sound. **The same class is not hypothetical: it is LIVE ON MAIN
+   for the cold tail (default-ON at K=20), reproduced flag-free and filed as
+   #4225** (`plan/issues/4225-static-in-hasown-fold-blind-to-cold-tail.md`
+   — native 111 vs wasm 001; fix shape and acceptance criteria live there).
+   The per-type-layout flavor is the same fix at the same two fold sites,
+   consulting `fnctorLayoutOwnFieldsFor` alongside
+   `findColdStructsForField`; it gates default-ON here and is tracked by
+   #4225's cross-check criterion. Related: the `for…in`
    static unroll on struct-typed receivers enumerates nothing
    (`plan/issues/4219-forin-static-unroll-ignores-presence.md`, on PR
    #4229's branch) — that gap is receiver-spelling-specific and does NOT
