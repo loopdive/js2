@@ -219,6 +219,53 @@ consult ~free, in the same query-never-allocates spirit as the
    grown ladder.
 3. The per-site last-shape cache stays speculative third.
 
+## Implementation plan for step 1 (the `$bag` slot) — feasibility AUDITED, ready to build
+
+The dangerous-looking part (a new field on the closure wrapper ROOT shifts
+every capturing subtype's field indices) is in fact the ESTABLISHED idiom:
+the closure layout is constant-driven — `CLOSURE_ARITY_FIELD_IDX = 1`,
+`CLOSURE_CAPTURE_FIELD_BASE = 2` in
+`src/codegen/closures/funcref-wrapper-types.ts`, whose own doc says *"every
+capture read/write and TDZ-slot index derives from these constants, never a
+bare literal"* — and the #3673 `$arity` field was itself inserted at index 1
+exactly this way. So:
+
+1. Add `CLOSURE_BAG_FIELD_IDX = 2` + a shared `closureBagField()`
+   (`$bag`, externref, mutable) in funcref-wrapper-types.ts; bump
+   `CLOSURE_CAPTURE_FIELD_BASE` 2 → 3. Add the field at every mint site that
+   uses `closureArityField()` today (grep gives the exact list — closures.ts
+   subtype mints + trampoline wrappers + this registry). Consumers of
+   capture indices need NO edits by the constants rule; audit
+   `fnctor-twin-captures.ts` (the third CLOSURE_CAPTURE_FIELD_BASE user)
+   compiles clean.
+2. Builtin instance carriers (`builtinInstanceCarrierTypeIdxs`): append
+   `$bag` at each carrier's own mint site (they are independent final
+   structs — no subtype shift risk; `$`-prefix keeps them
+   reflection-hidden).
+3. Swap the BODIES of `__closure_bag_lookup` / `__closure_bag_ensure`
+   (closure-props.ts fill): per carrier root, `ref.test` →
+   `struct.get $bag` (+ null fast path — the coordinator-requested
+   `br_on_null` shape, which makes the 39,451 no-expando consults ~free);
+   ensure does `struct.set` on first use. **Every consumer inherits the fix
+   through the helper names** (instance-props, carrier-bag-{hasown,define,
+   delete,visibility}, instance-tombstones, object-integrity-carrier) — no
+   call-site edits.
+4. The `$__bound_fn` + runtime-eval AOT carriers: either same-idiom fields
+   at their mint sites or keep a RUMP registry for exactly those two; prefer
+   the fields (kills the registry, the entry type, the head global, and the
+   leak wholesale).
+5. Semantic deltas to pin in tests: bag identity/lifetime becomes
+   per-instance (the leak fix — dead carriers now collectable); integrity
+   bags (`Object.freeze` on carriers) ride the same slot, so re-verify the
+   frozen matrix; `carrier-bag-hasown.ts`'s query-never-allocates rule is
+   naturally preserved (lookup never writes the slot).
+6. Validation: the #4194/#4225/#3920/#3927 suites + frozen/tombstone
+   probes; call census re-run (39,451 lookups should survive but each
+   becomes ~3 instrs); profile share of `__closure_bag_lookup` (expect the
+   frame to vanish — it will likely be INLINED once tiny, so measure the
+   BUCKET, not the frame, per §3b's lesson); paired order-reversed A/B with
+   §3d's caveats.
+
 ## Acceptance criteria
 
 - [ ] Fresh baseline recorded here (profile buckets + receiver-arm WAT
