@@ -37,9 +37,9 @@
       "skip": 0
     },
     "ES2021": {
-      "pass": 110,
+      "pass": 111,
       "fail": 0,
-      "ce": 2,
+      "ce": 1,
       "skip": 0
     },
     "ES2025": {
@@ -63,15 +63,15 @@
       "skip": 0
     },
     "ES2025": {
-      "pass": 163,
+      "pass": 164,
       "fail": 220,
-      "ce": 6,
+      "ce": 5,
       "skip": 0
     },
     "ES2026": {
       "pass": 7,
-      "fail": 24,
-      "ce": 1,
+      "fail": 25,
+      "ce": 0,
       "skip": 0
     },
     "ES2027": {
@@ -109,9 +109,9 @@
       "skip": 0
     },
     "ES2018": {
-      "pass": 640,
+      "pass": 641,
       "fail": 6,
-      "ce": 2,
+      "ce": 1,
       "skip": 0
     },
     "ES2020": {
@@ -153,9 +153,9 @@
       "skip": 0
     },
     "ES2020": {
-      "pass": 147,
+      "pass": 146,
       "fail": 258,
-      "ce": 2,
+      "ce": 3,
       "skip": 0
     },
     "ES2022": {
@@ -185,9 +185,9 @@
   },
   "annexB/language": {
     "ES5": {
-      "pass": 418,
+      "pass": 416,
       "fail": 380,
-      "ce": 7,
+      "ce": 9,
       "skip": 0
     },
     "ES2015": {
@@ -197,9 +197,9 @@
       "skip": 0
     },
     "ES2027": {
-      "pass": 9,
+      "pass": 10,
       "fail": 16,
-      "ce": 1,
+      "ce": 0,
       "skip": 0
     }
   },
@@ -235,9 +235,9 @@
       "skip": 0
     },
     "ES2022": {
-      "pass": 14,
+      "pass": 15,
       "fail": 78,
-      "ce": 2,
+      "ce": 1,
       "skip": 0
     },
     "ES2023": {
@@ -255,15 +255,15 @@
   },
   "built-ins/String": {
     "ES5": {
-      "pass": 636,
+      "pass": 635,
       "fail": 90,
-      "ce": 2,
+      "ce": 3,
       "skip": 0
     },
     "ES2015": {
-      "pass": 245,
+      "pass": 244,
       "fail": 25,
-      "ce": 0,
+      "ce": 1,
       "skip": 0
     },
     "ES2016": {
@@ -311,9 +311,9 @@
   },
   "built-ins/DataView": {
     "ES2015": {
-      "pass": 297,
+      "pass": 299,
       "fail": 77,
-      "ce": 4,
+      "ce": 2,
       "skip": 0
     },
     "ES2017": {
@@ -323,41 +323,41 @@
       "skip": 0
     },
     "ES2020": {
-      "pass": 46,
+      "pass": 47,
       "fail": 14,
-      "ce": 1,
+      "ce": 0,
       "skip": 0
     },
     "ES2022": {
       "pass": 0,
-      "fail": 28,
-      "ce": 0,
+      "fail": 27,
+      "ce": 1,
       "skip": 0
     },
     "ES2025": {
-      "pass": 36,
+      "pass": 35,
       "fail": 8,
-      "ce": 0,
+      "ce": 1,
       "skip": 0
     },
     "ES2027": {
       "pass": 0,
-      "fail": 10,
-      "ce": 1,
+      "fail": 11,
+      "ce": 0,
       "skip": 0
     }
   },
   "language/statements": {
     "ES5": {
-      "pass": 550,
+      "pass": 551,
       "fail": 139,
-      "ce": 43,
+      "ce": 42,
       "skip": 0
     },
     "ES2015": {
-      "pass": 2593,
-      "fail": 688,
-      "ce": 55,
+      "pass": 2595,
+      "fail": 689,
+      "ce": 52,
       "skip": 1
     },
     "ES2016": {
@@ -373,9 +373,9 @@
       "skip": 0
     },
     "ES2018": {
-      "pass": 1456,
-      "fail": 767,
-      "ce": 14,
+      "pass": 1454,
+      "fail": 766,
+      "ce": 17,
       "skip": 0
     },
     "ES2019": {
@@ -397,35 +397,35 @@
       "skip": 0
     },
     "ES2022": {
-      "pass": 1823,
-      "fail": 595,
+      "pass": 1822,
+      "fail": 596,
       "ce": 10,
       "skip": 0
     },
     "ES2027": {
       "pass": 80,
-      "fail": 103,
-      "ce": 7,
+      "fail": 102,
+      "ce": 8,
       "skip": 0
     }
   },
   "built-ins/TypedArrayConstructors": {
     "ES2015": {
-      "pass": 221,
+      "pass": 223,
       "fail": 90,
-      "ce": 5,
+      "ce": 3,
       "skip": 0
     },
     "ES2017": {
-      "pass": 17,
+      "pass": 19,
       "fail": 7,
-      "ce": 2,
+      "ce": 0,
       "skip": 0
     },
     "ES2020": {
-      "pass": 153,
+      "pass": 154,
       "fail": 102,
-      "ce": 1,
+      "ce": 0,
       "skip": 0
     },
     "ES2022": {
@@ -469,15 +469,15 @@
       "skip": 0
     },
     "ES2015": {
-      "pass": 2336,
+      "pass": 2338,
       "fail": 657,
-      "ce": 44,
+      "ce": 42,
       "skip": 0
     },
     "ES2016": {
-      "pass": 44,
+      "pass": 43,
       "fail": 6,
-      "ce": 0,
+      "ce": 1,
       "skip": 0
     },
     "ES2017": {
@@ -487,9 +487,9 @@
       "skip": 0
     },
     "ES2018": {
-      "pass": 1188,
+      "pass": 1187,
       "fail": 457,
-      "ce": 22,
+      "ce": 23,
       "skip": 0
     },
     "ES2020": {
@@ -506,8 +506,8 @@
     },
     "ES2022": {
       "pass": 1799,
-      "fail": 611,
-      "ce": 8,
+      "fail": 610,
+      "ce": 9,
       "skip": 0
     },
     "ES2025": {
@@ -519,15 +519,15 @@
   },
   "built-ins/Object": {
     "ES5": {
-      "pass": 2227,
+      "pass": 2228,
       "fail": 592,
-      "ce": 12,
+      "ce": 11,
       "skip": 0
     },
     "ES2015": {
       "pass": 137,
-      "fail": 73,
-      "ce": 1,
+      "fail": 74,
+      "ce": 0,
       "skip": 0
     },
     "ES2017": {
@@ -555,9 +555,9 @@
       "skip": 0
     },
     "ES2022": {
-      "pass": 58,
+      "pass": 59,
       "fail": 8,
-      "ce": 1,
+      "ce": 0,
       "skip": 0
     },
     "ES2024": {
@@ -581,9 +581,9 @@
   },
   "built-ins/DisposableStack": {
     "ES2027": {
-      "pass": 71,
+      "pass": 69,
       "fail": 22,
-      "ce": 0,
+      "ce": 2,
       "skip": 0
     }
   },
@@ -595,9 +595,9 @@
       "skip": 0
     },
     "ES2015": {
-      "pass": 151,
+      "pass": 150,
       "fail": 0,
-      "ce": 0,
+      "ce": 1,
       "skip": 0
     },
     "ES2025": {
@@ -608,24 +608,24 @@
     },
     "ES2026": {
       "pass": 0,
-      "fail": 9,
-      "ce": 1,
+      "fail": 8,
+      "ce": 2,
       "skip": 0
     }
   },
   "built-ins/GeneratorPrototype": {
     "ES2015": {
-      "pass": 33,
+      "pass": 34,
       "fail": 27,
-      "ce": 1,
+      "ce": 0,
       "skip": 0
     }
   },
   "built-ins/Function": {
     "ES5": {
-      "pass": 237,
-      "fail": 127,
-      "ce": 6,
+      "pass": 238,
+      "fail": 129,
+      "ce": 3,
       "skip": 0
     },
     "ES2015": {
@@ -679,15 +679,15 @@
       "skip": 0
     },
     "ES2024": {
-      "pass": 9,
+      "pass": 11,
       "fail": 3,
-      "ce": 2,
+      "ce": 0,
       "skip": 0
     },
     "ES2026": {
-      "pass": 22,
+      "pass": 21,
       "fail": 11,
-      "ce": 0,
+      "ce": 1,
       "skip": 0
     }
   },
@@ -708,8 +708,8 @@
     },
     "ES2015": {
       "pass": 11,
-      "fail": 17,
-      "ce": 0,
+      "fail": 16,
+      "ce": 1,
       "skip": 0
     },
     "ES2019": {
@@ -765,9 +765,9 @@
   },
   "built-ins/Atomics": {
     "ES2017": {
-      "pass": 82,
-      "fail": 127,
-      "ce": 0,
+      "pass": 80,
+      "fail": 125,
+      "ce": 4,
       "skip": 0
     },
     "ES2020": {
@@ -811,17 +811,17 @@
   },
   "built-ins/AsyncDisposableStack": {
     "ES2027": {
-      "pass": 73,
-      "fail": 30,
+      "pass": 72,
+      "fail": 31,
       "ce": 1,
       "skip": 0
     }
   },
   "built-ins/Promise": {
     "ES2015": {
-      "pass": 289,
+      "pass": 290,
       "fail": 106,
-      "ce": 4,
+      "ce": 3,
       "skip": 0
     },
     "ES2018": {
@@ -885,8 +885,8 @@
   },
   "built-ins/Proxy": {
     "ES2015": {
-      "pass": 140,
-      "fail": 168,
+      "pass": 139,
+      "fail": 169,
       "ce": 2,
       "skip": 0
     },
@@ -905,9 +905,9 @@
       "skip": 0
     },
     "ES2015": {
-      "pass": 48,
+      "pass": 49,
       "fail": 4,
-      "ce": 1,
+      "ce": 0,
       "skip": 0
     },
     "ES2016": {
@@ -923,17 +923,17 @@
       "skip": 0
     },
     "ES2021": {
-      "pass": 29,
+      "pass": 30,
       "fail": 0,
-      "ce": 1,
+      "ce": 0,
       "skip": 0
     }
   },
   "built-ins/Set": {
     "ES2015": {
-      "pass": 170,
+      "pass": 171,
       "fail": 22,
-      "ce": 3,
+      "ce": 2,
       "skip": 0
     },
     "ES2020": {
@@ -949,9 +949,9 @@
       "skip": 0
     },
     "ES2025": {
-      "pass": 166,
+      "pass": 168,
       "fail": 14,
-      "ce": 6,
+      "ce": 4,
       "skip": 0
     }
   },
@@ -1003,9 +1003,9 @@
       "skip": 0
     },
     "ES2015": {
-      "pass": 138,
+      "pass": 139,
       "fail": 15,
-      "ce": 1,
+      "ce": 0,
       "skip": 0
     },
     "ES2018": {
@@ -1015,9 +1015,9 @@
       "skip": 0
     },
     "ES2019": {
-      "pass": 8,
+      "pass": 7,
       "fail": 0,
-      "ce": 0,
+      "ce": 1,
       "skip": 0
     },
     "ES2020": {
@@ -1041,9 +1041,9 @@
   },
   "built-ins/Symbol": {
     "ES2015": {
-      "pass": 48,
+      "pass": 47,
       "fail": 31,
-      "ce": 1,
+      "ce": 2,
       "skip": 0
     },
     "ES2018": {
@@ -1060,8 +1060,8 @@
     },
     "ES2020": {
       "pass": 1,
-      "fail": 1,
-      "ce": 0,
+      "fail": 0,
+      "ce": 1,
       "skip": 0
     },
     "ES2027": {
@@ -1119,6 +1119,20 @@
       "skip": 0
     }
   },
+  "built-ins/Uint8Array": {
+    "ES2026": {
+      "pass": 35,
+      "fail": 28,
+      "ce": 5,
+      "skip": 0
+    },
+    "ES2027": {
+      "pass": 0,
+      "fail": 2,
+      "ce": 0,
+      "skip": 0
+    }
+  },
   "language/identifiers": {
     "ES5": {
       "pass": 49,
@@ -1142,20 +1156,6 @@
       "pass": 52,
       "fail": 0,
       "ce": 8,
-      "skip": 0
-    }
-  },
-  "built-ins/Uint8Array": {
-    "ES2026": {
-      "pass": 35,
-      "fail": 28,
-      "ce": 5,
-      "skip": 0
-    },
-    "ES2027": {
-      "pass": 0,
-      "fail": 2,
-      "ce": 0,
       "skip": 0
     }
   },
@@ -1187,22 +1187,6 @@
       "skip": 0
     }
   },
-  "built-ins/SetIteratorPrototype": {
-    "ES2015": {
-      "pass": 9,
-      "fail": 2,
-      "ce": 0,
-      "skip": 0
-    }
-  },
-  "language/statementList": {
-    "ES2015": {
-      "pass": 23,
-      "fail": 15,
-      "ce": 0,
-      "skip": 0
-    }
-  },
   "language/eval-code": {
     "ES5": {
       "pass": 46,
@@ -1217,9 +1201,25 @@
       "skip": 0
     },
     "ES2020": {
-      "pass": 96,
+      "pass": 95,
       "fail": 0,
+      "ce": 1,
+      "skip": 0
+    }
+  },
+  "built-ins/SetIteratorPrototype": {
+    "ES2015": {
+      "pass": 9,
+      "fail": 2,
       "ce": 0,
+      "skip": 0
+    }
+  },
+  "language/statementList": {
+    "ES2015": {
+      "pass": 22,
+      "fail": 15,
+      "ce": 1,
       "skip": 0
     }
   },
@@ -1243,25 +1243,11 @@
       "skip": 0
     }
   },
-  "language/destructuring": {
-    "ES2015": {
-      "pass": 17,
-      "fail": 1,
-      "ce": 0,
-      "skip": 0
-    },
-    "ES2022": {
-      "pass": 0,
-      "fail": 1,
-      "ce": 0,
-      "skip": 0
-    }
-  },
   "language/function-code": {
     "ES5": {
-      "pass": 172,
-      "fail": 38,
-      "ce": 2,
+      "pass": 173,
+      "fail": 39,
+      "ce": 0,
       "skip": 0
     }
   },
@@ -1274,8 +1260,8 @@
     },
     "ES2015": {
       "pass": 12,
-      "fail": 20,
-      "ce": 0,
+      "fail": 19,
+      "ce": 1,
       "skip": 0
     },
     "ES2022": {
@@ -1317,10 +1303,16 @@
       "skip": 0
     }
   },
-  "built-ins/ShadowRealm": {
-    "ES2023": {
+  "language/destructuring": {
+    "ES2015": {
+      "pass": 17,
+      "fail": 1,
+      "ce": 0,
+      "skip": 0
+    },
+    "ES2022": {
       "pass": 0,
-      "fail": 64,
+      "fail": 1,
       "ce": 0,
       "skip": 0
     }
@@ -1339,11 +1331,27 @@
       "skip": 0
     }
   },
+  "built-ins/ShadowRealm": {
+    "ES2023": {
+      "pass": 0,
+      "fail": 64,
+      "ce": 0,
+      "skip": 0
+    }
+  },
   "language/directive-prologue": {
     "ES5": {
       "pass": 60,
       "fail": 2,
       "ce": 0,
+      "skip": 0
+    }
+  },
+  "built-ins/Reflect": {
+    "ES2015": {
+      "pass": 123,
+      "fail": 29,
+      "ce": 1,
       "skip": 0
     }
   },
@@ -1368,14 +1376,6 @@
       "pass": 5,
       "fail": 0,
       "ce": 0,
-      "skip": 0
-    }
-  },
-  "built-ins/Reflect": {
-    "ES2015": {
-      "pass": 123,
-      "fail": 29,
-      "ce": 1,
       "skip": 0
     }
   },
@@ -1553,9 +1553,9 @@
   },
   "built-ins/AsyncGeneratorPrototype": {
     "ES2018": {
-      "pass": 24,
+      "pass": 25,
       "fail": 23,
-      "ce": 1,
+      "ce": 0,
       "skip": 0
     }
   },
@@ -1612,8 +1612,8 @@
   "built-ins/ArrayIteratorPrototype": {
     "ES2015": {
       "pass": 3,
-      "fail": 24,
-      "ce": 0,
+      "fail": 23,
+      "ce": 1,
       "skip": 0
     }
   },
