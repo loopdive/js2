@@ -73,7 +73,7 @@
 
 import type { Instr, ValType } from "../ir/types.js";
 import { ts } from "../ts-api.js";
-import { emitBuiltinConstructorIdentity } from "./builtin-static-globals.js";
+import { emitBuiltinConstructorIdentity, emitBuiltinNamespaceObject } from "./builtin-static-globals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
@@ -104,6 +104,22 @@ const WRAPPER_PRIMITIVE_KEY = "[[PrimitiveValue]]";
 
 /** `$PropEntry.$value` field index (object-runtime.ts layout). */
 const ENTRY_VALUE = 1;
+
+/** `$Object.proto` field index (object-runtime.ts layout: proto is field 0). */
+const OBJECT_PROTO = 0;
+
+/**
+ * (#4232) Accessor for the ORDINARY-object answer: `Object`.
+ *
+ * Kept separate from the three wrapper carriers because it answers a different
+ * question and is reached by a different gate. `Object` is a NAMESPACE object,
+ * not one of #3006's `__builtin_ctor_<Name>` singletons, so it is materialized
+ * by `emitBuiltinNamespaceObject` — the same global the bare `Object`
+ * identifier and #3133's static fold both read, which is what makes
+ * `Object(null).constructor === Object` genuine rather than a coincidence of
+ * two nulls.
+ */
+const PLAIN_CARRIER_FN = "__plain_ctor_Object";
 
 /** i31 abstract heap type (signed LEB -20) — small-int boxed numbers (#3673). */
 const I31_HEAP_TYPE = -20;
@@ -158,8 +174,8 @@ export function moduleReadsConstructorProp(sourceFile: ts.SourceFile): boolean {
  */
 export function ensureWrapperConstructorCarriers(ctx: CodegenContext): void {
   if (!ctx.standalone || ctx.wrapperCtorCarrierDemanded !== true) return;
-  for (const builtinName of WRAPPER_BUILTINS) {
-    const name = carrierFnName(builtinName);
+  for (const builtinName of [...WRAPPER_BUILTINS, PLAIN_CARRIER_FN] as const) {
+    const name = builtinName === PLAIN_CARRIER_FN ? PLAIN_CARRIER_FN : carrierFnName(builtinName);
     if (ctx.funcMap.get(name) !== undefined) continue;
 
     const resultType: ValType = { kind: "externref" };
@@ -180,7 +196,11 @@ export function ensureWrapperConstructorCarriers(ctx: CodegenContext): void {
     // Emit BEFORE minting: the carrier's own-property seed mints helpers of its
     // own, and nested mints must get their ordinals first (the same order
     // `ensureVecConstructorCarrier` uses).
-    emitBuiltinConstructorIdentity(ctx, fctx, builtinName);
+    if (builtinName === PLAIN_CARRIER_FN) {
+      if (emitBuiltinNamespaceObject(ctx, fctx, "Object") === null) continue;
+    } else {
+      emitBuiltinConstructorIdentity(ctx, fctx, builtinName);
+    }
 
     const funcIdx = mintDefinedFunc(ctx);
     pushDefinedFunc(ctx, funcIdx, {
@@ -230,7 +250,8 @@ export function wrapperConstructorArmInstrs(
     name: n,
     idx: ctx.funcMap.get(carrierFnName(n)),
   }));
-  if (carriers.every((c) => c.idx === undefined)) return empty; // never demanded
+  const plainIdx = ctx.funcMap.get(PLAIN_CARRIER_FN);
+  if (carriers.every((c) => c.idx === undefined) && plainIdx === undefined) return empty; // never demanded
 
   const anyStr = ctx.anyStrTypeIdx;
   const boxNum = ctx.nativeBoxNumberTypeIdx;
@@ -286,7 +307,50 @@ export function wrapperConstructorArmInstrs(
         ] satisfies Instr[])
       : []),
   ];
-  if (classify.length === 0) return empty;
+
+  /**
+   * (#4232) The ORDINARY-object arm: `Object(null)` / `Object(undefined)` /
+   * `Object()` produce a bare `$Object`, whose `.constructor` is `Object` —
+   * §20.1.1.1 step 1 makes them all `OrdinaryObjectCreate(%Object.prototype%)`.
+   * The proto-walk in `__extern_get`'s main body cannot answer it because
+   * `%Object.prototype%` is not itself a `$Object` in this model, so the walk
+   * terminates immediately and the read misses.
+   *
+   * The `proto == null` gate is the ENTIRE safety argument and it is why this
+   * could not simply be "a `$Object` answers Object". Every `new F()` instance
+   * is also a `$Object`, but #2660 links its `$proto` to the per-fnctor
+   * `F.prototype` object — so it has a non-null proto, never reaches here, and
+   * keeps inheriting `F.prototype.constructor` through the ordinary walk. A
+   * wrong answer here would be silent: `new F().constructor` would start
+   * reading `Object`.
+   *
+   * Placed AFTER the `[[PrimitiveValue]]` classification and predicated on the
+   * slot being ABSENT, so a wrapper (which also has a `$NativeProto`, i.e. a
+   * null `$Object`-typed proto link) is answered by its own arm first. The
+   * enclosing block has already established that the receiver carries no OWN
+   * `constructor`, so §7.3.2 shadowing is honored for free.
+   *
+   * Known limitation, recorded rather than papered over: `Object.create(null)`
+   * is represented identically to `{}` — there is no null-prototype marker on
+   * `$Object` — so it also reads `Object` here instead of `undefined`. That is
+   * a value-representation gap (the same one that makes
+   * `Object.getPrototypeOf(Object.create(null))` indistinguishable), not
+   * something this arm can decide.
+   */
+  const plainArm: Instr[] =
+    plainIdx === undefined
+      ? []
+      : [
+          { op: "local.get", index: slotLocal },
+          { op: "ref.is_null" },
+          { op: "local.get", index: objLocal },
+          { op: "ref.as_non_null" },
+          { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: OBJECT_PROTO },
+          { op: "ref.is_null" },
+          { op: "i32.and" },
+          { op: "if", blockType: { kind: "empty" }, then: answer(plainIdx) },
+        ];
+  if (classify.length === 0 && plainArm.length === 0) return empty;
 
   const instrs: Instr[] = [
     ...keyEqualsConstructor,
@@ -326,6 +390,7 @@ export function wrapperConstructorArmInstrs(
                 { op: "ref.is_null" },
                 { op: "i32.eqz" },
                 { op: "if", blockType: { kind: "empty" }, then: classify },
+                ...plainArm,
               ],
             },
           ],

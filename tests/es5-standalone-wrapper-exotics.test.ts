@@ -110,3 +110,44 @@ export function foldKept(): boolean { return (o.constructor as any) === Object; 
     expect(out).toEqual({ foldKept: 1 });
   });
 });
+
+describe("#4232 — Object(null)/Object(undefined) constructor (standalone)", () => {
+  it("a bare $Object reads Object, and the proto-gate keeps user instances out", async () => {
+    // The `$proto == null` gate is the whole safety argument: a `new F()`
+    // instance is ALSO a `$Object`, and must keep inheriting
+    // `F.prototype.constructor`. That negative is asserted directly, not
+    // assumed.
+    const out = await runStandalone(`
+function F(): void {}
+(F as any).prototype.tag = 7;
+var inst: any = new (F as any)();
+var fromNull: any = Object(null);
+var fromUndef: any = Object(undefined);
+var literal: any = {};
+export function nullOk(): boolean { return fromNull.constructor === Object; }
+export function undefOk(): boolean { return fromUndef.constructor === Object; }
+export function literalOk(): boolean { return literal.constructor === Object; }
+export function nullCross(): boolean { return fromNull.constructor === String; }
+export function instNotObject(): boolean { return inst.constructor !== Object; }
+export function instStillInherits(): boolean { return inst.tag === 7; }
+`);
+    expect(out).toEqual({
+      nullOk: 1,
+      undefOk: 1,
+      literalOk: 1,
+      nullCross: 0,
+      instNotObject: 1,
+      instStillInherits: 1,
+    });
+  });
+
+  it("an OWN constructor still shadows the arm (§7.3.2)", async () => {
+    const out = await runStandalone(`
+var o: any = Object(null);
+o.constructor = 42;
+export function shadowed(): boolean { return o.constructor === 42; }
+export function notObject(): boolean { return o.constructor !== Object; }
+`);
+    expect(out).toEqual({ shadowed: 1, notObject: 1 });
+  });
+});
