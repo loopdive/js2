@@ -107,15 +107,26 @@ export function isFnctorLayoutStructName(structName: string): boolean {
 }
 
 /**
- * `JS2WASM_FNCTOR_LAYOUT_EMIT` — boolean-shaped on purpose: there is no
- * numeric knob here, so a malformed value cannot half-enable anything (the
- * `Number("")` trap the cold-tail flag had to defend against does not exist).
- * Setting it also implies the ANALYSIS flag (`JS2WASM_FNCTOR_LAYOUTS`) — see
- * the gate in `analyzeFnctorEscapeGate`.
+ * `JS2WASM_FNCTOR_LAYOUT_EMIT` — **default ON since 2026-08-08** (the #3927
+ * default-ON flip; the flag shipped OFF on 2026-08-08 with PR #4230 and
+ * flipped the same day once its three gates closed — the #4194 computed-write
+ * routing, the flag-ON CI conformance pair (runs 31261617785 / 31262874434:
+ * standalone net −3 of 48,619, every flip in the shard-timeout band, zero
+ * semantic churn), and the struct-typed `in`/`hasOwnProperty` fold arm in
+ * `closed-struct-presence.ts`).
+ *
+ * `0` / `off` / empty disable it (the cold-tail token convention); any other
+ * value — including unset — is ON. Boolean-shaped on purpose: there is no
+ * numeric knob, so a malformed value cannot half-enable anything, it merely
+ * fails to disable. Setting it also implies the ANALYSIS flag
+ * (`JS2WASM_FNCTOR_LAYOUTS`) — see the gate in `analyzeFnctorEscapeGate`.
+ * The standalone-lane gate lives in {@link fnctorLayoutEmitFor}, not here.
  */
 export function fnctorLayoutEmitEnabled(): boolean {
   const raw = process.env.JS2WASM_FNCTOR_LAYOUT_EMIT;
-  return raw !== undefined && raw !== "" && raw !== "0";
+  if (raw === undefined) return true;
+  const norm = raw.trim().toLowerCase();
+  return norm !== "" && norm !== "0" && norm !== "off";
 }
 
 /**

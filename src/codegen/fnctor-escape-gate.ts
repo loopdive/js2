@@ -1357,7 +1357,19 @@ export function resolveReceiverStruct(
  * @returns a frozen {@link FnctorEscapeGateResult}; empty when no fnctor `new`
  *          sites exist (so the pass is a no-op for class-only / fnctor-free code).
  */
-export function analyzeFnctorEscapeGate(checker: ts.TypeChecker, sourceFile: ts.SourceFile): FnctorEscapeGateResult {
+export function analyzeFnctorEscapeGate(
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+  /**
+   * (#3927 default-ON) Whether this compile targets the standalone lane. The
+   * per-type-layout ANALYSIS (a second whole-program fixpoint) is only worth
+   * running where its plan can be consumed — the emission is standalone-only —
+   * and with the emit flag now defaulting ON, gating on the flag alone would
+   * run the fixpoint on every HOST compile for zero benefit. `undefined`
+   * (legacy callers) preserves the flag-only behaviour.
+   */
+  standalone?: boolean,
+): FnctorEscapeGateResult {
   const sites = new Map<ts.NewExpression, FnctorGateClass>();
   const approved = new Set<ts.NewExpression>();
   const approvedNames = new Set<string>();
@@ -1516,10 +1528,14 @@ export function analyzeFnctorEscapeGate(checker: ts.TypeChecker, sourceFile: ts.
     // (#3683 S1) inert write-once verdicts — consumed by the S2 typed-twin
     // emission, no lowering reads them yet.
     protoMethodWriteOnce: analyzeProtoMethodWriteOnce(sourceFile),
-    // (#3927) Per-type layout plan. Runs only under the flags: the fixpoint is a
-    // second whole-program pass and an unflagged build must not pay for it. The
-    // EMISSION flag implies the analysis — it consumes the plan.
-    ...(fnctorLayoutsEnabled() || fnctorLayoutEmitEnabled()
+    // (#3927) Per-type layout plan. The fixpoint is a second whole-program
+    // pass, so it runs only where it can pay: the analysis-only flag forces it
+    // (measurement lane, any target); otherwise the emit flag — default ON
+    // since the 2026-08-08 flip — requires the STANDALONE lane, where the
+    // emission actually consumes the plan. Host compiles skip it entirely
+    // (`standalone === false`); a legacy caller that passed no target keeps
+    // the flag-only behaviour.
+    ...(fnctorLayoutsEnabled() || (fnctorLayoutEmitEnabled() && standalone !== false)
       ? { allocLabels: analyzeFnctorAllocLabels(checker, sourceFile, ctorDeclByName) }
       : {}),
   };
