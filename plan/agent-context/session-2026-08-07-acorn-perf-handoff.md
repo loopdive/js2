@@ -20,9 +20,12 @@ folding of the parse, not speed.
 | #4211 | hot/cold fnctor split, flag-OFF |
 | #4212 | the `i31` lever is already spent; byte-ranked census; root-test CI coverage |
 | #4213 | per-type layout **analysis** (no emission), flag-OFF |
+| #4216 | `__box_number` provability: DON'T BUILD; byte-ranked census; root-test CI coverage |
+| #4218 | per-type baseline correction; `copyNode` retraction; #3920 as hard blocker |
 
-Open at handoff: **#4216** (this PR — `__box_number` provability, DON'T BUILD),
-**#4217** (split default-ON), **#4218** (per-type baseline correction).
+Open at handoff: **#4217** (split default-ON, ejected once on a merge conflict
+with #4218 and re-pushed), **#4219** (#3920 reflection fix), and the
+constant-box-hoisting slice if it reports.
 
 ## The one structural finding
 
@@ -78,12 +81,60 @@ Two of these are *permanently* closed, not "needs more work":
 the cold tail has nothing left to move. They are complementary *by verdict*: the
 tail keeps its value on the `single-site` / `not-separable` / `no-sites` cases.
 
-**The next slice is #4213's emission**, and its blocker is named: acorn's
-`copyNode` does `for (var prop in node) newNode[prop] = node[prop]` — enumeration
-plus a computed write — and it **never executes on this corpus** (0 of 25 sites).
-So no amount of running acorn validates it. That is why #4213 stopped at analysis.
+**The next slice is #4213's emission**, and it was **blocked on #3920** (below)
+until PR #4219. The blocker was not incidental: a per-type-layout receiver is
+*usually* dynamic — the analysis pins a single label only where exactly one is
+provable — so every unpinned receiver took precisely the broken reflective path,
+and **no differential could distinguish a correct split from a broken one**.
+
+⚠ **RETRACTED, do not rebuild on it.** An earlier revision of this file blamed
+#4211's silent wrong-AST divergence on acorn's `copyNode`
+(`for (var prop in node) newNode[prop] = node[prop]`). Two independent
+measurements disprove it — `for…in` yielded nothing, and `copyNode` executes
+**zero times** on this corpus (0 of 25 sites). The three reflective passes #4211
+wired did fix the divergence, but **the mechanism is unknown**.
 
 Untouched by anything: **dynamic property lookup 13.5 % + call dispatch 8.1 %**.
+
+## The reflection defect — #3920, and the shape of its fix
+
+**Three of five reflective surfaces answered as if a compiled object had no
+properties at all**, whenever its receiver arrived dynamically. Fixed in PR
+#4219: objects yielding ≥1 own key went **15 / 32,506 (0.05 %) → 32,502 (99.99 %)**.
+
+The discriminator was never the operation — it is the receiver's **static type**.
+A statically-typed receiver never enters the dynamic runtime, so it passes on all
+five; three break the moment the receiver is `any`. Testing the wrong spelling
+makes the bug look absent, and that cost a full cross-lane disagreement.
+
+| receiver | `Object.keys` | `in` | `for…in` | `hasOwnProperty` | `gOPN` |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| statically typed | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `any` / laundered | **✗** | **✗** | **✗** | ✓ | ✓ |
+
+**The trap, and the most transferable thing in this file: `Object.keys` was
+correct on a builtin PRECISELY BECAUSE it was broken on user classes.** No
+closed-struct arms ⇒ it enumerated nothing ⇒ and nothing is the right answer for
+`Date`. So adding arms fixes the user-class case and breaks the builtin case *in
+the same move*. That makes #4071's earlier revert **structural, not a tuning
+failure**, and "build the user-declared-vs-builtin predicate FIRST, then share"
+the only ordering that works. Reading the 3-for-3 helper split as "copy the
+working three onto the failing three" ships the Date/RegExp leak.
+
+Two corollaries worth keeping:
+
+- **A leak was already live** through the one surface that had arms:
+  `gOPN(/ab/g)` answered 7 internal RegExp fields, `gOPN(new Date(0))` answered 1.
+  Both now 0. The `Date` row was on no record anywhere before this session.
+- **Test both directions or the result is untrustworthy.** A regression test that
+  only checks a user class passes while builtins silently start leaking.
+- `isSyntheticStructName` is **not** that predicate and cannot be widened into it —
+  it screens only `Wrapper*` / `$AnyValue` / `__vec_*` / `__arr_*`.
+
+`status:` stays `in-progress`: a property first written *outside* a constructor
+is not stored on the closed struct in **either** lane (#3537 expando storage), so
+two acceptance criteria remain. Assertions encoding that as expected were removed
+rather than pinned. Cost of the fix: binary **+2.11 %** — real, and correctness.
 
 ## Traps that cost real time today
 
@@ -108,6 +159,44 @@ Untouched by anything: **dynamic property lookup 13.5 % + call dispatch 8.1 %**.
 - **The main correctness differential is blind to standalone layout changes** — it
   runs in JS-host mode, where flow-grown fields are never native slots, and
   `JSON.stringify` returns `null` on closed fnctor structs.
+- **A passing reflective test proved nothing while enumeration was dead.** A
+  differential reported "identical" across all 64 names and was comparing
+  `undefined` with `undefined` — 15 of 32,506 objects yielded any key. It was
+  nearly shipped as coverage. `cold-tail-differential.mjs` now reports
+  `enumeratingNodes` and prints a loud `VACUOUS` warning; **always report the
+  denominator.**
+- **Fixing the obvious half looks like success.** Repairing the key *source* got
+  `Object.keys` working and left `for…in` at zero — the loop re-checks every key
+  it yields through a *second* helper that was also unarmed.
+
+## Cross-lane coordination — what worked and what it cost
+
+Three lanes ran concurrently on overlapping files. Four corrections came out of
+the exchanges that **no single lane would have found**: the vacuous test, the
+retracted `copyNode` mechanism, a probe-shape confound, and the
+accidental-correctness trap. Every one changed what a fixer should do.
+
+The cost was real too: three rounds went to settling a two-cell disagreement.
+What finally converged it, named independently by both lanes:
+
+- **Put the fixture IN the message, not a description of it.** Two summaries
+  cannot settle a measurement disagreement; the symmetric run can.
+- **Elimination narrows to the right hypothesis even when it finds nothing.** One
+  lane ruled out structural canonicalization (its own leading theory), optimize
+  level, class spelling, and its own branch — by swapping in `origin/main` blobs,
+  not merely toggling its flag — which left "how the probes are written" as the
+  only candidate standing. That is where the fault was.
+- **The disagreement was a probe defect, not a measurement one**: one lane's
+  `Object.keys`/`in` probes used a *typed* receiver while only its `for…in` probe
+  laundered through `id(x): any`. Two different code paths reported as one
+  contradiction.
+- **Address agents by agent name, not claim slug.** Two lanes bounced repeatedly
+  trying to reach `opus-forin` (a claim identity, unaddressable). Route through
+  the coordinator when a name does not resolve.
+- **Do not let a second lane rewrite a shared issue file.** Both lanes declined
+  to edit a section the other had just written, recording their correction in
+  their own file and asking the owner to fold it in — a correction merged into a
+  conflict resolution is a correction lost.
 
 ## Process
 
@@ -123,7 +212,16 @@ Untouched by anything: **dynamic property lookup 13.5 % + call dispatch 8.1 %**.
   the same hole that burned #3890/#3891. **Search `plan/issues/` for the
   symptom before reserving an id**; the allocator cannot tell you a bug is
   already filed under a different title.
-- **#3920 needs an owner** and is the real home for the enumeration work.
+- **#3920 was the real home** for the enumeration work, and is fixed in PR #4219
+  (`status: in-progress` — two criteria remain, blocked on #3537).
+- ⚠ **A `PreToolUse` hook fires on every merge advising "run equiv tests, create
+  proof, then ff-only to main".** That contradicts `CLAUDE.md`, which is explicit
+  that all merges go through PRs + CI and that `git merge` on main directly is
+  never used. Every agent correctly refused; two escalated it independently after
+  it kept firing. **Unresolved — needs a human decision**: either the hook is
+  stale and should be fixed, or it is intentional and must come from a person.
+  The risk is narrow but real: it is an instruction to bypass CI arriving with
+  system authority, and it only takes one agent trusting it over the written rule.
 - **A stale claim was force-taken.** #3927 was held by `ttraenkler/claude-fable-6`
   for >25 h with an empty branch, no PR, and that tier out of credits. Taken as
   `ttraenkler/opus-shape-split`. The fork-side assignment book was unreachable at
