@@ -62,6 +62,7 @@ import { emitTransferredCharAtProtoMemberBody, unboxProtoArgToI32 as unboxArgToI
 // a hard compile error — #2193 PR-C).
 import { emitObjectProtoOrRefusal as emitProtoMemberBodyRefusal } from "./object-proto-tostring.js";
 import { emitStringSubstringMemberBody } from "./string-proto-substring.js";
+import { emitStringSplitMemberBody } from "./string-proto-split.js"; // (#4220) reflective String.prototype.split
 import { NO_ARG_STRING_MEMBER_HELPER, emitStringProtoToStringFlat } from "./string-proto-tostring.js"; // (#3992)
 
 /**
@@ -835,6 +836,11 @@ function emitStringProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, m
   // to `emitProtoMemberBodyRefusal`, so a borrowed `slice` threw
   // "not yet implemented in --target standalone".
   if (member === "slice") return emitStringSubstringMemberBody(ctx, fctx, "slice");
+  // (#4220) `split` (§22.1.3.23) returns an ARRAY, not a string/index/boolean,
+  // so it owns a body rather than joining a family above; a null refusal keeps
+  // the pre-#4220 behaviour via the shared refusal.
+  if (member === "split")
+    return emitStringSplitMemberBody(ctx, fctx) ?? emitProtoMemberBodyRefusal(ctx, fctx, "String", member);
   // (#2875 slice 3a) The number-returning search family — `indexOf` /
   // `lastIndexOf` — has a DIFFERENT closure ABI from the index accessors
   // (param 2 is the search STRING, not an integer position; the optional

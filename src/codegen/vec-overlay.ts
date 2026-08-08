@@ -89,7 +89,9 @@ import {
   buildVecDeletePrologue,
   fillVecHasOwnHelpers,
 } from "./vec-bag-seed.js";
+import { buildVecHasIdxPresencePrologue } from "./vec-overlay-presence.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
+import { nonExtensibleFreshIndexGuard, nonWritableLengthIndexGuard } from "./vec-define-rejections.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 
 /**
@@ -859,6 +861,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
   let s3: {
     throwRange: () => Instr[];
     throwType: () => Instr[];
+    throwTypeMsg: (message: string) => Instr[];
     boxNumIdx: number;
     unboxNumIdx: number;
     deleteIdx: number;
@@ -870,6 +873,12 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
     const typeCtorIdx = ctx.funcMap.get("__new_TypeError");
     if (rangeCtorIdx !== undefined && typeCtorIdx !== undefined) {
       const tagIdx = ensureExnTag(ctx);
+      const throwTypeMsg = (message: string): Instr[] => [
+        ...nativeStringLiteralInstrs(ctx, message),
+        { op: "extern.convert_any" },
+        { op: "call", funcIdx: typeCtorIdx },
+        { op: "throw", tagIdx },
+      ];
       s3 = {
         throwRange: () => [
           ...nativeStringLiteralInstrs(ctx, "RangeError: Invalid array length"),
@@ -877,12 +886,8 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
           { op: "call", funcIdx: rangeCtorIdx },
           { op: "throw", tagIdx },
         ],
-        throwType: () => [
-          ...nativeStringLiteralInstrs(ctx, "TypeError: Cannot redefine property: length"),
-          { op: "extern.convert_any" },
-          { op: "call", funcIdx: typeCtorIdx },
-          { op: "throw", tagIdx },
-        ],
+        throwType: () => throwTypeMsg("TypeError: Cannot redefine property: length"),
+        throwTypeMsg,
         boxNumIdx: s3BoxNumIdx,
         unboxNumIdx: s3UnboxNumIdx,
         deleteIdx: s3DeleteIdx,
@@ -919,6 +924,14 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
             ],
           },
         ];
+
+  /** Shared deps for the #4227 rejection guards (see vec-define-rejections.ts). */
+  const rejectionDeps = {
+    lengthLitExtern,
+    objFindIdx,
+    propEntryTypeIdx,
+    throwTypeMsg: s3 === null ? null : s3.throwTypeMsg,
+  };
 
   // ── __vec_dp_value ────────────────────────────────────────────────────────
   // params: 0=vec 1=key 2=value 3=flags(f64)
@@ -1336,6 +1349,10 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         { op: "local.set", index: 6 },
         ...parseIndex(1, 7),
         ...vecLen(4, 8),
+        // (#4227) §10.4.2.2 step 3 — frozen `length` blocks an index at/after it.
+        ...nonWritableLengthIndexGuard(rejectionDeps, { comp: 5, i: 7, len: 8, entry: 9 }),
+        // (#4227) §10.1.6.3 step 2 — a non-extensible array takes no new index.
+        ...nonExtensibleFreshIndexGuard(ctx, rejectionDeps, { recvLocalIdx: 0, i: 7, len: 8 }),
         // if (i >= 0) mark numeric-companion presence (#3673) + seed-if-real-element
         { op: "local.get", index: 7 },
         { op: "i32.const", value: 0 },
@@ -2204,6 +2221,26 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         },
       ];
       fn.body.splice(0, 0, ...prologue);
+    }
+  }
+
+  // ── (#4222) Overlay PRESENCE prologue: __extern_has_idx ───────────────────
+  // The read prologues above make Get see a deleted index as `undefined`; this
+  // makes HasProperty agree. Body lives in `vec-overlay-presence.ts` (the same
+  // split as the delete prologue in `vec-bag-seed.ts`).
+  {
+    const fn = findFn("__extern_has_idx");
+    if (fn) {
+      buildVecHasIdxPresencePrologue(fn, {
+        objectTypeIdx,
+        propEntryTypeIdx,
+        vecBaseIdx,
+        lookupIdx: core.lookupIdx,
+        numericFlagGlobalIdx: core.numericFlagGlobalIdx,
+        numToStringIdx,
+        objFindIdx,
+        deletedIndexFlag: FLAG_DELETED_INDEX,
+      });
     }
   }
 }

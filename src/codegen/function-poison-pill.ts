@@ -72,6 +72,35 @@ export function sourceFunctionForValue(
   return undefined;
 }
 
+/**
+ * (#4221) True when the expression statically denotes a BOUND function — the
+ * result of `f.bind(...)`, directly or through a `var b = f.bind(...)` binding.
+ *
+ * ES5 §15.3.4.5 steps 20-21 install `[[ThrowTypeError]]` as BOTH the getter and
+ * the setter of a bound function's `caller` and `arguments` — unconditionally,
+ * regardless of the target's strictness. `sourceFunctionForValue` cannot see
+ * that: a bound function has no source declaration, so the poison lowering
+ * declined and `obj.caller` answered `undefined` / `obj.arguments = 12` silently
+ * succeeded (`built-ins/Function/prototype/bind/15.3.4.5-2{0,1}-{2,3}`,
+ * `S15.3.4.5_A1`/`_A2`).
+ *
+ * Recognition is purely syntactic (a `.bind` member call, or a variable whose
+ * initializer is one) so it can never fire on a value that merely *looks*
+ * function-shaped to the checker.
+ */
+export function isBoundFunctionValue(ctx: CodegenContext, expression: ts.Expression, depth = 0): boolean {
+  if (depth > 4) return false;
+  const expr = stripTransparent(expression);
+  if (ts.isCallExpression(expr)) {
+    const callee = stripTransparent(expr.expression);
+    return ts.isPropertyAccessExpression(callee) && callee.name.text === "bind";
+  }
+  if (!ts.isIdentifier(expr)) return false;
+  const initializer = ctx.oracle.variableInitializerOf(expr);
+  if (initializer === undefined) return false;
+  return isBoundFunctionValue(ctx, initializer, depth + 1);
+}
+
 /** True when a function-valued expression denotes the currently executing source function. */
 export function isCurrentSourceFunctionValue(
   ctx: CodegenContext,

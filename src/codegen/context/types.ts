@@ -1436,6 +1436,20 @@ export interface CodegenContext {
    */
   vecAccessorDescriptorDirty: boolean;
   /**
+   * (#4222) The module contains a `delete <elementAccess>`, so some array index
+   * may be semantically ABSENT while its dense backing slot still holds a
+   * value. `__delete_property`'s vec arm (#4010) records that as a
+   * `FLAG_DELETED_INDEX` entry in the #3251 overlay companion — storage the
+   * TYPED lane's `i < length` presence test cannot see. Consumers: the same
+   * typed element read/write + index-presence lanes as
+   * `vecAccessorDescriptorDirty` (both feed `overlayRouteActive`). Kept SEPARATE
+   * from that flag because the two are independent module properties and either
+   * one alone is enough to make the dense answer wrong; folding them would make
+   * each scan's over-approximation pay for the other. Clear ⇒ byte-identical
+   * emission, no runtime guard.
+   */
+  vecIndexDeleteDirty: boolean;
+  /**
    * (#4159/#4160) `eval` / `Function` present ⇒ forces BOTH flags above.
    * Load-bearing: static eval inlining (#1163) splices statements in during
    * BODY compilation, after this pre-scan, so the flags would otherwise stay
@@ -3107,6 +3121,15 @@ export interface CodegenContext {
    *  a post-delete read returned the stale value (#2179). Delete-free modules
    *  keep the byte-identical inline fast-path (zero overhead). */
   moduleUsesDelete?: boolean;
+  /** (#4223) True when the module syntactically READS a `constructor` property
+   *  (`x.constructor` / `x["constructor"]`) and the target is standalone.
+   *  Pre-scanned once at module setup; it is the demand gate for the
+   *  primitive-wrapper constructor carriers
+   *  (`ensureWrapperConstructorCarriers`, wrapper-constructor-carrier.ts) and
+   *  therefore for the `__extern_get` arm that consumes them. A module that
+   *  never reads `.constructor` mints nothing and emits byte-identical
+   *  output. */
+  wrapperCtorCarrierDemanded?: boolean;
   /** (#4187) Identifier names appearing as the receiver of a member delete
    *  (`delete r.k` / `delete r[e]`), pre-scanned by
    *  `scanModuleMemberDeletes`. Consulted ONLY by the standalone arm of

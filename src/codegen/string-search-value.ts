@@ -46,6 +46,8 @@ import {
   stripStaticWrapper,
 } from "./regexp-standalone.js";
 import { compileStringIntegerArg, emitArgAsNativeString } from "./string-ops.js";
+import { isPlainToStringReplacement } from "./string-proto-replace.js";
+import { tryCompileStandaloneStringSearchFunctionReplace } from "./regex-replace-fn.js";
 
 /**
  * The well-known symbol each `String.prototype` search-value method consults
@@ -388,4 +390,80 @@ export function tryCompileStandaloneSplitSeparator(
   emitLimit();
   fctx.body.push({ op: "call", funcIdx: splitIdx });
   return { kind: "ref", typeIdx: nstrVecTypeIdx };
+}
+
+/**
+ * §22.1.3.19 / §22.1.3.20 steps 3-5 — `String.prototype.replace` /
+ * `replaceAll` with a STRING (or plain-`ToString`) search value, standalone.
+ *
+ * The native arms in `string-ops.ts` assume BOTH operands are already native
+ * strings and compile them straight into `ref $AnyString` slots. That is a
+ * silent wrong answer for everything else, and it had no gate at all: a
+ * function replacer trapped with `illegal cast` at runtime and a numeric one
+ * produced a module that failed `WebAssembly.compile` — both after a GREEN
+ * compile (#4224).
+ *
+ * Returns `undefined` for the string-search + string-replacement pair so the
+ * caller's byte-identical arm still owns it, and for any value whose shape
+ * cannot be PROVEN (`any`/`unknown`), which keeps the existing #1474 refusal
+ * rather than guessing.
+ */
+export function tryCompileStandaloneStringValueReplace(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  method: "replace" | "replaceAll",
+  emitReceiver: () => ValType | null,
+  firstArgIsStringLike: boolean,
+): ValType | null | undefined {
+  if (!noJsHost(ctx) || expr.arguments.length !== 2) return undefined;
+  const searchExpr = expr.arguments[0]!;
+  const replExpr = expr.arguments[1]!;
+
+  // The search value must provably reach step 3's `ToString` — i.e. it cannot
+  // carry `@@replace`. `undefined` joins the ToString path here (unlike
+  // `split`, where it is a distinct no-split case): `"x".replace(undefined, …)`
+  // searches for the literal text "undefined".
+  const searchTakesToString =
+    firstArgIsStringLike ||
+    isDefinitelyUndefinedExpr(ctx, searchExpr) ||
+    isPlainToStringSearchValue(ctx, searchExpr, "replace");
+  if (!searchTakesToString) return undefined;
+  // A string search + string replacement IS the caller's existing arm.
+  if (firstArgIsStringLike && ctx.oracle.typeFactOf(replExpr).kind === "string") return undefined;
+
+  ensureNativeStringHelpers(ctx);
+  const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
+  if (flattenIdx === undefined) return undefined;
+  const emitSubject = (): void => {
+    emitReceiver();
+    fctx.body.push({ op: "call", funcIdx: flattenIdx });
+  };
+  const emitSearch = (): void => {
+    // Emit from the same node the gate proved on — see `searchValueOperand`.
+    emitArgAsNativeString(ctx, fctx, searchValueOperand(searchExpr));
+    fctx.body.push({ op: "call", funcIdx: flattenIdx });
+  };
+
+  const fnArm = tryCompileStandaloneStringSearchFunctionReplace(
+    ctx,
+    fctx,
+    replExpr,
+    method === "replaceAll",
+    emitSubject,
+    emitSearch,
+  );
+  if (fnArm !== undefined) return fnArm;
+
+  // Non-callable: step 5 stringifies the replacement, then the native helper
+  // does the rest.
+  if (!isPlainToStringReplacement(ctx, replExpr)) return undefined;
+  const helper = ctx.nativeStrHelpers.get(method === "replaceAll" ? "__str_replaceAll" : "__str_replace");
+  if (helper === undefined) return undefined;
+  emitSubject();
+  emitSearch();
+  emitArgAsNativeString(ctx, fctx, replExpr);
+  fctx.body.push({ op: "call", funcIdx: flattenIdx });
+  fctx.body.push({ op: "call", funcIdx: helper });
+  return nativeStringType(ctx);
 }

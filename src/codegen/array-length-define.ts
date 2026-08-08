@@ -17,7 +17,7 @@ import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { emitThrowRangeError, emitThrowTypeError } from "./expressions/helpers.js";
+import { buildThrowJsErrorInstrs, emitThrowRangeError, emitThrowTypeError } from "./expressions/helpers.js";
 import { resolveWasmType } from "./index.js";
 import { coerceType, compileExpression } from "./shared.js";
 import { getVecInfo } from "./type-coercion.js";
@@ -362,8 +362,45 @@ export function tryEmitVecLengthDefineForDefineProperties(
   objArg: ts.Expression,
   propName: string | undefined,
   descExpr: ts.Expression,
+  compileSingularDefine?: (ctx: CodegenContext, fctx: FunctionContext, call: ts.CallExpression) => ValType | null,
 ): boolean {
   if (propName !== "length" || !ts.isObjectLiteralExpression(descExpr)) return false;
+  // (#4227) STANDALONE hands the key to the SINGULAR compiler instead of the
+  // inline path, because on that lane the singular compiler is precisely where
+  // the correct implementation lives: it is standalone-gated off this module
+  // (the "#3251 S3" note in `compileObjectDefineProperty`) so the key reaches
+  // the native `__vec_dp_value` length arm, which implements the FULL
+  // ArraySetLength — the step-15 non-configurable shrink stop and the
+  // non-writable length bit — against the #3251 overlay companion that this
+  // compile-time path cannot see. Racing in front of it made
+  // `Object.defineProperties(arr, {length: {…}})` shrink straight past
+  // non-configurable indices and ignore a frozen length.
+  //
+  // ROUTING rather than merely DECLINING is what keeps it clean: the plural
+  // loop's own inline expansion reaches the same native, but it also flips
+  // `arr.hasOwnProperty(<hole index>)` to `true` on an array with holes — a
+  // PRE-EXISTING plural-path defect, reproducible with any non-`length` key
+  // (`Object.defineProperties([0, , 2], {foo: {value: 1}})`) and therefore not
+  // this change's to fix. Declining here would newly expose it on `length` and
+  // cost 15.2.3.7-6-a-155/-156/-161/-162; the singular compiler does not have
+  // it, so routing takes the ArraySetLength gains without the collateral.
+  //
+  // A side-effecting receiver is left alone (the synthetic call re-evaluates
+  // `objArg`), as is a caller that passes no compiler — both keep the previous
+  // behaviour rather than acquiring a new one.
+  if (ctx.standalone) {
+    if (compileSingularDefine === undefined || !isSideEffectFreeReceiver(objArg)) return false;
+    const call = ts.factory.createCallExpression(
+      ts.factory.createPropertyAccessExpression(ts.factory.createIdentifier("Object"), "defineProperty"),
+      undefined,
+      [objArg, ts.factory.createStringLiteral("length"), descExpr],
+    );
+    ts.setTextRange(call, descExpr);
+    (call as ts.CallExpression & { parent: ts.Node }).parent = descExpr.parent;
+    const result = compileSingularDefine(ctx, fctx, call);
+    if (result) fctx.body.push({ op: "drop" });
+    return true;
+  }
   if (exceedsSafeGrowCeiling(descExpr)) return false;
   const handled = maybeEmitVecLengthDefine(ctx, fctx, objArg, ts.factory.createStringLiteral("length"), descExpr);
   if (!handled) return false;
@@ -421,4 +458,61 @@ function exceedsSafeGrowCeiling(descExpr: ts.ObjectLiteralExpression): boolean {
     return n > SAFE_GROW_CEILING;
   }
   return false;
+}
+
+/**
+ * (#4222) §10.4.2.4 `ArraySetLength` step 3 for the plain `arr.length = v`
+ * ASSIGNMENT form: `ToUint32(v) !== ToNumber(v)` is a **RangeError**.
+ *
+ * The assignment path lowered its value with `i32.trunc_sat_f64_s` and a
+ * comment saying NaN / Infinity / out-of-range lengths "clamp instead of
+ * trapping" (#1834). A saturating truncation is total by construction, so it
+ * cannot distinguish "too big" from "fine" — `[].length = 4294967296`, `= -1`,
+ * `= 1.5`, `= NaN` and `= Infinity` all silently succeeded. The
+ * `Object.defineProperty(arr, "length", …)` forms in this module always
+ * validated; only the assignment form did not.
+ *
+ * #1834's real requirement is preserved: the failure must not be a wasm TRAP,
+ * which kills the module unrecoverably. A RangeError is a catchable JS
+ * exception, so it serves that goal strictly better than clamping did.
+ *
+ * Stack: `[f64] → [i32]`. Consumes the value, throws on an invalid one, and
+ * leaves the saturating truncation of a valid one.
+ *
+ * The validity test runs on the f64 directly rather than materialising
+ * `ToUint32(v)` and comparing back, because `ToUint32(v) === ToNumber(v)` is
+ * exactly "v is an integer in [0, 2^32-1]":
+ *   - `NaN`       → `v == floor(v)` is false (NaN compares unequal to itself)
+ *   - `±Infinity` → floor is the identity, but the upper-bound test rejects it
+ *   - `-0`        → passes, and it must: `ToUint32(-0)` is `0`, and the spec
+ *                   compares with Number `!==`, under which `-0 !== 0` is false
+ *
+ * KNOWN GAP (#4222 leftover): the surviving truncation is SIGNED, so a
+ * validated length above 2^31-1 still clamps to i32 max
+ * (`built-ins/Array/length/15.4.5.1-3.d-3` wants 4294967295 and gets
+ * 2147483647). A wider truncation would not help — the vec cannot be that
+ * long; representing such a length needs genuinely sparse arrays.
+ */
+export function emitArraySetLengthValidation(ctx: CodegenContext, fctx: FunctionContext): void {
+  const lenValTmp = allocLocal(fctx, `__arr_len_set_v_${fctx.locals.length}`, { kind: "f64" });
+  fctx.body.push({ op: "local.tee", index: lenValTmp });
+  fctx.body.push({ op: "f64.floor" });
+  fctx.body.push({ op: "local.get", index: lenValTmp });
+  fctx.body.push({ op: "f64.eq" }); // integral
+  fctx.body.push({ op: "local.get", index: lenValTmp });
+  fctx.body.push({ op: "f64.const", value: 0 });
+  fctx.body.push({ op: "f64.ge" });
+  fctx.body.push({ op: "i32.and" });
+  fctx.body.push({ op: "local.get", index: lenValTmp });
+  fctx.body.push({ op: "f64.const", value: 4294967295 });
+  fctx.body.push({ op: "f64.le" });
+  fctx.body.push({ op: "i32.and" });
+  fctx.body.push({ op: "i32.eqz" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: buildThrowJsErrorInstrs(ctx, "RangeError", "Invalid array length", { flush: fctx }),
+  });
+  fctx.body.push({ op: "local.get", index: lenValTmp });
+  fctx.body.push({ op: "i32.trunc_sat_f64_s" });
 }

@@ -63,6 +63,7 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
       ctx.protoIndexDirty &&
       ctx.protoNamedDirty &&
       ctx.vecAccessorDescriptorDirty &&
+      ctx.vecIndexDeleteDirty &&
       ctx.dynamicCodeDirty
     ) {
       return;
@@ -84,6 +85,9 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
     if (!ctx.vecAccessorDescriptorDirty && isNonDataDescriptorDefine(node)) {
       ctx.vecAccessorDescriptorDirty = true;
     }
+    if (!ctx.vecIndexDeleteDirty && isIndexDelete(node)) {
+      ctx.vecIndexDeleteDirty = true;
+    }
     // (#4159/#4160) Dynamic code defeats the whole pre-scan: static eval
     // inlining (#1163) splices parsed statements in during BODY compilation,
     // after this pass has finished, so `eval('Array.prototype[0] = 1')` would
@@ -95,6 +99,7 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
       ctx.protoIndexDirty = true;
       ctx.protoNamedDirty = true;
       ctx.vecAccessorDescriptorDirty = true;
+      ctx.vecIndexDeleteDirty = true;
     }
     forEachChild(node, visit);
   };
@@ -225,6 +230,25 @@ function isNonDataDescriptorDefine(node: ts.Node): boolean {
     return node.arguments.length >= 2 && !isDataOnlyDescriptorBag(node.arguments[1]);
   }
   return false;
+}
+
+/**
+ * (#4222) Does this node delete a COMPUTED property — `delete o[k]`?
+ *
+ * `delete o.k` is deliberately NOT matched: a dotted name can never be an array
+ * index, so it cannot tombstone a dense vec slot, and matching it would arm the
+ * overlay route for the ubiquitous `delete obj.field` idiom that has nothing to
+ * do with arrays.
+ *
+ * Same per-module over-approximation as `isNonDataDescriptorDefine`: the key is
+ * usually not statically known (`delete srcArr[idx]` inside a callback is the
+ * dominant test262 shape), and the receiver's array-ness is a *type* question
+ * this cheap syntactic pre-pass deliberately does not ask — it runs before body
+ * compilation precisely so reads and stores cannot desync.
+ */
+function isIndexDelete(node: ts.Node): boolean {
+  if (!ts.isDeleteExpression(node)) return false;
+  return ts.isElementAccessExpression(unwrapExpr(node.expression));
 }
 
 /**

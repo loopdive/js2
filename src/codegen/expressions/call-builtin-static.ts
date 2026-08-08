@@ -2796,6 +2796,21 @@ export function compileBuiltinStaticCall(
     expr.arguments.length >= 1
   ) {
     const arg = expr.arguments[0]!;
+    // (#4227) §20.1.2.10 step 1 is `ToObject(O)`, so `null`/`undefined` throws.
+    // Host delegates to the real builtin and already did; the standalone
+    // `__getOwnPropertyNames` native has no nullish arm and answered an empty
+    // name list (15.2.3.4-1-2/-1-3). SYNTACTIC on purpose: `Object.keys`' twin
+    // guard (#2746) reads the argument's TS type, which the #1930 oracle ratchet
+    // forbids in new codegen — and a primitive receiver must NOT be caught here,
+    // since ES2015+ ToObject wraps it rather than throwing.
+    const isSyntacticNullish =
+      arg.kind === ts.SyntaxKind.NullKeyword ||
+      (ts.isIdentifier(arg) && arg.text === "undefined" && !fctx.localMap.has("undefined"));
+    if (isSyntacticNullish) {
+      emitThrowTypeError(ctx, fctx, "TypeError: Cannot convert undefined or null to object");
+      fctx.body.push({ op: "unreachable" });
+      return { kind: "externref" };
+    }
     const argResult = compileExpression(ctx, fctx, arg, { kind: "externref" });
     if (!argResult) {
       fctx.body.push({ op: "ref.null.extern" });

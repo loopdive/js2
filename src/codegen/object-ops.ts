@@ -3287,7 +3287,11 @@ export function compileObjectDefineProperties(
         // (#3984) Route array-`length` defines to ArraySetLength — the inline
         // expansion below has no notion of the vec's length field and would
         // silently leave the length unchanged. See array-length-define.ts.
-        if (tryEmitVecLengthDefineForDefineProperties(ctx, fctx, objArg, propName, descExpr)) continue;
+        if (
+          tryEmitVecLengthDefineForDefineProperties(ctx, fctx, objArg, propName, descExpr, compileObjectDefineProperty)
+        ) {
+          continue;
+        }
 
         // Parse the individual descriptor
         let valueExpr: ts.Expression | undefined;

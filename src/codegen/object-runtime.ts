@@ -69,6 +69,7 @@ import {
 } from "./native-strings.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
+import { buildThrowJsErrorInstrs, noJsHost } from "./js-errors.js"; // (#4221) absent-callee TypeError
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import {
@@ -163,6 +164,9 @@ import {
 import { ensureProxyRuntime } from "./object-runtime-proxy.js";
 import { ensureArgcGlobal } from "./statements/nested-declarations.js";
 import { buildLazyNativeProtoGetInstrs, getBuiltinBrand } from "./native-proto.js";
+import { vecConstructorArmInstrs } from "./vec-constructor-carrier.js"; // (#4220) runtime `<array>.constructor`
+import { ensureWrapperConstructorCarriers, wrapperConstructorArmInstrs } from "./wrapper-constructor-carrier.js"; // (#4223) runtime `<wrapper>.constructor`
+import { overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4222) overlay-aware index presence
 export { fillProxyDispatch } from "./object-runtime-proxy.js";
 
 /** Initial `$PropMap` capacity. Must be a power of two (mask = cap - 1).
@@ -4694,6 +4698,55 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       ];
     })();
 
+    const methodCallLocals: { name: string; type: ValType }[] =
+      strFastPath.length > 0
+        ? [
+            { name: "any", type: { kind: "anyref" } },
+            // (#3673 round 9) string fast-path scratch (locals 4-8).
+            { name: "nflat", type: { kind: "ref_null", typeIdx: ctx.nativeStrTypeIdx } },
+            { name: "argc", type: { kind: "i32" } },
+            { name: "arg0", type: { kind: "externref" } },
+            { name: "arg1", type: { kind: "externref" } },
+            { name: "argsAny", type: { kind: "anyref" } },
+          ]
+        : [{ name: "any", type: { kind: "anyref" } }];
+
+    // (#4221) §13.3.6.2 EvaluateCall step 5 — a method call whose resolved
+    // callee is ABSENT must throw TypeError, not silently answer `undefined`.
+    // `fillApplyClosure` documents this throw as its deferred "S2", carved out
+    // because pulling the error machinery in at FINALIZE shifts func indices.
+    // Emitting it HERE sidesteps that: `ensureObjectRuntime` runs during
+    // codegen, where minting the in-module `__new_TypeError` only APPENDS a
+    // defined func — the same discipline the `__to_primitive` TypeError
+    // already uses in this file.
+    //
+    // Scope is deliberately the resolved-method-is-null case only. A non-null
+    // but non-callable value keeps the legacy `__apply_closure` answer: the
+    // callable-brand classifier does not recognise every callable shape, and a
+    // false positive here turns a working call into a hard throw.
+    //
+    // Standalone/WASI only — with a JS host this call is a host import where
+    // the engine already throws, so the gc lane stays byte-identical.
+    const throwNotAFunctionInstrs: Instr[] = noJsHost(ctx)
+      ? (() => {
+          emitWasiErrorConstructor(ctx, "TypeError", 1);
+          return buildThrowJsErrorInstrs(ctx, "TypeError", "called value is not a function", {
+            forceInModuleCtor: true,
+          });
+        })()
+      : [];
+    let resolvedMethodGuard: Instr[] = [];
+    if (throwNotAFunctionInstrs.length > 0) {
+      const methodLocalIdx = 3 + methodCallLocals.length;
+      methodCallLocals.push({ name: "resolvedMethod", type: { kind: "externref" } });
+      resolvedMethodGuard = [
+        { op: "local.tee", index: methodLocalIdx },
+        { op: "ref.is_null" },
+        { op: "if", blockType: { kind: "empty" }, then: throwNotAFunctionInstrs },
+        { op: "local.get", index: methodLocalIdx },
+      ];
+    }
+
     const body: Instr[] = [
       // any = any.convert_extern(recv); if null → return undefined
       { op: "local.get", index: 0 },
@@ -4723,6 +4776,9 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
           ...(ctx.funcMap.has("__nullish_to_null")
             ? ([{ op: "call", funcIdx: ctx.funcMap.get("__nullish_to_null")! }] satisfies Instr[])
             : []),
+          // (#4221) an ABSENT callee is a TypeError, not `undefined`. Empty off
+          // the standalone lane (see the guard builder above).
+          ...resolvedMethodGuard,
           // __apply_closure(m, recv, args)
           { op: "local.get", index: 0 },
           { op: "local.get", index: 2 },
@@ -4739,17 +4795,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       "__extern_method_call",
       [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
       [{ kind: "externref" }],
-      strFastPath.length > 0
-        ? [
-            { name: "any", type: { kind: "anyref" } },
-            // (#3673 round 9) string fast-path scratch (locals 4-8).
-            { name: "nflat", type: { kind: "ref_null", typeIdx: ctx.nativeStrTypeIdx } },
-            { name: "argc", type: { kind: "i32" } },
-            { name: "arg0", type: { kind: "externref" } },
-            { name: "arg1", type: { kind: "externref" } },
-            { name: "argsAny", type: { kind: "anyref" } },
-          ]
-        : [{ name: "any", type: { kind: "anyref" } }],
+      methodCallLocals,
       body,
     );
   }
@@ -4765,6 +4811,20 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // them when a trap is absent) and only adds DEFINED functions, so no index
   // shift (same invariant as the rest of this runtime).
   ensureProxyRuntime(ctx, types, registerNative);
+
+  // (#4223) Mint the primitive-wrapper `.constructor` carriers, when the module
+  // was pre-scanned as reading a `constructor` property. Hung HERE — the tail of
+  // the runtime that owns `__extern_get` — because the consuming arm lives
+  // inside that shared native and so has no single call site to hang off: the
+  // read may lower through the legacy any-receiver path, the IR
+  // `dyn.member_get` path, or a builtin-specific reader. This body runs at most
+  // ONCE per module (the `ctx.objectRuntimeTypes` latch at the top), and in a
+  // standalone module that reads `.constructor` the first entry is always from
+  // ordinary codegen — which is what the mint's late-import contract wants.
+  // (`ctx.objectRuntimeTypes` is published at line ~827, well before here, so
+  // the nested `ensureObjectRuntime` the carrier emit performs returns
+  // immediately instead of recursing.)
+  ensureWrapperConstructorCarriers(ctx);
 
   return types;
 }
@@ -7664,6 +7724,56 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
 }
 
 /**
+ * (#4223) Prepend the primitive-WRAPPER `.constructor` arm onto `__extern_get`.
+ *
+ * A `new Number(5)` / `Object(5)` wrapper is a `$Object` whose [[Prototype]] is
+ * a `$NativeProto`, not another `$Object`, so the proto-walk below can never
+ * reach a place where `constructor` lives and every wrapper `.constructor` read
+ * fell out as a miss. The arm answers it from the same
+ * `__builtin_ctor_<Name>` carrier the bare `Number` / `String` / `Boolean`
+ * identifier reads, so the identity is genuine.
+ *
+ * No-op unless a consumer minted the accessors during codegen
+ * (`ensureWrapperConstructorCarriers`) — rationale and the own-property
+ * shadowing argument live in wrapper-constructor-carrier.ts.
+ */
+export function unshiftExternGetWrapperCtorArm(ctx: CodegenContext): void {
+  if (!ctx.standalone) return;
+  const anyStrTypeIdx = ctx.anyStrTypeIdx;
+  const objTypes = ctx.objectRuntimeTypes;
+  if (anyStrTypeIdx < 0 || objTypes === undefined) return;
+  const strFlattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
+  const strEqualsIdx = ctx.nativeStrHelpers.get("__str_equals");
+  if (strFlattenIdx === undefined || strEqualsIdx === undefined) return;
+  const fn = ctx.mod.functions.find((candidate) => candidate.name === "__extern_get");
+  if (!fn) return;
+
+  const arm = wrapperConstructorArmInstrs(ctx, {
+    // Key already known to be a `$AnyString` by the guard wrapped around this.
+    keyEqualsConstructor: [
+      { op: "local.get", index: 1 },
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: anyStrTypeIdx },
+      { op: "call", funcIdx: strFlattenIdx },
+      ...nativeStringLiteralInstrs(ctx, "constructor"),
+      { op: "call", funcIdx: strEqualsIdx },
+    ],
+    // `__extern_get` takes 2 params, so local `n` is operand index `2 + n`.
+    firstLocalIndex: 2 + fn.locals.length,
+    objectTypeIdx: objTypes.objectTypeIdx,
+    propEntryTypeIdx: objTypes.propEntryTypeIdx,
+  });
+  if (arm.instrs.length === 0) return;
+  fn.locals.push(...arm.locals);
+  fn.body.unshift(
+    { op: "local.get", index: 1 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: anyStrTypeIdx },
+    { op: "if", blockType: { kind: "empty" }, then: arm.instrs },
+  );
+}
+
+/**
  * (#3673 round 9b) Prepend the per-key prototype-lookup cache HIT arm onto the
  * FINAL `__extern_get` body — after every other finalize fill has unshifted
  * its arms, so a cache hit skips the closed-struct field ladder, the
@@ -7828,9 +7938,9 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
 
   const findFn = (name: string) => ctx.mod.functions.find((f) => f.name === name);
 
-  // `key == "length"` (key already known to be a $AnyString) — flatten it and
+  // `key == <literal>` (key already known to be a $AnyString) — flatten it and
   // compare against the literal via `__str_equals`. Leaves an i32 on the stack.
-  const keyIsLength = (): Instr[] | null =>
+  const keyIs = (literal: string): Instr[] | null =>
     strFlattenIdx === undefined || strEqualsIdx === undefined
       ? null
       : [
@@ -7838,9 +7948,10 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
           { op: "any.convert_extern" },
           { op: "ref.cast", typeIdx: anyStrTypeIdx },
           { op: "call", funcIdx: strFlattenIdx },
-          ...nativeStringLiteralInstrs(ctx, "length"),
+          ...nativeStringLiteralInstrs(ctx, literal),
           { op: "call", funcIdx: strEqualsIdx },
         ];
+  const keyIsLength = (): Instr[] | null => keyIs("length");
 
   // ── __object_keys_forin / __object_keys: enumerate "0".."len-1" ──
   //
@@ -7853,6 +7964,33 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
   // for-in are each enumerable-only, and `length` is non-enumerable. Expando
   // properties written onto a vec live in the separate #3537 side table and are
   // enumerated by NEITHER — that gap is unchanged by this arm (see #4010).
+  //
+  // (#4222) `0..len-1` is the complete INDEX answer only while every in-bounds
+  // index is PRESENT. `delete arr[i]` leaves `length` alone and records the
+  // absence as a `FLAG_DELETED_INDEX` entry in the #3251 overlay companion, so
+  // under the overlay route each push is gated on `__extern_has_idx` — the same
+  // chokepoint the `in` operator and the HOF presence gates consult, so all
+  // three agree about which indices exist. Route-inactive modules (the common
+  // case) emit the unguarded push, byte-for-byte as before.
+  const gateKeysOnPresence = overlayRouteActive(ctx) && externHasIdxIdx !== undefined;
+  /** `__objvec_push(out, ToString(i))`, presence-gated under the overlay route. */
+  const pushKeyI = (outLocal: number, iLocal: number): Instr[] => {
+    const push: Instr[] = [
+      { op: "local.get", index: outLocal },
+      { op: "local.get", index: iLocal },
+      { op: "f64.convert_i32_s" },
+      { op: "call", funcIdx: numToStringIdx as number },
+      { op: "call", funcIdx: objVecPushIdx as number },
+    ];
+    if (!gateKeysOnPresence) return push;
+    return [
+      { op: "local.get", index: 0 },
+      { op: "local.get", index: iLocal },
+      { op: "f64.convert_i32_s" },
+      { op: "call", funcIdx: externHasIdxIdx as number },
+      { op: "if", blockType: { kind: "empty" }, then: push },
+    ];
+  };
   for (const keysFn of [findFn("__object_keys_forin"), findFn("__object_keys")]) {
     if (!(keysFn && numToStringIdx !== undefined && objVecNewIdx !== undefined && objVecPushIdx !== undefined))
       continue;
@@ -7896,12 +8034,9 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
                   { op: "local.get", index: kLen },
                   { op: "i32.ge_s" },
                   { op: "br_if", depth: 1 },
-                  // __objvec_push(vec, number_toString(f64(i)))
-                  { op: "local.get", index: kVec },
-                  { op: "local.get", index: kI },
-                  { op: "f64.convert_i32_s" },
-                  { op: "call", funcIdx: numToStringIdx },
-                  { op: "call", funcIdx: objVecPushIdx },
+                  // __objvec_push(vec, number_toString(f64(i))), presence-gated
+                  // under the overlay route — see `pushKeyI`.
+                  ...pushKeyI(kVec, kI),
                   { op: "local.get", index: kI },
                   { op: "i32.const", value: 1 },
                   { op: "i32.add" },
@@ -8055,6 +8190,9 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
             },
           ]
         : [];
+    // (#4220) `<array>.constructor` on a receiver only known at RUNTIME —
+    // rationale and blast radius in vec-constructor-carrier.ts.
+    const ctorBody = vecConstructorArmInstrs(ctx, keyIs("constructor"));
     const arm: Instr[] = [
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
@@ -8071,7 +8209,7 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
           {
             op: "if",
             blockType: { kind: "empty" },
-            then: [...lenBody, ...numericArm],
+            then: [...lenBody, ...ctorBody, ...numericArm],
           },
           // Vec receiver, non-"length"/non-index key: FALL THROUGH to the main
           // body — its non-$Object miss arm consults the #3537 expando side

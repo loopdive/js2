@@ -292,6 +292,7 @@ import {
 import {
   tryJsxRuntimeCall,
   tryNamespaceNonCallable,
+  tryNonCallableValueCall,
   tryObjectCoercionCall,
   tryRegExpConstructorCall,
 } from "./calls-guards.js";
@@ -6154,6 +6155,14 @@ function compileCallExpression(
   // Extracted to calls-guards.ts (#742).
   {
     const r = tryNamespaceNonCallable(ctx, fctx, expr);
+    if (r !== undefined) return r;
+  }
+
+  // (#4221) §13.3.6.2 steps 4-5 — a callee whose static type PROVES it is a
+  // primitive (and so carries no [[Call]]) throws TypeError instead of falling
+  // to the last-resort arm's silent `undefined`. Extracted to calls-guards.ts.
+  {
+    const r = tryNonCallableValueCall(ctx, fctx, expr);
     if (r !== undefined) return r;
   }
 
