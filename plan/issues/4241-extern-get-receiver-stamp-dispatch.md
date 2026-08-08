@@ -23,6 +23,9 @@ loc-budget-allow:
   - src/codegen/async-scheduler.ts
   - src/ir/integration.ts
   - src/codegen/object-runtime.ts
+  # +1 line: the second `struct.new $__bound_fn` operand, at the `.bind`
+  # allocation site. Found by Wasm validation ("need 4, got 3"), not by audit.
+  - src/codegen/expressions/calls.ts
 origin: "stakeholder-ordered 2026-08-08 — #4157 bucket 1's residual (the '< 3% __extern_get self-time' acceptance line is still open after #3926). RENUMBERED 2026-08-08: this issue was filed as #4237 and moved to #4241 because another session merged a DIFFERENT plan/issues/4237-*.md to main the same day (the `check:issue-ids:against-main` gate would have rejected the PR). Commits made before the renumber say #4237 in their subject; history stands. Two further collisions to keep straight, both harmless: PR #4237 (loopdive) is an unrelated merged PR, and PR #4241 is the fnctor-layout default-ON flip this issue's baseline measures against — issue ids and PR ids share one sequence, which is exactly why `git log --grep` is useless here (#3571 lesson)."
 ---
 
