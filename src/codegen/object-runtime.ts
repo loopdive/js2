@@ -154,7 +154,7 @@ import {
 import { ensureProxyRuntime } from "./object-runtime-proxy.js";
 import { ensureArgcGlobal } from "./statements/nested-declarations.js";
 import { buildLazyNativeProtoGetInstrs, getBuiltinBrand } from "./native-proto.js";
-import { vecConstructorArmInstrs } from "./vec-constructor-carrier.js"; // (#4218) runtime `<array>.constructor`
+import { vecConstructorArmInstrs } from "./vec-constructor-carrier.js"; // (#4220) runtime `<array>.constructor`
 export { fillProxyDispatch } from "./object-runtime-proxy.js";
 
 /** Initial `$PropMap` capacity. Must be a power of two (mask = cap - 1).
@@ -7899,7 +7899,7 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
             },
           ]
         : [];
-    // (#4218) `<array>.constructor` on a receiver only known at RUNTIME —
+    // (#4220) `<array>.constructor` on a receiver only known at RUNTIME —
     // rationale and blast radius in vec-constructor-carrier.ts.
     const ctorBody = vecConstructorArmInstrs(ctx, keyIs("constructor"));
     const arm: Instr[] = [

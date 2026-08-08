@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#4218) `<array>.constructor` for a standalone array whose receiver is only
+ * (#4220) `<array>.constructor` for a standalone array whose receiver is only
  * known at RUNTIME.
  *
  * ## The gap

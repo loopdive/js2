@@ -1,5 +1,5 @@
 ---
-id: 4218
+id: 4220
 title: "Standalone: a transferred `String.prototype.split` throws `not yet implemented` — the ES5 split battery never runs"
 status: done
 completed: 2026-08-08
@@ -21,7 +21,7 @@ loc-budget-allow:
   - src/codegen/object-runtime.ts
 ---
 
-# #4218 — reflective `String.prototype.split` (standalone)
+# #4220 — reflective `String.prototype.split` (standalone)
 
 ## Symptom
 
