@@ -533,9 +533,7 @@ class FunctionEmitter {
       continues: lexicalNames,
       isLoop: false,
     };
-    if (this.loopTop < this.loops.length) this.loops[this.loopTop] = scopeCtx;
-    else this.loops.push(scopeCtx);
-    this.loopTop += 1;
+    this.installLoopCtx(scopeCtx);
 
     for (const fn of functions) {
       this.emitClosure(fn);
@@ -573,9 +571,7 @@ class FunctionEmitter {
       continues: [],
       isLoop: false,
     };
-    if (this.loopTop < this.loops.length) this.loops[this.loopTop] = scopeCtx;
-    else this.loops.push(scopeCtx);
-    this.loopTop += 1;
+    this.installLoopCtx(scopeCtx);
 
     this.emitStatement(s.body);
 
@@ -767,9 +763,7 @@ class FunctionEmitter {
         continues: lexicalNames,
         isLoop: false,
       };
-      if (this.loopTop < this.loops.length) this.loops[this.loopTop] = scopeCtx;
-      else this.loops.push(scopeCtx);
-      this.loopTop += 1;
+      this.installLoopCtx(scopeCtx);
     }
     if (s.init) {
       if (s.init.type === "VariableDeclaration") this.emitVarDecl(s.init);
@@ -852,9 +846,7 @@ class FunctionEmitter {
           continues: [declaration.id.name],
           isLoop: false,
         };
-        if (this.loopTop < this.loops.length) this.loops[this.loopTop] = scopeCtx;
-        else this.loops.push(scopeCtx);
-        this.loopTop += 1;
+        this.installLoopCtx(scopeCtx);
         this.enc.emitReg(Op.Ldar, valueReg);
         this.initializeName(declaration.id.name);
       }
@@ -959,9 +951,7 @@ class FunctionEmitter {
         continues: lexicalNames,
         isLoop: false,
       };
-      if (this.loopTop < this.loops.length) this.loops[this.loopTop] = scopeCtx;
-      else this.loops.push(scopeCtx);
-      this.loopTop += 1;
+      this.installLoopCtx(scopeCtx);
 
       // BlockDeclarationInstantiation initializes every function before the
       // first case expression is evaluated. B.3.3's OUTER assignment remains
@@ -1067,9 +1057,7 @@ class FunctionEmitter {
           continues: [catchName],
           isLoop: false,
         };
-        if (this.loopTop < this.loops.length) this.loops[this.loopTop] = catchScope;
-        else this.loops.push(catchScope);
-        this.loopTop += 1;
+        this.installLoopCtx(catchScope);
         // BindingInitialization of the CatchParameter: the record's cell starts
         // in TDZ, so this must be an initialize, not a store.
         this.enc.emitReg(Op.Ldar, handlerReg);
@@ -1175,6 +1163,32 @@ class FunctionEmitter {
   }
 
   // ── break / continue ─────────────────────────────────────────────────────────
+  /** Install a loop/scope context at the top of the control stack.
+   *
+   * Physical slots are never popped, only logically released via `loopTop`.
+   * Slot REUSE must NOT use an index-store (`this.loops[i] = ctx`): that store
+   * is a silent no-op under the provider self-compile (follow-up 1 in
+   * `plan/issues/2200-annexb-block-level-function-hoisting.md` — only the FULL
+   * `build-runtime-eval-provider.mjs` build reproduces it), leaving the stale
+   * popped scope visible to `scopeBindsName`/`findLoop` and the new ctx
+   * invisible. Mutate the resident slot's fields in place — ALL FOUR, a partial
+   * write reproduces the bug shape — and return THE SLOT, since callers patch
+   * `breaks` markers through the returned ctx. */
+  private installLoopCtx(ctx: LoopCtx): LoopCtx {
+    if (this.loopTop < this.loops.length) {
+      const slot = this.loops[this.loopTop]!;
+      slot.label = ctx.label;
+      slot.breaks = ctx.breaks;
+      slot.continues = ctx.continues;
+      slot.isLoop = ctx.isLoop;
+      this.loopTop += 1;
+      return slot;
+    }
+    this.loops.push(ctx);
+    this.loopTop += 1;
+    return ctx;
+  }
+
   private pushLoop(label: string | null, isLoop: boolean): LoopCtx {
     const markerSeed = this.enc.here() + 1;
     const ctx: LoopCtx = {
@@ -1184,10 +1198,7 @@ class FunctionEmitter {
       continues: [],
       isLoop,
     };
-    if (this.loopTop < this.loops.length) this.loops[this.loopTop] = ctx;
-    else this.loops.push(ctx);
-    this.loopTop += 1;
-    return ctx;
+    return this.installLoopCtx(ctx);
   }
   private popLoop(ctx: LoopCtx, continueTarget: number): void {
     this.loopTop -= 1;
