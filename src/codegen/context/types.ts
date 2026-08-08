@@ -2545,6 +2545,14 @@ export interface CodegenContext {
    * (emitNativeCaseConversion). Registered once on first use.
    */
   caseTableArrTypeIdx?: number;
+  /**
+   * (#4234) Immutable `(array f64)` type index for the decimal-scaling
+   * power-of-ten table used by the native string→number parsers
+   * (`parse-number-native.ts`). Registered once on first use.
+   */
+  pow10ArrTypeIdx?: number;
+  /** (#4234) Global index of the `10^0 … 10^308` table built on that type. */
+  pow10TableGlobalIdx?: number;
   /** #1588 PR-B: i8 backing array + Utf8String subtype indices. -1 when
    *  `utf8Storage` is off (types not registered). */
   utf8StrDataTypeIdx: number;
