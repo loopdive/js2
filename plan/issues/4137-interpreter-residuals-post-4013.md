@@ -289,3 +289,115 @@ three independent steps:
 - [ ] Each `interp/emitter` Phase-1 gap is either implemented or listed in
       #2928's Phase-2 scope with a count — untouched.
 - [x] Re-measured, with counts: 0 → 40 of 185, 0 regressions (table above).
+
+---
+
+## Implementation Plan (arch, 2026-08-08)
+
+### (a) Arm-by-arm status — verified against `origin/main` (e738507f era)
+
+| arm | status | evidence |
+| --- | --- | --- |
+| 2. `setEvalVariableEnvironmentBinding` null-deref (16) | **LANDED** | PR #4139 merged `c5e7d6a3`; commit `95d2b82a`. Fix present on main: `src/interp/eval-environment.ts:391-396` (`existing !== null` guard) and the `variableEnvironmentFor` parent-walk continuation at `:75`. |
+| 2b. Catch-parameter Environment Record (24) | **LANDED** | Same PR, commit `a751e10b` (`SIMPLE_CATCH_SCOPE_LABEL`, B.3.5 exemption). `tests/issue-4137-interp-catch-scope.test.ts` on main. |
+| 1. `SyntaxError: NaN` (36) | **OPEN** — and re-diagnosed by #4194 | The verdict-flipping half is NOT this issue's; see below. The rendering half is a real, unowned codegen defect specced here. |
+| 3. Phase-1 emitter gaps (22) | **OPEN** | All five refusal buckets unchanged in `src/interp/emitter.ts`; no commits touched the file since PR #4139. |
+
+### (b) Arm 1 — `SyntaxError: NaN` (36 records): split into three layers, only ONE is this issue's
+
+**Read `plan/issues/4194-standalone-instance-expando-substrate-breaks-compiled-acorn.md` first.** It corrects this issue's earlier diagnosis:
+
+- **Layer 1 (verdict-flipping, NOT here):** the raise itself is *spurious* — acorn's `copyNode` for-in enumerates zero keys on a standalone class instance, so `checkLValPattern` sees a blank node and raises on every object-destructuring shorthand (`catch ({ f })`, `var { a } = {}`). That is #4194 (status: ready, priority: high, feasibility: hard). **Do not duplicate it here.** All 24 annexB `skip-early-err` records and (probably) the 12 class-family records flip only via #4194's stack.
+- **Layer 2 (this issue): the message renders as the number `NaN`.**
+
+  **Root cause (verified in source):** `compileCompoundAssignment` in `src/codegen/expressions/operator-assignment.ts` gates the #2058 runtime-string `any +=` recovery on **`ctx.anyValueTypeIdx < 0`** (line **1722**: `if (op === PlusEqualsToken && !fctx.boxedCaptures?.has(name) && ctx.anyValueTypeIdx < 0)`). The runtime-eval provider is a huge `any`-typed program, so `ensureAnyValueType` (`src/codegen/any-helpers.ts:27-29`) has registered `$AnyValue` long before acorn's `pp.raise` compiles → the gate fails → `message += " (" + …` falls through to the numeric compound path (line ~1898 onward), which ToNumber-coerces both sides → `f64` NaN. The gate's own comment claims "the AnyValue infrastructure already round-trips `any += number` through the existing numeric path" — true for numbers, **false for runtime strings**.
+
+  The exclusion exists because `__host_add` is not part of the fast-mode ABI — but the **standalone** lane doesn't use `__host_add` at all: `emitAnyAddFromExternTemps` (`src/codegen/binary-ops.ts:2354`, standalone branch at `:2360`+) already has the host-free tag-dispatch concat/add.
+
+  **Fix design:** widen the gate to `(ctx.anyValueTypeIdx < 0 || ctx.standalone === true)` (WASI too if `emitAnyAdd`'s `noJsHost` covers it — it tests `ctx.standalone === true || ctx.wasi === true`, so match that). Then verify `compileAnyCompoundAdd` (line **1040**) writes back correctly when the binding's storage type is `ref_null $AnyValue` rather than `externref`: its store path calls `coerceType(ctx, fctx, {externref}, localType)` (lines 1064-1083) — confirm `type-coercion.ts`'s externref→AnyValue arm (~line 2355) handles this; if not, add that coercion leg, not a new path.
+
+- **The probe pair IS the acceptance test — run BOTH.** `.tmp/probe/pa9.ts` / `pa10.ts` (reproduced verbatim in `plan/agent-context/L3-annexb-hoisting.md`). The bug is context-sensitive: whole-program parameter inference makes the single-call-site probe (`pa9`) compile correctly while the four-call-site twin (`pa10`) mis-lowers. A fix validated on only one of them proves nothing. Compile with `target: "standalone", skipSemanticDiagnostics: true, inferModuleStrictArguments: false`. Success = `pa10.viaLength() === 10` and `pa9` still correct.
+
+- **Layer 3 (`err.pos === NaN`) — hypothesis, needs one discriminating probe.** #4194 observed `err.pos = NaN` and inferred "something numerifies both operands". Leading hypothesis from #4194's own data: acorn's `err.pos = pos` is a **dynamic expando write on a SyntaxError instance**, which standalone currently **drops** (#4194's `readsBack = 101` row); the read-back is `undefined`, and the *harness/consumer* numerifies `undefined → NaN` at the read. Probe: in the provider lane, catch a genuine syntax error and report `typeof err.pos` — `"undefined"` confirms this is #4194's write half (no third defect; nothing more to do here), `"number"` means a real second numerification path exists and needs its own diagnosis. Record the outcome in this file either way.
+
+**Expected flips from Layer 2 alone: ZERO.** This is a diagnostic-quality fix (unblocks all future compiled-acorn triage), already stated twice in this file. Do not sell it as a conformance delta.
+
+**Ownership caution:** `operator-assignment.ts` was concurrently owned by another lane on 2026-08-06. Before dispatch, check `origin/issue-assignments` and open PRs touching this file; the prescribed diff is one gate condition + at most one coercion leg — keep it that small.
+
+### (b) Arm 3 — Phase-1 emitter gaps (22 records)
+
+Published buckets: regex literal **13** · class method key `PrivateIdentifier` **4** · class element `PropertyDefinition` **3** · `TaggedTemplateExpression` **1** · binary `|` **1**.
+
+#### C1 — bitwise binary operators (implement; covers the `|` record + the compound forms for free)
+
+- **Root cause:** `binaryOpcode` (`src/interp/emitter.ts:1713-1744`) returns −1 for `|`/`&`/`^`/`>>>` (`default` comment at line 1742 names them as Phase-1 out of scope). The same table drives compound assignment (`emitAssign`, line 1571-1573), so `|=`/`&=`/`^=`/`>>>=` currently refuse too.
+- **Fix — follow the #4013 Shl/Shr precedent exactly (all four files, append-only):**
+  1. `src/interp/opcodes.ts`: append `BitOr: 45, BitAnd: 46, BitXor: 47, ShrU: 48` after `Shr: 44` (line 102); bump `OP_COUNT` 45 → **49** (line 106); append four `{ name, form: OperandForm.RegA }` rows to `OP_INFO` after index 44 (line 240). **Never renumber** (file header, lines 29-30).
+  2. `src/interp/runtime-ops.ts`: add `anyBitOr/anyBitAnd/anyBitXor/anyShrU` next to `anyShl`/`anyShr` (lines 46-51) — bodies are the plain native ops (`a | b`, `a & b`, `a ^ b`, `a >>> b`), which is what makes the value bridge free in both lanes (file header contract).
+  3. `src/interp/loop.ts`: four `case Op.BitOr: acc = anyBitOr(regs[a], acc); break;` arms next to `Op.Shl`/`Op.Shr` (lines 970-975); extend the import list (lines 74-75).
+  4. `src/interp/emitter.ts`: four `case` lines in `binaryOpcode`; update the line-1742 comment (leaves `**`, `in`, `instanceof` as the remaining out-of-scope set).
+- **Semantics come free:** ToInt32/ToUint32 and operand order (`acc = op(regs[r], acc)`, syntactic left in the register) are identical to the landed Shl/Shr; `>>>` correctly yields unsigned via native `>>>`.
+- **Expected flips:** the 1 published `binary operator '|'` record, plus any records currently refusing at `compound assignment |=` etc. (not separately counted in the published 22 — they'd have surfaced under the same-file refusal). Verify in Node first via `tests/interp/differential.test.ts` additions (no Wasm build needed).
+
+#### C2 — regex literal (implement as an interpreter-intrinsic builtin; measure honestly)
+
+- **Site:** `src/interp/emitter.ts:1249` — `if (node.regex) throw new UnsupportedNodeError("regex literal", "Literal")`.
+- **Fix design — builtin, NOT a new opcode** (the established "fewer ops, same cost class" rule the object/array-literal builtins follow):
+  1. `src/interp/opcodes.ts`: `export const BUILTIN_REGEXP_CREATE = 28;` appended after `BUILTIN_PUSH_OBJECT_ENV = 27` (line 133) — **scalar export, not a field on the frozen `Builtin` object** (the file's own note, lines 108-110: separately compiled callable rec-groups keep their shape). Append `"RegExpCreate"` to `BUILTIN_NAMES` (line 300).
+  2. `src/interp/runtime-ops.ts`: `export function buildRegExpLiteral(pattern: JSValue, flags: JSValue): JSValue { return new RegExp(pattern, flags); }` — in Node (E1) this is the real intrinsic; self-compiled it lowers to the AOT standalone RegExp constructor.
+  3. `src/interp/loop.ts` `callBuiltin` (line 1285): `case BUILTIN_REGEXP_CREATE: return buildRegExpLiteral(regs[base], regs[base + 1]);`
+  4. `src/interp/emitter.ts` `emitLiteral` (line 1249): replace the throw with: mark; `LdaConst internConst(node.regex.pattern)` → `Star rBase`; `LdaConst internConst(node.regex.flags)` → `Star rBase+1`; `CallBuiltin BUILTIN_REGEXP_CREATE, rBase, 2`; release. **Use `node.regex.pattern`/`node.regex.flags`, never `node.value`** (acorn's own `value` construction can be null/absent in the compiled lane).
+- **Semantics:** a fresh RegExp object per literal evaluation is correct ES2015+ (§13.2.7.3); `lastIndex` state per evaluation follows. Immune to a user-shadowed `RegExp` binding (intrinsic construction, not name resolution) — which is also why the `LdName "RegExp"` + `Construct` desugar was rejected.
+- **Dependency / honest expectations:** self-compiled, `new RegExp(<runtime string>)` goes through the standalone **dynamic-pattern** path — #4042 (status: ready, assignee L-regexp) records that patterns outside the post-#4065 grammar refuse with `Unsupported dynamic regular expression pattern`. So expect **≤ 13** flips: patterns inside the grammar flip; the rest degrade from a blanket Phase-1 refusal to a per-pattern runtime error (an attribution improvement, not a regression — verify 0 pass→fail). Measure the split and record it.
+- **Provider canary:** the provider build canary-verifies before caching (`scripts/build-runtime-eval-provider.mjs`) — a `new RegExp` that fails to self-compile fails the build loudly, not silently.
+
+#### C3 — defer to #2928 Phase 2 with counts (do NOT implement here)
+
+`PrivateIdentifier` method keys (**4**), `PropertyDefinition` class fields (**3**), `TaggedTemplateExpression` (**1**) each need a runtime protocol (private state slots; field-initializer evaluation in constructor context; the tagged-template call convention with `raw`), none of which fits an M-horizon residual issue. **Action:** append these three, with the counts above, to #2928's Phase-2 scope list, citing this section. That closes this issue's acceptance box ("implemented **or** listed in #2928's Phase-2 scope with a count").
+
+**Also record for Phase 2 (not in the published 22):** catch destructuring `ObjectPattern` (`emitter.ts:1054`) is invisible today only because #4194's parse-level raise masks it; it is #4194's declared "layer 2" and becomes the next blocker the day #4194 lands. Its implementer must also wire the B.3.3 **cancellation** half (a destructuring CatchParameter cancels the Annex B synthetic var — the `cancelsAnnexBVarBinding` counterpart to the landed `SIMPLE_CATCH_SCOPE_LABEL` exemption), which is currently unreached and untested.
+
+### (c) New opcodes / builtin ids — encoding positions (append-only)
+
+| id | name | form | notes |
+| ---: | --- | --- | --- |
+| 45 | `BitOr` | RegA | `acc = regs[r] \| acc` |
+| 46 | `BitAnd` | RegA | `acc = regs[r] & acc` |
+| 47 | `BitXor` | RegA | `acc = regs[r] ^ acc` |
+| 48 | `ShrU` | RegA | `acc = regs[r] >>> acc` |
+| builtin 28 | `BUILTIN_REGEXP_CREATE` | Builtin (a=id, b=rBase, +argc word) | scalar export |
+
+`OP_COUNT` → 49. All ids < 64, so the WIDE-flag encoding invariant (bit 7 free) holds untouched. No changes to `OperandForm`, the encoder, or the disassembler beyond the indexed-table rows.
+
+### (d) Edge cases
+
+- **C1:** `null`/`undefined`/string operands — ToInt32 handles them natively (e.g. `"3" | 0 === 3`, `undefined | 0 === 0`); covered for free by the native-op authoring rule, but add differential cases anyway. Operand order matters for `>>>` (left in register).
+- **C2:** empty flags (`/x/` → `flags === ""`); pattern containing chars that needed escaping in the literal (`node.regex.pattern` is already the source-exact pattern text); a regex literal in expression-statement head position never reaches the emitter as such (parser disambiguates — not our problem).
+- **A2 (Layer 2):** must not disturb host fast mode — the widened gate admits only `standalone`/`wasi`, where `emitAnyAddFromExternTemps` never emits `__host_add`. Boxed captures stay excluded (`!fctx.boxedCaptures?.has(name)` — the #1999 hazard). BigInt stays excluded (existing check, line 1727-1728).
+- **General:** none of these changes touch the provider seam — result envelope, callable rec-group ABI, and the ordered-initializer contract (#2928 "public linked runtime" findings) are unchanged. The provider disk cache key folds the compiler-bundle hash, so any A2 (codegen) change forces a ~2 min provider rebuild before measuring — that is correct behavior, not staleness.
+
+### (e) Verification
+
+Cheap first (no Wasm): add C1/C2 cases to `tests/interp/differential.test.ts` (runs the emitter+loop in Node against the host's `eval`), e.g. `a | b` on numbers/strings/undefined, `x |= 3`, `/a+b/.test("aab")`, `/x/g.flags`, two evaluations of one literal are distinct objects.
+
+Then the provider lane (build order is mandatory — `scripts/run-test262-vitest.sh:173-176` then the provider):
+
+```sh
+# 1. rebuild both esbuild bundles, 2. node scripts/build-runtime-eval-provider.mjs, then:
+TEST262_PATH_FILTER='annexB/language/eval-code/' TEST262_TARGET=standalone \
+TEST262_FULL_RUNTIME_EVAL=1 COMPILER_POOL_SIZE=1 TEST262_WORKERS=1 \
+pnpm run test:262 -- --official-scope-only
+```
+
+To enumerate the exact current record sets: `node scripts/fetch-baseline-jsonl.mjs --print-path`, then filter the standalone entries on error strings `"unsupported in Phase 1"` and `"SyntaxError: NaN"`.
+
+Expected outcomes per arm: **A2** — 0 verdict flips; success = `pa9`+`pa10` both correct, and a genuine-syntax-error control (`eval("var 1 = 2;")` through the provider) renders `Unexpected token (1:4)`-shaped text instead of `NaN`. **C1** — the 1 `binary operator '|'` record flips (plus any compound-bitwise refusals); 0 regressions. **C2** — ≤13 flips, 0 pass→fail; record the in-grammar/out-of-grammar split. **C3** — 0 flips; #2928 Phase-2 list updated.
+
+### (f) Risks / collisions
+
+- **`src/interp/emitter.ts` + `src/interp/eval-environment.ts` are contested files.** #4171 (ready, sprint current) will touch eval-environment; any in-flight B.3.3/annexB-semantics spec touches emitTry and the scope machinery. This spec's emitter diffs deliberately avoid both: C1 touches only `binaryOpcode` (lines 1713-1744), C2 only the `emitLiteral` regex branch (line 1249) — **no changes to `emitTry`, `SIMPLE_CATCH_SCOPE_LABEL`, `isActiveBlockLexical`, `cancelsAnnexBVarBinding`, or any env-record path.** If a merge conflict appears in those regions anyway, it is someone else's change — do not resolve inline (per the `[CONFLICT]` protocol).
+- **`operator-assignment.ts` (A2)** — concurrent-lane ownership as of 2026-08-06; re-check claims/open PRs at dispatch. The file also has a history of subtle mode-coupling (#1999, #2058, #3039) — keep the diff to the gate + coercion leg, nothing structural.
+- **A2 blast radius:** widening the #2058 gate changes lowering for *every* standalone `any +=` site, not just acorn — the equivalence gate and the standalone floor/net guards in `merge_group` are the real check; a local scoped run cannot clear this. Expect the possibility of a park; that is the gate working.
+- **Do not conflate arms in one PR.** A2 is codegen; C1/C2 are interpreter. Separate PRs so a park on the risky A2 change does not strand the mechanical C1/C2 wins.
+- **Frontmatter `loc-budget-allow` for emitter.ts already exists** (granted for the landed catch fix); C1+C2 add ~20 LOC — re-run `check:loc-budget` and extend the rationale only if it trips.
+- **#4194 sequencing:** nothing here depends on #4194 landing, and nothing here blocks it. But re-measure the `SyntaxError: NaN` bucket after #4194 lands — the 36 should collapse via its layer 1, and whatever remains is Layer-2/3 residue attributable with the now-readable diagnostics.

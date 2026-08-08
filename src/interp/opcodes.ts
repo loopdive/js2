@@ -100,10 +100,16 @@ export const Op = {
   DeleteName: 42, //DeleteName c    ; acc = delete <resolved consts[c]>
   Shl: 43, //       Shl r           ; acc = regs[r] << acc
   Shr: 44, //       Shr r           ; acc = regs[r] >> acc
+  // ── bitwise, part 2 (#4137 — appended; ToInt32/ToUint32 live in the runtime
+  //    helpers exactly like Shl/Shr, so these carry no type assumption) ──
+  BitOr: 45, //     BitOr r         ; acc = regs[r] |   acc
+  BitAnd: 46, //    BitAnd r        ; acc = regs[r] &   acc
+  BitXor: 47, //    BitXor r        ; acc = regs[r] ^   acc
+  ShrU: 48, //      ShrU r          ; acc = regs[r] >>> acc
 } as const;
 
 /** The number of distinct opcodes (0..OP_COUNT-1). */
-export const OP_COUNT = 45;
+export const OP_COUNT = 49;
 
 /** Private CallBuiltin ids used by #2929 lexical-environment mechanics. They
  * remain scalar exports instead of fields on the frozen `Builtin` object so
@@ -238,6 +244,10 @@ export const OP_INFO: OpInfo[] = [
   { name: "DeleteName", form: OperandForm.ConstA }, // 42 (#2929)
   { name: "Shl", form: OperandForm.RegA }, // 43 (#4013)
   { name: "Shr", form: OperandForm.RegA }, // 44 (#4013)
+  { name: "BitOr", form: OperandForm.RegA }, // 45 (#4137)
+  { name: "BitAnd", form: OperandForm.RegA }, // 46 (#4137)
+  { name: "BitXor", form: OperandForm.RegA }, // 47 (#4137)
+  { name: "ShrU", form: OperandForm.RegA }, // 48 (#4137)
 ];
 
 // ── Builtin ids (CallBuiltin operand `a`) ────────────────────────────────────

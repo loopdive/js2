@@ -58,6 +58,9 @@ import {
   buildForOfValues,
   buildObjectLiteral,
   anyAdd,
+  anyBitAnd,
+  anyBitOr,
+  anyBitXor,
   anyDiv,
   anyDelete,
   anyGe,
@@ -73,6 +76,7 @@ import {
   anySet,
   anyShl,
   anyShr,
+  anyShrU,
   anyStrictEq,
   anySub,
   anyTypeof,
@@ -972,6 +976,18 @@ function run(bottom: Frame): JSValue {
             break;
           case Op.Shr:
             acc = anyShr(regs[a], acc);
+            break;
+          case Op.ShrU:
+            acc = anyShrU(regs[a], acc);
+            break;
+          case Op.BitOr:
+            acc = anyBitOr(regs[a], acc);
+            break;
+          case Op.BitAnd:
+            acc = anyBitAnd(regs[a], acc);
+            break;
+          case Op.BitXor:
+            acc = anyBitXor(regs[a], acc);
             break;
           case Op.Neg:
             acc = anyNeg(acc);

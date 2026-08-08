@@ -1726,6 +1726,14 @@ class FunctionEmitter {
         return Op.Shl;
       case ">>":
         return Op.Shr;
+      case ">>>":
+        return Op.ShrU; // (#4137)
+      case "|":
+        return Op.BitOr; // (#4137)
+      case "&":
+        return Op.BitAnd; // (#4137)
+      case "^":
+        return Op.BitXor; // (#4137)
       case "==":
         return Op.Eq;
       case "===":
@@ -1739,7 +1747,7 @@ class FunctionEmitter {
       case ">=":
         return Op.Ge; // (#3356)
       default:
-        return -1; // bitwise / unsigned shift / ** / in / instanceof — Phase-1 out of scope
+        return -1; // ** / in / instanceof — Phase-1 out of scope
     }
   }
 

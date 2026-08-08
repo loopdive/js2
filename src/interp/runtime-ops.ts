@@ -49,6 +49,18 @@ export function anyShl(a: JSValue, b: JSValue): JSValue {
 export function anyShr(a: JSValue, b: JSValue): JSValue {
   return a >> b;
 }
+export function anyBitOr(a: JSValue, b: JSValue): JSValue {
+  return a | b;
+}
+export function anyBitAnd(a: JSValue, b: JSValue): JSValue {
+  return a & b;
+}
+export function anyBitXor(a: JSValue, b: JSValue): JSValue {
+  return a ^ b;
+}
+export function anyShrU(a: JSValue, b: JSValue): JSValue {
+  return a >>> b;
+}
 export function anyNeg(a: JSValue): JSValue {
   return -a;
 }
