@@ -94,6 +94,72 @@ provenance/census machinery — do not touch. This issue's surface is the
 object-runtime dispatch fills and the stamp plumbing in
 `fnctor-layout-emit.ts` / `struct-field-exports.ts` territory.
 
+## Baseline — 2026-08-08, post-#4241 main (9a993e32e + flip fb7915197), MEASURED
+
+All numbers standalone acorn self-parse unless said otherwise; census rows
+are deterministic (checksum 422), profile is 300 parses / 11,632 samples
+(box load ~3.4 at start — the quietest window this box has had).
+
+### 1. The profile has changed shape since 08-07 — the ladder is no longer the headline
+
+| bucket | 08-07 | NOW | |
+| --- | ---: | ---: | --- |
+| gc-engine | 23.1 % | **2.11 %** | the allocation program (#4211/#4217/#4230/#4241/#4208/#4221) landed |
+| dynamic-lookup | 13.5 % | 12.04 % | `__extern_get` self 6.83 % |
+| compiled | 32.1 (w/ scanner) | 36.31 % | **inflated: contains the new #1 frame, misbucketed** |
+
+**Top frame overall: `__closure_bag_lookup` at 12.25 % self** — a 696-char
+LEAF that linearly scans a global linked-list registry (`ref.eq` per node)
+— bigger than `__extern_get` itself. It was in nobody's top-25 on 08-07.
+
+### 2. Three instruments disagreed on WHO calls it; the census is the one that's right
+
+- Profiler nearest-caller said `__extern_get` (12.04 of 12.25) — **wrong at
+  the frame level**: the emitted `__extern_get` body contains ZERO calls to
+  it (verified in WAT); wasm-opt inlined the true intermediate frames.
+- WAT site census said `__extern_set` (325 call sites — the #4194
+  untombstone arms) — **right about sites, wrong about traffic**: those
+  sites execute ~0×/parse (writes are rare; the site count is not a
+  frequency).
+- **Call census (deterministic): 39,451 calls/parse — `__closure_prop_get`
+  20,850 + `__instance_prop_get` 18,601, nothing else.** These are the
+  dynamic READ-miss arms: a lookup that misses the struct/`$Object` arms
+  consults the carrier/expando bag before answering undefined, and each
+  consult is a full linear registry scan.
+
+### 3. Receiver-ladder census (the original brief), for when its turn comes
+
+`wasm-dis` on the optimize-4 standalone binary (1,851,442 B), per-function:
+
+| helper | lines | ref.test | ref.cast | br_table | __str_equals |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `__extern_set` | 30,004 | **748** | 2,220 | 0 | 288 |
+| `__extern_get` | 30,822 | **672** | 1,996 | **1** (#3926's key table) | 304 |
+| `__extern_has` | 10,775 | 409 | 726 | 0 | 297 |
+| 645 `__get/set_member_*` | ~40k | ~975 | ~2,260 | 0 | 0 |
+| **aggregate (648 helpers)** | 111,894 | **2,804** | 7,202 | 1 | 889 |
+
+The per-key member helpers average only ~1.5 ref.tests each (small candidate
+sets); the big three carry the ladders. `__extern_set` grew past
+`__extern_get` (#4194's write arms + #4241's layout arms — correctness
+first, now a dispatch-shape cost to collapse).
+
+### 4. Consequence for this issue's plan — REORDERED by the measurement
+
+1. **FIRST: kill the bag-lookup linearity (12.25 %, the largest single
+   frame in the whole profile).** Two candidate shapes, in order of
+   preference: (a) a carrier-INTRINSIC nullable `$bag` slot on closure
+   structs and fnctor bases (lookup = one `struct.get`; the registry list
+   stays only for carriers that cannot grow a slot), or (b) demote the
+   consult — the read-miss path only needs the bag when the receiver ever
+   HAD one; a per-carrier "has-bag" bit or a receiver-class screen before
+   the scan. (a) subsumes (b). Must keep the `carrier-bag-hasown.ts` rule: a
+   QUERY never allocates a bag.
+2. THEN the receiver stamp `br_table` (the original brief, §Fix shape) — its
+   payoff target is `__extern_get`'s 6.83 % self and the write helper's
+   grown ladder.
+3. The per-site last-shape cache stays speculative third.
+
 ## Acceptance criteria
 
 - [ ] Fresh baseline recorded here (profile buckets + receiver-arm WAT
