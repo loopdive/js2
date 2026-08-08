@@ -71,7 +71,7 @@
  */
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { withSpeculativeCompile } from "./context/speculative.js";
-import { BUILTIN_CTOR_ARITY, tryEnsureNativeProtoBrand } from "./builtin-value-read.js";
+import { BUILTIN_CTOR_ARITY, NUMBER_CONSTANT_VALUES, tryEnsureNativeProtoBrand } from "./builtin-value-read.js";
 import { pushMarkBuiltinCarrierCallable } from "./builtin-callable-brand.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
@@ -93,6 +93,31 @@ const EXTRA_CTOR_ARITY: Record<string, number> = { AggregateError: 2 };
  * attributes default to false per CompletePropertyDescriptor §6.2.6.4).
  */
 const HOST_FLAG_CONFIGURABLE = 0x04;
+
+/**
+ * (#4234) Per-ctor NUMERIC own data constants to seed alongside
+ * `length`/`name`/`prototype`.
+ *
+ * `Number`'s eight §15.7.3 value constants are `{ [[Writable]]: false,
+ * [[Enumerable]]: false, [[Configurable]]: false }` — flag word `0`, the same
+ * encoding `prototype` already uses below.
+ *
+ * Values come from `NUMBER_CONSTANT_VALUES`, the SAME table the syntactic
+ * `Number.MAX_VALUE` → `f64.const` fold and the reflective `Number["MAX_VALUE"]`
+ * fold read (`builtin-value-read.ts`). Sharing it is the point: a descriptor
+ * whose `value` disagreed with what the direct read returns would be worse than
+ * no descriptor at all, and `verifyNotWritable` checks exactly that pair
+ * (`gOPD(...).writable === false`, then `Number.MAX_VALUE` unchanged after a
+ * write attempt).
+ *
+ * Deliberately Number-only for now. `Math`'s eight constants have identical
+ * spec attributes (§15.8.1) and would seed through the same code, but `Math`
+ * takes the namespace-carrier call site and is outside this slice's measured
+ * set — see the issue's "Not done" section.
+ */
+const CTOR_NUMERIC_CONSTANTS: Record<string, Record<string, number>> = {
+  Number: NUMBER_CONSTANT_VALUES,
+};
 
 /**
  * Emit — into `fctx.body`, which the caller has already swapped to the
@@ -147,6 +172,24 @@ export function pushBuiltinCtorOwnPropSeed(
   fctx.body.push({ op: "f64.const", value: HOST_FLAG_CONFIGURABLE });
   fctx.body.push({ op: "call", funcIdx: defineIdx });
   fctx.body.push({ op: "drop" });
+
+  // (#4234) Numeric value constants — { w:false, e:false, c:false }, flag word
+  // 0. Seeded in declaration order so `getOwnPropertyNames` reports them after
+  // `length`/`name` and before `prototype`, which is the spec own-key order for
+  // `Number` (`length`, `name`, `prototype` are the function-object keys; the
+  // §15.7.3 constants follow in table order). Only presence and attributes are
+  // observable to the failing tests, but keeping insertion deterministic means
+  // a future key-order test sees a stable answer.
+  for (const [constName, constValue] of Object.entries(CTOR_NUMERIC_CONSTANTS[builtinName] ?? {})) {
+    fctx.body.push({ op: "local.get", index: objLocal });
+    addStringConstantGlobal(ctx, constName);
+    for (const instr of stringConstantExternrefInstrs(ctx, constName)) fctx.body.push(instr);
+    fctx.body.push({ op: "f64.const", value: constValue });
+    fctx.body.push({ op: "call", funcIdx: boxIdx });
+    fctx.body.push({ op: "f64.const", value: 0 });
+    fctx.body.push({ op: "call", funcIdx: defineIdx });
+    fctx.body.push({ op: "drop" });
+  }
 
   // `prototype` — { w:false, e:false, c:false }, value = the `$NativeProto`
   // singleton (identical to the syntactic `<Ctor>.prototype` read). Ctors with

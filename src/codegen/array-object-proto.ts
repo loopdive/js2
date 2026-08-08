@@ -63,6 +63,7 @@ import { emitTransferredCharAtProtoMemberBody, unboxProtoArgToI32 as unboxArgToI
 import { emitObjectProtoOrRefusal as emitProtoMemberBodyRefusal } from "./object-proto-tostring.js";
 import { emitStringSubstringMemberBody } from "./string-proto-substring.js";
 import { emitStringSplitMemberBody } from "./string-proto-split.js"; // (#4220) reflective String.prototype.split
+import { emitStringReplaceMemberBody } from "./string-proto-replace-transfer.js"; // (#4232) reflective String.prototype.replace
 import { NO_ARG_STRING_MEMBER_HELPER, emitStringProtoToStringFlat } from "./string-proto-tostring.js"; // (#3992)
 
 /**
@@ -841,6 +842,14 @@ function emitStringProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, m
   // the pre-#4220 behaviour via the shared refusal.
   if (member === "split")
     return emitStringSplitMemberBody(ctx, fctx) ?? emitProtoMemberBodyRefusal(ctx, fctx, "String", member);
+  // (#4232) `replace` (§22.1.3.19) is `split`'s sibling in every structural
+  // respect — reflective closure ABI, string-returning, ToString-everything —
+  // and was the arm #4224 named as its leftover. Same refusal fallback.
+  if (member === "replace")
+    return (
+      emitStringReplaceMemberBody(ctx, fctx, () => emitStringRequireObjectCoercible(ctx, fctx, member)) ??
+      emitProtoMemberBodyRefusal(ctx, fctx, "String", member)
+    );
   // (#2875 slice 3a) The number-returning search family — `indexOf` /
   // `lastIndexOf` — has a DIFFERENT closure ABI from the index accessors
   // (param 2 is the search STRING, not an integer position; the optional
