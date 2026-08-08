@@ -52,6 +52,12 @@ In `npm-compat-refresh.yml`:
 3. Best-effort: a failed dispatch is a `::warning`, not a job failure — the
    data is already safely on main and the next merge redeploys.
 
+## Permanent repro
+
+`tests/issue-4217-refresh-redeploys-pages.test.ts` — workflow-shape pin: the
+`actions: write` grant, the `id: promote` / `published=1` real-push marker, and
+the guarded `deploy-pages.yml` dispatch step must all survive refactors.
+
 ## Acceptance
 
 - [x] A refresh run that publishes artifacts triggers a `deploy-pages` run
