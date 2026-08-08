@@ -187,16 +187,34 @@ beyond what WP3 needs.
 | WP3b replace | #4224 | +19 (agent A/B) | function replacers + static-regexp lane; reflective arm left |
 | WP4b array | #4222 | +6 (agent A/B) | delete-presence + length RangeError; `Array(n)` holes needs a carrier decision |
 | WP2 functions | #4221 | +18 (agent A/B) | non-callable TypeErrors both lanes; arguments-object model untouched |
+| WP1 descriptor bags (Wave 3) | #4230 | +10 (agent A/B, sequential) | SITE-PROPS-BAG design call **resolved** — key-source COMPLETENESS, not store singularity; vec bag ∪ #3251 overlay. Indexed-vec + Error `Properties` still refuse by design |
 
-**Sum ≈ +124 vs the +397 needed** — measured per-bucket, zero known
+**Sum ≈ +134 vs the +397 needed** — measured per-bucket, zero known
 regressions (every agent A/B'd against its base; phantom regressions from
 load-induced compile timeouts and runtime-eval tier mismatches were each
-run down and excluded). The next tranche, in expected-value order, is
-documented in the issue files above: `arguments`-object model (#4221
-leftover), `new Object(<primitive>)`/`Object(null)` (#4223), `Array(n)`
-hole carrier (#4222), SITE-PROPS-BAG dynamic descriptor bags (WP1),
-reflective `replace`/`split`-family arms (#4224), gOPD on intrinsic
-receivers (WP1), and the `with`-statement scope-chain bugs (WP7).
+run down and excluded).
+
+Two entries of the previous "next tranche" list are now **retired or
+re-diagnosed** by #4230, which matters because both were mis-scoped:
+
+- **SITE-PROPS-BAG dynamic descriptor bags — done** (+10). The blocker was
+  never "wait for one authoritative store"; it was a key-source completeness
+  question, and a union answers it.
+- **gOPD on intrinsic receivers — NOT a missing-fields bug.** Measured:
+  `gOPD(globalThis, "NaN")` returns `undefined` and
+  `globalThis.hasOwnProperty("NaN")` is `false`. The global object has no own
+  property records for its intrinsics at all, so no amount of descriptor-field
+  completion reaches it. Re-scope as "model the global object as an ordinary
+  object" before anyone estimates it off the old framing.
+
+Remaining tranche, in expected-value order: **overlay-invisible-to-key-walk**
+(#4230 L1 — the single largest measured lever left in the descriptor cluster;
+it is what the `verifyProperty … should be enumerable` family fails on, with
+the index-key duplication hazard named in that issue), `arguments`-object
+model (#4221 leftover), `new Object(<primitive>)`/`Object(null)` (#4223),
+builtin-prototype expandos invisible to `for-in` (#4230 L2), array-literal
+elision holes (#4230 L4 / #4222), reflective `replace`/`split`-family arms
+(#4224), and the `with`-statement scope-chain bugs (WP7).
 
 ## Wave plan
 
