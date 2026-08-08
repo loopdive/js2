@@ -320,7 +320,8 @@ export interface CompileOptions {
   /**
    * (#743) Declaration source text for the entry module's shipped sibling
    * `.d.ts` (e.g. acorn's `dist/acorn.d.ts` when compiling `dist/acorn.mjs`).
-   * Only consulted when `JS2WASM_DTS_ENTRYPOINT_SEEDS=1`: exported functions
+   * Only consulted while `JS2WASM_DTS_ENTRYPOINT_SEEDS` is enabled (**ON by
+   * default since 2026-08-08**; `=0` disables): exported functions
    * with implicit-`any` parameters take their declared `string`/`number`
    * parameter types as inference SEEDS (claims joined against internal
    * call-site evidence, guarded at the export boundary — see

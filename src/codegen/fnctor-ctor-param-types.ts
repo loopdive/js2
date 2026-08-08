@@ -38,30 +38,32 @@ import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
 import type { ValType } from "../ir/types.js";
 import { computeFnctorGraphCtorParamFacts, computeFnctorGraphCtorThisReadFacts } from "../ir/fnctor-method-edges.js";
+import { fnctorCtorParamTypesFlagEnabled } from "../derivation-flags.js";
 import { inferParamTypeFromCallSites } from "./declarations/param-return-inference.js";
 
 /**
- * OFF by default — opt in with `JS2WASM_FNCTOR_CTOR_PARAM_TYPES=1`.
+ * **ON by default since 2026-08-08** — `JS2WASM_FNCTOR_CTOR_PARAM_TYPES=0`
+ * (or `off`, or empty) restores the pre-flip behaviour. Spelling rule and the
+ * decision that set it: `src/derivation-flags.ts`.
+ *
+ * The history below is preserved because it is what the flip overrode, and
+ * because it is the reason not to expect this to show up as a win.
  *
  * The mechanism works (a one-field fixture goes `externref` → `f64`, and the
  * #2660/#4155 fnctor suites stay green), but on the corpus it was built for it
- * does not yet pay: **acorn recovers 2 slots** (`unknown` 43 → 41) **for +90
- * bytes** (943,140 → 943,230). Direct call-site agreement is not enough there,
- * because acorn's constructor arguments are themselves untyped values forwarded
- * from other untyped parameters — `new Parser(options, input, startPos)` inside
- * a function whose own params are `any` teaches this pass nothing.
+ * never paid. Single-hop agreement recovered **2 slots** on acorn (`unknown`
+ * 43 → 41) for +90 bytes; the transitive fixpoint that followed added no slots
+ * at all; the #4246 pin-retirement slice brought the census to 61 typed / 1
+ * discarded / 34 unknown, and the value-level instrument read **zero movement**
+ * (`$AnyValue` 22,008 of 233,320 allocations per parse, identical flag-on and
+ * flag-off) for +124 B. Three "stays OFF" verdicts on a benefit criterion.
  *
- * Resolving the other 41 needs #743's actual Phase 2: an iterative fixpoint that
- * propagates types transitively through the call graph until convergence, rather
- * than a single-hop agreement check. This slice is the prerequisite for that —
- * it establishes that `new F(…)` participates at all — not a substitute.
- *
- * Kept and shipped rather than deleted because the negative result is the
- * useful part: the next attempt should start from the fixpoint, and should not
- * re-derive that single-hop agreement is worth 2 slots.
+ * The 2026-08-08 stakeholder decision retires that criterion — derivation runs
+ * always, consumers arrive later — so the flag ships ON at a measured null,
+ * deliberately and on the record. Do not read the default as evidence of a win.
  */
 export function fnctorCtorParamTypesEnabled(): boolean {
-  return process.env.JS2WASM_FNCTOR_CTOR_PARAM_TYPES === "1";
+  return fnctorCtorParamTypesFlagEnabled();
 }
 
 /**

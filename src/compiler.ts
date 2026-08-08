@@ -1327,9 +1327,11 @@ export function compileSourceSync(
     irInventory = elision.inventoryOptions;
   }
 
-  // (#743) Flag-gated (`JS2WASM_DTS_ENTRYPOINT_SEEDS=1`): resolve the entry's
-  // shipped sibling `.d.ts` (explicit option or on-disk sibling); undefined —
-  // the default — leaves every path below byte-identical.
+  // (#743) Flag-gated (`JS2WASM_DTS_ENTRYPOINT_SEEDS`, **ON by default since
+  // 2026-08-08**; `=0` disables): resolve the entry's shipped sibling `.d.ts`
+  // (explicit option or on-disk sibling). `undefined` — which is still the
+  // common case, since most entries have no sibling declaration file — leaves
+  // every path below byte-identical.
   const dtsEntryDecls = resolveDtsEntryDeclarations(options.fileName, options.entryDeclarations);
 
   let ast: TypedAST;
