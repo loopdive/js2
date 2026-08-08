@@ -26,9 +26,19 @@ loc-budget-allow:
   # `__hasOwnProperty`'s body is assembled here; the String-exotic own-property
   # prologue is a splice into it. The prologue itself is a satellite module.
   - src/codegen/object-runtime.ts
+  # +9: the reflective String-member dispatcher gains one `replace` arm plus its
+  # comment, mirroring the `split` arm immediately above it. The body is in
+  # string-proto-replace-transfer.ts.
+  - src/codegen/array-object-proto.ts
+  # +2 arms on the runtime `.constructor` carrier: the demand-minted
+  # `__plain_ctor_Object` accessor and the `$proto == null` arm.
+  - src/codegen/wrapper-constructor-carrier.ts
 func-budget-allow:
   - src/codegen/property-access.ts::compileElementAccessBody
   - src/codegen/object-runtime.ts::ensureObjectRuntime
+  - src/codegen/array-object-proto.ts::emitStringProtoMemberBody
+  - src/codegen/wrapper-constructor-carrier.ts::wrapperConstructorArmInstrs
+  - src/codegen/wrapper-constructor-carrier.ts::ensureWrapperConstructorCarriers
 origin: "2026-08-08 — ES5-standalone-90 Wave 3; the leftovers #4223 and #4222 measured and deliberately did not take"
 ---
 
@@ -135,6 +145,39 @@ index reads (`15.5.5.5.2-3-{3..8}`, `-7-{1..4}`) and two from own properties
 share this fix site and was re-measured as already correct on this base
 (`[10,20,30].hasOwnProperty("1") === true`), so nothing was done for it.
 
+## 4 — reflective `String.prototype.replace` (#4224's leftover)
+
+**Root cause.** #4224 fixed the DIRECT path. The battery mostly TRANSFERS the
+method (`__instance.replace = String.prototype.replace`), which reaches the
+`native-proto.ts` closure factory — whose String glue had no `replace` arm, so
+the member fell through to `emitProtoMemberBodyRefusal`. The referent this
+needed, `string-proto-split.ts` (#4220), now exists in the merged base.
+
+**Fix.** `src/codegen/string-proto-replace-transfer.ts` (new), following
+`string-proto-split.ts` step for step. §22.1.3.19 step 11 reuses
+`__regex_get_substitution` (#1913) rather than concatenating literally — the
+STRING-search path calls the same GetSubstitution the RegExp path does, so
+`$$`/`$&`/`` $` ``/`$'` are live. Group 0 is the whole match, so caps is
+`[position, position + searchLength]` and `nGroups` is 1.
+
+Still refused (both pre-existing — the member threw outright before): a
+CALLABLE `replaceValue` (a leaf native cannot marshal a dynamic call back out)
+and a RegExp `searchValue` (the engine compiles patterns at COMPILE time from a
+static literal; a reflective closure gets a runtime `externref`). Same shape as
+the RegExp-separator gap `split` records.
+
+### Measured — +2, 0 regressions
+
+A/B on `built-ins/String/prototype/replace` (55 files), both arms sequential on
+this tree: **40 → 42 pass**. `S15.5.4.11_A1_T1` and `tostring-this-throws-symbol`.
+`_T2` did NOT flip and the reason was not chased.
+
+The vitest cases compile as **JS** (`allowJs`), following
+`es5-standalone-split.test.ts`: the transferred-method idiom has no TypeScript
+spelling, and the TS-typed spellings route to a different (already-native)
+lowering. This is not a stylistic choice — the TS-lane probe of the identical
+source reads `null`, so a TS-lane test here would pass vacuously.
+
 ## Acceptance criteria
 
 - [ ] `new Object(<string|number|boolean>).constructor` is the matching builtin,
@@ -153,8 +196,10 @@ share this fix site and was re-measured as already correct on this base
 
 ## Leftovers (deliberately NOT in scope)
 
-- The reflective/transferred `String.prototype.replace` arm (#4224's 2 files,
-  `S15.5.4.11_A1_T1/_T2`) — see the report; not reached in this budget window.
+- `S15.5.4.11_A1_T2` — the second reflective-`replace` file. Section 4 flipped
+  `_T1` but not this one; not chased.
+- A CALLABLE replacer / a RegExp search value through the reflective `replace`
+  closure (section 4's two named refusals).
 - `(x as any).length` / `(x as any)[0]` on a String WRAPPER through an
   `any`-typed receiver still miss (`__extern_get` has no wrapper arm for
   `length` or indices — only `hasOwnProperty` gained one here). Separate
