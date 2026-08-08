@@ -1,0 +1,134 @@
+---
+id: 4218
+title: "Oracle backend: in-house binder + annotation propagation — make the TS5 checker droppable (JS-mode first, TS-mode second)"
+status: backlog
+sprint: Backlog
+created: 2026-08-08
+updated: 2026-08-08
+priority: medium
+horizon: xl
+feasibility: hard
+reasoning_effort: max
+task_type: refactor
+area: checker, codegen, ir
+goal: platform
+related: [1029, 1288, 1290, 1930, 2855, 3273]
+origin: "2026-08-08 assessment: does js2wasm still need the TypeScript package at all? Split the dependency into parser vs checker and found the checker is replaceable with machinery the IR already has. Follow-on from the TS7/tsgo compile-speed question (#1029)."
+---
+
+# #4218 — Oracle backend: in-house binder + annotation propagation
+
+## Problem
+
+js2wasm depends on the `typescript` npm package for two separable things:
+
+1. **Parser + AST shape** — the entire front end is written against the TS
+   AST: ~344k LOC in `src/codegen/` + ~80k LOC in `src/ir/`, 2,730
+   `SyntaxKind.*` sites (measured 2026-08-08). The AST *shape* is
+   load-bearing and stays. The *implementation* behind it is swappable:
+   tsgo (TypeScript 7 Go port) emits a property-compatible AST — validated
+   in #1029's audit (identical `SyntaxKind` values, node props, `.parent`
+   chains) — and parsing never required the still-missing Corsa
+   programmatic API.
+2. **TypeChecker as type oracle** — ~190 call sites through `ctx.oracle`
+   (wrapping only ~10 checker primitives: `getTypeAtLocation`,
+   `getSymbolAtLocation`, `getTypeOfSymbol`, `getContextualType`,
+   `getReturnTypeOfSignature`, `getPropertiesOfType`, declarations), plus
+   ~445 legacy raw `checker.`/`ctxChecker` references still in codegen
+   under the oracle-ratchet (#1930/#3273) baseline.
+
+The checker is the reason we cannot move the compile pipeline to tsgo:
+TS 7.0 went GA (2026-07-08) **without a programmatic compiler API** — the
+Strada JS API is not carried forward; a new (subprocess/IPC, async-flavored)
+API is expected around 7.1. #1029 is therefore blocked on upstream.
+
+This issue removes that blockage from our side: back `ctx.oracle` with an
+**in-house binder + annotation-propagation engine** so the TS5 checker
+becomes droppable, independent of when/what upstream ships.
+
+## Why the checker is replaceable (evidence)
+
+- **Plain-JS inputs get near-zero value from the checker.** The test262
+  corpus (43k files) has no annotations; codegen already degrades
+  gracefully to dynamic representations when type facts come back unknown.
+- **The oracle's fact vocabulary is deliberately small.** Top consumers
+  (measured): `staticJsTypeOf` (31), `valueDeclarationOf` (30),
+  `typeFactOf` (30), `variableDeclarationOf` (21), `declaredNameOf` (11),
+  `signatureOf` (9), `builtinReceiverOf` (8). Symbol/scope binding is
+  ordinary scope analysis; type facts on annotated TS are mostly
+  annotation-reading plus local propagation.
+- **The IR already owns type machinery**: `src/ir/propagate.ts`,
+  `type-evidence.ts`, `TypeMap`, `passes/monomorphize.ts`. The IR-fallback
+  buckets "better TypeMap propagation" (#1376/#2855) are explicitly about
+  owning type resolution in-house. This issue converges with that work
+  rather than competing with it.
+- **The oracle-ratchet has been forcing the right shape** — one narrow
+  interface that can be re-backed. The blocker is not design; it is the
+  ~445 un-ratcheted raw checker references in legacy codegen.
+
+## What is genuinely hard (scope the risk here)
+
+- **`lib.d.ts` builtin knowledge** (`oracle.builtinReceiverOf`,
+  well-known-symbol members): needs a curated builtin-shape table, not a
+  full lib.d.ts interpreter.
+- **Generics instantiation and contextual typing**: out of scope for the
+  in-house engine; the few sites that need raw `ts.Type` identity already
+  carry `oracle-ratchet-allow:` grants and can keep TS5 until TS-mode
+  phase-out.
+- **Module resolution**: `src/checker/index.ts` uses `ts.createProgram`
+  with real fs resolution — this is what makes npm-compat work. Module
+  resolution must be preserved (in-house resolver or tsgo project load),
+  and is the riskiest slice; keep it last.
+
+## Plan
+
+**Phase 0 — ratchet to zero (prerequisite, mergeable in slices).**
+Drive the ~445 raw `checker.`/`ctxChecker` references in codegen through
+`ctx.oracle`, extending the oracle's fact vocabulary only where a real
+consumer needs it. Pure refactor; each slice lands under the existing
+ratchet gate.
+
+**Phase 1 — JS-mode without the checker.**
+In-house binder (scope/symbol resolution → `valueDeclarationOf`,
+`variableDeclarationOf`, `declaredNameOf`, `isUnresolvableIdentifier`) +
+builtin-shape table. For inputs with no type annotations, back the oracle
+entirely in-house; assert conformance parity on test262 (which exercises
+exactly this mode). This also unlocks the tsgo batch-parse fast path from
+#1029 Phase 1 for JS inputs — no TS5 program construction at all.
+
+**Phase 2 — TS-mode annotation propagation.**
+Annotation reading + propagation (reuse/extend IR `TypeMap` machinery) to
+answer `typeFactOf`/`staticJsTypeOf`/`signatureOf` for the annotated
+subset js2wasm actually consumes (`type i32 = number`, typed params/returns,
+class shapes). TS5 checker stays available behind a flag as a differential
+oracle for validation.
+
+**Phase 3 — decide the endgame.**
+With phases 0–2 landed, the TS5 checker is a dev-time validation tool, not
+a runtime dependency. Whether to delete it, keep it as an optional
+strict-mode, or swap the parser to tsgo (same AST, ~6× cold / ~170× warm
+measured in #1288) becomes a cheap, reversible decision.
+
+## Acceptance criteria
+
+- [ ] Raw checker references in `src/codegen/` reduced to the
+      `oracle-ratchet-allow:` grant list only (Phase 0).
+- [ ] JS-mode (unannotated input) compiles with the in-house oracle backend
+      and zero TS5 `createProgram`/`getTypeChecker` calls; test262
+      conformance within drift of baseline (Phase 1).
+- [ ] TS-mode answers the oracle fact vocabulary from annotations +
+      propagation; differential run against the TS5-checker-backed oracle
+      shows no conformance regression on the equivalence suite (Phase 2).
+- [ ] Module resolution / npm-compat unaffected (explicitly re-run the
+      npm-compat suite before any phase that touches `checker/index.ts`).
+
+## Non-goals
+
+- Replacing the TS AST *shape* (oxc/swc/home-grown parser): rewriting a
+  ~424k-LOC front end for no user-visible gain. Ruled out.
+- Reimplementing full TypeScript inference (generics, conditional types,
+  flow narrowing). The oracle vocabulary defines the ceiling.
+- Waiting on the TS 7.1 API: even when it ships it will be
+  subprocess/IPC-based, so synchronous per-node oracle queries would each
+  cost a round-trip — an in-house backend avoids that architecture problem
+  entirely.
