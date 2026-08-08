@@ -1,10 +1,11 @@
 {
   "id": "4194",
   "assignee": "ttraenkler/fable-3927-emission",
-  "requested_by": "ttraenkler/fable-3927-emission",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-4194-closed-struct-computed-write",
   "claimed_at": "2026-08-08T10:44:47Z",
-  "updated_at": "2026-08-08T10:44:47Z",
-  "write_id": "56829-1dccxc9i"
+  "updated_at": "2026-08-08T13:40:20Z",
+  "write_id": "71050-2kndtgg6",
+  "released_at": "2026-08-08T13:40:20Z"
 }
