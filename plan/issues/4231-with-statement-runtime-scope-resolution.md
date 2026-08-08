@@ -83,6 +83,33 @@ does not. One file (`12.10-2-5.js`).
 a `with`-bound string field reports `"object"`. Number / boolean / function
 bindings are unaffected.
 
+### RC-F — the Tier-2 fallback write shadows a global-object property (the big one)
+
+Not in the original plan; found by delta-debugging `S12.10_A1.1_T1`'s **first**
+assertion down to a 6-line repro. It is the gate for the whole family.
+
+`emitIdentifierWriteFromLocal`'s tail branch auto-allocated a local for an
+undeclared name — and `allocLocal` registers the name in `fctx.localMap`, so
+every LATER bare read of that name in the same function resolves to the fresh
+local. The `with` cascade compiles that branch as the HasBinding-**MISS** arm,
+which for a name the object owns is **never taken**:
+
+```js
+this.p1 = 1;
+with (myObj) { p1 = 'x1'; delete p3; }   // myObj owns p1 ⇒ else arm is dead
+if (p1 !== 1) …                          // …but reads the dead arm's local ⇒ null
+```
+
+Merely *compiling* an unreachable fallback poisoned the binding. Fix: a name the
+pre-scan already classified as a global-object property (`sloppyImplicitGlobals`,
+#3956/#2726) has real storage that `emitImplicitGlobalRead` reads, so write it
+there with `__extern_set`. Genuinely undeclared, unscanned names keep the
+auto-local.
+
+The `delete` in the body is what forces Tier-2 (`bodyContainsIdentifierDelete`
+declines the Tier-1 struct proof), which is why every `S12.10_A1.*` file — all of
+which contain `del = delete p3` — was affected and simpler `with` bodies were not.
+
 ### RC-E — a property whose value is `undefined` does not shadow correctly (NOT FIXED)
 
 `with ({p1: undefined}) { s = p1; }` yields neither `undefined` nor `null`.
@@ -100,10 +127,67 @@ expression), so building it before the runtime defects are fixed yields ≈ 0.
 
 ## Acceptance criteria
 
-- [ ] RC-A: `var x = v` inside `with (o)` where `o` owns `x` writes `o.x` and
-      leaves the function-scoped `x` undefined; bare reads of `x` see `o.x`.
-- [ ] RC-B: `delete name` inside a `with` yields a boolean.
-- [ ] RC-C: `with (null)` throws TypeError.
-- [ ] RC-D: `typeof` of a string-valued `with` binding is `"string"`.
-- [ ] No regression in the `gc` (JS-host) lane for the same bucket.
-- [ ] Regression tests in `tests/es5-standalone-with.test.ts`, RED on base.
+- [x] RC-A: `var x = v` inside `with (o)` where `o` owns `x` writes `o.x`; bare
+      reads of `x` see `o.x`. **Partially** — the object write and the reads are
+      fixed; the hoisted binding is not left `undefined` (see RC-H below).
+- [x] RC-B: `delete name` inside a `with` yields a boolean.
+- [x] RC-C: `with (null)` throws TypeError.
+- [x] RC-D: `typeof` of a string-valued `with` binding is `"string"`.
+- [x] RC-F: a bare read after a `with` still sees its global-object property.
+- [x] Regression tests in `tests/es5-standalone-with.test.ts`, **9 of 24 RED on
+      base** (A/B'd by reverting the four touched source files to HEAD).
+- [x] No regression in the neighbouring suites: `issue-1387*`, `issue-2663*`,
+      `issue-3025`, `issue-4179`, `issue-4206`, `issue-3956`, `issue-2726*` —
+      failure sets byte-identical to base (13 and 4 pre-existing failures
+      respectively, same tests).
+
+## Measured effect on `language/statements/with` (standalone, local seam)
+
+A/B over all 181 files in the directory via the `runTest262File` seam, same
+process, eval provider prebuilt at the REFUSAL tier both arms (so eval-dependent
+files are comparable to each other, though not to CI).
+
+| | base | head |
+| --- | --- | --- |
+| pass | 55 | 56 |
+| fail→pass | — | **1** (`12.10-2-5.js`, RC-C) |
+| pass→fail | — | **0** |
+| still failing, signature ADVANCED | — | **31** |
+
+The headline is the third row, not the first. Every `S12.10_A1.*` file asserts
+~19 things in sequence and previously died on **assertion #1**
+(`p1 === 1` reading `null`). They now reach **assertion #11**
+(`myObj.parseInt !== parseInt`) or **#4** — i.e. assertions 1–10 flipped, the
+file still does not. Converting the family needs the remaining blockers below;
+none of them is the one #4206's handoff named.
+
+## Leftovers, precisely located
+
+1. **RC-G — Tier-1 writes are coerced to the field's inferred ValType.**
+   `with ({foo: 42}) { foo = 'set in with'; }` stores `NaN`: the struct field is
+   `f64` and the string is coerced into it. **Pre-existing and not caused by this
+   change** — measured identically on base for the plain assignment form; RC-A
+   only made the `var` form behave the same way as the plain one, so
+   `12.10-0-8.js` fails before and after (its reported value moves `42` → `NaN`).
+   The fix belongs in object-shape widening: a `with` target's field type must
+   accommodate every value assigned through the body, or the statement must
+   decline Tier-1.
+2. **RC-H — a `var` inside a `with` body that never EXECUTES is not `undefined`.**
+   `with (o) { throw v; var p4 = 'x4'; }` leaves `p4` reading `null`: §10.2.11
+   hoisting must initialise it at function/script entry, and instead the
+   declaration statement is the only thing that ever writes the slot.
+   **Pre-existing, not caused by RC-A — A/B'd directly and byte-identical on
+   base** (`.tmp/probe12.mjs`); it was simply masked behind assertion #1, and is
+   now the first failure of 9 files. The same slot-default gap also leaves the
+   hoisted binding non-`undefined` after RC-A redirects a `var`'s store to the
+   object. A plain `if (false) { var p4 = 'x4'; }` outside a `with` is correct,
+   so the gap is specific to `with` bodies. Assertions #4 and #18 of the battery.
+3. **RC-I — a `with`-owned property named after a folded intrinsic does not
+   shadow it.** `with ({NaN: 'obj_NaN'}) { st = NaN; }` reads the global `NaN`:
+   `NaN`/`Infinity` are folded to constants before `with` resolution runs.
+   Assertions #12/#13. `parseInt`/`isNaN`/`eval` shadow correctly in isolation
+   but not in the battery's Tier-2 context (assertion #11) — diagnose together.
+4. **RC-E** — see above.
+5. The 39 `#1387` gate refusals stay out of scope, and #4206 measured them
+   **downstream** of this cohort, so they should not be staffed until the above
+   land.
