@@ -10,7 +10,7 @@ fi
 AGENT=$(echo "$INPUT" | jq -r '.tool_input.to // empty' 2>/dev/null)
 
 # Log the shutdown event
-source /workspace/.claude/hooks/event-log.sh
+source "${CLAUDE_PROJECT_DIR:-/workspace}"/.claude/hooks/event-log.sh
 log_event "agent_shutdown" "agent=$AGENT"
 
 # Check if context summary exists

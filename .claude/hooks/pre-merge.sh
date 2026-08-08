@@ -14,11 +14,21 @@ if ! echo "$CMD" | grep -q 'git merge'; then
   exit 0
 fi
 
-source /workspace/.claude/hooks/event-log.sh
+source "${CLAUDE_PROJECT_DIR:-/workspace}"/.claude/hooks/event-log.sh
 
 # Detect: is this merging TO main (ff-only) or merging main INTO a branch?
 # ff-only anywhere in the command = merging to main
 if echo "$CMD" | grep -q '\-\-ff-only'; then
+  # LEGACY PATH. CLAUDE.md's merge protocol is PRs + CI, and direct merges to
+  # main are never used by dev agents — so under the documented workflow this
+  # branch should not be reached at all. It is kept as a BLOCKING guard (it
+  # refuses without a fresh passing proof) rather than deleted, because
+  # check-cwd.sh still allows `git merge --ff-only` in /workspace for the
+  # authenticated tech lead, and removing the proof requirement from that path
+  # would loosen a gate rather than tighten one. Do not read reaching this code
+  # as licence to merge directly; if you are a dev agent here, you are on the
+  # wrong path — open a PR instead.
+  #
   # Merging TO main — require test proof (unless UI-only branch)
   BRANCH=$(echo "$CMD" | sed 's/.*--ff-only[[:space:]]*//' | awk '{print $1}')
 
@@ -88,6 +98,13 @@ fi
 
 # No --ff-only = merging main into a branch (always allowed)
 # This includes: "git merge main", "cd <worktree> && git merge main", etc.
+#
+# The advisory below used to end "...then ff-only to main". That was left over
+# from the pre-PR era and directly contradicted CLAUDE.md's merge protocol
+# ("Never use `git merge` on main directly. All merges go through PRs + CI").
+# On 2026-08-07 it fired on every merge across three agents and the lead; all
+# correctly refused, and two escalated it independently. An instruction to
+# bypass CI that arrives with system authority only has to be believed once.
 log_event "merge_into_branch"
-jq -n '{hookSpecificOutput: {hookEventName: "PreToolUse", additionalContext: "Merging main into your branch. After merge: run equiv tests, create proof, then ff-only to main."}}'
+jq -n '{hookSpecificOutput: {hookEventName: "PreToolUse", additionalContext: "Merging main into your branch. After merge: push the branch and open a PR against main — all merges go through PRs + CI (docs/ci-policy.md). Do NOT merge to main directly, and do NOT enqueue: the server-side auto-enqueue.yml workflow is the single enqueuer."}}'
 exit 0

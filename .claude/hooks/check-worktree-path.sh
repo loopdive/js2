@@ -97,7 +97,7 @@ fi
 
 # Log the rejection and emit a helpful message
 if [ -f /workspace/.claude/hooks/event-log.sh ]; then
-  source /workspace/.claude/hooks/event-log.sh
+  source "${CLAUDE_PROJECT_DIR:-/workspace}"/.claude/hooks/event-log.sh
   log_event "worktree_path_blocked" "path=$ABS_PATH"
 fi
 
