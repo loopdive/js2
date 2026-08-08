@@ -240,6 +240,16 @@ The measurement is sequential for the reason #4221 and #4243 both recorded:
 `runTest262File` reports a TIMEOUT as `compile_error`, so a parallel sample on
 a loaded box manufactures phantom regressions.
 
+**gc lane** — all three root causes are lane-independent (the `new` guard and
+the sloppy-`this` reshape are pure AST decisions; the inlined receiver binds a
+local), so the host lane was A/B'd on the same corpus, a 118-file half of the
+cross-section:
+
+| arm | pass | delta |
+| --- | --- | --- |
+| gc without #4246 | 89 | — |
+| gc with #4246 | 90 | **+1 gain, 0 regressions** |
+
 ## Deliberately NOT in scope (leftovers, with the mechanism named)
 
 - **`new new Math()`** (`S11.2.2_A4_T5` CHECK#2) — the outer `new`'s callee is a
