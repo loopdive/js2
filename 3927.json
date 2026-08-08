@@ -1,10 +1,11 @@
 {
   "id": "3927",
   "assignee": "ttraenkler/fable-3927-emission",
-  "requested_by": "ttraenkler/fable-3927-emission",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-3927-per-type-emission",
   "claimed_at": "2026-08-08T04:57:59Z",
-  "updated_at": "2026-08-08T04:57:59Z",
-  "write_id": "31484-1bogfaxa"
+  "updated_at": "2026-08-08T11:20:01Z",
+  "write_id": "28520-tvsxn5zs",
+  "released_at": "2026-08-08T11:20:01Z"
 }
