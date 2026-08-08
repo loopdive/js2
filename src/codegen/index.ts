@@ -223,6 +223,7 @@ import {
   fillApplyClosure,
   fillBindDynHelper,
   fillBuiltinFnMeta,
+  fillClosedStructEnumerationArms,
   fillClosedStructExternGetArms,
   fillClosedStructHasOwnArms,
   fillClosedStructOwnPropertyNamesArms,
@@ -4449,6 +4450,7 @@ export function generateModule(
     fillInstanceTombstones(ctx); // (#4098 G1 s1) BEFORE the ladders below: they bake its call
     fillClosedStructHasOwnArms(ctx);
     fillClosedStructOwnPropertyNamesArms(ctx);
+    fillClosedStructEnumerationArms(ctx); // (#3920) Object.keys / for…in
     fillClosedStructExternGetArms(ctx);
     fillFnctorPrototypeDispatchArms(ctx);
 
@@ -6704,6 +6706,7 @@ export function generateMultiModule(
     fillInstanceTombstones(ctx); // (#4098 G1 s1) BEFORE the ladders below: they bake its call
     fillClosedStructHasOwnArms(ctx);
     fillClosedStructOwnPropertyNamesArms(ctx);
+    fillClosedStructEnumerationArms(ctx); // (#3920) Object.keys / for…in
     fillClosedStructExternGetArms(ctx);
     fillFnctorPrototypeDispatchArms(ctx);
 
