@@ -1,11 +1,10 @@
 {
   "id": "743",
-  "assignee": "ttraenkler/opus-impl-4",
-  "requested_by": "ttraenkler@users.noreply.github.com",
-  "status": "released",
-  "branch": "claude/issue-743-consumer-abi",
-  "claimed_at": "2026-08-07T16:47:56Z",
-  "updated_at": "2026-08-07T17:07:22Z",
-  "write_id": "32464-8nkjg5g4",
-  "released_at": "2026-08-07T17:07:22Z"
+  "assignee": "ttraenkler/fable-743-fixpoint",
+  "requested_by": "ttraenkler/fable-743-fixpoint",
+  "status": "in-progress",
+  "branch": "issue-743-field-param-mutual-fixpoint",
+  "claimed_at": "2026-08-08T17:46:13Z",
+  "updated_at": "2026-08-08T17:46:13Z",
+  "write_id": "14029-lk8hrq4g"
 }
