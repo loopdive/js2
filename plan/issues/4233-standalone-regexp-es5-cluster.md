@@ -16,6 +16,12 @@ es_edition: 5
 language_feature: regexp, native-prototypes, constructor-semantics
 goal: es5
 related: [682, 1539, 1912, 1913, 2175, 3507, 3724, 4089, 4220, 4224]
+# oracle-ratchet: one new getTypeAtLocation in regexp-standalone.ts asks a raw
+# ts.Type identity question (is the pattern arg's type THE global RegExp type),
+# which is deliberately above what ctx.oracle expresses (CLAUDE.md, #1930);
+# consistent with the file's 16 pre-existing checker queries of the same shape.
+oracle-ratchet-allow:
+  - src/codegen/regexp-standalone.ts
 ---
 
 # #4233 — the ES5 RegExp cluster in `--target standalone`
