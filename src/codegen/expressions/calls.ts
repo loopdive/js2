@@ -296,6 +296,8 @@ import {
   tryObjectCoercionCall,
   tryRegExpConstructorCall,
 } from "./calls-guards.js";
+import { reshapeSloppyPrimitiveThisArg } from "./sloppy-this-toobject.js"; // (#4246)
+import { planInlinedReceiver, releaseInlinedReceiver } from "./inlined-call-receiver.js"; // (#4246)
 import { analyzeTdzAccessByPos, emitLocalTdzCheck, emitStaticTdzThrow } from "./identifiers.js";
 import {
   emitUndefined,
@@ -6809,6 +6811,17 @@ function compileCallExpression(
       const invalidThis = tryBorrowedPrototypeNullishThisThrow(ctx, fctx, expr, innerExpr, compileOneArg, expectedType);
       if (invalidThis !== undefined) return invalidThis;
 
+      // (#4246) §10.2.1.2 step 5.b — a SLOPPY callee binds `ToObject(thisArg)`
+      // for a primitive receiver. Rewrite the receiver to `new <Wrapper>(…)`
+      // once, here, above the several receiver-install lowerings below, so the
+      // strict/sloppy decision lives in one place. Declines (returns undefined)
+      // for a strict callee, a callee that ignores `this`, and any receiver the
+      // oracle cannot prove primitive. See sloppy-this-toobject.ts.
+      {
+        const boxedThisCall = reshapeSloppyPrimitiveThisArg(ctx, expr, innerExpr);
+        if (boxedThisCall !== undefined) return compileCallExpression(ctx, fctx, boxedThisCall, expectedType);
+      }
+
       // (#3390 slice 1) `Promise.<combinator>.call(recv, …)` with a STATICALLY
       // non-constructor receiver throws a TypeError synchronously (§27.2.4.1
       // step 2 IsConstructor, BEFORE touching the iterable). On the standalone
@@ -6980,12 +6993,32 @@ function compileCallExpression(
             }
           }
           if (directArgs !== undefined) {
+            // (#4246) A function-expression callee that READS `this` gets the
+            // receiver bound as a real `this` local for the duration of the
+            // inline, instead of the legacy evaluate-and-drop below. Without
+            // it `(function(){ this.x = 1 }).call(obj)` wrote to the ambient
+            // receiver — the global object in sloppy top-level code — so the
+            // read looked right and every write was lost. See
+            // inlined-call-receiver.ts for the two gates that keep the nullish
+            // and arrow cases on the existing path.
+            const inlinedReceiver = planInlinedReceiver(ctx, fctx, fnExpr, expr.arguments[0]);
             // Evaluate the receiver-position thisArg for side effects (spec:
             // arguments are evaluated even though standalone functions ignore
             // `this`). For .call/.apply the thisArg is expr.arguments[0].
             if (expr.arguments.length > 0) {
-              const thisType = compileExpression(ctx, fctx, expr.arguments[0]!);
-              if (thisType !== null) fctx.body.push({ op: "drop" });
+              const thisType = compileExpression(
+                ctx,
+                fctx,
+                expr.arguments[0]!,
+                inlinedReceiver ? { kind: "externref" } : undefined,
+              );
+              if (inlinedReceiver) {
+                if (thisType === null) fctx.body.push({ op: "ref.null.extern" });
+                else if (thisType.kind !== "externref") coerceType(ctx, fctx, thisType, { kind: "externref" });
+                fctx.body.push({ op: "local.set", index: inlinedReceiver.localIdx });
+              } else if (thisType !== null) {
+                fctx.body.push({ op: "drop" });
+              }
             }
             const directCall = ts.factory.createCallExpression(
               fnExpr as ts.LeftHandSideExpression,
@@ -6994,7 +7027,9 @@ function compileCallExpression(
             );
             ts.setTextRange(directCall, expr);
             (directCall as any).parent = expr.parent;
-            return compileCallExpression(ctx, fctx, directCall as ts.CallExpression);
+            const inlinedResult = compileCallExpression(ctx, fctx, directCall as ts.CallExpression);
+            if (inlinedReceiver) releaseInlinedReceiver(fctx, inlinedReceiver);
+            return inlinedResult;
           }
         }
       }
