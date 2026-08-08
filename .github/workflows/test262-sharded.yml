@@ -78,6 +78,11 @@ on:
         required: false
         default: false
         type: boolean
+      layout_emit:
+        description: "(#3927) Measurement lane for the per-type-layout default-ON decision: export JS2WASM_FNCTOR_LAYOUT_EMIT=1 into the shard env. Same contract as ir_first: NEVER promotes a baseline — the merged report artifact is the measurement output, diffed against the same-SHA committed baseline."
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -735,6 +740,11 @@ jobs:
       # workers inherit the job env, and results are never cached across runs,
       # so a flag-on dispatch measures a full fresh compile of every test.
       JS2WASM_IR_FIRST: ${{ github.event_name == 'workflow_dispatch' && inputs.ir_first && '1' || '' }}
+      # (#3927) Same pattern as JS2WASM_IR_FIRST directly above: '1' only on a
+      # workflow_dispatch that opted in via layout_emit; empty string (falsy for
+      # truthyEnv) everywhere else, so all default lanes stay byte-identical.
+      # The flag is additionally standalone-gated inside the compiler itself.
+      JS2WASM_FNCTOR_LAYOUT_EMIT: ${{ github.event_name == 'workflow_dispatch' && inputs.layout_emit && '1' || '' }}
       TEST262_INCLUDE_PROPOSALS: ${{ github.event_name != 'workflow_dispatch' && '1' || (inputs.include_proposals && '1' || '0') }}
       RUN_TIMESTAMP: ${{ github.run_id }}-${{ matrix.target.name }}-chunk${{ matrix.chunk }}
       TEST262_TARGET: ${{ matrix.target.test262_target }}
@@ -908,6 +918,7 @@ jobs:
       # baseline alongside refresh-baseline.yml.
       COMPILER_POOL_SIZE: "4"
       JS2WASM_IR_FIRST: ""
+      JS2WASM_FNCTOR_LAYOUT_EMIT: ""
       TEST262_INCLUDE_PROPOSALS: "1"
       RUN_TIMESTAMP: ${{ github.run_id }}-${{ matrix.target_name }}-mgchunk${{ matrix.chunk_label }}
       TEST262_TARGET: ${{ matrix.test262_target }}
@@ -2239,7 +2250,8 @@ jobs:
       needs.mg-artifact-probe.result == 'success' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       github.actor != 'github-actions[bot]' &&
-      !(github.event_name == 'workflow_dispatch' && inputs.ir_first)
+      !(github.event_name == 'workflow_dispatch' && inputs.ir_first) &&
+      !(github.event_name == 'workflow_dispatch' && inputs.layout_emit)
     name: promote merged report to main baseline
     # (#2947) `!(… && inputs.ir_first)` above — an IR-first measurement dispatch
     # (JS2WASM_IR_FIRST=1 in the shards) must NEVER promote its merged report:
