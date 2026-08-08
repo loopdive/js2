@@ -678,3 +678,42 @@ makes faster is already ≲2 % of the parse.
   remains expensive is what the census keeps pointing at — the objects that
   are actually allocated and their size (`__fnctor_Node` at 292 B), i.e.
   Workstream 1 (#4155 / #743), not the boxing plumbing.
+
+## 2026-08-07 — session record, and where the next lane should start
+
+Full write-up: **`plan/agent-context/session-2026-08-07-acorn-perf-handoff.md`**.
+Read it before re-deriving anything below.
+
+**Standing: ~7.1× slower than Node on `standalone-dynamic`, from ~8.1×.**
+
+**The receiver-side type-inference route is exhausted for this corpus — five
+levers, each priced with its number** (#4155 null · PR #4202 one slot of 96 ·
+PR #4205 one candidate / 0 bytes · PR #4206 ≈0 movers · PR #4216 13.6 % of calls
+× ≲2 % of parse). Two are *permanently* closed rather than under-built: `i31`
+packing is already implemented and takes 99.31 % of the 556,923 `__box_number`
+calls per parse, and the IR lattice structurally cannot supply a second
+integrality population.
+
+**The live work is allocation via struct layout**, and the two techniques
+**overlap rather than compose** on `Node` — where a per-type layout is proved,
+the cold tail has nothing left to move:
+
+- PR #4217 — hot/cold split **default-ON**: −28.3 % of struct bytes, GC share
+  −4.51 pp, ≈ −4.5 % wall. Its ranking is at the **static ceiling**: six
+  corpus-independent proxies scored against ground truth, none beat ~25 % tail
+  rate, because the predicted quantity (how often each node *kind* occurs) is a
+  property of the corpus, not of the program being compiled.
+- #4213 — per-type layouts, **analysis only**; emission not built. Marginal gain
+  over #4217's new default is **−30.7 %**, with a **0 % residual rate** measured
+  against ground truth.
+
+**#3920 gated that emission slice** and is fixed in PR #4219 — three of five
+reflective surfaces answered as if a compiled object had no properties whenever
+its receiver arrived dynamically, so no differential could tell a correct layout
+split from a broken one. Its transferable lesson is recorded in the handoff:
+`Object.keys` was correct on builtins *precisely because* it was broken on user
+classes, which makes #4071's revert structural and forces
+predicate-before-arms ordering.
+
+**Still untouched by anything: dynamic property lookup 13.5 % + call dispatch
+8.1 %.** Nothing in this umbrella currently targets either.
