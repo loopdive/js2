@@ -82,13 +82,21 @@ import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
 
 /** Suffix + ordinal appended to the base struct name per emitted layout. */
-export const LAYOUT_STRUCT_INFIX = "__lay";
+const LAYOUT_STRUCT_INFIX = "__lay";
 /** Suffix appended to the base struct name for the residual carrier. */
-export const RESID_STRUCT_SUFFIX = "__resid";
+const RESID_STRUCT_SUFFIX = "__resid";
 /** Field name of the residual-carrier slot on the base struct. */
-export const RESID_SLOT_FIELD = "$resid";
-/** Field name of the per-instance layout stamp on the base struct. */
-export const LAYOUT_STAMP_FIELD = "$shape";
+const RESID_SLOT_FIELD = "$resid";
+/**
+ * Field name of the per-instance layout stamp on the base struct. Deliberately
+ * the SAME name the #2009 anon-collision retro-stamp uses, so every
+ * `fields.findIndex((f) => f.name === "$shape")` consumer resolves it — but
+ * the stamp VALUES live in this module's own contiguous 1-based space, never
+ * in `ctx.shapeNameCsvById` (layouts are hidden from the generic walks that
+ * read that registry, and a base/anon canonical collision is impossible: the
+ * base is a non-final hierarchy root, anon structs are final and super-less).
+ */
+const LAYOUT_STAMP_FIELD = "$shape";
 
 /** Is `structName` one of this module's per-layout sibling structs? */
 export function isFnctorLayoutStructName(structName: string): boolean {
@@ -390,11 +398,6 @@ export function applyFnctorLayoutSplit(
       );
     }
   }
-}
-
-/** Family info owning `structName` as its BASE, or undefined. */
-export function fnctorLayoutInfoForBase(ctx: CodegenContext, structName: string): FnctorLayoutEmitInfo | undefined {
-  return ctx.fnctorLayoutInfo?.get(structName);
 }
 
 /**
