@@ -532,6 +532,167 @@ shipped. The output half is the less-documented one: truncating with `tail -N`
 *inside* the command loses the rest **permanently**, which is how a 30-file
 test sample was rendered uninterpretable (see #3552, 2026-08-07).
 
+## 2026-08-07 — `__box_number` provability: measured, DON'T BUILD
+
+**Verdict: DON'T BUILD.** The compiler can already prove the value is an
+in-range integer at **35.8 % of `__box_number` emission sites (883 / 2,466)**,
+but those sites are cold: they carry only **13.6 % of the 556,923 calls per
+parse**. And the whole helper — call, checks and all, at 100 % of calls — is
+worth **≲2 % of parse wall time**, measured. So a proof-backed fast path on the
+provable sites is worth **~0.2–0.4 % of parse time: below this benchmark's own
+noise floor.**
+
+Lane `standalone-dynamic`, acorn 226 KB self-parse, checksum 422 intact on every
+build. Instrumentation was a temporary per-site extension of the #4185 call
+census (`src/codegen/alloc-census.ts`), reverted; this section is the only
+artifact. The instrument reproduced the established **556,923 calls/parse**
+exactly, which is what validates it.
+
+### The bucket table
+
+| bucket | meaning | static sites | site % | dynamic calls | **call %** |
+| --- | --- | --- | --- | --- | --- |
+| **A1** — i32 source | `f64.convert_i32_s` immediately feeds the call (the `type-coercion.ts:414` round trip) | 182 | 7.4 % | 9,277 | **1.67 %** |
+| **A2** — constant, i31-able | `f64.const` whose value is an integer in `[-2^30, 2^30-1]` | 689 | 27.9 % | 62,463 | **11.22 %** |
+| **A3** — constant, not i31-able | `f64.const`; **every one is `Infinity`** | 12 | 0.5 % | 3,862 | **0.69 %** |
+| **A total** | provable with **zero** dataflow — the producer instruction says it | **883** | **35.8 %** | **75,602** | **13.57 %** |
+| **B** — provable via IR lattice | f64 source that `propagate.ts` / #4202's bitwise-producer rule prove i32/u32 | 13 | 0.5 % | **0** | **0.00 %** |
+| **C** — not provable | everything else | 1,570 | 63.7 % | 481,321 | **86.43 %** |
+
+Three things in that table are worth more than the totals:
+
+- **The `:414` i32 round trip — the "clearest sub-population" — is confirmed but
+  nearly worthless.** It is real (182 sites emit `f64.convert_i32_s` and the
+  helper immediately truncates back) and it is **1.67 % of calls**. It looked
+  like most of the answer; it is a fortieth of it.
+- **Bucket B is empty, and not by accident.** The lattice's `i32`/`u32` atoms
+  come only from *syntactic* bitwise/shift producers (`fnctor-i32-producers.ts`)
+  — and any value a bitwise operator produced is already i32 at the emission
+  point, i.e. already bucket A. There is no second population for B to hold. Its
+  13 sites fired 0 times.
+- **Every non-i31 box in the parse is the constant `Infinity`.** A3's 3,862 calls
+  equal, exactly, the parse's 3,862 boxed-struct allocations — so all 553,061
+  other calls provably took the i31 path. That is a separate, much cheaper
+  finding: one hoisted module global would take this workload's `__box_number`
+  allocation count to **zero**. (It is 3,862 allocations out of 262,711 — 1.5 %
+  — so it is a tidiness win, not a perf one. Noted, not recommended.)
+  → **Built anyway, in the general form, and it was cheap: see "constant boxes
+  hoisted to module globals: LANDED" below.** The "not recommended" verdict was
+  about *perf*, and it stands — no wall-clock claim is made. What changed the
+  cost side is that the general form turned out to need no new machinery and to
+  make the binary *smaller*.
+
+### Top call sites by dynamic count
+
+Caller names are from a `preserveDebugNames` build. The shape is the finding:
+**this is not a distribution, it is a shortlist.** Nine sites carry 71 % of all
+calls, and every one of them is an acorn *source position* or a *char code*.
+
+| calls | share | bucket | producer | caller |
+| --- | --- | --- | --- | --- |
+| 163,778 | 29.41 % | C | `Parser.pos` field | `__closure_686__typed_this` |
+| 41,890 | 7.52 % | C | `get end()` return | `__closure_346` |
+| 41,890 | 7.52 % | C | `get start()` return | `__closure_346` |
+| 41,889 | 7.52 % | C | `Parser.fullCharCodeAtPos()` return | `__closure_683__typed_this` |
+| 32,468 | 5.83 % | C | `Parser.lastTokEnd` field | `__closure_598__typed_this` |
+| 25,705 | 4.62 % | **A2** | integral `f64.const` | `__closure_684__typed_this` |
+| 23,117 | 4.15 % | C | `Node.start` field | `__get_member_start_460` |
+| 23,046 | 4.14 % | C | `get start()` return | `__closure_251` |
+| 17,129 | 3.08 % | C | local: `NaN` ∪ `if` result | `__closure_708__typed_this` |
+| 10,593 | 1.90 % | C | local: `NaN` ∪ `Parser.start` | `__closure_546__typed_this` |
+| 8,838 | 1.59 % | C | `type75` field 2 | `__any_to_extern_318` |
+| 8,781 | 1.58 % | C | local: `NaN` ∪ `Parser.start` | `__closure_542__typed_this` |
+| 8,781 | 1.58 % | C | local: `NaN` ∪ `Parser.start` | `__closure_542__typed_this` |
+| 8,781 | 1.58 % | **A2** | integral `f64.const` | `__closure_542__typed_this` |
+| 7,702 | 1.38 % | **A1** | `f64.convert_i32_s` | `__call_m_push_1_529` |
+
+Aggregated, the source-position and char-code producers (`Parser.pos`,
+`.start`, `.end`, `.lastTokEnd`, `.awaitPos`, `.yieldPos`, `fullCharCodeAtPos`,
+`Node.start/end`) are **399 sites and 390,967 calls — 70.2 %**. They are all
+bucket C today. Reaching them needs a *new* whole-program analysis proving a
+struct field / function return is always an integer in range — the lattice
+carries per-field and per-return atoms (`inferPropertyAccessAtom`,
+`entries.returnType`) but has no value-range domain to fill them from. That is
+the only path to a majority of these calls, and the timing below is why it
+should not be walked.
+
+### The number that decides it
+
+Bucket-count alone cannot decide this — 13.6 % of calls is neither obviously
+worth it nor obviously not. So the helper's **total** cost was priced directly.
+
+`__box_number`'s body was temporarily replaced by a round-trip-check-only
+variant (11 instructions: keep `trunc`/`convert`/`f64.eq`, drop the shl/shr
+31-bit check and the `-0` sign check). That is **correct on this workload** —
+the census proved the only non-i31 value boxed is `Infinity`, which still fails
+`f64.eq` and still boxes — and both builds return checksum 422. At 11
+instructions `wasm-opt` **does** inline it: `ref.i31` goes from **1** occurrence
+in the baseline `-O` binary to **1,255**. So the probe removes, at 100 % of
+556,923 calls, both the call/return and 13 of the 24 body instructions —
+roughly two-thirds of the entire machinery.
+
+Interleaved A/B, 40 reps each, both orders, same box:
+
+| order | baseline med | probe med | Δ med | Δ min |
+| --- | --- | --- | --- | --- |
+| base→probe | 108.8 ms | 111.9 ms | **−2.84 %** | +1.13 % |
+| probe→base | 109.4 ms | 111.1 ms | **+1.53 %** | −0.43 % |
+
+**The sign flips with ordering.** Removing two-thirds of the box machinery at
+every single call is indistinguishable from zero, bounded at roughly ±2 %.
+
+That is consistent with first-principles arithmetic rather than contradicting
+it: ~30 instructions × 556,923 ≈ 16.7 M ops per parse, but they are
+register-only integer ops behind a branch taken 99.31 % of the time — at ~4 IPC
+on a 3 GHz core that is ≈1.4 ms, ≈1.3 % of a 110 ms parse. Both methods agree
+the whole helper is worth 1–3 %.
+
+**So: 13.57 % of calls × ≲2 % of parse ≈ 0.2–0.4 %.** For comparison, the
+regexp-scratch slice above removed 18.2 % of all allocations and bought ~0.4 pp.
+This is smaller than that, for more machinery.
+
+### Instruction and code-size arithmetic (for the record)
+
+Per call, fast path: baseline is `call` + ~24 body instructions + prologue ≈ 30.
+A proof-backed lowering is:
+
+| site kind | replacement | instrs | saved |
+| --- | --- | --- | --- |
+| A2 (constant, i31-able) | `i32.const N; ref.i31; extern.convert_any`, or one `global.get` | 3 (or 1) | ~27 |
+| A1, range provable | `ref.i31; extern.convert_any` (and drop the `f64.convert_i32_s`) | 2 | ~28 |
+| A1, range **not** provable | inline shl/shr check + branch, both arms | ~12 | ~18 |
+
+≈2.1 M instructions per parse across bucket A.
+
+**Code size is not the obstacle, which is the interesting part.** Two measured
+data points on the same binary: inlining a **4**-instruction boxing sequence at
+1,314 sites cost **+814 bytes (+0.05 %)**; inlining an **11**-instruction one at
+1,255 sites cost **+22,847 bytes (+1.48 %)**. A 2–3 instruction proof-backed
+replacement for `f64.const; call` or `f64.convert_i32_s; call` is therefore
+**size-neutral to size-negative** — it replaces a 9-byte `f64.const` plus a
+2-byte `call` with ~5 bytes.
+
+So `wasm-opt`'s refusal to inline is defensible *for what it was asked* — the
+full ~30-instruction helper at 1,325 sites is genuine growth — and the compiler
+really would be overruling it with proof `wasm-opt` lacks, at no size cost. The
+optimization is well-formed. It is simply not worth anything: the thing it
+makes faster is already ≲2 % of the parse.
+
+### What this rules out, and what it points at
+
+- **Do not build** a provability-driven `__box_number` fast path. Not for
+  bucket A (13.6 % of calls, ~0.3 % of parse), and emphatically not the
+  whole-program field/return integrality analysis that bucket C's 70 %
+  would require — that is a large analysis for ≲2 % ceiling.
+- **`type-coercion.ts:414`'s i32→f64→i32 round trip is a real inefficiency and
+  should stay unfixed on perf grounds.** If it is ever cleaned up, it should be
+  as a clarity change, not sold as a speedup.
+- The finding reinforces the section above: the boxing *call* is cheap because
+  #3673's i31 path already avoids the allocation 99.31 % of the time. What
+  remains expensive is what the census keeps pointing at — the objects that
+  are actually allocated and their size (`__fnctor_Node` at 292 B), i.e.
+  Workstream 1 (#4155 / #743), not the boxing plumbing.
+
 ## 2026-08-07 — constant boxes hoisted to module globals: LANDED
 
 Follows directly from the `__box_number` provability section above, which
