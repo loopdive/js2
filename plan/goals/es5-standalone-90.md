@@ -229,11 +229,11 @@ Waves 1+2 merged as loopdive/js2#4234 → official ES5 standalone
 | Number | #4234 | +15 | StringToNumber 10^k-table scaling (10.26→1.00 ulp); ctor value constants |
 | Wrapper exotics | #4232 | +18 | `new Object(prim)` initializer tracing; String §10.4.3 index exotics; reflective replace |
 | RegExp cluster | #4233 | +15 | static-pattern tracing through variables; exec arities/shape; construction-time SyntaxError |
-| arguments-object | #4229 | +4 | `callee` as real own property; strict poison (partial) |
+| arguments-object | #4243 | +4 | `callee` as real own property; strict poison (partial) |
 
 **Wave-3 sum: +63 measured** → projected ≈ 7,106/8,115 ≈ **87.6 %**;
 ~195 to 90 %. Top next levers (each documented in its issue): the real
-%ThrowTypeError% strict accessor (#4229), overlay-visible key enumeration
+%ThrowTypeError% strict accessor (#4243), overlay-visible key enumeration
 (L1, #4230 — the `verifyProperty` enumerability family), `with` RC-G/H/I
 (#4231), `Number.prototype`-as-wrapper (~25 files, #4234 → #4223 lane),
 correctly-rounded strtod (#4234), `Array(n)` hole carrier (#4222).

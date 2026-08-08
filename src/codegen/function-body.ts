@@ -48,7 +48,7 @@ import {
 import { emitThrowReferenceError } from "./expressions/helpers.js";
 import { compileObjectLiteralAsExternref } from "./literals.js";
 import { bodyUsesArguments } from "./helpers/body-uses-arguments.js";
-import { seedDeclarationArgumentsCallee } from "./arguments-callee.js"; // (#4229) §10.6 step 13.a
+import { seedDeclarationArgumentsCallee } from "./arguments-callee.js"; // (#4243) §10.6 step 13.a
 import { isStrictFunction, isSimpleParameterList } from "./helpers/is-strict-function.js";
 import { initializeFunctionPoisonPillContext } from "./function-poison-pill.js";
 import { detectStringBuilders, type StringBuilderPresizeInfo } from "./string-builder.js";
@@ -690,7 +690,7 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
       { vecTypeIdx, arrTypeIdx, argsLocalIdx: argsLocal, arrTmpIdx: arrTmp },
     );
 
-    // (#4229) §10.6 step 13.a — a non-strict arguments object carries `callee`.
+    // (#4243) §10.6 step 13.a — a non-strict arguments object carries `callee`.
     seedDeclarationArgumentsCallee(ctx, fctx, decl, func.name, argsLocal);
   }
 

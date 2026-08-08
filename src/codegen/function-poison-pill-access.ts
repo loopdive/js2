@@ -3,7 +3,7 @@
 
 import type { ValType } from "../ir/types.js";
 import { ts } from "../ts-api.js";
-import { tryCompileArgumentsCalleePoison } from "./arguments-callee-poison.js"; // (#4229)
+import { tryCompileArgumentsCalleePoison } from "./arguments-callee-poison.js"; // (#4243)
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { emitThrowTypeError } from "./expressions/helpers.js";
@@ -42,7 +42,7 @@ export function tryCompileFunctionPoisonRead(
   fctx: FunctionContext,
   expression: MemberExpression,
 ): ValType | undefined {
-  // (#4229) §10.6 step 14's sibling poison, dispatched from the same hook so
+  // (#4243) §10.6 step 14's sibling poison, dispatched from the same hook so
   // both `property-access.ts` call sites get it without a third entry point.
   const calleePoison = tryCompileArgumentsCalleePoison(ctx, fctx, expression);
   if (calleePoison !== undefined) return calleePoison;

@@ -1,5 +1,5 @@
 ---
-id: 4229
+id: 4243
 title: "arguments.callee as a real own property, and the remaining function-semantics pool"
 status: done
 completed: 2026-08-08
@@ -32,7 +32,7 @@ func-budget-allow:
 origin: "2026-08-08 — ES5-standalone-90 Wave 3, WP2 continuation (#4221 leftovers)"
 ---
 
-# #4229 — the `arguments`-object model in standalone
+# #4243 — the `arguments`-object model in standalone
 
 Continuation of #4221, whose "deliberately NOT in scope" list ends with:
 
@@ -201,8 +201,8 @@ build-level kill switch:
 
 | | pass | fail | compile_error |
 | --- | --- | --- | --- |
-| without #4229 | 71 | 22 | 1 |
-| with #4229 | 71 | 22 | 1 |
+| without #4243 | 71 | 22 | 1 |
+| with #4243 | 71 | 22 | 1 |
 
 Byte-for-byte identical: **0 regressions, 0 in-sample gains** (the gains are all
 inside `language/arguments-object`, measured separately above).

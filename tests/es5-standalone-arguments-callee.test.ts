@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// (#4229) `arguments.callee` as a REAL own property of the standalone arguments
+// (#4243) `arguments.callee` as a REAL own property of the standalone arguments
 // object (ES5 §10.6 step 13.a), continuing #4221's explicitly-deferred
 // arguments-object model change.
 //
@@ -42,7 +42,7 @@ async function runStandalone(source: string): Promise<number> {
   return (instance.exports as { test(): number }).test();
 }
 
-describe("#4229 arguments.callee is an own property (§10.6 step 13.a)", () => {
+describe("#4243 arguments.callee is an own property (§10.6 step 13.a)", () => {
   it("is the function object itself for a declaration (S10.6_A4 #1)", async () => {
     expect(
       await runStandalone(`

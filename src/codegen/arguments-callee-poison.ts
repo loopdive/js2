@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#4229) `arguments.callee` inside STRICT code is a poison read.
+ * (#4243) `arguments.callee` inside STRICT code is a poison read.
  *
  * ## What the spec says, and what this module does about it
  * ES5 §10.6 step 14 gives a strict arguments object a `callee` property that is
@@ -26,7 +26,7 @@
  * is the same property in the spec but a different expression here, so
  * `10.6-14-c-4-s` (assignment through an escaped arguments object) and the
  * descriptor queries `10.6-13-c-2-s` / `10.6-13-c-3-s` still need the real
- * accessor. Those stay on #4229's leftovers list.
+ * accessor. Those stay on #4243's leftovers list.
  *
  * ## The load-bearing negative case
  * The receiver must be the IMPLICIT `arguments` binding. A program that

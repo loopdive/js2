@@ -884,7 +884,7 @@ export function ensureFuncClosureSingleton(
 }
 
 /**
- * (#4229) The externref-only half of {@link emitCachedFuncClosureAccess}: leave
+ * (#4243) The externref-only half of {@link emitCachedFuncClosureAccess}: leave
  * the canonical cached closure for `funcName` on the stack as an `externref`,
  * skipping the `any.convert_extern` + `ref.cast` struct recovery.
  *

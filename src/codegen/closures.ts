@@ -30,7 +30,7 @@ import { reportError } from "./context/errors.js";
 import { reportSilentFallback } from "./fallback-telemetry.js";
 import { resolveLiftedMethodThisStruct } from "./fnctor-escape-gate.js"; // (#2681/#2686 A3) lifted-method `this`→struct
 import { allocLocal, allocTempLocal, getLocalType } from "./context/locals.js";
-import { seedLiftedClosureArgumentsCallee } from "./arguments-callee.js"; // (#4229) §10.6 step 13.a
+import { seedLiftedClosureArgumentsCallee } from "./arguments-callee.js"; // (#4243) §10.6 step 13.a
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import {
   addFuncType,
@@ -2304,7 +2304,7 @@ export function compileLiftedClosureBody(
       arrTmpIdx: arrTmp,
     });
 
-    // (#4229) §10.6 step 13.a — `callee` on a non-strict arguments object.
+    // (#4243) §10.6 step 13.a — `callee` on a non-strict arguments object.
     seedLiftedClosureArgumentsCallee(ctx, liftedFctx, arrow, argsLocal);
   }
 

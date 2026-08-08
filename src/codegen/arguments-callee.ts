@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#4229) `arguments.callee` as a REAL own property of the arguments object,
+ * (#4243) `arguments.callee` as a REAL own property of the arguments object,
  * for `--target standalone`.
  *
  * ## What was missing
@@ -52,7 +52,7 @@
  * syntactically instead (`arguments-callee-poison.ts`), which is enough for a
  * direct `arguments.callee` read inside a strict function but not for a
  * descriptor query on an arguments object that has escaped its function. See
- * #4229 for the split and what it leaves on the table.
+ * #4243 for the split and what it leaves on the table.
  *
  * ## Byte-neutrality
  * Gated on `noJsHost(ctx)`. The gc/host lane registers its arguments vecs with
@@ -153,7 +153,7 @@ export function seedArgumentsCallee(
  *     captures, so a capturing function takes the per-site
  *     `emitFuncRefAsClosure` path in the identifier read. Rather than mint a
  *     second, differently-shaped closure here, decline: `arguments.callee` then
- *     keeps its pre-#4229 `undefined`, which is a miss, not a wrong answer.
+ *     keeps its pre-#4243 `undefined`, which is a miss, not a wrong answer.
  *   * `constructible` = the same `isOrdinaryFunctionDecl` predicate (plain,
  *     non-generator, non-async declaration in a host-free lane). Passing the
  *     WIDER flavor is also the safe direction for the STORE, per (1).
