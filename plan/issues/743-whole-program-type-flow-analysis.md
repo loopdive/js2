@@ -2,7 +2,7 @@
 id: 743
 title: "Whole-program type flow analysis"
 status: in-progress
-assignee: ttraenkler/opus-impl-4
+assignee: ttraenkler/fable-743-fixpoint
 created: 2026-03-22
 updated: 2026-08-08
 priority: critical
@@ -2524,3 +2524,136 @@ an untracked call's result → ⊤; escaped/poisoned method's param → ⊤;
    `this.input = String(input)` gives the string fact, `.indexOf` the f64).
 3. The `size` param fact (:5798) — likely falls out of whichever of the two
    above lands first; measure, don't assume.
+
+## 2026-08-08 — Parser.pos program IMPLEMENTED (provenance + locals + string substrate): the field fact flips, census 39 → 34, and the VALUE-level instruments both read zero
+
+Branch `issue-743-field-param-mutual-fixpoint` (agent ttraenkler/fable-743-fixpoint).
+Implements all three "What remains" items above in one slice, because the pin
+census proved no proper subset moves a single slot (`Parser.pos` had three
+independent root pins and every dependent slot chains through its FIELD fact).
+
+### What shipped
+
+- **`src/ir/fnctor-receiver-provenance.ts`** — the 2026-08-08 spec, as written:
+  `⊥ | R | ⊤` domain, param-provenance fixpoint over the SAME edge set as the
+  value fixpoint, `"all"` → R rewrite before `runFixpoint` (static input), only
+  when R already carries the field name. `new B(…)` for an out-of-file,
+  never-written `B` is ⊥ (the §4 trust class); a tracked ctor whose body has a
+  `return <expr>` is ⊤ (ctor-return-override); `a && b` contributes `b` only
+  (no object is falsy). All 22 `state.pos = …` writes re-attribute to
+  `RegExpValidationState`; `err.pos`-class writes were already gone (§4 slice).
+- **`src/ir/fnctor-local-bindings.ts`** — the locals model as an
+  `InferExtension` rule resolving by SYMBOL (shadowing is structural, trap T6
+  never arises), join over all contributions, `+=` via the same
+  string-or-number plus join. Retires the `+= size` pin: every `finishOp` size
+  argument is a literal-fed local (`var size = 1; ++size; size = c ? 3 : 2`).
+- **`src/ir/fnctor-string-producers.ts`** — `String(x)` → string (host-global
+  guard: no in-file declaration/write of `String`); `indexOf`/`lastIndexOf`/
+  `charCodeAt` and `.length` → f64 on a receiver the evaluator PROVES string,
+  guarded on the method name never being property-written in-file
+  (`defineProperties` maps resolve through `resolveLiteralKeys`, which acorn's
+  `prototypeAccessors` needs — a blunt decline-all there kills the module).
+  Retires the `end + 2` pin via `this.input`'s string field fact.
+- **Ctor carrier facts generalized** (`collectThisReadFacts` →
+  `collectCtorCarrierFacts`): the node-keyed map now also answers
+  `<param>.<field>` carriers (`this.start = p.start` — the Token pattern),
+  evaluated post-convergence with the SOLVED fixpoint context; the consumer
+  branch in `fnctor-ctor-param-types.ts` widened accordingly. This is what
+  makes Token.start consumable — the 2026-08-07 measured table's "atom path"
+  expectation was right about the FACT and silent about the CONSUMER.
+
+### Defect found by measurement in the SHIPPED mutual fixpoint (fixed here)
+
+The `+=` field contribution read the field's own PREVIOUS-iteration fact
+(`plusJoin(fieldFacts.get(owner).get(name), rhs)`). That is a RATCHET, not a
+fixpoint variable: the atom-mediated reads make facts transiently DYNAMIC
+(iteration 1, before `input` enters the instance atom), and the feedback edge
+then locks the transient in — measured on acorn as `Parser.pos: final dynamic
+over 56 writes` with every single contribution evaluating f64. It violates the
+recompute-from-seeds discipline the fixpoint's own monotonicity note demands,
+and was invisible until now only because root pins kept `pos` dynamic anyway.
+Fixed by solving `X = join(base, plusJoin(X, rhs_i))` WITHIN the per-name pass
+(`solvePlusFeedback`, lattice-height-bounded inner loop).
+
+### Measurements (same env as the family: acorn standalone `-O3`, `JS2WASM_FNCTOR_FIELD_PROVENANCE=1 JS2WASM_FNCTOR_CTOR_PARAM_TYPES=1`)
+
+- **Census 56 typed / 1 discarded / 39 unknown → 61 / 1 / 34.** Movers, all
+  f64: `Parser.start`, `Parser.end`, `Parser.lastTokStart`, `Parser.lastTokEnd`
+  (ctor chain `this.start = this.end = this.pos`, keyed on the now-f64
+  `this.pos` read), `Token.start` (`this.s = p.start` via the param atom +
+  the new carrier path). Canaries 2,3,4,5; imports `[]`; exactly the 3
+  pre-existing parity IR-FALLBACKs. Binary byte-count unchanged (1,041,855 B
+  in the canary-bearing census config).
+- **Pin census**: `Parser.pos — final: f64 over 56 write(s)` (was: dynamic
+  over 78). `RegExpValidationState.pos` keeps the 22 re-attributed writes and
+  stays dynamic, as the spec pre-registered (its own valuation levers — locals
+  cannot type `var start = state.pos` while `state`'s VALUE fact is dynamic —
+  remain out of scope).
+- **Flag-off byte-identity**: sha256
+  `93ee8e78e505ef5e76f9097f1aff3d7f15fc2057f2bb22d02fd1dc1be44bdf1f`
+  (1,028,259 B, canary-free config) — identical with this branch's sources and
+  with `upstream/main`'s, A/B by file copy in one worktree.
+- **$AnyValue allocation census (the #4157 value-level metric; #3927/#4185
+  instrument, export-name join, `-O3`, full self-parse driver, checksum 422
+  both sides): ZERO movement.** Total allocations 233,320 flag-off and
+  flag-on; `$AnyValue` (`type_122`: 2×i32 1×f64 1×eqref 1×externref, ~32 B)
+  22,008 flag-off and flag-on — matching #4157's "~22 k residual" row. The
+  five typed slots eliminate no boxing on this corpus's hot path. Binary
+  +124 B flag-on in that config.
+- **Wall A/B not run, per pre-registration**: the mutual-fixpoint spec §11 set
+  the trigger at ≥10 movers (5 moved), and the allocation delta of ZERO means
+  a wall A/B on this box (~10 % noise floor, #4157 §6) cannot resolve the
+  change — running it would produce a quotable-but-meaningless sign.
+
+### Spec deviations (recorded, with evidence)
+
+1. **Locals eligibility is STRICTER than the locals spec §3.1**: the
+   declaration must be a DIRECT child statement of the declaring function's
+   body block. The spec's initializer+position rule is falsified by
+   `if (c) var x = 1; use(x)` — initializer present, read positionally after,
+   still observes `undefined` when `c` is false. Pinned by test.
+2. **Closure-write contributions are DYNAMIC**, not precisely joined (§3.1
+   wanted nested-scope evaluation): evaluating a nested fn's RHS against the
+   read-site scope resolves same-named identifiers to the WRONG binding. On
+   the corpus every pin-relevant local is closure-free, so the precision buys
+   nothing. Pinned by test.
+3. **An escaped constructor does NOT defeat provenance at a still-visible
+   `new R(…)` site** — escape poisons R's PARAM facts (unseen call args), not
+   what `new R` constructs. The spec's "poisoned callee's params stay ⊤" gate
+   holds where it matters (a write through an escaped function's param stays
+   in the all-bucket); both directions pinned by tests.
+4. `join(f64, string)` is a lattice UNION atom, not DYNAMIC — the consumer's
+   f64-only gate rejects it either way; tests assert `not f64` rather than a
+   specific top.
+
+### The honest read against #4157's <20 acceptance
+
+34 is not <20, and the remaining buckets say no evaluator-precision slice gets
+there: ~19 genuinely dynamic (RegExp objects, null seeds, arrays, config
+reads), ~9 ref-class (Position/SourceLocation/TokenType/BranchID instances +
+`RegExpValidationState.parser` — needs the ref-typed consumer ABI that
+measured 1 slot / 0 bytes on acorn, plus nominal provenance), ~5 non-f64
+atoms (string/bool — string-ABI consumption), `Node.start` (blocked on T8:
+`new Tracked(…)` as a VALUE stays DYNAMIC — the nominal-provenance XL
+program), `Token.end`/`Parser.end`-field (hard-pinned by
+`node.loc.end = loc` :3895 — an all-bucket write on a non-identifier
+receiver, out of reach of identifier-keyed provenance; note the Parser.end
+SLOT still moved because the ctor chain keys on `this.pos`). With the
+value-level instruments reading zero on 5 slots, the census bucket is no
+longer a proxy for the boxed-VALUES tax on this corpus — the #4157 line
+should re-anchor on the allocation census ($AnyValue 22,008/parse) rather
+than the slot count.
+
+**Flag verdict: `JS2WASM_FNCTOR_CTOR_PARAM_TYPES` STAYS OFF** — 5 slots, zero
+allocation movement, +124 B.
+
+### Continuation point
+
+- The next census movers, if wanted: (a) ref/string-typed slot consumption
+  (~9+5 slots, spec + DO-NOT-BUILD pricing above — re-price against the new
+  baseline), (b) nominal provenance / T8 (Node.start + the regexp locals),
+  both XL-class and previously priced out on acorn alone; pako's 25-unknown
+  census is the second data point that could justify (a).
+- The value-level lever #4157 actually needs is upstream of slots entirely
+  (the 22 k `$AnyValue` and 47.7 k regex-scratch streams — see #4157's
+  redirect section).
