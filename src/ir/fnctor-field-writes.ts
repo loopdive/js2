@@ -102,7 +102,7 @@ function collectAssignedIdentifiers(state: AnalysisState, target: ts.Node, out: 
   }
 }
 
-function assignedIdentifierSymbols(state: AnalysisState): ReadonlySet<ts.Symbol> {
+export function assignedIdentifierSymbols(state: AnalysisState): ReadonlySet<ts.Symbol> {
   const cached = assignedSymbolsCache.get(state.sourceFile);
   if (cached) return cached;
   const out = new Set<ts.Symbol>();
@@ -271,6 +271,7 @@ function recordFieldWrite(
     attribution: attribution.attribution,
     ...(attribution.thisOwner !== undefined ? { thisOwner: attribution.thisOwner } : {}),
     readSnapshot: NO_FIELDS,
+    ...(attribution.owner === "all" && !attribution.viaThis ? { receiver: target.expression } : {}),
   });
   if (attribution.owner !== "all") {
     let names = state.fieldNamesByOwner.get(attribution.owner);

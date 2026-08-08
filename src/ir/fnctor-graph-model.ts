@@ -69,7 +69,13 @@ export type FieldOwner = IrUnitId | "all";
 export type FieldAttribution = "ctor-direct" | "ctor-nested" | "proto-method" | "all";
 
 export interface FieldWrite {
-  readonly owner: FieldOwner;
+  /**
+   * Mutable for exactly one writer: the receiver-provenance pass
+   * (`fnctor-receiver-provenance.ts`) may re-attribute an `"all"` write to the
+   * single tracked owner whose instances provably reach its receiver, BEFORE
+   * the value fixpoint runs (attribution must be static input to it).
+   */
+  owner: FieldOwner;
   readonly name: string;
   /**
    * `numeric-op` covers `-= *= /= %= **= <<= >>= >>>= &= |= ^=` and `++`/`--`:
@@ -88,6 +94,8 @@ export interface FieldWrite {
   readonly thisOwner?: IrUnitId;
   /** Names provably assigned before this write can execute. */
   readSnapshot: ReadonlySet<string>;
+  /** The write target's receiver expression (for `"all"` re-attribution). */
+  readonly receiver?: ts.Expression;
 }
 
 /** Mutable working state threaded through the analysis phases. */
@@ -143,6 +151,36 @@ export interface GraphFacts {
 }
 
 export const EMPTY_FACTS: GraphFacts = { paramFacts: new Map(), thisReadFacts: new Map() };
+
+/** Keys of an object literal, or a top-level once-declared var holding one. */
+export function resolveLiteralKeys(sourceFile: ts.SourceFile, arg: ts.Expression): Set<string> | undefined {
+  const a = unwrap(arg);
+  let lit: ts.ObjectLiteralExpression | undefined;
+  if (ts.isObjectLiteralExpression(a)) lit = a;
+  else if (ts.isIdentifier(a)) {
+    let count = 0;
+    for (const stmt of sourceFile.statements) {
+      if (!ts.isVariableStatement(stmt)) continue;
+      for (const d of stmt.declarationList.declarations) {
+        if (!ts.isIdentifier(d.name) || d.name.text !== a.text) continue;
+        count++;
+        const i = d.initializer !== undefined ? unwrap(d.initializer) : undefined;
+        lit = i !== undefined && ts.isObjectLiteralExpression(i) ? i : undefined;
+      }
+    }
+    if (count !== 1) return undefined;
+  }
+  if (lit === undefined) return undefined;
+  const keys = new Set<string>();
+  for (const prop of lit.properties) {
+    const name = prop.name;
+    if (name === undefined || !(ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name))) {
+      return undefined;
+    }
+    keys.add(name.text);
+  }
+  return keys;
+}
 
 export function unwrap(e: ts.Expression): ts.Expression {
   let cur = e;

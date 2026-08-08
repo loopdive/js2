@@ -1572,6 +1572,18 @@ bytes by proof verdict (`split` vs bail verdicts) corpus-wide — bail-family
 bytes are the cold split's entire residual value (#4211/#4217; on acorn the
 cold-tail stream measures exactly 0 with layouts on).
 
+**Preliminary answer (2026-08-08, second-corpus static census — full table
+in #4235's file): KEEP the split.** Acorn is the best case by a wide margin
+(its `Node` union is 62 fields; every other measured package's proved
+families are 5–17, and three.js's 33 families yield ZERO `split` verdicts).
+Bail-verdict families dominate every package measured, so the split's
+residual value is broad while the layouts' payoff is (so far) narrow. Two
+caveats keep this preliminary: it is a static site-count census (no runtime
+byte shares — only acorn compiles standalone of that set), and it measured
+the single-file path only, because the multi-file path runs NO fnctor
+analysis at all (#4235) — fixing that is the precondition for the real
+corpus-wide, runtime-weighted verdict this gate item calls for.
+
 ### 7. Gates (emission slice)
 
 typecheck 0, lint 0, format 0. loc-budget / func-budget: allowances for the
