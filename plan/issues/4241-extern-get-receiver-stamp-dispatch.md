@@ -461,6 +461,74 @@ pre-fix literal restored, the corrected source fails with 2 fatal diagnostics
 and the setTimeout-free one still compiles clean. A pin that cannot fail
 defends the defect, so the shape is load-bearing and the test says so.
 
+### R7c. Miss #4 — the merge_group standalone floor, and the attribution that decided it
+
+The `merge_group` re-validation failed the standalone high-water floor
+(#2097/#2879): `host_free_pass 28,819 vs mark 28,939 (floor 28,889, delta
+−120)`. PR-level CI cannot see this — the heavy shards are merge_group-only.
+
+**Attribution first, because "the mark is stale" was a live hypothesis and
+re-seeding is a lead decision.** The mark was seeded at `83a120296` (15:57Z),
+several merges earlier, so some of the −120 could have been main's drift. It
+was not:
+
+| point | run | host_free_pass | vs mark |
+| --- | --- | ---: | ---: |
+| main @ `bb5566798` (20:33Z), last measured | 31277182545 | 28,922 | −17 |
+| my merged state (22:51Z) | 31282672641 | 28,819 | −120 |
+
+Only **−17 is main's drift**; **−103 is mine.** Three intervening merge_group
+runs (pr-4251/4253/4254) reported no number at all — `SHARDS_RAN: false`, they
+never measured — so 28,922 is genuinely the last measured main. And
+`git diff bb5566798 d0019f86e -- src/ tests/` is **empty**: main's compiler did
+not change between that measurement and my base, so the comparison is clean and
+the −103 is not confounded.
+
+**Bucket table** (computed from the two runs' merged standalone jsonl, using the
+floor's own predicate `status === "pass" && !host_import_leak_class`; the
+instrument reproduces CI exactly — 28,922 / 28,819 / −103 — which is the
+positive control that makes the rest of the table trustworthy):
+
+| | count |
+| --- | ---: |
+| LOST host-free pass | 141 |
+| GAINED | 38 |
+| **net** | **−103** |
+
+| lost, by transition | count | verdict |
+| --- | ---: | --- |
+| `pass → compile_error` | 115 | **my defect** |
+| `pass → compile_timeout` | 26 | churn, see below |
+
+Every one of the 115 is `not enough arguments on the stack for struct.new`.
+Path concentration: 78 under `built-ins/Promise*`, 16 under async
+function/arrow, 12 top-level-await. **Root cause: `promise-executor.ts` allocates
+the `$__promise_settle_cap` type — which I DID give a `$bag` to — at TWO
+`emitSettleValue` sites I never gave the operand.** Miss #4 of the same class.
+
+The error *signature* spread across `__module_init` / `__closure_26` / `__cb_0`
+/ `__async_resume_ff` invited four separate hypotheses; per the project rule it
+is one defect surfacing wherever validation happened to stop first. Attribution
+was per-file, and the fix is one place.
+
+**The 26 timeouts are NOT mine.** The compile_timeout population *shrank*
+(65 → 52) and the transitions are near-symmetric (41 in, 54 out, net −13 fewer
+timeouts on my build). That is timing churn, and de-noising only the losing side
+would have manufactured a −26 that does not exist.
+
+**Verification — the exact regressed population, re-run:** 141 files through the
+project's own runner in standalone mode: **132 pass, 0 struct.new errors.** The
+9 remaining are one local-only instrument gap, not failures — the eval-refusal
+provider does not build in this container, so every one reports the identical
+`Import #0 "js2wasm:runtime-eval": module is not an object or function`. Those 9
+are **unmeasured locally**, not verified-passing; CI has the provider.
+
+Minimal repro pinned by kill-switch: `new Promise(executor)` +
+`Promise.allSettled` + a reject path fail to validate on the pre-fix executor
+and validate after, while `Promise.resolve().then` and a bare `async` function
+validate either way — which is why the earlier probes and all four playground
+async examples missed it.
+
 ### R7. What the "loud failure" net actually caught
 
 Inserting a field at index 2 makes a missed `struct.new` operand a hard Wasm
