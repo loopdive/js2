@@ -13,7 +13,7 @@ import type { Instr } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { addFuncType, getOrRegisterSubviewType } from "./registry/types.js";
 import { deriveFnctorFields } from "./fnctor-escape-gate.js";
-import { coldTailHotFieldLimit, coldTailStructName } from "./fnctor-cold-tail.js";
+import { coldTailHotFieldLimitFor, coldTailStructName } from "./fnctor-cold-tail.js";
 
 /**
  * #1886 Slice B — start of the linear-backed `Uint8Array` arena (page 4,
@@ -168,7 +168,7 @@ export function reserveFnctorStructTypes(ctx: CodegenContext): void {
     // `ref_null <coldTypeIdx>` is baked into the main struct's shape, so the
     // index has to be pass-invariant too. Reserved only under the flag, so an
     // unflagged build pushes no extra type and stays byte-identical.
-    if (coldTailHotFieldLimit() !== undefined) {
+    if (coldTailHotFieldLimitFor(ctx) !== undefined) {
       const coldStructName = coldTailStructName(structName);
       const coldIdx = ctx.mod.types.length;
       ctx.mod.types.push({ kind: "struct", name: coldStructName, fields: [] });
