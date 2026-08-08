@@ -202,6 +202,7 @@ import { fillIterHofSteppers } from "./iter-hof-native.js"; // (#2903)
 import { fillLazyIterLadderArms } from "./iter-lazy-native.js"; // (#2903 R3)
 import { fillMemberSetDispatch, reserveVecFieldMaterializers } from "./member-set-dispatch.js";
 import { reserveColdTailAllocators } from "./fnctor-cold-tail.js"; // (#3927) hot/cold fnctor split
+import { fillClosedStructExternSetArms } from "./closed-struct-extern-set.js"; // (#4194) computed-write arms
 import { fillMemberGetDispatch, fillTypedMemberGetF64Dispatch } from "./member-get-dispatch.js";
 import { emitUndefined, ensureGetUndefined, reconcileNativeStrFinalizeShift } from "./expressions/late-imports.js";
 import { fillProtoIteratorDriver } from "./expressions/proto-override.js";
@@ -4453,6 +4454,7 @@ export function generateModule(
     fillClosedStructOwnPropertyNamesArms(ctx);
     fillClosedStructEnumerationArms(ctx); // (#3920) Object.keys / for…in
     fillClosedStructExternGetArms(ctx);
+    fillClosedStructExternSetArms(ctx); // (#4194) computed-WRITE twin of the GET arms
     fillFnctorPrototypeDispatchArms(ctx);
 
     // (#3673 round 9b) LAST __extern_get body fill: prepend the per-key
@@ -6713,6 +6715,7 @@ export function generateMultiModule(
     fillClosedStructOwnPropertyNamesArms(ctx);
     fillClosedStructEnumerationArms(ctx); // (#3920) Object.keys / for…in
     fillClosedStructExternGetArms(ctx);
+    fillClosedStructExternSetArms(ctx); // (#4194) computed-WRITE twin of the GET arms
     fillFnctorPrototypeDispatchArms(ctx);
 
     // (#3673 round 9b) LAST __extern_get body fill: prepend the per-key

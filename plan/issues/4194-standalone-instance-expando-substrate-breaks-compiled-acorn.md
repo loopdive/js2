@@ -1,10 +1,11 @@
 ---
 id: 4194
 title: "standalone: a constructed instance has no expando substrate — for-in/Object.keys/`in` see 0 keys and a dynamic write is DROPPED; this is what makes compiled acorn reject `{ f }` destructuring in every eval"
-status: ready
+status: in-progress
+assignee: "ttraenkler/fable-3927-emission"
 sprint: current
 created: 2026-08-06
-updated: 2026-08-06
+updated: 2026-08-08
 priority: high
 horizon: l
 feasibility: hard
@@ -14,9 +15,103 @@ area: runtime
 es_edition: 5
 language_feature: objects
 goal: standalone-mode
-related: [2928, 4010, 4055, 4071, 4098, 4137, 4182]
+related: [2928, 3927, 4010, 4055, 4071, 4098, 4137, 4182]
+loc-budget-allow:
+  # (2026-08-08 computed-write slice) One import + the fill call in each of
+  # the two finalize sequences; the fill itself (~350 LOC) is the NEW
+  # src/codegen/closed-struct-extern-set.ts.
+  - src/codegen/index.ts
+func-budget-allow:
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
 origin: "W14 (annexB eval-code lever, 2026-08-06). Reserved with pr_scan=degraded (gh unauthenticated) — re-verify the id before merge."
 ---
+
+## Status 2026-08-08 — re-measured on current main; the WRITE half is this issue's remaining substance and its computed-key core is FIXED here
+
+The 2026-08-06 table predates the #3920 chain (GitHub PRs #4219 + #4229). On
+current main the four claims split cleanly:
+
+| surface (same fixture as the TL;DR) | 2026-08-06 | 2026-08-08 main | after this slice | native |
+| --- | ---: | ---: | ---: | ---: |
+| `for (p in n)` bitmask | 0 | 11 | 11 | 111 |
+| `Object.keys(n).length` | 0 | 2 | 2 | 3 |
+| `("type" in n) + ("name" in n)`·(1/10) | 0 | 1 | 1 | 11 |
+| named write `n.name="f"` readback | 101 | 101 | 101 | 111 |
+| computed write to a STRUCT-FIELD name (`n[k]="T2"`, k="type") | — | **0 (dropped)** | **11 = native** | 11 |
+| computed write to an expando name (`n[k]`, k="name") | — | 0 | 0 | 11 |
+
+So the ENUMERATION half is fixed for struct-backed fields (own keys with
+storage enumerate, `in` answers, presence-word reads are live) — by
+#4219/#4229, not here. What remained, and what this slice fixes, is the
+**computed-WRITE half for names WITH physical storage**: `n[key] = v` through
+a dynamic key silently dropped on every closed-struct receiver — even
+`n["type"] = "T2"` — because `__extern_set`'s non-`$Object` arm knew only
+vecs and closures. That drop is exactly what kept acorn's `copyNode`
+(`for (p in node) newNode[p] = node[p]`) blank AFTER enumeration went live,
+i.e. the measured zero-effect blocking the #3927 per-type-layout default-ON
+flip.
+
+**What this slice ships** (`src/codegen/closed-struct-extern-set.ts`,
+`fillClosedStructExternSetArms`, wired beside the GET fill in both finalize
+sequences): closed-struct write arms in `__extern_set` — key flattened once,
+per-name probes, per-receiver `ref.test` + `$shape` collision guards
+mirroring the GET fill, presence-bit set on write, cold-tail arms through
+`__cold_ensure_*`, tombstone REVIVAL on write (bag-lookup-only, never
+ensure), funcMap-read-only value coercion (a field whose unbox helper is
+absent is skipped and stays exactly as unwritable as before). Strict and
+sloppy both route here (`__extern_set_strict` delegates every non-`$Object`
+receiver). Measured after: the copyNode composition goes **0 → full copy**
+(unit fixture 1111 = native, incl. a flow-grown conditional field, with a
+positive-control write asserted first); delete-then-computed-rewrite revives
+the key (1111 = native); frozen computed writes still throw with the value
+unchanged (= native); acorn dogfood canaries 2/3/4/5, `functionImports []`.
+
+**What this slice does NOT ship — the rows still ≠ native above:**
+
+1. **The true expando substrate** (a name with NO storage anywhere:
+   `n.name = "f"` on the minimal fixture, `keysLen` 2 vs 3, `"name" in n`).
+   That is the #4010 rows-4-7 / #4098 carrier-bag greenfield this file's
+   TL;DR cites; unchanged here, pinned by
+   `tests/issue-4194-closed-struct-computed-write.test.ts` ("expando
+   residual") so the day it lands is noticed. In ACORN's case the ESTree
+   names are flow-grown struct fields, so copyNode does not need it.
+2. Layers 2–3 of the annexB stack below (interpreter ObjectPattern catch
+   destructuring, B.3.3/B.3.5 cancellation) — unchanged scope.
+3. The `SyntaxError: NaN` diagnostic defect — independent, unchanged.
+4. The js-host lane has DRIFTED since 2026-08-06 (measured 2026-08-08:
+   for-in 100, keys 0, `in` 10 on the same fixture — it now sees ONLY the
+   sidecar expando, not the ctor fields). Not this slice's lane; recorded so
+   the next host-lane pass starts from the current truth, not this file's
+   old table.
+
+**Acorn-scale validation — the copyNode composition, measured on the real
+artifact.** `tests/dogfood/cold-tail-differential.mjs` gained a fourth mode,
+`PROBE_READ=copy`: every walked node is copied via
+`for (k in n) copy[k] = n[k]` into a fresh laundered `new Node(...)` and the
+64 per-field hashes are taken over the COPY. Against the same build's
+computed-mode (direct read) hashes, over 32,506 objects: **58 of 64 fields
+bit-exact** — before this slice the copy was structurally blank (first
+measurement: every write dropped). The 6 divergences decompose completely and
+none is a write defect:
+
+- `type`/`start`/`end` presence 32,487 → 32,506: the copy shell is a Node,
+  whose ctor writes those three unconditionally — the 19 walked non-Node
+  objects gain them. Instrument shape.
+- `pattern`/`flags` 15 → 0, `source` 5 → 1: acorn's `node.regex` descriptor
+  is a plain `{pattern, flags}` object natively (enumerable — the native
+  ORACLE's copy keeps all 15), but the wasm lane's `for…in` over that carrier
+  class yields nothing, so the copy loses what the direct computed read still
+  sees. **Pre-existing #3920-family enumeration residual on that receiver
+  class — newly measurable precisely because the write half now works.**
+  Whoever runs the flag-ON conformance pass should expect this class.
+
+Two instrument traps burned into the harness docs: the copy receiver must be
+LAUNDERED (a struct-typed `var copy = new Node(...)` binding takes a
+different lowering for both `copy[k]` reads and writes — the first cut
+answered non-undefined for all 64 fields on all 32,506 nodes, a fully
+vacuous-looking PASS shape), and the expected divergences above are labeled
+so they are not re-diagnosed.
 
 # #4194 — a constructed instance has no expando substrate in standalone, and compiled acorn is the victim
 
@@ -213,15 +308,29 @@ Neither correction reflects badly on that lane's measurement — it explicitly
 flagged the arm as diagnosed-not-fixed and told the next lane to expect a second
 layer. There were three.
 
-## Acceptance criteria
+## Acceptance criteria (status annotated 2026-08-08 — see the Status section)
 
-- [ ] `for (const p in instanceOfC)` enumerates the instance's own enumerable
-      keys in standalone, including keys added by a later dynamic assignment.
+- [x] ~~`for (const p in instanceOfC)` enumerates the instance's own
+      enumerable keys~~ **for STRUCT-BACKED keys: done by #4219/#4229** (not
+      this slice), including keys added by a later dynamic assignment to a
+      storage-backed name (presence bit set on write — this slice). Keys
+      added to names with NO storage: still invisible (expando substrate,
+      #4010/#4098).
 - [ ] A dynamic write to an instance-typed `any` (`n.name = "f"`) is retained
-      and reads back.
+      and reads back — **done for names WITH physical storage (this slice,
+      computed + named routes agree); still open for true expandos**
+      (#4010/#4098 substrate; pinned red in the unit test).
 - [ ] The A/B above collapses: **stock** compiled acorn parses `var { a } = {}`,
-      `catch ({ f })`, `function g({ f }){}` with no source patch.
-- [ ] `Object.keys` behaviour on builtin-backed receivers is **unchanged** —
-      re-measure against the #4071 -5 bucket explicitly, do not assume.
+      `catch ({ f })`, `function g({ f }){}` with no source patch. The
+      compiled-acorn copyNode composition now copies (58/64 fields bit-exact
+      at scale); the eval-provider A/B itself needs the provider rebuild
+      instrument (~106 s + TEST262_FULL_RUNTIME_EVAL=1) and is the flag-ON
+      conformance run's first checkpoint.
+- [x] `Object.keys` behaviour on builtin-backed receivers is **unchanged** —
+      this slice touches only the WRITE helper; the #4071 screen
+      (`isUserDeclaredStruct`) governs enumeration and is untouched. The
+      write arms enumerate `ctx.structFields` for STORAGE, never for name
+      lists, and skip synthetic carriers.
 - [ ] Measured on the standalone lane with a lever list AND a control list of
-      currently-passing files in the same clauses; report both.
+      currently-passing files in the same clauses; report both — belongs to
+      the flag-ON test262 run (next slice per the #3927 program).
