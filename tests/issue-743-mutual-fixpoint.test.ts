@@ -436,8 +436,9 @@ describe("#743 — mutual-fixpoint facts reach the fnctor field slots", () => {
     expect(on.slots.get("N.b")).toBe("f64");
     const onResult = await run(on.binary);
 
-    // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
-    delete process.env.JS2WASM_FNCTOR_CTOR_PARAM_TYPES;
+    // (#743 defaults flip, 2026-08-08) OFF is a SPELLING now — unset is ON, so
+    // deleting the variable here would silently test the flag-ON path.
+    process.env.JS2WASM_FNCTOR_CTOR_PARAM_TYPES = "0";
     const off = await compileE2E();
     expect(off.slots.get("P.start")).toBe("externref");
     expect(off.slots.get("N.a")).toBe("externref");
@@ -445,8 +446,9 @@ describe("#743 — mutual-fixpoint facts reach the fnctor field slots", () => {
   });
 
   it("flag off: byte-identical to a second flag-off compile (satellite invisible)", async () => {
-    // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
-    delete process.env.JS2WASM_FNCTOR_CTOR_PARAM_TYPES;
+    // (#743 defaults flip, 2026-08-08) OFF is a SPELLING now — unset is ON, so
+    // deleting the variable here would silently test the flag-ON path.
+    process.env.JS2WASM_FNCTOR_CTOR_PARAM_TYPES = "0";
     const a = await compileE2E();
     const b = await compileE2E();
     expect(Buffer.from(a.binary).equals(Buffer.from(b.binary))).toBe(true);

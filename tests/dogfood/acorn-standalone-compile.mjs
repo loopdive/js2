@@ -8,6 +8,7 @@
 import { readFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 
+import { derivationFlagEnabled } from "../../src/derivation-flags.ts";
 import { compile } from "../../src/index.ts";
 import { setupAcorn } from "./setup-acorn.mjs";
 
@@ -98,9 +99,15 @@ export function __acorn_function_body_canary() {
     // (`parse(input: string, options: Options)`, …) seed their implicit-`any`
     // params from it. The entry here is in-memory (`fileName: "acorn.mjs"` is
     // virtual), so on-disk sibling discovery cannot fire — the explicit option
-    // is the honest equivalent. Flag off (the default): option absent,
-    // byte-identical compile.
-    ...(process.env.JS2WASM_DTS_ENTRYPOINT_SEEDS === "1"
+    // is the honest equivalent. Flag off: option absent, byte-identical
+    // compile.
+    //
+    // (#743 defaults flip, 2026-08-08) The flag is now ON when UNSET, so this
+    // condition uses the family's token rule rather than `=== "1"`. Getting
+    // that wrong would make the harness's default lane compile with seeding
+    // enabled but no declarations supplied — i.e. silently measure the flag-off
+    // artifact while reporting it as the shipped default.
+    ...(derivationFlagEnabled(process.env.JS2WASM_DTS_ENTRYPOINT_SEEDS)
       ? { entryDeclarations: readFileSync(entryModulePath.replace(/\.mjs$/, ".d.mts"), "utf-8") }
       : {}),
     skipSemanticDiagnostics: true,

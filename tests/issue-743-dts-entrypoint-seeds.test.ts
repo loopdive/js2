@@ -197,15 +197,19 @@ async function compileE2E(withDts: boolean) {
 }
 
 describe("#743 — .d.ts entrypoint seeds end-to-end", () => {
-  it("flag off: byte-identical whether declarations are supplied or not", async () => {
-    // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
-    delete process.env.JS2WASM_DTS_ENTRYPOINT_SEEDS;
+  // (#743 defaults flip, 2026-08-08) OFF is now a SPELLING, not the absence of
+  // one. This test used to establish its baseline by DELETING the variable;
+  // after the flip that arm compiles with seeding ON, so a supplied-`.d.ts`
+  // compile would be compared against an already-seeded baseline and the
+  // byte-identity assertion would pass for the wrong reason.
+  it("flag off (explicit 0/off): byte-identical whether declarations are supplied or not", async () => {
+    process.env.JS2WASM_DTS_ENTRYPOINT_SEEDS = "0";
     const bare = await compileE2E(false);
     const withDts = await compileE2E(true);
-    process.env.JS2WASM_DTS_ENTRYPOINT_SEEDS = "0";
-    const explicitOff = await compileE2E(true);
+    process.env.JS2WASM_DTS_ENTRYPOINT_SEEDS = "off";
+    const wordOff = await compileE2E(true);
     expect(hash(withDts.binary!)).toBe(hash(bare.binary!));
-    expect(hash(explicitOff.binary!)).toBe(hash(bare.binary!));
+    expect(hash(wordOff.binary!)).toBe(hash(bare.binary!));
   });
 
   it("flag on: seeds narrow the downstream fnctor field slot with NO parity demotion", async () => {
@@ -225,8 +229,9 @@ describe("#743 — .d.ts entrypoint seeds end-to-end", () => {
   });
 
   it("flag on without declarations: byte-identical to baseline (no declarations → no behavior change)", async () => {
-    // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
-    delete process.env.JS2WASM_DTS_ENTRYPOINT_SEEDS;
+    // Baseline must be explicit-OFF: post-flip, unset would BE the flag-on arm
+    // and this test would compare a compile against itself.
+    process.env.JS2WASM_DTS_ENTRYPOINT_SEEDS = "0";
     const bare = await compileE2E(false);
     process.env.JS2WASM_DTS_ENTRYPOINT_SEEDS = "1";
     const flagOnNoDts = await compileE2E(false);

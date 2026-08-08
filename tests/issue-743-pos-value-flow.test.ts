@@ -466,16 +466,18 @@ describe("#743 param-property carrier — end to end", () => {
     expect(on.slots.get("T.s")).toBe("f64");
     const onResult = await run(on.binary);
 
-    // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
-    delete process.env.JS2WASM_FNCTOR_CTOR_PARAM_TYPES;
+    // (#743 defaults flip, 2026-08-08) OFF is a SPELLING now — unset is ON, so
+    // deleting the variable here would silently test the flag-ON path.
+    process.env.JS2WASM_FNCTOR_CTOR_PARAM_TYPES = "0";
     const off = await compileE2E();
     expect(off.slots.get("T.s")).toBe("externref");
     expect(await run(off.binary)).toEqual(onResult);
   });
 
   it("flag off: the new rules are invisible in the emitted bytes", async () => {
-    // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
-    delete process.env.JS2WASM_FNCTOR_CTOR_PARAM_TYPES;
+    // (#743 defaults flip, 2026-08-08) OFF is a SPELLING now — unset is ON, so
+    // deleting the variable here would silently test the flag-ON path.
+    process.env.JS2WASM_FNCTOR_CTOR_PARAM_TYPES = "0";
     const a = await compileE2E();
     const b = await compileE2E();
     expect(Buffer.from(a.binary).equals(Buffer.from(b.binary))).toBe(true);
