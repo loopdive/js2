@@ -113,6 +113,11 @@ import {
   emitDynamicWithSet,
   resolveWithBinding,
 } from "../with-scope.js";
+import {
+  emitGlobalEnvironmentKey,
+  emitGlobalEnvironmentObject,
+  ensureGlobalEnvironmentOperation,
+} from "../global-environment.js";
 import { isStrictContext } from "../helpers/is-strict-function.js";
 import { tryCompileStrictFunctionPoisonAssignment } from "../function-poison-pill-access.js";
 import { emitRuntimeEvalAotCallableAdapter } from "../runtime-eval-callable.js";
@@ -781,7 +786,37 @@ function emitIdentifierWriteFromLocal(
     return;
   }
 
-  // Undeclared (sloppy implicit global): auto-allocate a local holding the value.
+  // (#4231 RC-F) A name the pre-scan already classified as a property of the
+  // realm's global object (`this.p1 = 1` or a top-level implicit `p1 = 1`,
+  // #3956/#2726) has REAL storage — the global object — and `emitImplicitGlobalRead`
+  // reads it from there. Auto-allocating a local for it below was actively
+  // destructive, and silently so: `allocLocal` registers the name in
+  // `fctx.localMap`, so from that point on EVERY bare read of the name in this
+  // function resolves to the fresh local instead of the global object.
+  //
+  // The `with` cascade is where this bites, because it compiles this fallback as
+  // the HasBinding-MISS arm of a branch that is normally NOT TAKEN:
+  //
+  //   with (o) { p1 = 'x1'; delete p3; }   // o owns p1 ⇒ the else arm never runs
+  //   if (p1 !== 1) …                      // …but reads the else arm's local ⇒ null
+  //
+  // So merely *compiling* an unreachable fallback poisoned every later read.
+  // That is the whole `S12.10_A1.*` family's assertion #1 (`p1 === 1` reading
+  // `null`), and it needs the object write, not a local.
+  if (ctx.sloppyImplicitGlobals?.has(name) && emitGlobalEnvironmentObject(ctx, fctx)) {
+    const setIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__extern_set");
+    if (setIdx !== undefined) {
+      emitGlobalEnvironmentKey(ctx, fctx, name);
+      fctx.body.push({ op: "local.get", index: rhsLocalIdx });
+      fctx.body.push({ op: "call", funcIdx: setIdx });
+      return;
+    }
+    // The global-environment setter is unavailable — drop the receiver we just
+    // pushed and fall through to the auto-local so the write is not lost.
+    fctx.body.push({ op: "drop" });
+  }
+
+  // Genuinely undeclared and not pre-scanned: auto-allocate a local.
   const newLocalIdx = allocLocal(fctx, name, { kind: "externref" });
   fctx.body.push({ op: "local.get", index: rhsLocalIdx });
   fctx.body.push({ op: "local.set", index: newLocalIdx });
