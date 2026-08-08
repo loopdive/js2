@@ -17,6 +17,8 @@ import { tryCompileNativeSetMethodCall } from "../set-runtime.js";
 import { tryCompileNativeSetAlgebraCall } from "../set-algebra.js";
 import { tryCompileNativeWeakMethodCall } from "../weak-collections-runtime.js";
 import { tryCompileNativeWeakRefDeref } from "../weakref-runtime.js";
+import { noJsHost } from "../js-errors.js";
+import { tryEmitStaticOrNativeIsPrototypeOf } from "../native-is-prototype-of.js";
 import { addStringConstantGlobal } from "../registry/imports.js";
 import { emitStandaloneClassProtoObject } from "../class-proto-object.js"; // (#3976) standalone proto as a real $Object
 import type { InnerResult } from "../shared.js";
@@ -144,6 +146,18 @@ function compileExternMethodCall(
   if (className === "DisposableStack" && ctx.nativeStrings) {
     const dsResult = tryCompileNativeDisposableStackMethodCall(ctx, fctx, propAccess, callExpr);
     if (dsResult !== undefined) return dsResult;
+  }
+
+  // (#2916) `recv.isPrototypeOf(v)` on a TYPED receiver. `Object` is the ROOT
+  // extern class, so every extern class inherits `isPrototypeOf` and this
+  // dispatch emitted `env::Object_isPrototypeOf` — unsatisfiable host-free (9
+  // sole-import leaks in the ≤ES5 standalone scope). Answer natively instead:
+  // the #2994 static folds, then the WasmGC `$Object.$proto` walk. Runs BEFORE
+  // the `className` guard because the receiver's class is irrelevant — every
+  // object inherits this method. JS-host mode is untouched.
+  if (noJsHost(ctx) && methodName === "isPrototypeOf") {
+    const nativeProtoOf = tryEmitStaticOrNativeIsPrototypeOf(ctx, fctx, propAccess.expression, callExpr);
+    if (nativeProtoOf !== null) return nativeProtoOf;
   }
 
   if (!className) return null;
