@@ -21,6 +21,9 @@ import {
 } from "./expressions/helpers.js";
 import { ensureLateImport } from "./expressions/late-imports.js";
 import { resolveWasmType } from "./index.js";
+// (#3920) Own-presence is a per-instance bit, never a shape property — the `in`
+// answer must come from the same presence machinery the value read uses.
+import { emitInPresence } from "./closed-struct-presence.js";
 import type { InnerResult } from "./shared.js";
 import { coerceType, compileExpression, flushLateImportShifts } from "./shared.js";
 import { inRhsIsExclusivelyPrimitive } from "./binary-ops.js";
@@ -189,6 +192,7 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
   let structFieldNames: string[] | null = null;
   let isVecType = false;
   let vecTypeIdx = -1;
+  let structWasm: ValType | undefined; // (#3920) receiver's closed-struct type
   if (rightWasm.kind === "ref" || rightWasm.kind === "ref_null") {
     const typeIdx = (rightWasm as { typeIdx: number }).typeIdx;
     const structDef = ctx.mod.types[typeIdx];
@@ -198,6 +202,7 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
         vecTypeIdx = typeIdx;
       } else {
         structFieldNames = structDef.fields.map((f) => f.name).filter((n): n is string => n !== undefined);
+        structWasm = rightWasm;
       }
     }
   }
@@ -339,6 +344,12 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
       fctx.body.push({ op: "i32.const", value: 1 });
       return { kind: "i32" };
     }
+  }
+
+  // (#3920) BEFORE the fold below: a conditionally-assigned field is a
+  // per-instance bit, not a shape property — see `closed-struct-presence.ts`.
+  if (staticKey !== null && emitInPresence(ctx, fctx, structWasm, staticKey, expr.left, expr.right)) {
+    return { kind: "i32" };
   }
 
   // Static resolution: key is known at compile time

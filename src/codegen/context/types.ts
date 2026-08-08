@@ -3403,6 +3403,34 @@ export interface CodegenContext {
    */
   fnctorColdTailStructName?: Map<string, string>;
   /**
+   * (#3927 per-type layouts) fnctor name → the family's reserved type indices,
+   * hint global and stamp range, reserved alongside the base struct in
+   * `reserveFnctorStructTypes` so every index is pass-invariant. Present only
+   * under `JS2WASM_FNCTOR_LAYOUT_EMIT` for split-verdict plans.
+   */
+  fnctorLayoutReserved?: Map<string, import("../fnctor-layout-emit.js").FnctorLayoutReservation>;
+  /**
+   * (#3927 per-type layouts) BASE struct name (`__fnctor_<Name>`) → the
+   * completed emission info for a family whose split actually took effect —
+   * the map every layout-aware consumer (dispatcher fills, reflective passes,
+   * the Phase-3 narrowing vote) enumerates. Populated by
+   * `applyFnctorLayoutSplit` during field derivation.
+   */
+  fnctorLayoutInfo?: Map<string, import("../fnctor-layout-emit.js").FnctorLayoutEmitInfo>;
+  /**
+   * (#3927 per-type layouts) allocation-label SITE (the factory call / direct
+   * `new` expression node from the alloc-labels plan) → the layout hint to
+   * publish before compiling that expression. Consumed by
+   * `maybeEmitLayoutHint` at the top of the call/new compilers.
+   */
+  fnctorLayoutHintBySite?: Map<ts.Node, { hintGlobalIdx: number; ordinal: number }>;
+  /**
+   * (#3927 per-type layouts) next globally-unique layout stamp. Stamps are
+   * 1-based and allocated CONTIGUOUSLY per family — the resid / presence arms'
+   * range guards (`stampRangeTestInstrs`) depend on that contiguity.
+   */
+  fnctorLayoutNextStamp?: number;
+  /**
    * #1886 Slice B — Func index of the lazily-emitted
    * `__lin_u8_alloc(len:i32)->i32` bump allocator for linear-backed Uint8Array
    * buffers (`undefined` = not yet emitted). Allocates from a dedicated page-4

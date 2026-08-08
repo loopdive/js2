@@ -45,6 +45,7 @@ import {
   maybeEmitVecLengthDefine,
   tryEmitVecLengthDefineForDefineProperties,
 } from "./array-length-define.js";
+import { emitHasOwnPresence } from "./closed-struct-presence.js"; // (#3920) per-instance own-presence
 import { isStaticDescWellFormed, isStaticallyNonObjectDescExpr } from "./descriptor-shape.js";
 import { isDescriptorTranscribableStruct } from "./property-descriptor-shape.js"; // (#4180) #2372 transcription gate
 import {
@@ -4689,6 +4690,11 @@ export function compilePropertyIntrospection(
       } else if (nonEnumerableTsProps.has(staticKey)) {
         result = 0;
       }
+    }
+
+    // (#3920/#4225) Replace an unsound folded constant — see closed-struct-presence.ts.
+    if (emitHasOwnPresence(ctx, fctx, receiverWasm, structFieldNames, staticKey, propAccess, arg, result)) {
+      return { kind: "i32", boolean: true };
     }
 
     // Compile receiver and argument for side effects, then drop

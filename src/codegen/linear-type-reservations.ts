@@ -14,6 +14,7 @@ import type { CodegenContext } from "./context/types.js";
 import { addFuncType, getOrRegisterSubviewType } from "./registry/types.js";
 import { deriveFnctorFields } from "./fnctor-escape-gate.js";
 import { coldTailHotFieldLimitFor, coldTailStructName } from "./fnctor-cold-tail.js";
+import { fnctorLayoutPlanFor, reserveFnctorLayoutTypes } from "./fnctor-layout-emit.js"; // (#3927) per-type layouts
 
 /**
  * #1886 Slice B — start of the linear-backed `Uint8Array` arena (page 4,
@@ -168,7 +169,14 @@ export function reserveFnctorStructTypes(ctx: CodegenContext): void {
     // `ref_null <coldTypeIdx>` is baked into the main struct's shape, so the
     // index has to be pass-invariant too. Reserved only under the flag, so an
     // unflagged build pushes no extra type and stays byte-identical.
-    if (coldTailHotFieldLimitFor(ctx) !== undefined) {
+    // (#3927 per-type layouts) A split-planned family reserves its sibling
+    // layout structs + resid carrier + hint global instead of a cold tail —
+    // the two techniques overlap rather than compose on one fnctor (where a
+    // layout is proved, the tail has nothing left to move; issue §8.4).
+    reserveFnctorLayoutTypes(ctx, name, idx); // declines itself unless split-planned + flagged
+    if (fnctorLayoutPlanFor(ctx, name) !== undefined) {
+      // layout family reserved above — no cold tail for this fnctor (overlap, not composition)
+    } else if (coldTailHotFieldLimitFor(ctx) !== undefined) {
       const coldStructName = coldTailStructName(structName);
       const coldIdx = ctx.mod.types.length;
       ctx.mod.types.push({ kind: "struct", name: coldStructName, fields: [] });

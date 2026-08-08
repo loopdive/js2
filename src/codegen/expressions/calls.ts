@@ -357,6 +357,7 @@ import { isStrictContext } from "../helpers/is-strict-function.js";
 // Registry extracted to its own leaf module (#1793; LOC ratchet #3102) —
 // re-exported here so existing importers keep resolving via calls.js.
 import { BUILTIN_CLASS_NAMES } from "./builtin-class-names.js";
+import { maybeEmitLayoutHint } from "../fnctor-layout-emit.js"; // (#3927) per-type layouts
 export { BUILTIN_CLASS_NAMES };
 
 /**
@@ -6118,6 +6119,15 @@ function compileCallExpression(
   expr: ts.CallExpression,
   expectedType?: ValType,
 ): InnerResult {
+  // (#3927 per-type layouts) Publish the allocation-label hint when this call
+  // is a recorded label site (a transparent-factory call) of a split fnctor
+  // family. Emitted BEFORE the callee/arguments compile: a labelled allocation
+  // nested inside them consumes and resets the hint, so the outer allocation
+  // degrades to the union layout — fat, never narrow. Net stack effect zero,
+  // so this is safe on every lowering path below. No-op unless
+  // `JS2WASM_FNCTOR_LAYOUT_EMIT` populated the site map.
+  maybeEmitLayoutHint(ctx, fctx, expr);
+
   // Optional chaining on calls: obj?.method() and obj.method?.().
   //
   // In the TS AST the `?.` of `o?.m(args)` sits on the inner

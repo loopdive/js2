@@ -12,12 +12,32 @@
 // `acorn-corpus.mjs` runs in JS-HOST mode where flow-grown fields are never
 // reserved as native slots at all — it is structurally blind to this feature.
 //
-// THREE READ MODES, and the distinction is what found the #3927 §4 defect:
+// FOUR READ MODES, and the distinction is what found the #3927 §4 defect:
 //   PROBE_READ=computed  `node[key]`     → the computed `__extern_get` path
 //   PROBE_READ=named     `node.<key>`    → the per-name `__get_member_<n>`
 //                                          dispatcher and its typed twins
 //   PROBE_READ=reflect   `for…in` + `hasOwnProperty` + `node[k]` → the
 //                                          ENUMERATION arms
+//   PROBE_READ=copy      copy every node via `for (k in n) copy[k] = n[k]`
+//                        into a fresh `new Node(...)`, then read the COPY →
+//                        the computed-WRITE arms (#4194) composed with
+//                        enumeration — acorn's copyNode shape. On one build,
+//                        copy-mode hashes must EQUAL computed-mode hashes
+//                        field-for-field; a dropped write reads as the ctor
+//                        default and diverges.
+//
+// EXPECTED copy-mode divergences vs computed mode (measured 2026-08-08,
+// 58/64 exact; do not re-diagnose these as write defects):
+//   - type/start/end presence 32487 -> 32506: the copy SHELL is a Node, whose
+//     ctor writes those three unconditionally, so the 19 walked non-Node
+//     objects gain them. Instrument shape, not a defect.
+//   - pattern/flags 15 -> 0, source 5 -> 1: acorn's `node.regex` descriptor is
+//     a plain `{pattern, flags}` object natively (enumerable — the ORACLE
+//     copies it), but the wasm lane's for…in over that carrier class yields
+//     nothing, so the copy loses what the direct computed READ still sees
+//     (computed-mode seen: 15). That is a PRE-EXISTING #3920-family
+//     enumeration residual on that receiver class — measurable at all only
+//     now that the write half works.
 // The defect was invisible in `computed` and uniform in `named`.
 //
 // ⚠ `reflect` IS CURRENTLY VACUOUS ON THIS CORPUS, AND SAYS SO. Measured
@@ -155,7 +175,13 @@ const MOD = 50000017; // 33*MOD + MOD < 2^31 so i32 and f64 lowerings agree
 // dispatcher and its typed twins). Running both separates "the stored value is
 // wrong" from "this particular read path is wrong".
 const readMode =
-  process.env.PROBE_READ === "named" ? "named" : process.env.PROBE_READ === "reflect" ? "reflect" : "computed";
+  process.env.PROBE_READ === "named"
+    ? "named"
+    : process.env.PROBE_READ === "reflect"
+      ? "reflect"
+      : process.env.PROBE_READ === "copy"
+        ? "copy"
+        : "computed";
 
 /** The reference implementation of the in-wasm walk, for the oracle. */
 function oracleHash(root, key, childKeys) {
@@ -170,7 +196,19 @@ function oracleHash(root, key, childKeys) {
       return;
     }
     nodes += 1;
-    const v = node[key];
+    let v;
+    if (readMode === "copy") {
+      // (#4194) Mirror the in-wasm copy probe: enumerate + computed-write into
+      // a fresh object, then read the copy. The reference uses a plain object
+      // where the wasm lane uses `new Node(...)` — both start property-less
+      // for every ESTree name (Node's ctor fields are then overwritten by the
+      // copy loop, same as in wasm).
+      const copy = {};
+      for (const k in node) copy[k] = node[k];
+      v = copy[key];
+    } else {
+      v = node[key];
+    }
     acc = (acc * 33 + code(v)) % MOD;
     if (v !== undefined) seen += 1;
     for (let i = 0; i < childKeys.length; i++) {
@@ -222,6 +260,9 @@ var __probeKey = "type";
 var __probeKeyIdx = 0;
 var __probeAst = null;
 
+/** Identity that erases static typing (the copy-mode receiver spelling). @param {*} x @returns {*} */
+function __probeLaunder(x) { return x ? x : x; }
+
 /** @param {*} node @returns {*} */
 function __probeRead(node) {
 ${
@@ -240,7 +281,23 @@ ${
     }
   }
   return v;`
-      : `  return node[__probeKey];`
+      : readMode === "copy"
+        ? `  // (#4194) The copyNode-shaped probe: enumerate + computed-WRITE into a
+  // fresh Node, then read the COPY. Exercises the closed-struct arms of
+  // __extern_set (the write half) composed with the #3920 enumeration arms —
+  // the exact acorn copyNode composition that measured ZERO effect before
+  // the extern-set fill (every computed write dropped, so the copy was
+  // blank and every hash was the ctor default).
+  //
+  // The copy is LAUNDERED to an any-typed binding first — acorn's copyNode
+  // receiver is an untyped parameter, and a struct-typed binding takes a
+  // DIFFERENT lowering for both n[k] reads and writes (receiver-spelling
+  // trap, #3920: the first cut of this mode measured a statically-typed
+  // copy and answered non-undefined for all 64 fields on all 32,506 nodes).
+  var copy = __probeLaunder(new Node({ options: {} }, 0, null));
+  for (var k in node) { copy[k] = node[k]; }
+  return copy[__probeKey];`
+        : `  return node[__probeKey];`
 }
 }
 

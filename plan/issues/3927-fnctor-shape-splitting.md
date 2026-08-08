@@ -1,11 +1,13 @@
 ---
 id: 3927
 title: "perf: a widened fnctor struct is the union of every shape its constructor ever takes — acorn's `Node` is 292 B for a 3-6 property object"
-status: in-progress
-assignee: "ttraenkler/opus-shape-split"
+status: done
+completed: 2026-08-08
+pr: 4230
+assignee: "ttraenkler/fable-3927-emission"
 sprint: current
 created: 2026-07-31
-updated: 2026-08-07
+updated: 2026-08-08
 loc-budget-allow:
   # The split's own code (≈500 LOC) lives in the NEW `fnctor-cold-tail.ts`.
   # These five are the unavoidable in-place seams: the three reflective
@@ -28,6 +30,15 @@ loc-budget-allow:
   # consumer-side narrowing in `compilePropertyAccess`. The veto has to be
   # where the narrowing decision is made; there is no seam to move it to.
   - src/codegen/property-access-dispatch.ts
+  # (2026-08-08 emission slice) The layout-hint global must be published at
+  # the allocation-label SITE (a factory call / direct new), i.e. at the top
+  # of the two expression compilers — there is no narrower seam that sees the
+  # ts.Node the plan keyed the label on. The ctor's layout-selecting
+  # struct.new replaces the single struct.new in compileNewFunctionDeclaration
+  # (new-super.ts). ~10 lines each; the emission itself (~700 LOC) lives in
+  # the NEW fnctor-layout-emit.ts.
+  - src/codegen/expressions/calls.ts
+  - src/codegen/expressions/new-super.ts
 func-budget-allow:
   - src/codegen/fnctor-escape-gate.ts::deriveFnctorFields
   - src/codegen/index.ts::generateModule
@@ -37,6 +48,10 @@ func-budget-allow:
   # (2026-08-07) Same seam as the loc-budget grant above — the Phase-3
   # narrowing decision lives inside this function.
   - src/codegen/property-access-dispatch.ts::finalizeStructAndDynamicMemberGet
+  # (2026-08-08 emission slice) The hint publication sits at the top of the
+  # two expression compilers (see the loc grant above) — +9/+6 lines.
+  - src/codegen/expressions/calls.ts::compileCallExpression
+  - src/codegen/expressions/new-super.ts::compileNewExpression
 priority: medium
 horizon: xl
 feasibility: hard
@@ -117,9 +132,11 @@ typed-and-reachable, which is exactly when the guard becomes live.
       property sets, with an explicit "unknown / too many" verdict.
       **Landed 2026-08-07** — `src/codegen/fnctor-alloc-labels.ts`; see the
       results section below.
-- [ ] Emit per-shape structs sharing a common prefix where the set is small and
-      separable; keep the union struct otherwise. **Designed and priced below
-      (§8.4); not built.**
+- [x] Emit per-shape structs sharing a common prefix where the set is small and
+      separable; keep the union struct otherwise. **Landed 2026-08-08,
+      flag-gated `JS2WASM_FNCTOR_LAYOUT_EMIT`, DEFAULT OFF** —
+      `src/codegen/fnctor-layout-emit.ts`; see the emission results section
+      below. Non-`split` verdicts keep the union struct + cold tail.
 - [x] Fold in the `objectIrTypeFromTsType` ↔ `tsTypeToFieldIr` seen-set, with
       the repro that proves it. **Already on main** — #4019 added the
       path-scoped `onPath` set to both functions (`src/codegen/index.ts`
@@ -1252,3 +1269,262 @@ Suites, all with the flag at its new default:
 every failure above was re-run under `off` before being attributed, and the
 fnctor ones were additionally re-run against `origin/main`'s own sources via
 file copies (never `git stash` — it is one shared stack across every worktree).
+
+## Results — 2026-08-08 slice: the EMISSION, built and validated (ships flag-OFF)
+
+**What landed**: `src/codegen/fnctor-layout-emit.ts` (+ wiring) behind
+`JS2WASM_FNCTOR_LAYOUT_EMIT` (boolean; unset/`""`/`"0"` ⇒ OFF ⇒
+byte-identical, pinned by `tests/issue-3927-fnctor-layout-emit.test.ts`).
+This is the second scope item — codegen now CONSUMES the validated per-type
+plan. Standalone-only by its own gate (`fnctorLayoutEmitFor`); a JS-host build
+is byte-identical for every flag value (pinned).
+
+### 1. The mechanism, in the §6 design with two deviations worth recording
+
+As designed: layouts are **siblings** (`$__fnctor_<Name>__lay<k>`, declared
+`sub final $base`; the base becomes a non-final root, the `$__vec_base`
+idiom); `ref.test $__fnctor_<Name>` matches every layout so base-field
+consumers are untouched; presence bits stay in the BASE words at fixed
+indices for the FULL union; allocation is routed by the layout-hint module
+global (mechanism 3), read-and-RESET in `__fnctor_<Name>_new`, hint 0 ⇒ the
+full-union sibling (ordinal 0) — every failure direction degrades to
+fat-never-narrow. The residual carrier `$__fnctor_<Name>__resid` hangs off a
+base `$resid` slot, lazily allocated by `__resid_ensure_<Struct>` (the
+`__cold_ensure` idiom), and holds every flow-grown union field so an
+analysis MISS degrades to a tail allocation, never a dropped property.
+
+The deviations:
+
+1. **Dispatch is by STAMP, not by `ref.test` (the design's "siblings ⇒ arm
+   order cannot matter" was WRONG as stated).** WasmGC canonicalizes
+   structurally identical types, and sibling layouts with the same field-kind
+   vector — acorn has many (`{left,right}` vs two other 2×externref layouts,
+   etc.) — share ONE canonical heap type, so `ref.test $__lay2` matches
+   `__lay3` instances and a bare arm reads another field's slot: the
+   silent-wrong-answer class. Every instance therefore carries an immutable
+   `$shape` i32 in the base (written at `struct.new`), globally unique per
+   layout and CONTIGUOUS per family. Value arms guard on stamp EQUALITY;
+   family-level arms (resid, presence, enumeration) guard on the stamp RANGE
+   (`(s − lo) u< count`, 2 instructions) — which also defends the base arms
+   against a whole-base canonical twin from ANOTHER split fnctor of identical
+   shape, a case the cold tail never had to face. The unit fixture's
+   `{alpha}`/`{beta}` layouts are deliberate canonical twins so this machinery
+   is exercised, not just present.
+2. **Layouts and the resid are `isSyntheticStructName`-hidden and get
+   EXPLICIT arms** (the cold-tail idiom), rather than flowing through the
+   generic `ctx.structFields` walks — a generic walk would emit exactly the
+   unguarded `ref.test` arms deviation 1 forbids. Consumers wired:
+   `fillMemberGetDispatch` / `fillMemberSetDispatch` (layout chains, then
+   resid chains, after the cold chains, before the host fallback),
+   `fillClosedStructExternGetArms` (computed reads; layout entries reuse the
+   existing `shapeFieldIdx`/`shapeId` guard machinery, resid entries add a
+   `shapeRange` guard), `fillClosedStructHasOwnArms` + the shared #3920
+   enumeration entries (presence-ONLY base arms from the side table — one
+   range-guarded arm answers for the whole family, layout-independently,
+   which IS the §6 constraint discharged).
+
+### 2. Vote-seam audit (the #4217 `generator` class) — every candidate-set consumer, disposition
+
+`findAlternateStructsForField` hides layouts + resid (like `__cold`); all 8
+consumers audited:
+
+| consumer | disposition |
+| --- | --- |
+| `property-access-dispatch.ts:3773` Phase-3 narrowing VOTE | **layout + resid kinds ADDED to `fieldKinds`** — a family carrying the name anywhere de-narrows; "this layout lacks the field" can never read as agreement |
+| `property-access-dispatch.ts:4026` `exactStructField` | safe — matches by exact `structTypeIdx` of a widened defineProperty struct; layouts can't match, base lacks flow-grown names |
+| `member-get-dispatch.ts:410` fill candidates | layout/resid arm chains appended (stamp/range-guarded) |
+| `member-get-dispatch.ts:843` typed f64 twin | declines correctly: flow-grown names have no scalar candidates ⇒ falls back to the generic dispatcher, which knows the hop |
+| `member-set-dispatch.ts:156` fill candidates | layout/resid write chains appended; resid writes lazy-allocate via `__resid_ensure_*` |
+| `member-set-dispatch.ts:341` vec-materializer scan | no-op — layout extras are `externref`, never vec-typed |
+| `property-access.ts:1327/1814` inline alternates | layouts hidden ⇒ no unguarded inline arm; the chains' terminal (`__extern_get` / `__get_member_*`) carries the layout arms |
+| enumeration/hasOwn/`in` (object-runtime) | presence-only base arms; never consult a layout field list |
+
+The vote-seam unit pin: `voteSeam()` in the test fixture reproduces the
+`generator` shape exactly (a flow-grown boxed `true` whose only VISIBLE
+carrier of the same name is another constructor's scalar slot) and asserts
+the boxed value survives — under the old vote it would have been dragged
+through `__unbox_number` to a constant `false`.
+
+**The §6 risk ordering, RE-DERIVED (the ⚠ correction requires it — the old
+ordering leaned on the retracted `copyNode` story).** The old implicit
+ordering was "the reflective passes are the principal risk, the dispatchers
+secondary", derived from attributing the K=52 divergence to
+`for (var prop in node)` — a routine since shown to execute zero times over
+an enumeration that yielded nothing. Re-derived from what this slice
+actually hit, in descending order of measured danger:
+
+1. **Canonical-twin misdispatch** — §6's own "layouts are siblings, so arm
+   order in the dispatchers cannot matter" is WRONG as stated: sibling
+   layouts of identical field kinds share one canonical type, `ref.test`
+   cannot separate them, and an unguarded arm silently reads another field's
+   slot. This is a class §6 did not list at all, it applies to every value
+   surface at once, and it is why dispatch is by stamp (deviation 1).
+2. **The narrowing vote** (carried over from slice C, unchanged — the one
+   part of the old ordering that was independently grounded).
+3. **Family-level base arms under cross-family base twins** — the resid and
+   presence arms' `ref.test $base` admits another split family's instances;
+   range guards close it. Also unlisted in §6.
+4. **The reflective passes** — DEMOTED from first place: with presence
+   pinned in the base words they are layout-independent by construction, and
+   post-#4219 they are actually exercisable (the differential's `reflect`
+   mode is no longer vacuous), so this risk is now both structurally smaller
+   and better measured than when it was ranked first on the unsupported
+   story.
+
+Delete/tombstones need no wiring: the #4098 tombstone registry is
+name-keyed per instance, layout-independent by construction, and the
+enumeration arms' tombstone screen is applied uniformly to the appended
+entries. Computed WRITES (`n[k] = v`) on closed structs remain unrouted in
+BOTH lanes (pre-existing #3537/#3920-residue class; measured: the unit
+fixture's computed write is dropped identically flag-ON and flag-OFF) — a
+resid write only happens through the named write dispatcher today.
+
+### 3. Bytes, deterministic census (`JS2WASM_ALLOC_CENSUS=1`, optimize 0, checksum 422 every run)
+
+Against the CURRENT default (hot/cold split ON at K=20 — slice C's baseline,
+reproduced to the byte before measuring):
+
+| | current default | + `JS2WASM_FNCTOR_LAYOUT_EMIT=1` | |
+| --- | ---: | ---: | ---: |
+| `Node` family bytes/parse | 5,891,776 (181.5 B/node eff.) | **3,051,188 (94.0 B/node)** | **−48.2 %** |
+| ALL struct bytes/parse | 9,036,640 | **6,196,052** | **−31.4 %** |
+| allocations/parse | 242,423 | 233,298 | −9,125 (= the cold tails, gone) |
+| `__fnctor_Node__resid` allocated | — | **0** | the analysis's 0 % overflow, confirmed at runtime |
+| Node instances attributed | 32,468 | 32,468 (Σ over 41 layout counters) | none escaped |
+
+The plan projected 98.0 B/instance and a −30.7 % marginal; the emission
+lands at **94.0 B** and **−31.4 %** (some plan-layout fields are not
+flow-grown-eligible, so a few layouts are narrower than planned). 41 layouts
+(union + 40), 59 hinted labels, stamps 1..41. Vs the pre-split union struct
+(292 B, 12.69 MB) the combined figure is −67.8 % on the node stream.
+
+Size: standalone dogfood acorn binary 961,576 → 1,007,131 B (**+4.7 %**,
+41 sibling type definitions + stamp-guarded arms; both measured with the
+same harness on this branch). Reported as size, not speed.
+
+### 4. Correctness on acorn — all three read paths, non-vacuously
+
+`tests/dogfood/cold-tail-differential.mjs` (committed harness), current
+default vs flag-ON, 64 per-field rolling hashes + presence counts, 32,506
+walked objects, body 422, all three `PROBE_READ` modes:
+
+| mode | hash diverged | presence diverged |
+| --- | --- | --- |
+| `named` (`__get_member_*` + twins) | 0 of 64 | none |
+| `computed` (`__extern_get`) | 0 of 64 | none |
+| `reflect` (`for…in` + `hasOwnProperty`) | 0 of 64 | none |
+
+**The `reflect` row is no longer the vacuous pass recorded in slice C** — 
+post-#4219 enumeration is live and the harness's own denominator shows
+**32,502 of 32,506 objects enumerating ≥1 key in BOTH lanes** (the
+positive-control requirement; no `VACUOUS` warning fired). What it still
+does not cover: acorn's `copyNode` executes 0 times on this corpus (§4 of
+the analysis slice), so enumeration+computed-WRITE composition is validated
+only by the unit fixture's resid round-trip, not at acorn scale.
+
+Dogfood canaries **2/3/4/5** with the flag ON, `functionImports: []`,
+exactly the 3 pre-existing IR-FALLBACKs (typeIdx parity on
+parse/parseExpressionAt/tokenizer). The resid path itself is exercised by
+the unit fixture (a property-round-trip flow the may-flow analysis provably
+cannot see lands the write in `$resid`, reads back, and answers
+`hasOwnProperty`/`in` from the base presence bit), since acorn never needs
+it.
+
+### 5. Wall clock — order-reversed A/B (recorded with its load caveat)
+
+One order-reversed block (ON → OFF → OFF → ON), `standalone-dynamic` lane,
+same-process pairs, 1-min load recorded at each run's start; **other agent
+lanes were active on the box throughout** (load 4.9–7.7 on 8 cores):
+
+| run | wasm µs/op | node µs/op (same code every run) | load |
+| --- | ---: | ---: | ---: |
+| ON-1 | 105,337 | 25,678 | 5.9 |
+| OFF-1 | 136,143 | 20,986 | 6.7 |
+| OFF-2 | 187,740 | 37,190 | 4.9→spike |
+| ON-2 | 95,537 | 15,608 | 7.7 |
+
+Both ON samples sit below both OFF samples in an order-reversed sequence —
+the sign is order-robust. **The magnitude is NOT usable**: the same-code
+Node baseline swung 2.4× (15.6 → 37.2 ms) across the four runs, and the
+apparent −22 %…−49 % wall delta is far outside what −31.4 % of struct bytes
+can buy through the measured byte→GC-bucket coefficient (≈ −4 to −5 pp).
+Per the §6 measurement rule this block is quoted for sign-consistency only;
+the deterministic census above is the instrument, exactly as in the two
+predecessor slices. (A quiet-box profile-bucket A/B is the right follow-up
+when the box is idle; not run here.)
+
+### 6. Flag decision: ships **default OFF**, and what gates default-ON
+
+1. **#3920's second half is in flight** (the compile-time
+   `structFieldNames.includes(key)` fold answering a constant YES for
+   conditionally-assigned fields, branch `issue-3920-closed-struct-reflection`).
+   Until it lands, hasOwnProperty/in-based validation on STATICALLY-typed
+   receivers can be wrong in both directions on conditionally-assigned
+   fields — which is most of what this split touches. The dynamic path (all
+   differentials above) is post-#4219 and real, but a default-ON claim needs
+   the full reflective surface re-validated after that fix, plus a probe
+   corpus that actually triggers enumeration+computed-write (acorn's does
+   not).
+2. **No test262 run on the flag-ON build yet.** Flag-OFF is byte-identical,
+   so the merge-queue gates cover this PR; a conformance run of the ON build
+   is the default-ON slice's job.
+2b. **The compile-time `in`/`hasOwnProperty` FOLD on struct-typed receivers
+   is presence-blind to the split (flag-ON only, flagged 2026-08-08 while
+   PR #4229 was in flight).** The static fold sources its name list from the
+   BASE struct's field list; the split removes the flow-grown value slots
+   from that list, so `"left" in typedNode` folds to a constant FALSE for a
+   name the instance may carry (inline in its layout, or in resid). PR
+   #4229 replaces only the folded-1 side with base-presence-word reads —
+   which this emission's fixed-index constraint deliberately keeps working —
+   but the folded-0 side keeps its constant, and under the split folded-0 is
+   no longer sound. **The same class is not hypothetical: it is LIVE ON MAIN
+   for the cold tail (default-ON at K=20), reproduced flag-free and filed as
+   #4225** (`plan/issues/4225-static-in-hasown-fold-blind-to-cold-tail.md`
+   — native 111 vs wasm 001; fix shape and acceptance criteria live there).
+   The per-type-layout flavor is the same fix at the same two fold sites,
+   consulting `fnctorLayoutOwnFieldsFor` alongside
+   `findColdStructsForField`; it gates default-ON here and is tracked by
+   #4225's cross-check criterion. Related: the `for…in`
+   static unroll on struct-typed receivers enumerates nothing — #4219
+   (`plan/issues/4219-forin-static-unroll-ignores-presence.md`, landed with
+   PR #4229). That gap is receiver-spelling-specific and does NOT block
+   this slice's validation (every differential here runs the dynamic path,
+   non-vacuously), but a flag-ON conformance run will surface both.
+3. The wall-clock claim is an extrapolation either way (§7 of the analysis
+   slice): −31.4 % of struct bytes projects, via the two measured
+   byte→GC-bucket points, to roughly −4 to −5 pp of wall on top of the
+   current default — unresolvable by A/B on this box.
+4. **Split-retirement decision input (run WITH the default-ON flip, not
+   after it).** Once layouts are default-ON, run the allocation census
+   grouped by PROOF VERDICT — `split` vs `single-site` / `not-separable` /
+   `no-sites` / `too-many-shapes` — across the FULL npm-compat corpus, not
+   only acorn. The struct bytes remaining in the bail-verdict families are
+   the ENTIRE residual value of the #4211/#4217 hot/cold split: on a
+   `split`-verdict fnctor the tail has nothing left to move (this slice
+   measures the cold-tail stream at exactly 0 with layouts ON — the −9,125
+   tail allocations line in §3), so the cold split earns its dispatcher
+   surface only on what the analysis bails on. On acorn that residue is ~0
+   (`Node` is the only widened fnctor and it splits), but acorn is one
+   corpus and the stakeholder question — "does #4217 become redundant once
+   layouts land?" — must be answered by that grouped census, not by
+   extrapolating from the motivating package. If the bail-family byte share
+   is negligible corpus-wide, retire the cold split (and its per-consumer
+   arm surface) in a follow-up; if not, the two verdicts partition cleanly
+   and both stay.
+
+The switch is one line (default the flag ON in `fnctorLayoutEmitEnabled`)
+once those close.
+
+### 7. Gates (emission slice)
+
+typecheck 0, lint 0, format 0. loc-budget / func-budget: allowances for the
+two new seams (`expressions/calls.ts`, `expressions/new-super.ts`) granted in
+this file's frontmatter; the emission itself (~900 LOC incl. docs) is the new
+`fnctor-layout-emit.ts`. Suites: `tests/issue-3927-fnctor-layout-emit.test.ts`
+5/5 (OFF byte-identity across `unset`/`""`/`"0"`, ON differs — the
+anti-vacuity pin; ON≡OFF on every surface incl. canonical-twin layouts;
+absolute spec answers; resid round-trip; vote seam; host byte-identity);
+`issue-3927-cold-tail` 6/6, `issue-3927-alloc-labels` 8/8, `issue-3927-pad`
+3/3, `issue-2660` suite green; the one red is
+`issue-3486 > own fields and enumeration are untouched` — the documented
+pre-existing known-red on main (verified against base blobs in slice C).
