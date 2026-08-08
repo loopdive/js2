@@ -68,9 +68,11 @@ export function tryNonConstructableNewTarget(
   // — a different error, from a different step, than the TypeError below. The
   // unknown-constructor path never compiles its callee at all, so `new x` with
   // no `x` in scope silently answered `undefined` (`S11.2.2_A2`). An identifier
-  // the checker cannot resolve to ANY declaration can never be a constructor,
-  // so evaluating it here is safe; `compileExpression` owns the throw (and the
-  // dynamic-global lookup that legitimately precedes it under runtime-eval).
+  // the checker cannot resolve to ANY binding can never be a constructor, so
+  // evaluating it here is safe; `compileExpression` owns the throw (and the
+  // dynamic-global lookup that legitimately precedes it under runtime-eval),
+  // which is why this arm delegates rather than emitting the ReferenceError
+  // itself — the identifier lowering already distinguishes those two cases.
   //
   // SYNTHESIZED nodes are excluded, and that exclusion is load-bearing rather
   // than defensive: several lowerings rewrite a call/construct into a fresh
@@ -79,7 +81,7 @@ export function tryNonConstructableNewTarget(
   // no position and therefore no checker symbol, so it looks exactly like an
   // undeclared name — this arm would turn every such rewrite into a
   // ReferenceError.
-  if (ts.isIdentifier(callee) && !nodeIsSynthesized(callee) && !ctx.oracle.resolvesToBinding(callee)) {
+  if (ts.isIdentifier(callee) && !nodeIsSynthesized(callee) && ctx.oracle.isUnresolvableIdentifier(callee)) {
     const unresolvedType = compileExpression(ctx, fctx, callee);
     if (unresolvedType) fctx.body.push({ op: "drop" });
     for (const arg of expr.arguments ?? []) {
