@@ -1,7 +1,9 @@
 ---
 id: 4225
 title: "bug: compile-time `in`/`hasOwnProperty` fold answers constant FALSE for a cold-moved fnctor field on a struct-typed receiver (cold tail is default-ON)"
-status: ready
+status: done
+completed: 2026-08-08
+assignee: ttraenkler/opus-forin-2
 sprint: current
 created: 2026-08-08
 updated: 2026-08-08
@@ -81,10 +83,75 @@ and a presence bit; only the fold cannot see them.
 
 ## Acceptance criteria
 
-- [ ] The repro answers 111 in standalone with default flags.
-- [ ] A never-written cold field still answers false (`in`/`hasOwnProperty`)
+- [x] The repro answers 111 in standalone with default flags.
+- [x] A never-written cold field still answers false (`in`/`hasOwnProperty`)
       — i.e. the fix reads presence, it does not blanket-fold to 1.
-- [ ] No change for non-fnctor closed structs (fold behavior preserved where
+- [x] No change for non-fnctor closed structs (fold behavior preserved where
       the field list is complete).
-- [ ] Cross-check with #3927 §6 item 2b, which tracks the per-type-layout
+- [x] Cross-check with #3927 §6 item 2b, which tracks the per-type-layout
       flavor of the same hole for its default-ON gate.
+
+---
+
+## Resolution (2026-08-08, `ttraenkler/opus-forin-2`)
+
+Landed as a follow-up stacked on PR #4229 (#3920's static-fold half), which is
+where both fold sites already route through one presence derivation.
+
+### Correction to the filed repro: `in` was ALREADY fixed, `hasOwnProperty` was not
+
+Measured on the #4229 branch before this change, digits `1`=`in`,
+`10`=`hasOwnProperty`, `100`=value read-back:
+
+| arm | cold field, written |
+| --- | ---: |
+| pre-#4229 | **100** — both reflective answers constant-false (the filed reading) |
+| #4229 | **101** — `in` fixed, `hasOwnProperty` still constant-false |
+| this change | **111** |
+
+The asymmetry is the whole diagnosis. `binary-ops-in.ts` passes the receiver's
+struct type to the shared helper unconditionally, so its cold lookup already
+ran. `object-ops.ts` gated the call on `result === 1` — a deliberate #4229
+conservatism — and a cold field folds `result === 0`, so the helper was never
+reached. **One call site had the fix and the other could not get to it.**
+
+### Fix
+
+`findPresenceStorage(ctx, structName, key)` in
+`src/codegen/closed-struct-presence.ts` is now the single union-aware source of
+truth: base `$presence_<w>` bit, `$cold` hop, or nothing. Both fold sites
+consult it; #3927's per-type emission extends **it**, not the call sites.
+
+The two fold directions are deliberately **not** symmetric:
+
+- **folded `1`** → demote on any storage (a conditionally-assigned field may
+  never have been written) — #3920's side.
+- **folded `0`** → demote **only** for OFF-BASE storage. A base-resident name
+  that folded to `0` did so for a reason the presence bit does not know about;
+  `propertyIsEnumerable` answering `0` for a non-enumerable field is the live
+  example, and reading the bit there would turn a correct `false` into a wrong
+  `true`. `findPresenceStorage` is itself the discriminator — a non-enumerable
+  base field has no cold location, so it never fires.
+
+### Test evidence
+
+`tests/issue-4225.test.ts`, 5 tests. Kill-switch A/B reverting only
+`object-ops.ts` + `closed-struct-presence.ts` to the #4229 branch:
+
+| | this change | #4229 baseline |
+| --- | --- | --- |
+| fixture really splits (instrument check) | pass | **pass** |
+| written cold field present | pass | fail `101` vs `111` |
+| never-written cold field absent | pass | **pass** |
+| hot field, both directions | pass | **pass** |
+| name with no storage stays folded false | pass | **pass** |
+
+Exactly one row moves. The **instrument check is the load-bearing one**: cold
+eligibility needs flow-grown AND `externref` fields, and the first draft of this
+fixture used numeric values, so nothing split and the "repro" passed on every
+arm while measuring an un-split struct. That test reads the emitted types and
+fails if the tail is missing or does not hold the probed name.
+
+Ranking note for anyone extending the fixture: the cold tail holds `f5`..`f9`,
+not `f21`..`f25` — hot fields are the top-K by static write-site count with ties
+broken by name **ascending**, and `"f10"` sorts before `"f5"`.
