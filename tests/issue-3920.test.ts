@@ -1,17 +1,36 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#3920) Own-presence on a closed fnctor/class struct is a PER-INSTANCE bit,
- * not a property of the shape.
+ * (#3920, second half) Own-presence on a closed fnctor/class struct is a
+ * PER-INSTANCE bit, not a property of the shape.
  *
  * A conditionally-assigned field (`if (c) this.p = v`) gets a physical slot on
  * the struct plus a `$presence_<w>` bit (#2847/#3780). Every VALUE read
- * consults the bit. The three reflective predicates did not:
+ * consults the bit. The reflective predicates did not, and they were wrong in
+ * BOTH directions depending on how the receiver was typed:
  *
- * | surface | wrong answer before | mechanism |
- * | --- | --- | --- |
- * | `"p" in bag`, struct-typed receiver | `true` for an absent field | `structFieldNames.includes(key)` folded to `i32.const 1` |
- * | `"p" in bag`, `any`/externref receiver | `false` for a present field | `__extern_has` had no closed-struct arm at all |
- * | `bag.hasOwnProperty("p")` | `true` for an absent field | the same shape fold |
+ * | receiver | surface | wrong answer | mechanism |
+ * | --- | --- | --- | --- |
+ * | `any`/externref | `in`, `for…in`, `Object.keys` | `false` / 0 keys for a PRESENT field | the dynamic helpers had no closed-struct arm |
+ * | statically the struct | `in`, `hasOwnProperty`, `propertyIsEnumerable` | `true` for an ABSENT field | `structFieldNames.includes(key)` folds to `i32.const 1` |
+ *
+ * **PR #4219 fixed the first row** — `__object_keys` / `__object_keys_forin` /
+ * `__extern_has` now carry closed-struct arms behind an `isUserDeclaredStruct`
+ * whitelist. Its commit message states that "a statically-typed receiver never
+ * showed the bug because it never enters the dynamic runtime at all"; the
+ * second row is why that is only half true. A statically-typed receiver has the
+ * OPPOSITE defect, and measured on `main` after #4219 landed, three of the four
+ * spellings still disagreed across lanes:
+ *
+ * | predicate, 2-iteration loop, one hit expected | standalone | JS host |
+ * | --- | ---: | ---: |
+ * | `"cond" in bag` | **2** | 1 |
+ * | `bag.hasOwnProperty("cond")` | **2** | 1 |
+ * | `bag.propertyIsEnumerable("cond")` | **2** | 1 |
+ * | `Object.hasOwn(bag, "cond")` | 1 | 1 |
+ *
+ * `Object.hasOwn` is the control: it already routed to the runtime, so it was
+ * right before and after, which localises the defect to the FOLD rather than to
+ * the presence machinery.
  *
  * Both directions are silent wrong answers: the value read on the same line
  * stayed correct, so nothing ever contradicted them.
@@ -134,14 +153,16 @@ export function main() {
 `;
 
 /**
- * The FALSE-POSITIVE arm, which needs a receiver whose STATIC type is the
- * closed struct — here a loop-local, which the typed-binding pass resolves to
- * `(ref null $__fnctor_Bag)`. That routes both `in` and `hasOwnProperty` into
- * the compile-time `structFieldNames.includes(key)` fold, and before this fix
- * BOTH answered `true` on the iteration where `cond` was never assigned.
+ * The FALSE-POSITIVE arm — the half PR #4219 left open. It needs a receiver
+ * whose STATIC type is the closed struct; a loop-local is one, because the
+ * typed-binding pass resolves it to `(ref null $__fnctor_Bag)`. That routes all
+ * three folding predicates into `structFieldNames.includes(key)`, and each
+ * answered `true` on the iteration where `cond` was never assigned.
  *
- * seed 0 → `cond` absent, seed 1 → present, so the honest answer is one hit
- * each: `1 + 10 = 11`. A shape fold scores `2 + 20 = 22`.
+ * seed 0 → `cond` absent, seed 1 → present, so the honest answer is exactly one
+ * hit per predicate: `1 + 10 + 100 = 111`. A shape fold scores `222`.
+ * `Object.hasOwn` is deliberately NOT in this fixture — it never folded, so it
+ * would score the same either way and would dilute the signal.
  */
 const IN_FOLD_LOOP = `
 function Bag(seed) { this.always = seed; }
@@ -152,6 +173,7 @@ export function main() {
     if (seed > 0) bag.cond = 7;
     if ("cond" in bag) score = score + 1;
     if (bag.hasOwnProperty("cond")) score = score + 10;
+    if (bag.propertyIsEnumerable("cond")) score = score + 100;
   }
   return score;
 }
@@ -204,9 +226,11 @@ describe("#3920 — closed-struct own-presence is a per-instance bit", () => {
   });
 
   it("a struct-typed receiver does not fold an absent conditional field to `true`", async () => {
-    // The false-POSITIVE arm. Base answered 22 (both predicates always true).
-    expect(await runStandalone(IN_FOLD_LOOP)).toBe(11);
-    expect(await runHost(IN_FOLD_LOOP)).toBe(11);
+    // The false-POSITIVE arm — still live on `main` after #4219, where the
+    // standalone lane answered 222 (all three predicates constant-true) against
+    // the host lane's correct 111.
+    expect(await runStandalone(IN_FOLD_LOOP)).toBe(111);
+    expect(await runHost(IN_FOLD_LOOP)).toBe(111);
   });
 
   it("the runtime `__extern_has` arm finds a present conditional field", async () => {

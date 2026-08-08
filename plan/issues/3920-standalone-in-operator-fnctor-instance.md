@@ -1,11 +1,12 @@
 ---
 id: 3920
 title: "standalone: three of five reflective operations answer nothing once a closed-struct receiver arrives as `any`"
-status: in-progress
-assignee: "ttraenkler/opus-forin"
+status: done
+completed: 2026-08-08
+assignee: "ttraenkler/opus-forin, ttraenkler/opus-forin-2"
 sprint: current
 created: 2026-07-31
-updated: 2026-08-07
+updated: 2026-08-08
 priority: high
 horizon: m
 feasibility: medium
@@ -265,22 +266,118 @@ defect.
       Six helpers, three armed and three not, matching the measured matrix
       3-for-3 — the §Problem grouping was an observation; this is the
       diagnosis.
-- [ ] Flip `tests/issue-3780-allocation-lowerings.test.ts`'s standalone
-      assertion to `EXPECTED_CROSS_WORD`. **Blocked** on the expando-storage
-      gap above, not on enumeration; that fixture writes its properties after
-      construction.
+- [x] Flip `tests/issue-3780-allocation-lowerings.test.ts`'s standalone
+      assertion to `EXPECTED_CROSS_WORD`. Was recorded here as **blocked** on
+      the expando-storage gap; re-measured and it is not — see
+      "the flip was not blocked" below.
 
 ## Acceptance criteria
 
 - [x] `"p" in instance` agrees across the JS-host and standalone lanes for
       constructor-assigned properties.
-- [ ] …and for conditionally-assigned ones — lanes now AGREE, but both
-      under-report against Node (expando storage, above).
-- [ ] The cross-word fixture asserts `EXPECTED_CROSS_WORD`. Blocked as above.
+- [x] …and for conditionally-assigned ones. The dynamic half landed in
+      PR #4219; the **static-fold** half is the second slice below, without
+      which three of the four spellings still disagreed across lanes.
+- [x] The cross-word fixture asserts `EXPECTED_CROSS_WORD`.
 - [x] Whatever of `for…in` / `Object.keys` / `hasOwnProperty` shares the root
       cause is fixed in the same change; anything that does not is split out
       with its own repro rather than left implied.
 - [ ] No standalone test262 regression — CI `merge_group` owns this.
+
+---
+
+## Second slice — the COMPILE-TIME fold (2026-08-08, `ttraenkler/opus-forin-2`)
+
+Found by an independent lane working the same issue id concurrently; PR #4219
+landed mid-flight, so this is the non-overlapping residual, re-measured against
+`upstream/main` @ `23ba5903b` **with #4219 already in**.
+
+### The half above is the `any`-receiver half; there is a second, opposite one
+
+#4219's summary says "a statically-typed receiver never showed the bug because
+it never enters the dynamic runtime at all". True as far as the *dynamic* bug
+goes — but a statically-typed receiver has the **opposite** defect, from a
+different mechanism, and it also diverges across lanes. Measured after #4219, on
+a 2-iteration loop where the honest answer is one hit per predicate:
+
+| predicate | standalone | JS host | correct |
+| --- | ---: | ---: | ---: |
+| `"cond" in bag` | **2** | 1 | 1 |
+| `bag.hasOwnProperty("cond")` | **2** | 1 | 1 |
+| `bag.propertyIsEnumerable("cond")` | **2** | 1 | 1 |
+| `Object.hasOwn(bag, "cond")` | 1 | 1 | 1 |
+
+`Object.hasOwn` is the control that localises it: it never folded, so it was
+right before and after. The other three fold to `i32.const 1` from
+`structFieldNames.includes(key)` — the SHAPE's answer — for a field the instance
+never got. A conditionally-assigned field has a physical slot AND a
+`$presence_<w>` bit; the VALUE read consults the bit, the fold did not, so the
+predicate contradicted the read on the same line and nothing ever noticed.
+
+This is the more dangerous direction of the two: a bigger number bought with a
+silent wrong answer.
+
+### Fix
+
+`src/codegen/closed-struct-presence.ts` — one derivation, used by
+`binary-ops-in.ts` (`in`) and `object-ops.ts` (`hasOwnProperty` /
+`propertyIsEnumerable`). The runtime presence test replaces **only a folded
+`1`**; a folded `0`, and every unconditionally-assigned field, keep their
+constant. The answer therefore narrows and never widens, so this cannot
+manufacture a new `true` on a builtin carrier — which is why it needs no
+`isUserDeclaredStruct` gate of its own.
+
+**Name-list source (the #3927 constraint):** the presence WORD, never the field
+list — `presenceTestInstrs` on `$presence_<w>`, or `coldFieldPresenceInstrs`'
+`$cold` hop for a hot/cold-split field, resolved per owning struct via
+`presenceSlotOf`. A field-list derivation is layout-dependent and is already
+wrong today for a split field, which is not in the main struct's field list at
+all.
+
+**Commit-only-on-confirmed-operand:** the checker-resolved receiver type and the
+compiled operand can disagree (widened binding, subtype, externref-slotted
+variable), and committing a mismatch is an **invalid module**, not a wrong
+answer. Both call sites scratch-compile their operands via `pushBody`/`popBody`
+and commit only when `isClosedStructOperand` confirms the reference; the scratch
+local is always `(ref null $S)` so nullability cannot mismatch either.
+
+### The #3780 flip was not blocked
+
+This file recorded the flip as blocked on the expando-storage gap. Re-measured:
+`CROSS_WORD_PRESENCE` answers **830,660 = `EXPECTED_CROSS_WORD` exactly** on
+upstream/main with #4219 in. The storage gap is real but does not reach that
+fixture — its properties are `this`-flow-grown onto the closed struct, so they
+are stored. What was actually true is that
+**`tests/issue-3780-allocation-lowerings.test.ts` is RED on `main`**: the
+behaviour moved and the pinned `EXPECTED_CROSS_WORD - 820 * 1000` did not. The
+credit for the behaviour is #4219's; this slice repairs the stale pin.
+
+### Attribution (kill-switch A/B)
+
+`tests/issue-3920.test.ts`, 8 tests, reverting **only** `binary-ops-in.ts` and
+`object-ops.ts` to `upstream/main` and changing nothing else:
+
+| | this slice | upstream-only |
+| --- | --- | --- |
+| positive control (instance is observable) | pass | **pass** |
+| struct-typed receiver, absent field | pass | fail `222` vs `111` |
+| the other 6 | pass | pass |
+
+The positive control passing on both arms is what makes the one failure
+attributable rather than an instrument defect. Six of the eight passing on the
+upstream-only arm is the honest statement that **#4219 fixed most of this
+issue**; this slice is the remaining row.
+
+Every presence assertion pins the FULL 4-way answer (present/absent ×
+conditional/unconditional), so a predicate that has degenerated into a constant
+fails in either direction — an enumeration-shaped differential over this
+receiver class otherwise passes vacuously by comparing "nothing" to "nothing".
+
+### Process note
+
+Two lanes worked id #3920 concurrently. The `issue-assignments` claim ref was
+held by `ttraenkler/opus-forin-2` and did not prevent the `claude/` lane from
+landing #4219 — the claim book does not cover that lane.
 
 ## See also
 
