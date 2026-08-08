@@ -14,6 +14,7 @@ import { fillNativeConstructDrivers, maxReservedNativeConstructArity } from "./n
 import { fillConstructBoundDriver } from "./construct-bound.js"; // (#4196)
 import { emitVecDefineWritebackExports } from "./vec-define-writeback.js"; // (#3116)
 import { detectArrayReduceFusion } from "./array-reduce-fusion.js";
+import { hoistConstantBoxedNumbers } from "./const-box-hoist.js"; // (#4157)
 import type { MultiTypedAST, TypedAST } from "../checker/index.js";
 import type { TypeFact, TypeOracle } from "../checker/oracle.js";
 import {
@@ -4635,6 +4636,10 @@ export function generateModule(
     // index freeze. No-op unless a gc/host delete-aware read recorded the flag.
     finalizeInModuleInitFlag(ctx);
 
+    // (#4157) Constant number boxes → module globals. Placement contract (why
+    // exactly here) is in const-box-hoist.ts's own doc comment.
+    hoistConstantBoxedNumbers(ctx);
+
     // (#2853) Nominal shape branding: structurally-colliding `__anon_*` /
     // `__fnctor_*` shape types get a trailing brand-ref field so the engine's
     // iso-recursive canonicalization cannot merge distinct key-sets into one
@@ -6861,6 +6866,9 @@ export function generateMultiModule(
     // Runs before dead-elim (which never prunes/remaps live globals) and the
     // index freeze. No-op unless a gc/host delete-aware read recorded the flag.
     finalizeInModuleInitFlag(ctx);
+
+    // (#4157) Same pass + placement as the single-module pipeline.
+    hoistConstantBoxedNumbers(ctx);
 
     // (#2853) Nominal shape branding — same pass + placement as the
     // single-module pipeline (see generateModule): after all instruction
