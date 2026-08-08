@@ -5,7 +5,7 @@ status: in-progress
 assignee: ttraenkler/L3-annexb-hoisting
 sprint: current
 created: 2026-08-03
-updated: 2026-08-06
+updated: 2026-08-08
 priority: medium
 horizon: m
 feasibility: medium
@@ -23,8 +23,19 @@ origin: "2026-08-03 delta /harvest-errors, baselines 2090e7bfd342 (gitHash b65d2
 # are read by five other emit sites in the same file. +60 LOC is the fix plus
 # the B.3.5 exemption rationale, not barrel spill; `isActiveBlockLexical` /
 # `cancelsAnnexBVarBinding` were folded into one scan to hold it down.
+# (#4137 arm 1, Layer 2) +6 lines in operator-assignment.ts and every one of
+# them is comment. The code change is a single gate condition; the comment is
+# the load-bearing part, because the ORIGINAL comment on that gate asserted the
+# opposite ("the AnyValue infrastructure already round-trips any += number") and
+# that assertion is what kept the bug alive — true for numbers, false for
+# runtime strings. Without a recorded reason the next reader re-narrows the gate
+# to `anyValueTypeIdx < 0` and every compiled-acorn SyntaxError goes back to
+# rendering as `NaN`. The file already has a documented history of subtle
+# mode-coupling (#1999, #2058, #3039); no subsystem module exists to move one
+# boolean into.
 loc-budget-allow:
   - src/interp/emitter.ts
+  - src/codegen/expressions/operator-assignment.ts
 ---
 
 # #4137 — the residual tail of the newly-linked standalone interpreter
@@ -282,13 +293,19 @@ three independent steps:
 
 ## Acceptance criteria (updated)
 
-- [ ] `SyntaxError: NaN` never reaches a test result — **diagnosed, not fixed**;
-      root cause and a failing/passing probe pair recorded above.
+- [x] `SyntaxError: NaN` never reaches a test result — **fixed 2026-08-08**
+      (Layer 2, `operator-assignment.ts` gate). The bucket goes 24 → 0 on the
+      scoped standalone lane and renders `SyntaxError: Binding rvalue (1:266/288)`.
+      The remaining verdict-flipping half is #4194 (Layer 1), by design.
 - [x] The `setEvalVariableEnvironmentBinding` null-deref is fixed — and it is
       **not** a #4131 residual; it is a standalone null-vs-undefined ABI bug.
-- [ ] Each `interp/emitter` Phase-1 gap is either implemented or listed in
-      #2928's Phase-2 scope with a count — untouched.
-- [x] Re-measured, with counts: 0 → 40 of 185, 0 regressions (table above).
+- [x] Each `interp/emitter` Phase-1 gap is either implemented or listed in
+      #2928's Phase-2 scope with a count — bitwise (`\|`/`&`/`^`/`>>>`) and regex
+      literals implemented; PrivateIdentifier (4) / PropertyDefinition (3) /
+      TaggedTemplateExpression (1) listed in #2928 with counts.
+- [x] Re-measured, with counts: 0 → 40 of 185, 0 regressions (table above);
+      and 442/469 → 442/469 with 0 fail→pass / 0 pass→fail for this session
+      (2026-08-08 work log).
 
 ---
 
@@ -401,3 +418,137 @@ Expected outcomes per arm: **A2** — 0 verdict flips; success = `pa9`+`pa10` bo
 - **Do not conflate arms in one PR.** A2 is codegen; C1/C2 are interpreter. Separate PRs so a park on the risky A2 change does not strand the mechanical C1/C2 wins.
 - **Frontmatter `loc-budget-allow` for emitter.ts already exists** (granted for the landed catch fix); C1+C2 add ~20 LOC — re-run `check:loc-budget` and extend the rationale only if it trips.
 - **#4194 sequencing:** nothing here depends on #4194 landing, and nothing here blocks it. But re-measure the `SyntaxError: NaN` bucket after #4194 lands — the 36 should collapse via its layer 1, and whatever remains is Layer-2/3 residue attributable with the now-readable diagnostics.
+
+---
+
+## Work log — 2026-08-08 (spec execution: C1, C2, A2 Layer 2, C3)
+
+All four spec items implemented as four separate commits. Arm statuses below.
+
+### Arm status after this session
+
+| arm | status |
+| --- | --- |
+| 2 / 2b — null-deref + catch Environment Record | **LANDED** (PR #4139, unchanged here) |
+| 1 — `SyntaxError: NaN`, **Layer 2** (rendering) | **FIXED** — the bucket now renders real acorn text with position |
+| 1 — Layer 1 (the spurious raise, verdict-flipping) | **NOT HERE** — #4194, and this session's readable diagnostic now *names* it (below) |
+| 1 — Layer 3 (`err.pos === NaN`) | **RESOLVED as a hypothesis** — it is #4194's dropped-expando write; no third defect |
+| 3 — Phase-1 emitter gaps: bitwise `\|`/`&`/`^`/`>>>` | **IMPLEMENTED** (C1, opcodes 45-48) |
+| 3 — Phase-1 emitter gaps: regex literal | **IMPLEMENTED** (C2, `BUILTIN_REGEXP_CREATE = 28`) |
+| 3 — PrivateIdentifier / PropertyDefinition / TaggedTemplate | **DEFERRED with counts** to #2928 Phase 2 (C3) |
+
+### Scoped test262 — local A/B, same machine, same corpus
+
+`TEST262_PATH_FILTER='annexB/language/eval-code/' TEST262_TARGET=standalone
+TEST262_FULL_RUNTIME_EVAL=1 COMPILER_POOL_SIZE=1 TEST262_WORKERS=1
+pnpm run test:262 -- --official-scope-only`, 469 official-scope files, full
+interpreter provider rebuilt for each arm (cache keys `8d62618f76cb96b7` before /
+`e858993d4151b13f` after — the ~3 min rebuild is the cache key folding the
+compiler-bundle hash, i.e. correct, not staleness).
+
+| build | pass / 469 | fail→pass | pass→fail |
+| --- | ---: | ---: | ---: |
+| `HEAD~3` (pre-C1/C2/A2) | 442 (94.2 %) | — | — |
+| this branch | 442 (94.2 %) | **0** | **0** |
+
+**0 verdict flips, exactly as the spec predicted for A2.** What changed is the
+entire failure bucket's *text*:
+
+| bucket | before | after |
+| --- | ---: | ---: |
+| `SyntaxError: NaN` | **24** | **0** |
+| `SyntaxError: Binding rvalue (1:266)` | 0 | 16 |
+| `SyntaxError: Binding rvalue (1:288)` | 0 | 8 |
+| `Test262Error: …"first declaration"/"second declaration"…` | 2 | 2 |
+| `Test262Error: …«function () { [native code] }», «1»…` | 1 | 1 |
+
+24 records changed error text with an unchanged verdict; nothing else moved.
+
+**New, actionable finding — the now-readable message names #4194's raise.**
+Compiled-acorn's spurious early error is `Binding rvalue`, i.e. `checkLValSimple`
+rejecting the destructuring shorthand's `AssignmentPattern`/binding target. That
+is the concrete diagnostic #4194 has been working without, and it is the
+observable payoff of this arm: the message is now a lead, not an opaque `NaN`.
+
+### A2 — the mandatory probe pair (`.tmp/probe/pa9.ts` + `.tmp/probe/pa10.ts`)
+
+Compiled `target: "standalone", skipSemanticDiagnostics: true,
+inferModuleStrictArguments: false`. Both were run; the pair disagrees by design.
+
+| build | pa9 | pa10 |
+| --- | --- | --- |
+| baseline | `run=1 control=1` (correct) | `viaString=0 viaDirectEq=0 viaTypeof=2 viaLength=3` — **wrong** (`"NaN".length`, `typeof` number) |
+| this branch | `run=1 control=1` | `viaString=1 viaDirectEq=1 viaTypeof=1 viaLength=10` — **correct** |
+
+**Genuine-syntax-error control, through the real provider** (`.tmp/probe/layer3.mjs`,
+`js2wasm:runtime-eval` linked, verified with `WebAssembly.Module.imports`):
+
+```
+err.name        = "SyntaxError"
+err.message     = "Unexpected token (1:4)"      ← position TEXT, not NaN
+```
+
+A constant-string `eval("var 1 = 2;")` does **not** reach the provider (the
+Tier-0 inline path answers `Invalid eval source`); the control must read `eval`
+as a first-class value and pass a source string built at runtime, or it verifies
+nothing.
+
+### Layer 3 — the discriminating probe, and its verdict
+
+Same probe, same caught provider syntax error:
+
+```
+typeof err.pos  = "undefined"
+String(err.pos) = "undefined"
+```
+
+**`"undefined"` ⇒ this is #4194's dropped-expando-write half.** There is no
+second numerification path and nothing further is owed by #4137: acorn's
+`err.pos = pos` write on the SyntaxError instance is dropped in standalone, the
+read-back is `undefined`, and whatever numerifies it to `NaN` does so at the
+consumer. Closed as a hypothesis.
+
+### A2 — the write-back coercion leg
+
+No new coercion leg was needed. `compileAnyCompoundAdd`'s store path calls
+`coerceType(ctx, fctx, {externref}, localType)`, and `type-coercion.ts` already
+has the externref → `$AnyValue` arm (`isAnyValue(to)` → `addUnionImports` +
+`boxToAny`, whose `from.kind === "externref"` branch is complete). Verified in
+source; the diff is one gate condition, as specced.
+
+### C1 — bitwise operators
+
+Node differential (`tests/interp/differential.test.ts`, 15 new bodies covering
+`|`/`&`/`^`/`>>>`, ToInt32 on string/`undefined`/`null`/fractional operands,
+`>>>` operand order, and the compound forms incl. a member target): **all pass**,
+curated corpus `supported=94 unsupported=1` (the one is `**`, still out of
+scope). The 1 published `binary operator '|'` record is outside the
+annexB/eval-code filter, so this A/B does not price it; the differential is the
+direct evidence that the opcode path is correct.
+
+### C2 — regex literals: the honest grammar split
+
+Node (E1) differential: **9 new regex bodies, all pass** — `.test`, `.exec`,
+`.replace`, `.source`, `.flags`, `lastIndex` state, and fresh-object-per-
+evaluation identity. The emitter no longer refuses.
+
+Self-compiled (the lane the 13 published records live in), measured through the
+real provider (`.tmp/probe/c2-split.mjs`, 20 representative bodies):
+
+| outcome | count | meaning |
+| --- | ---: | --- |
+| evaluates correctly | 1 | `/x/.source` |
+| wrong value | 1 | `/x/g.flags` → `1` |
+| `Unsupported dynamic regular expression pattern` (#4042) | 10 | the expected out-of-grammar degradation |
+| `undefined is not a function` | 5 | **a second, distinct gap** — `RegExp.prototype.test`/`.exec` are not reachable on the constructed object in standalone |
+| other (`String is not defined`, invalid `\p{L}`) | 3 | unrelated Phase-1/host-surface gaps |
+
+**So the realistic standalone flip yield from C2 is near zero, not ≈13.** The
+spec's "≤13, patterns inside the grammar flip" is an upper bound that assumed
+#4042's grammar was the only obstacle; it is not — method reachability on the
+constructed RegExp is a second one. The change is still correct and worth
+landing: the refusal moves from a blanket `unsupported in Phase 1: regex literal`
+(which hides everything behind it) to per-pattern, per-method runtime errors that
+name their own cause, and it is verdict-neutral (a refusal and a runtime error
+are both `fail`). Whoever picks up #4042 should also chase the
+`undefined is not a function` half.
