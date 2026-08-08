@@ -73,6 +73,61 @@ export function fnctorCtorParamTypesFlagEnabled(): boolean {
 }
 
 /**
+ * `JS2WASM_FNCTOR_CTOR_PARAM_SLOTS` — **the one sub-lever DELIBERATELY LEFT OFF
+ * by the 2026-08-08 flip.** Opt in with `=1`; it is the only flag in this file
+ * whose default is OFF, and the only one that does NOT follow the token rule
+ * above (an explicit `1` is required, so it cannot be enabled by accident).
+ *
+ * It gates `inferFnctorFieldTypeFromCtorParam`: turning a derived ctor-param
+ * fact into a **physical field SLOT** (`externref` → `f64`).
+ *
+ * ## Why it is excluded
+ *
+ * A field's type must join over EVERY write that reaches it. This narrowing
+ * consults the constructor's param facts, which say nothing about writes to the
+ * field made anywhere else. Measured on this branch:
+ *
+ *     var A = function A(n) { this.tag = n; };
+ *     var a = new A(1);
+ *     a.tag = "s";
+ *     typeof a.tag === "string"   //  1 with the slot lever off
+ *                                 //  0 with it on   ← wrong answer
+ *
+ * Both of the narrowing's arms have this hole, not just one: the `this.f =
+ * <param>` arm and the `this.f = this.<y>` field-fact arm were probed
+ * separately and both miss a later `a.f = "s"`.
+ *
+ * **The defect class is NOT new.** The identical wrong answer is already
+ * reachable on `main` with every flag off, whenever the constructor's write is
+ * a literal the checker can type (`this.tag = 1` derives `f64` and the later
+ * string write is lost the same way). What this lever changes is the
+ * POPULATION: it extends the same hazard to constructors whose write is an
+ * OPAQUE PARAMETER — which is precisely the acorn-shaped code the pass was
+ * built for. Enlarging a silent-wrong-answer class in exchange for slots that
+ * measured zero value-level effect (#4246: `$AnyValue` allocations identical
+ * flag-on and flag-off) is a bad trade in the one direction that matters, so
+ * the DEFAULT stays sound and the lever stays opt-in.
+ *
+ * ## What unblocks it
+ *
+ * A whole-program per-field write-kind verdict — "every write reaching this
+ * field is numeric" — which does not exist today. `numericPropertyNames`
+ * (#3683 S4a) is close but demands ALL writes be *syntactically* numeric,
+ * which is exactly why acorn's `Parser.pos` never qualified for it and why
+ * this lever was built in the first place. Tracked as its own slice; see
+ * `plan/issues/743-whole-program-type-flow-analysis.md` for the cross-link.
+ *
+ * Note the deliberately narrow scope: this flag does NOT gate the `new`-site
+ * PARAMETER narrowing in either inference lane. A parameter's writes ARE its
+ * call sites, which the existing conflict/under-application/escape rules
+ * already enumerate — so that half keeps `JS2WASM_FNCTOR_CTOR_PARAM_TYPES` and
+ * ships ON.
+ */
+export function fnctorCtorParamSlotsEnabled(): boolean {
+  return process.env.JS2WASM_FNCTOR_CTOR_PARAM_SLOTS === "1";
+}
+
+/**
  * `JS2WASM_DTS_ENTRYPOINT_SEEDS` — seed an exported entrypoint's implicit-`any`
  * parameters from the package's shipped `.d.ts`.
  *

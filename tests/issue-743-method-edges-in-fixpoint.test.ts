@@ -234,6 +234,9 @@ describe("#743 — graph fact reaches the fnctor field slot (flagged compile)", 
     resetFnctorFieldProvenance();
     process.env.JS2WASM_FNCTOR_CTOR_PARAM_TYPES = "1";
     process.env.JS2WASM_FNCTOR_FIELD_PROVENANCE = "1";
+    // (#743 defaults flip) The field-SLOT consumer is opt-in — see
+    // src/derivation-flags.ts. These pins are about it, so they ask for it.
+    process.env.JS2WASM_FNCTOR_CTOR_PARAM_SLOTS = "1";
   });
   afterEach(() => {
     resetFnctorFieldProvenance();
@@ -243,6 +246,8 @@ describe("#743 — graph fact reaches the fnctor field slot (flagged compile)", 
     // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
     if (savedProv === undefined) delete process.env.JS2WASM_FNCTOR_FIELD_PROVENANCE;
     else process.env.JS2WASM_FNCTOR_FIELD_PROVENANCE = savedProv;
+    // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
+    delete process.env.JS2WASM_FNCTOR_CTOR_PARAM_SLOTS;
   });
 
   it("emits an f64 slot for a ctor-param field fed only through new this(…)", async () => {

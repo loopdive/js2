@@ -38,7 +38,7 @@ import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
 import type { ValType } from "../ir/types.js";
 import { computeFnctorGraphCtorParamFacts, computeFnctorGraphCtorThisReadFacts } from "../ir/fnctor-method-edges.js";
-import { fnctorCtorParamTypesFlagEnabled } from "../derivation-flags.js";
+import { fnctorCtorParamSlotsEnabled, fnctorCtorParamTypesFlagEnabled } from "../derivation-flags.js";
 import { inferParamTypeFromCallSites } from "./declarations/param-return-inference.js";
 
 /**
@@ -77,6 +77,14 @@ export function inferFnctorFieldTypeFromCtorParam(
   rhsWasm: ValType,
 ): ValType | null {
   if (!fnctorCtorParamTypesEnabled()) return null;
+  // (#743 defaults flip, 2026-08-08) The SLOT half is the family's one
+  // deliberately-excluded sub-lever and stays OFF unless
+  // `JS2WASM_FNCTOR_CTOR_PARAM_SLOTS=1`: it types a field from the
+  // constructor's writes alone, with no verdict about writes reaching that
+  // field from anywhere else, and a later `a.f = "s"` then reads back wrong.
+  // Full argument, both probed arms, and what would unblock it:
+  // `src/derivation-flags.ts`.
+  if (!fnctorCtorParamSlotsEnabled()) return null;
   // STANDALONE ONLY. The narrowing's trust boundary is "the module owns every
   // write to this slot" — the same boundary the #3683 S4a numeric promotion
   // draws when it populates `numericPropertyNames` in the standalone lane only,

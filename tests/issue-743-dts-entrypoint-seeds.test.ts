@@ -29,7 +29,15 @@ import { buildIrPlanningIdentityContext, type IrPlanningIdentityContext } from "
 import { buildIrUnitTypeMap } from "../src/ir/propagate.js";
 import { ts } from "../src/ts-api.js";
 
-const ENV_KEYS = ["JS2WASM_DTS_ENTRYPOINT_SEEDS", "JS2WASM_FNCTOR_CTOR_PARAM_TYPES", "JS2WASM_FNCTOR_FIELD_PROVENANCE"];
+const ENV_KEYS = [
+  "JS2WASM_DTS_ENTRYPOINT_SEEDS",
+  "JS2WASM_FNCTOR_CTOR_PARAM_TYPES",
+  "JS2WASM_FNCTOR_FIELD_PROVENANCE",
+  // (#743 defaults flip, 2026-08-08) The field-SLOT consumer is the family's
+  // one deliberately-excluded sub-lever and is opt-in — see
+  // src/derivation-flags.ts. The slot pin below asks for it explicitly.
+  "JS2WASM_FNCTOR_CTOR_PARAM_SLOTS",
+];
 const saved = new Map(ENV_KEYS.map((key) => [key, process.env[key]]));
 afterEach(() => {
   for (const [key, value] of saved) {
@@ -215,6 +223,7 @@ describe("#743 — .d.ts entrypoint seeds end-to-end", () => {
   it("flag on: seeds narrow the downstream fnctor field slot with NO parity demotion", async () => {
     process.env.JS2WASM_DTS_ENTRYPOINT_SEEDS = "1";
     process.env.JS2WASM_FNCTOR_CTOR_PARAM_TYPES = "1";
+    process.env.JS2WASM_FNCTOR_CTOR_PARAM_SLOTS = "1";
     process.env.JS2WASM_FNCTOR_FIELD_PROVENANCE = "1";
     resetFnctorFieldProvenance();
     const seeded = await compileE2E(true);

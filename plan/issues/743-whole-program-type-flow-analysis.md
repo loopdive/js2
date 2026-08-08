@@ -2681,3 +2681,103 @@ empty ⇒ OFF. Boolean-shaped on purpose — a malformed value cannot half-enabl
 anything, it merely fails to disable. The unset-spelling tests invert with the
 default, exactly as `tests/issue-3927-fnctor-layout-emit.test.ts` did.
 
+
+### Flag inventory and disposition
+
+Identified from CODE, not from this file's prose — the issue records name more
+levers than exist as gates.
+
+| flag | what it gates | disposition |
+| --- | --- | --- |
+| `JS2WASM_FNCTOR_CTOR_PARAM_TYPES` (#4117/#743) | the satellite graph, and `new`-site PARAMETER narrowing in both inference lanes (`ir/propagate.ts`, `codegen/declarations/param-return-inference.ts`) | **flipped ON** |
+| `JS2WASM_DTS_ENTRYPOINT_SEEDS` (#743) | `.d.ts` entrypoint parameter seeds | **flipped ON** |
+| `JS2WASM_FNCTOR_TYPED_READS` (#4155 P2) | typed `struct.get`/`struct.set` for a struct-typed receiver | **flipped ON** |
+| `JS2WASM_FNCTOR_TYPED_BINDINGS` (#2660 S3b) | binding retype to `(ref null $__fnctor_F)` | **flipped ON** |
+| `JS2WASM_FNCTOR_CTOR_PARAM_SLOTS` (NEW) | `inferFnctorFieldTypeFromCtorParam` — turning a ctor-param fact into a physical field SLOT | **EXCLUDED, opt-in `=1`** |
+| `JS2WASM_FNCTOR_TYPED_INSTANCES` | — | already ON since 2026-08-04, untouched |
+| `JS2WASM_FNCTOR_LAYOUT_EMIT` | — | already ON since 2026-08-08 (#4241), untouched |
+
+The #4246 satellite passes — `ir/fnctor-receiver-provenance.ts`,
+`ir/fnctor-local-bindings.ts`, `ir/fnctor-string-producers.ts` — have **no gate
+of their own**. They are composed into the satellite evaluator by
+`ir/fnctor-eval-extensions.ts` and are unreachable except through
+`JS2WASM_FNCTOR_CTOR_PARAM_TYPES`, so that flag is what turns them on. Nothing
+separate to flip.
+
+### The one sub-lever DELIBERATELY EXCLUDED, and why
+
+`inferFnctorFieldTypeFromCtorParam` types a field's physical slot from the
+CONSTRUCTOR's write. Nothing in it consults writes that reach the field from
+anywhere else, so a later store of another kind is silently lost:
+
+```js
+var A = function A(n) { this.tag = n; };
+var a = new A(1);
+a.tag = "s";
+typeof a.tag === "string";   // 1 with the lever off  ·  0 with it on
+```
+
+Both arms have the hole, probed separately — the `this.f = <param>` arm and the
+`this.f = this.<y>` field-fact arm. The field-fact arm was expected to be safe
+(the satellite's field pass joins over reaching writes) and is not: it
+enumerates `this.<f>` writes inside the owner's methods, and `a.mark = "s"`
+through an instance BINDING is not in that set.
+
+**The defect class is not new.** The identical wrong answer is reachable on
+`main` today with every flag off whenever the constructor writes a literal
+(`this.tag = 1` derives f64 and loses the later string write the same way).
+What this lever changes is the POPULATION — it extends the hazard to
+opaque-parameter constructor writes, which is the normal shape in real JS and
+precisely the acorn case the lever was built for.
+
+Against that: the slots it recovers measured **zero** value-level effect
+(#4246 — `$AnyValue` 22,008 of 233,320 allocations per parse, identical
+flag-on and flag-off) for +124 B. Enlarging a silent-wrong-answer class in
+exchange for a measured null is a bad trade in the one direction that matters
+(memory: *a bigger number bought with a silent wrong answer is negative value*),
+so the DEFAULT stays sound and the lever is opt-in via
+`JS2WASM_FNCTOR_CTOR_PARAM_SLOTS=1`.
+
+**Unblocked by #4250** — the whole-program per-field write-kind verdict. That
+issue records the mechanism sketch, the `main`-baseline repro, and the
+acceptance criterion that flips this flag to the family's normal rule.
+
+Consequence worth stating plainly: with the slot lever off, the satellite graph
+has no consumer, so the #4246 passes do not execute on a default compile. The
+derivation that IS live by default is the `new`-site parameter narrowing in
+both inference lanes. "Derive types always" is satisfied for the parameter
+half; the field half waits on #4250.
+
+### Two defects the flip found (both fixed here)
+
+Neither was visible while the flag was OFF, because nothing exercised the
+combination. Both are in the excluded lever's path, and are fixed anyway so
+that whoever turns it on — or lands #4250 — does not re-find them.
+
+1. **Presence-tracked fields were narrowed to a machine slot.** A
+   conditional-only field carries a `$$presence_0` bit and answers `undefined`
+   through the read dispatcher, which only works while the slot keeps its
+   externref carrier. Measured on
+   `function T(k){ this.keyword=k; if(k>100){this.opt=k;} }`: `$opt` derived
+   `(mut f64)` with the presence bit intact, and
+   `this.type.opt === undefined ? -1 : this.type.opt` returned an opaque boxed
+   object where the flag-off compile returned `-800`. The #3683 S4a numeric and
+   #3753 S1 string promotions both already carve out `onlyConditional` fields;
+   this adds the third carve-out. It has to be a REVERT after the constructor
+   walk rather than a guard at the narrowing site, because presence-tracking is
+   not decided when the field type is chosen.
+
+2. **The narrowing fired in the JS-HOST lane**, where its trust argument ("the
+   module owns every write") does not hold. `tests/issue-3683-numeric-fields.ts`
+   states the rule in its own comment and pins it; the pin went red. Now gated
+   to standalone, matching `numericPropertyNames` (standalone-only) and
+   `fnctor-typed-bindings.ts` admission rule 1, and matching every measurement
+   this pass has ever been given.
+
+A third finding is an INSTRUMENT issue, recorded because it would mislead the
+next reader: the #3683 S4a differential suite compiles its control lane with
+`JS2WASM_NUMERIC_FIELDS=0` to reproduce pre-S4a field shapes, and #743's
+narrowing reaches some of the same slots by a different proof. With it on, nine
+pins failed on their BASELINE assertion — reading as "S4a broke" when S4a had
+not moved. That suite now pins `JS2WASM_FNCTOR_CTOR_PARAM_TYPES=0` in BOTH
+lanes so it keeps measuring one variable.

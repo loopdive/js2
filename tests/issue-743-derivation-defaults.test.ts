@@ -18,6 +18,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   derivationFlagEnabled,
   dtsEntrypointSeedsFlagEnabled,
+  fnctorCtorParamSlotsEnabled,
   fnctorCtorParamTypesFlagEnabled,
   fnctorTypedBindingsFlagEnabled,
   fnctorTypedReadsFlagEnabled,
@@ -113,6 +114,34 @@ describe("#743 — derivation flag defaults (flipped ON 2026-08-08)", () => {
     setAll("false");
     for (const [name, predicate] of PREDICATES) {
       expect(predicate(), `${name}: "false" is not an off-spelling`).toBe(true);
+    }
+  });
+
+  it("the field-SLOT sub-lever is OFF by default and needs an explicit 1", () => {
+    // The one flag in this family whose default is OFF, and the one that does
+    // NOT follow the token rule: it types a field slot from the constructor's
+    // writes alone, with no verdict about writes reaching the field elsewhere,
+    // so a later `a.f = "s"` reads back wrong (probe + full argument in
+    // src/derivation-flags.ts). Requiring a literal "1" means no spelling
+    // accident and no "unset ⇒ on" reasoning can turn it on.
+    const saved = process.env.JS2WASM_FNCTOR_CTOR_PARAM_SLOTS;
+    try {
+      // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
+      delete process.env.JS2WASM_FNCTOR_CTOR_PARAM_SLOTS;
+      expect(fnctorCtorParamSlotsEnabled(), "must be OFF when unset").toBe(false);
+      for (const spelling of ["", "0", "off", "true", "yes", "on", "2"]) {
+        process.env.JS2WASM_FNCTOR_CTOR_PARAM_SLOTS = spelling;
+        expect(fnctorCtorParamSlotsEnabled(), `${JSON.stringify(spelling)} must not enable`).toBe(false);
+      }
+      process.env.JS2WASM_FNCTOR_CTOR_PARAM_SLOTS = "1";
+      expect(fnctorCtorParamSlotsEnabled()).toBe(true);
+    } finally {
+      if (saved === undefined) {
+        // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
+        delete process.env.JS2WASM_FNCTOR_CTOR_PARAM_SLOTS;
+      } else {
+        process.env.JS2WASM_FNCTOR_CTOR_PARAM_SLOTS = saved;
+      }
     }
   });
 

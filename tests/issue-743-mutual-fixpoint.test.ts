@@ -413,6 +413,11 @@ describe("#743 — mutual-fixpoint facts reach the fnctor field slots", () => {
   beforeEach(() => {
     resetFnctorFieldProvenance();
     process.env.JS2WASM_FNCTOR_FIELD_PROVENANCE = "1";
+    // (#743 defaults flip, 2026-08-08) The field-SLOT consumer is the family's
+    // one deliberately-excluded sub-lever and is opt-in — see
+    // src/derivation-flags.ts. These pins are ABOUT that consumer, so they ask
+    // for it explicitly; the shipped default does not have it.
+    process.env.JS2WASM_FNCTOR_CTOR_PARAM_SLOTS = "1";
   });
   afterEach(() => {
     resetFnctorFieldProvenance();
@@ -422,6 +427,8 @@ describe("#743 — mutual-fixpoint facts reach the fnctor field slots", () => {
     // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
     if (savedProv === undefined) delete process.env.JS2WASM_FNCTOR_FIELD_PROVENANCE;
     else process.env.JS2WASM_FNCTOR_FIELD_PROVENANCE = savedProv;
+    // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
+    delete process.env.JS2WASM_FNCTOR_CTOR_PARAM_SLOTS;
   });
 
   it("emits f64 slots for BOTH sides of a field↔param cycle, behaviour unchanged", async () => {
