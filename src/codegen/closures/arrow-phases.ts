@@ -790,7 +790,7 @@ export function emitClosureConstruction(
   // arity + captured values
   fctx.body.push({ op: "ref.func", funcIdx: liftedFuncIdx });
   fctx.body.push({ op: "i32.const", value: arity });
-  fctx.body.push(closureBagInitInstr()); // (#4237) $bag — no expandos at birth
+  fctx.body.push(closureBagInitInstr()); // (#4241) $bag — no expandos at birth
   for (const cap of captures) {
     if (cap.mutable) {
       // Check if the outer scope already has this variable boxed (nested closure case)

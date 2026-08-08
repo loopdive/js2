@@ -87,7 +87,7 @@ function emitMemoizedNestedFnClosure(
   // Build the construction sequence into the guard's then-arm.
   const savedBody = pushBody(fctx);
 
-  // struct.new fields: func, (#3673) $arity, (#4237) $bag, cap0, cap1, ..., __tdz_*...
+  // struct.new fields: func, (#3673) $arity, (#4241) $bag, cap0, cap1, ..., __tdz_*...
   fctx.body.push({ op: "ref.func", funcIdx: trampolineFuncIdx });
   fctx.body.push({ op: "i32.const", value: arity });
   fctx.body.push(closureBagInitInstr());
@@ -436,7 +436,7 @@ export function emitFuncRefAsClosure(
   });
   ctx.funcMap.set(trampolineName, trampolineFuncIdx);
 
-  // Emit: ref.func $trampoline, (#3673) $arity, (#4237) $bag, struct.new $closure_struct
+  // Emit: ref.func $trampoline, (#3673) $arity, (#4241) $bag, struct.new $closure_struct
   fctx.body.push({ op: "ref.func", funcIdx: trampolineFuncIdx });
   fctx.body.push({ op: "i32.const", value: userParams.length });
   fctx.body.push(closureBagInitInstr());

@@ -289,9 +289,10 @@ export function emitObjectMethodAsClosure(
     methodTargetsImport: methodFuncIdx < ctx.numImportFuncs,
   });
 
-  // Emit: ref.func $trampoline, (#3673) $arity, struct.new $closure_struct
+  // Emit: ref.func $trampoline, (#3673) $arity, (#4241) $bag, struct.new $closure_struct
   fctx.body.push({ op: "ref.func", funcIdx: trampolineFuncIdx });
   fctx.body.push({ op: "i32.const", value: userParams.length });
+  fctx.body.push(closureBagInitInstr());
   fctx.body.push({ op: "struct.new", typeIdx: structTypeIdx });
 
   return { kind: "ref", typeIdx: structTypeIdx };
@@ -553,7 +554,7 @@ function emitLazyClosureCacheAccess(
   const initBody: Instr[] = [
     { op: "ref.func", funcIdx: trampolineFuncIdx },
     { op: "i32.const", value: arity }, // (#3673) $arity
-    closureBagInitInstr(), // (#4237) $bag
+    closureBagInitInstr(), // (#4241) $bag
     ...(constructible ? ([{ op: "i32.const", value: 1 }] satisfies Instr[]) : []),
     { op: "struct.new", typeIdx: structTypeIdx },
     { op: "extern.convert_any" },

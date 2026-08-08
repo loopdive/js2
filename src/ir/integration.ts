@@ -5874,7 +5874,7 @@ class ClosureStructRegistry {
     const fields: FieldDef[] = [
       { name: "func", type: { kind: "funcref" }, mutable: false },
       closureArityField(), // (#3673)
-      closureBagField(), // (#4237)
+      closureBagField(), // (#4241)
     ];
     for (let i = 0; i < captureFieldTypes.length; i++) {
       let ft: ValType;
@@ -5920,7 +5920,7 @@ class ClosureStructRegistry {
     });
 
     const fieldIdxByCap = new Map<number, number>();
-    for (let i = 0; i < captureFieldTypes.length; i++) fieldIdxByCap.set(i, i + CLOSURE_CAPTURE_FIELD_BASE); // after (#3673) $arity + (#4237) $bag
+    for (let i = 0; i < captureFieldTypes.length; i++) fieldIdxByCap.set(i, i + CLOSURE_CAPTURE_FIELD_BASE); // after (#3673) $arity + (#4241) $bag
 
     const lowering: IrClosureLowering = {
       structTypeIdx: subIdx,

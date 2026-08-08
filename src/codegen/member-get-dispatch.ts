@@ -43,6 +43,7 @@
 import type { Instr, ValType } from "../ir/types.js";
 import { classMemberFuncKey, resolveMethodOwnerClass } from "./class-member-keys.js"; // (#2963) method-arm candidates
 import { ensureMethodClosureSingleton } from "./closures.js"; // (#2963) canonical method-value singleton
+import { closureBagInitInstr } from "./closures/funcref-wrapper-types.js"; // (#4241) $bag header operand
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { isNativeGeneratorResultStruct, sentinelAwareF64BoxInstrs } from "./generators-native.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
@@ -488,6 +489,7 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
                   op: "i32.const",
                   value: ctx.closureInfoByTypeIdx.get(arm.closureStructTypeIdx)?.paramTypes.length ?? 0,
                 },
+                closureBagInitInstr(), // (#4241) $bag
                 { op: "struct.new", typeIdx: arm.closureStructTypeIdx },
                 { op: "extern.convert_any" },
                 { op: "global.set", index: arm.cacheGlobalIdx },

@@ -58,7 +58,7 @@
  */
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
-import { BFN_ID_FIELD_IDX, BFN_STATE_FIELD_IDX } from "./builtin-fn-meta.js"; // (#4237) header-derived
+import { BFN_ID_FIELD_IDX, BFN_STATE_FIELD_IDX } from "./builtin-fn-meta.js"; // (#4241) header-derived
 import { ensureNativeCharCodeAtHelper } from "./char-code-at-helpers.js";
 import { getFuncRefWrapperRootTypeIdx } from "./closures/funcref-wrapper-types.js"; // (#3673 round 19b)
 import {
@@ -5969,7 +5969,7 @@ export function fillBindDynHelper(ctx: CodegenContext): void {
     { op: "local.get", index: 0 },
     { op: "local.get", index: THISV },
     { op: "local.get", index: BARGS },
-    { op: "ref.null.extern" }, // (#4237) $bag
+    { op: "ref.null.extern" }, // (#4241) $bag
     { op: "struct.new", typeIdx: bfIdx },
     { op: "extern.convert_any" },
     { op: "return" },

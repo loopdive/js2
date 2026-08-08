@@ -1,5 +1,5 @@
 ---
-id: 4237
+id: 4241
 title: "perf: collapse __extern_get/__extern_set's receiver ref.test ladder into one stamp br_table — the dynamic-lookup residual after #3926's key dispatch"
 status: ready
 sprint: current
@@ -14,7 +14,7 @@ area: codegen
 goal: performance
 related: [4157, 3926, 3927, 4230]
 loc-budget-allow:
-  # (#4237 step 1) The `$bag` closure-header slot adds ONE `struct.new` operand
+  # (#4241 step 1) The `$bag` closure-header slot adds ONE `struct.new` operand
   # and ONE named-constant import to each of these god-files. The code cannot
   # move to a subsystem module: it is a header operand pushed inline at an
   # existing allocation site (async-scheduler's promise settle-cap, ir's closure
@@ -23,10 +23,10 @@ loc-budget-allow:
   - src/codegen/async-scheduler.ts
   - src/ir/integration.ts
   - src/codegen/object-runtime.ts
-origin: "stakeholder-ordered 2026-08-08 — #4157 bucket 1's residual (the '< 3% __extern_get self-time' acceptance line is still open after #3926). NOTE: PR #4237 (loopdive) is an unrelated merged PR; the shared number sequence makes `git log --grep` useless here, as usual (#3571 lesson)."
+origin: "stakeholder-ordered 2026-08-08 — #4157 bucket 1's residual (the '< 3% __extern_get self-time' acceptance line is still open after #3926). RENUMBERED 2026-08-08: this issue was filed as #4237 and moved to #4241 because another session merged a DIFFERENT plan/issues/4237-*.md to main the same day (the `check:issue-ids:against-main` gate would have rejected the PR). Commits made before the renumber say #4237 in their subject; history stands. Two further collisions to keep straight, both harmless: PR #4237 (loopdive) is an unrelated merged PR, and PR #4241 is the fnctor-layout default-ON flip this issue's baseline measures against — issue ids and PR ids share one sequence, which is exactly why `git log --grep` is useless here (#3571 lesson)."
 ---
 
-# #4237 — receiver identification by stamp, not by ref.test ladder
+# #4241 — receiver identification by stamp, not by ref.test ladder
 
 ## Problem
 
@@ -276,10 +276,156 @@ exactly this way. So:
    BUCKET, not the frame, per §3b's lesson); paired order-reversed A/B with
    §3d's caveats.
 
+## Step 1 RESULT — 2026-08-08, MEASURED (the `$bag` slot, closure family)
+
+Built and measured on this branch. Every number below is from a PAIRED run in
+one session on one box: base = `2aad478b3` (this branch's docs-only tip),
+slot = the same tree plus the `$bag` commit. Nothing is inherited.
+
+### R1. Profile — paired, 300 parses each, same session
+
+| | base | slot | |
+| --- | ---: | ---: | --- |
+| `__closure_bag_lookup` self | **12.98 %** | **0.22 %** | the #1 frame is gone |
+| wall (300 parses) | 25,579 ms | 21,508 ms | **−15.9 %** |
+| samples | 11,894 | 9,910 | −16.7 % |
+| `compiled` bucket | 57.91 % | 49.81 % | the frame was misbucketed here |
+| `dynamic-lookup` bucket | 12.06 % | 13.34 % | **share inflation, not a regression** |
+| `__extern_get` self | 7.15 % | 7.24 % | flat — this change does not touch it |
+
+The `dynamic-lookup` RISE is the §3d denominator caveat firing exactly as
+pre-registered: removing ~13 % of total self-time inflates every surviving
+bucket by ~1.16×. `__extern_get`'s own self-time is flat to within noise,
+which is the correct reading — step 2 is what moves that number.
+
+**The 300-parse wall figure OVERSTATES the single-parse gain**, also as
+pre-registered: the removed cost had a quadratic term (a growing list scanned
+per lookup), so a longer run gains more. Quote −15.9 % as "at 300 parses",
+never as a per-parse number.
+
+### R2. Deterministic call census — unchanged by construction, and that is the point
+
+`JS2WASM_ALLOC_CENSUS_CALLS`, 5 parses, checksum 2110 both sides:
+
+| caller → `__closure_bag_lookup` | base | slot |
+| --- | ---: | ---: |
+| `__closure_prop_get` | 20,850/parse | 20,850/parse |
+| `__instance_prop_get` | 18,588/parse | 18,588/parse |
+| `__carrier_bag_of` | 17/parse | 17/parse |
+| **total** | **39,455/parse** | **39,455/parse** |
+| `__closure_bag_ensure` (all via `__instance_prop_set`) | 75/parse | 75/parse |
+
+The call COUNT is identical — the helper is still called 39,455×/parse. What
+changed is what each call COSTS: a closure receiver now takes `ref.test` +
+`ref.cast` + `struct.get` + `return` instead of walking the registry. This is
+why the call census alone cannot show the win and the profile is the instrument
+that can — the §3b lesson in reverse.
+
+### R3. The leak — HALVED IN REACH, NOT CLOSED. The plan was wrong about where it lives
+
+The plan (step 4) expected the slot to kill "the registry, the entry type, the
+head global, and the leak wholesale". **It does not, and the census says why:
+all 75 ensures/parse come from `__instance_prop_set` — i.e. from USER CLASS /
+`__fnctor_*` / `__anon_*` instance carriers, which are NOT in the closure
+family and did not get a slot.** So:
+
+- Registry POPULATION is unchanged at 75 entries/parse (375 after 5 parses,
+  never pruned). The leak is intact.
+- Registry TRAFFIC is down 53 %: the 20,850 closure-side consults no longer
+  scan it at all. That is where the 12.98 % went — closure carriers never had
+  bags, so every one of those consults was a FULL-LENGTH miss, while the
+  instance-side consults mostly hit near the head (entries are prepended, so
+  the current parse's carriers are at the front). The expensive half was the
+  closure half.
+
+**What step 1b needs** (the honest carry-over): the instance-carrier slot is a
+strictly bigger job than the closure one, because those structs are not a
+single-root family. A class with `extends` is a WasmGC subtype
+(`class-bodies.ts` sets `superTypeIdx`), so appending `$bag` to a base INSERTS
+it in every subclass and shifts that subclass's own fields — the same shift
+this slice absorbed for closures, but across user-declared shapes whose field
+indices are baked into already-emitted bodies at finalize. The two viable
+seams: (a) append `$bag` at struct REGISTRATION time, before any body is
+emitted, so every name→index map picks it up naturally; or (b) reuse the
+#2009/#4230 retro-stamp (`patchStructNewWithShapeId`), which only works for
+final, subtype-free carriers. `fnctor-layout-emit.ts` is a ready-made precedent
+for (a): it already appends `$shape` + `$resid` to the base and rebuilds the
+layout subtypes as `[...base, ...moved]` in one place.
+
+### R4. Semantics — pinned
+
+- `tests/issue-4241-carrier-bag-slot.test.ts` (new, 15 cases): write/read
+  round-trip, capture-shift pins (single and multi-capture), bag identity
+  across aliases, distinct bags for distinct carriers, overwrite, the three
+  reflective surfaces (`in` / `hasOwnProperty` / `Object.keys`) agreeing,
+  the null-slot fast path, query-never-allocates, `.length` after the insert,
+  the `bfnstate`/`bfnid` shift pin, bound-fn expando, `.call` dispatch.
+- **Cold-tail differential, build-vs-build: BIT-IDENTICAL.** base vs slot agree
+  on every one of 64 per-field rolling hashes and every presence count across
+  32,506 AST nodes, in BOTH `computed` and `copy` read modes (exit 0 both).
+- Cold-tail copy-vs-computed: 5 diverged fields (`type`/`start`/`end` presence
+  32,487→32,506, `source` 5→1, `flags` 19→15) — **the same 5, with the same
+  counts, on base and on slot**. No new residual.
+- Equivalence gate: 8/8 shards, 0 regressions.
+- `#3468` / `#4194` (both files) / `#4225` / `#3920` / `#3201` / `#4010` /
+  `#3673` / `#2864` / `#4122` suites: 206 tests, all pass.
+- Two pre-existing failures confirmed IDENTICAL on base (probed both builds,
+  not assumed): `#2984`'s own `KNOWN GAP (pre-existing)` case, and — found
+  while writing the new tests — `add.bind(null,1)` INVOCATION traps
+  ("dereferencing a null pointer") and `g.apply(null,[…])` answers 0 on this
+  lane. The bind/apply pair are unrelated standalone gaps; the new test file
+  pins the halves that work and says so in comments rather than pinning a
+  failure someone else owns.
+
+### R5. Wall A/B — sign positive in both orderings, magnitude NOT claimable tonight
+
+`--only acorn --perf-only --lane standalone-dynamic`, order-reversed pairs.
+The box was heavily loaded by parallel lanes (native Node's own time swung
+9.6→16.1 ms/op across runs, a 67 % spread), so absolute `wasmUs` is
+uninterpretable; the load-robust `ratio` (node/wasm, higher is better):
+
+| order | base ratio | slot ratio |
+| --- | ---: | ---: |
+| base → slot | 0.1468 | 0.1567 |
+| slot → base | 0.1336 | 0.1789 |
+
+Slot > base in BOTH orderings. Mean 0.1402 → 0.1678. **Report the sign, not
+the +20 %** — with that much load noise the magnitude is not defensible, and
+the paired profile in R1 is the controlled number.
+
+### R6. Scope actually shipped
+
+Slotted: the whole closure root-wrapper hierarchy (per-signature wrappers,
+constructible wrappers, capturing subtypes, named-func-expr subtypes, IR
+closure subtypes, method-trampoline singletons, builtin-fn meta subtypes, the
+promise settle-cap) plus `$__bound_fn`.
+
+Still on the registry, deliberately: user class / `__fnctor_` / `__anon_`
+instance carriers (see R3), `__StandaloneRegExp`, `__Date`, and the
+runtime-eval AOT callable carrier. The split is resolved by FIELD NAME at
+fill time, so an unslotted root routes to the registry automatically rather
+than being mis-read at a wrong index — adding a slot to any of them later is
+a mint-site change with no edit to the helpers.
+
+### R7. What the "loud failure" net actually caught
+
+Inserting a field at index 2 makes a missed `struct.new` operand a hard Wasm
+validation error, and that is how both misses were found rather than by
+audit: `$__bound_fn`'s second allocation site in `calls.ts` ("need 4, got 3")
+and the object-literal / member-dispatch method-closure singletons in
+`member-get-dispatch.ts` + `method-trampolines.ts` ("need 3, got 2", surfaced
+by the `equality-mixed-types` equivalence shard, 9 failures from one site).
+Worth recording: the equivalence shards found a real defect the targeted
+probes did not, because `{ valueOf() {…} }` is a closure-allocation shape the
+issue-level tests never build.
+
 ## Acceptance criteria
 
-- [ ] Fresh baseline recorded here (profile buckets + receiver-arm WAT
-      census, post-#4241 main).
+- [x] Fresh baseline recorded here (profile buckets + receiver-arm WAT
+      census, post-flip main).
+- [x] **Step 1** — the bag-lookup linearity is killed for closure carriers:
+      `__closure_bag_lookup` 12.98 % → 0.22 % self, paired, with the leak
+      finding re-attributed to the instance-carrier side (R3).
 - [ ] `__extern_get` receiver dispatch is a single stamp `br_table` for
       stamped receivers; unstamped receivers keep a correct fallback.
 - [ ] `__extern_get` self-time and dynamic-lookup bucket share move, with

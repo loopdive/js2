@@ -25,7 +25,7 @@ import { addFuncType } from "../index.js";
  */
 export const CLOSURE_ARITY_FIELD_IDX = 1;
 /**
- * (#4237) The carrier-intrinsic expando-bag slot. Every closure struct in the
+ * (#4241) The carrier-intrinsic expando-bag slot. Every closure struct in the
  * root wrapper hierarchy carries a nullable, mutable `externref` here; it holds
  * the receiver's own-property `$Object` bag once one is created, and stays null
  * for the overwhelming majority of function values that never grow a property.
@@ -45,7 +45,7 @@ export function closureArityField(): { name: string; type: ValType; mutable: fal
   return { name: "$arity", type: { kind: "i32" }, mutable: false };
 }
 /**
- * (#4237) The `$bag` field definition — shared by every closure-struct mint
+ * (#4241) The `$bag` field definition — shared by every closure-struct mint
  * site, exactly like {@link closureArityField}. MUTABLE, so a WasmGC subtype
  * must redeclare it with the identical type and mutability (field types are
  * invariant for mutable fields); using this one factory everywhere is what
@@ -58,7 +58,7 @@ export function closureBagField(): { name: string; type: ValType; mutable: true 
   return { name: "$bag", type: { kind: "externref" }, mutable: true };
 }
 /**
- * (#4237) The `struct.new` operand for a freshly-minted closure's `$bag` slot.
+ * (#4241) The `struct.new` operand for a freshly-minted closure's `$bag` slot.
  * Sits between the `$arity` i32 and the first capture at EVERY closure
  * allocation site — a missed site is a loud `struct.new` arity/type validation
  * failure, never a silent wrong answer.

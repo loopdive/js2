@@ -43,7 +43,7 @@ import type { ClosureInfo, CodegenContext } from "./context/types.js";
 import { closureArityField, closureBagField, closureBagInitInstr } from "./closures/funcref-wrapper-types.js";
 
 /**
- * (#4237) Field indices of the meta-typed closure subtype, derived from the
+ * (#4241) Field indices of the meta-typed closure subtype, derived from the
  * shared closure header rather than spelled as bare literals — the header grew
  * a `$bag` slot at index 2 and these two shifted with it.
  * Layout: `[func, $arity, $bag, bfnstate, bfnid]`.
@@ -302,7 +302,7 @@ export function pushBuiltinFnClosureValueInstrs(
     ? (ctx.builtinFnMetaByTypeIdx?.get(closure.type.typeIdx)?.length ?? 0)
     : (ctx.closureInfoByTypeIdx.get(closure.type.typeIdx)?.paramTypes.length ?? 0);
   instrs.push({ op: "i32.const", value: arity });
-  instrs.push(closureBagInitInstr()); // (#4237) $bag field 2
+  instrs.push(closureBagInitInstr()); // (#4241) $bag field 2
   if (isMeta) {
     instrs.push({ op: "i32.const", value: 0 }, { op: "i32.const", value: closure.type.typeIdx });
   }

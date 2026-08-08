@@ -229,7 +229,7 @@ export interface BackendEmitter<S = Instr[]> extends StringBackendEmitter<S> {
   // representation hooks; these hooks own closure allocation and field reads.
   /** lifted function ref + captureCount captures on the stack -> closure value. */
   emitClosureNew(layout: IrClosureLowering, captureCount: number, out: S): void;
-  /** (#3673/#4237) Optional: push the closure HEADER operands — declared arity
+  /** (#3673/#4241) Optional: push the closure HEADER operands — declared arity
    *  and the `$bag` expando slot — between the lifted-func reference and the
    *  capture values. Only backends whose closure layout carries that header
    *  (WasmGC root-wrapper hierarchy) implement this; bytecode/linear closures

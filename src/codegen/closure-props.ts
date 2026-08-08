@@ -89,14 +89,14 @@ const F_KEY = 1;
 const F_BAG = 2;
 
 /**
- * (#4237) The carrier-intrinsic `$bag` slot name — see `closureBagField()` in
+ * (#4241) The carrier-intrinsic `$bag` slot name — see `closureBagField()` in
  * `closures/funcref-wrapper-types.js`. Resolved by NAME (the `$shape` idiom),
  * never by a baked index, so a later header change cannot silently misread it.
  */
 const BAG_SLOT_FIELD = "$bag";
 
 /**
- * (#4237) The carrier roots that carry an intrinsic `$bag` slot, paired with
+ * (#4241) The carrier roots that carry an intrinsic `$bag` slot, paired with
  * that slot's field index.
  *
  * Splitting the carrier set into SLOTTED and SLOTLESS is the whole fix. A
@@ -388,7 +388,7 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
   // finalize walks; see reference_shared_instr_object_dce_double_remap).
   const getMiss = (): Instr[] => undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }];
 
-  // (#4237) Computed once and shared by the carrier predicate and BOTH bag
+  // (#4241) Computed once and shared by the carrier predicate and BOTH bag
   // helpers, so the slotted/slotless split cannot drift between them.
   const carrierTypeIdxs = [...collectClosureBaseWrapperTypeIdxs(ctx), ...builtinInstanceCarrierTypeIdxs(ctx)];
   const slotted = slottedCarrierRoots(ctx, carrierTypeIdxs);
@@ -459,7 +459,7 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
     { op: "local.set", index: 2 },
   ];
   //
-  // (#4237) The SLOTTED arms run first and are terminal: one `ref.test` on the
+  // (#4241) The SLOTTED arms run first and are terminal: one `ref.test` on the
   // carrier ROOT (which matches every capturing subtype), one `ref.cast`, one
   // `struct.get $bag`, `return`. A carrier with no expandos reads back the null
   // the slot was born with — the "no-bag consult is ~free" fast path, and the
@@ -518,7 +518,7 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
   // As lookup; on miss allocate a fresh `$Object` bag, prepend a new entry,
   // update the head, and return the bag. Locals: 1 = recvEq, 2 = cur, 3 = bag.
   //
-  // (#4237) Slotted carriers store the bag IN the receiver: read the slot, and
+  // (#4241) Slotted carriers store the bag IN the receiver: read the slot, and
   // on null allocate once and `struct.set` it. The bag then dies with its
   // carrier — which is the memory-correctness half of this change, since the
   // registry never removed an entry and so pinned every carrier that ever grew

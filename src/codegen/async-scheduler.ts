@@ -1145,7 +1145,7 @@ function ensurePromiseThenableSubstrate(
   const emitSettleCap = (clFuncIdx: number): Instr[] => [
     { op: "ref.func", funcIdx: clFuncIdx },
     { op: "i32.const", value: 1 }, // (#3673) $arity — settle callbacks take 1 arg
-    closureBagInitInstr(), // (#4237) $bag
+    closureBagInitInstr(), // (#4241) $bag
     { op: "local.get", index: promiseLocal },
     { op: "ref.as_non_null" },
     { op: "struct.new", typeIdx: execClosures.capTypeIdx },
