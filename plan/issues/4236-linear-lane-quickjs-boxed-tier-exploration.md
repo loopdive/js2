@@ -5,6 +5,9 @@ status: backlog
 sprint: Backlog
 created: 2026-08-08
 updated: 2026-08-08
+# 2026-08-08 (later): "## Design variant C" appended — QuickJS as the eval
+# ENGINE for the WasmGC lane behind the existing js2wasm:runtime-eval provider
+# seam, with a code-grounded staged effort estimate and an ABI probe record.
 # 2026-08-08: acceptance box 1 (the link/identity/measurement spike) executed —
 # see "## Spike findings". Status stays `backlog`: the exploration's remaining
 # boxes (frontier A/B, strings, cycle policy, split-brain audit, version pin)
@@ -134,6 +137,10 @@ reachable by dynamic code; everything else stays native.
 - [ ] Honest go/no-go against the alternative uses of the same effort:
       finishing the #4157 representation program on the WasmGC lane, or the
       Porffor-adjacent linear work (#3288).
+- [ ] Variant C decision — QuickJS as the eval ENGINE for the **WasmGC lane**
+      behind the existing `js2wasm:runtime-eval` provider seam (see "## Design
+      variant C" below): accept/reject the tiered-provider MVP, and separately
+      accept/reject the full membrane program.
 
 ## Non-goals
 
@@ -158,6 +165,40 @@ through the #2928 provider's four-import seam, QuickJS `evalCode`, and Node
 indirect eval. js2wasm AOT number from
 `node --import tsx scripts/generate-npm-compat-report.mjs --only acorn
 --perf-only --lane standalone-dynamic` (wasmUs 84576, nodeUs 11913).
+
+## Decision (project lead, 2026-08-08) — ADOPT the linear-lane boxed tier
+
+Stakeholder decision after the spike + benchmark review: **adopt QuickJS's
+`JSValue` as the linear lane's boxed/dynamic representation**, under the
+representation policy discussed and agreed in-session:
+
+1. **Typed code is untouched** — unboxed `i32`/`f64` and the existing static
+   fat-slot layouts stay; they beat any tagged representation and carry the
+   measured 4× AOT-over-QuickJS win. The program-level perf promise rests on
+   frontier-analysis precision, not on the representation choice.
+2. **`JSValue` is OPAQUE by default** — all manipulation through the C API
+   with codegen-enforced refcount discipline; internal layouts are never
+   open-coded (unstable ABI).
+3. **Immediates get inline fast paths via BUILD-TIME TAG EXTRACTION** — a tiny
+   C shim in the artifact exports the tag constants / float64 encoding, so
+   number box/unbox compiles to `i64.reinterpret_f64`-class sequences learned
+   from the pinned build rather than hardcoded. Refcounted values stay
+   API-mediated.
+4. **Migration story**: the C-API seam is the engine boundary. If the dynamic
+   tier ever becomes hot enough to justify an owned runtime (own NaN-box,
+   tracing GC, specialized accessors), it swaps in behind the same seam; until
+   then the borrowed runtime carries builtins, RegExp, and eval at QuickJS
+   speed. Nothing about this decision forecloses that future.
+
+Rationale in one line: adoption costs nothing where js2wasm is fast, buys a
+finished runtime where the linear lane has nothing today (no dynamic value
+representation exists — `layout.ts` is a static fat-slot model), and caps only
+the cold dynamic tier at best-in-class-interpreter speed.
+
+Slice 1 (the wasi-built artifact + tag-extraction shim + link re-proof) is
+dispatched; findings land below when complete. The variant-C (WasmGC-lane)
+question is SEPARATE and remains an estimate — see its own section's verdict
+(MVP tiered provider ≈ one budget window; full membrane deferred).
 
 ## Spike findings (2026-08-08)
 
@@ -462,3 +503,295 @@ node .tmp/spike-4236/r5-addrmap.mjs                     # QuickJS heap base vs j
 node --import tsx src/cli.ts .tmp/spike-4236/tiny2.ts --target linear -o .tmp/spike-4236/out-linear
 node .tmp/spike-4236/r5-inspect-js2wasm.mjs .tmp/spike-4236/out-linear/tiny2.wasm
 ```
+
+## Design variant C — QuickJS-as-eval-engine for the WasmGC lane, via handles + exotic wrappers (arch, 2026-08-08)
+
+Variants A/B above are linear-lane: they make QuickJS's `JSValue` the boxed
+*representation*. Variant C targets the **WasmGC lane** and deliberately does
+NOT touch representation — it cannot: a WasmGC module has no linear memory to
+share with QuickJS, and wasm provides no way to store a GC ref into linear
+memory, so representation unification is impossible **by construction**. All
+typed code keeps its WasmGC representation. QuickJS (its own wasm module, its
+own linear memory) is used purely as the **eval engine**, connected through a
+handle-based proxy membrane. The frontier is the SAME eval-taint analysis the
+compiler already runs (`functionMayReachDirectEval` /
+`collectDirectEvalBindingNames` in `src/codegen/direct-eval-environment.ts:37/64`
+— the analysis that drives ref-cell promotion, the direct-eval state cells, and
+the C+D global-lexical-cells carrier).
+
+**Beneficiary, precisely:** the `--standalone` WasmGC target. In default
+gc/js-host mode dynamic eval routes to the host's real eval
+(`emitDynamicNewFunctionHostEval`, `eval-inline.ts:2103`, gated
+`if (noJsHost(ctx) …) return undefined`) and is already fast. The 1857 ms
+Phase-1 number is the standalone `js2wasm:runtime-eval` provider — that is what
+variant C would replace or tier. Consumers exist (#4229 playground REPL runs on
+exactly this provider).
+
+### The load-bearing question first: is this just another provider behind the seam?
+
+**Yes — with three named caveats.** The entire user-module/compiler side is
+UNCHANGED. This dominates the estimate: variant C is provider-side work, not a
+compiler rewrite.
+
+Read from `src/codegen/expressions/runtime-eval-provider.ts` and
+`src/codegen/expressions/eval-inline.ts` (current main, c795d299):
+
+| seam import (`js2wasm:runtime-eval`) | signature | declared at |
+| --- | --- | --- |
+| `__runtime_direct_eval` | `(externref ×10, i32 strict, externref mappedNames) → externref` | runtime-eval-provider.ts:668-687 |
+| `__runtime_indirect_eval` | `(externref source, externref globalEnv) → externref` | eval-inline.ts:1899-1905 |
+| `__runtime_new_function` | `(externref params, externref body, externref globalEnv) → externref` | eval-inline.ts:2000-2006 |
+| `__runtime_apply_interpreted` | `(externref callable, externref this, f64 argc, externref ×8) → externref` | eval-inline.ts:2029-2035 |
+
+Every value crossing the seam is `externref`/`i32`/`f64` — **no i64 anywhere in
+the seam**. The seam contract is however MORE than four signatures; a
+variant-C provider must honor all of it:
+
+1. **`[ok, value]` result envelope** — decoded caller-side via
+   `__extern_get_idx`/`__is_truthy` + `buildRuntimeEvalValueUnwrap`
+   (`emitRuntimeEvalResultUnwrap`, runtime-eval-provider.ts:385-428). The
+   envelope is a structurally-canonical externref vec carrier; a thrown value
+   rides the same vector because exception tags are module instances, not
+   structural (comment at :376-384).
+2. **Callable rec-group ABI** — interpreted callables returned by the provider
+   must be the exact 8-slot `makeInterpClosure` shape; the caller seeds the
+   matching rec-group locally so WasmGC structural canonicalization makes the
+   two modules' types identical (`ensureRuntimeEvalCallableCarrier`,
+   eval-inline.ts:2020-2048).
+3. **Push/pull globals + ordered-initializer contract** — the caller runs
+   `__runtime_eval_push_globals` before and `__runtime_eval_pull_globals` after
+   every entry (runtime-eval-provider.ts:39-41, 362-368, 388-390); global
+   lexical bindings cross as live ref cells in the
+   `RUNTIME_EVAL_GLOBAL_LEXICAL_CELLS_PROPERTY` carrier (:45, :132-210); direct
+   eval additionally hands three name/cell vector layers + a
+   `DIRECT_EVAL_STATE_BINDING_CAPACITY = 64` persistent state-cell pool (:39,
+   :512-558) whose cells the engine must read/write LIVE (interpreter stores
+   update canonical AOT cells directly — the provider side consumes them in
+   `src/interp/eval-environment.ts:34-45`).
+
+**The consequence that shapes everything:** those cells, vecs and callables are
+WasmGC values. A linear QuickJS module cannot mint, hold or trap on them. So
+the variant-C provider is a **sandwich**:
+
+```
+user module ──(js2wasm:runtime-eval, externref ABI, UNCHANGED)──▶ GC adapter
+GC adapter ──(handle/pointer ABI, i32-in-f64 + shared memory)──▶ QuickJS wasm
+QuickJS ──(env.* host-callback imports = membrane hooks)──▶ GC adapter exports
+```
+
+The GC adapter is a js2wasm-compiled TS module (built exactly like today's
+provider — `scripts/build-runtime-eval-provider.mjs` /
+`buildRuntimeEvalProviderSource`), which guarantees for free that its envelope
+vecs, ref-cell reads and 8-slot callable carriers are structurally canonical
+with the user module. The one packaging invariant that breaks: `verifyProvider`
+(build-runtime-eval-provider.mjs:52-57) requires **zero imports**; a variant-C
+provider is a 2-module bundle plus a link recipe (instantiate QuickJS first
+with memory + stubs, then the adapter with `qjs.*` bound to QuickJS exports and
+the hook imports bound to adapter exports via the host trampoline).
+`instantiateRuntimeEvalNamespace` and the cache-key machinery need a
+multi-module-aware variant — contained in `scripts/runtime-eval-provider.mjs`.
+
+### ABI probe — is the adapter authorable in js2wasm-compiled TS? (probe record, run 2026-08-08)
+
+Probe: `.tmp/probe-4236c/adapter-probe.ts` (gitignored; restated fully here),
+compiled `node --import tsx src/cli.ts … --standalone`:
+
+```ts
+type i32 = number;
+declare function qts_eval_num(ctx: number, ptr: number): number;
+declare function qts_free_big(v: bigint): bigint;
+declare function qts_getprop_i32(ctx: i32, obj: i32): i32;
+export function drive(a: number): number { /* calls all three */ }
+```
+
+Results (import section of the emitted standalone binary, verified by
+instantiation with JS stubs — `drive(5)` returned the expected 33):
+
+1. **`declare function` externs WORK in the GC lane** and SURVIVE into the
+   standalone binary as `env.*` function imports
+   (`collectExternDeclarations`, `src/codegen/extern-declarations.ts:643-736` →
+   `addImport`, registry/imports.ts:54). Each import currently fires the #2961
+   "host import leak" *warning* (not an error) because `qts_*` is not on
+   `src/codegen/host-import-allowlist.ts`. Before #2961 ratchets standalone to
+   hard-no-leak, variant C needs either allowlist entries or — better,
+   following the `RUNTIME_EVAL_IMPORT_MODULE` precedent — a dedicated import
+   namespace (`js2wasm:qjs`). S-size compiler change.
+2. **`number` params map to f64** (`(f64, f64) → f64` observed). The
+   `type i32 = number` native annotation is **NOT honored on extern
+   declarations** — `qts_getprop_i32` got the identical f64 type, because
+   extern-declarations.ts:728 maps params via `mapTsTypeToWasm` (checker type
+   → `numberType` → f64, `src/checker/type-mapper.ts:52-67`) and never
+   consults `nativeTypeFromTypeNode`
+   (`src/codegen/native-type-annotations.ts:109` — the alias identity only
+   survives syntactically). Fix = prefer `nativeTypeOfDeclaration(p)` at that
+   one site: S-size.
+3. **`bigint` params produce a REAL i64 import** (`(i64) → i64` observed) and
+   the call convention works end-to-end (literal `1n` crossed as BigInt 1n,
+   result consumed). So a raw-JSValue-as-i64 ABI is authorable today via
+   `bigint`-typed externs, with the caveat that the i64 is bigint-branded
+   (type-mapper.ts:45-50) and must be kept out of dynamic/boxing contexts.
+
+**ABI recommendation: the handle/pointer ABI — JSValues never leave QuickJS.**
+This is what quickjs-emscripten's `QTS_*` C wrappers already are (spike R1(b)):
+every `JSValue` is passed as a **pointer** (i32) to a heap cell inside
+QuickJS's own memory, exact in f64. No i64 needed at all; the split-hi/lo
+workaround is moot. With a JS host in the instantiation loop (Node test262
+harness, browser), even the f64-vs-i32 type mismatch dissolves for free — the
+import is a JS function calling the QuickJS export, and JS number conversion
+bridges the types with zero compiler change. Only a pure wasm-to-wasm link
+(wasmtime) needs the S-size native-i32-extern fix (or a generated shim module).
+
+Two further enablers, both already in the tree:
+
+- **The adapter can read/write QuickJS's memory directly.** `wasm:memory`
+  accessors `store32/load32/store8/load8` lower to INLINE memory ops
+  (`src/codegen/raw-wasi-api.ts:25-55`), and the memory-import-at-index-0
+  topology exists on the WasmGC side (#2633, `src/codegen/wasi.ts:89-100`). So
+  the adapter can `malloc` (QuickJS export) + write UTF-8 source strings and
+  read C strings back without any per-byte trampolining.
+- **Handle registry needs no wasm table.** The seed analysis proposed pinning
+  GC objects in a wasm table; simpler and authorable today: a plain adapter-TS
+  `const handles: any[] = []` (a GC array of anyref) + freelist. Handle =
+  index; pin = held slot; release = null + freelist push. Tables buy nothing
+  here.
+
+### Membrane design (corrected from the seed analysis)
+
+- **Forward (GC object visible to eval'd code):** one QuickJS-side wrapper per
+  handle. MVP mechanism: a QuickJS-side **`Proxy`** created by a small
+  bootstrap script run at context init — NOT a custom exotic class — whose
+  handler traps call C-function callbacks (`QTS_NewFunction` /
+  the host-callback env imports that are among the 19 imports the spike
+  stubbed). Those callbacks are adapter **exports**: resolve handle → property
+  op through the #4194 dynamic dispatch/accessor substrate (the same
+  `__carrier_bag_of`/expando MOP the interpreter uses). Dedup map
+  handle→wrapper inside QuickJS so identity (`===`) and two-way mutation hold.
+  The custom-C exotic class (JS_NewClass + exotic get/set) is the
+  *optimization*, requiring a source build — defer to the wasi-sdk slice.
+  ⚠ Unverified: whether the host-callback trampoline works under the spike's
+  glue-free instantiation (the spike never exercised `QTS_NewFunction`); this
+  is stage 1's probe obligation.
+- **Reverse (QuickJS value held by GC code):** primitives convert at the
+  boundary (copy is semantics-preserving). Objects/functions come back as a
+  GC-side carrier holding the handle-pointer, with a new "qjs-handle" arm in
+  the any-dispatch (get/set/call route to `QTS_GetProp`/`QTS_SetProp`/
+  `QTS_Call`), and eval-returned callables wrapped in the 8-slot carrier so
+  `__runtime_apply_interpreted` keeps working unchanged.
+- **Refcount discipline:** every `QTS_SetProp`/`QTS_Call` consumes a
+  reference; the spike already hit this (R3 needed `QTS_DupValuePointer`).
+  In variant C this discipline lives in ONE audited adapter module — far
+  safer than variant A/B's plan to emit it from codegen at every site.
+- **Cross-heap cycles leak bidirectionally** — neither collector traces the
+  other's edges. QuickJS-side dedup map must be weak-valued (quickjs-ng lists
+  WeakRef/FinalizationRegistry support — verify on the pinned build; the
+  spike's `@jitl/quickjs-wasmfile-release-sync` is stock quickjs). GC-side:
+  FinalizationRegistry is *unsupported in the standalone lane* (#988), so
+  reverse-direction handle release has no finalizer hook — QuickJS values held
+  by GC code leak until context teardown. Document as the accepted leak class
+  or gate on #988; same class of accepted risk as variants A/B's cycle
+  criterion above.
+
+### Scope/global bridging
+
+- **Global carrier (indirect eval / `new Function` — both are global-scope-only
+  by spec):** for each pushed var/function binding, define the property on
+  QuickJS's `globalThis`; for each C+D lexical cell, define an
+  accessor property whose get/set callbacks read/write the live ref cell via
+  hook exports. Pull-side is already copy-back by contract
+  (`emitRuntimeEvalGlobalBindingPullBody`, runtime-eval-provider.ts:289-333).
+  Mechanically straightforward.
+- **Direct eval** is the hard half. The caller hands live cells; the engine
+  must resolve *names* through them mid-eval. Sloppy mode: wrap the source in
+  `with (scopeProxy) { … }` where scopeProxy traps into the cell layers —
+  QuickJS executes it natively. Strict mode cannot use `with`: needs
+  `JS_EvalThis` plus either a source transform or custom C (an internal
+  scope-push QuickJS does not expose). And the caller-context semantics that
+  are NOT expressible in a foreign engine at all: `super`/`new.target` **of
+  the AOT caller** inside direct eval — the interpreter can own these (it owns
+  its frames); QuickJS has no API to inject them. **Direct eval should stay on
+  the #2928 interpreter in any near-term variant C** — which the seam makes
+  trivial: route `__runtime_direct_eval` to the interpreter, the other three
+  entries to QuickJS. A tiered provider mixing both engines is a natural
+  configuration of the seam, not a hack.
+
+### Conformance analysis — what QuickJS buys, honestly
+
+(The session seed said "19 residual eval-code files"; the measured number on
+current main is **32** — `plan/issues/4194-…md:912-915`: `new.target` 4,
+`super` 6, `non-definable-global` 6, `var-env-*` 13, realm/lex-env-heritage 2,
+this-value-func-strict-caller 1.)
+
+- **Genuinely free inside eval'd source:** the #2928 Phase-2 emitter residuals
+  — private names (4), class fields (3), tagged templates (1), catch
+  destructuring — plus everything else the Phase-1/2 emitter doesn't cover.
+  QuickJS is a complete engine; eval'd-code *language* completeness stops
+  being our problem.
+- **NOT free — moves, and probably gets harder:** the frontier classes.
+  `var-env-*` (13), `non-definable-global` (6), and caller-context
+  `super`/`new.target` (10) are exactly membrane/scope-bridge fidelity. The
+  interpreter shares the `$Object` substrate natively; the membrane replaces
+  that free sharing with trap code. Membrane semantics bound the conformance
+  ceiling: `typeof`/`Array.isArray`/`Object.getPrototypeOf` on wrappers,
+  prototype identity at the frontier — the split-brain audit criterion above
+  applies to variant C verbatim.
+- **Performance:** the honest headline stands — wasm-driven `JS_Eval` at
+  ~3.3 ms vs the Phase-1 interpreter's 1857 ms on the 100k-loop workload,
+  **~560×** — and the spike proved eval driven from wasm costs nothing over
+  eval driven from JS. But test262 conformance is gated by semantics, not eval
+  throughput; the perf win matters for real consumers (#4229 REPL).
+
+### Staged effort breakdown (each stage independently landable)
+
+| # | stage | size | prereqs | main risk |
+| --- | --- | --- | --- | --- |
+| 1 | **Browser-friendly QuickJS artifact + CI packaging.** Pin `quickjs-emscripten` release-sync (503 KB / 234 KB gz, imports its memory, glue-free instantiation proven — spike R1(b)/R2); dedicated CI job + cache key + canaries per the #4013 provider-artifact precedent; **probe the host-callback (`QTS_NewFunction`) path glue-free** — unverified, load-bearing for stage 3. The wasi-sdk source build (pure-wasm link, trimmed intrinsics, custom exotic-class C shim) is a separate follow-on slice — same R1(a) blocker as variants A/B, needs CI toolchain + repo access. | **M** (+M for the wasi-sdk follow-on) | none | callback trampoline may require emscripten glue; then stage 3's MVP mechanism needs rework |
+| 2 | **GC adapter implementing the seam over the QTS handle ABI**: `__runtime_indirect_eval` + `__runtime_new_function` + result envelope + interpreted-callable 8-slot carrier + refcount discipline; source-string transport via `malloc` + `wasm:memory` accessors; multi-module packaging (`instantiateRuntimeEvalNamespace` variant, drop the zero-import invariant for the bundle). Includes the two S compiler enablers: import namespace/allowlist (`js2wasm:qjs`), native-i32 on externs (extern-declarations.ts:728). | **L** | 1 | envelope/callable structural-canonicalization subtleties (known territory — #2928 E6 solved the same class); error mapping from QuickJS exceptions into the `[ok, value]` vector |
+| 3 | **The membrane**: adapter-TS handle registry (GC array + freelist), QuickJS-side Proxy wrapper bootstrap + handle→wrapper dedup, trap hooks as adapter exports → #4194 dispatch/accessors, weak dedup + finalizer→handle-release. | **XL** | 1, 2, **#4194's write half landed** | #4194 substrate maturity; wrapper exotic-behavior leaks (`typeof`, `Array.isArray`, proto identity) = split-brain surface; GC-side finalizer gap (#988) |
+| 4 | **Scope/global bridging**: (4a) global carrier — pushed bindings as globals, C+D lexical cells as accessor properties: **M**. (4b) direct-eval scope chain — sloppy via `with(scopeProxy)`: **M**; strict + TDZ + caller `super`/`new.target`: **not fully reachable in QuickJS** — permanent interpreter routing for those shapes. | **L** total | 2 (4a); 3 (4b) | 4b semantic ceiling; state-cell liveness (64-cell pool must behave identically to interpreter semantics) |
+| 5 | **Reverse direction**: "qjs-handle" arm in the GC lane's any-dispatch + boundary conversion table + refcount at every crossing. | **M–L** | 3 | double-membrane re-entrancy (GC wrapper of a QuickJS wrapper of a GC object must collapse to the original handle, or identity breaks) |
+| 6 | **Validation**: 816-file `language/eval-code/` A/B against the #2928 interpreter provider (reuse `TEST262_FULL_RUNTIME_EVAL` + provider-cache swap — the seam makes this a pure artifact substitution); split-brain audit at the membrane; perf on the issue's workloads. | **M** | any shippable subset | none new — machinery exists (#2928 "MVP acceptance remeasurement" is the template) |
+
+### MVP — the tiered provider (stages 1 + 2 + 4a + 6-subset)
+
+`__runtime_indirect_eval` and `__runtime_new_function` are global-scope-only by
+spec — no membrane needed IF no object crosses. Gate at the push boundary:
+**if every pushed global/cell value is primitive (or an intrinsic), route to
+QuickJS; otherwise route to the #2928 interpreter.** The check is O(#globals)
+per entry, conservative, and sound — by construction zero regressions vs the
+interpreter, while primitive-frontier eval (the entire 100k-loop benchmark
+class, most REPL usage) gets the ~560×. Direct eval stays on the interpreter
+entirely. The interpreter is NOT replaced at any stage: it remains the
+semantic backstop (object-crossing calls, direct eval, caller-context
+constructs) and the only option when the QuickJS artifact is absent. Per-call
+routing is a runtime decision inside the adapter — the seam sees one provider.
+
+MVP total: **M + L + M + S-ish validation ≈ one focused budget window for one
+senior lane.** Full membrane program (3 + 4b + 5): **+XL +M–L on top, 2-3×
+the MVP**, and gated on #4194 landing plus the stage-1 callback probe.
+
+### Verdict
+
+- **Provider-seam verdict: YES** — variant C is another provider behind
+  `js2wasm:runtime-eval`; user module and compiler are untouched except two
+  S-size enablers (import namespace/allowlist; optional native-i32 externs)
+  and the multi-module packaging change. This is the decisive economic fact:
+  the expensive halves of A/B (codegen emitting C-API calls with refcount
+  discipline everywhere; representation migration) simply do not exist here.
+- **Recommend: MVP yes-if, full membrane not now.** The tiered MVP is
+  well-bounded, regression-free by construction, and lands real REPL/eval
+  performance (~560×) — worth scheduling *if* standalone eval performance is
+  a user-facing requirement (#4229). The full membrane is XL+ with its
+  conformance payoff concentrated exactly where the membrane is weakest
+  (frontier semantics), so:
+- **The honest counter-case:** the 32-file residual analysis says remaining
+  eval-code failures are frontier/EvalDeclarationInstantiation semantics —
+  work the interpreter does natively on a shared substrate and a membrane
+  makes *harder*. Finishing #2928 Phase-2 (8 recorded records + catch
+  destructuring) + #2929 residuals buys more conformance per token than
+  stages 3-5. And the 1857 ms is per-operation interpreter cost, not a
+  lookup pathology (measured above) — an interpreter optimization pass
+  (dispatch tightening, register caching) plausibly recovers 10-50× at a
+  fraction of the membrane's risk, shrinking variant C's perf argument to
+  the last ~10-50×. Variant C's unique, non-recoverable advantage is eval'd-
+  source language completeness — which only the MVP's QuickJS routing already
+  captures for primitive-frontier code.
