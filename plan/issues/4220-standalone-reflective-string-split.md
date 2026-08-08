@@ -110,3 +110,10 @@ lists, not the counts).
 - **`instance-is-math` / `instance-is-number-1e21`** — ToString of the `Math`
   namespace object, and `Number.prototype.toString` on a wrapper. Both fail
   outside split's own steps.
+
+## Permanent repro
+
+Pinned by `tests/es5-standalone-split.test.ts` (15 cases: reflective transfer,
+limit/separator coercion order, `<array>.constructor` carrier) and the
+`test262/test/built-ins/String/prototype/split/` battery (+22 measured flips,
+runner-validated on the branch).

@@ -210,3 +210,10 @@ mechanism from this issue's:
   reads `""` instead of `undefined` and `s.hasOwnProperty(0)` answers false.
   Those are the String-exotic own-index-property surface (§10.4.3), not
   constructor identity — filed as an observation here, unfixed.
+
+## Permanent repro
+
+Pinned by `tests/es5-standalone-ctor-identity.test.ts` (13 cases: bare-identifier
+carriers, wrapper `.constructor` via `__extern_get`, gc-lane zero-`__wrap_ctor_`
+pin, demand gate). Measured +28 flips across
+`test262/test/built-ins/{Object,Number,String,Boolean}/` (per-file list above).
