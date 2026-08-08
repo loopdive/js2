@@ -128,7 +128,26 @@ stored in-repo. No third-party service.
   - `github-actions[bot]` → exempt (`bot`).
   - `guest271314` (external) → NOT exempt → must sign. Correct.
 
-### Follow-up for an admin (NOT done in this PR — by design)
+### Follow-up for an admin — ✅ DONE (verified 2026-08-08)
+**`cla-check` is now a REQUIRED check.** It is one of the six contexts in the
+live `main` ruleset:
+
+```sh
+gh api repos/loopdive/js2/rules/branches/main \
+  --jq '[.[]|select(.type=="required_status_checks")|.parameters.required_status_checks[].context]'
+```
+
+It is also in `REQUIRED_CHECKS` in `scripts/enable-branch-protection.sh` and in
+the required table in `docs/ci-policy.md` §1/§7, and the workflow gained a
+`merge_group` trigger (#1668) so the required context posts on the merge-group
+commit instead of wedging the queue.
+
+Everything below this line is the **state as of May 2026**, kept as the record
+of why the promotion was deferred. It no longer describes enforcement — read the
+ruleset, not this issue.
+
+---
+
 `cla-check` is currently **informational** (it is not in `REQUIRED_CHECKS`, and
 branch protection on `main` is presently not even enabled). To make external
 PRs hard-blocked:
@@ -146,7 +165,7 @@ A `pull_request_target` workflow always runs the workflow definition from the
 This PR removes the `pull_request` trigger (head) and adds `pull_request_target`
 (only active once on `main`), so the new gate does **not** run against its own
 introducing PR — standard GitHub behavior, and the usual way CLA gates are
-landed. The gate goes live for the *next* PR. Because `cla-check` is not a
-required check (and branch protection is off), the absent status does not block
-this merge; the required checks (`cheap gate`, `merge shard reports`,
-`quality`) all passed.
+landed. The gate goes live for the *next* PR. Because `cla-check` was not yet a
+required check at the time (and branch protection was off), the absent status did
+not block that merge; the required checks (`cheap gate`, `merge shard reports`,
+`quality`) all passed. It is required now — see the resolved follow-up above.

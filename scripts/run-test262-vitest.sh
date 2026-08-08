@@ -190,6 +190,20 @@ fi
 #                        provider (MINUTES) and let the worker prefer it. CI
 #                        distributes one shared build to every standalone shard,
 #                        so this is the authoritative CI-comparable tier.
+#
+# (#4238) A THIRD, flag-gated ENGINE: JS2WASM_EVAL_ENGINE=quickjs swaps the
+# Acorn+interpreter provider for the QuickJS WASI artifact behind the same
+# frozen `js2wasm:runtime-eval` seam. Symmetric hook — prebuild it here (the
+# selector never builds), and fail the run on error rather than degrading to
+# the interpreter, which would invalidate every measurement made under the flag.
+# NOTE (slice 1/2): `assembleOriginalHarness` injects a direct-eval-bearing
+# `$262.evalScript` shim into every assembled test, and direct eval is a typed
+# refusal under this engine until slice 3 — so a FULL test262 run under the flag
+# is not yet meaningful; `tests/quickjs-eval-provider.test.ts` is the gate.
+if [ "$TEST262_TARGET" = "standalone" ] && [ "${JS2WASM_EVAL_ENGINE:-interpreter}" = "quickjs" ]; then
+  echo "Prebuilding QUICKJS eval-engine provider (#4238; JS2WASM_EVAL_ENGINE=quickjs)..."
+  NODE_OPTIONS="--max-old-space-size=3072" node scripts/build-quickjs-eval-provider.mjs
+fi
 if [ "$TEST262_TARGET" = "standalone" ]; then
   if [ "${TEST262_FULL_RUNTIME_EVAL:-}" = "1" ]; then
     echo "Prebuilding runtime-eval provider — refusal + FULL interpreter (#2928 E7)..."
