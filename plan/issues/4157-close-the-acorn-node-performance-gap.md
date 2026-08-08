@@ -4,7 +4,7 @@ title: "umbrella: close the acorn-vs-Node performance gap — representation fir
 status: ready
 sprint: current
 created: 2026-08-04
-updated: 2026-08-06
+updated: 2026-08-08
 priority: high
 horizon: xl
 feasibility: hard
@@ -382,6 +382,75 @@ on its own.
 before the next representation lever. Four levers have now priced out for
 reasons specific to acorn's shape; a corpus with declared types would say
 whether the representation program is exhausted generally or only here.
+
+## 2026-08-08 — cross-runtime profile: wasm and Node bucketed side by side
+
+Every prior profile in this file measured only the wasm side. This run profiles
+**both runtimes with the same instrument** (`--profile-runtime wasm` and
+`--profile-runtime node`, 300 iterations each, same runtime-suffixed 226 KB
+corpus) and joins them phase by phase, so "where it loses to Node" is now a
+per-bucket subtraction rather than an inference. Fresh 4-core Xeon 2.10 GHz
+container, Node 22.22.2, main @ `41ad08c3`, binary 1,567,288 B, checksum green.
+
+Per-parse from the profile windows (34,325 ms / 300 wasm; 4,234 ms / 300 node):
+**wasm 114.4 ms vs node 14.1 ms → 8.1×**. Wasm agrees with its unprofiled lane
+median (116.0 ms) to within 1.5 %; the node side is where the ratio moves —
+this session's two lane runs gave node medians of 21.9 ms and 18.8 ms (lane
+ratios 5.3× / 6.4×) against 14.1 ms under the profiler. The node baseline swing
+is the known §6 band; the wasm number is stable across all four measurements.
+
+### The side-by-side (ms per parse, self-time)
+
+| phase | wasm | share | node | share | wasm/node |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| scanner/tokenizer (compiled acorn) | 21.6 | 18.9 % | 7.1 | 50.0 % | **3.1×** |
+| parser logic (compiled acorn) | 20.9 | 18.2 % | 5.9 | 41.9 % | **3.5×** |
+| dynamic-lookup (`__extern_get` 6.9 pp + per-key members) | 18.0 | 15.7 % | — | — | — |
+| gc-engine | 13.6 | 11.9 % | 0.9 | 6.4 % | 15× |
+| call-dispatch (`__dc_*`, `__call_fn_method_*`) | 11.7 | 10.2 % | — | — | — |
+| regexp engine (`__regex_search` 6.7 pp) | 9.2 | 8.1 % | ~0.1 | 0.9 % | (see caveat) |
+| dynamic-eq (`__is_truthy` 3.3 + `__extern_strict_eq` 2.2) | 6.5 | 5.7 % | — | — | — |
+| string-runtime (`__str_flatten` 2.8, `__str_equals` 1.2) | 5.9 | 5.1 % | — | — | — |
+| cast-convert (`__box/__unbox/__to_primitive`) | 5.5 | 4.9 % | — | — | — |
+| alloc-helpers | 1.3 | 1.2 % | — | — | — |
+| **total** | **114.4** | | **14.1** | | **8.1×** |
+
+Node's regexp row counts only acorn's own `regexp_*` validator frames; V8
+attributes native `RegExp.test` ticks to the calling JS frame, so some node
+regexp time hides inside its scanner rows. The 72× row-ratio is therefore an
+overstatement — but the wasm regexp engine at 9.2 ms/parse still exceeds any
+plausible node figure several times over.
+
+### Gap attribution (100.3 ms of gap)
+
+| component | ms | % of gap |
+| --- | ---: | ---: |
+| runtime helpers with **no node counterpart** (lookup + dispatch + eq + string + cast + alloc) | 49.2 | **49 %** |
+| compiled parser slower than JIT'd parser | 14.9 | 15 % |
+| compiled scanner slower than JIT'd scanner | 14.6 | 15 % |
+| extra GC | 12.7 | 13 % |
+| extra regexp | 9.1 | 9 % |
+
+Reading: **Node spends 92.9 % of its parse inside acorn's own code; the wasm
+build spends 37.1 % there.** The other 62.9 % is machinery — helper functions
+(43.0 %), GC (11.9 %), and the wasm regex engine (8.1 %). Removing every
+helper/GC/regexp millisecond would leave 42.5 ms vs 14.1 ms ≈ **3.0×** — the
+measured floor of the "JIT-class residue" this umbrella estimated at ~3.5×.
+Conversely the residue cannot be attacked below ~3× without making the
+compiled scanner/parser code itself faster, which is register allocation /
+inlining / IC-class work, not helper elision.
+
+Scanner/parser rows are self-time only: helper time *caused by* the scanner
+(e.g. `__str_flatten` re-entered from `skipSpace`, both still visible in this
+profile at 2.8 pp) is charged to the helper buckets, so the 3.1×/3.5× rows are
+lower bounds on the phases' end-to-end cost ratio.
+
+Reproduction: §Reproduction above for the wasm side; the node side is the same
+command with `--profile-runtime node --profile-output .tmp/acorn-node.cpuprofile`
+(no closure map needed), bucketed with `profile-buckets.mjs <profile> /dev/null`.
+Phase split for node frames: `read*/next/nextToken/skip*/finish{Token,Op}/
+updateContext/curContext/getTokenFromCode/types$1.*` → scanner; `regexp_*` +
+`readRegexp` → regexp; remainder → parser.
 
 ## Dupe check
 
@@ -857,3 +926,19 @@ is observable (`NaN === NaN` must stay false for the same reference).
 
 **Still untouched by anything: dynamic property lookup 13.5 % + call dispatch
 8.1 %.** Nothing in this umbrella currently targets either.
+
+## 2026-08-08 — the second-corpus measurement RAN (pako): acorn's exhaustion does not generalize
+
+The "measure a second dogfood corpus" recommendation is now answered — full
+record in **#743, "2026-08-08 — second-corpus measurement"**. pako 2.1.0
+(226 KB dist, function-ctors, numeric-heavy) censuses at **77.0 % typed vs
+acorn's 58.3 %**, and its 25-slot untyped residue contains **zero** slots of
+acorn's dominant "integer `this`-field-read argument" bucket. Its residue is
+instead 68 % first-write-decides null seeds and 20 % ref-valued args — the two
+levers acorn priced at ~0. Consequences for this umbrella: the receiver-typing
+program is exhausted *for acorn specifically*; the `Parser.pos` field-fact XL
+program serves acorn's number only and must be justified on that basis, not on
+generality. pako becomes a runnable corpus once #4216 (i16 packed-local emit
+bug, sole standalone blocker) lands; luxon/styled-components were measured
+unusable (native-class syntax bypasses the fnctor machinery entirely / non-
+self-contained bundle).
