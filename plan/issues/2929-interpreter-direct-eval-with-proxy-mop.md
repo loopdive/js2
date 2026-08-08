@@ -959,3 +959,84 @@ Explicitly out of scope for that follow-on: bucket E (24 Annex-B
 `skip-early-err` `SyntaxError: NaN` files — owned by #4137) and bucket F (16
 files: new.target, super-prop, realm identity, B.3.3 update — different
 mechanisms).
+
+## Implementation notes — buckets A + B (2026-08-08)
+
+Buckets A and B of the plan above are implemented; C, D, E and F are not (see
+the TODO section for the C/D follow-on; E belongs to #4137; F is out of scope).
+
+All changes are in `src/codegen/expressions/eval-inline.ts`. Two things the
+plan did not anticipate had to be added to make bucket B's 8 files actually
+flip; both are recorded here because they generalise beyond this slice.
+
+### 1. Dropping the NAME→slot mapping is not enough — the slot must be renamed
+
+`restoreFoldedEvalLexicalScope` originally only removed the eval body's
+`localMap` / `boxedCaptures` / `tdzFlagLocals` / `boxedTdzFlags` entries, per
+§2b. That fixed a caller-scope read (`typeof x` at the splice site, an IIFE) but
+NOT the shape test262 actually uses:
+
+```js
+eval('let xNonStrict = 3;');
+assert.throws(ReferenceError, function () { xNonStrict; });   // did not throw
+```
+
+Cause: the **#1177 block-scope-shadow rescue** in
+`src/codegen/closures/arrow-phases.ts` (and its twin in
+`src/codegen/statements/nested-declarations.ts`) deliberately falls back to
+scanning `fctx.locals` **by name** when `localMap` misses, so a closure built
+inside a block can still capture a pre-hoisted-then-shadowed slot. That rescan
+resurrects the eval's ORPHANED slot for any closure created **after** the eval
+returned. Measured discrimination:
+
+| shape | before the rename fix |
+| --- | --- |
+| IIFE at the splice site | throws (correct) |
+| thunk passed to a helper (`assert.throws`) | **no throw** |
+| thunk stored in a var, then called | **no throw** |
+| thunk declared BEFORE the eval | throws (correct) |
+| name never declared at all | throws (correct) |
+
+Fix: after the splice, rename every slot the eval allocated to
+`<name>@evallex$<idx>` / `<name>@evaltdz$<idx>`. `@` cannot occur in a JS
+identifier, so no by-name probe can match; the slot INDEX is untouched, so
+captures already planned for closures created *inside* the eval body keep
+working (pinned by a canary). The mangled name deliberately does not start with
+`__`, keeping the compiler-temp deduplicator in `context/locals.ts` away from it.
+
+### 2. `lex-env-no-init-*` is a SECOND, unrelated defect: TDZ `typeof` of a foreign identifier
+
+`eval('typeof x; let x;')` must throw ReferenceError. `typeof-delete.ts`
+resolves the operand through `checker.getSymbolAtLocation`; a FOREIGN eval
+identifier has no checker symbol at all, so it takes the
+genuinely-unresolvable arm and statically folds to `"undefined"`, erasing the
+error. (A *bare* read of the same binding is fine — it reaches the TDZ check.)
+This is orthogonal to the lexical leak and is why the `-cls` variants of the
+same files already passed: classes bail to the provider, whose lexical records
+carry real TDZ state.
+
+Fixed **in scope** by bailing to the provider (§3's "never splice-and-ignore"):
+`foldedEvalTypeofBeforeLexicalDeclaration` detects a `typeof <ident>` textually
+before that lexical's own declaration in the eval body. A `typeof` *after* the
+declaration, or of an unrelated name, still folds — pinned by canaries.
+
+The alternative one-line fix — teach `typeof-delete.ts` to consult
+`fctx.tdzFlagLocals` before the `!hasValueDecl` fold — was deliberately NOT
+taken here: it is outside this slice's declared file scope. It is the better
+long-term fix and would also restore the fast path for these bodies.
+
+### Measured result
+
+`TEST262_PATH_FILTER=language/eval-code/ TEST262_TARGET=standalone
+TEST262_FULL_RUNTIME_EVAL=1 COMPILER_POOL_SIZE=1 TEST262_WORKERS=1
+--official-scope-only`, all 816 official files, full Acorn+interpreter provider.
+
+| run | pass |
+| --- | ---: |
+| baseline `20260808-072852` (main `a8bbc0d7`) | 747 / 816 |
+| bucket A only, `20260808-082628` | 749 / 816 |
+| buckets A + B, `20260808-091553` | **757 / 816** |
+
+Zero pass→fail at every step. The 10 fail→pass files are the exact bucket A + B
+enumeration: `{direct,indirect}/var-env-global-lex-non-strict.js` and
+`{direct,indirect}/lex-env-{distinct,no-init}-{let,const}.js`.
