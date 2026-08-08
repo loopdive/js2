@@ -1059,3 +1059,78 @@ split-brain builtins audit, and the honest go/no-go against #4157 / #3288.
 bash scripts/quickjs-artifact/build.sh          # ~3 min cold -> .tmp/quickjs-artifact/
 node scripts/quickjs-artifact/probe/probe.mjs   # R2/R3/R4; exits non-zero on any failure
 ```
+
+## Design notes from the 2026-08-08 adoption review (project lead Q&A)
+
+Recorded so the decisions survive the session; each amends or sharpens an
+acceptance box above.
+
+### Cross-heap cycle policy — mostly SOLVABLE in the linear lane (amends that box)
+
+The leak needs a cycle crossing heaps in BOTH directions. Two levers close it:
+
+1. **Keep cycles homogeneous**: with tainted allocation, eval-visible objects
+   are QuickJS objects from birth, so dynamic-object cycles live entirely in
+   QuickJS's heap and its cycle collector handles them normally.
+2. **Teach QuickJS the through-native edges**: `JSClassDef.gc_mark` lets an
+   exotic wrapper class participate in cycle collection by marking every
+   JSValue its wrapped native object holds — codegen knows these edges because
+   it emits every JSValue store into a native field. A wrapper→native→JSValue
+   path becomes visible as wrapper→JSValue, making cycles THROUGH native
+   objects collectable. This is the browser-vendor technique for JS↔DOM
+   cycles (Firefox's cycle collector, Chromium's unified heap tracing).
+3. Backstop: epoch/session bulk-release of the handle set (REPL line, eval
+   session).
+
+Honest residual: this works where the native side has no independent tracing
+GC. In **variant C** (WasmGC lane) the host VM's GC cannot be taught QuickJS
+edges, so the leak class persists there — one more reason variant C's verdict
+capped at the MVP tier.
+
+### Acorn scoping after adoption
+
+In the linear lane QuickJS parses AND executes eval'd code — acorn and the
+bytecode interpreter drop out of that lane's eval path entirely. Acorn is NOT
+retired from the project: the WasmGC lane keeps the #2928 Acorn+interpreter
+provider (JSValue cannot hold GC refs; variant C's own verdict keeps the
+interpreter), the Tier-0 splice uses the TypeScript parser at compile time,
+and compiled-acorn remains the flagship dogfood/benchmark workload
+independently of eval.
+
+### Builtin routing policy (boxed tier gets the whole engine)
+
+For boxed values the entire engine comes along, not just functions — RegExp,
+Date, JSON, string methods, and the census's largest remaining buckets
+(property-descriptor MOP ~795 files, `with` ~162, Proxy) become QuickJS's
+problem for dynamic values in this lane. Routing:
+
+| operation | where it runs |
+| --- | --- |
+| Math/arithmetic on typed `f64`/`i32` | native wasm instructions — never leaves the typed tier |
+| RegExp, Date, JSON, `toLocale*`, coercion corner cases | delegate to QuickJS (box in, call, unbox out) |
+| property access on dynamic values | QuickJS shapes via the C API |
+
+Structural bonus: all dynamic objects in this lane are QuickJS objects, so
+there is exactly ONE `String.prototype` etc. at the dynamic level — the
+split-brain audit shrinks to the typed↔boxed frontier only.
+
+### Typed code calling builtins — transient adapters (and the string decision)
+
+Typed values can use QuickJS builtins through call-site adapters; resident
+representation stays native, only the boundary pays:
+
+| argument kind | crossing cost | mechanism |
+| --- | ---: | --- |
+| numbers | ~free | immediate boxing via tag extraction (verified open-coded in slice 1) |
+| strings | one copy per call — or ZERO, see below | `qjs_new_string_len` in / copy out |
+| RegExp pattern | once per literal, then cached | compile at first use, hold the handle |
+| typed structs (e.g. `JSON.stringify`) | per-property traps, or one copy | exotic wrapper vs eager conversion |
+
+**Recommendation for the "string story" box: adopt `JSString` as the linear
+lane's native string type.** "Unboxed" was always a fiction for strings (heap
+things in any representation); if typed strings ARE QuickJS strings, every
+string builtin call is zero-copy on data already in the right heap, while
+numbers stay truly unboxed and structs stay native. Cost: refcount discipline
+flows into typed string locals (dup/free, codegen-inserted — the slice-1
+borrow-semantics shim makes the obligation "free every returned handle once").
+Decide before slice 2 shapes the ABI.
