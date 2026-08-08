@@ -241,6 +241,7 @@ import {
   unshiftExternGetWrapperCtorArm,
 } from "./object-runtime.js";
 import { moduleMentionsObjectIdentifier, moduleReadsConstructorProp } from "./wrapper-constructor-carrier.js"; // (#4223/#4232)
+import { unshiftNativeProtoHasOwnArms } from "./native-proto-own-props.js"; // (#4248) builtin-proto own members
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { fillInstanceTombstones } from "./instance-tombstones.js"; // (#4098 G1 s1) per-instance own-property deletability
 import { fillInstanceProps } from "./instance-props.js"; // (#4194) instance expando bag substrate
@@ -4465,6 +4466,10 @@ export function generateModule(
     fillInstanceTombstones(ctx); // (#4098 G1 s1) BEFORE the ladders below: they bake its call
     fillInstanceProps(ctx); // (#4194) instance expando carrier + bag get/set + tombstone resurrect
     fillClosedStructHasOwnArms(ctx);
+    // (#4248) A builtin `.prototype` is a `$NativeProto`, not a `$Object`, so
+    // its OWN members are invisible to the table walk. AFTER the closed-struct
+    // prologue so the two arms compose in receiver-shape order.
+    unshiftNativeProtoHasOwnArms(ctx);
     fillClosedStructOwnPropertyNamesArms(ctx);
     fillClosedStructEnumerationArms(ctx); // (#3920) Object.keys / for…in
     fillClosedStructExternGetArms(ctx);
@@ -6744,6 +6749,10 @@ export function generateMultiModule(
     fillInstanceTombstones(ctx); // (#4098 G1 s1) BEFORE the ladders below: they bake its call
     fillInstanceProps(ctx); // (#4194) instance expando carrier + bag get/set + tombstone resurrect
     fillClosedStructHasOwnArms(ctx);
+    // (#4248) A builtin `.prototype` is a `$NativeProto`, not a `$Object`, so
+    // its OWN members are invisible to the table walk. AFTER the closed-struct
+    // prologue so the two arms compose in receiver-shape order.
+    unshiftNativeProtoHasOwnArms(ctx);
     fillClosedStructOwnPropertyNamesArms(ctx);
     fillClosedStructEnumerationArms(ctx); // (#3920) Object.keys / for…in
     fillClosedStructExternGetArms(ctx);
