@@ -5,6 +5,9 @@ status: backlog
 sprint: Backlog
 created: 2026-08-08
 updated: 2026-08-08
+# 2026-08-08 (post-slice-1): "## Regex measurements" appended — engine-tie
+# benchmark, standalone lre-only artifact recipe/sizes, our engine's per-module
+# size A/B; cross-refs #4237 (compile-time regex specialization exploration).
 # 2026-08-08 (later): "## Design variant C" appended — QuickJS as the eval
 # ENGINE for the WasmGC lane behind the existing js2wasm:runtime-eval provider
 # seam, with a code-grounded staged effort estimate and an ABI probe record.
@@ -1134,3 +1137,39 @@ numbers stay truly unboxed and structs stay native. Cost: refcount discipline
 flows into typed string locals (dup/free, codegen-inserted — the slice-1
 borrow-semantics shim makes the obligation "free every returned handle once").
 Decide before slice 2 shapes the ABI.
+
+## Regex measurements (2026-08-08, post-slice-1) — engine tie, lre-only artifact, our engine's size
+
+Follow-up to the builtin-routing table's "delegate RegExp to QuickJS" row:
+measured whether that delegation wins on *speed* (no) and what it costs on
+*size* (favorable past one module). Harness: `.tmp/bench-regex.mjs` —
+`/([a-z]+[0-9]+)@([a-z]+)\.([a-z][a-z][a-z])/` over 200 subjects × 500 iters.
+
+| engine | ms | note |
+| --- | ---: | --- |
+| V8 native | 6.5 | Irregexp JIT tier — per-pattern specialized code |
+| QuickJS libregexp (wasm) | 112.1 | generic bytecode interpreter |
+| js2wasm own engine (wasm) | 121.7 | generic interpreter — statistical tie |
+
+So the case for QuickJS's regex in the boxed tier is **completeness and
+single-`RegExp.prototype` coherence, not speed**. The 18× V8 gap is
+specialization-vs-interpretation, not native-vs-wasm — pursued separately in
+**#4237** (compile literal patterns to per-pattern wasm functions at build
+time; orthogonal to this adoption, shares the fallback-engine decision).
+
+**libregexp ships standalone** — proven 2026-08-08 in `.tmp/lre-only/`:
+compile `libregexp.c` + `libunicode.c` + a 3-export shim
+(`lre_compile_pattern` / `lre_exec_pattern` / `lre_capture_count`, plus the
+three host hooks `lre_realloc` / `lre_check_stack_overflow` /
+`lre_check_timeout`) with the slice-1 toolchain (stock clang-18,
+wasi-libc sysroot, quickjs-ng v0.16.1 pin; note quickjs-ng inlined cutils
+into `cutils.h` — there is no `cutils.c` to compile). Result: **115,480 raw /
+53,211 gzip**, imports = 4 `wasi_snapshot_preview1`, functional probe green
+(4 capture groups, match + negative correct). This gives the **GC lane** a
+regex-completeness option without adopting any of the boxed tier.
+
+**Our engine's cost is per-module, not shared** — A/B compile
+(`.tmp/regex-size.mjs`): standalone module without regex 21,188 raw /
+9,896 gzip; with one regex literal 96,737 / 40,009 → **≈75.5 KB raw /
+≈30 KB gzip marginal, duplicated in every regex-using binary**. The shared
+lre-only artifact is ~1.5× bigger once but breaks even at the second module.
