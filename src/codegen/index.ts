@@ -240,7 +240,7 @@ import {
   unshiftExternGetProtoCacheArm,
   unshiftExternGetWrapperCtorArm,
 } from "./object-runtime.js";
-import { moduleReadsConstructorProp } from "./wrapper-constructor-carrier.js"; // (#4223)
+import { moduleMentionsObjectIdentifier, moduleReadsConstructorProp } from "./wrapper-constructor-carrier.js"; // (#4223/#4232)
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { fillInstanceTombstones } from "./instance-tombstones.js"; // (#4098 G1 s1) per-instance own-property deletability
 import { fillInstanceProps } from "./instance-props.js"; // (#4194) instance expando bag substrate
@@ -3534,6 +3534,9 @@ export function generateModule(
   // hangs), and only for standalone — the gc/host lane keeps its genuine
   // `Object_get_constructor` read.
   ctx.wrapperCtorCarrierDemanded = ctx.standalone === true && moduleReadsConstructorProp(ast.sourceFile);
+  // (#4232) Narrower gate for the ordinary-object arm alone — see
+  // `moduleMentionsObjectIdentifier` for why it cannot ride the flag above.
+  ctx.plainCtorCarrierDemanded = ctx.wrapperCtorCarrierDemanded && moduleMentionsObjectIdentifier(ast.sourceFile);
   const memberDeletes = scanModuleMemberDeletes(ast.sourceFile, ctx.standalone === true);
   ctx.moduleUsesDelete = memberDeletes.any;
   ctx.memberDeleteReceiverNames = memberDeletes.receiverNames;
@@ -6260,6 +6263,9 @@ export function generateMultiModule(
   // reads a `constructor` property arms the wrapper carriers.
   ctx.wrapperCtorCarrierDemanded =
     ctx.standalone === true && multiAst.sourceFiles.some((sf) => moduleReadsConstructorProp(sf));
+  // (#4232) Narrower gate for the ordinary-object arm alone.
+  ctx.plainCtorCarrierDemanded =
+    ctx.wrapperCtorCarrierDemanded && multiAst.sourceFiles.some((sf) => moduleMentionsObjectIdentifier(sf));
   try {
     // WASI target: register linear memory, bump pointer global, and WASI imports
     if (ctx.wasi) {

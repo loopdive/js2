@@ -33,12 +33,23 @@ loc-budget-allow:
   # +2 arms on the runtime `.constructor` carrier: the demand-minted
   # `__plain_ctor_Object` accessor and the `$proto == null` arm.
   - src/codegen/wrapper-constructor-carrier.ts
+  # +7: the plain-`Object` carrier's SECOND, narrower demand gate, set at the
+  # same two places the #4223 gate is (single-source + multi-module). It cannot
+  # ride the existing flag — see section 5.
+  - src/codegen/index.ts
+  # +9: the `plainCtorCarrierDemanded` field and the note explaining why it is
+  # separate from `wrapperCtorCarrierDemanded`.
+  - src/codegen/context/types.ts
 func-budget-allow:
   - src/codegen/property-access.ts::compileElementAccessBody
   - src/codegen/object-runtime.ts::ensureObjectRuntime
   - src/codegen/array-object-proto.ts::emitStringProtoMemberBody
   - src/codegen/wrapper-constructor-carrier.ts::wrapperConstructorArmInstrs
   - src/codegen/wrapper-constructor-carrier.ts::ensureWrapperConstructorCarriers
+  # The two module-setup functions that set the #4223 demand gate; the #4232
+  # narrower gate has to be set in the same place, next to it.
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
 origin: "2026-08-08 — ES5-standalone-90 Wave 3; the leftovers #4223 and #4222 measured and deliberately did not take"
 # coercion-sites: both are NEW modules from this wave calling the CANONICAL
 # helpers (__to_primitive for index ToPrimitive, __str_to_number for canonical
@@ -199,6 +210,50 @@ source reads `null`, so a TS-lane test here would pass vacuously.
 - [ ] `new String("globglob").hasOwnProperty("length" | "0" | 7)` is true and
       `hasOwnProperty("8")` is false.
 - [ ] gc/host lane untouched (standalone-gated at every site).
+
+## 5 — regression caught on the wave-3 integration branch, and its fix
+
+Section 2's `__plain_ctor_Object` carrier answers from
+`emitBuiltinNamespaceObject`, which materializes the `Object` namespace
+object's **complete function-valued own surface** — every `Object.keys` /
+`defineProperty` / … as a closure. Materializing closures arms the JS-host
+method-closure bridge, whose five compiler-reserved
+`__\0js2_call_fn_method_argc_<n>` exports then appear in the module.
+
+I hung that mint off the EXISTING `wrapperCtorCarrierDemanded` flag, which is
+`moduleReadsConstructorProp`. So the whole `Object` static surface went into
+**every** standalone module that reads `.constructor` anywhere — including
+modules that only ever read a primitive wrapper's, which the three
+`__builtin_ctor_<Name>` carriers answer and which never reach the plain arm at
+all. That is exactly the unconditional pull-in #4034 stands as the reminder
+against.
+
+It surfaced as 5/13 failures in #4223's own suite. Worth naming precisely,
+because the failure text points away from the cause: every asserted VALUE was
+correct and only the key COUNT differed (`{numOk:1,strOk:1,boolOk:1, (8)}` vs
+`(3)`), because that suite's `runStandalone` sweeps `Object.entries(exports)`
+and asserts an exact object. It read like a wrapper-carrier semantic
+regression; it was a cost regression plus an over-broad test sweep.
+
+Two fixes, because there were two defects:
+
+- **`plainCtorCarrierDemanded`** — a second, narrower gate
+  (`moduleMentionsObjectIdentifier`) for the plain-`Object` carrier alone. This
+  is a genuine heuristic, unlike the exact gate above it: a module that reads
+  `.constructor` on a bare `$Object` while never mentioning `Object` keeps
+  today's `undefined`. Every test262 file the arm exists for builds its
+  receiver with `Object(null)` / `new Object(null)`, so all six still flip.
+- **#4223's `runStandalone` skips `\0`-containing exports.** The NUL in
+  `__\0js2_call_fn_method_argc_<n>` is deliberate — `closure-exports.ts` uses
+  it so the name cannot collide with a source-level identifier — so an
+  exact-shape sweep must exclude it. Otherwise the assertion silently doubles
+  as a "did anything arm the host bridge?" check and breaks on cost, not
+  semantics. My three suites already filtered.
+
+**Verified**: no host import leaks in any case (`imports: (none)` throughout —
+the `env::Object_set_constructor` leak reported alongside this is a different
+change's). #4223 13/13, my three suites + #4230's descriptor-bags + #4220's
+split 34/34, `built-ins/Object/S15.2*` still 43/50 (the full +18 intact).
 
 ## Leftovers (deliberately NOT in scope)
 

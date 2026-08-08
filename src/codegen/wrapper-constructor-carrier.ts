@@ -161,6 +161,54 @@ export function moduleReadsConstructorProp(sourceFile: ts.SourceFile): boolean {
 }
 
 /**
+ * (#4232) SECOND demand gate, for the ordinary-object arm only: does this
+ * module mention the `Object` identifier at all?
+ *
+ * Why this is separate from `moduleReadsConstructorProp`, and why it had to be
+ * added after the fact: the plain-`Object` answer comes from
+ * `emitBuiltinNamespaceObject`, which materializes the namespace object's
+ * COMPLETE function-valued own surface — every `Object.keys` / `defineProperty`
+ * / … as a closure. Materializing closures arms the JS-host method-closure
+ * bridge, whose five compiler-reserved `__\0js2_call_fn_method_argc_N` exports
+ * then appear in the module. Hanging that off `moduleReadsConstructorProp`
+ * alone put the whole `Object` static surface into EVERY standalone module that
+ * reads `.constructor` anywhere — including modules that only ever read a
+ * primitive wrapper's, which are answered by the three `__builtin_ctor_<Name>`
+ * carriers and never reach the plain arm at all. That is exactly the
+ * unconditional pull-in #4034 stands as the reminder against, and it is what
+ * broke #4223's own suite (five tests that sweep `Object.entries(exports)` and
+ * assert an exact shape).
+ *
+ * The gate is a genuine heuristic and it is worth being explicit about the
+ * trade: a module that reads `.constructor` on a bare `$Object` while never
+ * mentioning `Object` keeps today's `undefined`. That is the same bargain the
+ * `moduleReadsConstructorProp` gate above already strikes — accept a wrong
+ * `undefined` in a case that cannot be cheaply detected rather than pay an
+ * unconditional pull-in — except that gate is exact and this one is not. Every
+ * test262 file the arm was added for (`S15.2.1.1_A1_T1..T5`, `A3_T2`) mentions
+ * `Object` by construction: they all build the receiver with `Object(null)` or
+ * `new Object(null)`.
+ */
+const objectMentionCache = new WeakMap<ts.SourceFile, boolean>();
+export function moduleMentionsObjectIdentifier(sourceFile: ts.SourceFile): boolean {
+  let mentions = objectMentionCache.get(sourceFile);
+  if (mentions === undefined) {
+    mentions = false;
+    const walk = (node: ts.Node): void => {
+      if (mentions) return;
+      if (ts.isIdentifier(node) && node.text === "Object") {
+        mentions = true;
+        return;
+      }
+      ts.forEachChild(node, walk);
+    };
+    walk(sourceFile);
+    objectMentionCache.set(sourceFile, mentions);
+  }
+  return mentions;
+}
+
+/**
  * Mint (idempotently) `__wrap_ctor_String/Number/Boolean() -> externref` — the
  * runtime accessors for the three `__builtin_ctor_<Name>` singletons.
  *
@@ -175,6 +223,11 @@ export function moduleReadsConstructorProp(sourceFile: ts.SourceFile): boolean {
 export function ensureWrapperConstructorCarriers(ctx: CodegenContext): void {
   if (!ctx.standalone || ctx.wrapperCtorCarrierDemanded !== true) return;
   for (const builtinName of [...WRAPPER_BUILTINS, PLAIN_CARRIER_FN] as const) {
+    // (#4232) The plain-`Object` carrier carries its own, NARROWER gate — see
+    // `moduleMentionsObjectIdentifier`. The three wrapper carriers are cheap
+    // (`__builtin_ctor_<Name>` singletons); this one drags in the whole
+    // `Object` namespace surface, so it must not ride the shared flag.
+    if (builtinName === PLAIN_CARRIER_FN && ctx.plainCtorCarrierDemanded !== true) continue;
     const name = builtinName === PLAIN_CARRIER_FN ? PLAIN_CARRIER_FN : carrierFnName(builtinName);
     if (ctx.funcMap.get(name) !== undefined) continue;
 
