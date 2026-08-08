@@ -406,6 +406,26 @@ function foldedEvalDeclarationNames(sourceFile: ts.SourceFile): FoldedEvalDeclar
 }
 
 /**
+ * True when the eval Script declares a FunctionDeclaration (including a
+ * generator) directly at its top level — the shape whose
+ * EvalDeclarationInstantiation step 9 must create a *deletable* binding in the
+ * caller's VariableEnvironment and instantiate the function object BEFORE any
+ * statement runs.
+ *
+ * Deliberately narrower than `declarationNames.varNames`: plain `var`-only
+ * bodies in a function caller keep the existing splice, which is what preserves
+ * the 192-file `declare-arguments` matrix (all function-scope, all var-only).
+ * Block-nested function declarations are Annex-B B.3.3's business and keep
+ * their own arm.
+ */
+function foldedEvalHasTopLevelFunctionDeclaration(sourceFile: ts.SourceFile): boolean {
+  for (const statement of sourceFile.statements) {
+    if (ts.isFunctionDeclaration(statement) && statement.name) return true;
+  }
+  return false;
+}
+
+/**
  * Top-level LexicallyDeclaredNames of an eval Script: `let`/`const` (and
  * `using`) declarations plus named class declarations that are DIRECT children
  * of the foreign SourceFile. Block/loop/switch-nested lexicals belong to their
@@ -1033,6 +1053,29 @@ export function tryStaticEvalInline(
     (directEval ? fctx.name === "__module_init" : true)
   ) {
     return undefined; // provider owns EvalDeclarationInstantiation here
+  }
+
+  // Same rule one scope down (slice 2): a sloppy DIRECT eval in a FUNCTION
+  // caller whose body declares a top-level FunctionDeclaration. §19.2.1.3 step
+  // 9 requires a *deletable* binding in the caller's VariableEnvironment, with
+  // the function object instantiated before the first statement executes and
+  // remaining mutable afterwards. The splice creates an ordinary caller local
+  // instead: it is not deletable, it is initialized in statement order (so a
+  // preceding read sees `undefined`, not the function), and the binding leaks
+  // past the eval instead of producing the required ReferenceError outside.
+  // The provider models all three via the reified activation cells.
+  //
+  // Keyed on FUNCTION declarations specifically, NOT on `varNames`: the
+  // 192-file `declare-arguments` matrix is entirely function-scope var-only
+  // eval and must keep splicing (named canary in the issue's verification).
+  if (
+    ctx.standalone &&
+    !evalIsStrict &&
+    directEval &&
+    fctx.name !== "__module_init" &&
+    foldedEvalHasTopLevelFunctionDeclaration(sf)
+  ) {
+    return undefined;
   }
 
   // A direct nested `eval(...)` can recurse through this same constant-fold
