@@ -154,6 +154,7 @@ import {
 import { ensureProxyRuntime } from "./object-runtime-proxy.js";
 import { ensureArgcGlobal } from "./statements/nested-declarations.js";
 import { buildLazyNativeProtoGetInstrs, getBuiltinBrand } from "./native-proto.js";
+import { ensureWrapperConstructorCarriers, wrapperConstructorArmInstrs } from "./wrapper-constructor-carrier.js"; // (#4223) runtime `<wrapper>.constructor`
 export { fillProxyDispatch } from "./object-runtime-proxy.js";
 
 /** Initial `$PropMap` capacity. Must be a power of two (mask = cap - 1).
@@ -4757,6 +4758,20 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // shift (same invariant as the rest of this runtime).
   ensureProxyRuntime(ctx, types, registerNative);
 
+  // (#4223) Mint the primitive-wrapper `.constructor` carriers, when the module
+  // was pre-scanned as reading a `constructor` property. Hung HERE — the tail of
+  // the runtime that owns `__extern_get` — because the consuming arm lives
+  // inside that shared native and so has no single call site to hang off: the
+  // read may lower through the legacy any-receiver path, the IR
+  // `dyn.member_get` path, or a builtin-specific reader. This body runs at most
+  // ONCE per module (the `ctx.objectRuntimeTypes` latch at the top), and in a
+  // standalone module that reads `.constructor` the first entry is always from
+  // ordinary codegen — which is what the mint's late-import contract wants.
+  // (`ctx.objectRuntimeTypes` is published at line ~827, well before here, so
+  // the nested `ensureObjectRuntime` the carrier emit performs returns
+  // immediately instead of recursing.)
+  ensureWrapperConstructorCarriers(ctx);
+
   return types;
 }
 
@@ -7503,6 +7518,56 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
     );
   }
   fn.body.unshift(...arms);
+}
+
+/**
+ * (#4223) Prepend the primitive-WRAPPER `.constructor` arm onto `__extern_get`.
+ *
+ * A `new Number(5)` / `Object(5)` wrapper is a `$Object` whose [[Prototype]] is
+ * a `$NativeProto`, not another `$Object`, so the proto-walk below can never
+ * reach a place where `constructor` lives and every wrapper `.constructor` read
+ * fell out as a miss. The arm answers it from the same
+ * `__builtin_ctor_<Name>` carrier the bare `Number` / `String` / `Boolean`
+ * identifier reads, so the identity is genuine.
+ *
+ * No-op unless a consumer minted the accessors during codegen
+ * (`ensureWrapperConstructorCarriers`) — rationale and the own-property
+ * shadowing argument live in wrapper-constructor-carrier.ts.
+ */
+export function unshiftExternGetWrapperCtorArm(ctx: CodegenContext): void {
+  if (!ctx.standalone) return;
+  const anyStrTypeIdx = ctx.anyStrTypeIdx;
+  const objTypes = ctx.objectRuntimeTypes;
+  if (anyStrTypeIdx < 0 || objTypes === undefined) return;
+  const strFlattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
+  const strEqualsIdx = ctx.nativeStrHelpers.get("__str_equals");
+  if (strFlattenIdx === undefined || strEqualsIdx === undefined) return;
+  const fn = ctx.mod.functions.find((candidate) => candidate.name === "__extern_get");
+  if (!fn) return;
+
+  const arm = wrapperConstructorArmInstrs(ctx, {
+    // Key already known to be a `$AnyString` by the guard wrapped around this.
+    keyEqualsConstructor: [
+      { op: "local.get", index: 1 },
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: anyStrTypeIdx },
+      { op: "call", funcIdx: strFlattenIdx },
+      ...nativeStringLiteralInstrs(ctx, "constructor"),
+      { op: "call", funcIdx: strEqualsIdx },
+    ],
+    // `__extern_get` takes 2 params, so local `n` is operand index `2 + n`.
+    firstLocalIndex: 2 + fn.locals.length,
+    objectTypeIdx: objTypes.objectTypeIdx,
+    propEntryTypeIdx: objTypes.propEntryTypeIdx,
+  });
+  if (arm.instrs.length === 0) return;
+  fn.locals.push(...arm.locals);
+  fn.body.unshift(
+    { op: "local.get", index: 1 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: anyStrTypeIdx },
+    { op: "if", blockType: { kind: "empty" }, then: arm.instrs },
+  );
 }
 
 /**

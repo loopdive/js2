@@ -1,0 +1,337 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+/**
+ * (#4223) `<wrapper>.constructor` for a standalone primitive-WRAPPER object
+ * (`Object(5)`, `new Number(5)`, `new String("x")`, `new Boolean(true)`) whose
+ * receiver is only known at RUNTIME.
+ *
+ * ## The gap, and why it needed BOTH halves
+ *
+ * `Object(5).constructor === Number` was false on standalone for two
+ * independent reasons, and fixing either alone flips nothing:
+ *
+ * | side | read on main            | why                                        |
+ * | ---- | ----------------------- | ------------------------------------------ |
+ * | RHS  | `Number` → **null**     | no identity-stable carrier (#3006 excluded) |
+ * | LHS  | `.constructor` → `undefined` | no arm answers it for a wrapper       |
+ *
+ * The RHS half is a one-line addition to `BUILTIN_CONSTRUCTOR_IDENTITY_NAMES`
+ * (builtin-static-globals.ts) — #4200 named this exact omission and deferred it
+ * because it changes what the BARE identifier reads. That is this module's
+ * premise, not its content: with the carrier minted, `<B>.prototype.constructor`
+ * also starts resolving for free (builtin-proto-constructor.ts dispatches on the
+ * same predicate).
+ *
+ * This module is the LHS half. A wrapper is a plain `$Object` carrying its
+ * [[NumberData]]/[[StringData]]/[[BooleanData]] under the internal-slot key
+ * `[[PrimitiveValue]]` (object-runtime.ts), and `Object.getPrototypeOf(o) ===
+ * Number.prototype` already holds — but the proto link points at a
+ * `$NativeProto`, not a `$Object`, so `__extern_get`'s proto-walk (which follows
+ * `$Object.$proto`) never reaches a place where `constructor` could live. Every
+ * wrapper `.constructor` read therefore fell out of the chain as a miss.
+ *
+ * ## The arm
+ *
+ * Prepended to `__extern_get` at finalize: when the key is `"constructor"` and
+ * the receiver is a `$Object` with a `[[PrimitiveValue]]` slot, classify the
+ * slot value's box type and return the matching carrier. The classification
+ * ladder is deliberately the SAME one `__protoidx_brand_off`
+ * (proto-index-store.ts, #4176) uses to recover a wrapper's prototype brand —
+ * `$AnyString` → String, `$__box_number` or `i31` → Number, `$__box_boolean` →
+ * Boolean — so a wrapper cannot be classified one way for its inherited
+ * properties and another way for its constructor.
+ *
+ * `constructor` is an ordinary writable INHERITED property (§7.3.2), so an own
+ * entry must shadow the answer. The arm consults `__obj_find(o, "constructor")`
+ * FIRST and declines when the wrapper carries its own — the main body then
+ * answers it normally. That check is what makes prepending sound: the arm
+ * behaves as if it sat at the chain-exhausted miss, because a wrapper's
+ * [[Prototype]] chain contains no other `$Object` that could define the key.
+ *
+ * ## Why demand-minted, and why the gate is a module-wide scan
+ *
+ * Materializing the three carriers drags in the `$Object` runtime's
+ * define-property path plus each carrier's `length`/`name`/`prototype` seed
+ * (builtin-ctor-own-props.ts) — ~700 bytes measured. #4034 is the standing
+ * reminder of what an unconditional pull-in costs, so a module that never reads
+ * `.constructor` mints nothing and `wrapperConstructorArmInstrs` installs no arm.
+ *
+ * The gate is a SOURCE scan (`moduleReadsConstructorProp`) rather than a hook on
+ * the emitting call site, because there is no single emitting call site: the
+ * consuming arm lives inside the shared `__extern_get`, and a `.constructor`
+ * read reaches it through at least three lowerings — the legacy any-receiver
+ * path (`tryEmitConstructorViaTag`), the IR `dyn.member_get` path
+ * (`__dyn_member_get` is a thin `__extern_get` wrapper), and a plain
+ * externref-receiver read at module top level. Hanging the mint on any one of
+ * them fixed only the tests that used that lowering; each of the first two
+ * attempts here flipped a different third of the probes.
+ *
+ * Minting must happen DURING ordinary codegen (it can register late imports),
+ * never from finalize — same contract as vec-constructor-carrier.ts. The hook is
+ * the tail of `ensureObjectRuntime`, which owns `__extern_get` and is always
+ * entered from ordinary codegen.
+ */
+
+import type { Instr, ValType } from "../ir/types.js";
+import { ts } from "../ts-api.js";
+import { emitBuiltinConstructorIdentity } from "./builtin-static-globals.js";
+import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { nativeStringLiteralInstrs } from "./native-strings.js";
+import { addFuncType } from "./registry/types.js";
+
+/**
+ * The wrapper constructors this module answers for, in classification order.
+ * `Object(fn)` / `Object(obj)` are NOT here: those return the argument itself
+ * (identity, already correct) and carry no `[[PrimitiveValue]]` slot, so they
+ * never reach this arm.
+ */
+const WRAPPER_BUILTINS = ["String", "Number", "Boolean"] as const;
+type WrapperBuiltin = (typeof WRAPPER_BUILTINS)[number];
+
+/** Accessor name minted per wrapper builtin, and the finalize lookup key. */
+function carrierFnName(builtinName: WrapperBuiltin): string {
+  return `__wrap_ctor_${builtinName}`;
+}
+
+/**
+ * (#4176 sibling) The boxed-primitive wrapper internal-slot key — MUST equal
+ * `WRAPPER_PRIMITIVE_KEY` in object-runtime.ts. Duplicated rather than
+ * imported for the same reason proto-index-store.ts duplicates it:
+ * object-runtime imports THIS module, so a value import back would close an
+ * ESM cycle.
+ */
+const WRAPPER_PRIMITIVE_KEY = "[[PrimitiveValue]]";
+
+/** `$PropEntry.$value` field index (object-runtime.ts layout). */
+const ENTRY_VALUE = 1;
+
+/** i31 abstract heap type (signed LEB -20) — small-int boxed numbers (#3673). */
+const I31_HEAP_TYPE = -20;
+
+/**
+ * (#4223) The demand gate: does this module syntactically READ a `constructor`
+ * property anywhere? Cached per source file, same shape as #3133's
+ * `moduleTouchesConstructorProp` (property-access.ts) — which asks the
+ * complementary question (does the module WRITE one).
+ *
+ * A read is the honest signal here because the consuming arm lives inside the
+ * shared `__extern_get`, so it cannot be attributed to one call site: the read
+ * may be lowered by the legacy any-receiver path, the IR `dyn.member_get`
+ * path, or a builtin-specific reader, and all three land in the same native.
+ * Scanning once at module setup covers every one of them.
+ */
+const constructorPropReadCache = new WeakMap<ts.SourceFile, boolean>();
+export function moduleReadsConstructorProp(sourceFile: ts.SourceFile): boolean {
+  let reads = constructorPropReadCache.get(sourceFile);
+  if (reads === undefined) {
+    reads = false;
+    const walk = (node: ts.Node): void => {
+      if (reads) return;
+      if (
+        (ts.isPropertyAccessExpression(node) && node.name.text === "constructor") ||
+        (ts.isElementAccessExpression(node) &&
+          ts.isStringLiteralLike(node.argumentExpression) &&
+          node.argumentExpression.text === "constructor")
+      ) {
+        reads = true;
+        return;
+      }
+      ts.forEachChild(node, walk);
+    };
+    walk(sourceFile);
+    constructorPropReadCache.set(sourceFile, reads);
+  }
+  return reads;
+}
+
+/**
+ * Mint (idempotently) `__wrap_ctor_String/Number/Boolean() -> externref` — the
+ * runtime accessors for the three `__builtin_ctor_<Name>` singletons.
+ *
+ * The accessor, not a bare `global.get`, is what makes the read work when it is
+ * the module's FIRST demand for the builtin: the singleton's guarded lazy init
+ * rides inside it. That case is not exotic — it is the argument order of
+ * `assert.sameValue(obj.constructor, Number)`, where the LHS is compiled first.
+ *
+ * Call from ordinary codegen only, and treat it as a late-import adder: run it
+ * before any funcIdx is captured by name and flush afterwards.
+ */
+export function ensureWrapperConstructorCarriers(ctx: CodegenContext): void {
+  if (!ctx.standalone || ctx.wrapperCtorCarrierDemanded !== true) return;
+  for (const builtinName of WRAPPER_BUILTINS) {
+    const name = carrierFnName(builtinName);
+    if (ctx.funcMap.get(name) !== undefined) continue;
+
+    const resultType: ValType = { kind: "externref" };
+    const typeIdx = addFuncType(ctx, [], [resultType]);
+    const fctx: FunctionContext = {
+      name,
+      params: [],
+      locals: [],
+      localMap: new Map(),
+      returnType: resultType,
+      body: [],
+      blockDepth: 0,
+      breakStack: [],
+      continueStack: [],
+      labelMap: new Map(),
+      savedBodies: [],
+    };
+    // Emit BEFORE minting: the carrier's own-property seed mints helpers of its
+    // own, and nested mints must get their ordinals first (the same order
+    // `ensureVecConstructorCarrier` uses).
+    emitBuiltinConstructorIdentity(ctx, fctx, builtinName);
+
+    const funcIdx = mintDefinedFunc(ctx);
+    pushDefinedFunc(ctx, funcIdx, {
+      name,
+      typeIdx,
+      locals: fctx.locals,
+      body: fctx.body,
+      exported: false,
+    });
+    ctx.funcMap.set(name, funcIdx);
+  }
+}
+
+/**
+ * The `"constructor"` arm prepended onto `__extern_get`'s body at finalize.
+ *
+ * `__extern_get(externref o /*0*\/, externref key /*1*\/) -> externref`. The arm
+ * appends its own scratch locals to `fn.locals` (caller passes the current
+ * count so the indices line up: local `n` is operand index `2 + n`).
+ *
+ * Answers `[]` — no arm at all — when the accessors were never demanded or when
+ * any structural prerequisite is missing, so the caller can splice
+ * unconditionally.
+ */
+export function wrapperConstructorArmInstrs(
+  ctx: CodegenContext,
+  opts: {
+    /** `key == "constructor"` test, leaving an i32 (caller owns the numbering). */
+    keyEqualsConstructor: Instr[] | null;
+    /** Index of the first scratch local this arm may claim. */
+    firstLocalIndex: number;
+    objectTypeIdx: number;
+    propEntryTypeIdx: number;
+  },
+): { instrs: Instr[]; locals: { name: string; type: ValType }[] } {
+  const empty = {
+    instrs: [] as Instr[],
+    locals: [] as { name: string; type: ValType }[],
+  };
+  if (!ctx.standalone) return empty;
+  const { keyEqualsConstructor, firstLocalIndex, objectTypeIdx, propEntryTypeIdx } = opts;
+  if (!keyEqualsConstructor) return empty;
+  const objFindIdx = ctx.funcMap.get("__obj_find");
+  if (objFindIdx === undefined) return empty;
+
+  const carriers = WRAPPER_BUILTINS.map((n) => ({
+    name: n,
+    idx: ctx.funcMap.get(carrierFnName(n)),
+  }));
+  if (carriers.every((c) => c.idx === undefined)) return empty; // never demanded
+
+  const anyStr = ctx.anyStrTypeIdx;
+  const boxNum = ctx.nativeBoxNumberTypeIdx;
+  const boxBool = ctx.nativeBoxBooleanTypeIdx;
+
+  // locals: [0] the cast `$Object`, [1] the `[[PrimitiveValue]]` $PropEntry.
+  const objLocal = firstLocalIndex;
+  const slotLocal = firstLocalIndex + 1;
+  const locals = [
+    {
+      name: "wco",
+      type: { kind: "ref_null", typeIdx: objectTypeIdx } as ValType,
+    },
+    {
+      name: "wce",
+      type: { kind: "ref_null", typeIdx: propEntryTypeIdx } as ValType,
+    },
+  ];
+
+  const slotValue = (): Instr[] => [
+    { op: "local.get", index: slotLocal },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: ENTRY_VALUE },
+  ];
+  const answer = (idx: number): Instr[] => [{ op: "call", funcIdx: idx }, { op: "return" }];
+  const stringIdx = carriers[0]!.idx;
+  const numberIdx = carriers[1]!.idx;
+  const booleanIdx = carriers[2]!.idx;
+
+  const classify: Instr[] = [
+    ...(stringIdx !== undefined && anyStr >= 0
+      ? ([
+          ...slotValue(),
+          { op: "ref.test", typeIdx: anyStr },
+          { op: "if", blockType: { kind: "empty" }, then: answer(stringIdx) },
+        ] satisfies Instr[])
+      : []),
+    ...(numberIdx !== undefined && boxNum >= 0
+      ? ([
+          ...slotValue(),
+          { op: "ref.test", typeIdx: boxNum },
+          ...slotValue(),
+          { op: "ref.test", typeIdx: I31_HEAP_TYPE },
+          { op: "i32.or" },
+          { op: "if", blockType: { kind: "empty" }, then: answer(numberIdx) },
+        ] satisfies Instr[])
+      : []),
+    ...(booleanIdx !== undefined && boxBool >= 0
+      ? ([
+          ...slotValue(),
+          { op: "ref.test", typeIdx: boxBool },
+          { op: "if", blockType: { kind: "empty" }, then: answer(booleanIdx) },
+        ] satisfies Instr[])
+      : []),
+  ];
+  if (classify.length === 0) return empty;
+
+  const instrs: Instr[] = [
+    ...keyEqualsConstructor,
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: objectTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: 0 },
+            { op: "any.convert_extern" },
+            { op: "ref.cast", typeIdx: objectTypeIdx },
+            { op: "local.set", index: objLocal },
+            // §7.3.2: an OWN `constructor` shadows the inherited carrier.
+            { op: "local.get", index: objLocal },
+            { op: "ref.as_non_null" },
+            { op: "local.get", index: 1 },
+            { op: "call", funcIdx: objFindIdx },
+            { op: "ref.is_null" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                // wrapper? — the [[PrimitiveValue]] internal slot decides.
+                { op: "local.get", index: objLocal },
+                { op: "ref.as_non_null" },
+                ...nativeStringLiteralInstrs(ctx, WRAPPER_PRIMITIVE_KEY),
+                { op: "extern.convert_any" },
+                { op: "call", funcIdx: objFindIdx },
+                { op: "local.set", index: slotLocal },
+                { op: "local.get", index: slotLocal },
+                { op: "ref.is_null" },
+                { op: "i32.eqz" },
+                { op: "if", blockType: { kind: "empty" }, then: classify },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  ];
+  return { instrs, locals };
+}

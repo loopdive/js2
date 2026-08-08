@@ -91,6 +91,23 @@ export const BUILTIN_CONSTRUCTOR_IDENTITY_NAMES: ReadonlySet<string> = new Set([
   "DisposableStack",
   "AsyncDisposableStack",
   "SuppressedError",
+  // (#4223) The primitive-WRAPPER constructors. #3006 left them out and #4200
+  // recorded the consequence explicitly: with no carrier, the bare identifier
+  // read `null` while `<B>.prototype.constructor` read `undefined`, so
+  // `Object(5).constructor === Number` compared `undefined === null` — false on
+  // BOTH sides, and no amount of work on the wrapper's `.constructor` read
+  // could have made it true. The carrier is what makes the RHS a real object.
+  //
+  // Safe by the same argument as the Error family above: every SYNTACTIC use of
+  // these names is intercepted before identifier resolution — `Number(x)` /
+  // `new Number(x)` at the call/construct site, `Number.MAX_VALUE` and
+  // `Number.prototype` at the property-access site, `typeof Number` at the
+  // typeof fold, `x instanceof Number` at the instanceof lowering. Only the
+  // BARE-VALUE read changes, and it changes from `ref.null.extern` (a value no
+  // conforming program can observe as the constructor) to the carrier.
+  "Number",
+  "String",
+  "Boolean",
 ]);
 
 export function isBuiltinConstructorIdentityName(name: string): boolean {
