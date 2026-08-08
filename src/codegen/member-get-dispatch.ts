@@ -61,6 +61,14 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { undefinedExternInstrs } from "./any-helpers.js";
 import { presenceTestInstrs } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
 import { coldFieldReadArm, findColdStructsForField } from "./fnctor-cold-tail.js"; // (#3927) hot/cold fnctor split
+import {
+  findFnctorLayoutStructsForField,
+  findFnctorResidStructsForField,
+  layoutFieldReadInstrs,
+  layoutMatchTestInstrs,
+  residFieldReadInstrs,
+  residMatchTestInstrs,
+} from "./fnctor-layout-emit.js"; // (#3927) per-type layouts
 
 /** Mangle a property name into the reserved member-get dispatcher name. */
 function dispatcherName(propName: string): string {
@@ -551,6 +559,14 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
     // host/sidecar fallback, which for a split field would answer `undefined`.
     const coldLocs = findColdStructsForField(ctx, propName);
     let coldLocalIdx = -1;
+    // (#3927 per-type layouts) Layout + resid arms. The inline layout arms come
+    // first (a layout that carries the field wins), the resid arms are each
+    // family's terminal (their `ref.test $base` matches every family member),
+    // and both sit AFTER the cold arms and BEFORE the host/sidecar fallback.
+    // Match tests are combined i32s (`layoutMatchTestInstrs`) so each arm
+    // embeds its `next` chain exactly once (#1302).
+    const layoutLocs = findFnctorLayoutStructsForField(ctx, propName);
+    const residLocs = findFnctorResidStructsForField(ctx, propName);
 
     let usedSentinelBox = false;
     // (#2963) Locals layout: 1 = __any (anyref); with method arms 2 = __mres
@@ -558,8 +574,47 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
     // method arms the sentinel f64 scratch keeps its legacy slot 2
     // (byte-identical for every dispatcher with no method arm).
     const f64ScratchIdx = methodArms.length > 0 ? 3 : 2;
+    const buildResidArmChain = (idx: number): Instr[] => {
+      if (idx >= residLocs.length || coldLocalIdx < 0) return fallback;
+      const loc = residLocs[idx]!;
+      return [
+        ...residMatchTestInstrs(loc, 1),
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } as ValType },
+          then: residFieldReadInstrs(
+            loc,
+            1,
+            coldLocalIdx,
+            { kind: "externref" },
+            undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }],
+            coercionInstrs(ctx, loc.fieldType, { kind: "externref" }),
+          ),
+          else: buildResidArmChain(idx + 1),
+        },
+      ];
+    };
+    const buildLayoutArmChain = (idx: number): Instr[] => {
+      if (idx >= layoutLocs.length) return buildResidArmChain(0);
+      const loc = layoutLocs[idx]!;
+      return [
+        ...layoutMatchTestInstrs(loc, 1),
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } as ValType },
+          then: layoutFieldReadInstrs(
+            loc,
+            1,
+            { kind: "externref" },
+            undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }],
+            coercionInstrs(ctx, loc.fieldType, { kind: "externref" }),
+          ),
+          else: buildLayoutArmChain(idx + 1),
+        },
+      ];
+    };
     const buildColdArmChain = (idx: number): Instr[] => {
-      if (idx >= coldLocs.length || coldLocalIdx < 0) return fallback;
+      if (idx >= coldLocs.length || coldLocalIdx < 0) return buildLayoutArmChain(0);
       const loc = coldLocs[idx]!;
       return [
         { op: "local.get", index: 1 }, // __any
@@ -714,7 +769,7 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
     // locals precede it. `usedSentinelBox` is only known after a build, so build
     // once to settle it, compute the index, then build for real. The builders
     // are pure, so the discarded first build costs only time.
-    if (coldLocs.length > 0) {
+    if (coldLocs.length > 0 || residLocs.length > 0) {
       buildAccessorArmChain(0);
       coldLocalIdx = 2 + (methodArms.length > 0 ? 1 : 0) + (usedSentinelBox ? 1 : 0);
     }
