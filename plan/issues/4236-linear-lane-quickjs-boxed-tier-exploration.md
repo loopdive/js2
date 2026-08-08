@@ -166,6 +166,40 @@ indirect eval. js2wasm AOT number from
 `node --import tsx scripts/generate-npm-compat-report.mjs --only acorn
 --perf-only --lane standalone-dynamic` (wasmUs 84576, nodeUs 11913).
 
+## Decision (project lead, 2026-08-08) — ADOPT the linear-lane boxed tier
+
+Stakeholder decision after the spike + benchmark review: **adopt QuickJS's
+`JSValue` as the linear lane's boxed/dynamic representation**, under the
+representation policy discussed and agreed in-session:
+
+1. **Typed code is untouched** — unboxed `i32`/`f64` and the existing static
+   fat-slot layouts stay; they beat any tagged representation and carry the
+   measured 4× AOT-over-QuickJS win. The program-level perf promise rests on
+   frontier-analysis precision, not on the representation choice.
+2. **`JSValue` is OPAQUE by default** — all manipulation through the C API
+   with codegen-enforced refcount discipline; internal layouts are never
+   open-coded (unstable ABI).
+3. **Immediates get inline fast paths via BUILD-TIME TAG EXTRACTION** — a tiny
+   C shim in the artifact exports the tag constants / float64 encoding, so
+   number box/unbox compiles to `i64.reinterpret_f64`-class sequences learned
+   from the pinned build rather than hardcoded. Refcounted values stay
+   API-mediated.
+4. **Migration story**: the C-API seam is the engine boundary. If the dynamic
+   tier ever becomes hot enough to justify an owned runtime (own NaN-box,
+   tracing GC, specialized accessors), it swaps in behind the same seam; until
+   then the borrowed runtime carries builtins, RegExp, and eval at QuickJS
+   speed. Nothing about this decision forecloses that future.
+
+Rationale in one line: adoption costs nothing where js2wasm is fast, buys a
+finished runtime where the linear lane has nothing today (no dynamic value
+representation exists — `layout.ts` is a static fat-slot model), and caps only
+the cold dynamic tier at best-in-class-interpreter speed.
+
+Slice 1 (the wasi-built artifact + tag-extraction shim + link re-proof) is
+dispatched; findings land below when complete. The variant-C (WasmGC-lane)
+question is SEPARATE and remains an estimate — see its own section's verdict
+(MVP tiered provider ≈ one budget window; full membrane deferred).
+
 ## Spike findings (2026-08-08)
 
 Executes acceptance box 1 (the link + round-trip + measurement spike). Probe
