@@ -115,8 +115,8 @@ const CASES: Record<string, [string, number]> = {
   // (#4161) B1/B2 flipped DELIBERATELY from the [2] refusal pins: the closure
   // bag is now authoritative for a FUNCTION Properties map (defines land in the
   // same #3468 bag assignments do, via the #4161 applier arms), so the gate
-  // enumerates the bag instead of refusing. The ARRAY pins (C1/C2) must NOT
-  // move — a vec's defines still land in the #3251 overlay, not its bag.
+  // enumerates the bag instead of refusing. (#4230 later moved C1 too, by a
+  // different route — see the note there; C2 still holds.)
   "B1 FUNCTION Properties -> bag enumerated, define lands (#4161) [0]": [
     `export function test(): number {
       const obj: any = {};
@@ -141,14 +141,23 @@ const CASES: Record<string, [string, number]> = {
     }`,
     0,
   ],
-  "C1 empty ARRAY Properties with expando -> still refuses [2]": [
+  // (#4230) C1 flipped DELIBERATELY from its [2] refusal pin, on the same
+  // grounds B1/B2 flipped for closures — but reached differently. A vec's own
+  // named properties are split across TWO stores (assignments → the #3537 bag,
+  // defines → the #3251 overlay companion), so no single store is
+  // authoritative and the C1 comment above was right to say so. #4230's
+  // finding is that the gate needs a COMPLETE key source, not a single one:
+  // `__vec_props_keysrc` unions the two, which is exactly as complete.
+  // C2 must still NOT move — an INDEXED vec has own keys in `$data`, which is
+  // in neither side table, so it keeps refusing under [SITE-PROPS-VEC-INDEXED].
+  "C1 empty ARRAY Properties with expando -> bag ∪ overlay enumerated (#4230) [0]": [
     `export function test(): number {
       const obj: any = {};
       const props: any = [];
       props.prop = { value: 8, enumerable: true };
       try { Object.defineProperties(obj, props); return obj.hasOwnProperty("prop") ? (obj.prop === 8 ? 0 : 4) : 1; } catch (e) { return 2; }
     }`,
-    2,
+    0,
   ],
   "C2 NON-empty ARRAY Properties -> still refuses loudly [2]": [
     `export function test(): number {

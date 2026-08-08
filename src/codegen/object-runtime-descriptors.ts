@@ -43,6 +43,9 @@ import { bagGopdBetween, bagKeysIf } from "./carrier-bag-visibility.js"; // (#40
 // (#4161) DEFINE-side closure-bag arms — Object.defineProperty/defineProperties
 // on a FUNCTION receiver store into the #3468 own-property bag.
 import { closureBagSubstitutionArm, closurePropertiesBagArm, isClosureCarrierInstrs } from "./carrier-bag-define.js";
+// (#4230) VEC `Properties` maps — a complete own-key source built from the
+// #3537 bag ∪ the #3251 overlay companion.
+import { reserveVecPropsKeySource, vecPropertiesKeySourceArm } from "./vec-props-key-source.js";
 
 /**
  * Everything the descriptor/integrity block reads from the enclosing
@@ -1182,6 +1185,52 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       nonClosureFallback: throwUnsupported(" [SITE-PROPS-BAG-NOT-AUTHORITATIVE]"),
     });
 
+    // (#4230) VEC `Properties` map. Tried BEFORE the closure arm (a vec is
+    // never a closure, so the order is only about which fallback wraps which)
+    // and carrying the closure arm as its own non-vec fallback, so the two
+    // compose into one chain ending in the unchanged refusal. The key source is
+    // the #3537 bag ∪ the #3251 overlay companion — see
+    // `vec-props-key-source.ts` for why a UNION is as sound as the "one
+    // authoritative store" the old comment demanded, and why an indexed vec
+    // still refuses.
+    reserveVecPropsKeySource(ctx);
+    // Bag local (22) is appended only when the closure arm exists, so the key
+    // source local lands at 22 or 23 accordingly — appended either way, so no
+    // existing local index shifts.
+    const L_VEC_KEYSRC = propsClosureArm ? 23 : 22;
+    const propsVecArm = vecPropertiesKeySourceArm(ctx, {
+      propsLocalIdx: 1,
+      descsAnyLocalIdx: L_DESCS_ANY,
+      keySrcLocalIdx: L_VEC_KEYSRC,
+      indexedFallback: throwUnsupported(" [SITE-PROPS-VEC-INDEXED]"),
+      nonVecFallback: propsClosureArm ?? throwUnsupported(" [SITE-PROPS-BAG-NOT-AUTHORITATIVE]"),
+    });
+    /** The composed carrier chain: vec → closure → refusal. */
+    const propsCarrierArm = propsVecArm ?? propsClosureArm;
+
+    // (#4230) `[] -> [i32]` — does receiver `O` have SOMEWHERE to store a
+    // descriptor? Shared by the eager (non-standalone) and deferred
+    // (standalone) forms of the `[SITE-O-NO-CARRIER]` refusal, so the two can
+    // never drift apart.
+    const oCarrierPresentTest: Instr[] = [
+      ...(isVecCarrierIdx === undefined
+        ? ([{ op: "i32.const", value: 0 }] satisfies Instr[])
+        : ([
+            { op: "local.get", index: 0 },
+            { op: "call", funcIdx: isVecCarrierIdx },
+          ] satisfies Instr[])),
+      ...(isClosureCarrierInstrs(ctx, 0) ?? ([{ op: "i32.const", value: 0 }] satisfies Instr[])),
+      { op: "i32.or" },
+    ];
+    /**
+     * Defer the receiver-carrier refusal past the key walk (standalone only —
+     * gc/host keeps the exact prior instruction sequence AND local vector, so
+     * its output stays byte-identical).
+     */
+    const deferOCarrierRefusal = ctx.standalone;
+    /** Recorded verdict local — APPENDED last, standalone only. */
+    const L_O_NOCARRIER = (propsClosureArm ? 23 : 22) + (propsVecArm ? 1 : 0);
+
     const readBooleanFlag = (key: string, specifiedBit: number, valueBit: number, marksData: boolean): Instr[] => [
       ...hasField(key),
       {
@@ -1355,24 +1404,41 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
           // the appliers' terminal arm for a carrier-less receiver is a LENIENT
           // NO-OP, and letting one through would trade a loud refusal for a
           // silent wrong answer.
-          ...(isVecCarrierIdx === undefined && isClosureCarrierInstrs(ctx, 0) === undefined
-            ? throwUnsupported(" [SITE-O-NO-CARRIER]")
-            : ([
-                ...(isVecCarrierIdx === undefined
-                  ? ([{ op: "i32.const", value: 0 }] satisfies Instr[])
-                  : ([
-                      { op: "local.get", index: 0 },
-                      { op: "call", funcIdx: isVecCarrierIdx },
-                    ] satisfies Instr[])),
-                ...(isClosureCarrierInstrs(ctx, 0) ?? ([{ op: "i32.const", value: 0 }] satisfies Instr[])),
-                { op: "i32.or" },
+          //
+          // (#4230) …but only when something is actually going to be DEFINED.
+          // The receiver needs a store for a descriptor, not for the absence of
+          // one: with `Properties` a primitive (`Object.defineProperties(o,
+          // -12)`), ToObject yields a fresh wrapper with no own enumerable
+          // properties, the key walk is empty, and "return O unchanged" is the
+          // complete spec answer for ANY receiver. So under standalone the
+          // verdict is RECORDED here and the throw is deferred to just before
+          // pass 2, guarded on a non-empty gathered set. Strictly narrowing —
+          // every input that refused before and still has work to do still
+          // refuses, with the same message and the same tag.
+          ...(deferOCarrierRefusal
+            ? ([
+                ...oCarrierPresentTest,
                 { op: "i32.eqz" },
                 {
                   op: "if",
                   blockType: { kind: "empty" },
-                  then: throwUnsupported(" [SITE-O-NO-CARRIER]"),
+                  then: [
+                    { op: "i32.const", value: 1 },
+                    { op: "local.set", index: L_O_NOCARRIER },
+                  ],
                 },
-              ] satisfies Instr[])),
+              ] satisfies Instr[])
+            : isVecCarrierIdx === undefined && isClosureCarrierInstrs(ctx, 0) === undefined
+              ? throwUnsupported(" [SITE-O-NO-CARRIER]")
+              : ([
+                  ...oCarrierPresentTest,
+                  { op: "i32.eqz" },
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: throwUnsupported(" [SITE-O-NO-CARRIER]"),
+                  },
+                ] satisfies Instr[])),
         ],
       },
 
@@ -1516,11 +1582,19 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
           //     (`tests/issue-3957.test.ts`'s Array invariant case catches
           //     it). That arm becomes sound the moment ONE store is
           //     authoritative for a vec's own properties (#4010).
-          ...(propsClosureArm === undefined
+          //
+          // (f) a VEC (Array / `arguments`) `Properties` map (#4230): substitute
+          //     a merged key source built from BOTH of its stores. The (e) note
+          //     above described this as blocked on ONE store becoming
+          //     authoritative; #4230's finding is that COMPLETENESS is the real
+          //     precondition and a union over the two enumerable stores supplies
+          //     it. An INDEXED vec still refuses — its elements are own keys
+          //     that live in neither side table.
+          ...(propsCarrierArm === undefined
             ? throwUnsupported(" [SITE-PROPS-BAG-NOT-AUTHORITATIVE]")
             : ([
-                ...propsClosureArm,
-                // Reached only on the substituted-bag path (the other arms
+                ...propsCarrierArm,
+                // Reached only on a substituted-map path (the other arms
                 // return/throw): mirror the `$Object` branch's cast so the key
                 // walk below reads a non-null L_DESCS.
                 { op: "local.get", index: L_DESCS_ANY },
@@ -1699,6 +1773,19 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
         ],
       },
 
+      // (#4230) The deferred `[SITE-O-NO-CARRIER]` verdict, now that the key
+      // walk has run: refuse only if the receiver has no store AND there is at
+      // least one descriptor to apply. An empty gathered set means the whole
+      // operation is "return O", which every receiver can do.
+      ...(deferOCarrierRefusal
+        ? ([
+            { op: "local.get", index: L_O_NOCARRIER },
+            { op: "local.get", index: L_M },
+            { op: "i32.and" },
+            { op: "if", blockType: { kind: "empty" }, then: throwUnsupported(" [SITE-O-NO-CARRIER]") },
+          ] satisfies Instr[])
+        : []),
+
       // Pass 2: apply the gathered records through the existing single-property
       // helpers. No target mutation happened before this point.
       { op: "i32.const", value: 0 },
@@ -1804,6 +1891,14 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
         // (#4161) closure Properties bag (local 22) — standalone/wasi only.
         ...(propsClosureArm
           ? ([{ name: "bag", type: { kind: "externref" } }] as { name: string; type: ValType }[])
+          : []),
+        // (#4230) merged vec Properties key source — standalone/wasi only.
+        ...(propsVecArm
+          ? ([{ name: "vecKeySrc", type: { kind: "externref" } }] as { name: string; type: ValType }[])
+          : []),
+        // (#4230) deferred receiver-carrier verdict — standalone only.
+        ...(deferOCarrierRefusal
+          ? ([{ name: "oNoCarrier", type: { kind: "i32" } }] as { name: string; type: ValType }[])
           : []),
       ],
       body,
