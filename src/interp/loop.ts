@@ -45,6 +45,7 @@ import {
   BUILTIN_OBJECT_DEFINE_PROPERTY,
   BUILTIN_PUSH_OBJECT_ENV,
   BUILTIN_PUSH_LEXICAL_ENV,
+  BUILTIN_REGEXP_CREATE,
   BUILTIN_RESTORE_ENV,
   BUILTIN_SAVE_ENV,
   OP_MASK,
@@ -57,7 +58,11 @@ import {
   buildForInKeys,
   buildForOfValues,
   buildObjectLiteral,
+  buildRegExpLiteral,
   anyAdd,
+  anyBitAnd,
+  anyBitOr,
+  anyBitXor,
   anyDiv,
   anyDelete,
   anyGe,
@@ -73,6 +78,7 @@ import {
   anySet,
   anyShl,
   anyShr,
+  anyShrU,
   anyStrictEq,
   anySub,
   anyTypeof,
@@ -973,6 +979,18 @@ function run(bottom: Frame): JSValue {
           case Op.Shr:
             acc = anyShr(regs[a], acc);
             break;
+          case Op.ShrU:
+            acc = anyShrU(regs[a], acc);
+            break;
+          case Op.BitOr:
+            acc = anyBitOr(regs[a], acc);
+            break;
+          case Op.BitAnd:
+            acc = anyBitAnd(regs[a], acc);
+            break;
+          case Op.BitXor:
+            acc = anyBitXor(regs[a], acc);
+            break;
           case Op.Neg:
             acc = anyNeg(acc);
             break;
@@ -1365,6 +1383,8 @@ function callBuiltin(builtinId: number, regs: Regs, base: number, argc: number, 
       return regs[base];
     case BUILTIN_OBJECT_DEFINE_PROPERTY:
       return definePropertyWithMappedArguments(frame.envRec, regs[base], regs[base + 1], regs[base + 2]);
+    case BUILTIN_REGEXP_CREATE:
+      return buildRegExpLiteral(regs[base], regs[base + 1]);
     case BUILTIN_FOR_IN_KEYS:
       return buildForInKeys(regs[base]);
     case BUILTIN_FOR_OF_VALUES:

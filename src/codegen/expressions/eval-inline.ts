@@ -405,6 +405,102 @@ function foldedEvalDeclarationNames(sourceFile: ts.SourceFile): FoldedEvalDeclar
   return { varNames, blockFunctionNames };
 }
 
+/**
+ * True when the eval Script declares a FunctionDeclaration (including a
+ * generator) directly at its top level — the shape whose
+ * EvalDeclarationInstantiation step 9 must create a *deletable* binding in the
+ * caller's VariableEnvironment and instantiate the function object BEFORE any
+ * statement runs.
+ *
+ * Deliberately narrower than `declarationNames.varNames`: plain `var`-only
+ * bodies in a function caller keep the existing splice, which is what preserves
+ * the 192-file `declare-arguments` matrix (all function-scope, all var-only).
+ * Block-nested function declarations are Annex-B B.3.3's business and keep
+ * their own arm.
+ */
+function foldedEvalHasTopLevelFunctionDeclaration(sourceFile: ts.SourceFile): boolean {
+  for (const statement of sourceFile.statements) {
+    if (ts.isFunctionDeclaration(statement) && statement.name) return true;
+  }
+  return false;
+}
+
+/**
+ * Top-level LexicallyDeclaredNames of an eval Script: `let`/`const` (and
+ * `using`) declarations plus named class declarations that are DIRECT children
+ * of the foreign SourceFile. Block/loop/switch-nested lexicals belong to their
+ * own nested record, which the ordinary lowering already scopes.
+ */
+function foldedEvalTopLevelLexicalNames(sourceFile: ts.SourceFile): Set<string> {
+  const names = new Set<string>();
+  const LEXICAL_FLAGS = ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing;
+  for (const statement of sourceFile.statements) {
+    if (ts.isVariableStatement(statement)) {
+      if ((statement.declarationList.flags & LEXICAL_FLAGS) === 0) continue;
+      for (const declaration of statement.declarationList.declarations) {
+        addFoldedEvalBindingNames(declaration.name, names);
+      }
+    } else if (ts.isClassDeclaration(statement) && statement.name) {
+      names.add(statement.name.text);
+    }
+  }
+  return names;
+}
+
+/**
+ * True when the eval body applies `typeof` to one of its OWN lexical bindings
+ * before that binding's declaration — a temporal-dead-zone read that must throw
+ * ReferenceError (§13.5.3.1).
+ *
+ * The splice cannot express it. `typeof-delete.ts` resolves the operand through
+ * `checker.getSymbolAtLocation`, and a FOREIGN eval identifier has no checker
+ * symbol at all, so it takes the genuinely-unresolvable arm and statically folds
+ * to `"undefined"` — silently erasing the required error. (A bare read of the
+ * same binding is fine: it misses `localMap` differently and reaches the TDZ
+ * check.) Route these bodies to the bytecode provider, whose lexical records
+ * carry real TDZ state. This is the §3 "never splice-and-ignore" rule: an early
+ * error the fold cannot reproduce must not be folded away.
+ */
+function foldedEvalTypeofBeforeLexicalDeclaration(sourceFile: ts.SourceFile): boolean {
+  const LEXICAL_FLAGS = ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing;
+  const firstDeclaration = new Map<string, number>();
+  const record = (name: string, at: number): void => {
+    const previous = firstDeclaration.get(name);
+    if (previous === undefined || at < previous) firstDeclaration.set(name, at);
+  };
+  const collect = (node: ts.Node): void => {
+    if (ts.isFunctionLike(node)) return;
+    if (ts.isVariableStatement(node) && (node.declarationList.flags & LEXICAL_FLAGS) !== 0) {
+      const names = new Set<string>();
+      for (const declaration of node.declarationList.declarations) addFoldedEvalBindingNames(declaration.name, names);
+      for (const name of names) record(name, node.getStart(sourceFile));
+      return;
+    }
+    if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
+      if (ts.isClassDeclaration(node) && node.name) record(node.name.text, node.getStart(sourceFile));
+      return;
+    }
+    ts.forEachChild(node, collect);
+  };
+  ts.forEachChild(sourceFile, collect);
+  if (firstDeclaration.size === 0) return false;
+
+  let found = false;
+  const scan = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isTypeOfExpression(node) && ts.isIdentifier(node.expression)) {
+      const declaredAt = firstDeclaration.get(node.expression.text);
+      if (declaredAt !== undefined && node.getStart(sourceFile) < declaredAt) {
+        found = true;
+        return;
+      }
+    }
+    ts.forEachChild(node, scan);
+  };
+  ts.forEachChild(sourceFile, scan);
+  return found;
+}
+
 function foldedEvalLowerLexicalCollision(varNames: ReadonlySet<string>, fctx: FunctionContext): string | undefined {
   const lexicalNames = currentDirectEvalLexicalBindingNames(fctx);
   if (lexicalNames.size === 0) return undefined;
@@ -639,6 +735,132 @@ function restoreFoldedDirectEvalVarScope(fctx: FunctionContext, shadows: readonl
   }
 }
 
+interface FoldedEvalLexicalShadow {
+  name: string;
+  /** Caller's prior `localMap` entry, if any. */
+  localIdx: number | undefined;
+  /** Caller's prior `boxedCaptures` entry, if any. */
+  boxed: { refCellTypeIdx: number; valType: ValType } | undefined;
+  /** Caller's prior `tdzFlagLocals` entry, if any. */
+  tdzFlag: number | undefined;
+  /** Caller's prior `boxedTdzFlags` entry, if any. */
+  boxedTdz: { refCellTypeIdx: number; localIdx: number } | undefined;
+}
+
+interface FoldedEvalLexicalScope {
+  shadows: FoldedEvalLexicalShadow[];
+  /** `preHoistedLetConstSlots` keys present before the splice (node-keyed, so
+   * the eval body's foreign declarations can only ADD entries). */
+  preHoistedKeys: Set<ts.VariableDeclaration> | undefined;
+  /** `fctx.locals.length` before the splice — everything past this mark is a
+   * slot the eval body allocated. */
+  localsMark: number;
+  /** The eval body's top-level lexical names, for the slot-rename sweep. */
+  lexNames: ReadonlySet<string>;
+}
+
+/**
+ * Mangling for a discarded eval-lexical slot. `@` cannot appear in a JS
+ * identifier, so no user binding and no `__tdz_<name>` probe can ever match the
+ * renamed slot; the slot index keeps it unique. It also deliberately does NOT
+ * start with `__`, which keeps the compiler-temp deduplicator
+ * (`context/locals.ts`, `__`-prefixed names only) away from it.
+ */
+function discardedEvalLexicalSlotName(name: string, slotIdx: number, tdz: boolean): string {
+  return `${name}@eval${tdz ? "tdz" : "lex"}$${slotIdx}`;
+}
+
+/**
+ * §19.2.1 PerformEval steps 17-20: an eval Script gets a FRESH
+ * `LexicalEnvironment` that is discarded when the eval returns. The foreign-AST
+ * splice deliberately shares the caller's binding maps (that is how sloppy
+ * eval-created `var`s persist, #1102 AC2), so `hoistLetConstWithTdz` used to
+ * register the eval body's top-level `let`/`const`/class into the CALLER's live
+ * `localMap` and never remove them — the binding leaked, and a later caller read
+ * of the name resolved instead of producing the required unresolved reference.
+ *
+ * `enter` shadows those names (snapshotting whatever the caller had, then
+ * removing it so the eval declares a genuinely fresh binding); `restore` drops
+ * the eval-created entries and reinstates the snapshot. Vars are deliberately
+ * untouched.
+ */
+function enterFoldedEvalLexicalScope(fctx: FunctionContext, lexNames: ReadonlySet<string>): FoldedEvalLexicalScope {
+  const shadows: FoldedEvalLexicalShadow[] = [];
+  if (lexNames.size === 0) {
+    return { shadows, preHoistedKeys: undefined, localsMark: fctx.locals.length, lexNames };
+  }
+  for (const name of lexNames) {
+    shadows.push({
+      name,
+      localIdx: fctx.localMap.get(name),
+      boxed: fctx.boxedCaptures?.get(name),
+      tdzFlag: fctx.tdzFlagLocals?.get(name),
+      boxedTdz: fctx.boxedTdzFlags?.get(name),
+    });
+    fctx.localMap.delete(name);
+    fctx.boxedCaptures?.delete(name);
+    fctx.tdzFlagLocals?.delete(name);
+    fctx.boxedTdzFlags?.delete(name);
+  }
+  return {
+    shadows,
+    preHoistedKeys: fctx.preHoistedLetConstSlots ? new Set(fctx.preHoistedLetConstSlots.keys()) : new Set(),
+    localsMark: fctx.locals.length,
+    lexNames,
+  };
+}
+
+function restoreFoldedEvalLexicalScope(fctx: FunctionContext, scope: FoldedEvalLexicalScope): void {
+  if (scope.shadows.length === 0) return;
+  for (const shadow of scope.shadows) {
+    if (shadow.localIdx !== undefined) fctx.localMap.set(shadow.name, shadow.localIdx);
+    else fctx.localMap.delete(shadow.name);
+
+    if (shadow.boxed) (fctx.boxedCaptures ??= new Map()).set(shadow.name, shadow.boxed);
+    else fctx.boxedCaptures?.delete(shadow.name);
+
+    if (shadow.tdzFlag !== undefined) (fctx.tdzFlagLocals ??= new Map()).set(shadow.name, shadow.tdzFlag);
+    else fctx.tdzFlagLocals?.delete(shadow.name);
+
+    if (shadow.boxedTdz) (fctx.boxedTdzFlags ??= new Map()).set(shadow.name, shadow.boxedTdz);
+    else fctx.boxedTdzFlags?.delete(shadow.name);
+  }
+  // Drop the per-declaration pre-hoist records the splice added. They are keyed
+  // by the FOREIGN declaration nodes, so anything absent from the snapshot key
+  // set belongs to the discarded eval lexical record.
+  const priorKeys = scope.preHoistedKeys;
+  if (priorKeys && fctx.preHoistedLetConstSlots) {
+    for (const key of fctx.preHoistedLetConstSlots.keys()) {
+      if (!priorKeys.has(key)) fctx.preHoistedLetConstSlots.delete(key);
+    }
+  }
+
+  // Dropping the NAME→slot mappings above is not sufficient on its own: the
+  // #1177 block-scope-shadow rescue in `closures/arrow-phases.ts` (and its twin
+  // in `statements/nested-declarations.ts`) deliberately falls back to scanning
+  // `fctx.locals` BY NAME when `localMap` misses, so that a closure built inside
+  // a block can still capture a pre-hoisted-then-shadowed slot. That rescan
+  // happily resurrects the eval's ORPHANED slot for a closure created AFTER the
+  // eval returned — which is exactly the leak this scope is meant to close
+  // (`eval('let x = 3'); assert.throws(ReferenceError, function(){ x; })` did
+  // not throw, because the lifted thunk captured the orphan).
+  //
+  // Rename the slots the eval allocated so no by-name probe can find them. The
+  // slot indices are untouched, so bytecode already emitted — including
+  // captures planned for closures created INSIDE the eval body, which store the
+  // resolved index — keeps working.
+  for (let i = scope.localsMark; i < fctx.locals.length; i++) {
+    const slot = fctx.locals[i]!;
+    if (scope.lexNames.has(slot.name)) {
+      slot.name = discardedEvalLexicalSlotName(slot.name, fctx.params.length + i, false);
+      continue;
+    }
+    if (slot.name.startsWith("__tdz_") && scope.lexNames.has(slot.name.slice("__tdz_".length))) {
+      slot.name = discardedEvalLexicalSlotName(slot.name.slice("__tdz_".length), fctx.params.length + i, true);
+    }
+  }
+}
+
 /**
  * Try to inline `eval("<constant>")` at compile time.
  *
@@ -717,6 +939,39 @@ export function tryStaticEvalInline(
   }
   const declarationNames = foldedEvalDeclarationNames(sf);
 
+  // §19.2.1.3 (EvalDeclarationInstantiation) step 5.a: when eval's
+  // VariableEnvironment IS the GlobalEnvironmentRecord, every VarDeclaredName
+  // must miss the Script's lexical (`let`/`const`/class) declarations —
+  // otherwise a runtime SyntaxError. The splice bypasses the runtime EnvRec
+  // walk entirely, so reconstruct the rule here.
+  //
+  // varEnv is global for ALL sloppy indirect eval (its VariableEnvironment is
+  // always the realm global) and for sloppy DIRECT eval whose call executes in
+  // global Script code. The latter is the `__module_init` fctx identity — the
+  // same precedent as `unsupportedGlobalShape` below, and deliberately NOT an
+  // AST parent walk (a nested `eval('eval("var x")')` compiles foreign nodes
+  // whose parents reach the foreign SourceFile, so a walk answers wrongly while
+  // the fctx identity is inherited correctly). It is also deliberately NOT
+  // `directEvalRunsAtScriptGlobal`, which stops at Block/Case/Catch/With: those
+  // change the LexicalEnvironment, never the VariableEnvironment.
+  //
+  // The error is statically certain (the Script's lexical name set is a
+  // compile-time constant), so emit the throw rather than bailing to the
+  // provider — that also covers host/GC mode, where no provider exists.
+  if (!evalIsStrict && (!directEval || fctx.name === "__module_init")) {
+    const globalLexicals = ctx.globalLexicalBindings;
+    if (globalLexicals !== undefined && globalLexicals.size > 0) {
+      for (const name of declarationNames.varNames) {
+        // Annex B.3.3 block functions are excluded: their synthetic outer var
+        // is CANCELLED by a colliding lexical binding, never an error.
+        if (globalLexicals.has(name)) {
+          emitThrowJsError(ctx, fctx, "SyntaxError", `Identifier '${name}' has already been declared`);
+          return { kind: "externref" };
+        }
+      }
+    }
+  }
+
   // A constant direct eval normally splices into the caller and bypasses the
   // runtime EnvRec walk. Reconstruct the one caller-dependent early error that
   // cannot be learned from the foreign Script alone: a sloppy eval var/function
@@ -764,6 +1019,65 @@ export function tryStaticEvalInline(
     if (collidesWithCaller || readsBeforeDeclaration || unsupportedGlobalShape) return undefined;
   }
 
+  // EvalDeclarationInstantiation §19.2.1.3 step 16 / CanDeclareGlobal* (buckets
+  // C+D): when the sloppy eval's varEnv is the GlobalEnvironmentRecord, var and
+  // function declarations must become own (configurable, D=true) properties of
+  // the realm global object, gated by IsExtensible — runtime state the splice
+  // cannot know. The interpreter implements all of it
+  // (`prepareGlobalDeclarations`, `src/interp/eval-environment.ts`); route
+  // there rather than re-deriving the CanDeclare* preflight, the
+  // descriptor-preserving redefinition rules and a `delete`-severing read path
+  // in emitted Wasm.
+  //
+  // Direct eval's varEnv is global exactly when the caller fctx is the module
+  // initializer (blocks/case/catch change the LexicalEnvironment, never the
+  // VariableEnvironment — same predicate precedent as `unsupportedGlobalShape`
+  // above); sloppy INDIRECT eval's varEnv is ALWAYS the realm global,
+  // regardless of call site.
+  //
+  // `declarationNames.varNames` already covers top-level FunctionDeclaration
+  // names, so one predicate serves var + function + generator bodies.
+  // `blockFunctionNames` are deliberately NOT counted — B.3.3 keeps its own arm
+  // above. `evalIsStrict` excludes strict bodies and strict direct-eval callers
+  // (strict eval vars live in a private varEnv, never on the global), which
+  // preserves the #1102 AC2 TS-module lane. Standalone only: WASI has no
+  // provider (a bail would degrade splice into refusal) and host/gc keeps its
+  // existing dynamic `eval` fallback.
+  //
+  // Ordered AFTER the bucket-A global-lexical collision guard above: that error
+  // is statically certain and also covers host mode, so it wins.
+  if (
+    ctx.standalone &&
+    !evalIsStrict &&
+    declarationNames.varNames.size > 0 &&
+    (directEval ? fctx.name === "__module_init" : true)
+  ) {
+    return undefined; // provider owns EvalDeclarationInstantiation here
+  }
+
+  // Same rule one scope down (slice 2): a sloppy DIRECT eval in a FUNCTION
+  // caller whose body declares a top-level FunctionDeclaration. §19.2.1.3 step
+  // 9 requires a *deletable* binding in the caller's VariableEnvironment, with
+  // the function object instantiated before the first statement executes and
+  // remaining mutable afterwards. The splice creates an ordinary caller local
+  // instead: it is not deletable, it is initialized in statement order (so a
+  // preceding read sees `undefined`, not the function), and the binding leaks
+  // past the eval instead of producing the required ReferenceError outside.
+  // The provider models all three via the reified activation cells.
+  //
+  // Keyed on FUNCTION declarations specifically, NOT on `varNames`: the
+  // 192-file `declare-arguments` matrix is entirely function-scope var-only
+  // eval and must keep splicing (named canary in the issue's verification).
+  if (
+    ctx.standalone &&
+    !evalIsStrict &&
+    directEval &&
+    fctx.name !== "__module_init" &&
+    foldedEvalHasTopLevelFunctionDeclaration(sf)
+  ) {
+    return undefined;
+  }
+
   // A direct nested `eval(...)` can recurse through this same constant-fold
   // path. An eval Identifier used as a VALUE cannot: foreign AST identifiers
   // have no checker binding, so the ordinary identifier emitter materializes
@@ -772,6 +1086,12 @@ export function tryStaticEvalInline(
   // to the bytecode provider, where `%eval%` has a real realm-stable marker and
   // alias calls correctly become indirect eval.
   if (ctx.standalone && containsEvalValueReference(sf)) return undefined;
+
+  // A `typeof` of one of the eval body's own lexical bindings, before that
+  // binding's declaration, is a TDZ ReferenceError the splice statically folds
+  // to "undefined" (foreign identifiers have no checker symbol). Let the
+  // provider own it.
+  if (foldedEvalTypeofBeforeLexicalDeclaration(sf)) return undefined;
 
   // Empty program — eval returns undefined.
   if (stmts.length === 0) {
@@ -836,8 +1156,20 @@ export function tryStaticEvalInline(
     if (t !== null) fctx.body.push({ op: "drop" });
   }
 
+  // The eval's LexicalEnvironment is a fresh record discarded on exit, so its
+  // top-level let/const/class must not survive into the caller's binding maps.
+  // Orthogonal to the all-or-nothing indirect `isolateBindings` switch below:
+  // vars keep sharing the caller/global scope, only lexicals are isolated.
+  const lexicalScope = enterFoldedEvalLexicalScope(fctx, foldedEvalTopLevelLexicalNames(sf));
+
   const isolateIndirectBindings = !directEval && hasScriptScopeAnnexBFunction(sf);
-  if (!directEval) return compileInlinedEvalStatements(ctx, fctx, stmts, isolateIndirectBindings);
+  if (!directEval) {
+    try {
+      return compileInlinedEvalStatements(ctx, fctx, stmts, isolateIndirectBindings);
+    } finally {
+      restoreFoldedEvalLexicalScope(fctx, lexicalScope);
+    }
+  }
 
   const savedDirectEvalThisFallback = fctx.directEvalSloppyThisFallback;
   const outerShadows = enterFoldedDirectEvalVarScope(fctx, declarationNames.varNames);
@@ -846,6 +1178,8 @@ export function tryStaticEvalInline(
   try {
     const result = compileInlinedEvalStatements(ctx, fctx, stmts, false);
     if (result === undefined) {
+      // Late bail to the provider: undo BOTH scope mutations before the caller
+      // recompiles the call, or the provider path sees phantom caller bindings.
       restoreFoldedDirectEvalVarScope(fctx, outerShadows);
     } else if (result !== null && outerShadows.length > 0) {
       // Keep the eval-created activation binding visible to later AOT reads and
@@ -854,6 +1188,7 @@ export function tryStaticEvalInline(
     }
     return result;
   } finally {
+    restoreFoldedEvalLexicalScope(fctx, lexicalScope);
     fctx.directEvalSloppyThisFallback = savedDirectEvalThisFallback;
   }
 }
