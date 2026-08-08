@@ -13,6 +13,16 @@ task_type: performance
 area: codegen
 goal: performance
 related: [4157, 3926, 3927, 4230]
+loc-budget-allow:
+  # (#4237 step 1) The `$bag` closure-header slot adds ONE `struct.new` operand
+  # and ONE named-constant import to each of these god-files. The code cannot
+  # move to a subsystem module: it is a header operand pushed inline at an
+  # existing allocation site (async-scheduler's promise settle-cap, ir's closure
+  # subtype resolver) and a field-index constant swapped for a bare literal
+  # (object-runtime's builtin-fn meta arms). Net +13 lines across the three.
+  - src/codegen/async-scheduler.ts
+  - src/ir/integration.ts
+  - src/codegen/object-runtime.ts
 origin: "stakeholder-ordered 2026-08-08 — #4157 bucket 1's residual (the '< 3% __extern_get self-time' acceptance line is still open after #3926). NOTE: PR #4237 (loopdive) is an unrelated merged PR; the shared number sequence makes `git log --grep` useless here, as usual (#3571 lesson)."
 ---
 
