@@ -952,3 +952,35 @@ Node interpreter fixtures and the zero-import E2 self-compile canary are green.
 This is a landing/collision measurement, not a replacement for the 816-file
 MVP table above. Generated Test262 JSONL and cache artifacts are deliberately
 excluded from the source checkpoint.
+
+## Phase-2 emitter scope — deferred here from #4137 (2026-08-08)
+
+#4137 arm 3 triaged the published `Error: interp/emitter: unsupported in
+Phase 1: …` bucket (22 standalone records). Two of the five constructs were
+implementable inside that issue and landed there; the remaining three each need
+a **runtime protocol** the Phase-1 emitter does not have, so per #4137's
+implementation plan §(b)/C3 they are recorded here with their measured record
+counts instead. Source: `plan/issues/4137-interpreter-residuals-post-4013.md`,
+"Implementation Plan (arch, 2026-08-08)" → "C3 — defer to #2928 Phase 2 with
+counts".
+
+| construct | emitter site | records | what Phase 2 must add |
+| --- | --- | ---: | --- |
+| class method key `PrivateIdentifier` | `src/interp/emitter.ts` (`emitClass` key path) | **4** | private state slots + the brand check, i.e. a per-instance private-name environment that is not a property key |
+| class element `PropertyDefinition` (class fields) | `src/interp/emitter.ts` (`emitClass` element loop) | **3** | field-initializer evaluation in constructor context (each initializer is its own function-ish scope with `this` bound to the instance under construction) |
+| `TaggedTemplateExpression` | `src/interp/emitter.ts` (`emitExpr`) | **1** | the tagged-template call convention: a frozen, per-site-cached strings array carrying `raw`, passed ahead of the substitution values |
+
+Landed in #4137 instead of deferring (listed so this table is not read as the
+whole bucket): binary/compound **bitwise** operators `\|` `&` `^` `>>>` (1
+published record, opcodes 45-48, append-only) and **regex literals** (13
+records, `BUILTIN_REGEXP_CREATE = 28`).
+
+**Also for Phase 2, and NOT in the published 22 — catch destructuring
+`ObjectPattern`** (`src/interp/emitter.ts:1054`). It is invisible in today's
+records only because #4194's parse-level raise masks it (compiled-acorn raises
+before the emitter ever sees the pattern); it is #4194's declared "layer 2" and
+becomes the next blocker the day #4194 lands. Its implementer must also wire the
+B.3.3 **cancellation** half — a destructuring CatchParameter *cancels* the Annex B
+synthetic var binding, the `cancelsAnnexBVarBinding` counterpart to the
+`SIMPLE_CATCH_SCOPE_LABEL` B.3.5 exemption that landed in PR #4139. That
+cancellation path is currently unreached and untested.

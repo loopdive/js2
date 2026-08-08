@@ -1719,7 +1719,13 @@ export function compileCompoundAssignment(
   // infrastructure already round-trips `any += number` through the existing
   // numeric path, and the `__host_add` host import isn't part of that ABI.
   // Per the #2058 design rule, this per-site recovery is **default-mode only**.
-  if (op === ts.SyntaxKind.PlusEqualsToken && !fctx.boxedCaptures?.has(name) && ctx.anyValueTypeIdx < 0) {
+  // (#4137) …EXCEPT with no JS host: that exclusion was written for the
+  // `__host_add` ABI, which `emitAnyAddFromExternTemps` never emits in
+  // standalone/WASI. "Already round-trips" holds for `any += number` and is
+  // FALSE for a runtime STRING — which is how acorn's `message += " (" + …`
+  // rendered as the number NaN. Mirrors `emitAnyAdd`'s own `noJsHost` test.
+  const anyCompoundAddEligible = ctx.anyValueTypeIdx < 0 || ctx.standalone === true || ctx.wasi === true;
+  if (op === ts.SyntaxKind.PlusEqualsToken && !fctx.boxedCaptures?.has(name) && anyCompoundAddEligible) {
     const leftTsType = ctx.checker.getTypeAtLocation(expr.left);
     const rightTsType = ctx.checker.getTypeAtLocation(expr.right);
     const leftIsAnyish = (leftTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
