@@ -768,6 +768,11 @@ function buildCodegenOptions(
     wasiRawImports: prep?.wasiRawImports,
     wasiMemAccessors: prep?.wasiMemAccessors,
     allowFs: options.allowFs ?? false,
+    // (#4238 slice 1) internal provider-build enablers — all default-off, so a
+    // compile that does not set them is byte-identical.
+    externNativeTypes: options.externNativeTypes === true,
+    externImportModule: options.externImportModule,
+    importMemory: options.importMemory,
     jsxRuntime: prep?.jsxRuntime,
     dtsEntrypointSeeds: prep?.dtsEntrypointSeeds,
   };
