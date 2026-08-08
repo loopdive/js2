@@ -1,7 +1,8 @@
 ---
 id: 4249
 title: "Standalone ES5 wave 4: the eval-spliced accessor compiler crash, `catch{break} finally{continue}` at module scope, and the RegExp/exec remainder"
-status: in-progress
+status: done
+completed: 2026-08-08
 sprint: current
 created: 2026-08-08
 updated: 2026-08-08
@@ -28,13 +29,25 @@ under **Node 25** (Node 22's host RegExp rejects ES2025 modifier syntax during
 early-error validation and manufactures phantom failures in these directories —
 see #4233's "not wave-3 regressions" note).
 
-| bucket | files | base pass | after |
-| --- | --- | --- | --- |
-| `language/expressions/object` | 12 | 0 (7 compile_error) | **5** |
-| `language/statements/try` | 8 | 0 | **4** |
-| `built-ins/RegExp/prototype/exec` | 15 | 6 | 6 |
-| `built-ins/RegExp` (residue) | 35 | 9 | 9 |
-| `language/types/object` | 13 | 1 | 1 |
+| bucket | files | base pass | after | Δ |
+| --- | --- | --- | --- | --- |
+| `language/expressions/object` | 12 | 0 (7 compile_error) | **5** (0 CE) | **+5** |
+| `language/statements/try` | 8 | 0 | **4** | **+4** |
+| `built-ins/RegExp/prototype/exec` | 15 | 6 | 6 | 0 |
+| `built-ins/RegExp` (residue) | 35 | 9 | 9 | 0 |
+| `language/types/object` | 13 | 1 | 1 | 0 |
+
+**Standalone total: +9, zero regressions** (both untouched RegExp buckets
+re-measured identically after the change). The two fixed buckets were also
+A/B'd on the **gc** lane against the unmodified sources:
+
+| bucket (gc lane) | base | after |
+| --- | --- | --- |
+| `language/expressions/object` | 6 | 6 (unchanged — see RC1) |
+| `language/statements/try` | 3 | **7** (+4 collateral) |
+
+The try fix helps both lanes; the accessor fix is standalone-only by
+construction (the gc lane never reached the crashing query).
 
 ## Root cause 1 — an eval-spliced object-literal ACCESSOR crashed the compiler
 
@@ -151,6 +164,38 @@ unmodified file and fail identically on the base.
   (`Cannot access property on null or undefined`). A catch-binding
   representation gap, unrelated to the finally-depth fix.
 - **`12.14-7`** — needs a `ReferenceError` from an unresolvable reference.
+
+## The biggest lever found and NOT taken: standalone throws error STRINGS
+
+`typeErrorThrowInstrs` (`src/codegen/property-access.ts`) throws a **native
+string** whose text merely *begins* with `"TypeError: "`, not a `TypeError`
+object. Every `catch (e) { … e instanceof TypeError … }` and every `e.name` /
+`e.message` read against it therefore answers falsy. Measured against the ES5
+standalone failing set (`.tmp/es5-buckets.json`, 1,077 files):
+
+| signature | failing ES5 files |
+| --- | --- |
+| `TypeError: Cannot access property on null or undefined` (the raw string) | 23 |
+| `(e instanceof TypeError) … Expected SameValue(«false», «true»)` | 19 |
+
+That is **42 files** touching one representation decision — larger than any
+remaining item in this issue's own buckets. It is visible from here because
+`built-ins/RegExp/prototype/exec/S15.10.6.2_A2_T10` (bare `exec("s")`) fails
+*exactly* this way: the inline dynamic-dispatch fallback cannot match the
+native-proto method's `(self, this, arg)` funcref against its two 2-param
+candidate arms, falls to the "no arm" path, and throws that string. Confirmed
+from the emitted WAT — the argument `"m"` is even passed in the `this` slot.
+
+Deliberately **not** changed here: it is a generic path used everywhere, the
+blast radius is the whole suite rather than these buckets, and it belongs to the
+`error-model` goal, not to an ES5-bucket wave. The two sub-levers are
+independent and should be sized separately:
+
+1. mint a real `TypeError` (`__new_TypeError`, which the standalone RegExp
+   backend already uses) instead of a string — mechanical, wide;
+2. register native-proto method closures as dispatch candidates so a bare or
+   element-access call reaches the brand-recovery prologue at all — this is the
+   same gap behind `A2_T6`/`A2_T8` above.
 
 ## Permanent repro
 
