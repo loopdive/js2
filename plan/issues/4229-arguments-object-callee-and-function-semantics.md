@@ -1,7 +1,8 @@
 ---
 id: 4229
 title: "arguments.callee as a real own property, and the remaining function-semantics pool"
-status: in-progress
+status: done
+completed: 2026-08-08
 sprint: current
 created: 2026-08-08
 priority: high
