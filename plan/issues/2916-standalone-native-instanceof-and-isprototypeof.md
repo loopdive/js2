@@ -708,3 +708,50 @@ the instance's `$Object.$proto` is simply not seeded from the per-fnctor
 prototype global except for #2660-S3a-approved reconstructions, and a fnctor
 value is not an `$Object` so it cannot be stored in `$proto` at all. That is
 #2660 M3 substrate work, which this issue already names as a predecessor.
+
+### 2026-08-08 — the 8 `S15.3.5.3_A1_T*` "regressions" were an INSTRUMENT ARTIFACT, not this change
+
+A scoped standalone validation run on the integration branch reported
+`S15.3.5.3_A1_T1 … T8` as pass→fail against the partial landing above, all with
+
+```
+TypeError: dynamic code evaluation is not supported in this standalone build
+(no js2wasm:runtime-eval interpreter linked — tracking: #2928)
+```
+
+**They are not regressions.** A/B measured with the real instrument
+(`runTest262File`, `--target standalone`) at `a8bbc0d7` (base) vs `4c2c4448`
+(this work), all eight files:
+
+| runtime-eval tier                                | base    | this change |
+| ------------------------------------------------ | ------- | ----------- |
+| INTERPRETER (`TEST262_FULL_RUNTIME_EVAL=1`)      | 8× PASS | 8× PASS     |
+| REFUSAL (the default when the full cache is cold) | 8× FAIL | 8× FAIL     |
+
+Both sides move together on both tiers. The delta is the TIER, not the commit.
+
+**The quoted error text is itself the tell.** That sentence is emitted by the
+REFUSAL provider, which `selectCachedRuntimeEvalProvider` announces on stderr as
+"fast local diagnostic only, **NOT CI-comparable**". Comparing a refusal-tier run
+against a baseline captured on the interpreter tier turns every eval-dependent
+test into a phantom regression — and `assembleOriginalHarness` injects a
+`$262.evalScript` shim containing a direct `eval` into EVERY assembled test, so
+the eval-dependent set is large, not exotic.
+
+**Before attributing an eval-shaped standalone regression to a compiler change:**
+
+```bash
+node scripts/build-runtime-eval-provider.mjs        # ~3 min, once (cached)
+TEST262_FULL_RUNTIME_EVAL=1 <run the lane>          # authoritative, CI-comparable
+```
+
+Without the env var the lane silently selects REFUSAL even when the full
+provider is cached (`TEST262_FULL_RUNTIME_EVAL` is an explicit opt-in, not a
+cache-presence check), and the single stderr announcement is easy to lose in a
+long log. Read the `runtime-eval tier:` line before trusting a pass→fail list.
+
+`tests/es5-standalone-instanceof.test.ts` now pins the compile-level property
+those eight files depend on — the §7.3.20-step-1 non-callable rule must DECLINE
+for a `Function(…)`/`new Function(…)`-valued RHS — across all three declaration
+spellings, so the real hazard is caught in the fast lane instead of only in a
+lane that has the interpreter linked.

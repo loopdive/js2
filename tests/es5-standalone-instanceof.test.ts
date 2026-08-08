@@ -87,6 +87,38 @@ describe("#2916 — host-free instanceof in standalone", () => {
     expect(imports, "a Function-typed RHS must not be treated as non-callable").toContain("env::__instanceof_check");
   });
 
+  // The `S15.3.5.3_A1_T1…T8` RHS shape — a binding holding a `Function(…)`
+  // value. Those tests run their RHS through the runtime-eval interpreter, so
+  // they cannot be executed here; the COMPILE-LEVEL property that keeps them
+  // correct is checkable instead. The §7.3.20-step-1 rule must DECLINE, leaving
+  // the host predicate in place — a `new Function(…)` initializer must never be
+  // mistaken for the "fresh ordinary object" it syntactically resembles. If the
+  // rule ever fired here it would emit an unconditional TypeError where the spec
+  // requires a plain `false`, and the failure would surface ONLY in a lane with
+  // the interpreter tier linked (`TEST262_FULL_RUNTIME_EVAL=1`).
+  //
+  // The LHS is an OBJECT on purpose: the upstream files spell it `1 instanceof
+  // FACTORY`, which the #2998 statically-primitive-LHS fold answers `false`
+  // before this rule is consulted, so a primitive LHS cannot observe it.
+  const declinedRhsShapes: Array<[string, string]> = [
+    ["assigned from `Function(…)` after a bare `var`", `var FACTORY;\nFACTORY = Function("name", "this.name=name;");`],
+    ["initialized with `new Function(…)`", `var FACTORY = new Function("name", "this.name=name;");`],
+    ["initialized with `Function(…)`", `var FACTORY = Function("name", "this.name=name;");`],
+  ];
+  for (const [name, decl] of declinedRhsShapes) {
+    it(`declines the non-callable rule for an RHS ${name}`, async () => {
+      const compiled = await compile(
+        `${decl}\nvar obj = {};\nexport function test(): number { return (obj instanceof (FACTORY as any)) ? 1 : 0; }\n`,
+        { allowJs: true, fileName: "fnctor-rhs.ts", skipSemanticDiagnostics: true, target: "standalone" },
+      );
+      expect(compiled.success, compiled.errors.map((e) => e.message).join("; ")).toBe(true);
+      const imports = (compiled.imports ?? []).map((i) => `${i.module}::${i.name}`);
+      expect(imports, "a Function(…)-valued RHS must not be treated as non-callable").toContain(
+        "env::__instanceof_check",
+      );
+    });
+  }
+
   it("answers `x instanceof <alias of Object>` without the host predicate", async () => {
     // `S11.8.6_A2.1_T1` CHECK#3/#4 — the RHS identifier does not carry the
     // builtin's name, so the builtin dispatch used to be skipped entirely.
