@@ -12,7 +12,9 @@ task_type: bug
 area: codegen
 goal: es5
 related: [4221, 4220, 4222, 4223, 4224, 2916]
+# loc-budget (wave-3 PR aggregate vs main): emitCachedFuncClosureExternref cast-free reader beside the singleton it guards
 loc-budget-allow:
+  - src/codegen/expressions/calls-closures.ts
   # closures.ts (+4): one import plus a two-line call at the ONLY point where a
   # lifted function expression's arguments vec exists and its `__self` is still
   # in scope — immediately after `emitArgumentsVecBody`. The seed body itself

@@ -40,6 +40,12 @@ func-budget-allow:
   - src/codegen/wrapper-constructor-carrier.ts::wrapperConstructorArmInstrs
   - src/codegen/wrapper-constructor-carrier.ts::ensureWrapperConstructorCarriers
 origin: "2026-08-08 — ES5-standalone-90 Wave 3; the leftovers #4223 and #4222 measured and deliberately did not take"
+# coercion-sites: both are NEW modules from this wave calling the CANONICAL
+# helpers (__to_primitive for index ToPrimitive, __str_to_number for canonical
+# numeric-index checks) — per-file counting registers new-module reuse as growth.
+coercion-sites-allow:
+  - src/codegen/string-exotic-index.ts
+  - src/codegen/string-exotic-own-props.ts
 ---
 
 # #4232 — wrapper `.constructor` leftovers and String exotic-object index/own-property semantics

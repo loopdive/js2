@@ -22,6 +22,9 @@ related: [682, 1539, 1912, 1913, 2175, 3507, 3724, 4089, 4220, 4224]
 # consistent with the file's 16 pre-existing checker queries of the same shape.
 oracle-ratchet-allow:
   - src/codegen/regexp-standalone.ts
+# loc-budget (wave-3 PR aggregate vs main): static-pattern tracing, exec arity/shape and ctor-identity arms live in the regexp subsystem module itself
+loc-budget-allow:
+  - src/codegen/regexp-standalone.ts
 ---
 
 # #4233 — the ES5 RegExp cluster in `--target standalone`

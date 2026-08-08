@@ -16,6 +16,16 @@ language_feature: with-statement
 goal: es5
 related: [671, 1387, 3025, 4179, 4205, 4206, 3956, 1472]
 origin: "Wave 3 of the ES5-standalone-90 program (WP7). Successor to #4206's 'Deferred, precisely located' list, re-measured on the Waves 1+2 branch."
+# loc-budget (wave-3 PR aggregate vs main): RC-F write routing, RC-B/D delete-boolean + typeof-binding, and the with-var redirect are point fixes in the owning modules
+loc-budget-allow:
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/typeof-delete.ts
+  - src/codegen/statements/variables.ts
+# func-budget: the with-var redirect hook (+10) and delete-boolean tagging (+3)
+# are single-branch additions inside the statement dispatchers they modify.
+func-budget-allow:
+  - src/codegen/statements/variables.ts::compileVariableStatement
+  - src/codegen/typeof-delete.ts::compileDeleteExpression
 ---
 
 # #4231 — the `with` runtime residue, re-measured after Waves 1+2
