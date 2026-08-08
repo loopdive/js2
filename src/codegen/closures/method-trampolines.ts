@@ -26,6 +26,7 @@ import {
   flushLateImportShifts as flushLateImportShiftsShared,
 } from "../shared.js";
 import {
+  closureBagInitInstr,
   getFuncSignature,
   getOrCreateConstructibleFuncRefWrapperTypes,
   getOrCreateFuncRefWrapperTypes,
@@ -552,6 +553,7 @@ function emitLazyClosureCacheAccess(
   const initBody: Instr[] = [
     { op: "ref.func", funcIdx: trampolineFuncIdx },
     { op: "i32.const", value: arity }, // (#3673) $arity
+    closureBagInitInstr(), // (#4237) $bag
     ...(constructible ? ([{ op: "i32.const", value: 1 }] satisfies Instr[]) : []),
     { op: "struct.new", typeIdx: structTypeIdx },
     { op: "extern.convert_any" },

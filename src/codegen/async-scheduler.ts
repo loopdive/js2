@@ -30,7 +30,12 @@ import { inLiveShiftRange } from "../emit/resolve-layout.js"; // (#1916 S3) stab
 // never at module evaluation). The other three are cycle-free leaves relative
 // to this module.
 import { getClosureFuncSelfTypeIdx, getOrCreateFuncRefWrapperTypes } from "./closures.js";
-import { closureArityField } from "./closures/funcref-wrapper-types.js";
+import {
+  CLOSURE_CAPTURE_FIELD_BASE,
+  closureArityField,
+  closureBagField,
+  closureBagInitInstr,
+} from "./closures/funcref-wrapper-types.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { reserveClosedMethodDispatchVararg } from "./closed-method-dispatch.js";
@@ -957,6 +962,7 @@ export function ensurePromiseExecutorClosures(ctx: CodegenContext): PromiseExecu
       // redeclared identically in the subtype — as must the #3673 $arity slot.
       { name: "func", type: { kind: "funcref" }, mutable: false },
       closureArityField(),
+      closureBagField(),
       { name: "cap_promise", type: { kind: "ref", typeIdx: promiseTypeIdx }, mutable: false },
     ],
     superTypeIdx: wrapper.structTypeIdx,
@@ -976,7 +982,7 @@ export function ensurePromiseExecutorClosures(ctx: CodegenContext): PromiseExecu
   const makeBody = (settleFuncIdx: number): Instr[] => [
     { op: "local.get", index: 0 }, // self: (ref $wrapperRoot)
     { op: "ref.cast", typeIdx: capTypeIdx }, // downcast to the cap subtype (non-null)
-    { op: "struct.get", typeIdx: capTypeIdx, fieldIdx: 2 }, // captured (ref $Promise) — after (#3673) $arity
+    { op: "struct.get", typeIdx: capTypeIdx, fieldIdx: CLOSURE_CAPTURE_FIELD_BASE }, // captured (ref $Promise)
     { op: "local.get", index: 1 }, // value: externref
     { op: "call", funcIdx: settleFuncIdx }, // settle -> externref
     { op: "drop" }, // trampoline result type is () — discard the settled value
@@ -1139,6 +1145,7 @@ function ensurePromiseThenableSubstrate(
   const emitSettleCap = (clFuncIdx: number): Instr[] => [
     { op: "ref.func", funcIdx: clFuncIdx },
     { op: "i32.const", value: 1 }, // (#3673) $arity — settle callbacks take 1 arg
+    closureBagInitInstr(), // (#4237) $bag
     { op: "local.get", index: promiseLocal },
     { op: "ref.as_non_null" },
     { op: "struct.new", typeIdx: execClosures.capTypeIdx },

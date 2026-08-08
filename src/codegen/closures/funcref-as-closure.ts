@@ -18,7 +18,10 @@ import { getOrRegisterRefCellType } from "../index.js";
 import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
 import { observeProgramAbiFunctionValue } from "../program-abi-source-callable-planning.js";
 import {
+  CLOSURE_CAPTURE_FIELD_BASE,
   closureArityField,
+  closureBagField,
+  closureBagInitInstr,
   getFuncSignature,
   getOrCreateConstructibleFuncRefWrapperTypes,
   getOrCreateFuncRefWrapperTypes,
@@ -84,9 +87,10 @@ function emitMemoizedNestedFnClosure(
   // Build the construction sequence into the guard's then-arm.
   const savedBody = pushBody(fctx);
 
-  // struct.new fields: func, (#3673) $arity, cap0, cap1, ..., __tdz_*...
+  // struct.new fields: func, (#3673) $arity, (#4237) $bag, cap0, cap1, ..., __tdz_*...
   fctx.body.push({ op: "ref.func", funcIdx: trampolineFuncIdx });
   fctx.body.push({ op: "i32.const", value: arity });
+  fctx.body.push(closureBagInitInstr());
   // (#1312) Self-reference inside the lifted body of `funcName` itself —
   // e.g. `function next() { return call(next); }`. The captures are
   // already in scope as the leading params [0..numCaptures-1] of the
@@ -317,6 +321,7 @@ export function emitFuncRefAsClosure(
       fields: [
         { name: "func", type: { kind: "funcref" as const }, mutable: false },
         closureArityField(),
+        closureBagField(),
         ...captureFields,
       ],
       superTypeIdx: wrapperTypes.structTypeIdx,
@@ -345,14 +350,14 @@ export function emitFuncRefAsClosure(
     if (totalCapFields === 1) {
       // Exactly one capture field (a value capture; TDZ-flag-only with zero
       // value captures is impossible because each flag is paired with a value).
-      trampolineBody.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: 2 });
+      trampolineBody.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: CLOSURE_CAPTURE_FIELD_BASE });
     } else {
       trampolineBody.push({ op: "local.set", index: castedSelfLocal });
       // Push value captures first, then TDZ-flag captures, mirroring the
       // lifted fn's leading-param order.
       for (let i = 0; i < totalCapFields; i++) {
         trampolineBody.push({ op: "local.get", index: castedSelfLocal });
-        trampolineBody.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: i + 2 });
+        trampolineBody.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: i + CLOSURE_CAPTURE_FIELD_BASE });
       }
     }
     for (let i = 0; i < userParams.length; i++) {
@@ -431,9 +436,10 @@ export function emitFuncRefAsClosure(
   });
   ctx.funcMap.set(trampolineName, trampolineFuncIdx);
 
-  // Emit: ref.func $trampoline, (#3673) $arity, struct.new $closure_struct
+  // Emit: ref.func $trampoline, (#3673) $arity, (#4237) $bag, struct.new $closure_struct
   fctx.body.push({ op: "ref.func", funcIdx: trampolineFuncIdx });
   fctx.body.push({ op: "i32.const", value: userParams.length });
+  fctx.body.push(closureBagInitInstr());
   if (constructible) fctx.body.push({ op: "i32.const", value: 1 });
   fctx.body.push({ op: "struct.new", typeIdx: structTypeIdx });
 

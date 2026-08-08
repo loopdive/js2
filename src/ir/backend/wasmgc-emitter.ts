@@ -357,9 +357,13 @@ export class WasmGcEmitter implements BackendEmitter<Instr[]> {
   }
 
   // (#3673) $arity operand — sits between the lifted funcref and the captures
-  // in every root-wrapper-hierarchy closure allocation.
+  // in every root-wrapper-hierarchy closure allocation. (#4237) The `$bag`
+  // expando slot follows it, so the two header operands are pushed together:
+  // the trait has ONE hook for "the header operands between the funcref and
+  // the captures", and splitting them would let a backend emit half a header.
   emitClosureArityOperand(arity: number, out: Instr[]): void {
     out.push({ op: "i32.const", value: arity });
+    out.push({ op: "ref.null.extern" }); // (#4237) $bag — no expandos at birth
   }
 
   emitClosureFuncGet(layout: IrClosureLowering, out: Instr[]): void {

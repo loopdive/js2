@@ -7,6 +7,7 @@
  */
 import type { ArrayTypeDef, FieldDef, FuncTypeDef, StructTypeDef, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
+import { closureBagField } from "../closures/funcref-wrapper-types.js"; // (#4237)
 
 /**
  * (#3268) Register a WasmGC struct type: append it to `ctx.mod.types` and wire
@@ -484,6 +485,11 @@ export function getOrRegisterBoundFnType(ctx: CodegenContext): number {
     { name: "target", type: { kind: "externref" as const }, mutable: false },
     { name: "thisArg", type: { kind: "externref" as const }, mutable: false },
     { name: "boundArgs", type: { kind: "externref" as const }, mutable: false },
+    // (#4237) Carrier-intrinsic expando bag — a bound function is a callable
+    // carrier for `__closure_bag_lookup`, so it gets the O(1) slot instead of
+    // a `$ClosurePropEntry` registry entry. Appended LAST: this struct is
+    // final and super-less, so no field index shifts.
+    closureBagField(),
   ];
   ctx.mod.types.push({ kind: "struct", name, fields });
   ctx.boundFnTypeIdx = idx;

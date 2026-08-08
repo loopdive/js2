@@ -40,7 +40,16 @@
  */
 import type { Instr } from "../ir/types.js";
 import type { ClosureInfo, CodegenContext } from "./context/types.js";
-import { closureArityField } from "./closures/funcref-wrapper-types.js";
+import { closureArityField, closureBagField, closureBagInitInstr } from "./closures/funcref-wrapper-types.js";
+
+/**
+ * (#4237) Field indices of the meta-typed closure subtype, derived from the
+ * shared closure header rather than spelled as bare literals — the header grew
+ * a `$bag` slot at index 2 and these two shifted with it.
+ * Layout: `[func, $arity, $bag, bfnstate, bfnid]`.
+ */
+export const BFN_STATE_FIELD_IDX = 3;
+export const BFN_ID_FIELD_IDX = 4;
 
 /**
  * Spec `{name, length}` for the builtin STATIC method closures wired in
@@ -257,6 +266,7 @@ export function ensureBuiltinFnMetaType(
       // as must the #3673 $arity slot at index 1.
       { name: "func", type: { kind: "funcref" as const }, mutable: false },
       closureArityField(),
+      closureBagField(),
       // Deleted-bits mask: bit 0 = "name" deleted, bit 1 = "length" deleted.
       { name: "bfnstate", type: { kind: "i32" as const }, mutable: true },
       // Stable per-module metadata identity. Structurally-equivalent meta
@@ -292,6 +302,7 @@ export function pushBuiltinFnClosureValueInstrs(
     ? (ctx.builtinFnMetaByTypeIdx?.get(closure.type.typeIdx)?.length ?? 0)
     : (ctx.closureInfoByTypeIdx.get(closure.type.typeIdx)?.paramTypes.length ?? 0);
   instrs.push({ op: "i32.const", value: arity });
+  instrs.push(closureBagInitInstr()); // (#4237) $bag field 2
   if (isMeta) {
     instrs.push({ op: "i32.const", value: 0 }, { op: "i32.const", value: closure.type.typeIdx });
   }
