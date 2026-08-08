@@ -2,7 +2,9 @@
 id: 2916
 title: "[SUBSTRATE][ARCH] Standalone native instanceof operator + isPrototypeOf residual (~31 leaky-PASS conversions)"
 status: ready
-updated: 2026-07-31
+updated: 2026-08-08
+loc-budget-allow:
+  - src/codegen/expressions/identifiers.ts
 sprint: current
 created: 2026-07-01
 priority: medium
@@ -630,3 +632,126 @@ to the earlier sketch beyond using the #2580 M3 walk.
   (never wrong-`true`; `noJsHost` gating; full `merge_group`; leak-probe
   corpus). Coordinate with #2651 M3 (consumes B0 — do not let sd-2651 mint a
   parallel carrier) and #2622 (consumes the arm-1/arm-2 split above).
+
+---
+
+## PARTIAL LANDING 2026-08-08 — Slice C done, Slice B step 1 + step 4 done
+
+A slice of this issue landed as part of the **ES5-standalone-90 WP5** sweep
+("remove the instanceof / isPrototypeOf host-import leaks"). It does **not**
+close the issue: the reflective `Get(C, "prototype")` off an arbitrary runtime
+callable — Slice B's crux — is still unimplemented, and is what the remaining
+8 leaking files need.
+
+### Measured before / after (`--target standalone`, module import list)
+
+Source: the ≤ES5 failure census `.tmp/es5-buckets.json` (2026-08-07 baseline),
+re-probed file by file on this branch.
+
+| host import                | files gated before | still leaking after | now PASS |
+| -------------------------- | ------------------ | ------------------- | -------- |
+| `env::Object_isPrototypeOf` | 9                  | **0**               | 3        |
+| `env::__instanceof_check`   | 10                 | 8                   | 2        |
+
+The 6 `isPrototypeOf` files that no longer leak but still fail moved from
+`host_import_leak` (unsatisfiable module) to honest `assertion_fail` on
+*unrelated* assertions (`x.constructor.prototype`, `new Object.prototype.constructor`,
+the `$proto` seeding gap below).
+
+### What landed
+
+- **Slice C — `isPrototypeOf` residual.** New `src/codegen/native-is-prototype-of.ts`.
+  Both dispatchers that can reach the method now share one answer: the #2994
+  static folds, then the WasmGC-native `$Object.$proto` walk (`__isPrototypeOf`).
+  The TYPED-receiver path (`compileExternMethodCall`, extern.ts) previously had
+  neither and always emitted `env::Object_isPrototypeOf`, because `Object` is
+  the ROOT extern class and every extern class inherits its prototype methods —
+  so the leak fired on any receiver the checker typed as an interface. Two new
+  folds: `X.prototype.isPrototypeOf(v)` where `v`'s type IS the builtin instance
+  interface `X`, and `Object.prototype.isPrototypeOf(b)` where `b` is a
+  single-assignment binding provably holding a fresh object.
+- **Slice B step 4 (non-callable RHS ⇒ TypeError)** and **the builtin-alias
+  case**. New `src/codegen/native-ordinary-instanceof.ts`. §7.3.20 step 1 now
+  throws in wasm when the RHS is a provably non-callable object, and
+  `var OBJECT = Object; x instanceof OBJECT` resolves the builtin behind the
+  alias so the Slice-A builtin dispatch is not skipped.
+- Regression test: `tests/es5-standalone-instanceof.test.ts` (10 cases, each
+  asserting BOTH the answer and a zero-import binary).
+- `tests/issue-2994.test.ts`'s "does NOT mis-fold" case was rewritten: its
+  proof of "not folded" was the PRESENCE of `env::Object_isPrototypeOf`, which
+  is exactly the leak being retired. It now proves the same property by the
+  answer (`0`) plus a zero-import binary.
+
+### What is still open (the 8 remaining `__instanceof_check` files)
+
+1. **`obj instanceof FACTORY`, `FACTORY` a runtime `Function(…)` value** —
+   `S15.3.5.3_A2_T2/T5/T6`, `_A3_T1/T2` (5 files). Needs Slice B's reflective
+   `Get(C, "prototype")` off an arbitrary callable. Deliberately left on the
+   host import rather than answered wrongly.
+2. **`(OBJECT = Object, {}) instanceof OBJECT`** — `S11.8.6_A2.4_T1/T3`
+   (2 files). The RHS binding's static type is `number` (its declared
+   initializer), so the alias rule cannot see the builtin; a union-based fold
+   would be unsound.
+3. **`S11.8.6_A6_T4`** (1 file) — its `instanceof MyFunct` arm leaks because
+   `tryEmitNativeUserCtorInstanceOf` (#3962) requires `ctx.topLevelFunctionNames`,
+   which holds only for function DECLARATIONS, not `var F = function(){}`. Note
+   the file would still fail after that: its CHECK#3 needs
+   `instanceof Object` on a `$Object`, which `nativeBuiltinInstanceOfTypeIdxs`
+   deliberately does not model.
+
+### Adjacent gap found while measuring — the `$proto` seeding, not instanceof
+
+`F.prototype.isPrototypeOf(new F())` answers **0**, and so does
+`__PROTO.isPrototypeOf(__monster)` after `__FACTORY.prototype = __PROTO`
+(`S13.2.2_A1_T1/T2`, `S8.6.2_A1` CHECK#2.2/#3.2). The chain walk is correct;
+the instance's `$Object.$proto` is simply not seeded from the per-fnctor
+prototype global except for #2660-S3a-approved reconstructions, and a fnctor
+value is not an `$Object` so it cannot be stored in `$proto` at all. That is
+#2660 M3 substrate work, which this issue already names as a predecessor.
+
+### 2026-08-08 — the 8 `S15.3.5.3_A1_T*` "regressions" were an INSTRUMENT ARTIFACT, not this change
+
+A scoped standalone validation run on the integration branch reported
+`S15.3.5.3_A1_T1 … T8` as pass→fail against the partial landing above, all with
+
+```
+TypeError: dynamic code evaluation is not supported in this standalone build
+(no js2wasm:runtime-eval interpreter linked — tracking: #2928)
+```
+
+**They are not regressions.** A/B measured with the real instrument
+(`runTest262File`, `--target standalone`) at `a8bbc0d7` (base) vs `4c2c4448`
+(this work), all eight files:
+
+| runtime-eval tier                                | base    | this change |
+| ------------------------------------------------ | ------- | ----------- |
+| INTERPRETER (`TEST262_FULL_RUNTIME_EVAL=1`)      | 8× PASS | 8× PASS     |
+| REFUSAL (the default when the full cache is cold) | 8× FAIL | 8× FAIL     |
+
+Both sides move together on both tiers. The delta is the TIER, not the commit.
+
+**The quoted error text is itself the tell.** That sentence is emitted by the
+REFUSAL provider, which `selectCachedRuntimeEvalProvider` announces on stderr as
+"fast local diagnostic only, **NOT CI-comparable**". Comparing a refusal-tier run
+against a baseline captured on the interpreter tier turns every eval-dependent
+test into a phantom regression — and `assembleOriginalHarness` injects a
+`$262.evalScript` shim containing a direct `eval` into EVERY assembled test, so
+the eval-dependent set is large, not exotic.
+
+**Before attributing an eval-shaped standalone regression to a compiler change:**
+
+```bash
+node scripts/build-runtime-eval-provider.mjs        # ~3 min, once (cached)
+TEST262_FULL_RUNTIME_EVAL=1 <run the lane>          # authoritative, CI-comparable
+```
+
+Without the env var the lane silently selects REFUSAL even when the full
+provider is cached (`TEST262_FULL_RUNTIME_EVAL` is an explicit opt-in, not a
+cache-presence check), and the single stderr announcement is easy to lose in a
+long log. Read the `runtime-eval tier:` line before trusting a pass→fail list.
+
+`tests/es5-standalone-instanceof.test.ts` now pins the compile-level property
+those eight files depend on — the §7.3.20-step-1 non-callable rule must DECLINE
+for a `Function(…)`/`new Function(…)`-valued RHS — across all three declaration
+spellings, so the real hazard is caught in the fast lane instead of only in a
+lane that has the interpreter linked.
