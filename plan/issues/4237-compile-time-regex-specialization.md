@@ -138,3 +138,36 @@ on real corpora is high enough to matter.
 - Any change to the #4236 slice sequence; this issue is independent of the
   QuickJS boxed-tier adoption and merely shares the libregexp artifact
   option with it.
+
+## Path B staged estimate — and the bytecode-backend route (2026-08-08)
+
+Design update that supersedes the "~40-method C++ `RegExpMacroAssemblerWasm`"
+framing above: Irregexp already has TWO codegen backends — the native
+macro-assemblers and `RegExpBytecodeGenerator` (its interpreter bytecode).
+Since we only need Irregexp at BUILD time, use the bytecode backend
+unmodified and write the **bytecode → wasm translator in TypeScript inside
+js2wasm**. The bytecode is pattern-specialized linear code (~50 opcodes);
+the optimization passes (Boyer-Moore lookahead, quick checks) run before
+bytecode emission, so they are preserved. C++ work then reduces to making
+V8's `src/regexp` parser+compiler subset build standalone.
+
+| Stage | Work | Estimate |
+| --- | --- | --- |
+| Spike | vendor V8 `src/regexp` subset + SpiderMonkey-style shim (fake `Isolate`, `Zone`, strings, flags), emscripten → wasm blob the TS compiler calls at build time; compile one pattern, dump bytecode | days-to-a-week; go/no-go = "does the subset link standalone" |
+| MVP | TS bytecode→wasm translator (dispatch-loop lowering — `loop` + `br_table` over a state var — for the irreducible backtrack jumps), wired into both lanes' literal path, fallback-on-unsupported-flag; decline `\p{…}` in v1 (drags in ICU) | ≈ 1 budget window |
+| Coverage | `lastIndex`/`g`/`y`, capture materialization per lane, `match`/`replace`/`split`/`exec` routing, test262 `built-ins/RegExp` + differential fuzz vs native V8 | ≈ 1 window (shared with path A — not B-specific) |
+| Standing | pin a V8 revision; `src/regexp` churns faster than quickjs-ng, occasional real re-sync | ongoing, small |
+
+Total ≈ 2–3 windows to tested integration vs ≈ 1 window for path A; the
+spike front-loads nearly all uncertainty. Calibration: SpiderMonkey's 2020
+import was multi-month, but included runtime execution, GC integration, and
+JIT-tier bridging — all skipped here. Honest ceiling: the bytecode route
+keeps the node-network optimizations but loses native-emission peepholes,
+and the dispatch loop costs branch overhead vs fallthrough — target
+**5–10× on hot literal patterns**, not the full 18×; B's edge over A is
+correctness breadth (V8's parser + case-folding tables), not extra speed.
+
+Fallback-engine note: the split-module proof in #4236 ("Feature-subset
+builds + the split regex module") means the decline path can be the ONE
+shared libregexp module serving both lanes — the specializer never has to
+carry a per-module generic engine.

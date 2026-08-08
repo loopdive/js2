@@ -1173,3 +1173,46 @@ regex-completeness option without adopting any of the boxed tier.
 9,896 gzip; with one regex literal 96,737 / 40,009 → **≈75.5 KB raw /
 ≈30 KB gzip marginal, duplicated in every regex-using binary**. The shared
 lre-only artifact is ~1.5× bigger once but breaks even at the second module.
+
+## Feature-subset builds + the split regex module (2026-08-08, measured)
+
+Two follow-up questions answered empirically on the slice-1 build env
+(scratchpad `noregex/`, reusing the pinned quickjs-ng v0.16.1 objects):
+
+**QuickJS builds without regex — intrinsics are runtime-modular.**
+`JS_NewContextRaw` + per-intrinsic adders (13: BaseObjects, Date, Eval,
+RegExp(+Compiler), JSON, Proxy, MapSet, TypedArrays, Promise, BigInt,
+WeakRef, DOMException, AToB); skip an adder and `--gc-sections` strips its
+code. Shim variant calling every adder except RegExp: **933,497 raw /
+316,778 gzip vs 1,037,624 / 359,899 full** (−104 KB raw / −43 KB gzip).
+Probe green — eval/JSON/Promise/async/MapSet/BigInt/TypedArray all work;
+`/a/` → `SyntaxError: RegExp are not supported`, `new RegExp` →
+`ReferenceError`. This is the general knob for trimming the boxed-tier
+engine to what the frontier actually needs.
+
+**libregexp links as a SEPARATE wasm module — built and proven.** Core with
+the RegExp builtin ON, engine imported cross-module:
+
+- Seam: 7 functions core→regex (`lre_compile`, `lre_exec`, 5 bytecode
+  accessors) and shared memory + 3 hooks regex→core (`lre_realloc`,
+  `lre_check_stack_overflow`, `lre_check_timeout`). Sizes: core 966,775 raw
+  / 326,254 gzip; regex module 114,284 / 52,636 (libunicode rides along —
+  data symbols cannot cross wasm module boundaries).
+- Functional through the seam: `exec` captures, named groups,
+  `String.replace`/`split` with regex, `/u` flag, negatives.
+- Wrinkle 1: wasm-ld-18 SEGFAULTS on `--wrap` + `--import-undefined`; the
+  working cut is preprocessor renames (`-Dlre_compile=…_local_unused`) on
+  the core's libregexp compile plus a 7-thunk import file.
+- Wrinkle 2: the core's LEXER uses libregexp's `lre_parse_escape` + an ident
+  **data** table — those ~2 KB stay in core; the cut is at the engine entry
+  points, not the file boundary.
+- Wrinkle 3 (the real productization work): the probe parks the regex
+  module's static data at a fixed 14 MB `--global-base` and late-binds the
+  circular imports with harness closures — production needs the same
+  memory-region coordination as the slice-1 allocator-collision finding.
+
+Payoff: ONE shared regex module can serve BOTH lanes — the GC lane binds it
+directly (the lre-only artifact recorded above is the same class of build),
+the linear lane's core imports it, and non-regex users load neither. The
+builtin-routing "delegate RegExp to QuickJS" row therefore does not force
+regex bytes into every deployment.
