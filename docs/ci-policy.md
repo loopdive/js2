@@ -709,9 +709,11 @@ checks list but its `pull_request` event path is a hard fail on regression
 
 ## 8. How an admin applies this policy
 
-The script `scripts/enable-branch-protection.sh` PATCHes the GitHub branch
-protection API with the JSON payload corresponding to the rules above.
-Usage:
+The script `scripts/enable-branch-protection.sh` PUTs the repo **ruleset**
+(`/repos/loopdive/js2/rulesets/16700772`) with the JSON payload corresponding to
+the rules above. It reads the live ruleset first and replaces only the
+required-check list, preserving merge-queue parameters, conditions, enforcement
+and bypass actors. Usage:
 
 ```sh
 # Dry run — print the payload and curl command, no changes.
@@ -725,16 +727,27 @@ The script is idempotent: re-running it re-applies the canonical state.
 Drift between repo settings and this file should be reconciled by running
 the script, not by editing settings manually.
 
-**Caveat — the script is NOT what is currently enforcing (#3934).** Enforcement
-on `main` today comes from a repo **ruleset**
-(`gh api repos/loopdive/js2/rules/branches/main`), while this script targets the
-**classic** branch-protection API — which for `main` answers `404 Branch not
-protected`. The script's required-checks array also still lists `linear-tests`,
-which the live ruleset does not require. That array is deliberately left as-is
-here: editing it would be a change to *enforcement policy* (promote or drop a
-gate), not a documentation fix, and belongs in its own reviewed change. Until
-someone reconciles the two, **read the ruleset, not this script**, when you need
-to know what actually gates a merge.
+**Reconciled 2026-08-08.** This section previously said the script targeted the
+**classic** branch-protection API and was therefore not what enforces `main`.
+That was wrong on the first count: the script has targeted the ruleset endpoint
+(`RULESET_ID=16700772`, the live one) since it was rewritten, so running it does
+apply real enforcement. The classic endpoint does answer `404 Branch not
+protected` for `main` — that is a fact about the classic API, not about this
+script, and the two got conflated.
+
+The second half of the old caveat was correct and has now been acted on: the
+script's array listed `linear-tests`, which the live ruleset has never
+contained (#3934). Left in place it was a loaded gun — a "reconcile the drift"
+run would have silently promoted a seventh gate nobody decided to require. It
+has been removed, so the array now states the six contexts actually in force.
+
+Verification is still the rule over trust, since the ruleset can be edited in
+the GitHub UI without touching this repo:
+
+```sh
+gh api repos/loopdive/js2/rules/branches/main \
+  --jq '[.[]|select(.type=="required_status_checks")|.parameters.required_status_checks[].context]'
+```
 
 ---
 
