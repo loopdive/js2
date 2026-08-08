@@ -85,8 +85,20 @@ import { addUnionImportsViaRegistry, flushLateImportShifts } from "./shared.js";
 import { reserveAccessorGetDriver, reserveAccessorSetDriver } from "./accessor-driver.js";
 import { registerDescriptorHasOwn } from "./carrier-bag-hasown.js"; // (#4055) descriptor-scoped HasProperty over the #3468 bag
 import { buildNonObjectDeleteArms, reserveCarrierBagDelete } from "./carrier-bag-delete.js"; // (#4010 S2) OrdinaryDelete over the carrier bags
-import { bagHasIfAbsent, bagKeysTail, reserveCarrierBagVisibility } from "./carrier-bag-visibility.js";
+import {
+  bagHasIfAbsent,
+  bagKeysTail,
+  buildBagPushKeys,
+  reserveCarrierBagVisibility,
+} from "./carrier-bag-visibility.js";
 import { reserveClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
+// (#4194) instance expando substrate — composes AROUND the #3537/#3468 arms and
+// splices the declared-field write-through prologue onto `__extern_set`.
+import {
+  buildInstanceOrVecOrClosurePropSetMissArm,
+  buildInstancePropGetArm,
+  reserveInstanceProps,
+} from "./instance-props.js";
 import {
   INSTANCE_FIELD_DELETED,
   buildTombstoneScreen,
@@ -878,6 +890,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     reserveVecPropHelpers(ctx);
     reserveCarrierBagVisibility(ctx); // (#4010 S3) visibility over both bags — see that module
     reserveInstanceTombstones(ctx); // (#4098 G1 s1) per-instance delete over the SAME bag
+    reserveInstanceProps(ctx); // (#4194) per-instance WRITE-through + expando over that bag
     // (#4160) Prototype-index store — self-gated on `ctx.standalone &&
     // ctx.protoIndexDirty`, so a flag-clear module reserves NOTHING and every
     // consult site below resolves `funcMap.get("__protoidx_*") === undefined`,
@@ -1687,6 +1700,10 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // `reference_shared_instr_object_dce_double_remap`).
     const getMiss = (): Instr[] => undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }];
     const HSTR = ctx.hashedStrTypeIdx;
+    // (#4194) Scratch externref for the instance-bag consult, appended LAST in
+    // the locals list below so no already-baked index moves. Locals 8/9 are the
+    // conditional proto-cache pair.
+    const ispScratchLocal = protoCacheEnabled ? 10 : 8;
     const body: Instr[] = [
       // (#3673 round 9b) The per-key prototype-lookup cache HIT arm is NOT
       // here — it is prepended at FINALIZE by `unshiftExternGetProtoCacheArm`
@@ -1741,10 +1758,21 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
               ] satisfies Instr[])
             : []),
         ],
-        else:
-          fnctorProtoStartIdx === undefined
+        else: [
+          // (#4194) The receiver is not a `$Object`. Consult the instance
+          // expando bag FIRST — an own property shadows the prototype chain
+          // (§7.3.2), and this position (rather than inside the miss arm below)
+          // is what covers `__fnctor_` receivers at all: `__fnctor_proto_start`
+          // answers non-null for a fnctor WITH a prototype, so control takes the
+          // proto walk and never reaches the miss arm. Acorn's `Node` is exactly
+          // that shape, and the enumeration side already lists its bag keys — a
+          // key that enumerates but reads `undefined` is the divergence this
+          // substrate exists to remove. The arm falls through on a bag miss, so
+          // the fnctor walk and the #4176 companion consult are unchanged.
+          ...buildInstancePropGetArm(ctx, ispScratchLocal),
+          ...(fnctorProtoStartIdx === undefined
             ? buildVecOrClosurePropGetMissArm(ctx, getMiss)
-            : [
+            : ([
                 { op: "local.get", index: 0 },
                 { op: "call", funcIdx: fnctorProtoStartIdx },
                 { op: "local.tee", index: 7 },
@@ -1766,7 +1794,8 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                       { op: "local.set", index: 9 },
                     ] satisfies Instr[])
                   : []),
-              ],
+              ] satisfies Instr[])),
+        ],
       },
       // proto-walk loop
       {
@@ -1933,6 +1962,8 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
               { name: "canCache", type: { kind: "i32" } as ValType },
             ]
           : []),
+        // (#4194) instance-bag consult scratch — LAST, at `ispScratchLocal`.
+        { name: "ispv", type: { kind: "externref" } as ValType },
       ],
       body,
     );
@@ -2463,7 +2494,12 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       {
         op: "if",
         blockType: { kind: "empty" },
-        then: buildVecOrClosurePropSetMissArm(ctx),
+        // (#4194) instance branch composed AROUND the unchanged vec/closure
+        // builders. Reached only after the declared-field write-through
+        // prologue (`fillClosedStructExternSetArms`) missed, so a declared name
+        // can never be deposited in the bag — the invariant that structurally
+        // excludes the #4055 v1 -684 shape.
+        then: buildInstanceOrVecOrClosurePropSetMissArm(ctx),
       },
       // o = cast<$Object>(any)
       { op: "local.get", index: 6 },
@@ -6968,6 +7004,7 @@ function buildClosedStructEnumerationArms(
   objVecPushIdx: number,
   vecLocalIdx: number,
   vecInit: Instr[],
+  includeNonEnum: boolean,
 ): Instr[] {
   const arms: Instr[] = [];
   for (const entry of entries) {
@@ -7002,7 +7039,20 @@ function buildClosedStructEnumerationArms(
         );
       }
     }
-    const returnNames: Instr[] = [...vecInit, ...pushFields, { op: "local.get", index: vecLocalIdx }, { op: "return" }];
+    const returnNames: Instr[] = [
+      ...vecInit,
+      ...pushFields,
+      // (#4194) …then the instance's EXPANDO bag keys. Declared names first,
+      // bag keys after: that matches OrdinaryOwnPropertyKeys for the dominant
+      // ctor-fields-then-expandos lifecycle (interleaved-insertion ordering is
+      // a documented bounded divergence). `buildBagPushKeys` is LOOKUP-only, so
+      // enumerating a fresh instance allocates no bag; `__carrier_bag_of`
+      // answers null and this is a no-op. The #4098 tombstone marker is
+      // filtered inside `CARRIER_BAG_PUSH_KEYS`.
+      ...buildBagPushKeys(ctx, { vecLocal: vecLocalIdx, includeNonEnum, objLocal: 0 }),
+      { op: "local.get", index: vecLocalIdx },
+      { op: "return" },
+    ];
     const exactThen: Instr[] =
       entry.shapeRange !== undefined
         ? [
@@ -7052,7 +7102,9 @@ export function fillClosedStructOwnPropertyNamesArms(ctx: CodegenContext): void 
   // internal aliasing, so a shared `Instr` object reachable from two function
   // bodies would be remapped twice by `shiftLateImportIndices` (the #1302
   // hazard). Re-running the builder is cheap and sidesteps that entirely.
-  const buildArms = (): Instr[] => buildClosedStructEnumerationArms(ctx, entries, objVecPushIdx, 7, []);
+  // `getOwnPropertyNames` is the non-enumerable-inclusive surface (#4099), so
+  // the bag consult uses `__obj_ordered_all`.
+  const buildArms = (): Instr[] => buildClosedStructEnumerationArms(ctx, entries, objVecPushIdx, 7, [], true);
 
   // Other finalize fills may already have prepended family classifiers. Anchor
   // to the semantic provider's actual result-vector initialization rather than
@@ -7139,10 +7191,18 @@ export function fillClosedStructEnumerationArms(ctx: CodegenContext): void {
     // Fresh instruction objects per target — a shared `Instr` reachable from
     // two bodies is remapped twice by `shiftLateImportIndices` (#1302).
     fn.body.unshift(
-      ...buildClosedStructEnumerationArms(ctx, entries, objVecPushIdx, vecLocalIdx, [
-        { op: "call", funcIdx: objVecNewIdx },
-        { op: "local.set", index: vecLocalIdx },
-      ]),
+      ...buildClosedStructEnumerationArms(
+        ctx,
+        entries,
+        objVecPushIdx,
+        vecLocalIdx,
+        [
+          { op: "call", funcIdx: objVecNewIdx },
+          { op: "local.set", index: vecLocalIdx },
+        ],
+        // `Object.keys` / for-in are enumerable-only.
+        false,
+      ),
     );
   }
 }

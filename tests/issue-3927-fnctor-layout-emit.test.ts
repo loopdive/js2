@@ -105,6 +105,23 @@ export function reflectiveSurface() {
   }
   return own + notOwn + viaIn + sawAlpha + (sawBeta ? 0 : 1);
 }
+export function structTypedFold() {
+  // The default-ON gate blocker (2026-08-08): static in/hasOwnProperty on a
+  // STRUCT-TYPED receiver fold from the base field list, which the split
+  // empties of flow-grown names — without the closed-struct-presence
+  // side-table arm both answered a constant false for a property the
+  // instance carries (probe: native 111, flag-ON 1). The dynamic-receiver
+  // reflectiveSurface() above can NEVER catch this — the fold only fires on
+  // this spelling (the #3920 receiver-spelling confound, third occurrence).
+  var p = new Parser();
+  var n = new Node();               // struct-typed binding — the fold path
+  var a = p.launder(n);
+  a.beta = 7;                        // dynamic write into split-family storage
+  var viaIn = "beta" in n ? 1 : 0;
+  var hasOwn = n.hasOwnProperty("beta") ? 10 : 0;
+  var neverIn = "alpha" in n ? 0 : 100; // never-written union name stays absent
+  return viaIn + hasOwn + neverIn;
+}
 export function voteSeam() {
   var p = new Parser();
   var n = p.withFlag();
@@ -150,15 +167,19 @@ async function build(flag: string | undefined, target: "standalone" | "js-host" 
 }
 
 describe("#3927 — per-type fnctor layout emission", () => {
-  it("flag reader: OFF for unset/empty/0, ON otherwise; layout-name predicate is exact", () => {
+  it("flag reader: default ON since the 2026-08-08 flip; 0/off/empty disable; predicate exact", () => {
     const saved = process.env.JS2WASM_FNCTOR_LAYOUT_EMIT;
     try {
       // biome-ignore lint/performance/noDelete: env vars need delete to unset
       delete process.env.JS2WASM_FNCTOR_LAYOUT_EMIT;
-      expect(fnctorLayoutEmitEnabled()).toBe(false);
+      expect(fnctorLayoutEmitEnabled()).toBe(true);
       process.env.JS2WASM_FNCTOR_LAYOUT_EMIT = "";
       expect(fnctorLayoutEmitEnabled()).toBe(false);
       process.env.JS2WASM_FNCTOR_LAYOUT_EMIT = "0";
+      expect(fnctorLayoutEmitEnabled()).toBe(false);
+      process.env.JS2WASM_FNCTOR_LAYOUT_EMIT = "off";
+      expect(fnctorLayoutEmitEnabled()).toBe(false);
+      process.env.JS2WASM_FNCTOR_LAYOUT_EMIT = "OFF";
       expect(fnctorLayoutEmitEnabled()).toBe(false);
       process.env.JS2WASM_FNCTOR_LAYOUT_EMIT = "1";
       expect(fnctorLayoutEmitEnabled()).toBe(true);
@@ -174,18 +195,27 @@ describe("#3927 — per-type fnctor layout emission", () => {
     expect(isFnctorLayoutStructName("__fnctor_Node__resid")).toBe(false);
   });
 
-  it("OFF is byte-identical across spellings, and ON actually changes the binary", async () => {
-    const off = await build(undefined);
-    expect((await build("0")).sha).toBe(off.sha);
+  it("disable spellings are byte-identical to each other; the DEFAULT equals explicit ON and differs from OFF", async () => {
+    const off = await build("0");
     expect((await build("")).sha).toBe(off.sha);
+    expect((await build("off")).sha).toBe(off.sha);
+    const byDefault = await build(undefined);
+    expect(byDefault.sha).toBe((await build("1")).sha);
     // Mechanism proof — a parity-only test would pass while measuring nothing.
-    expect((await build("1")).sha).not.toBe(off.sha);
+    expect(byDefault.sha).not.toBe(off.sha);
   });
 
   it("ON answers exactly what OFF answers on every surface (incl. canonical-twin layouts)", async () => {
-    const off = await build(undefined);
+    const off = await build("0");
     const on = await build("1");
-    for (const fn of ["sum", "absentReads", "residRoundTrip", "reflectiveSurface", "voteSeam"] as const) {
+    for (const fn of [
+      "sum",
+      "absentReads",
+      "residRoundTrip",
+      "reflectiveSurface",
+      "voteSeam",
+      "structTypedFold",
+    ] as const) {
       const expected = off.exports[fn]!();
       expect(
         on.exports[fn]!(),
@@ -204,6 +234,8 @@ describe("#3927 — per-type fnctor layout emission", () => {
     expect(on.exports.reflectiveSurface!()).toBe(5);
     // The vote-seam read answers the BOXED true, not a scalar-narrowed false.
     expect(on.exports.voteSeam!()).toBe(2);
+    // The struct-typed fold reads the base presence word, not a constant.
+    expect(on.exports.structTypedFold!()).toBe(111);
   });
 
   it("never changes a JS-host build, whatever the flag says", async () => {

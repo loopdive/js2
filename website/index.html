@@ -1130,8 +1130,8 @@
       .feat-tables {
         margin-top: 16px;
       }
-      /* Each edition section collapses independently, collapsed by default —
-         click the edition headline to expand just that edition's rows. */
+      /* Each edition section collapses independently, expanded by default —
+         click the edition headline to collapse just that edition's rows. */
       .feat-section:not(.expanded) .feat-row,
       .feat-section:not(.expanded) .feat-note {
         display: none;
@@ -1760,7 +1760,7 @@
 
         <div class="feat-tables" id="feat-tables">
           <div class="feat-panel">
-            <div class="feat-section">
+            <div class="feat-section expanded">
               <div class="feat-edition">ES3 / Core</div>
               <div class="feat-row" data-t262-paths="language/types,language/literals">
                 <span class="feat-badge full">✓</span>
@@ -1965,7 +1965,7 @@ function legacy() {
                 </details>
               </div>
             </div>
-            <div class="feat-section">
+            <div class="feat-section expanded">
               <div class="feat-edition">ES5</div>
               <div
                 class="feat-row"
@@ -2306,7 +2306,7 @@ Object.defineProperty(obj, "x", {
                 </details>
               </div>
             </div>
-            <div class="feat-section">
+            <div class="feat-section expanded">
               <div class="feat-edition">ES2015</div>
               <div
                 class="feat-row"
@@ -2664,7 +2664,7 @@ new Proxy(t, handler);      // trap dispatch not yet</pre
                 </details>
               </div>
             </div>
-            <div class="feat-section">
+            <div class="feat-section expanded">
               <div class="feat-edition">ES2017</div>
               <div
                 class="feat-row"
@@ -2723,7 +2723,7 @@ Object.values({ x: 10 });
                 </details>
               </div>
             </div>
-            <div class="feat-section">
+            <div class="feat-section expanded">
               <div class="feat-edition">ES2018</div>
               <div class="feat-row" data-t262-paths="language/expressions/object/spread">
                 <span class="feat-badge partial">⚠</span>
@@ -2772,7 +2772,7 @@ const { a, ...rest } = obj;</pre
                 </details>
               </div>
             </div>
-            <div class="feat-section">
+            <div class="feat-section expanded">
               <div class="feat-edition">ES2020</div>
               <div class="feat-row" data-t262-paths="language/expressions/optional-chaining">
                 <span class="feat-badge partial">⚠</span>
@@ -2861,7 +2861,7 @@ const sum = big + 1n;</pre
                 </details>
               </div>
             </div>
-            <div class="feat-section">
+            <div class="feat-section expanded">
               <div class="feat-edition">ES2021</div>
               <div class="feat-row" data-t262-paths="built-ins/WeakRef,built-ins/FinalizationRegistry">
                 <span class="feat-badge partial">⚠</span>
@@ -2878,7 +2878,7 @@ const sum = big + 1n;</pre
                 </details>
               </div>
             </div>
-            <div class="feat-section">
+            <div class="feat-section expanded">
               <div class="feat-edition">ES2022</div>
               <div class="feat-row" data-t262-paths="language/statements/class/fields">
                 <span class="feat-badge partial">⚠</span>
@@ -2961,7 +2961,7 @@ export { data };</pre
                 </details>
               </div>
             </div>
-            <div class="feat-section">
+            <div class="feat-section expanded">
               <div class="feat-edition">ES2016</div>
               <div class="feat-row" data-t262-paths="built-ins/Array/prototype/includes">
                 <span class="feat-badge partial">⚠</span>
@@ -3000,7 +3000,7 @@ call $Math.pow</pre
                 </details>
               </div>
             </div>
-            <div class="feat-section">
+            <div class="feat-section expanded">
               <div class="feat-edition">ES2019</div>
               <div class="feat-row" data-t262-paths="language/statements/try/optional-catch-binding">
                 <span class="feat-badge partial">⚠</span>
@@ -3055,7 +3055,7 @@ const obj = Object.fromEntries(
                 </details>
               </div>
             </div>
-            <div class="feat-section">
+            <div class="feat-section expanded">
               <div class="feat-edition">ES2023</div>
               <div
                 class="feat-row"
@@ -3114,7 +3114,7 @@ console.log("hello");</pre
                 </details>
               </div>
             </div>
-            <div class="feat-section">
+            <div class="feat-section expanded">
               <div class="feat-edition">ES2024</div>
               <div class="feat-row" data-t262-paths="built-ins/Promise/withResolvers">
                 <span class="feat-badge partial">⚠</span>
@@ -3161,7 +3161,7 @@ buf.resize(16);</pre
                 </details>
               </div>
             </div>
-            <div class="feat-section">
+            <div class="feat-section expanded">
               <div class="feat-edition">ES2025</div>
               <div
                 class="feat-row"
@@ -3214,7 +3214,7 @@ nums().filter(x =&gt; x &gt; 1)
                 </details>
               </div>
             </div>
-            <div class="feat-section">
+            <div class="feat-section expanded">
               <div class="feat-edition">ES2026</div>
               <div class="feat-row" data-t262-paths="built-ins/Error/isError">
                 <span class="feat-badge partial">⚠</span>
@@ -3320,7 +3320,7 @@ counts.getOrInsert("a", 0);</pre
                 </details>
               </div>
             </div>
-            <div class="feat-section" data-sloppy>
+            <div class="feat-section expanded" data-sloppy>
               <div class="feat-edition">Legacy / Deprecated</div>
               <div class="feat-row" data-t262-paths="language/statements/variable,language/statements/var" data-sloppy>
                 <span class="feat-badge partial">⚠</span>
@@ -3452,7 +3452,7 @@ RegExp.$1; // "123" — deprecated</pre
                 </details>
               </div>
             </div>
-            <div class="feat-section">
+            <div class="feat-section expanded">
               <div class="feat-edition">Proposals</div>
               <div class="feat-row" data-t262-paths="built-ins/Temporal">
                 <span class="feat-badge partial">⚠</span>
@@ -5804,7 +5804,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
       applyFeatureEditionScope();
 
       // Each edition section (below the timeline slider) collapses
-      // independently, collapsed by default — click its headline to expand
+      // independently, expanded by default — click its headline to collapse
       // just that edition's feature rows. Delegated so it also covers
       // sections added later by updateEditionPassBars().
       document.addEventListener("click", (event) => {
@@ -5895,7 +5895,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           if (existing) return existing;
 
           const section = document.createElement("div");
-          section.className = "feat-section";
+          section.className = "feat-section expanded";
           section.dataset.generatedEdition = "true";
           section.innerHTML = `
             <div class="feat-edition">${label}</div>

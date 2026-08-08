@@ -1515,6 +1515,75 @@ when the box is idle; not run here.)
 The switch is one line (default the flag ON in `fnctorLayoutEmitEnabled`)
 once those close.
 
+## Results — 2026-08-08: the default-ON flip (all §6 gates closed)
+
+`JS2WASM_FNCTOR_LAYOUT_EMIT` now defaults **ON** (`0`/`off`/empty disable;
+standalone lane only, by the flag's own `fnctorLayoutEmitFor` gate). How each
+gate item closed, same-day:
+
+1. **#3920's second half** — landed as PR #4229 (+ the #4225 folded-0
+   follow-up, PR #4231, `closed-struct-presence.ts`/`findPresenceStorage`).
+2. **Flag-ON conformance** — measured on CI with a same-instrument,
+   same-branch dispatch PAIR (the committed-baseline diff proved config-
+   contaminated: the flag-OFF control reproduced the flag-ON run's gate
+   failures nearly line-for-line, so only artifact-vs-artifact counts):
+   - ON run 31261617785 vs OFF control 31262874434, 48,619 rows each,
+     proposals on, env witnessed in shard logs both ways.
+   - **Standalone lane (flag active): pass 28,707 → 28,704 (net −3), 36
+     flips, every one in the compile_timeout band, ZERO non-timeout flips,
+     ZERO same-status error-category churn.**
+   - GC lane (flag-inert = the instrument's noise floor): net +27, 284
+     flips, likewise all timeout-band, zero semantic. The active lane sits
+     well inside the inert lane's noise.
+   - Scope caveat, stated plainly: test262 barely contains transparent-
+     factory fnctors, so few files can take a split verdict — this measures
+     "the flip does not regress test262", while the acorn-scale
+     differentials (3 read modes + the copy mode, all bit-exact) remain the
+     evidence the split itself is correct.
+   - Prerequisite en route: computed-WRITE routing (#4194, PR #4232) — the
+     copyNode composition went 0 → full copy, killing the last measured
+     zero-effect.
+3. **Item 2b (the static in/hasOwnProperty fold), layout flavor — found
+   STILL OPEN by this flip's gate probe and fixed here.** #4231 closed the
+   cold flavor only; under flag-ON the same struct-typed-receiver probe
+   answered native 111 / flag-OFF 111 / **flag-ON 1** (value lands, both
+   reflective folds constant-false). The `closed-struct-presence.ts` record
+   that layouts were "already answered correctly" was the #3920
+   receiver-spelling confound — its evidence was a DYNAMIC-receiver fixture,
+   and the fold only fires struct-typed. Fix shipped with the flip (it is a
+   flip prerequisite, not a nicety): `findPresenceStorage` resolves a split
+   family's union names through the side table — the presence bit IS a base-
+   word slot at fixed indices (the §6 constraint held for exactly this), so
+   no third storage variant was needed — and `emitHasOwnPresence`'s folded-0
+   escape now keys on LIST-BLINDNESS (`!structFieldNames.includes(key)`)
+   rather than on cold storage specifically, keeping propertyIsEnumerable's
+   semantic zeros folded. Pinned by `structTypedFold()` in the layout-emit
+   test (third receiver-spelling-confound occurrence; the fixture comment
+   says why the dynamic-receiver test can never catch it).
+
+Also in the flip: the alloc-labels ANALYSIS gate is now standalone-aware
+(`analyzeFnctorEscapeGate` takes the target) — with the emit flag defaulting
+ON, the flag-only gate would have run the second whole-program fixpoint on
+every HOST compile for zero benefit.
+
+**The split-retirement decision input (§6 item 4) is now actionable**: with
+layouts default-ON, the next full npm-compat census pass should group struct
+bytes by proof verdict (`split` vs bail verdicts) corpus-wide — bail-family
+bytes are the cold split's entire residual value (#4211/#4217; on acorn the
+cold-tail stream measures exactly 0 with layouts on).
+
+**Preliminary answer (2026-08-08, second-corpus static census — full table
+in #4235's file): KEEP the split.** Acorn is the best case by a wide margin
+(its `Node` union is 62 fields; every other measured package's proved
+families are 5–17, and three.js's 33 families yield ZERO `split` verdicts).
+Bail-verdict families dominate every package measured, so the split's
+residual value is broad while the layouts' payoff is (so far) narrow. Two
+caveats keep this preliminary: it is a static site-count census (no runtime
+byte shares — only acorn compiles standalone of that set), and it measured
+the single-file path only, because the multi-file path runs NO fnctor
+analysis at all (#4235) — fixing that is the precondition for the real
+corpus-wide, runtime-weighted verdict this gate item calls for.
+
 ### 7. Gates (emission slice)
 
 typecheck 0, lint 0, format 0. loc-budget / func-budget: allowances for the

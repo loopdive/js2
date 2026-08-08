@@ -191,7 +191,33 @@ function fieldContribution(fx: FixpointCtx, w: FieldWrite, owner: IrUnitId, name
   const rhs = evalValueExpr(fx, w.carrier, scope, thisCtx);
   if (w.kind !== "plus-assign") return rhs;
   if (fieldFactTraceEnabled()) recordFieldFactPlusRhs(fx.state, owner, name, w, rhs);
-  return plusJoin(fx.fieldFacts.get(owner)?.get(name) ?? core.UNKNOWN, rhs);
+  return rhs;
+}
+
+/**
+ * Solve `X = join(base, plusJoin(X, rhs_i) ∀i)` WITHIN the pass.
+ *
+ * `+=` folds the field's own value in, and the obvious implementation — read
+ * the PREVIOUS iteration's fact — is a ratchet, not a fixpoint variable: the
+ * atom-mediated reads make facts transiently DYNAMIC (a field is not in the
+ * instance atom until its fact resolves), and `plusJoin(dynamic, …)` is
+ * DYNAMIC, so one transient pollutes every later iteration through its own
+ * feedback edge and the "recompute from seeds each iteration" discipline the
+ * monotonicity note demands is silently violated. Measured on acorn: with the
+ * cross-iteration read, `Parser.pos` stays `dynamic` with every single
+ * contribution evaluating `f64`. Solving the self-reference locally (the
+ * lattice height bounds the inner loop) removes the only cross-iteration
+ * self-dependency a field fact had.
+ */
+function solvePlusFeedback(base: LatticeType, plusRhs: readonly LatticeType[]): LatticeType {
+  let next = base;
+  for (let step = 0; step < 4; step++) {
+    let candidate = next;
+    for (const rhs of plusRhs) candidate = core.join(candidate, plusJoin(next, rhs));
+    if (core.typesEqual(candidate, next)) return next;
+    next = candidate;
+  }
+  return core.DYNAMIC; // lattice height makes this unreachable; refuse rather than under-join
 }
 
 /** Writes that can reach `owner.<name>` — its own plus every name-based one. */
@@ -224,15 +250,21 @@ export function runFieldPass(fx: FixpointCtx, writeIndex: Map<IrUnitId, Map<stri
     if (node === undefined || node.poisoned) continue;
     const facts = fx.fieldFacts.get(owner)!;
     for (const [name, writes] of perName) {
-      let next: LatticeType = core.UNKNOWN;
+      let base: LatticeType = core.UNKNOWN;
+      const plusRhs: LatticeType[] = [];
       for (const w of writes) {
         const contribution = fieldContribution(fx, w, owner, name);
         if (tracing) recordFieldFactContribution(fx.state, owner, name, w, contribution);
-        next = core.join(next, contribution);
+        if (w.kind === "plus-assign") {
+          plusRhs.push(contribution); // the RHS value; the feedback is solved below
+          continue;
+        }
+        base = core.join(base, contribution);
         // Tracing keeps evaluating past the first DYNAMIC so every pin is
         // visible; the join is already at top, so the result is identical.
-        if (next.kind === "dynamic" && !tracing) break;
+        if (base.kind === "dynamic" && !tracing) break;
       }
+      const next = base.kind === "dynamic" ? base : solvePlusFeedback(base, plusRhs);
       if (tracing) recordFieldFactFinal(fx.state, owner, name, next);
       if (!core.typesEqual(facts.get(name) ?? core.UNKNOWN, next)) {
         facts.set(name, next);
@@ -244,28 +276,35 @@ export function runFieldPass(fx: FixpointCtx, writeIndex: Map<IrUnitId, Map<stri
 }
 
 /**
- * Post-convergence: the resolved value of every `this.<y>` READ that carries a
- * CONSTRUCTOR field write, keyed by the read node the consumer will compute.
+ * Post-convergence: the resolved value of every non-identifier carrier of a
+ * CONSTRUCTOR field write, keyed by the carrier node the consumer will compute.
  *
  * Only ctor-direct plain assignments are recorded, because that is exactly what
  * `deriveFnctorFields` hands the consumer. The chain unwrap matches the escape
  * gate's carrier loop so `this.start = this.end = this.pos` keys on `this.pos`
  * for BOTH slots.
+ *
+ * Two carrier shapes are recorded:
+ *  - `this.<y>` reads — answered by `readFieldFact` through `evalValueExpr`,
+ *    with the write's own definiteness snapshot (a read that could observe
+ *    `undefined` never carries a numeric fact);
+ *  - `<param>.<y>` reads (`this.start = p.start` — acorn's Token pattern) and
+ *    any other property access on an identifier — answered by the converged
+ *    evaluator: the parameter's instance ATOM carries the source owner's
+ *    definite atom-typed fields, so the read resolves iff the source field's
+ *    own fact did. Bare-identifier carriers are deliberately ABSENT: the
+ *    consumer's parameter path has its own legacy-first semantics (#4117
+ *    agreement before graph fallback) that a node-keyed answer must not bypass.
+ *
+ * `fx` is the SOLVED fixpoint context (final-iteration atoms, converged
+ * entries), so evaluation here answers exactly what the fixpoint proved.
  */
-export function collectThisReadFacts(
+export function collectCtorCarrierFacts(
   state: AnalysisState,
-  fieldFacts: FieldFacts,
+  fx: FixpointCtx,
   nameCounts: ReadonlyMap<string, number>,
 ): ReadonlyMap<ts.Node, LatticeType> {
   const out = new Map<ts.Node, LatticeType>();
-  const fx: FixpointCtx = {
-    state,
-    entries: new Map(),
-    fieldFacts,
-    atoms: new Map(),
-    resolver: () => undefined,
-    buildScope: () => new Map(),
-  };
   for (const w of state.fieldWrites) {
     if (w.attribution !== "ctor-direct" || w.kind !== "assign" || w.carrier === undefined) continue;
     const owner = w.owner;
@@ -273,9 +312,11 @@ export function collectThisReadFacts(
     const node = state.nodes.get(owner);
     if (node === undefined || node.poisoned || nameCounts.get(node.name) !== 1) continue;
     const carrier = chainCarrier(w.carrier);
-    if (!ts.isPropertyAccessExpression(carrier) || carrier.expression.kind !== ts.SyntaxKind.ThisKeyword) continue;
-    if (ts.isPrivateIdentifier(carrier.name)) continue;
-    out.set(carrier, readFieldFact(fx, owner, carrier.name.text, w.readSnapshot));
+    if (!ts.isPropertyAccessExpression(carrier) || ts.isPrivateIdentifier(carrier.name)) continue;
+    const base = unwrap(carrier.expression);
+    if (base.kind !== ts.SyntaxKind.ThisKeyword && !ts.isIdentifier(base)) continue;
+    const { scope, thisCtx } = writeContext(fx, w);
+    out.set(carrier, evalValueExpr(fx, carrier, scope, thisCtx));
   }
   return out;
 }

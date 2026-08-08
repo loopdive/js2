@@ -243,6 +243,7 @@ import {
 import { moduleReadsConstructorProp } from "./wrapper-constructor-carrier.js"; // (#4223)
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { fillInstanceTombstones } from "./instance-tombstones.js"; // (#4098 G1 s1) per-instance own-property deletability
+import { fillInstanceProps } from "./instance-props.js"; // (#4194) instance expando bag substrate
 import { fillVecPropHelpers } from "./vec-props.js"; // (#3537) array ($Vec) expando side table
 import { fillProtoIndexStore } from "./proto-index-store.js"; // (#4160) prototype-index companions
 import { finalizeFunctionPoisonPillCalls } from "./function-poison-pill.js";
@@ -3541,7 +3542,7 @@ export function generateModule(
   // reconstruction lowering but is NOT yet consumed, so emitted Wasm is
   // byte-identical. Side-effect free; safe to run unconditionally (no fnctor
   // `new` sites ⇒ empty result ⇒ no-op).
-  ctx.fnctorEscapeGate = analyzeFnctorEscapeGate(ast.checker, ast.sourceFile);
+  ctx.fnctorEscapeGate = analyzeFnctorEscapeGate(ast.checker, ast.sourceFile, ctx.standalone);
   // (#3673) Names the source itself defines as function-valued members, so the
   // guarded native-string method lowering can tell a genuine `String.prototype`
   // call apart from a same-named USER method on an object receiver. Cheap
@@ -4459,11 +4460,18 @@ export function generateModule(
     // Closed compiler structs are not `$Object` hash maps. Fill the native
     // Object.hasOwn / hasOwnProperty predicates from the complete shape table.
     fillInstanceTombstones(ctx); // (#4098 G1 s1) BEFORE the ladders below: they bake its call
+    fillInstanceProps(ctx); // (#4194) instance expando carrier + bag get/set + tombstone resurrect
     fillClosedStructHasOwnArms(ctx);
     fillClosedStructOwnPropertyNamesArms(ctx);
     fillClosedStructEnumerationArms(ctx); // (#3920) Object.keys / for…in
     fillClosedStructExternGetArms(ctx);
-    fillClosedStructExternSetArms(ctx); // (#4194) computed-WRITE twin of the GET arms
+    // (#4194/#4232 reconciliation) Declared-field WRITE-through on `__extern_set`
+    // is #4232's fill (closed-struct-extern-set.ts — presence bits, cold tail,
+    // tombstone revival, single-engine coercion). The expando-bag half — writes
+    // with no physical slot, bag visibility, enumeration merge — is
+    // fillInstanceProps (instance-props.ts). Misses fall through from the
+    // declared ladder to the bag miss-arm, so the two compose without overlap.
+    fillClosedStructExternSetArms(ctx);
     fillFnctorPrototypeDispatchArms(ctx);
 
     // (#3673 round 9b) LAST __extern_get body fill: prepend the per-key
@@ -6728,11 +6736,18 @@ export function generateMultiModule(
 
     // Mirror the single-source closed-struct own-property finalizer.
     fillInstanceTombstones(ctx); // (#4098 G1 s1) BEFORE the ladders below: they bake its call
+    fillInstanceProps(ctx); // (#4194) instance expando carrier + bag get/set + tombstone resurrect
     fillClosedStructHasOwnArms(ctx);
     fillClosedStructOwnPropertyNamesArms(ctx);
     fillClosedStructEnumerationArms(ctx); // (#3920) Object.keys / for…in
     fillClosedStructExternGetArms(ctx);
-    fillClosedStructExternSetArms(ctx); // (#4194) computed-WRITE twin of the GET arms
+    // (#4194/#4232 reconciliation) Declared-field WRITE-through on `__extern_set`
+    // is #4232's fill (closed-struct-extern-set.ts — presence bits, cold tail,
+    // tombstone revival, single-engine coercion). The expando-bag half — writes
+    // with no physical slot, bag visibility, enumeration merge — is
+    // fillInstanceProps (instance-props.ts). Misses fall through from the
+    // declared ladder to the bag miss-arm, so the two compose without overlap.
+    fillClosedStructExternSetArms(ctx);
     fillFnctorPrototypeDispatchArms(ctx);
 
     // (#3673 round 9b) LAST __extern_get body fill: prepend the per-key

@@ -103,6 +103,7 @@ import {
   isFunctionLikeNode,
   isSymbolKeyed,
   mkId,
+  resolveLiteralKeys,
   scopeChainOf,
   spaceOfBase,
   symOf,
@@ -115,12 +116,13 @@ import {
   type FixpointCtx,
   type ThisContext,
   buildWriteIndex,
-  collectThisReadFacts,
+  collectCtorCarrierFacts,
   evalValueExpr,
   instanceAtomFor,
   runFieldPass,
 } from "./fnctor-field-lattice.js";
 import { createSatelliteInferExtension } from "./fnctor-eval-extensions.js";
+import { refineFieldWriteAttribution } from "./fnctor-receiver-provenance.js";
 import { _propagationCore as core, type InferExtension, type LatticeType } from "./propagate.js";
 
 const memo = new WeakMap<ts.SourceFile, GraphFacts>();
@@ -142,14 +144,17 @@ export function computeFnctorGraphCtorParamFacts(
 }
 
 /**
- * Post-fixpoint lattice value of every `this.<y>` READ that carries a
- * constructor field write, keyed by the read's `PropertyAccessExpression`.
+ * Post-fixpoint lattice value of every `this.<y>` or `<identifier>.<y>` READ
+ * that carries a constructor field write, keyed by the read's
+ * `PropertyAccessExpression`.
  *
- * This is the field↔param mutual fixpoint's output for the shape
- * `this.start = this.end = this.pos`, which the parameter facts alone cannot
- * express: the value is a field of the instance under construction, not a
- * parameter. Definiteness and statement ordering are already applied — a read
- * that could observe `undefined` never appears with a numeric fact.
+ * This is the field↔param mutual fixpoint's output for the shapes
+ * `this.start = this.end = this.pos` (a field of the instance under
+ * construction) and `this.start = p.start` (a field of ANOTHER owner's
+ * instance, carried by a parameter's instance atom — acorn's Token pattern).
+ * Neither is expressible as a parameter fact. Definiteness and statement
+ * ordering are already applied — a read that could observe `undefined` never
+ * appears with a numeric fact.
  */
 export function computeFnctorGraphCtorThisReadFacts(
   sourceFile: ts.SourceFile,
@@ -207,6 +212,11 @@ function analyze(sourceFile: ts.SourceFile, checker: ts.TypeChecker): GraphFacts
   computeDefiniteCtorFields(state);
   buildEdges(state);
   if (state.poisonAllCtors) return EMPTY_FACTS;
+  // (#743) Receiver-provenance attribution — re-home `"all"` writes whose
+  // receiver provably holds instances of ONE tracked owner (acorn's 22
+  // `state.pos = …` writes). Must run BEFORE the value fixpoint: attribution
+  // is static input to it, and rewriting mid-iteration would be non-monotone.
+  refineFieldWriteAttribution(state);
   const solved = runFixpoint(state);
   // Non-convergence is NOT "use what we have": the atom-mediated reads are not
   // monotone (a fact rising `unknown → f64` makes a field ENTER the instance
@@ -225,7 +235,7 @@ function analyze(sourceFile: ts.SourceFile, checker: ts.TypeChecker): GraphFacts
     if (node.kind !== "callable" || node.poisoned || nameCounts.get(node.name) !== 1) continue;
     out.set(node.name, entries.get(node.id)!.params);
   }
-  const thisReadFacts = collectThisReadFacts(state, solved.fieldFacts, nameCounts);
+  const thisReadFacts = collectCtorCarrierFacts(state, solved.fx, nameCounts);
 
   // Inert diagnostics (JS2WASM_LOG_FNCTOR_GRAPH=1) — mirrors the escape gate's
   // JS2WASM_LOG_FNCTOR_GATE pattern; zero effect on output.
@@ -368,36 +378,6 @@ function objectDefineKind(call: ts.CallExpression): "many" | "one" | undefined {
   return undefined;
 }
 
-/** Keys of an object literal, or a top-level once-declared var holding one. */
-function resolveLiteralKeys(state: AnalysisState, arg: ts.Expression): Set<string> | undefined {
-  const a = unwrap(arg);
-  let lit: ts.ObjectLiteralExpression | undefined;
-  if (ts.isObjectLiteralExpression(a)) lit = a;
-  else if (ts.isIdentifier(a)) {
-    let count = 0;
-    for (const stmt of state.sourceFile.statements) {
-      if (!ts.isVariableStatement(stmt)) continue;
-      for (const d of stmt.declarationList.declarations) {
-        if (!ts.isIdentifier(d.name) || d.name.text !== a.text) continue;
-        count++;
-        const i = d.initializer !== undefined ? unwrap(d.initializer) : undefined;
-        lit = i !== undefined && ts.isObjectLiteralExpression(i) ? i : undefined;
-      }
-    }
-    if (count !== 1) return undefined;
-  }
-  if (lit === undefined) return undefined;
-  const keys = new Set<string>();
-  for (const prop of lit.properties) {
-    const name = prop.name;
-    if (name === undefined || !(ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name))) {
-      return undefined;
-    }
-    keys.add(name.text);
-  }
-  return keys;
-}
-
 function handleObjectDefine(state: AnalysisState, call: ts.CallExpression): void {
   const kind = objectDefineKind(call);
   if (kind === undefined || call.arguments.length < 2) return;
@@ -408,7 +388,7 @@ function handleObjectDefine(state: AnalysisState, call: ts.CallExpression): void
     const key = unwrap(call.arguments[1]!);
     demote = ts.isStringLiteral(key) ? new Set([key.text]) : undefined;
   } else {
-    demote = resolveLiteralKeys(state, call.arguments[1]!);
+    demote = resolveLiteralKeys(state.sourceFile, call.arguments[1]!);
   }
   if (demote === undefined) {
     (space.space === "proto" ? state.protoPoisoned : state.staticPoisoned).add(space.ownerId);
@@ -813,6 +793,8 @@ interface FixpointResult {
   readonly converged: boolean;
   readonly entries: Map<IrUnitId, { params: LatticeType[]; returnType: LatticeType }>;
   readonly fieldFacts: FieldFacts;
+  /** The solved context — final-iteration atoms + converged entries — for post-convergence evaluation. */
+  readonly fx: FixpointCtx;
 }
 
 function runFixpoint(state: AnalysisState): FixpointResult {
@@ -932,5 +914,5 @@ function runFixpoint(state: AnalysisState): FixpointResult {
       break;
     }
   }
-  return { converged, entries, fieldFacts };
+  return { converged, entries, fieldFacts, fx };
 }

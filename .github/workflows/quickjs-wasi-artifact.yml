@@ -1,0 +1,135 @@
+# Build the QuickJS "boxed tier" WASI artifact (#4236 slice 1).
+#
+# DRAFT — `workflow_dispatch` only. Nothing in the repo consumes the artifact
+# yet; slice 2 (the codegen-linear import/extern work) is what turns this on.
+# Modelled on the `runtime-eval-provider` job in test262-sharded.yml (#4013):
+# build one content-keyed wasm artifact centrally instead of in every consumer.
+#
+# What it produces (retention 30d, plus a content-hash cache entry):
+#   libquickjs.wasm  wasm32-wasip1 reactor module, ~1.01 MB / ~348 KB gzip.
+#                    Imports ONLY wasi_snapshot_preview1.{clock_time_get,
+#                    fd_close,fd_fdstat_get,fd_seek,fd_write}. Exports its
+#                    linear memory, malloc/free and the qjs_* wrapper ABI.
+#   qjs-abi.json     QuickJS tag/encoding constants read OUT of that module, so
+#                    codegen never hardcodes QuickJS-internal layouts.
+#   build-info.json  pinned refs + sizes + sha256.
+#
+# Runtime on a 4-core box: ~3 min cold (sysroot ~30 s, quickjs core ~20 s,
+# link ~1 s; the rest is clones + the builtins download).
+
+name: quickjs-wasi-artifact
+
+on:
+  workflow_dispatch:
+    inputs:
+      quickjs_ng_ref:
+        description: quickjs-ng commit to build (default = the pinned v0.16.1)
+        required: false
+        default: "954dc53628e36891f93c359aa60895c2ae3dac6b"
+      opt:
+        description: "-O2 (fast, ~1.01 MB) or -Oz (~626 KB, ~23% slower)"
+        required: false
+        default: "-O2"
+
+permissions:
+  contents: read
+
+concurrency:
+  # Long build, and the artifact is content-keyed, so let a newer dispatch win.
+  group: quickjs-wasi-artifact-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build libquickjs.wasm (wasm32-wasip1)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node and pnpm (cached)
+        uses: ./.github/actions/setup-node-pnpm
+
+      # The cache key is the CONTENT of everything that determines the output:
+      # the pinned upstream refs, the shim, the build script, the opt level and
+      # the compiler version. A hit means the artifact is already exactly this.
+      - name: Compute content hash
+        id: key
+        run: |
+          set -euo pipefail
+          CLANG_V="$(clang-18 --version | head -1)"
+          HASH="$(printf '%s|%s|%s|%s|%s' \
+            "${{ inputs.quickjs_ng_ref }}" \
+            "${{ inputs.opt }}" \
+            "$CLANG_V" \
+            "$(sha256sum scripts/quickjs-artifact/qjs_shim.c | cut -d' ' -f1)" \
+            "$(sha256sum scripts/quickjs-artifact/build.sh | cut -d' ' -f1)" \
+            | sha256sum | cut -d' ' -f1)"
+          echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+          echo "artifact content key: $HASH"
+
+      - name: Restore built artifact
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: .tmp/quickjs-artifact
+          key: quickjs-wasi-${{ steps.key.outputs.hash }}
+
+      - name: Install wasm toolchain
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          # clang 18 + lld give us wasm32; the wasm32 compiler-rt builtins are
+          # NOT packaged and are fetched from a wasi-sdk release by build.sh.
+          sudo apt-get install -y clang-18 lld-18 llvm-18 cmake
+          clang-18 --version
+
+      - name: Build artifact
+        if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          QUICKJS_NG_REF: ${{ inputs.quickjs_ng_ref }}
+          OPT: ${{ inputs.opt }}
+          JOBS: "4"
+        run: bash scripts/quickjs-artifact/build.sh
+
+      # Guard rails: the ENTIRE point of this artifact over the emscripten build
+      # the #4236 spike used is that it needs no JS host. An `env.*` import would
+      # silently reintroduce that dependency, so fail the build on it.
+      - name: Verify standalone (no env.* / no emscripten imports)
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("fs");
+            const m = new WebAssembly.Module(fs.readFileSync(".tmp/quickjs-artifact/libquickjs.wasm"));
+            const imports = WebAssembly.Module.imports(m);
+            const bad = imports.filter((i) => i.module !== "wasi_snapshot_preview1");
+            const exports = new Set(WebAssembly.Module.exports(m).map((e) => e.name));
+            const required = ["memory", "malloc", "free", "qjs_eval", "qjs_new_object",
+              "qjs_get_prop_str", "qjs_set_prop_str", "qjs_dup", "qjs_free_value",
+              "qjs_is_equal", "qjs_to_f64", "qjs_abi_tag_object"];
+            const missing = required.filter((n) => !exports.has(n));
+            console.log("imports:", imports.map((i) => `${i.module}.${i.name}`).join(", "));
+            if (bad.length) { console.error("NON-WASI IMPORTS:", bad); process.exit(1); }
+            if (missing.length) { console.error("MISSING EXPORTS:", missing); process.exit(1); }
+            console.log("standalone OK");
+          '
+
+      - name: Report sizes and ABI
+        run: |
+          cat .tmp/quickjs-artifact/build-info.json
+          cat .tmp/quickjs-artifact/qjs-abi.json
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: quickjs-wasi-${{ steps.key.outputs.hash }}
+          path: |
+            .tmp/quickjs-artifact/libquickjs.wasm
+            .tmp/quickjs-artifact/qjs-abi.json
+            .tmp/quickjs-artifact/build-info.json
+          if-no-files-found: error
+          retention-days: 30
