@@ -2457,6 +2457,60 @@ value is an unused entrypoint's param proves nothing (the first draft of this
 slice's negative tests passed vacuously). Use a property read (`p.v`) to
 manufacture a provably-DYNAMIC value.
 
+## Implementation Plan — receiver-provenance attribution (Fable spec, 2026-08-08)
+
+The next `Parser.pos` slice: re-attribute the 22 all-bucket `state.pos = …`
+writes to `RegExpValidationState` so they stop dragging every other owner's
+`pos`. Attribution-only — NO new lattice dimension, which is what keeps this
+below §6's XL pricing of full value-provenance.
+
+**Sound rule.** An `"all"`-attributed write with receiver identifier `r` may
+be re-attributed to tracked owner `R` iff every value reaching `r` is (a) the
+result of `new R(…)`, or (b) `null`/`undefined` (the write throws — vacuous).
+
+**Domain.** `⊥ | R (single owner) | ⊤`, join: `⊥∨x=x`, `R∨R=R`, `R∨R'=⊤`.
+
+**Placement.** A provenance-only fixpoint AFTER `buildEdges`, BEFORE
+`runFixpoint`, then rewrite `w.owner` before the value fixpoint runs —
+attribution must be static input to the value fixpoint; rewriting it during
+iteration is non-monotone.
+
+**Feeding.** Param provenance joins over the SAME `edges[].argExprs` the value
+fixpoint feeds from, with the same poison gates (a poisoned/escaped callee's
+params stay ⊤ — narrowing is what needs proof here, so any gap must widen).
+Expression provenance: `new <Ident>(…)` → its owner if a tracked callable,
+else ⊤ · `null`/`undefined` literal → ⊥ · identifier → param provenance, or a
+single-assignment local's initializer provenance (reuse
+`assignedIdentifierSymbols` from the §4 carve-out — a local with one
+initialized declaration and no in-file reassignment) · `a || b` / `a ?? b` →
+join · `(x = e)` chain → provenance of `e` · `this.<f>` read where the
+this-binder is tracked owner O, guarded exactly like `readFieldFact`
+(poison/interception checks) → join over the provenance of every write to
+O.f's carrier (recursive — participates in the fixpoint) · anything else → ⊤.
+
+**Rewrite rule.** Only rewrite `owner: "all"` → `R` when `R` already has the
+field name in `fieldNamesByOwner` (a re-attributed write must not manufacture
+field-presence evidence); keep `attribution: "all"` semantics (no snapshot,
+never definite). Writes whose receiver's provenance is ⊤ or ⊥ stay in the
+all-bucket unchanged (⊥ = only null reaches it — could drop entirely, but
+keeping it is the conservative first cut).
+
+**Pre-registered acorn expectation.** `state` param of `pp$1.regexp_*` ←
+method-call args `this.regexp_*(state)` ← local `var state =
+this.regexpState || (this.regexpState = new RegExpValidationState(this))` ←
+`regexpState` writes {ctor `null`, the `||`-assign `new R(this)`} → provenance
+R. All 22 writes re-attribute; `Parser.pos`'s remaining root pins become
+`end + 2` (:5494) and `+= size` (:5798) — locals/string-substrate territory.
+`RegExpValidationState.pos` KEEPS the 22 writes and stays dynamic until its
+own valuation levers land (locals + §5 method returns). Verify with the pin
+census (`JS2WASM_FNCTOR_FIELD_FACT_TRACE=pos`), which prints attribution
+per write.
+
+**Gates.** Flag-off byte-parity (file-copy A/B, sha compare) · family suites ·
+negative tests: receiver fed by two different owners → ⊤; receiver also fed by
+an untracked call's result → ⊤; escaped/poisoned method's param → ⊤;
+`||`-idiom where the field also has a third write of another owner → ⊤.
+
 ### What remains for `Parser.pos`, re-priced by the census
 
 1. **Receiver-provenance attribution for the 22 `state.pos` writes** — the
