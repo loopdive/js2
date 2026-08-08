@@ -45,6 +45,7 @@ import { popBody, pushBody } from "../context/bodies.js";
 import { reportSilentFallback } from "../fallback-telemetry.js";
 import { annexBReadIsUnbound, collectAnnexBCancelSites } from "../annexb-cancel.js";
 import { emitAnnexBUnboundReferenceError } from "../js-errors.js";
+import { resolveBuiltinCtorAliasName, tryEmitNonCallableRhsThrow } from "../native-ordinary-instanceof.js";
 import { emitTaCtorValue } from "../dataview-native.js";
 import { taCtorKindOf } from "../registry/types.js";
 import { emitThrowReferenceError, emitThrowTypeError, noJsHost } from "./helpers.js";
@@ -1630,6 +1631,11 @@ function emitDynamicInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
     return { kind: "i32" };
   }
 
+  // (#2916) §7.3.20 step 1, host-free: a provably non-callable OBJECT RHS
+  // throws. Declines (null) in gc/host mode — see native-ordinary-instanceof.ts.
+  const nonCallableThrow = tryEmitNonCallableRhsThrow(ctx, fctx, expr);
+  if (nonCallableThrow) return nonCallableThrow;
+
   // (#2702) `__instanceof_check` implements §13.10.2 InstanceofOperator +
   // §7.3.20 OrdinaryHasInstance and returns a tri-state (0/1/2) so the
   // non-object / non-callable / custom-@@hasInstance cases are handled
@@ -1893,6 +1899,11 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
       ctorName = mapped;
     }
   }
+
+  // (#2916) `var OBJECT = Object; x instanceof OBJECT` — resolve the builtin
+  // behind an alias so the builtin dispatch below is not skipped (host-free
+  // only; gc/host keeps its runtime predicate). See native-ordinary-instanceof.ts.
+  ctorName = resolveBuiltinCtorAliasName(ctx, expr.right, ctorName) ?? ctorName;
 
   if (!ctorName) {
     return emitDynamicInstanceOf(ctx, fctx, expr);

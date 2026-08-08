@@ -40,6 +40,7 @@ import {
   STANDALONE_TA_SCALAR_HOFS,
 } from "./calls.js";
 import { tryCompileGetPrototypeOfIsPrototypeOf } from "./object-get-prototype-of.js";
+import { tryEmitStaticOrNativeIsPrototypeOf } from "../native-is-prototype-of.js";
 
 /**
  * (#3033) Per-source-file set of member names the USER's own code defines as
@@ -1299,67 +1300,6 @@ export function compileCallableElementAccessCall(
   return expectedReturn ?? VOID_RESULT;
 }
 
-/**
- * (#2994) Statically decide `Object.prototype.isPrototypeOf(arg)` /
- * `Function.prototype.isPrototypeOf(arg)` when the receiver is written
- * syntactically as `Object.prototype` or `Function.prototype` and the argument's
- * TypeScript type makes the answer provable:
- *   - `Object.prototype.isPrototypeOf(x)`   → true for any non-primitive object
- *     value (§20.1.3.4 / §10.4 — every ordinary object's [[Prototype]] chain
- *     ends at %Object.prototype%).
- *   - `Function.prototype.isPrototypeOf(x)`  → true when `x` is callable /
- *     constructable (its chain passes through %Function.prototype%).
- * Returns `true` for a provable yes, `undefined` otherwise (fall through to the
- * existing host dispatch — conservatively no false-negatives / no behaviour
- * change for undecidable shapes).
- */
-function tryStaticIsPrototypeOf(
-  ctx: CodegenContext,
-  receiver: ts.Expression,
-  argExpr: ts.Expression | undefined,
-): boolean | undefined {
-  if (!argExpr) return undefined;
-  if (!ts.isPropertyAccessExpression(receiver)) return undefined;
-  if (receiver.name.text !== "prototype") return undefined;
-  if (!ts.isIdentifier(receiver.expression)) return undefined;
-  const base = receiver.expression.text;
-  if (base !== "Object" && base !== "Function") return undefined;
-
-  // A `new X()` expression always evaluates to an object (§13.3.5 EvaluateNew /
-  // OrdinaryCreateFromConstructor — even a constructor that returns a
-  // non-object yields the freshly-created instance), regardless of what
-  // TypeScript infers for its (possibly `any`) instance type. Every object
-  // descends from %Object.prototype%, so `Object.prototype.isPrototypeOf(new X())`
-  // is unconditionally true.
-  if (base === "Object" && ts.isNewExpression(argExpr)) return true;
-
-  const argType = ctx.checker.getTypeAtLocation(argExpr);
-  const f = argType.flags;
-  const isPrimitiveOrIndeterminate =
-    (f &
-      (ts.TypeFlags.Any |
-        ts.TypeFlags.Unknown |
-        ts.TypeFlags.NumberLike |
-        ts.TypeFlags.StringLike |
-        ts.TypeFlags.BooleanLike |
-        ts.TypeFlags.BigIntLike |
-        ts.TypeFlags.ESSymbolLike |
-        ts.TypeFlags.Null |
-        ts.TypeFlags.Undefined |
-        ts.TypeFlags.Void |
-        ts.TypeFlags.Never)) !==
-    0;
-  if (isPrimitiveOrIndeterminate) return undefined;
-  // Functions carry the Object type flag too, so this admits both plain objects
-  // and callables — correct for the `Object.prototype` receiver.
-  if ((f & ts.TypeFlags.Object) === 0) return undefined;
-
-  if (base === "Object") return true;
-  // base === "Function": require a call or construct signature.
-  const callable = argType.getCallSignatures().length > 0 || argType.getConstructSignatures().length > 0;
-  return callable ? true : undefined;
-}
-
 /** Resolve an `any`-typed receiver method through registered extern classes. */
 export function tryExternClassMethodOnAny(
   ctx: CodegenContext,
@@ -1379,25 +1319,14 @@ export function tryExternClassMethodOnAny(
     if (prototypeResult) return prototypeResult;
   }
 
-  // (#2994) `Object.prototype.isPrototypeOf` / `Function.prototype.isPrototypeOf`
-  // static fold for builtin prototype objects, whose native prototype links are
-  // not materialized in standalone. Mirrors tryStaticInstanceOf's `instanceof
-  // Object` short-circuit (#1729); undecidable shapes retain the host path.
+  // (#2994) Static fold for a provable `Object.prototype` / `Function.prototype`
+  // receiver, then (#2916) the host-free `$Object.$proto` walk for every
+  // remaining shape — without it the extern-class resolver below binds
+  // `env::Object_isPrototypeOf` (Object is the ROOT extern class), which a
+  // standalone/wasi binary cannot satisfy. Both live in native-is-prototype-of.ts.
   if (methodName === "isPrototypeOf") {
-    const staticResult = tryStaticIsPrototypeOf(ctx, propAccess.expression, expr.arguments[0]);
-    if (staticResult !== undefined) {
-      // Compile receiver + arg for side effects (evaluation order), then const.
-      // compileExpression returns `ValType | null` (never VOID_RESULT), so a
-      // non-null result always left one value on the stack that must be dropped.
-      const recvType = compileExpression(ctx, fctx, propAccess.expression);
-      if (recvType !== null) fctx.body.push({ op: "drop" });
-      if (expr.arguments.length > 0) {
-        const argType = compileExpression(ctx, fctx, expr.arguments[0]!);
-        if (argType !== null) fctx.body.push({ op: "drop" });
-      }
-      fctx.body.push({ op: "i32.const", value: staticResult ? 1 : 0 });
-      return { kind: "i32" };
-    }
+    const answered = tryEmitStaticOrNativeIsPrototypeOf(ctx, fctx, propAccess.expression, expr);
+    if (answered !== null) return answered;
   }
 
   // `.slice` is ambiguous across String, Array, ArrayBuffer, Blob, and every
