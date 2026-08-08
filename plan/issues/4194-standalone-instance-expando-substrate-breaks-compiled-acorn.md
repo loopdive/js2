@@ -226,6 +226,15 @@ Neither correction reflects badly on that lane's measurement — it explicitly
 flagged the arm as diagnosed-not-fixed and told the next lane to expect a second
 layer. There were three.
 
+## Permanent repro (#2093)
+
+`tests/issue-4194-instance-expando.test.ts` — the §e1 micro-probe table as
+vitest: reads-back / for-in / `in` / Object.keys / computed writes / the
+copyNode-shaped copy loop, on class and function-constructor receivers,
+standalone. The end-to-end population is the 24
+`test262/test/annexB/language/eval-code/**/*-skip-early-err-try.js` files
+(24/24 pass with the full provider).
+
 ## Acceptance criteria
 
 - [ ] `for (const p in instanceOfC)` enumerates the instance's own enumerable
