@@ -89,6 +89,7 @@ import {
   buildVecDeletePrologue,
   fillVecHasOwnHelpers,
 } from "./vec-bag-seed.js";
+import { buildVecHasIdxPresencePrologue } from "./vec-overlay-presence.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
 import { nonExtensibleFreshIndexGuard, nonWritableLengthIndexGuard } from "./vec-define-rejections.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
@@ -2220,6 +2221,26 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         },
       ];
       fn.body.splice(0, 0, ...prologue);
+    }
+  }
+
+  // ── (#4222) Overlay PRESENCE prologue: __extern_has_idx ───────────────────
+  // The read prologues above make Get see a deleted index as `undefined`; this
+  // makes HasProperty agree. Body lives in `vec-overlay-presence.ts` (the same
+  // split as the delete prologue in `vec-bag-seed.ts`).
+  {
+    const fn = findFn("__extern_has_idx");
+    if (fn) {
+      buildVecHasIdxPresencePrologue(fn, {
+        objectTypeIdx,
+        propEntryTypeIdx,
+        vecBaseIdx,
+        lookupIdx: core.lookupIdx,
+        numericFlagGlobalIdx: core.numericFlagGlobalIdx,
+        numToStringIdx,
+        objFindIdx,
+        deletedIndexFlag: FLAG_DELETED_INDEX,
+      });
     }
   }
 }

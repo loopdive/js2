@@ -76,25 +76,50 @@ describe("#1825 — i32 fast-mode modulo does not trap", () => {
 });
 
 // #1834 — element-write / length-set index uses saturating truncation.
-describe("#1834 — vec write index uses saturating truncation", () => {
-  it("arr.length = NaN does not trap", async () => {
+//
+// (#4222) The two `arr.length = <invalid>` cases below asserted the CLAMP
+// (NaN → 0, 1e30 → i32 max). That was never the spec answer: §10.4.2.4
+// ArraySetLength step 3 makes `ToUint32(v) !== ToNumber(v)` a **RangeError**,
+// and five test262 files in `built-ins/Array/length` assert exactly that. The
+// assertions have been retargeted rather than deleted, because what #1834
+// actually bought is still being pinned: the failure mode must not be a wasm
+// TRAP, which kills the module unrecoverably. A RangeError is a catchable JS
+// exception, so it satisfies #1834's goal strictly better than clamping did —
+// and the saturating truncation itself is unchanged for every value that
+// survives the validity check.
+// The assertion here is deliberately "the catch ran", not "the value is a
+// RangeError": this file instantiates via `instantiateWasm(binary, imports.env)`
+// rather than the full `buildImports` object, and under that narrower wiring the
+// thrown payload does not satisfy `e instanceof RangeError`. The error IDENTITY
+// is pinned on both lanes in tests/es5-standalone-array-semantics-length.test.ts;
+// what belongs in THIS file is #1834's property — control reaches user code
+// afterwards, so the module was not trapped.
+describe("#1834 / #4222 — an invalid arr.length throws catchably, never traps", () => {
+  it("arr.length = NaN throws instead of clamping to 0", async () => {
     const src = `export function test(): number {
       const arr = [1, 2, 3];
-      arr.length = NaN;
-      return arr.length;
+      try { arr.length = NaN; } catch (e) { return 1; }
+      return 0;
     }`;
-    // trunc_sat(NaN) === 0
-    expect(await run(src)).toBe(0);
+    expect(await run(src)).toBe(1);
   });
 
-  it("arr.length = Infinity does not trap", async () => {
+  it("arr.length = 1e30 throws instead of clamping to i32 max", async () => {
     const src = `export function test(): number {
       const arr = [1, 2, 3];
-      arr.length = 1e30;
+      try { arr.length = 1e30; } catch (e) { return 1; }
+      return 0;
+    }`;
+    expect(await run(src)).toBe(1);
+  });
+
+  it("a valid length still rides the saturating truncation unchanged", async () => {
+    const src = `export function test(): number {
+      const arr = [1, 2, 3];
+      arr.length = 0;
       return arr.length;
     }`;
-    // trunc_sat clamps to i32 max instead of trapping
-    expect(await run(src)).toBe(2147483647);
+    expect(await run(src)).toBe(0);
   });
 
   it("normal arr.length set still works", async () => {

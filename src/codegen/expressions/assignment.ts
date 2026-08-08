@@ -8,6 +8,7 @@ import { integrityVarKey } from "../widened-var-key.js";
 import { PROP_FLAG_ACCESSOR, PROP_FLAG_WRITABLE } from "../object-ops.js";
 import type { FieldDef, Instr, ValType } from "../../ir/types.js";
 import { emitBoundsCheckedArrayGet, resolveArrayInfo } from "../array-methods.js";
+import { emitArraySetLengthValidation } from "../array-length-define.js"; // (#4222) §10.4.2.4 step 3
 import { emitHoleToUndefined } from "../array-holes.js";
 import { tryEmitLinearU8ElementCompound, tryEmitLinearU8ElementSet } from "../linear-uint8-codegen.js";
 import { emitAnyAdd, emitModulo, emitToInt32, emitToUint8Clamp } from "../binary-ops.js";
@@ -3750,10 +3751,9 @@ function compilePropertyAssignment(
       // Convert f64 to i32 if needed
       const newLenTmp = allocLocal(fctx, `__arr_len_set_nl_${fctx.locals.length}`, { kind: "i32" });
       if (valType.kind === "f64") {
-        // Saturating truncation: NaN/Infinity/out-of-range lengths clamp
-        // instead of trapping the module. Matches every other length
-        // conversion in this file (#1834).
-        fctx.body.push({ op: "i32.trunc_sat_f64_s" as any });
+        // (#4222) §10.4.2.4 ArraySetLength step 3 — RangeError, not a clamp;
+        // body in array-length-define.ts, which owns the defineProperty forms.
+        emitArraySetLengthValidation(ctx, fctx);
       }
       fctx.body.push({ op: "local.set", index: newLenTmp });
       // Set vec.length = newLen
