@@ -1,7 +1,8 @@
 ---
 id: 4252
 title: "obj[runtimeKey]() on a plain-object receiver is a silent no-op (drop-everything call fallback); standalone Proxy trap support matrix"
-status: in-progress
+status: done
+completed: 2026-08-08
 sprint: current
 created: 2026-08-08
 priority: high
@@ -124,14 +125,63 @@ already dispatch through real trap closures**, with the handler threaded as
 why this issue does not implement them. They are recorded here so the next
 session starts from measurement rather than from the filename.
 
-## Scope of this issue
+## The fix
 
-1. Assessment above (matrix + root cause). — done
-2. Fix `obj[runtimeKey]()` for plain-object receivers by widening the
-   `tryEmitInlineDynamicCall` gate, demand-gated so a module without a
-   dynamic-key call on a non-class receiver stays byte-identical.
-3. Blast radius: `built-ins/Proxy/` sampled before/after, plus the harness
-   self-test suite.
+Both drop sites now route through `tryEmitInlineDynamicCall` — the same
+ref.test-guarded dispatch the user-class arm (#3166) uses — behind a new
+oracle-based predicate `elemAccessReceiverIsPlainObject`
+(`src/codegen/expressions/calls.ts`), which is simply
+`ctx.oracle.typeFactOf(receiver).kind === "object"`.
+
+The predicate was chosen by **measuring** the receiver fact at both drop sites
+rather than guessing: every one of the six failing shapes reported exactly
+`{"kind":"object"}`. That makes the gate narrow by construction — `array`/`tuple`
+(already working), `string`/`number`/`boolean`, `builtin`, `function`, `class`,
+and the deliberately-excluded `any`/`unknown`/`unresolvable` all stay on their
+existing paths. Admitting `any` would have been the tempting wide gate; it is
+excluded precisely because an unresolvable receiver could be anything.
+
+The dispatch's default arm reproduces the historical `ref.null.extern`, so a
+read value that is not callable keeps today's behaviour rather than trapping.
+
+### Demand gate (the #4232 lesson)
+
+Byte-identity measured by hashing compiled standalone output, file-copy A/B:
+
+| module shape | before → after |
+| --- | --- |
+| no element access at all | **identical** |
+| element access READ, never called | **identical** |
+| array receiver, variable index (`fs[i]()`) | **identical** |
+| primitive receiver (`s[k]()`) | **identical** |
+| `any`-typed receiver | **identical** |
+| plain-object receiver, runtime key (the target) | changed |
+
+## Blast radius (measured, both directions)
+
+| suite | before | after | gained | lost |
+| --- | --- | --- | --- | --- |
+| harness self-tests (**all 116**) | 44 pass | **46 pass** | 2 | **0** |
+| `built-ins/Proxy/` (30 sampled of 311) | 4 pass | 4 pass | 0 | 0 |
+| `language/` (60 sampled of 23,724) | 46 pass | 46 pass | 0 | 0 |
+| `built-ins/` (60 sampled of 23,809) | 25 pass | 25 pass | 0 | 0 |
+
+The two harness flips are the assigned files. **Proxy movement is zero**, which
+is the honest result: the fix has nothing to do with Proxy, so nothing in that
+corpus should move, and nothing did. ES5-bucket impact is likewise ~0.
+
+Caveat on the sampled rows: a 60-of-23,724 stride sample is sparse and is a
+regression *smoke* check, not a conformance measurement. The load-bearing
+evidence is the **complete** 116-file harness self-test suite (zero regressions)
+plus the byte-identity table above — a module that cannot reach the new arm
+cannot be affected by it.
+
+## Out of scope
 
 Proxy trap gaps (`isExtensible` / `ownKeys` / `construct` / `apply` /
-`revocable`) are explicitly **out of scope** and left for a follow-up.
+`revocable`) are left for a follow-up. The matrix above is the starting point.
+
+Also observed while bisecting, **not fixed here** and not caused by this change:
+`this` is not bound for an object-literal method call — both `obj.m()` and
+`obj[k]()` leave `this !== obj` (`.tmp/probe-b2.js`, `static-this-bound=BAD`
+before and after). That is a separate defect worth its own issue.
