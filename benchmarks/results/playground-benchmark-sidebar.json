@@ -12,11 +12,11 @@
       "--no-liftoff"
     ],
     "jsOptStatus": "41 (matches optimized-signature 40)",
-    "wasmUs": 4523.543202898549,
-    "jsUs": 10430.013266666689,
-    "wasmStdUs": 4.276395207910517,
-    "jsStdUs": 5.07385807385385,
-    "ratioStd": 0.0025402683580192397,
+    "wasmUs": 4218.4447222222225,
+    "jsUs": 9263.030454545446,
+    "wasmStdUs": 2.3889052974349814,
+    "jsStdUs": 76.4858171836183,
+    "ratioStd": 0.018471683674510873,
     "warmupRounds": 2,
     "measuredRounds": 9
   },
@@ -33,11 +33,11 @@
       "--no-liftoff"
     ],
     "jsOptStatus": "41 (matches optimized-signature 40)",
-    "wasmUs": 208.82059678546477,
-    "jsUs": 351.70992957746483,
-    "wasmStdUs": 0.12575795683123384,
-    "jsStdUs": 0.10061301354797052,
-    "ratioStd": 0.0012113310852665683,
+    "wasmUs": 180.141400241109,
+    "jsUs": 311.4344548286604,
+    "wasmStdUs": 3.172042684109396,
+    "jsStdUs": 2.9879672243497146,
+    "ratioStd": 0.03575509544496904,
     "warmupRounds": 2,
     "measuredRounds": 9
   },
@@ -54,11 +54,11 @@
       "--no-liftoff"
     ],
     "jsOptStatus": "41 (matches optimized-signature 40)",
-    "wasmUs": 0.840218364922305,
-    "jsUs": 3.864780785491268,
-    "wasmStdUs": 0.0011278805103180727,
-    "jsStdUs": 0.1543647181430476,
-    "ratioStd": 0.18290094968152149,
+    "wasmUs": 0.8710184109933709,
+    "jsUs": 3.5272353036033635,
+    "wasmStdUs": 0.001994028999467561,
+    "jsStdUs": 0.07023476192026518,
+    "ratioStd": 0.08130462648850571,
     "warmupRounds": 2,
     "measuredRounds": 9
   },
@@ -75,11 +75,11 @@
       "--no-liftoff"
     ],
     "jsOptStatus": "41 (matches optimized-signature 40)",
-    "wasmUs": 19.648267296918778,
-    "jsUs": 37.146891548081044,
-    "wasmStdUs": 0.020322176931946885,
-    "jsStdUs": 1.264579941803032,
-    "ratioStd": 0.06343703915317649,
+    "wasmUs": 17.829351023846545,
+    "jsUs": 31.408454510371456,
+    "wasmStdUs": 0.1137114501716268,
+    "jsStdUs": 0.6563765738462195,
+    "ratioStd": 0.04214530124825837,
     "warmupRounds": 2,
     "measuredRounds": 9
   }
