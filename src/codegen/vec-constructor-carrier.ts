@@ -128,10 +128,7 @@ export function ensureVecConstructorCarrier(ctx: CodegenContext): number | undef
  * Without the bag helper the guard degrades to the unconditional answer, which
  * is still strictly better than the `undefined` this replaces.
  */
-export function vecConstructorArmInstrs(
-  ctx: CodegenContext,
-  keyEqualsConstructor: Instr[] | null,
-): Instr[] {
+export function vecConstructorArmInstrs(ctx: CodegenContext, keyEqualsConstructor: Instr[] | null): Instr[] {
   const carrierIdx = ctx.funcMap.get(VEC_CONSTRUCTOR_CARRIER_FN);
   if (carrierIdx === undefined || !keyEqualsConstructor) return [];
   const bagHasIdx = ctx.funcMap.get("__carrier_bag_has");

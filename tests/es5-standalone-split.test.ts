@@ -145,10 +145,11 @@ describe("#4220 — String.prototype.split in --target standalone", () => {
   });
 
   it("leaves the JS-host (gc) lane compiling the same sources", async () => {
-    const result = await compile(
-      `export function f() {\n${TRANSFER} return o.split().length;\n}`,
-      { allowJs: true, fileName: "es5-split-gc.js", skipSemanticDiagnostics: true },
-    );
+    const result = await compile(`export function f() {\n${TRANSFER} return o.split().length;\n}`, {
+      allowJs: true,
+      fileName: "es5-split-gc.js",
+      skipSemanticDiagnostics: true,
+    });
     expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
   });
 });

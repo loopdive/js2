@@ -155,6 +155,7 @@ import { ensureProxyRuntime } from "./object-runtime-proxy.js";
 import { ensureArgcGlobal } from "./statements/nested-declarations.js";
 import { buildLazyNativeProtoGetInstrs, getBuiltinBrand } from "./native-proto.js";
 import { vecConstructorArmInstrs } from "./vec-constructor-carrier.js"; // (#4220) runtime `<array>.constructor`
+import { overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4222) overlay-aware index presence
 export { fillProxyDispatch } from "./object-runtime-proxy.js";
 
 /** Initial `$PropMap` capacity. Must be a power of two (mask = cap - 1).
@@ -7697,6 +7698,33 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
   // for-in are each enumerable-only, and `length` is non-enumerable. Expando
   // properties written onto a vec live in the separate #3537 side table and are
   // enumerated by NEITHER — that gap is unchanged by this arm (see #4010).
+  //
+  // (#4222) `0..len-1` is the complete INDEX answer only while every in-bounds
+  // index is PRESENT. `delete arr[i]` leaves `length` alone and records the
+  // absence as a `FLAG_DELETED_INDEX` entry in the #3251 overlay companion, so
+  // under the overlay route each push is gated on `__extern_has_idx` — the same
+  // chokepoint the `in` operator and the HOF presence gates consult, so all
+  // three agree about which indices exist. Route-inactive modules (the common
+  // case) emit the unguarded push, byte-for-byte as before.
+  const gateKeysOnPresence = overlayRouteActive(ctx) && externHasIdxIdx !== undefined;
+  /** `__objvec_push(out, ToString(i))`, presence-gated under the overlay route. */
+  const pushKeyI = (outLocal: number, iLocal: number): Instr[] => {
+    const push: Instr[] = [
+      { op: "local.get", index: outLocal },
+      { op: "local.get", index: iLocal },
+      { op: "f64.convert_i32_s" },
+      { op: "call", funcIdx: numToStringIdx as number },
+      { op: "call", funcIdx: objVecPushIdx as number },
+    ];
+    if (!gateKeysOnPresence) return push;
+    return [
+      { op: "local.get", index: 0 },
+      { op: "local.get", index: iLocal },
+      { op: "f64.convert_i32_s" },
+      { op: "call", funcIdx: externHasIdxIdx as number },
+      { op: "if", blockType: { kind: "empty" }, then: push },
+    ];
+  };
   for (const keysFn of [findFn("__object_keys_forin"), findFn("__object_keys")]) {
     if (!(keysFn && numToStringIdx !== undefined && objVecNewIdx !== undefined && objVecPushIdx !== undefined))
       continue;
@@ -7740,12 +7768,9 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
                   { op: "local.get", index: kLen },
                   { op: "i32.ge_s" },
                   { op: "br_if", depth: 1 },
-                  // __objvec_push(vec, number_toString(f64(i)))
-                  { op: "local.get", index: kVec },
-                  { op: "local.get", index: kI },
-                  { op: "f64.convert_i32_s" },
-                  { op: "call", funcIdx: numToStringIdx },
-                  { op: "call", funcIdx: objVecPushIdx },
+                  // __objvec_push(vec, number_toString(f64(i))), presence-gated
+                  // under the overlay route — see `pushKeyI`.
+                  ...pushKeyI(kVec, kI),
                   { op: "local.get", index: kI },
                   { op: "i32.const", value: 1 },
                   { op: "i32.add" },

@@ -42,6 +42,7 @@ import {
   getOrRegisterRefCellType,
   getOrRegisterVecBaseType,
 } from "../registry/types.js";
+import { overlayRouteActive } from "../typed-lane-overlay-route.js"; // (#4222) overlay-aware index presence
 import { coerceType, compileExpression, compileStatement, valTypesMatch } from "../shared.js";
 import {
   compileArrayDestructuring,
@@ -3228,8 +3229,35 @@ function emitArrayForIn(
   }
   loopBody.push({ op: "local.set", index: keyLocal });
 
-  // block $continue { userBody }
-  loopBody.push({ op: "block", blockType: { kind: "empty" }, body: userBody });
+  // block $continue { [presence gate] userBody }
+  //
+  // (#4222) `0..vecLen-1` is the own-key list only while every in-bounds index
+  // is PRESENT. `delete arr[i]` leaves `length` untouched and records the
+  // absence as a `FLAG_DELETED_INDEX` entry in the #3251 overlay companion, so
+  // under the overlay route each iteration first asks `__extern_has_idx` — the
+  // same chokepoint `in`, `Object.keys` and the HOF presence gates consult — and
+  // `br_if 0` (continue) on an absent index. The gate sits INSIDE `$continue` as
+  // an early branch rather than wrapping the block in an `if`, so the user
+  // body's break/continue depths are untouched. Route-inactive modules and the
+  // host key path emit the bare block, byte-for-byte as before.
+  const forInHasIdx = !hostKeys && overlayRouteActive(ctx) ? ctx.funcMap.get("__extern_has_idx") : undefined;
+  loopBody.push({
+    op: "block",
+    blockType: { kind: "empty" },
+    body:
+      forInHasIdx === undefined
+        ? userBody
+        : [
+            { op: "local.get", index: vecLocal },
+            { op: "extern.convert_any" },
+            { op: "local.get", index: iLocal },
+            { op: "f64.convert_i32_s" },
+            { op: "call", funcIdx: forInHasIdx },
+            { op: "i32.eqz" },
+            { op: "br_if", depth: 0 },
+            ...userBody,
+          ],
+  });
 
   // increment + restart
   loopBody.push({ op: "local.get", index: iLocal });

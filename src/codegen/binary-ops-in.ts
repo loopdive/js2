@@ -24,6 +24,7 @@ import { resolveWasmType } from "./index.js";
 import type { InnerResult } from "./shared.js";
 import { coerceType, compileExpression, flushLateImportShifts } from "./shared.js";
 import { inRhsIsExclusivelyPrimitive } from "./binary-ops.js";
+import { overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4222) overlay-aware index presence
 
 /**
  * (#3714) `emitThrowTypeError` pushes directly onto `fctx.body`; to nest its
@@ -283,6 +284,34 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
       const leftResult = compileExpression(ctx, fctx, expr.left);
       if (leftResult) {
         fctx.body.push({ op: "drop" });
+      }
+      // (#4222) Under the overlay route the dense `numIdx < length` compare is
+      // NOT the HasProperty answer: `delete arr[numIdx]` leaves `length`
+      // untouched and records the absence as a `FLAG_DELETED_INDEX` companion
+      // entry, and an accessor index may sit beyond the physical backing. Defer
+      // to `__extern_has_idx`, the chokepoint whose overlay presence prologue
+      // knows about both — the same typed→dynamic hand-off #4159 made for
+      // element reads/writes. Route-inactive modules keep the inline compare
+      // byte-for-byte.
+      if (overlayRouteActive(ctx)) {
+        const hasIdxFn = ensureLateImport(
+          ctx,
+          "__extern_has_idx",
+          [{ kind: "externref" }, { kind: "f64" }],
+          [{ kind: "i32" }],
+        );
+        flushLateImportShifts(ctx, fctx);
+        if (hasIdxFn !== undefined) {
+          const recvResult = compileExpression(ctx, fctx, expr.right);
+          if (recvResult) {
+            fctx.body.push({ op: "extern.convert_any" });
+            fctx.body.push({ op: "f64.const", value: numIdx });
+            fctx.body.push({ op: "call", funcIdx: hasIdxFn });
+          } else {
+            fctx.body.push({ op: "i32.const", value: 0 });
+          }
+          return { kind: "i32" };
+        }
       }
       // Compile the array expression to get the vec struct
       const rightResult = compileExpression(ctx, fctx, expr.right);
