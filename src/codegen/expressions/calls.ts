@@ -3505,6 +3505,27 @@ export function elemAccessReceiverIsUserClass(ctx: CodegenContext, elemAccess: t
 }
 
 /**
+ * (#4252) True when the element-access receiver is an ORDINARY OBJECT — an
+ * object literal or an object-typed binding — as opposed to an array, a
+ * primitive, a builtin, a function or a user class.
+ *
+ * Gates the plain-object arm of the runtime-key call dispatch in
+ * `call-tail-dispatch.ts`. `TypeFact.kind === "object"` is exactly the
+ * discrimination wanted: `array`/`tuple` receivers already have a working
+ * element-call lowering, `string`/`number`/`boolean` receivers must keep their
+ * primitive method paths, `builtin`/`function`/`class` are handled by their own
+ * arms (`class` by `elemAccessReceiverIsUserClass` immediately above), and the
+ * deliberately-excluded `any`/`unknown`/`unresolvable` are NOT admitted — an
+ * unresolvable receiver could be anything, so widening the dispatch there would
+ * perturb receivers that compile correctly today.
+ *
+ * Oracle-based (#1930/#3273): a `TypeFact` tri-state, no `ts.Type` escapes.
+ */
+export function elemAccessReceiverIsPlainObject(ctx: CodegenContext, elemAccess: ts.ElementAccessExpression): boolean {
+  return ctx.oracle.typeFactOf(elemAccess.expression).kind === "object";
+}
+
+/**
  * (#3166) True when the receiver class of an element access declares a struct
  * field named `fieldName`. A computed-name class field (`[1+1] = …`) lands here
  * under its ToPropertyKey-canonicalised name ("2"); distinguishes a
