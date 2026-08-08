@@ -28,6 +28,7 @@
 // and reports coverage (they are named follow-ups in the issue).
 
 import { Builtin, Encoder, type JumpSlot } from "./encoder.js";
+import { appendPatternBoundNames } from "./eval-environment.js";
 import { FLAG_CLASS_CONSTRUCTOR, FLAG_SCRIPT, FLAG_STRICT, type FuncMeta, type JSValue } from "./types.js";
 import {
   BUILTIN_ASSIGN_OUTER_NAME,
@@ -369,7 +370,17 @@ class FunctionEmitter {
       }
     } else if (s.type === "TryStatement") {
       this.collectNestedVarHoist(s.block, lexicalAncestors);
-      if (s.handler) this.collectNestedVarHoist(s.handler.body, lexicalAncestors);
+      if (s.handler) {
+        // Mirrors `collectNestedVarDeclarations`: a SIMPLE catch parameter is
+        // B.3.5-exempt and does not shadow the handler descent, a
+        // destructuring one is not exempt and must.
+        const handlerLexicals: string[] = [];
+        for (const name of lexicalAncestors) handlerLexicals.push(name);
+        if (s.handler.param && s.handler.param.type !== "Identifier") {
+          appendPatternBoundNames(s.handler.param, handlerLexicals);
+        }
+        this.collectNestedVarHoist(s.handler.body, handlerLexicals);
+      }
       if (s.finalizer) this.collectNestedVarHoist(s.finalizer, lexicalAncestors);
     } else if (s.type === "LabeledStatement") {
       this.collectNestedVarHoist(s.body, lexicalAncestors);
@@ -1039,7 +1050,50 @@ class FunctionEmitter {
       // `isActiveBlockLexical` and stop seeing it when the clause ends (#4137).
       let handlerReg: number;
       let catchSaveReg = -1;
-      if (s.handler.param) {
+      if (s.handler.param && s.handler.param.type === "ObjectPattern") {
+        // Minimal destructuring slice: non-computed Identifier keys with
+        // Identifier values (`{ f }`, `{ a: b }`). Defaults, rest, nesting and
+        // ArrayPattern stay refused.
+        //
+        // The record is labelled LEXICAL_SCOPE_LABEL, NOT
+        // SIMPLE_CATCH_SCOPE_LABEL: B.3.5 exempts only
+        // `CatchParameter : BindingIdentifier`, so a DESTRUCTURING parameter
+        // must cancel B.3.3's synthetic var binding, and the plain label makes
+        // `cancelsAnnexBVarBinding` count it with no extra code.
+        const boundNames: string[] = [];
+        const keyNames: string[] = [];
+        const properties = s.handler.param.properties;
+        for (let i = 0; i < properties.length; i += 1) {
+          const prop = properties[i];
+          if (prop.type !== "Property" || prop.computed || prop.key.type !== "Identifier") {
+            throw new UnsupportedNodeError(`catch destructuring (${prop.type})`, prop.type);
+          }
+          if (prop.value.type !== "Identifier") {
+            throw new UnsupportedNodeError(`catch destructuring (${prop.value.type})`, prop.value.type);
+          }
+          boundNames.push(prop.value.name);
+          keyNames.push(prop.key.name);
+        }
+        handlerReg = this.allocReg(); // scratch sink for the thrown value
+        const namesReg = this.allocReg();
+        catchSaveReg = this.allocReg();
+        this.enc.emitConst(Op.LdaConst, this.enc.internConst(boundNames));
+        this.enc.emitReg(Op.Star, namesReg);
+        this.enc.emitCallBuiltin(BUILTIN_PUSH_LEXICAL_ENV, namesReg, 1);
+        this.enc.emitReg(Op.Star, catchSaveReg);
+        const catchScope: LoopCtx = {
+          label: LEXICAL_SCOPE_LABEL,
+          breaks: [catchSaveReg],
+          continues: boundNames,
+          isLoop: false,
+        };
+        this.installLoopCtx(catchScope);
+        for (let i = 0; i < boundNames.length; i += 1) {
+          this.enc.emitReg(Op.Ldar, handlerReg);
+          this.enc.emitConst(Op.GetProp, this.enc.internConst(keyNames[i]!));
+          this.initializeName(boundNames[i]!);
+        }
+      } else if (s.handler.param) {
         if (s.handler.param.type !== "Identifier") {
           throw new UnsupportedNodeError(`catch destructuring (${s.handler.param.type})`, s.handler.param.type);
         }
