@@ -244,13 +244,25 @@ Run locally on this branch: `check:loc-budget` OK (the `+95` on
 granted), `check:oracle-ratchet` OK (no raw `checker.*` added — this change is
 pure funcMap wiring), `check:stack-balance` OK, `tsc --noEmit` clean.
 
-`tests/equivalence/**` was run in full. One failure —
-`arguments-nested-and-loops.test.ts > for-loop with function declaration in
-body` — and it is **pre-existing**, proved by a paired A/B in isolation
-(`1 failed | 45 passed` identically at base and with the fix, swapping the two
-touched sources for their `HEAD` copies). Note this suite exercises the DEFAULT
-gc lane, which the byte-identity A/B above already proves unchanged, so it could
-not have regressed here on mechanism either.
+`tests/equivalence/**` was run in full. It reported **5** failures, and the run
+**OOM'd** partway (`FatalProcessOutOfMemory` + `ERR_IPC_CHANNEL_CLOSED` — the
+full-suite hazard CLAUDE.md warns about). Every one was chased down
+individually rather than waved off as "probably the OOM":
+
+| failure | verdict | how established |
+| --- | --- | --- |
+| `arguments-nested-and-loops > for-loop with function declaration in body` | **pre-existing** | isolated A/B: `1 failed \| 45 passed` identically at base and with the fix |
+| `logical-conditional-identity > isNaN(void x)…` + 2 sibling `void`/NaN rows | **pre-existing** | isolated A/B: the same 3 rows fail at base |
+| `weakmap-weakset > WeakMap set and get` | **OOM collateral** | passes in isolation (it had taken 35 s in the full run) |
+
+Zero regressions. Two independent reasons, not one: the isolated A/Bs above,
+and the mechanism — this suite exercises the DEFAULT gc lane, which the
+byte-identity A/B already proves unchanged.
+
+**Method note for the next agent:** the wrapper `npm test … > log; echo "EXIT=$?"`
+reports the *echo*'s status, so an OOM-killed suite can read as exit 0 (it did
+here, in a background-task notification). Read the log, not the exit code — and
+never let "the run OOM'd" stand in for a per-failure verdict.
 
 `check:godfiles` **fails with 13 regressions, none of them from this change** —
 every entry is in `src/codegen/expressions/calls.ts`, `src/codegen/index.ts` or
