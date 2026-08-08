@@ -36,7 +36,7 @@ import { reserveMemberGetDispatch } from "../member-get-dispatch.js"; // (#2681/
 import { resolveReceiverStruct } from "../fnctor-escape-gate.js"; // (#2681/#2686) pinned reconstructed-fnctor receiver gate
 import { tryEmitTypedThisIncDec } from "../typed-this.js"; // (#3683 S2) typed-`this` inc/dec
 import { receiverIsRealmGlobalObject } from "../helpers/sloppy-this-global.js"; // (#4205) realm global object receiver
-import { coerceType, compileExpression, skipTransparentExpressions } from "../shared.js";
+import { coerceType, compileExpression, skipTransparentExpressions, unpackedElemType } from "../shared.js";
 import { compileStringLiteral } from "../string-ops.js";
 import { defaultValueInstrs } from "../type-coercion.js";
 import {
@@ -898,7 +898,10 @@ function compileMemberIncDec(
         // and store THAT. Byte-inert when elemType already matches numType.
         const makeStoreLocal = (newTmp: number): number => {
           if (elemType.kind === numType) return newTmp;
-          const storeTmp = allocLocal(fctx, `__incdec_store_${fctx.locals.length}`, elemType);
+          // (#4216) Packed i8/i16 elements: coerceType leaves an i32 on the
+          // stack (array.set takes i32 for packed storage), and a LOCAL may
+          // never be declared with a packed kind — widen the declared type.
+          const storeTmp = allocLocal(fctx, `__incdec_store_${fctx.locals.length}`, unpackedElemType(elemType));
           fctx.body.push({ op: "local.get", index: newTmp });
           coerceType(ctx, fctx, { kind: numType }, elemType);
           fctx.body.push({ op: "local.set", index: storeTmp });
