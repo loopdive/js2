@@ -4688,8 +4688,8 @@ export function compilePropertyIntrospection(
       }
     }
 
-    // (#3920) Replace ONLY a folded `1` — see `closed-struct-presence.ts`.
-    if (result === 1 && emitHasOwnPresence(ctx, fctx, receiverWasm, structFieldNames, staticKey, propAccess, arg)) {
+    // (#3920/#4225) Replace an unsound folded constant — see closed-struct-presence.ts.
+    if (emitHasOwnPresence(ctx, fctx, receiverWasm, structFieldNames, staticKey, propAccess, arg, result)) {
       return { kind: "i32", boolean: true };
     }
 
