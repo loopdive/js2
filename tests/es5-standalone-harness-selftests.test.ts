@@ -178,8 +178,8 @@ const EXPECTED: ReadonlyArray<{ file: string; status: "pass" | "fail"; note: str
   },
   {
     file: "verifyProperty-restore.js",
-    status: "fail",
-    note: "#4251 — verifyProperty restore/configurable family; overlaps the in-flight descriptor-configurable work in object-runtime-descriptors.ts / vec-props-key-source.ts.",
+    status: "pass",
+    note: "fixed by #4230's descriptor-bag work (flipped when the wave-3 merge landed); was the verifyProperty restore/configurable family.",
   },
 ];
 
