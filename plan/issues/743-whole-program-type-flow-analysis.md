@@ -2378,3 +2378,95 @@ Probe artifacts: `.tmp/file-census.mjs` (inline in this section's Setup),
 outputs `.tmp/pako-census.json`, `.tmp/luxon-census.json`,
 `.tmp/sc-census.json`, acorn control `.tmp/acorn-probe.{json,err}` — scratch
 only; this section is the durable record.
+
+## 2026-08-08 — Parser.pos program: pin-census instrument + the first two slices LANDED
+
+The locals spec's §7 pin table was hand-traced and predates the levers that
+landed later the same day. This session built the INSTRUMENT that makes the
+table mechanical, re-measured, and retired the two cheapest pin families the
+fresh census exposed.
+
+### The instrument: `JS2WASM_FNCTOR_FIELD_FACT_TRACE=<field | Owner.field | *>`
+
+`src/ir/fnctor-field-fact-trace.ts`, hooked into `runFieldPass` /
+`fieldContribution` (env-gated, inert off; records overwrite per iteration so
+the surviving snapshot is post-convergence). For each matching `owner.field`
+it prints every reaching write with site line, attribution, kind, and its
+evaluated contribution — plus, for `+=` writes, the RHS value SEPARATELY,
+because a plus-assign contribution folds the field's running fact in via
+`plusJoin`: a dynamic contribution with a clean RHS is **derivative** (clears
+when the roots do), only a dynamic RHS or a dynamic plain assign is a **root
+pin**. Probe idiom: `.tmp/pos-pin-census.mjs` (fixture-style synthetic program
+over the dist, then `formatFieldFactTrace()`).
+
+### What the live census corrected in the §7 table
+
+- **Pin (4) — `+= ch <= 0xffff ? 1 : 2` — was ALREADY retired** by the
+  shipped conditional-join rule; the table predates it.
+- **The "benign" `+= 2` / `+= 3` / `+= startSkip` sites were NOT benign** —
+  every `+=` on a dynamic running fact reads as dynamic regardless of its RHS
+  (the plusJoin feedback). They are derivative, not pins, but the spec's
+  "already work" claim was measuring the wrong thing.
+- `Parser.pos`: 79 reaching writes, **root pins = (1) `err.pos = pos` :3761,
+  (2) 22× all-bucket `state.pos = …`, (3) `this.pos = end + 2` :5494,
+  (4) `+= size` :5798 (rhs dynamic), (5) `+= octalStr.length - 1` :6125.**
+
+### Slice A — builtin-instance receiver carve-out (§4 decision, now implemented)
+
+`classifyFieldReceiver` (src/ir/fnctor-field-writes.ts) now attributes a write
+NOWHERE when the receiver is an identifier with a single in-file
+`var x = new B(…)` declaration, `B` resolves entirely out-of-file (or not at
+all — an undeclared global cannot be a tracked in-file ctor), and the binding
+is never reassigned by ANY in-file assignment form (full taxonomy: `=`,
+compounds, logical assigns, `++`/`--`, for-in/of targets, destructuring —
+where the shorthand-property case needs
+`checker.getShorthandAssignmentValueSymbol`, NOT `getSymbolAtLocation`, which
+answers the PROPERTY symbol; the negative test caught exactly that). The §4
+cross-module trust note is carried in the code comment.
+
+### Slice B — arithmetic F64-producer (`- * / % **`), `src/ir/fnctor-f64-producers.ts`
+
+Fourth satellite evaluator rule: either operand provably not a BigInt ⇒ the
+expression is a Number — same `ApplyStringOrNumericBinaryOperator` totality
+argument as the i32-producer rule (mixed numeric types throw; no value flows
+on the counterexample path), minus the Int32 wrap. Retires pin (5) — the
+literal `1` alone proves `octalStr.length - 1` numeric, no string substrate
+needed — which is CHEAPER than the §6-priced string-builtin route for that
+pin. `+` deliberately absent (string-or-number; `plusJoin`'s business).
+
+### Measured result (all on the acorn dist, same session)
+
+| | before | after |
+| --- | --- | --- |
+| `Parser.pos` root pin families | 5 | **2** (the 22 all-bucket writes · `end + 2`) + one dynamic `size` param |
+| `err.pos = pos` :3761 | pins every owner's `pos` | attributed nowhere |
+| `+= octalStr.length - 1` / ternary / `+= literal` sites | pins | derivative |
+| flag-off standalone binary | — | **byte-identical** (sha256 `fbea40a8…`, 948,264 B, A/B by file copy) |
+| flag-on slot census | 56 / 1 / 39 | **56 / 1 / 39 — unchanged, as pre-registered** (no slot moves until ALL pins retire) |
+| suites | — | `issue-743-*` + `issue-4155-*` + `issue-2660-*` + `ir-propagate*` + `ir-frontend-widening` **299/299**, new `issue-743-pos-pin-slices.test.ts` 9/9 |
+
+`RegExpValidationState.pos` root pins after the slices: the same 22 all-bucket
+writes, `this.pos = this.nextIndex(this.pos, forceU)` :4113 (owner-resolved
+method returns, §5), `this.pos = pos` :4139 (dynamic param).
+
+### Fixture trap, recorded for the next test author
+
+A no-call-site function's params sit at UNKNOWN (lattice bottom), and
+`f64Compatible(unknown)` is TRUE by design — so a fixture whose "dynamic"
+value is an unused entrypoint's param proves nothing (the first draft of this
+slice's negative tests passed vacuously). Use a property read (`p.v`) to
+manufacture a provably-DYNAMIC value.
+
+### What remains for `Parser.pos`, re-priced by the census
+
+1. **Receiver-provenance attribution for the 22 `state.pos` writes** — the
+   attribution-only variant: prove `state`'s def-chain closes over
+   `{new RegExpValidationState(…), null}` (through the `||`-caching idiom and
+   the `regexpState` field's writes) and attribute the writes to that owner
+   instead of `"all"`. No new lattice dimension — cheaper than §6's XL
+   pricing of full value-provenance, but still needs the locals model for the
+   chain. This is now the binding constraint on `Parser.pos`.
+2. **Locals + string-builtin substrate for `end + 2`** (§3 spec exists;
+   `this.input = String(input)` gives the string fact, `.indexOf` the f64).
+3. The `size` param fact (:5798) — likely falls out of whichever of the two
+   above lands first; measure, don't assume.
