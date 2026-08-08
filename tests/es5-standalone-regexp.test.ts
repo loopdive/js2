@@ -123,6 +123,35 @@ describe("#4233 — ES5 RegExp semantics in --target standalone", () => {
       expect(await runStandalone(src)).toBe(6);
     });
 
+    // (#4233 follow-up) §22.2.3.1 step 4.b guards the identity arm with TWO
+    // preconditions the static RegExp *type* does not establish:
+    // `IsRegExp(pattern)` (which reads `pattern[Symbol.match]` and uses
+    // ToBoolean of it when present) and `SameValue(newTarget, pattern
+    // .constructor)`. Folding on the type alone returned `R` where the spec
+    // constructs a new object — this is the exact shape of
+    // `built-ins/RegExp/call_with_regexp_match_falsy.js`, which the first cut
+    // of the fold flipped pass→fail on the standalone lane.
+    it("a falsy Symbol.match makes IsRegExp false — RegExp(R) must build a NEW object", async () => {
+      const src = `var re = /(?:)/; re[Symbol.match] = false; var out = RegExp(re);
+        return out === re ? 0 : 1;`;
+      expect(await runStandalone(src)).toBe(1);
+    });
+
+    // (A `.constructor` override — step 4.b.iii's other precondition — takes the
+    // same code path but cannot be pinned through `runStandalone`: writing
+    // `re.constructor` needs `env::Object_set_constructor`, and this suite's
+    // empty-imports assertion is itself a #4233 regression guard.)
+
+    it("the brand guard also covers the RUNTIME-undefined flags arm", async () => {
+      // Same §22.2.3.1 branch, reached through the two-arm runtime merge
+      // (`(function(){})()` is undefined only at runtime), which had its own
+      // identity spelling.
+      const src = `var re = /(?:)/; re[Symbol.match] = false;
+        var out = RegExp(re, (function(){})());
+        return out === re ? 0 : 1;`;
+      expect(await runStandalone(src)).toBe(1);
+    });
+
     it("runtime-known flags recompile R's ORIGINAL SOURCE, not ToString(R)", async () => {
       // §22.2.3.1 step 6. ToString(R) would be "/x/i", an invalid pattern.
       const src = `var re = /x/i; var fl = "g"; var out = new RegExp(re, fl);

@@ -288,6 +288,103 @@ function assignmentTargetContainsSymbol(ctx: CodegenContext, target: ts.Expressi
   return false;
 }
 
+/**
+ * (#4233 follow-up) Per-source-file memo for {@link regExpIdentityBrandIsProvable}.
+ * The scan is whole-file, and the constructor helper runs per call site.
+ */
+const regExpBrandOverrideCache = new WeakMap<ts.SourceFile, boolean>();
+
+/**
+ * Does anything in this compilation unit make `RegExp(R)`'s **identity**
+ * precondition unprovable?
+ *
+ * §22.2.3.1 step 4.b returns `pattern` itself only when BOTH hold:
+ *
+ *   b.  `patternIsRegExp` — i.e. `IsRegExp(pattern)`, which reads
+ *       `pattern[Symbol.match]` and, when that property EXISTS, uses
+ *       `ToBoolean` of it rather than the [[RegExpMatcher]] brand; and
+ *   iii. `SameValue(newTarget, Get(pattern, "constructor"))`.
+ *
+ * A static "this expression has type RegExp" answers NEITHER: a falsy
+ * `Symbol.match` makes `IsRegExp` false, and a reassigned `constructor` makes
+ * the SameValue check fail — in both cases the spec falls through to the
+ * ordinary *construct* path and a NEW object is returned
+ * (`built-ins/RegExp/call_with_regexp_match_falsy.js`, which #4233 flipped
+ * pass→fail by folding on the type alone).
+ *
+ * The standalone RegExp carrier is a fixed WasmGC struct with no slot for
+ * either override, so neither can be re-checked at runtime. The only sound
+ * lowering is therefore to prove the absence of any such write statically and
+ * otherwise decline the fold, falling back to the pre-#4233 clone — which is
+ * observably wrong only for the identity the fold was added to fix, and
+ * correct for everything else.
+ *
+ * Conservative and whole-file, mirroring `bindingHasWrites`: any write through
+ * a well-known-symbol key, any `.constructor` / `"constructor"` write, and any
+ * `Object.defineProperty`/`defineProperties`/`setPrototypeOf`/`create` call
+ * (each of which can install either slot without a syntactic write) disables
+ * the fold for the whole file.
+ */
+function regExpIdentityBrandIsProvable(expr: ts.Expression): boolean {
+  const sourceFile = expr.getSourceFile();
+  const cached = regExpBrandOverrideCache.get(sourceFile);
+  if (cached !== undefined) return cached;
+
+  // `X[Symbol.anything]` — `Symbol.match` is the one §22.2.3.1 reads, but
+  // `Symbol.species`/`Symbol.replace` land in the same reflective idiom and
+  // none of them appear in code the fold is meant to serve.
+  const isWellKnownSymbolKey = (key: ts.Expression): boolean => {
+    const k = stripStaticWrapper(key);
+    return ts.isPropertyAccessExpression(k) && ts.isIdentifier(k.expression) && k.expression.text === "Symbol";
+  };
+  const isConstructorKey = (key: ts.Expression): boolean => {
+    const k = stripStaticWrapper(key);
+    return (ts.isStringLiteral(k) || ts.isNoSubstitutionTemplateLiteral(k)) && k.text === "constructor";
+  };
+
+  let overridden = false;
+  const visit = (node: ts.Node): void => {
+    if (overridden) return;
+
+    if (ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind)) {
+      const target = stripStaticWrapper(node.left);
+      if (ts.isPropertyAccessExpression(target) && target.name.text === "constructor") overridden = true;
+      else if (
+        ts.isElementAccessExpression(target) &&
+        (isWellKnownSymbolKey(target.argumentExpression) || isConstructorKey(target.argumentExpression))
+      ) {
+        overridden = true;
+      }
+      if (overridden) return;
+    }
+
+    // `Object.defineProperty(re, Symbol.match, …)` and friends install the same
+    // slots with no assignment node to find.
+    if (ts.isCallExpression(node)) {
+      const callee = stripStaticWrapper(node.expression);
+      if (
+        ts.isPropertyAccessExpression(callee) &&
+        ts.isIdentifier(callee.expression) &&
+        callee.expression.text === "Object" &&
+        (callee.name.text === "defineProperty" ||
+          callee.name.text === "defineProperties" ||
+          callee.name.text === "setPrototypeOf" ||
+          callee.name.text === "create")
+      ) {
+        overridden = true;
+        return;
+      }
+    }
+
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sourceFile, visit);
+
+  const provable = !overridden;
+  regExpBrandOverrideCache.set(sourceFile, provable);
+  return provable;
+}
+
 function bindingHasWrites(ctx: CodegenContext, decl: ts.VariableDeclaration, sym: ts.Symbol): boolean {
   let hasWrite = false;
   const visit = (node: ts.Node): void => {
@@ -1775,6 +1872,13 @@ export function compileStandaloneRegExpConstructor(
     (isGlobalRegExpType(ctx.checker.getTypeAtLocation(patternArg)) ||
       isKnownBackendCreatedRegExpReceiver(ctx, patternArg));
   //
+  // A RegExp *type* is not enough for the identity arm: §22.2.3.1 step 4.b also
+  // needs `IsRegExp(pattern)` (which reads `pattern[Symbol.match]`) and
+  // `pattern.constructor === RegExp`. See `regExpIdentityBrandIsProvable` — when
+  // either may have been overridden, the fold is declined and the clone arm
+  // below runs instead, which is what §22.2.3.1's construct path does.
+  const identityIsProvable = patternIsRegExp && regExpIdentityBrandIsProvable(patternArg!);
+  //
   // `staticConstStringValue(...) === undefined` is the THIRD static spelling
   // and the one S15.10.3.1_A1_T3 needs: a never-written `var x;` with no
   // initialiser folds to `undefined` there (it is not the identifier
@@ -1782,7 +1886,7 @@ export function compileStandaloneRegExpConstructor(
   // `!== null` result also kept it out of the runtime arm below).
   if (
     ts.isCallExpression(node) &&
-    patternIsRegExp &&
+    identityIsProvable &&
     (flagsArg === undefined ||
       isStaticallyUndefinedExpr(flagsArg) ||
       staticConstStringValue(ctx, flagsArg) === undefined)
@@ -1824,11 +1928,12 @@ export function compileStandaloneRegExpConstructor(
     flushLateImportShifts(ctx, fctx);
     if (isUndefIdx === undefined || toStringIdx === undefined) return null;
 
-    // Undefined arm — identity (plain call) or a field-by-field carrier clone
-    // with the spec's fresh `lastIndex = 0` (`new`), byte-identical to the
-    // static arms above/below.
+    // Undefined arm — identity (plain call, and only when step 4.b's brand
+    // preconditions are statically provable) or a field-by-field carrier clone
+    // with the spec's fresh `lastIndex = 0` (`new`, or an unprovable brand),
+    // byte-identical to the static arms above/below.
     const undefinedArm: Instr[] = [{ op: "local.get", index: regexpLocal }];
-    if (!ts.isCallExpression(node)) {
+    if (!ts.isCallExpression(node) || !identityIsProvable) {
       undefinedArm.length = 0;
       for (const fieldIdx of [
         RE_FIELD_FLAGS,
