@@ -1312,7 +1312,19 @@ export function tryExternClassMethodOnAny(
   // The first ambient extern-class match binds `env.RegExp_test` before the
   // standalone runtime can inspect the receiver's real `$NativeRegExp` brand.
   // Let the closed-method dispatcher perform that runtime identity check.
-  if (ctx.standalone && methodName === "test" && expr.arguments.length === 1) return null;
+  //
+  // (#4233) `exec` has the SAME shape and was left behind: the only extern
+  // class declaring it is `RegExp`, so the first-match loop below bound
+  // `env::RegExp_exec` for the §22.2.6.2 reflective idiom
+  // (`o.exec = RegExp.prototype.exec; o.exec(s)`) — an unsatisfiable host
+  // import that made the whole module fail to instantiate in standalone mode
+  // (`host_import_leak: env::RegExp_exec`, the 15.10.6.2_A2_* battery). The
+  // arity guard is dropped for both members: `exec()` / `test()` with ZERO
+  // args is the §22.2.6.2 step-3 `ToString(undefined)` case, and it must reach
+  // the brand-checking native closure just as the one-arg form does.
+  if (ctx.standalone && (methodName === "test" || methodName === "exec") && expr.arguments.length <= 1) {
+    return null;
+  }
 
   if (methodName === "isPrototypeOf") {
     const prototypeResult = tryCompileGetPrototypeOfIsPrototypeOf(ctx, fctx, expr, propAccess.expression);

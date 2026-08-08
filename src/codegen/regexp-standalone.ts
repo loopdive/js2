@@ -288,6 +288,103 @@ function assignmentTargetContainsSymbol(ctx: CodegenContext, target: ts.Expressi
   return false;
 }
 
+/**
+ * (#4233 follow-up) Per-source-file memo for {@link regExpIdentityBrandIsProvable}.
+ * The scan is whole-file, and the constructor helper runs per call site.
+ */
+const regExpBrandOverrideCache = new WeakMap<ts.SourceFile, boolean>();
+
+/**
+ * Does anything in this compilation unit make `RegExp(R)`'s **identity**
+ * precondition unprovable?
+ *
+ * §22.2.3.1 step 4.b returns `pattern` itself only when BOTH hold:
+ *
+ *   b.  `patternIsRegExp` — i.e. `IsRegExp(pattern)`, which reads
+ *       `pattern[Symbol.match]` and, when that property EXISTS, uses
+ *       `ToBoolean` of it rather than the [[RegExpMatcher]] brand; and
+ *   iii. `SameValue(newTarget, Get(pattern, "constructor"))`.
+ *
+ * A static "this expression has type RegExp" answers NEITHER: a falsy
+ * `Symbol.match` makes `IsRegExp` false, and a reassigned `constructor` makes
+ * the SameValue check fail — in both cases the spec falls through to the
+ * ordinary *construct* path and a NEW object is returned
+ * (`built-ins/RegExp/call_with_regexp_match_falsy.js`, which #4233 flipped
+ * pass→fail by folding on the type alone).
+ *
+ * The standalone RegExp carrier is a fixed WasmGC struct with no slot for
+ * either override, so neither can be re-checked at runtime. The only sound
+ * lowering is therefore to prove the absence of any such write statically and
+ * otherwise decline the fold, falling back to the pre-#4233 clone — which is
+ * observably wrong only for the identity the fold was added to fix, and
+ * correct for everything else.
+ *
+ * Conservative and whole-file, mirroring `bindingHasWrites`: any write through
+ * a well-known-symbol key, any `.constructor` / `"constructor"` write, and any
+ * `Object.defineProperty`/`defineProperties`/`setPrototypeOf`/`create` call
+ * (each of which can install either slot without a syntactic write) disables
+ * the fold for the whole file.
+ */
+function regExpIdentityBrandIsProvable(expr: ts.Expression): boolean {
+  const sourceFile = expr.getSourceFile();
+  const cached = regExpBrandOverrideCache.get(sourceFile);
+  if (cached !== undefined) return cached;
+
+  // `X[Symbol.anything]` — `Symbol.match` is the one §22.2.3.1 reads, but
+  // `Symbol.species`/`Symbol.replace` land in the same reflective idiom and
+  // none of them appear in code the fold is meant to serve.
+  const isWellKnownSymbolKey = (key: ts.Expression): boolean => {
+    const k = stripStaticWrapper(key);
+    return ts.isPropertyAccessExpression(k) && ts.isIdentifier(k.expression) && k.expression.text === "Symbol";
+  };
+  const isConstructorKey = (key: ts.Expression): boolean => {
+    const k = stripStaticWrapper(key);
+    return (ts.isStringLiteral(k) || ts.isNoSubstitutionTemplateLiteral(k)) && k.text === "constructor";
+  };
+
+  let overridden = false;
+  const visit = (node: ts.Node): void => {
+    if (overridden) return;
+
+    if (ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind)) {
+      const target = stripStaticWrapper(node.left);
+      if (ts.isPropertyAccessExpression(target) && target.name.text === "constructor") overridden = true;
+      else if (
+        ts.isElementAccessExpression(target) &&
+        (isWellKnownSymbolKey(target.argumentExpression) || isConstructorKey(target.argumentExpression))
+      ) {
+        overridden = true;
+      }
+      if (overridden) return;
+    }
+
+    // `Object.defineProperty(re, Symbol.match, …)` and friends install the same
+    // slots with no assignment node to find.
+    if (ts.isCallExpression(node)) {
+      const callee = stripStaticWrapper(node.expression);
+      if (
+        ts.isPropertyAccessExpression(callee) &&
+        ts.isIdentifier(callee.expression) &&
+        callee.expression.text === "Object" &&
+        (callee.name.text === "defineProperty" ||
+          callee.name.text === "defineProperties" ||
+          callee.name.text === "setPrototypeOf" ||
+          callee.name.text === "create")
+      ) {
+        overridden = true;
+        return;
+      }
+    }
+
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sourceFile, visit);
+
+  const provable = !overridden;
+  regExpBrandOverrideCache.set(sourceFile, provable);
+  return provable;
+}
+
 function bindingHasWrites(ctx: CodegenContext, decl: ts.VariableDeclaration, sym: ts.Symbol): boolean {
   let hasWrite = false;
   const visit = (node: ts.Node): void => {
@@ -854,11 +951,43 @@ function emitArgAsNativeString(
   fctx: FunctionContext,
   argExpr: ts.Expression,
   strType: ValType,
+  opts?: {
+    /**
+     * (#4233) §22.2.3.1 steps 5 & 7: `If pattern is undefined, let P be the
+     * empty String` (same for `flags`/F). That is NOT ToString(undefined) —
+     * `new RegExp(undefined, undefined)` is `/(?:)/`, whereas ToString would
+     * give the pattern `undefined` and the *flags* `undefined`, which are five
+     * invalid flag characters and threw `SyntaxError: Invalid regular
+     * expression` (S15.10.4.1_A4_T3/T5, _A1_T5, S15.10.3.1_A1_T2 — the flags
+     * operand there is only undefined at RUNTIME, e.g. `(function(){})()` or
+     * `{}.q`, so a static spelling check cannot catch it).
+     */
+    undefinedIsEmptyString?: boolean;
+  },
 ): boolean {
   const emitted = compileExpression(ctx, fctx, argExpr, { kind: "externref" });
   if (emitted === null) return false;
   if (emitted.kind !== "externref") {
     coerceType(ctx, fctx, emitted, { kind: "externref" }, "string", compileStringLiteral);
+  }
+  if (opts?.undefinedIsEmptyString) {
+    // `__extern_is_undefined` answers true for BOTH undefined spellings (the
+    // `$undefined` singleton and a bare `ref.null.extern`), which is what an
+    // absent object property / a void-returning call lowers to here.
+    const isUndefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+    flushLateImportShifts(ctx, fctx);
+    if (isUndefIdx !== undefined) {
+      const argLocal = allocLocal(fctx, `__re_ctor_arg_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push({ op: "local.tee", index: argLocal });
+      fctx.body.push({ op: "call", funcIdx: isUndefIdx });
+      addStringConstantGlobal(ctx, "");
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: [...stringConstantExternrefInstrs(ctx, "")],
+        else: [{ op: "local.get", index: argLocal }],
+      });
+    }
   }
   const toStringIdx = ensureRuntimeToStringIdx(ctx, fctx);
   if (toStringIdx === undefined) {
@@ -1727,6 +1856,121 @@ export function compileStandaloneRegExpConstructor(
   const patternArg = args[0];
   const flagsArg = args[1];
 
+  // (#4233) §22.2.4.1 step 1 — `RegExp(R)` **without `new`**, where `R` is
+  // already a RegExp and `flags` is undefined, returns `R` ITSELF, not a copy.
+  // (Cloning is `new RegExp(R)`; the arm below it keeps doing that.) The
+  // difference is observable through any own property added to `R` afterwards,
+  // which is exactly what the 15.10.3.1_A1_* battery checks
+  // (`__re.indicator = 1; __instance.indicator === 1`).
+  //
+  // Statically-provable `flags is undefined` (absent, `undefined`, `void 0`) is
+  // folded here; a flags operand that is only undefined at RUNTIME
+  // (`(function(){})()`, `{}.q`, a hoisted-but-unassigned `var x`) is handled by
+  // the runtime two-arm merge further below.
+  const patternIsRegExp =
+    patternArg !== undefined &&
+    (isGlobalRegExpType(ctx.checker.getTypeAtLocation(patternArg)) ||
+      isKnownBackendCreatedRegExpReceiver(ctx, patternArg));
+  //
+  // A RegExp *type* is not enough for the identity arm: §22.2.3.1 step 4.b also
+  // needs `IsRegExp(pattern)` (which reads `pattern[Symbol.match]`) and
+  // `pattern.constructor === RegExp`. See `regExpIdentityBrandIsProvable` — when
+  // either may have been overridden, the fold is declined and the clone arm
+  // below runs instead, which is what §22.2.3.1's construct path does.
+  const identityIsProvable = patternIsRegExp && regExpIdentityBrandIsProvable(patternArg!);
+  //
+  // `staticConstStringValue(...) === undefined` is the THIRD static spelling
+  // and the one S15.10.3.1_A1_T3 needs: a never-written `var x;` with no
+  // initialiser folds to `undefined` there (it is not the identifier
+  // `undefined`, so `isStaticallyUndefinedExpr` alone misses it, and the
+  // `!== null` result also kept it out of the runtime arm below).
+  if (
+    ts.isCallExpression(node) &&
+    identityIsProvable &&
+    (flagsArg === undefined ||
+      isStaticallyUndefinedExpr(flagsArg) ||
+      staticConstStringValue(ctx, flagsArg) === undefined)
+  ) {
+    // `flagsArg` is either absent or a side-effect-free undefined spelling
+    // (`isStaticallyUndefinedExpr` already excludes `void f()`), so there is
+    // nothing to evaluate-and-drop for it.
+    const identity = compileExpression(ctx, fctx, patternArg!);
+    if (identity !== null) return identity;
+  }
+
+  // (#4233) `<new> RegExp(R, <flags-undefined-only-at-runtime>)`. §22.2.3.1
+  // steps 4-7 branch on `flags === undefined`, and the operands the ES5 battery
+  // uses to spell "undefined" — `(function(){})()` (S15.10.4.1_A1_T5,
+  // S15.10.3.1_A1_T2), a hoisted `var x` (S15.10.3.1_A1_T3) — are not
+  // statically resolvable, so they used to fall through to the dynamic
+  // compiler as `ToString(R)` = `"/src/flags"` (an invalid pattern →
+  // `SyntaxError: Invalid regular expression`, or a wrong-identity clone).
+  //
+  // Emit the spec's branch at runtime instead. The undefined arm reproduces the
+  // static behaviour exactly — identity for a plain call, carrier clone for
+  // `new` — and the defined arm recompiles `R`'s ORIGINAL SOURCE (not
+  // `ToString(R)`) against the supplied flags, which is §22.2.3.1 step 6.
+  if (patternIsRegExp && flagsArg !== undefined && staticConstStringValue(ctx, flagsArg) === null) {
+    const loaded = loadStandaloneRegExpStruct(ctx, fctx, patternArg!);
+    if (loaded === null) return null;
+    const { regexpLocal, structTypeIdx } = loaded;
+    const flagsLocal = allocLocal(fctx, `__re_rt_flags_${fctx.locals.length}`, { kind: "externref" });
+    const flagsRaw = compileExpression(ctx, fctx, flagsArg, { kind: "externref" });
+    if (flagsRaw === null) return null;
+    if (flagsRaw.kind !== "externref") {
+      coerceType(ctx, fctx, flagsRaw, { kind: "externref" }, "string", compileStringLiteral);
+    }
+    fctx.body.push({ op: "local.set", index: flagsLocal });
+
+    const isUndefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+    const toStringIdx = ensureRuntimeToStringIdx(ctx, fctx);
+    const dynamicCompilerIdx = ensureDynamicStandaloneRegExpCompiler(ctx);
+    flushLateImportShifts(ctx, fctx);
+    if (isUndefIdx === undefined || toStringIdx === undefined) return null;
+
+    // Undefined arm — identity (plain call, and only when step 4.b's brand
+    // preconditions are statically provable) or a field-by-field carrier clone
+    // with the spec's fresh `lastIndex = 0` (`new`, or an unprovable brand),
+    // byte-identical to the static arms above/below.
+    const undefinedArm: Instr[] = [{ op: "local.get", index: regexpLocal }];
+    if (!ts.isCallExpression(node) || !identityIsProvable) {
+      undefinedArm.length = 0;
+      for (const fieldIdx of [
+        RE_FIELD_FLAGS,
+        RE_FIELD_NGROUPS,
+        RE_FIELD_PROG,
+        RE_FIELD_CLASS_TABLE,
+        RE_FIELD_SOURCE,
+        RE_FIELD_NSCRATCH,
+      ]) {
+        undefinedArm.push(
+          { op: "local.get", index: regexpLocal },
+          { op: "struct.get", typeIdx: structTypeIdx, fieldIdx },
+        );
+      }
+      undefinedArm.push({ op: "f64.const", value: 0 }, { op: "struct.new", typeIdx: structTypeIdx });
+    }
+
+    fctx.body.push({ op: "local.get", index: flagsLocal });
+    fctx.body.push({ op: "call", funcIdx: isUndefIdx });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: { kind: "ref", typeIdx: structTypeIdx } },
+      then: undefinedArm,
+      else: [
+        // §22.2.3.1 step 6: P is R's [[OriginalSource]], F is ToString(flags).
+        { op: "local.get", index: regexpLocal },
+        { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_SOURCE },
+        { op: "local.get", index: flagsLocal },
+        { op: "call", funcIdx: toStringIdx },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+        { op: "call", funcIdx: dynamicCompilerIdx },
+      ],
+    });
+    return { kind: "ref", typeIdx: structTypeIdx };
+  }
+
   // #2161 — §22.2.3.1 copy-constructor: `new RegExp(/…/f [, flags])`. The first
   // argument is a regex literal; the pattern (and inherited-or-overridden flags)
   // are statically known, so route to the native engine instead of refusing.
@@ -1795,7 +2039,7 @@ export function compileStandaloneRegExpConstructor(
     const patternLocal = allocLocal(fctx, `__re_dyn_pattern_${fctx.locals.length}`, strType);
     if (pattern === null) {
       // (#4089) §22.2.3.1 step 5/7: ToString, not a cast.
-      if (!emitArgAsNativeString(ctx, fctx, patternArg!, strType)) return null;
+      if (!emitArgAsNativeString(ctx, fctx, patternArg!, strType, { undefinedIsEmptyString: true })) return null;
     } else {
       for (const instr of nativeStringLiteralInstrs(ctx, pattern ?? "")) fctx.body.push(instr);
     }
@@ -1803,7 +2047,7 @@ export function compileStandaloneRegExpConstructor(
 
     const flagsLocal = allocLocal(fctx, `__re_dyn_flags_${fctx.locals.length}`, strType);
     if (flags === null) {
-      if (!emitArgAsNativeString(ctx, fctx, flagsArg!, strType)) return null;
+      if (!emitArgAsNativeString(ctx, fctx, flagsArg!, strType, { undefinedIsEmptyString: true })) return null;
     } else {
       for (const instr of nativeStringLiteralInstrs(ctx, flags ?? "")) fctx.body.push(instr);
     }
@@ -2245,6 +2489,23 @@ function isToStringableArg(ctx: CodegenContext, argExpr: ts.Expression): boolean
   return true;
 }
 
+/**
+ * (#4233) Push the string `"undefined"` as a pre-evaluated native-string
+ * subject, for the zero-argument `exec()` / `test()` forms.
+ *
+ * §22.2.6.2 RegExpBuiltinExec step 3 is `Let S be ? ToString(string)`, and an
+ * absent argument is `undefined`, so `re.exec()` matches against the six-char
+ * string `"undefined"` — not against the empty string and not a refusal.
+ * Shaped as an `inputOverride` because the arity-0 call has no argument AST
+ * node for the ordinary `compileExpression` lane to consume.
+ */
+function undefinedSubjectOverride(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
+  const instrs = nativeStringLiteralInstrs(ctx, "undefined");
+  if (instrs === null) return null;
+  fctx.body.push(...instrs);
+  return nativeStringType(ctx);
+}
+
 export function tryCompileStandaloneRegExpTest(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -2259,6 +2520,19 @@ export function tryCompileStandaloneRegExpTest(
   if (!hasStandaloneRegExpEngine(ctx)) {
     reportStandaloneRegExpUnsupported(ctx, expr, "RegExp.prototype.test without an enabled standalone engine");
     return null;
+  }
+  if (expr.arguments.length === 0) {
+    // (#4233) §22.2.6.16 → §22.2.6.2 step 3: `re.test()` is `re.test(undefined)`,
+    // and ToString(undefined) is the STRING "undefined" — the subject the
+    // 15.10.6.3_A1_T16 family matches against. No arg node exists to compile,
+    // so feed the literal through the pre-evaluated-subject seam.
+    const testFlags0 = staticRegExpFlags(ctx, propAccess.expression);
+    const emitted0 = emitRegexSearchCall(ctx, fctx, propAccess.expression, propAccess.expression, {
+      gyLastIndex: testFlags0 === null ? "runtime" : flagsHaveGlobalOrSticky(testFlags0),
+      inputOverride: () => undefinedSubjectOverride(ctx, fctx),
+    });
+    if (emitted0 === null) return null;
+    return { kind: "i32" };
   }
   if (expr.arguments.length !== 1) {
     reportStandaloneRegExpUnsupported(ctx, expr, "RegExp.prototype.test arities other than one string argument");
@@ -2677,6 +2951,15 @@ export function tryCompileStandaloneRegExpExec(
   if (!hasStandaloneRegExpEngine(ctx)) {
     reportStandaloneRegExpUnsupported(ctx, expr, "RegExp.prototype.exec without an enabled standalone engine");
     return null;
+  }
+  if (expr.arguments.length === 0) {
+    // (#4233) `re.exec()` === `re.exec("undefined")` (§22.2.6.2 step 3) — see
+    // `undefinedSubjectOverride`. 15.10.6.2_A1_T16 / _A12 assert exactly this.
+    const flags0 = staticRegExpFlags(ctx, propAccess.expression);
+    return emitRegexExecArrayCall(ctx, fctx, propAccess.expression, propAccess.expression, {
+      gyLastIndex: flags0 === null ? "runtime" : flagsHaveGlobalOrSticky(flags0),
+      inputOverride: () => undefinedSubjectOverride(ctx, fctx),
+    });
   }
   if (expr.arguments.length !== 1) {
     reportStandaloneRegExpUnsupported(ctx, expr, "RegExp.prototype.exec arities other than one string argument");

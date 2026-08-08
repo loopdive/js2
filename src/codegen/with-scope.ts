@@ -55,6 +55,17 @@ function withHasBindingImport(ctx: CodegenContext): string {
   return ctx.standalone ? "__extern_has" : "__with_has_binding";
 }
 
+/**
+ * (#4231 RC-B) The result type of `delete name` resolved through a `with` scope.
+ *
+ * §13.5.1.2 evaluates to a BOOLEAN. The i32 carrying it must say so: an untagged
+ * `{kind:"i32"}` flowing into an externref consumer is boxed as a NUMBER
+ * (`f64.convert_i32_s` + `__box_number`), so `del = delete p3` inside a `with`
+ * yielded `1` and `del === true` was false. A plain `delete o.p` never hit this
+ * because its consumer is boolean-typed and no boxing happens.
+ */
+const DELETE_RESULT: ValType = { kind: "i32", boolean: true };
+
 /** A static (#1387 Tier-1) `with` scope entry. */
 export type StaticWithScope = Extract<NonNullable<FunctionContext["withScopes"]>[number], { kind: "static" }>;
 
@@ -252,11 +263,25 @@ function finalizeStaticWithScope(
     }
   }
 
-  const blockedNames = collectBodyDeclaredNames(stmt.statement);
+  // (#4231 RC-A) Only LEXICAL body declarations shadow the object environment
+  // record — the same rule the Tier-2 path has always applied
+  // (`collectBodyLexicalNames`, see its doc comment). A `var` inside `with`
+  // hoists to the FUNCTION environment, but §14.11.2's object environment is
+  // consulted FIRST, so the object wins whenever it owns the name:
+  // `with ({value:'mv'}) { var value = 'v'; }` must write the OBJECT and leave
+  // the hoisted `value` undefined. Tier-1 used the full declared set and so
+  // routed every such name to the local instead.
+  const blockedNames = collectBodyLexicalNames(stmt.statement);
   if (guardInheritedKeys) {
+    // The inherited-Object.prototype-key diagnostic keeps the BROADER declared
+    // set on purpose: it decides whether to hard-error, and widening what it
+    // considers unshadowed would turn bodies that compile today (`var toString
+    // = …`) into compile errors. Narrowing name RESOLUTION is the fix; widening
+    // a refusal is not part of it.
+    const declaredNames = collectBodyDeclaredNames(stmt.statement);
     const referencedNames = collectBodyReferencedNames(stmt.statement);
     for (const name of referencedNames) {
-      if (!blockedNames.has(name) && !requiredKeys.has(name) && OBJECT_PROTOTYPE_KEYS.has(name)) {
+      if (!declaredNames.has(name) && !requiredKeys.has(name) && OBJECT_PROTOTYPE_KEYS.has(name)) {
         reportWithStatementDiagnostic(
           ctx,
           stmt,
@@ -418,6 +443,14 @@ function compileDynamicWithStatement(ctx: CodegenContext, fctx: FunctionContext,
   if (isUndefIdx !== undefined) {
     fctx.body.push({ op: "local.get", index: localIdx });
     fctx.body.push({ op: "call", funcIdx: isUndefIdx });
+    // (#4231 RC-C) `__extern_is_undefined` recognises the host `undefined`/`null`
+    // SENTINEL, but a literal `with (null)` lowers to a genuine wasm
+    // `ref.null.extern`, which is not that sentinel and slipped through — so
+    // `with (null)` ran its body instead of throwing (12.10-2-5). OR in the
+    // structural null test; `with (undefined)` already threw via the sentinel arm.
+    fctx.body.push({ op: "local.get", index: localIdx });
+    fctx.body.push({ op: "ref.is_null" });
+    fctx.body.push({ op: "i32.or" });
     const savedGuard = pushBody(fctx);
     emitThrowTypeError(ctx, fctx, "Cannot convert undefined or null to object");
     const throwArm = fctx.body;
@@ -767,7 +800,7 @@ export function emitDynamicWithDelete(
 
   if (hasIdx === undefined || delIdx === undefined) {
     fctx.body.push(...elseArm);
-    return { kind: "i32" };
+    return DELETE_RESULT;
   }
 
   // THEN arm: __delete_property(recv, name) → i32 (configurability-aware result).
@@ -787,7 +820,7 @@ export function emitDynamicWithDelete(
     then: thenArm,
     else: elseArm,
   });
-  return { kind: "i32" };
+  return DELETE_RESULT;
 }
 
 function compileClosedObjectLiteralTarget(
