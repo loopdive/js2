@@ -1230,6 +1230,17 @@ export function findAlternateStructsForField(
     // of matching the WRONG shape at worst. Cold fields are reached through the
     // owner's `$cold` slot (`findColdStructsForField`).
     if (typeName.endsWith("__cold")) continue;
+    // (#3927 per-type layouts) Same reasoning, doubled. The `__resid` carrier
+    // is a private payload like the cold tail. The `__lay<k>` siblings ARE
+    // receivers, but two layouts with identical field kinds share ONE
+    // canonical wasm type, so a bare `ref.test` candidate arm would read
+    // another field's slot; layout arms need the `$shape` stamp guard and are
+    // appended explicitly by the dispatcher fills (`layoutFieldReadArm` /
+    // `residFieldReadArm` in fnctor-layout-emit.ts). Their field KINDS still
+    // feed the Phase-3 narrowing vote via `findFnctorLayoutStructsForField` /
+    // `findFnctorResidStructsForField` — hiding a carrier from the arms is
+    // correct; hiding it from the vote is the #4217 `generator` defect.
+    if (typeName.endsWith("__resid") || /__lay[0-9]+$/.test(typeName)) continue;
     const fIdx = fields.findIndex((f) => f.name === propName);
     if (fIdx !== -1) {
       const shapeId = ctx.shapeIdByStructName.get(typeName);
