@@ -8,7 +8,7 @@
 import { ts } from "../../ts-api.js";
 import type { WasmModule } from "../../ir/types.js";
 import type { IrPlanningIdentityContext } from "../../ir/planning-identity.js";
-import { TsCheckerOracle } from "../../checker/oracle.js";
+import { createTypeOracle } from "../../checker/oracle-backend.js";
 import { UsageInference } from "../../checker/usage-inference.js";
 import { getOrRegisterVecType, registerNativeStringTypes } from "../registry/types.js";
 import { nativeLiteralRegExpEngineConfig } from "../regexp-standalone.js";
@@ -63,8 +63,8 @@ export function createCodegenContext(
     // `ctx.oracle` over raw `ctx.checker` access — the oracle-ratchet CI gate
     // (`pnpm run check:oracle-ratchet`) fails on any growth of direct checker
     // usage under src/codegen/. Contract: registry-free, side-effect-free,
-    // memoized (see src/checker/oracle.ts and issue #1930's Design section).
-    oracle: new TsCheckerOracle(checker),
+    // memoized (see src/checker/oracle.ts). The BACKEND is selectable (#4218).
+    oracle: createTypeOracle(checker, options?.oracleBackend),
     // (#684) Usage-based any-local inference. Constructed from the local
     // `checker` parameter (a raw-checker capture that lives entirely in the
     // checker layer), so this instantiation adds no oracle-ratchet debt.

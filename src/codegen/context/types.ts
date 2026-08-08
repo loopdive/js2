@@ -155,6 +155,20 @@ export interface CodegenOptions {
    * legacy boxed representation for every `any` local.
    */
   useUsageInfer?: boolean;
+  /**
+   * (#4218) Which implementation backs `ctx.oracle`:
+   *
+   *   - `"checker"` (default) — the TS5 `ts.TypeChecker`.
+   *   - `"inhouse"` — the checker-free binder + annotation-propagation backend
+   *     (`src/checker/inhouse-oracle.ts`). Answers `unresolvable` wherever it
+   *     cannot prove a fact syntactically, so codegen degrades to the dynamic
+   *     representation rather than mis-lowering.
+   *   - `"differential"` — answers from the checker (behavior identical) while
+   *     recording where the in-house backend disagrees. The measurement lane.
+   *
+   * Unset falls back to `JS2WASM_ORACLE_BACKEND`, then `"checker"`.
+   */
+  oracleBackend?: import("../../checker/oracle-backend.js").OracleBackend;
   /** (#2141 S2/S3, #2626, #2040 A1) Tag-5 boxed-VALUE equality classifier —
    *  see the `CompileOptions.tag5ValueEqClassifier` doc. Default TRUE
    *  (#2040 flip); `JS2WASM_TAG5_CLASSIFIER=0` forces the legacy regime. */

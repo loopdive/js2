@@ -736,6 +736,8 @@ function buildCodegenOptions(
     unionAnyRep: options.unionAnyRep,
     // (#684) usage-based any-local f64 inference (default on; see CodegenOptions).
     useUsageInfer: options.useUsageInfer,
+    // (#4218) oracle backend selection (default: the TS5 checker).
+    oracleBackend: options.oracleBackend,
     // (#2141 S2/S3, #2626) tag-5 boxed-VALUE eq classifier flag (default off).
     tag5ValueEqClassifier: options.tag5ValueEqClassifier,
     // (#4173) fast tag-pair dispatch in the dynamic-eq helpers (default on).
