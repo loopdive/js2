@@ -1,7 +1,8 @@
 ---
 id: 4222
 title: "Standalone array semantics: `delete arr[k]` never makes the index absent, `new Array(n)` fills `undefined` instead of holes"
-status: in-progress
+status: done
+completed: 2026-08-08
 sprint: current
 created: 2026-08-08
 updated: 2026-08-08
@@ -138,5 +139,92 @@ and the interplay with `src/codegen/array-length-define.ts`.
 
 ## Scope actually landed
 
-See the commit trailer list. Items shipped in priority order; anything not
-shipped is recorded under "Leftovers" below rather than silently dropped.
+**Item 1 (delete) — DONE.** Two mechanisms, as designed above: the
+`vecIndexDeleteDirty` pre-scan flag joined `overlayRouteActive`, and
+`vec-overlay-presence.ts` splices a `FLAG_DELETED_INDEX` consult onto
+`__extern_has_idx`. Four presence surfaces were retargeted onto that
+chokepoint so they agree by construction — the typed `n in arr` arm
+(`binary-ops-in.ts`), the for-in vec index loop (`statements/loops.ts`), the
+`__object_keys` / `__object_keys_forin` vec arm (`object-runtime.ts`), and the
+HOF gates (already routed by Wave 1's `overlayFilterAccess`).
+
+**Item 4 (`arr.length =` RangeError) — DONE for the assignment form.**
+§10.4.2.4 step 3 validation, as `emitArraySetLengthValidation` in
+`array-length-define.ts` (the module that already owns ArraySetLength over the
+vec representation for the `defineProperty` forms), called from the assignment
+path. `new Array(n)` already threw correctly; only the assignment form clamped.
+
+**Items 2 and 3 — NOT shipped.** See "Leftovers".
+
+### Measured
+
+test262 standalone, this branch vs. its base, over **all 462** files in
+`built-ins/Array/length` + `built-ins/Array/prototype/filter` +
+`built-ins/Array/prototype/forEach` — the three directories this change can
+reach: **281 → 287 pass, +6, zero regressions.**
+
+| test | before | after |
+| --- | --- | --- |
+| `Array/prototype/filter/15.4.4.20-9-3` | fail | **pass** |
+| `Array/prototype/filter/15.4.4.20-9-b-9` | fail | **pass** |
+| `Array/prototype/filter/15.4.4.20-9-c-iii-1-4` | fail | **pass** |
+| `Array/length/15.4.5.1-3.d-1` | fail | **pass** |
+| `Array/length/15.4.5.1-3.d-2` | fail | **pass** |
+| `Array/length/S15.4.5.1_A1.1_T1` | fail | **pass** |
+
+A second sweep over the 99 failing `built-ins/Array/**` tests from
+`.tmp/es5-buckets.json` agrees (+5 of those 6 are in that list; no regressions).
+
+The gc lane is unchanged for item 1 by construction (`overlayRouteActive`
+requires `ctx.standalone`); its pre-existing array-suite failures are identical
+before and after. Item 4 applies to both lanes (it is not overlay-gated) and
+the gc lane picks up the same RangeError.
+
+### One deliberate test change
+
+`tests/issue-1825.test.ts` asserted the OLD clamping (`arr.length = NaN` → 0,
+`= 1e30` → i32 max). #1834's actual goal was "must not TRAP the module", not
+"must not throw" — a spec RangeError is catchable, so it serves that goal
+better than clamping. The two assertions were retargeted (not deleted) to pin
+the non-trapping property; the RangeError identity is pinned separately in
+`tests/es5-standalone-array-semantics-length.test.ts`.
+
+## Leftovers (deliberately not shipped)
+
+**Item 2 — `new Array(n)` holes.** Blocked on a decision this issue should not
+make unilaterally. `usesArrayHoles`'s `$Hole` machinery is uniformly gated on
+`elemType.kind === "externref"` (28 read sites in `array-methods.ts` alone), so
+making `new Array(n)` sparse needs the constructor to mint an **externref**
+carrier. Usage inference currently mints `__vec_f64` for
+`new Array(n); a[0] = 5` — the common numeric-buffer idiom — and forcing
+externref for every `new Array(n)` in a module is a per-module perf regression
+that needs benchmark evidence before it lands. Setting the flag WITHOUT the
+carrier change flips nothing and arms the module-wide read guard for no gain,
+so nothing was changed here. Affects `filter` 9-5 / 9-b-1 and
+`built-ins/Array/S15.4_A1.1_T4…T9`.
+
+**Item 3 — OOB reads.** The `oob:array element access out of bounds` cluster is
+NOT a generic out-of-range read. Measured, all six are the **huge-index** rule:
+`x[4294967295] = 1` and `x[-1] = 1` trap on both lanes because the write path
+tries to grow the vec. Per §10.4.2.2 an index is an array index only in
+[0, 2^32−1); 4294967295 and −1 are ordinary **named** properties that must land
+in the #3537 bag and leave `length` alone. That is a contained follow-up in the
+element-write growth path. Two of the six (`S15.4.5.2_A1_T1/_T2`) additionally
+demand a real `length` of 4294967295, which needs genuinely sparse arrays and
+is out of reach of any of this.
+
+**`arr.length` above 2^31−1.** The surviving truncation is
+`i32.trunc_sat_f64_s`, so a validated length above i32 max still clamps
+(`15.4.5.1-3.d-3` expects 4294967295, gets 2147483647). The vec cannot be that
+long; representing it needs the sparse-array work.
+
+**`arr.length = <non-numeric>`.** `a.length = "x"` does not throw — the value
+is not compiled as f64, so the new check does not see it. §10.4.2.4 runs
+ToNumber first.
+
+**`arr.hasOwnProperty("1")` on a typed receiver returns false even for a
+PRESENT index** (measured, pre-existing, unrelated to delete). Not touched;
+worth its own issue.
+
+**`arr.toString()` returns `undefined` in standalone** (gc: `"1,2,3"`). Not
+touched.

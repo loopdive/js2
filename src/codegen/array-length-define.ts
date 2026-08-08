@@ -17,7 +17,7 @@ import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { emitThrowRangeError, emitThrowTypeError } from "./expressions/helpers.js";
+import { buildThrowJsErrorInstrs, emitThrowRangeError, emitThrowTypeError } from "./expressions/helpers.js";
 import { resolveWasmType } from "./index.js";
 import { coerceType, compileExpression } from "./shared.js";
 import { getVecInfo } from "./type-coercion.js";
@@ -421,4 +421,61 @@ function exceedsSafeGrowCeiling(descExpr: ts.ObjectLiteralExpression): boolean {
     return n > SAFE_GROW_CEILING;
   }
   return false;
+}
+
+/**
+ * (#4222) §10.4.2.4 `ArraySetLength` step 3 for the plain `arr.length = v`
+ * ASSIGNMENT form: `ToUint32(v) !== ToNumber(v)` is a **RangeError**.
+ *
+ * The assignment path lowered its value with `i32.trunc_sat_f64_s` and a
+ * comment saying NaN / Infinity / out-of-range lengths "clamp instead of
+ * trapping" (#1834). A saturating truncation is total by construction, so it
+ * cannot distinguish "too big" from "fine" — `[].length = 4294967296`, `= -1`,
+ * `= 1.5`, `= NaN` and `= Infinity` all silently succeeded. The
+ * `Object.defineProperty(arr, "length", …)` forms in this module always
+ * validated; only the assignment form did not.
+ *
+ * #1834's real requirement is preserved: the failure must not be a wasm TRAP,
+ * which kills the module unrecoverably. A RangeError is a catchable JS
+ * exception, so it serves that goal strictly better than clamping did.
+ *
+ * Stack: `[f64] → [i32]`. Consumes the value, throws on an invalid one, and
+ * leaves the saturating truncation of a valid one.
+ *
+ * The validity test runs on the f64 directly rather than materialising
+ * `ToUint32(v)` and comparing back, because `ToUint32(v) === ToNumber(v)` is
+ * exactly "v is an integer in [0, 2^32-1]":
+ *   - `NaN`       → `v == floor(v)` is false (NaN compares unequal to itself)
+ *   - `±Infinity` → floor is the identity, but the upper-bound test rejects it
+ *   - `-0`        → passes, and it must: `ToUint32(-0)` is `0`, and the spec
+ *                   compares with Number `!==`, under which `-0 !== 0` is false
+ *
+ * KNOWN GAP (#4222 leftover): the surviving truncation is SIGNED, so a
+ * validated length above 2^31-1 still clamps to i32 max
+ * (`built-ins/Array/length/15.4.5.1-3.d-3` wants 4294967295 and gets
+ * 2147483647). A wider truncation would not help — the vec cannot be that
+ * long; representing such a length needs genuinely sparse arrays.
+ */
+export function emitArraySetLengthValidation(ctx: CodegenContext, fctx: FunctionContext): void {
+  const lenValTmp = allocLocal(fctx, `__arr_len_set_v_${fctx.locals.length}`, { kind: "f64" });
+  fctx.body.push({ op: "local.tee", index: lenValTmp });
+  fctx.body.push({ op: "f64.floor" });
+  fctx.body.push({ op: "local.get", index: lenValTmp });
+  fctx.body.push({ op: "f64.eq" }); // integral
+  fctx.body.push({ op: "local.get", index: lenValTmp });
+  fctx.body.push({ op: "f64.const", value: 0 });
+  fctx.body.push({ op: "f64.ge" });
+  fctx.body.push({ op: "i32.and" });
+  fctx.body.push({ op: "local.get", index: lenValTmp });
+  fctx.body.push({ op: "f64.const", value: 4294967295 });
+  fctx.body.push({ op: "f64.le" });
+  fctx.body.push({ op: "i32.and" });
+  fctx.body.push({ op: "i32.eqz" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: buildThrowJsErrorInstrs(ctx, "RangeError", "Invalid array length", { flush: fctx }),
+  });
+  fctx.body.push({ op: "local.get", index: lenValTmp });
+  fctx.body.push({ op: "i32.trunc_sat_f64_s" });
 }
