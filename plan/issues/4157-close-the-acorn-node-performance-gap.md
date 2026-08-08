@@ -926,3 +926,19 @@ is observable (`NaN === NaN` must stay false for the same reference).
 
 **Still untouched by anything: dynamic property lookup 13.5 % + call dispatch
 8.1 %.** Nothing in this umbrella currently targets either.
+
+## 2026-08-08 — the second-corpus measurement RAN (pako): acorn's exhaustion does not generalize
+
+The "measure a second dogfood corpus" recommendation is now answered — full
+record in **#743, "2026-08-08 — second-corpus measurement"**. pako 2.1.0
+(226 KB dist, function-ctors, numeric-heavy) censuses at **77.0 % typed vs
+acorn's 58.3 %**, and its 25-slot untyped residue contains **zero** slots of
+acorn's dominant "integer `this`-field-read argument" bucket. Its residue is
+instead 68 % first-write-decides null seeds and 20 % ref-valued args — the two
+levers acorn priced at ~0. Consequences for this umbrella: the receiver-typing
+program is exhausted *for acorn specifically*; the `Parser.pos` field-fact XL
+program serves acorn's number only and must be justified on that basis, not on
+generality. pako becomes a runnable corpus once #4216 (i16 packed-local emit
+bug, sole standalone blocker) lands; luxon/styled-components were measured
+unusable (native-class syntax bypasses the fnctor machinery entirely / non-
+self-contained bundle).

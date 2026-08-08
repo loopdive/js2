@@ -4,7 +4,7 @@ title: "Whole-program type flow analysis"
 status: in-progress
 assignee: ttraenkler/opus-impl-4
 created: 2026-03-22
-updated: 2026-08-07
+updated: 2026-08-08
 priority: critical
 horizon: xl
 feasibility: hard
@@ -2270,3 +2270,111 @@ its facts agreed with the in-compile census on every cross-checkable row;
 promotion at the #3753 site rather than through the flag's own consumer, because
 the two produce the same struct shape and the former needs no plumbing — §6
 explains why that choice does not weaken the conclusion.
+
+## 2026-08-08 — second-corpus measurement (pako 2.1.0): the acorn conclusion does NOT generalize
+
+The re-ranked levers above put "a second corpus" ahead of the field-fact XL
+program: three levers priced out on acorn for corpus-shaped reasons, and the
+question was whether the representation program is exhausted generally or only
+there. **Answer: only there.** pako's untyped residue is dominated by exactly
+the two levers acorn made look worthless.
+
+### Setup
+
+Tree: `41ad08c3` (main) + docs commits. Probe: compile the package's
+self-contained dist bundle with `target: "standalone"`,
+`JS2WASM_FNCTOR_FIELD_PROVENANCE=1 JS2WASM_FNCTOR_CTOR_PARAM_TYPES=1`, then
+read `fnctorFieldProvenanceRecords()` + `classifyFieldSlot` in-process (no
+optimize step — slot decisions are made in codegen, before Binaryen). Same-tree
+acorn control: `tests/dogfood/acorn-standalone-compile.mjs` reproduces the
+recorded census EXACTLY — 96 slots, 56 / 1 / 39, canaries 2,3,4,5, imports
+`[]` — so the cross-corpus comparison is same-commit, not cross-session.
+
+### Corpus selection (two candidates rejected, recorded so nobody retries them)
+
+- **styled-components 6.4.4** (the only substantial npm-compat package whose
+  compile lane is green): its esm entry is a 39 KB re-export wrapper, not a
+  self-contained bundle; standalone compile fails (50× TDZ "Cannot access 'n'
+  before initialization") and produces **0 fnctor records**. Unusable.
+- **luxon 3.7.2** (262 KB, 25 classes): **native `class` syntax — the fnctor
+  machinery (function-constructor path) never engages, 0 records.** Also
+  standalone-blocked (`String.prototype.match` unsupported, Intl host-import
+  leaks). Beyond unusable, this is a finding in its own right: **the entire
+  fnctor typing program is invisible to modern class-syntax bundles.** Any
+  future corpus must be an ES5-style function-ctor bundle, or the program
+  needs a class-ctor equivalent first.
+- **pako 2.1.0** `dist/pako.esm.mjs` (226 KB — acorn's size class; zlib port;
+  7 function-ctors; typed-array/numeric-heavy where acorn is string/object-
+  heavy): census runs to completion. **Chosen.** One caveat: binary emit fails
+  with a single error (packed `i16` leaked into a local — filed as **#4216**),
+  so pako is census-only until that lands; codegen and all 122 slot decisions
+  complete before the emit stage.
+
+### The census, side by side
+
+| | acorn 8.16.0 | pako 2.1.0 |
+| --- | ---: | ---: |
+| slots | 96 | 122 |
+| typed | 56 (58.3 %) | **94 (77.0 %)** |
+| discarded | 1 (1.0 %) | 3 (2.5 %) |
+| unknown | 39 (40.6 %) | **25 (20.5 %)** |
+
+pako's typed slots: 77× f64, 10× ref_null, 5× i32, 2× ref. Its discarded
+bucket (`Deflate.strm: ZStream`, `Inflate.strm: ZStream`, `Inflate.header:
+GZheader`) is acorn's #1712 shape-model gap, same cause, same size class.
+Call-site param inference **works where its preconditions hold**: `Config`'s
+four numeric tuning params are all typed f64 from ten all-literal `new Config`
+sites.
+
+### The 25 unknowns, bucketed (each verified in source)
+
+1. **17 (68 %) — null-in-ctor, concretely assigned post-ctor** (`DeflateState`
+   9, `InflateState` 8): `this.window = null` in the ctor; `s.window = new
+   Uint8Array(...)`, `s.head = new Uint16Array(...)`, `s.l_desc = new
+   TreeDesc(...)` in `deflateInit2`/`inflateInit` — monomorphic concrete
+   writes outside the ctor. **The blocker is `deriveFnctorFields`' first-
+   write-decides rule, not inference.** The lever is slot-typing from the JOIN
+   OF ALL WRITES (the mutual-fixpoint slice already built the write scan that
+   would feed it). Acorn has ~6 such slots; here it is two-thirds of the
+   residue.
+2. **5 (20 %) — ref-valued ctor args, concrete at every site**
+   (`StaticTreeDesc.static_tree/extra_bits`, `TreeDesc.dyn_tree/stat_desc`,
+   `Config.func`): module-const arrays, `Uint16Array` this-fields,
+   `StaticTreeDesc` instances, function references. **The blocker is the
+   f64-only consumer ABI** — the ref/string consumer that measured 1 slot /
+   0 bytes on acorn has a real population here.
+3. **1 — conditional-join extension**: `has_stree = static_tree &&
+   static_tree.length` — the lhs is a ref (always truthy), so the `&&` always
+   yields the numeric rhs; typing it needs the shipped ToBoolean-totality join
+   rule extended to ref-typed lhs.
+4. **2 (8 %) — open options objects** (`Deflate.options`, `Inflate.options`
+   via `assign({}, DEFAULTS, options)`): acorn's `Parser.options` analog —
+   genuinely dynamic, honest boxes.
+
+**And 0 slots in acorn's dominant bucket.** The ~14-slot "integer-valued
+`this`-field-read arguments" population that drives acorn's residue — and
+motivates the `Parser.pos` field-fact XL program — simply does not exist here.
+
+### Consequences for the lever ranking
+
+- **The receiver-typing program is NOT exhausted generally — it is exhausted
+  on acorn.** pako's residue is addressable, and by levers already
+  half-built: (1) **all-writes slot join** (17 slots here vs ~6 on acorn;
+  collection side exists in the mutual-fixpoint write scan), then (2) **ref-
+  typed slot consumption** (5 slots here vs the measured 1/0-bytes on acorn).
+- **The `Parser.pos` field-fact XL program is acorn-specific.** Do not
+  greenlight it on generality grounds; if it is built, it is for acorn's
+  perf number alone.
+- Numeric-heavy corpora are already well served (77 % typed) — consistent
+  with #4157's cross-runtime profile showing the remaining tax is in boxed
+  VALUES and comparisons, not receivers.
+- The `.d.ts`-seed lever stays untested on a second corpus: pako ships no
+  bundled declarations (`@types/pako` is external). A typed-declaration
+  corpus remains unmeasured.
+- Wall-clock A/B is not applicable pre-#4216 (no binary); the census is the
+  pre-registered instrument for this question and is deterministic.
+
+Probe artifacts: `.tmp/file-census.mjs` (inline in this section's Setup),
+outputs `.tmp/pako-census.json`, `.tmp/luxon-census.json`,
+`.tmp/sc-census.json`, acorn control `.tmp/acorn-probe.{json,err}` — scratch
+only; this section is the durable record.
