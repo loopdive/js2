@@ -1,10 +1,10 @@
 {
   "id": "3927",
-  "assignee": "ttraenkler/opus-shape-split",
-  "requested_by": "ttraenkler/opus-shape-split",
+  "assignee": "ttraenkler/fable-3927-emission",
+  "requested_by": "ttraenkler/fable-3927-emission",
   "status": "in-progress",
-  "branch": "claude/issue-3927-shape-split-impl",
-  "claimed_at": "2026-08-07T19:54:20Z",
-  "updated_at": "2026-08-07T19:54:20Z",
-  "write_id": "26001-cqj8x8fb"
+  "branch": "issue-3927-per-type-emission",
+  "claimed_at": "2026-08-08T04:57:59Z",
+  "updated_at": "2026-08-08T04:57:59Z",
+  "write_id": "31484-1bogfaxa"
 }
