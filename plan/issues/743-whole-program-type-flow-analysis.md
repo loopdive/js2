@@ -2658,3 +2658,26 @@ allocation movement, +124 B.
 - The value-level lever #4157 actually needs is upstream of slots entirely
   (the 22 k `$AnyValue` and 47.7 k regex-scratch streams — see #4157's
   redirect section).
+
+## 2026-08-08 — DEFAULTS FLIPPED: the derivation family ships ON (stakeholder decision)
+
+**Stakeholder decision, 2026-08-08: "derive types always; consumers arrive
+later."** Every prior "flag verdict: STAYS OFF" in this file was decided on a
+*benefit* criterion — the pass moved no slots, no allocations, no wall time on
+acorn. That criterion is retired. The derivation runs by default now; whether a
+consumer exploits it is a separate question, answered later and per-consumer.
+
+What that changes about the evidence bar: the question is no longer "does this
+pay?" but **"is this free?"** — i.e. conformance-neutral and affordable at
+compile time. Those are the two numbers this section records, and they are the
+two nobody had produced. Every prior measurement in this file is a *slot census*
+or a *binary byte count*; the family has never been run against test262, and its
+compile-time cost has never been quantified at all.
+
+### Flip pattern
+
+The #4241 layout-emit idiom, verbatim: **unset ⇒ ON**, explicit `0` / `off` /
+empty ⇒ OFF. Boolean-shaped on purpose — a malformed value cannot half-enable
+anything, it merely fails to disable. The unset-spelling tests invert with the
+default, exactly as `tests/issue-3927-fnctor-layout-emit.test.ts` did.
+
