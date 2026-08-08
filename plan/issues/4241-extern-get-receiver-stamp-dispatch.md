@@ -26,7 +26,16 @@ loc-budget-allow:
   # +1 line: the second `struct.new $__bound_fn` operand, at the `.bind`
   # allocation site. Found by Wasm validation ("need 4, got 3"), not by audit.
   - src/codegen/expressions/calls.ts
-origin: "stakeholder-ordered 2026-08-08 — #4157 bucket 1's residual (the '< 3% __extern_get self-time' acceptance line is still open after #3926). RENUMBERED 2026-08-08: this issue was filed as #4237 and moved to #4241 because another session merged a DIFFERENT plan/issues/4237-*.md to main the same day (the `check:issue-ids:against-main` gate would have rejected the PR). Commits made before the renumber say #4237 in their subject; history stands. Two further collisions to keep straight, both harmless: PR #4237 (loopdive) is an unrelated merged PR, and PR #4241 is the fnctor-layout default-ON flip this issue's baseline measures against — issue ids and PR ids share one sequence, which is exactly why `git log --grep` is useless here (#3571 lesson)."
+func-budget-allow:
+  # (#4241) +1 line: the `$bag` header operand on the method-closure singleton's
+  # `struct.new`. It is ONE array element at an existing allocation site inside a
+  # 385-line function; there is nothing to split that would not be churn, and
+  # omitting it is a hard Wasm validation failure, not a style choice. The other
+  # function this change-set pushed over its ceiling —
+  # `closure-props.ts::fillClosurePropHelpers` — was SPLIT instead
+  # (`fillCarrierBagHelpers`), not granted.
+  - src/codegen/member-get-dispatch.ts::fillMemberGetDispatch
+origin: "stakeholder-ordered 2026-08-08 — #4157 bucket 1's residual (the '< 3% __extern_get self-time' acceptance line is still open after #3926). RENUMBERED 2026-08-08: this issue was filed as #4237 and moved to #4241 because another session merged a DIFFERENT issue file carrying id 4237 to main the same day (the `check:issue-ids:against-main` gate would have rejected the PR). Commits made before the renumber say #4237 in their subject; history stands. Two further collisions to keep straight, both harmless: PR #4237 (loopdive) is an unrelated merged PR, and PR #4241 is the fnctor-layout default-ON flip this issue's baseline measures against — issue ids and PR ids share one sequence, which is exactly why `git log --grep` is useless here (#3571 lesson)."
 ---
 
 # #4241 — receiver identification by stamp, not by ref.test ladder
