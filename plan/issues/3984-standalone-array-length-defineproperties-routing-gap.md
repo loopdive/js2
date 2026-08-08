@@ -20,9 +20,11 @@ related: [3251, 3661, 3662, 3663, 1906, 739, 2668]
 loc-budget-allow:
   - src/codegen/vec-overlay.ts
   - src/codegen/expressions/call-builtin-static.ts
+  - src/codegen/object-ops.ts
 func-budget-allow:
   - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
   - src/codegen/expressions/call-builtin-static.ts::compileBuiltinStaticCall
+  - src/codegen/object-ops.ts::compileObjectDefineProperties
 origin: "2026-08-01: highest-confidence unowned lever in the standalone ES5+untagged goal scope; identified in plan/log/analysis-2026-08-01-descriptor-dedup-map.md as the largest uncovered descriptor family."
 ---
 
@@ -312,6 +314,9 @@ that cannot be moved: the two spliced call sites plus the `throwTypeMsg` hook in
 `vec-overlay.ts`' S3 record, and the syntactic `ToObject` nullish guard on
 `Object.getOwnPropertyNames` in `call-builtin-static.ts`, which has to sit in
 that call's own dispatch arm. The same two lines are what the function-budget
-gate sees, hence the matching `func-budget-allow` for the two host functions.
+gate sees, hence the matching `func-budget-allow` for the host functions. The
+`object-ops.ts` entry is the plural loop passing `compileObjectDefineProperty`
+into `tryEmitVecLengthDefineForDefineProperties` as the standalone route — one
+argument, spread over a prettier-wrapped call.
 (the allowance itself is declared in this file's frontmatter, which is what the
 gate reads.)

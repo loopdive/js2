@@ -362,20 +362,45 @@ export function tryEmitVecLengthDefineForDefineProperties(
   objArg: ts.Expression,
   propName: string | undefined,
   descExpr: ts.Expression,
+  compileSingularDefine?: (ctx: CodegenContext, fctx: FunctionContext, call: ts.CallExpression) => ValType | null,
 ): boolean {
-  // (#4227) STANDALONE declines, for exactly the reason the SINGULAR caller
-  // already does (see the "#3251 S3" note in `compileObjectDefineProperty`):
-  // there the native `__vec_dp_value` length arm implements the FULL
-  // ArraySetLength — the step-15 non-configurable shrink stop and the
-  // non-writable length bit — against the overlay companion, which this
-  // compile-time path cannot see. Winning the race in front of it made
-  // `Object.defineProperties(arr, {length: {…}})` shrink straight past
-  // non-configurable indices and ignore a frozen length. Host mode keeps this
-  // route, which is where #3984 measured its 34-file gain, so the gate lives
-  // here rather than at the call site: one module, one policy, and the singular
-  // form's own standalone gate cannot drift away from it unnoticed.
-  if (ctx.standalone) return false;
   if (propName !== "length" || !ts.isObjectLiteralExpression(descExpr)) return false;
+  // (#4227) STANDALONE hands the key to the SINGULAR compiler instead of the
+  // inline path, because on that lane the singular compiler is precisely where
+  // the correct implementation lives: it is standalone-gated off this module
+  // (the "#3251 S3" note in `compileObjectDefineProperty`) so the key reaches
+  // the native `__vec_dp_value` length arm, which implements the FULL
+  // ArraySetLength — the step-15 non-configurable shrink stop and the
+  // non-writable length bit — against the #3251 overlay companion that this
+  // compile-time path cannot see. Racing in front of it made
+  // `Object.defineProperties(arr, {length: {…}})` shrink straight past
+  // non-configurable indices and ignore a frozen length.
+  //
+  // ROUTING rather than merely DECLINING is what keeps it clean: the plural
+  // loop's own inline expansion reaches the same native, but it also flips
+  // `arr.hasOwnProperty(<hole index>)` to `true` on an array with holes — a
+  // PRE-EXISTING plural-path defect, reproducible with any non-`length` key
+  // (`Object.defineProperties([0, , 2], {foo: {value: 1}})`) and therefore not
+  // this change's to fix. Declining here would newly expose it on `length` and
+  // cost 15.2.3.7-6-a-155/-156/-161/-162; the singular compiler does not have
+  // it, so routing takes the ArraySetLength gains without the collateral.
+  //
+  // A side-effecting receiver is left alone (the synthetic call re-evaluates
+  // `objArg`), as is a caller that passes no compiler — both keep the previous
+  // behaviour rather than acquiring a new one.
+  if (ctx.standalone) {
+    if (compileSingularDefine === undefined || !isSideEffectFreeReceiver(objArg)) return false;
+    const call = ts.factory.createCallExpression(
+      ts.factory.createPropertyAccessExpression(ts.factory.createIdentifier("Object"), "defineProperty"),
+      undefined,
+      [objArg, ts.factory.createStringLiteral("length"), descExpr],
+    );
+    ts.setTextRange(call, descExpr);
+    (call as ts.CallExpression & { parent: ts.Node }).parent = descExpr.parent;
+    const result = compileSingularDefine(ctx, fctx, call);
+    if (result) fctx.body.push({ op: "drop" });
+    return true;
+  }
   if (exceedsSafeGrowCeiling(descExpr)) return false;
   const handled = maybeEmitVecLengthDefine(ctx, fctx, objArg, ts.factory.createStringLiteral("length"), descExpr);
   if (!handled) return false;

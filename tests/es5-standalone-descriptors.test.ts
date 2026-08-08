@@ -146,6 +146,30 @@ const CASES: Array<[string, string, number]> = [
      return a.length;`,
     3,
   ],
+  // A `length` define must not materialise the array's HOLES as own properties.
+  // The plural loop's own inline expansion does exactly that for ANY key (it is
+  // reproducible with `{foo: {value: 1}}` and is not this change's to fix), so
+  // the standalone `length` key is handed to the singular compiler instead —
+  // these two rows are what pins that routing. They deliberately use a TYPED
+  // array literal rather than the `any` receiver the rows above use: an `any`
+  // receiver takes a different read/write lowering that materialises holes on
+  // its own, independently of any define, which would make these rows report a
+  // defect they are not measuring.
+  [
+    "t_defprops_length_keeps_hole",
+    `const a = [0, , 2];
+     Object.defineProperties(a, { length: { value: 3 } });
+     return a.hasOwnProperty("1") ? 1 : 0;`,
+    0,
+  ],
+  [
+    "t_defprops_shrink_then_regrow_keeps_hole",
+    `const a = [0, 1];
+     Object.defineProperties(a, { length: { value: 1 } });
+     a.length = 10;
+     return a.hasOwnProperty("1") ? 1 : 0;`,
+    0,
+  ],
   // A plain index define on an untouched array still grows the length.
   [
     "t_index_define_grows",
@@ -181,6 +205,8 @@ const HOST_COVERED = new Set([
   "t_defprops_frozen_length",
   "t_defprops_shrink_ok",
   "t_defprops_grow_ok",
+  "t_defprops_length_keeps_hole",
+  "t_defprops_shrink_then_regrow_keeps_hole",
   "t_gopn_undefined",
   "t_gopn_null",
   "t_gopn_string",
