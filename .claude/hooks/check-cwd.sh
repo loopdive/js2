@@ -79,10 +79,13 @@ fi
 
 # If the command starts with "cd /workspace" or we're in /workspace, check it
 IN_WORKSPACE=false
-if echo "$CMD" | grep -qE '^cd /workspace( |&&|;|$)'; then
-  IN_WORKSPACE=true
-fi
-if [ "$PWD" = "/workspace" ] && ! echo "$CMD" | grep -qE '^cd /'; then
+REPO_ROOT="${CLAUDE_PROJECT_DIR:-/workspace}"
+# Match `cd <repo-root>` literally — the root is a path, not a pattern, so
+# compare with a case glob rather than embedding it in a regex.
+case "$CMD" in
+  "cd $REPO_ROOT" | "cd $REPO_ROOT "* | "cd $REPO_ROOT&&"* | "cd $REPO_ROOT;"*) IN_WORKSPACE=true ;;
+esac
+if [ "$PWD" = "$REPO_ROOT" ] && ! echo "$CMD" | grep -qE '^cd /'; then
   IN_WORKSPACE=true
 fi
 

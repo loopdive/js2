@@ -2,7 +2,7 @@
 # Check for recent OOM kills and log them
 # Run periodically or after suspected OOM events
 
-source /workspace/.claude/hooks/event-log.sh
+source "${CLAUDE_PROJECT_DIR:-/workspace}"/.claude/hooks/event-log.sh
 
 # Check dmesg for OOM kills (last 5 min)
 OOM_COUNT=$(dmesg --time-format iso 2>/dev/null | tail -100 | grep -c "Out of memory\|oom-kill\|Killed process" || echo 0)

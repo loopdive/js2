@@ -10,15 +10,20 @@
 //   2. module-level numeric constants    — `fnctor-module-consts.ts`
 //   3. condition-agnostic conditionals   — below
 //
-// They ride one `InferExtension` because `core.inferExpr` takes one. The three
-// rules answer on DISJOINT node kinds (binary/`~` · identifier · conditional),
-// so composition order is not a semantic choice; first-non-`undefined` wins and
-// nothing overlaps.
+// The `Parser.pos` pin census (2026-08-08) added a fourth:
+//
+//   4. arithmetic `- * / % **` totality  — `fnctor-f64-producers.ts`
+//
+// They ride one `InferExtension` because `core.inferExpr` takes one. The rules
+// answer on DISJOINT node kinds / operator sets (bitwise-binary/`~` ·
+// arithmetic-binary · identifier · conditional), so composition order is not a
+// semantic choice; first-non-`undefined` wins and nothing overlaps.
 //
 // All of this is SATELLITE-ONLY. The always-on `buildIrUnitTypeMap` path passes
 // no extension at all, so the main `IrUnitTypeMap` — and therefore #1712
 // byte-parity — is unaffected by construction, not by measurement.
 import { ts } from "../ts-api.js";
+import { createF64ProducerExtension } from "./fnctor-f64-producers.js";
 import { createI32ProducerExtension } from "./fnctor-i32-producers.js";
 import { createModuleConstExtension } from "./fnctor-module-consts.js";
 import { _propagationCore as core, type InferExtension, type LatticeType } from "./propagate.js";
@@ -81,6 +86,9 @@ export interface SatelliteInferExtensionHost {
 export function createSatelliteInferExtension(host: SatelliteInferExtensionHost): InferExtension {
   const rules: readonly InferExtension[] = [
     createI32ProducerExtension(host.evaluate),
+    // Arithmetic `- * / % **` — disjoint from the bitwise/shift set above, so
+    // composition order between the two is not a semantic choice.
+    createF64ProducerExtension(host.evaluate),
     createModuleConstExtension(host.sourceFile, host.checker),
     createConditionalJoinExtension(host.evaluate),
   ];

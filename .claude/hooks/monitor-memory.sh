@@ -3,7 +3,7 @@
 # Tracks: vitest workers, compiler workers, claude agents — individually
 # Run in background: bash .claude/hooks/monitor-memory.sh &
 
-LOGFILE="/workspace/.claude/nonces/memory-monitor.jsonl"
+LOGFILE="${CLAUDE_PROJECT_DIR:-/workspace}/.claude/nonces/memory-monitor.jsonl"
 echo "{\"event\":\"monitor_start\",\"timestamp\":\"$(date -Iseconds)\",\"available_mb\":$(free -m | awk '/Mem/{print $7}')}" >> "$LOGFILE"
 
 while true; do

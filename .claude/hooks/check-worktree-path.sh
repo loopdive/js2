@@ -80,8 +80,8 @@ esac
 
 # Allow these path prefixes:
 ALLOWED_PREFIXES=(
-  "/workspace/.claude/worktrees/"
-  "/workspace/test262"
+  "${CLAUDE_PROJECT_DIR:-/workspace}/.claude/worktrees/"
+  "${CLAUDE_PROJECT_DIR:-/workspace}/test262"
 )
 
 OK=false
@@ -96,19 +96,19 @@ if [ "$OK" = true ]; then
 fi
 
 # Log the rejection and emit a helpful message
-if [ -f /workspace/.claude/hooks/event-log.sh ]; then
-  source /workspace/.claude/hooks/event-log.sh
+if [ -f "${CLAUDE_PROJECT_DIR:-/workspace}"/.claude/hooks/event-log.sh ]; then
+  source "${CLAUDE_PROJECT_DIR:-/workspace}"/.claude/hooks/event-log.sh
   log_event "worktree_path_blocked" "path=$ABS_PATH"
 fi
 
 cat >&2 <<EOF
 BLOCKED: git worktree add target "$ABS_PATH" is outside the canonical worktree root.
 
-Convention: worktrees MUST live under /workspace/.claude/worktrees/<branch-name>/
+Convention: worktrees MUST live under ${CLAUDE_PROJECT_DIR:-/workspace}/.claude/worktrees/<branch-name>/
 so they're visible in the tech-lead statusline and covered by .gitignore.
 
 Suggested fix:
-  git worktree add /workspace/.claude/worktrees/$(basename "$ABS_PATH") <branch-args...>
+  git worktree add "${CLAUDE_PROJECT_DIR:-/workspace}"/.claude/worktrees/$(basename "$ABS_PATH") <branch-args...>
 
 (See CLAUDE.md / team-lead memo on worktree convention.)
 EOF

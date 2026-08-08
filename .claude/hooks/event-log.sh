@@ -2,7 +2,7 @@
 # Shared event logging function — append structured events to a JSONL log
 # Usage: source this file, then call log_event "type" "key=value" "key=value" ...
 
-EVENTS_LOG="/workspace/.claude/nonces/events.jsonl"
+EVENTS_LOG="${CLAUDE_PROJECT_DIR:-/workspace}/.claude/nonces/events.jsonl"
 
 log_event() {
   local EVENT_TYPE="$1"
@@ -27,5 +27,8 @@ log_event() {
   done
 
   JSON="$JSON}"
+  # `.claude/nonces/` is gitignored, so a fresh clone or container has no such
+  # directory and every append silently no-ops. Create it on demand.
+  mkdir -p "$(dirname "$EVENTS_LOG")" 2>/dev/null
   echo "$JSON" >> "$EVENTS_LOG" 2>/dev/null
 }
