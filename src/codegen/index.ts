@@ -202,6 +202,7 @@ import { fillIterHofSteppers } from "./iter-hof-native.js"; // (#2903)
 import { fillLazyIterLadderArms } from "./iter-lazy-native.js"; // (#2903 R3)
 import { fillMemberSetDispatch, reserveVecFieldMaterializers } from "./member-set-dispatch.js";
 import { reserveColdTailAllocators } from "./fnctor-cold-tail.js"; // (#3927) hot/cold fnctor split
+import { fillClosedStructExternSetArms } from "./closed-struct-extern-set.js"; // (#4194) computed-write arms
 import { reserveFnctorResidAllocators } from "./fnctor-layout-emit.js"; // (#3927) per-type layouts
 import { fillMemberGetDispatch, fillTypedMemberGetF64Dispatch } from "./member-get-dispatch.js";
 import { emitUndefined, ensureGetUndefined, reconcileNativeStrFinalizeShift } from "./expressions/late-imports.js";
@@ -240,7 +241,7 @@ import {
 } from "./object-runtime.js";
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { fillInstanceTombstones } from "./instance-tombstones.js"; // (#4098 G1 s1) per-instance own-property deletability
-import { fillClosedStructExternSetArms, fillInstanceProps } from "./instance-props.js"; // (#4194) instance expando substrate
+import { fillInstanceProps } from "./instance-props.js"; // (#4194) instance expando bag substrate
 import { fillVecPropHelpers } from "./vec-props.js"; // (#3537) array ($Vec) expando side table
 import { fillProtoIndexStore } from "./proto-index-store.js"; // (#4160) prototype-index companions
 import { finalizeFunctionPoisonPillCalls } from "./function-poison-pill.js";
@@ -4457,10 +4458,12 @@ export function generateModule(
     fillClosedStructOwnPropertyNamesArms(ctx);
     fillClosedStructEnumerationArms(ctx); // (#3920) Object.keys / for…in
     fillClosedStructExternGetArms(ctx);
-    // (#4194) Declared-field WRITE-through prologue on `__extern_set`. AFTER the
-    // read-side fills so the two ladders are derived from the same complete
-    // struct table, and BEFORE `fillExternSetVecArms` prepends its numeric-key
-    // `$__vec_base` store arms (disjoint receivers, so order is cost-only).
+    // (#4194/#4232 reconciliation) Declared-field WRITE-through on `__extern_set`
+    // is #4232's fill (closed-struct-extern-set.ts — presence bits, cold tail,
+    // tombstone revival, single-engine coercion). The expando-bag half — writes
+    // with no physical slot, bag visibility, enumeration merge — is
+    // fillInstanceProps (instance-props.ts). Misses fall through from the
+    // declared ladder to the bag miss-arm, so the two compose without overlap.
     fillClosedStructExternSetArms(ctx);
     fillFnctorPrototypeDispatchArms(ctx);
 
@@ -6724,10 +6727,12 @@ export function generateMultiModule(
     fillClosedStructOwnPropertyNamesArms(ctx);
     fillClosedStructEnumerationArms(ctx); // (#3920) Object.keys / for…in
     fillClosedStructExternGetArms(ctx);
-    // (#4194) Declared-field WRITE-through prologue on `__extern_set`. AFTER the
-    // read-side fills so the two ladders are derived from the same complete
-    // struct table, and BEFORE `fillExternSetVecArms` prepends its numeric-key
-    // `$__vec_base` store arms (disjoint receivers, so order is cost-only).
+    // (#4194/#4232 reconciliation) Declared-field WRITE-through on `__extern_set`
+    // is #4232's fill (closed-struct-extern-set.ts — presence bits, cold tail,
+    // tombstone revival, single-engine coercion). The expando-bag half — writes
+    // with no physical slot, bag visibility, enumeration merge — is
+    // fillInstanceProps (instance-props.ts). Misses fall through from the
+    // declared ladder to the bag miss-arm, so the two compose without overlap.
     fillClosedStructExternSetArms(ctx);
     fillFnctorPrototypeDispatchArms(ctx);
 
