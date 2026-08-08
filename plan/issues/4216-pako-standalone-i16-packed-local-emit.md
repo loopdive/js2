@@ -11,6 +11,16 @@ task_type: bug
 area: emit
 goal: standalone-gap
 related: [743, 4157, 679]
+loc-budget-allow:
+  # +3 lines in the vec-element inc/dec arm: the write-back temp's declared
+  # type routed through unpackedElemType plus the constraint comment. The fix
+  # IS the type-selection site inside makeStoreLocal — there is no satellite
+  # module a one-line local-type correction can live in.
+  - src/codegen/expressions/unary-updates.ts
+func-budget-allow:
+  # Same +3 lines, seen per-function: the temp's type is chosen inside this
+  # arm; splitting the function is #3399-class work, not a bugfix rider.
+  - src/codegen/expressions/unary-updates.ts::compileMemberIncDec
 origin: "2026-08-08 — found by the #743 second-corpus census (pako 2.1.0 standalone compile)"
 ---
 
