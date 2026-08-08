@@ -1430,3 +1430,161 @@ serves the previous compiler's semantics).
   files fail with the refusal TypeError / LinkError and the change reads as a
   regression. The tier announcement line (`runtime-eval tier: INTERPRETER
   (key …)`) is the control — quote it in the PR.
+
+## Implementation record — C+D slices 1 & 2 landed, slice 3 NOT landed (2026-08-08)
+
+Branch base for every number below: `main` + the merged #2929 A/B stack
+(`64b8bcfc`, `0afe71af`, `08bd1244`). Standalone target, faithful worker path
+(`CompilerPool(1,"unified")` + `assembleOriginalHarness` + `runTest`),
+`TEST262_FULL_RUNTIME_EVAL=1`.
+
+Tier announcement (the instrument control §f demands):
+
+```
+[probe] runtime-eval tier: INTERPRETER (key 4b014a5cc23d45eb, TEST262_FULL_RUNTIME_EVAL=1)
+```
+
+(key `1a78259035ddfefe` after slice 2 — the key tracks the compiler bundle and
+was rebuilt after every `src/` change.)
+
+### Re-measured baseline — the spec's 747/816 is stale
+
+The §f note is right that the figure predates the merges. Re-measured here, and
+the 816 splits into two populations that must be reported separately:
+
+| population | base | after slice 1 | after slice 2 |
+| --- | --- | --- | --- |
+| `language/eval-code` (347 files) | 312 | 324 | **326** |
+| `annexB/language/eval-code` (469 files) | 442 | 442 | 442 |
+| combined | 754/816 | 766/816 | **768/816** |
+
+**Zero pass→fail and zero fail-signature changes in either population, at both
+slices.** All 19 C+D files reproduced the spec's §a error table exactly on the
+base, so the diagnosis transferred intact.
+
+### Slice 1 — +12, and the "probable" pair is CONFIRMED
+
+6 C-global own-property files, 4 bucket-D files, and **both** members of the
+spec's probable pair (`indirect/var-env-{var,func}-non-strict`) — probed
+explicitly rather than assumed, as §d required.
+
+The spec predicted "12 firm (6 C-global + 6 D) + 2 probable". The count landed
+at 12, but the composition differs: only **4** of the 6 D files are reachable
+by routing (see the residue below), and the 2 probable files flipped.
+
+### Slice 2 — +2, exactly as predicted
+
+`direct/var-env-func-init-local-new`, `direct/var-env-func-init-local-update`.
+The 192-file `declare-arguments` matrix was compiled in full and its import
+sections inspected: **192/192 still SPLICED, 0 provider imports**, before and
+after. Keying the predicate on top-level FunctionDeclarations rather than on
+`varNames` is what preserves it.
+
+### Byte-identity (the §f hot-path argument)
+
+`fib.ts`, `loop.ts`, `array.ts`, `string.ts` from
+`website/playground/examples/benchmarks/` compile to **identical wasm sha256**
+at base, slice 1 and slice 2. The design's "no codegen on any name-resolution
+path" claim holds mechanically.
+
+### RESIDUE 1 (bucket D, 2 files) — direct eval never applies CanDeclareGlobalFunction
+
+`direct/non-definable-global-function` and `direct/non-definable-global-generator`
+do **not** flip, and cannot be fixed by routing — they already route.
+
+The spec's §a table describes all six `non-definable-global-*` files as the
+`preventExtensions(this)` shape. That is only true of the `-var` pair. The
+`-function`/`-generator` pair instead evaluates `function NaN(){}` and needs
+`CanDeclareGlobalFunction` to REFUSE because `NaN` is an existing
+`{writable:false, enumerable:false, configurable:false}` own property.
+
+Measured, and the cause is **not** `NaN` and **not** realm population:
+
+| probe | result |
+| --- | --- |
+| `NaN` own property of the realm global after any eval | present, `w=false e=false c=false` (`installRuntimeEvalRealm`, `src/interp/loop.ts:183-197`, works) |
+| `(0,eval)("function NaN(){}")` | **TypeError** (correct) |
+| `eval("function NaN(){}")` at global | no throw |
+| define own `zzTop` `{w:false,e:false,c:false}`, then `(0,eval)("function zzTop(){}")` | **TypeError** (correct) |
+| same, `eval("function zzTop(){}")` | **no throw** |
+
+A user-defined property reproduces it, so this is not about `NaN`, the intrinsic
+set, or #4205/G2. **A sloppy DIRECT eval whose varEnv is the global record does
+not run the `plan.functionNames` CanDeclareGlobalFunction loop of
+`prepareGlobalDeclarations` (`src/interp/eval-environment.ts:570-574`), while
+the identical INDIRECT eval does.** Everything observed is consistent with
+`plan.functionNames` being empty on the direct path (the var loop still runs —
+`direct/non-definable-global-var` passes — and a NEW name still materializes as
+a property via `prepareGlobalVarBinding`, which is why the direct
+function-declaration cases otherwise look right).
+
+This is a provider/interpreter defect in the direct-eval declaration-instantiation
+path, independent of the C+D routing work. Worth its own issue.
+
+### RESIDUE 2 (slice 3 gap i, 2 files) — eval-created bindings are not deletable
+
+`direct/var-env-var-init-local-new-delete`, `direct/var-env-func-init-local-new-delete`.
+Two independent blockers, both proven:
+
+1. **Runtime**: `envDelete` (`src/interp/loop.ts:777-787`) returns `false` for
+   *every* declarative own cell. §19.2.1.3 steps 9/11 create eval's var and
+   function bindings with `CreateMutableBinding(n, **true**)` — D = deletable —
+   so eval-created bindings must be severable. Deletability is per-binding, but
+   `EvalBindingCell` is a frozen cross-module ABI struct and `EnvRec` a frozen
+   rec-group, so the flag has to live in an out-of-line side table (the idiom
+   `VARIABLE_ENVIRONMENTS` / `EXISTING_VARIABLE_ENVIRONMENTS` already use).
+   Severing itself is cheap and needs no array splice: overwrite the entry in
+   `env.names` with a unique non-string sentinel, since every own-binding probe
+   compares `names[i] === name`. `preparePersistentEvalBindings`
+   (`eval-environment.ts:342`) already treats `names[i] === undefined` as a
+   reusable vacancy, so that convention exists.
+2. **Emitter (the blocker)**: `src/interp/emitter.ts:1859-1862` folds
+   `delete <identifier>` to `LdaFalse` at COMPILE time whenever
+   `isBoundName(name)` — and `isBoundName` includes the eval body's own
+   `hoistedVars`. So `envDelete` is never reached for exactly the names that
+   are supposed to be deletable, and no runtime fix alone can work.
+
+A first cut of (1) was written and then **reverted**: keyed on `ensureVarBinding`
+it never fires (the direct-eval path allocates through
+`preparePersistentEvalBindings` instead), and behind the (2) fold it is
+unreachable regardless. Shipping unverifiable dead code would have been worse
+than recording the analysis. Fixing this needs (2), which is
+`src/interp/emitter.ts` — #4137's declared budget — so it needs coordination,
+not a drive-by edit.
+
+### RESIDUE 3 (slice 3 gap ii, 1 file) — eval-created local bindings are invisible to AOT siblings
+
+`direct/var-env-func-non-strict`. Measured contrast:
+
+| shape | result |
+| --- | --- |
+| `(function(){ eval('var q = 4;'); v = q; }())` | **passes** — SPLICED, so `q` is an ordinary caller local |
+| `(function(){ eval('function fun2(){...}'); v = fun2(); }())` | **fails**, `fun2 is not defined` — routed by slice 2 |
+
+The boundary carries only names collected from the CALLER's AST:
+`collectDirectEvalBindingNames` / `collectDirectEvalActivationBindingNames`
+(`src/codegen/direct-eval-environment.ts:64,109`) feed
+`fctx.directEvalBindingNames`, and `currentDirectEvalBindings` builds the cell
+layers from that set. A name the eval CREATES has no cell, so the AOT sibling
+read falls through to the no-symbol dynamic global read and finds nothing.
+
+The compiler *can* know these names — the eval source is a literal, and
+`foldedEvalDeclarationNames(sf)` already computes exactly them. A fix would
+pre-allocate activation cells for the eval's declared names at the call site and
+have the provider write created bindings back. That is a new write-back
+direction across `eval-inline.ts` + `direct-eval-environment.ts` +
+`runtime-eval-provider.ts`, i.e. genuinely more than an L-slice, so it is
+recorded rather than forced.
+
+### Test coverage
+
+- `tests/issue-2929-cd-global-materialization.test.ts` (new, 11 tests) — own-property
+  descriptors, existing-script-var non-configurability, delete-severing at global,
+  the assignment-only no-bail case, the three reachable D refusals, and a pin on
+  RESIDUE 1. Provider-linked `CompilerPool`; `describe.skipIf`s off the refusal
+  tier. Kept under #2929's id because `claim-issue.mjs --allocate` cannot reach
+  GitHub from this sandbox and hand-picking an id is forbidden (#2531) — it needs
+  a real id before this work is filed as its own issue.
+- `tests/issue-2929-evaldecl-early-errors.test.ts` — 28/28. Four tests changed
+  from splice-behaviour to routing assertions, because their global-varEnv var
+  declarations are now provider-owned by design.
