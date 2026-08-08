@@ -57,9 +57,38 @@ Two-site fnctor fixture (`TWO_SITE`), identical options:
 
 The census subagent's first acorn-through-`compileProject` pass reported
 zeros for everything — only the positive control exposed the path
-difference. (Full census table in the lead session log, 2026-08-08; the
-report's .tmp copy was lost to worktree auto-cleanup — the summary survives
-in the session transcript and the conclusions in #3927 §6.4's data note.)
+difference. (The report's `.tmp` copy was lost to worktree auto-cleanup;
+the table below is the durable record, transcribed 2026-08-08.)
+
+## The second-corpus census (what the single-file path measured)
+
+Instrument: `[alloc-labels]` stderr, single-file `compile()`, main @
+`5d661603f`. Verdict names are the code's (`split` = proved per-type
+layouts; `too-many-shapes` etc. are bail verdicts). The site-count column is
+a static proxy, NOT volume; the alloc-share column needs a runnable module
+and only acorn compiles standalone of this set.
+
+| package | families | proved (`split`) | bail verdicts | labels proved/all | alloc share |
+| --- | ---: | ---: | --- | ---: | --- |
+| acorn 8.16.0 | 6 | **1** (`Node`) | 1 single-site, 1 not-sep, 3 no-sites | 59/68 (87%) | ≥77.5% of struct bytes (runtime census) |
+| lodash 4.18.1 | 7 | 2 | 5 no-sites | 13/25 (52%) | no data — doesn't compile |
+| three 0.185.1 | 33 | **0** | 3 single-site, 2 not-sep, 28 no-sites | 0/36 (0%) | no data — doesn't compile |
+| moment 2.30.1 | 3 | 1 (`Moment`) | 2 single-site | 3/5 (60%) | no data — doesn't compile |
+| styled-components, marked, redux, cookie, clsx | 0 | — | — | — | no fnctors at all |
+| react-dom, jest, uuid, lit | 0 | — | — | — | no data — barrel entries (157–1,359 B stubs) |
+
+Union widths of proved families: acorn `Node` 62 fields (mean 6.3) vs
+`Moment` 17, `LazyWrapper` 10, `LodashWrapper` 5.
+
+**Conclusion (2026-08-08): k=1 labeling generalizes as a MECHANISM, not as a
+payoff — acorn is the best case by a wide margin.** Every second-corpus
+union is 5–17 fields against acorn's 62; three.js (largest family count, 33)
+yields zero splits. **Keep the #4211/#4217 cold split**: its value lives in
+the bail-verdict families, which dominate everywhere (32/33 three.js, 5/7
+lodash, 5/6 acorn itself). And the headline caveat stands: most of this
+corpus compiles through `compileProject`, which this analysis has NEVER
+measured — fixing this issue is the precondition for a real corpus-wide
+census.
 
 ## Acceptance criteria
 
