@@ -1,0 +1,254 @@
+#!/usr/bin/env node
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+// #4238 slice 1 — prebuild the QuickJS eval-engine provider into .test262-cache.
+//
+// Sibling of scripts/build-runtime-eval-provider.mjs, same idempotent
+// build → verify → publish shape. Two artifacts:
+//
+//   quickjs-artifact-<akey>/{libquickjs.wasm, qjs-abi.json, build-info.json}
+//     akey = sha256(quickjs-ng ref ∥ wasi-libc ref ∥ builtins url ∥ OPT ∥
+//                   sha256(qjs_shim.c) ∥ sha256(build.sh))
+//   quickjs-eval-adapter-<key>.wasm
+//     key = runtimeEvalProviderCacheKey(adapterSource, compilerBundleHash);
+//     the adapter source bakes in the artifact's own qjs-abi.json constants, so
+//     re-pinning the artifact invalidates the adapter automatically.
+//
+// Acquisition order:
+//   1. JS2WASM_QUICKJS_ARTIFACT_DIR — a prebuilt dir, verified then copied into
+//      the keyed cache dir.
+//   2. keyed cache hit — exit fast.
+//   3. build on demand: `bash scripts/quickjs-artifact/build.sh` (~3 min cold;
+//      needs clang-18/cmake/git/curl + network). On failure: HARD ERROR naming
+//      the prerequisite and the env override — never a silent degrade, because
+//      the flag is an explicit opt-in and a silent fallback to the interpreter
+//      would invalidate every measurement made under it.
+//
+// Usage:
+//   node --import tsx scripts/build-quickjs-eval-provider.mjs   (dev, no bundle)
+//   node scripts/build-quickjs-eval-provider.mjs                (after the
+//                                                                compiler bundle
+//                                                                is built)
+
+import { spawnSync } from "node:child_process";
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+
+import {
+  computeCompilerBundleHash,
+  defaultRuntimeEvalProviderCacheDir,
+  instantiateRuntimeEvalNamespace,
+  runtimeEvalProviderCacheKey,
+  writeCachedRuntimeEvalProvider,
+} from "./runtime-eval-provider.mjs";
+import {
+  assertQuickjsArtifactStandalone,
+  buildQuickjsAdapterSource,
+  QUICKJS_ADAPTER_CANARY_SOURCE,
+  QUICKJS_ADAPTER_COMPILE_OPTIONS,
+  QUICKJS_ADAPTER_EXTERNS,
+  QUICKJS_BUILD_SCRIPT,
+  QUICKJS_IMPORT_MODULE,
+  quickjsAdapterCachePath,
+  quickjsArtifactCacheDir,
+  quickjsArtifactCacheKey,
+  readQuickjsArtifact,
+} from "./quickjs-eval-provider.mjs";
+
+const RUNTIME_EVAL_IMPORT_MODULE = "js2wasm:runtime-eval";
+
+async function loadCompile() {
+  try {
+    const bundle = await import("./compiler-bundle.mjs");
+    if (typeof bundle.compile === "function") return { compile: bundle.compile, origin: "compiler-bundle.mjs" };
+  } catch {}
+  try {
+    const src = await import("../src/index.ts");
+    if (typeof src.compile === "function") return { compile: src.compile, origin: "src/index.ts (tsx)" };
+  } catch {}
+  throw new Error(
+    "no compiler available — build scripts/compiler-bundle.mjs first, or run under tsx " +
+      "(`node --import tsx scripts/build-quickjs-eval-provider.mjs`)",
+  );
+}
+
+/** Step 1–3 of the acquisition order. Returns the verified artifact. */
+function acquireArtifact(cacheDir) {
+  const akey = quickjsArtifactCacheKey();
+  const keyedDir = quickjsArtifactCacheDir(cacheDir, akey);
+
+  const override = process.env.JS2WASM_QUICKJS_ARTIFACT_DIR;
+  if (override) {
+    const from = resolve(override);
+    const supplied = readQuickjsArtifact(from);
+    if (!supplied) {
+      throw new Error(
+        `JS2WASM_QUICKJS_ARTIFACT_DIR=${from} must contain libquickjs.wasm and qjs-abi.json ` +
+          `(build them with: bash scripts/quickjs-artifact/build.sh)`,
+      );
+    }
+    assertQuickjsArtifactStandalone(supplied.binary);
+    if (from !== keyedDir) {
+      mkdirSync(keyedDir, { recursive: true });
+      for (const name of ["libquickjs.wasm", "qjs-abi.json", "build-info.json"]) {
+        if (existsSync(join(from, name))) copyFileSync(join(from, name), join(keyedDir, name));
+      }
+    }
+    console.log(
+      `[quickjs-eval-provider] artifact from JS2WASM_QUICKJS_ARTIFACT_DIR — sha256 ${supplied.sha256.slice(0, 16)}, ` +
+        `published to ${keyedDir} (key ${akey})`,
+    );
+    return readQuickjsArtifact(keyedDir);
+  }
+
+  const cached = readQuickjsArtifact(keyedDir);
+  if (cached) {
+    assertQuickjsArtifactStandalone(cached.binary);
+    console.log(
+      `[quickjs-eval-provider] artifact cache HIT — key ${akey}, sha256 ${cached.sha256.slice(0, 16)} at ${keyedDir}`,
+    );
+    return cached;
+  }
+
+  console.log(`[quickjs-eval-provider] artifact cache MISS — building (key ${akey}) into ${keyedDir} ...`);
+  mkdirSync(keyedDir, { recursive: true });
+  const started = Date.now();
+  const built = spawnSync("bash", [QUICKJS_BUILD_SCRIPT], {
+    stdio: "inherit",
+    env: { ...process.env, OUT_DIR: keyedDir },
+  });
+  if (built.error || built.status !== 0) {
+    throw new Error(
+      `scripts/quickjs-artifact/build.sh failed (${built.error?.message ?? `exit ${built.status}`}). ` +
+        `It needs clang-18 (CC=), llvm-ar-18/llvm-ranlib-18/llvm-nm-18, cmake, git, curl and network access. ` +
+        `Alternatively set JS2WASM_QUICKJS_ARTIFACT_DIR to a directory holding a prebuilt ` +
+        `libquickjs.wasm + qjs-abi.json.`,
+    );
+  }
+  const fresh = readQuickjsArtifact(keyedDir);
+  if (!fresh) throw new Error(`build.sh reported success but ${keyedDir} has no libquickjs.wasm + qjs-abi.json`);
+  assertQuickjsArtifactStandalone(fresh.binary);
+  console.log(
+    `[quickjs-eval-provider] artifact built in ${Date.now() - started}ms — ` +
+      `sha256 ${fresh.sha256.slice(0, 16)}, ${fresh.binary.length} bytes`,
+  );
+  return fresh;
+}
+
+/**
+ * Canary-verify the LINKED PAIR before publishing (`verifyProvider`'s
+ * discipline). Self-inspection is not enough: what has to hold is that a real
+ * user module's indirect eval reaches QuickJS and the number comes back through
+ * the `[ok, value]` envelope.
+ *
+ * NOTE: the existing single-module tiers keep their zero-imports invariant —
+ * this check deliberately does NOT touch it. The adapter's imports must be
+ * exactly `js2wasm:qjs`, and the artifact's exactly `wasi_snapshot_preview1`.
+ */
+async function verifyQuickjsProvider(compile, adapterBinary, artifact) {
+  const adapterModule = new WebAssembly.Module(adapterBinary);
+  const allowed = new Set([...QUICKJS_ADAPTER_EXTERNS, "memory"]);
+  for (const imp of WebAssembly.Module.imports(adapterModule)) {
+    if (imp.module !== QUICKJS_IMPORT_MODULE) {
+      throw new Error(
+        `quickjs adapter must import ONLY ${QUICKJS_IMPORT_MODULE}, found ${imp.module}::${imp.name} — ` +
+          `an extern leaked outside the provider namespace`,
+      );
+    }
+    if (!allowed.has(imp.name)) {
+      throw new Error(`quickjs adapter imports unexpected ${QUICKJS_IMPORT_MODULE}::${imp.name}`);
+    }
+  }
+  const quickjsModule = assertQuickjsArtifactStandalone(artifact.binary);
+
+  const canary = await compile(QUICKJS_ADAPTER_CANARY_SOURCE, {
+    ...QUICKJS_ADAPTER_COMPILE_OPTIONS,
+    fileName: "quickjs-eval-canary.ts",
+    // The CANARY is an ordinary user module — it must NOT carry the adapter's
+    // provider-build enablers, or it would not be the module shape we serve.
+    externNativeTypes: false,
+    externImportModule: undefined,
+    importMemory: undefined,
+  });
+  if (!canary.success || !canary.binary) {
+    const detail = (canary.errors ?? [])
+      .filter((e) => e.severity === "error" || e.severity === undefined)
+      .slice(0, 5)
+      .map((e) => e.message ?? String(e))
+      .join("; ");
+    throw new Error(`quickjs canary user module failed to compile: ${detail || "unknown"}`);
+  }
+  const canaryModule = new WebAssembly.Module(canary.binary);
+  const linksProvider = WebAssembly.Module.imports(canaryModule).some((i) => i.module === RUNTIME_EVAL_IMPORT_MODULE);
+  if (!linksProvider) {
+    throw new Error(`quickjs canary does not import ${RUNTIME_EVAL_IMPORT_MODULE} — it would verify nothing`);
+  }
+  const instance = new WebAssembly.Instance(canaryModule, {
+    [RUNTIME_EVAL_IMPORT_MODULE]: instantiateRuntimeEvalNamespace({
+      engine: "quickjs",
+      adapterModule,
+      quickjsModule,
+    }),
+  });
+  instance.exports._start?.();
+  const evalNumber = instance.exports.evalNumberProbe();
+  if (evalNumber !== 42) {
+    throw new Error(
+      `quickjs canary indirect eval returned ${evalNumber}, expected 42 ` +
+        `(the number completion value did not round-trip through QuickJS)`,
+    );
+  }
+  // "quickjs".length — proves the marker is a real QuickJS STRING on the
+  // realm, not merely a truthy property.
+  const identity = instance.exports.engineIdentityProbe();
+  if (identity !== 7) {
+    throw new Error(
+      `quickjs canary engine identity returned ${identity}, expected 7 ` +
+        `(evaluated code cannot see the in-band engine marker)`,
+    );
+  }
+}
+
+async function main() {
+  const cacheDir = defaultRuntimeEvalProviderCacheDir();
+  mkdirSync(cacheDir, { recursive: true });
+  const bundleHash = computeCompilerBundleHash();
+
+  const artifact = acquireArtifact(cacheDir);
+  const adapterSource = buildQuickjsAdapterSource(artifact.abi);
+  const key = runtimeEvalProviderCacheKey(adapterSource, bundleHash);
+  const adapterPath = quickjsAdapterCachePath(cacheDir, key);
+  if (existsSync(adapterPath)) {
+    console.log(
+      `[quickjs-eval-provider] adapter cache HIT — key ${key} (bundle ${bundleHash}), ` +
+        `${readFileSync(adapterPath).length} bytes at ${adapterPath}`,
+    );
+    return;
+  }
+
+  const { compile, origin } = await loadCompile();
+  console.log(
+    `[quickjs-eval-provider] adapter cache MISS — compiling (key ${key}, bundle ${bundleHash}, ` +
+      `compiler: ${origin}, source ${adapterSource.length} chars) ...`,
+  );
+  const startMs = Date.now();
+  const result = await compile(adapterSource, { ...QUICKJS_ADAPTER_COMPILE_OPTIONS });
+  const compileMs = Date.now() - startMs;
+  if (!result.success || !result.binary || result.binary.length === 0) {
+    const detail = (result.errors ?? [])
+      .filter((e) => e.severity === "error" || e.severity === undefined)
+      .slice(0, 5)
+      .map((e) => e.message ?? String(e))
+      .join("; ");
+    throw new Error(`quickjs adapter compile FAILED after ${compileMs}ms: ${detail || "unknown"}`);
+  }
+  await verifyQuickjsProvider(compile, result.binary, artifact);
+  const written = writeCachedRuntimeEvalProvider(cacheDir, key, result.binary, quickjsAdapterCachePath);
+  console.log(
+    `[quickjs-eval-provider] built + canary-verified in ${compileMs}ms — ${result.binary.length} bytes at ${written}`,
+  );
+}
+
+main().catch((err) => {
+  console.error(`[quickjs-eval-provider] FAILED: ${err?.stack ?? err}`);
+  process.exit(1);
+});
