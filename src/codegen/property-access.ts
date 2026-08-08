@@ -175,6 +175,7 @@ import { alternateFieldArmRead } from "./alternate-field-arm.js";
 import { classMethodCandidatesForProp, reserveMemberGetDispatch } from "./member-get-dispatch.js";
 import { resolveReceiverStruct } from "./fnctor-escape-gate.js"; // (#2681/#2686 A3) pinned-struct read dispatch
 import { emitGuardedNativeStringElementGet } from "./string-element-read.js"; // (#3973) any-typed native-string element read
+import { emitStringExoticIndexGet } from "./string-exotic-index.js"; // (#4232) §10.4.3.5 bounds for a statically-string receiver
 import { reserveAccessorGetDriver } from "./accessor-driver.js";
 import { S5C_STRUCT_ACCESSOR_CLOSURE } from "./struct-accessor-closure.js";
 import { tryCompileTemporalPropertyAccess } from "./temporal-native.js";
@@ -4232,25 +4233,15 @@ export function compileElementAccess(
       (isStringWrapperType(recvWrapTsType) || ctx.oracle.staticJsTypeOf(expr.expression) === "string") &&
       isNumericIndexExpression(ctx, expr.argumentExpression, fctx)
     ) {
-      ensureObjectRuntime(ctx);
-      ensureNativeStringHelpers(ctx);
-      const toPrimIdx = ctx.funcMap.get("__to_primitive");
-      const charAtIdx = ctx.nativeStrHelpers.get("__str_charAt");
-      if (toPrimIdx !== undefined && charAtIdx !== undefined) {
-        // [[StringData]] native string ← __to_primitive(recv, "string").
-        compileExpression(ctx, fctx, expr.expression, { kind: "externref" });
-        addStringConstantGlobal(ctx, "string");
-        fctx.body.push(...stringConstantExternrefInstrs(ctx, "string"));
-        fctx.body.push({ op: "call", funcIdx: toPrimIdx });
-        // __str_charAt wants a flattened `$AnyString` ref; coerce + flatten.
-        coerceType(ctx, fctx, { kind: "externref" }, { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx });
-        const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
-        if (flattenIdx !== undefined) fctx.body.push({ op: "call", funcIdx: flattenIdx });
-        // index (i32)
-        compileExpression(ctx, fctx, expr.argumentExpression, { kind: "i32" });
-        fctx.body.push({ op: "call", funcIdx: charAtIdx });
-        return { kind: "ref", typeIdx: ctx.nativeStrTypeIdx };
-      }
+      // (#4232) …with §10.4.3.5 bounds, not §22.1.3.1 charAt bounds: an index
+      // outside `[0, len)` — or a non-canonical one like `NaN` / `1.5` — is
+      // `undefined`, not `""`. The arm used to end at `__str_charAt` and
+      // return `ref $NativeString`, a type in which `undefined` is not even
+      // representable; string-exotic-index.ts carries the guard (mirroring
+      // #3973's, which already got this right for `any` receivers) and returns
+      // `externref`.
+      const exotic = emitStringExoticIndexGet(ctx, fctx, expr.expression, expr.argumentExpression);
+      if (exotic) return exotic;
     }
 
     // (#3973) Same read, but the receiver is only KNOWN to be a string at

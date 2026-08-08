@@ -156,6 +156,7 @@ import { ensureProxyRuntime } from "./object-runtime-proxy.js";
 import { ensureArgcGlobal } from "./statements/nested-declarations.js";
 import { buildLazyNativeProtoGetInstrs, getBuiltinBrand } from "./native-proto.js";
 import { vecConstructorArmInstrs } from "./vec-constructor-carrier.js"; // (#4220) runtime `<array>.constructor`
+import { registerStringExoticHasOwn, stringExoticHasOwnPrologue } from "./string-exotic-own-props.js"; // (#4232) §10.4.3 own props
 import { ensureWrapperConstructorCarriers, wrapperConstructorArmInstrs } from "./wrapper-constructor-carrier.js"; // (#4223) runtime `<wrapper>.constructor`
 import { overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4222) overlay-aware index presence
 export { fillProxyDispatch } from "./object-runtime-proxy.js";
@@ -3032,8 +3033,18 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // __obj_find on the own props table; present iff the returned entry is
   // non-null (find already skips tombstones). Object.hasOwn shares the exact
   // own-only predicate, so both names register the same body.
+  // (#4232) String-exotic own properties (`length` + canonical indices) are
+  // DERIVED from the wrapper's [[PrimitiveValue]], not table entries, so the
+  // `__obj_find` walk below cannot see them. Consult-only: the prologue answers
+  // 1 or falls through, never 0 — see string-exotic-own-props.ts.
+  const strExoticHasOwnIdx = registerStringExoticHasOwn(ctx, {
+    objectTypeIdx,
+    propEntryTypeIdx,
+    objFindIdx,
+  });
   const emitHasOwn = (name: string): void => {
     const body: Instr[] = [
+      ...stringExoticHasOwnPrologue(strExoticHasOwnIdx),
       // (#2896) Builtin-fn metadata arm: name/length are OWN properties of a
       // builtin function value (until deleted). get_meta returns non-null
       // exactly when the own property exists.
