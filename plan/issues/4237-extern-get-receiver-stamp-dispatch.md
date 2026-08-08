@@ -144,6 +144,65 @@ sets); the big three carry the ladders. `__extern_set` grew past
 `__extern_get` (#4194's write arms + #4241's layout arms — correctness
 first, now a dispatch-shape cost to collapse).
 
+### 3b. The reusable lesson: three instruments, three different answers, one right
+
+Worth keeping beyond this issue, because each instrument failed for a
+DIFFERENT structural reason and any one of them alone would have shipped a
+wrong fix:
+
+- **The profiler's nearest-caller attribution named `__extern_get`** (12.04
+  of 12.25 %). Wrong at the frame level: the emitted `__extern_get` body
+  contains zero calls to the leaf. `wasm-opt` had inlined the true
+  intermediate frames (`__closure_prop_get` / `__instance_prop_get`) into
+  their callers, so the profiler's stack collapses the middle and blames the
+  survivor. Nearest-caller over an optimized binary attributes to the
+  nearest NON-INLINED frame, not the nearest call site.
+- **The WAT site census named `__extern_set`** (325 call sites — the #4194
+  untombstone arms). Right about sites, wrong about traffic: those arms
+  execute ~0×/parse. A static site count is not a frequency — the same trap
+  as ranking cold fields by write-site count (#3927 §2).
+- **The deterministic call census is the authority**: 39,451 calls/parse,
+  20,850 via `__closure_prop_get` + 18,601 via `__instance_prop_get`,
+  nothing else — the dynamic read-MISS arms consulting the expando bag
+  before answering undefined.
+
+Rule of thumb this yields: *attribute hot leaves with the call census;
+use the profiler only to find the leaf, and the WAT census only to find the
+mechanism.*
+
+### 3c. The registry is not just linear — it is a cross-parse LEAK, so the scan is quadratic over a session
+
+`__closure_bag_ensure` measures **75 calls/parse, all via
+`__instance_prop_set`** (expando writes on closure/builtin-instance
+carriers; plain fnctor expandos still drop — #4010/#4098). Each ensure
+PREPENDS a registry entry keyed by the receiver, and nothing ever removes
+one: the global list holds a strong ref to every carrier that ever grew a
+bag, so (a) dead instances are GC-PINNED for the module's lifetime — a
+genuine memory leak in any long-lived embedding — and (b) the 39,451
+lookups/parse scan a list that GROWS ~75/parse, making the aggregate scan
+cost QUADRATIC across a session. The 300-parse profile ends scanning a
+~22K-entry list, which is how a 696-char leaf became 12.25 % of wall. The
+carrier-intrinsic slot fixes all three at once: O(1) lookup, no global
+strong refs (the bag dies with its instance), and a null-slot fast path —
+one `struct.get` + `br_on_null` — makes the common carrier-has-no-expandos
+consult ~free, in the same query-never-allocates spirit as the
+`carrier-bag-hasown.ts` rule.
+
+### 3d. Pre-registered measurement caveats for the A/B
+
+- **The profile-share DENOMINATOR shrank across the #4241 flip** (gc-engine
+  23.1 → 2.11 % ⇒ every surviving bucket's share inflated ~1.27× by
+  arithmetic alone). Quote share deltas against THIS baseline only; never
+  compare shares across the flip.
+- The flip's committed CI measurement — the program's current standing
+  number: **wasm 104.9 → 91.8 ms/op (−12.5 % wall), ratio 0.142 (7.0×) on
+  CI hardware.**
+- The bag-scan fix's wall payoff is SESSION-LENGTH-DEPENDENT (quadratic
+  term): a 300-parse profile overstates what a single parse gains. Quote
+  the call census (39,451 consults → expected ~39,451 null-slot fast-paths)
+  and the profile share at fixed iteration count; note the leak fix
+  separately as correctness/memory, not speed.
+
 ### 4. Consequence for this issue's plan — REORDERED by the measurement
 
 1. **FIRST: kill the bag-lookup linearity (12.25 %, the largest single
