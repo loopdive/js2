@@ -14,10 +14,20 @@
 //
 //   4. arithmetic `- * / % **` totality  — `fnctor-f64-producers.ts`
 //
+// The pin retirement program (2026-08-08, this issue's field↔param follow-up)
+// added the last two the census left standing:
+//
+//   5. function-local bindings           — `fnctor-local-bindings.ts`
+//   6. string substrate (String(x) /
+//      indexOf / charCodeAt / length)    — `fnctor-string-producers.ts`
+//
 // They ride one `InferExtension` because `core.inferExpr` takes one. The rules
 // answer on DISJOINT node kinds / operator sets (bitwise-binary/`~` ·
-// arithmetic-binary · identifier · conditional), so composition order is not a
-// semantic choice; first-non-`undefined` wins and nothing overlaps.
+// arithmetic-binary · identifier · conditional · call/property-access), so
+// composition order is not a semantic choice; first-non-`undefined` wins and
+// nothing overlaps. The two identifier rules (module constants, locals) are
+// disjoint by SYMBOL — a module-level binding is never a function-local — and
+// each declines the other's symbols.
 //
 // All of this is SATELLITE-ONLY. The always-on `buildIrUnitTypeMap` path passes
 // no extension at all, so the main `IrUnitTypeMap` — and therefore #1712
@@ -25,7 +35,9 @@
 import { ts } from "../ts-api.js";
 import { createF64ProducerExtension } from "./fnctor-f64-producers.js";
 import { createI32ProducerExtension } from "./fnctor-i32-producers.js";
+import { createLocalBindingExtension } from "./fnctor-local-bindings.js";
 import { createModuleConstExtension } from "./fnctor-module-consts.js";
+import { createStringProducerExtension } from "./fnctor-string-producers.js";
 import { _propagationCore as core, type InferExtension, type LatticeType } from "./propagate.js";
 
 /**
@@ -90,6 +102,8 @@ export function createSatelliteInferExtension(host: SatelliteInferExtensionHost)
     // composition order between the two is not a semantic choice.
     createF64ProducerExtension(host.evaluate),
     createModuleConstExtension(host.sourceFile, host.checker),
+    createLocalBindingExtension(host.sourceFile, host.checker, host.evaluate),
+    createStringProducerExtension(host.sourceFile, host.checker, host.evaluate),
     createConditionalJoinExtension(host.evaluate),
   ];
   return {

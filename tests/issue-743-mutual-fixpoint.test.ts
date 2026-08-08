@@ -109,7 +109,10 @@ describe("#743 — field slots are lattice variables (mutual fixpoint)", () => {
     // `new T(this)` → T's param IS the instance atom → `p.start` resolves
     // through the EXISTING object-shape property-access rule, no new machinery.
     expect(params(src).get("T")?.[0]?.kind).toBe("object");
-    expect(reads(src).size).toBe(0); // T's write carrier is `p.start`, not `this.x`
+    // The `<param>.<y>` carrier is node-keyed alongside the `this.<y>` reads
+    // (the consumer's Token.start path — it used to be absent here, which is
+    // exactly the gap that left `this.s = p.start` unconsumable).
+    expect(reads(src).get("p.start")).toBe("f64");
   });
 
   it("a conflicting method write WIDENS the slot instead of guessing", () => {

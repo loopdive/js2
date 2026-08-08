@@ -87,12 +87,17 @@ export function inferFnctorFieldTypeFromCtorParam(
     carrier = carrier.right;
   }
 
-  // (#743) A `this.<y>` READ: the value is a FIELD of the instance under
-  // construction, which no parameter fact can express. The satellite's mutual
-  // field↔param fixpoint has already applied definiteness and statement
-  // ordering, so a read that could observe `undefined` never carries a numeric
-  // fact here. Node-keyed so this cannot drift from what was proven.
-  if (ts.isPropertyAccessExpression(carrier) && carrier.expression.kind === ts.SyntaxKind.ThisKeyword) {
+  // (#743) A `this.<y>` READ (the value is a FIELD of the instance under
+  // construction) or a `<param>.<y>` READ (`this.start = p.start` — acorn's
+  // Token pattern, where `p` carries the source owner's instance atom): neither
+  // is expressible as a parameter fact. The satellite's mutual field↔param
+  // fixpoint has already applied definiteness and statement ordering, so a
+  // read that could observe `undefined` never carries a numeric fact here.
+  // Node-keyed so this cannot drift from what was proven.
+  if (
+    ts.isPropertyAccessExpression(carrier) &&
+    (carrier.expression.kind === ts.SyntaxKind.ThisKeyword || ts.isIdentifier(carrier.expression))
+  ) {
     const fact = computeFnctorGraphCtorThisReadFacts(funcDecl.getSourceFile(), ctx).get(carrier);
     if (fact === undefined) return null;
     return fact.kind === "f64" || fact.kind === "i32" || fact.kind === "u32" ? { kind: "f64" } : null;
