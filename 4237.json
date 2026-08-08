@@ -1,10 +1,11 @@
 {
   "id": "4237",
   "assignee": "ttraenkler/fable-3927-emission",
-  "requested_by": "ttraenkler/fable-3927-emission",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "issue-4237-receiver-stamp-dispatch",
   "claimed_at": "2026-08-08T17:54:19Z",
-  "updated_at": "2026-08-08T17:54:19Z",
-  "write_id": "50045-w6falzvh"
+  "updated_at": "2026-08-08T18:21:40Z",
+  "write_id": "38882-tca78fiy",
+  "released_at": "2026-08-08T18:21:40Z"
 }
