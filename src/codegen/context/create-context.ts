@@ -381,6 +381,10 @@ export function createCodegenContext(
     wasiRawImports: options?.wasiRawImports ?? new Set(),
     wasiMemAccessors: options?.wasiMemAccessors ?? new Set(),
     allowFs: options?.allowFs ?? false,
+    // (#4238 slice 1) provider-build enablers — default off / undefined.
+    externNativeTypes: options?.externNativeTypes ?? false,
+    ...(options?.externImportModule ? { externImportModule: options.externImportModule } : {}),
+    ...(options?.importMemory ? { importMemory: options.importMemory } : {}),
     strictNoHostImports,
     tdzGlobals: new Map(),
     tdzLetConstNames: new Set(),

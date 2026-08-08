@@ -1449,7 +1449,11 @@ export function ensureNativeStringExternBridge(ctx: CodegenContext): void {
   const strRef: ValType = { kind: "ref", typeIdx: anyStrTypeIdx };
   const strDataRef: ValType = { kind: "ref", typeIdx: strDataTypeIdx };
 
-  if (ctx.mod.memories.length === 0) {
+  // (#4238) With `importMemory` the module already has a memory at index 0 (an
+  // IMPORTED one — `mod.memories` only holds DEFINED memories). Defining a
+  // second one here would land at index 1 while every emitted load/store still
+  // targets index 0, so skip: the bridge shares the peer's memory.
+  if (ctx.mod.memories.length === 0 && ctx.importMemory === undefined) {
     ctx.mod.memories.push({ min: 1 });
     ctx.mod.exports.push({
       name: "__str_mem",

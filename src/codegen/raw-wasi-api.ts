@@ -79,7 +79,13 @@ export function tryCompileRawWasiCall(
   fctx: FunctionContext,
   expr: ts.CallExpression,
 ): InnerResult | undefined {
-  if (!ctx.wasi) return undefined;
+  // (#4238) Two regimes own a linear memory at index 0: `--target wasi` (this
+  // module defines/exports it) and `importMemory` (a PEER wasm module owns and
+  // exports it, this module imports it — the `--link node:fs` topology). The
+  // inline `wasm:memory` accessors are valid in both; the `fd_read`/`fd_write`
+  // passthrough below stays WASI-only (its import indices are only registered
+  // by registerWasiImports, and the `importIdx === undefined` guard bails).
+  if (!ctx.wasi && ctx.importMemory === undefined) return undefined;
   if (ctx.wasiRawImports.size === 0 && ctx.wasiMemAccessors.size === 0) return undefined;
   if (expr.questionDotToken) return undefined;
   if (!ts.isIdentifier(expr.expression)) return undefined;
