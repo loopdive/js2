@@ -7,6 +7,7 @@ import { emitLazyNativeProtoGet } from "./native-proto.js";
 import { fillVecOverlayHelpers } from "./vec-overlay.js";
 import { fillCarrierBagDelete } from "./carrier-bag-delete.js";
 import { fillCarrierBagVisibility } from "./carrier-bag-visibility.js";
+import { fillVecPropsKeySource } from "./vec-props-key-source.js";
 
 /** Finalize the generic vec overlay before installing the exact `$ObjVec` prototype arm. */
 export function fillObjVecReflectionHelpers(ctx: CodegenContext): void {
@@ -21,6 +22,11 @@ export function fillObjVecReflectionHelpers(ctx: CodegenContext): void {
   // `__getOwnPropertyDescriptor`'s funcIdx and the key walker needs
   // `__obj_ordered`/`__obj_ordered_all`, none of which exist at reserve time.
   fillCarrierBagVisibility(ctx);
+  // (#4230) Same pass, same reason: `__vec_props_keysrc` unions the #3537 bag
+  // with the #3251 overlay companion, and `__vec_overlay_lookup` is minted by
+  // `fillVecOverlayHelpers` above — it does not exist at reserve time. A
+  // skipped fill leaves the null placeholder, i.e. the caller keeps refusing.
+  fillVecPropsKeySource(ctx);
   fillObjVecArrayPrototypeArm(ctx);
 }
 
