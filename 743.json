@@ -1,10 +1,11 @@
 {
   "id": "743",
   "assignee": "ttraenkler/fable-743-fixpoint",
-  "requested_by": "ttraenkler/fable-743-fixpoint",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "issue-743-field-param-mutual-fixpoint",
   "claimed_at": "2026-08-08T17:46:13Z",
-  "updated_at": "2026-08-08T17:46:13Z",
-  "write_id": "14029-lk8hrq4g"
+  "updated_at": "2026-08-08T19:35:48Z",
+  "write_id": "64273-1mzfvuiz",
+  "released_at": "2026-08-08T19:35:48Z"
 }
