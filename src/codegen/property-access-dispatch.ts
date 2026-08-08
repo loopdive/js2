@@ -122,6 +122,7 @@ import {
 import { tryEmitJsonParsePropertyAccess } from "./json-standalone.js";
 import { resolveReceiverStruct } from "./fnctor-escape-gate.js";
 import { findColdStructsForField } from "./fnctor-cold-tail.js"; // (#3927) hot/cold fnctor split
+import { findFnctorLayoutStructsForField, findFnctorResidStructsForField } from "./fnctor-layout-emit.js"; // (#3927) per-type layouts — vote seam
 import { tryCompileTemporalPropertyAccess } from "./temporal-native.js";
 import {
   BUILTIN_CTOR_ARITY,
@@ -3808,6 +3809,15 @@ export function finalizeStructAndDynamicMemberGet(
             // so every `node.generator` read answered a constant `false` —
             // 32,506 of 32,506 AST nodes, one wrong field out of 64.
             for (const cold of findColdStructsForField(ctx, propName)) fieldKinds.add(cold.fieldType.kind);
+            // (#3927 per-type layouts) The same vote seam, twice over: the
+            // sibling layouts and the resid carrier are hidden from
+            // `findAlternateStructsForField` (their arms need stamp guards),
+            // but they are CARRIERS of `propName` and must vote. "This layout
+            // lacks the field" must never read as agreement — a family that
+            // carries the name anywhere contributes its (externref) kind via
+            // BOTH finders, which de-narrows exactly like the cold fix above.
+            for (const lay of findFnctorLayoutStructsForField(ctx, propName)) fieldKinds.add(lay.fieldType.kind);
+            for (const resid of findFnctorResidStructsForField(ctx, propName)) fieldKinds.add(resid.fieldType.kind);
             if (fieldKinds.size === 1) {
               const k = [...fieldKinds][0];
               if (k === "f64" || k === "i32") {

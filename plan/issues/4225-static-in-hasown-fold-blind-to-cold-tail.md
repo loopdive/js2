@@ -55,6 +55,16 @@ Measured (standalone, optimize 0): **native 111, wasm 001** — the value
 round-trips, both reflective answers are a constant false. The same probe on
 a HOT field is answered by the folded-1 side, which PR #4229 owns.
 
+**Re-measured 2026-08-08 after PR #4229 merged: native 111, wasm 101.** The
+`in` operator now answers correctly on this repro; the residual is the
+`hasOwnProperty` site (`object-ops.ts` `compilePropertyIntrospection`),
+whose #3920 fix deliberately replaces ONLY a folded **1**
+(`emitHasOwnPresence` — "Replace ONLY a folded 1") and leaves the folded 0
+constant. Scope of the fix shrinks accordingly: teach the folded-0 exit at
+that site (and audit `propertyIsEnumerable` / `Object.hasOwn` if they share
+it) the off-base-carrier check via `findColdStructsForField` +
+`coldFieldPresenceInstrs`.
+
 ## Fix shape
 
 At both fold sites, before treating `includes(key) === false` as a constant
