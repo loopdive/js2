@@ -133,6 +133,51 @@ describe("#4194 — computed writes route to closed-struct storage (standalone)"
     expect(native.copyNodeComposition!()).toBe(1111);
   });
 
+  it("routes a computed write to the RESID carrier under per-type layouts (#3927 flag ON)", async () => {
+    // An {alpha}-layout instance computed-written with "beta": the inline
+    // layout arms stamp-mismatch (canonical twins included) and the family's
+    // resid arm must take it — then named read, hasOwnProperty and `in` see
+    // it through the base presence bit.
+    const LAYOUT_FIXTURE = `
+function Node() { this.type = "?"; }
+function Parser() { this.pos = 0; }
+var pp = Parser.prototype;
+pp.startNode = function () { return new Node(); };
+pp.alpha = function () { var n = this.startNode(); n.alpha = 11; return n; };
+pp.beta = function () { var n = this.startNode(); n.beta = 22; return n; };
+function launder(x) { return x ? x : null; }
+function launderKey(x) { return x ? x : null; }
+export function mkDyn() { var n = new Node(); n["k"] = 1; return 0; } // approval site
+export function residComputedWrite() {
+  var p = new Parser();
+  var a = launder(p.alpha());          // {alpha}-layout instance, any-typed
+  var key = launderKey("x") ? "beta" : "zz"; // dynamic key
+  a[key] = 7;
+  return (a.beta === 7 ? 1 : 0) + (a[key] === 7 ? 10 : 0) +
+         (a.hasOwnProperty("beta") ? 100 : 0) + ("beta" in a ? 1000 : 0) +
+         (a.alpha === 11 ? 10000 : 0);
+}
+`;
+    const saved = process.env.JS2WASM_FNCTOR_LAYOUT_EMIT;
+    process.env.JS2WASM_FNCTOR_LAYOUT_EMIT = "1";
+    try {
+      const result = await compile(LAYOUT_FIXTURE, {
+        fileName: "t.mjs",
+        skipSemanticDiagnostics: true,
+        target: "standalone",
+        optimize: 0,
+      });
+      if (!result.success) throw new Error(result.errors.map((e) => String(e.message ?? e)).join("; "));
+      const { instance } = await WebAssembly.instantiate(result.binary, {});
+      (instance.exports as Record<string, () => void>).__module_init?.();
+      expect((instance.exports as Exports).residComputedWrite!()).toBe(11111);
+    } finally {
+      // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
+      if (saved === undefined) delete process.env.JS2WASM_FNCTOR_LAYOUT_EMIT;
+      else process.env.JS2WASM_FNCTOR_LAYOUT_EMIT = saved;
+    }
+  });
+
   it("pins the expando residual (no storage anywhere → still dropped; #4010/#4098 own it)", async () => {
     const wasm = await buildStandalone();
     const native = await nativeModule();

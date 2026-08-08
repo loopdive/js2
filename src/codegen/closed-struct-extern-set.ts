@@ -54,6 +54,15 @@ import type { FieldDef, Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { isSyntheticStructName } from "./emit-helpers.js";
 import { coldFieldWriteArm, coldTailAllocatorName, findColdStructsForField } from "./fnctor-cold-tail.js";
+import {
+  findFnctorLayoutStructsForField,
+  findFnctorResidStructsForField,
+  layoutFieldWriteInstrs,
+  layoutMatchTestInstrs,
+  residEnsureAllocatorName,
+  residFieldWriteInstrs,
+  residMatchTestInstrs,
+} from "./fnctor-layout-emit.js"; // (#3927) per-type layouts — write side of the computed path
 import { exposedClosedStructFieldName } from "./fnctor-identity-fields.js";
 import { type PresenceSlot, presenceSetInstrs, presenceSlotOf } from "./fnctor-presence-bits.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
@@ -196,6 +205,13 @@ export function fillClosedStructExternSetArms(ctx: CodegenContext): void {
       });
     }
   }
+  // (#3927 per-type layouts) The flow-grown union names of every split
+  // family — their storage is a layout slot or the resid carrier, both
+  // invisible to the struct walk above (layouts/resid are synthetic-hidden).
+  const layoutNames = new Set<string>();
+  for (const info of ctx.fnctorLayoutInfo?.values() ?? []) {
+    for (const name of info.residFieldNames) layoutNames.add(name);
+  }
   // (#3927) Cold-tail write arms — the split moved these names off the main
   // struct, so the walk above cannot see them. Keyed per name; each arm
   // lazily allocates the tail via `__cold_ensure_*` exactly like the
@@ -210,7 +226,7 @@ export function fillClosedStructExternSetArms(ctx: CodegenContext): void {
       if (locs.length > 0) coldByField.set(field.name, locs);
     }
   }
-  if (byField.size === 0 && coldByField.size === 0) return;
+  if (byField.size === 0 && coldByField.size === 0 && layoutNames.size === 0) return;
 
   // Appended scratch locals (existing locals/indices untouched).
   const paramCount = 3; // obj, key, value
@@ -292,11 +308,38 @@ export function fillClosedStructExternSetArms(ctx: CodegenContext): void {
         },
       );
     }
+    // (#3927 per-type layouts) Inline layout arms first (stamp-guarded — two
+    // sibling layouts with the same field kinds share ONE canonical wasm
+    // type, so `ref.test` alone would write another field's slot), then each
+    // family's resid arm as its terminal (`ref.test $base` matches every
+    // family member, range-guarded against cross-family base twins). All
+    // flow-grown slots are externref ⇒ no coercion. No tombstone clear:
+    // split families are fnctors, and fnctor instances never tombstone
+    // (`__is_class_instance_carrier` is class-only).
+    if (layoutNames.has(fieldName)) {
+      for (const loc of findFnctorLayoutStructsForField(ctx, fieldName)) {
+        if (!loc.mutable) continue;
+        arms.push(...layoutMatchTestInstrs(loc, RECV_ANY), {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [...layoutFieldWriteInstrs(loc, RECV_ANY, 2, []), { op: "return" }],
+        });
+      }
+      for (const loc of findFnctorResidStructsForField(ctx, fieldName)) {
+        const ensureIdx = ctx.funcMap.get(residEnsureAllocatorName(loc.baseStructName));
+        if (ensureIdx === undefined) continue;
+        arms.push(...residMatchTestInstrs(loc, RECV_ANY), {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [...residFieldWriteInstrs(loc, RECV_ANY, 2, COLD_ANY, ensureIdx, []), { op: "return" }],
+        });
+      }
+    }
     return arms;
   };
 
   const keyArms: Instr[] = [];
-  const names = new Set<string>([...byField.keys(), ...coldByField.keys()]);
+  const names = new Set<string>([...byField.keys(), ...coldByField.keys(), ...layoutNames]);
   for (const fieldName of names) {
     const receiverArms = buildReceiverArms(fieldName);
     if (receiverArms.length === 0) continue;
