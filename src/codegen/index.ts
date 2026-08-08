@@ -3579,6 +3579,18 @@ export function generateModule(
     ctx.moduleUsesDynTaView = sourceHasDynamicTaConstruct(ast.checker, ast.sourceFile);
   }
   try {
+    // (#4238 slice 1) Imported-memory topology: a PEER wasm module owns and
+    // exports the linear memory and this module imports it at memory index 0,
+    // so the `wasm:memory` accessors address the peer's heap. Registered FIRST
+    // (before any func import) to mirror `src/codegen/wasi.ts`'s node:fs link
+    // path; a memory import does not perturb the func index space. Absent for
+    // every compile that does not pass the option.
+    if (ctx.importMemory) {
+      addImport(ctx, ctx.importMemory.module, "memory", {
+        kind: "memory",
+        min: ctx.importMemory.min ?? 1,
+      });
+    }
     // WASI target: register linear memory, bump pointer global, and WASI imports
     if (ctx.wasi) {
       registerWasiImports(ctx, ast.sourceFile);

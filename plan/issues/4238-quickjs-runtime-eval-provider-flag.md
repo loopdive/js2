@@ -1,10 +1,31 @@
 ---
 id: 4238
 title: "QuickJS-backed runtime-eval provider behind a flag — swap the eval engine, keep the Acorn+interpreter default until migration completes (#4236 variant C MVP)"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-08-08
 updated: 2026-08-08
+# Slice 1 landed the three option-gated compiler enablers (§2). Every new code
+# path is behind `ctx.externNativeTypes` / `ctx.externImportModule` /
+# `ctx.importMemory`, all default-off, so a compile that does not set them is
+# byte-identical — verified by diffing the emitted import signatures with the
+# flag on and off (f64→i32) and by the untouched eval-provider suites.
+loc-budget-allow:
+  - src/codegen/context/types.ts
+  - src/codegen/extern-declarations.ts
+  - src/codegen/index.ts
+  - src/codegen/native-strings.ts
+  - src/compiler.ts
+func-budget-allow:
+  - src/codegen/index.ts::generateModule
+  - src/codegen/context/create-context.ts::createCodegenContext
+# The native-type annotation resolver asks a wasm-LOWERING question ("does this
+# type node name the user-declared `type i32 = number` alias?") whose answer is
+# a `ValType`. That is deliberately above what `ctx.oracle` models, so the one
+# added `ctx.checker` reference routes through the existing
+# `nativeTypeFromTypeNode` (src/codegen/native-type-annotations.ts) helper.
+oracle-ratchet-allow:
+  - src/codegen/extern-declarations.ts
 priority: high
 horizon: l
 feasibility: hard
@@ -619,3 +640,85 @@ committed here.
   papers over the f64/i32 signature mismatch the `externNativeTypes` enabler
   exists to fix, and violates the zero-JS acceptance criterion while
   appearing to work.
+
+## Slice 1 — implementation record (2026-08-08)
+
+**Done-signal met.** An INDIRECT EVAL evaluated inside the QuickJS WASI
+artifact returns its number completion value to a js2wasm-compiled standalone
+module through the unchanged 4-import `js2wasm:runtime-eval` seam. Zero JS
+behind the seam beyond `wasi-stub.mjs`: the adapter's `qjs_*` imports are bound
+to `libquickjs.wasm`'s exported functions **directly** (same function objects,
+matching `(i32,…)->i32` signatures), and the adapter's linear memory IS the
+QuickJS heap, imported at memory index 0.
+
+### What landed
+
+| file | why |
+| --- | --- |
+| `src/index.ts` | three INTERNAL, default-off compile options: `externNativeTypes`, `externImportModule`, `importMemory` |
+| `src/compiler.ts`, `src/codegen/context/{types,create-context}.ts` | plumb them to `ctx` |
+| `src/codegen/extern-declarations.ts` | under `externNativeTypes`, resolve a `declare function` extern's param/result types via `nativeTypeFromTypeNode` before the default f64 mapping; register the import in `externImportModule` instead of `env`; skip the `wasm:memory` accessor stubs in the imported-memory regime |
+| `src/codegen/index.ts` | register the imported memory FIRST (before any func import), mirroring the `--link node:fs` topology |
+| `src/codegen/raw-wasi-api.ts` | admit the inline `wasm:memory` accessors in the imported-memory regime (`fd_read`/`fd_write` stay WASI-only) |
+| `src/codegen/native-strings.ts` | do not DEFINE a second memory when one is imported |
+| `src/codegen/host-import-allowlist.ts` | `js2wasm:qjs` is a wasm-to-wasm provider namespace, not a host-import leak |
+| `scripts/quickjs-artifact/qjs_shim.c` | `qjs_new_string_len`, `qjs_new_undefined` (slice-2 seams; also what installs the identity global) |
+| `scripts/quickjs-eval-provider.mjs` | NEW — adapter source (tag constants baked from the artifact's own `qjs-abi.json`), cache keys, 2-module link, `selectQuickjsEvalProvider` |
+| `scripts/build-quickjs-eval-provider.mjs` | NEW — artifact acquisition (env override → keyed cache → `build.sh`), adapter compile, canary verification, publish |
+| `scripts/runtime-eval-provider.mjs` | the engine flag + branch; `engine` field; bundle-aware `instantiateRuntimeEvalNamespace` |
+| `scripts/test262-import-object.mjs` | accept the bundle descriptor (`selection.module ?? selection.bundle`) |
+| `scripts/run-test262-vitest.sh` | symmetric prebuild hook under the flag |
+| `tests/quickjs-eval-provider.test.ts` | NEW — self-gating lane, §6 cases 1–4, 9, 11 |
+
+### Slice-1 tier ladder (as implemented)
+
+| entry point | slice-1 behaviour |
+| --- | --- |
+| `__runtime_indirect_eval(source, global)` | non-string source returned unchanged (PerformEval step 2); `"eval"`/`"Function"` materialize the MEMOIZED intrinsic markers (refusal-provider precedent, so `(0, eval)` identity is stable); otherwise ASCII source → `qjs_eval` at QuickJS global scope, tag-dispatched INT/FLOAT64 → GC number |
+| `__runtime_new_function` | typed `TypeError` (slice 2) |
+| `__runtime_apply_interpreted` | typed `TypeError` (slice 2) |
+| `__runtime_direct_eval` | typed `TypeError` (slice 3) |
+
+### Slice-1 residuals (all typed + catchable, none silent)
+
+1. Non-ASCII source → `TypeError`. UTF-8 both directions is slice 2.
+2. Non-number completion value (string/bool/null/undefined/object/function) →
+   `TypeError`. The full conversion table is slice 2.
+3. A throw inside evaluated code surfaces as a generic `Error`; the real
+   `name`/`message` need the QuickJS→GC string direction (slice 2).
+4. No globals push/pull mirror yet, so evaluated code sees the QuickJS realm's
+   own globals only.
+5. Handles: every handle a wrapper returns is freed exactly once on every path
+   (borrow-in/own-out); the runtime/context are intentionally never freed
+   (instance-lifetime, per the documented out-of-scope note).
+
+### Two vacuity traps worth keeping
+
+- **A literal eval argument never reaches any engine.** `(0, eval)("40 + 2")`
+  is constant-folded and then evaluated at COMPILE time by
+  `tryStaticEvalInline`; the module still carries the provider import and still
+  links, so the test passes green having never called QuickJS. Every canary and
+  test source here composes its argument from a runtime binding.
+- **`40 + 2 === 42` proves nothing about WHICH engine ran.** So the expected
+  values depend on the in-band `__js2wasm_eval_engine` marker the adapter
+  installs on the QuickJS realm — `"quickjs".length === 7` is not something a
+  compile-time fold or the interpreter tier can produce.
+
+### Deviations from the spec
+
+- **§1 return shape.** The spec's `{ module | bundle, message, engine }` is
+  implemented, and `getTest262RuntimeEvalProviderModule` needed one additive
+  line (`selection.module ?? selection.bundle`) to pass the descriptor through;
+  the spec did not mention that call site.
+- **§5 lazy import.** `selectCachedRuntimeEvalProvider` is SYNCHRONOUS for every
+  existing caller, so the lazy load uses `createRequire` rather than
+  `await import()`. A top-level `await` would convert
+  `scripts/runtime-eval-provider.mjs` into an async module and hard-fail
+  wherever the toolchain transpiles it to CJS. Laziness is preserved: with the
+  flag unset the quickjs module is never read from disk.
+- **§3 error mapping** is deferred to slice 2 (spec §7 assigns it there);
+  slice 1 returns a typed generic `Error` rather than reading `.name`/`.message`,
+  which would require the QuickJS→GC string direction.
+- **§2 `qjs_call` and the remaining shim additions** are slice 2 per §7; only
+  `qjs_new_string_len` / `qjs_new_undefined` landed, as §7 specifies.
+- **§6 CI lane** (`quickjs-wasi-artifact.yml` second job) is slice 2 per §7.

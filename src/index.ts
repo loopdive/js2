@@ -572,6 +572,40 @@ export interface CompileOptions {
    *  Default: false (calls to fs.readFileSync / fs.writeFileSync raise a compile error). */
   allowFs?: boolean;
   /**
+   * (#4238 slice 1) INTERNAL provider-build option. When true, a `declare
+   * function` extern's parameter and return types are resolved through the
+   * native-type annotations (`type i32 = number`, `nativeTypeFromTypeNode`)
+   * BEFORE falling back to the default `mapTsTypeToWasm` mapping — so
+   * `declare function qjs_eval(ctx: i32, src: i32, len: i32): i32` emits a real
+   * `(i32,i32,i32) -> i32` import that binds DIRECTLY to a peer wasm module's
+   * export with no JS wrapper closure in between.
+   *
+   * Default off, and deliberately not a CLI flag: user externs must keep the
+   * historical f64 mapping (`number` → f64) or every existing host binding
+   * would change signature. Only `QUICKJS_ADAPTER_COMPILE_OPTIONS` in
+   * `scripts/quickjs-eval-provider.mjs` sets it.
+   */
+  externNativeTypes?: boolean;
+  /**
+   * (#4238 slice 1) INTERNAL provider-build option. Import module for
+   * `declare function` externs, instead of the default `"env"` JS-host module.
+   * Used by the QuickJS eval adapter so its `qjs_*` externs are declared in the
+   * `js2wasm:qjs` namespace (a wasm-to-wasm provider namespace, satisfied by
+   * `libquickjs.wasm`'s exports — not a JS host surface). Default `undefined`
+   * → `"env"`, byte-identical.
+   */
+  externImportModule?: string;
+  /**
+   * (#4238 slice 1) INTERNAL provider-build option. Import the module's linear
+   * memory from `{ module }.memory` instead of defining one, mirroring the
+   * proven `--link node:fs` topology (`src/codegen/wasi.ts`): the PEER module
+   * owns and exports the memory, this module imports it at memory index 0, so
+   * the `wasm:memory` accessors (`store8`/`load8`/`store32`/`load32`) address
+   * the peer's heap directly. A memory import does not perturb the function
+   * index space. Default `undefined` → unchanged.
+   */
+  importMemory?: { module: string; min?: number };
+  /**
    * (#2796) Differential-test-harness fidelity flag. In the default JS-host
    * (WasmGC) target, top-level module code runs via the wasm `start` section —
    * i.e. DURING `WebAssembly.instantiate`, BEFORE the host can call
