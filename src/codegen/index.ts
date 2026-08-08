@@ -3542,7 +3542,7 @@ export function generateModule(
   // reconstruction lowering but is NOT yet consumed, so emitted Wasm is
   // byte-identical. Side-effect free; safe to run unconditionally (no fnctor
   // `new` sites ⇒ empty result ⇒ no-op).
-  ctx.fnctorEscapeGate = analyzeFnctorEscapeGate(ast.checker, ast.sourceFile);
+  ctx.fnctorEscapeGate = analyzeFnctorEscapeGate(ast.checker, ast.sourceFile, ctx.standalone);
   // (#3673) Names the source itself defines as function-valued members, so the
   // guarded native-string method lowering can tell a genuine `String.prototype`
   // call apart from a same-named USER method on an object receiver. Cheap

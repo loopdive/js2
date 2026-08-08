@@ -83,18 +83,20 @@ export interface ClosedStructPresence {
  * the call sites, which is what let the two sites drift apart in the first
  * place (#4225: one site had the fix and the other could not reach it).
  *
- * **Per-type layouts (#3927 `JS2WASM_FNCTOR_LAYOUT_EMIT`) are deliberately NOT
- * an arm here yet, and that is a measurement, not an oversight.** That pass's
- * own `reflectiveSurface` fixture probes `hasOwnProperty(present)`,
- * `hasOwnProperty(absent)` and `key in recv` on a layout-split receiver and
- * asserts flag-ON equals flag-OFF equals the spec answer; those tests pass with
- * this module as written, so the layout case is already answered correctly and
- * a speculative third arm would be untested duplication. If that ever changes,
- * the shapes are ready: `LayoutFieldLocation` and `ResidFieldLocation` in
- * `fnctor-layout-emit.ts` both carry a `presenceSlot`, and the layout one
- * resolves into the BASE words at fixed indices — already layout-independent by
- * construction. Extend {@link PresenceStorage} with a third variant and this
- * function with a third lookup; every fold site inherits it for free.
+ * **Per-type layouts (#3927) ARE an arm here — and the earlier record that
+ * they were "already answered correctly" without one was the #3920
+ * receiver-spelling confound, caught by the default-ON gate probe
+ * (2026-08-08).** The layout-emit test's `reflectiveSurface` fixture probes a
+ * DYNAMIC receiver, which never reaches these folds; the folds fire only on a
+ * STRUCT-TYPED receiver, where a split family's flow-grown name is absent
+ * from the base field list and both `in` and `hasOwnProperty` answered a
+ * constant FALSE for a property the instance carried (probe: native 111,
+ * flag-OFF 111, flag-ON 1 — the value round-tripped, both folds wrong). No
+ * third {@link PresenceStorage} variant was needed: the split keeps every
+ * union name's presence BIT in the BASE words at fixed indices (the
+ * emission's §6 constraint, held exactly so this lookup could stay
+ * layout-independent), so the side-table lookup returns the existing
+ * `"base"` storage shape and every fold site inherits the fix for free.
  */
 export type PresenceStorage =
   | { readonly where: "base"; readonly slot: PresenceSlot }
@@ -103,6 +105,12 @@ export type PresenceStorage =
 export function findPresenceStorage(ctx: CodegenContext, structName: string, key: string): PresenceStorage | undefined {
   const slot = presenceSlotOf(ctx.structFields.get(structName), key);
   if (slot) return { where: "base", slot };
+  // (#3927 per-type layouts) A split family's flow-grown union name: the VALUE
+  // slot moved to a sibling layout or the resid carrier, but the presence BIT
+  // stayed in the base words at fixed indices. The side-table slot IS a base
+  // slot, valid on every layout instance through the shared prefix.
+  const layoutSlot = ctx.fnctorLayoutInfo?.get(structName)?.presenceByName.get(key);
+  if (layoutSlot) return { where: "base", slot: layoutSlot };
   const loc = coldOwnFieldsFor(ctx, structName).find((c) => coldFieldNameAt(ctx, c) === key);
   return loc ? { where: "cold", loc } : undefined;
 }
@@ -247,7 +255,14 @@ export function emitHasOwnPresence(
   if (structName === undefined) return false;
   const storage = findPresenceStorage(ctx, structName, key);
   if (!storage) return false;
-  if (foldedAnswer !== 1 && storage.where !== "cold") return false;
+  // A folded 0 is replaced only when it came from LIST-BLINDNESS — the name
+  // has storage the base field list cannot see (a cold-tail slot, or a
+  // #3927 split family's side-table presence bit, which reports as `"base"`
+  // storage for a name ABSENT from the list). A folded 0 for a name the list
+  // DOES carry is a semantic zero (propertyIsEnumerable's non-enumerable
+  // branch, the defineProperty flag path) and must stand — un-folding it to a
+  // presence read would answer 1 for a present-but-non-enumerable property.
+  if (foldedAnswer !== 1 && storage.where !== "cold" && structFieldNames.includes(key)) return false;
   return emitClosedStructPresence(ctx, fctx, structTypeIdx, key, () => {
     const recv = compileExpression(ctx, fctx, propAccess.expression);
     if (compileExpression(ctx, fctx, argExpr)) fctx.body.push({ op: "drop" });
