@@ -1,9 +1,10 @@
 {
   "id": "3103",
-  "assignee": "ttraenkler/opus-splitrt2",
-  "status": "released",
-  "branch": "issue-3103-split-runtime-slice2",
-  "claimed_at": "2026-07-13T08:30:07Z",
-  "updated_at": "2026-07-23T16:24:05Z",
-  "released_at": "2026-07-23T16:24:05Z"
+  "assignee": "ttraenkler/opus-forin-2",
+  "requested_by": "ttraenkler/opus-forin-2",
+  "status": "in-progress",
+  "branch": "issue-3103-runtime-split-imports-dispatch",
+  "claimed_at": "2026-08-08T09:30:20Z",
+  "updated_at": "2026-08-08T09:30:20Z",
+  "write_id": "7985-voohigch"
 }
