@@ -154,6 +154,7 @@ import {
 import { ensureProxyRuntime } from "./object-runtime-proxy.js";
 import { ensureArgcGlobal } from "./statements/nested-declarations.js";
 import { buildLazyNativeProtoGetInstrs, getBuiltinBrand } from "./native-proto.js";
+import { vecConstructorArmInstrs } from "./vec-constructor-carrier.js"; // (#4217) runtime `<array>.constructor`
 export { fillProxyDispatch } from "./object-runtime-proxy.js";
 
 /** Initial `$PropMap` capacity. Must be a power of two (mask = cap - 1).
@@ -7670,9 +7671,9 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
 
   const findFn = (name: string) => ctx.mod.functions.find((f) => f.name === name);
 
-  // `key == "length"` (key already known to be a $AnyString) — flatten it and
+  // `key == <literal>` (key already known to be a $AnyString) — flatten it and
   // compare against the literal via `__str_equals`. Leaves an i32 on the stack.
-  const keyIsLength = (): Instr[] | null =>
+  const keyIs = (literal: string): Instr[] | null =>
     strFlattenIdx === undefined || strEqualsIdx === undefined
       ? null
       : [
@@ -7680,9 +7681,10 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
           { op: "any.convert_extern" },
           { op: "ref.cast", typeIdx: anyStrTypeIdx },
           { op: "call", funcIdx: strFlattenIdx },
-          ...nativeStringLiteralInstrs(ctx, "length"),
+          ...nativeStringLiteralInstrs(ctx, literal),
           { op: "call", funcIdx: strEqualsIdx },
         ];
+  const keyIsLength = (): Instr[] | null => keyIs("length");
 
   // ── __object_keys_forin / __object_keys: enumerate "0".."len-1" ──
   //
@@ -7897,6 +7899,9 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
             },
           ]
         : [];
+    // (#4217) `<array>.constructor` on a receiver only known at RUNTIME —
+    // rationale and blast radius in vec-constructor-carrier.ts.
+    const ctorBody = vecConstructorArmInstrs(ctx, keyIs("constructor"));
     const arm: Instr[] = [
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
@@ -7913,7 +7918,7 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
           {
             op: "if",
             blockType: { kind: "empty" },
-            then: [...lenBody, ...numericArm],
+            then: [...lenBody, ...ctorBody, ...numericArm],
           },
           // Vec receiver, non-"length"/non-index key: FALL THROUGH to the main
           // body — its non-$Object miss arm consults the #3537 expando side
