@@ -3,6 +3,7 @@ id: 743
 title: "Whole-program type flow analysis"
 status: in-progress
 assignee: ttraenkler/fable-743-fixpoint
+pr: 4246
 created: 2026-03-22
 updated: 2026-08-08
 priority: critical
