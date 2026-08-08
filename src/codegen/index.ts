@@ -239,6 +239,7 @@ import {
 } from "./object-runtime.js";
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { fillInstanceTombstones } from "./instance-tombstones.js"; // (#4098 G1 s1) per-instance own-property deletability
+import { fillClosedStructExternSetArms, fillInstanceProps } from "./instance-props.js"; // (#4194) instance expando substrate
 import { fillVecPropHelpers } from "./vec-props.js"; // (#3537) array ($Vec) expando side table
 import { fillProtoIndexStore } from "./proto-index-store.js"; // (#4160) prototype-index companions
 import { finalizeFunctionPoisonPillCalls } from "./function-poison-pill.js";
@@ -4449,10 +4450,16 @@ export function generateModule(
     // Closed compiler structs are not `$Object` hash maps. Fill the native
     // Object.hasOwn / hasOwnProperty predicates from the complete shape table.
     fillInstanceTombstones(ctx); // (#4098 G1 s1) BEFORE the ladders below: they bake its call
+    fillInstanceProps(ctx); // (#4194) instance expando carrier + bag get/set + tombstone resurrect
     fillClosedStructHasOwnArms(ctx);
     fillClosedStructOwnPropertyNamesArms(ctx);
     fillClosedStructEnumerationArms(ctx); // (#3920) Object.keys / for…in
     fillClosedStructExternGetArms(ctx);
+    // (#4194) Declared-field WRITE-through prologue on `__extern_set`. AFTER the
+    // read-side fills so the two ladders are derived from the same complete
+    // struct table, and BEFORE `fillExternSetVecArms` prepends its numeric-key
+    // `$__vec_base` store arms (disjoint receivers, so order is cost-only).
+    fillClosedStructExternSetArms(ctx);
     fillFnctorPrototypeDispatchArms(ctx);
 
     // (#3673 round 9b) LAST __extern_get body fill: prepend the per-key
@@ -6709,10 +6716,16 @@ export function generateMultiModule(
 
     // Mirror the single-source closed-struct own-property finalizer.
     fillInstanceTombstones(ctx); // (#4098 G1 s1) BEFORE the ladders below: they bake its call
+    fillInstanceProps(ctx); // (#4194) instance expando carrier + bag get/set + tombstone resurrect
     fillClosedStructHasOwnArms(ctx);
     fillClosedStructOwnPropertyNamesArms(ctx);
     fillClosedStructEnumerationArms(ctx); // (#3920) Object.keys / for…in
     fillClosedStructExternGetArms(ctx);
+    // (#4194) Declared-field WRITE-through prologue on `__extern_set`. AFTER the
+    // read-side fills so the two ladders are derived from the same complete
+    // struct table, and BEFORE `fillExternSetVecArms` prepends its numeric-key
+    // `$__vec_base` store arms (disjoint receivers, so order is cost-only).
+    fillClosedStructExternSetArms(ctx);
     fillFnctorPrototypeDispatchArms(ctx);
 
     // (#3673 round 9b) LAST __extern_get body fill: prepend the per-key

@@ -100,6 +100,17 @@ const CLOSURE_BAG_LOOKUP = "__closure_bag_lookup";
 /** #3537 array-expando side table (`vec-props.ts`). */
 const IS_VEC_PROP_CARRIER = "__is_vec_prop_carrier";
 const VEC_BAG_LOOKUP = "__vec_bag_lookup";
+/**
+ * (#4194) Instance expando side table (`instance-props.ts`). Instances share the
+ * #3468 closure bag — it is keyed by `eqref` IDENTITY, not by closure type — so
+ * the arm is `(instance predicate, closure lookup)`. The name is declared here
+ * rather than imported to keep this module free of a back-edge to the one that
+ * consumes {@link buildBagMarkerTestInstrs}.
+ */
+const IS_INSTANCE_EXPANDO_CARRIER = "__is_instance_expando_carrier";
+
+/** Abbreviated heap type `eq` (`closure-props.ts` uses the same encoding). */
+const EQ_HEAP_TYPE = -19;
 
 /** `(externref obj) -> externref` — the receiver's bag as a screened `$Object`, or null. */
 export const CARRIER_BAG_OF = "__carrier_bag_of";
@@ -246,6 +257,53 @@ export function buildBagPushKeys(
 }
 
 /**
+ * (#4194) `i32` on the stack: 1 iff the `$PropEntry` in `entryLocal` is the
+ * #4098 **tombstone marker** — the self-referential entry `bag[k] === bag`.
+ *
+ * `instance-tombstones.ts:69-77` predicted this leak by name: *"Stage 3/4 must
+ * filter `bag[k] === bag` when they wire the instance arm in, or the marker
+ * leaks into `Object.keys` as a real entry."* This is that filter, in one place,
+ * used by all three bag query natives below AND by `__instance_prop_get`.
+ *
+ * Applying it to closure and vec carriers too is safe *because* the marker is
+ * unforgeable: a bag is unreachable from user source, so no program can store a
+ * value `ref.eq` to it, and the filter can never hide a real entry.
+ *
+ * `entryLocal` must hold a NON-NULL `$PropEntry`; `bagLocal` its owning bag as
+ * `externref`; `tmpAnyLocal` is a scratch `anyref` the caller owns. The
+ * `ref.test eq` before the cast is not decoration: a stored value need not be an
+ * `eq` type (a host externref is not), and `ref.cast eq` on one would TRAP
+ * inside a helper that must never throw.
+ */
+export function buildBagMarkerTestInstrs(
+  ctx: CodegenContext,
+  args: { entryLocal: number; bagLocal: number; tmpAnyLocal: number },
+): Instr[] {
+  const propEntryTypeIdx = ctx.objectRuntimeTypes?.propEntryTypeIdx;
+  if (propEntryTypeIdx === undefined) return [{ op: "i32.const", value: 0 }];
+  return [
+    { op: "local.get", index: args.entryLocal },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 1 }, // value (anyref)
+    { op: "local.tee", index: args.tmpAnyLocal },
+    { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+    {
+      op: "if",
+      blockType: { kind: "val", type: I32 },
+      then: [
+        { op: "local.get", index: args.tmpAnyLocal },
+        { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+        { op: "local.get", index: args.bagLocal },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+        { op: "ref.eq" },
+      ],
+      else: [{ op: "i32.const", value: 0 }],
+    },
+  ];
+}
+
+/**
  * (#4010 S3) `__extern_set`'s builtin-fn refusal — the fix for the -684
  * mechanism, at its SOURCE.
  *
@@ -357,8 +415,16 @@ export function fillCarrierBagVisibility(ctx: CodegenContext): void {
     };
     const closureArm = arm(IS_CLOSURE_PROP_CARRIER, CLOSURE_BAG_LOOKUP);
     const vecArm = arm(IS_VEC_PROP_CARRIER, VEC_BAG_LOOKUP);
-    if (closureArm.length === 0 && vecArm.length === 0) return;
-    setFn(CARRIER_BAG_OF, [{ name: "bag", type: EXT }], [...closureArm, ...vecArm, { op: "ref.null.extern" }]);
+    // (#4194) Instances read the SAME (identity-keyed) closure bag. #4098's
+    // header warns this arm is "inert alone" — it ships in the same change as
+    // the write path (`instance-props.ts` S1/S2), never on its own.
+    const instanceArm = arm(IS_INSTANCE_EXPANDO_CARRIER, CLOSURE_BAG_LOOKUP);
+    if (closureArm.length === 0 && vecArm.length === 0 && instanceArm.length === 0) return;
+    setFn(
+      CARRIER_BAG_OF,
+      [{ name: "bag", type: EXT }],
+      [...closureArm, ...vecArm, ...instanceArm, { op: "ref.null.extern" }],
+    );
   }
 
   /** `bag = __carrier_bag_of(obj); if (bag == null) <miss>;` */
@@ -379,13 +445,22 @@ export function fillCarrierBagVisibility(ctx: CodegenContext): void {
   ];
 
   // ── __carrier_bag_has(obj, key) -> i32 ──────────────────────────────────
+  // (#4194) The #4098 tombstone marker is a LIVE entry, so it must be filtered
+  // explicitly or `delete o.f` would leave `"f" in o` answering true.
   setFn(
     CARRIER_BAG_HAS,
-    [{ name: "bag", type: EXT }],
+    [
+      { name: "bag", type: EXT },
+      { name: "e", type: { kind: "ref_null", typeIdx: propEntryTypeIdx } },
+      { name: "v", type: { kind: "anyref" } },
+    ],
     [
       ...loadBag(2, [{ op: "i32.const", value: 0 }, { op: "return" }]),
       ...findInBag(2, 1),
+      { op: "local.tee", index: 3 },
       { op: "ref.is_null" },
+      { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
+      ...buildBagMarkerTestInstrs(ctx, { entryLocal: 3, bagLocal: 2, tmpAnyLocal: 4 }),
       { op: "i32.eqz" },
     ],
   );
@@ -398,11 +473,20 @@ export function fillCarrierBagVisibility(ctx: CodegenContext): void {
   // key the bag does not hold.
   setFn(
     CARRIER_BAG_GOPD,
-    [{ name: "bag", type: EXT }],
+    [
+      { name: "bag", type: EXT },
+      { name: "e", type: { kind: "ref_null", typeIdx: propEntryTypeIdx } },
+      { name: "v", type: { kind: "anyref" } },
+    ],
     [
       ...loadBag(2, [{ op: "ref.null.extern" }, { op: "return" }]),
       ...findInBag(2, 1),
+      { op: "local.tee", index: 3 },
       { op: "ref.is_null" },
+      { op: "if", blockType: { kind: "empty" }, then: [{ op: "ref.null.extern" }, { op: "return" }] },
+      // (#4194) A tombstone marker is "not handled", not "present with a
+      // self-referential value" — otherwise gOPD would describe the marker.
+      ...buildBagMarkerTestInstrs(ctx, { entryLocal: 3, bagLocal: 2, tmpAnyLocal: 4 }),
       { op: "if", blockType: { kind: "empty" }, then: [{ op: "ref.null.extern" }, { op: "return" }] },
       { op: "local.get", index: 2 },
       { op: "local.get", index: 1 },
@@ -421,6 +505,7 @@ export function fillCarrierBagVisibility(ctx: CodegenContext): void {
     const CAP = 5;
     const I = 6;
     const E = 7;
+    const V = 8; // (#4194) marker-test scratch
     const orderedCall = (idx: number): Instr[] => [
       { op: "local.get", index: BAG },
       { op: "any.convert_extern" },
@@ -436,6 +521,7 @@ export function fillCarrierBagVisibility(ctx: CodegenContext): void {
         { name: "cap", type: I32 },
         { name: "i", type: I32 },
         { name: "e", type: { kind: "ref_null", typeIdx: propEntryTypeIdx } },
+        { name: "v", type: { kind: "anyref" } },
       ],
       [
         ...loadBag(BAG, [{ op: "i32.const", value: 0 }, { op: "return" }]),
@@ -471,12 +557,22 @@ export function fillCarrierBagVisibility(ctx: CodegenContext): void {
                 { op: "local.tee", index: E },
                 { op: "ref.is_null" },
                 { op: "br_if", depth: 1 },
-                { op: "local.get", index: 1 }, // vec
-                { op: "local.get", index: E },
-                { op: "ref.as_non_null" },
-                { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
-                { op: "extern.convert_any" },
-                { op: "call", funcIdx: objVecPushIdx },
+                // (#4194) skip the #4098 tombstone marker — a deleted declared
+                // field must not reappear as an own key of the bag.
+                ...buildBagMarkerTestInstrs(ctx, { entryLocal: E, bagLocal: BAG, tmpAnyLocal: V }),
+                { op: "i32.eqz" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "local.get", index: 1 }, // vec
+                    { op: "local.get", index: E },
+                    { op: "ref.as_non_null" },
+                    { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
+                    { op: "extern.convert_any" },
+                    { op: "call", funcIdx: objVecPushIdx },
+                  ],
+                },
                 { op: "local.get", index: I },
                 { op: "i32.const", value: 1 },
                 { op: "i32.add" },

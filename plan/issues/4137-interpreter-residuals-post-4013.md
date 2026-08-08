@@ -37,9 +37,11 @@ loc-budget-allow:
   - src/interp/emitter.ts
   - src/codegen/expressions/operator-assignment.ts
 # func-budget: compileCompoundAssignment grew +6 (504 > 498) — the A2 gate
-# widening plus its load-bearing rationale comment (see the loc-budget note
-# above; the original comment asserted the opposite of the truth and is what
-# kept the NaN-rendering bug alive). Same justification, per-function grant.
+# widening plus its load-bearing rationale comment (the LOC allowance above
+# already covers the identical change; the per-function ratchet fires on it
+# too). Recorded here because this issue owns the edit: the gate is
+# change-set-scoped against merge-base(origin), so the grant travels with the
+# commit that grew the function, not with the change-sets that ship it.
 func-budget-allow:
   - src/codegen/expressions/operator-assignment.ts::compileCompoundAssignment
 ---
