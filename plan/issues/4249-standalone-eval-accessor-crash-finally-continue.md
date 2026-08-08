@@ -16,6 +16,13 @@ es_edition: 5
 language_feature: object-literal-accessors, try-finally, regexp, eval
 goal: es5
 related: [993, 1858, 2061, 2923, 2939, 3633, 4230, 4233]
+func-budget-allow:
+  # compileTryStatement +18: the catch{break}/finally{continue} fix threads the
+  # finally-completion override through the existing try lowering — the branch
+  # bookkeeping has to live inside the same function that owns the try/finally
+  # block structure, so it cannot be split out without passing the whole label
+  # context by reference.
+  - src/codegen/statements/exceptions.ts::compileTryStatement
 ---
 
 # #4249 — ES5-standalone wave 4: compiler crash + control-flow + RegExp remainder
