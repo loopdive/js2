@@ -83,9 +83,9 @@ unchanged (= native); acorn dogfood canaries 2/3/4/5, `functionImports []`.
 3. The `SyntaxError: NaN` diagnostic defect — independent, unchanged.
 4. The js-host lane has DRIFTED since 2026-08-06 (measured 2026-08-08:
    for-in 100, keys 0, `in` 10 on the same fixture — it now sees ONLY the
-   sidecar expando, not the ctor fields). Not this slice's lane; recorded so
-   the next host-lane pass starts from the current truth, not this file's
-   old table.
+   sidecar expando, not the ctor fields). **Filed as #4227**
+   (`plan/issues/4227-jshost-instance-reflection-sees-only-sidecar.md`) so it
+   stays dispatchable after this file goes `done`.
 
 **Acorn-scale validation — the copyNode composition, measured on the real
 artifact.** `tests/dogfood/cold-tail-differential.mjs` gained a fourth mode,
@@ -104,9 +104,14 @@ none is a write defect:
   is a plain `{pattern, flags}` object natively (enumerable — the native
   ORACLE's copy keeps all 15), but the wasm lane's `for…in` over that carrier
   class yields nothing, so the copy loses what the direct computed read still
-  sees. **Pre-existing #3920-family enumeration residual on that receiver
-  class — newly measurable precisely because the write half now works.**
-  Whoever runs the flag-ON conformance pass should expect this class.
+  sees. Pre-existing, newly measurable precisely because the write half now
+  works. **Filed as #4228**
+  (`plan/issues/4228-acorn-regex-descriptor-forin-yields-nothing.md`) — with
+  the load-bearing negative result that the obvious minimal fixture does NOT
+  reproduce (a hand-built `{pattern, flags}` behind a dynamic receiver
+  enumerates fine; the mechanism is context-dependent inside compiled acorn).
+  Whoever runs the flag-ON conformance pass should expect this class, now
+  with an issue number to cite.
 
 Two instrument traps burned into the harness docs: the copy receiver must be
 LAUNDERED (a struct-typed `var copy = new Node(...)` binding takes a
