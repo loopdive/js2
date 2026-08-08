@@ -764,3 +764,69 @@ checker queries).
   (183 s, in the spec's 166-180 s band). If a future workload does put many
   instances in the bag, the fix order is: own head global first, hidden
   per-struct `$bag` slot second.
+
+### Verification results (senior-dev, 2026-08-08) — every control, measured
+
+All standalone numbers from the faithful lane (`runTest262File(…, "standalone")`,
+`TEST262_FULL_RUNTIME_EVAL=1`, provider REBUILT on the measured revision —
+183 s AFTER / 180 s BEFORE, both canary-verified). Base for every A/B is this
+branch's own HEAD, restored by FILE COPY (never `git stash` in a worktree).
+
+| lever / control | before | after | verdict |
+| --- | ---: | ---: | --- |
+| **the 24 annexB `…-skip-early-err-try` files** | 0 / 24 | **24 / 24** | ✅ all 24 flip |
+| `language/eval-code/` (347 files, direct + indirect) | ≤ 315 pass | 315 pass / 32 fail | ✅ **zero pass→fail** — all 32 AFTER-failures re-measured on the base: `pass=0 fail=32` |
+| 131-file class-eval list | 61 pass | **62 pass** | ✅ ≥ 61, and one file flips |
+| #4071 bucket (`Object.keys(new Date(0))`, `Object.keys(/ab/g)`, `gOPN(/ab/g)`, `gOPN(new Date(0))`) | 0/0/0/0 | 0/0/0/0 | ✅ unchanged |
+| #3537 vec carrier family (write/read/`in`/keys/length/delete) | 11111 | 11111 | ✅ unchanged |
+| #3468 closure carrier family (same round trip) | 11111 | 11111 | ✅ unchanged |
+| equivalence suite (host byte-neutrality), shards 1–4 | — | no new regressions; 10 baseline failures now PASS | ✅ |
+| `optimize: 3` (the dogfood harness's lane) | — | identical answers, 102,855 → 43,476 bytes | ✅ wasm-opt keeps the arms |
+
+The one class-eval flip is
+`language/statements/class/elements/private-setter-visible-to-direct-eval-on-initializer.js`.
+The architect's A5 prediction of **0** flips there was very nearly right; the
+list is otherwise `super` / `new.target` / private-name Phase-1 refusals, which
+this substrate does not touch.
+
+The 32 `language/eval-code/` residual failures are `new.target` (4), `super`
+(6), `non-definable-global` (6), `var-env-*` (13), `realm`/`lex-env-heritage`
+(2), `this-value-func-strict-caller` (1) — none in this family, all failing on
+the base too.
+
+Provider-unit parse canaries after the change: `var { a } = {}` **ok**, plain
+`catch ({ f })` **ok**, 2-level collide **ok**, 1-level collide still a raise
+(correct — stock acorn's own "already declared"), longhand ok, copy-fidelity
+**1111** (was `16000000`, i.e. both parses raised).
+
+### #2200 follow-up 1 — re-measured, and it is NOT fixed. But here is a better repro.
+
+The task asked whether S1 fixes the "provider self-compile silently drops
+index-store slot reuse" defect. **It does not.** Measured by appending the
+idiom's minimal shape to the REAL provider source (so it compiles in the same
+unit) — no revert of `installLoopCtx` needed, and none was made:
+
+| canary (inside the provider unit) | correct | measured |
+| --- | ---: | ---: |
+| A `push("first"); pop(); push("second"); topLabel()` | 1 | **2** (stale slot) |
+| I `findLabel("target")` visible ∧ `findLabel("popped")` gone | 11 | **0** (new ctx invisible AND stale one still found) |
+| E reused slot must not expose the popped ctx's mutable array | 1 | **2** (stale) |
+
+**What is new here is the isolation.** #2200 recorded that "a minimal
+ordinary-compile probe does NOT reproduce" and told the next lane to A/B against
+the provider build rather than a toy module. Running the *identical* canaries as
+a toy unit — once plainly, once **under
+`RUNTIME_EVAL_PROVIDER_COMPILE_OPTIONS`** — answers **1 / 11 / 1, correct, both
+times**. So:
+
+- the defect is **not** in the provider's compile options (the obvious suspect,
+  now eliminated);
+- it is a property of the provider **UNIT** — 462 KB of concatenated source —
+  which points at something that degrades with unit size or cross-module type
+  resolution, not at a flag;
+- and `.tmp/probe-4194/slot-reuse-2200.mjs` + `slot-reuse-toy.mjs` are a
+  self-contained A/B pair that reproduces it in ~220 s without touching
+  `src/interp`, which is what #2200's follow-up was missing.
+
+`installLoopCtx` must stay, and the `loops\[this\.loopTop\] =` grep must stay at
+zero, until that is fixed.

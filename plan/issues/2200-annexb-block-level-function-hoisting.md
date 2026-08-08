@@ -1109,6 +1109,31 @@ the faithful worker path (`CompilerPool(1, "unified")` +
 helper is the workaround, and the grep pattern `loops\[this\.loopTop\] =` must
 stay at zero in `src/interp/emitter.ts`.
 
+**Re-measured 2026-08-08 (#4194 lane) — still reproduces, and the compile
+OPTIONS are now eliminated as the variable.** #4194 built the instance expando
+substrate (`__extern_set` declared-field write-through + expando bag), which was
+the plausible candidate for the same root cause; it is **not** — the defect is
+unchanged after it.
+
+The re-measurement also produced the self-contained repro this follow-up was
+missing. Append the idiom's minimal shape to the REAL provider source and
+compile that unit with `RUNTIME_EVAL_PROVIDER_COMPILE_OPTIONS`
+(`.tmp/probe-4194/slot-reuse-2200.mjs`, ~220 s) — **no revert of
+`installLoopCtx` required, and none was made**:
+
+| canary, inside the provider unit | correct | measured |
+| --- | ---: | ---: |
+| A `push("first"); pop(); push("second"); topLabel()` | 1 | **2** (stale slot) |
+| I `findLabel("target")` visible ∧ `findLabel("popped")` gone | 11 | **0** (new ctx invisible AND the stale one still found) |
+| E reused slot must not expose the popped ctx's mutable array | 1 | **2** (stale) |
+
+The control (`slot-reuse-toy.mjs`) runs the **identical** canaries as a toy
+unit, once plainly and once **under the provider's own compile options**, and
+answers **1 / 11 / 1 — correct, both times**. So the options are not the
+variable: it is a property of the 462 KB concatenated provider **UNIT**, which
+points at something degrading with unit size or cross-module type resolution
+rather than at a flag. That is where the next lane should start.
+
 ### TODO follow-up 2 — `evalScript` / global-script lexical persistence (B3)
 
 `direct/script-decl-lex-no-collision.js`: `eval('if (true) { function
