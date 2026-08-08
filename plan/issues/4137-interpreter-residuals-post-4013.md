@@ -36,6 +36,14 @@ origin: "2026-08-03 delta /harvest-errors, baselines 2090e7bfd342 (gitHash b65d2
 loc-budget-allow:
   - src/interp/emitter.ts
   - src/codegen/expressions/operator-assignment.ts
+# The same +6 comment lines land inside ONE function, so the per-function
+# ratchet fires on the identical change the LOC allowance above already covers.
+# Recorded here (rather than in the change-set that merely inherits it) because
+# this issue owns the edit: #4194's PR carries the session base forward and the
+# gate is change-set-scoped against merge-base(origin), so the grant has to
+# travel with the commit that grew the function, not with the one that ships it.
+func-budget-allow:
+  - src/codegen/expressions/operator-assignment.ts::compileCompoundAssignment
 ---
 
 # #4137 — the residual tail of the newly-linked standalone interpreter
