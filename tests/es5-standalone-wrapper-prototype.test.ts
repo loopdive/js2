@@ -111,6 +111,43 @@ export function reflectiveCtor(): boolean { return Object.prototype.hasOwnProper
     expect(out).toEqual({ reflectiveHit: 1, reflectiveMiss: 0, reflectiveCtor: 1 });
   });
 
+  it("the three wrapper prototypes have a [[PrimitiveValue]] (§15.5.4/§15.6.4/§15.7.4)", async () => {
+    const out = await runStandalone(`${PRELUDE}
+export function numEqZero(): boolean { return (Number.prototype as any) == 0; }
+export function boolEqFalse(): boolean { return (Boolean.prototype as any) == false; }
+export function strEqEmpty(): boolean { return (String.prototype as any) == ""; }
+// Cross checks — an arm that answered ANY primitive would satisfy the three
+// above; these pin that it answers the RIGHT one, per brand.
+export function numNotOne(): boolean { return (Number.prototype as any) == 1; }
+export function boolNotTrue(): boolean { return (Boolean.prototype as any) == true; }
+export function strNotX(): boolean { return (String.prototype as any) == "x"; }
+// Prototypes that are NOT wrapper objects keep ordinary-object ToPrimitive.
+export function arrayProtoUnaffected(): boolean { return ((Array.prototype as any) == 0) === false; }
+export function objectProtoUnaffected(): boolean { return ((Object.prototype as any) == 0) === false; }
+// The arm must not shadow the paths it sits in front of.
+export function wrapperInstanceUnaffected(): boolean { const n: any = new Number(7); return n == 7; }
+// An ORDINARY object still reduces through OrdinaryToPrimitive's default
+// Object.prototype.toString, which is the arm immediately downstream of this
+// one. (A user-defined valueOf on a TS object literal is a DIFFERENT,
+// pre-existing gap — the literal lowers to a closed struct and takes the
+// #2638 class-to-primitive route, which answers the object; measured on the
+// base commit, so it is not a regression this arm introduced.)
+export function plainObjectUnaffected(): boolean { return ({} as any) == "[object Object]"; }
+`);
+    expect(out).toEqual({
+      numEqZero: 1,
+      boolEqFalse: 1,
+      strEqEmpty: 1,
+      numNotOne: 0,
+      boolNotTrue: 0,
+      strNotX: 0,
+      arrayProtoUnaffected: 1,
+      objectProtoUnaffected: 1,
+      wrapperInstanceUnaffected: 1,
+      plainObjectUnaffected: 1,
+    });
+  });
+
   it("ordinary objects and wrapper INSTANCES are unaffected (consult-only)", async () => {
     const out = await runStandalone(`${PRELUDE}
 export function plainObjectsUnaffected(): boolean {

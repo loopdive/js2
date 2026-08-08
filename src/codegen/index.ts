@@ -242,6 +242,7 @@ import {
 } from "./object-runtime.js";
 import { moduleMentionsObjectIdentifier, moduleReadsConstructorProp } from "./wrapper-constructor-carrier.js"; // (#4223/#4232)
 import { unshiftNativeProtoHasOwnArms } from "./native-proto-own-props.js"; // (#4248) builtin-proto own members
+import { unshiftNativeProtoToPrimitiveArm } from "./native-proto-wrapper-primitive.js"; // (#4248) proto [[PrimitiveValue]]
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { fillInstanceTombstones } from "./instance-tombstones.js"; // (#4098 G1 s1) per-instance own-property deletability
 import { fillInstanceProps } from "./instance-props.js"; // (#4194) instance expando bag substrate
@@ -4470,6 +4471,9 @@ export function generateModule(
     // its OWN members are invisible to the table walk. AFTER the closed-struct
     // prologue so the two arms compose in receiver-shape order.
     unshiftNativeProtoHasOwnArms(ctx);
+    // (#4248) §15.5.4/§15.6.4/§15.7.4 — the three wrapper prototypes ARE
+    // wrapper objects, so ToPrimitive must answer their [[PrimitiveValue]].
+    unshiftNativeProtoToPrimitiveArm(ctx);
     fillClosedStructOwnPropertyNamesArms(ctx);
     fillClosedStructEnumerationArms(ctx); // (#3920) Object.keys / for…in
     fillClosedStructExternGetArms(ctx);
@@ -6753,6 +6757,9 @@ export function generateMultiModule(
     // its OWN members are invisible to the table walk. AFTER the closed-struct
     // prologue so the two arms compose in receiver-shape order.
     unshiftNativeProtoHasOwnArms(ctx);
+    // (#4248) §15.5.4/§15.6.4/§15.7.4 — the three wrapper prototypes ARE
+    // wrapper objects, so ToPrimitive must answer their [[PrimitiveValue]].
+    unshiftNativeProtoToPrimitiveArm(ctx);
     fillClosedStructOwnPropertyNamesArms(ctx);
     fillClosedStructEnumerationArms(ctx); // (#3920) Object.keys / for…in
     fillClosedStructExternGetArms(ctx);
