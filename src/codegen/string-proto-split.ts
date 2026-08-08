@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#4217) Native body for a reflective `String.prototype.split` closure in
+ * (#4218) Native body for a reflective `String.prototype.split` closure in
  * `--target standalone`.
  *
  * The DIRECT call path (`"a,b".split(",")`, `string-ops.ts`) has been native

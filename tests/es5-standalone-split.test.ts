@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#4217) Reflective `String.prototype.split` in `--target standalone`.
+ * (#4218) Reflective `String.prototype.split` in `--target standalone`.
  *
  * The ES5 sputnik battery under `test/built-ins/String/prototype/split/`
  * exercises split almost exclusively through the TRANSFERRED form
@@ -43,7 +43,7 @@ async function runStandalone(body: string): Promise<unknown> {
 /** The transferred-method preamble every reflective case shares. */
 const TRANSFER = `var o = new Object(); o.split = String.prototype.split;`;
 
-describe("#4217 — String.prototype.split in --target standalone", () => {
+describe("#4218 — String.prototype.split in --target standalone", () => {
   describe("reflective (transferred) form", () => {
     it("an undefined separator yields [ToString(this)] (§22.1.3.23 step 7)", async () => {
       expect(await runStandalone(`${TRANSFER} return o.split().length;`)).toBe(1);
@@ -116,7 +116,7 @@ describe("#4217 — String.prototype.split in --target standalone", () => {
     it("coerces the limit BEFORE the separator (step 4 precedes step 5)", async () => {
       // 15.5.4.14_A1_T14: the limit's throwing valueOf must win over the
       // separator's throwing toString. 1 = limit first (spec), 2 = separator
-      // first (the pre-#4217 ordering a plain `__unbox_number` would give),
+      // first (the pre-#4218 ordering a plain `__unbox_number` would give),
       // 3 = some other throw, 0 = no throw at all.
       const src = `var sep = { toString: function () { throw "intostr"; } };
         var lim = { valueOf: function () { throw "intoint"; } };
