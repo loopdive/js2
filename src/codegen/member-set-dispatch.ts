@@ -46,6 +46,15 @@ import { buildVecFromExternMaterializer, coercionInstrs, getVecInfo } from "./ty
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2/S3) positional-read chokepoint + stable-regime minting
 import { presenceSetInstrs } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
 import { coldFieldWriteArm, coldTailAllocatorName, findColdStructsForField } from "./fnctor-cold-tail.js"; // (#3927)
+import {
+  findFnctorLayoutStructsForField,
+  findFnctorResidStructsForField,
+  layoutFieldWriteInstrs,
+  layoutMatchTestInstrs,
+  residEnsureAllocatorName,
+  residFieldWriteInstrs,
+  residMatchTestInstrs,
+} from "./fnctor-layout-emit.js"; // (#3927) per-type layouts
 
 /**
  * Mangle a property name + fallback strictness into the reserved dispatcher name.
@@ -179,8 +188,54 @@ export function fillMemberSetDispatch(ctx: CodegenContext): void {
     // `reserveColdTailAllocators`, so this fill stays funcMap-read-only).
     const coldLocs = findColdStructsForField(ctx, propName).filter((loc) => loc.mutable);
     const COLD_LOCAL = 3; // params 0/1, `__any` 2, `__cold` 3
+    // (#3927 per-type layouts) Layout + resid write arms — these are what make
+    // the split SOUND on the write side: with the field gone from the base
+    // struct, an unwired write would fall to `__extern_set`, which has no side
+    // table for a closed-struct receiver and would drop it. Inline layout arms
+    // first; each family's resid arm is its terminal (`ref.test $base` matches
+    // every member); resid storage is lazily allocated via
+    // `__resid_ensure_<Struct>` (minted by `reserveFnctorResidAllocators`, so
+    // this fill stays funcMap-read-only). Match tests are combined i32s so
+    // each arm embeds its `next` chain exactly once (#1302).
+    const layoutLocs = findFnctorLayoutStructsForField(ctx, propName).filter((loc) => loc.mutable);
+    const residLocs = findFnctorResidStructsForField(ctx, propName);
+    const buildResidArmChain = (idx: number): Instr[] => {
+      if (idx >= residLocs.length) return fallback;
+      const loc = residLocs[idx]!;
+      const ensureIdx = ctx.funcMap.get(residEnsureAllocatorName(loc.baseStructName));
+      if (ensureIdx === undefined) return buildResidArmChain(idx + 1);
+      return [
+        ...residMatchTestInstrs(loc, 2),
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: residFieldWriteInstrs(
+            loc,
+            2,
+            1,
+            COLD_LOCAL,
+            ensureIdx,
+            coercionInstrs(ctx, { kind: "externref" }, loc.fieldType),
+          ),
+          else: buildResidArmChain(idx + 1),
+        },
+      ];
+    };
+    const buildLayoutArmChain = (idx: number): Instr[] => {
+      if (idx >= layoutLocs.length) return buildResidArmChain(0);
+      const loc = layoutLocs[idx]!;
+      return [
+        ...layoutMatchTestInstrs(loc, 2),
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: layoutFieldWriteInstrs(loc, 2, 1, coercionInstrs(ctx, { kind: "externref" }, loc.fieldType)),
+          else: buildLayoutArmChain(idx + 1),
+        },
+      ];
+    };
     const buildColdArmChain = (idx: number): Instr[] => {
-      if (idx >= coldLocs.length) return fallback;
+      if (idx >= coldLocs.length) return buildLayoutArmChain(0);
       const loc = coldLocs[idx]!;
       const mainStructName = ctx.typeIdxToStructName.get(loc.mainStructTypeIdx);
       const ensureIdx =
@@ -289,10 +344,10 @@ export function fillMemberSetDispatch(ctx: CodegenContext): void {
     };
 
     dispFn.locals =
-      coldLocs.length > 0
+      coldLocs.length > 0 || residLocs.length > 0
         ? [
             { name: "__any", type: { kind: "anyref" } },
-            { name: "__cold", type: { kind: "anyref" } }, // (#3927) tail scratch, local 3
+            { name: "__cold", type: { kind: "anyref" } }, // (#3927) tail/resid scratch, local 3
           ]
         : [{ name: "__any", type: { kind: "anyref" } }];
     dispFn.body = [

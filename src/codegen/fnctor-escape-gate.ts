@@ -48,6 +48,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { appendFnctorInternalFields } from "./fnctor-identity-fields.js";
 import { type AllocLabelResult, analyzeFnctorAllocLabels, fnctorLayoutsEnabled } from "./fnctor-alloc-labels.js"; // (#3927) per-type layout plan
 import { applyColdTailSplit } from "./fnctor-cold-tail.js";
+import { applyFnctorLayoutSplit, fnctorLayoutEmitEnabled } from "./fnctor-layout-emit.js"; // (#3927) per-type layout EMISSION
 import { recordFnctorFieldProvenance } from "./fnctor-field-provenance.js";
 import { inferFnctorFieldTypeFromCtorParam } from "./fnctor-ctor-param-types.js";
 import { resolveWasmType } from "./index.js";
@@ -1515,9 +1516,12 @@ export function analyzeFnctorEscapeGate(checker: ts.TypeChecker, sourceFile: ts.
     // (#3683 S1) inert write-once verdicts — consumed by the S2 typed-twin
     // emission, no lowering reads them yet.
     protoMethodWriteOnce: analyzeProtoMethodWriteOnce(sourceFile),
-    // (#3927) Per-type layout plan. Runs only under the flag: the fixpoint is a
-    // second whole-program pass and an unflagged build must not pay for it.
-    ...(fnctorLayoutsEnabled() ? { allocLabels: analyzeFnctorAllocLabels(checker, sourceFile, ctorDeclByName) } : {}),
+    // (#3927) Per-type layout plan. Runs only under the flags: the fixpoint is a
+    // second whole-program pass and an unflagged build must not pay for it. The
+    // EMISSION flag implies the analysis — it consumes the plan.
+    ...(fnctorLayoutsEnabled() || fnctorLayoutEmitEnabled()
+      ? { allocLabels: analyzeFnctorAllocLabels(checker, sourceFile, ctorDeclByName) }
+      : {}),
   };
 }
 
@@ -1858,6 +1862,19 @@ export function deriveFnctorFields(
   }
 
   appendFnctorInternalFields(ctx, fields, onlyConditional);
+
+  // (#3927 per-type layouts) Split the flow-grown union into sibling per-label
+  // layouts + the residual carrier. Runs AFTER the internal-field append so the
+  // presence words are already sized for the FULL union and every flow-grown
+  // FieldDef carries its bit — removing the value slots afterwards keeps
+  // presence in the base at fixed indices (the issue §6 constraint). No-op
+  // unless this fnctor's family was reserved (split verdict + flag). Mutually
+  // exclusive with the cold-tail split by construction: the reservation pass
+  // reserves a family INSTEAD OF a cold tail, so `applyColdTailSplit` above
+  // already declined (no cold type index).
+  if (fnctorName !== undefined && flowStructName !== undefined) {
+    applyFnctorLayoutSplit(ctx, fnctorName, flowStructName, fields, onlyConditional, flowGrownNames);
+  }
 
   return fields;
 }

@@ -149,6 +149,15 @@ import {
   coldFieldValueInstrs,
   coldOwnFieldsFor,
 } from "./fnctor-cold-tail.js"; // (#3927) hot/cold fnctor split — reflective surfaces
+import {
+  type ResidFieldLocation,
+  findFnctorLayoutStructsForField,
+  findFnctorResidStructsForField,
+  fnctorLayoutOwnFieldsFor,
+  fnctorLayoutShapeRangeFor,
+  residFieldValueInstrs,
+  stampRangeTestInstrs,
+} from "./fnctor-layout-emit.js"; // (#3927) per-type layouts — reflective surfaces
 import { orderNamesByInsertion } from "./struct-field-exports.js";
 import {
   buildRuntimeEvalValueWrap,
@@ -6524,6 +6533,13 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
     shapeId?: number;
     /** (#3927) Field lives in the hot/cold-split tail — presence needs the hop. */
     cold?: ColdFieldLocation;
+    /**
+     * (#3927 per-type layouts) Family stamp-range guard for a split BASE arm:
+     * `ref.test $base` also matches a canonical-twin family, whose word bits
+     * mean different names. Presence itself needs no hop — it lives in the
+     * base words at fixed indices regardless of where the VALUE went.
+     */
+    shapeRange?: { shapeFieldIdx: number; stampLo: number; stampCount: number };
   };
   const byField = new Map<string, Entry[]>();
   for (const [structName, fields] of ctx.structFields) {
@@ -6577,6 +6593,24 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
         ...(shapeFieldIdx >= 0 && shapeId !== undefined ? { shapeFieldIdx, shapeId } : {}),
       });
     }
+    // (#3927 per-type layouts) The split moved the flow-grown union names off
+    // the base struct's field list, so the loop above cannot see them. Their
+    // presence bits stayed in the BASE words at fixed indices — one range-
+    // guarded base arm per name answers for EVERY layout of the family,
+    // layout-independently (the issue §6 constraint).
+    for (const layoutField of fnctorLayoutOwnFieldsFor(ctx, structName)) {
+      let entries = byField.get(layoutField.name);
+      if (!entries) {
+        entries = [];
+        byField.set(layoutField.name, entries);
+      }
+      const shapeRange = fnctorLayoutShapeRangeFor(ctx, structName);
+      entries.push({
+        typeIdx,
+        presenceSlot: layoutField.presenceSlot,
+        ...(shapeRange ? { shapeRange } : {}),
+      });
+    }
   }
   if (byField.size === 0) return;
 
@@ -6623,17 +6657,29 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
                 ...presenceTestInstrs(entry.typeIdx, entry.presenceSlot),
               ]);
         const exactThen: Instr[] =
-          entry.shapeFieldIdx === undefined || entry.shapeId === undefined
-            ? returnPresence
-            : [
-                { op: "local.get", index: 0 },
-                { op: "any.convert_extern" },
-                { op: "ref.cast", typeIdx: entry.typeIdx },
-                { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: entry.shapeFieldIdx },
-                { op: "i32.const", value: entry.shapeId },
-                { op: "i32.eq" },
+          entry.shapeRange !== undefined
+            ? [
+                // (#3927 per-type layouts) family stamp-RANGE guard — see Entry doc.
+                ...stampRangeTestInstrs(
+                  entry.typeIdx,
+                  entry.shapeRange.shapeFieldIdx,
+                  entry.shapeRange.stampLo,
+                  entry.shapeRange.stampCount,
+                  [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }],
+                ),
                 { op: "if", blockType: { kind: "empty" }, then: returnPresence },
-              ];
+              ]
+            : entry.shapeFieldIdx === undefined || entry.shapeId === undefined
+              ? returnPresence
+              : [
+                  { op: "local.get", index: 0 },
+                  { op: "any.convert_extern" },
+                  { op: "ref.cast", typeIdx: entry.typeIdx },
+                  { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: entry.shapeFieldIdx },
+                  { op: "i32.const", value: entry.shapeId },
+                  { op: "i32.eq" },
+                  { op: "if", blockType: { kind: "empty" }, then: returnPresence },
+                ];
         receiverArms.push(
           { op: "local.get", index: 0 },
           { op: "any.convert_extern" },
@@ -6783,6 +6829,13 @@ type EnumShapeEntry = {
   fields: EnumOwnField[];
   shapeFieldIdx?: number;
   shapeId?: number;
+  /**
+   * (#3927 per-type layouts) Family stamp-range guard on a split BASE entry:
+   * `ref.test $base` also matches a canonical-twin family whose presence bits
+   * mean different names, so the arm must fall through for out-of-range
+   * stamps instead of enumerating the wrong name list.
+   */
+  shapeRange?: { shapeFieldIdx: number; stampLo: number; stampCount: number };
 };
 
 /**
@@ -6830,15 +6883,26 @@ function collectClosedStructEnumerationEntries(ctx: CodegenContext): EnumShapeEn
       const name = coldFieldNameAt(ctx, cold);
       if (name !== undefined && !byName.has(name)) byName.set(name, { name, cold });
     }
+    // (#3927 per-type layouts) The split moved the flow-grown union names off
+    // the base field list; their presence bits stayed in the BASE words, so
+    // enumeration answers from ONE range-guarded base arm for every layout of
+    // the family — layout-independent by construction (issue §6 constraint).
+    for (const layoutField of fnctorLayoutOwnFieldsFor(ctx, structName)) {
+      if (!byName.has(layoutField.name)) {
+        byName.set(layoutField.name, { name: layoutField.name, presenceSlot: layoutField.presenceSlot });
+      }
+    }
     if (byName.size === 0) continue;
 
     const orderedNames = orderNamesByInsertion(ctx, structName, [...byName.keys()]);
     const shapeFieldIdx = fields.findIndex((field) => field?.name === "$shape");
     const shapeId = ctx.shapeIdByStructName.get(structName);
+    const shapeRange = fnctorLayoutShapeRangeFor(ctx, structName);
     entries.push({
       typeIdx,
       fields: orderedNames.map((name) => byName.get(name)!),
       ...(shapeFieldIdx >= 0 && shapeId !== undefined ? { shapeFieldIdx, shapeId } : {}),
+      ...(shapeRange ? { shapeRange } : {}),
     });
   }
   return entries;
@@ -6919,17 +6983,29 @@ function buildClosedStructEnumerationArms(
       { op: "return" },
     ];
     const exactThen: Instr[] =
-      entry.shapeFieldIdx === undefined || entry.shapeId === undefined
-        ? returnNames
-        : [
-            { op: "local.get", index: 0 },
-            { op: "any.convert_extern" },
-            { op: "ref.cast", typeIdx: entry.typeIdx },
-            { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: entry.shapeFieldIdx },
-            { op: "i32.const", value: entry.shapeId },
-            { op: "i32.eq" },
+      entry.shapeRange !== undefined
+        ? [
+            // (#3927 per-type layouts) family stamp-RANGE guard — see EnumShapeEntry doc.
+            ...stampRangeTestInstrs(
+              entry.typeIdx,
+              entry.shapeRange.shapeFieldIdx,
+              entry.shapeRange.stampLo,
+              entry.shapeRange.stampCount,
+              [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }],
+            ),
             { op: "if", blockType: { kind: "empty" }, then: returnNames },
-          ];
+          ]
+        : entry.shapeFieldIdx === undefined || entry.shapeId === undefined
+          ? returnNames
+          : [
+              { op: "local.get", index: 0 },
+              { op: "any.convert_extern" },
+              { op: "ref.cast", typeIdx: entry.typeIdx },
+              { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: entry.shapeFieldIdx },
+              { op: "i32.const", value: entry.shapeId },
+              { op: "i32.eq" },
+              { op: "if", blockType: { kind: "empty" }, then: returnNames },
+            ];
     arms.push(
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
@@ -7085,6 +7161,14 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
     shapeId?: number;
     /** (#3927) Read through the hot/cold-split tail rather than a main slot. */
     cold?: ColdFieldLocation;
+    /** (#3927 per-type layouts) Read through the family's `$resid` carrier. */
+    resid?: ResidFieldLocation;
+    /**
+     * (#3927 per-type layouts) Family stamp-RANGE guard on a resid (base-
+     * keyed) arm — `ref.test $base` also matches a canonical-twin family.
+     * Layout arms use the exact-stamp `shapeFieldIdx`/`shapeId` pair instead.
+     */
+    shapeRange?: { shapeFieldIdx: number; stampLo: number; stampCount: number };
   };
   const byField = new Map<string, Entry[]>();
   for (const [structName, fields] of ctx.structFields) {
@@ -7144,12 +7228,74 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
       });
     }
   }
+  // (#3927 per-type layouts) The computed-read arms for split families. The
+  // generic walk above cannot see these — the sibling layouts and the resid
+  // carrier are `isSyntheticStructName`-hidden, because a bare per-layout
+  // `ref.test` arm is unsound under canonicalization (two sibling layouts with
+  // the same field kinds share ONE wasm type). Each layout arm is exact-stamp
+  // guarded (via the existing `shapeFieldIdx`/`shapeId` machinery); each
+  // family's resid arm is range-guarded and appended AFTER the layout arms —
+  // its `ref.test $base` matches every family member, so it must be the
+  // family's terminal. Presence for BOTH comes from the base words.
+  {
+    const seen = new Set<string>();
+    const appendFamilyArms = (propName: string): void => {
+      if (seen.has(propName)) return;
+      seen.add(propName);
+      let entries = byField.get(propName);
+      if (!entries) {
+        entries = [];
+        byField.set(propName, entries);
+      }
+      for (const loc of findFnctorLayoutStructsForField(ctx, propName)) {
+        entries.push({
+          typeIdx: loc.layoutTypeIdx,
+          fieldIdx: loc.fieldIdx,
+          fieldType: loc.fieldType,
+          jsBoolean: false,
+          ...(loc.presenceSlot ? { presenceSlot: loc.presenceSlot } : {}),
+          shapeFieldIdx: loc.shapeFieldIdx,
+          shapeId: loc.stamp,
+        });
+      }
+      for (const loc of findFnctorResidStructsForField(ctx, propName)) {
+        entries.push({
+          typeIdx: loc.baseTypeIdx,
+          fieldIdx: loc.residFieldIdx,
+          fieldType: loc.fieldType,
+          jsBoolean: false,
+          resid: loc,
+          ...(loc.presenceSlot ? { presenceSlot: loc.presenceSlot } : {}),
+          shapeRange: { shapeFieldIdx: loc.shapeFieldIdx, stampLo: loc.stampLo, stampCount: loc.stampCount },
+        });
+      }
+    };
+    for (const info of ctx.fnctorLayoutInfo?.values() ?? []) {
+      for (const name of info.residFieldNames) appendFamilyArms(name);
+    }
+  }
   if (byField.size === 0) return;
   const readAndBox = (entry: Entry): Instr[] => {
     if (entry.cold !== undefined) {
       return [
         ...coldFieldValueInstrs(
           entry.cold,
+          [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }],
+          { kind: "externref" },
+          undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }],
+          [],
+        ),
+        { op: "return" },
+      ];
+    }
+    // (#3927 per-type layouts) Resid hop — presence was already answered from
+    // the base words by the entry's presenceSlot guard; a null resid with the
+    // bit set cannot happen through this module's writers, and even then it
+    // degrades to undefined rather than a trap.
+    if (entry.resid !== undefined) {
+      return [
+        ...residFieldValueInstrs(
+          entry.resid,
           [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }],
           { kind: "externref" },
           undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }],
@@ -7196,17 +7342,29 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
       }
       then.push(...readAndBox(entry));
       const exactThen: Instr[] =
-        entry.shapeFieldIdx === undefined || entry.shapeId === undefined
-          ? then
-          : [
-              { op: "local.get", index: 0 },
-              { op: "any.convert_extern" },
-              { op: "ref.cast", typeIdx: entry.typeIdx },
-              { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: entry.shapeFieldIdx },
-              { op: "i32.const", value: entry.shapeId },
-              { op: "i32.eq" },
+        entry.shapeRange !== undefined
+          ? [
+              // (#3927 per-type layouts) family stamp-RANGE guard — see Entry doc.
+              ...stampRangeTestInstrs(
+                entry.typeIdx,
+                entry.shapeRange.shapeFieldIdx,
+                entry.shapeRange.stampLo,
+                entry.shapeRange.stampCount,
+                [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }],
+              ),
               { op: "if", blockType: { kind: "empty" }, then },
-            ];
+            ]
+          : entry.shapeFieldIdx === undefined || entry.shapeId === undefined
+            ? then
+            : [
+                { op: "local.get", index: 0 },
+                { op: "any.convert_extern" },
+                { op: "ref.cast", typeIdx: entry.typeIdx },
+                { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: entry.shapeFieldIdx },
+                { op: "i32.const", value: entry.shapeId },
+                { op: "i32.eq" },
+                { op: "if", blockType: { kind: "empty" }, then },
+              ];
       receiverArms.push(
         { op: "local.get", index: 0 },
         { op: "any.convert_extern" },
