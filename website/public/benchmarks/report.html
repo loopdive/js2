@@ -1126,6 +1126,27 @@
         );
       }
 
+      // A result record's OWN scope verdict, as written by the runner
+      // (`scope` / `scope_official` in the per-file JSONL). This is the
+      // authority whenever the per-file edition index has no entry for the
+      // file: the index and the JSONL are produced by separate refresh paths,
+      // so a test262 file added since the last index refresh resolves to no
+      // edition at all. Treating that as "unknown, keep it" leaked
+      // proposal-scope tests into EVERY published-edition view — e.g. two
+      // built-ins/Temporal tests surfaced "Temporal is not defined" in the
+      // ES2026 error patterns even though Temporal is not in any published
+      // edition. Mirrors the generator's own rule (generate-editions.ts buckets
+      // `scope_official === false || scope === "proposal"` to `Proposals`), so
+      // the fallback and the index can never disagree about a given record.
+      function isProposalScopeRecord(record) {
+        if (!record) return false;
+        if (record.scope_official === false) return true;
+        // Older JSONL rows predate `scope_official`; `scope` carries the same
+        // verdict (test262 `staging/` is reported as scope "proposal" too).
+        const scope = String(record.scope || "");
+        return scope === "proposal" || scope === "staging";
+      }
+
       function escapeHtml(str) {
         if (typeof str !== "string") return str;
         return str
@@ -2313,9 +2334,18 @@
               if (f.status !== "compile_error" && f.status !== "fail") continue;
               if (allowedEditions && fileEditions) {
                 const ed = fileEditionOf(fileEditions, f.file);
-                // No classification ⇒ can't prove it's out of range; drop it
-                // only when we do know and it's outside the selection.
-                if (ed && !allowedEditions.has(ed)) continue;
+                if (ed) {
+                  // Classified: drop it when it sits outside the selection.
+                  if (!allowedEditions.has(ed)) continue;
+                } else if (isProposalScopeRecord(f)) {
+                  // Not in the index — which lags the JSONL whenever test262
+                  // gains files — but the record's own scope says proposal, and
+                  // no proposal is part of any published edition. Without this
+                  // the leftovers surfaced in every edition (see the helper).
+                  continue;
+                }
+                // Still unclassified and standard-scope ⇒ can't prove it's out
+                // of range, so keep it rather than blanking a real failure.
               }
               const err = f.error || "";
               if (!err) continue;
