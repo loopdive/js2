@@ -50,6 +50,13 @@ export const ALWAYS_ALLOWED_IMPORT_MODULES: ReadonlySet<string> = new Set([
   // lower to `writeSync(1|2, …)`); the bespoke `js2wasm:node-process` shim was
   // retired. Per-module Node shims are named after the declared module (`node:<mod>`).
   "node:fs",
+  // #4238 — the QuickJS eval-engine provider namespace. Satisfied by
+  // `libquickjs.wasm` (a wasm32-wasip1 reactor whose ONLY imports are
+  // `wasi_snapshot_preview1.*`), which exports the shared linear memory and the
+  // `qjs_*` wrapper ABI. Like `js2wasm:runtime-eval` and `node:fs` this is a
+  // namespaced wasm-to-wasm provider interface, not a JavaScript host binding,
+  // so it is not a host-import leak.
+  "js2wasm:qjs",
 ]);
 
 export interface HostImportAllowlistEntry {

@@ -83,7 +83,11 @@ export function getTest262RuntimeEvalProviderModule(label = "test262") {
     providerAnnounced = true;
     console.error(`[${label}] runtime-eval tier: ${selection.message}`);
   }
-  providerModule = selection.module;
+  // (#4238) The quickjs ENGINE supplies a 2-module bundle descriptor instead of
+  // a single `WebAssembly.Module`; `instantiateRuntimeEvalNamespace`
+  // discriminates on it. `selection.bundle` is absent for every other tier, so
+  // the interpreter/refusal/none paths are unchanged.
+  providerModule = selection.module ?? selection.bundle ?? null;
   return providerModule;
 }
 

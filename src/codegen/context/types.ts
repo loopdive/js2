@@ -223,6 +223,14 @@ export interface CodegenOptions {
   wasiMemAccessors?: Set<string>;
   /** Allow `node:fs` JS-host imports for non-WASI targets (#1491). Default: false. */
   allowFs?: boolean;
+  /** (#4238) Resolve `declare function` extern signatures through the native
+   *  type annotations (`type i32 = number`) before the default f64 mapping. */
+  externNativeTypes?: boolean;
+  /** (#4238) Import module for `declare function` externs (default `"env"`). */
+  externImportModule?: string;
+  /** (#4238) Import the module's linear memory from `<module>.memory` instead
+   *  of defining one (mirrors the `--link node:fs` topology). */
+  importMemory?: { module: string; min?: number };
   /**
    * Enforce dual-mode discipline (#1524): when set, `addImport` rejects any
    * JS-host `env` import that is not on the
@@ -3261,6 +3269,24 @@ export interface CodegenContext {
    * WASI leaked-host-import gate (`assertNoLeakedHostImports`).
    */
   linkedNamespaces: ReadonlySet<string>;
+  /**
+   * (#4238 slice 1) Resolve `declare function` extern param/result types
+   * through `nativeTypeFromTypeNode` (the `type i32 = number` annotations)
+   * before falling back to `mapTsTypeToWasm`. Default false → the historical
+   * f64-for-`number` mapping, byte-identical.
+   */
+  externNativeTypes: boolean;
+  /**
+   * (#4238 slice 1) Import module for `declare function` externs. `undefined`
+   * → `"env"` (the JS-host module), unchanged.
+   */
+  externImportModule?: string;
+  /**
+   * (#4238 slice 1) When set, the module imports its linear memory from
+   * `<module>.memory` at memory index 0 instead of defining one. Enables the
+   * `wasm:memory` inline accessors to address a PEER wasm module's heap.
+   */
+  importMemory?: { module: string; min?: number };
   /** #2631/#2633: func index of the imported `node:fs::readSync` (fd,ptr,len)->i32 (-1 = not registered). */
   nodeFsReadSyncIdx: number;
   /** #2631/#2633: func index of the imported `node:fs::writeSync` (fd,ptr,len)->i32 (-1 = not registered). */

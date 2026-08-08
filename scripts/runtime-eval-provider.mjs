@@ -24,6 +24,7 @@
 
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -604,12 +605,25 @@ export function readCachedRuntimeEvalProvider(cacheDir, key, pathOf = runtimeEva
  * drifting back to an unresolved `js2wasm:runtime-eval` import.
  */
 export function selectCachedRuntimeEvalProvider() {
+  // (#4238) Engine selector. Read + VALIDATED here, OUTSIDE the try/catch
+  // below: an unknown engine must fail the process loudly, never degrade into
+  // the NONE tier where it would look like an ordinary missing-cache result.
+  const engine = process.env.JS2WASM_EVAL_ENGINE ?? "interpreter";
+  if (engine !== "interpreter" && engine !== "quickjs") {
+    throw new Error(
+      `JS2WASM_EVAL_ENGINE=${JSON.stringify(engine)} is not a known eval engine ` +
+        `(expected "interpreter" or "quickjs")`,
+    );
+  }
   if (process.env.TEST262_DISABLE_RUNTIME_EVAL_PROVIDER === "1") {
+    // Precedence: the disable switch wins over the engine flag.
     return {
       module: null,
+      engine: "none",
       message: "NONE (TEST262_DISABLE_RUNTIME_EVAL_PROVIDER=1) — eval-mentioning modules cannot link",
     };
   }
+  if (engine === "quickjs") return selectQuickjsEngine();
   try {
     const compilerHash = computeCompilerBundleHash();
     const load = (source, pathOf) => {
@@ -624,6 +638,7 @@ export function selectCachedRuntimeEvalProvider() {
     if (full.module) {
       return {
         module: full.module,
+        engine: "interpreter",
         message:
           `INTERPRETER (key ${full.key}, TEST262_FULL_RUNTIME_EVAL=1) — authoritative CI-comparable ` +
           `standalone tier (#2928 E7)`,
@@ -632,6 +647,7 @@ export function selectCachedRuntimeEvalProvider() {
     const refusal = load(buildRuntimeEvalRefusalProviderSource(), runtimeEvalRefusalCachePath);
     return {
       module: refusal.module,
+      engine: refusal.module ? "refusal" : "none",
       message: refusal.module
         ? `REFUSAL (key ${refusal.key}; interpreter ${full.key}) — fast local diagnostic only, NOT ` +
           `CI-comparable: eval-mentioning modules instantiate and dynamic-code calls throw TypeError`
@@ -639,8 +655,30 @@ export function selectCachedRuntimeEvalProvider() {
           `unlinkable. Prebuild with: node scripts/build-runtime-eval-provider.mjs --refusal-only`,
     };
   } catch (err) {
-    return { module: null, message: `NONE — provider load failed: ${err?.message ?? err}` };
+    return { module: null, engine: "none", message: `NONE — provider load failed: ${err?.message ?? err}` };
   }
+}
+
+/**
+ * (#4238) Lazily load the quickjs engine module and make the selection.
+ *
+ * Loaded with `createRequire` rather than `await import()` on purpose: this
+ * selector is SYNCHRONOUS for every existing caller, and a top-level `await`
+ * anywhere in this file would turn it into an async module (and outright fail
+ * wherever the toolchain transpiles these .mjs files to CJS). `require(esm)` is
+ * supported natively on the Node versions this repo targets and keeps the load
+ * both synchronous and lazy — with the flag unset this function is never
+ * called, so `quickjs-eval-provider.mjs` is never even read from disk and no
+ * quickjs cache path is stat'ed.
+ */
+function selectQuickjsEngine() {
+  const require = createRequire(import.meta.url);
+  const qjs = require("./quickjs-eval-provider.mjs");
+  return qjs.selectQuickjsEvalProvider(
+    defaultRuntimeEvalProviderCacheDir(),
+    computeCompilerBundleHash(),
+    runtimeEvalProviderCacheKey,
+  );
 }
 
 /** Atomically (tmp + rename) publish a provider binary into the cache. */
@@ -666,6 +704,14 @@ export function writeCachedRuntimeEvalProvider(cacheDir, key, binary, pathOf = r
  * namespace the user module links against.
  */
 export function instantiateRuntimeEvalNamespace(providerModule) {
+  // (#4238) The quickjs engine hands a 2-module BUNDLE descriptor instead of a
+  // single `WebAssembly.Module`; discriminate on the instance check so every
+  // existing caller (6+ test files, the import-object harness, the prebuild
+  // script) is untouched.
+  if (!(providerModule instanceof WebAssembly.Module) && providerModule?.engine === "quickjs") {
+    const require = createRequire(import.meta.url);
+    return require("./quickjs-eval-provider.mjs").instantiateQuickjsEvalNamespace(providerModule);
+  }
   const instance = new WebAssembly.Instance(providerModule, {});
   return {
     __runtime_new_function: instance.exports.__runtime_new_function,
