@@ -175,6 +175,29 @@ beyond what WP3 needs.
 6. Equivalence tests for the touched area (`npm test -- tests/<relevant>.test.ts`)
    plus at least one new regression test per fixed root cause.
 
+## Outcome (2026-08-08, both waves landed on this branch)
+
+| WP | Issue | Measured flips | Notes |
+| --- | --- | --- | --- |
+| WP3a split | #4220 | +22 (runner-validated) | + `<array>.constructor` fix; regexp separators still refused |
+| WP5 instanceof | #2916 | +5 (runner-validated) | both host-import leaks retired; 5 files need runtime `Get(C,"prototype")` |
+| WP4a filter | — | +9 (runner-validated) | 3 of 4 root causes were outside filter → WP4b/WP1 |
+| WP1 descriptors | #3984-adj | +17 (agent A/B) | array-exotic [[DefineOwnProperty]] was the real gap; SITE-PROPS-BAG deferred (design call) |
+| WP6 ctor identity | #4223 | +28 (agent A/B) | `new Object(<primitive>)` (12) + `Object(null)` (6) left with mechanism documented |
+| WP3b replace | #4224 | +19 (agent A/B) | function replacers + static-regexp lane; reflective arm left |
+| WP4b array | #4222 | +6 (agent A/B) | delete-presence + length RangeError; `Array(n)` holes needs a carrier decision |
+| WP2 functions | #4221 | +18 (agent A/B) | non-callable TypeErrors both lanes; arguments-object model untouched |
+
+**Sum ≈ +124 vs the +397 needed** — measured per-bucket, zero known
+regressions (every agent A/B'd against its base; phantom regressions from
+load-induced compile timeouts and runtime-eval tier mismatches were each
+run down and excluded). The next tranche, in expected-value order, is
+documented in the issue files above: `arguments`-object model (#4221
+leftover), `new Object(<primitive>)`/`Object(null)` (#4223), `Array(n)`
+hole carrier (#4222), SITE-PROPS-BAG dynamic descriptor bags (WP1),
+reflective `replace`/`split`-family arms (#4224), gOPD on intrinsic
+receivers (WP1), and the `with`-statement scope-chain bugs (WP7).
+
 ## Wave plan
 
 - **Wave 1 (parallel, disjoint):** WP3-split, WP1, WP5, WP4-filter.
