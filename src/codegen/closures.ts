@@ -2184,8 +2184,8 @@ export function compileLiftedClosureBody(
   // local in the lifted fctx and register it in `boxedTdzFlags` +
   // `tdzFlagLocals`. This makes existing TDZ-check call sites (calls.ts,
   // identifiers.ts) automatically route through `struct.get` on the ref cell.
-  // Field-layout invariant: TDZ flag fields come AFTER all value fields,
-  // i.e. fieldIdx = 1 + captures.length + tdzCaptureIndex.
+  // Field-layout invariant: TDZ flag fields come AFTER all value fields, i.e.
+  // fieldIdx = CLOSURE_CAPTURE_FIELD_BASE + captures.length + tdzCaptureIndex.
   {
     const tdzFlaggedCapturesForPrologue = captures.filter((c) => c.hasTdzFlag);
     if (tdzFlaggedCapturesForPrologue.length > 0) {

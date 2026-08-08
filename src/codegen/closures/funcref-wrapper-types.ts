@@ -12,60 +12,37 @@ import type { ClosureInfo, CodegenContext } from "../context/types.js";
 import type { ValType } from "../../ir/types.js";
 import { funcSignatureOf } from "../func-space.js"; // (#1916 S2 read chokepoint)
 import { addFuncType } from "../index.js";
+import { closureArityField, closureBagField } from "./closure-header-layout.js";
 
 /**
- * (#3673) Closure representation constants. Every closure struct in the root
- * wrapper hierarchy carries, after the field-0 funcref, an immutable i32
- * DECLARED-ARITY field — the closure's user formal count. `__apply_closure`'s
- * #3592 widening probe and the `__closure_arity` export read it with a single
- * `struct.get` on the root instead of a per-func-type `ref.test` chain
- * (90 arms pre-#3673 on compiled acorn). Capture fields start at index
- * CLOSURE_CAPTURE_FIELD_BASE — every capture read/write and TDZ-slot index
- * derives from these constants, never a bare literal.
- */
-export const CLOSURE_ARITY_FIELD_IDX = 1;
-/**
- * (#4241) The carrier-intrinsic expando-bag slot. Every closure struct in the
- * root wrapper hierarchy carries a nullable, mutable `externref` here; it holds
- * the receiver's own-property `$Object` bag once one is created, and stays null
- * for the overwhelming majority of function values that never grow a property.
+ * (#3673/#4241) Closure representation constants and header field factories.
  *
- * It replaces the `$ClosurePropEntry` linked-list consult for closure carriers:
- * `__closure_bag_lookup` becomes one `struct.get` (plus a `ref.is_null` fast
- * path) instead of a LINEAR `ref.eq` walk of a registry that was measured at
- * 39,455 consults per acorn self-parse over a list growing 75 entries per parse
- * — quadratic over a session, and a leak besides (the registry held a strong
- * ref to every carrier that ever grew a bag). Slotted carriers never enter the
- * registry at all, so their bags now die with them.
- */
-export const CLOSURE_BAG_FIELD_IDX = 2;
-export const CLOSURE_CAPTURE_FIELD_BASE = 3;
-/** The `$arity` field definition — shared by every closure-struct mint site. */
-export function closureArityField(): { name: string; type: ValType; mutable: false } {
-  return { name: "$arity", type: { kind: "i32" }, mutable: false };
-}
-/**
- * (#4241) The `$bag` field definition — shared by every closure-struct mint
- * site, exactly like {@link closureArityField}. MUTABLE, so a WasmGC subtype
- * must redeclare it with the identical type and mutability (field types are
- * invariant for mutable fields); using this one factory everywhere is what
- * guarantees that.
+ * These now live in the LEAF module `closure-header-layout.ts` and are
+ * re-exported here so the ~10 existing importers are unaffected. The move was
+ * forced by a real failure: this module imports the codegen barrel
+ * (`../index.js`), and `program-abi-type-planning.ts` — which VALIDATES the
+ * header on the IR path — is reachable from that barrel, so it could not import
+ * the constants without closing an initialization cycle. It therefore carried
+ * its own hand-written copy of the layout (`fields.length === 2 && funcref &&
+ * i32`), which the `$bag` insertion silently invalidated. A leaf that both
+ * sides can import is the fix; see that module's header for the full story.
  *
- * The `$` prefix keeps it out of name enumeration / getter emission, matching
- * `$arity` and the `$shape` layout stamp.
+ * Capture fields start at CLOSURE_CAPTURE_FIELD_BASE — every capture
+ * read/write, TDZ-slot index AND header validator derives from these
+ * constants, never a bare literal.
  */
-export function closureBagField(): { name: string; type: ValType; mutable: true } {
-  return { name: "$bag", type: { kind: "externref" }, mutable: true };
-}
-/**
- * (#4241) The `struct.new` operand for a freshly-minted closure's `$bag` slot.
- * Sits between the `$arity` i32 and the first capture at EVERY closure
- * allocation site — a missed site is a loud `struct.new` arity/type validation
- * failure, never a silent wrong answer.
- */
-export function closureBagInitInstr(): { op: "ref.null.extern" } {
-  return { op: "ref.null.extern" };
-}
+export {
+  CLOSURE_ARITY_FIELD_IDX,
+  CLOSURE_BAG_FIELD_IDX,
+  CLOSURE_CAPTURE_FIELD_BASE,
+  CLOSURE_FUNC_FIELD_IDX,
+  closureArityField,
+  closureBagField,
+  closureBagInitInstr,
+  closureSubtypeFieldCount,
+  hasClosureHeaderPrefix,
+  isCanonicalClosureHeader,
+} from "./closure-header-layout.js";
 
 /**
  * Look up a function's parameter and result types from its index.

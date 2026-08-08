@@ -244,6 +244,39 @@ describe("#4241 — carrier-intrinsic $bag slot", () => {
     ).toBe(1);
   });
 
+  it("the IR path's own header validator agrees with the mint sites — the miss-#3 pin", async () => {
+    // The `check:ir-only` readiness gate (#3519) validates the physical closure
+    // wrapper types it planned, and it used to state the header layout in its
+    // OWN words: `fields.length === 2 && fields[0] funcref && fields[1] i32`.
+    // That is a second, disconnected copy of the layout, so inserting `$bag`
+    // satisfied every mint site and silently violated the validator — which
+    // does not warn, it THROWS. All five async functions in
+    // `website/playground/examples/js/async.ts` failed IR-first with
+    // "non-canonical physical wrapper root", 10 fatal diagnostics, gate exit 1.
+    //
+    // The trigger is narrower than "an async function": it is a `setTimeout`
+    // callback nested INSIDE a `new Promise` executor. That pair mints the
+    // `(externref) -> void` wrapper root the validator inspects. Verified by
+    // kill-switch — with the pre-fix literal predicate restored, this source
+    // fails (2 fatal diagnostics) while the same source WITHOUT the
+    // `setTimeout` compiles clean. The first draft of this test omitted the
+    // `setTimeout` and therefore passed against the known-broken predicate:
+    // a pin that cannot fail defends the defect, so the shape matters.
+    const source = `
+      function delay(ms: number, value: number): Promise<number> {
+        return new Promise<number>((resolve) => {
+          setTimeout(() => resolve(value), ms);
+        });
+      }
+      export async function test(): Promise<number> { return await delay(1, 2); }
+    `;
+    const r = await compile(source, { fileName: "issue-4241-ir.ts", trackIrOutcomes: true });
+    const messages = (r.errors ?? []).map((d) => d.message).join("\n");
+    expect(messages).not.toMatch(/non-canonical physical wrapper root/);
+    expect(messages).not.toMatch(/mismatched captured subtype/);
+    expect(r.success, messages).toBe(true);
+  });
+
   it("gc/host lane still compiles the same sources (the slot is standalone-visible only)", async () => {
     const r = await compile(
       `function f(a) { return a; }

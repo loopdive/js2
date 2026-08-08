@@ -410,6 +410,48 @@ fill time, so an unslotted root routes to the registry automatically rather
 than being mis-read at a wrong index — adding a slot to any of them later is
 a mint-site change with no edit to the helpers.
 
+### R7b. Miss #3 — the header layout was stated TWICE, and the second copy THREW
+
+The two `struct.new` misses in R7 were loud at Wasm validation. The third was
+not, and it is the more interesting one: `program-abi-type-planning.ts`'s IR
+closure-support validator carried its **own hand-written copy** of the header
+layout —
+
+```ts
+type.fields.length === 2 && type.fields[0]?.type.kind === "funcref" && type.fields[1]?.type.kind === "i32"
+```
+
+— plus a matching `captureFieldTypes.length + 2`. Nothing connected it to
+`CLOSURE_CAPTURE_FIELD_BASE`, so the slot satisfied every mint site and
+invalidated the validator. It does not fall back or warn: it **throws**, so all
+five async functions in `website/playground/examples/js/async.ts` failed
+IR-first with `non-canonical physical wrapper root`, 10 fatal diagnostics, and
+`quality`'s `check:ir-only` readiness step (#3519) exited 1 — on a PR whose
+equivalence shards, 206 targeted tests and bit-identical acorn differential were
+all green.
+
+**Root cause is structural, not an oversight.** `funcref-wrapper-types.ts`
+imports the codegen barrel (`../index.js`), and `program-abi-type-planning.ts`
+is reachable from that barrel — so the validator *could not* import the
+constants without closing an initialization cycle around `const` exports. Its
+only options were a private copy or nothing. The fix is a LEAF module,
+`src/codegen/closures/closure-header-layout.ts`, holding the constants, the
+field factories, the `struct.new` operand and the header PREDICATES
+(`hasClosureHeaderPrefix`, `isCanonicalClosureHeader`,
+`closureSubtypeFieldCount`); `funcref-wrapper-types.ts` re-exports it so the ~10
+existing importers are untouched, and the validator imports it directly. Same
+device, and same justification, as `closure-classifier.ts`: one definition, many
+consumers, never two divergent copies.
+
+**The regression pin needed a kill-switch check to be worth anything.** The
+first draft compiled `new Promise(resolve => resolve(v))` with
+`trackIrOutcomes` — and **passed against the known-broken predicate**. The
+trigger is narrower: a `setTimeout` callback nested INSIDE the executor is what
+mints the `(externref) -> void` wrapper root the validator inspects. With the
+pre-fix literal restored, the corrected source fails with 2 fatal diagnostics
+and the setTimeout-free one still compiles clean. A pin that cannot fail
+defends the defect, so the shape is load-bearing and the test says so.
+
 ### R7. What the "loud failure" net actually caught
 
 Inserting a field at index 2 makes a missed `struct.new` operand a hard Wasm
