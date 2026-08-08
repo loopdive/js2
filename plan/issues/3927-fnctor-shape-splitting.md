@@ -1485,13 +1485,11 @@ when the box is idle; not run here.)
    consulting `fnctorLayoutOwnFieldsFor` alongside
    `findColdStructsForField`; it gates default-ON here and is tracked by
    #4225's cross-check criterion. Related: the `for…in`
-   static unroll on struct-typed receivers enumerates nothing — filed as
-   issue id 4219, whose file rides PR #4229's branch (not linkable from
-   here until that PR lands; the #1616 gate resolves issue-file paths
-   against the current tree). That gap is receiver-spelling-specific and
-   does NOT block this slice's validation (every differential here runs the
-   dynamic path, non-vacuously), but a flag-ON conformance run will surface
-   both.
+   static unroll on struct-typed receivers enumerates nothing — #4219
+   (`plan/issues/4219-forin-static-unroll-ignores-presence.md`, landed with
+   PR #4229). That gap is receiver-spelling-specific and does NOT block
+   this slice's validation (every differential here runs the dynamic path,
+   non-vacuously), but a flag-ON conformance run will surface both.
 3. The wall-clock claim is an extrapolation either way (§7 of the analysis
    slice): −31.4 % of struct bytes projects, via the two measured
    byte→GC-bucket points, to roughly −4 to −5 pp of wall on top of the
