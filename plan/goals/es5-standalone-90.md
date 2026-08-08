@@ -26,9 +26,10 @@ Measured 2026-08-08 against `test262-standalone-current.jsonl`
 | compile_timeout | 21 |
 | **needed for 90 %** | **7,304 → +397 net passes** |
 
-The reachable pool is large enough: `with` (99) + eval-dependent tests are a
-minority of the 1,208 non-passes; the top eight non-`with` clusters alone hold
-~700 failures.
+The reachable pool is large enough: source-scanning the 1,208 non-passing
+tests, 143 use `eval(` / `Function(` (gated on the `runtime-eval` goal) and
+106 use `with(` — leaving a **clean reachable pool of 959** failures, 2.4× the
+397 needed.
 
 Full per-test failure list with error signatures: regenerate with
 `node .tmp/es5-standalone-analysis.mjs` / `.tmp/es5-buckets.mjs` (both in
@@ -68,7 +69,15 @@ Entry points: standalone object model in `src/codegen/` (search
 `SITE-PROPS-BAG`, `defineProperty`, `getOwnPropertyDescriptor` emit paths) and
 `src/runtime/builtins.ts`. The property-model goal doc has background.
 
-### WP2 — Function invocation semantics (~150 failing; expect +70–100)
+### WP2 — Function invocation semantics (~150 failing; expect +50–80)
+
+> **Refinement (source scan):** the `call`/`apply` sub-buckets are ~87 %
+> `Function(...)`-constructor-dependent (20 of 23 each) — those are
+> `runtime-eval`-gated, not fixable here. The clean WP2 pool is:
+> `language/statements/function` 50, `built-ins/Function` 26,
+> `language/expressions/call` 19, `bind` 18, `language/function-code` 17,
+> `language/arguments-object` 17, call/apply 6. Prioritize bind crashes,
+> TypeError-on-non-callable, arguments-object, and sloppy `this` coercion.
 
 Dirs: `built-ins/Function` (40), `Function/prototype/call` (23), `apply` (23),
 `bind` (18), `language/statements/function` (61 − 8 with-related),
