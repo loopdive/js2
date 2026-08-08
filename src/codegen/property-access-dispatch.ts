@@ -136,6 +136,7 @@ import {
   tryEnsureNativeProtoBrand,
 } from "./builtin-value-read.js";
 import { isBuiltinSubtype, isBuiltinTypeName } from "./builtin-tags.js";
+import { receiverIsPrimitiveWrapper } from "./object-ctor-primitive-receiver.js";
 import { getOrRegisterErrorStructType, isWasiErrorName } from "./registry/error-types.js";
 import {
   classExpressionDefinesOwnName,
@@ -518,9 +519,20 @@ export function tryConstructorPrototypeIdentity(
   // a module-wide guard against runtime shadowing — any module that assigns to
   // or deletes a `.constructor` property anywhere. Standalone-only: gc/host mode
   // keeps the genuine `Object_get_constructor` host read.
+  //
+  // (#4232) …with ONE exception the classifier cannot see: `Object(<primitive>)`
+  // also has TS type `Object`, but ToObject(§20.1.1.1) makes it a String/Number/
+  // Boolean WRAPPER, whose `.constructor` is that builtin, not `Object`. The
+  // fold stands down for a provable primitive-wrapper receiver so #4223's
+  // runtime arm answers instead. See object-ctor-primitive-receiver.ts for why
+  // the check has to trace the identifier's initializer.
   if (ctx.standalone && propName === "constructor") {
     const nsName = classifyPlainCtorReceiverNamespace(ctx, objType);
-    if (nsName !== undefined && !moduleTouchesConstructorProp(expr.getSourceFile())) {
+    if (
+      nsName !== undefined &&
+      !moduleTouchesConstructorProp(expr.getSourceFile()) &&
+      !receiverIsPrimitiveWrapper(ctx, expr.expression)
+    ) {
       // Evaluate the receiver for its side effects (spec: MemberExpression is
       // evaluated), then discard it — the constructor identity is static.
       const objResult = compileExpression(ctx, fctx, expr.expression);
