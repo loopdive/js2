@@ -32,8 +32,30 @@ if echo "$CMD" | grep -q '\-\-ff-only'; then
   # Merging TO main — require test proof (unless UI-only branch)
   BRANCH=$(echo "$CMD" | sed 's/.*--ff-only[[:space:]]*//' | awk '{print $1}')
 
-  # Skip proof for UI-only branches (no src/ changes)
-  SRC_CHANGES=$(git diff main..."$BRANCH" --name-only 2>/dev/null | grep '^src/' | head -1)
+  # Skip proof for UI-only branches (no src/ changes).
+  #
+  # FAIL CLOSED if the diff cannot be computed. The old form piped git straight
+  # into grep, so git's exit status was discarded (the same trap CLAUDE.md warns
+  # about) and ANY failure — an unresolvable ref, a missing `main`, a git error —
+  # produced empty output, which read as "no src/ changes" and skipped the proof
+  # requirement entirely. That is the gate failing open exactly when it knows
+  # least. Capture the status first, then filter.
+  # NOTE: the base is the LOCAL `main` ref, which in a worktree or container is
+  # routinely stale (CLAUDE.md records /workspace sitting 135 commits behind).
+  # A stale base widens the range, so the UI-only skip is missed and a proof is
+  # demanded for a branch that touches no src/ file. That errs toward MORE
+  # proof, never less, so it is left as-is deliberately: switching the base to a
+  # remote ref could narrow the range instead, and in checkouts where `origin`
+  # is the fork it would compare against the wrong history entirely.
+  DIFF_OUT=$(git diff main..."$BRANCH" --name-only 2>/dev/null)
+  DIFF_RC=$?
+  if [ "$DIFF_RC" -ne 0 ]; then
+    log_event "merge_blocked" "reason=diff_failed" "branch=$BRANCH" "rc=$DIFF_RC"
+    echo "BLOCKED: cannot compute 'git diff main...$BRANCH' (exit $DIFF_RC), so it is not knowable whether this branch touches src/." >&2
+    echo "Resolve the ref (or fetch main) and retry. A proof is required whenever this check cannot answer." >&2
+    exit 2
+  fi
+  SRC_CHANGES=$(echo "$DIFF_OUT" | grep '^src/' | head -1)
   if [ -z "$SRC_CHANGES" ]; then
     log_event "merge_to_main_ui_only" "branch=$BRANCH"
     jq -n '{hookSpecificOutput: {hookEventName: "PreToolUse", additionalContext: "UI-only branch (no src/ changes) — proof skipped. POST-MERGE: move issue to done/, update dep graph."}}'
