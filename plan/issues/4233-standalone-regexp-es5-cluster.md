@@ -156,8 +156,57 @@ standalone`, over the 62-file ES5 RegExp set:
   read is not supported in --target standalone" compile errors, not RegExp bugs.
 - `S15.10.6.2_A4_T11/T12` — `lastIndex` coercion ordering / null deref.
 
+## Follow-up — the identity fold was over-wide (`call_with_regexp_match_falsy`)
+
+The first cut of root cause 3 keyed `RegExp(R)`'s §22.2.4.1 step-1 identity arm
+on the static RegExp **type** of the pattern operand. That is not the spec's
+precondition. §22.2.3.1 step 4.b returns `pattern` itself only when BOTH
+
+- **b.** `patternIsRegExp` — `IsRegExp(pattern)`, which **reads
+  `pattern[Symbol.match]`** and, when that property exists, uses `ToBoolean` of
+  it *instead of* the [[RegExpMatcher]] brand; and
+- **b.iii.** `SameValue(newTarget, Get(pattern, "constructor"))`.
+
+`built-ins/RegExp/call_with_regexp_match_falsy.js` sets
+`regExpObj[Symbol.match] = false`, so `IsRegExp` is **false**, step 4.b does not
+apply, and the spec CONSTRUCTS a new object. The type-only fold returned the
+same object and flipped that file **pass→fail** on the standalone lane. It was
+the ONLY genuine test262 regression in wave 3's reported set.
+
+**Fix** — `regExpIdentityBrandIsProvable` in `src/codegen/regexp-standalone.ts`.
+The standalone RegExp carrier is a fixed WasmGC struct with no slot for either
+override, so neither precondition can be re-checked at runtime; the sound
+lowering is to prove their **absence** statically and otherwise decline. The
+scan is whole-file and memoised per `ts.SourceFile`, mirroring
+`bindingHasWrites`: any well-known-symbol-keyed write (`X[Symbol.…] = …`), any
+`.constructor` / `"constructor"` write, and any `Object.defineProperty` /
+`defineProperties` / `setPrototypeOf` / `create` call disables the fold for the
+file. Declining falls back to the pre-#4233 clone arm, which is what
+§22.2.3.1's construct path does anyway. Applied to **both** identity spellings —
+the static arm and the runtime two-arm merge's undefined branch.
+
+Budget gates: no NEW grant needed — the growth (~90 LOC) sits inside the
+existing `loc-budget-allow` for `src/codegen/regexp-standalone.ts` above, and
+the fix adds **zero** `checker.*` queries, so the `oracle-ratchet-allow` entry is
+likewise unchanged.
+
+### Not wave-3 regressions (proved by A/B, recorded so they are not re-chased)
+
+- **The 33 `built-ins/RegExp/regexp-modifiers/*` files** reported as
+  pass→compile_error are an **environment artifact, not a code regression**.
+  They pass on **both** `main` and this branch under CI's **Node 25**, and fail
+  on **both** under **Node 22**, whose V8 predates ES2025 regexp modifiers. The
+  rejection comes from `src/compiler/early-errors/node-checks.ts`, which
+  validates every regex literal with the **host** `new RegExp(pattern, flags)` —
+  a check that is byte-identical on main and on wave 3. Diffing a Node-22 run
+  against the CI (Node-25) baseline manufactures 33 phantom regressions.
+- **`interp/emitter: unsupported in Phase 1: regex`** is a **main-only** error
+  string. Wave 3 *removed* that refusal (`src/interp/emitter.ts`, #4137 regex
+  literals → `%RegExpCreate%`), so wave 3 fixes it rather than causing it.
+
 ## Permanent repro
 
 Pinned by `tests/es5-standalone-regexp.test.ts` (ES5 RegExp semantics: dynamic
-pattern tracing, exec arities/result shape, construction-time SyntaxError) over
-the `test262/test/built-ins/RegExp/` battery.
+pattern tracing, exec arities/result shape, construction-time SyntaxError,
+and the §22.2.3.1 step-4.b brand guard on the identity fold) over the
+`test262/test/built-ins/RegExp/` battery.
