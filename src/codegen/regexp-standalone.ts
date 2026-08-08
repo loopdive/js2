@@ -2245,6 +2245,23 @@ function isToStringableArg(ctx: CodegenContext, argExpr: ts.Expression): boolean
   return true;
 }
 
+/**
+ * (#4233) Push the string `"undefined"` as a pre-evaluated native-string
+ * subject, for the zero-argument `exec()` / `test()` forms.
+ *
+ * §22.2.6.2 RegExpBuiltinExec step 3 is `Let S be ? ToString(string)`, and an
+ * absent argument is `undefined`, so `re.exec()` matches against the six-char
+ * string `"undefined"` — not against the empty string and not a refusal.
+ * Shaped as an `inputOverride` because the arity-0 call has no argument AST
+ * node for the ordinary `compileExpression` lane to consume.
+ */
+function undefinedSubjectOverride(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
+  const instrs = nativeStringLiteralInstrs(ctx, "undefined");
+  if (instrs === null) return null;
+  fctx.body.push(...instrs);
+  return nativeStringType(ctx);
+}
+
 export function tryCompileStandaloneRegExpTest(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -2259,6 +2276,19 @@ export function tryCompileStandaloneRegExpTest(
   if (!hasStandaloneRegExpEngine(ctx)) {
     reportStandaloneRegExpUnsupported(ctx, expr, "RegExp.prototype.test without an enabled standalone engine");
     return null;
+  }
+  if (expr.arguments.length === 0) {
+    // (#4233) §22.2.6.16 → §22.2.6.2 step 3: `re.test()` is `re.test(undefined)`,
+    // and ToString(undefined) is the STRING "undefined" — the subject the
+    // 15.10.6.3_A1_T16 family matches against. No arg node exists to compile,
+    // so feed the literal through the pre-evaluated-subject seam.
+    const testFlags0 = staticRegExpFlags(ctx, propAccess.expression);
+    const emitted0 = emitRegexSearchCall(ctx, fctx, propAccess.expression, propAccess.expression, {
+      gyLastIndex: testFlags0 === null ? "runtime" : flagsHaveGlobalOrSticky(testFlags0),
+      inputOverride: () => undefinedSubjectOverride(ctx, fctx),
+    });
+    if (emitted0 === null) return null;
+    return { kind: "i32" };
   }
   if (expr.arguments.length !== 1) {
     reportStandaloneRegExpUnsupported(ctx, expr, "RegExp.prototype.test arities other than one string argument");
@@ -2677,6 +2707,15 @@ export function tryCompileStandaloneRegExpExec(
   if (!hasStandaloneRegExpEngine(ctx)) {
     reportStandaloneRegExpUnsupported(ctx, expr, "RegExp.prototype.exec without an enabled standalone engine");
     return null;
+  }
+  if (expr.arguments.length === 0) {
+    // (#4233) `re.exec()` === `re.exec("undefined")` (§22.2.6.2 step 3) — see
+    // `undefinedSubjectOverride`. 15.10.6.2_A1_T16 / _A12 assert exactly this.
+    const flags0 = staticRegExpFlags(ctx, propAccess.expression);
+    return emitRegexExecArrayCall(ctx, fctx, propAccess.expression, propAccess.expression, {
+      gyLastIndex: flags0 === null ? "runtime" : flagsHaveGlobalOrSticky(flags0),
+      inputOverride: () => undefinedSubjectOverride(ctx, fctx),
+    });
   }
   if (expr.arguments.length !== 1) {
     reportStandaloneRegExpUnsupported(ctx, expr, "RegExp.prototype.exec arities other than one string argument");
