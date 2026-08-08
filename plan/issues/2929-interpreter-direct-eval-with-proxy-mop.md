@@ -1040,3 +1040,551 @@ TEST262_FULL_RUNTIME_EVAL=1 COMPILER_POOL_SIZE=1 TEST262_WORKERS=1
 Zero pass→fail at every step. The 10 fail→pass files are the exact bucket A + B
 enumeration: `{direct,indirect}/var-env-global-lex-non-strict.js` and
 `{direct,indirect}/lex-env-{distinct,no-init}-{let,const}.js`.
+
+## Implementation Plan — eval global own-property substrate C+D (arch, 2026-08-08)
+
+Follow-on slice for buckets **C** (13 files, eval-created global/local var+func
+binding materialization) and **D** (6 files, CanDeclareGlobalVar/Function
+TypeError) of the eval-code failure enumeration in the A/B spec (§0/§5 of the
+2026-08-08 EvalDeclarationInstantiation section — written in worktree
+`/home/user/js2/.claude/worktrees/agent-ac08047453f4638e8/`, same file, not yet
+on main). This section is self-contained: fresh per-file baseline, mechanism
+probes, and the design are all re-derived on branch base `8d2f12a6`
+(main + #4137 + #2200).
+
+### (a) Fresh per-file baseline + the #4205 verdict
+
+Instrument: faithful worker path — `CompilerPool(1, "unified")` +
+`assembleOriginalHarness` + `pool.runTest(..., {originalHarness: true, target:
+"standalone"}, 30_000)`, `TEST262_FULL_RUNTIME_EVAL=1`, full Acorn+interpreter
+provider rebuilt for this branch (cache key `b83bad5b0b676c8b`, announced tier
+INTERPRETER). Probe script pattern preserved in `.tmp/probe-cd-baseline.mts`.
+All 19 files FAIL; per-file error text:
+
+| file (`language/eval-code/`) | error |
+| --- | --- |
+| direct/var-env-var-init-global-new | `Test262Error: x should be an own property` |
+| direct/var-env-var-init-global-exstng | `Test262Error: x should be an own property` |
+| direct/var-env-func-init-global-new | `Test262Error: f should be an own property` |
+| indirect/var-env-var-init-global-new | `Test262Error: x should be an own property` |
+| indirect/var-env-var-init-global-exstng | `Test262Error: x should be an own property` |
+| indirect/var-env-func-init-global-new | `Test262Error: f should be an own property` |
+| indirect/var-env-var-non-strict | `Test262Error: x Expected SameValue(«1», «0»)` (eval `var x=1` wrote the CALLER's local) |
+| indirect/var-env-func-non-strict | `Expected SameValue(«"undefined"», «"function"»)` |
+| direct/var-env-func-non-strict | `Expected SameValue(«"undefined"», «"function"»)` (typeofInside was "undefined") |
+| direct/var-env-func-init-local-new | `Expected a ReferenceError to be thrown but no exception was thrown` (leak) |
+| direct/var-env-func-init-local-new-delete | `binding may be deleted Expected a ReferenceError…no exception` |
+| direct/var-env-func-init-local-update | `Expected SameValue(«"number"», «"function"»)` |
+| direct/var-env-var-init-local-new-delete | `Expected a ReferenceError to be thrown but no exception was thrown` |
+| direct/non-definable-global-{var,function,generator} | `Expected true but got false` (`error instanceof TypeError` false — no throw; `preventExtensions(this)` itself WORKS, the guard `nonExtensible` was true) |
+| indirect/non-definable-global-{var,function,generator} | `Expected a TypeError to be thrown but no exception was thrown` |
+
+**Routing fact that reframes the whole issue**: a compile-probe of all nine
+shapes (`.tmp/probe-route.mts`, inspects the import section for
+`js2wasm:runtime-eval`) shows **every one of the 19 files' evals is SPLICED
+today** (`tryStaticEvalInline` accepts them). None of these failures is a
+provider/interpreter gap — they are all consequences of the AOT constant-splice
+reconstructing EvalDeclarationInstantiation without the global-object /
+deletable-binding halves.
+
+**Mechanism probe — the interpreter tier already implements C-global and D
+correctly, end-to-end** (`.tmp/probe-provider-equiv.mts`: same semantics with a
+dynamic source `var s='…'; eval(s)`, which forces provider routing):
+
+| probe (provider-routed) | result |
+| --- | --- |
+| new global `var` → own property, {writable,enumerable,configurable}=true, initial `undefined` | **PASS** |
+| existing script `var x=23` + eval `var x=45` → own property {value:45, configurable:false}, initial 23 | **PASS** |
+| new global `function f` → own property, configurable:true, instantiated before statements | **PASS** |
+| `Object.preventExtensions(this)` then eval `var …` → TypeError | **PASS** |
+| direct eval in IIFE declaring `function f` → caller-varEnv binding, mutable, no global leak, outer `f` throws ReferenceError | **PASS** |
+| indirect alias eval `var x` from global → own configurable property | **PASS** |
+| eval `delete x` on eval-created LOCAL var → later closure read must throw | **FAIL** (`no ReferenceError after delete`) |
+| eval `function fun(){}` in IIFE, then AOT sibling `typeof fun` | **FAIL** (`inside: undefined`) |
+
+This settles the two identity questions the task raised: **(1) AOT `this` ≡
+provider `globalObject` is ALREADY unified** — `emitStandaloneDirectEvalRuntime`
+(`src/codegen/expressions/runtime-eval-provider.ts:629`) passes
+`emitGlobalEnvironmentObject(...)` = the #2996 native `$Object` singleton
+(`emitNativeGlobalThisObject`, `src/codegen/array-object-proto.ts:2430`) into
+`__runtime_direct_eval`, and `createRuntimeEvalGlobalEnvironment`
+(`src/interp/eval-environment.ts:34`) uses that very object as
+`ENV_GLOBAL.backing`. **(2) The cross-module property store works** — the
+provider's `Object.defineProperty(globalObject, …)` / `Object.isExtensible`
+land on the caller's singleton and are visible to caller-side
+`hasOwnProperty`/`gOPD`/`verifyProperty` (proved by the four passing global
+probes; the WasmGC `$Object` rec-group is structurally canonical across the
+module seam, as #2928's carrier ABI requires).
+
+#### #4205 verdict: ADJACENT — the shared substrate already exists; there is no 133-file spillover
+
+`plan/issues/4205-script-goal-global-object-standalone.md` is **`status: done`
+(2026-08-07) and its implementation record RETRACTS the filed framing**:
+
+- "Standalone has no realm global object" is **false as of #2996** — the
+  identity-stable `$Object` singleton exists, `this === globalThis` at script
+  top level, `this.p1 = 1; p1 === 1`, `delete this.p1`, `gOPD(this,'p1')` all
+  pass on main. The `!ctx.standalone` gate at
+  `src/codegen/expressions/call-builtin-static.ts:2315` is gOPD-local and was
+  **not on the symptom's path**.
+- The census's 137-file lever was a *shape*, not a mechanism: #4205's full A/B
+  (388 files, both arms) fixed 7 files, broke 0, and changed **zero** error
+  signatures among the 96/99 `with`-overlap files. The "#4205 unmasks the
+  `with` cluster" dependency **does not exist**. Do NOT project a 150-file
+  yield from this spec; the honest population is the 19 files here (+2
+  probable, see below).
+- The one genuinely shared residue is #4205's deferred **G2** (script `var`
+  visible as a global-object own property with configurable:false — 10 failing
+  ES5 files, 0 passing, design sketched in #4205's record). **Bucket C does
+  NOT depend on G2**: the provider's entry-time
+  `__runtime_eval_push_globals` (`emitRuntimeEvalGlobalBindingPushBody`,
+  `src/codegen/expressions/runtime-eval-provider.ts:132-287`) already defines
+  every script var/function as a property (attrs `0x23`:
+  writable+enumerable, configurable:false) on the singleton before interpreted
+  code runs — which is exactly why the `-exstng` probe passes. G2 remains a
+  separate, non-eval-facing 10-file item; recommend a fresh issue (allocate id
+  via `claim-issue.mjs`), not bundling.
+
+Where the two DIVERGE so implementations don't fight: #4205/G2 is about the
+**static-correspondence read path** (module globals as storage, compile-time
+name sets, member-access lowering in `unary-updates.ts` /
+`sloppy-this-global.ts`). This slice deliberately adds **zero** new codegen on
+any name-resolution or member-access path — its entire AOT-side change is a
+routing predicate inside `tryStaticEvalInline`. No shared files, no shared
+mechanism beyond the already-built singleton.
+
+### (b) Substrate design — route, don't re-implement
+
+**What object IS the standalone global?** The existing #2996 `$Object`
+singleton (`__native_globalThis` module global). No new object, no facade.
+Eval-created global vars/functions become own configurable properties on it
+**by the interpreter's existing `prepareGlobalDeclarations` /
+`prepareGlobalVarBinding` / `prepareGlobalFunctionBinding`**
+(`src/interp/eval-environment.ts:510-592`) — code that is already correct and
+already reachable for dynamic sources. The defect is only that literal sources
+never get there.
+
+**Core change (slice 1): bail the splice to the provider when the eval's
+VariableEnvironment is the GlobalEnvironmentRecord and the body declares
+vars/functions.**
+
+- File: `src/codegen/expressions/eval-inline.ts`, function `tryStaticEvalInline`
+  — place with the other standalone routing arms (after the strict-isolation
+  bail at line ~749 and the Annex-B global-shape arm at lines ~751-765, BEFORE
+  `containsEvalValueReference` at ~774; must stay ahead of the
+  argument-side-effect compilation at ~834, which the existing comment already
+  mandates for all eligibility checks):
+
+```ts
+// EvalDeclarationInstantiation §19.2.1.3 step 16/CanDeclareGlobal* (buckets
+// C+D): when the sloppy eval's varEnv is the GlobalEnvironmentRecord, var and
+// function declarations must become own (configurable, D=true) properties of
+// the realm global object, gated by IsExtensible — runtime state the splice
+// cannot know. The interpreter implements all of it (prepareGlobalDeclarations);
+// route there. Direct eval's varEnv is global exactly when the caller fctx is
+// the module initializer (blocks/case/catch do not change varEnv — same
+// predicate precedent as unsupportedGlobalShape); sloppy indirect eval's
+// varEnv is ALWAYS global regardless of call site.
+if (
+  ctx.standalone &&
+  !evalIsStrict &&
+  declarationNames.varNames.size > 0 &&
+  (directEval ? fctx.name === "__module_init" : true)
+) {
+  return undefined; // provider owns EvalDeclarationInstantiation here
+}
+```
+
+- `declarationNames.varNames` already includes top-level FunctionDeclaration
+  names (`foldedEvalDeclarationNames`), so one predicate covers var + func +
+  generator bodies. `blockFunctionNames` are deliberately NOT counted (B.3.3
+  has its own arm at lines 751-765, unchanged).
+- `evalIsStrict` (line ~712) excludes strict bodies and strict direct-eval
+  callers — strict eval vars live in a private varEnv, never on the global
+  (this preserves the #1102 AC2 TS-module lane and all `*-strict` siblings).
+- `ctx.standalone` only: WASI has no provider (bail would degrade splice →
+  refusal), host/gc keeps today's splice (its dynamic fallback is host `eval`
+  with different scope plumbing — do not touch).
+- Ordering vs the A/B slice: the bucket-A global-lexical-collision emit-throw
+  (§2a of the A/B spec) must run BEFORE this bail — it is statically certain,
+  cheaper, and also covers host mode. The provider would throw the same
+  SyntaxError anyway (`prepareGlobalDeclarations` lines 560-568), so
+  mis-ordering is a perf/coverage wart, not a correctness bug.
+
+**Why routing beats materializing properties in the splice** (the design the
+§5 sketch originally gestured at): an in-splice implementation must reproduce,
+in emitted Wasm, the CanDeclare* preflight atomicity (validate ALL names before
+defining ANY), descriptor-preserving redefinition rules, function-before-var
+ordering, existing-property no-reset, AND reroute every subsequent read/write
+of the created names through the object so `delete this.x` severs the compiled
+read path. That is a re-implementation of `prepareGlobalDeclarations` plus a
+new name-resolution mode — precisely the #4055 anti-pattern (new substrate
+where an existing answer exists) and a standing perf hazard on identifier
+lowering. Routing costs: interpreter-speed execution of these eval sites (eval
+is cold), and the provider dependency (CI's standalone lane links the full
+provider; local refusal-tier runs will report these files as the documented
+TypeError — instrument note, not a regression).
+
+**How reads/writes/delete converge after routing** (all existing machinery,
+verified by the probes):
+
+- Eval-created NEW global name, later AOT bare read: the outer identifier has
+  no TS symbol → `emitRuntimeEvalGlobalRead` (`src/codegen/global-environment.ts:99`,
+  HasProperty + get + unwrap; gated on `ctx.runtimeEvalGlobalFunctionBindings`,
+  which is already true for every eval-consuming file via
+  `sourceUsesRuntimeEvalBoundary` → `src/codegen/index.ts:6038`). `typeof`
+  takes the non-throwing variant (`src/codegen/typeof-delete.ts:1575`).
+- `delete this.x` → native `__delete_property` on the singleton (configurable:
+  true ⇒ removed) → the SAME HasProperty-guarded read now throws
+  ReferenceError. Severed both ways by construction — no static storage ever
+  existed for the name.
+- Existing script var (`-exstng`): seeded onto the object by
+  `__runtime_eval_push_globals` at provider entry (configurable:false per
+  ScriptDeclarationInstantiation), value-updated by the interpreter's
+  SetMutableBinding, pulled back into the module global by
+  `__runtime_eval_pull_globals`. AOT reads keep the `global.get` fast path.
+
+**Slice 2 (local varEnv function declarations, direct eval)**: extend the bail
+to sloppy DIRECT evals in FUNCTION callers whose body has top-level
+FunctionDeclarations:
+
+```ts
+if (ctx.standalone && !evalIsStrict && directEval &&
+    fctx.name !== "__module_init" &&
+    foldedEvalHasTopLevelFunctionDeclaration(sf)) {
+  return undefined;
+}
+```
+
+(new tiny collector next to `foldedEvalDeclarationNames`; or derive from the
+existing declaration walk). The provider models function instantiation order
+and caller-varEnv binding via the reified activation cells — probe `lfunc-new`
+passes including the mutation (`f = 5`) and the no-leak ReferenceError.
+Expected: `func-init-local-new`, `func-init-local-update`. Keep this a
+SEPARATE PR: function-scope literal evals are a much larger passing population
+than global ones (the entire 192-file `declare-arguments` matrix is
+function-scope — it declares only vars, so the predicate must key on function
+declarations specifically, and the matrix must be a named canary).
+
+**Slice 3 (interpreter/boundary gaps — the two probes that fail on the
+provider tier)**:
+
+1. `delete` of an eval-created binding in a FUNCTION varEnv does not sever
+   (`lvar-delete` probe; files `var-env-var-init-local-new-delete`,
+   `func-init-local-new-delete`). Investigate the interpreter's Delete opcode
+   against `EnvRec` bindings created by `ensureVarBinding`
+   (`src/interp/eval-environment.ts:491-508`) and the persistent activation
+   cells (`preparePersistentEvalBindings`) — the closure created inside the
+   eval (`postDeletion = function(){ x; }`) must observe the binding's removal,
+   so deletion has to mark the cell/name-map entry dead, not just remove a
+   local alias.
+2. An eval-created NEW local binding is invisible to AOT sibling statements in
+   the same activation (`lfunc-non-strict` probe; file
+   `direct/var-env-func-non-strict`). The AOT caller compiled `typeof fun`
+   against the no-symbol dynamic-GLOBAL read, but the binding lives in the
+   activation layer the provider returned. Likely fix direction: on provider
+   return, `reifyCurrentDirectEvalBindings` /
+   the state-cell pool (`DIRECT_EVAL_STATE_BINDING_CAPACITY` cells in
+   `emitStandaloneDirectEvalRuntime`) already carries eval-created names — the
+   AOT-side no-symbol read inside a function that CONTAINS a direct eval
+   should consult the activation state cells before falling through to the
+   global object. Spec this as investigation, not prescription; it is
+   boundary work across `direct-eval-environment.ts` + `eval-environment.ts`.
+
+### (c) Bucket D wiring
+
+Nothing new to build: `canDeclareGlobalVar`/`canDeclareGlobalFunction`
+(`src/interp/eval-environment.ts:510-523`) already run inside
+`prepareGlobalDeclarations` with the atomic validate-all-before-create order,
+and the caller-side `Object.preventExtensions(this)` /
+`Object.isExtensible(this)` already manipulate the singleton's flags field
+(`$Object` flags, `src/codegen/object-runtime.ts:28`) in a way the provider
+observes across the module seam — the `non-definable` probe passes with ZERO
+interpreter changes. The slice-1 bail is the entire wiring for all 6 D files.
+The direct-D shape (`eval` nested in `if{try{}}`) is covered because blocks do
+not change the module-init fctx (same varEnv-globality argument as the A/B
+spec's §2a).
+
+### (d) Slicing / minimal first PR
+
+| PR | change | expected flips | risk |
+| --- | --- | --- | --- |
+| **1 (minimal)** | slice-1 bail predicate (one `if`, `eval-inline.ts`) | **12 firm**: 6 C-global own-property + 6 D. **+2 probable**: `indirect/var-env-{var,func}-non-strict` (probe the exact files before claiming — the IIFE-caller indirect seed path was validated only from global scope) | low — eval-code-scoped; must stack on the in-flight #2929 A/B PR (same function) |
+| 2 | local-varEnv function-decl bail | +2 (`func-init-local-new`, `-update`) | medium — function-scope eval population is large; declare-arguments canary mandatory |
+| 3 | interpreter delete-severing + sibling visibility | +3 (`…local-new-delete` ×2, `direct/var-env-func-non-strict`) | medium — touches `src/interp/`; coordinate with #4137 (owns `src/interp/emitter.ts`) |
+
+"Can C ship without D" is moot under this design — one predicate delivers both
+(D is just the interpreter's existing check becoming reachable). The
+"#4205-facing half" does not exist as work: #4205 is done; G2 is a separate
+10-file issue to file independently.
+
+### (e) Edge cases
+
+- **Redeclaration of an existing global** (`var-env-var-init-global-exstng`):
+  `prepareGlobalVarBinding` early-returns when the own property exists, so the
+  push-seeded configurable:false descriptor survives and only the value updates
+  (verified by probe). Do not "fix" the interpreter to redefine.
+- **Function vs var descriptors**: eval's D=true makes BOTH configurable:true
+  when newly created; functions redefine an existing CONFIGURABLE property to
+  {writable,enumerable,configurable:true} but leave a compatible
+  non-configurable data property's attributes alone
+  (`prepareGlobalFunctionBinding` — already per §9.1.1.4.18).
+- **Strict eval**: excluded by `evalIsStrict` in the predicate; strict bodies
+  with scoped declarations already route to the provider via the line-749 arm.
+- **Host lane**: untouched (`ctx.standalone` gate). WASI: untouched (no
+  provider — keep splicing).
+- **Annex B block functions**: `blockFunctionNames` not in the predicate; the
+  existing 751-765 arm and #4137's bucket E are unaffected.
+- **B.3.5 catch-parameter** (`try{}catch(e){ eval('var e') }` at global): the
+  bail routes it to the provider, whose `validateNonStrictEvalVarNames` skips
+  object records and B.3.5-exempts the catch binding — behavior preserved; add
+  the canary from the A/B spec's list anyway.
+- **TS-lib-shadowing names** (`eval('var name')` / `length` / `onload`): the
+  outer AOT read of such a name resolves a lib symbol instead of the
+  no-symbol dynamic path, so post-eval reads may miss the property. Known,
+  pre-existing resolution split — note in the PR, do not chase.
+- **Nested eval recursion**: an inner literal eval inside a provider-routed
+  source is interpreted (fine); an inner eval inside a still-spliced outer
+  body inherits the outer fctx, so the `__module_init` predicate remains
+  correct (same argument as the A/B spec).
+- **`eval('x = 1')` (assignment only, no declaration)**: `varNames` empty → no
+  bail → splices exactly as today.
+
+### (f) Verification
+
+```sh
+# per-file before/after (fast, faithful worker path — scripts preserved in .tmp/):
+TEST262_FULL_RUNTIME_EVAL=1 COMPILER_POOL_SIZE=1 node --import tsx .tmp/probe-cd-baseline.mts
+# full population (needs the machine-global lock free; ~30+ min):
+TEST262_PATH_FILTER=language/eval-code/ TEST262_TARGET=standalone \
+TEST262_FULL_RUNTIME_EVAL=1 COMPILER_POOL_SIZE=1 TEST262_WORKERS=1 \
+TEST262_REPORTER=dot pnpm run test:262 -- --official-scope-only
+```
+
+Prereqs on a fresh worktree: `pnpm install --prefer-offline`, `pnpm run
+build:compiler-bundle`, the `runtime-bundle.mjs` esbuild line from
+`.github/workflows/ci.yml:429`, and `node --import tsx
+scripts/build-runtime-eval-provider.mjs` (~3.5 min; the cache key tracks the
+compiler bundle, so REBUILD after every src/ change — a stale provider silently
+serves the previous compiler's semantics).
+
+- Expected flips: PR1 +12 (firm) to +14; PR2 +2; PR3 +3; total ≤19 in this
+  population. NOTE: the A/B spec's 747/816 eval-code baseline predates the
+  #4137/#2200 merges on this branch — re-measure the full-population number on
+  the PR branch base before quoting deltas.
+- **Zero-regression controls (named)**:
+  - the **192-file `declare-arguments` matrix** (function-scope var-only
+    evals — must NOT match any new predicate; spot-check that their compiled
+    modules' import sections are unchanged, i.e. still spliced);
+  - **annexB eval-code** current 444/469 — zero pass→fail;
+  - the **17 `issue-2923-eval-const-broaden` fast-path canaries**;
+  - `tests/issue-1102.test.ts` (module-strict lane), `tests/issue-4162.test.ts`,
+    `tests/issue-4195-eval-refusal-message-and-dedupe.test.ts`;
+  - `npm test -- tests/equivalence.test.ts`.
+- **Hot-path perf**: the design's argument is structural — no codegen change
+  on any name-resolution path, so eval-free modules must compile
+  **byte-identically**. Verify: compile 3-4 `playground/examples/*.ts` before/
+  after and diff wasm sha256 (stronger and cheaper than a perf run). For the
+  perf canary on eval-CONTAINING code, `benchmarks/run.ts` →
+  `playground-benchmark-sidebar.json` diff is the named benchmark; no entry
+  there uses literal global-var eval, so expect noise-level deltas only.
+- Promote the two probe scripts to `tests/issue-XXXX-*.test.ts` (id from
+  `claim-issue.mjs --allocate` — unreachable from this sandbox, do NOT
+  hand-pick) with the provider-linked pool pattern from
+  `tests/issue-3426-realm-canary.test.ts`.
+
+### (g) Risks / gates
+
+- **File collision (real, sequencing-critical)**: the in-flight #2929 A/B
+  implementer owns `src/codegen/expressions/eval-inline.ts` and edits the SAME
+  region of `tryStaticEvalInline` (lines ~720-770). PR1 must stack on that
+  PR's branch (predecessor-stacking per CLAUDE.md) or land after it; the
+  bucket-A guard must precede the new bail. Slice 3 additionally risks
+  `src/interp/emitter.ts` (#4137's declared budget) — keep slice-3 edits in
+  `eval-environment.ts`/`direct-eval-environment.ts` or coordinate. **No
+  overlap with #4194** (carrier-bag / property-access dispatch): this design
+  touches no property-access codegen at all.
+- **#4071 hazard (Object.keys widening)**: not triggered — no compiled-side
+  property materialization on any receiver; the only object mutated is the
+  singleton, by the interpreter, per spec (verifyProperty's enumerability
+  probe REQUIRES the new keys there).
+- **#4055 composition rule**: honored by construction — the existing answer
+  (interpreter EvalDeclarationInstantiation + native property store) is used;
+  no new substrate.
+- **Query-must-never-allocate / hot-path**: no new queries; reads stay
+  `global.get` for script names. The bail only swaps which existing arm an
+  eval CALL SITE takes.
+- **Oracle ratchet**: the predicate is pure syntax on the foreign AST + fctx
+  identity — zero checker/oracle queries.
+- **Coercion-sites ratchet**: no new module, no new coercion sites.
+- **loc/func budgets**: `src/codegen/expressions/eval-inline.ts` and
+  `tryStaticEvalInline` are already on this issue's allow lists.
+- **Top regression risk**: a currently-PASSING file whose literal global
+  var/func eval silently relied on splice semantics (eval-created var used as
+  a TYPED module value later). Mitigation: the A/B over every standalone file
+  whose source greps `eval(` with a `var`/`function` literal (bounded, few
+  hundred files) before enqueue; anything that flips pass→fail is a provider
+  fidelity bug to fix BEFORE landing, not after.
+- **Instrument trap** (for whoever re-measures): with no
+  `TEST262_FULL_RUNTIME_EVAL=1` (or a stale provider cache) the newly-routed
+  files fail with the refusal TypeError / LinkError and the change reads as a
+  regression. The tier announcement line (`runtime-eval tier: INTERPRETER
+  (key …)`) is the control — quote it in the PR.
+
+## Implementation record — C+D slices 1 & 2 landed, slice 3 NOT landed (2026-08-08)
+
+Branch base for every number below: `main` + the merged #2929 A/B stack
+(`64b8bcfc`, `0afe71af`, `08bd1244`). Standalone target, faithful worker path
+(`CompilerPool(1,"unified")` + `assembleOriginalHarness` + `runTest`),
+`TEST262_FULL_RUNTIME_EVAL=1`.
+
+Tier announcement (the instrument control §f demands):
+
+```
+[probe] runtime-eval tier: INTERPRETER (key 4b014a5cc23d45eb, TEST262_FULL_RUNTIME_EVAL=1)
+```
+
+(key `1a78259035ddfefe` after slice 2 — the key tracks the compiler bundle and
+was rebuilt after every `src/` change.)
+
+### Re-measured baseline — the spec's 747/816 is stale
+
+The §f note is right that the figure predates the merges. Re-measured here, and
+the 816 splits into two populations that must be reported separately:
+
+| population | base | after slice 1 | after slice 2 |
+| --- | --- | --- | --- |
+| `language/eval-code` (347 files) | 312 | 324 | **326** |
+| `annexB/language/eval-code` (469 files) | 442 | 442 | 442 |
+| combined | 754/816 | 766/816 | **768/816** |
+
+**Zero pass→fail and zero fail-signature changes in either population, at both
+slices.** All 19 C+D files reproduced the spec's §a error table exactly on the
+base, so the diagnosis transferred intact.
+
+### Slice 1 — +12, and the "probable" pair is CONFIRMED
+
+6 C-global own-property files, 4 bucket-D files, and **both** members of the
+spec's probable pair (`indirect/var-env-{var,func}-non-strict`) — probed
+explicitly rather than assumed, as §d required.
+
+The spec predicted "12 firm (6 C-global + 6 D) + 2 probable". The count landed
+at 12, but the composition differs: only **4** of the 6 D files are reachable
+by routing (see the residue below), and the 2 probable files flipped.
+
+### Slice 2 — +2, exactly as predicted
+
+`direct/var-env-func-init-local-new`, `direct/var-env-func-init-local-update`.
+The 192-file `declare-arguments` matrix was compiled in full and its import
+sections inspected: **192/192 still SPLICED, 0 provider imports**, before and
+after. Keying the predicate on top-level FunctionDeclarations rather than on
+`varNames` is what preserves it.
+
+### Byte-identity (the §f hot-path argument)
+
+`fib.ts`, `loop.ts`, `array.ts`, `string.ts` from
+`website/playground/examples/benchmarks/` compile to **identical wasm sha256**
+at base, slice 1 and slice 2. The design's "no codegen on any name-resolution
+path" claim holds mechanically.
+
+### RESIDUE 1 (bucket D, 2 files) — direct eval never applies CanDeclareGlobalFunction
+
+`direct/non-definable-global-function` and `direct/non-definable-global-generator`
+do **not** flip, and cannot be fixed by routing — they already route.
+
+The spec's §a table describes all six `non-definable-global-*` files as the
+`preventExtensions(this)` shape. That is only true of the `-var` pair. The
+`-function`/`-generator` pair instead evaluates `function NaN(){}` and needs
+`CanDeclareGlobalFunction` to REFUSE because `NaN` is an existing
+`{writable:false, enumerable:false, configurable:false}` own property.
+
+Measured, and the cause is **not** `NaN` and **not** realm population:
+
+| probe | result |
+| --- | --- |
+| `NaN` own property of the realm global after any eval | present, `w=false e=false c=false` (`installRuntimeEvalRealm`, `src/interp/loop.ts:183-197`, works) |
+| `(0,eval)("function NaN(){}")` | **TypeError** (correct) |
+| `eval("function NaN(){}")` at global | no throw |
+| define own `zzTop` `{w:false,e:false,c:false}`, then `(0,eval)("function zzTop(){}")` | **TypeError** (correct) |
+| same, `eval("function zzTop(){}")` | **no throw** |
+
+A user-defined property reproduces it, so this is not about `NaN`, the intrinsic
+set, or #4205/G2. **A sloppy DIRECT eval whose varEnv is the global record does
+not run the `plan.functionNames` CanDeclareGlobalFunction loop of
+`prepareGlobalDeclarations` (`src/interp/eval-environment.ts:570-574`), while
+the identical INDIRECT eval does.** Everything observed is consistent with
+`plan.functionNames` being empty on the direct path (the var loop still runs —
+`direct/non-definable-global-var` passes — and a NEW name still materializes as
+a property via `prepareGlobalVarBinding`, which is why the direct
+function-declaration cases otherwise look right).
+
+This is a provider/interpreter defect in the direct-eval declaration-instantiation
+path, independent of the C+D routing work. Worth its own issue.
+
+### RESIDUE 2 (slice 3 gap i, 2 files) — eval-created bindings are not deletable
+
+`direct/var-env-var-init-local-new-delete`, `direct/var-env-func-init-local-new-delete`.
+Two independent blockers, both proven:
+
+1. **Runtime**: `envDelete` (`src/interp/loop.ts:777-787`) returns `false` for
+   *every* declarative own cell. §19.2.1.3 steps 9/11 create eval's var and
+   function bindings with `CreateMutableBinding(n, **true**)` — D = deletable —
+   so eval-created bindings must be severable. Deletability is per-binding, but
+   `EvalBindingCell` is a frozen cross-module ABI struct and `EnvRec` a frozen
+   rec-group, so the flag has to live in an out-of-line side table (the idiom
+   `VARIABLE_ENVIRONMENTS` / `EXISTING_VARIABLE_ENVIRONMENTS` already use).
+   Severing itself is cheap and needs no array splice: overwrite the entry in
+   `env.names` with a unique non-string sentinel, since every own-binding probe
+   compares `names[i] === name`. `preparePersistentEvalBindings`
+   (`eval-environment.ts:342`) already treats `names[i] === undefined` as a
+   reusable vacancy, so that convention exists.
+2. **Emitter (the blocker)**: `src/interp/emitter.ts:1859-1862` folds
+   `delete <identifier>` to `LdaFalse` at COMPILE time whenever
+   `isBoundName(name)` — and `isBoundName` includes the eval body's own
+   `hoistedVars`. So `envDelete` is never reached for exactly the names that
+   are supposed to be deletable, and no runtime fix alone can work.
+
+A first cut of (1) was written and then **reverted**: keyed on `ensureVarBinding`
+it never fires (the direct-eval path allocates through
+`preparePersistentEvalBindings` instead), and behind the (2) fold it is
+unreachable regardless. Shipping unverifiable dead code would have been worse
+than recording the analysis. Fixing this needs (2), which is
+`src/interp/emitter.ts` — #4137's declared budget — so it needs coordination,
+not a drive-by edit.
+
+### RESIDUE 3 (slice 3 gap ii, 1 file) — eval-created local bindings are invisible to AOT siblings
+
+`direct/var-env-func-non-strict`. Measured contrast:
+
+| shape | result |
+| --- | --- |
+| `(function(){ eval('var q = 4;'); v = q; }())` | **passes** — SPLICED, so `q` is an ordinary caller local |
+| `(function(){ eval('function fun2(){...}'); v = fun2(); }())` | **fails**, `fun2 is not defined` — routed by slice 2 |
+
+The boundary carries only names collected from the CALLER's AST:
+`collectDirectEvalBindingNames` / `collectDirectEvalActivationBindingNames`
+(`src/codegen/direct-eval-environment.ts:64,109`) feed
+`fctx.directEvalBindingNames`, and `currentDirectEvalBindings` builds the cell
+layers from that set. A name the eval CREATES has no cell, so the AOT sibling
+read falls through to the no-symbol dynamic global read and finds nothing.
+
+The compiler *can* know these names — the eval source is a literal, and
+`foldedEvalDeclarationNames(sf)` already computes exactly them. A fix would
+pre-allocate activation cells for the eval's declared names at the call site and
+have the provider write created bindings back. That is a new write-back
+direction across `eval-inline.ts` + `direct-eval-environment.ts` +
+`runtime-eval-provider.ts`, i.e. genuinely more than an L-slice, so it is
+recorded rather than forced.
+
+### Test coverage
+
+- `tests/issue-2929-cd-global-materialization.test.ts` (new, 11 tests) — own-property
+  descriptors, existing-script-var non-configurability, delete-severing at global,
+  the assignment-only no-bail case, the three reachable D refusals, and a pin on
+  RESIDUE 1. Provider-linked `CompilerPool`; `describe.skipIf`s off the refusal
+  tier. Kept under #2929's id because `claim-issue.mjs --allocate` cannot reach
+  GitHub from this sandbox and hand-picking an id is forbidden (#2531) — it needs
+  a real id before this work is filed as its own issue.
+- `tests/issue-2929-evaldecl-early-errors.test.ts` — 28/28. Four tests changed
+  from splice-behaviour to routing assertions, because their global-varEnv var
+  declarations are now provider-owned by design.

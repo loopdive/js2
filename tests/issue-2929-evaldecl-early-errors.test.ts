@@ -122,11 +122,14 @@ eval('{ function x(){} }');
 `);
   });
 
-  it("Annex B.3.5 catch parameter: try{}catch(e){ eval('var e;') } at global is fine", async () => {
+  it("Annex B.3.5 catch parameter: try{}catch(e){ eval('var e;') } at global routes, never static-throws", async () => {
     // CatchClause bindings are NOT in `ctx.globalLexicalBindings` (only
-    // top-level let/const/class are), so the guard correctly stays silent.
-    await runScript(`try { throw 1; } catch (e) { eval('var e;'); }
-`);
+    // top-level let/const/class are), so the bucket-A guard correctly stays
+    // silent. Since the C+D slice this global-varEnv var declaration is owned
+    // by the provider (which B.3.5-exempts the catch binding in
+    // `validateNonStrictEvalVarNames`), so the assertion is that it ROUTES —
+    // the one thing that must never happen is folding to a static throw.
+    expect(await bailsToProvider(`try { throw 1; } catch (e) { eval('var e;'); }\n`)).toBe(true);
   });
 
   it("a function-scope caller has its own varEnv: let x; function h(){ eval('var x;') } is fine", async () => {
@@ -136,10 +139,10 @@ if (h() !== 1) throw new Error('h() misbehaved');
 `);
   });
 
-  it("an unrelated eval var name does not collide", async () => {
-    await runScript(`let x;
-eval('var y;');
-`);
+  it("an unrelated eval var name does not collide (routes, no static throw)", async () => {
+    // `y` misses `globalLexicalBindings`, so the bucket-A guard stays silent
+    // and the C+D slice hands the global-varEnv declaration to the provider.
+    expect(await bailsToProvider(`let x;\neval('var y;');\n`)).toBe(true);
   });
 
   it("strict eval gets a private varEnv — it must not fold to a static throw", async () => {
@@ -197,10 +200,16 @@ if (typeof ind !== 'undefined') throw new Error('indirect let leaked: typeof ind
 `);
   });
 
-  it("eval-created sloppy VARS still persist in the caller (#1102 AC2 — deliberately untouched)", async () => {
-    await runScript(`eval('var kept = 11;');
-if (kept !== 11) throw new Error('var did not persist: ' + kept);
-`);
+  it("eval-created sloppy VARS at global routes to the provider (#1102 AC2 moved, not dropped)", async () => {
+    // Bucket B deliberately left sloppy vars alone, so the splice kept them as
+    // caller locals. The C+D slice moves the GLOBAL-varEnv case to the
+    // provider, where the var becomes an own property of the realm global —
+    // the actual spec behaviour. Persistence is still verified end-to-end, by
+    // `tests/issue-2929-cd-global-materialization.test.ts` and by test262
+    // `language/eval-code/{direct,indirect}/var-env-var-init-global-*`.
+    // The #1102 AC2 TS-module lane is untouched: it is strict, so `evalIsStrict`
+    // excludes it from the new bail.
+    expect(await bailsToProvider(`eval('var kept = 11;');\n`)).toBe(true);
   });
 });
 
@@ -250,16 +259,23 @@ export function test(): number { return outcome; }
     ).toBe(THREW);
   });
 
-  it("a closure created INSIDE the eval body keeps its lexical after the restore", async () => {
-    // The rename only re-labels the slot; the index (and every capture already
-    // planned against it) is untouched.
+  it("a closure created INSIDE the eval body is provider-owned since the C+D slice", async () => {
+    // Originally a SPLICE canary: the bucket-B slot rename only re-labels the
+    // slot, so a closure built inside the eval body keeps reading its lexical.
+    //
+    // That shape is no longer spliced. The only inline-supported way to build a
+    // closure in a foreign eval body is a FunctionDeclaration (function
+    // *expressions* have never been inline-supported), and a top-level
+    // FunctionDeclaration is a VarDeclaredName — routed by the C+D slice at
+    // global scope (slice 1) and in function callers (slice 2) alike. So assert
+    // the routing; the splice-path slot rename stays pinned by the two sibling
+    // thunk canaries above, which still fold.
     expect(
-      await outcomeOf(`var outcome = 0;
+      await bailsToProvider(`var outcome = 0;
 eval('let cv = 7; function g() { return cv; }');
 outcome = (g() === 7) ? 2 : 1;
-export function test(): number { return outcome; }
 `),
-    ).toBe(THREW);
+    ).toBe(true);
   });
 
   it("a same-named CALLER binding stays capturable by a later closure", async () => {
