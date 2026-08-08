@@ -50,7 +50,7 @@ const U32: LatticeType = { kind: "u32" };
  * can define exactly those methods. `unknown` is lattice BOTTOM (no contribution
  * observed yet), never evidence.
  */
-function provablyNotBigInt(t: LatticeType): boolean {
+export function provablyNotBigInt(t: LatticeType): boolean {
   return t.kind === "f64" || t.kind === "i32" || t.kind === "u32" || t.kind === "bool" || t.kind === "string";
 }
 
