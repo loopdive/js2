@@ -146,3 +146,9 @@ standalone`, over the 62-file ES5 RegExp set:
   (`Math.NaN` static read) — both are generic "builtin static property value
   read is not supported in --target standalone" compile errors, not RegExp bugs.
 - `S15.10.6.2_A4_T11/T12` — `lastIndex` coercion ordering / null deref.
+
+## Permanent repro
+
+Pinned by `tests/es5-standalone-regexp.test.ts` (ES5 RegExp semantics: dynamic
+pattern tracing, exec arities/result shape, construction-time SyntaxError) over
+the `test262/test/built-ins/RegExp/` battery.
