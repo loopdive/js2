@@ -717,6 +717,39 @@ export function tryStaticEvalInline(
   }
   const declarationNames = foldedEvalDeclarationNames(sf);
 
+  // §19.2.1.3 (EvalDeclarationInstantiation) step 5.a: when eval's
+  // VariableEnvironment IS the GlobalEnvironmentRecord, every VarDeclaredName
+  // must miss the Script's lexical (`let`/`const`/class) declarations —
+  // otherwise a runtime SyntaxError. The splice bypasses the runtime EnvRec
+  // walk entirely, so reconstruct the rule here.
+  //
+  // varEnv is global for ALL sloppy indirect eval (its VariableEnvironment is
+  // always the realm global) and for sloppy DIRECT eval whose call executes in
+  // global Script code. The latter is the `__module_init` fctx identity — the
+  // same precedent as `unsupportedGlobalShape` below, and deliberately NOT an
+  // AST parent walk (a nested `eval('eval("var x")')` compiles foreign nodes
+  // whose parents reach the foreign SourceFile, so a walk answers wrongly while
+  // the fctx identity is inherited correctly). It is also deliberately NOT
+  // `directEvalRunsAtScriptGlobal`, which stops at Block/Case/Catch/With: those
+  // change the LexicalEnvironment, never the VariableEnvironment.
+  //
+  // The error is statically certain (the Script's lexical name set is a
+  // compile-time constant), so emit the throw rather than bailing to the
+  // provider — that also covers host/GC mode, where no provider exists.
+  if (!evalIsStrict && (!directEval || fctx.name === "__module_init")) {
+    const globalLexicals = ctx.globalLexicalBindings;
+    if (globalLexicals !== undefined && globalLexicals.size > 0) {
+      for (const name of declarationNames.varNames) {
+        // Annex B.3.3 block functions are excluded: their synthetic outer var
+        // is CANCELLED by a colliding lexical binding, never an error.
+        if (globalLexicals.has(name)) {
+          emitThrowJsError(ctx, fctx, "SyntaxError", `Identifier '${name}' has already been declared`);
+          return { kind: "externref" };
+        }
+      }
+    }
+  }
+
   // A constant direct eval normally splices into the caller and bypasses the
   // runtime EnvRec walk. Reconstruct the one caller-dependent early error that
   // cannot be learned from the foreign Script alone: a sloppy eval var/function
