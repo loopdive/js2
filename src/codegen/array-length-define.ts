@@ -363,6 +363,18 @@ export function tryEmitVecLengthDefineForDefineProperties(
   propName: string | undefined,
   descExpr: ts.Expression,
 ): boolean {
+  // (#4227) STANDALONE declines, for exactly the reason the SINGULAR caller
+  // already does (see the "#3251 S3" note in `compileObjectDefineProperty`):
+  // there the native `__vec_dp_value` length arm implements the FULL
+  // ArraySetLength — the step-15 non-configurable shrink stop and the
+  // non-writable length bit — against the overlay companion, which this
+  // compile-time path cannot see. Winning the race in front of it made
+  // `Object.defineProperties(arr, {length: {…}})` shrink straight past
+  // non-configurable indices and ignore a frozen length. Host mode keeps this
+  // route, which is where #3984 measured its 34-file gain, so the gate lives
+  // here rather than at the call site: one module, one policy, and the singular
+  // form's own standalone gate cannot drift away from it unnoticed.
+  if (ctx.standalone) return false;
   if (propName !== "length" || !ts.isObjectLiteralExpression(descExpr)) return false;
   if (exceedsSafeGrowCeiling(descExpr)) return false;
   const handled = maybeEmitVecLengthDefine(ctx, fctx, objArg, ts.factory.createStringLiteral("length"), descExpr);
