@@ -14,14 +14,14 @@ task_type: feature
 area: runtime-eval
 language_feature: eval
 goal: runtime-eval
-related: [2928, 2929, 4013, 4229, 4236, 4238, 4241]
-blocked_by: [4238, 4241]
+related: [2928, 2929, 4013, 4229, 4236, 4238, 4243]
+blocked_by: [4238, 4243]
 # id 4242 reserved via claim-issue.mjs --allocate --allow-unscanned on
 # 2026-08-08 (gh CLI unavailable; pr_scan=degraded). Equivalent open-PR scan
 # via the GitHub MCP at reservation time: sole open PR was PR 4250 (#4238
 # slice 1, edits the existing 4238 issue file, introduces no new issue ids).
 # The id coincides with a merged PR number — shared sequence, not a namespace
-# (precedent: 4235/4236/4237, 4241).
+# (precedent: 4235/4236/4237, 4243).
 ---
 
 # #4242 — parity measurement + default flip to QuickJS (no removals)
@@ -45,7 +45,7 @@ So the migration endgame is a **default flip, not a retirement**:
 
 - [ ] Run the full eval-dependent test262 set (the ~826-file eval bucket +
       Annex B eval families + `new Function` buckets) under
-      `JS2WASM_EVAL_ENGINE=quickjs` on the #4238+#4241 stack; produce a
+      `JS2WASM_EVAL_ENGINE=quickjs` on the #4238+#4243 stack; produce a
       three-way diff: quickjs-vs-interpreter-vs-baseline, bucketed by root
       cause (scope fidelity, membrane residuals, engine differences,
       genuine wins where QuickJS fixes interpreter residuals).
@@ -93,5 +93,5 @@ So the migration endgame is a **default flip, not a retirement**:
 
 ## Implementation Plan
 
-(To be written by architect once #4241 lands and the parity run is
+(To be written by architect once #4243 lands and the parity run is
 possible — mostly Phase-1 runner mechanics + the flip-site inventory.)

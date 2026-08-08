@@ -1,5 +1,5 @@
 ---
-id: 4241
+id: 4243
 title: "QuickJS eval membrane — live cross-heap object access both directions + cycle-safe lifetimes (gc_mark), replacing slice-2's copy/box tier"
 status: ready
 sprint: current
@@ -16,15 +16,16 @@ language_feature: eval
 goal: runtime-eval
 related: [2928, 2929, 4236, 4238, 4242]
 blocked_by: [4238]
-# id 4241 reserved via claim-issue.mjs --allocate --allow-unscanned on
-# 2026-08-08 (gh CLI unavailable; pr_scan=degraded). Equivalent open-PR scan
-# via the GitHub MCP at reservation time: sole open PR was PR 4250 (#4238
-# slice 1, edits the existing 4238 issue file, introduces no new issue ids).
-# The id coincides with a merged PR number — shared sequence, not a namespace
-# (precedent: 4235/4236/4237).
+# id 4243 reserved via claim-issue.mjs --allocate --allow-unscanned on
+# 2026-08-08 (gh CLI unavailable; pr_scan=degraded). RENUMBERED from 4241:
+# open PR 4252 (another lane) added plan/issues/4241-extern-get-receiver-
+# stamp-dispatch.md without a reservation; our 4241 reservation was the only
+# one on origin/issue-assignments, but renumbering this docs-only file was
+# cheaper than cross-lane coordination. The id coincides with a merged PR
+# number — shared sequence, not a namespace (precedent: 4235/4236/4237).
 ---
 
-# #4241 — QuickJS eval membrane: live cross-heap objects + cycle-safe lifetimes
+# #4243 — QuickJS eval membrane: live cross-heap objects + cycle-safe lifetimes
 
 ## Why (the gap #4238 deliberately leaves)
 
@@ -162,7 +163,7 @@ Implemented `JSClassExoticMethods`:
 | `get_own_property` | `__membrane_has` → absent ⇒ 0; present ⇒ `__membrane_get`, fill `desc` as a **synthesized data descriptor** `{value, writable, enumerable, configurable}` — flag fidelity is NOT preserved (residual §5). When `desc == NULL` (pure existence probe) free the value handle immediately. |
 | `get_own_property_names` | `__membrane_own_keys` → QuickJS Array of strings → `JSPropertyEnum` (js_malloc'd). String + array-index keys only. |
 | `delete_property` | `__membrane_delete`. |
-| `define_own_property` | **NOT trapped** — `JS_ThrowTypeError(ctx, "Object.defineProperty on a compiled object inside eval is not supported (#4241)")`. Loud beats approximated. NOTE: plain assignment does NOT land here because `set_property` below is implemented; only reflective defineProperty does. |
+| `define_own_property` | **NOT trapped** — `JS_ThrowTypeError(ctx, "Object.defineProperty on a compiled object inside eval is not supported (#4243)")`. Loud beats approximated. NOTE: plain assignment does NOT land here because `set_property` below is implemented; only reflective defineProperty does. |
 | `has_property` | `__membrane_has` (fast path; also keeps `in`, `with`-scope probes off the descriptor path). |
 | `get_property` | `__membrane_get`; absent ⇒ `JS_UNDEFINED` (no proto-chain crossing — the wrapper's [[Get]] answers for the whole compiled object, own+proto, because the adapter resolves through `__extern_get`'s proto walk on the GC side). |
 | `set_property` | `__membrane_set`; strict-mode failure semantics via the `flags & JS_PROP_THROW` bit. |
@@ -414,7 +415,7 @@ acceptance-box-3 cycle case, demonstrable with `qjs_run_gc` + the leak hook.
 | cross-heap cycle, GC→QJS leg created via trap write (§3.3) | QuickJS cycle collector — prompt |
 | box/carrier held only by compiled code | **context teardown only** — WasmGC has no finalization (#988); nothing can observe the drop |
 | cross-heap cycle whose box was stored into the GC graph by a **compiled-side write** (no trap ran, no ownership transfer) | **context teardown only** — the table root is invisible to QuickJS's collector |
-| tombstone hazard | a box whose ownership had moved to a wrapper edge dies with that wrapper's cycle; if compiled code still holds the box, every later trap on it throws a typed `TypeError("quickjs object was reclaimed with its wrapper cycle (#4241)")` — loud, not dangling. Enumerated residual (§5); `JS2WASM_QJS_MEMBRANE_PIN_ALL=1` (adapter env baked at build? no — read via a shim-settable flag from the harness) disables ownership transfer entirely for debugging (everything strong until teardown, no tombstones, more leaks). |
+| tombstone hazard | a box whose ownership had moved to a wrapper edge dies with that wrapper's cycle; if compiled code still holds the box, every later trap on it throws a typed `TypeError("quickjs object was reclaimed with its wrapper cycle (#4243)")` — loud, not dangling. Enumerated residual (§5); `JS2WASM_QJS_MEMBRANE_PIN_ALL=1` (adapter env baked at build? no — read via a shim-settable flag from the harness) disables ownership transfer entirely for debugging (everything strong until teardown, no tombstones, more leaks). |
 
 Context teardown (new, replaces slice-1's "runtime/context intentionally
 never freed"): `instantiateQuickjsEvalNamespace` returns the namespace plus a
