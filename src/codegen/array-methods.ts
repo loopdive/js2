@@ -59,6 +59,8 @@ import {
 } from "./native-strings.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
 import { ensureNativeArrayHof } from "./hof-native.js";
+// (§15.4.4.20 / §23.1.3.7) live per-index HasProperty + fresh Get for `filter`.
+import { filterSelectStage, overlayFilterAccess } from "./array-filter-spec-access.js";
 import { allocJoinFoldLocals, emitStringJoinFold, hostStringRepr, nativeStringRepr } from "./builtin-scaffold.js";
 import { ensureTimsortHelper } from "./timsort.js";
 import { emitStableMergeSort } from "./merge-sort.js"; // (#3902) shared stable O(n log n) sort skeleton
@@ -5735,8 +5737,12 @@ function compileArrayFilter(
 
   const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "flt");
 
-  // Allocate result array with same capacity as source
-  fctx.body.push({ op: "local.get", index: loop.lenTmp });
+  // §15.4.4.20 step 3: `len` is captured ONCE — see array-filter-spec-access.ts
+  // for why the overlay route walks the LOGICAL length and the dense route the
+  // #3215 backing-clamped one. Result capacity = one push per visited index.
+  const overlay = overlayFilterAccess(ctx, fctx, loop, elemType, elemTmp);
+  const boundTmp = overlay ? loop.logicalLenTmp : loop.lenTmp;
+  fctx.body.push({ op: "local.get", index: boundTmp });
   fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
   fctx.body.push({ op: "local.set", index: resData });
 
@@ -5756,18 +5762,12 @@ function compileArrayFilter(
   );
 
   const loopBody: Instr[] = [
-    ...loopExitCheck(loop),
-
-    // elem = data[i]
-    { op: "local.get", index: loop.dataTmp },
-    { op: "local.get", index: loop.iTmp },
-    { op: loop.getOp, typeIdx: arrTypeIdx },
-    { op: "local.set", index: elemTmp },
-
     // (#2001 S2) filter does not call the callback for a hole (§23.1.3.7 uses
     // HasProperty) and never adds it to the result. The flag-gate yields 0 for
     // a hole → the push `if` below does not fire (and the callback isn't run).
-    ...gateHoleFlag(ctx, loop, arrTypeIdx, elemType, callAndCheck),
+    ...filterSelectStage(loop, vecTypeIdx, arrTypeIdx, boundTmp, elemTmp, overlay, callAndCheck, (inner) =>
+      gateHoleFlag(ctx, loop, arrTypeIdx, elemType, inner),
+    ),
 
     // if result is truthy, add element to result
     {
