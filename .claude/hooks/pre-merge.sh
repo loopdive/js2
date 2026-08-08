@@ -10,15 +10,23 @@ if [ -z "$CMD" ]; then
   exit 0
 fi
 
-if ! echo "$CMD" | grep -q 'git merge'; then
+# Match only the FIRST LINE of the command. A commit message, heredoc or script
+# body can quote a git command verbatim without being one — e.g. a `-m "$(cat
+# <<EOF ... EOF)"` whose text mentions the merge flags. Scanning the whole
+# command string treats that prose as an invocation: the branch extractor below
+# then grabs a fragment of English as a ref name, and since the proof gate now
+# fails CLOSED on an uncomputable diff, an ordinary commit gets blocked. Real
+# invocations, including `cd <dir> && git merge …`, are single-line.
+CMD_HEAD=$(printf '%s' "$CMD" | head -1)
+
+if ! echo "$CMD_HEAD" | grep -q 'git merge'; then
   exit 0
 fi
 
 source "${CLAUDE_PROJECT_DIR:-/workspace}"/.claude/hooks/event-log.sh
 
 # Detect: is this merging TO main (ff-only) or merging main INTO a branch?
-# ff-only anywhere in the command = merging to main
-if echo "$CMD" | grep -q '\-\-ff-only'; then
+if echo "$CMD_HEAD" | grep -q '\-\-ff-only'; then
   # LEGACY PATH. CLAUDE.md's merge protocol is PRs + CI, and direct merges to
   # main are never used by dev agents — so under the documented workflow this
   # branch should not be reached at all. It is kept as a BLOCKING guard (it
@@ -30,7 +38,12 @@ if echo "$CMD" | grep -q '\-\-ff-only'; then
   # wrong path — open a PR instead.
   #
   # Merging TO main — require test proof (unless UI-only branch)
-  BRANCH=$(echo "$CMD" | sed 's/.*--ff-only[[:space:]]*//' | awk '{print $1}')
+  BRANCH=$(echo "$CMD_HEAD" | sed 's/.*--ff-only[[:space:]]*//' | awk '{print $1}')
+  # No ref after the flag — not an invocation this gate can reason about, and
+  # blocking here would refuse commands that merely mention the flag.
+  if [ -z "$BRANCH" ]; then
+    exit 0
+  fi
 
   # Skip proof for UI-only branches (no src/ changes).
   #
@@ -40,13 +53,19 @@ if echo "$CMD" | grep -q '\-\-ff-only'; then
   # produced empty output, which read as "no src/ changes" and skipped the proof
   # requirement entirely. That is the gate failing open exactly when it knows
   # least. Capture the status first, then filter.
-  # NOTE: the base is the LOCAL `main` ref, which in a worktree or container is
-  # routinely stale (CLAUDE.md records /workspace sitting 135 commits behind).
-  # A stale base widens the range, so the UI-only skip is missed and a proof is
-  # demanded for a branch that touches no src/ file. That errs toward MORE
-  # proof, never less, so it is left as-is deliberately: switching the base to a
-  # remote ref could narrow the range instead, and in checkouts where `origin`
-  # is the fork it would compare against the wrong history entirely.
+  # The base is the LOCAL `main` ref ON PURPOSE — do not "fix" it to a remote.
+  #
+  # This gate runs on `git merge --ff-only <branch>` performed WHILE ON main, so
+  # the merge fast-forwards local main to the branch and main gains every commit
+  # in between. `git diff main...<branch>` therefore measures exactly what THIS
+  # merge introduces, which is the question the proof requirement is asking.
+  #
+  # A stale local main is not a false positive: if main is behind, the merge
+  # really does carry those extra commits in, so requiring a proof that covers
+  # them is correct. Switching to `origin/main` would narrow the range to just
+  # the branch's own commits and stop covering what the merge actually lands —
+  # and in checkouts where `origin` is the fork (CLAUDE.md warns about this) it
+  # would compare against the wrong history entirely.
   DIFF_OUT=$(git diff main..."$BRANCH" --name-only 2>/dev/null)
   DIFF_RC=$?
   if [ "$DIFF_RC" -ne 0 ]; then
