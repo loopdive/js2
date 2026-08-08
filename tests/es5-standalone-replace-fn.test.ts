@@ -121,3 +121,97 @@ describe("#4224 standalone replace — non-callable replacement is ToString-ed",
     expect(out).toBe("a[1]b");
   });
 });
+
+// (#4224) The STRING search-value lane. Before this, `string-ops.ts` compiled
+// the replacement straight into a `ref $AnyString` slot with no gate at all: a
+// function replacer trapped with `illegal cast` at runtime and a numeric one
+// produced a module that failed `WebAssembly.compile` — both after a GREEN
+// compile, which is why these are regression tests and not feature tests.
+describe("#4224 standalone replace — string search value", () => {
+  it("function replacer on a string search (first occurrence only)", async () => {
+    const out = await standaloneString(
+      `const __r: string = "abcb".replace("b", function (m: string): string { return m + m; });`,
+    );
+    expect(out).toBe("abcb".replace("b", (m) => m + m));
+  });
+
+  it("replaceAll walks every occurrence", async () => {
+    const out = await standaloneString(
+      `const __r: string = "abcb".replaceAll("b", function (m: string): string { return "[" + m + "]"; });`,
+    );
+    expect(out).toBe("abcb".replaceAll("b", (m) => `[${m}]`));
+  });
+
+  it("the replacer receives (matched, position, string)", async () => {
+    const out = await standaloneString(`
+      const __r: string = "xxbyy".replace("b", function (m: any, off: any, s: any): string {
+        return "" + m + off + s.length;
+      });
+    `);
+    expect(out).toBe("xxbyy".replace("b", (m, off, s) => `${m}${off}${String(s).length}`));
+  });
+
+  it("an under-arity replacer sees its arguments", async () => {
+    const out = await standaloneString(`
+      function __f(): string { return "" + arguments[1]; }
+      const __r: string = "xxbyy".replace("b", __f);
+    `);
+    expect(out).toBe("xx2yy");
+  });
+
+  it("numeric replacement is ToString-ed (was invalid Wasm)", async () => {
+    const out = await standaloneString(`const __r: string = "abc".replace("b", 1 as any);`);
+    expect(out).toBe("a1c");
+  });
+
+  it("non-string search value is ToString-ed", async () => {
+    const out = await standaloneString(`const __r: string = "a1b".replace(1 as any, "X");`);
+    expect(out).toBe("aXb");
+  });
+
+  it("a search string that is absent leaves the subject untouched", async () => {
+    const out = await standaloneString(`const __r: string = "abc".replace("z", function (): string { return "Q"; });`);
+    expect(out).toBe("abc");
+  });
+
+  it("an empty search string terminates (matches once at 0)", async () => {
+    const out = await standaloneString(`const __r: string = "ab".replaceAll("", function (): string { return "-"; });`);
+    expect(out).toBe("ab".replaceAll("", () => "-"));
+  });
+
+  it("string search + string replacement is unchanged", async () => {
+    const out = await standaloneString(`const __r: string = "abc".replace("b", "Z");`);
+    expect(out).toBe("aZc");
+  });
+});
+
+// (#4224) The replacement-value gate is ASYMMETRIC with the search-value one,
+// and both halves matter. A type carrying a call signature already classifies as
+// `function`, so an `object` fact PROVES `IsCallable` is false — enough for
+// §22.2.6.11 step 2. A SEARCH value gets no such proof: `@@replace` can be
+// installed after the type is fixed, so an object search value must keep
+// reaching the #1474 refusal rather than silently taking the ToString path.
+describe("#4224 standalone replace — replacement/search gate asymmetry", () => {
+  it("an object replacement runs its own toString exactly once", async () => {
+    const out = await standaloneString(`
+      let calls = 0;
+      const replaceValue = { toString: function (): string { calls += 1; return "b"; } };
+      const replaced: string = "xax".replace("a", replaceValue as any);
+      const __r: string = replaced + ":" + calls;
+    `);
+    expect(out).toBe("xbx:1");
+  });
+
+  it("an object SEARCH value still refuses (it could carry @@replace)", async () => {
+    const r = await compile(
+      `
+        const searchValue: any = {};
+        searchValue[Symbol.replace] = function (): string { return "hit"; };
+        export function f(): string { return "".replace(searchValue, "x"); }
+      `,
+      { fileName: "issue-4224-cstm.ts", target: "standalone" },
+    );
+    expect(r.success).toBe(false);
+    expect(r.errors.some((e) => /#1474/.test(e.message))).toBe(true);
+  });
+});

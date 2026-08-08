@@ -465,3 +465,146 @@ export function tryCompileStandaloneRegExpFunctionReplace(
   );
   return strType;
 }
+
+/**
+ * `String.prototype.replace(searchString, fn)` / `replaceAll` — the STRING
+ * search-value lane (§22.1.3.19 steps 3-14), standalone.
+ *
+ * Same shape as the RegExp walk above with the engine removed: `__str_indexOf`
+ * finds each occurrence instead of `__regex_search`, and the argument list is
+ * `« matched, position, string »` with no captures. The `replace` form stops
+ * after the FIRST occurrence (§22.1.3.19 step 8's single `StringIndexOf`);
+ * `replaceAll` walks them all.
+ *
+ * This lane previously had NO gate on its replacement value at all: the
+ * `__str_replace` arm in `string-ops.ts` compiled the argument straight into a
+ * `ref $AnyString` slot, so a function replacer produced `RuntimeError: illegal
+ * cast` at runtime — a green compile and a broken binary.
+ *
+ * `emitSubject`/`emitSearch` must each leave one `$AnyString` on the stack; the
+ * caller owns those coercions because it also owns whether the search value is
+ * admissible at all (§22.1.3.19 step 2's `@@replace` lookup).
+ */
+export function tryCompileStandaloneStringSearchFunctionReplace(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  replExpr: ts.Expression,
+  replaceAll: boolean,
+  emitSubject: () => void,
+  emitSearch: () => void,
+): ValType | null | undefined {
+  if (!isCallableReplacement(ctx, replExpr)) return undefined;
+  const k = loadKernel(ctx, fctx);
+  if (k === undefined) return undefined;
+  const indexOf = ctx.nativeStrHelpers.get("__str_indexOf");
+  if (indexOf === undefined) return undefined;
+
+  const strTypeIdx = ctx.nativeStrTypeIdx;
+  const strType = nativeStringType(ctx);
+
+  // Staged off-body first — see stageReplacerClosure's contract.
+  const closure = stageReplacerClosure(ctx, fctx, replExpr);
+  if (closure === undefined) return undefined;
+
+  const subjLocal = allocLocal(fctx, `__sr_subj_${fctx.locals.length}`, { kind: "ref", typeIdx: strTypeIdx });
+  emitSubject();
+  fctx.body.push({ op: "call", funcIdx: k.flatten }, { op: "local.set", index: subjLocal });
+  const searchLocal = allocLocal(fctx, `__sr_needle_${fctx.locals.length}`, { kind: "ref", typeIdx: strTypeIdx });
+  emitSearch();
+  fctx.body.push({ op: "call", funcIdx: k.flatten }, { op: "local.set", index: searchLocal });
+  for (const instr of closure.instrs) fctx.body.push(instr);
+
+  const slen = allocLocal(fctx, `__sr_slen_${fctx.locals.length}`, { kind: "i32" });
+  const nlen = allocLocal(fctx, `__sr_nlen_${fctx.locals.length}`, { kind: "i32" });
+  const pos = allocLocal(fctx, `__sr_pos_${fctx.locals.length}`, { kind: "i32" });
+  const lastEnd = allocLocal(fctx, `__sr_last_${fctx.locals.length}`, { kind: "i32" });
+  const idx = allocLocal(fctx, `__sr_idx_${fctx.locals.length}`, { kind: "i32" });
+  const result = allocLocal(fctx, `__sr_res_${fctx.locals.length}`, strType);
+  const argLocals = [0, 1, 2].map((i) => allocLocal(fctx, `__sr_arg${i}_${fctx.locals.length}`, { kind: "externref" }));
+
+  const lenOf = (local: number): Instr[] => [
+    { op: "local.get", index: local },
+    { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 },
+  ];
+  fctx.body.push(...lenOf(subjLocal), { op: "local.set", index: slen });
+  fctx.body.push(...lenOf(searchLocal), { op: "local.set", index: nlen });
+  fctx.body.push(
+    { op: "i32.const", value: 0 },
+    { op: "i32.const", value: 0 },
+    { op: "i32.const", value: 0 },
+    { op: "array.new_default", typeIdx: ctx.nativeStrDataTypeIdx },
+    { op: "struct.new", typeIdx: strTypeIdx },
+    { op: "local.set", index: result },
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: pos },
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: lastEnd },
+  );
+
+  const boxIdx = ctx.funcMap.get("__box_number");
+  const boxPosition: Instr[] =
+    boxIdx !== undefined ? [{ op: "call", funcIdx: boxIdx }] : [{ op: "drop" }, { op: "ref.null.extern" }];
+  const loopBody: Instr[] = [
+    { op: "local.get", index: pos },
+    { op: "local.get", index: slen },
+    { op: "i32.gt_s" },
+    { op: "br_if", depth: 1 },
+    // idx = __str_indexOf(subject, search, pos); stop when absent
+    { op: "local.get", index: subjLocal },
+    { op: "local.get", index: searchLocal },
+    { op: "local.get", index: pos },
+    { op: "call", funcIdx: indexOf },
+    { op: "local.tee", index: idx },
+    { op: "i32.const", value: 0 },
+    { op: "i32.lt_s" },
+    { op: "br_if", depth: 1 },
+    // « matched, position, string » — `matched` IS the search string here.
+    { op: "local.get", index: searchLocal },
+    { op: "extern.convert_any" },
+    { op: "local.set", index: argLocals[0]! },
+    { op: "local.get", index: idx },
+    { op: "f64.convert_i32_s" },
+    ...boxPosition,
+    { op: "local.set", index: argLocals[1]! },
+    { op: "local.get", index: subjLocal },
+    { op: "extern.convert_any" },
+    { op: "local.set", index: argLocals[2]! },
+    // result = result + subject[lastEnd, idx) + ToString(fn(…))
+    { op: "local.get", index: result },
+    { op: "local.get", index: subjLocal },
+    { op: "local.get", index: lastEnd },
+    { op: "local.get", index: idx },
+    { op: "call", funcIdx: k.substring },
+    { op: "call", funcIdx: k.concat },
+    ...buildReplacerCallInstrs(ctx, fctx, k, closure, argLocals),
+    { op: "call", funcIdx: k.concat },
+    { op: "local.set", index: result },
+    { op: "local.get", index: idx },
+    { op: "local.get", index: nlen },
+    { op: "i32.add" },
+    { op: "local.set", index: lastEnd },
+    ...(replaceAll ? [] : ([{ op: "br", depth: 1 }] satisfies Instr[])),
+    // An EMPTY search string matches at every position, so advance by one to
+    // terminate — the string analogue of AdvanceStringIndex.
+    { op: "local.get", index: lastEnd },
+    { op: "local.get", index: nlen },
+    { op: "i32.eqz" },
+    { op: "i32.add" },
+    { op: "local.set", index: pos },
+    { op: "br", depth: 0 },
+  ];
+  fctx.body.push({
+    op: "block",
+    blockType: { kind: "empty" },
+    body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }],
+  });
+  fctx.body.push(
+    { op: "local.get", index: result },
+    { op: "local.get", index: subjLocal },
+    { op: "local.get", index: lastEnd },
+    { op: "local.get", index: slen },
+    { op: "call", funcIdx: k.substring },
+    { op: "call", funcIdx: k.concat },
+  );
+  return strType;
+}

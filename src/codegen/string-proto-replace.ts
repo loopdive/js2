@@ -56,7 +56,43 @@ const TO_STRING_TOTAL_FACTS: ReadonlySet<TypeFact["kind"]> = new Set([
  * `isPlainToStringSearchValue` grants).
  */
 export function isPlainToStringReplacement(ctx: CodegenContext, replExpr: ts.Expression): boolean {
-  const value = stripStaticWrapper(replExpr);
+  if (isPrimitiveToStringOperand(ctx, replExpr)) return true;
+  // An ORDINARY OBJECT is admissible here even though it is not for a SEARCH
+  // value. The two gates are asymmetric on purpose: a search value's `@@replace`
+  // can be installed after its type is fixed, but callability cannot be — a
+  // type carrying a call signature already classifies as `function`
+  // (`oracle.factOfType`), so a fact of `object`/`array`/`tuple` is a PROOF that
+  // `IsCallable` is false, which is all §22.2.6.11 step 2 asks. This is what
+  // lets `"".replace("a", { toString() {…} })` run its `toString` instead of
+  // reaching a refusal.
+  const fact = ctx.oracle.typeFactOf(stripStaticWrapper(replExpr));
+  const parts = fact.kind === "union" ? fact.parts : [fact];
+  return parts.length > 0 && parts.every((part) => NON_CALLABLE_OBJECT_FACTS.has(part.kind));
+}
+
+/** Object-ish facts that are PROVABLY not callable (see above). */
+const NON_CALLABLE_OBJECT_FACTS: ReadonlySet<TypeFact["kind"]> = new Set(["object", "array", "tuple"]);
+
+/**
+ * Is `expr` a PRIMITIVE whose `ToString` is total and side-effect-free?
+ *
+ * Deliberately narrower than `isPlainToStringSearchValue` (#4016), which admits
+ * any type the checker can prove does not declare the well-known symbol. That
+ * proof is sound about the DECLARED type and blind to a member installed later:
+ *
+ *     var searchValue = {};
+ *     searchValue[Symbol.replace] = function () { … };
+ *     "".replace(searchValue, "x");   // must dispatch @@replace
+ *
+ * The checker's type for `searchValue` is `{}`, so the symbol lookup answers a
+ * confident `false`. On the `replace` lane that would turn a clean #1474
+ * refusal into a silently wrong answer, so this predicate refuses every object
+ * — a primitive cannot acquire `@@replace` after the fact.
+ */
+export function isPrimitiveToStringOperand(ctx: CodegenContext, expr: ts.Expression): boolean {
+  const value = stripStaticWrapper(expr);
+  // `null` is unambiguously the null value even though its checker type is
+  // `any` under `strictNullChecks: false`.
   if (value.kind === ts.SyntaxKind.NullKeyword) return true;
   const fact = ctx.oracle.typeFactOf(value);
   const parts = fact.kind === "union" ? fact.parts : [fact];

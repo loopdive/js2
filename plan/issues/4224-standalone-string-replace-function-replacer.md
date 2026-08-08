@@ -1,9 +1,10 @@
 ---
 id: 4224
 title: "standalone String.prototype.replace: function replacers and non-string replacement values"
-status: in-progress
+status: done
 sprint: current
 created: 2026-08-08
+completed: 2026-08-08
 priority: high
 horizon: m
 feasibility: medium
@@ -19,6 +20,16 @@ loc-budget-allow:
   # the replacement-value decision in `string-proto-replace.ts`, so the god-file
   # takes only the routing.
   - src/codegen/regexp-standalone.ts
+  # +9 lines: the STRING-lane dispatch is a 6-line delegation to
+  # `string-search-value.ts` (which owns the search-value decision) plus its
+  # comment. The `replace`/`replaceAll` arms it guards live here and nowhere
+  # else, so the guard has to sit in front of them.
+  - src/codegen/string-ops.ts
+func-budget-allow:
+  # Same +9 lines seen per-function. Splitting this 1200-line dispatcher is
+  # #3399 work, not a rider on a correctness fix; the new logic is already
+  # extracted into two satellite modules.
+  - src/codegen/string-ops.ts::compileNativeStringMethodCall
 origin: "2026-08-08 — ES5-standalone-90 WP3, from the `built-ins/String/prototype/replace` failure bucket"
 ---
 
@@ -106,15 +117,33 @@ shape).
 
 ## Measured test262 flips (standalone lane)
 
-`built-ins/String/prototype/replace`, compile_error/fail → pass:
+A/B measured by running each whole directory through `runTest262File(…, "standalone")`
+with only the four changed `src/codegen` files swapped between `origin/main` and this
+branch. **+19 pass, 0 regressions.**
 
-| test | was | now |
+| directory | base pass | after pass |
 | --- | --- | --- |
-| `S15.5.4.11_A1_T8` | compile_error | pass |
-| `S15.5.4.11_A1_T14` | compile_error | pass |
-| `S15.5.4.11_A4_T1` | compile_error | pass |
-| `S15.5.4.11_A4_T2` | compile_error | pass |
-| `S15.5.4.11_A4_T3` | compile_error | pass |
-| `S15.5.4.11_A4_T4` | compile_error | pass |
-| `S15.5.4.11_A12` | compile_error | pass |
-| `15.5.4.11-1` | compile_error | pass |
+| `built-ins/String/prototype/replace` (55 files) | 23 | 37 |
+| `built-ins/String/prototype/replaceAll` (45 files) | 10 | 15 |
+
+Newly passing:
+
+- **RegExp + function replacer** — `S15.5.4.11_A4_T1..T4` (all four read
+  `arguments` from a zero-param replacer), `S15.5.4.11_A12`, `15.5.4.11-1`.
+- **Non-callable replacement ToString** — `S15.5.4.11_A1_T7`, `_T8`, `_T14`,
+  `replaceValue-evaluation-order`.
+- **String search lane** — `S15.5.4.11_A1_T4`,
+  `cstm-replace-on-{bigint,boolean,number}-primitive`,
+  `cstm-replaceall-on-{bigint,boolean,number}-primitive`,
+  `replaceValue-call-abrupt`, `replaceValue-call-skip-no-match`.
+
+## Still failing (out of scope, unchanged)
+
+| test | why |
+| --- | --- |
+| `S15.5.4.11_A1_T1`, `_T2` | transferred `String.prototype.replace` on a `Boolean`/`Object` receiver — needs the reflective/native-proto arm (`native-proto.ts`), not the replacement gate |
+| `S15.5.4.11_A1_T5`, `_T6` | `Function("…")` replacer — runtime-eval gated |
+| `S15.5.4.11_A1_T9` | `new String(obj)` where `obj.toString` is `undefined` and `valueOf` returns `undefined` — a wrapper-coercion bug, not a replace bug |
+| `S15.5.4.11_A1_T10` | replacer returns an uninitialised `var`; the value reaches ToString as `ref.null.extern` and stringifies to `"null"` instead of `"undefined"` — an undefined-representation issue in closure returns |
+| `S15.5.4.11_A1_T11`, `_T12`, `_T13` | object search value with a THROWING `toString`; needs observable coercion ordering, and an object search value deliberately keeps the refusal (see the asymmetry note above) |
+| `cstm-replace-*`, `length`, `name`, `tostring-this-throws-*` | `@@replace` protocol dispatch / function-property reflection / runtime-eval — unrelated lanes |
