@@ -36,6 +36,7 @@ import { emitLocalTdzInit, emitTdzInit } from "./tdz.js";
 import { ensureNativeStringHelpers, flatStringType } from "../native-strings.js";
 import { compileStringBuilderInit } from "../string-builder.js";
 import { tryEmitLinearU8New } from "../linear-uint8-codegen.js";
+import { tryCompileWithScopedVarDeclaration } from "../with-var-decl.js";
 import { bindingHasMixedAssignmentCarrier } from "../analysis/mixed-assignment-carrier.js";
 import { staticConstStringValues } from "../analysis/static-string-values.js";
 import { staticIntegerRange } from "../analysis/static-numeric-range.js";
@@ -1328,6 +1329,16 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     }
 
     const name = decl.name.text;
+
+    // (#4231 RC-A) Inside a `with` body a `var` does NOT shadow the object
+    // environment record: the declaration hoists to the function environment but
+    // its initializer is an ordinary assignment resolved through the scope
+    // chain, where §14.11.2's object environment is consulted first. When the
+    // `with` target owns this name the store belongs to the OBJECT and the
+    // hoisted local must stay `undefined`, so this hook takes the declaration
+    // entirely. No-op outside a `with` (and for lexical declarations, which do
+    // shadow).
+    if (tryCompileWithScopedVarDeclaration(ctx, fctx, stmt, decl)) continue;
 
     // #1690b: a `var`/`let`/`const` declaration inside a function body always
     // introduces a function-local binding (ECMA-262 §10.2.10 for `var`;
