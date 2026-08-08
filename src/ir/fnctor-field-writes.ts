@@ -60,6 +60,109 @@ interface ReceiverAttribution {
   readonly viaThis: boolean;
 }
 
+// ── (#743 §4) Builtin-instance receiver carve-out ─────────────────────────────
+//
+// `var err = new SyntaxError(msg); err.pos = pos;` is an `"all"`-attributed
+// write under the receiver taxonomy, and that single write drags EVERY tracked
+// owner's `pos` fact to DYNAMIC (acorn: `pp$4.raise` pins `Parser.pos` and
+// `RegExpValidationState.pos` alike). The receiver provably holds a host
+// builtin's construction result, which predates the module and cannot be an
+// instance of a tracked fnctor — so the write can be attributed NOWHERE.
+//
+// Trust boundary, stated honestly (per the #743 §4 decision record): in-module
+// this is a proof; cross-module, `globalThis.SyntaxError = TrackedCtor` before
+// calling in would defeat it. That attack lands in the damage class the family
+// already accepts at the export boundary (`fnctor-method-edges.ts` module
+// header): the consumer is f64-only, so a violating write coerces through the
+// numeric unbox path — never a reinterpreted reference.
+
+/** Identifier symbols that are the target of ANY in-file assignment form. */
+const assignedSymbolsCache = new WeakMap<ts.SourceFile, ReadonlySet<ts.Symbol>>();
+
+function collectAssignedIdentifiers(state: AnalysisState, target: ts.Node, out: Set<ts.Symbol>): void {
+  const t = ts.isExpression(target) ? unwrap(target) : target;
+  if (ts.isIdentifier(t)) {
+    const sym = state.checker.getSymbolAtLocation(t);
+    if (sym !== undefined) out.add(sym);
+    return;
+  }
+  // Destructuring targets: every nested identifier is written.
+  if (ts.isObjectLiteralExpression(t) || ts.isArrayLiteralExpression(t) || ts.isSpreadElement(t)) {
+    forEachChild(t, (child) => {
+      collectAssignedIdentifiers(state, child, out);
+    });
+    return;
+  }
+  if (ts.isPropertyAssignment(t)) collectAssignedIdentifiers(state, t.initializer, out);
+  if (ts.isShorthandPropertyAssignment(t)) {
+    // `({ err } = p)` — the name is both property and assignment target; the
+    // plain symbol is the PROPERTY's, the written binding is the value symbol.
+    const sym = state.checker.getShorthandAssignmentValueSymbol(t);
+    if (sym != null) out.add(sym);
+  }
+}
+
+function assignedIdentifierSymbols(state: AnalysisState): ReadonlySet<ts.Symbol> {
+  const cached = assignedSymbolsCache.get(state.sourceFile);
+  if (cached) return cached;
+  const out = new Set<ts.Symbol>();
+  const scan = (n: ts.Node): void => {
+    if (ts.isBinaryExpression(n)) {
+      const op = n.operatorToken.kind;
+      const isAssignOp =
+        op === ts.SyntaxKind.EqualsToken ||
+        op === ts.SyntaxKind.PlusEqualsToken ||
+        NUMERIC_COMPOUND.has(op) ||
+        LOGICAL_COMPOUND.has(op);
+      if (isAssignOp) collectAssignedIdentifiers(state, n.left, out);
+    }
+    if (ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) {
+      if (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken) {
+        collectAssignedIdentifiers(state, n.operand, out);
+      }
+    }
+    if ((ts.isForInStatement(n) || ts.isForOfStatement(n)) && !ts.isVariableDeclarationList(n.initializer)) {
+      collectAssignedIdentifiers(state, n.initializer, out);
+    }
+    forEachChild(n, scan);
+  };
+  scan(state.sourceFile);
+  assignedSymbolsCache.set(state.sourceFile, out);
+  return out;
+}
+
+/**
+ * The receiver identifier provably holds a host-builtin construction result:
+ * a single in-file `var`/`let`/`const` declaration whose initializer is
+ * `new B(…)` where `B` resolves entirely out-of-file (or not at all — an
+ * undeclared global cannot be a tracked in-file ctor), and the binding is
+ * never reassigned by any in-file assignment form. Everything conservative:
+ * any miss keeps the `"all"` over-approximation.
+ */
+function isBuiltinInstanceReceiver(state: AnalysisState, b: ts.Expression): boolean {
+  if (!ts.isIdentifier(b)) return false;
+  const sym = state.checker.getSymbolAtLocation(b);
+  if (sym === undefined) return false;
+  const decls = sym.getDeclarations() ?? [];
+  if (decls.length !== 1) return false;
+  const decl = decls[0]!;
+  if (!ts.isVariableDeclaration(decl) || decl.getSourceFile() !== state.sourceFile) return false;
+  if (decl.initializer === undefined) return false;
+  const init = unwrap(decl.initializer);
+  if (!ts.isNewExpression(init)) return false;
+  const ctor = unwrap(init.expression);
+  if (!ts.isIdentifier(ctor)) return false;
+  const ctorSym = state.checker.getSymbolAtLocation(ctor);
+  // `new F(…)` where F is a plain in-file function can return a TRACKED
+  // instance (ctor-return-object semantics), so B must be OUT-OF-FILE — not
+  // merely untracked. An unresolved global has no in-file declaration by
+  // definition; a shadowing in-file declaration would be the resolved symbol.
+  for (const cd of ctorSym?.getDeclarations() ?? []) {
+    if (cd.getSourceFile() === state.sourceFile) return false;
+  }
+  return !assignedIdentifierSymbols(state).has(sym);
+}
+
 /**
  * Which field space a write-ish operation on `base` addresses.
  * `undefined` = attribute NOWHERE (a static method's `this` is the constructor
@@ -78,7 +181,10 @@ function classifyFieldReceiver(
     // write — `node.end = pos` inside `finishNodeAt` is the load-bearing case,
     // and name-based attribution is what keeps its f64 alive instead of
     // poisoning the name.
-    return spaceOfBase(state, b) !== undefined ? undefined : { owner: "all", attribution: "all", viaThis: false };
+    if (spaceOfBase(state, b) !== undefined) return undefined;
+    // (#743 §4) A write onto a proven builtin instance reaches no tracked slot.
+    if (isBuiltinInstanceReceiver(state, b)) return undefined;
+    return { owner: "all", attribution: "all", viaThis: false };
   }
   const binder = enclosingThisBinder(site);
   const untracked: ReceiverAttribution = { owner: "all", attribution: "all", viaThis: true };

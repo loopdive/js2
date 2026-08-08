@@ -6,6 +6,12 @@
 
 import { ts } from "../ts-api.js";
 import type { IrUnitId } from "./identity.js";
+import {
+  fieldFactTraceEnabled,
+  recordFieldFactContribution,
+  recordFieldFactFinal,
+  recordFieldFactPlusRhs,
+} from "./fnctor-field-fact-trace.js";
 import { type AnalysisState, F64, type FieldWrite, NO_FIELDS, STRING, unwrap } from "./fnctor-graph-model.js";
 import {
   _propagationCore as core,
@@ -184,6 +190,7 @@ function fieldContribution(fx: FixpointCtx, w: FieldWrite, owner: IrUnitId, name
   const { scope, thisCtx } = writeContext(fx, w);
   const rhs = evalValueExpr(fx, w.carrier, scope, thisCtx);
   if (w.kind !== "plus-assign") return rhs;
+  if (fieldFactTraceEnabled()) recordFieldFactPlusRhs(fx.state, owner, name, w, rhs);
   return plusJoin(fx.fieldFacts.get(owner)?.get(name) ?? core.UNKNOWN, rhs);
 }
 
@@ -210,6 +217,7 @@ export function buildWriteIndex(state: AnalysisState): Map<IrUnitId, Map<string,
 }
 
 export function runFieldPass(fx: FixpointCtx, writeIndex: Map<IrUnitId, Map<string, FieldWrite[]>>): boolean {
+  const tracing = fieldFactTraceEnabled();
   let changed = false;
   for (const [owner, perName] of writeIndex) {
     const node = fx.state.nodes.get(owner);
@@ -218,9 +226,14 @@ export function runFieldPass(fx: FixpointCtx, writeIndex: Map<IrUnitId, Map<stri
     for (const [name, writes] of perName) {
       let next: LatticeType = core.UNKNOWN;
       for (const w of writes) {
-        next = core.join(next, fieldContribution(fx, w, owner, name));
-        if (next.kind === "dynamic") break;
+        const contribution = fieldContribution(fx, w, owner, name);
+        if (tracing) recordFieldFactContribution(fx.state, owner, name, w, contribution);
+        next = core.join(next, contribution);
+        // Tracing keeps evaluating past the first DYNAMIC so every pin is
+        // visible; the join is already at top, so the result is identical.
+        if (next.kind === "dynamic" && !tracing) break;
       }
+      if (tracing) recordFieldFactFinal(fx.state, owner, name, next);
       if (!core.typesEqual(facts.get(name) ?? core.UNKNOWN, next)) {
         facts.set(name, next);
         changed = true;

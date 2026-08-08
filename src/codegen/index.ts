@@ -236,7 +236,9 @@ import {
   fillExternIsArray,
   fillProxyDispatch,
   unshiftExternGetProtoCacheArm,
+  unshiftExternGetWrapperCtorArm,
 } from "./object-runtime.js";
+import { moduleReadsConstructorProp } from "./wrapper-constructor-carrier.js"; // (#4223)
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { fillInstanceTombstones } from "./instance-tombstones.js"; // (#4098 G1 s1) per-instance own-property deletability
 import { fillVecPropHelpers } from "./vec-props.js"; // (#3537) array ($Vec) expando side table
@@ -3524,6 +3526,11 @@ export function generateModule(
   // deleted from). Only standalone reads the names, and collecting them forfeits
   // the boolean's short-circuit — worth +3,847 on the #3437 harness budget — so
   // host mode asks for the boolean alone and keeps main's exact traversal.
+  // (#4223) Demand gate for the primitive-wrapper `.constructor` carriers. Set
+  // BEFORE anything can call `ensureObjectRuntime` (which is where the mint
+  // hangs), and only for standalone — the gc/host lane keeps its genuine
+  // `Object_get_constructor` read.
+  ctx.wrapperCtorCarrierDemanded = ctx.standalone === true && moduleReadsConstructorProp(ast.sourceFile);
   const memberDeletes = scanModuleMemberDeletes(ast.sourceFile, ctx.standalone === true);
   ctx.moduleUsesDelete = memberDeletes.any;
   ctx.memberDeleteReceiverNames = memberDeletes.receiverNames;
@@ -4457,6 +4464,9 @@ export function generateModule(
 
     // (#3673 round 9b) LAST __extern_get body fill: prepend the per-key
     // prototype-lookup cache hit arm ahead of the ladder arms unshifted above.
+    // (#4223) BEFORE the cache arm (which must stay last): answer
+    // `<wrapper>.constructor` from the builtin ctor carrier.
+    unshiftExternGetWrapperCtorArm(ctx);
     unshiftExternGetProtoCacheArm(ctx);
 
     // (#1904) Fill the standalone native Array.isArray predicate after all
@@ -6234,6 +6244,10 @@ export function generateMultiModule(
   const ctx = createCodegenContext(mod, multiAst.checker, options, programAbiSession, irPlanningIdentityContext);
   // Multi-file compilation is linked through import/export module records.
   ctx.sourceIsModule = true;
+  // (#4223) Same demand gate as the single-source path — any source file that
+  // reads a `constructor` property arms the wrapper carriers.
+  ctx.wrapperCtorCarrierDemanded =
+    ctx.standalone === true && multiAst.sourceFiles.some((sf) => moduleReadsConstructorProp(sf));
   try {
     // WASI target: register linear memory, bump pointer global, and WASI imports
     if (ctx.wasi) {
@@ -6717,6 +6731,9 @@ export function generateMultiModule(
 
     // (#3673 round 9b) LAST __extern_get body fill: prepend the per-key
     // prototype-lookup cache hit arm ahead of the ladder arms unshifted above.
+    // (#4223) BEFORE the cache arm (which must stay last): answer
+    // `<wrapper>.constructor` from the builtin ctor carrier.
+    unshiftExternGetWrapperCtorArm(ctx);
     unshiftExternGetProtoCacheArm(ctx);
     fillRuntimeEvalCallablePropertyGetArm(ctx);
 
