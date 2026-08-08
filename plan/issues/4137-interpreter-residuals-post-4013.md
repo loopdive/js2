@@ -36,6 +36,12 @@ origin: "2026-08-03 delta /harvest-errors, baselines 2090e7bfd342 (gitHash b65d2
 loc-budget-allow:
   - src/interp/emitter.ts
   - src/codegen/expressions/operator-assignment.ts
+# func-budget: compileCompoundAssignment grew +6 (504 > 498) — the A2 gate
+# widening plus its load-bearing rationale comment (see the loc-budget note
+# above; the original comment asserted the opposite of the truth and is what
+# kept the NaN-rendering bug alive). Same justification, per-function grant.
+func-budget-allow:
+  - src/codegen/expressions/operator-assignment.ts::compileCompoundAssignment
 ---
 
 # #4137 — the residual tail of the newly-linked standalone interpreter
