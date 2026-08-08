@@ -144,6 +144,19 @@ qjs_handle QJS_EXPORT(qjs_new_f64)(JSContext *ctx, double d) {
   return box(JS_NewFloat64(ctx, d));
 }
 
+/* #4238 — the immediate constructors the eval adapter needs to push values INTO
+ * QuickJS. `qjs_new_undefined` takes no context on purpose: JS_UNDEFINED is a
+ * pure immediate, so there is nothing to allocate against a runtime. */
+qjs_handle QJS_EXPORT(qjs_new_undefined)(void) { return box(JS_UNDEFINED); }
+
+/* #4238 — build a QuickJS string from `len` UTF-8 bytes at `buf` in THIS heap
+ * (the peer authors them via qjs_malloc_raw + byte stores). Not NUL-terminated
+ * by contract, hence the explicit length. Returns an owned handle. */
+qjs_handle QJS_EXPORT(qjs_new_string_len)(JSContext *ctx, const char *buf,
+                                          uint32_t len) {
+  return box(JS_NewStringLen(ctx, buf, (size_t)len));
+}
+
 qjs_handle QJS_EXPORT(qjs_new_object)(JSContext *ctx) {
   return box(JS_NewObject(ctx));
 }
