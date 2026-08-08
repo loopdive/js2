@@ -1,10 +1,10 @@
 ---
 id: 2200
 title: "Annex B B.3.3 block-level function declaration hoisting — outer binding created/initialized incorrectly (~186 test262 fails)"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-06-19
-updated: 2026-06-19
+updated: 2026-08-08
 phase1: done
 phase2_rework: 2552
 has_impl_plan: true
@@ -16,6 +16,16 @@ area: codegen, scoping
 language_feature: block-scoped-functions
 goal: es5
 related: [1642]
+loc-budget-allow:
+  # The `installLoopCtx` slot-mutation helper (B1) and the catch-ObjectPattern
+  # minimal slice (B2 layer 2) both land in the interpreter emitter. The spec's
+  # arithmetic assumed the 7-site idiom collapse (-15) would cover the helper,
+  # but the helper plus its load-bearing "never index-store a reused slot"
+  # rationale is 25 lines on its own. Both changes are subsystem-local: this
+  # file IS the interpreter's emit driver, there is no separate module the
+  # control-stack install/catch-lowering could move to without splitting the
+  # scope stack from its only consumer.
+  - src/interp/emitter.ts
 test262_bucket: annexb-block-fn-hoisting
 test262_count: 186
 es_edition: annexb
@@ -677,3 +687,506 @@ The masked half is blocked earlier by #3633 (module bindings invisible to
 
 **Consequence for sizing:** the ES5 `eval` programme is not worth ~484 tests to
 eval work. It is worth ~104 to eval work and ~380 to this issue plus #3633.
+
+---
+
+## Implementation Plan — interpreter-tier eval-code slice (arch, 2026-08-08)
+
+**Scope guard (load-bearing, #2552):** every change below is confined to the
+INTERPRETER tier (`src/interp/`). No AOT hot-path rework — the last AOT B.3.3
+attempt (#1769) cost **−1180** net and was reverted. Where a failure's root
+cause is AOT-side, it is documented as a follow-up here, NOT specced for
+implementation.
+
+### 0. Where the lever actually stands (measured 2026-08-08 — the task framing was stale)
+
+The B.3.3.3 core (init / update / cancellation / function-in-if, direct and
+indirect) is **already implemented and passing on current main**. The framing
+numbers ("473/816, annexB 469-led") predate #4137's fixes (WeakMap-miss +
+catch-parameter Environment Record, +40), #4182 (+16 in eval-code via live
+global block-fn bindings), and the acorn/harness work.
+
+Authoritative baseline: `test262-standalone-current.jsonl` in
+`loopdive/js2wasm-baselines`, rows stamped **2026-08-08 06:14Z**, fetched
+fresh (the default host-lane `test262-current.jsonl` is the WRONG lane for
+this issue — it shows 296 fails because the host `__extern_eval` splice bails
+on `funcDeclNeedsDynamicEvalPath`; do not diagnose from it):
+
+| population | pass |
+| --- | --- |
+| `language/eval-code/` + `annexB/language/eval-code/` (816) | **745** |
+| `annexB/language/eval-code/` (469) | **442** |
+
+E1 (node, pinned-acorn, `runScript`) probes confirm the semantics core:
+`init`/`update`/`skip`(lexical cancel)/`if-arm`/`if-else-arm`/`switch`/
+`typeof-init`/`if-false`(never-entered)/`no-skip-try`(simple catch param
+exempt)/`two-blocks`(last-wins) all produce spec-correct values.
+
+### (a) Baseline failure buckets — 27 files, three buckets, ZERO hangs
+
+| bucket | count | files (examples) | error |
+| --- | ---: | --- | --- |
+| **B1 update** — second declaration in a `switch` after a popped same-name scope | **2** | `direct/func-switch-case-eval-func-existing-block-fn-update.js`, `direct/func-switch-dflt-eval-func-existing-block-fn-update.js` | `Expected SameValue(«"first declaration"», «"second declaration"»)` |
+| **B2 cancellation** — destructuring `catch ({f})` family | **24** | all `*-skip-early-err-try.js` (16 direct + 8 indirect), e.g. `direct/func-block-decl-eval-func-skip-early-err-try.js`, `indirect/global-switch-case-eval-global-skip-early-err-try.js` | `SyntaxError: NaN` (compiled-acorn raises at parse — #4194) |
+| **B3 singleton** — `$262.evalScript` global-lexical persistence | **1** | `direct/script-decl-lex-no-collision.js` | `Expected SameValue(«function () { [native code] }», «1»)` |
+
+**Hang family (c-answer): retired.** Zero timeout rows in the annexB
+eval-code standalone baseline; the old ~100-file function-in-if hang family
+(#2928 E6 finding 2) does not reproduce — if-arm forms are measured correct
+(E1 probe + real-file `skip-early-err-switch` pass). The 4 `compile_timeout`
+rows visible for this directory are in the HOST-lane jsonl only. The single
+standalone eval-code timeout (`language/eval-code/indirect/var-env-var-strict.js`,
+strict-rerun) is not annexB and not this issue.
+
+Instrument note: per-file reproduction used the faithful worker path —
+`CompilerPool(1, "unified")` + `assembleOriginalHarness` +
+`runTest(src, { originalHarness: true, target: "standalone", … }, 30_000)` —
+after `TEST262_FULL_RUNTIME_EVAL=1` provider build. Validated against the
+published baseline on 13 files: 5 fail-repros exact-match, 8 pass controls.
+**Trap:** bare `runTest` without `originalHarness: true` yields
+`compile_error: no test export` / divergent verdicts on harness files — do
+not diagnose from it.
+
+### (b1) B1 root cause — control-stack slot reuse is a silent no-op in the provider-compiled emitter
+
+Evidence chain (every step measured):
+
+1. E1 node (`runScript`) and node-level `executeDirectEval` (with sidecar
+   cells) both produce "second declaration" — **the TS logic is correct**.
+2. Standalone bisect through the real provider (synthesized test262-format
+   cases, faithful worker path):
+
+   | case (eval string shape) | verdict |
+   | --- | --- |
+   | A `{ function f(){first} }` then `switch … case: function f(){second}` | **FAIL** (got first) |
+   | B plain switch | pass |
+   | C block then block, same name | pass |
+   | D popped block binds *other* name `q`, then switch | pass |
+   | E popped `{ let f }`, then switch fn `f` | **FAIL** (updated stays undefined — wrongly cancelled) |
+   | F block then if-arm decl | pass |
+   | G switch then switch | pass |
+   | H popped var-only block (no lexical env) then switch | pass |
+   | I popped `{ let q }`, then switch with **`break`** | **FAIL** — `interp/emitter: unsupported in Phase 1: break with no matching target` (emit-time!) |
+   | J switch with break, no popped scope | pass |
+
+3. Mechanism: `FunctionEmitter` tracks active scopes in the class-field
+   vector `loops` with a logical top pointer `loopTop` (physical slots are
+   never popped; they are REUSED via
+   `if (this.loopTop < this.loops.length) this.loops[this.loopTop] = ctx; else this.loops.push(ctx)`).
+   Under the **provider self-compile** the index-store branch is a silent
+   no-op: the stale popped scope stays visible at its slot (A: stale
+   `{label: LEXICAL_SCOPE_LABEL, continues:["f"]}` makes
+   `cancelsAnnexBVarBinding("f")` return true during `emitSwitch`'s
+   eligibility scan → `annexBFunctionNames` stays empty → the B.3.3.3.b
+   `SetMutableBinding` (`BUILTIN_ASSIGN_OUTER_NAME`) is never emitted), and
+   the NEW ctx is invisible (I: `findLoop` cannot see the switch's break
+   target → emit-time `UnsupportedNodeError`). Case I proves this is a
+   **latent bug beyond the 2 annexB files**: any `break`/`continue`/labeled
+   target whose ctx lands in a reused slot inside eval'd / `Function`-built
+   code is broken.
+4. Why `emitBlock` shapes don't trip it: `emitBlock` computes annexB
+   eligibility BEFORE pushing anything (loopTop still excludes the stale
+   slot); `emitSwitch` computes eligibility AFTER `pushLoop(null,false)`
+   (the break-target ctx) — the first slot-reuse in the sequence.
+5. **Caveat for the follow-up compiler issue:** a minimal ordinary-compile
+   repro of the idiom (small class, `items: Ctx[]` field, push/pop/reuse)
+   does NOT reproduce — `ret 0`, correct. The defect is specific to the
+   provider-pipeline compile of the emitter (`build-runtime-eval-provider.mjs`
+   concatenates `src/interp/*` and compiles that). Whoever takes the compiler
+   issue must A/B against the provider build, not a toy module.
+
+### (b1) B1 fix — in-place slot mutation, one helper, seven call sites (VERIFIED)
+
+**File: `src/interp/emitter.ts`** (all line numbers = current main):
+
+Add one private helper (insert immediately before `pushLoop`, ~line 1178;
+keep the file's self-compile-safe idioms — plain method, indexed access, no
+destructuring, no multiline typed arrows):
+
+```ts
+/** Install a loop/scope context at the top of the control stack.
+ * Physical slots are never popped, only logically released via `loopTop`.
+ * Slot REUSE must not use an index-store (`this.loops[i] = ctx`) — that
+ * store is a silent no-op under the provider self-compile (#<new-issue>),
+ * leaving the stale popped scope visible to `scopeBindsName`/`findLoop`.
+ * Instead, mutate the resident slot object's fields in place and return
+ * THE SLOT (callers patch `breaks` markers through the returned ctx, so
+ * returning a detached object would break break/continue patching). */
+private installLoopCtx(ctx: LoopCtx): LoopCtx {
+  if (this.loopTop < this.loops.length) {
+    const slot = this.loops[this.loopTop]!;
+    slot.label = ctx.label;
+    slot.breaks = ctx.breaks;
+    slot.continues = ctx.continues;
+    slot.isLoop = ctx.isLoop;
+    this.loopTop += 1;
+    return slot;
+  }
+  this.loops.push(ctx);
+  this.loopTop += 1;
+  return ctx;
+}
+```
+
+Replace the 3-line idiom at ALL SEVEN sites with `this.installLoopCtx(X);`:
+
+| site | lines | ctx var |
+| --- | --- | --- |
+| `emitBlock` | 536–538 | `scopeCtx` |
+| `emitWith` | 576–578 | `scopeCtx` |
+| `emitFor` (lexical init) | 770–772 | `scopeCtx` |
+| `emitForInOf` (lexical binding) | 855–857 | `scopeCtx` |
+| `emitSwitch` (CaseBlock env) | 962–964 | `scopeCtx` |
+| `emitTry` (catch scope) | 1070–1072 | `catchScope` |
+| `pushLoop` | 1187–1189 | `ctx` — **must become `return this.installLoopCtx(ctx);`** |
+
+Why in-place field mutation is safe where the index-store is not (argue this
+in the PR, it is the design's crux): (i) array-element READS demonstrably
+return the canonical resident object (the corrupted scans read the stale
+object — that IS an element read); (ii) object field writes are pervasive and
+reliable under self-compile (e.g. `emitConditionalStatement` builds synthetic
+nodes by field assignment and the if-arm forms pass standalone); (iii) no
+caller holds a popped ctx after `popLoop` — all `patchTargetMarker` calls on
+a ctx complete before the next push (audited: emitWhile/DoWhile/For/ForInOf/
+Switch/Labeled all patch then pop within the same emit function).
+
+**Verified A/B (2026-08-08, this worktree, patch applied → provider rebuilt →
+reverted):** cases A, E, I flip to pass; B/C/D/F/G/H/J stay pass; real files
+`func-switch-case-…` and `func-switch-dflt-…-existing-block-fn-update.js`
+flip to **pass**; 8 real-file controls (block-decl existing-block-fn-update,
+switch-case update/init, indirect switch-case existing-block-fn-update +
+update, no-skip-try, skip-early-err-switch, switch-case-decl-nostrict) all
+stay pass. E1 probe matrix unchanged. `tsc --noEmit` clean.
+
+Wasm IR: none — the fix changes which bytecode the emitter emits only in the
+previously-corrupted cases (the missing `BUILTIN_ASSIGN_OUTER_NAME` sequence
+reappears); no new opcodes, no compiler change.
+
+### (b2) B2 — the 24 `skip-early-err-try`: interpreter layers 2+3 (specced), AOT layer 1 (prerequisite, NOT here)
+
+Shape: eval'd `try { throw {}; } catch ({ f }) {{ function f() {} }}` with
+asserts inside the eval string. Three independent layers (per #4194/W14, all
+still true on current main — re-verified):
+
+- **Layer 1 (AOT, #4194 — OUT of scope here):** standalone instances have no
+  expando substrate, so compiled-acorn's `copyNode` (`for (var prop in node)`)
+  returns a blank node and the parser RAISES on object-pattern shorthand —
+  the `SyntaxError: NaN` seen today. Until #4194 lands, interpreter-only work
+  flips **zero** of the 24. Do not count them in this PR's expected delta and
+  do not reimplement #4194 in `src/interp`.
+- **Layer 2 (interpreter, specced):** `emitTry` (~line 1052–1055) throws
+  `UnsupportedNodeError("catch destructuring (ObjectPattern)")`. Implement a
+  **minimal slice**: `ObjectPattern` CatchParameter with non-computed keys
+  and `Identifier` values (covers shorthand `{ f }` and `{ a: b }` — the only
+  shapes in the 24). Keep the refusal for defaults/rest/nesting/ArrayPattern.
+  Lowering, replacing the `s.handler.param.type !== "Identifier"` throw:
+  1. Collect `boundNames` + `keyNames` by walking `param.properties`
+     (`prop.computed` → refuse; `prop.value.type !== "Identifier"` → refuse;
+     bind `prop.value.name`, read key `prop.key.name`).
+  2. Push the lexical env with `boundNames` — **label
+     `LEXICAL_SCOPE_LABEL`, NOT `SIMPLE_CATCH_SCOPE_LABEL`** (that IS layer
+     3: B.3.5 exempts only `CatchParameter: BindingIdentifier`; a
+     destructuring parameter must CANCEL B.3.3's synthetic var, and the plain
+     label makes `cancelsAnnexBVarBinding` count it with zero extra code).
+  3. For each i: `Ldar handlerReg` → `GetProp keyNames[i]` →
+     `initializeName(boundNames[i])` (TDZ cells, so initialize not store —
+     mirror the existing simple-param `initializeName` at 1075–1076).
+- **Layer 3b (collectors — REQUIRED with layer 2, currently unreachable):**
+  the plan/hoist collectors descend into catch bodies ignoring the parameter
+  entirely, which is correct ONLY for the exempt simple param. Once layer 2
+  makes destructuring reachable, the eligibility side must cancel too:
+  - `src/interp/eval-environment.ts`, `collectNestedVarDeclarations`
+    TryStatement arm (~202–207): when `statement.handler.param` exists and is
+    NOT an `Identifier`, append its bound names to `lexicalAncestors` for the
+    `handler.body` descent (→ the name never enters `blockFunctionNames`, so
+    `preparePersistentEvalBindings`/`prepareEvalEnvironment` create no
+    synthetic var cell — B.3.3.3 "would produce an early error" satisfied).
+  - `src/interp/emitter.ts`, `collectNestedVarHoist` TryStatement arm
+    (~370–373): same append for the handler descent (keeps function-body
+    `hoistedVars` and script preflight consistent).
+  - For a SIMPLE `Identifier` param, keep NOT appending — that is the B.3.5
+    exemption and `*-no-skip-try` (passing today) is the regression control.
+
+E1 acceptance for layers 2+3 (node-acorn parses the shorthand fine, so this
+is testable NOW, before #4194): `before = typeof f; try { throw {}; } catch
+({ f }) {{ function f() {} }} after = typeof f;` → both `"undefined"`, and a
+bare `f` read after → ReferenceError. Control: same with `catch (f)` →
+`after === "function"` (unchanged). Add these to `tests/interp/` (E1 lane).
+
+### (b3) B3 singleton — defer, documented follow-up (cross-boundary)
+
+`direct/script-decl-lex-no-collision.js`: `eval('if (true) { function
+test262Fn() {} }')` then `$262.evalScript('let test262Fn = 1;')`, assert
+(AOT-side) `test262Fn === 1`. Two gaps compound: (1) `runScript`/evalScript
+puts script-level lexical declarations in a throwaway declarative env
+(`prepareEvalEnvironment` → `declarativeWithBindings(...)`, discarded after
+the run) instead of persisting them in the realm's canonical global lexical
+cells (`RUNTIME_EVAL_GLOBAL_LEXICAL_CELLS_PROPERTY` carrier, the #4182 seam);
+(2) even persisted, the ASSERTING READ is compiled AOT and resolves the
+global-object property, not the runtime lexical cell — an AOT read-path
+change, out of interpreter scope (#2552 guard). 1 file; matches W14's
+"remaining 9 are `$262.evalScript` interpreter-side" family on the
+global-code lever. File as its own follow-up issue; do not chase here.
+
+### (d) Edge cases (verified where marked)
+
+- **Strict eval gets NONE of this** — annexB is gated on `!this.strictMode`
+  at all three emitter sites (511, 945, 291) and strict eval takes the
+  private varEnv path (`prepareEvalEnvironment` 612–617). The B1 fix and B2
+  layers change nothing inside those gates; the `skip-early-err` templates
+  are `noStrict`-flagged so the strict rerun never runs them.
+- **Indirect vs direct**: both route through the same emitter → the B1 fix
+  covers both (indirect controls verified). The sidecar
+  (`executeDirectEval` cells) is untouched.
+- **Nested blocks / redeclaration across sibling scopes**: last-executed-wins
+  via repeated `SetMutableBinding` — verified (C, G, two-blocks).
+- **Never-entered block** (`if(false){…}`): binding stays undefined —
+  verified (if-false probe).
+- **Simple catch param** must remain B.3.5-exempt (`SIMPLE_CATCH_SCOPE_LABEL`
+  split, #4137) — `*-no-skip-try` is the canary.
+- **installLoopCtx must overwrite ALL FOUR fields** — a partial write leaves
+  `label`/`continues` from the popped scope and reproduces the bug shape; and
+  `pushLoop` must return the SLOT object (loop emitters patch
+  `ctx.breaks[1]/[2]` through the returned reference) — case I is the
+  regression test for getting this wrong.
+- **E1 cannot see B1** — the defect only exists in the provider-compiled
+  emitter. Any regression test for B1 must run the standalone lane (lever run
+  or worker-path probe); node-lane `tests/interp` tests are necessary but not
+  sufficient.
+
+### (e) Verification — commands and expected counts
+
+Build order (NOT optional; the provider cache key folds in `src/interp`
+sources — rebuild after EVERY interp change):
+
+```bash
+./node_modules/.bin/esbuild src/index.ts  --bundle --platform=node --format=esm \
+  --outfile=scripts/compiler-bundle.mjs --external:typescript --external:binaryen
+./node_modules/.bin/esbuild src/runtime.ts --bundle --platform=node --format=esm \
+  --outfile=scripts/runtime-bundle.mjs  --external:typescript --external:binaryen
+NODE_OPTIONS=--max-old-space-size=3072 node scripts/build-runtime-eval-provider.mjs
+```
+
+Lever run (covers `direct/` AND the `indirect/` no-regression slice — the
+filter includes both):
+
+```bash
+TEST262_PATH_FILTER=annexB/language/eval-code/ TEST262_TARGET=standalone \
+TEST262_FULL_RUNTIME_EVAL=1 COMPILER_POOL_SIZE=1 TEST262_WORKERS=1 \
+TEST262_REPORTER=dot pnpm run test:262 -- --official-scope-only
+```
+
+Expected: **442 → 444 of 469** (B1's two files; measured, not projected).
+The 24 `skip-early-err-try` stay `SyntaxError: NaN` until #4194 lands (then
+expected → 468/469 with layers 2+3 in place); the singleton stays. Indirect
+slice: 159/160 → 159/160 (its only failures are in the 24). Watch for BONUS
+flips outside annexB from the break/continue corollary (case I class) in
+`language/eval-code/` and `built-ins/eval` — report them, they are upside.
+Also run the E1 differential harness (`npm test -- tests/interp/`) — must be
+flat.
+
+### (f) Risks and collisions
+
+- **#4137 (in-progress, `ttraenkler/L3-annexb-hoisting`) owns
+  `src/interp/emitter.ts` + `eval-environment.ts` edits** and this spec's B1
+  rewrites the `emitTry` catch-scope push it added. Run
+  `node scripts/pre-dispatch-gate.mjs 2200` and check the claim ref before
+  dispatch; if #4137's lane is active in the file, predecessor-stack on its
+  branch. Its remaining arm (the `SyntaxError: NaN` message channel) is
+  codegen-side — semantic overlap is low, textual conflict risk is real.
+- **#2928 Phase 2** owns emitter feature growth; layer 2 (catch
+  destructuring) is a Phase-2 item implemented here as a minimal slice — if a
+  Phase-2 lane is active on destructuring, hand layer 2 to it and keep only
+  B1 + layer 3b in this PR.
+- **#4194** is the B2 gate; it carries a recorded **−5** hazard on the
+  adjacent `Object.keys` widening — do not bundle.
+- The B1 fix touches every control-flow emit path in the interpreter;
+  regression surface = all eval'd control flow. Mitigation is the A–J matrix,
+  8 real-file controls, the full 469 lever, and the E1 differential harness —
+  all listed above, all already exercised once in this worktree.
+- `emitter.ts` LOC: the helper (+17) is offset by the idiom collapse (−14
+  across 7 sites); no new `loc-budget-allow` expected.
+
+### Follow-ups to file (via `claim-issue.mjs --allocate`, not hand-picked)
+
+1. **Compiler: provider self-compile silently drops index-store slot reuse in
+   class-field object vectors** — repro = eval strings A/E/I through the
+   FULL provider (the minimal ordinary-compile probe does NOT reproduce;
+   state that in the issue so the taker A/Bs against
+   `build-runtime-eval-provider.mjs`). Until fixed, `src/interp` must avoid
+   the idiom (the B1 helper is the workaround and the grep pattern
+   `loops\[this\.loopTop\] =` should stay at zero).
+2. **evalScript/global script lexical persistence** (B3) — realm-level
+   lexical cells + the AOT read seam (#4182's carrier). 1 file here, plus the
+   ~9-file `$262.evalScript` family on the global-code lever (W14).
+
+---
+
+## Implementation — interpreter-tier eval-code slice (dev, 2026-08-08)
+
+Implements the spec section above. Three commits, `src/interp/` only (no AOT /
+codegen changes — the #2552 hazard).
+
+### B1 — `installLoopCtx` (spec §b1)
+
+`src/interp/emitter.ts`: one private helper, in-place field mutation of the
+resident control-stack slot (all four fields, returns THE SLOT), replacing the
+3-line index-store push idiom at all seven install sites — `emitBlock`,
+`emitWith`, `emitFor`, `emitForInOf`, `emitSwitch`, `emitTry` (catch scope) and
+`pushLoop`. `grep 'loops\[this\.loopTop\] ='` is now zero, which is the
+invariant that keeps the provider-self-compile defect out of the interpreter.
+
+### B2 layers 2 + 3b — catch `ObjectPattern` minimal slice (spec §b2)
+
+- `emitTry` accepts a CatchParameter `ObjectPattern` with **non-computed
+  Identifier keys and Identifier values** (`{ f }`, `{ a: b }`). Defaults,
+  rest, nesting and `ArrayPattern` keep the `UnsupportedNodeError` refusal.
+  The lexical env is pushed with **`LEXICAL_SCOPE_LABEL`, not
+  `SIMPLE_CATCH_SCOPE_LABEL`** — B.3.5 exempts only
+  `CatchParameter : BindingIdentifier`, so a destructuring parameter must
+  CANCEL B.3.3's synthetic var, and the plain label makes
+  `cancelsAnnexBVarBinding` count it with no extra code.
+- The plan/hoist collectors (`collectNestedVarDeclarations` in
+  `eval-environment.ts`, `collectNestedVarHoist` in `emitter.ts`) append a
+  NON-Identifier catch parameter's bound names to `lexicalAncestors` for the
+  handler descent. A simple Identifier parameter keeps NOT appending — that is
+  the B.3.5 exemption, and `*-no-skip-try` is its regression control.
+
+**Expected verdict flips from B2: ZERO**, and that is by design. The 24
+`*-skip-early-err-try` files stay `SyntaxError: NaN` until **#4194** lands
+(standalone instances have no expando substrate, so compiled-acorn's `copyNode`
+returns a blank node and the parser raises on object-pattern shorthand before
+any of this code runs). Acceptance for B2 is therefore the node-lane E1 test
+`tests/interp/annexb-catch-destructuring.test.ts`, which is measurable today.
+
+### B3 — deferred, not attempted
+
+`direct/script-decl-lex-no-collision.js` is left failing. Per spec §b3 it needs
+BOTH realm-level lexical persistence for `$262.evalScript` AND an AOT read-path
+change, and the AOT half is out of scope here (#2552). Recorded as follow-up 2
+below.
+
+## Follow-ups to file — TODO (ids NOT yet allocated)
+
+`node scripts/claim-issue.mjs --allocate` **refused** in this sandbox: the
+open-PR id scan could not reach `gh` (3 attempts), so the tool exited **6** with
+*"Nothing was reserved. Fix gh auth and re-run, or pass `--allow-unscanned` to
+reserve anyway."* Passing `--allow-unscanned` would have reserved an id that was
+never checked against in-flight PRs, so nothing was reserved and **no id was
+hand-picked**. Both follow-ups are recorded here in full; whoever has working
+`gh` should allocate an id and move each section into its own issue file.
+
+### TODO follow-up 1 — compiler: the provider self-compile silently drops index-store slot reuse
+
+**Symptom.** In a class with a growable object-vector field and a logical top
+pointer, the slot-reuse store `this.items[this.top] = ctx` is a **silent
+no-op** when the class is compiled through
+`scripts/build-runtime-eval-provider.mjs`. Reads of that element keep returning
+the STALE object; the new object is invisible. No error, no diagnostic — the
+program simply behaves as if the assignment never executed.
+
+**Why it matters beyond #2200.** In the interpreter emitter this corrupted (a)
+Annex B B.3.3 eligibility (`cancelsAnnexBVarBinding` read a popped scope's
+binding names and cancelled a live declaration) and (b) `break`/`continue`
+target resolution (`findLoop` could not see a target installed in a reused
+slot, producing an emit-time `UnsupportedNodeError: break with no matching
+target`). (b) affects ANY eval'd / `Function`-built code with a
+break/continue/labeled target after a popped lexical scope, not just the two
+annexB files that motivated the fix.
+
+**Reproduction — the caveat that makes or breaks this issue.** A minimal
+ordinary-compile probe of the idiom (small class, `items: Ctx[]` field,
+push/pop/reuse) does **NOT** reproduce; it returns the correct result. The
+defect is specific to the PROVIDER-pipeline compile, which concatenates
+`src/interp/*` and compiles that unit. **A/B against
+`build-runtime-eval-provider.mjs`, not a toy module.** The measured repro is
+the eval-string bisect A/E/I from spec §b1 run through the full provider via
+the faithful worker path (`CompilerPool(1, "unified")` +
+`assembleOriginalHarness` + `runTest(..., { originalHarness: true, target:
+"standalone" })`).
+
+**Until it is fixed**, `src/interp` must avoid the idiom. The `installLoopCtx`
+helper is the workaround, and the grep pattern `loops\[this\.loopTop\] =` must
+stay at zero in `src/interp/emitter.ts`.
+
+### TODO follow-up 2 — `evalScript` / global-script lexical persistence (B3)
+
+`direct/script-decl-lex-no-collision.js`: `eval('if (true) { function
+test262Fn() {} }')` then `$262.evalScript('let test262Fn = 1;')`, then an
+AOT-compiled assert that `test262Fn === 1`. Two gaps compound:
+
+1. `runScript`/`evalScript` puts script-level lexical declarations in a
+   throwaway declarative env (`prepareEvalEnvironment` →
+   `declarativeWithBindings(...)`, discarded after the run) instead of
+   persisting them in the realm's canonical global lexical cells (the
+   `RUNTIME_EVAL_GLOBAL_LEXICAL_CELLS_PROPERTY` carrier — the #4182 seam).
+2. Even once persisted, the asserting READ is compiled AOT and resolves the
+   global-object property rather than the runtime lexical cell. That is an AOT
+   read-path change and is deliberately out of interpreter scope (#2552).
+
+Worth 1 file on this lever plus the ~9-file `$262.evalScript` family on the
+global-code lever (W14).
+
+## Test Results (dev, 2026-08-08)
+
+Build order per spec §e (both esbuild bundles → `build-runtime-eval-provider.mjs`
+after EVERY `src/interp` change — the provider cache key folds those sources).
+
+### Lever: `annexB/language/eval-code/`, standalone, `TEST262_FULL_RUNTIME_EVAL=1`
+
+| build | pass / 469 | indirect | fail→pass | pass→fail |
+| --- | --- | --- | --- | --- |
+| baseline (`test262-standalone-current.jsonl`, fetched fresh) | 442 | 152 / 160 | — | — |
+| B1 only | **444** | 152 / 160 | the 2 `func-switch-{case,dflt}-eval-func-existing-block-fn-update` | **0** |
+| B1 + B2 (final) | **444** | 152 / 160 | same 2 | **0** |
+
+B2 moves ZERO verdicts, exactly as specced — file-for-file identical to the B1
+run. Remaining 25 failures: 24 × `SyntaxError: NaN` (the `*-skip-early-err-try`
+family, gated on #4194) + 1 × the B3 `script-decl-lex-no-collision` singleton.
+
+Note: the spec's "indirect slice 159/160" is off by seven — the fetched
+baseline has indirect at **152/160**, and 160 − 152 = 8 is exactly the indirect
+half of the 24-file `skip-early-err-try` bucket the spec itself counts. 152/160
+is the number to hold flat; it did.
+
+`pnpm run test:262` could not be used: it takes a machine-global lock
+(`/tmp/js2wasm-test262.lock`) that another lane held throughout. The runs above
+use the same faithful worker path the vitest runner uses —
+`CompilerPool(1, "unified")` + `assembleOriginalHarness` + `runTest(..., {
+originalHarness: true, target: "standalone" }, 30_000)` — walking every `.js`
+under the subtree and writing per-file verdicts, which also gives exact
+fail→pass / pass→fail lists rather than a bare total.
+
+### A–J bisect matrix (spec §b1), through the full provider
+
+All ten pass on the final build. **A, E, I flip** (they were the specced
+failures); B, C, D, F, G, H, J stay pass. Case I —
+`{ let q = 1; } switch (1) { case 1: …; break; … }` — is the regression test for
+`installLoopCtx` returning the SLOT and overwriting all four fields; getting
+either wrong resurfaces `break with no matching target` at emit time.
+
+Real-file controls, all still pass: `func-block-decl-eval-func-existing-block-fn-update`,
+`func-block-decl-eval-func-no-skip-try`, `func-block-decl-eval-func-skip-early-err-switch`,
+`indirect/global-switch-case-eval-global-existing-block-fn-update`.
+
+### Bonus scan outside annexB — NONE found
+
+`language/eval-code/` (347) and `built-ins/eval/` (10) were swept for the
+case-I break/continue corollary. Result: **no flips attributable to this
+change.** Two apparent `pass→fail` in `language/eval-code`
+(`direct/strict-caller-global.js`, `indirect/parse-failure-2.js`) were an
+artifact of the ad-hoc runner, which marked `phase: runtime` negatives as
+early-error negatives; `tests/test262-shared.ts` sets `isNegative` only for
+`parse`/`early`/`resolution`. Both pass once the runner matches. One apparent
+`fail→pass` (`direct/cptn-nrml-empty-do-while.js`) was A/B'd against a provider
+rebuilt from the pre-change `src/interp`: it passes there too, so it is
+baseline drift, not a win from this change.
+
+### Node lane
+
+- `npx vitest run tests/interp/` — **204 passed** (196 before + 8 new). Flat.
+- `tests/interp/annexb-catch-destructuring.test.ts` — 6 of its 8 assertions
+  fail on pre-B2 `main` and pass after, including the differential against the
+  host for all four catch-parameter shapes.
+- `npx tsc --noEmit` clean. `check:loc-budget` / `check:func-budget` green
+  (emitter growth covered by this file's `loc-budget-allow`).

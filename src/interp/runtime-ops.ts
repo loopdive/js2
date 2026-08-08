@@ -49,6 +49,18 @@ export function anyShl(a: JSValue, b: JSValue): JSValue {
 export function anyShr(a: JSValue, b: JSValue): JSValue {
   return a >> b;
 }
+export function anyBitOr(a: JSValue, b: JSValue): JSValue {
+  return a | b;
+}
+export function anyBitAnd(a: JSValue, b: JSValue): JSValue {
+  return a & b;
+}
+export function anyBitXor(a: JSValue, b: JSValue): JSValue {
+  return a ^ b;
+}
+export function anyShrU(a: JSValue, b: JSValue): JSValue {
+  return a >>> b;
+}
 export function anyNeg(a: JSValue): JSValue {
   return -a;
 }
@@ -133,6 +145,15 @@ export function buildObjectLiteral(pairs: JSValue[]): JSValue {
     i += 2;
   }
   return obj;
+}
+
+/** Build `/pattern/flags` (#4137). The emitter passes the source-exact pattern
+ * text and flag string from `node.regex`, so no literal re-parsing happens here;
+ * constructing the intrinsic directly also makes the literal immune to a
+ * user-shadowed `RegExp` binding. A fresh object per evaluation is required by
+ * §13.2.7.3 (each evaluation gets its own `lastIndex`). */
+export function buildRegExpLiteral(pattern: JSValue, flags: JSValue): JSValue {
+  return new RegExp(pattern, flags);
 }
 
 /** Build `[ e0, e1, … ]` from the element window. */
