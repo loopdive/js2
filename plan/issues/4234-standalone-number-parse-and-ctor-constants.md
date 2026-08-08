@@ -143,9 +143,12 @@ the table is the point: a descriptor whose `value` disagreed with the direct
 read would be worse than no descriptor, and `verifyNotWritable` compares
 precisely that pair.
 
-## Measured flips (sequential, one file per process)
+## Measured flips (sequential, one file per process, quiet box)
 
-Baseline 3/47 → **18/47** on `built-ins/Number` (+15).
+A/B by file swap (`.tmp` copies — never `git stash`, see CLAUDE.md), same
+harness, same eval-provider state on both sides.
+
+Baseline 3/47 → **18/47** on `built-ins/Number`: **+15, 0 regressions.**
 
 | root cause                | files                                                                                                                                                                        | n     |
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- |
@@ -153,12 +156,23 @@ Baseline 3/47 → **18/47** on `built-ins/Number` (+15).
 | ctor constants — presence | `S15.7.3_A2` … `_A6`                                                                                                                                                          | 5     |
 | ctor constants — attrs    | `MAX_VALUE/S15.7.3.2_A2`, `_A3`, `MIN_VALUE/S15.7.3.3_A2`, `_A3`, `NEGATIVE_INFINITY/S15.7.3.5_A2`, `POSITIVE_INFINITY/S15.7.3.6_A2`                                          | 6     |
 
+Regression sweeps over the two directories the change can reach, A/B on the
+same box:
+
+| directory                       | before | after  | delta |
+| ------------------------------- | ------ | ------ | ----- |
+| `built-ins/parseFloat`          | 47/54  | 47/54  | 0     |
+| `built-ins/Number/prototype`    | 129/168| 129/168| 0     |
+
+Per-file diff of both sweeps: zero gained, zero lost, zero status changes —
+i.e. identical membership, not merely an identical count.
+
 > **Local-harness note.** The six `propertyHelper.js` files need the
 > runtime-eval **refusal provider** built (`node --import tsx
 > scripts/build-runtime-eval-provider.mjs --refusal-only`). Without it they fail
 > on `Import #0 module="js2wasm:runtime-eval"`, which is a *local* infra gap,
-> not a compiler result — and it silently understates any baseline measured
-> before the provider exists. CI has it.
+> not a compiler result. The 3/47 baseline above was re-measured **with** the
+> provider present, so the +15 is not inflated by that gap.
 
 ## Not done (deliberate, with the evidence)
 
