@@ -23,7 +23,7 @@ import { ensureLateImport } from "./expressions/late-imports.js";
 import { resolveWasmType } from "./index.js";
 // (#3920) Own-presence is a per-instance bit, never a shape property — the `in`
 // answer must come from the same presence machinery the value read uses.
-import { closedStructPresenceInstrs } from "./closed-struct-presence.js";
+import { closedStructPresenceInstrs, isClosedStructOperand } from "./closed-struct-presence.js";
 import type { InnerResult } from "./shared.js";
 import { coerceType, compileExpression, flushLateImportShifts } from "./shared.js";
 import { inRhsIsExclusivelyPrimitive } from "./binary-ops.js";
@@ -330,26 +330,28 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
   // The answer here comes from the same source the read uses: the
   // `$presence_<w>` word (`presenceTestInstrs`), or the `$cold` hop for a
   // hot/cold-split field (#3927), NEVER from the field list.
-  if (
-    staticKey !== null &&
-    structName !== undefined &&
-    structTypeIdx >= 0 &&
-    (rightWasm.kind === "ref" || rightWasm.kind === "ref_null")
-  ) {
-    const presence = closedStructPresenceInstrs(ctx, fctx, structName, structTypeIdx, staticKey, rightWasm.kind);
+  if (staticKey !== null && structName !== undefined && structTypeIdx >= 0) {
+    const presence = closedStructPresenceInstrs(ctx, fctx, structName, structTypeIdx, staticKey);
     if (presence) {
-      // §13.10.1 evaluates the LHS (key) before the RHS (object).
+      // Compile both operands into a SCRATCH body first (§13.10.1 order: LHS
+      // key, then RHS object) and commit only once the receiver is confirmed to
+      // be the expected struct reference. The checker type and the compiled
+      // value can disagree, and committing a mismatch would be an invalid
+      // module rather than a wrong answer — so the fallback below must stay
+      // reachable after the operands have been compiled.
+      const saved = pushBody(fctx);
       const leftResult = compileExpression(ctx, fctx, expr.left);
       if (leftResult) fctx.body.push({ op: "drop" });
       const rightResult = compileExpression(ctx, fctx, expr.right);
-      if (rightResult === null) {
-        // Defensive: the receiver produced no value — keep the old constant.
-        fctx.body.push({ op: "i32.const", value: 1 });
+      const operandInstrs = fctx.body;
+      popBody(fctx, saved);
+      if (isClosedStructOperand(rightResult, structTypeIdx)) {
+        for (const instr of operandInstrs) fctx.body.push(instr);
+        for (const instr of presence.instrs) fctx.body.push(instr);
+        releaseTempLocal(fctx, presence.recvLocal);
         return { kind: "i32" };
       }
-      for (const instr of presence.instrs) fctx.body.push(instr);
       releaseTempLocal(fctx, presence.recvLocal);
-      return { kind: "i32" };
     }
   }
 

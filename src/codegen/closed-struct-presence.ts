@@ -43,9 +43,19 @@ export interface ClosedStructPresence {
  * needed — either there is no such field, or the field is unconditional and
  * therefore present on every instance. Both keep the caller's existing fold.
  *
- * A nullable receiver is null-CHECKED rather than `ref.as_non_null`-ed: the
- * folds this replaces never trapped, and turning a constant into a trap would
- * be a strictly worse answer than the one being fixed.
+ * The scratch local is always `(ref null $S)` and the null case is CHECKED, not
+ * `ref.as_non_null`-ed. Two reasons, both load-bearing:
+ *
+ * - A nullable local accepts a non-null value too, so the caller only has to
+ *   prove the receiver is *some* ref to `structTypeIdx` — never that its
+ *   nullability matches. A `ref`/`ref null` mismatch on `local.set` is a module
+ *   validation failure, i.e. a hard compile error on a path that used to emit a
+ *   constant.
+ * - The folds this replaces never trapped. Turning a wrong constant into a trap
+ *   would be a strictly worse answer than the one being fixed.
+ *
+ * The redundant null test on a provably non-null receiver folds away in
+ * `wasm-opt`.
  */
 export function closedStructPresenceInstrs(
   ctx: CodegenContext,
@@ -53,31 +63,42 @@ export function closedStructPresenceInstrs(
   structName: string,
   structTypeIdx: number,
   key: string,
-  recvKind: "ref" | "ref_null",
 ): ClosedStructPresence | undefined {
   const slot = presenceSlotOf(ctx.structFields.get(structName), key);
   const cold = slot ? undefined : coldOwnFieldsFor(ctx, structName).find((loc) => coldFieldNameAt(ctx, loc) === key);
   if (!slot && !cold) return undefined;
 
-  const recvLocal = allocTempLocal(fctx, { kind: recvKind, typeIdx: structTypeIdx } as ValType);
+  const recvLocal = allocTempLocal(fctx, { kind: "ref_null", typeIdx: structTypeIdx } as ValType);
   const recv: Instr[] = [{ op: "local.get", index: recvLocal }, { op: "ref.as_non_null" }];
   const present: Instr[] = slot
     ? [...recv, ...presenceTestInstrs(structTypeIdx, slot)]
     : coldFieldPresenceInstrs(cold!, recv);
   const instrs: Instr[] = [
     { op: "local.set", index: recvLocal },
-    ...(recvKind === "ref_null"
-      ? ([
-          { op: "local.get", index: recvLocal },
-          { op: "ref.is_null" },
-          {
-            op: "if",
-            blockType: { kind: "val", type: { kind: "i32" } },
-            then: [{ op: "i32.const", value: 0 }],
-            else: present,
-          },
-        ] satisfies Instr[])
-      : present),
+    { op: "local.get", index: recvLocal },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [{ op: "i32.const", value: 0 }],
+      else: present,
+    },
   ];
   return { instrs, recvLocal };
+}
+
+/**
+ * Does a compiled operand actually carry the closed-struct reference the
+ * presence instrs expect?
+ *
+ * The caller resolves the receiver's type from the checker, then compiles the
+ * expression — the two can disagree (a widened binding, a subtype, an
+ * externref-slotted variable). Committing a mismatch is not a wrong answer, it
+ * is an INVALID MODULE, so the presence path is entered only when the compiled
+ * value is confirmed.
+ */
+export function isClosedStructOperand(result: ValType | null | undefined, structTypeIdx: number): boolean {
+  if (!result) return false;
+  if (result.kind !== "ref" && result.kind !== "ref_null") return false;
+  return (result as { typeIdx: number }).typeIdx === structTypeIdx;
 }

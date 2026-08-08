@@ -16,6 +16,7 @@ import {
   compileArrowAsClosure,
   promoteAccessorCapturesToGlobals,
 } from "./closures.js";
+import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -45,7 +46,8 @@ import {
   maybeEmitVecLengthDefine,
   tryEmitVecLengthDefineForDefineProperties,
 } from "./array-length-define.js";
-import { closedStructPresenceInstrs } from "./closed-struct-presence.js"; // (#3920) per-instance own-presence
+// (#3920) per-instance own-presence
+import { closedStructPresenceInstrs, isClosedStructOperand } from "./closed-struct-presence.js";
 import { isStaticDescWellFormed, isStaticallyNonObjectDescExpr } from "./descriptor-shape.js";
 import { isDescriptorTranscribableStruct } from "./property-descriptor-shape.js"; // (#4180) #2372 transcription gate
 import {
@@ -4700,24 +4702,21 @@ export function compilePropertyIntrospection(
         ? (receiverWasm as { typeIdx: number }).typeIdx
         : -1;
     const recvStructName = recvStructTypeIdx >= 0 ? ctx.typeIdxToStructName.get(recvStructTypeIdx) : undefined;
-    if (
-      result === 1 &&
-      recvStructName !== undefined &&
-      (receiverWasm.kind === "ref" || receiverWasm.kind === "ref_null")
-    ) {
-      const presence = closedStructPresenceInstrs(
-        ctx,
-        fctx,
-        recvStructName,
-        recvStructTypeIdx,
-        staticKey,
-        receiverWasm.kind,
-      );
+    if (result === 1 && recvStructName !== undefined) {
+      const presence = closedStructPresenceInstrs(ctx, fctx, recvStructName, recvStructTypeIdx, staticKey);
       if (presence) {
+        // Scratch-compile both operands and commit only once the receiver is
+        // confirmed to be the expected struct reference — see
+        // `isClosedStructOperand`. A mismatch must fall back to the constant
+        // below, not emit an unvalidatable `local.set`.
+        const saved = pushBody(fctx);
         const presenceRecv = compileExpression(ctx, fctx, propAccess.expression);
-        if (presenceRecv) {
-          const argSideEffect = compileExpression(ctx, fctx, arg);
-          if (argSideEffect) fctx.body.push({ op: "drop" });
+        const argSideEffect = compileExpression(ctx, fctx, arg);
+        if (argSideEffect) fctx.body.push({ op: "drop" });
+        const operandInstrs = fctx.body;
+        popBody(fctx, saved);
+        if (isClosedStructOperand(presenceRecv, recvStructTypeIdx)) {
+          for (const instr of operandInstrs) fctx.body.push(instr);
           for (const instr of presence.instrs) fctx.body.push(instr);
           releaseTempLocal(fctx, presence.recvLocal);
           return { kind: "i32", boolean: true };
