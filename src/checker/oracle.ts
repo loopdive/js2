@@ -157,6 +157,16 @@ export interface TypeOracle {
    * declaration syntax such as `var` versus `let`/`const`.
    */
   variableDeclarationOf(id: ts.Node): ts.VariableDeclaration | undefined;
+  /**
+   * (#4246) Does this node resolve to ANY binding the checker knows about —
+   * user declaration, lib `.d.ts` global, import, anything? `false` means the
+   * name is genuinely unresolvable, which is the §9.1.1.1 ReferenceError
+   * condition, and is distinct from `declarationsOf(node).length === 0`
+   * (a resolved symbol can legitimately carry no declaration). Returns a
+   * boolean rather than the Symbol so the no-checker-object-escapes contract
+   * holds.
+   */
+  resolvesToBinding(node: ts.Node): boolean;
 }
 
 /** Builtins with first-class compiler handling (mirrors type-mapper's set —
@@ -400,6 +410,16 @@ export class TsCheckerOracle implements TypeOracle {
       return decl;
     } catch {
       return undefined;
+    }
+  }
+
+  resolvesToBinding(node: ts.Node): boolean {
+    try {
+      return this.checker.getSymbolAtLocation(node) !== undefined;
+    } catch {
+      // A checker failure is not evidence of unresolvability — report
+      // "resolved" so a caller gating a THROW on this never fires on noise.
+      return true;
     }
   }
 
