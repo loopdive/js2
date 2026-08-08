@@ -216,6 +216,28 @@ builtin-prototype expandos invisible to `for-in` (#4230 L2), array-literal
 elision holes (#4230 L4 / #4222), reflective `replace`/`split`-family arms
 (#4224), and the `with`-statement scope-chain bugs (WP7).
 
+## Wave 3 outcome (2026-08-08, on the post-merge branch)
+
+Waves 1+2 merged as loopdive/js2#4234 → official ES5 standalone
+**7,043/8,115 = 86.79 %** (+136 incl. collateral). Wave 3, measured per-package
+(sequential A/B, zero regressions each):
+
+| WP | Issue | Flips | Key mechanism |
+| --- | --- | --- | --- |
+| Descriptor bags | #4230 | +10 | props-bag admission reframed as key-source completeness |
+| `with` scope chain | #4231 | +1 (+31 advanced) | 4 root causes; RC-F implicit-global write shadowing was the family gate |
+| Number | #4234 | +15 | StringToNumber 10^k-table scaling (10.26→1.00 ulp); ctor value constants |
+| Wrapper exotics | #4232 | +18 | `new Object(prim)` initializer tracing; String §10.4.3 index exotics; reflective replace |
+| RegExp cluster | #4233 | +15 | static-pattern tracing through variables; exec arities/shape; construction-time SyntaxError |
+| arguments-object | #4229 | +4 | `callee` as real own property; strict poison (partial) |
+
+**Wave-3 sum: +63 measured** → projected ≈ 7,106/8,115 ≈ **87.6 %**;
+~195 to 90 %. Top next levers (each documented in its issue): the real
+%ThrowTypeError% strict accessor (#4229), overlay-visible key enumeration
+(L1, #4230 — the `verifyProperty` enumerability family), `with` RC-G/H/I
+(#4231), `Number.prototype`-as-wrapper (~25 files, #4234 → #4223 lane),
+correctly-rounded strtod (#4234), `Array(n)` hole carrier (#4222).
+
 ## Wave plan
 
 - **Wave 1 (parallel, disjoint):** WP3-split, WP1, WP5, WP4-filter.
