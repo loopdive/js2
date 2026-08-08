@@ -21,6 +21,9 @@ import {
 } from "./expressions/helpers.js";
 import { ensureLateImport } from "./expressions/late-imports.js";
 import { resolveWasmType } from "./index.js";
+// (#3920) Own-presence is a per-instance bit, never a shape property — the `in`
+// answer must come from the same presence machinery the value read uses.
+import { closedStructPresenceInstrs } from "./closed-struct-presence.js";
 import type { InnerResult } from "./shared.js";
 import { coerceType, compileExpression, flushLateImportShifts } from "./shared.js";
 import { inRhsIsExclusivelyPrimitive } from "./binary-ops.js";
@@ -188,6 +191,10 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
   let structFieldNames: string[] | null = null;
   let isVecType = false;
   let vecTypeIdx = -1;
+  // (#3920) The receiver's closed-struct identity, kept alongside the name list
+  // so the static fold below can ask the PER-INSTANCE presence question.
+  let structTypeIdx = -1;
+  let structName: string | undefined;
   if (rightWasm.kind === "ref" || rightWasm.kind === "ref_null") {
     const typeIdx = (rightWasm as { typeIdx: number }).typeIdx;
     const structDef = ctx.mod.types[typeIdx];
@@ -197,6 +204,8 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
         vecTypeIdx = typeIdx;
       } else {
         structFieldNames = structDef.fields.map((f) => f.name).filter((n): n is string => n !== undefined);
+        structTypeIdx = typeIdx;
+        structName = ctx.typeIdxToStructName.get(typeIdx) ?? structDef.name;
       }
     }
   }
@@ -308,6 +317,38 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
         fctx.body.push({ op: "drop" });
       }
       fctx.body.push({ op: "i32.const", value: 1 });
+      return { kind: "i32" };
+    }
+  }
+
+  // (#3920) BEFORE the compile-time fold: a closed-struct field that is
+  // CONDITIONALLY assigned is not a static property of the shape, it is a
+  // per-instance bit. `structFieldNames.includes(key)` answers the SHAPE
+  // question and folded `"p" in bag` to a constant `true` for an instance that
+  // never got `p` — a silent wrong answer that survived because the value read
+  // (`bag.p`) has always consulted the bit and therefore looked consistent.
+  // The answer here comes from the same source the read uses: the
+  // `$presence_<w>` word (`presenceTestInstrs`), or the `$cold` hop for a
+  // hot/cold-split field (#3927), NEVER from the field list.
+  if (
+    staticKey !== null &&
+    structName !== undefined &&
+    structTypeIdx >= 0 &&
+    (rightWasm.kind === "ref" || rightWasm.kind === "ref_null")
+  ) {
+    const presence = closedStructPresenceInstrs(ctx, fctx, structName, structTypeIdx, staticKey, rightWasm.kind);
+    if (presence) {
+      // §13.10.1 evaluates the LHS (key) before the RHS (object).
+      const leftResult = compileExpression(ctx, fctx, expr.left);
+      if (leftResult) fctx.body.push({ op: "drop" });
+      const rightResult = compileExpression(ctx, fctx, expr.right);
+      if (rightResult === null) {
+        // Defensive: the receiver produced no value — keep the old constant.
+        fctx.body.push({ op: "i32.const", value: 1 });
+        return { kind: "i32" };
+      }
+      for (const instr of presence.instrs) fctx.body.push(instr);
+      releaseTempLocal(fctx, presence.recvLocal);
       return { kind: "i32" };
     }
   }

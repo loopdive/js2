@@ -125,28 +125,28 @@ describe("#3780 — packed own-presence flags", () => {
   });
 
   /**
-   * The standalone lane is pinned against its own paired control rather than
-   * against `EXPECTED_CROSS_WORD`, because it does NOT currently agree with the
-   * host lane on this fixture: `"pNN" in bag` answers `false` for a fnctor
-   * instance there, so the `present` term drops out (10,660 vs 830,660 — the
-   * value read-back half is identical). That is the standalone reflection hole
-   * already recorded in `plan/agent-context/dev-acorn-throughput.md` §7
-   * (`for…in`/`Object.keys`/presence over fnctor instances), it reproduces
-   * byte-for-byte with packing DISABLED, and it is not this change's to fix.
-   * Filed as **#3920**, whose acceptance criteria include flipping this
-   * assertion to `EXPECTED_CROSS_WORD` once the lanes agree.
+   * (#3920) The standalone lane now agrees with the host lane, so this asserts
+   * `EXPECTED_CROSS_WORD` outright — the flip #3920's acceptance criteria asked
+   * for. Until then it was pinned to `EXPECTED_CROSS_WORD - 820 * 1000` on the
+   * strength of `"pNN" in bag` answering `false` for a fnctor instance.
    *
-   * Pinning to the control is the assertion that actually matters here anyway:
-   * packing is a pure layout change, so whatever the lane answers, both
-   * layouts must answer the same — including across the 32-bit word boundary,
-   * which a single-word implementation would silently pass.
+   * That pinned constant had since gone STALE IN THE OTHER DIRECTION and the
+   * test was red on `main`: the receiver had come to type as the closed struct,
+   * which routed `in` into the compile-time `structFieldNames.includes(key)`
+   * fold, so every one of the 40 keys answered `true` — present or not
+   * (1,650,660: 40 hits × 41 seeds instead of 820). A pin against the lane's own
+   * wrong answer cannot survive the answer changing, which is the argument for
+   * asserting the real one.
+   *
+   * Both layouts must still agree — that is the packing-is-layout-only claim,
+   * and the 32-bit word boundary is where a single-word implementation would
+   * silently pass.
    */
   it("is layout-only: packed and unpacked standalone builds agree", async () => {
     const packed = await runStandalone(CROSS_WORD_PRESENCE);
     const unpacked = await runStandalone(CROSS_WORD_PRESENCE, { JS2WASM_PACKED_PRESENCE_BITS: "0" });
     expect(packed).toBe(unpacked);
-    // The value read-back half does match the host lane; only presence differs.
-    expect(packed).toBe(EXPECTED_CROSS_WORD - 820 * 1000);
+    expect(packed).toBe(EXPECTED_CROSS_WORD);
   });
 });
 

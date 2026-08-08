@@ -6457,6 +6457,18 @@ export function fillExternGetIdxVecArms(ctx: CodegenContext): void {
  * `__extern_*` imports own these paths.
  */
 /**
+ * (#3920) How a closed-struct field arm answers when the field is ABSENT.
+ *
+ * - `"own"` — return the presence bit verbatim. Correct for the own-only
+ *   predicates (`hasOwnProperty` / `Object.hasOwn` / `propertyIsEnumerable`):
+ *   the struct IS the complete own-property set, so a clear bit is a final `0`.
+ * - `"has"` — return 1 only when the bit is SET, otherwise fall through. §7.3.12
+ *   HasProperty continues onto the prototype chain, so `__extern_has` must not
+ *   let a clear own bit pre-empt the consults that follow it.
+ */
+type HasOwnLadderMode = "own" | "has";
+
+/**
  * Teach the standalone own-property predicates about closed compiler structs.
  *
  * The object runtime is emitted while user shapes are still being discovered,
@@ -6468,6 +6480,10 @@ export function fillExternGetIdxVecArms(ctx: CodegenContext): void {
  *
  * This is deliberately an in-place fill: no imports or functions are added and
  * all previously-baked call indices remain stable.
+ *
+ * (#3920) The same ladder also serves `__extern_has` (`key in obj`) in
+ * {@link HasOwnLadderMode | affirmative-only} mode — see the target list at the
+ * bottom of this function for why it is the SAME ladder and not a second one.
  */
 export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
   if (!ctx.standalone || ctx.anyStrTypeIdx < 0) return;
@@ -6541,25 +6557,35 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
   // Factory, not a shared Instr tree: finalize remaps every function body in
   // place, so sharing these objects between the two predicates would remap all
   // embedded type indices twice (#1719 reserve/fill discipline).
-  const buildPrologue = (flatLocalIdx: number): Instr[] => {
+  const buildPrologue = (flatLocalIdx: number, mode: HasOwnLadderMode): Instr[] => {
+    // (#3920) In `"has"` mode the ladder is AFFIRMATIVE-ONLY: a set presence bit
+    // returns 1, a clear one falls through to the caller's own body instead of
+    // returning 0. `__extern_has` is §7.3.12 HasProperty — prototype-INCLUSIVE —
+    // so an absent own field must still reach the carrier-bag / proto-companion
+    // consult below it. The own-only predicates keep returning the bit directly.
+    const affirmOnly = (presence: Instr[]): Instr[] =>
+      mode === "own"
+        ? [...presence, { op: "return" }]
+        : [
+            ...presence,
+            { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 1 }, { op: "return" }] },
+          ];
     const keyArms: Instr[] = [];
     for (const [fieldName, entries] of byField) {
       const receiverArms: Instr[] = [];
       for (const entry of entries) {
         const returnPresence: Instr[] = entry.cold
-          ? [
-              ...coldFieldPresenceInstrs(entry.cold, [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }]),
-              { op: "return" },
-            ]
+          ? affirmOnly(
+              coldFieldPresenceInstrs(entry.cold, [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }]),
+            )
           : entry.presenceSlot === undefined
             ? [{ op: "i32.const", value: 1 }, { op: "return" }]
-            : [
+            : affirmOnly([
                 { op: "local.get", index: 0 },
                 { op: "any.convert_extern" },
                 { op: "ref.cast", typeIdx: entry.typeIdx },
                 ...presenceTestInstrs(entry.typeIdx, entry.presenceSlot),
-                { op: "return" },
-              ];
+              ]);
         const exactThen: Instr[] =
           entry.shapeFieldIdx === undefined || entry.shapeId === undefined
             ? returnPresence
@@ -6608,10 +6634,7 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
             { op: "i32.eqz" },
           ]
         : [{ op: "i32.const", value: 1 }];
-    return [
-      // (#4098 G1 s1) BEFORE the field arms: each arm below returns unconditionally
-      // on a name match, so a screen after them could never run. Narrowing only.
-      ...buildTombstoneScreen(ctx, [{ op: "i32.const", value: 0 }, { op: "return" }]),
+    const armBlock: Instr[] = [
       ...structReceiverGuard,
       {
         op: "if",
@@ -6635,17 +6658,48 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
         ],
       },
     ];
+    // (#3920) A tombstoned field must not be answered by the physical-slot arms.
+    // The own-only predicates short-circuit to 0; `__extern_has` instead SKIPS
+    // the arms and falls through, so a deleted own property can still be found
+    // on the prototype chain (§7.3.12 does not stop at the own slot).
+    return mode === "own"
+      ? [
+          // (#4098 G1 s1) BEFORE the field arms: each arm below returns unconditionally
+          // on a name match, so a screen after them could never run. Narrowing only.
+          ...buildTombstoneScreen(ctx, [{ op: "i32.const", value: 0 }, { op: "return" }]),
+          ...armBlock,
+        ]
+      : buildTombstoneSkip(ctx, [{ op: "local.get", index: 1 }], armBlock);
   };
   // Closed compiler fields are ordinary own data properties and therefore
   // enumerable by default. Define/reflag paths that need live descriptor flags
   // are already widened to the open `$Object` runtime rather than remaining on
   // this physical-field path.
-  for (const name of ["__object_hasOwn", "__hasOwnProperty", "__propertyIsEnumerable"]) {
+  //
+  // (#3920) `__extern_has` — the `key in obj` runtime — joins the list in
+  // AFFIRMATIVE-ONLY mode. It is the one reflective predicate that was left out,
+  // so `"p" in fnctorInstance` answered `false` in standalone for a property
+  // `hasOwnProperty` on the SAME instance already answered `true`: the receiver
+  // is not a `$Object`, so the base body fell straight through to the carrier-bag
+  // / proto-companion consult and returned 0. Sharing this ladder (rather than
+  // deriving a second name list) is what keeps `in` and `hasOwnProperty` from
+  // disagreeing again, and it inherits the presence-word derivation — the answer
+  // comes from the `$presence_<w>` bit (`presenceTestInstrs`) or, for a
+  // hot/cold-split field, `coldFieldPresenceInstrs`' hop — rather than from the
+  // physical field list, which is what keeps it correct under #3927's per-type
+  // layouts.
+  const targets: [string, HasOwnLadderMode][] = [
+    ["__object_hasOwn", "own"],
+    ["__hasOwnProperty", "own"],
+    ["__propertyIsEnumerable", "own"],
+    ["__extern_has", "has"],
+  ];
+  for (const [name, mode] of targets) {
     const fn = ctx.mod.functions.find((candidate) => candidate.name === name);
     if (fn) {
-      const flatLocalIdx = 2 + fn.locals.length; // 2 params on all three
+      const flatLocalIdx = 2 + fn.locals.length; // 2 params on all four
       fn.locals.push({ name: "__ho_flatkey", type: { kind: "ref_null", typeIdx: ctx.nativeStrTypeIdx } });
-      fn.body.unshift(...buildPrologue(flatLocalIdx));
+      fn.body.unshift(...buildPrologue(flatLocalIdx, mode));
     }
   }
 }
