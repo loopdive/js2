@@ -30,8 +30,7 @@ import { reportError } from "./context/errors.js";
 import { reportSilentFallback } from "./fallback-telemetry.js";
 import { resolveLiftedMethodThisStruct } from "./fnctor-escape-gate.js"; // (#2681/#2686 A3) lifted-method `this`→struct
 import { allocLocal, allocTempLocal, getLocalType } from "./context/locals.js";
-import { seedArgumentsCallee } from "./arguments-callee.js"; // (#4229) §10.6 step 13.a
-import { isStrictFunction } from "./helpers/is-strict-function.js";
+import { seedLiftedClosureArgumentsCallee } from "./arguments-callee.js"; // (#4229) §10.6 step 13.a
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import {
   addFuncType,
@@ -2305,20 +2304,8 @@ export function compileLiftedClosureBody(
       arrTmpIdx: arrTmp,
     });
 
-    // (#4229) §10.6 step 13.a — `callee` on a non-strict arguments object. A
-    // lifted function expression already holds its own closure struct in
-    // `__self` (param 0): that IS the function object the caller invoked, so it
-    // is both the spec value and the identity `f2 === f2()` (`S10.6_A4` #2)
-    // needs, with no singleton lookup. Strict function expressions get the
-    // §10.6 step 14 poison instead.
-    if (!isStrictFunction(arrow, ctx.inferModuleStrictArguments)) {
-      const selfType = liftedFctx.params[0]?.type ?? null;
-      seedArgumentsCallee(ctx, liftedFctx, argsLocal, () => {
-        if (selfType === null) return null;
-        liftedFctx.body.push({ op: "local.get", index: 0 });
-        return selfType;
-      });
-    }
+    // (#4229) §10.6 step 13.a — `callee` on a non-strict arguments object.
+    seedLiftedClosureArgumentsCallee(ctx, liftedFctx, arrow, argsLocal);
   }
 
   let conciseBodyHasValue = false;

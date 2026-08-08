@@ -145,6 +145,58 @@ describe("#4229 arguments.callee is an own property (§10.6 step 13.a)", () => {
     ).toBe(1);
   });
 
+  it("throws TypeError on a direct read in strict code (§10.6 step 14, 10.6-2gs)", async () => {
+    expect(
+      await runStandalone(`
+        function f1(): any { "use strict"; return (arguments as any).callee; }
+        export function test(): number {
+          try { f1(); return 1; } catch (e) { return e instanceof TypeError ? 2 : 3; }
+        }
+      `),
+    ).toBe(2);
+  });
+
+  it("throws for the computed form too (arguments['callee'])", async () => {
+    expect(
+      await runStandalone(`
+        function f1(): any { "use strict"; return (arguments as any)["callee"]; }
+        export function test(): number {
+          try { f1(); return 1; } catch (e) { return e instanceof TypeError ? 2 : 3; }
+        }
+      `),
+    ).toBe(2);
+  });
+
+  it("does NOT throw when the function declares its own `arguments`", async () => {
+    // The load-bearing negative: the poison is keyed on the IMPLICIT binding.
+    // A user-declared `arguments` is an ordinary object and `.callee` on it is
+    // an ordinary (missing) property read, not a spec poison — turning that
+    // into a throw would break working sloppy programs. `10.6-6-3`/`10.6-6-4`
+    // in this same test262 directory use exactly this shape.
+    expect(
+      await runStandalone(`
+        function f1(): number {
+          "use strict";
+          var args: any = { callee: 5 };
+          return args.callee;
+        }
+        export function test(): number { return f1(); }
+      `),
+    ).toBe(5);
+  });
+
+  it("leaves a SLOPPY arguments.callee read working (the poison is strict-only)", async () => {
+    // Guards the gate itself: if `isStrictContext` ever answered true here, the
+    // whole non-strict data-property half above would become unreachable and
+    // every sloppy `arguments.callee` program would start throwing.
+    expect(
+      await runStandalone(`
+        function f1(): any { return (arguments as any).callee; }
+        export function test(): number { return typeof f1() === "function" ? 1 : 0; }
+      `),
+    ).toBe(1);
+  });
+
   it("leaves the JS-host lane compiling unchanged", async () => {
     const result = await compile(
       `

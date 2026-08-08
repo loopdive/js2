@@ -49,10 +49,10 @@
  * §10.6 step 14 gives a strict arguments object a `callee` ACCESSOR whose get and
  * set are both %ThrowTypeError%. Minting that in-module needs a callable throwing
  * function value, which this module does not build; the strict half is covered
- * syntactically instead (`tryCompileArgumentsCalleePoison`, below), which is
- * enough for a direct `arguments.callee` read inside a strict function but not
- * for a descriptor query on an arguments object that has escaped its function.
- * See #4229 for the split and what it leaves on the table.
+ * syntactically instead (`arguments-callee-poison.ts`), which is enough for a
+ * direct `arguments.callee` read inside a strict function but not for a
+ * descriptor query on an arguments object that has escaped its function. See
+ * #4229 for the split and what it leaves on the table.
  *
  * ## Byte-neutrality
  * Gated on `noJsHost(ctx)`. The gc/host lane registers its arguments vecs with
@@ -183,4 +183,31 @@ export function seedDeclarationArgumentsCallee(
       ? ({ kind: "externref" } as const)
       : null,
   );
+}
+
+/**
+ * Lifted-function-expression seed: `callee` is `__self`, local 0.
+ *
+ * A lifted closure receives its own closure struct as its first parameter, and
+ * that struct IS the function object the caller invoked — so this site needs no
+ * singleton lookup, no cache global, and no cast, and the identity
+ * `f2 === f2()` (`S10.6_A4` #2) holds for free.
+ *
+ * `arrow` is the source function-like node; arrows are excluded by the caller
+ * (they inherit the enclosing function's `arguments` rather than binding their
+ * own), so in practice this only sees function expressions.
+ */
+export function seedLiftedClosureArgumentsCallee(
+  ctx: CodegenContext,
+  liftedFctx: FunctionContext,
+  arrow: ts.FunctionLikeDeclaration,
+  argsLocalIdx: number,
+): void {
+  if (isStrictFunction(arrow, ctx.inferModuleStrictArguments)) return;
+  const selfType = liftedFctx.params[0]?.type ?? null;
+  if (selfType === null) return;
+  seedArgumentsCallee(ctx, liftedFctx, argsLocalIdx, () => {
+    liftedFctx.body.push({ op: "local.get", index: 0 });
+    return selfType;
+  });
 }

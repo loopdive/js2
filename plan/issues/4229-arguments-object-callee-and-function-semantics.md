@@ -11,6 +11,21 @@ task_type: bug
 area: codegen
 goal: es5
 related: [4221, 4220, 4222, 4223, 4224, 2916]
+loc-budget-allow:
+  # closures.ts (+4): one import plus a two-line call at the ONLY point where a
+  # lifted function expression's arguments vec exists and its `__self` is still
+  # in scope — immediately after `emitArgumentsVecBody`. The seed body itself
+  # lives in the satellite `arguments-callee.ts`; this is the call site, and it
+  # cannot move without moving the arguments-vec construction with it.
+  - src/codegen/closures.ts
+func-budget-allow:
+  # Both are the same shape: a single call appended to the arguments-object
+  # construction block of an existing giant builder. The seed needs the block's
+  # `argsLocal` and (in the closure case) its param-0 `__self`, neither of which
+  # survives extraction; splitting either host function is #3399-class work
+  # unrelated to this issue.
+  - src/codegen/closures.ts::compileLiftedClosureBody
+  - src/codegen/function-body.ts::compileFunctionBody
 origin: "2026-08-08 — ES5-standalone-90 Wave 3, WP2 continuation (#4221 leftovers)"
 ---
 
@@ -116,31 +131,96 @@ The underlying flavor-vs-cache hazard is left in place — it predates this issu
 and fixing it properly means recording the flavor per key — but it is now
 documented at both ends.
 
+## Problem 2 — strict `arguments.callee` does not throw
+
+§10.6 step 14 gives a STRICT arguments object a `callee` ACCESSOR whose
+`[[Get]]` and `[[Set]]` are both %ThrowTypeError%, `{enumerable: false,
+configurable: false}`. Minting that faithfully needs an in-module callable
+throwing-function value, which this lane does not have.
+
+What it CAN do without that machinery is the case the spec text exists to
+produce: a direct `arguments.callee` read in strict code throws a TypeError.
+That is decidable syntactically, so it needs no runtime accessor —
+`src/codegen/arguments-callee-poison.ts` is the deliberate twin of #4221's
+`function-poison-pill-access.ts`, dispatched from the same
+`tryCompileFunctionPoisonRead` hook so both `property-access.ts` call sites get
+it without a third entry point. It is lane-independent, because strictness is a
+source property, not a target one.
+
+The load-bearing negative case is the receiver test: the poison fires only on
+the IMPLICIT `arguments` binding. A function that declares its own (`var
+arguments = …`, legal in sloppy code, and used by `10.6-6-3`/`10.6-6-4` in this
+very directory) must keep its ordinary property read, so a non-`undefined`
+`oracle.valueDeclarationOf` declines.
+
+## Tests
+
+`tests/es5-standalone-arguments-callee.test.ts` — 12 cases covering both halves.
+The two that guard against silent breakage rather than asserting the feature:
+
+- *"stays out of for-in"* — test262's `propertyHelper.js` decides enumerability
+  with a `for (x in obj)` scan, not by reading the descriptor, so a descriptor
+  that says `enumerable: false` while the key still shows up in for-in fails
+  `verifyProperty` even though the descriptor assertion passes.
+- *"does NOT throw when the function declares its own `arguments`"* — the
+  poison's negative case, above.
+
+Note the harness helper passes `inferModuleStrictArguments: false`: the probe's
+own `export function test()` makes TypeScript classify the source as a module,
+and module code is strict (§11.2.2), so with the default every function under
+test would be strict and take the step-14 path instead. Same reason the test262
+harness passes `false` for script-goal tests (#2119).
+
 ## Measured flips
 
 Standalone lane, `runTest262File`, sequential re-verify of every transition:
 
-| test | before | after |
-| --- | --- | --- |
-| `language/arguments-object/10.6-12-2` | fail | **pass** |
-| `language/arguments-object/S10.6_A4` | fail | **pass** |
+| test | before | after | from |
+| --- | --- | --- | --- |
+| `language/arguments-object/10.6-12-2` | fail | **pass** | problem 1 |
+| `language/arguments-object/S10.6_A4` | fail | **pass** | problem 1 |
+| `language/arguments-object/10.6-2gs` | fail | **pass** | problem 2 |
+| `language/arguments-object/10.6-13-c-1-s` | fail | **pass** | problem 2 |
 
-Bucket total 26 → **28** pass of 43, **0 regressions**.
+Bucket total 26 → **30** pass of 43, **0 regressions**.
 
-That is a smaller number than the mechanism deserves, and the reason is in the
-leftovers below: most of the remaining `callee` tests need the STRICT half, and
-two need an IIFE to have a function object at all.
+Two more files improved without flipping, which the count hides:
+`S10.6_A3_T1` and `10.6-13-c-2-s` now pass their sloppy run and fail only on the
+`strict rerun:` line — both are waiting on the real accessor.
+
+### Regression sampling
+
+A 94-file cross-section of the tests that actually exercise this code — every
+file under `language/{statements/function,function-code,expressions/call,
+expressions/function,statements/return}` and `built-ins/Function` that mentions
+`arguments`, sampled deterministically — run sequentially on both sides of a
+build-level kill switch:
+
+| | pass | fail | compile_error |
+| --- | --- | --- | --- |
+| without #4229 | 71 | 22 | 1 |
+| with #4229 | 71 | 22 | 1 |
+
+Byte-for-byte identical: **0 regressions, 0 in-sample gains** (the gains are all
+inside `language/arguments-object`, measured separately above).
+
+**Method note, inherited from #4221 and confirmed again here.** A first attempt
+at a broader 435-file cross-section had to be abandoned: another agent's test
+run put this box at load ~10, and `runTest262File` reports a TIMEOUT as
+`compile_error`, so a sample taken under that load manufactures phantom
+regressions. Every transition reported above was re-verified sequentially.
 
 ## Deliberately NOT in scope (leftovers, with the mechanism named)
 
-- **Strict-mode `callee` (§10.6 step 14)** — a strict arguments object needs a
-  `callee` ACCESSOR whose get and set are both %ThrowTypeError%, with
-  `configurable: false` (`10.6-13-c-3-s` asserts `desc.hasOwnProperty('get')`).
-  Minting that needs a callable in-module throwing function value, which this
-  issue does not build. Blocks `10.6-13-c-1-s`, `10.6-13-c-3-s`, `10.6-2gs`,
-  `10.6-14-c-4-s`, and the **strict rerun** halves of `S10.6_A3_T1` and
-  `10.6-13-c-2-s` (both of which now pass their sloppy run — the failure line
-  moved to `strict rerun:`, which is progress that does not show in the count).
+- **The real strict `callee` ACCESSOR (§10.6 step 14).** The syntactic poison
+  covers the direct read; a descriptor QUERY still needs an accessor with
+  `configurable: false` and both `get`/`set` present (`10.6-13-c-3-s` asserts
+  `desc.hasOwnProperty('get')`). That needs a callable in-module
+  %ThrowTypeError% value — mint a defined func that throws, then wrap it with
+  the closure ABI so `__defineProperty_accessor` can take it. Blocks
+  `10.6-13-c-3-s`, `10.6-14-c-4-s` (assignment through an ESCAPED arguments
+  object, which is a value not an identifier and so out of the syntactic
+  poison's reach), and the strict reruns of `S10.6_A3_T1` / `10.6-13-c-2-s`.
 - **Inlined IIFEs have no function object.** `(function () { return arguments })()`
   is inlined by `expressions/call-tail-dispatch.ts` — no lifted closure, no
   `__self`, no wasm function to reference — so there is nothing to install as
