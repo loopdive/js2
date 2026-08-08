@@ -79,9 +79,22 @@ export interface ClosedStructPresence {
  * moved field from the base struct's field list, so `structFieldNames
  * .includes(key)` answers false for a name the instance really carries. A fold
  * site that decides "genuinely absent" from the base list therefore emits a
- * constant `false` for a present property. When per-type layouts land, add the
- * new carrier here — never at the call sites, which is what let the two sites
- * drift apart in the first place.
+ * constant `false` for a present property. Add any new carrier HERE — never at
+ * the call sites, which is what let the two sites drift apart in the first
+ * place (#4225: one site had the fix and the other could not reach it).
+ *
+ * **Per-type layouts (#3927 `JS2WASM_FNCTOR_LAYOUT_EMIT`) are deliberately NOT
+ * an arm here yet, and that is a measurement, not an oversight.** That pass's
+ * own `reflectiveSurface` fixture probes `hasOwnProperty(present)`,
+ * `hasOwnProperty(absent)` and `key in recv` on a layout-split receiver and
+ * asserts flag-ON equals flag-OFF equals the spec answer; those tests pass with
+ * this module as written, so the layout case is already answered correctly and
+ * a speculative third arm would be untested duplication. If that ever changes,
+ * the shapes are ready: `LayoutFieldLocation` and `ResidFieldLocation` in
+ * `fnctor-layout-emit.ts` both carry a `presenceSlot`, and the layout one
+ * resolves into the BASE words at fixed indices — already layout-independent by
+ * construction. Extend {@link PresenceStorage} with a third variant and this
+ * function with a third lookup; every fold site inherits it for free.
  */
 export type PresenceStorage =
   | { readonly where: "base"; readonly slot: PresenceSlot }
