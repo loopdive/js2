@@ -77,6 +77,20 @@ export function inferFnctorFieldTypeFromCtorParam(
   rhsWasm: ValType,
 ): ValType | null {
   if (!fnctorCtorParamTypesEnabled()) return null;
+  // STANDALONE ONLY. The narrowing's trust boundary is "the module owns every
+  // write to this slot" — the same boundary the #3683 S4a numeric promotion
+  // draws when it populates `numericPropertyNames` in the standalone lane only,
+  // and the same one `fnctor-typed-bindings.ts` draws in its admission rule 1.
+  // In the host lane a JS caller can hand the module anything and store it
+  // through the generic member path, so a machine slot is not defensible.
+  //
+  // This gate was missing while the flag was OFF, and the flip surfaced it:
+  // `tests/issue-3683-numeric-fields.test.ts` "host mode is untouched by the
+  // promotion" compiles `this.pos = startPos` in the HOST lane and pins the
+  // slot at `externref` — it went f64. Every measurement this pass has ever
+  // been given (the acorn census, the binary sizes, the A/Bs in
+  // plan/issues/743-*.md) is standalone, so nothing is lost by saying so.
+  if (!ctx.standalone) return null;
   // Only rescue a slot the checker could not type; never perturb a typed one.
   if (rhsWasm.kind !== "externref") return null;
 

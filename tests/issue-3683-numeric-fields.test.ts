@@ -55,9 +55,29 @@ async function buildLane(source: string, env: Record<string, string>): Promise<L
   }
 }
 
-/** Compile with the promotion ON and OFF. */
+/**
+ * Compile with the promotion ON and OFF.
+ *
+ * (#743 defaults flip, 2026-08-08) BOTH lanes pin
+ * `JS2WASM_FNCTOR_CTOR_PARAM_TYPES=0`. This suite's whole method is a
+ * differential whose OFF lane reproduces the PRE-S4a field shapes, and
+ * `expectPromoted` asserts that lane is still `externref`. The #743 ctor-param
+ * narrowing reaches some of the same slots by a different route, so with it ON
+ * the control lane is no longer pre-S4a and nine pins failed on their BASELINE
+ * assertion — which would have read as "S4a broke" when S4a had not moved.
+ *
+ * Holding it off in both lanes keeps this suite measuring exactly one variable,
+ * which is what it is for. The #743 × S4a interaction is deliberately NOT
+ * covered here: the two passes reach an f64 slot under different proofs
+ * (name-keyed whole-program vs ctor-param call-site agreement) and the
+ * difference between them is recorded in plan/issues/743-*.md, not smuggled
+ * into a suite that would then be testing two things at once.
+ */
 async function lanes(source: string): Promise<{ on: Lane; off: Lane }> {
-  return { on: await buildLane(source, {}), off: await buildLane(source, { JS2WASM_NUMERIC_FIELDS: "0" }) };
+  return {
+    on: await buildLane(source, { JS2WASM_FNCTOR_CTOR_PARAM_TYPES: "0" }),
+    off: await buildLane(source, { JS2WASM_NUMERIC_FIELDS: "0", JS2WASM_FNCTOR_CTOR_PARAM_TYPES: "0" }),
+  };
 }
 
 /**
