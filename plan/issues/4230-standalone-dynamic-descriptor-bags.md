@@ -244,6 +244,14 @@ Run locally on this branch: `check:loc-budget` OK (the `+95` on
 granted), `check:oracle-ratchet` OK (no raw `checker.*` added — this change is
 pure funcMap wiring), `check:stack-balance` OK, `tsc --noEmit` clean.
 
+`tests/equivalence/**` was run in full. One failure —
+`arguments-nested-and-loops.test.ts > for-loop with function declaration in
+body` — and it is **pre-existing**, proved by a paired A/B in isolation
+(`1 failed | 45 passed` identically at base and with the fix, swapping the two
+touched sources for their `HEAD` copies). Note this suite exercises the DEFAULT
+gc lane, which the byte-identity A/B above already proves unchanged, so it could
+not have regressed here on mechanism either.
+
 `check:godfiles` **fails with 13 regressions, none of them from this change** —
 every entry is in `src/codegen/expressions/calls.ts`, `src/codegen/index.ts` or
 `src/codegen/object-runtime.ts`, three files this issue does not touch. They are
