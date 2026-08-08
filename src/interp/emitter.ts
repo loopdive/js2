@@ -39,6 +39,7 @@ import {
   BUILTIN_OBJECT_DEFINE_PROPERTY,
   BUILTIN_PUSH_OBJECT_ENV,
   BUILTIN_PUSH_LEXICAL_ENV,
+  BUILTIN_REGEXP_CREATE,
   BUILTIN_RESTORE_ENV,
   BUILTIN_SAVE_ENV,
   Op,
@@ -1246,7 +1247,21 @@ class FunctionEmitter {
 
   private emitLiteral(node: Node): void {
     const v = node.value;
-    if (node.regex) throw new UnsupportedNodeError("regex literal", "Literal");
+    if (node.regex) {
+      // (#4137) `/pattern/flags` → %RegExpCreate%(pattern, flags). Read the
+      // source-exact text off `node.regex`, never `node.value`: acorn only
+      // materialises `value` when the host can construct the RegExp, so it is
+      // null for any pattern the host rejects and absent in the compiled lane.
+      const m = this.mark();
+      const base = this.regTop;
+      this.enc.emitConst(Op.LdaConst, this.enc.internConst(node.regex.pattern));
+      this.enc.emitReg(Op.Star, this.allocReg());
+      this.enc.emitConst(Op.LdaConst, this.enc.internConst(node.regex.flags));
+      this.enc.emitReg(Op.Star, this.allocReg());
+      this.enc.emitCallBuiltin(BUILTIN_REGEXP_CREATE, base, 2);
+      this.release(m);
+      return;
+    }
     if (v === null) {
       // Distinguish JSON `null` literal from bigint/undefined shapes.
       this.enc.emit0(Op.LdaNull);

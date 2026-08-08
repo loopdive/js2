@@ -45,6 +45,7 @@ import {
   BUILTIN_OBJECT_DEFINE_PROPERTY,
   BUILTIN_PUSH_OBJECT_ENV,
   BUILTIN_PUSH_LEXICAL_ENV,
+  BUILTIN_REGEXP_CREATE,
   BUILTIN_RESTORE_ENV,
   BUILTIN_SAVE_ENV,
   OP_MASK,
@@ -57,6 +58,7 @@ import {
   buildForInKeys,
   buildForOfValues,
   buildObjectLiteral,
+  buildRegExpLiteral,
   anyAdd,
   anyBitAnd,
   anyBitOr,
@@ -1381,6 +1383,8 @@ function callBuiltin(builtinId: number, regs: Regs, base: number, argc: number, 
       return regs[base];
     case BUILTIN_OBJECT_DEFINE_PROPERTY:
       return definePropertyWithMappedArguments(frame.envRec, regs[base], regs[base + 1], regs[base + 2]);
+    case BUILTIN_REGEXP_CREATE:
+      return buildRegExpLiteral(regs[base], regs[base + 1]);
     case BUILTIN_FOR_IN_KEYS:
       return buildForInKeys(regs[base]);
     case BUILTIN_FOR_OF_VALUES:

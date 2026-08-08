@@ -124,6 +124,17 @@ const CURATED: string[] = [
   "var x = 5; x ^= 3; x",
   "var x = -1; x >>>= 0; x",
   "var o = { v: 5 }; o.v |= 3; o.v",
+  // #4137 C2 — regex literals (compare through primitives; a bare RegExp would
+  // structurally compare equal to anything with no own enumerable keys)
+  "/a+b/.test('aab')",
+  "/x/g.flags",
+  "/x/gi.source",
+  "String(/ab+c/gi)",
+  "/(\\d+)/.exec('a123b')[1]",
+  "'a1b2'.replace(/\\d/g, '#')",
+  "var r = /a/g; r.test('aa'); r.lastIndex",
+  "var a = []; for (var i = 0; i < 2; i++) a.push(/x/); a[0] === a[1]", // fresh object per evaluation
+  "typeof /x/",
 ];
 
 describe("#3101 differential — curated constant-string corpus", () => {

@@ -137,6 +137,11 @@ export const BUILTIN_DIRECT_EVAL = 26;
  * builtin returns the previous chain head so bytecode can restore it on normal
  * and abrupt completion using the existing environment-scope machinery. */
 export const BUILTIN_PUSH_OBJECT_ENV = 27;
+/** Regular-expression literal construction (#4137). Intrinsic rather than an
+ * `LdName "RegExp"` + `Construct` desugar so a user-shadowed `RegExp` binding
+ * cannot change the meaning of `/x/g`, and a fresh object is produced on every
+ * evaluation of the literal (§13.2.7.3). */
+export const BUILTIN_REGEXP_CREATE = 28;
 
 // ── Encoding (doc §"Encoding" / ADR-0019) ────────────────────────────────────
 //
@@ -307,4 +312,5 @@ export const BUILTIN_NAMES: string[] = [
   "ForOfValues",
   "DirectEval",
   "PushObjectEnv",
+  "RegExpCreate",
 ];
