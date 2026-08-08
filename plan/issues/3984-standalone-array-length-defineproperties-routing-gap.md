@@ -17,6 +17,14 @@ language_feature: arrays, property descriptors
 es_edition: es5
 goal: standalone-mode
 related: [3251, 3661, 3662, 3663, 1906, 739, 2668]
+loc-budget-allow:
+  - src/codegen/vec-overlay.ts
+  - src/codegen/expressions/call-builtin-static.ts
+  - src/codegen/object-ops.ts
+func-budget-allow:
+  - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
+  - src/codegen/expressions/call-builtin-static.ts::compileBuiltinStaticCall
+  - src/codegen/object-ops.ts::compileObjectDefineProperties
 origin: "2026-08-01: highest-confidence unowned lever in the standalone ES5+untagged goal scope; identified in plan/log/analysis-2026-08-01-descriptor-dedup-map.md as the largest uncovered descriptor family."
 ---
 
@@ -271,3 +279,44 @@ descriptor record for array `length` (D3) and with `writable` dropped on store
 (D2), the `defineProperties` tests that assert on *attributes* rather than on
 the length *value* cannot pass no matter how the define is routed. That is the
 honest ceiling of this issue, and it is why D2/D3 are worth filing.
+
+## Standalone follow-up (2026-08-08, #4227): this routing is HOST-ONLY now
+
+The routing added here was applied to **both** lanes, and on the standalone lane
+that was the wrong direction: it put the compile-time inline ArraySetLength in
+front of the native `__vec_dp_value` length arm, which — since #3251 S3 —
+implements the FULL algorithm (the step-15 non-configurable shrink stop and the
+`length` [[Writable]] bit) against the #3251 overlay companion. The inline path
+cannot see that companion, so on standalone
+`Object.defineProperties(arr, {length: {value: n}})` shrank straight past
+non-configurable indices and ignored a frozen length.
+
+That is exactly the reason the **singular** `Object.defineProperty` caller had
+already been standalone-gated off (the "#3251 S3" note in
+`compileObjectDefineProperty`); the plural caller introduced here simply
+predated the same reasoning being applied to it. The gate now lives **inside**
+`tryEmitVecLengthDefineForDefineProperties` rather than at either call site, so
+the two callers cannot drift apart again.
+
+Host mode is unchanged — this issue's measured +34 is a host-lane number and
+still routes through the inline path.
+
+Flipped standalone: `15.2.3.7-6-a-112` / `-158` / `-160` / `-165` / `-166` /
+`-168` / `-169` / `-170` / `-172` / `-173` / `-175`. The "other 69 gated files"
+ceiling recorded above is a HOST-lane statement and is untouched.
+
+### LOC allowance for the #4227 change-set
+
+The two rejection guards that came with it (§10.4.2.2 step 3, §10.1.6.3 step 2)
+were extracted into their own module, `src/codegen/vec-define-rejections.ts`,
+which is where the substance lives. What remains in the god-files is the wiring
+that cannot be moved: the two spliced call sites plus the `throwTypeMsg` hook in
+`vec-overlay.ts`' S3 record, and the syntactic `ToObject` nullish guard on
+`Object.getOwnPropertyNames` in `call-builtin-static.ts`, which has to sit in
+that call's own dispatch arm. The same two lines are what the function-budget
+gate sees, hence the matching `func-budget-allow` for the host functions. The
+`object-ops.ts` entry is the plural loop passing `compileObjectDefineProperty`
+into `tryEmitVecLengthDefineForDefineProperties` as the standalone route — one
+argument, spread over a prettier-wrapped call.
+(the allowance itself is declared in this file's frontmatter, which is what the
+gate reads.)
