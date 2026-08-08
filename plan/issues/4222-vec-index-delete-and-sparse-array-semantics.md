@@ -22,6 +22,17 @@ related: [4159, 4160, 3251, 2001, 4010, 4221]
 # branch, one presence gate inside the for-in loop body, one ctx flag + its
 # doc-comment. Extracting any of those would put a two-line helper behind an
 # import and hide the branch from the code that has to reason about it.
+# coercion-sites: both entries below are NEW modules from this branch's wave
+# work, and both CALL the canonical helpers rather than hand-rolling coercion:
+# `vec-overlay-presence.ts` calls `number_toString` (the overlay companion's
+# canonical index-key builder, same idiom as its read twin in vec-overlay.ts);
+# `array-filter-spec-access.ts` calls the existing `__unbox_number` late import
+# for the f64 element lane. The gate counts per-file vocabulary, so code moved
+# into a new module registers as growth even when the vocabulary is reused, not
+# invented.
+coercion-sites-allow:
+  - src/codegen/vec-overlay-presence.ts
+  - src/codegen/array-filter-spec-access.ts
 loc-budget-allow:
   - src/codegen/statements/loops.ts
   - src/codegen/vec-overlay.ts
