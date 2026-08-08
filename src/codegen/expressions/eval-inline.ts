@@ -405,6 +405,82 @@ function foldedEvalDeclarationNames(sourceFile: ts.SourceFile): FoldedEvalDeclar
   return { varNames, blockFunctionNames };
 }
 
+/**
+ * Top-level LexicallyDeclaredNames of an eval Script: `let`/`const` (and
+ * `using`) declarations plus named class declarations that are DIRECT children
+ * of the foreign SourceFile. Block/loop/switch-nested lexicals belong to their
+ * own nested record, which the ordinary lowering already scopes.
+ */
+function foldedEvalTopLevelLexicalNames(sourceFile: ts.SourceFile): Set<string> {
+  const names = new Set<string>();
+  const LEXICAL_FLAGS = ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing;
+  for (const statement of sourceFile.statements) {
+    if (ts.isVariableStatement(statement)) {
+      if ((statement.declarationList.flags & LEXICAL_FLAGS) === 0) continue;
+      for (const declaration of statement.declarationList.declarations) {
+        addFoldedEvalBindingNames(declaration.name, names);
+      }
+    } else if (ts.isClassDeclaration(statement) && statement.name) {
+      names.add(statement.name.text);
+    }
+  }
+  return names;
+}
+
+/**
+ * True when the eval body applies `typeof` to one of its OWN lexical bindings
+ * before that binding's declaration — a temporal-dead-zone read that must throw
+ * ReferenceError (§13.5.3.1).
+ *
+ * The splice cannot express it. `typeof-delete.ts` resolves the operand through
+ * `checker.getSymbolAtLocation`, and a FOREIGN eval identifier has no checker
+ * symbol at all, so it takes the genuinely-unresolvable arm and statically folds
+ * to `"undefined"` — silently erasing the required error. (A bare read of the
+ * same binding is fine: it misses `localMap` differently and reaches the TDZ
+ * check.) Route these bodies to the bytecode provider, whose lexical records
+ * carry real TDZ state. This is the §3 "never splice-and-ignore" rule: an early
+ * error the fold cannot reproduce must not be folded away.
+ */
+function foldedEvalTypeofBeforeLexicalDeclaration(sourceFile: ts.SourceFile): boolean {
+  const LEXICAL_FLAGS = ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing;
+  const firstDeclaration = new Map<string, number>();
+  const record = (name: string, at: number): void => {
+    const previous = firstDeclaration.get(name);
+    if (previous === undefined || at < previous) firstDeclaration.set(name, at);
+  };
+  const collect = (node: ts.Node): void => {
+    if (ts.isFunctionLike(node)) return;
+    if (ts.isVariableStatement(node) && (node.declarationList.flags & LEXICAL_FLAGS) !== 0) {
+      const names = new Set<string>();
+      for (const declaration of node.declarationList.declarations) addFoldedEvalBindingNames(declaration.name, names);
+      for (const name of names) record(name, node.getStart(sourceFile));
+      return;
+    }
+    if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
+      if (ts.isClassDeclaration(node) && node.name) record(node.name.text, node.getStart(sourceFile));
+      return;
+    }
+    ts.forEachChild(node, collect);
+  };
+  ts.forEachChild(sourceFile, collect);
+  if (firstDeclaration.size === 0) return false;
+
+  let found = false;
+  const scan = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isTypeOfExpression(node) && ts.isIdentifier(node.expression)) {
+      const declaredAt = firstDeclaration.get(node.expression.text);
+      if (declaredAt !== undefined && node.getStart(sourceFile) < declaredAt) {
+        found = true;
+        return;
+      }
+    }
+    ts.forEachChild(node, scan);
+  };
+  ts.forEachChild(sourceFile, scan);
+  return found;
+}
+
 function foldedEvalLowerLexicalCollision(varNames: ReadonlySet<string>, fctx: FunctionContext): string | undefined {
   const lexicalNames = currentDirectEvalLexicalBindingNames(fctx);
   if (lexicalNames.size === 0) return undefined;
@@ -639,6 +715,132 @@ function restoreFoldedDirectEvalVarScope(fctx: FunctionContext, shadows: readonl
   }
 }
 
+interface FoldedEvalLexicalShadow {
+  name: string;
+  /** Caller's prior `localMap` entry, if any. */
+  localIdx: number | undefined;
+  /** Caller's prior `boxedCaptures` entry, if any. */
+  boxed: { refCellTypeIdx: number; valType: ValType } | undefined;
+  /** Caller's prior `tdzFlagLocals` entry, if any. */
+  tdzFlag: number | undefined;
+  /** Caller's prior `boxedTdzFlags` entry, if any. */
+  boxedTdz: { refCellTypeIdx: number; localIdx: number } | undefined;
+}
+
+interface FoldedEvalLexicalScope {
+  shadows: FoldedEvalLexicalShadow[];
+  /** `preHoistedLetConstSlots` keys present before the splice (node-keyed, so
+   * the eval body's foreign declarations can only ADD entries). */
+  preHoistedKeys: Set<ts.VariableDeclaration> | undefined;
+  /** `fctx.locals.length` before the splice — everything past this mark is a
+   * slot the eval body allocated. */
+  localsMark: number;
+  /** The eval body's top-level lexical names, for the slot-rename sweep. */
+  lexNames: ReadonlySet<string>;
+}
+
+/**
+ * Mangling for a discarded eval-lexical slot. `@` cannot appear in a JS
+ * identifier, so no user binding and no `__tdz_<name>` probe can ever match the
+ * renamed slot; the slot index keeps it unique. It also deliberately does NOT
+ * start with `__`, which keeps the compiler-temp deduplicator
+ * (`context/locals.ts`, `__`-prefixed names only) away from it.
+ */
+function discardedEvalLexicalSlotName(name: string, slotIdx: number, tdz: boolean): string {
+  return `${name}@eval${tdz ? "tdz" : "lex"}$${slotIdx}`;
+}
+
+/**
+ * §19.2.1 PerformEval steps 17-20: an eval Script gets a FRESH
+ * `LexicalEnvironment` that is discarded when the eval returns. The foreign-AST
+ * splice deliberately shares the caller's binding maps (that is how sloppy
+ * eval-created `var`s persist, #1102 AC2), so `hoistLetConstWithTdz` used to
+ * register the eval body's top-level `let`/`const`/class into the CALLER's live
+ * `localMap` and never remove them — the binding leaked, and a later caller read
+ * of the name resolved instead of producing the required unresolved reference.
+ *
+ * `enter` shadows those names (snapshotting whatever the caller had, then
+ * removing it so the eval declares a genuinely fresh binding); `restore` drops
+ * the eval-created entries and reinstates the snapshot. Vars are deliberately
+ * untouched.
+ */
+function enterFoldedEvalLexicalScope(fctx: FunctionContext, lexNames: ReadonlySet<string>): FoldedEvalLexicalScope {
+  const shadows: FoldedEvalLexicalShadow[] = [];
+  if (lexNames.size === 0) {
+    return { shadows, preHoistedKeys: undefined, localsMark: fctx.locals.length, lexNames };
+  }
+  for (const name of lexNames) {
+    shadows.push({
+      name,
+      localIdx: fctx.localMap.get(name),
+      boxed: fctx.boxedCaptures?.get(name),
+      tdzFlag: fctx.tdzFlagLocals?.get(name),
+      boxedTdz: fctx.boxedTdzFlags?.get(name),
+    });
+    fctx.localMap.delete(name);
+    fctx.boxedCaptures?.delete(name);
+    fctx.tdzFlagLocals?.delete(name);
+    fctx.boxedTdzFlags?.delete(name);
+  }
+  return {
+    shadows,
+    preHoistedKeys: fctx.preHoistedLetConstSlots ? new Set(fctx.preHoistedLetConstSlots.keys()) : new Set(),
+    localsMark: fctx.locals.length,
+    lexNames,
+  };
+}
+
+function restoreFoldedEvalLexicalScope(fctx: FunctionContext, scope: FoldedEvalLexicalScope): void {
+  if (scope.shadows.length === 0) return;
+  for (const shadow of scope.shadows) {
+    if (shadow.localIdx !== undefined) fctx.localMap.set(shadow.name, shadow.localIdx);
+    else fctx.localMap.delete(shadow.name);
+
+    if (shadow.boxed) (fctx.boxedCaptures ??= new Map()).set(shadow.name, shadow.boxed);
+    else fctx.boxedCaptures?.delete(shadow.name);
+
+    if (shadow.tdzFlag !== undefined) (fctx.tdzFlagLocals ??= new Map()).set(shadow.name, shadow.tdzFlag);
+    else fctx.tdzFlagLocals?.delete(shadow.name);
+
+    if (shadow.boxedTdz) (fctx.boxedTdzFlags ??= new Map()).set(shadow.name, shadow.boxedTdz);
+    else fctx.boxedTdzFlags?.delete(shadow.name);
+  }
+  // Drop the per-declaration pre-hoist records the splice added. They are keyed
+  // by the FOREIGN declaration nodes, so anything absent from the snapshot key
+  // set belongs to the discarded eval lexical record.
+  const priorKeys = scope.preHoistedKeys;
+  if (priorKeys && fctx.preHoistedLetConstSlots) {
+    for (const key of fctx.preHoistedLetConstSlots.keys()) {
+      if (!priorKeys.has(key)) fctx.preHoistedLetConstSlots.delete(key);
+    }
+  }
+
+  // Dropping the NAME→slot mappings above is not sufficient on its own: the
+  // #1177 block-scope-shadow rescue in `closures/arrow-phases.ts` (and its twin
+  // in `statements/nested-declarations.ts`) deliberately falls back to scanning
+  // `fctx.locals` BY NAME when `localMap` misses, so that a closure built inside
+  // a block can still capture a pre-hoisted-then-shadowed slot. That rescan
+  // happily resurrects the eval's ORPHANED slot for a closure created AFTER the
+  // eval returned — which is exactly the leak this scope is meant to close
+  // (`eval('let x = 3'); assert.throws(ReferenceError, function(){ x; })` did
+  // not throw, because the lifted thunk captured the orphan).
+  //
+  // Rename the slots the eval allocated so no by-name probe can find them. The
+  // slot indices are untouched, so bytecode already emitted — including
+  // captures planned for closures created INSIDE the eval body, which store the
+  // resolved index — keeps working.
+  for (let i = scope.localsMark; i < fctx.locals.length; i++) {
+    const slot = fctx.locals[i]!;
+    if (scope.lexNames.has(slot.name)) {
+      slot.name = discardedEvalLexicalSlotName(slot.name, fctx.params.length + i, false);
+      continue;
+    }
+    if (slot.name.startsWith("__tdz_") && scope.lexNames.has(slot.name.slice("__tdz_".length))) {
+      slot.name = discardedEvalLexicalSlotName(slot.name.slice("__tdz_".length), fctx.params.length + i, true);
+    }
+  }
+}
+
 /**
  * Try to inline `eval("<constant>")` at compile time.
  *
@@ -806,6 +1008,12 @@ export function tryStaticEvalInline(
   // alias calls correctly become indirect eval.
   if (ctx.standalone && containsEvalValueReference(sf)) return undefined;
 
+  // A `typeof` of one of the eval body's own lexical bindings, before that
+  // binding's declaration, is a TDZ ReferenceError the splice statically folds
+  // to "undefined" (foreign identifiers have no checker symbol). Let the
+  // provider own it.
+  if (foldedEvalTypeofBeforeLexicalDeclaration(sf)) return undefined;
+
   // Empty program — eval returns undefined.
   if (stmts.length === 0) {
     emitUndefined(ctx, fctx);
@@ -869,8 +1077,20 @@ export function tryStaticEvalInline(
     if (t !== null) fctx.body.push({ op: "drop" });
   }
 
+  // The eval's LexicalEnvironment is a fresh record discarded on exit, so its
+  // top-level let/const/class must not survive into the caller's binding maps.
+  // Orthogonal to the all-or-nothing indirect `isolateBindings` switch below:
+  // vars keep sharing the caller/global scope, only lexicals are isolated.
+  const lexicalScope = enterFoldedEvalLexicalScope(fctx, foldedEvalTopLevelLexicalNames(sf));
+
   const isolateIndirectBindings = !directEval && hasScriptScopeAnnexBFunction(sf);
-  if (!directEval) return compileInlinedEvalStatements(ctx, fctx, stmts, isolateIndirectBindings);
+  if (!directEval) {
+    try {
+      return compileInlinedEvalStatements(ctx, fctx, stmts, isolateIndirectBindings);
+    } finally {
+      restoreFoldedEvalLexicalScope(fctx, lexicalScope);
+    }
+  }
 
   const savedDirectEvalThisFallback = fctx.directEvalSloppyThisFallback;
   const outerShadows = enterFoldedDirectEvalVarScope(fctx, declarationNames.varNames);
@@ -879,6 +1099,8 @@ export function tryStaticEvalInline(
   try {
     const result = compileInlinedEvalStatements(ctx, fctx, stmts, false);
     if (result === undefined) {
+      // Late bail to the provider: undo BOTH scope mutations before the caller
+      // recompiles the call, or the provider path sees phantom caller bindings.
       restoreFoldedDirectEvalVarScope(fctx, outerShadows);
     } else if (result !== null && outerShadows.length > 0) {
       // Keep the eval-created activation binding visible to later AOT reads and
@@ -887,6 +1109,7 @@ export function tryStaticEvalInline(
     }
     return result;
   } finally {
+    restoreFoldedEvalLexicalScope(fctx, lexicalScope);
     fctx.directEvalSloppyThisFallback = savedDirectEvalThisFallback;
   }
 }

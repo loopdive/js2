@@ -155,6 +155,165 @@ eval('var y;');
   });
 });
 
+describe("#2929 bucket B — scoped lexical isolation for the splice", () => {
+  it("eval('let a = 1; a') evaluates to 1 but leaves no caller binding", async () => {
+    await runScript(`var r = eval('let a = 1; a');
+if (r !== 1) throw new Error('eval result was ' + r);
+if (typeof a !== 'undefined') throw new Error('binding leaked: typeof a === ' + typeof a);
+`);
+  });
+
+  it("a same-named caller binding is shadowed by the eval, then restored", async () => {
+    await runScript(`let o = 23;
+eval('let o;');
+if (o !== 23) throw new Error('caller binding clobbered: o === ' + o);
+`);
+  });
+
+  it("a bare read of an eval-declared let is an unresolved reference afterwards", async () => {
+    await runScript(`eval('let q = 3;');
+var caught = null;
+try { q; } catch (e) { caught = e; }
+if (caught === null) throw new Error('expected a ReferenceError, nothing thrown');
+`);
+  });
+
+  it("const isolates the same way as let", async () => {
+    await runScript(`eval('const c = 7;');
+if (typeof c !== 'undefined') throw new Error('const leaked: typeof c === ' + typeof c);
+`);
+  });
+
+  it("isolation also holds inside a function body", async () => {
+    await runScript(`function f() { eval('let z = 5;'); return typeof z; }
+var t = f();
+if (t !== 'undefined') throw new Error('leaked into function scope: ' + t);
+`);
+  });
+
+  it("indirect eval isolates its lexicals too", async () => {
+    await runScript(`(0,eval)('let ind = 9;');
+if (typeof ind !== 'undefined') throw new Error('indirect let leaked: typeof ind === ' + typeof ind);
+`);
+  });
+
+  it("eval-created sloppy VARS still persist in the caller (#1102 AC2 — deliberately untouched)", async () => {
+    await runScript(`eval('var kept = 11;');
+if (kept !== 11) throw new Error('var did not persist: ' + kept);
+`);
+  });
+});
+
+describe("#2929 bucket B — the discarded slot must be invisible to LATER closures", () => {
+  /**
+   * The #1177 block-scope-shadow rescue in `closures/arrow-phases.ts` falls back
+   * to scanning `fctx.locals` BY NAME when `localMap` misses. Dropping the name
+   * mapping alone therefore did NOT close the leak: a lifted thunk created after
+   * the eval resurrected the eval's orphaned slot and read it happily. Only the
+   * IIFE shape (compiled in the caller's own context) threw. This is the exact
+   * shape test262's `assert.throws(ReferenceError, function(){ x; })` uses.
+   */
+  async function outcomeOf(src: string): Promise<number> {
+    const r = await compile(src, {
+      allowJs: false,
+      fileName: "issue-2929.ts",
+      skipSemanticDiagnostics: true,
+      inferModuleStrictArguments: false,
+      target: "standalone",
+    });
+    expect(r.success, JSON.stringify(r.errors)).toBe(true);
+    const { instance } = await WebAssembly.instantiate(r.binary, {});
+    return (instance.exports as { test: () => number }).test();
+  }
+
+  const THREW = 2;
+
+  it("a thunk PASSED TO A HELPER throws on the eval-declared name (assert.throws shape)", async () => {
+    expect(
+      await outcomeOf(`var outcome = 0;
+function thr(f) { try { f(); outcome = 1; } catch (e) { outcome = 2; } }
+eval('let q2 = 3;');
+thr(function () { q2; });
+export function test(): number { return outcome; }
+`),
+    ).toBe(THREW);
+  });
+
+  it("a thunk stored in a var then called throws too", async () => {
+    expect(
+      await outcomeOf(`var outcome = 0;
+eval('let q3 = 3;');
+var f = function () { q3; };
+try { f(); outcome = 1; } catch (e) { outcome = 2; }
+export function test(): number { return outcome; }
+`),
+    ).toBe(THREW);
+  });
+
+  it("a closure created INSIDE the eval body keeps its lexical after the restore", async () => {
+    // The rename only re-labels the slot; the index (and every capture already
+    // planned against it) is untouched.
+    expect(
+      await outcomeOf(`var outcome = 0;
+eval('let cv = 7; function g() { return cv; }');
+outcome = (g() === 7) ? 2 : 1;
+export function test(): number { return outcome; }
+`),
+    ).toBe(THREW);
+  });
+
+  it("a same-named CALLER binding stays capturable by a later closure", async () => {
+    expect(
+      await outcomeOf(`var outcome = 0;
+function call(f) { return f(); }
+let keep = 23;
+eval('let keep;');
+outcome = (call(function () { return keep; }) === 23) ? 2 : 1;
+export function test(): number { return outcome; }
+`),
+    ).toBe(THREW);
+  });
+});
+
+describe("#2929 — TDZ typeof inside an eval body routes to the provider", () => {
+  // `typeof-delete.ts` resolves the operand via `checker.getSymbolAtLocation`;
+  // a FOREIGN eval identifier has no symbol, so it takes the
+  // genuinely-unresolvable arm and folds to "undefined", erasing the required
+  // ReferenceError. The splice cannot express it, so it must not fold it away.
+  async function bails(src: string): Promise<boolean> {
+    const r = await compile(src, {
+      allowJs: true,
+      fileName: "issue-2929.js",
+      skipSemanticDiagnostics: true,
+      inferModuleStrictArguments: false,
+      target: "standalone",
+      deferTopLevelInit: true,
+    });
+    expect(r.success, JSON.stringify(r.errors)).toBe(true);
+    return Buffer.from(r.binary).includes("js2wasm:runtime-eval");
+  }
+
+  it("eval('typeof x; let x;') bails to the provider", async () => {
+    expect(await bails(`eval('typeof x; let x;');\n`)).toBe(true);
+  });
+
+  it("eval('typeof x; const x = 1;') bails to the provider", async () => {
+    expect(await bails(`eval('typeof x; const x = 1;');\n`)).toBe(true);
+  });
+
+  it("a nested-block TDZ typeof bails too", async () => {
+    expect(await bails(`eval('{ typeof y; let y; }');\n`)).toBe(true);
+  });
+
+  it("typeof AFTER the declaration still folds (no needless bail)", async () => {
+    expect(await bails(`eval('let z = 1; typeof z;');\n`)).toBe(false);
+  });
+
+  it("typeof of an unrelated name still folds", async () => {
+    expect(await bails(`eval('typeof nope; let w = 1;');\n`)).toBe(false);
+  });
+});
+
 describe("#2929 — pre-existing collision paths stay green", () => {
   it("lower-lexical collision in a function caller still throws SyntaxError", async () => {
     await runScript(`function f() { let y; return eval('var y;'); }

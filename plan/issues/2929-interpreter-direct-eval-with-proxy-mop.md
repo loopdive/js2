@@ -555,3 +555,407 @@ The PR is ready for a fresh merge-group run. If it fails again, the next agent
 should diff the new candidate against its exact merge-group predecessor and
 work only newly introduced transitions; do not return authoritative standalone
 shards to the refusal provider or broaden the shared closure ABI.
+
+## Implementation Plan — EvalDeclarationInstantiation early errors (arch, 2026-08-08)
+
+### 0. Population reality check — the "~89 SyntaxError" cluster is ALREADY LANDED
+
+Fresh measurement on main tip `a8bbc0d7` (this spec's worktree, full Acorn+interpreter
+provider, cache key `8d62618f76cb96b7`, run `20260808-072852`):
+
+```sh
+TEST262_PATH_FILTER=language/eval-code/ TEST262_TARGET=standalone \
+TEST262_FULL_RUNTIME_EVAL=1 COMPILER_POOL_SIZE=1 TEST262_WORKERS=1 \
+TEST262_REPORTER=dot pnpm run test:262 -- --official-scope-only
+```
+
+Result: **747 / 816 pass (91.5%)** — standard 305/347, Annex B 442/469, 69 fail,
+0 CE, 0 timeout. The 2026-08-03 measurement this issue's task text was written
+against (473/816, "89 missing EvalDeclarationInstantiation SyntaxErrors in
+literal direct-eval / default-parameter shapes") predates the merged collision
+slices (PR #4013 lineage; `src/interp/` landed on main 2026-08-07 via the
+#4156 merge). **The entire 192-file `declare-arguments` default-parameter
+matrix now passes (192/192, zero failures).** The var-env strict shapes and
+lower-lex shapes also pass. Do NOT re-implement:
+`foldedEvalParameterCollision` / `foldedEvalLowerLexicalCollision`
+(`src/codegen/expressions/eval-inline.ts:360-470`), the interpreter's
+`validateNonStrictEvalVarNames` / `prepareGlobalDeclarations` / TDZ lexical
+records (`src/interp/eval-environment.ts:470-642`), or the
+`preparePersistentEvalBindings` atomic preflight — all merged and green.
+
+What REMAINS of the EvalDeclarationInstantiation early-error family, from the
+69-failure enumeration (exact file list in
+`benchmarks/results/test262-standalone-results-20260808-072852.jsonl`):
+
+| Bucket | Count | Expectation | Status |
+| --- | ---: | --- | --- |
+| **A. Global lexical collision** (sloppy eval `var x` vs script `let x`) | 2 | runtime SyntaxError | evaluates silently — **this spec** |
+| **B. Eval-lexical leak** (`eval("let x=3")` leaks `x` into caller) | 8 | typeof undefined + ReferenceError after eval | binding leaks — **this spec** |
+| **C. Global own-property var/func init** (`var-env-{var,func}-init-*`, `var-env-{var,func}-non-strict`) | 13 | own property on globalThis, configurable, deletable | module-global storage, not `$Object` property — **sketch, follow-on slice** |
+| **D. Non-definable global** (`non-definable-global-{var,function,generator}`) | 6 | TypeError (CanDeclareGlobalVar/Function) | no runtime check — **sketch, depends on C** |
+| E. `SyntaxError: NaN` Annex-B skip-early-err | 24 | must NOT throw early | **#4137's — in-progress, another lane. DO NOT TOUCH** |
+| F. Out of scope: new.target (4), super-prop (6), this-value-func-strict-caller (1), indirect realm (1), indirect lex-env-heritage (1), annexB existing-block-fn-update (2), annexB script-decl-lex-no-collision (1) | 16 | various | different mechanisms (metaproperties/method context, realm identity, B.3.3 update) |
+
+2+8+13+6+24+16 = 69 ✓.
+
+**Bucket A files (2):**
+- `test/language/eval-code/direct/var-env-global-lex-non-strict.js` — `let x; eval('var x;')` at global; `negative: {phase: runtime, type: SyntaxError}`; currently "expected runtime SyntaxError but succeeded"
+- `test/language/eval-code/indirect/var-env-global-lex-non-strict.js` — `let x; (0,eval)('var x;')` in try; caught must be SyntaxError; currently nothing thrown
+
+**Bucket B files (8):** `test/language/eval-code/{direct,indirect}/lex-env-distinct-{let,const}.js`, `test/language/eval-code/{direct,indirect}/lex-env-no-init-{let,const}.js` — e.g. `eval('let xNonStrict = 3;')` then `assert.throws(ReferenceError, () => xNonStrict)`; currently the `let` resolves after the eval returns.
+
+**Bucket C files (13):** direct: `var-env-func-init-global-new`, `var-env-func-init-local-new`, `var-env-func-init-local-new-delete`, `var-env-func-init-local-update`, `var-env-func-non-strict`, `var-env-var-init-global-new`, `var-env-var-init-global-exstng`, `var-env-var-init-local-new-delete`; indirect: `var-env-func-init-global-new`, `var-env-func-non-strict`, `var-env-var-init-global-new`, `var-env-var-init-global-exstng`, `var-env-var-non-strict`.
+
+**Bucket D files (6):** `{direct,indirect}/non-definable-global-{var,function,generator}.js`.
+
+### 1. Root cause (buckets A and B — both in the AOT constant-splice path)
+
+Both failing populations use **literal** eval sources, so they never reach the
+interpreter: `tryStaticEvalInline` (`src/codegen/expressions/eval-inline.ts:657`)
+splices the foreign AST into the caller and returns before the provider routing
+in `calls.ts:6313-6323`. The interpreter side is already correct for both rules
+(`prepareGlobalDeclarations` at `eval-environment.ts:554` throws the
+HasLexicalDeclaration SyntaxError against the global lexical-cells carrier;
+`prepareEvalEnvironment` gives eval lexicals a fresh discarded TDZ record at
+`eval-environment.ts:635-642`). The splice reconstructs the
+parameter-environment and lower-lexical collision rules (lines 726-738) but is
+missing exactly two caller-dependent behaviors:
+
+- **A**: no check of the eval body's VarDeclaredNames against the **script's
+  global lexical declarations** (`ctx.globalLexicalBindings`, populated by
+  `recordScriptGlobalLexicalBindingNames`, `src/codegen/source-scan-predicates.ts:397`,
+  wired in `recordSourceGlobalEnvironment`, `src/codegen/index.ts:3173`). At
+  module-init scope `fctx.directEvalBindingNames` is undefined (only
+  FunctionLikeDeclarations get it, `src/codegen/function-body.ts:402`), so
+  `foldedEvalLowerLexicalCollision` sees an empty set and the splice proceeds.
+- **B**: `compileInlinedEvalStatements` (line 911) calls `hoistLetConstWithTdz`
+  (`src/codegen/index.ts:8853`) which registers the eval body's top-level
+  `let`/`const` **into the caller's live `fctx.localMap`** and never removes
+  them. For direct eval, `isolateBindings` is false; for indirect eval it is
+  true only when `hasScriptScopeAnnexBFunction(sf)`. Per PerformEval steps
+  17-20 the eval's LexicalEnvironment is a fresh record discarded on exit; a
+  later caller read of the name must be an unresolved reference.
+
+### 2. Changes
+
+**All changes are in `src/codegen/expressions/eval-inline.ts` only.** Do not
+touch `src/interp/emitter.ts` (owned by in-flight #4137) or
+`src/interp/eval-environment.ts` (correct already).
+
+#### 2a. Bucket A — global-lexical collision guard in the splice
+
+Location: inside `tryStaticEvalInline`, immediately after
+`const declarationNames = foldedEvalDeclarationNames(sf);` (line ~721),
+alongside the existing direct-eval collision block (lines 726-738).
+
+```ts
+// §19.2.1.3 step 3.a: when eval's VariableEnvironment is the
+// GlobalEnvironmentRecord, every VarDeclaredName must miss the script's
+// lexical declarations. Applies to ALL sloppy indirect eval (its varEnv is
+// always global) and to sloppy direct eval whose call executes in global
+// Script code (module-init fctx — blocks/case/catch do not change varEnv).
+if (!evalIsStrict && (!directEval || fctx.name === "__module_init")) {
+  const globalLexicals = ctx.globalLexicalBindings;
+  if (globalLexicals !== undefined && globalLexicals.size > 0) {
+    for (const name of declarationNames.varNames) {
+      if (globalLexicals.has(name)) {
+        emitThrowJsError(ctx, fctx, "SyntaxError",
+          `Identifier '${name}' has already been declared`);
+        return { kind: "externref" };
+      }
+    }
+  }
+}
+```
+
+- Use the `fctx.name === "__module_init"` predicate (same precedent as
+  `unsupportedGlobalShape`, line 763), NOT a parent-pointer walk: a nested
+  `eval('eval("var x")')` recursion compiles foreign AST nodes whose parents
+  reach the foreign `EVAL_SOURCE_FILENAME` SourceFile, so an AST walk gives
+  the wrong answer, while the fctx identity is inherited correctly. It is also
+  deliberately different from `directEvalRunsAtScriptGlobal`
+  (`calls.ts:3264`), which stops at Block/Case/Catch/With — that predicate
+  models the LexicalEnvironment global-route; varEnv-globality must NOT stop
+  at blocks.
+- `declarationNames.varNames` already includes top-level FunctionDeclaration
+  names (see `foldedEvalDeclarationNames`, line 374-406) — required, since
+  VarDeclaredNames covers them.
+- **Exclude `declarationNames.blockFunctionNames`** — B.3.3 cancels, never
+  throws (this is what keeps `annexB/.../script-decl-lex-no-collision`-family
+  and the `*-skip-early-err-*` family unaffected).
+- `evalIsStrict` is the already-computed value at line 712 (uses
+  `ctx.inferModuleStrictArguments`), so the #1102 AC2 TS-module lane
+  (module-strict ⇒ strict eval ⇒ private varEnv ⇒ no collision) is preserved
+  automatically.
+- Emitting the throw (rather than `return undefined` to the provider) is
+  correct AND cheaper: the error does not depend on runtime state — the
+  script's lexical name set is static. It also covers host/GC mode, where the
+  provider is not in play.
+
+#### 2b. Bucket B — scoped lexical isolation for the splice
+
+Add a collector next to `foldedEvalDeclarationNames` (~line 406):
+
+```ts
+/** Top-level LexicallyDeclaredNames of the eval body: let/const declarations
+ * and class declarations directly under the foreign SourceFile. */
+function foldedEvalTopLevelLexicalNames(sourceFile: ts.SourceFile): Set<string>
+```
+
+(let/const via `NodeFlags.Let | NodeFlags.Const` on direct SourceFile-child
+VariableStatements, plus named ClassDeclarations; reuse
+`addFoldedEvalBindingNames` for destructuring patterns.)
+
+Add a shadow/restore pair mirroring `enterFoldedDirectEvalVarScope` /
+`restoreFoldedDirectEvalVarScope` (lines 601-640):
+
+```ts
+interface FoldedEvalLexicalShadow {
+  name: string;
+  localIdx: number | undefined;        // caller's prior localMap entry
+  boxed: BoxedCaptureInfo | undefined; // caller's prior boxedCaptures entry
+  tdzFlag: number | undefined;         // caller's prior tdzFlagLocals entry
+  boxedTdz: ... | undefined;           // caller's prior boxedTdzFlags entry
+  preHoisted: ... | undefined;         // caller's prior preHoistedLetConstSlots entry
+}
+function enterFoldedEvalLexicalScope(fctx, lexNames): FoldedEvalLexicalShadow[]
+function restoreFoldedEvalLexicalScope(fctx, shadows): void
+```
+
+`enter` snapshots the five per-name structures **before** the splice compiles
+(so a caller binding of the same name is captured); `restore` runs **after**
+the splice and (a) deletes the eval-created entries for each lexical name,
+(b) reinstates the snapshot values where they existed. This makes the eval's
+lexical record observably fresh-and-discarded:
+
+- caller `let outside = 23; eval('let outside;')` — no error, eval shadows,
+  caller binding restored (lex-env-distinct first half);
+- `eval('let x = 3;')` — after restore `x` is unresolved in the caller, so
+  `typeof x` is `"undefined"` and a bare read produces the ReferenceError the
+  tests assert (the caller-side unresolved-read machinery already does this —
+  proven by the strict variants of the same files, which route to the provider
+  today and pass).
+
+Apply at both call sites:
+
+1. **Direct tail** (lines 842-858): wrap the existing
+   `enterFoldedDirectEvalVarScope`/`compileInlinedEvalStatements` sequence —
+   `const lexShadows = enterFoldedEvalLexicalScope(fctx, foldedEvalTopLevelLexicalNames(sf))`
+   before `compileInlinedEvalStatements`, `restoreFoldedEvalLexicalScope` in
+   the same `finally` that restores `directEvalSloppyThisFallback`. On the
+   `result === undefined` bail path restore BEFORE falling through to the
+   provider (no double bookkeeping).
+2. **Indirect arm** (line 840): same wrap around
+   `compileInlinedEvalStatements(ctx, fctx, stmts, isolateIndirectBindings)`.
+   Note indirect isolation today is all-or-nothing keyed on Annex B functions;
+   the new scoped-lexical restore is orthogonal and must run even when
+   `isolateIndirectBindings` is false (vars must still share the caller/global
+   scope — only lexicals are isolated).
+
+Var declarations are deliberately NOT touched: sloppy eval-created vars
+persisting in the caller activation is spec behavior and #1102 AC2.
+
+#### 2c. How the caller's lexical-binding set reaches the check (already reified)
+
+Nothing new must be threaded for A/B. The inputs all exist:
+
+- script global lexicals → `ctx.globalLexicalBindings` (compile-time set) and,
+  for the runtime provider path, the `RUNTIME_EVAL_GLOBAL_LEXICAL_CELLS_PROPERTY`
+  carrier (`runtime-eval-provider.ts:46`, seeded by
+  `emitRuntimeEvalGlobalBindingSeed`) which `createRuntimeEvalGlobalEnvironment`
+  rehydrates into `ENV_GLOBAL.names` — that is why the dynamic-source variant
+  of bucket A already throws in the interpreter (`prepareGlobalDeclarations`,
+  `eval-environment.ts:560-568`);
+- function-scope lexicals → `currentDirectEvalLexicalBindingNames`
+  (`direct-eval-environment.ts:242`) — already consumed by
+  `foldedEvalLowerLexicalCollision`, already passing its tests.
+
+### 3. AOT splice-path guard design (general principle)
+
+A compile-time fold must never erase a required early error. The decision
+table this slice completes, for a literal eval body under standalone:
+
+| Condition | Action |
+| --- | --- |
+| Parse error | emit-throw SyntaxError (exists, line 694) |
+| Script early error (strict names, orphan break/continue, dup params) | emit-throw (exists, `eval-early-errors.ts`) |
+| Sloppy var/func name ∈ param-env or lower-lexical (function callers) | emit-throw (exists, lines 726-731) |
+| **Sloppy var/func name ∈ script global lexicals (global varEnv)** | **emit-throw (NEW, 2a)** |
+| Annex B block-fn crossing caller lexical | bail to provider — cancellation, not error (exists, line 738) |
+| Explicitly-strict body/caller with scoped declarations | bail to provider (exists, line 748) |
+| Non-static preconditions (extensibility, descriptors — bucket D) | cannot be decided statically: bail to provider once C lands (see §5) |
+
+Emit-throw when the error is statically certain; bail-to-provider when the
+outcome depends on runtime environment state. Never splice-and-ignore.
+
+### 4. Edge cases
+
+- **Nested evals**: inner literal `eval` recursion inherits the outer fctx —
+  the `__module_init` predicate stays correct; an inner eval spliced inside a
+  function-caller fctx keeps using the function-scope collision path.
+- **Blocks/switch/catch at global scope**: do NOT suppress the bucket-A guard
+  (varEnv is still global). This is exactly the shape of
+  `non-definable-global-*` (eval inside `if{try{}}`) — those must keep
+  compiling (guard only fires on a *lexical-name* collision).
+- **catch-adjacent scopes**: `catch (e) { eval('var e') }` inside a function —
+  Annex B.3.5 exempts CatchParameter collisions; the function-scope path
+  handles it today (passing); the new guard never fires there (not
+  module-init... it can be: global `try/catch` — B.3.5 means `var e` must NOT
+  throw. CatchClause bindings are NOT in `ctx.globalLexicalBindings` (only
+  top-level let/const/class are — verified `source-scan-predicates.ts:407-414`),
+  so the guard correctly stays silent. Add the canary anyway.
+- **Indirect eval must NOT get caller collisions**: the guard consults only
+  `ctx.globalLexicalBindings` — a function-local `let x` around
+  `(0,eval)('var x')` never throws. `lex-env-heritage` (bucket F) is a
+  separate indirect-splice caller-capture defect; out of scope here.
+- **Annex B interactions — leave alone**: blockFunctionNames excluded from the
+  guard; the `*-skip-early-err-*` family (bucket E) is #4137's; the B.3.3
+  routing arm (lines 750-763) runs after the new guard and is unchanged.
+- **Shadow restore vs. closures**: a closure created inside the eval body over
+  an eval-lexical captured via `boxedCaptures` during the splice keeps its
+  cell after restore (the cell local is not freed; only the name mapping is).
+- **Duplicate lexicals inside the eval body** (`let x; let x`): Acorn/TS parse
+  diagnostics already reject — unchanged.
+- **Module-strict TS lane (#1102 AC2)**: `evalIsStrict` true ⇒ guard skipped,
+  isolation for strict bodies already routes to provider — no behavior change
+  for `tests/issue-1102.test.ts`.
+
+### 5. Buckets C and D — sketch only (separate follow-on, do not bundle)
+
+C (13 files) is a substrate item, not an eval-inline patch: eval-created
+global `var`/`function` must materialize as **own, configurable (D=true),
+deletable properties of the real global `$Object`** that
+`Object.getOwnPropertyDescriptor(this, 'x')` sees, with `delete` severing the
+binding. Today values round-trip through `__runtime_eval_push_globals`/
+`__runtime_eval_pull_globals` cells but never become `$Object` own properties.
+The live-binding pattern to follow is `src/codegen/annexb-global-live-binding.ts`
+(#4182 — module-global-backed live cells for B.3.3.2). D (6 files) is the
+runtime `CanDeclareGlobalVar/Function` TypeError arm
+(`eval-environment.ts:510-523` already implements the check in the
+interpreter); it is unreachable for literal evals until the splice can consult
+the real global object's extensibility at runtime, i.e. it depends on C's
+identity unification (AOT `this` object ≡ provider `globalObject`). File one
+follow-on issue for C+D referencing this section; projected +19 files.
+
+### 6. Verification
+
+```sh
+# Focused before/after (in this worktree, dirty-tree mode runs in place):
+TEST262_PATH_FILTER=language/eval-code/ TEST262_TARGET=standalone \
+TEST262_FULL_RUNTIME_EVAL=1 COMPILER_POOL_SIZE=1 TEST262_WORKERS=1 \
+TEST262_REPORTER=dot pnpm run test:262 -- --official-scope-only
+```
+
+- Baseline (2026-08-08, run `20260808-072852`): 747/816.
+- After 2a: +2 → 749 (both `var-env-global-lex-non-strict` files).
+- After 2b: +8 → **757/816** (all 8 `lex-env-{distinct,no-init}-{let,const}`).
+- Required zero pass→fail; watch specifically: the 192 `declare-arguments`
+  files, `annexB/.../script-decl-lex-no-collision`-family passes,
+  `lex-env-*-strict-*` passes, and the 17 currently-passing
+  `issue-2923-eval-const-broaden` fast-path canaries.
+- Dev canaries (put in `.tmp/`, promote to `tests/issue-2929-*.test.ts`):
+  - `let x; eval('var x;')` → SyntaxError (catchable, runtime phase)
+  - `let x; (0,eval)('var x;')` → SyntaxError
+  - `let x; var s = 'var x;'; eval(s)` → SyntaxError via provider
+    (confirms the dynamic tier is already correct — regression tripwire)
+  - `let x; eval('{ function x(){} }')` → NO error (B.3.3 cancellation)
+  - `try {} catch (e) { eval('var e;') }` at global → NO error (B.3.5)
+  - `eval('let a = 1; a')` → 1, then `typeof a === 'undefined'`
+  - `let o = 23; eval('let o;')` → no error, `o === 23` after
+  - `function f(){ let y; return eval('var y;') }` → SyntaxError (existing
+    lower-lex path, must stay green)
+- `pnpm run typecheck`; scoped vitest: `npm test -- tests/issue-1102.test.ts
+  tests/issue-2923-eval-const-broaden.test.ts` plus any existing
+  `tests/*eval*` suites touched by CI's quality gate.
+
+### 7. Risks / gates
+
+- **#4137 concurrency (real)**: in-progress, other lane, owns bucket E and has
+  `loc-budget-allow: src/interp/emitter.ts`. This slice touches ONLY
+  `src/codegen/expressions/eval-inline.ts` — no file overlap with #4137's
+  declared budget. Do not "fix" any `SyntaxError: NaN` file encountered in the
+  diff; they are #4137's baseline.
+- **Oracle ratchet (#1930/#3273)**: the new code needs no type queries — it is
+  pure syntax walking + `ctx.globalLexicalBindings`. Do not add
+  `checker.getSymbolAtLocation` calls; if binding info is ever needed use
+  `ctx.oracle`.
+- **Coercion-sites ratchet** (`check:coercion-sites`): `emitThrowJsError` and
+  the existing helpers are already counted; adding calls to existing helpers
+  in an existing module does not create a new module needing
+  `coercion-sites-allow`.
+- **loc/func budget**: issue frontmatter already allows
+  `src/codegen/expressions/eval-inline.ts::tryStaticEvalInline`.
+- **False-positive SyntaxError is the top regression risk**: the guard flips
+  currently-passing files if it fires for (i) strict eval, (ii) Annex B block
+  functions, (iii) function-scope callers, or (iv) TS-module-strict lane.
+  Each is excluded by construction (§2a); the §6 canaries pin all four.
+- **Restore-path bookkeeping**: `compileInlinedEvalStatements` can return
+  `undefined` (late bail to provider) — the lexical restore must run on that
+  path too, or the provider-path compile sees phantom caller bindings and the
+  fold/runtime disagree. Mirror the existing
+  `restoreFoldedDirectEvalVarScope` discipline (line 849).
+- **Standalone floor / merge-group**: PR-level test262 checks are designed
+  no-ops; the real gate is the merge-group standalone floor. The change is
+  monotone (+10 projected, 0 regressions) if the canaries hold.
+
+## TODO — follow-on issue for spec buckets C + D (NOT YET FILED, no id allocated)
+
+**Why this is a TODO and not a real issue file:** the implementing agent tried
+to allocate an id with
+`node scripts/claim-issue.mjs --allocate --by ttraenkler/opus-eval-lane` and it
+**REFUSED (exit 6)**: `gh` is not installed in this sandbox, so the open-PR id
+scan degraded and the tool would not reserve an unverified id. `--dry-run`
+previewed `#4217`, but a DEGRADED-scan preview is not a reservation and
+hand-picking it would race an in-flight PR (#2531). **The next agent with a
+working `gh` must run `--allocate` for real and move this section into
+`plan/issues/$NEW-<slug>.md`** — do not copy `4217` across.
+
+Proposed frontmatter for the new file:
+
+```yaml
+id: $NEW
+title: "Eval-created global var/function must become real global-object own properties"
+status: ready
+priority: medium
+horizon: l
+feasibility: hard
+task_type: feature
+area: runtime
+language_feature: eval
+goal: runtime-eval
+sprint: current
+parent: 2929
+related: [2929, 4182]
+```
+
+Scope (see [§5 of the 2026-08-08 implementation plan above]):
+
+- **Bucket C — 13 files.** Eval-created global `var`/`function` must materialize
+  as **own, configurable (`[[Configurable]]: true`), deletable properties of the
+  real global `$Object`**, visible to
+  `Object.getOwnPropertyDescriptor(this, 'x')`, with `delete` severing the
+  binding. Today the values round-trip through
+  `__runtime_eval_push_globals` / `__runtime_eval_pull_globals` cells and never
+  become `$Object` own properties. The live-binding pattern to follow is
+  `src/codegen/annexb-global-live-binding.ts` (#4182 — module-global-backed live
+  cells for B.3.3.2).
+  Files: `{direct,indirect}/var-env-{var,func}-init-*`,
+  `{direct,indirect}/var-env-{var,func}-non-strict` — enumerated exactly in §0
+  of the plan above.
+- **Bucket D — 6 files**, `{direct,indirect}/non-definable-global-{var,function,generator}.js`.
+  The runtime `CanDeclareGlobalVar` / `CanDeclareGlobalFunction` `TypeError` arm.
+  The interpreter already implements the check
+  (`src/interp/eval-environment.ts:510-523`); it is unreachable for **literal**
+  evals until the splice can consult the real global object's extensibility at
+  runtime — i.e. **D depends on C's identity unification** (AOT `this` object ≡
+  provider `globalObject`). Per §3 of the plan, this is a
+  "bail-to-provider once C lands" case, not an emit-throw: the outcome depends
+  on runtime environment state.
+
+Projected: **+19 files** on the `language/eval-code/` standalone lane
+(757 → 776 / 816 on top of this issue's buckets A+B).
+
+Explicitly out of scope for that follow-on: bucket E (24 Annex-B
+`skip-early-err` `SyntaxError: NaN` files — owned by #4137) and bucket F (16
+files: new.target, super-prop, realm identity, B.3.3 update — different
+mechanisms).
