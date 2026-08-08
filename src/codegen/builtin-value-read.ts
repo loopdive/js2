@@ -839,6 +839,31 @@ function tryCompileStandaloneBuiltinProtoMemberRead(
   return closure.type;
 }
 
+/**
+ * The result ValType of a builtin static that returns a JS **boolean**
+ * (`Array.isArray`, `Object.is`, `Object.hasOwn`, `Reflect.has`, `Reflect.set`,
+ * `Number.isNaN` & friends).
+ *
+ * The `boolean: true` brand is not decoration. An `i32` slot backs `number`,
+ * `boolean` and symbol handles alike (#2785/#2795), and every place that lowers
+ * a closure result across the externref ABI picks `__box_boolean` vs
+ * `__box_number` from this brand — so an unbranded predicate reifies `false` as
+ * the NUMBER `0`, and `Object.is(a, b) === false` is then false.
+ *
+ * It is also **load-bearing for other functions**, which is how the missing
+ * brand stayed invisible: the funcref-wrapper registry keys one shared wrapper
+ * per wasm signature (it must — WasmGC type identity is structural, so two
+ * "different" `(externref, externref) -> i32` types are the SAME type at run
+ * time and a `ref.test` ladder cannot tell them apart). Whoever registers that
+ * signature FIRST fixes the brand for every closure that shares it. When
+ * #4223's wrapper-constructor carriers began minting `Object.is`/`Object.hasOwn`
+ * from inside `ensureObjectRuntime`, these unbranded statics started winning
+ * that race — and every user boolean predicate reached through the inline
+ * dynamic-call ladder began boxing as a number (test262's `isConfigurable()`
+ * answering `0`, 105 standalone descriptor tests).
+ */
+const BOOLEAN_PREDICATE_RESULT: ValType = { kind: "i32", boolean: true };
+
 export function ensureStandaloneBuiltinStaticMethodClosure(
   ctx: CodegenContext,
   builtinName: string,
@@ -855,7 +880,7 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
   switch (key) {
     case "Array.isArray":
       paramTypes = [{ kind: "externref" }];
-      returnType = { kind: "i32" };
+      returnType = BOOLEAN_PREDICATE_RESULT;
       break;
     case "Object.keys":
       paramTypes = [{ kind: "externref" }];
@@ -874,7 +899,7 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       break;
     case "Object.hasOwn":
       paramTypes = [{ kind: "externref" }, { kind: "externref" }];
-      returnType = { kind: "i32" };
+      returnType = BOOLEAN_PREDICATE_RESULT;
       break;
     // (#2933) Namespace static-method VALUE reads for the fixed-arity `Reflect.*`
     // methods that the standalone CALL path already backs with a simple
@@ -892,11 +917,11 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       break;
     case "Reflect.has":
       paramTypes = [{ kind: "externref" }, { kind: "externref" }];
-      returnType = { kind: "i32" };
+      returnType = BOOLEAN_PREDICATE_RESULT;
       break;
     case "Reflect.set":
       paramTypes = [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }];
-      returnType = { kind: "i32" };
+      returnType = BOOLEAN_PREDICATE_RESULT;
       break;
     case "Reflect.ownKeys":
       paramTypes = [{ kind: "externref" }];
@@ -977,7 +1002,7 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
         break;
       }
       paramTypes = [{ kind: "externref" }];
-      returnType = { kind: "i32" };
+      returnType = BOOLEAN_PREDICATE_RESULT;
       break;
     }
     // (#2963 Tier 2b) `Object.is(x, y)` as a first-class VALUE — SameValue
@@ -1006,7 +1031,7 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
         break;
       }
       paramTypes = [{ kind: "externref" }, { kind: "externref" }];
-      returnType = { kind: "i32" };
+      returnType = BOOLEAN_PREDICATE_RESULT;
       break;
     }
     default: {
