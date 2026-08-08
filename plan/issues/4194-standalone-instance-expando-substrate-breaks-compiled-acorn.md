@@ -597,3 +597,170 @@ bake its call), before `unshiftExternGetProtoCacheArm` for the get-side wrap.
 - The three-layer stack: layers 2 (#2200 catch-ObjectPattern) and 3 (B.3.3
   cancellation) are landed and **verified working** via the longhand oracle;
   this issue's layer 1 is the sole remaining gate for the 24.
+
+## Implementation notes (senior-dev, 2026-08-08) — what was built and WHY
+
+Landed on `worktree-agent-aeb33418e4a262077` (= `origin/main` `cafb5bb7` +
+session base `328cf887`, i.e. #4137's NaN-render fix + #2200 layers 2/3 +
+#2929). New module `src/codegen/instance-props.ts`; call-site wiring only in
+`object-runtime.ts` / `index.ts`; marker filtering + the third
+`__carrier_bag_of` arm in `carrier-bag-visibility.ts`.
+
+### The headline
+
+**24/24 of the annexB `…-skip-early-err-try` files flip fail → pass**, measured
+on the faithful lane (`runTest262File(…, "standalone")`, provider REBUILT on
+this branch, `TEST262_FULL_RUNTIME_EVAL=1`). Tier line, quoted:
+
+```
+[test262-in-process] runtime-eval tier: INTERPRETER (key 76b68a30f881745b,
+TEST262_FULL_RUNTIME_EVAL=1) — authoritative CI-comparable standalone tier (#2928 E7)
+## pass=24 fail=0 other=0 total=24
+```
+
+The spec's prediction was exact: layers 2+3 were already working, parse was the
+only gate, and the parse gate was `copyNode`'s dropped writes.
+
+### Three places where the implementation departs from the spec, and why
+
+**1. The get-side consult sits at the HEAD of `__extern_get`'s non-`$Object`
+branch, not inside `buildVecOrClosurePropGetMissArm`'s two call sites.**
+
+The spec named `object-runtime.ts:1732/1741`. Wiring only there covers class
+instances and MISSES every fnctor instance that has a prototype:
+`__fnctor_proto_start` answers non-null for those, so control takes the
+proto-walk and a chain-exhausted miss lands on the body's tail (`:1902`), never
+on the miss arm. **Acorn's `Node` is exactly that shape.** Since S3 makes the
+enumeration surfaces list such an instance's bag keys, wiring only the miss arm
+would produce a key that enumerates but reads `undefined` — a new silent
+divergence, in the same change that exists to remove one.
+
+Measured: the fn-expr-ctor `copyNode` emulation (`forin-lanes3.mjs`
+`copyLoop`) is **101 with the spec's placement and 111 with this one**. The
+placement is also strictly more correct — an own property shadows the prototype
+chain (§7.3.2), and the bag holds own properties. Cost: one predicate call on
+the non-`$Object` read path, which already pays several.
+
+**2. Scalar stores are NOT type-guarded; they go through `coercionInstrs`.**
+
+The spec said a type-mismatched write should be a silent no-op, reasoning that a
+bag deposit would resurrect the −684. The second half is right and is preserved
+(see the invariant below) — but "no-op" is not the only non-depositing option,
+and it is the worse one. `n.count = "abc"` with a LITERAL key already goes
+through `__set_member_count` → `coercionInstrs` → stores `NaN`. Making the
+computed spelling no-op instead would have introduced a literal-vs-computed
+divergence, which is the exact failure class this area keeps regrowing. Using
+the single coercion engine also satisfies `check:coercion-sites` without an
+allowance (the first cut hand-rolled `__unbox_number` and the gate correctly
+refused it).
+
+Measured on the `noShadow` probe: with the guard, standalone answered `111`
+(struct value preserved) against host `110`; without it, standalone answers
+`110` — **identical to host**.
+
+**3. `__instance_prop_get` folds the tombstone screen into the marker filter
+instead of calling `__instance_field_deleted` first.**
+
+The spec listed a separate `__instance_field_deleted` screen as step (i). It is
+the same test — both ask "is `bag[k]` `ref.eq` the bag" — so folding saves a
+second walk of the bag list on the read path. It also WIDENS the screen
+correctly: `__instance_field_deleted`'s carrier predicate is class-only by
+design (#4098 owns it, and this change does not touch it), while an
+`__fnctor_` instance can now carry a marker.
+
+### The invariant that keeps this off #4055 v1's −684
+
+Once S1's ladder matches a name **on a receiver whose struct type it matched**,
+the arm **always `return`s** — storing, or REFUSING:
+
+- immutable field (`struct.set` would not validate) — §10.1.9 OrdinarySet over
+  a non-writable own data property is a no-op anyway;
+- unrepresentable field kind (i64 / f32 / v128 / packed);
+- brand-mismatched value into a typed-ref slot (the same `ref.test` guard
+  `fillMemberSetDispatch` emits). Its guard-miss falls back to `__extern_set`;
+  from inside `__extern_set`'s own prologue that would recurse, so refusing is
+  forced here as well as correct.
+
+So a declared name can never reach the bag ⇒ the bag can never shadow a struct
+field ⇒ `Object.keys` can never list a name twice. Every refusal is byte-equal
+to today's behaviour, since the write is dropped today too; they only remove the
+option of the bag catching them. The name set is derived with
+`exposedClosedStructFieldName` — deliberately the read ladder's own filter — so
+the refusal set is a superset of the read lane's answer set for any receiver
+that can own a bag.
+
+Two consequences worth stating because they are NOT obvious:
+
+- The write ladder does **not** skip `isOpenDescriptorShape` structs even though
+  the read ladder does. Skipping them would let a declared name (`enumerable`,
+  `value`) reach the bag on a receiver whose S3 enumeration arm ALSO lists it
+  from the struct — a duplicate key. Covering them costs nothing and removes the
+  case entirely.
+- The write ladder's carrier screen is `isUserDeclaredStruct`, which is
+  **stricter** than the read ladder's (the read ladder answers for `__Date`'s
+  `timestamp`). That is safe precisely because a non-carrier can never obtain a
+  bag: `(new Date(0) as any).timestamp = 5` falls through to the closure arm,
+  which no-ops for a non-closure. Nothing is deposited, so nothing can be
+  shadowed.
+
+### Measurements
+
+Micro-probes (`.tmp/probe-4194/forin-lanes{,2,3}.mjs`; 1 = `type`, 10 = `name`
+expando, 100 = `start`; standalone lane, host lane byte-identical throughout):
+
+| probe | before | after | target |
+| --- | --- | --- | --- |
+| class: for-in / keys / `in` / reads | 101 / 2 / 1 / 101 | **111 / 3 / 11 / 111** | 111/3/11/111 |
+| class: computed writes `n[k] = v` | 0 | **111** | 111 |
+| class: `copyNode` emulation | 101 | **111** | 111 |
+| fn-expr-ctor: `copyNode` emulation | 101 | **111** | 111 |
+| fnctor control lane | 111 | 111 | unchanged |
+
+Provider-unit parse canaries (`provider-parse-split.mjs`, recompiled 202 s):
+
+| parse(…) input | before | after |
+| --- | --- | --- |
+| `var { a } = {};` | raise | **ok** |
+| `try{throw{}}catch({ f }){ }` plain | raise | **ok** |
+| `catch ({ f }) {{ function f(){} }}` 2-level | raise | **ok** |
+| `catch ({ f }) { function f(){} }` 1-level collide | raise | raise (correct — see below) |
+| `catch ({ f: f }) {{ … }}` longhand | ok | ok |
+| copy-fidelity (`prop.value.type` / `.name` after parse) | 16000000 (both parses raised) | **1111** |
+
+Controls, A/B'd against this branch's HEAD by file copy (never `git stash` in a
+worktree — `refs/stash` is one shared stack):
+
+| control | before | after |
+| --- | --- | --- |
+| #4071 bucket: `Object.keys(new Date(0))` / `Object.keys(/ab/g)` / `gOPN(/ab/g)` / `gOPN(new Date(0))` | 0 / 0 / 0 / 0 | 0 / 0 / 0 / 0 (unchanged) |
+| #3537 vec carrier family (write/read/`in`/keys/length/delete) | 11111 | 11111 |
+| #3468 closure carrier family (same round trip) | 11111 | 11111 |
+| #4098 `delete o.f; o.f = v` round trip, computed spelling | 111 | **11111** |
+
+Gates: `pnpm run typecheck` clean; `check:coercion-sites` OK (no net vocabulary
+growth); `check:loc-budget` and `check:func-budget` OK with the allowances
+recorded in this file's frontmatter; `check:oracle-ratchet` OK (+0 — the whole
+change is finalize-time Wasm emission over `ctx.structFields`/`funcMap`, no
+checker queries).
+
+### Loose ends and things the next lane should know
+
+- **`Object.getOwnPropertyNames(/ab/g)` answers 0 on this base, not 1.** The
+  #3920 header and this spec's control both state 1. Measured 0 BEFORE and 0
+  AFTER, so it is not a regression from this change — but the documented
+  expectation is stale, and a control that "passes" by matching a wrong number
+  is worth nothing. Someone should re-derive it.
+- **The tombstone round trip is only fixed for the COMPUTED spelling.**
+  `delete n.type; n.type = "U"` with a LITERAL key still leaves `"type" in n`
+  false: the literal write goes through `__set_member_type`, which stores the
+  slot directly and never sees the resurrect helper. That is the
+  "static-read tombstone coherence" divergence the spec put out of scope,
+  observed from the write side. Fixing it means teaching
+  `fillMemberSetDispatch` to call `__instance_field_resurrect` too.
+- **Bag list contention is unmeasured at provider scale.** Instance expandos
+  share `$__closure_prop_head` with closures (O(n) `ref.eq` walk). Acorn's hot
+  node fields are flow-grown STRUCT fields, so they take the write-through path
+  and never touch the bag — which is why the provider build did not regress
+  (183 s, in the spec's 166-180 s band). If a future workload does put many
+  instances in the bag, the fix order is: own head global first, hidden
+  per-struct `$bag` slot second.
