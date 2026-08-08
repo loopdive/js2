@@ -32,14 +32,16 @@
  * still drops exactly as before. That residual is #4010/#4098 substrate
  * territory, not this fill's.
  *
- * ## Value coercion is deliberately funcMap-READ-ONLY
- * This fill runs at finalize, after bodies bake their indices — registering an
- * import here is the #2043 index-shift class. So instead of the general
- * `coercionInstrs` (which may `ensureLateImport`), {@link writeCoerceInstrs}
- * emits only pure instruction sequences or `funcMap`-resolved calls, and a
- * field whose coercion helper is absent is SKIPPED (that field stays exactly
- * as writable as it was yesterday: not at all). Every flow-grown field — the
- * whole copyNode surface — is `externref` and coerces as a no-op.
+ * ## Value coercion goes through the SINGLE engine, and that is safe here
+ * Values coerce via `coercionInstrs` (#1917/#2108 — the coercion-sites gate
+ * exists precisely so nobody hand-rolls a second unbox matrix). The usual
+ * finalize-time worry — the engine registering a late import and shifting
+ * baked indices, the #2043 class — does not apply to THIS fill: it is
+ * standalone-only, where the engine's helpers are union NATIVES minted as
+ * append-only defined funcs (no import-index shift), and vec-typed fields
+ * resolve materializers `reserveVecFieldMaterializers` reserved before every
+ * value-coercion fill. Every flow-grown field — the whole copyNode surface —
+ * is `externref` and coerces as a no-op anyway.
  *
  * ## Tombstones (`delete n.x` then `n[k] = v`)
  * A write to a previously-deleted key must revive it. The tombstone marker is
@@ -66,51 +68,7 @@ import {
 import { exposedClosedStructFieldName } from "./fnctor-identity-fields.js";
 import { type PresenceSlot, presenceSetInstrs, presenceSlotOf } from "./fnctor-presence-bits.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
-
-/**
- * Coerce the boxed externref value (in `valLocal`) to `fieldType`, pure or
- * funcMap-read-only. `null` = no safe coercion available → the caller skips
- * the field (it keeps today's behaviour: unwritable through this path).
- * Ref-typed fields return instructions that ASSUME the caller emitted the
- * {@link refBrandTestInstrs} guard.
- */
-function writeCoerceInstrs(ctx: CodegenContext, fieldType: ValType, valLocal: number): Instr[] | null {
-  switch (fieldType.kind) {
-    case "externref":
-    case "ref_extern":
-      return [{ op: "local.get", index: valLocal }];
-    case "ref":
-    case "ref_null":
-      return [
-        { op: "local.get", index: valLocal },
-        { op: "any.convert_extern" },
-        { op: "ref.cast", typeIdx: fieldType.typeIdx },
-      ];
-    case "f64": {
-      const unboxIdx = ctx.funcMap.get("__unbox_number");
-      if (unboxIdx === undefined) return null;
-      return [
-        { op: "local.get", index: valLocal },
-        { op: "call", funcIdx: unboxIdx },
-      ];
-    }
-    case "i32": {
-      if (fieldType.boolean === true) {
-        const unboxBoolIdx = ctx.funcMap.get("__unbox_boolean");
-        if (unboxBoolIdx === undefined) return null;
-        return [
-          { op: "local.get", index: valLocal },
-          { op: "call", funcIdx: unboxBoolIdx },
-        ];
-      }
-      const unboxIdx = ctx.funcMap.get("__unbox_number");
-      if (unboxIdx === undefined) return null;
-      return [{ op: "local.get", index: valLocal }, { op: "call", funcIdx: unboxIdx }, { op: "i32.trunc_sat_f64_s" }];
-    }
-    default:
-      return null;
-  }
-}
+import { coercionInstrs } from "./type-coercion.js";
 
 /** Runtime brand guard for a ref-typed slot: 1 iff the value can be stored. */
 function refBrandTestInstrs(fieldType: ValType, valLocal: number): Instr[] | null {
@@ -245,11 +203,18 @@ export function fillClosedStructExternSetArms(ctx: CodegenContext): void {
   const buildReceiverArms = (fieldName: string): Instr[] => {
     const arms: Instr[] = [];
     for (const entry of byField.get(fieldName) ?? []) {
-      const coerce = writeCoerceInstrs(ctx, entry.fieldType, 2);
-      if (coerce === null) continue; // no safe coercion → field keeps today's (unwritable) behaviour
+      // The SINGLE coercion engine (#1917/#2108 — never hand-roll a fresh
+      // box/unbox matrix). Safe at this fill despite the finalize timing:
+      // the fill is standalone-only, where the engine's helpers are UNION
+      // NATIVES minted as APPEND-ONLY defined funcs (no import-index shift —
+      // the #2043 class needs a late IMPORT), and vec-typed fields resolve
+      // materializers reserved by `reserveVecFieldMaterializers`, which runs
+      // before every value-coercion fill.
+      const coerce = coercionInstrs(ctx, { kind: "externref" }, entry.fieldType);
       const store: Instr[] = [
         { op: "local.get", index: RECV_ANY },
         { op: "ref.cast", typeIdx: entry.typeIdx },
+        { op: "local.get", index: 2 }, // value (externref)
         ...coerce,
         { op: "struct.set", typeIdx: entry.typeIdx, fieldIdx: entry.fieldIdx },
       ];
