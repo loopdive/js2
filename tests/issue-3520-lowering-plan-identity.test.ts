@@ -158,6 +158,7 @@ function callbackFixture(): {
   const externref = { kind: "externref" } as const;
   const eventTarget: IrExternClassMeta = {
     className: "EventTarget",
+    importPrefix: "EventTarget",
     constructorParams: [],
     methods: new Map([["addEventListener", { params: [externref, externref, externref], results: [] }]]),
     properties: new Map(),
@@ -185,6 +186,36 @@ function callbackFixture(): {
 }
 
 describe("#3520 lowering-plan owner identity", () => {
+  it("keeps a canonical extern brand separate from its lookup spelling and import prefix", () => {
+    const declaration = sourceFunction(`export function owner() { return new Alias(); }`);
+    const canonicalType: IrType = { kind: "extern", className: "Canonical" };
+    const metadata: IrExternClassMeta = {
+      className: "Canonical",
+      importPrefix: "Namespace_Canonical",
+      constructorParams: [],
+      methods: new Map(),
+      properties: new Map(),
+    };
+
+    const lowered = lowerFunctionAstToIr(declaration, {
+      ownerUnitId: OWNER_ID,
+      exported: true,
+      returnTypeOverride: canonicalType,
+      resolver: {
+        getExternClassInfo: (name) => (name === "Alias" ? metadata : undefined),
+      },
+    });
+
+    expect(lowered.main.blocks.flatMap((block) => block.instrs)).toContainEqual(
+      expect.objectContaining({
+        kind: "extern.new",
+        className: "Canonical",
+        importPrefix: "Namespace_Canonical",
+        resultType: canonicalType,
+      }),
+    );
+  });
+
   it.each([
     ["imported call", importedCallFixture, 0],
     ["direct call", directCallFixture, 0],

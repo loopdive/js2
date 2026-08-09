@@ -2111,8 +2111,13 @@ export interface IrInstrGenSetReturn extends IrInstrBase {
  */
 export interface IrInstrExternNew extends IrInstrBase {
   readonly kind: "extern.new";
+  /** Semantic result brand used by later member resolution. */
   readonly className: string;
+  /** Exact host registry prefix used only for provider selection. */
+  readonly importPrefix: string;
   readonly args: readonly IrValueId[];
+  /** Exact host import chosen during final provider preparation. */
+  readonly provider?: IrFuncRef;
 }
 
 /**
@@ -2134,6 +2139,8 @@ export interface IrInstrExternCall extends IrInstrBase {
   readonly method: string;
   readonly receiver: IrValueId;
   readonly args: readonly IrValueId[];
+  /** Exact host import chosen during final provider preparation. */
+  readonly provider?: IrFuncRef;
 }
 
 /**
@@ -2150,6 +2157,8 @@ export interface IrInstrExternProp extends IrInstrBase {
   readonly className: string;
   readonly property: string;
   readonly receiver: IrValueId;
+  /** Exact host import chosen during final provider preparation. */
+  readonly provider?: IrFuncRef;
 }
 
 /**
@@ -2167,6 +2176,8 @@ export interface IrInstrExternPropSet extends IrInstrBase {
   readonly property: string;
   readonly receiver: IrValueId;
   readonly value: IrValueId;
+  /** Exact host import chosen during final provider preparation. */
+  readonly provider?: IrFuncRef;
 }
 
 /**

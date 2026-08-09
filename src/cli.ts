@@ -53,9 +53,10 @@ Options:
                     wasm:js-string or env JS-host imports.
   --allocator <a>   Linear backend allocator (#1856): bump (default,
                     allocate-and-exit arena, smallest binary) or arena-reset
-                    (same arena + __arena_reset/__arena_used exports for hosts
-                    reusing one instance across short-lived tasks). Linear
-                    target only.
+                    (safe primitive-only exported calls reclaim between calls;
+                    aggregate/global escapes fall back, with explicit
+                    __arena_reset/__arena_used exports retained). Linear target
+                    only.
   --allow-fs        Allow node:fs JS-host imports (readFileSync, writeFileSync)
                     for non-WASI targets (#1491). Off by default to prevent
                     accidental capability leakage.

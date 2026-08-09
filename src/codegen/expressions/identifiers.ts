@@ -46,6 +46,7 @@ import { reportSilentFallback } from "../fallback-telemetry.js";
 import { annexBReadIsUnbound, collectAnnexBCancelSites } from "../annexb-cancel.js";
 import { emitAnnexBUnboundReferenceError } from "../js-errors.js";
 import { resolveBuiltinCtorAliasName, tryEmitNonCallableRhsThrow } from "../native-ordinary-instanceof.js";
+import { isObjectFamilyCtorName, tryEmitNativeObjectFamilyInstanceOf } from "../native-object-family-instanceof.js";
 import { emitTaCtorValue } from "../dataview-native.js";
 import { taCtorKindOf } from "../registry/types.js";
 import { emitThrowReferenceError, emitThrowTypeError, noJsHost } from "./helpers.js";
@@ -1768,6 +1769,8 @@ function nativeBuiltinInstanceOfTypeIdxs(ctx: CodegenContext, ctorName: string):
     case "String":
       return keep(ctx.wrapperStringTypeIdx);
     case "Boolean":
+      // NOT force-registered via `ensureWrapperTypes` — see the "Measured and
+      // deliberately reverted" note in `native-object-family-instanceof.ts`.
       return keep(ctx.wrapperBooleanTypeIdx);
     case "Date":
       // (#1325) `new Date()` lowers to a distinct `$__Date` WasmGC struct
@@ -2046,6 +2049,15 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
   // the host import here.
   if (noJsHost(ctx)) {
     const typeIdxs = nativeBuiltinInstanceOfTypeIdxs(ctx, ctorName);
+    // `Object` and `Function` cannot be answered by a backing-struct membership
+    // list — see `native-object-family-instanceof.ts` for why (no finite list /
+    // snapshot-at-lowering-time). Route them through the finalize-corrected
+    // `typeof` classifiers instead, OR-ing in the membership list so the answer
+    // is never weaker than the one it replaces.
+    if (isObjectFamilyCtorName(ctorName)) {
+      const viaTypeof = tryEmitNativeObjectFamilyInstanceOf(ctx, fctx, expr, ctorName, typeIdxs);
+      if (viaTypeof) return viaTypeof;
+    }
     if (typeIdxs !== undefined) {
       return emitNativeInstanceOfMembership(ctx, fctx, expr, typeIdxs);
     }

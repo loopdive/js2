@@ -6,6 +6,7 @@ import type { ClassLayout } from "./layout.js";
 export interface LinearStringLiteralData {
   readonly offset: number;
   readonly bytes: readonly number[];
+  readonly cacheGlobalIdx: number;
 }
 
 /** Module-level context for linear-memory codegen */
