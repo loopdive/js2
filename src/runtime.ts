@@ -15921,6 +15921,28 @@ function wrapWithContainment(
 }
 
 /**
+ * These intents resolve to leaf functions that cannot throw or call user code,
+ * so they cannot re-enter Wasm. Their import wrappers therefore do not need the
+ * recursion-depth or catch-all bookkeeping used by general host operations.
+ * Keep this predicate intent-based: `buildImports` is public and must not trust
+ * a caller-supplied import name to imply safe behaviour.
+ */
+function isFastLeafHostImport(imp: ImportDescriptor): boolean {
+  switch (imp.intent.type) {
+    case "box":
+    case "typeof_check":
+    case "truthy_check":
+      return true;
+    case "unbox":
+      return imp.intent.targetType === "boolean";
+    case "builtin":
+      return imp.intent.name === "__get_undefined";
+    default:
+      return false;
+  }
+}
+
+/**
  * Build the WebAssembly import object from a closed manifest.
  *
  * After instantiation, prefer `setInstance(instance)`. It proves the
@@ -16029,6 +16051,28 @@ export function buildImports(
       if (imp.intent.type === "declared_global" && imp.intent.name === "document") {
         fn = () => options.domRoot;
       }
+    }
+
+    // Acorn executes millions of these leaf calls per parse. They cannot throw
+    // or re-enter Wasm, so avoid constructing and invoking the general guarded
+    // wrapper. Preserve import diagnostics and the Wasm signature's fixed
+    // arity. The switch provides rollout containment.
+    const fastLeaf = process.env.JS2WASM_FAST_LEAF_HOST_IMPORTS !== "0" && isFastLeafHostImport(imp);
+    if (fastLeaf && imp.paramCount === 0) {
+      const original = fn;
+      env[imp.name] = function () {
+        if (importCounts) importCounts[importIndex]++;
+        return original();
+      };
+      continue;
+    }
+    if (fastLeaf && imp.paramCount === 1) {
+      const original = fn;
+      env[imp.name] = function (a: any) {
+        if (importCounts) importCounts[importIndex]++;
+        return original(a);
+      };
+      continue;
     }
 
     // Wrap host imports with recursion depth guard + exception capture for catch_all.

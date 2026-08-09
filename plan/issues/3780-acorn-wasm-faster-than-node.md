@@ -4,7 +4,7 @@ title: "Compile Acorn parse hot path to Wasm faster than native Node"
 status: in-progress
 sprint: current
 created: 2026-07-29
-updated: 2026-08-01
+updated: 2026-08-09
 priority: high
 horizon: l
 feasibility: hard
@@ -61,6 +61,7 @@ files:
   - tests/issue-3683-direct-calls.test.ts
   - tests/issue-3765-numeric-locals.test.ts
   - tests/issue-1712-exactfield-lane-guard.test.ts
+  - tests/issue-3780-fast-leaf-host-imports.test.ts
 loc-budget-allow:
   - src/codegen/closed-method-dispatch.ts
   - src/codegen/closures.ts
@@ -89,6 +90,7 @@ oracle-ratchet-allow:
   - src/codegen/property-access.ts
   - src/codegen/statements/control-flow.ts
 func-budget-allow:
+  - src/runtime.ts::buildImports
   - scripts/generate-npm-compat-report.mjs::compileStandaloneLane
   - src/codegen/closed-method-dispatch.ts::fillClosedMethodDispatch
   - src/codegen/closures.ts::compileArrowAsClosure
@@ -785,3 +787,61 @@ Ranked by measured share, the remaining work is:
 Reproduction: `.tmp/wat-census.mjs`, `.tmp/wat-funcs2.mjs`, `.tmp/hot-mix.mjs`,
 `.tmp/prof-buckets.mjs`, `.tmp/alloc-rate.mjs`, `.tmp/startup.mjs` against a
 WAT dump and the named standalone binary.
+
+## 2026-08-09 JS-host leaf-import checkpoint
+
+Current `main` (`517aa2d0debef17373eeadf36d42a775e4c6ddce`) still reports
+Acorn JS-host runtime-dynamic as the largest uncovered running npm gap. One
+parse makes 15,065,637 Wasm-to-host calls. The following proven leaf imports
+account for 5,702,030 of them (37.85%):
+
+| import | calls per parse |
+| --- | ---: |
+| `__get_undefined` | 1,753,050 |
+| `__typeof_number` | 1,321,342 |
+| `__is_truthy` | 1,310,240 |
+| `__box_number` | 772,126 |
+| `__box_boolean` | 545,250 |
+| `__typeof_string` | 22 |
+
+These operations only return `undefined`, apply `typeof`/ToBoolean, or return
+an identity/boolean box. They cannot throw, call user code, or re-enter Wasm.
+`buildImports` now gives zero- and one-argument imports with those safe intents
+a fixed-arity leaf wrapper instead of the general recursion-depth and
+`try`/`catch`/`finally` wrapper. The safety decision uses the closed import
+**intent**, not a caller-supplied name. Import counting remains enabled in the
+fast wrapper, and `JS2WASM_FAST_LEAF_HOST_IMPORTS=0` restores the guarded path.
+
+The performance comparison used one prebuilt artifact for both sides, fresh
+Node/tsx processes, one warm-up parse and one measured parse per process, eight
+alternating-order pairs, and checksum `422` on every sample. The only variable
+was the runtime kill switch:
+
+| runtime | median | mean |
+| --- | ---: | ---: |
+| guarded base (`=0`) | 1,618,772.167 us | 1,692,400.771 us |
+| leaf wrappers (`=1`) | 1,478,630.521 us | 1,554,253.896 us |
+| improvement | **1.095x / 8.66% less time** | **1.089x / 8.16% less time** |
+
+The process-level lane was noisy, including outliers on both sides; alternating
+fresh processes and reporting both median and mean keep the comparison paired.
+The exact samples, in pair order, were:
+
+- guarded: `1423286.125, 1702635.083, 1587498.625, 1356205.291,
+  1285319.708, 2505275.125, 1650045.708, 2028940.500` us;
+- leaf: `1616879.958, 1628955.959, 1413372.459, 2334727.958,
+  1278800.458, 1204033.333, 1470799.000, 1486462.042` us.
+
+This is a runtime-only change. A pristine rebuild before and after produced the
+same 347,063-byte binary and metadata, with SHA-256
+`3b256b8f371f9f05aa9c9d7af84920058ed736567dacf5521f1992a2400002c0`.
+The official nine-round harness also returned checksum `422`; appending a new
+top-level declaration after compilation returned checksum `423`, proving that
+the runtime source is still parsed rather than folded or memoized. Boundary
+count is unchanged; this checkpoint only reduces JS wrapper cost.
+
+Two broader ways to remove `__get_undefined` crossings were rejected and fully
+removed: a lazy Wasm cache regressed the paired median by about 10%, and an
+imported immutable externref global regressed it by about 14%. The remaining
+Acorn gap is still dominated by generic compare/equality, numeric coercion, and
+extern property operations; this checkpoint does not claim parity with Node.
