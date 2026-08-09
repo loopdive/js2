@@ -14,7 +14,7 @@ import { fillNativeConstructDrivers, maxReservedNativeConstructArity } from "./n
 import { fillConstructBoundDriver } from "./construct-bound.js"; // (#4196)
 import { emitVecDefineWritebackExports } from "./vec-define-writeback.js"; // (#3116)
 import { detectArrayReduceFusion } from "./array-reduce-fusion.js";
-import { hoistConstantBoxedNumbers } from "./const-box-hoist.js"; // (#4157)
+import { finalizeModuleValueCaches } from "./module-value-caches.js"; // (#4150/#4157)
 import type { MultiTypedAST, TypedAST } from "../checker/index.js";
 import type { TypeFact, TypeOracle } from "../checker/oracle.js";
 import {
@@ -73,6 +73,7 @@ import {
 import { makeIrHostDateSnapshotResolver } from "../ir/host-date.js";
 import { supportsIrBackendTargetCapability, type IrBackendTargetCapability } from "../ir/backend/legality.js";
 import { collectModuleInitPopulation, MODULE_INIT_UNIT_NAME } from "../ir/module-init.js";
+import { isBoundedPreparedAccessorClass } from "../ir/class-accessor-safety.js";
 import {
   buildIrModuleInitPlan,
   reconcileIrModuleInitPlan,
@@ -149,20 +150,18 @@ import {
 import {
   buildIrExactFunctionClaimIndex,
   buildIrRequestedFunctionSkipProjection,
-  correlateIrSkippedBodyNames,
+  correlateIrSkippedBodyUnitIds,
   correlateIrSkippedFunctionNames,
-  mergeIrIntegrationReports,
   type IrExactFunctionClaim,
 } from "./ir-overlay-safety.js";
 import {
   completePreparedIrIntegration,
   computePreparedInheritedIrFirstSkipUnitIds,
   finalizeR3PreparedOwnerPopulation,
-  prepareIrClassMemberBodies,
-  prepareIrFreeFunctionBodies,
+  prepareIrBodies,
   selectR2PreparedFreeFunctions,
   selectR3PreparedPromiseDelayFunctions,
-  selectPreparedClassMemberNames,
+  selectPreparedClassMemberUnitIds,
   type PreparedIrClassMemberBodies,
   type PreparedIrFreeFunctionBodies,
 } from "./ir-prepared-free-functions.js";
@@ -332,6 +331,7 @@ import {
   collectClassDeclaration,
   collectDeclaredFuncRefs,
   compileClassBodies,
+  resolveClassMemberName,
 } from "./class-bodies.js";
 import { classMemberFuncKey, fnctorAncestorOfClass, moduleHasFnctorSubclass } from "./class-member-keys.js"; // (#1983 / #3123)
 import {
@@ -1266,13 +1266,21 @@ function buildIrClassShapes(
   ctx: CodegenContext,
   sourceFile: ts.SourceFile,
   identityContext: IrPlanningIdentityContext,
+  topLevelAccessorEvidence:
+    | { readonly kind: "selection-candidate" }
+    | { readonly kind: "selected"; readonly unitIds: ReadonlySet<IrUnitId> },
 ): IrClassShapeSidecar {
   const out = new Map<IrClassId, IrClassShapeEntry>();
   const lookup: IrClassShapeLookup = { identityContext, byClassId: out };
-  for (const { classId, legacyName: className, declaration: stmt } of collectIrClassShapeDeclarations(
-    sourceFile,
-    identityContext,
-  )) {
+  for (const { classId, declaration: stmt } of collectIrClassShapeDeclarations(sourceFile, identityContext)) {
+    const className = ts.isClassExpression(stmt) ? ctx.anonClassExprNames.get(stmt) : stmt.name?.text;
+    if (!className) continue;
+    // The selector needs a provisional descriptor population in order to
+    // prove the bounded class atomically. Every downstream shape rebuild uses
+    // exact selected UnitIds instead, so a rejected syntactic candidate cannot
+    // perturb lowering or the direct fallback ABI.
+    const boundedAccessorSelectionCandidate =
+      topLevelAccessorEvidence.kind === "selection-candidate" && isBoundedPreparedAccessorClass(stmt);
     // #3000-E: a single-level `extends` of a LOCAL user class projects (its own
     // shape carries the parent as `.parent`, driving `super(...)` / `super.method`
     // lowering). A class with `extends` of a builtin / externref-backed / not-yet-
@@ -1292,6 +1300,18 @@ function buildIrClassShapes(
     if (!ctx.structFields.has(className)) continue;
     const callableTarget = (declaration: ts.Node, kind: IrUnitKind, suffix: string): IrFuncRef | undefined =>
       projectClassCallableTarget(ctx, identityContext, classId, declaration, kind, `${className}_${suffix}`);
+    const placementFor = (declaration: ts.Node): IrClassMethodDescriptor["placement"] | undefined => {
+      const unitId = identityContext.unitIdByDeclaration.get(declaration);
+      const unit = unitId === undefined ? undefined : identityContext.unitByUnitId.get(unitId);
+      if (
+        !unit ||
+        unit.lexicalOwnerId !== classId ||
+        identityContext.declarationByUnitId.get(unitId!) !== declaration
+      ) {
+        return undefined;
+      }
+      return { classId, unitId: unit.id, staticClassMember: hasStaticModifier(declaration) };
+    };
 
     // Constructor params — re-derived from AST so types come through
     // the same `tsTypeToFieldIr`-style projection. Reject if any param
@@ -1365,12 +1385,18 @@ function buildIrClassShapes(
     // has no `astFieldIr` entry and falls to the null-returning ValType path,
     // rejecting the whole subclass. Numeric/boolean inherited fields survive the
     // ValType path regardless; this walk is what recovers inherited string fields.
-    const chain: ts.ClassDeclaration[] = [stmt];
+    const chain: (ts.ClassDeclaration | ts.ClassExpression)[] = [stmt];
     const visitedClassIds = new Set<IrClassId>([classId]);
     for (let cursor = parentClassId; cursor !== null && cursor !== undefined; ) {
       if (visitedClassIds.has(cursor)) break;
       const decl = identityContext.declarationByClassId.get(cursor);
-      if (!decl || !ts.isClassDeclaration(decl) || decl.getSourceFile() !== sourceFile) break;
+      if (
+        !decl ||
+        (!ts.isClassDeclaration(decl) && !ts.isClassExpression(decl)) ||
+        decl.getSourceFile() !== sourceFile
+      ) {
+        break;
+      }
       visitedClassIds.add(cursor);
       chain.push(decl);
       cursor = resolveIrParentClassId(ctx.checker, decl, identityContext);
@@ -1457,7 +1483,14 @@ function buildIrClassShapes(
         }
       }
       const target = callableTarget(member, "class-instance-method", methodName);
-      methods.push({ name: methodName, params, returnType, ...(target ? { target } : {}) });
+      const placement = placementFor(member);
+      methods.push({
+        name: methodName,
+        params,
+        returnType,
+        ...(target ? { target } : {}),
+        ...(placement ? { placement } : {}),
+      });
     }
     if (!methodsOk) continue;
 
@@ -1472,39 +1505,75 @@ function buildIrClassShapes(
     // filter on `memberKind`, so these never leak into `class.call`
     // resolution.
     for (const member of stmt.members) {
-      if (!member.name || !ts.isIdentifier(member.name)) continue;
-      const memberName = member.name.text;
-      if (ts.isGetAccessorDeclaration(member) && !hasStaticModifier(member)) {
+      if (!member.name) continue;
+      const placement = placementFor(member);
+      const placementTerminal = placement ? identityContext.terminalByUnitId.get(placement.unitId) : undefined;
+      const nestedAccessorPlacement = placementTerminal?.containingTerminalOwnerId !== undefined;
+      const exactSelectedTopLevelAccessorPlacement =
+        placement !== undefined &&
+        topLevelAccessorEvidence.kind === "selected" &&
+        topLevelAccessorEvidence.unitIds.has(placement.unitId);
+      const exactAccessorPlacement =
+        nestedAccessorPlacement || boundedAccessorSelectionCandidate || exactSelectedTopLevelAccessorPlacement;
+      if (
+        (ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member)) &&
+        !exactAccessorPlacement &&
+        !ts.isIdentifier(member.name)
+      ) {
+        continue;
+      }
+      const memberName = resolveClassMemberName(ctx, member.name);
+      if (memberName === undefined) continue;
+      if (ts.isGetAccessorDeclaration(member)) {
         const sig = ctx.checker.getSignatureFromDeclaration(member);
         if (!sig) continue;
         const retTs = ctx.checker.getReturnTypeOfSignature(sig);
         if (isVoidType(retTs)) continue; // void getter — degenerate, skip
         const ir = tsTypeToClassPositionIr(ctx, retTs, lookup);
         if (!ir) continue;
-        const target = callableTarget(member, "class-instance-getter", `get_${memberName}`);
+        const isStatic = hasStaticModifier(member);
+        if (isStatic && !exactAccessorPlacement) continue;
+        const target = callableTarget(
+          member,
+          isStatic ? "class-static-getter" : "class-instance-getter",
+          `get_${memberName}`,
+        );
         methods.push({
           name: memberName,
           params: [],
           returnType: ir,
           memberKind: "getter",
           ...(target ? { target } : {}),
+          ...(placement ? { placement } : {}),
         });
-      } else if (ts.isSetAccessorDeclaration(member) && !hasStaticModifier(member)) {
+      } else if (ts.isSetAccessorDeclaration(member)) {
         if (member.parameters.length !== 1) continue;
         const p = member.parameters[0]!;
         if (!ts.isIdentifier(p.name) || p.dotDotDotToken || p.questionToken || p.initializer) continue;
-        const ir = tsTypeToClassPositionIr(ctx, ctx.checker.getTypeAtLocation(p), lookup);
+        const parameterType = ctx.checker.getTypeAtLocation(p);
+        const ir =
+          exactAccessorPlacement && p.type === undefined
+            ? irDynamic()
+            : tsTypeToClassPositionIr(ctx, parameterType, lookup);
         if (!ir) continue;
-        const target = callableTarget(member, "class-instance-setter", `set_${memberName}`);
+        const isStatic = hasStaticModifier(member);
+        if (isStatic && !exactAccessorPlacement) continue;
+        const target = callableTarget(
+          member,
+          isStatic ? "class-static-setter" : "class-instance-setter",
+          `set_${memberName}`,
+        );
         methods.push({
           name: memberName,
           params: [ir],
           returnType: null,
           memberKind: "setter",
           ...(target ? { target } : {}),
+          ...(placement ? { placement } : {}),
         });
       } else if (
         ts.isMethodDeclaration(member) &&
+        ts.isIdentifier(member.name) &&
         hasStaticModifier(member) &&
         !hasAbstractModifier(member) &&
         !member.asteriskToken
@@ -1547,6 +1616,7 @@ function buildIrClassShapes(
           returnType,
           memberKind: "static",
           ...(target ? { target } : {}),
+          ...(placement ? { placement } : {}),
         });
       }
     }
@@ -1786,11 +1856,13 @@ interface IrOverlayPlan {
   readonly selection: import("../ir/select.js").IrSelection;
   readonly classShapeSidecar: IrClassShapeSidecar;
   readonly classShapes: ReadonlyMap<string, import("../ir/nodes.js").IrClassShape>;
+  readonly classShapesById: ReadonlyMap<IrClassId, import("../ir/nodes.js").IrClassShape>;
   readonly overrideMapByUnitId: ReadonlyMap<IrUnitId, { params: IrType[]; returnType: IrType | null }>;
   readonly overrideMap: Map<string, { params: IrType[]; returnType: IrType | null }>;
   readonly safeSelection: {
     funcs: Set<string>;
     classMembers?: ReadonlySet<string>;
+    classMemberUnitIds?: ReadonlySet<IrUnitId>;
     // (#3142 Slice 2) Claim-feeding module-init assessment, forwarded from
     // `selection` so `compileIrPathFunctions` can lower + patch the
     // `__module_init` slot. Cleared alongside funcs under the `new.target`
@@ -1833,7 +1905,7 @@ function recordObservedIrOutcomes(
   ctx: CodegenContext,
   sourceFile: ts.SourceFile,
   plan: IrOverlayPlan,
-  preparedSelection: Pick<IrSelection, "funcs" | "classMembers" | "moduleInit">,
+  preparedSelection: Pick<IrSelection, "funcs" | "classMembers" | "classMemberUnitIds" | "moduleInit">,
   report: IrIntegrationReport,
   skippedBodyUnitIds: ReadonlySet<IrUnitId>,
 ): void {
@@ -2090,6 +2162,7 @@ function planIrOverlay(
             numberStorage: ctx.fast ? "i32" : "f64",
             allowHostExterns: jsHostExterns && !ctx.nativeStrings,
             allowBuiltinMapExtern: jsHostExterns && !ctx.nativeStrings,
+            allowBoundedTopLevelAccessorSelectionCandidates: true,
           },
           identityContext,
         );
@@ -2105,16 +2178,20 @@ function planIrOverlay(
     jsHostExterns && !ctx.fast && !ctx.nativeStrings && options.resolveModuleBindings !== false
       ? makeIrPromiseDelayResolver(ast.checker)
       : undefined;
-  // Selection and lowering consume one authoritative class projection. Build
-  // it before claiming units, then derive checker-backed expression identity
-  // from the exact same declarations/shapes so textual aliases and shadows
-  // cannot drift between the two phases.
-  const classShapeSidecar = buildIrClassShapes(ctx, ast.sourceFile, identityContext);
-  const classShapes = classShapeSidecar.legacyProjection;
+  // Selection gets one provisional descriptor population for the bounded
+  // top-level accessor candidate family. After the selector has made its
+  // atomic decision, lowering rebuilds the sidecar from exact selected UnitIds.
+  const selectionClassShapeSidecar = buildIrClassShapes(ctx, ast.sourceFile, identityContext, {
+    kind: "selection-candidate",
+  });
+  const selectionClassShapes = selectionClassShapeSidecar.legacyProjection;
+  const selectionClassShapesById = new Map(
+    [...selectionClassShapeSidecar.byClassId].map(([classId, entry]) => [classId, entry.shape] as const),
+  );
   const resolveLocalClassExpression = makeIrLocalClassExpressionResolver(
     ast.checker,
     ast.sourceFile,
-    classShapes,
+    selectionClassShapes,
     identityContext,
   );
   // (#3053 U2) The gc `__dyn_member_get` body is sound in every config EXCEPT
@@ -2221,7 +2298,10 @@ function planIrOverlay(
       resolveImplicitParamType: (parameter) => resolveImplicitParamType(parameter)?.kind,
       implicitParamUsesNumericVecAbi,
       legacyCallerAbiIsProjected,
-      projectedClassShapes: classShapes,
+      projectedClassShapes: selectionClassShapes,
+      projectedClassShapesById: selectionClassShapesById,
+      nestedClassMemberCallableAvailable: (unitId) =>
+        ctx.programAbiClassCallables?.functionForUnit(unitId) !== undefined,
       resolveLocalClassExpression,
       supportsSymbolicMathHelpers: true,
       supportsLiteralStringReplace: true,
@@ -2244,6 +2324,14 @@ function planIrOverlay(
   const recordPreparationFailure = (legacyName: string, failure: IrPreparationFailure): void =>
     recordIrOverlayPreparationFailure({ identityPlan, preparationFailuresByUnitId }, legacyName, failure);
   const selection = identityPlan.selectionProjection.selection;
+  const classShapeSidecar = buildIrClassShapes(ctx, ast.sourceFile, identityContext, {
+    kind: "selected",
+    unitIds: selection.classMemberUnitIds ?? new Set(),
+  });
+  const classShapes = classShapeSidecar.legacyProjection;
+  const classShapesById = new Map(
+    [...classShapeSidecar.byClassId].map(([classId, entry]) => [classId, entry.shape] as const),
+  );
   // #1530 — when a rejection reason is listed in STRICT_IR_REASONS,
   // promote every fallback with that reason to a hard compile error
   // instead of letting the legacy path silently catch it. The set
@@ -2377,10 +2465,12 @@ function planIrOverlay(
   const safeSelection: {
     funcs: Set<string>;
     classMembers?: ReadonlySet<string>;
+    classMemberUnitIds?: ReadonlySet<IrUnitId>;
     moduleInit?: import("../ir/select.js").IrModuleInitAssessment;
   } = {
     funcs: irOverlayIdentity.projectIrSafeFunctionNames(identityPlan.safeFunctionUnitIds, identityPlan),
     classMembers: selection.classMembers,
+    classMemberUnitIds: selection.classMemberUnitIds,
     // (#3142 Slice 2) Forward the module-init claim. A resolve-time drop of
     // one of the unit's callees is self-limiting: the integration builds
     // `calleeTypes` from safeSelection.funcs, so a call to a dropped callee
@@ -2411,6 +2501,7 @@ function planIrOverlay(
     safeSelection.funcs.clear();
     identityPlan.safeFunctionUnitIds.clear();
     safeSelection.classMembers = new Set();
+    safeSelection.classMemberUnitIds = new Set();
     safeSelection.moduleInit = undefined;
   }
   // (#2023) The IR `new C(...)` lowering does not thread the new.target
@@ -2450,6 +2541,7 @@ function planIrOverlay(
     safeSelection.funcs.clear();
     identityPlan.safeFunctionUnitIds.clear();
     safeSelection.classMembers = new Set();
+    safeSelection.classMemberUnitIds = new Set();
     // (#3142 Slice 2) The module-init unit routes through legacy too.
     safeSelection.moduleInit = undefined;
   }
@@ -2554,6 +2646,7 @@ function planIrOverlay(
     selection,
     classShapeSidecar,
     classShapes,
+    classShapesById,
     overrideMapByUnitId,
     overrideMap,
     safeSelection,
@@ -2575,7 +2668,7 @@ function consumeIrOverlayReport(
   ctx: CodegenContext,
   report: IrIntegrationReport,
   plan: IrOverlayPlan,
-  preparedSelection: Pick<IrSelection, "funcs" | "classMembers" | "moduleInit">,
+  preparedSelection: Pick<IrSelection, "funcs" | "classMembers" | "classMemberUnitIds" | "moduleInit">,
   sourceFile: ts.SourceFile,
   skippedFunctionUnitIds: ReadonlySet<IrUnitId> = new Set(),
   skippedClassMemberUnitIds: ReadonlySet<IrUnitId> = new Set(),
@@ -3300,7 +3393,7 @@ interface IrFirstBodyRouting {
   readonly preparedFreeFunctions?: PreparedIrFreeFunctionBodies;
   readonly preparedClassMembers?: PreparedIrClassMemberBodies;
   readonly preparedReport?: IrIntegrationReport;
-  readonly preparedSelection?: Pick<IrSelection, "funcs" | "classMembers" | "moduleInit">;
+  readonly preparedSelection?: Pick<IrSelection, "funcs" | "classMembers" | "classMemberUnitIds" | "moduleInit">;
   readonly skipBodies?: ReadonlySet<string>;
   readonly preserveBodies?: ReadonlySet<string>;
 }
@@ -3342,12 +3435,33 @@ function planIrFirstBodyRouting(
         overridesByUnitId: plan.overrideMapByUnitId,
       })
     : new Set<string>();
-  const preliminaryClassMemberNames = !hasLateFeaturePreparation
-    ? selectPreparedClassMemberNames(ctx, preliminarySelection, plan.identityPlan)
-    : new Set<string>();
+  const selectedPreliminaryClassMemberUnitIds = selectPreparedClassMemberUnitIds(
+    ctx,
+    preliminarySelection,
+    plan.identityPlan,
+  );
+  // Preserve the established late-feature gate for ordinary members and
+  // constructors. Only exact selected accessor UnitIds are an
+  // independently sealed component that may prepare beside host/import/date/
+  // promise work in the surrounding Test262 harness.
+  const preliminaryClassMemberUnitIds = new Set(
+    [...selectedPreliminaryClassMemberUnitIds].filter((unitId) => {
+      if (!hasLateFeaturePreparation) return true;
+      const terminal = plan.identityPlan.identityContext.terminalByUnitId.get(unitId);
+      return (
+        terminal !== undefined &&
+        (terminal.kind === "class-instance-getter" ||
+          terminal.kind === "class-instance-setter" ||
+          terminal.kind === "class-static-getter" ||
+          terminal.kind === "class-static-setter")
+      );
+    }),
+  );
   // A class or module owner does not make an unrelated free-function component
-  // direct-owned. Ordinary instance/static methods may enter the same sealed
-  // preparation transaction; constructors and module init remain direct.
+  // direct-owned. Dependency-complete free functions, ordinary members,
+  // accessors, and eligible source constructor `_init` bodies enter one sealed
+  // preparation transaction. Constructor `_new` wrappers remain AST-free
+  // support and module init remains direct.
   // selectR2PreparedFreeFunctions closes candidates over exact local call
   // edges, so any callable edge that crosses into one of those owners removes
   // the complete affected free-function component before preparation.
@@ -3355,10 +3469,10 @@ function planIrFirstBodyRouting(
   const hasSuspendingAsyncComponent = plan.suspendingAsyncUnitIds.size > 0;
   const usePreparedRouting =
     preliminaryR2Names.size > 0 ||
-    preliminaryClassMemberNames.size > 0 ||
+    preliminaryClassMemberUnitIds.size > 0 ||
     hasPromiseDelayComponent ||
     hasSuspendingAsyncComponent;
-  let finalizedSelection: Pick<IrSelection, "funcs" | "classMembers" | "moduleInit"> | undefined;
+  let finalizedSelection: Pick<IrSelection, "funcs" | "classMembers" | "classMemberUnitIds" | "moduleInit"> | undefined;
 
   if (usePreparedRouting) {
     // TDZ globals are part of the frozen Program ABI and may be read while
@@ -3388,45 +3502,40 @@ function planIrFirstBodyRouting(
       sourceFile,
       plan,
       selection: preparedSelection,
-      preliminaryClassMemberNames,
+      preliminaryClassMemberUnitIds,
       preliminaryR2Names,
       promiseDelayNames,
       projectLoweringPlans: (selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
     });
     preparedSelection = preparedPopulation.selection;
     finalizedSelection = preparedSelection;
-    const { classMemberNames: finalClassMemberNames, freeFunctionNames: preparedFreeFunctionNames } =
-      preparedPopulation;
+    const {
+      classMemberNames: finalClassMemberNames,
+      classMemberUnitIds: finalClassMemberUnitIds,
+      freeFunctionNames: preparedFreeFunctionNames,
+    } = preparedPopulation;
     if (preparedFreeFunctionNames.size === 0 && finalClassMemberNames.size === 0) {
       // Final-context Promise preparation may reject an occupied/mismatched
       // runtime ABI. Keep that owner on the established direct route.
     } else {
-      const freeFunctionSelection = {
-        funcs: preparedFreeFunctionNames,
-        classMembers: new Set<string>(),
-        moduleInit: undefined,
-      };
-      const preparedFreeFunctions = prepareIrFreeFunctionBodies({
+      const preparedBodies = prepareIrBodies({
         ctx,
         sourceFile,
-        selection: freeFunctionSelection,
-        claimsByUnitId: plan.functionClaimsByUnitId,
-        overrideMap: plan.overrideMap,
-        classShapes: plan.classShapes,
-        loweringPlans: irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, freeFunctionSelection),
-      });
-      const preparedClassMembers = prepareIrClassMemberBodies({
-        ctx,
-        sourceFile,
-        selection: { classMembers: finalClassMemberNames },
+        selection: {
+          funcs: preparedFreeFunctionNames,
+          classMembers: finalClassMemberNames,
+          classMemberUnitIds: finalClassMemberUnitIds,
+        },
         identityPlan: plan.identityPlan,
+        functionClaimsByUnitId: plan.functionClaimsByUnitId,
         overrideMap: plan.overrideMap,
         classShapes: plan.classShapes,
+        classShapesById: plan.classShapesById,
         projectLoweringPlans: (selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
       });
-      const preparedReport = preparedClassMembers
-        ? mergeIrIntegrationReports(preparedFreeFunctions.report, preparedClassMembers.report)
-        : preparedFreeFunctions.report;
+      const preparedFreeFunctions = preparedBodies.freeFunctions;
+      const preparedClassMembers = preparedBodies.classMembers;
+      const preparedReport = preparedBodies.report;
       const requestedSkipUnitIds = computePreparedInheritedIrFirstSkipUnitIds(inheritedSkipInput);
       for (const entry of preparedFreeFunctions.requestedSkipProjection.entries) {
         requestedSkipUnitIds.add(entry.unitId);
@@ -3976,12 +4085,11 @@ export function generateModule(
     // `unreachable` placeholder are no longer ownership mechanisms for this
     // population.
     //
-    // Dependency-complete top-level methods and accessors now join this
-    // prepared route, including inherited layouts. Constructors, nested
-    // classes, and module init retain the post-direct overlay until their
-    // R3/R4 owners land.
-    // Both reports are joined before telemetry/auditing, so every terminal row
-    // is reconciled once.
+    // Dependency-complete free functions, constructors, methods, and accessors
+    // now join one prepared route, including inherited layouts. Nested classes
+    // and module init retain the post-direct overlay until their R3/R4 owners
+    // land. One report reaches telemetry/auditing, so every terminal row is
+    // reconciled once.
     // Selector-REJECTED functions are never claimed and still compile through
     // the direct path unchanged.
     // Escape hatch (one release, #3143): `JS2WASM_IR_FIRST=0` restores the
@@ -3998,7 +4106,9 @@ export function generateModule(
     let preparedFreeFunctions: PreparedIrFreeFunctionBodies | undefined;
     let preparedClassMembers: PreparedIrClassMemberBodies | undefined;
     let preparedReport: IrIntegrationReport | undefined;
-    let preparedSelection: Pick<IrSelection, "funcs" | "classMembers" | "moduleInit"> | undefined;
+    let preparedSelection:
+      | Pick<IrSelection, "funcs" | "classMembers" | "classMemberUnitIds" | "moduleInit">
+      | undefined;
     let irSkippedFunctionUnitIds: ReadonlySet<IrUnitId> = new Set();
     let irSkippedClassMemberUnitIds: ReadonlySet<IrUnitId> = new Set();
     let irSkipBodies: ReadonlySet<string> | undefined;
@@ -4017,19 +4127,33 @@ export function generateModule(
 
     // Third pass: compile function bodies
     const actuallySkippedClassMembers: string[] = [];
-    const actuallySkipped = compileDeclarations(
-      ctx,
-      ast.sourceFile,
-      irSkipBodies,
-      irPreserveBodies,
-      preparedClassMembers
-        ? {
-            skipBodies: preparedClassMembers.skipBodies,
-            preserveSkippedBodies: preparedClassMembers.preserveBodies,
-            skippedNames: actuallySkippedClassMembers,
-          }
-        : undefined,
-    );
+    const actuallySkippedClassMemberUnitIds: IrUnitId[] = [];
+    const classBodyRouting = preparedClassMembers
+      ? {
+          skipBodies: preparedClassMembers.skipBodies,
+          preserveSkippedBodies: preparedClassMembers.preserveBodies,
+          skippedNames: actuallySkippedClassMembers,
+          skipBodyUnitIds: preparedClassMembers.skipBodyUnitIds,
+          preserveSkippedBodyUnitIds: preparedClassMembers.preserveBodyUnitIds,
+          skippedUnitIds: actuallySkippedClassMemberUnitIds,
+        }
+      : undefined;
+    const previousClassBodyRouting = ctx.irClassBodyRouting;
+    let actuallySkipped: string[] | undefined;
+    try {
+      if (classBodyRouting) {
+        ctx.irClassBodyRouting = classBodyRouting;
+      } else {
+        ctx.irClassBodyRouting = undefined;
+      }
+      actuallySkipped = compileDeclarations(ctx, ast.sourceFile, irSkipBodies, irPreserveBodies, classBodyRouting);
+    } finally {
+      if (previousClassBodyRouting) {
+        ctx.irClassBodyRouting = previousClassBodyRouting;
+      } else {
+        ctx.irClassBodyRouting = undefined;
+      }
+    }
     if (irFirst) {
       const skipProjection = requestedSkipProjection;
       if (!skipProjection) {
@@ -4043,12 +4167,11 @@ export function generateModule(
       irFirstSkipped = correlated.legacyNames;
       irSkippedFunctionUnitIds = correlated.unitIds;
       if (preparedClassMembers) {
-        const correlatedClassMembers = correlateIrSkippedBodyNames(
-          preparedClassMembers.requestedSkipProjection,
-          actuallySkippedClassMembers,
+        irSkippedClassMemberUnitIds = correlateIrSkippedBodyUnitIds(
+          preparedClassMembers.skipBodyUnitIds,
+          actuallySkippedClassMemberUnitIds,
           "class member",
         );
-        irSkippedClassMemberUnitIds = correlatedClassMembers.unitIds;
       }
     }
 
@@ -4090,6 +4213,7 @@ export function generateModule(
         ...(preparedReport ? { preparedReport } : {}),
         ...(preparedFreeFunctions ? { preparedLegacyNames: preparedFreeFunctions.completedBodies } : {}),
         ...(preparedClassMembers ? { preparedClassMemberLegacyNames: preparedClassMembers.completedBodies } : {}),
+        ...(preparedClassMembers ? { preparedClassMemberUnitIds: preparedClassMembers.completedBodyUnitIds } : {}),
         projectLoweringPlans: (selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
       });
       consumeIrOverlayReport(
@@ -4701,9 +4825,9 @@ export function generateModule(
     // index freeze. No-op unless a gc/host delete-aware read recorded the flag.
     finalizeInModuleInitFlag(ctx);
 
-    // (#4157) Constant number boxes → module globals. Placement contract (why
-    // exactly here) is in const-box-hoist.ts's own doc comment.
-    hoistConstantBoxedNumbers(ctx);
+    // (#4150/#4157) Finalize ambient-global and constant-box caches after every
+    // import global settles. Each pass documents its exact placement contract.
+    finalizeModuleValueCaches(ctx);
 
     // (#2853) Nominal shape branding: structurally-colliding `__anon_*` /
     // `__fnctor_*` shape types get a trailing brand-ref field so the engine's
@@ -7024,8 +7148,8 @@ export function generateMultiModule(
     // index freeze. No-op unless a gc/host delete-aware read recorded the flag.
     finalizeInModuleInitFlag(ctx);
 
-    // (#4157) Same pass + placement as the single-module pipeline.
-    hoistConstantBoxedNumbers(ctx);
+    // (#4150/#4157) Same module-value caches as the single-module pipeline.
+    finalizeModuleValueCaches(ctx);
 
     // (#2853) Nominal shape branding — same pass + placement as the
     // single-module pipeline (see generateModule): after all instruction

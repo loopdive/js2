@@ -9,6 +9,7 @@
 // disqualification rules applies).
 import { describe, expect, it } from "vitest";
 import { compile } from "../../src/index.js";
+import { buildImports } from "../../src/runtime.js";
 import { assertEquivalent } from "./helpers.js";
 
 async function compileWat(source: string): Promise<string> {
@@ -91,6 +92,115 @@ describe("#1197 i32 element specialization for number[]", () => {
         }`,
         [{ fn: "test", args: [] }],
       );
+    });
+
+    it("bounded permutation fill and indexOf agree with native JS", async () => {
+      const source = `export function test(): number {
+        const arr: number[] = [];
+        for (let i = 0; i < 10000; i = i + 1) {
+          arr.push((i * 7919) % 10000);
+        }
+        let sum = 0;
+        for (let i = 0; i < 1000; i = i + 1) {
+          sum = sum + arr.indexOf(i * 10);
+        }
+        return sum;
+      }`;
+      const result = await compile(source, { fast: true });
+      expect(result.success).toBe(true);
+      expect(result.wat).toContain("__arr_i32");
+      const imports = buildImports(result.imports, undefined, result.stringPool);
+      const { instance } = await WebAssembly.instantiate(result.binary, imports);
+      imports.setInstance?.(instance);
+      expect((instance.exports.test as () => number)()).toBe(4_995_000);
+    });
+
+    it("the counted-push unrolled scan preserves tails, misses, and fromIndex", async () => {
+      const source = `export function test(): number {
+        const arr: number[] = [];
+        for (let i = 0; i < 1031; i = i + 1) {
+          arr.push((i * 37) % 1031);
+        }
+        let passed = 0;
+        if (arr.indexOf(0) === 0) passed = passed + 1;
+        if (arr.indexOf(37) === 1) passed = passed + 1;
+        if (arr.indexOf((1030 * 37) % 1031) === 1030) passed = passed + 1;
+        if (arr.indexOf(2000) === -1) passed = passed + 1;
+        if (arr.indexOf(0, 2000) === -1) passed = passed + 1;
+        if (arr.indexOf(37, 2) === -1) passed = passed + 1;
+        if (arr.indexOf((1030 * 37) % 1031, -1) === 1030) passed = passed + 1;
+        return passed;
+      }`;
+      const result = await compile(source, { fast: true });
+      expect(result.success).toBe(true);
+      const imports = buildImports(result.imports, undefined, result.stringPool);
+      const { instance } = await WebAssembly.instantiate(result.binary, imports);
+      imports.setInstance?.(instance);
+      expect((instance.exports.test as () => number)()).toBe(7);
+    });
+
+    it("the batched miss path preserves f64 strict-equality search semantics", async () => {
+      const source = `export function test(): number {
+        const arr: number[] = [];
+        for (let i = 0; i < 1031; i = i + 1) {
+          arr.push(i + 0.25);
+        }
+        let passed = 0;
+        if (arr.indexOf(0.25) === 0) passed = passed + 1;
+        if (arr.indexOf(37.25) === 37) passed = passed + 1;
+        if (arr.indexOf(1030.25) === 1030) passed = passed + 1;
+        if (arr.indexOf(2000.25) === -1) passed = passed + 1;
+        if (arr.indexOf(NaN) === -1) passed = passed + 1;
+        if (arr.indexOf(37.25, 38) === -1) passed = passed + 1;
+        if (arr.indexOf(1030.25, -1) === 1030) passed = passed + 1;
+        return passed;
+      }`;
+      const result = await compile(source, { fast: true });
+      expect(result.success).toBe(true);
+      const imports = buildImports(result.imports, undefined, result.stringPool);
+      const { instance } = await WebAssembly.instantiate(result.binary, imports);
+      imports.setInstance?.(instance);
+      expect((instance.exports.test as () => number)()).toBe(7);
+    });
+
+    it("batches hot numeric misses while the kill switch restores the branch ladder", async () => {
+      const source = `export function test(): number {
+        const arr: number[] = [];
+        for (let i = 0; i < 1031; i = i + 1) {
+          arr.push((i * 37) % 1031);
+        }
+        return arr.indexOf(444);
+      }`;
+      const compileWithBatching = async (enabled: boolean) => {
+        const previous = process.env.JS2WASM_ARRAY_INDEXOF_BATCHED_BRANCHES;
+        try {
+          process.env.JS2WASM_ARRAY_INDEXOF_BATCHED_BRANCHES = enabled ? "1" : "0";
+          return await compile(source, { fast: true });
+        } finally {
+          if (previous === undefined) {
+            Reflect.deleteProperty(process.env, "JS2WASM_ARRAY_INDEXOF_BATCHED_BRANCHES");
+          } else process.env.JS2WASM_ARRAY_INDEXOF_BATCHED_BRANCHES = previous;
+        }
+      };
+      const candidate = await compileWithBatching(true);
+      const control = await compileWithBatching(false);
+      expect(candidate.success).toBe(true);
+      expect(control.success).toBe(true);
+
+      const functionBody = (wat: string): string => {
+        const start = wat.indexOf("(func $test ");
+        const end = wat.indexOf("\n  (func ", start + 1);
+        return wat.slice(start, end);
+      };
+      expect(functionBody(candidate.wat ?? "")).toContain("i32.or");
+      expect(functionBody(control.wat ?? "")).not.toContain("i32.or");
+
+      for (const compiled of [candidate, control]) {
+        const imports = buildImports(compiled.imports, undefined, compiled.stringPool);
+        const { instance } = await WebAssembly.instantiate(compiled.binary, imports);
+        imports.setInstance?.(instance);
+        expect((instance.exports.test as () => number)()).toBe(12);
+      }
     });
 
     it("compound bitwise assignment on element preserves i32 semantics", async () => {
@@ -239,6 +349,53 @@ describe("#1197 i32 element specialization for number[]", () => {
             values[i] = i / 2; // f64 result, not i32-shaped
           }
           return values[5];
+        }`,
+      );
+      expect(wat).not.toContain("__arr_i32");
+    });
+
+    it("a fractional indexOf search keeps the f64 backing", async () => {
+      const wat = await compileWat(
+        `export function test(): number {
+          const values: number[] = [];
+          for (let i = 0; i < 10; i++) values.push(i & 7);
+          return values.indexOf(1.5);
+        }`,
+      );
+      expect(wat).not.toContain("__arr_i32");
+    });
+
+    it("an out-of-range indexOf search keeps the f64 backing", async () => {
+      const wat = await compileWat(
+        `export function test(): number {
+          const values: number[] = [];
+          for (let i = 0; i < 10; i++) values.push(i & 7);
+          return values.indexOf(2147483648);
+        }`,
+      );
+      expect(wat).not.toContain("__arr_i32");
+    });
+
+    it("range arithmetic that can produce negative zero keeps the f64 backing", async () => {
+      const wat = await compileWat(
+        `export function test(): number {
+          const values: number[] = [];
+          for (let i = 0; i < 10; i++) values.push(i * -1);
+          return 1 / values[0];
+        }`,
+      );
+      expect(wat).not.toContain("__arr_i32");
+    });
+
+    it("a loop-body counter write invalidates the static range", async () => {
+      const wat = await compileWat(
+        `export function test(): number {
+          const values: number[] = [];
+          for (let i = 0; i < 10; i++) {
+            if (i === 5) i = i + 1;
+            values.push((i * 7919) % 10000);
+          }
+          return values[0];
         }`,
       );
       expect(wat).not.toContain("__arr_i32");

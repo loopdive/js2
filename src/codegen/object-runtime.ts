@@ -93,6 +93,8 @@ import {
   reserveCarrierBagVisibility,
 } from "./carrier-bag-visibility.js";
 import { reserveClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
+// (#4230 L1) the #3251 overlay companion as a THIRD key source for the vec key walks
+import { buildOverlayPushKeys, buildVecOverlayHasArm, reserveVecOverlayPushKeys } from "./vec-overlay-keys.js";
 // (#4194) instance expando substrate — composes AROUND the #3537/#3468 arms and
 // splices the declared-field write-through prologue onto `__extern_set`.
 import {
@@ -8052,6 +8054,12 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
   const objVecPushIdx = ctx.funcMap.get("__objvec_push");
   const strFlattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
   const strEqualsIdx = ctx.nativeStrHelpers.get("__str_equals");
+  // (#4230 L1) `__vec_overlay_lookup` does not exist yet — `ensureOverlayCore`
+  // mints it in the LATER `fillObjVecReflectionHelpers` pass. Reserve the key
+  // pusher now so the arm below can bake its index; the real body is installed
+  // there. Demand-gated (see vec-overlay-keys.ts): a no-op unless the module
+  // mentions a descriptor-define or own-name read.
+  reserveVecOverlayPushKeys(ctx);
 
   const findFn = (name: string) => ctx.mod.functions.find((f) => f.name === name);
 
@@ -8163,7 +8171,15 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
               },
             ],
           },
-          ...bagKeysTail(ctx, { vecLocal: kVec, includeNonEnum: false }), // (#4010 S3) expandos AFTER indices
+          // (#4010 S3) #3537 bag expandos AFTER indices, then (#4230 L1) the
+          // #3251 overlay companion's named expandos — the third store, which
+          // no key walk consulted before. `buildBagPushKeys` + the explicit
+          // tail replace `bagKeysTail` so the overlay push lands INSIDE the
+          // arm rather than after its `return`.
+          ...buildBagPushKeys(ctx, { vecLocal: kVec, includeNonEnum: false }),
+          ...buildOverlayPushKeys(ctx, { vecLocal: kVec, includeNonEnum: false }),
+          { op: "local.get", index: kVec },
+          { op: "return" },
         ],
       },
     ];
@@ -8214,6 +8230,10 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
           ] satisfies Instr[])
         : []),
       ...numericArm,
+      // (#4230 L1) The overlay consult `fillVecHasOwnHelpers` gave
+      // `hasOwnProperty` but not `in` — see buildVecOverlayHasArm. Non-index,
+      // non-`length` keys only: both returned above.
+      ...buildVecOverlayHasArm(ctx),
     ];
     const arm: Instr[] = [
       { op: "local.get", index: 0 },

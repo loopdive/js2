@@ -1049,7 +1049,7 @@ export class IrFunctionBuilder {
    * Result type is `{ kind: "extern", className }` — opaque externref
    * carrying the class identity statically.
    */
-  emitExternNew(className: string, args: readonly IrValueId[]): IrValueId {
+  emitExternNew(className: string, args: readonly IrValueId[], importPrefix = className): IrValueId {
     const result = this.allocator.fresh();
     const resultType: IrType = { kind: "extern", className };
     this.valueTypes.set(result, resultType);
@@ -1057,6 +1057,7 @@ export class IrFunctionBuilder {
     this.pushInstr({
       kind: "extern.new",
       className,
+      importPrefix,
       args: [...args],
       result,
       resultType,

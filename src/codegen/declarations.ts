@@ -18,11 +18,20 @@ import {
   unwrapPromiseType,
 } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType, WasmFunction } from "../ir/types.js";
+import {
+  exactPreparedAccessorExpressionKey,
+  exactPreparedAccessorSyntaxKey,
+  isBoundedPreparedAccessorClass,
+} from "../ir/class-accessor-safety.js";
 import { collectShapes } from "../shape-inference.js";
 // (#3623) Total classification of top-level ExpressionStatements, so the
 // allow-list's fall-through leaves evidence instead of silently dropping an
 // observable statement (the #1268/#2671/#2992/#3366/#3468/#3592/#3615 class).
-import { classifyTopLevelExpressionStatement, createsGlobalObjectBinding } from "./module-init-collection.js";
+import {
+  classifyTopLevelExpressionStatement,
+  createsGlobalObjectBinding,
+  isAssignmentOperator,
+} from "./module-init-collection.js";
 import { emitUndefinedExtern, ensureWrapperTypes } from "./any-helpers.js";
 import { ASYNC_CPS_ENABLED, analyzeAsyncBody, asyncFnNeedsCps } from "./async-cps.js";
 import { asyncFnNeedsHostDrive, asyncGenDrivableUnderCarrier, asyncGenStem } from "./async-frame.js";
@@ -97,6 +106,7 @@ import {
   pushProgramAbiTopLevelCallable,
 } from "./program-abi-source-callable-planning.js";
 import { heterogeneousWidenedModuleGlobalType } from "./declarations/heterogeneous-scalar-var-widening.js";
+import { withBodyHoistedModuleVarNames } from "./declarations/with-body-var-hoisting.js";
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import { prepareModuleTdzGlobals, registerModuleGlobal } from "./module-global-registration.js";
 import { annexBModuleGlobalSeedsFromTopLevel } from "./annexb-global-live-binding.js";
@@ -659,7 +669,7 @@ function defaultReturnInstrs(returnType: ValType | undefined): Instr[] {
   }
 }
 
-function getAssignmentRootIdentifier(expr: ts.Expression): string | undefined {
+function getAssignmentRootIdentifierNode(expr: ts.Expression): ts.Identifier | undefined {
   let current: ts.Expression = expr;
   while (
     ts.isParenthesizedExpression(current) ||
@@ -680,7 +690,239 @@ function getAssignmentRootIdentifier(expr: ts.Expression): string | undefined {
       current = current.expression;
     }
   }
-  return ts.isIdentifier(current) ? current.text : undefined;
+  return ts.isIdentifier(current) ? current : undefined;
+}
+
+function getAssignmentRootIdentifier(expr: ts.Expression): string | undefined {
+  return getAssignmentRootIdentifierNode(expr)?.text;
+}
+
+function classElementIsStatic(member: ts.ClassElement): boolean {
+  return (
+    ts.canHaveModifiers(member) &&
+    (ts.getModifiers(member)?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword) ?? false)
+  );
+}
+
+function isReadOnlyElementAccess(access: ts.ElementAccessExpression): boolean {
+  let current: ts.Expression = access;
+  while (
+    (ts.isParenthesizedExpression(current.parent) ||
+      ts.isAsExpression(current.parent) ||
+      ts.isNonNullExpression(current.parent) ||
+      ts.isTypeAssertionExpression(current.parent)) &&
+    current.parent.expression === current
+  ) {
+    current = current.parent;
+  }
+  const parent = current.parent;
+  if (ts.isBinaryExpression(parent) && parent.left === current && isAssignmentOperator(parent.operatorToken.kind)) {
+    return false;
+  }
+  if (
+    (ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) &&
+    parent.operand === current &&
+    (parent.operator === ts.SyntaxKind.PlusPlusToken || parent.operator === ts.SyntaxKind.MinusMinusToken)
+  ) {
+    return false;
+  }
+  if (ts.isDeleteExpression(parent) && parent.expression === current) return false;
+  if ((ts.isForInStatement(parent) || ts.isForOfStatement(parent)) && parent.initializer === current) return false;
+  return true;
+}
+
+function exactReadOnlyAccessorObservation(
+  ctx: CodegenContext,
+  reference: ts.Identifier,
+  classDeclaration: ts.ClassDeclaration | ts.ClassExpression,
+  className: string,
+): boolean {
+  let access: ts.ElementAccessExpression | undefined;
+  let instance = false;
+  if (ts.isElementAccessExpression(reference.parent) && reference.parent.expression === reference) {
+    access = reference.parent;
+  } else if (
+    ts.isPropertyAccessExpression(reference.parent) &&
+    reference.parent.expression === reference &&
+    reference.parent.name.text === "prototype" &&
+    ts.isElementAccessExpression(reference.parent.parent) &&
+    reference.parent.parent.expression === reference.parent
+  ) {
+    access = reference.parent.parent;
+    instance = true;
+  }
+  if (!access || !isReadOnlyElementAccess(access)) return false;
+
+  const key = exactPreparedAccessorExpressionKey(access.argumentExpression);
+  if (key === undefined) return false;
+  const matchingGetters = classDeclaration.members.filter(
+    (member): member is ts.GetAccessorDeclaration =>
+      ts.isGetAccessorDeclaration(member) &&
+      exactPreparedAccessorSyntaxKey(member.name) === key &&
+      classElementIsStatic(member) !== instance,
+  );
+  if (matchingGetters.length !== 1) return false;
+
+  // The allow-list is intentionally smaller than "an accessor read". A
+  // getter may itself call out, mutate the class binding, or expose the class.
+  // The generated Test262 observations return one literal-only expression, so
+  // prove that exact side-effect-free body before allowing the root reference.
+  const getterBody = matchingGetters[0]!.body;
+  if (!getterBody || getterBody.statements.length !== 1) return false;
+  const [statement] = getterBody.statements;
+  if (
+    !statement ||
+    !ts.isReturnStatement(statement) ||
+    !statement.expression ||
+    exactPreparedAccessorExpressionKey(statement.expression) === undefined
+  ) {
+    return false;
+  }
+
+  const accessorKey = `${className}_${key}`;
+  return (
+    ctx.classAccessorSet.has(accessorKey) &&
+    (instance ? !ctx.staticAccessorSet.has(accessorKey) : ctx.staticAccessorSet.has(accessorKey)) &&
+    ctx.funcMap.has(`${className}_get_${key}`)
+  );
+}
+
+function bindingHasUnsafeReference(
+  ctx: CodegenContext,
+  declaration: ts.Declaration,
+  targetRoot: ts.Identifier,
+  classDeclaration: ts.ClassDeclaration | ts.ClassExpression,
+  className: string,
+): boolean {
+  const sourceFile = targetRoot.getSourceFile();
+  if (declaration.getSourceFile() !== sourceFile) return true;
+
+  let unsafe = false;
+  const visit = (node: ts.Node): void => {
+    if (unsafe || node === declaration || node === classDeclaration) return;
+    if (ts.isIdentifier(node) && ctx.oracle.valueDeclarationOf(node) === declaration) {
+      if (node === targetRoot || exactReadOnlyAccessorObservation(ctx, node, classDeclaration, className)) return;
+      unsafe = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sourceFile, visit);
+  return unsafe;
+}
+
+/**
+ * Exact #4259 Test262 call-site shape. A class binding is not a module global,
+ * so its top-level accessor write needs an explicit module-init keep. Resolve
+ * the source binding and the already-registered setter slot before retaining
+ * anything; name-only class registries are not sufficient evidence here.
+ */
+function isExactTopLevelClassAccessorWrite(ctx: CodegenContext, target: ts.Expression): boolean {
+  if (!ts.isElementAccessExpression(target)) return false;
+  let root: ts.Identifier | undefined;
+  let instance = false;
+  if (ts.isIdentifier(target.expression)) {
+    root = target.expression;
+  } else if (
+    ts.isPropertyAccessExpression(target.expression) &&
+    ts.isIdentifier(target.expression.expression) &&
+    target.expression.name.text === "prototype"
+  ) {
+    root = target.expression.expression;
+    instance = true;
+  }
+  if (!root) return false;
+
+  const declaration = ctx.oracle.valueDeclarationOf(root);
+  if (!declaration) return false;
+  let classDeclaration: ts.ClassDeclaration | ts.ClassExpression;
+  let className: string;
+  if (ts.isClassDeclaration(declaration) && ts.isSourceFile(declaration.parent)) {
+    if (
+      declaration.name?.text !== root.text ||
+      declaration.getSourceFile() !== root.getSourceFile() ||
+      ctx.classExprNameMap.has(root.text)
+    ) {
+      return false;
+    }
+    classDeclaration = declaration;
+    className = root.text;
+    if (ctx.classDeclarationMap.get(className) !== declaration) return false;
+  } else if (
+    ts.isVariableDeclaration(declaration) &&
+    declaration.initializer !== undefined &&
+    ts.isClassExpression(declaration.initializer) &&
+    ts.isVariableDeclarationList(declaration.parent) &&
+    ts.isVariableStatement(declaration.parent.parent) &&
+    ts.isSourceFile(declaration.parent.parent.parent)
+  ) {
+    if (declaration.getSourceFile() !== root.getSourceFile()) return false;
+    classDeclaration = declaration.initializer;
+    const syntheticName = ctx.anonClassExprNames.get(classDeclaration);
+    if (!syntheticName || ctx.classExprNameMap.get(root.text) !== syntheticName) return false;
+    className = syntheticName;
+  } else {
+    return false;
+  }
+  if (!isBoundedPreparedAccessorClass(classDeclaration) || !ctx.classSet.has(className)) return false;
+  const occupiedSlots = new Set<string>();
+  for (const member of classDeclaration.members) {
+    if (!ts.isGetAccessorDeclaration(member) && !ts.isSetAccessorDeclaration(member)) return false;
+    const memberKey = exactPreparedAccessorSyntaxKey(member.name);
+    if (memberKey === undefined) return false;
+    const slot = `${ts.isGetAccessorDeclaration(member) ? "getter" : "setter"}:${memberKey}`;
+    if (occupiedSlots.has(slot)) return false;
+    occupiedSlots.add(slot);
+  }
+  const key = exactPreparedAccessorExpressionKey(target.argumentExpression);
+  if (key === undefined) return false;
+  const matchingSetters = classDeclaration.members.filter(
+    (member): member is ts.SetAccessorDeclaration =>
+      ts.isSetAccessorDeclaration(member) && exactPreparedAccessorSyntaxKey(member.name) === key,
+  );
+  if (matchingSetters.length !== 1) return false;
+  const setterIsStatic = classElementIsStatic(matchingSetters[0]!);
+  if (setterIsStatic === instance) return false;
+  const accessorKey = `${className}_${key}`;
+  const hasSetter =
+    ctx.classAccessorSet.has(accessorKey) &&
+    (instance ? !ctx.staticAccessorSet.has(accessorKey) : ctx.staticAccessorSet.has(accessorKey));
+  return (
+    hasSetter &&
+    ctx.funcMap.has(`${className}_set_${key}`) &&
+    !bindingHasUnsafeReference(ctx, declaration, root, classDeclaration, className)
+  );
+}
+
+/**
+ * Prepared top-level class declarations are byte-inert unless a computed
+ * accessor name has source-ordered effects that module initialization must
+ * preserve. The statement emitter consults the final IR skip set.
+ */
+function collectPreparedTopLevelClassComputedNameEffects(ctx: CodegenContext, statement: ts.Statement): boolean {
+  if (
+    !ts.isClassDeclaration(statement) ||
+    !isBoundedPreparedAccessorClass(statement) ||
+    !statement.members.some(
+      (member) =>
+        (ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member)) &&
+        ts.isComputedPropertyName(member.name),
+    )
+  ) {
+    return false;
+  }
+  ctx.moduleInitStatements.push(statement);
+  return true;
+}
+
+function shouldCollectTopLevelAssignment(ctx: CodegenContext, target: ts.Expression, operator: ts.SyntaxKind): boolean {
+  const targetName = getAssignmentRootIdentifier(target);
+  const namedGlobal = targetName === "globalThis" || (!!targetName && ctx.moduleGlobals.has(targetName));
+  return (
+    namedGlobal ||
+    (operator === ts.SyntaxKind.EqualsToken && isExactTopLevelClassAccessorWrite(ctx, target)) ||
+    createsGlobalObjectBinding(target, ctx.sloppyImplicitGlobals)
+  );
 }
 
 function isTopLevelFunctionPropertyReceiver(ctx: CodegenContext, receiver: ts.Expression): boolean {
@@ -1529,6 +1771,15 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       ctx.externrefAccessorVars.add(decl.name.text);
       return { kind: "externref" };
     }
+    // (#4264) A `var` DECLARED inside a `with` body may never be written at all
+    // — §14.11.2 consults the object environment first, so when the target owns
+    // the name the store goes to the object and the hoisted binding keeps its
+    // initial `undefined`. A primitive slot cannot represent that value; widen
+    // it. See `with-body-var-hoisting.ts` for the full argument and the seed
+    // that gives the slot its `undefined` at `__module_init` entry.
+    if (ts.isIdentifier(decl.name) && withBodyHoistedModuleVarNames(sourceFile).has(decl.name.text)) {
+      return { kind: "externref" };
+    }
     // #1914 — `var m = re.exec(s)` under standalone gets the precise
     // match-vec ref type so indexed reads stay on the static vec path
     // (externref-widened globals round-trip through __extern_get_idx,
@@ -1655,6 +1906,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       }
       continue;
     }
+    if (collectPreparedTopLevelClassComputedNameEffects(ctx, stmt)) continue;
     // For control-flow statements at module level, recursively scan for
     // `var` declarations (JavaScript var-hoisting) and collect the statement
     // for init compilation so it executes at module load time.
@@ -1981,7 +2233,6 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
             continue;
           }
         }
-        const targetName = getAssignmentRootIdentifier(expr.left);
         // (#3493) A top-level write through `globalThis` is observable realm
         // state just like a write to one of our module globals. In particular,
         // fixture modules commonly initialise shared state with
@@ -1998,8 +2249,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         // (#3956) `this.p = v` and a sloppy implicit-global `p = v` create the
         // SAME realm state — see `createsGlobalObjectBinding` for why each was
         // silently dropped here (the #3623 mechanism, arms eight and nine).
-        const namedGlobal = targetName === "globalThis" || (!!targetName && ctx.moduleGlobals.has(targetName));
-        if (namedGlobal || createsGlobalObjectBinding(expr.left, ctx.sloppyImplicitGlobals)) {
+        if (shouldCollectTopLevelAssignment(ctx, expr.left, opKind)) {
           ctx.moduleInitStatements.push(stmt);
         }
       }
@@ -2316,13 +2566,7 @@ export function compileDeclarations(
           ctx.deferredClassBodies.add(stmt.name.text);
         } else {
           try {
-            compileClassBodies(
-              ctx,
-              stmt,
-              funcByName,
-              undefined,
-              stmt.parent === sourceFile ? classBodyRouting : undefined,
-            );
+            compileClassBodies(ctx, stmt, funcByName, undefined, classBodyRouting);
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             reportError(ctx, stmt, `Internal error compiling class '${stmt.name.text}': ${msg}`);
@@ -2352,7 +2596,7 @@ export function compileDeclarations(
               if (synth !== undefined) ctx.deferredClassBodies.add(synth);
             } else {
               try {
-                compileClassBodies(ctx, decl.initializer, funcByName, decl.name.text);
+                compileClassBodies(ctx, decl.initializer, funcByName, decl.name.text, classBodyRouting);
               } catch (e) {
                 const msg = e instanceof Error ? e.message : String(e);
                 reportError(ctx, decl, `Internal error compiling class expression: ${msg}`);
@@ -2446,7 +2690,7 @@ export function compileDeclarations(
       // `compiledAnonClasses` above) so it is never eager-compiled; skip.
       if (ctx.deferredClassBodies.has(syntheticName)) return;
       try {
-        compileClassBodies(ctx, classExpr, funcByName, syntheticName);
+        compileClassBodies(ctx, classExpr, funcByName, syntheticName, classBodyRouting);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         reportError(ctx, classExpr, `Internal error compiling anonymous class: ${msg}`);
@@ -2555,6 +2799,25 @@ export function compileDeclarations(
       savedBodies: [],
     };
     ctx.currentFunc = initFctx;
+
+    // (#4264) §10.2.11: a `var` hoisted out of a `with` body is instantiated at
+    // script entry with the value `undefined`. A module global's constant init
+    // can only be `ref.null.extern`, which the standalone lane does NOT read as
+    // `undefined` — so seed the tag-1 singleton here, exactly as the #4182
+    // Annex B block-function binding below does, and for the same reason. Host
+    // mode is excluded on the same grounds: there `undefined` IS the null
+    // extern, and the singleton would surface to host helpers as an object.
+    if (ctx.standalone || ctx.wasi) {
+      const seededWithVars = new Set<number>();
+      for (const withVarName of withBodyHoistedModuleVarNames(sourceFile)) {
+        const withVarGlobalIdx = ctx.moduleGlobals.get(withVarName);
+        if (withVarGlobalIdx === undefined || seededWithVars.has(withVarGlobalIdx)) continue;
+        if (ctx.mod.globals[localGlobalIdx(ctx, withVarGlobalIdx)]?.type.kind !== "externref") continue;
+        if (!emitUndefinedExtern(ctx, initFctx)) continue;
+        initFctx.body.push({ op: "global.set", index: withVarGlobalIdx });
+        seededWithVars.add(withVarGlobalIdx);
+      }
+    }
 
     // (#2931) Seed each reassigned-function live-binding global with the
     // function's closure BEFORE any user init statement runs, so a read of the

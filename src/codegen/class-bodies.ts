@@ -6,8 +6,10 @@
  */
 import { ts } from "../ts-api.js";
 import { nativeTypeFromTypeNode, nativeTypeOfDeclaration } from "./native-type-annotations.js";
+import { resolveIrDynamicCarrierType } from "./any-helpers.js";
 import { isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType } from "../ir/types.js";
+import type { IrUnitId } from "../ir/identity.js";
 import { isHostConstructibleBuiltin, isNativeCollectionBuiltin } from "./builtin-tags.js";
 import { isStandalonePromiseActive } from "./async-scheduler.js"; // (#2637 B2) host-only Promise-subclass ctor gate
 // (#3132 S2a) Bounded async-generator METHOD drive: no-`this`/`super`/
@@ -598,6 +600,33 @@ export function resolveClassMemberName(ctx: CodegenContext, name: ts.PropertyNam
 // (imported above) so consumer files can use it without an import cycle; it is
 // re-exported here for callers that already import from `class-bodies.js`.
 export { classMemberFuncKey } from "./class-member-keys.js";
+
+/**
+ * Resolve an accessor parameter once for both callable allocation and body
+ * re-resolution. A promoted direct-child setter with no annotation is an
+ * exact dynamic writeback boundary; the checker may otherwise infer its type
+ * from the paired getter and silently change the physical callable ABI.
+ */
+function resolveClassAccessorParameterType(
+  ctx: CodegenContext,
+  member: ts.SetAccessorDeclaration,
+  param: ts.ParameterDeclaration,
+): ValType {
+  const unitId = ctx.irPlanningIdentityContext?.unitIdByDeclaration.get(member);
+  const terminal = unitId === undefined ? undefined : ctx.irPlanningIdentityContext?.terminalByUnitId.get(unitId);
+  if (param.type === undefined) {
+    if (terminal?.containingTerminalOwnerId !== undefined) return resolveIrDynamicCarrierType(ctx);
+    // Top-level collection intentionally keeps the checker-derived direct ABI.
+    // Exact IR selection may later stage a dynamic contract on this same
+    // allocator-owned callable. Body re-resolution must preserve that exact
+    // selected contract instead of re-inferring from syntax or a paired getter.
+    const allocated = unitId === undefined ? undefined : ctx.programAbiClassCallables?.functionForUnit(unitId);
+    const signature = allocated === undefined ? undefined : ctx.mod.types[allocated.typeIdx];
+    const selectedValueType = signature?.kind === "func" ? signature.params[1] : undefined;
+    if (selectedValueType !== undefined) return selectedValueType;
+  }
+  return nativeTypeOfDeclaration(ctx.checker, param) ?? resolveWasmType(ctx, ctx.checker.getTypeAtLocation(param));
+}
 
 /** Collect all function declarations and interfaces */
 /** Collect a class declaration or class expression: register struct type, constructor, and methods */
@@ -1295,8 +1324,7 @@ export function collectClassDeclaration(
       // Setter takes self + value, returns void
       const setterParams: ValType[] = [{ kind: "ref", typeIdx: structTypeIdx }];
       for (const param of member.parameters) {
-        const paramType = ctx.checker.getTypeAtLocation(param);
-        setterParams.push(nativeTypeOfDeclaration(ctx.checker, param) ?? resolveWasmType(ctx, paramType));
+        setterParams.push(resolveClassAccessorParameterType(ctx, member, param));
       }
       registerClassOptionalParams(ctx, setterName, member.parameters, setterParams, 1);
 
@@ -1599,6 +1627,41 @@ export interface ClassBodyCompileRouting {
   readonly preserveSkippedBodies?: ReadonlySet<string>;
   /** Correlation sink populated only after an exact class slot is found. */
   readonly skippedNames: string[];
+  /** Authoritative exact body population; names above are compatibility only. */
+  readonly skipBodyUnitIds?: ReadonlySet<IrUnitId>;
+  readonly preserveSkippedBodyUnitIds?: ReadonlySet<IrUnitId>;
+  readonly skippedUnitIds?: IrUnitId[];
+}
+
+function skipExactPreparedClassBody(
+  ctx: CodegenContext,
+  declaration: ts.MethodDeclaration | ts.GetAccessorDeclaration | ts.SetAccessorDeclaration,
+  routing: ClassBodyCompileRouting | undefined,
+): boolean {
+  const unitId = ctx.irPlanningIdentityContext?.unitIdByDeclaration.get(declaration);
+  if (unitId === undefined || routing?.skipBodyUnitIds?.has(unitId) !== true) return false;
+  const terminal = ctx.irPlanningIdentityContext?.terminalByUnitId.get(unitId);
+  const allocated = ctx.programAbiClassCallables?.functionForUnit(unitId);
+  if (
+    !terminal ||
+    terminal.observedKind !== "class-member" ||
+    ctx.irPlanningIdentityContext?.declarationByUnitId.get(unitId) !== declaration ||
+    !allocated
+  ) {
+    throw new Error(`exact prepared class body ${unitId} has no observed allocator callable`);
+  }
+  if (routing.preserveSkippedBodyUnitIds?.has(unitId) !== true) {
+    allocated.body = [{ op: "unreachable" }];
+  }
+  // The legacy declaration walker intentionally reaches a variable-bound
+  // class expression through both its binding branch and its recursive
+  // anonymous-class scan. Both visits point at the same authoritative AST
+  // declaration/UnitId; record the skip once so result correlation measures
+  // body ownership rather than traversal multiplicity.
+  if (routing.skippedUnitIds && !routing.skippedUnitIds.includes(unitId)) {
+    routing.skippedUnitIds.push(unitId);
+  }
+  return true;
 }
 
 function assertDirectClassBodyAllowed(name: string): void {
@@ -1615,6 +1678,7 @@ export function compileClassBodies(
   syntheticName?: string,
   routing?: ClassBodyCompileRouting,
 ): void {
+  routing ??= ctx.irClassBodyRouting;
   const className = syntheticName ?? decl.name?.text;
   if (!className) {
     reportError(ctx, decl, "Cannot compile unnamed class");
@@ -1657,6 +1721,7 @@ function skipPreparedClassConstructorBody(
   ctx: CodegenContext,
   funcByName: ReadonlyMap<string, number>,
   routing: ClassBodyCompileRouting | undefined,
+  declaration: ts.ConstructorDeclaration | undefined,
   className: string,
   ctorName: string,
 ): boolean {
@@ -1666,8 +1731,25 @@ function skipPreparedClassConstructorBody(
   const initLocalIdx = funcByName.get(initKey);
   const initFuncIdx = ctx.funcMap.get(initKey);
   const initFunc = initLocalIdx === undefined ? undefined : ctx.mod.functions[initLocalIdx];
-  if (routing.preserveSkippedBodies?.has(ctorName)) {
-    if (newFuncIdx === undefined || initFuncIdx === undefined || !initFunc || initFunc.body.length === 0) {
+  const unitId = declaration ? ctx.irPlanningIdentityContext?.unitIdByDeclaration.get(declaration) : undefined;
+  const terminal = unitId ? ctx.irPlanningIdentityContext?.terminalByUnitId.get(unitId) : undefined;
+  const allocated = unitId ? ctx.programAbiClassCallables?.functionForUnit(unitId) : undefined;
+  if (
+    unitId === undefined ||
+    routing.skipBodyUnitIds?.has(unitId) !== true ||
+    terminal?.kind !== "class-constructor" ||
+    ctx.irPlanningIdentityContext?.declarationByUnitId.get(unitId) !== declaration ||
+    !initFunc ||
+    allocated !== initFunc
+  ) {
+    throw new Error(`prepared constructor ${ctorName} has no exact source init owner`);
+  }
+  const preserveExactBody = routing.preserveSkippedBodyUnitIds?.has(unitId) === true;
+  if (preserveExactBody !== (routing.preserveSkippedBodies?.has(ctorName) === true)) {
+    throw new Error(`prepared constructor ${ctorName} has inconsistent exact and legacy preserve ownership`);
+  }
+  if (preserveExactBody) {
+    if (newFuncIdx === undefined || initFuncIdx === undefined || initFunc.body.length === 0) {
       throw new Error(`prepared constructor ${ctorName} has no installed IR init body`);
     }
     if (definedFuncAt(ctx, initFuncIdx) !== initFunc) {
@@ -1679,10 +1761,12 @@ function skipPreparedClassConstructorBody(
       throw new Error(`prepared constructor ${ctorName} has no installed allocation wrapper`);
     }
   } else {
-    if (!initFunc) throw new Error(`invariant-owned constructor ${ctorName} has no init slot`);
     initFunc.body = [{ op: "unreachable" }];
   }
   routing.skippedNames.push(ctorName);
+  if (routing.skippedUnitIds && !routing.skippedUnitIds.includes(unitId)) {
+    routing.skippedUnitIds.push(unitId);
+  }
   return true;
 }
 
@@ -1699,7 +1783,10 @@ function compileClassBodiesInner(
   const ctor = decl.members.find(ts.isConstructorDeclaration) as ts.ConstructorDeclaration | undefined;
   const ctorName = `${className}_new`;
   const ctorLocalIdx = funcByName.get(classMemberFuncKey(ctx, ctorName)); // (#1983)
-  if (ctorLocalIdx !== undefined && !skipPreparedClassConstructorBody(ctx, funcByName, routing, className, ctorName)) {
+  if (
+    ctorLocalIdx !== undefined &&
+    !skipPreparedClassConstructorBody(ctx, funcByName, routing, ctor, className, ctorName)
+  ) {
     const func = ctx.mod.functions[ctorLocalIdx]!;
     assertDirectClassBodyAllowed(ctorName);
     const params: { name: string; type: ValType }[] = [];
@@ -2236,6 +2323,7 @@ function compileClassBodiesInner(
   const compiledMethods = new Set<string>();
   for (const member of decl.members) {
     if (ts.isMethodDeclaration(member) && member.name) {
+      if (skipExactPreparedClassBody(ctx, member, routing)) continue;
       const methodName = resolveClassMemberName(ctx, member.name);
       if (methodName === undefined) continue; // dynamic computed name — skip
       const fullName = `${className}_${methodName}`;
@@ -2249,8 +2337,8 @@ function compileClassBodiesInner(
       // (#3522) Methods whose complete ABI component was sealed and
       // installed before direct emission own this exact slot. A prepared body
       // stays intact; an invariant-owned failure receives only a non-shipping
-      // placeholder. Constructors deliberately remain on the established
-      // direct-then-overlay route in this slice.
+      // placeholder. Exact source constructors use the corresponding skip
+      // seam above; their allocation wrappers remain AST-free support.
       if (routing?.skipBodies.has(fullName)) {
         if (!routing.preserveSkippedBodies?.has(fullName)) {
           func.body = [{ op: "unreachable" }];
@@ -2616,6 +2704,7 @@ function compileClassBodiesInner(
   const compiledAccessors = new Set<string>();
   for (const member of decl.members) {
     if (ts.isGetAccessorDeclaration(member) && member.name) {
+      if (skipExactPreparedClassBody(ctx, member, routing)) continue;
       const propName = resolveClassMemberName(ctx, member.name);
       if (propName === undefined) continue; // dynamic computed name — skip
       const getterName = `${className}_get_${propName}`;
@@ -2722,6 +2811,7 @@ function compileClassBodiesInner(
     }
 
     if (ts.isSetAccessorDeclaration(member) && member.name) {
+      if (skipExactPreparedClassBody(ctx, member, routing)) continue;
       const propName = resolveClassMemberName(ctx, member.name);
       if (propName === undefined) continue; // dynamic computed name — skip
       const setterName = `${className}_set_${propName}`;
@@ -2747,8 +2837,7 @@ function compileClassBodiesInner(
       for (let pi = 0; pi < member.parameters.length; pi++) {
         const param = member.parameters[pi]!;
         const paramName = ts.isIdentifier(param.name) ? param.name.text : `__param${pi}`;
-        const paramType = ctx.checker.getTypeAtLocation(param);
-        let wasmType = resolveWasmType(ctx, paramType);
+        let wasmType = resolveClassAccessorParameterType(ctx, member, param);
         // Widen ref to ref_null for params with defaults or optional params (#702)
         if ((param.initializer || param.questionToken) && wasmType.kind === "ref") {
           wasmType = { kind: "ref_null", typeIdx: (wasmType as { kind: "ref"; typeIdx: number }).typeIdx };

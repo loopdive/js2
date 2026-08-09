@@ -1,11 +1,17 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import { irClassTypeRef, irGlobalBindingKey, irTypeBindingKey } from "./abi-bindings.js";
+import {
+  arePairedIrModuleGlobalBindingIds,
+  irClassTypeRef,
+  irGlobalBindingKey,
+  irTypeBindingKey,
+} from "./abi-bindings.js";
 import { irCallableBindingKey, irUnitCallableBindingId } from "./callable-bindings.js";
 import type { IrBindingId, IrClassId, IrTerminalUnitRecord, IrUnitId, IrUnitInventory } from "./identity.js";
 import {
   forEachInstrDeep,
   type IrClassShape,
+  type IrFuncRef,
   type IrFunction,
   type IrGlobalRef,
   type IrInstr,
@@ -86,6 +92,17 @@ export interface PreparedComponentAbiDependency {
   readonly canonicalBindingId: IrBindingId;
   readonly structuralReferenceKey: string;
   readonly terminalOwnerUnitId: IrUnitId | null;
+  /** Exact, structurally certified source-owned dependency borrowed by a bounded class accessor. */
+  readonly borrowing?:
+    | { readonly kind: "nested-accessor-class-layout" }
+    | {
+        readonly kind: "class-setter-writeback-global";
+        readonly dynamicCarrierBindingId: IrBindingId;
+      }
+    | {
+        readonly kind: "class-setter-writeback-tdz-global";
+        readonly valueGlobalBindingId: IrBindingId;
+      };
 }
 
 export interface PreparedComponentExternalCallableDependency {
@@ -121,6 +138,20 @@ export interface PreparedComponentClosureSupportEvidence {
   readonly functionRefs: ReadonlyMap<IrFunction, readonly IrTypeRef[]>;
 }
 
+/**
+ * Exact post-pass proof for the only prepared dynamic accessor shape: the
+ * setter's dynamic value parameter is written unchanged to one mutable source
+ * global. The carrier itself remains a symbolic Program ABI type dependency.
+ */
+export interface PreparedClassAccessorWritebackEvidence {
+  readonly valueGlobalBindingId: IrBindingId;
+  readonly tdzGlobalBindingId?: IrBindingId;
+  /** Exact Program-ABI type behind the singleton tag used by the TDZ throw. */
+  readonly tdzExceptionTagTypeRef?: IrTypeRef;
+  readonly dynamicCarrierRef: IrTypeRef;
+  readonly dynamicCarrierValueType: string;
+}
+
 export interface DerivePreparedComponentDependenciesInput {
   readonly module: IrModule;
   /** Exact R2 candidate denominator. Local calls close components within it. */
@@ -128,6 +159,7 @@ export interface DerivePreparedComponentDependenciesInput {
   readonly inventory: IrUnitInventory;
   readonly derivedUnits?: readonly ProgramAbiDerivedUnitRecord[];
   readonly closureSupport?: PreparedComponentClosureSupportEvidence;
+  readonly classAccessorWritebacks?: ReadonlyMap<IrUnitId, PreparedClassAccessorWritebackEvidence>;
   readonly abi: PreparedComponentAbiLookup;
 }
 
@@ -358,6 +390,7 @@ function recordImplicitTypeRequirement(
   seen: Set<IrType>,
   abi: PreparedComponentAbiLookup,
   ownership: OwnershipIndex,
+  dynamicCarrierRef?: IrTypeRef,
 ): void {
   if (seen.has(type)) return;
   seen.add(type);
@@ -418,7 +451,7 @@ function recordImplicitTypeRequirement(
         ownership,
         "IR vec backing array must use a compiler-support Program ABI type ref",
       );
-      recordImplicitTypeRequirement(evidence, type.elementType, seen, abi, ownership);
+      recordImplicitTypeRequirement(evidence, type.elementType, seen, abi, ownership, dynamicCarrierRef);
       return;
     }
     case "object":
@@ -435,7 +468,17 @@ function recordImplicitTypeRequirement(
       block("IR boxed/ref-cell type resolves a backend type without a symbolic Program ABI type ref");
       return;
     case "dynamic":
-      block("IR dynamic carrier resolves backend type/helper support without a symbolic Program ABI ref");
+      if (!dynamicCarrierRef) {
+        block("IR dynamic carrier resolves backend type/helper support without a symbolic Program ABI ref");
+        return;
+      }
+      recordSupportTypeReference(
+        evidence,
+        dynamicCarrierRef,
+        abi,
+        ownership,
+        "IR dynamic carrier must use a compiler-support Program ABI type ref",
+      );
       return;
     case "class":
     case "extern":
@@ -589,7 +632,11 @@ function samePreparedVecLayout(left: IrVecLayoutRef, right: IrVecLayoutRef): boo
   );
 }
 
-function implicitSupportRequirement(instr: IrInstr, hasPreparedClosureSupport = false): string | null {
+function implicitSupportRequirement(
+  instr: IrInstr,
+  hasPreparedClosureSupport = false,
+  hasPreparedExceptionTagSupport = false,
+): string | null {
   switch (instr.kind) {
     case "binary":
       return instr.op.startsWith("js.")
@@ -658,13 +705,22 @@ function implicitSupportRequirement(instr: IrInstr, hasPreparedClosureSupport = 
     case "gen.setReturn":
       return `${instr.kind} resolves generator runtime callables without explicit symbolic refs`;
     case "throw":
+      return hasPreparedExceptionTagSupport
+        ? null
+        : `${instr.kind} resolves exception tag/support without an explicit symbolic ref`;
     case "try":
       return `${instr.kind} resolves exception tag/support without an explicit symbolic ref`;
     case "extern.new":
     case "extern.call":
     case "extern.prop":
     case "extern.propSet":
+      return instr.provider
+        ? null
+        : `${instr.kind} resolves host/runtime callables or globals without explicit symbolic refs`;
     case "extern.regex":
+      // Besides RegExp_new, this instruction materializes pattern and flags
+      // through backend-selected string storage. Keep it fail-closed until
+      // all three symbolic dependencies are attached together.
       return `${instr.kind} resolves host/runtime callables or globals without explicit symbolic refs`;
     case "await":
     case "async.return":
@@ -734,6 +790,7 @@ function addClassLayout(
   candidateTerminalUnitIds: ReadonlySet<IrUnitId>,
   abi: PreparedComponentAbiLookup,
   ownership: OwnershipIndex,
+  inventory: IrUnitInventory,
 ): void {
   const terminalOwner = ownership.classTerminalOwner.get(shape.classId);
   if (terminalOwner === undefined) {
@@ -745,7 +802,16 @@ function addClassLayout(
     });
     return;
   }
-  if (terminalOwner !== null && !candidateTerminalUnitIds.has(terminalOwner)) {
+  const terminal = terminalInventoryUnit(inventory, evidence.terminalOwnerUnitId);
+  const borrowsOwnNestedAccessorLayout =
+    terminalOwner !== null &&
+    terminal?.containingTerminalOwnerId === terminalOwner &&
+    terminal.lexicalOwnerId === shape.classId &&
+    (terminal.kind === "class-instance-getter" ||
+      terminal.kind === "class-static-getter" ||
+      terminal.kind === "class-instance-setter" ||
+      terminal.kind === "class-static-setter");
+  if (terminalOwner !== null && !candidateTerminalUnitIds.has(terminalOwner) && !borrowsOwnNestedAccessorLayout) {
     addFailure(evidence, {
       code: "foreign-source-class",
       ownerUnitId: evidence.terminalOwnerUnitId,
@@ -761,6 +827,16 @@ function addClassLayout(
     structuralReferenceKey: irTypeBindingKey(ref.binding),
     expected: (intent) => intent.kind === "class" && intent.classId === shape.classId,
   });
+  if (borrowsOwnNestedAccessorLayout && !candidateTerminalUnitIds.has(terminalOwner)) {
+    const key = `class-layout\u0000${ref.binding.bindingId}`;
+    const dependency = evidence.abiDependencies.get(key);
+    if (dependency) {
+      evidence.abiDependencies.set(
+        key,
+        Object.freeze({ ...dependency, borrowing: { kind: "nested-accessor-class-layout" as const } }),
+      );
+    }
+  }
 }
 
 function recordUnitReference(
@@ -824,6 +900,7 @@ function recordGlobalReference(
   abi: PreparedComponentAbiLookup,
   ownership: OwnershipIndex,
   terminalUnitIds: ReadonlySet<IrUnitId>,
+  writeback?: PreparedClassAccessorWritebackEvidence,
 ): void {
   const key = irGlobalBindingKey(ref.binding);
   const expectedOrigin = ref.binding.kind;
@@ -838,6 +915,101 @@ function recordGlobalReference(
   if (entry && ref.binding.kind === "source") {
     const storageTerminalOwner = terminalOwnerForIntent(entry.canonical.intent, ownership);
     if (storageTerminalOwner === null || !terminalUnitIds.has(storageTerminalOwner)) {
+      const callable = canonicalAbiEntry(abi, irUnitCallableBindingId(evidence.terminalOwnerUnitId));
+      const requestedGlobal = entry.requested.intent;
+      const canonicalGlobal = entry.canonical.intent;
+      const requestedCallable = callable.kind === "resolved" ? callable.entry.requested.intent : undefined;
+      const canonicalCallable = callable.kind === "resolved" ? callable.entry.canonical.intent : undefined;
+      const carrier = writeback ? canonicalAbiEntry(abi, writeback.dynamicCarrierRef.binding.bindingId) : undefined;
+      const exactDynamicWriteback =
+        writeback?.valueGlobalBindingId === ref.binding.bindingId &&
+        requestedGlobal.kind === "global" &&
+        requestedGlobal.origin === "source" &&
+        requestedGlobal.mutable &&
+        requestedGlobal.valueType === writeback.dynamicCarrierValueType &&
+        canonicalGlobal.kind === "global" &&
+        canonicalGlobal.origin === "source" &&
+        canonicalGlobal.mutable &&
+        canonicalGlobal.valueType === writeback.dynamicCarrierValueType &&
+        requestedCallable?.kind === "callable" &&
+        requestedCallable.origin === "source" &&
+        requestedCallable.unitId === evidence.terminalOwnerUnitId &&
+        requestedCallable.signature.params.length === 2 &&
+        requestedCallable.signature.params[1] === writeback.dynamicCarrierValueType &&
+        requestedCallable.signature.results.length === 0 &&
+        canonicalCallable?.kind === "callable" &&
+        canonicalCallable.origin === "source" &&
+        canonicalCallable.unitId === evidence.terminalOwnerUnitId &&
+        canonicalCallable.signature.params.length === 2 &&
+        canonicalCallable.signature.params[1] === writeback.dynamicCarrierValueType &&
+        canonicalCallable.signature.results.length === 0 &&
+        carrier?.kind === "resolved" &&
+        carrier.entry.requested.intent.kind === "type" &&
+        carrier.entry.canonical.intent.kind === "type";
+      if (exactDynamicWriteback) {
+        const dependencyKey = `source-global\u0000${ref.binding.bindingId}`;
+        const dependency = evidence.abiDependencies.get(dependencyKey);
+        if (dependency) {
+          evidence.abiDependencies.set(
+            dependencyKey,
+            Object.freeze({
+              ...dependency,
+              borrowing: {
+                kind: "class-setter-writeback-global" as const,
+                dynamicCarrierBindingId: writeback.dynamicCarrierRef.binding.bindingId,
+              },
+            }),
+          );
+          return;
+        }
+      }
+      const requestedValueGlobal = writeback ? canonicalAbiEntry(abi, writeback.valueGlobalBindingId) : undefined;
+      const requestedTdzGlobal = entry.requested.intent;
+      const canonicalTdzGlobal = entry.canonical.intent;
+      const valueRequestedIntent =
+        requestedValueGlobal?.kind === "resolved" ? requestedValueGlobal.entry.requested.intent : undefined;
+      const valueCanonicalIntent =
+        requestedValueGlobal?.kind === "resolved" ? requestedValueGlobal.entry.canonical.intent : undefined;
+      const exactTdzWriteback =
+        writeback?.tdzGlobalBindingId === ref.binding.bindingId &&
+        arePairedIrModuleGlobalBindingIds(writeback.valueGlobalBindingId, writeback.tdzGlobalBindingId) &&
+        requestedTdzGlobal.kind === "global" &&
+        requestedTdzGlobal.origin === "source" &&
+        requestedTdzGlobal.mutable &&
+        requestedTdzGlobal.valueType === JSON.stringify({ kind: "i32" }) &&
+        canonicalTdzGlobal.kind === "global" &&
+        canonicalTdzGlobal.origin === "source" &&
+        canonicalTdzGlobal.mutable &&
+        canonicalTdzGlobal.valueType === JSON.stringify({ kind: "i32" }) &&
+        valueRequestedIntent?.kind === "global" &&
+        valueRequestedIntent.origin === "source" &&
+        requestedValueGlobal?.kind === "resolved" &&
+        arePairedIrModuleGlobalBindingIds(requestedValueGlobal.entry.requested.id, entry.requested.id) &&
+        valueRequestedIntent.sourceId === requestedTdzGlobal.sourceId &&
+        valueRequestedIntent.unitId === requestedTdzGlobal.unitId &&
+        valueCanonicalIntent?.kind === "global" &&
+        valueCanonicalIntent.origin === "source" &&
+        requestedValueGlobal?.kind === "resolved" &&
+        arePairedIrModuleGlobalBindingIds(requestedValueGlobal.entry.canonical.id, entry.canonical.id) &&
+        valueCanonicalIntent.sourceId === canonicalTdzGlobal.sourceId &&
+        valueCanonicalIntent.unitId === canonicalTdzGlobal.unitId;
+      if (exactTdzWriteback) {
+        const dependencyKey = `source-global\u0000${ref.binding.bindingId}`;
+        const dependency = evidence.abiDependencies.get(dependencyKey);
+        if (dependency) {
+          evidence.abiDependencies.set(
+            dependencyKey,
+            Object.freeze({
+              ...dependency,
+              borrowing: {
+                kind: "class-setter-writeback-tdz-global" as const,
+                valueGlobalBindingId: writeback.valueGlobalBindingId,
+              },
+            }),
+          );
+          return;
+        }
+      }
       addFailure(evidence, {
         code: "source-global-outside-component",
         ownerUnitId: evidence.terminalOwnerUnitId,
@@ -854,7 +1026,7 @@ function recordGlobalReference(
 
 function recordExternalCallable(
   evidence: MutableFunctionEvidence,
-  ref: Extract<IrInstr, { kind: "call" }>["target"],
+  ref: IrFuncRef,
   abi: PreparedComponentAbiLookup,
   ownership: OwnershipIndex,
 ): void {
@@ -1074,7 +1246,14 @@ function collectFunctionEvidence(
       if (type.signature.returnType) collectType(type.signature.returnType);
       return;
     }
-    recordImplicitTypeRequirement(evidence, type, seenImplicitTypes, input.abi, ownership);
+    recordImplicitTypeRequirement(
+      evidence,
+      type,
+      seenImplicitTypes,
+      input.abi,
+      ownership,
+      input.classAccessorWritebacks?.get(terminalOwnerUnitId)?.dynamicCarrierRef,
+    );
   };
   for (const param of fn.params) collectType(param.type);
   for (const result of fn.resultTypes) collectType(result);
@@ -1094,6 +1273,7 @@ function collectFunctionEvidence(
   );
 
   const collectInstr = (instr: IrInstr): void => {
+    const classAccessorWriteback = input.classAccessorWritebacks?.get(terminalOwnerUnitId);
     forEachInstrDeep(instr, (nested) => {
       if (nested.resultType) collectType(nested.resultType);
       for (const shape of explicitClassShapes(nested, valueTypes)) collectClassShape(shape, classes, seenTypes);
@@ -1106,7 +1286,21 @@ function collectFunctionEvidence(
         nested.kind === "closure.cap"
           ? (functionClosureSupport?.length ?? 0) > 0
           : (instructionClosureSupport?.length ?? 0) > 0;
-      const implicitSupport = implicitSupportRequirement(nested, hasPreparedClosureSupport);
+      const exceptionTagTypeRef = nested.kind === "throw" ? classAccessorWriteback?.tdzExceptionTagTypeRef : undefined;
+      if (exceptionTagTypeRef) {
+        recordSupportTypeReference(
+          evidence,
+          exceptionTagTypeRef,
+          input.abi,
+          ownership,
+          "prepared TDZ throw must use the singleton Program ABI exception-tag type ref",
+        );
+      }
+      const implicitSupport = implicitSupportRequirement(
+        nested,
+        hasPreparedClosureSupport,
+        exceptionTagTypeRef !== undefined,
+      );
       if (implicitSupport) {
         addFailure(evidence, {
           code: "implicit-support-reference-unavailable",
@@ -1131,6 +1325,14 @@ function collectFunctionEvidence(
         if (nested.provider?.kind === "callable") {
           recordExternalCallable(evidence, nested.provider.target, input.abi, ownership);
         }
+      } else if (
+        (nested.kind === "extern.new" ||
+          nested.kind === "extern.call" ||
+          nested.kind === "extern.prop" ||
+          nested.kind === "extern.propSet") &&
+        nested.provider
+      ) {
+        recordExternalCallable(evidence, nested.provider, input.abi, ownership);
       } else if (nested.kind === "closure.new") {
         if (nested.liftedFunc.binding.kind === "unit") {
           recordUnitReference(
@@ -1145,10 +1347,24 @@ function collectFunctionEvidence(
           recordExternalCallable(evidence, nested.liftedFunc, input.abi, ownership);
         }
       } else if (nested.kind === "global.get" || nested.kind === "global.set") {
-        recordGlobalReference(evidence, nested.target, input.abi, ownership, input.terminalUnitIds);
+        recordGlobalReference(
+          evidence,
+          nested.target,
+          input.abi,
+          ownership,
+          input.terminalUnitIds,
+          classAccessorWriteback,
+        );
       } else if (nested.kind === "string.const") {
         if (nested.storage) {
-          recordGlobalReference(evidence, nested.storage, input.abi, ownership, input.terminalUnitIds);
+          recordGlobalReference(
+            evidence,
+            nested.storage,
+            input.abi,
+            ownership,
+            input.terminalUnitIds,
+            classAccessorWriteback,
+          );
         } else if (nested.materializer) {
           recordExternalCallable(evidence, nested.materializer, input.abi, ownership);
         }
@@ -1249,7 +1465,7 @@ function collectFunctionEvidence(
     recordExternalCallable(evidence, adapter.target, input.abi, ownership);
   }
   for (const shape of classes.values()) {
-    addClassLayout(evidence, shape, input.terminalUnitIds, input.abi, ownership);
+    addClassLayout(evidence, shape, input.terminalUnitIds, input.abi, ownership, input.inventory);
   }
   return evidence;
 }

@@ -266,6 +266,8 @@ function unsupportedVoidCallExpression(detail: string): never {
  */
 export interface IrExternClassMeta {
   readonly className: string;
+  /** Exact legacy/import registry prefix; may differ for namespaces. */
+  readonly importPrefix: string;
   readonly constructorParams: readonly ValType[];
   readonly methods: ReadonlyMap<string, { readonly params: readonly ValType[]; readonly results: readonly ValType[] }>;
   readonly properties: ReadonlyMap<string, { readonly type: ValType; readonly readonly: boolean }>;
@@ -3432,8 +3434,8 @@ function moduleStorageCompatible(actual: IrType, expected: IrType): boolean {
   return asVal(actual)?.kind === "externref";
 }
 
-/** Emit the legacy module-global TDZ check followed by the symbolic read. */
-function lowerResolvedModuleBindingRead(name: string, binding: ModuleBindingGlobal, cx: LowerCtx): IrValueId {
+/** Emit the exact legacy module-global TDZ guard before a read or write. */
+function lowerResolvedModuleBindingTdzCheck(name: string, binding: ModuleBindingGlobal, cx: LowerCtx): void {
   requireMatchingModuleBindingOwner(binding, cx.ownerUnitId, cx.funcName);
   if (binding.type.kind === "extern") {
     assertNotDeferred(
@@ -3450,10 +3452,23 @@ function lowerResolvedModuleBindingRead(name: string, binding: ModuleBindingGlob
         { kind: "null", ty: irVal({ kind: "externref" }) },
         irVal({ kind: "externref" }),
       );
-      cx.builder.emitThrow(nullExt);
+      const referenceError = cx.builder.emitCall(
+        irRuntimeFuncRef("__new_ReferenceError"),
+        [nullExt],
+        irVal({ kind: "externref" }),
+      );
+      if (referenceError === null) {
+        throw new Error(`ir/from-ast: ReferenceError constructor returned no value (${cx.funcName})`);
+      }
+      cx.builder.emitThrow(referenceError);
     });
     cx.builder.emitIfStmt({ cond, then: thenBody, else: [] });
   }
+}
+
+/** Emit the legacy module-global TDZ check followed by the symbolic read. */
+function lowerResolvedModuleBindingRead(name: string, binding: ModuleBindingGlobal, cx: LowerCtx): IrValueId {
+  lowerResolvedModuleBindingTdzCheck(name, binding, cx);
   return cx.builder.emitGlobalGet(binding.globalRef, binding.type);
 }
 
@@ -4212,14 +4227,16 @@ function lowerOptionalExternPropertyAccess(
     throw new Error(`ir/from-ast: lowerOptionalExternPropertyAccess called with non-extern recv in ${cx.funcName}`);
   }
   const className = recvType.className;
+  const resolved = cx.resolver?.resolveExternMember?.(className, propName, "property");
   const info = cx.resolver?.getExternClassInfo?.(className);
-  if (!info) {
+  if (!resolved?.property && !info) {
     throw new Error(`ir/from-ast: extern class ${className} not registered in ${cx.funcName}`);
   }
-  const prop = info.properties.get(propName);
+  const prop = resolved?.property ?? info?.properties.get(propName);
   if (!prop) {
     throw new Error(`ir/from-ast: extern class ${className} has no property "${propName}" in ${cx.funcName}`);
   }
+  const importPrefix = resolved?.importPrefix ?? info?.importPrefix ?? className;
   const propValType = prop.type;
   const resultType: IrType = irVal(propValType);
 
@@ -4260,7 +4277,7 @@ function lowerOptionalExternPropertyAccess(
   // Build the "non-null arm": emit the actual extern-property access.
   let elseValue!: IrValueId;
   const elseBody = cx.builder.collectBodyInstrs(() => {
-    elseValue = cx.builder.emitExternProp(className, propName, recv, resultType);
+    elseValue = cx.builder.emitExternProp(importPrefix, propName, recv, resultType);
   });
 
   return cx.builder.emitIfElse({
@@ -4423,7 +4440,7 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
     if (!prop) {
       throw new Error(`ir/from-ast: extern class ${className} has no property "${propName}" in ${cx.funcName}`);
     }
-    return cx.builder.emitExternProp(className, propName, recv, irVal(prop.type));
+    return cx.builder.emitExternProp(info.importPrefix, propName, recv, irVal(prop.type));
   }
 
   // Slice 13 (#1169p) — vec-shaped receiver (`number[]`, `string[]`, …):
@@ -5516,7 +5533,7 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
       const expectedTy = externInfo.constructorParams[i]!;
       args.push(emitDefaultExternArg(cx, expectedTy));
     }
-    return cx.builder.emitExternNew(className, args);
+    return cx.builder.emitExternNew(externInfo.className, args, externInfo.importPrefix);
   }
 
   if (!shape) {
@@ -6264,11 +6281,12 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   if (recvType.kind === "extern") {
     const className = recvType.className;
     const chained = cx.resolver?.resolveExternMember?.(className, methodName, "method", expr);
-    const method = chained?.method ?? cx.resolver?.getExternClassInfo?.(className)?.methods.get(methodName);
+    const flatInfo = cx.resolver?.getExternClassInfo?.(className);
+    const method = chained?.method ?? flatInfo?.methods.get(methodName);
     if (!method) {
       throw new Error(`ir/from-ast: extern class ${className} has no method "${methodName}" in ${cx.funcName}`);
     }
-    const definingClass = chained?.importPrefix ?? className;
+    const definingClass = chained?.importPrefix ?? flatInfo?.importPrefix ?? className;
     // params[0] is the receiver — userParams = params.slice(1).
     const userParams = method.params.slice(1);
     if (expr.arguments.length > userParams.length) {
@@ -6574,6 +6592,22 @@ function lowerStringMethodCall(
     );
   }
 
+  // #3522 Builtins retirement — preserve the direct path's exact immutable
+  // literal predicate fold before asking the backend-specific method planner.
+  // The receiver was already lowered by lowerMethodCall, and we lower the
+  // search argument here before returning so source evaluation order remains
+  // explicit even though this deliberately narrow proof admits only effect-
+  // free literal/const chains. A second position argument stays on the normal
+  // runtime path.
+  if (methodName === "includes" && args.length === 1 && cx.checker) {
+    const receiverValue = immutableLiteralStringValue(receiverExpr, cx.checker);
+    const searchValue = immutableLiteralStringValue(args[0]!, cx.checker);
+    if (receiverValue !== undefined && searchValue !== undefined) {
+      lowerExpr(args[0]!, cx, { kind: "string" });
+      return cx.builder.emitConst({ kind: "bool", value: receiverValue.includes(searchValue) }, irVal({ kind: "i32" }));
+    }
+  }
+
   if (methodName === "charAt" || methodName === "charCodeAt") {
     const receiverEncoding = inferStringEncoding(receiverExpr, cx);
     const receiverEvidence = typedValueEvidence(receiverExpr, cx.builder.typeOf(recv), receiverEncoding, cx);
@@ -6736,6 +6770,37 @@ function lowerStringMethodCall(
     throw new Error(`ir/from-ast: String.${methodName} produced void result (${cx.funcName})`);
   }
   return r;
+}
+
+function immutableLiteralStringValue(
+  expression: ts.Expression,
+  checker: ts.TypeChecker,
+  seen: ReadonlySet<ts.Symbol> = new Set(),
+): string | undefined {
+  if (ts.isStringLiteralLike(expression)) return expression.text;
+  if (
+    ts.isParenthesizedExpression(expression) ||
+    ts.isAsExpression(expression) ||
+    ts.isNonNullExpression(expression) ||
+    ts.isTypeAssertionExpression(expression)
+  ) {
+    return immutableLiteralStringValue(expression.expression, checker, seen);
+  }
+  if (!ts.isIdentifier(expression)) return undefined;
+  const symbol = checker.getSymbolAtLocation(expression);
+  const declaration = symbol?.valueDeclaration;
+  if (!symbol || seen.has(symbol) || !declaration || !ts.isVariableDeclaration(declaration)) return undefined;
+  const declarationList = declaration.parent;
+  if (
+    !ts.isVariableDeclarationList(declarationList) ||
+    !(declarationList.flags & ts.NodeFlags.Const) ||
+    !declaration.initializer
+  ) {
+    return undefined;
+  }
+  const nextSeen = new Set(seen);
+  nextSeen.add(symbol);
+  return immutableLiteralStringValue(declaration.initializer, checker, nextSeen);
 }
 
 /**
@@ -8359,6 +8424,7 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
           `ir/from-ast: assignment to module binding "${id.text}" (${describeIrType(writable.type)}) got ${describeIrType(newType)} in ${cx.funcName}`,
         );
       }
+      lowerResolvedModuleBindingTdzCheck(id.text, writable, cx);
       cx.builder.emitGlobalSet(writable.globalRef, newValue);
       return;
     }

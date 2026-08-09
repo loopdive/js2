@@ -2,6 +2,29 @@
 
 Lightweight pointer index for unscheduled issues that need sprint candidacy. Authoritative status lives in each issue file's frontmatter.
 
+## 2026-08-09 — Prepared provider transaction rollback
+
+- [#4260](../4260-prepared-provider-plans-leak-across-aborted-component-seal.md)
+  — make blocking callable-provider and import plans commit or abort with their
+  prepared component, so a failed seal cannot leave a stale
+  `__new_ReferenceError` reservation or an unplanned direct fallback.
+
+## 2026-08-09 — ES2015 TypedArray native-prototype reads
+
+- [#2375](../2375-typedarray-nativeproto-value-read-init-trap.md) — add the
+  missing IR/runtime `$NativeProto` arm for dynamic method-valued reads. The
+  first exact cohort is 48 host-pass/standalone-fail invalid-receiver files;
+  the frozen 125-file exposure set remains a layered rerun, not a promised
+  125-pass slice.
+
+## 2026-08-09 — ES2015 class accessor IR writeback (done)
+
+- [#4259](../4259-es2015-class-accessor-outer-binding-writeback-ir.md) —
+  **Done:** prepared IR owns the bounded class declaration/expression getter and
+  setter bodies, and exact class-root writes reach them during module init. On
+  the frozen 84-file set, all 72 positives now pass in each lane; the 12
+  computed-error controls remain unchanged.
+
 ## 2026-07-29 — npm standalone versus JS-host performance lanes
 
 - [#3781](../3781-npm-perf-standalone-js-host-lanes.md) — split every npm

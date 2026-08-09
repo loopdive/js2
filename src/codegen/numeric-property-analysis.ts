@@ -1171,6 +1171,8 @@ export interface NumericPropertyAnalysisTarget {
   numericPropertyNames?: ReadonlySet<string>;
   stringPropertyNames?: ReadonlySet<string>;
   numericFunctionNames?: ReadonlySet<string>;
+  /** Runtime eval can introduce calls and values outside the static source graph. */
+  runtimeEvalCallableBoundaryEnabled?: boolean;
   /**
    * (#4122) The grounded slot verdict, exposed directly rather than only
    * through `usageInference`. `bindingHasMixedAssignmentCarrier` needs to ask
@@ -1472,7 +1474,11 @@ export function applyNumericPropertyAnalysis(
   target.numericPropertyNames = verdicts.numeric;
   target.stringPropertyNames = verdicts.string;
   target.numericFunctionNames = verdicts.numericFunctions;
-  if (process.env.JS2WASM_NUMERIC_LOCALS !== "0") {
+  // Runtime-eval modules are not closed worlds: interpreted callables can feed
+  // values through AOT functions without a statically visible call site. The
+  // parameter fixpoint may still derive field/return facts, but its local
+  // carrier oracle must not narrow those dynamically reached bindings.
+  if (process.env.JS2WASM_NUMERIC_LOCALS !== "0" && target.runtimeEvalCallableBoundaryEnabled !== true) {
     target.usageInference.setNumericLocalOracle(verdicts.isNumericLocal);
     target.numericLocalVerdict = verdicts.isNumericLocal;
   }

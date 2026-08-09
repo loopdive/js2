@@ -94,6 +94,7 @@ import {
   pushTaViewEffectiveLen,
 } from "./dataview-native.js";
 import { staticConstStringValues } from "./analysis/static-string-values.js";
+import { staticUniformDerivedLength, tryEmitNativeTrimLength } from "./native-strings-derived-length.js";
 import {
   addUnionImports,
   resolveWasmType,
@@ -2260,7 +2261,7 @@ export function tryLengthAndNameReads(
 ): PADispatchResult {
   if (propName === "length" && ts.isIdentifier(expr.expression)) {
     const symbol = ctx.checker.getSymbolAtLocation(expr.expression);
-    const substring = symbol ? fctx.derivedSubstringReads?.get(symbol) : undefined;
+    const substring = symbol?.valueDeclaration ? fctx.derivedSubstringReads?.get(symbol.valueDeclaration) : undefined;
     if (substring !== undefined) {
       fctx.body.push({ op: "local.get", index: substring.lenLocal });
       return { kind: "i32" };
@@ -3069,20 +3070,7 @@ export function tryStringLengthIteratorAndExternClassReads(
     if (ts.isPropertyAccessExpression(callee)) {
       const method = callee.name.text;
       const receiverValues = staticConstStringValues(ctx, callee.expression);
-      let uniformDerivedLength: number | undefined;
-      if (receiverValues && method === "trim" && call.arguments.length === 0) {
-        const lengths = new Set(receiverValues.map((value) => value.trim().length));
-        if (lengths.size === 1) uniformDerivedLength = lengths.values().next().value;
-      } else if (
-        receiverValues &&
-        method === "split" &&
-        call.arguments.length === 1 &&
-        ts.isStringLiteralLike(call.arguments[0]!)
-      ) {
-        const separator = call.arguments[0]!.text;
-        const lengths = new Set(receiverValues.map((value) => value.split(separator).length));
-        if (lengths.size === 1) uniformDerivedLength = lengths.values().next().value;
-      }
+      const uniformDerivedLength = staticUniformDerivedLength(receiverValues, method, call.arguments);
       if (uniformDerivedLength !== undefined) {
         // Preserve evaluation (including an OOB/null trap) even though the
         // derived result is uniform across every immutable table entry.
@@ -3099,6 +3087,8 @@ export function tryStringLengthIteratorAndExternClassReads(
         fctx.body.push({ op: "i32.const", value: uniformDerivedLength });
         return { kind: "i32" };
       }
+      const nativeTrimLength = tryEmitNativeTrimLength(ctx, fctx, call, receiverValues);
+      if (nativeTrimLength) return nativeTrimLength;
       const asciiCaseLength =
         (method === "toLowerCase" || method === "toUpperCase") &&
         call.arguments.length === 0 &&

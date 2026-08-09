@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-08-09T04:21:31.828Z",
+  "timestamp": "2026-08-09T16:30:06.663Z",
   "benchmarks": [
     {
       "name": "fib",
@@ -828,31 +828,11 @@
         },
         {
           "module": "env",
-          "name": "__js_array_new",
+          "name": "__extern_method_call_1",
           "kind": "func",
           "intent": {
             "type": "builtin",
-            "name": "__js_array_new"
-          },
-          "paramCount": 0
-        },
-        {
-          "module": "env",
-          "name": "__js_array_push",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__js_array_push"
-          },
-          "paramCount": 2
-        },
-        {
-          "module": "env",
-          "name": "__extern_method_call",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__extern_method_call"
+            "name": "__extern_method_call_1"
           },
           "paramCount": 3
         },

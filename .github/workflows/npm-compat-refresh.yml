@@ -130,6 +130,27 @@ jobs:
             console.log(`ok: ${packages.length} packages`);
           '
 
+      # (2026-08-09, stakeholder) A DEFERRED run's measurement must never be
+      # LOST. On 2026-08-09 two successful runs — including the one measuring
+      # the #4252 bag-slot merge — deferred their promote behind a busy queue,
+      # and their numbers were unrecoverable: no commit, no artifact, logs
+      # don't carry the JSON. Upload the generated artifacts unconditionally
+      # so every measurement is inspectable the moment the run ends, deferred
+      # or not. Paired change: the queue-gate staleness floor drops 12h → 1h,
+      # so a busy queue can hold the PUBLISHED artifact back at most an hour
+      # (worst-case ~1 queue rebuild per hour, vs the measured 3h+ blackout).
+      - name: Upload generated artifacts (always — deferred measurements must survive)
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: npm-compat-generated
+          path: |
+            benchmarks/results/npm-compat.json
+            benchmarks/results/npm-compat-perf.json
+            benchmarks/results/npm-compat-history.json
+          if-no-files-found: warn
+          retention-days: 14
+
       # (#3915) DO NOT DISCARD AN IN-FLIGHT merge_group VALIDATION. Any push to
       # main — INCLUDING a `[skip ci]` one — makes GitHub rebuild every queued
       # merge group on the new base and throw away the validation running under
@@ -151,7 +172,7 @@ jobs:
           node scripts/main-push-queue-gate.mjs \
             --repo "$GITHUB_REPOSITORY" \
             --last-refresh "$LAST_REFRESH" \
-            --stale-after-hours 12 \
+            --stale-after-hours 1 \
             --reason "landing npm-compat artifacts" || RC=$?
           if [ "$RC" -eq 10 ]; then
             echo "decision=defer" >> "$GITHUB_OUTPUT"

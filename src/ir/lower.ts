@@ -3005,15 +3005,15 @@ export function lowerIrFunctionBody<S, Slot>(
       // `<className>_set_<prop>`. The resolver's `resolveFunc` looks
       // them up by name.
       case "extern.new": {
-        const importName = `${instr.className}_new`;
-        const fn = resolver.resolveFunc(irImportFuncRef("env", importName));
+        const importName = `${instr.importPrefix}_new`;
+        const fn = resolver.resolveFunc(instr.provider ?? irImportFuncRef("env", importName));
         for (const a of instr.args) emitValue(a, out);
         emitter.pushRaw(out, { op: "call", funcIdx: fn });
         return;
       }
       case "extern.call": {
         const importName = `${instr.className}_${instr.method}`;
-        const fn = resolver.resolveFunc(irImportFuncRef("env", importName));
+        const fn = resolver.resolveFunc(instr.provider ?? irImportFuncRef("env", importName));
         emitValue(instr.receiver, out);
         for (const a of instr.args) emitValue(a, out);
         emitter.pushRaw(out, { op: "call", funcIdx: fn });
@@ -3021,14 +3021,14 @@ export function lowerIrFunctionBody<S, Slot>(
       }
       case "extern.prop": {
         const importName = `${instr.className}_get_${instr.property}`;
-        const fn = resolver.resolveFunc(irImportFuncRef("env", importName));
+        const fn = resolver.resolveFunc(instr.provider ?? irImportFuncRef("env", importName));
         emitValue(instr.receiver, out);
         emitter.pushRaw(out, { op: "call", funcIdx: fn });
         return;
       }
       case "extern.propSet": {
         const importName = `${instr.className}_set_${instr.property}`;
-        const fn = resolver.resolveFunc(irImportFuncRef("env", importName));
+        const fn = resolver.resolveFunc(instr.provider ?? irImportFuncRef("env", importName));
         emitValue(instr.receiver, out);
         emitValue(instr.value, out);
         emitter.pushRaw(out, { op: "call", funcIdx: fn });
