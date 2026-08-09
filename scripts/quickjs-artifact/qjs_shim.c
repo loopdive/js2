@@ -157,6 +157,22 @@ qjs_handle QJS_EXPORT(qjs_new_string_len)(JSContext *ctx, const char *buf,
   return box(JS_NewStringLen(ctx, buf, (size_t)len));
 }
 
+/* #4238 slice 2 — the remaining immediate constructors. `qjs_new_null` takes no
+ * context for the same reason `qjs_new_undefined` does not: JS_NULL is a pure
+ * immediate with nothing to allocate against a runtime. */
+qjs_handle QJS_EXPORT(qjs_new_null)(void) { return box(JS_NULL); }
+
+qjs_handle QJS_EXPORT(qjs_new_bool)(JSContext *ctx, int b) {
+  return box(JS_NewBool(ctx, b));
+}
+
+/* #4238 slice 2 — callability test. Needed to split the OBJECT tag into the
+ * callable carrier arm and the opaque handle-box arm; JS_IsFunction is the only
+ * predicate that answers it without a property probe. */
+int QJS_EXPORT(qjs_is_function)(JSContext *ctx, qjs_handle h) {
+  return JS_IsFunction(ctx, unbox(h)) ? 1 : 0;
+}
+
 qjs_handle QJS_EXPORT(qjs_new_object)(JSContext *ctx) {
   return box(JS_NewObject(ctx));
 }
@@ -201,6 +217,26 @@ qjs_handle QJS_EXPORT(qjs_eval)(JSContext *ctx, const char *src, uint32_t len) {
   return box(v);
 }
 
+/* #4238 slice 2 — invoke a QuickJS function. `argv` points at `argc`
+ * CONSECUTIVE i32 handles in this heap (the peer authors them with
+ * qjs_malloc_raw + 4-byte stores). Follows ABI note 2 in both directions:
+ * JS_Call borrows its arguments, so none of the caller's handles are consumed,
+ * and the returned handle is owned (possibly an exception). */
+qjs_handle QJS_EXPORT(qjs_call)(JSContext *ctx, qjs_handle fn,
+                                qjs_handle this_val, uint32_t argc,
+                                const qjs_handle *argv) {
+  JSValue *args = NULL;
+  if (argc > 0) {
+    if (!argv) return 0;
+    args = (JSValue *)malloc(sizeof(JSValue) * (size_t)argc);
+    if (!args) return 0;
+    for (uint32_t i = 0; i < argc; i++) args[i] = unbox(argv[i]);
+  }
+  JSValue r = JS_Call(ctx, unbox(fn), unbox(this_val), (int)argc, args);
+  free(args);
+  return box(r);
+}
+
 /* Diagnostics: pending exception as an owned handle (undefined if none). */
 qjs_handle QJS_EXPORT(qjs_take_exception)(JSContext *ctx) {
   return box(JS_GetException(ctx));
@@ -218,6 +254,30 @@ char *QJS_EXPORT(qjs_to_cstring)(JSContext *ctx, qjs_handle h) {
   char *out = (char *)malloc(n + 1);
   if (out) memcpy(out, s, n + 1);
   JS_FreeCString(ctx, s);
+  return out;
+}
+
+/* #4238 slice 2 — UTF-8 rendering WITH the byte length written to `*len_out`.
+ * `qjs_to_cstring` above cannot serve the QuickJS→GC string direction: a JS
+ * string may contain U+0000, so a NUL scan would truncate it. The buffer is
+ * still NUL-terminated for convenience. Release with qjs_free_raw; returns 0 on
+ * failure (and writes 0 to *len_out). */
+char *QJS_EXPORT(qjs_to_cstring_len)(JSContext *ctx, qjs_handle h,
+                                     uint32_t *len_out) {
+  size_t n = 0;
+  const char *s = JS_ToCStringLen(ctx, &n, unbox(h));
+  if (!s) {
+    JS_FreeValue(ctx, JS_GetException(ctx));
+    if (len_out) *len_out = 0;
+    return NULL;
+  }
+  char *out = (char *)malloc(n + 1);
+  if (out) {
+    memcpy(out, s, n);
+    out[n] = '\0';
+  }
+  JS_FreeCString(ctx, s);
+  if (len_out) *len_out = out ? (uint32_t)n : 0;
   return out;
 }
 
