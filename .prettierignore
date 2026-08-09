@@ -14,9 +14,6 @@ scripts/runtime-bundle.mjs
 scripts/compiler-fork-worker.mjs
 scripts/test262-worker.mjs
 scripts/wasm-exec-worker.mjs
-public/benchmarks/results/test262-report.json
-public/benchmarks/results/test262-standalone-report.json
-scripts/eval-engine-parity.mjs
 *.wasm
 *.wat
 
