@@ -299,6 +299,22 @@ Unchanged by construction, twice over: every entry point is behind
 imports own these paths — the natives this change edits are not even emitted.
 The gc half of the identity corpus above is the measured form of that.
 
+### `tests/es5-standalone-harness-selftests.test.ts` (the #4251 ratchet) — checked, no flip
+
+That file landed on `main` AFTER this branch's base (e1aeff7c2), so it is not in
+this diff. It was checked anyway rather than assumed, by copying `main`'s copy
+into `tests/` and running it against this branch: **19 / 19, exit 0** — no
+`"pass"` entry regressed and no `"fail"` entry got fixed, so the EXPECTED table
+needs no edit in this change. The copy was then removed; `main`'s version
+arrives with the merge.
+
+That result is also the expected one, mechanically: every `"fail"` entry in the
+table is #4251 **RC1 constructor identity** (`err.constructor !== Test262Error`)
+or `Test262Error.prototype`, and the load-bearing `"pass"` entries
+(`propertyhelper-verifyenumerable-enumerable.js` et al.) exercise
+propertyHelper against **plain objects**, which no arm of this change touches —
+every arm is `$__vec_base`-gated.
+
 ### `tests/equivalence/**` (the gc lane's own suite)
 
 Full run: **24 failed | 1637 passed | 3 todo** across 215 files. Every one of
