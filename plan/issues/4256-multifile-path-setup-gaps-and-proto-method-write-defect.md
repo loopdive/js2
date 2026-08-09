@@ -1,6 +1,6 @@
 ---
 id: 4256
-title: "generateMultiModule is missing 10 more single-path-only setup steps, and drops fnctor prototype-method this-writes outright"
+title: "The specialized fnctor dispatch arm is a CORRECTNESS dependency only the single-file path reaches — multi drops prototype-method this-writes; plus 10 more single-path-only setup steps"
 status: ready
 sprint: current
 created: 2026-08-09
@@ -19,8 +19,16 @@ origin: "2026-08-09, while fixing #4235: the audit the issue asked for turned up
 
 # #4256 — the rest of the multi-file setup gap, and a live prototype-method defect
 
+**The framing that matters (established 2026-08-09): the specialized fnctor
+dispatch arm is a CORRECTNESS dependency, not an optimization — and only the
+single-file path reaches it.** Removing either the factory or the expando
+write from the repro makes it fail on the SINGLE path too, so this is not
+"multi is missing a fast path"; it is "a write only lands when the instance
+reaches an arm one path never reaches". Treat any fix that merely restores
+parity of *speed* as not addressing this issue.
+
 #4235 fixed ONE of these (the fnctor pipeline). This is what the audit it
-mandated turned up, plus a correctness defect found while validating it.
+mandated turned up, plus the correctness defect found while validating it.
 
 ## Part A — a live miscompile: prototype-method `this.<field> = …` writes are
 ## dropped on the multi-file path
@@ -117,12 +125,29 @@ Two further facts that constrain the mechanism:
   neither flipped the result): `collectUserMethodNames` and
   `applyNumericPropertyAnalysis`.
 
-**Next step:** find what gates the specialized arm of `$__call_m_<name>_<arity>`
-— it is not in `closed-method-dispatch.ts` (no fnctor/ctx-field gate there), so
-it is emitted by whichever pass installs the fnctor prototype dispatch
-(`fnctor-prototype.ts` / `typed-this.ts` / `object-runtime.ts:~1544`, all of
-which read `fnctorEscapeGate.approvedNames`) — and check whether its
-precondition is one of the ten Part-B rows.
+**The arm's INPUT is identical on both paths — so the consumers are where to
+look, and the analysis is fully exonerated.** The specialized arm gates on
+`approvedNames` readers across three files, so the first question is whether
+those readers are being handed different sets. They are not. Instrumenting both
+`analyzeFnctorEscapeGate` call sites in `src/codegen/index.ts` and compiling
+the repro through each path:
+
+```
+[approved:single] names=[K] ctorDecls=[K] reserved=[]
+[approved:multi]  names=[K] ctorDecls=[K] reserved=[]
+```
+
+Identical. So the divergence is NOT upstream of the consumers — some consumer
+of `approvedNames`, or a second precondition it carries, behaves differently
+on the multi path with the same input.
+
+**Next step:** find what gates the specialized arm of `$__call_m_<name>_<arity>`.
+It is not in `closed-method-dispatch.ts` (no fnctor/ctx-field gate there), so it
+is emitted by whichever pass installs the fnctor prototype dispatch —
+`fnctor-prototype.ts`, `typed-this.ts`, or `object-runtime.ts:~1544`, all three
+of which read `fnctorEscapeGate.approvedNames`. Since the set they receive is
+the same, look for each one's OTHER precondition and check it against the ten
+Part-B rows.
 
 **Note on grepping the WAT while working this:** `.tmp/*.wat` contains NUL
 bytes, so plain `grep` treats it as binary and prints **nothing** — which reads
