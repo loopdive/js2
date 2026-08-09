@@ -291,6 +291,25 @@ describe("fast mode: native strings", () => {
     expect(await runFast(src)).toBe(3);
   });
 
+  it("preserves search-position coercion outside the proven i32 range", async () => {
+    const src = `export function test(): number {
+      const s = "0123456789";
+      let result = 0;
+      for (let i = 0; i < 4; i++) {
+        result += s.indexOf("0", i - 2);
+      }
+      result += s.indexOf("3", 2.9);
+      result += s.indexOf("9", 2147483648);
+      result += s.includes("3", 2.9) ? 1000 : 0;
+      result += s.includes("0", -1) ? 10000 : 0;
+      result += s.includes("9", 2147483648) ? 100000 : 0;
+      return result;
+    }`;
+    // The loop exercises a proven i32 expression that produces negative
+    // positions; the literals cover fractional and out-of-range ToInteger.
+    expect(await runFast(src)).toBe(11001);
+  });
+
   it("indexOf empty string", async () => {
     const src = `export function test(): number {
       return "hello".indexOf("");
