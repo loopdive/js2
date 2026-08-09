@@ -519,15 +519,14 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
             return externToClosureF64(argLocalIdx, unboxIdx, isUndefinedIdx);
           }
         } else if (paramType.kind === "i32") {
-          if (paramType.boolean === true) {
-            const unboxBoolIdx = ctx.funcMap.get("__unbox_boolean");
-            if (unboxBoolIdx !== undefined) ops.push({ op: "call", funcIdx: unboxBoolIdx });
-          } else {
-            const unboxIdx = ctx.funcMap.get("__unbox_number");
-            if (unboxIdx !== undefined) {
-              ops.push({ op: "call", funcIdx: unboxIdx });
-              ops.push({ op: "i32.trunc_sat_f64_s" });
-            }
+          // A host boolean may arrive as the engine's i31 numeric carrier in
+          // standalone mode. __unbox_number recognizes i31, boxed-number, and
+          // boxed-boolean values; __unbox_boolean recognizes only the latter
+          // and turned true conditions into false across the closure bridge.
+          const unboxIdx = ctx.funcMap.get("__unbox_number");
+          if (unboxIdx !== undefined) {
+            ops.push({ op: "call", funcIdx: unboxIdx });
+            ops.push({ op: "i32.trunc_sat_f64_s" });
           }
         } else if (needsExternToAnyForClosureParam(paramType)) {
           // The host-facing param is `externref`, but the closure funcref
@@ -902,15 +901,13 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
             return externToClosureF64(argLocalIdx, unboxIdx, isUndefinedIdx);
           }
         } else if (paramType.kind === "i32") {
-          if (paramType.boolean === true) {
-            const unboxBoolIdx = ctx.funcMap.get("__unbox_boolean");
-            if (unboxBoolIdx !== undefined) ops.push({ op: "call", funcIdx: unboxBoolIdx });
-          } else {
-            const unboxIdx = ctx.funcMap.get("__unbox_number");
-            if (unboxIdx !== undefined) {
-              ops.push({ op: "call", funcIdx: unboxIdx });
-              ops.push({ op: "i32.trunc_sat_f64_s" });
-            }
+          // Mirror the free-call bridge above: standalone host booleans can be
+          // i31 numeric carriers, so the numeric coercion is the lossless union
+          // decoder for both booleans and integer-valued arguments here.
+          const unboxIdx = ctx.funcMap.get("__unbox_number");
+          if (unboxIdx !== undefined) {
+            ops.push({ op: "call", funcIdx: unboxIdx });
+            ops.push({ op: "i32.trunc_sat_f64_s" });
           }
         } else if (needsExternToAnyForClosureParam(paramType)) {
           // See emitClosureCallExportN: a non-extern reference param (anyref /

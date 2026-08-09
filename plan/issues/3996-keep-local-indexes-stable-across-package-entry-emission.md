@@ -156,6 +156,32 @@ Measured after the correction:
 - Lodash still has no runtime differential workload in the catalog harness, so
   package correctness remains **unverified** beyond compile and validation.
 
+## 2026-08-09 merge-queue standalone boolean-carrier regression
+
+The integrated npm-compat branch initially failed its authoritative
+merge-group Test262 run at 27,063 standalone host-free passes, 2,324 below the
+committed high-water mark. An exact baseline diff found 2,387 lost passes and
+63 gains; 2,366 losses were assertion failures dominated by propertyHelper's
+`<name> should be an own property` messages.
+
+A local commit bisect identified `4237ffebcf0ff51` and file-level isolation
+narrowed the regression to the new typed-i32 path in
+`src/codegen/closure-exports.ts`. Standalone boolean values crossing a host
+closure boundary can use the engine's i31 numeric carrier. Routing them through
+`__unbox_boolean` therefore produced false, while the existing
+`__unbox_number` union decoder already accepts i31, boxed-number, and
+boxed-boolean carriers. Both free-call and method-call closure bridges now use
+that decoder before the saturating i32 conversion.
+
+Measured validation after the correction:
+
+- A 20-file authentic standalone harness sample drawn directly from the lost
+  pass set changed from 0/20 to 20/20 passing.
+- `tests/issue-1308.test.ts` and the nine focused Redux runtime regressions pass
+  18/18 together.
+- The authoritative full-corpus confirmation remains the next merge-queue run;
+  the high-water mark is not re-seeded or weakened.
+
 ## Provenance
 
 Migrated on 2026-08-01 from a GitHub issue on `loopdive/js2` (opened 2026-07-30)

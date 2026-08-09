@@ -91,6 +91,23 @@ describe("#1308 — wrapExports makes Wasm closure returns JS-callable", () => {
     expect(collect(2, 3, 4)).toBe(330);
   });
 
+  it("decodes standalone boolean closure arguments through the numeric union carrier", async () => {
+    const result = await compile(
+      `
+        export function makePredicate(): (condition: boolean) => number {
+          return (condition: boolean): number => condition ? 1 : 0;
+        }
+      `,
+      { fileName: "standalone-boolean-bridge.ts", target: "standalone" },
+    );
+    expect(result.success, JSON.stringify(result.errors)).toBe(true);
+    const wat = result.wat ?? "";
+    const start = wat.indexOf("(func $__call_fn_1");
+    const end = wat.indexOf("\n  (func ", start + 1);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(wat.slice(start, end >= 0 ? end : undefined)).toContain("i32.trunc_sat_f64_s");
+  });
+
   it("non-callable exports pass through unchanged", async () => {
     const { exports } = await runSingle(`
       export function pure(x: number): number {
