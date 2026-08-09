@@ -394,34 +394,34 @@
       }
     },
     {
-      "generatedAt": "2026-08-09T17:27:39.092Z",
-      "sourceRevision": "f4d30fd22470d04d2cc0b418a39dce49b7e81ec4",
+      "generatedAt": "2026-08-09T18:06:25.183Z",
+      "sourceRevision": "860b97e17fc2d5c0812b269d5a6f45f0deff9325",
       "packages": {
         "acorn": {
           "jsHost": {
-            "dynamic": 0.0035302493018760112
+            "dynamic": 0.003858454310591694
           },
           "standalone": {
-            "static": 107591.00505016444,
-            "dynamic": 0.11542301179247845
+            "static": 93499.41178946682,
+            "dynamic": 0.16057397009655933
           }
         },
         "cookie": {
           "jsHost": {
-            "dynamic": 0.0022312362759959077
+            "dynamic": 0.0019109441667007122
           },
           "standalone": {
-            "static": 593.7865755622029,
-            "dynamic": 0.09763347420818483
+            "static": 506.05212452445994,
+            "dynamic": 0.09907379248734911
           }
         },
         "clsx": {
           "jsHost": {
-            "dynamic": 0.0542791525793512
+            "dynamic": 0.11116294902413171
           },
           "standalone": {
-            "static": 21.232060374739778,
-            "dynamic": 0.16216524697636658
+            "static": 18.5843827409097,
+            "dynamic": 0.15159745649796255
           }
         }
       }
