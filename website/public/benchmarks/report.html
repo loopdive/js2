@@ -2566,8 +2566,24 @@
 
         if (conformance) {
           // (#2871 #1) Host (JS) vs Standalone (pure Wasm) views. Both share the
-          // same report schema; standalone ships no per-file JSONL nor a
-          // per-category×edition file, so those degrade gracefully.
+          // same report schema; standalone ships no per-file JSONL, so the
+          // per-test error-pattern list degrades to the root-cause buckets.
+          //
+          // The per-category×edition map is SHARED, not host-only. An edition is
+          // a property of the test file's frontmatter, not of the compile
+          // target, and the category-table filter reads only this map's edition
+          // KEYS (`computeAllowedCategories`), never its host pass/fail counts —
+          // so pointing the standalone view at it cannot leak host numbers.
+          // Passing `null` here used to make `computeAllowedCategories` bail out
+          // and return null, which `applyFilters` reads as "no edition filter":
+          // every standalone category row stayed visible at every slider
+          // position, so selecting ES2026 still listed `built-ins/Temporal`
+          // (4,603 proposal tests). The only standalone categories absent from
+          // the map are `built-ins/Temporal` and `built-ins/AbstractModuleSource`
+          // (both Proposals) plus `built-ins/undefined` and `language/export`
+          // (both Unclassified) — none is a published edition, so hiding them
+          // under a published-edition selection is correct and makes the two
+          // views behave the same way.
           const hostView = {
             mode: "host",
             report: conformance,
@@ -2580,7 +2596,7 @@
                 mode: "standalone",
                 report: standaloneReport,
                 editionsSrc: STANDALONE_EDITIONS_JSON,
-                categoryEditions: null,
+                categoryEditions: categoryEditions || null,
                 fileResultsSrc: null,
               }
             : null;
