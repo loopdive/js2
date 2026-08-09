@@ -2113,6 +2113,7 @@ function emitBoundFnValueFromLocals(
     fctx.body.push({ op: "call", funcIdx: objVecPushIdx });
   }
   fctx.body.push({ op: "local.get", index: argsVecLocal });
+  fctx.body.push({ op: "ref.null.extern" }); // (#4241) $bag — no expandos at birth
   fctx.body.push({ op: "struct.new", typeIdx: bfIdx });
   fctx.body.push({ op: "extern.convert_any" });
 }
