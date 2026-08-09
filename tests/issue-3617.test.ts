@@ -76,9 +76,27 @@ describe("#3617 — standalone fnctor instance constructor back-pointer", () => 
       await runStandalone(`
         var value: any = new DummyError("boom");
         if (value.hasOwnProperty("constructor")) return 0;
-        // Closed fnctor source fields are not yet surfaced by Object.keys on
-        // main; pin the zero-key baseline and ensure the hidden link adds none.
-        return Object.keys(value).length === 0 ? 1 : 0;
+        // Object.keys must surface the SOURCE field and NOTHING else.
+        //
+        // This asserted \`length === 0\` until 2026-08-09, which pinned a BUG
+        // rather than the behaviour: closed fnctor source fields were not
+        // surfaced at all, so \`message\` was missing too. #3920 (23fcac402,
+        // "standalone reflection over closed structs enumerated nothing")
+        // fixed that, and the zero-key pin went red — reading, misleadingly,
+        // as though the constructor link had started leaking.
+        //
+        // The length alone could not tell those apart, so assert the CONTENT.
+        // \`indexOf\` and \`join\` over the key array still trap in standalone
+        // (separate pre-existing gaps), hence index + length.
+        var keys = Object.keys(value);
+        if (keys.length !== 1) return 0;
+        if (keys[0] !== "message") return 0;
+        // Kill-switch: a field-less instance must have NO keys. Without this,
+        // the pin above would still pass if the hidden link were emitted as a
+        // second key on instances that happen to have exactly one field.
+        var bare: any = new EmptyA();
+        if (Object.keys(bare).length !== 0) return 0;
+        return 1;
       `),
     ).toBe(1);
   });
