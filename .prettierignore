@@ -63,9 +63,3 @@ website/public/graph-data.json
 # started confounding the manual `prettier --write CLAUDE.md` check), and it
 # runs in CI on every PR rather than when someone remembers.
 **/*.md
-
-# Temporary shepherd cleanup: keep exact-main content while reverting an
-# out-of-scope merge-hook rewrite. Removed in the following commit.
-public/benchmarks/results/test262-report.json
-public/benchmarks/results/test262-standalone-report.json
-scripts/eval-engine-parity.mjs
