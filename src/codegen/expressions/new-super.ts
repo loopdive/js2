@@ -19,6 +19,7 @@ import {
   resolvesToAmbientGlobal,
   resolvesToNonConstructableValue,
 } from "./non-constructable.js"; // (#4017)
+import { tryNonConstructableNewTarget } from "./new-non-constructable-value.js"; // (#4246)
 import { popBody, pushBody } from "../context/bodies.js"; // (#3486) detached operand buffer
 import { reportError } from "../context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
@@ -3348,6 +3349,17 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       // catches it (the bare-string throw is only `instanceof Error`/string).
       return emitStaticNotAConstructorThrow(ctx, fctx, []);
     }
+  }
+
+  // (#4246) `new <provably-not-a-constructor>` — a primitive value, or the
+  // result of another `new` — throws TypeError (§13.3.5.1 step 4). Placed
+  // after the intrinsic-name interceptions above (Map/Set/WeakRef/Temporal),
+  // which key on an identifier that could never carry one of these facts, and
+  // before the class-expression / unknown-constructor paths that would
+  // otherwise swallow the construction and answer `undefined`.
+  {
+    const nonCtorValue = tryNonConstructableNewTarget(ctx, fctx, expr);
+    if (nonCtorValue !== undefined) return nonCtorValue;
   }
 
   // Handle `new (class { ... })()` — anonymous class expression in new

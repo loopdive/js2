@@ -97,7 +97,27 @@ describe("#2107 standalone typeof conformance over canonical tags", () => {
         expect(await runStandalone(src, target)).toBe(10);
       });
 
-      it("undefined-any reports typeof 'undefined'", async () => {
+      // (#4258) KNOWN BROKEN — a real silent wrong answer, kept as the
+      // acceptance test for the fix rather than deleted or weakened.
+      //
+      // `mapTsTypeToWasm`'s union arm lowers `string | undefined` to
+      // `(ref null $AnyString)`, a carrier that cannot represent `undefined`,
+      // so the undefined arm is erased to NULL — the emitted signature is
+      // literally `(func $pick (param f64) (result (ref null 3)))`. `typeof`
+      // then correctly reports "object", because the value it is handed really
+      // IS null.
+      //
+      // This test USED to pass, and passed for the wrong reason: under the
+      // legacy regime `undefined ≡ null`, so `typeof null` answered
+      // "undefined" and the erasure was invisible. `6f7f93c8` (#2106) made
+      // `typeof null === "object"` — correct per §13.5.3 — which uncancelled
+      // the two bugs. Bisect over 3,059 revisions lands on that commit; it is
+      // the revealer, not the cause.
+      //
+      // **Do not make this green by reverting or re-gating #2106.** That
+      // reinstates a second defect whose only virtue is hiding this one. The
+      // test below this one pins exactly that mistake.
+      it.fails("undefined-any reports typeof 'undefined' (#4258: union erases undefined to null)", async () => {
         const src = `
           function pick(i: number): string | undefined { return i > 0 ? "hi" : undefined; }
           export function test(): number {
@@ -105,6 +125,79 @@ describe("#2107 standalone typeof conformance over canonical tags", () => {
             const isUndef = (typeof x === "undefined") ? 1 : 0;
             const isStr = (typeof x === "string") ? 1 : 0;
             return isUndef * 10 + isStr;
+          }
+        `;
+        expect(await runStandalone(src, target)).toBe(10);
+      });
+
+      // The counted, non-silent statement of #4258: this asserts what the
+      // compiler ACTUALLY does today, so the defect is recorded as a value
+      // rather than as an absence. When #4258 lands this flips and must be
+      // deleted together with the `it.fails` above — the pair is the acceptance
+      // test.
+      it("(#4258) records the erasure: `T | undefined` currently answers as null", async () => {
+        const src = `
+          function pick(i: number): string | undefined { return i > 0 ? "hi" : undefined; }
+          export function test(): number {
+            const x = pick(0);
+            // JS says: === null is FALSE, typeof is "undefined".
+            const eqNull = (x === null) ? 1 : 0;
+            const isObj = (typeof x === "object") ? 1 : 0;
+            return eqNull * 10 + isObj;
+          }
+        `;
+        // 11 = both wrong, in the one direction the erasure predicts.
+        expect(await runStandalone(src, target)).toBe(11);
+      });
+
+      // KILL-SWITCH for the wrong cure. The legacy `undefined ≡ null` regime
+      // makes the case above LOOK fixed, so someone chasing green could revert
+      // #2106 and believe they had solved it. Pin that the flag changes only
+      // whether the erasure is VISIBLE, never whether it exists: `=== null` is
+      // wrong in BOTH regimes.
+      it("(#4258) the $undefined-singleton flag is not the cure — `=== null` is wrong either way", async () => {
+        const src = `
+          function pick(i: number): string | undefined { return i > 0 ? "hi" : undefined; }
+          export function test(): number { return (pick(0) === null) ? 1 : 0; }
+        `;
+        const saved = process.env.JS2WASM_UNDEF_SINGLETON;
+        try {
+          process.env.JS2WASM_UNDEF_SINGLETON = "0";
+          // JS says 0. The legacy regime gets `typeof` accidentally right and
+          // this one still wrong, which is what makes it a false cure.
+          expect(await runStandalone(src, target)).toBe(1);
+        } finally {
+          if (saved === undefined) {
+            // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
+            delete process.env.JS2WASM_UNDEF_SINGLETON;
+          } else {
+            process.env.JS2WASM_UNDEF_SINGLETON = saved;
+          }
+        }
+      });
+
+      // Positive control, and the whole point of #4258's diagnosis: a
+      // HETEROGENEOUS union with undefined is CORRECT today, because two
+      // differently-mapped arms force an `externref` carrier, which can hold
+      // the `$undefined` singleton. Same `undefined`, same `typeof` lowering —
+      // only the carrier differs.
+      //
+      // Without this control the reader cannot tell whether typeof-over-
+      // undefined is broken in general (it is not) or only where the union's
+      // other arm has a narrower carrier (it is). Note `{ a: number } |
+      // undefined` is NOT usable here: an interface maps to a named struct
+      // ref, so it is broken in the same way as the string case — checked, not
+      // assumed.
+      it("heterogeneous-or-undefined reports typeof 'undefined' — the carrier is what differs", async () => {
+        const src = `
+          function pick(i: number): string | number | undefined {
+            return i > 0 ? "hi" : (i < 0 ? 5 : undefined);
+          }
+          export function test(): number {
+            const x = pick(0);
+            const isUndef = (typeof x === "undefined") ? 1 : 0;
+            const isNull = (x === null) ? 1 : 0;
+            return isUndef * 10 + isNull;
           }
         `;
         expect(await runStandalone(src, target)).toBe(10);

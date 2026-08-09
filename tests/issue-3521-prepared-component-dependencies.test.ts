@@ -170,6 +170,21 @@ function supportTypeEntry(ref: IrTypeRef): PreparedComponentAbiEntry {
   };
 }
 
+function supportCallableEntry(ref: ReturnType<typeof irSupportFuncRef>, classId: IrClassId): PreparedComponentAbiEntry {
+  if (ref.binding.kind !== "support") throw new Error("expected support callable fixture");
+  return {
+    id: ref.binding.bindingId,
+    structuralReferenceKey: irCallableBindingKey(ref.binding),
+    slotPolicy: "required",
+    intent: {
+      kind: "callable",
+      origin: "support",
+      signature: VOID_SIGNATURE,
+      classId,
+    },
+  };
+}
+
 describe("#3521 post-pass prepared-component dependency evidence", () => {
   it("closes a local direct-call edge into one exact terminal component", () => {
     const f = fixture();
@@ -282,12 +297,6 @@ describe("#3521 post-pass prepared-component dependency evidence", () => {
       methods: [{ name: "run", params: [], returnType: null }],
       constructorParams: [],
     };
-    const alloc: IrInstr = {
-      kind: "class.alloc",
-      result: asValueId(0),
-      resultType: { kind: "class", shape },
-      shape,
-    };
     const call: IrInstr = {
       kind: "class.call",
       result: null,
@@ -305,7 +314,15 @@ describe("#3521 post-pass prepared-component dependency evidence", () => {
       intent: { kind: "class", classId: shape.classId, layoutKey: "LocalBox{}" },
     };
     const report = derivePreparedComponentDependencies({
-      module: { functions: [irFunction(f.first, [alloc, call])] },
+      module: {
+        functions: [
+          {
+            ...irFunction(f.first, [call]),
+            params: [{ value: asValueId(0), name: "box", type: { kind: "class", shape } }],
+            valueCount: 1,
+          },
+        ],
+      },
       terminalUnitIds: new Set([f.first.id]),
       inventory: f.inventory,
       abi: abiLookup([sourceCallableEntry(f.first.id), classEntry]),
@@ -338,12 +355,6 @@ describe("#3521 post-pass prepared-component dependency evidence", () => {
       methods: [{ name: "run", params: [], returnType: null, target }],
       constructorParams: [],
     };
-    const alloc: IrInstr = {
-      kind: "class.alloc",
-      result: asValueId(0),
-      resultType: { kind: "class", shape },
-      shape,
-    };
     const call: IrInstr = {
       kind: "class.call",
       result: null,
@@ -362,7 +373,16 @@ describe("#3521 post-pass prepared-component dependency evidence", () => {
       intent: { kind: "class", classId: shape.classId, layoutKey: "LocalBox{}" },
     };
     const report = derivePreparedComponentDependencies({
-      module: { functions: [irFunction(f.first, [alloc, call]), irFunction(f.nestedMethod)] },
+      module: {
+        functions: [
+          {
+            ...irFunction(f.first, [call]),
+            params: [{ value: asValueId(0), name: "box", type: { kind: "class", shape } }],
+            valueCount: 1,
+          },
+          irFunction(f.nestedMethod),
+        ],
+      },
       terminalUnitIds: new Set([f.first.id]),
       inventory: f.inventory,
       abi: abiLookup([sourceCallableEntry(f.first.id), sourceCallableEntry(f.nestedMethod.id), classEntry]),
@@ -416,6 +436,93 @@ describe("#3521 post-pass prepared-component dependency evidence", () => {
         terminalOwnerUnitId: null,
       }),
     ]);
+  });
+
+  it("pins a constructor init's own AST-free new wrapper in its prepared component", () => {
+    const source = ts.createSourceFile(
+      "/repo/prepared-constructor.ts",
+      `class Box { value: number; constructor(value: number) { this.value = value; } }`,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS,
+    );
+    const inventory = buildIrUnitInventory([source], { entrySource: source });
+    const classRecord = inventory.classes.find((record) => record.displayName === "Box");
+    const constructorUnit = inventory.terminalUnits.find(
+      (unit) => unit.kind === "class-constructor" && unit.lexicalOwnerId === classRecord?.id,
+    );
+    if (!classRecord || !constructorUnit) throw new Error("invalid constructor dependency fixture");
+
+    const newTarget = irSupportFuncRef(classRecord.id, "class-constructor-new", "Box_new");
+    const initTarget = irUnitFuncRef({ unitId: constructorUnit.id, name: "Box_init" });
+    const shape: IrClassShape = {
+      classId: classRecord.id,
+      className: "Box",
+      fields: [{ name: "value", type: irVal({ kind: "f64" }) }],
+      methods: [],
+      constructorParams: [irVal({ kind: "f64" })],
+      constructorTarget: newTarget,
+      constructorInitTarget: initTarget,
+    };
+    const classType: IrType = { kind: "class", shape };
+    const constructorFn: IrFunction = {
+      ...irFunction(constructorUnit),
+      params: [
+        { value: asValueId(0), name: "value", type: irVal({ kind: "f64" }) },
+        { value: asValueId(1), name: "__self", type: classType },
+      ],
+      resultTypes: [classType],
+      blocks: [
+        {
+          id: asBlockId(0),
+          blockArgs: [],
+          blockArgTypes: [],
+          instrs: [],
+          terminator: { kind: "return", values: [asValueId(1)] },
+        },
+      ],
+      valueCount: 2,
+    };
+    const classRef = irClassTypeRef(classRecord.id, "Box");
+    const classEntry: PreparedComponentAbiEntry = {
+      id: classRef.binding.bindingId,
+      structuralReferenceKey: irTypeBindingKey(classRef.binding),
+      slotPolicy: "required",
+      intent: { kind: "class", classId: classRecord.id, layoutKey: "Box{value:f64}" },
+    };
+    const newEntry = supportCallableEntry(newTarget, classRecord.id);
+    const dependencies = (entries: readonly PreparedComponentAbiEntry[]) =>
+      derivePreparedComponentDependencies({
+        module: { functions: [constructorFn] },
+        terminalUnitIds: new Set([constructorUnit.id]),
+        inventory,
+        abi: abiLookup(entries),
+      }).components[0]!;
+
+    const component = dependencies([sourceCallableEntry(constructorUnit.id), classEntry, newEntry]);
+    expect(component.status).toBe("complete");
+    expect(component.failures).toEqual([]);
+    expect(component.abiDependencies).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "class-layout",
+          bindingId: classRef.binding.bindingId,
+        }),
+        expect.objectContaining({
+          kind: "support",
+          bindingId: newTarget.binding.bindingId,
+        }),
+      ]),
+    );
+
+    const missingNew = dependencies([sourceCallableEntry(constructorUnit.id), classEntry]);
+    expect(missingNew.status).toBe("blocked");
+    expect(missingNew.failures).toContainEqual(
+      expect.objectContaining({
+        code: "unplanned-abi-binding",
+        bindingId: newTarget.binding.bindingId,
+      }),
+    );
   });
 
   it("turns a prepared string carrier into an exact support-type dependency", () => {

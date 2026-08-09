@@ -1155,9 +1155,6 @@ function collectUses(instr: IrBlock["instrs"][number]): readonly IrValueId[] {
     // Slice 4 (#1169d): class ops.
     case "class.new":
       return instr.args;
-    case "class.alloc":
-      // #3000-C: fresh default-initialised allocation — no SSA operands.
-      return [];
     case "class.super_init":
       return [...instr.args, instr.self];
     case "class.super_call":

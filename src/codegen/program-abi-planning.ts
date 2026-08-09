@@ -17,7 +17,6 @@ import {
 export const PROGRAM_ABI_CALLABLE_ROLE = Object.freeze({
   body: 0,
   functionValueTrampoline: 1,
-  classConstructorInit: 2,
   classMethodAdapter: 3,
   classHostConstructor: 4,
   moduleInit: 5,
@@ -37,6 +36,7 @@ export const PROGRAM_ABI_CALLABLE_ROLE = Object.freeze({
   // this one table, and `programAbiCallableRoleOrdinalsAreDistinct()` below is
   // the guard that keeps it that way.
   callableProvider: 12,
+  classConstructorNew: 13,
 } as const);
 
 /**

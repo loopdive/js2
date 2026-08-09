@@ -46,7 +46,7 @@ interface ProgramAbiInheritedClassCallableObservation {
 export function pushProgramAbiClassCallable(
   ctx: CodegenContext,
   declaration: ts.Node,
-  kind: "unit" | "constructor-init" | "promise-subclass-onhost",
+  kind: "unit" | "constructor-new" | "promise-subclass-onhost",
   funcIdx: FuncHandle,
   func: WasmFunction,
 ): void {
@@ -63,8 +63,8 @@ export function pushProgramAbiClassCallable(
       `class support callable ${func.name} does not have a class declaration`,
     );
   }
-  if (kind === "constructor-init") {
-    registry.observeConstructorInit(declaration, func.name, funcIdx);
+  if (kind === "constructor-new") {
+    registry.observeConstructorNew(declaration, func.name, funcIdx);
   } else {
     registry.observePromiseSubclassOnHostConstructor(declaration, func.name, funcIdx);
   }
@@ -194,16 +194,16 @@ export class ProgramAbiClassCallableRegistry {
     return unitId;
   }
 
-  /** Observe the WasmGC `<Class>_init` support function before DCE. */
-  observeConstructorInit(
+  /** Observe the AST-free WasmGC `<Class>_new` support function before DCE. */
+  observeConstructorNew(
     declaration: ts.ClassDeclaration | ts.ClassExpression,
     displayName: string,
     funcIdx: FuncHandle,
   ): IrBindingId {
     return this.observeSupport(
       declaration,
-      "class-constructor-init",
-      PROGRAM_ABI_CALLABLE_ROLE.classConstructorInit,
+      "class-constructor-new",
+      PROGRAM_ABI_CALLABLE_ROLE.classConstructorNew,
       displayName,
       funcIdx,
     );
@@ -367,35 +367,21 @@ export class ProgramAbiClassCallableRegistry {
       }
     }
 
-    for (const [bindingId, observations] of this.supports) {
-      const canonical = observations.filter((observation) => definedFuncAt(this.ctx, observation.funcIdx)).at(-1);
-      const func = canonical ? definedFuncAt(this.ctx, canonical.funcIdx) : undefined;
-      if (!canonical || !func) continue;
-      if (this.session.hasPlan(bindingId)) {
-        if (!this.session.hasLocator(bindingId, func)) {
-          throw new ProgramAbiInvariantError(
-            "duplicate-slot-locator",
-            `retained class support callable ${canonical.displayName} is not the exact allocator owned by ${bindingId}`,
-          );
-        }
-        continue;
-      }
-      const ref = irSupportFuncRef(canonical.classId, canonical.role, canonical.displayName);
-      const plannedBindingId = planProgramAbiSupportCallable(this.ctx, {
-        ref,
-        anchor: { kind: "class", classId: canonical.classId },
-        role: canonical.role,
-        roleOrdinal: canonical.roleOrdinal,
-        signature: functionSignature(this.ctx, func),
-        func,
-      });
-      if (plannedBindingId !== bindingId) {
-        throw new ProgramAbiInvariantError(
-          "invalid-binding-reference",
-          `retained class support callable ${canonical.displayName} was not accepted for ${bindingId}`,
-        );
-      }
+    for (const bindingId of this.supports.keys()) this.planSupport(bindingId, false);
+  }
+
+  /** Plan one observed support callable before dependency-complete IR sealing. */
+  prepareSupport(bindingId: IrBindingId): FuncHandle {
+    this.assertOpen(bindingId);
+    this.planSupport(bindingId, true);
+    const handle = this.handleForSupport(bindingId);
+    if (handle === undefined) {
+      throw new ProgramAbiInvariantError(
+        "invalid-binding-reference",
+        `prepared class support callable ${bindingId} lost its observed allocator`,
+      );
     }
+    return handle;
   }
 
   /** Resolve one exact class source unit to its current stable allocator handle. */
@@ -414,6 +400,47 @@ export class ProgramAbiClassCallableRegistry {
       ?.filter((observation) => definedFuncAt(this.ctx, observation.funcIdx))
       .at(-1);
     return canonical?.funcIdx;
+  }
+
+  private planSupport(bindingId: IrBindingId, required: boolean): void {
+    const canonical = this.supports
+      .get(bindingId)
+      ?.filter((observation) => definedFuncAt(this.ctx, observation.funcIdx))
+      .at(-1);
+    const func = canonical ? definedFuncAt(this.ctx, canonical.funcIdx) : undefined;
+    if (!canonical || !func) {
+      if (required) {
+        throw new ProgramAbiInvariantError(
+          "invalid-binding-reference",
+          `prepared class support callable ${bindingId} has no live observed allocator`,
+        );
+      }
+      return;
+    }
+    if (this.session.hasPlan(bindingId)) {
+      if (!this.session.hasLocator(bindingId, func)) {
+        throw new ProgramAbiInvariantError(
+          "duplicate-slot-locator",
+          `retained class support callable ${canonical.displayName} is not the exact allocator owned by ${bindingId}`,
+        );
+      }
+      return;
+    }
+    const ref = irSupportFuncRef(canonical.classId, canonical.role, canonical.displayName);
+    const plannedBindingId = planProgramAbiSupportCallable(this.ctx, {
+      ref,
+      anchor: { kind: "class", classId: canonical.classId },
+      role: canonical.role,
+      roleOrdinal: canonical.roleOrdinal,
+      signature: functionSignature(this.ctx, func),
+      func,
+    });
+    if (plannedBindingId !== bindingId) {
+      throw new ProgramAbiInvariantError(
+        "invalid-binding-reference",
+        `retained class support callable ${canonical.displayName} was not accepted for ${bindingId}`,
+      );
+    }
   }
 
   /** Resolve one inherited alias to its exact canonical source unit and handle. */

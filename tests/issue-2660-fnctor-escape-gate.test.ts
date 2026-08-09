@@ -36,7 +36,7 @@ function checkerFor(source: string): { sf: ts.SourceFile; checker: ts.TypeChecke
 /** Collect the classification of the (single) `new F()` site in `source`. */
 function classifyOnly(source: string): FnctorGateClass | undefined {
   const { sf, checker } = checkerFor(source);
-  const result = analyzeFnctorEscapeGate(checker, sf);
+  const result = analyzeFnctorEscapeGate(checker, [sf]);
   const entries = [...result.sites.values()];
   return entries[0];
 }
@@ -119,7 +119,7 @@ describe("#2660 S1 — fnctor escape/dynamic-use gate (inert analysis)", () => {
       [].forEach.call(c, function () {});
     `;
     const { sf, checker } = checkerFor(src);
-    const result = analyzeFnctorEscapeGate(checker, sf);
+    const result = analyzeFnctorEscapeGate(checker, [sf]);
     expect(result.sites.size).toBe(0);
     expect(result.approved.size).toBe(0);
   });
@@ -130,13 +130,13 @@ describe("#2660 S1 — fnctor escape/dynamic-use gate (inert analysis)", () => {
       var a: any = new Arrow();
     `;
     const { sf, checker } = checkerFor(src);
-    const result = analyzeFnctorEscapeGate(checker, sf);
+    const result = analyzeFnctorEscapeGate(checker, [sf]);
     expect(result.sites.size).toBe(0);
   });
 
   it("fnctor-free / empty program yields an empty result (no-op)", () => {
     const { sf, checker } = checkerFor(`var x: number = 1 + 2;`);
-    const result = analyzeFnctorEscapeGate(checker, sf);
+    const result = analyzeFnctorEscapeGate(checker, [sf]);
     expect(result.sites.size).toBe(0);
     expect(result.approved.size).toBe(0);
   });
@@ -151,7 +151,7 @@ describe("#2660 S1 — fnctor escape/dynamic-use gate (inert analysis)", () => {
       var y: any = b.x;
     `;
     const { sf, checker } = checkerFor(src);
-    const result = analyzeFnctorEscapeGate(checker, sf);
+    const result = analyzeFnctorEscapeGate(checker, [sf]);
     const reconstructCount = [...result.sites.values()].filter((c) => c === "reconstruct").length;
     expect(result.approved.size).toBe(reconstructCount);
     expect(result.approved.size).toBe(1); // only `a`

@@ -30,6 +30,54 @@ function watFunctionBody(wat: string, name: string): string {
   return wat.slice(start, next < 0 ? wat.length : next);
 }
 
+function watFunctionIndex(wat: string, name: string): number {
+  const importedFunctionCount = [...wat.matchAll(/^\s*\(import .+ \(func\b/gm)].length;
+  const functions = [...wat.matchAll(/^\s*\(func \$([^\s(]+)/gm)].map((match) => match[1]!);
+  const index = functions.indexOf(name);
+  expect(index, `missing WAT function index for ${name}`).toBeGreaterThanOrEqual(0);
+  return importedFunctionCount + index;
+}
+
+function watTypeDefinition(wat: string, name: string): string {
+  const definition = wat.split("\n").find((line) => line.startsWith(`  (type $${name} `));
+  expect(definition, `missing WAT type $${name}`).toBeDefined();
+  return definition!;
+}
+
+function watGlobalIndex(wat: string, name: string): number {
+  const importedGlobalCount = [...wat.matchAll(/^\s*\(import .+ \(global\b/gm)].length;
+  const globals = [...wat.matchAll(/^\s*\(global \$([^\s(]+)/gm)].map((match) => match[1]!);
+  const index = globals.indexOf(name);
+  expect(index, `missing WAT global index for ${name}`).toBeGreaterThanOrEqual(0);
+  return importedGlobalCount + index;
+}
+
+function watInstructionOpcodes(body: string): string[] {
+  return body
+    .split("\n")
+    .slice(1, -1)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("(local "))
+    .map((line) => line.split(/\s+/, 1)[0]!);
+}
+
+function watNullableRefResultTypeIndex(body: string, name: string): number {
+  const header = body.split("\n")[0]!;
+  const match = header.match(/\(result \(ref null (\d+)\)\)$/);
+  expect(match, `missing nullable reference result for ${name}`).not.toBeNull();
+  return Number(match![1]);
+}
+
+function watAnyStringTypeIndex(wat: string): number {
+  expect(watTypeDefinition(wat, "AnyString")).toContain("(field $len i32)");
+  const native = watTypeDefinition(wat, "NativeString").match(/\(sub \$type(\d+) /);
+  const cons = watTypeDefinition(wat, "ConsString").match(/\(sub final \$type(\d+) /);
+  expect(native, "NativeString must extend the native string root").not.toBeNull();
+  expect(cons, "ConsString must extend the native string root").not.toBeNull();
+  expect(cons![1]).toBe(native![1]);
+  return Number(native![1]);
+}
+
 describe("#3522 instance class-method compile-once ownership", () => {
   it("admits scalar, reference-bearing, and inherited layouts through remappable Program ABI cells", () => {
     expect(
@@ -56,7 +104,7 @@ describe("#3522 instance class-method compile-once ownership", () => {
   });
 
   it.each(["gc", "standalone"] as const)(
-    "prepares the exact Animal/Dog method-accessor component once in the %s lane",
+    "prepares the exact Animal/Dog constructor-method-accessor component once in the %s lane",
     async (target) => {
       const source = readFileSync(new URL("../website/playground/examples/js/classes.ts", import.meta.url), "utf8");
       const result = await compile(source, {
@@ -69,10 +117,12 @@ describe("#3522 instance class-method compile-once ownership", () => {
       expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
       expect(WebAssembly.validate(result.binary)).toBe(true);
       const prepared = [
+        "Animal_new",
         "Animal_get_name",
         "Animal_set_name",
         "Animal_get_age",
         "Animal_speak",
+        "Dog_new",
         "Dog_speak",
         "Dog_get_breed",
         "Animal_kingdom",
@@ -90,13 +140,6 @@ describe("#3522 instance class-method compile-once ownership", () => {
         componentIds.add(observed.preparedComponentId!);
       }
       expect(componentIds.size).toBeGreaterThan(0);
-      for (const name of ["Animal_new", "Dog_new"]) {
-        expect(classMemberOutcome(result, name)).toMatchObject({
-          kind: "emitted",
-          legacyBodyEmitted: true,
-          irBodyEmitted: true,
-        });
-      }
       expect(result.irPostClaimErrors ?? []).toEqual([]);
     },
   );
@@ -131,40 +174,578 @@ describe("#3522 instance class-method compile-once ownership", () => {
     ]);
   });
 
-  it("never enters the direct emitter for the prepared Animal/Dog members, with a direct positive control", async () => {
-    const source = readFileSync(new URL("../website/playground/examples/js/classes.ts", import.meta.url), "utf8");
-    const previous = process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY;
-    try {
-      process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = [
-        "Animal_get_name",
-        "Animal_set_name",
-        "Animal_get_age",
-        "Animal_speak",
-        "Dog_speak",
-        "Dog_get_breed",
-      ].join(",");
-      const prepared = await compile(source, {
-        fileName: "website/playground/examples/js/classes.ts",
-        experimentalIR: true,
-        trackIrOutcomes: true,
-      });
-      expect(prepared.success, prepared.errors.map((error) => error.message).join("\n")).toBe(true);
+  it.each(["gc", "standalone"] as const)(
+    "never enters the direct emitter for prepared Animal/Dog constructors or members in the %s lane",
+    async (target) => {
+      const source = readFileSync(new URL("../website/playground/examples/js/classes.ts", import.meta.url), "utf8");
+      const previous = process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY;
+      try {
+        // Positive control: a parameter-property constructor remains deliberately
+        // unsupported, so the same poison seam must still stop its direct body.
+        process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = "UnsupportedConstructor_new";
+        const unsupported = await compile(
+          `
+          class UnsupportedConstructor {
+            constructor(public value: number) {}
+          }
+          export function run(): number { return new UnsupportedConstructor(7).value; }
+          `,
+          {
+            fileName: `unsupported-constructor-positive-control-${target}.ts`,
+            experimentalIR: true,
+            trackIrOutcomes: true,
+            target,
+          },
+        );
+        expect(unsupported.success).toBe(false);
+        expect(classMemberOutcome(unsupported, "UnsupportedConstructor_new")).toMatchObject({
+          kind: "unsupported",
+          legacyBodyEmitted: true,
+          irBodyEmitted: false,
+        });
+        expect(
+          unsupported.errors.some((error) =>
+            error.message.includes("injected direct class-body poison: UnsupportedConstructor_new"),
+          ),
+        ).toBe(true);
 
-      process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = "Animal_new";
-      const direct = await compile(source, {
+        process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = [
+          "Animal_new",
+          "Animal_get_name",
+          "Animal_set_name",
+          "Animal_get_age",
+          "Animal_speak",
+          "Dog_new",
+          "Dog_speak",
+          "Dog_get_breed",
+        ].join(",");
+        const prepared = await compile(source, {
+          fileName: "website/playground/examples/js/classes.ts",
+          experimentalIR: true,
+          trackIrOutcomes: true,
+          target,
+        });
+        expect(prepared.success, prepared.errors.map((error) => error.message).join("\n")).toBe(true);
+        for (const name of ["Animal_new", "Dog_new"]) {
+          expect(classMemberOutcome(prepared, name)).toMatchObject({
+            kind: "emitted",
+            legacyBodyEmitted: false,
+            irBodyEmitted: true,
+            preparedComponentId: expect.stringMatching(/^prepared-component:/),
+          });
+        }
+      } finally {
+        if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
+        else process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = previous;
+      }
+    },
+  );
+
+  it.each(["gc", "standalone"] as const)(
+    "runs the base constructor before derived work on the same allocated receiver in the %s lane",
+    async (target) => {
+      const result = await compile(
+        `
+        class Base {
+          trace: number;
+          label: string;
+          constructor(label: string, age: number) {
+            this.trace = 1;
+            this.label = label;
+            this.trace = this.trace * 10 + age;
+          }
+        }
+        class Derived extends Base {
+          suffix: string;
+          constructor(label: string, age: number, suffix: string) {
+            super(label, age);
+            this.trace = this.trace * 10 + 3;
+            this.suffix = suffix;
+          }
+        }
+        export function run(): number {
+          const value = new Derived("ab", 2, "xyz");
+          return value.trace * 100 + value.label.length * 10 + value.suffix.length;
+        }
+        `,
+        {
+          fileName: `ir-constructor-ordering-${target}.ts`,
+          experimentalIR: true,
+          trackIrOutcomes: true,
+          target,
+        },
+      );
+
+      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(WebAssembly.validate(result.binary)).toBe(true);
+      expect(result.irPostClaimErrors ?? []).toEqual([]);
+      for (const name of ["Base_new", "Derived_new"]) {
+        expect(classMemberOutcome(result, name)).toMatchObject({
+          kind: "emitted",
+          legacyBodyEmitted: false,
+          irBodyEmitted: true,
+          preparedComponentId: expect.stringMatching(/^prepared-component:/),
+        });
+      }
+      expect((await instantiate(result)).run!()).toBe(12_323);
+    },
+  );
+
+  it.each(["gc", "standalone"] as const)(
+    "keeps _new AST-free and gives constructor source work exclusively to _init in the %s lane",
+    async (target) => {
+      const source = readFileSync(new URL("../website/playground/examples/js/classes.ts", import.meta.url), "utf8");
+      const result = await compile(source, {
         fileName: "website/playground/examples/js/classes.ts",
         experimentalIR: true,
         trackIrOutcomes: true,
+        emitWat: true,
+        target,
       });
-      expect(direct.success).toBe(false);
-      expect(
-        direct.errors.some((error) => error.message.includes("injected direct class-body poison: Animal_new")),
-      ).toBe(true);
-    } finally {
-      if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
-      else process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = previous;
-    }
-  });
+
+      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(WebAssembly.validate(result.binary)).toBe(true);
+      for (const name of ["Animal_new", "Dog_new"]) {
+        expect(classMemberOutcome(result, name)).toMatchObject({
+          kind: "emitted",
+          legacyBodyEmitted: false,
+          irBodyEmitted: true,
+          preparedComponentId: expect.stringMatching(/^prepared-component:/),
+        });
+      }
+
+      const animalNew = watFunctionBody(result.wat, "Animal_new");
+      const animalInit = watFunctionBody(result.wat, "Animal_init");
+      const dogNew = watFunctionBody(result.wat, "Dog_new");
+      const dogInit = watFunctionBody(result.wat, "Dog_init");
+      const animalInitIdx = watFunctionIndex(result.wat, "Animal_init");
+      const dogInitIdx = watFunctionIndex(result.wat, "Dog_init");
+      const animalTypeIdx = watNullableRefResultTypeIndex(animalNew, "Animal_new");
+      const dogTypeIdx = watNullableRefResultTypeIndex(dogNew, "Dog_new");
+      const currentThisIdx = watGlobalIndex(result.wat, "__current_this");
+      const anyStringTypeIdx = target === "standalone" ? watAnyStringTypeIndex(result.wat) : undefined;
+
+      // The exact source ABI keeps user parameters in source order and appends
+      // the already allocated receiver last; `_init` returns that same type.
+      const stringParam = target === "standalone" ? String.raw`\(ref null ${anyStringTypeIdx}\)` : "externref";
+      expect(animalInit.split("\n")[0]!.trim()).toMatch(
+        new RegExp(
+          `^\\(func \\$Animal_init \\(param ${stringParam} f64 \\(ref null ${animalTypeIdx}\\)\\) \\(result \\(ref null ${animalTypeIdx}\\)\\)$`,
+        ),
+      );
+      expect(dogInit.split("\n")[0]!.trim()).toMatch(
+        new RegExp(
+          `^\\(func \\$Dog_init \\(param ${stringParam} f64 ${stringParam} \\(ref null ${dogTypeIdx}\\)\\) \\(result \\(ref null ${dogTypeIdx}\\)\\)$`,
+        ),
+      );
+      expect(animalNew).toContain(`struct.new ${animalTypeIdx}`);
+      expect(dogNew).toContain(`struct.new ${dogTypeIdx}`);
+
+      // Each `_new` is an AST-free support wrapper: allocate exactly once and
+      // tail-call its `_init`. The exact opcode sequences exclude hidden calls,
+      // globals, alternate allocation forms, and duplicated source work.
+      for (const [body, initIdx, expectedOpcodes] of [
+        [
+          animalNew,
+          animalInitIdx,
+          [
+            "i32.const",
+            "ref.null",
+            "f64.const",
+            "struct.new",
+            "local.set",
+            "local.get",
+            "local.get",
+            "local.get",
+            "return_call",
+          ],
+        ],
+        [
+          dogNew,
+          dogInitIdx,
+          [
+            "i32.const",
+            "ref.null",
+            "f64.const",
+            "ref.null",
+            "struct.new",
+            "local.set",
+            "local.get",
+            "local.get",
+            "local.get",
+            "local.get",
+            "return_call",
+          ],
+        ],
+      ] as const) {
+        expect(watInstructionOpcodes(body)).toEqual(expectedOpcodes);
+        expect(body.match(/\bstruct\.new\b/g) ?? []).toHaveLength(1);
+        expect(body).not.toContain("struct.set");
+        expect(body.match(/\breturn_call \d+\b/g) ?? []).toEqual([`return_call ${initIdx}`]);
+      }
+
+      // `_init` is the sole source-body owner. A derived init narrows the same
+      // receiver to the parent ABI, runs the parent init once, then writes only
+      // its own field; it never allocates a second instance.
+      expect(animalInit).not.toContain("struct.new");
+      expect(watInstructionOpcodes(animalInit)).toEqual([
+        "local.get",
+        "local.get",
+        "struct.set",
+        "local.get",
+        "local.get",
+        "struct.set",
+        "local.get",
+        "return",
+      ]);
+      expect(animalInit.match(/\bstruct\.set\b/g) ?? []).toHaveLength(2);
+      expect(dogInit).not.toContain("struct.new");
+      expect(watInstructionOpcodes(dogInit)).toEqual([
+        "local.get",
+        "local.get",
+        "local.get",
+        "ref.cast",
+        "call",
+        "drop",
+        "local.get",
+        "local.get",
+        "struct.set",
+        "local.get",
+        "return",
+      ]);
+      expect(dogInit.match(/\bstruct\.set\b/g) ?? []).toHaveLength(1);
+      expect(dogInit.match(new RegExp(`\\bcall ${animalInitIdx}\\b`, "g")) ?? []).toHaveLength(1);
+      expect(result.wat.match(new RegExp(`\\bstruct\\.new ${animalTypeIdx}\\b`, "g")) ?? []).toHaveLength(1);
+      expect(result.wat.match(new RegExp(`\\bstruct\\.new ${dogTypeIdx}\\b`, "g")) ?? []).toHaveLength(1);
+
+      // Preserve the lane's native class layout: f64 stays unboxed and strings
+      // use either the host carrier (gc) or `$AnyString` hierarchy (standalone).
+      const stringFieldType = target === "standalone" ? String.raw`\(ref null ${anyStringTypeIdx}\)` : "externref";
+      expect(watTypeDefinition(result.wat, "Animal")).toMatch(
+        new RegExp(
+          `\\(field \\$__priv_name \\(mut ${stringFieldType}\\)\\)[\\s\\S]*\\(field \\$__priv_age \\(mut f64\\)\\)`,
+        ),
+      );
+      expect(watTypeDefinition(result.wat, "Dog")).toMatch(
+        new RegExp(`\\(field \\$__priv_breed \\(mut ${stringFieldType}\\)\\)`),
+      );
+
+      for (const body of [animalNew, animalInit, dogNew, dogInit]) {
+        expect(body).not.toMatch(new RegExp(`\\bglobal\\.(?:get|set) ${currentThisIdx}\\b`));
+        expect(body).not.toMatch(
+          /__current_this|__extern_(?:get|set)|(?:return_)?call_ref|any\.convert_extern|extern\.convert_any|ref\.test/,
+        );
+      }
+      expect(result.irPostClaimErrors ?? []).toEqual([]);
+    },
+  );
+
+  it.each(["gc", "standalone"] as const)(
+    "keeps conditional, late, and repeated super constructors on the direct path in the %s lane",
+    async (target) => {
+      const cases = [
+        {
+          name: "ConditionalSuper",
+          body: `
+            constructor(value: number, branch: boolean) {
+              if (branch) super(value);
+              else super(value + 1);
+            }
+          `,
+        },
+        {
+          name: "LateSuper",
+          body: `
+            constructor(value: number) {
+              let adjusted: number = value + 1;
+              super(adjusted);
+            }
+          `,
+        },
+        {
+          name: "RepeatedSuper",
+          body: `
+            constructor(value: number) {
+              super(value);
+              super(value + 1);
+            }
+          `,
+        },
+      ] as const;
+      const previous = process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY;
+      try {
+        for (const unsafe of cases) {
+          const source = `
+            class Base {
+              value: number;
+              constructor(value: number) { this.value = value; }
+            }
+            class ${unsafe.name} extends Base {
+              ${unsafe.body}
+            }
+            export function marker(): number { return 1; }
+          `;
+          const fileName = `unsafe-${unsafe.name.toLowerCase()}-${target}.ts`;
+          Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
+          const direct = await compile(source, {
+            fileName,
+            experimentalIR: true,
+            trackIrOutcomes: true,
+            target,
+          });
+          expect(direct.success, direct.errors.map((error) => error.message).join("\n")).toBe(true);
+          expect(WebAssembly.validate(direct.binary)).toBe(true);
+          expect(classMemberOutcome(direct, `${unsafe.name}_new`)).toMatchObject({
+            kind: "unsupported",
+            stage: "select",
+            legacyBodyEmitted: true,
+            irBodyEmitted: false,
+          });
+          expect(direct.irPostClaimErrors ?? []).toEqual([]);
+
+          process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = `${unsafe.name}_new`;
+          const poisoned = await compile(source, {
+            fileName,
+            experimentalIR: true,
+            trackIrOutcomes: true,
+            target,
+          });
+          expect(poisoned.success).toBe(false);
+          expect(classMemberOutcome(poisoned, `${unsafe.name}_new`)).toMatchObject({
+            kind: "unsupported",
+            stage: "select",
+            legacyBodyEmitted: true,
+            irBodyEmitted: false,
+          });
+          expect(
+            poisoned.errors.some((error) =>
+              error.message.includes(`injected direct class-body poison: ${unsafe.name}_new`),
+            ),
+          ).toBe(true);
+        }
+      } finally {
+        if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
+        else process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = previous;
+      }
+    },
+  );
+
+  it.each(["gc", "standalone"] as const)(
+    "keeps constructor receiver calls on the virtual-dispatch direct path in the %s lane",
+    async (target) => {
+      const source = `
+        let observed: number = 0;
+        class A {
+          constructor() { this.tag(); }
+          tag(): void { observed = 1; }
+        }
+        class B extends A {
+          constructor() { super(); }
+          tag(): void { observed = 2; }
+        }
+        export function run(): number { new B(); return observed; }
+      `;
+      const fileName = `constructor-virtual-dispatch-${target}.ts`;
+      const previous = process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY;
+      try {
+        Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
+        const direct = await compile(source, {
+          fileName,
+          experimentalIR: true,
+          trackIrOutcomes: true,
+          target,
+        });
+        expect(direct.success, direct.errors.map((error) => error.message).join("\n")).toBe(true);
+        expect(WebAssembly.validate(direct.binary)).toBe(true);
+        expect(classMemberOutcome(direct, "A_new")).toMatchObject({
+          kind: "unsupported",
+          stage: "select",
+          legacyBodyEmitted: true,
+          irBodyEmitted: false,
+        });
+        expect((await instantiate(direct)).run!()).toBe(2);
+        expect(direct.irPostClaimErrors ?? []).toEqual([]);
+
+        process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = "A_new";
+        const poisoned = await compile(source, {
+          fileName,
+          experimentalIR: true,
+          trackIrOutcomes: true,
+          target,
+        });
+        expect(poisoned.success).toBe(false);
+        expect(
+          poisoned.errors.some((error) => error.message.includes("injected direct class-body poison: A_new")),
+        ).toBe(true);
+      } finally {
+        if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
+        else process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = previous;
+      }
+    },
+  );
+
+  it.each(["gc", "standalone"] as const)(
+    "keeps constructor receiver accessors on the direct dispatch path in the %s lane",
+    async (target) => {
+      const source = `
+        class A {
+          x: number;
+          constructor() {
+            this.value = 5;
+            this.x = this.value;
+          }
+          set value(next: number) { this.x = next; }
+          get value(): number { return this.x + 1; }
+        }
+        export function run(): number { return new A().x; }
+      `;
+      const fileName = `constructor-accessor-dispatch-${target}.ts`;
+      const previous = process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY;
+      try {
+        Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
+        const direct = await compile(source, {
+          fileName,
+          experimentalIR: true,
+          trackIrOutcomes: true,
+          target,
+        });
+        expect(direct.success, direct.errors.map((error) => error.message).join("\n")).toBe(true);
+        expect(WebAssembly.validate(direct.binary)).toBe(true);
+        expect(classMemberOutcome(direct, "A_new")).toMatchObject({
+          kind: "unsupported",
+          stage: "select",
+          legacyBodyEmitted: true,
+          irBodyEmitted: false,
+        });
+        expect((await instantiate(direct)).run!()).toBe(6);
+        expect(direct.irPostClaimErrors ?? []).toEqual([]);
+
+        process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = "A_new";
+        const poisoned = await compile(source, {
+          fileName,
+          experimentalIR: true,
+          trackIrOutcomes: true,
+          target,
+        });
+        expect(poisoned.success).toBe(false);
+        expect(
+          poisoned.errors.some((error) => error.message.includes("injected direct class-body poison: A_new")),
+        ).toBe(true);
+      } finally {
+        if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
+        else process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = previous;
+      }
+    },
+  );
+
+  it.each(["gc", "standalone"] as const)(
+    "keeps externref-backed constructors outside the prepared _new/_init split in the %s lane",
+    async (target) => {
+      const source = `
+        class NativeError extends Error {
+          code: number;
+          constructor(message: string, code: number) {
+            super(message);
+            this.code = code;
+          }
+        }
+        export function marker(): number { return 1; }
+      `;
+      const previous = process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY;
+      try {
+        Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
+        const direct = await compile(source, {
+          fileName: `externref-backed-constructor-${target}.ts`,
+          experimentalIR: true,
+          trackIrOutcomes: true,
+          emitWat: true,
+          target,
+        });
+        expect(direct.success, direct.errors.map((error) => error.message).join("\n")).toBe(true);
+        expect(WebAssembly.validate(direct.binary)).toBe(true);
+        expect(classMemberOutcome(direct, "NativeError_new")).toMatchObject({
+          kind: "unsupported",
+          stage: "select",
+          legacyBodyEmitted: true,
+          irBodyEmitted: false,
+        });
+        expect(direct.wat).not.toContain("(func $NativeError_init");
+        expect(direct.irPostClaimErrors ?? []).toEqual([]);
+
+        process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = "NativeError_new";
+        const poisoned = await compile(source, {
+          fileName: `externref-backed-constructor-${target}.ts`,
+          experimentalIR: true,
+          trackIrOutcomes: true,
+          target,
+        });
+        expect(poisoned.success).toBe(false);
+        expect(classMemberOutcome(poisoned, "NativeError_new")).toMatchObject({
+          kind: "unsupported",
+          stage: "select",
+          legacyBodyEmitted: true,
+          irBodyEmitted: false,
+        });
+        expect(
+          poisoned.errors.some((error) => error.message.includes("injected direct class-body poison: NativeError_new")),
+        ).toBe(true);
+      } finally {
+        if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
+        else process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = previous;
+      }
+    },
+  );
+
+  it.each(["gc", "standalone"] as const)(
+    "keeps a forward-class constructor parameter direct until its finalized ABI is exact in the %s lane",
+    async (target) => {
+      const source = `
+        class A { constructor(b: B) {} }
+        class B {}
+        export function marker(): number { return 1; }
+      `;
+      const previous = process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY;
+      try {
+        Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
+        const direct = await compile(source, {
+          fileName: `forward-class-constructor-param-${target}.ts`,
+          experimentalIR: true,
+          trackIrOutcomes: true,
+          target,
+        });
+        expect(direct.success, direct.errors.map((error) => error.message).join("\n")).toBe(true);
+        expect(WebAssembly.validate(direct.binary)).toBe(true);
+        expect(classMemberOutcome(direct, "A_new")).toMatchObject({
+          kind: "unsupported",
+          stage: "select",
+          legacyBodyEmitted: true,
+          irBodyEmitted: false,
+        });
+        expect(direct.irPostClaimErrors ?? []).toEqual([]);
+
+        process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = "A_new";
+        const poisoned = await compile(source, {
+          fileName: `forward-class-constructor-param-${target}.ts`,
+          experimentalIR: true,
+          trackIrOutcomes: true,
+          target,
+        });
+        expect(poisoned.success).toBe(false);
+        expect(classMemberOutcome(poisoned, "A_new")).toMatchObject({
+          kind: "unsupported",
+          stage: "select",
+          legacyBodyEmitted: true,
+          irBodyEmitted: false,
+        });
+        expect(
+          poisoned.errors.some((error) => error.message.includes("injected direct class-body poison: A_new")),
+        ).toBe(true);
+      } finally {
+        if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
+        else process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = previous;
+      }
+    },
+  );
 
   it("preserves typed receivers, private struct fields, direct super dispatch, and string concat", async () => {
     const source = readFileSync(new URL("../website/playground/examples/js/classes.ts", import.meta.url), "utf8");
