@@ -126,6 +126,46 @@ export function correlateIrSkippedBodyNames(
 }
 
 /**
+ * Reconcile the direct class-body seam against its authoritative UnitId
+ * population. Nested class members deliberately bypass the lossy physical-name
+ * projection, so duplicates, foreign observations, and omissions all fail
+ * closed here.
+ */
+export function correlateIrSkippedBodyUnitIds(
+  requestedUnitIds: ReadonlySet<IrUnitId>,
+  returnedUnitIds: readonly IrUnitId[],
+  kind: "class member",
+): ReadonlySet<IrUnitId> {
+  const completed = new Set<IrUnitId>();
+  for (const unitId of returnedUnitIds) {
+    if (!requestedUnitIds.has(unitId)) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `direct declaration compiler returned foreign skipped ${kind} ${unitId}`,
+      );
+    }
+    if (completed.has(unitId)) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `direct declaration compiler returned duplicate skipped ${kind} ${unitId}`,
+      );
+    }
+    completed.add(unitId);
+  }
+  const missing = [...requestedUnitIds].filter((unitId) => !completed.has(unitId));
+  if (missing.length > 0) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "resolve",
+      `direct declaration compiler omitted skipped ${kind} UnitIds: ${missing.join(", ")}`,
+    );
+  }
+  return completed;
+}
+
+/**
  * Correlate top-level function names returned by `compileDeclarations` only
  * against the requested projection. Foreign, duplicate, and missing results
  * all fail closed.
@@ -145,6 +185,7 @@ export function correlateIrSkippedFunctionNames(
 export function preparedIrBodyRouting(
   report: IrIntegrationReport,
   claimsByUnitId: ReadonlyMap<IrUnitId, IrExactBodyClaim>,
+  options: { readonly deferUnsupported?: boolean } = {},
 ): {
   readonly irOwnedUnitIds: ReadonlySet<IrUnitId>;
   readonly preparedUnitIds: ReadonlySet<IrUnitId>;
@@ -181,6 +222,14 @@ export function preparedIrBodyRouting(
       // without giving the direct emitter a retry. The declaration pass will
       // install only its non-shipping structural placeholder.
       irOwned.add(evidence.unitId);
+    } else if (options.deferUnsupported === true) {
+      // A typed Unsupported during early preparation is a soft withdrawal,
+      // not completed ownership. Let direct emission establish the remaining
+      // ABI, then include this exact owner in the ordinary post-direct IR
+      // population so free-function callers and dependencies are reconciled
+      // together. Prepared class members intentionally keep Unsupported as a
+      // terminal direct-only withdrawal.
+      deferred.add(evidence.unitId);
     }
   }
   return { irOwnedUnitIds: irOwned, preparedUnitIds: prepared, deferredUnitIds: deferred };

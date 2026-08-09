@@ -283,6 +283,7 @@ export function projectIrIntegrationLoweringPlans(
     readonly identityPlan: IrOverlayIdentityPlan;
     readonly overrideMapByUnitId: IrIntegrationLoweringPlans["signaturesByUnitId"];
     readonly directCalls?: IrIntegrationLoweringPlans["directCalls"];
+    readonly classShapesById?: IrIntegrationLoweringPlans["classShapesById"];
   } & Pick<
     IrIntegrationLoweringPlans,
     "importedCalls" | "topLevelFunctionValues" | "hostVoidCallbacks" | "promiseDelays" | "suspendingAsyncUnitIds"
@@ -290,6 +291,7 @@ export function projectIrIntegrationLoweringPlans(
   selection: {
     readonly funcs: ReadonlySet<string>;
     readonly classMembers?: ReadonlySet<string>;
+    readonly classMemberUnitIds?: ReadonlySet<IrUnitId>;
     readonly moduleInit?: { readonly stmtCount: number; readonly reason: string | null };
   },
 ): IrIntegrationLoweringPlans {
@@ -329,6 +331,7 @@ export function projectIrIntegrationLoweringPlans(
   }
   return {
     identityContext: plan.identityPlan.identityContext,
+    ...(plan.classShapesById ? { classShapesById: plan.classShapesById } : {}),
     ownerProjection,
     ownerUnitIdByLegacyName,
     directCalls,
@@ -349,6 +352,7 @@ export function buildIrIntegrationOwnerProjection(
   selection: {
     readonly funcs: ReadonlySet<string>;
     readonly classMembers?: ReadonlySet<string>;
+    readonly classMemberUnitIds?: ReadonlySet<IrUnitId>;
     readonly moduleInit?: { readonly stmtCount: number; readonly reason: string | null };
   },
 ): IrLegacyUnitProjection {
@@ -361,6 +365,7 @@ export function collectIrPreparedSelectionUnitIds(
   selection: {
     readonly funcs: ReadonlySet<string>;
     readonly classMembers?: ReadonlySet<string>;
+    readonly classMemberUnitIds?: ReadonlySet<IrUnitId>;
     readonly moduleInit?: { readonly stmtCount: number; readonly reason: string | null };
   },
 ): ReadonlySet<IrUnitId> {
@@ -372,6 +377,7 @@ function buildPreparedOwnerProjection(
   selection: {
     readonly funcs: ReadonlySet<string>;
     readonly classMembers?: ReadonlySet<string>;
+    readonly classMemberUnitIds?: ReadonlySet<IrUnitId>;
     readonly moduleInit?: { readonly stmtCount: number; readonly reason: string | null };
   },
   includeStaticClassMembers: boolean,
@@ -397,10 +403,27 @@ function buildPreparedOwnerProjection(
   };
 
   addSelected(selection.funcs, structural.funcs, "function");
-  addSelected(selection.classMembers, structural.classMembers, "class member", (unitId) => {
-    if (includeStaticClassMembers) return true;
-    return identityPlan.identityContext.terminalByUnitId.get(unitId)?.staticClassMember !== true;
-  });
+  const includeClassMember = (unitId: IrUnitId): boolean =>
+    includeStaticClassMembers || identityPlan.identityContext.terminalByUnitId.get(unitId)?.staticClassMember !== true;
+  if (selection.classMemberUnitIds !== undefined) {
+    const selectedLegacyNames = new Set<string>();
+    for (const unitId of selection.classMemberUnitIds) {
+      const claim = structural.classMembers?.get(unitId);
+      if (!claim || omitted.has(unitId)) {
+        mismatch(`prepared IR class member ${unitId} has no exact structural projection`);
+      }
+      if (!includeClassMember(unitId)) continue;
+      entries.push({ unitId, legacyName: claim.legacyMatchName });
+      selectedLegacyNames.add(claim.legacyMatchName);
+    }
+    for (const legacyName of selection.classMembers ?? []) {
+      if (!selectedLegacyNames.has(legacyName)) {
+        mismatch(`compatibility class-member name ${legacyName} has no selected exact owner`);
+      }
+    }
+  } else {
+    addSelected(selection.classMembers, structural.classMembers, "class member", includeClassMember);
+  }
 
   const moduleSelected = selection.moduleInit?.reason === null && (selection.moduleInit.stmtCount ?? 0) > 0;
   if (moduleSelected) {

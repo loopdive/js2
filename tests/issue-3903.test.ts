@@ -105,6 +105,32 @@ describe("#3903 host-call shim rewrite keeps string-method semantics", () => {
     ).toBe(1);
   });
 
+  it("keeps live prototype dispatch in the fixed-arity predicate adapter", async () => {
+    const result = await compile(`export function test(s: string): number {
+      return s.startsWith("world", 6) ? 1 : 0;
+    }`);
+    expect(result.success, result.errors.map((error) => error.message).join("; ")).toBe(true);
+
+    const original = String.prototype.startsWith;
+    let receiver: unknown;
+    let argsLength = -1;
+    String.prototype.startsWith = function (this: string, ...args: [search: string, position?: number]): boolean {
+      receiver = this;
+      argsLength = args.length;
+      return args[0] === "world" && args[1] === 6;
+    };
+    try {
+      const imports = buildImports(result.imports, undefined, result.stringPool);
+      const { instance } = await WebAssembly.instantiate(result.binary, imports);
+      imports.setExports?.(instance.exports as Record<string, Function>);
+      expect((instance.exports.test as (value: string) => number)("hello world")).toBe(1);
+      expect(receiver).toBe("hello world");
+      expect(argsLength).toBe(2);
+    } finally {
+      String.prototype.startsWith = original;
+    }
+  });
+
   it("treats an omitted `endPosition` on endsWith as the length", async () => {
     expect(
       await run(`export function test(): number {
