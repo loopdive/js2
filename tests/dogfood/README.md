@@ -53,6 +53,12 @@ node tests/dogfood/typescript-upstream-build-probe.mjs \
 
 node tests/dogfood/typescript-upstream-build-probe.mjs \
   --root /path/to/TypeScript-5.9.3 --mode bundle --timeout-ms 1800000 --heap-mb 4096 --json
+
+node tests/dogfood/typescript-upstream-build-probe.mjs \
+  --root /path/to/TypeScript-5.9.3 --mode source --entry js2-parser-workload.ts \
+  --consumer-driven-barrels --invoke-export runCase \
+  --invoke-string 'export const answer: number = 6 * 7;' \
+  --expected-number 308001 --timeout-ms 300000 --heap-mb 4096 --json
 ```
 
 `--mode source` selects `src/typescript/typescript.ts`; `--mode bundle`
@@ -60,7 +66,11 @@ selects `lib/typescript.js`. Pass `--entry <path-relative-to-root>` for a
 narrow upstream-source entry such as a parser workload. The probe defaults to
 a 30-minute budget, a 4 GiB worker heap, and 30-second heartbeats. It reports
 compile and validation separately and never treats elapsed CPU time or a valid
-binary as a package test pass.
+binary as a package test pass. `--consumer-driven-barrels` is an explicit,
+default-off source-tree specialization experiment. When `--invoke-export` is
+provided, the probe passes `--invoke-string` at runtime and requires the result
+to equal `--expected-number`; a source literal folded during compilation cannot
+satisfy that check.
 
 The original package-specific harnesses, plus the deeper Acorn conformance
 check, are:

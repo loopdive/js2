@@ -12,6 +12,11 @@ goal: compiler-architecture
 sprint: Backlog
 depends_on: [1042, 1044, 1046]
 required_by: [1059, 1066, 1165, 1584]
+loc-budget-allow:
+  # The stacked TypeScript-source validation branch includes #4267/#4268's
+  # overload-owner fixes in the declaration driver. The pruning subsystem
+  # itself lives in src/resolve/consumer-driven-barrels.ts.
+  - src/codegen/declarations.ts
 ---
 # #1058 — Compile the TypeScript compiler to Wasm (self-hosting stress test)
 
@@ -253,20 +258,74 @@ of the compiler. Direct parser source removes the `services`, `server`, and
 `jsTyping` graphs (280 → 82 inputs), but the current recursive resolver retains
 every re-export instead of only the named bindings consumed by the parser.
 
+### Consumer-driven specialization slice
+
+The first #1046-shaped slice is now implemented as an explicit
+`resolve.consumerDrivenBarrels` mode. It tracks named demand through pure
+import/re-export barrels, derives demand from static namespace property reads,
+and specializes ordinary provider files by blanking unreachable function and
+type declarations while preserving line positions. A dynamic namespace use,
+an incomplete/cyclic export surface, or a side-effect-only import retains the
+full edge. The option remains **off by default**: opting in is the caller's
+explicit assertion that unused import/re-export targets and unreachable
+declaration bodies in the generated source tree do not have required
+initialization effects.
+
+On the exact upstream `v5.9.3` parser wrapper this reduces the graph from **82
+input files / 86 Program files to 31 input files / 35 Program files**. The
+selected graph no longer contains the emitter, build, watch, or language-service
+subsystems. `checker.ts` is still present only for the `getNodeId` leaf used by
+`nodeFactory`; specialization blanks 98.3% of its non-whitespace source
+(2,178,565 → 38,005 characters). The largest remaining provider is
+`nodeFactory.ts`: its single demanded factory returns a large method object, so
+declaration-level specialization cannot yet remove individual returned
+properties.
+
+The probe now accepts an invocation export, a runtime string, and a numeric
+oracle. This keeps the parser input dynamic instead of embedding it in the
+wrapper. Native TypeScript returns **308001** for
+`"export const answer: number = 6 * 7;"` and **308002** for
+`"let a = 1; let b = 2;"`; a future Wasm success must invoke the compiled
+`runCase(sourceText)` export and match the requested value before the probe can
+pass.
+
+With the four generic overload fixes (#4267, #4268, #4270, #4272) layered for
+validation, the specialized static-input wrapper reached final codegen in
+251,093 ms at 555.5 MiB peak observed RSS instead of timing out at 900,028 ms
+and 1,308.7 MiB on the unspecialized graph. It exposed two generic finalization
+gaps: nested `InterfaceDeclaration` statements were incorrectly reported as
+runtime statements, and the constant-box walker revisited shared instruction
+arrays once per incoming edge. Focused fixes now ignore nested type-only
+declarations and visit instruction-array DAG nodes once.
+
+The authoritative **dynamic-input** run still produces no binary. With the
+same 31-file graph it remained CPU-active through a 300,300 ms cap (264,014 ms
+CPU, 609.5 MiB peak RSS) after compiling 3,252 function bodies. Disabling
+constant-box hoisting also timed out after the last profiled
+`declared-func-refs` phase (300,083 ms, 206,033 ms CPU, 643.6 MiB peak), proving
+that the residual finalization tail is not solely that pass. Consequently
+there is still **no 308001 Wasm parity claim**. The next leverage is
+consumer-driven property specialization of returned method tables—especially
+`createNodeFactory`—plus phase-level profiling of the post-body finalizers.
+
 ### Decision
 
 Keep the upstream TypeScript source route as the migration substrate, but do
 not replace the npm-compat package result with it and do not claim that
-TypeScript compiles. The next leverage is generic **consumer-driven barrel
-pruning** or #1046's **separate-module compilation** so `parser.ts` can link
-only the providers of the names it imports. Raising the timeout or heap alone
-does not close the gap; the 4 GiB / 30-minute run proves that.
+TypeScript compiles. Land consumer-driven specialization as a measurable,
+default-off #1046 slice: it removes 51 irrelevant files and more than halves
+peak memory, but the remaining returned-method table and finalization work
+still prevent a binary. Raising the timeout or heap alone does not close the
+gap; both the 4 GiB / 30-minute full-source run and the 31-file dynamic run
+prove that.
 
 ## Acceptance criteria
 
 - [ ] `scripts/ts-compiler-stress.ts` exists and runs against a local `typescript` install
 - [ ] Tier 2 (leaf modules: `core.ts`, `path.ts`) compiles cleanly
 - [ ] Tier 3 attempted — even a partial compile produces valuable error data
+- [x] Consumer-driven source resolution narrows the parser graph with default
+      resolution unchanged and focused static/dynamic-demand tests
 - [ ] ≥ 5 follow-up issues filed for concrete gap patterns
 - [ ] Results document the real-package compile rate, not hand-written toy subset (supersedes #452's scope)
 - [ ] **Stretch 1 (Tier 3):** compiled scanner+parser produces AST shape-equivalent to native ts for ≥ 3 real `.ts` files

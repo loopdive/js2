@@ -119,8 +119,16 @@ function constKey(value: number): string {
 function everyArray(instrs: Instr[]): Instr[][] {
   const out: Instr[][] = [];
   const stack: Instr[][] = [instrs];
+  // Instruction builders may reuse one immutable child array in more than one
+  // branch.  The resulting object graph is a DAG even though the emitted Wasm
+  // is a tree.  Visiting the shared array once per incoming edge makes this
+  // collection exponential (and a malformed cycle would never terminate),
+  // while rewriting the array once is both sufficient and required.
+  const visited = new WeakSet<Instr[]>();
   while (stack.length > 0) {
     const arr = stack.pop()!;
+    if (visited.has(arr)) continue;
+    visited.add(arr);
     out.push(arr);
     for (const instr of arr) walkChildren(instr, (child) => stack.push(child));
   }

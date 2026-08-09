@@ -324,6 +324,13 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
     return;
   }
 
+  // Type-only declarations have no runtime evaluation. They normally disappear
+  // in the top-level declaration pass, but can reach this statement compiler
+  // from a namespace/module block or another nested statement list.
+  if (ts.isInterfaceDeclaration(stmt) || ts.isTypeAliasDeclaration(stmt)) {
+    return;
+  }
+
   // `debugger;` — no-op. Per ECMA-262 §13.16, DebuggerStatement evaluation may
   // trigger a breakpoint if an implementation-defined debugging facility is
   // available, and otherwise "has no observable effect". Wasm exposes no such

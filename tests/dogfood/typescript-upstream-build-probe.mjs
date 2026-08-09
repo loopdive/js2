@@ -40,6 +40,14 @@ async function runMain() {
   const timeoutMs = numericOption("--timeout-ms", DEFAULT_TIMEOUT_MS);
   const heartbeatMs = numericOption("--heartbeat-ms", DEFAULT_HEARTBEAT_MS);
   const heapMb = numericOption("--heap-mb", DEFAULT_HEAP_MB);
+  const consumerDrivenBarrels = process.argv.includes("--consumer-driven-barrels");
+  const invokeExport = optionValue("--invoke-export");
+  const invokeString = optionValue("--invoke-string");
+  const expectedNumberRaw = optionValue("--expected-number");
+  const expectedNumber = expectedNumberRaw === null ? null : Number(expectedNumberRaw);
+  if (expectedNumberRaw !== null && !Number.isFinite(expectedNumber)) {
+    throw new Error("--expected-number expects a finite number");
+  }
   const jsonOnly = process.argv.includes("--json");
   if (!existsSync(entry)) throw new Error(`TypeScript ${mode} entry does not exist: ${entry}`);
 
@@ -55,7 +63,7 @@ async function runMain() {
   const profileCounts = {};
 
   const worker = new Worker(new URL("./typescript-upstream-build-worker.mjs", import.meta.url), {
-    workerData: { entry, mode },
+    workerData: { entry, mode, consumerDrivenBarrels, invokeExport, invokeString, expectedNumber },
     stderr: true,
     env: { ...process.env, JS2WASM_COMPILE_PROFILE: "stream" },
     resourceLimits: { maxOldGenerationSizeMb: heapMb },
@@ -137,6 +145,9 @@ async function runMain() {
     elapsedMs,
     timeoutMs,
     heapLimitMiB: heapMb,
+    consumerDrivenBarrels,
+    invokeExport,
+    expectedNumber,
     timedOut,
     workerExitCode,
     cpuMs,
