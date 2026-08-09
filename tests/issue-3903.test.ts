@@ -25,6 +25,36 @@ async function run(source: string, fn = "test", deps?: Record<string, unknown>):
 }
 
 describe("#3903 host-call shim rewrite keeps string-method semantics", () => {
+  it("keeps dynamic string receivers on the live prototype path", async () => {
+    const original = String.prototype.indexOf;
+    let receiver: unknown;
+    String.prototype.indexOf = function (this: string, search: string): number {
+      receiver = this;
+      return search === "b" ? 42 : original.call(this, search);
+    };
+    try {
+      expect(
+        await run(`export function test(): number {
+          const s: any = "abc";
+          return s.indexOf("b");
+        }`),
+      ).toBe(42);
+      expect(receiver).toBe("abc");
+    } finally {
+      String.prototype.indexOf = original;
+    }
+  });
+
+  it("falls back to WasmGC argument coercion", async () => {
+    expect(
+      await run(`export function test(): number {
+        const key = { toString(): string { return "b"; } };
+        const s: any = "abc";
+        return s.indexOf(key);
+      }`),
+    ).toBe(1);
+  });
+
   // The arity switch replaced `recvStr[method](...args)`. Each arm has to stay
   // a *member call* on the receiver, so a real `this` still reaches the method.
   it("passes the receiver as `this` for a zero-arg method", async () => {
