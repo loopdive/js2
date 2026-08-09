@@ -3914,11 +3914,19 @@ export function compileObjectKeysOrValues(
   // Resolve struct name from the argument type
   const structName = argIsHostObjectVar ? undefined : resolveStructName(ctx, argType);
   if (!structName) {
-    // Check if the type is an empty object literal (not any/unknown) — if so,
-    // compile away to an empty array since there's nothing to enumerate.
+    // Only a FRESH syntactic `{}` proves an empty own-key set. A variable or
+    // parameter whose checker type has zero declared properties is not such a
+    // proof: `{}` is a structural TypeScript type and the runtime object may
+    // have received computed writes (Redux's `nextState[key] = value`) or may
+    // have arrived from a caller with arbitrary own properties. Folding those
+    // expressions to `[]` loses observable mutations. Keep the allocation-free
+    // fast path for the direct literal and send every other zero-property value
+    // through the runtime own-key operation.
     const isAnyOrUnknown = (argType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
     const tsProps = argType.getProperties?.();
-    if (!isAnyOrUnknown && tsProps && tsProps.length === 0) {
+    const unwrappedArg = unwrapTransparentExpression(arg);
+    const isFreshEmptyLiteral = ts.isObjectLiteralExpression(unwrappedArg) && unwrappedArg.properties.length === 0;
+    if (!isAnyOrUnknown && tsProps && tsProps.length === 0 && isFreshEmptyLiteral) {
       const argResult = compileExpression(ctx, fctx, arg);
       if (argResult) {
         fctx.body.push({ op: "drop" });

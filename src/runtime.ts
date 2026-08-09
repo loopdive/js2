@@ -1556,6 +1556,24 @@ function _denseOwnArgs(args: ArrayLike<any>, length: number): any[] {
   return dense;
 }
 
+// Arguments crossing from a host callback back into a compiled closure may be
+// live `_wrapForHost` proxies for WasmGC structs. The closure dispatch exports
+// accept the underlying typed structs, not their JS-facing proxy views. Build
+// the same prototype-safe dense argument list as `_denseOwnArgs`, while
+// restoring each proxy to its canonical Wasm value at this boundary.
+function _denseOwnWasmArgs(args: ArrayLike<any>, length: number): any[] {
+  const dense = _denseOwnArgs(args, length);
+  for (let i = 0; i < length; i++) {
+    _intrinsicReflectDefineProperty(dense, i, {
+      value: _unwrapForHost(dense[i]),
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  }
+  return dense;
+}
+
 function _hostEqComparableValue(v: any): any {
   if (typeof v === "function") {
     return _wasmClosureWrapperTargets.get(v as Function) ?? v;
@@ -1676,7 +1694,7 @@ function _wrapWasmClosure(
     }
     // Pad with undefined to exactly `arity` positional args. Extra args
     // dropped (JS spec for fewer/more args than declared params).
-    const padded = _denseOwnArgs(args, arity);
+    const padded = _denseOwnWasmArgs(args, arity);
     if (this !== undefined && this !== globalThis) {
       // (#2838 L3) Method-`this` dispatch. Prefer the exact-arity method
       // dispatcher; when it is ABSENT, fall back to the HIGHEST available
@@ -1706,7 +1724,7 @@ function _wrapWasmClosure(
       }
       if (methodArity >= 0) {
         const methodCallFn = exports![`__call_fn_method_${methodArity}`]!;
-        const methodPadded = _denseOwnArgs(args, methodArity);
+        const methodPadded = _denseOwnWasmArgs(args, methodArity);
         const rawThis = this !== null && typeof this === "object" ? _unwrapForHost(this) : this;
         const receiver = _isWasmStruct(rawThis) ? rawThis : this;
         // The ordinary method dispatcher intentionally consumes a pre-seeded
@@ -1833,7 +1851,7 @@ function _wrapWasmClosureUnknownArity(
       }
       const methodCallFn = exports[`__call_fn_method_${dispatchArity}`];
       if (typeof methodCallFn === "function") {
-        const padded = _denseOwnArgs(args, dispatchArity);
+        const padded = _denseOwnWasmArgs(args, dispatchArity);
         // (#2015) Unwrap a `_wrapForHost` proxy receiver back to its raw WasmGC
         // struct before installing it as `__current_this`. `__extern_method_call`
         // dispatches `fn.apply(wrappedObj, …)` with `wrappedObj` being the host
@@ -1858,7 +1876,7 @@ function _wrapWasmClosureUnknownArity(
     while (arity > 0 && typeof exports[`__call_fn_${arity}`] !== "function") arity--;
     const callFn = exports[`__call_fn_${arity}`];
     if (typeof callFn !== "function") return undefined;
-    const padded = _denseOwnArgs(args, arity);
+    const padded = _denseOwnWasmArgs(args, arity);
     return marshalNew(callFn(closure, ...padded));
   };
   // (#3429) Surface the closure's real declared `.name`/`.length` (codegen's
@@ -2086,18 +2104,14 @@ function _maybeWrapCallableUnknownArity(
   return _wrapWasmClosureUnknownArity(val, callbackState) ?? val;
 }
 
-/**
- * The generic host bridge cannot synthesize the Wasm vec backing a source rest
- * parameter. Wrapping `(...args) => …` therefore makes Proxy's positional host
- * arguments hit a concrete-vec `ref.cast`, turning the pre-existing "not a
- * function" limitation into an uncatchable `illegal cast`. Use the emitted
- * source-shape discriminator before exposing a callable; ordinary zero- and
- * nonzero-arity functions remain bridgeable.
- */
 function _maybeWrapAccessorGetterCallable(
   val: any,
   callbackState?: { getExports: () => Record<string, Function> | undefined },
 ): any {
+  // Accessor-returned rest closures can share a signature wrapper with an
+  // ordinary vec-parameter closure. Until that accessor-specific classifier
+  // is allocation-exact, keep its conservative no-wrap behavior; ordinary
+  // property/export bridges use the rest-packing dispatchers directly.
   if (val != null && typeof val === "object" && callbackState) {
     const hasRest = callbackState.getExports()?.__closure_has_rest as ((v: any) => number) | undefined;
     if (typeof hasRest === "function" && hasRest(val) === 1) return val;
@@ -4568,8 +4582,13 @@ function _safeGet(
       if (protoDesc.get) return protoDesc.get.call(_hostProxyCache.get(obj) ?? obj);
       return rawCallable ? protoDesc.value : _maybeWrapCallableUnknownArity(protoDesc.value, callbackState);
     }
-    // Fall back to native access (e.g. Symbol.iterator set directly on the struct)
-    return obj[key];
+    // V8 exposes an opaque WasmGC struct miss as `null` on some versions.
+    // That is not an own value: compiled writes live in the sidecar above and
+    // declared fields are recovered by `__extern_get`'s generated getter after
+    // this helper reports a miss. Normalize only that opaque native miss to
+    // JavaScript `undefined`; a real null sidecar/field still round-trips.
+    const native = obj[key];
+    return native === null ? undefined : native;
   }
   const direct = obj[key];
   if (direct !== undefined) return direct;
@@ -10440,24 +10459,19 @@ assert._isSameValue = isSameValue;
               // (#2179) Static struct fields — UNCHANGED legacy filter (drop
               // deleted keys + non-enumerable redefinitions).
               if (fieldNames) for (const k of fieldNames) if (isEnumerable(k)) result.push(k);
-              // (#2746) ADD own ENUMERABLE keys introduced via
-              // `Object.defineProperty` BEYOND the static struct shape — e.g.
-              // `Object.defineProperty(obj, "prop3", {enumerable:true})` on an
-              // object whose literal declared only prop1/prop2. Gate on a
-              // descriptor-table entry (`_wasmPropDescs`): defineProperty records
-              // one, a plain dynamic write (`obj.x = 1`) does NOT. This keeps the
-              // enumeration consistent with the for-in path (which likewise does
-              // not surface plain dynamic-write sidecar props on a struct), so we
-              // don't make `Object.keys` over-report relative to for-in (which
-              // would break tests that compare the two — e.g. keys of a `Date`
-              // with `obj.prop1 = …`). Accessor bookkeeping keys
-              // (`__get_<p>`/`__set_<p>`) are skipped. This only ADDS keys the old
-              // path omitted, so the legacy struct-field result cannot regress.
-              if (sc && descs) {
+              // Dynamic assignment creates an ordinary enumerable own data
+              // property even when the compiler's fixed struct shape has no
+              // slot for the key. Those values live in `_wasmStructProps` and
+              // have no descriptor-table entry (absence means the default
+              // writable+enumerable+configurable attributes). Enumerate every
+              // such sidecar key, while honoring an explicit non-enumerable
+              // descriptor and hiding accessor implementation bookkeeping.
+              // Redux's `finalReducers[key] = reducer` depends on this exact
+              // Object.keys round trip.
+              if (sc) {
                 for (const k of Object.getOwnPropertyNames(sc)) {
                   if (k.startsWith("__get_") || k.startsWith("__set_")) continue;
                   if (result.includes(k) || (fieldNames && fieldNames.includes(k))) continue;
-                  if (!descs.has(_normalizeDescKey(k))) continue; // defineProperty'd only
                   if (isEnumerable(k)) result.push(k);
                 }
               }
@@ -15121,9 +15135,31 @@ assert._isSameValue = isSameValue;
       return (v: any) => v;
     case "dynamic_import":
       return (specifier: any) => import(/* @vite-ignore */ specifier);
-    case "typeof_check":
+    case "typeof_check": {
+      // (#3996) A compiled closure crossing an externref boundary is an opaque
+      // WasmGC object to JavaScript, so the host's native `typeof` reports
+      // "object" even though the value has ECMAScript [[Call]]. The module's
+      // generated discriminator has the complete closure-type census and is
+      // wired through setInstance after instantiation. Consult it for the two
+      // overlapping categories; ordinary host values stay on native typeof.
+      const isCompiledClosure = (value: any): boolean => {
+        const classifier = callbackState?.getExports()?.__is_closure;
+        if (typeof classifier !== "function") return false;
+        try {
+          return classifier(value) === 1;
+        } catch {
+          return false;
+        }
+      };
+      if (intent.targetType === "function") {
+        return (v: any) => (typeof v === "function" || isCompiledClosure(v) ? 1 : 0);
+      }
+      if (intent.targetType === "object") {
+        return (v: any) => (typeof v === "object" && !isCompiledClosure(v) ? 1 : 0);
+      }
       // biome-ignore lint/suspicious/useValidTypeof: targetType is a runtime string from compiled code
       return (v: any) => (typeof v === intent.targetType ? 1 : 0);
+    }
     case "box":
       if (intent.targetType === "boolean") return (v: number) => Boolean(v);
       // (#1644) __box_bigint: JS-BigInt-integration already delivers the wasm
@@ -16230,14 +16266,10 @@ export function buildImports(
  * `__call_fn_N` exports the codegen emits (`__call_fn_0` for zero-arg
  * closures, `__call_fn_1` for one-arg).
  *
- * Limitations / scope:
- * - 0-arg closure returns: `wrapped()` works via `__call_fn_0`.
- * - 1-arg closure returns: `wrapped(x)` works via `__call_fn_1`.
- * - Variadic closures (`function(...args){...}`) are lifted as 0-arg
- *   functions whose body reads `arguments`. Without a JS-side path to
- *   populate `__extras_argv` + `__argc` before invoking, calling
- *   `wrapped(2)` falls through to `__call_fn_0` and the closure body
- *   sees an empty arguments object. Tracked as a follow-up.
+ * Scope:
+ * - Returned closures dispatch through the highest available arity bridge.
+ * - Source rest parameters are packed into their internal Wasm vec by those
+ *   bridges, while `__argc` / `__extras_argv` preserve `arguments` semantics.
  * - Returned value from the wrapped closure that is itself a Wasm
  *   struct is NOT recursively wrapped — only direct returns from
  *   top-level exports. Recursive wrapping can be added if needed.
@@ -16363,6 +16395,11 @@ export function wrapExports(
 
   // Build a JS-callable wrapper around a Wasm closure struct.
   const makeCallableClosureWrapper = (closure: any): ((...args: any[]) => any) => {
+    const hasRest = exportsForMarshal.__closure_has_rest as ((value: any) => number) | undefined;
+    if (typeof hasRest === "function" && hasRest(closure) === 1) {
+      const dynamic = _wrapWasmClosureUnknownArity(closure, { getExports: () => exportsForMarshal });
+      if (dynamic) return dynamic;
+    }
     return function (this: any, ...args: any[]): any {
       if (args.length === 1 && typeof callFn1 === "function") {
         return callFn1(closure, args[0]);

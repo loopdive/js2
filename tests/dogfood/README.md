@@ -24,7 +24,7 @@ lane substitutes harness-authored smoke vectors or implies that validation is a
 test pass. Matching upstream source suites can be pinned and adapted package by
 package, following the existing Acorn/React precedent.
 
-ESLint and jsdom are the two explicit runtime-workload exceptions. Their npm
+ESLint, jsdom, and Redux are the explicit runtime-workload exceptions. Their npm
 tarballs still omit the upstream suites, but each has a separate API workload
 that is only scored after the generated Wasm driver actually runs and matches
 a native Node oracle. A compile timeout or invalid module remains an
@@ -52,6 +52,7 @@ check, are:
 | **react upstream suite**                | —     | `cjs/react.production.js` | React's own real `packages/react/src/__tests__` unit tests                  |
 | **react-dom upstream suite**             | #3982 | `cjs/react-dom*.js`       | ReactDOM's own real `packages/react-dom/src/__tests__` unit tests            |
 | **uuid upstream suite**                 | #3995 | `dist/index.js`           | UUID's own 75 `src/test/*.test.ts` cases                                    |
+| **redux** (state container)             | #3996 | `dist/redux.mjs`          | consumed store/reducer/subscription/action-creator API workload             |
 
 ## uuid v14.0.1 upstream suite (#3995)
 
@@ -68,6 +69,18 @@ one Wasm module per file; the shared table helper is pinned alongside the test
 files. The 2026-08-09 baseline is **75/75 native, 6/75 Wasm** (exact runtime
 denominator 75). Every failure remains in the JSON report, including the
 invalid `v35` binary and v1/validate/version runtime traps.
+
+## Redux 5.0.1 API workload (#3996)
+
+```bash
+pnpm run dogfood:redux-workload
+```
+
+The generated driver imports the pinned published bundle and consumes
+`combineReducers`, `createStore`, `subscribe`, and `bindActionCreators`. It
+returns one numeric summary after dispatch and unsubscribe operations; the
+same operations run against the installed package in native Node. This is an
+API workload, not a substitute for Redux's original upstream suite.
 
 ## acorn (#1710)
 

@@ -3060,7 +3060,15 @@ export function compileArrowAsClosure(
     : recordDirectCallGeneric(ctx, arrow, closureName, structTypeIdx, liftedParams, closureResults);
 
   // 7. At the creation site, emit struct.new with funcref + arity + captured values.
-  emitClosureConstruction(ctx, fctx, captures, liftedFuncIdx, structTypeIdx, arrowParams.length);
+  const hasRestParam = runtimeParameters(arrow).some((param) => param.dotDotDotToken !== undefined);
+  emitClosureConstruction(
+    ctx,
+    fctx,
+    captures,
+    liftedFuncIdx,
+    structTypeIdx,
+    hasRestParam ? Math.max(0, arrowParams.length - 1) : arrowParams.length,
+  );
   if (directGenericGlobalIdx !== undefined) {
     // Keep one typed handle to the exact closure instance installed on the
     // write-once prototype. The assignment still consumes the same value:

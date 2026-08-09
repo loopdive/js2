@@ -3732,6 +3732,7 @@ export function tryEmitInlineDynamicCall(
   // captured, so the capture happens after every import insertion this
   // function performs (the stale-capture hazard the note above describes).
   if (!ctx.standalone && !ctx.wasi) {
+    ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
     ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
     ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
     ensureLateImport(
@@ -3754,7 +3755,7 @@ export function tryEmitInlineDynamicCall(
   // null externref alike).
   const maxFormals = candidates.reduce((m, c) => Math.max(m, c.info.paramTypes.length), 0);
   const needsUndefinedPad = maxFormals > arity;
-  const needsUndefined = needsUndefinedPad || wantProxyArm || wantApplyFallback;
+  const needsUndefined = needsUndefinedPad || wantProxyArm || wantApplyFallback || (!ctx.standalone && !ctx.wasi);
   const undefinedIdx = needsUndefined ? ensureGetUndefined(ctx) : undefined;
   const undefinedSingletonPad = needsUndefined && undefinedIdx === undefined ? undefinedExternInstrs(ctx) : undefined;
   // (#2611) Flush the deferred late-import shift NOW — every other late-import
@@ -3784,6 +3785,7 @@ export function tryEmitInlineDynamicCall(
   // stale-capture note above).
   const boxNumberIdx = ctx.funcMap.get("__box_number");
   const unboxNumberIdx = ctx.funcMap.get(UNBOX_NUMBER);
+  const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
   if (boxNumberIdx === undefined || unboxNumberIdx === undefined) return null;
 
   // (#3031) Materialize the Proxy [[Call]] pieces while the gate is live. The
@@ -3911,7 +3913,7 @@ export function tryEmitInlineDynamicCall(
       }
       hostArm.push({ op: "local.get", index: anyLocal });
       hostArm.push({ op: "extern.convert_any" });
-      hostArm.push({ op: "ref.null.extern" }); // thisArg — undefined for a bare call
+      pushDynamicUndefinedExternref(hostArm, undefinedIdx, undefinedSingletonPad); // bare-call thisArg
       hostArm.push({ op: "local.get", index: hostArgsLocal });
       hostArm.push({ op: "call", funcIdx: callFn });
       dispatch = hostArm;
@@ -4004,7 +4006,8 @@ export function tryEmitInlineDynamicCall(
         // Missing arg → `undefined`. For ref/ref_null formals there is no
         // valid concrete struct to cast `undefined` to; pass the typed null.
         if (pType.kind === "f64") {
-          callBody.push({ op: "f64.const", value: Number.NaN });
+          callBody.push({ op: "i64.const", value: 0x7ff00000deadc0den });
+          callBody.push({ op: "f64.reinterpret_i64" });
         } else if (pType.kind === "i32") {
           callBody.push({ op: "i32.const", value: 0 });
         } else if (pType.kind === "externref") {
@@ -4016,7 +4019,20 @@ export function tryEmitInlineDynamicCall(
       }
       callBody.push({ op: "local.get", index: argLocals[i]! });
       if (pType.kind === "f64") {
-        callBody.push({ op: "call", funcIdx: unboxNumberIdx });
+        if (isUndefinedIdx === undefined) {
+          callBody.push({ op: "call", funcIdx: unboxNumberIdx });
+        } else {
+          callBody.push({ op: "call", funcIdx: isUndefinedIdx });
+          callBody.push({
+            op: "if",
+            blockType: { kind: "val", type: { kind: "f64" } },
+            then: [{ op: "i64.const", value: 0x7ff00000deadc0den }, { op: "f64.reinterpret_i64" }],
+            else: [
+              { op: "local.get", index: argLocals[i]! },
+              { op: "call", funcIdx: unboxNumberIdx },
+            ],
+          });
+        }
       } else if (pType.kind === "i32") {
         callBody.push({ op: "call", funcIdx: unboxNumberIdx });
         callBody.push({ op: "i32.trunc_sat_f64_s" });

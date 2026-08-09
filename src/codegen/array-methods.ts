@@ -64,7 +64,13 @@ import { filterSelectStage, overlayFilterAccess } from "./array-filter-spec-acce
 import { allocJoinFoldLocals, emitStringJoinFold, hostStringRepr, nativeStringRepr } from "./builtin-scaffold.js";
 import { ensureTimsortHelper } from "./timsort.js";
 import { emitStableMergeSort } from "./merge-sort.js"; // (#3902) shared stable O(n log n) sort skeleton
-import { coerceType, coercionInstrs, defaultValueInstrs, emitGuardedRefCast } from "./type-coercion.js";
+import {
+  buildVecFromExternref,
+  coerceType,
+  coercionInstrs,
+  defaultValueInstrs,
+  emitGuardedRefCast,
+} from "./type-coercion.js";
 import { staticIntegerRange } from "./analysis/static-numeric-range.js";
 import { tryEmitStaticI32Expression } from "./i32-static-range-expr.js";
 
@@ -1666,7 +1672,7 @@ export function compileArrayMethodCall(
     // plus ref/ref_null elements when the callback is a provable closure (#3126).
     case "filter":
       result = hofElemKindOk(elemType)
-        ? compileArrayFilter(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+        ? compileArrayFilter(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType, receiverIsExternref)
         : undefined;
       break;
     case "map":
@@ -1699,7 +1705,7 @@ export function compileArrayMethodCall(
       break;
     case "forEach": {
       const feResult = hofElemKindOk(elemType)
-        ? compileArrayForEach(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+        ? compileArrayForEach(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType, receiverIsExternref)
         : undefined;
       // forEach returns void; use VOID_RESULT so compileExpression doesn't rollback
       result = feResult === null ? (VOID_RESULT as any) : feResult;
@@ -5135,6 +5141,7 @@ function setupArrayLoop(
   arrTypeIdx: number,
   elemType: ValType,
   tag: string,
+  receiverIsExternref = false,
 ): ArrayLoopLocals {
   // (#2001 S1) When the per-iteration callback value-mapping (`$Hole →
   // undefined`, built as detached instrs in `buildClosureCallInstrs`) may run,
@@ -5147,7 +5154,24 @@ function setupArrayLoop(
     ensureGetUndefined(ctx);
     flushLateImportShifts(ctx, fctx);
   }
-  compileExpression(ctx, fctx, propAccess.expression);
+  const receiverType = compileExpression(
+    ctx,
+    fctx,
+    propAccess.expression,
+    receiverIsExternref ? { kind: "externref" } : undefined,
+  );
+
+  // (#3996) A dynamically typed producer such as `Object.keys(any)` returns a
+  // real JavaScript array (externref) in the JS-host lane. The callback HOFs
+  // operate on the compiler's canonical WasmGC vec representation; casting
+  // that host array to a vec traps before the first callback. Materialize the
+  // cross-representation receiver once through the same externref→vec path
+  // used by assignments and destructuring.
+  if (receiverIsExternref && receiverType?.kind === "externref") {
+    const externTmp = allocLocal(fctx, `__arr_${tag}_extern_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "local.set", index: externTmp });
+    fctx.body.push(...buildVecFromExternref(ctx, fctx, externTmp, vecTypeIdx, { arrTypeIdx, elemType }));
+  }
 
   const vecTmp = allocLocal(fctx, `__arr_${tag}_vec_${fctx.locals.length}`, {
     kind: "ref_null",
@@ -5721,6 +5745,7 @@ function compileArrayFilter(
   vecTypeIdx: number,
   arrTypeIdx: number,
   elemType: ValType,
+  receiverIsExternref = false,
 ): ValType | null {
   // ES spec: throw TypeError if callback is not a function
   if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.filter")) {
@@ -5735,7 +5760,7 @@ function compileArrayFilter(
   const resLen = allocLocal(fctx, `__arr_flt_rl_${fctx.locals.length}`, { kind: "i32" });
   const elemTmp = allocLocal(fctx, `__arr_flt_el_${fctx.locals.length}`, elemType);
 
-  const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "flt");
+  const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "flt", receiverIsExternref);
 
   // §15.4.4.20 step 3: `len` is captured ONCE — see array-filter-spec-access.ts
   // for why the overlay route walks the LOGICAL length and the dense route the
@@ -6376,6 +6401,7 @@ function compileArrayForEach(
   vecTypeIdx: number,
   arrTypeIdx: number,
   elemType: ValType,
+  receiverIsExternref = false,
 ): ValType | null {
   // ES spec: throw TypeError if callback is not a function
   if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.forEach")) {
@@ -6386,7 +6412,7 @@ function compileArrayForEach(
   const setup = setupArrayCallback(ctx, fctx, callExpr, "forEach", "fe", undefined, 1);
   if (!setup) return null;
 
-  const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "fe");
+  const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "fe", receiverIsExternref);
 
   if (setup.closureInfo) {
     const callInstrs = buildClosureCallInstrs(ctx, fctx, setup, elemType, vecTypeIdx, arrTypeIdx, loop, {

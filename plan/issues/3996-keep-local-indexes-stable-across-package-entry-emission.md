@@ -15,8 +15,14 @@ language_feature: n/a
 goal: dogfood
 related: []
 loc-budget-allow:
+  - src/codegen/closure-exports.ts
   - src/codegen/statements/nested-declarations.ts
   - src/codegen/expressions/call-identifier.ts
+  - src/codegen/object-ops.ts
+func-budget-allow:
+  - src/codegen/closure-exports.ts::emitClosureMethodCallExportN
+  - src/codegen/expressions/calls.ts::tryEmitInlineDynamicCall
+  - src/codegen/object-ops.ts::compileObjectKeysOrValues
 ---
 
 # codegen: keep local indexes stable across package-entry emission
@@ -61,17 +67,30 @@ the outer ref-cell type. The narrow correction uses checker declaration
 identity only for same-name collision candidates and removes a capture only
 when every real reference resolves inside the closure.
 
-Measured result with all three corrections applied:
+That compile-only checkpoint was subsequently extended to Redux's original
+runtime workload. The remaining generic defects were at the host/Wasm closure
+boundary rather than in Redux itself: closure dispatch had to restore host
+proxies to their underlying Wasm structs, first-class escaping reducers could
+not be narrowed to the single object shape seen at a direct call site, and a
+callback retained by `subscribe` needed a shared mutable capture cell rather
+than a value copied back when the registration call returned.
 
-- Redux entry compile: success in 3.758 s
-- binary: 38,710 bytes, `WebAssembly.validate` succeeds
-- runtime differential: still unimplemented, so correctness remains
-  **unverified** and this issue remains open
-- focused regressions: 10/10 pass across `#1301`, `#4134`, and the new exact
-  block-local-shadow case
+Measured result with the complete correction applied:
 
-Lodash and Moment remain separate residuals under the same package-frontier
-umbrella; a Redux compile/validation win is not evidence that either is fixed.
+- `pnpm run dogfood:redux-workload` compiles and validates the pinned Redux
+  5.0.1 entry, then passes the original differential workload 1/1 with the
+  native Node result `781`.
+- The npm-compat report path independently compiles a 57,186-byte binary,
+  validates it, and passes the same API workload 1/1.
+- The focused Redux regressions pass 9/9, including cross-shape reducer calls,
+  retained subscriber state, and the multi-module closure dispatcher ABI.
+- The exact full workload compile measured about 2.0 s locally; timing is
+  informational and is not a compatibility gate.
+
+Redux is therefore compile-, validation-, and runtime-verified. Lodash and
+Moment remain separate residuals under the same package-frontier umbrella; a
+Redux win is not evidence that either is fixed, so this umbrella issue remains
+open.
 
 ## 2026-08-09 measured Moment fnctor-constructor residual
 

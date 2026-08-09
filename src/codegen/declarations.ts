@@ -270,6 +270,50 @@ function implicitAnyParamNeedsDynamicObjectCarrier(
 
 const dynamicObjectReturnByFunction = new WeakMap<ts.FunctionDeclaration, boolean>();
 
+const functionValueEscapeByDeclaration = new WeakMap<ts.FunctionDeclaration, boolean>();
+
+/**
+ * Whether a function declaration is consumed as a first-class value rather
+ * than only invoked through statically visible `f(...)` / `new f(...)` sites.
+ *
+ * Call-site inference can only describe the latter. Once the function is put
+ * in an object, collection, callback argument, or returned value, an
+ * implicit-any parameter may receive values from calls the source scan cannot
+ * see. Narrowing such a parameter to one observed anonymous object shape is
+ * unsound because WasmGC shapes are nominal even when JavaScript objects are
+ * structurally compatible.
+ */
+function functionDeclarationEscapesAsValue(
+  ctx: CodegenContext,
+  stmt: ts.FunctionDeclaration,
+  sourceFile: ts.SourceFile,
+): boolean {
+  const cached = functionValueEscapeByDeclaration.get(stmt);
+  if (cached !== undefined) return cached;
+
+  let escapes = false;
+  const visit = (node: ts.Node): void => {
+    if (escapes) return;
+    if (ts.isIdentifier(node) && node !== stmt.name) {
+      const parent = node.parent;
+      const valueDeclaration = ctx.oracle.valueDeclarationOf(node);
+      if (valueDeclaration !== stmt) {
+        forEachChild(node, visit);
+        return;
+      }
+      const isDirectCall = (ts.isCallExpression(parent) || ts.isNewExpression(parent)) && parent.expression === node;
+      if (!isDirectCall) {
+        escapes = true;
+        return;
+      }
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(sourceFile, visit);
+  functionValueEscapeByDeclaration.set(stmt, escapes);
+  return escapes;
+}
+
 /**
  * Detect a function that returns an empty object populated/read through computed
  * keys. Its representation is the native open `$Object`, so an inferred closed
@@ -370,6 +414,8 @@ function lowerParamType(
         inferredTypeIdx === undefined ? undefined : ctx.typeIdxToStructName.get(inferredTypeIdx);
       const inferredIndexedCarrier =
         inferredStructName?.startsWith("__vec_") || inferredStructName?.startsWith("__arr_");
+      const inferredEscapingAnonymousObject =
+        inferredStructName?.startsWith("__anon_") === true && functionDeclarationEscapesAsValue(ctx, stmt, sourceFile);
       // A call-site object literal is only one observed shape of an untyped JS
       // parameter. In standalone, specialising that parameter to the literal's
       // nominal `__anon_*` struct breaks forwarding chains (`parse(input,
@@ -380,7 +426,8 @@ function lowerParamType(
       // proved the indexed vec/array family rather than one incidental object.
       if (
         !(needsDynamicObjectCarrier && !inferredIndexedCarrier) &&
-        !(ctx.standalone && inferredStructName?.startsWith("__anon_"))
+        !(ctx.standalone && inferredStructName?.startsWith("__anon_")) &&
+        !inferredEscapingAnonymousObject
       ) {
         wasmType = inferred;
       }

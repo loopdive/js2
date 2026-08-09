@@ -26,7 +26,7 @@ function parseProbe(stdout) {
 }
 
 function errorsFromProbe(probe, child) {
-  if (probe?.errors?.length) return probe.errors;
+  if (probe) return probe.errors ?? [];
   if (!child) return [{ message: "workload probe was not started" }];
   if (child.error?.code === "ETIMEDOUT") return [];
   if (child.error?.message) return [{ message: child.error.message }];

@@ -40,6 +40,7 @@ import { runHarness as runCookie } from "../tests/dogfood/cookie-harness.mjs";
 import { correctnessRollup, correctnessVerdict } from "./lib/npm-compat-correctness.mjs"; // (#4127)
 import { runHarness as runEslint } from "../tests/dogfood/eslint-harness.mjs";
 import { runHarness as runEslintWorkload } from "../tests/dogfood/eslint-workload-harness.mjs";
+import { runHarness as runReduxWorkload } from "../tests/dogfood/redux-workload-harness.mjs";
 import { runHarness as runJsdomWorkload } from "../tests/dogfood/jsdom-harness.mjs";
 import { runHarness as runPrettier } from "../tests/dogfood/prettier-harness.mjs";
 import { runHarness as runReact } from "../tests/dogfood/react-harness.mjs";
@@ -1650,19 +1651,21 @@ for (const entry of NPM_COMPAT_CATALOG) {
   if (entry.name === "react-dom") continue;
   console.log(`[npm-compat] ${entry.name} — bounded published package-entry compile/validate...`);
   const report = await runNpmCompatCatalogHarness(entry.name, { quiet: true });
+  const workloadRunner = entry.name === "jsdom" ? runJsdomWorkload : entry.name === "redux" ? runReduxWorkload : null;
   const workload =
-    entry.name === "jsdom" && report.compile.success && report.validation.validates
-      ? await runJsdomWorkload({ quiet: true })
+    workloadRunner && report.compile.success && report.validation.validates
+      ? await workloadRunner({ quiet: true })
       : null;
+  const hasApiWorkload = workloadRunner !== null;
   const tests =
     workload?.tests ??
-    (entry.name === "jsdom"
+    (hasApiWorkload
       ? {
           kind: "api-workload",
           status: "blocked",
           reason: report.compile.success
-            ? "package-entry validation did not produce a runnable jsdom workload"
-            : "package-entry compile blocked before the jsdom workload could run",
+            ? `package-entry validation did not produce a runnable ${entry.name} workload`
+            : `package-entry compile blocked before the ${entry.name} workload could run`,
         }
       : {
           kind: "upstream-suite",

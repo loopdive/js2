@@ -8,6 +8,7 @@
 // returned.
 
 import { compileProject } from "../../src/index.ts";
+import { renderHarnessThrownText } from "../../scripts/lib/wasm-exn-render.mjs";
 
 export const COMPILE_PROJECT_RUN_PROBE_MARKER = "__JS2_COMPILE_PROJECT_RUN_PROBE__";
 
@@ -23,13 +24,15 @@ let validationError = null;
 let ran = false;
 let value = null;
 let runtimeError = null;
+let runtimeStack = null;
+let instance = null;
 
 if (result.success) {
   try {
     const module = new WebAssembly.Module(result.binary);
     valid = true;
     const imports = result.importObject ?? {};
-    const instance = await WebAssembly.instantiate(module, imports);
+    instance = await WebAssembly.instantiate(module, imports);
     imports.__setInstance?.(instance);
     const workload = instance.exports[exportName];
     if (typeof workload !== "function") {
@@ -42,7 +45,8 @@ if (result.success) {
     if (!valid) {
       validationError = error instanceof Error ? error.message : String(error);
     } else {
-      runtimeError = error instanceof Error ? error.message : String(error);
+      runtimeError = renderHarnessThrownText(error, instance);
+      runtimeStack = error instanceof Error ? (error.stack ?? null) : null;
     }
   }
 }
@@ -53,7 +57,7 @@ const report = {
   valid,
   validationError,
   errors: result.errors.map((error) => ({ message: error.message })),
-  runtime: { ran, value, error: runtimeError },
+  runtime: { ran, value, error: runtimeError, stack: runtimeStack },
 };
 
 process.stdout.write(`${COMPILE_PROJECT_RUN_PROBE_MARKER}${JSON.stringify(report)}\n`);

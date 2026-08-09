@@ -328,6 +328,9 @@ const ANY_RECEIVER_DEFERRED_METHOD_NAMES: ReadonlySet<string> = new Set([
   "removeListener",
   "prependListener",
   "prependOnceListener",
+  // Observable/store APIs (Redux, useSyncExternalStore-compatible stores,
+  // Rx-style sources) retain the subscriber until unsubscribe/teardown.
+  "subscribe",
 ]);
 
 const DEFERRED_CALLBACK_METHODS_BY_CLASS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
