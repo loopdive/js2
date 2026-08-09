@@ -456,7 +456,9 @@ export function validateRules(raw) {
   for (const rule of raw) {
     if (!rule || typeof rule.id !== "string" || !rule.id) throw new Error("rule is missing a string `id`");
     if (!BUCKET_ORDER.includes(rule.bucket)) {
-      throw new Error(`rule ${rule.id}: bucket ${JSON.stringify(rule.bucket)} is not one of ${BUCKET_ORDER.join(", ")}`);
+      throw new Error(
+        `rule ${rule.id}: bucket ${JSON.stringify(rule.bucket)} is not one of ${BUCKET_ORDER.join(", ")}`,
+      );
     }
     if (!["win", "loss", "any"].includes(rule.kind)) throw new Error(`rule ${rule.id}: kind must be win|loss|any`);
     for (const key of ["pathPatterns", "errorPatterns"]) {
@@ -481,7 +483,15 @@ export function validateRules(raw) {
  * @returns {object} the artifact (schema in the #4242 plan §P1.3)
  */
 export function buildParityArtifact(opts) {
-  const { quickjs, interpreter, baseline = null, tiers, mode = "scoped", manifest = null, rules = DEFAULT_RULES } = opts;
+  const {
+    quickjs,
+    interpreter,
+    baseline = null,
+    tiers,
+    mode = "scoped",
+    manifest = null,
+    rules = DEFAULT_RULES,
+  } = opts;
 
   const qFiles = new Set(quickjs.map.keys());
   const iFiles = new Set(interpreter.map.keys());
@@ -775,7 +785,10 @@ export function renderMarkdown(artifact) {
   const lines = [];
   lines.push(`## Parity Measurement (Phase 1) — #4242`, "");
   if (!artifact.admissible) {
-    lines.push(`> **INADMISSIBLE** — tier provenance does not pin QUICKJS vs INTERPRETER. Do not cite these numbers.`, "");
+    lines.push(
+      `> **INADMISSIBLE** — tier provenance does not pin QUICKJS vs INTERPRETER. Do not cite these numbers.`,
+      "",
+    );
   }
   lines.push(`Generated ${artifact.generatedAt} by \`${artifact.generated_by}\` (${artifact.set.mode} mode).`, "");
   lines.push(`| provenance | value |`, `| --- | --- |`);
@@ -803,9 +816,7 @@ export function renderMarkdown(artifact) {
     lines.push(`### Losses (${losses.length})`, "", `| file | bucket | rule | quickjs | interpreter | error |`);
     lines.push(`| --- | --- | --- | --- | --- | --- |`);
     for (const f of losses) {
-      lines.push(
-        `| \`${f.file}\` | ${f.bucket} | ${f.rule} | ${f.quickjs} | ${f.interpreter} | ${mdCell(f.error)} |`,
-      );
+      lines.push(`| \`${f.file}\` | ${f.bucket} | ${f.rule} | ${f.quickjs} | ${f.interpreter} | ${mdCell(f.error)} |`);
     }
     lines.push("");
   }

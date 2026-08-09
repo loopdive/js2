@@ -21,6 +21,7 @@
  * are exact), so there is zero rounding drift:
  *
  *   fmod(a, b):
+ *     [large static divisor] if |a| < |b|             -> a
  *     if b == 0 or a is ±Inf or a/b is NaN          -> NaN
  *     if b is ±Inf (a finite)                        -> a
  *     x = |a|; y = |b|
@@ -47,6 +48,8 @@ import { addFuncType } from "./registry/types.js";
 
 /** Reserved name for the f64 remainder helper. */
 export const FMOD_FN = "__fmod";
+/** Large-static-divisor variant that checks `|a| < |b|` before integer guards. */
+export const FMOD_EARLY_MAGNITUDE_FN = "__fmod_early_magnitude";
 
 /**
  * Ensure the `__fmod` helper function exists in the module and return its
@@ -55,10 +58,31 @@ export const FMOD_FN = "__fmod";
  * Signature: `(f64 a, f64 b) -> f64`.
  */
 export function ensureFmod(ctx: CodegenContext): number {
-  const existing = ctx.funcMap.get(FMOD_FN);
+  return ensureFmodVariant(ctx, FMOD_FN, false);
+}
+
+export function isFmodIntrinsic(name: string): name is typeof FMOD_FN | typeof FMOD_EARLY_MAGNITUDE_FN {
+  return name === FMOD_FN || name === FMOD_EARLY_MAGNITUDE_FN;
+}
+
+/** Materialize either exact helper after the IR resolver validates its symbol. */
+export function ensureFmodIntrinsic(
+  ctx: CodegenContext,
+  name: typeof FMOD_FN | typeof FMOD_EARLY_MAGNITUDE_FN,
+): number {
+  return ensureFmodVariant(ctx, name, name === FMOD_EARLY_MAGNITUDE_FN);
+}
+
+function ensureFmodVariant(ctx: CodegenContext, name: string, earlyMagnitude: boolean): number {
+  const existing = ctx.funcMap.get(name);
   if (existing !== undefined) return existing;
 
-  const sigIdx = addFuncType(ctx, [{ kind: "f64" }, { kind: "f64" }], [{ kind: "f64" }], "$fmod_type");
+  const sigIdx = addFuncType(
+    ctx,
+    [{ kind: "f64" }, { kind: "f64" }],
+    [{ kind: "f64" }],
+    earlyMagnitude ? "$fmod_early_magnitude_type" : "$fmod_type",
+  );
   const funcIdx = mintDefinedFunc(ctx);
 
   // Locals (after the two f64 params at indices 0=a, 1=b):
@@ -73,10 +97,48 @@ export function ensureFmod(ctx: CodegenContext): number {
 
   const INF = Infinity;
 
-  // result = a (sign carrier) — early `a` return for |a| < |b| and the NaN /
-  // Inf-divisor cases all flow through copysign(result, a) at the end except
-  // where the spec wants raw NaN. We special-case NaN/Inf up front.
+  // For |a| < |b| every ECMAScript remainder edge collapses to `a` itself:
+  // zero divisors and NaN/Infinity dividends fail the ordered comparison,
+  // while an infinite divisor with finite `a` correctly returns `a`. Put this
+  // exact fast path before the integral guards; rolling-modulo accumulators
+  // commonly stay below their modulus for almost every iteration.
+  const earlyMagnitudeFastPath: Instr[] = earlyMagnitude
+    ? [
+        { op: "local.get", index: A },
+        { op: "f64.abs" },
+        { op: "local.get", index: B },
+        { op: "f64.abs" },
+        { op: "f64.lt" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [{ op: "local.get", index: A }, { op: "return" }],
+        },
+      ]
+    : [];
+  const lateMagnitudeCheck: Instr[] = earlyMagnitude
+    ? []
+    : [
+        { op: "local.get", index: X },
+        { op: "local.get", index: Y },
+        { op: "f64.lt" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: X },
+            { op: "local.get", index: A },
+            { op: "f64.copysign" },
+            { op: "return" },
+          ],
+        },
+      ];
+
+  // `a` remains the sign carrier throughout. The specialized variant can
+  // return it directly before any conversion; the standard variant reaches
+  // the equivalent late `copysign(|a|, a)` check after the exceptional cases.
   const body: Instr[] = [
+    ...earlyMagnitudeFastPath,
     // ── (#4150) Integral fast path — the overwhelmingly common shape ───────
     // `x % 3`, `i % n`, hash folds: both operands are whole numbers in i32
     // range, where the exact remainder is just `i32.rem_s`. Without this every
@@ -199,15 +261,7 @@ export function ensureFmod(ctx: CodegenContext): number {
     { op: "f64.abs" },
     { op: "local.set", index: Y },
 
-    // if (x < y) return copysign(x, a)   (covers x == 0 too → ±0)
-    { op: "local.get", index: X },
-    { op: "local.get", index: Y },
-    { op: "f64.lt" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [{ op: "local.get", index: X }, { op: "local.get", index: A }, { op: "f64.copysign" }, { op: "return" }],
-    },
+    ...lateMagnitudeCheck,
 
     // ── t = y; while (t * 2 <= x) t *= 2 ───────────────────────────────────
     { op: "local.get", index: Y },
@@ -286,7 +340,7 @@ export function ensureFmod(ctx: CodegenContext): number {
   ];
 
   const fn: WasmFunction = {
-    name: FMOD_FN,
+    name,
     typeIdx: sigIdx,
     locals: [
       { name: "$x", type: { kind: "f64" } }, // X
@@ -299,6 +353,6 @@ export function ensureFmod(ctx: CodegenContext): number {
     exported: false,
   };
   pushDefinedFunc(ctx, funcIdx, fn);
-  ctx.funcMap.set(FMOD_FN, funcIdx);
+  ctx.funcMap.set(name, funcIdx);
   return funcIdx;
 }
