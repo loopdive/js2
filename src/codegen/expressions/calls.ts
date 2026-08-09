@@ -8098,6 +8098,16 @@ export function compileConditionalCallee(
         const finalFuncIdx = ctx.funcMap.get(funcName) ?? funcIdx;
         maybeSetArgcForKnownCall(ctx, fctx, funcName, expr.arguments.length, ccParamCount);
         fctx.body.push({ op: "call", funcIdx: finalFuncIdx });
+        // The checker's result for the *conditional call* is only the desired
+        // join representation. It does not describe what this direct branch
+        // physically leaves on the Wasm stack. For example, lodash's
+        // `arrayEach` returns the canonical vec ref while `baseForOwn` returns
+        // externref, even though the conditional call is typed as `any`.
+        // Report the emitted function's real result here so the join below can
+        // insert the required ref -> externref conversion.
+        if (wasmFuncReturnsVoid(ctx, finalFuncIdx)) return VOID_RESULT;
+        const actualRetType = getWasmFuncReturnType(ctx, finalFuncIdx);
+        if (actualRetType) return actualRetType;
         if (callRetType) return callRetType;
         // Try to determine return type from the branch function's signature
         const branchType = ctx.checker.getTypeAtLocation(branchExpr);
@@ -8189,14 +8199,14 @@ export function compileConditionalCallee(
   let resultType: ValType = callRetType ?? thenVal;
 
   // If types don't match, coerce both to the result type
-  if (thenVal.kind !== resultType.kind) {
+  if (!valTypesMatch(thenVal, resultType)) {
     const coerceBody: Instr[] = [];
     fctx.body = coerceBody;
     coerceType(ctx, fctx, thenVal, resultType);
     fctx.body = savedBody;
     thenInstrs = [...thenInstrs, ...coerceBody];
   }
-  if (elseVal.kind !== resultType.kind) {
+  if (!valTypesMatch(elseVal, resultType)) {
     const coerceBody: Instr[] = [];
     fctx.body = coerceBody;
     coerceType(ctx, fctx, elseVal, resultType);
