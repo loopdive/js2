@@ -365,7 +365,7 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
   // #1197: detect `number[]` locals whose element storage can lower to i32.
   // Depends on the i32 scalar set so that `arr[i] = sum` (where `sum` is i32)
   // counts as an i32-safe write.
-  const i32SpecializedArrays = collectI32SpecializedArrays(decl, i32CoercedLocals);
+  const i32SpecializedArrays = collectI32SpecializedArrays(decl, i32CoercedLocals, ctx.oracle);
 
   // #2152 — a named function declaration whose body references `this` may be
   // passed by reference as an array-HOF callback (e.g.
