@@ -28,13 +28,13 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { performance } from "node:perf_hooks";
 import { createRequire } from "node:module";
-import { JSDOM } from "jsdom";
 
 import { compile } from "../../src/index.ts";
 import { wrapExports } from "../../src/runtime.ts";
 import { setupReact } from "./setup-react.mjs";
 import { setupReactDomImplementation, setupReactDomUpstreamSuite } from "./setup-react-dom-upstream-suite.mjs";
 import { extractReactUpstreamTests } from "./react-upstream-extract.mjs";
+import { installReactTestEnvironment } from "./react-test-environment.mjs";
 import { REACT_EXPECT_SHIM, LAST_ERROR_EXPORT, buildTestFunction } from "./react-upstream-shim.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -176,42 +176,6 @@ function withReactDomSetup(test) {
   return { ...test, prelude };
 }
 
-function installDomGlobals() {
-  const dom = new JSDOM("<!doctype html><html><body></body></html>", {
-    url: "http://localhost/",
-    pretendToBeVisual: true,
-  });
-  const window = dom.window;
-  const globals = [
-    "window",
-    "self",
-    "document",
-    "navigator",
-    "Node",
-    "Element",
-    "HTMLElement",
-    "HTMLInputElement",
-    "HTMLSelectElement",
-    "HTMLTextAreaElement",
-    "Event",
-    "CustomEvent",
-    "MouseEvent",
-    "KeyboardEvent",
-    "FocusEvent",
-    "InputEvent",
-    "MutationObserver",
-    "getComputedStyle",
-    "requestAnimationFrame",
-    "cancelAnimationFrame",
-  ];
-  for (const name of globals) {
-    const value = name === "window" || name === "self" ? window : window[name];
-    if (value === undefined) continue;
-    Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
-  }
-  return dom;
-}
-
 function buildModuleSource(implementation, tests) {
   return [
     implementation,
@@ -231,12 +195,13 @@ function buildNativeRunners(implementation, tests) {
       .join(", ")} } };`,
   ].join("\n");
   // eslint-disable-next-line no-new-func
-  return new Function(source);
+  return new Function("require", source);
 }
 
 async function runNative(implementation, tests) {
   try {
-    const runners = buildNativeRunners(implementation, tests)();
+    const nativeRequire = createRequire(import.meta.url);
+    const runners = buildNativeRunners(implementation, tests)(nativeRequire);
     const out = [];
     for (const test of tests) {
       let value;
@@ -253,6 +218,17 @@ async function runNative(implementation, tests) {
     const message = thrown instanceof Error ? thrown.message : String(thrown);
     return tests.map((test) => ({ id: test.id, value: undefined, error: `oracle build failed: ${message}` }));
   }
+}
+
+async function runNativeByFile(implementation, tests) {
+  const byFile = new Map();
+  for (const test of tests) {
+    if (!byFile.has(test.file)) byFile.set(test.file, []);
+    byFile.get(test.file).push(test);
+  }
+  const results = [];
+  for (const fileTests of byFile.values()) results.push(...(await runNative(implementation, fileTests)));
+  return results;
 }
 
 // Compiles the implementation ALONE — no test code. If this cannot produce a
@@ -312,7 +288,7 @@ function splitBySize(tests) {
 
 export async function runHarness({ quiet = false } = {}) {
   const log = quiet ? () => {} : (...values) => console.log(...values);
-  installDomGlobals();
+  installReactTestEnvironment();
 
   // --- 1. ACQUIRE ----------------------------------------------------------
   const { root: reactRoot, version: reactVersion } = setupReact();
@@ -401,7 +377,10 @@ export async function runHarness({ quiet = false } = {}) {
     // are scored as failures rather than quietly dropped.
     implementationInvalid = { error: String(baseline.error), compileMs: baseline.compileMs };
     admitted = selectedTests;
-    const nativeResults = new Map((await runNative(implementation, selectedTests)).map((e) => [e.id, e]));
+    // Build one native oracle per upstream file.  A single ESM helper import
+    // in one file must not turn every unrelated test into an oracle-build
+    // failure (the extractor records those helpers as dropped scaffolding).
+    const nativeResults = new Map((await runNativeByFile(implementation, selectedTests)).map((e) => [e.id, e]));
     for (const test of selectedTests) {
       runResults.set(test.id, {
         native: nativeResults.get(test.id) ?? {},

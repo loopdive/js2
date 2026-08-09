@@ -109,6 +109,14 @@ function isSkipped(node) {
 function filterPreludeStatement(statement, sourceFile, supportedInfrastructure) {
   const text = statement.getText(sourceFile);
   if (/^\s*['"]use strict['"]/.test(text)) return null;
+  // The lifted tests are evaluated by `new Function` (and later embedded in a
+  // Wasm module), neither of which accepts ESM import declarations.  Jest's
+  // module transform normally resolves these imports before the test runs;
+  // this harness does not have those helper modules, so drop the declaration
+  // and retain its local names in `droppedNames`.  Conservative admission then
+  // rejects a test that reaches for one, while admit-all records it as a native
+  // harness failure instead of letting one import poison an entire batch.
+  if (ts.isImportDeclaration(statement) || ts.isImportEqualsDeclaration(statement)) return null;
   // Scaffolding that only exists to wire up the infrastructure this harness
   // deliberately does not have (`let ReactDOMClient;`, the `internal-test-utils`
   // destructure, `jest.resetModules()`). Dropping it here rather than rejecting
@@ -139,6 +147,18 @@ function declaredNames(node, into = new Set()) {
 
   if (ts.isVariableStatement(node)) {
     for (const declaration of node.declarationList.declarations) addBinding(declaration.name);
+  } else if (ts.isImportDeclaration(node)) {
+    const clause = node.importClause;
+    if (!clause) return into;
+    addBinding(clause.name);
+    if (clause.namedBindings) {
+      if (ts.isNamespaceImport(clause.namedBindings)) addBinding(clause.namedBindings.name);
+      else {
+        for (const element of clause.namedBindings.elements) addBinding(element.name);
+      }
+    }
+  } else if (ts.isImportEqualsDeclaration(node)) {
+    addBinding(node.name);
   } else if (ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) {
     addBinding(node.name);
   } else if (ts.isExpressionStatement(node)) {

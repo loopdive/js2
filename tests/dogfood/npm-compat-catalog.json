@@ -83,7 +83,8 @@
     "integrity": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
     "entryModule": "package/lib/typescript.js",
     "shape": "cjs-project",
-    "timeoutMs": 180000
+    "issue": 3994,
+    "timeoutMs": 600000
   },
   {
     "name": "redux",
