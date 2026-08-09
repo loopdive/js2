@@ -1,10 +1,11 @@
 {
   "id": "4253",
   "assignee": "ttraenkler/opus-typeflow-enable",
-  "requested_by": "ttraenkler/opus-typeflow-enable",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "issue-4253-latent-red-root-tests",
   "claimed_at": "2026-08-09T00:05:30Z",
-  "updated_at": "2026-08-09T00:05:30Z",
-  "write_id": "43102-3pikurvy"
+  "updated_at": "2026-08-09T02:21:54Z",
+  "write_id": "11709-gh01mvl6",
+  "released_at": "2026-08-09T02:21:54Z"
 }
