@@ -42,6 +42,7 @@ import {
 } from "./regexp-standalone.js";
 import { tryCompileStandaloneSplitSeparator, tryCompileStandaloneStringValueReplace } from "./string-search-value.js";
 import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
+import { resolveStrictConstant, staticStringLength } from "./analysis/static-string-constants.js";
 import { staticConstStringValues } from "./analysis/static-string-values.js";
 import { staticIntegerRange } from "./analysis/static-numeric-range.js";
 import { tryEmitStaticI32Expression } from "./i32-static-range-expr.js";
@@ -1678,60 +1679,54 @@ function foldAdjacentConstantOperands(ctx: CodegenContext, operands: ts.Expressi
   return result;
 }
 
-/**
- * Resolve a compile-time constant, but only for truly immutable values.
- * Unlike resolveConstantExpression, this does NOT resolve let/var declarations —
- * only string/numeric literals, const variables, and expressions composed of those.
- * This prevents incorrect folding of mutable variables in loops.
- */
-function resolveStrictConstant(ctx: CodegenContext, expr: ts.Expression): string | number | undefined {
-  if (ts.isStringLiteral(expr)) return expr.text;
-  if (ts.isNumericLiteral(expr)) return Number(expr.text);
-  if (ts.isParenthesizedExpression(expr)) return resolveStrictConstant(ctx, expr.expression);
+/** Emit the branch-free ConsString construction licensed by a >=64 RHS proof. */
+function emitProvenRopeConcat(ctx: CodegenContext, fctx: FunctionContext, rhsLength: number): void {
+  const rhs = allocLocal(fctx, `__rope_rhs_${fctx.locals.length}`, nativeStringType(ctx));
+  const lhs = allocLocal(fctx, `__rope_lhs_${fctx.locals.length}`, nativeStringType(ctx));
+  fctx.body.push({ op: "local.set", index: rhs });
+  fctx.body.push({ op: "local.set", index: lhs });
+  fctx.body.push({ op: "local.get", index: lhs });
+  fctx.body.push({ op: "struct.get", typeIdx: ctx.anyStrTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "i32.const", value: rhsLength });
+  fctx.body.push({ op: "i32.add" });
+  fctx.body.push({ op: "local.get", index: lhs });
+  fctx.body.push({ op: "local.get", index: rhs });
+  fctx.body.push({ op: "struct.new", typeIdx: ctx.consStrTypeIdx });
+}
 
-  // Only resolve const variable references
-  if (ts.isIdentifier(expr)) {
-    const sym = ctx.checker.getSymbolAtLocation(expr);
-    if (sym) {
-      const decl = sym.valueDeclaration;
-      if (decl && ts.isVariableDeclaration(decl) && decl.initializer) {
-        const declList = decl.parent;
-        if (ts.isVariableDeclarationList(declList) && (declList.flags & ts.NodeFlags.Const) !== 0) {
-          return resolveStrictConstant(ctx, decl.initializer);
-        }
-      }
-    }
-    return undefined;
+/** Compile native string `+`, including the statically-proven rope arm. */
+function compileNativeStringConcat(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.BinaryExpression,
+): ValType | null {
+  const constVal = resolveStrictConstant(ctx, expr);
+  if (typeof constVal === "string") return compileStringLiteral(ctx, fctx, constVal, expr);
+
+  // #1470 — `__str_concat` takes two native strings. Standalone/WASI must
+  // coerce mixed operands in Wasm; the legacy JS-host native-string mode keeps
+  // its established raw operand path.
+  if (noJsHost(ctx)) {
+    compileNativeConcatOperand(ctx, fctx, expr.left);
+    compileNativeConcatOperand(ctx, fctx, expr.right);
+  } else {
+    compileExpression(ctx, fctx, expr.left);
+    compileExpression(ctx, fctx, expr.right);
   }
 
-  // Binary expressions (recurse strictly)
-  if (ts.isBinaryExpression(expr)) {
-    const left = resolveStrictConstant(ctx, expr.left);
-    const right = resolveStrictConstant(ctx, expr.right);
-    if (left === undefined || right === undefined) return undefined;
-    if (typeof left === "string" || typeof right === "string") {
-      if (expr.operatorToken.kind === ts.SyntaxKind.PlusToken) {
-        return String(left) + String(right);
-      }
-      return undefined;
-    }
-    if (expr.operatorToken.kind === ts.SyntaxKind.PlusToken) return left + right;
-    return undefined;
+  const staticRhsLength = staticStringLength(ctx, expr.right);
+  if (process.env.JS2WASM_NATIVE_PROVEN_ROPE_CONCAT !== "0" && (staticRhsLength ?? 0) >= 64) {
+    emitProvenRopeConcat(ctx, fctx, staticRhsLength!);
+    return nativeStringType(ctx);
   }
 
-  // Template literals
-  if (ts.isTemplateExpression(expr)) {
-    let result = expr.head.text;
-    for (const span of expr.templateSpans) {
-      const val = resolveStrictConstant(ctx, span.expression);
-      if (val === undefined) return undefined;
-      result += String(val) + span.literal.text;
-    }
-    return result;
+  const funcIdx = ctx.nativeStrHelpers.get("__str_concat");
+  if (funcIdx === undefined) {
+    reportError(ctx, expr, `Unsupported string operator: ${ts.SyntaxKind[ts.SyntaxKind.PlusToken]}`);
+    return null;
   }
-  if (ts.isNoSubstitutionTemplateLiteral(expr)) return expr.text;
-
-  return undefined;
+  fctx.body.push({ op: "call", funcIdx });
+  return nativeStringType(ctx);
 }
 
 /** Create a synthetic TS string literal node for use in codegen. */
@@ -1884,42 +1879,8 @@ export function compileStringBinaryOp(
     const strFlattenIdx = ctx.nativeStrHelpers.get("__str_flatten")!;
 
     switch (op) {
-      case ts.SyntaxKind.PlusToken: {
-        // Constant-fold if both sides are compile-time constants (#1004)
-        const constVal = resolveStrictConstant(ctx, expr);
-        if (typeof constVal === "string") {
-          return compileStringLiteral(ctx, fctx, constVal, expr);
-        }
-        // #1470 — `__str_concat` takes `(ref $AnyString, ref $AnyString)`. A
-        // non-string operand (number, boolean, object, `any`) must be coerced
-        // to a native string first or the module is invalid (the previous code
-        // pushed the raw f64/i32/struct ref and `__str_concat` rejected it).
-        //
-        // This issue targets the standalone / WASI surface (`noJsHost`), where
-        // there is no JS runtime to fall back on. There, every operand is
-        // lowered to a native `ref $AnyString` in pure Wasm via
-        // `compileNativeConcatOperand` (numbers → native `number_toString`,
-        // booleans/null/undefined → native literals, dynamic refs → the
-        // `$__any_to_string` dispatcher). The legacy JS-host `nativeStrings`
-        // path (explicit `nativeStrings: true` / `fast`) is left unchanged here:
-        // its mixed-operand handling has separate, pre-existing limitations and
-        // bridging through `__str_from_extern` mid-body corrupts function
-        // indices, so it stays on the original raw-push behavior.
-        if (noJsHost(ctx)) {
-          compileNativeConcatOperand(ctx, fctx, expr.left);
-          compileNativeConcatOperand(ctx, fctx, expr.right);
-        } else {
-          // concat accepts ref $AnyString — no flatten needed
-          compileExpression(ctx, fctx, expr.left);
-          compileExpression(ctx, fctx, expr.right);
-        }
-        const funcIdx = ctx.nativeStrHelpers.get("__str_concat");
-        if (funcIdx !== undefined) {
-          fctx.body.push({ op: "call", funcIdx });
-          return nativeStringType(ctx);
-        }
-        break;
-      }
+      case ts.SyntaxKind.PlusToken:
+        return compileNativeStringConcat(ctx, fctx, expr);
       case ts.SyntaxKind.EqualsEqualsEqualsToken:
       case ts.SyntaxKind.EqualsEqualsToken: {
         const funcIdx = ctx.nativeStrHelpers.get("__str_equals");
