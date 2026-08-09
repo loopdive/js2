@@ -176,6 +176,29 @@ evidence is the **complete** 116-file harness self-test suite (zero regressions)
 plus the byte-identity table above — a module that cannot reach the new arm
 cannot be affected by it.
 
+### Equivalence suite (the gc/host lane)
+
+The gate is deliberately **lane-agnostic** — the drop-everything fallback
+mis-compiled the host lane too — so the equivalence suite is the relevant check
+there.
+
+- **Every equivalence test file containing a call-through-brackets**
+  (`]` followed by `(` — 14 files incl. `proxy-traps`, `super-element-access`,
+  `optional-element-access`, `computed-property-class`,
+  `issue-3205-property-call-wrapper-root`): **153/153 pass.** These are the only
+  files whose emitted code the change can reach.
+- A fixed 43-file (1-in-5) slice of the suite was run **at HEAD and at
+  baseline** by file-copy A/B: both produce `2 failed | 407 passed | 1 todo`
+  and the failing-file sets are **byte-for-byte identical**
+  (`arguments-nested-and-loops.test.ts`, `delete-sentinel.test.ts`). Those two
+  are **pre-existing on this branch and untouched by this change**
+  (`arguments-nested-and-loops` fails `expected 30 to be 33` on both sides).
+
+A full 214-file equivalence run was started but abandoned after ~50 min without
+completing; the subset A/B above supersedes it and is the stronger evidence
+because it is differential. The authoritative check remains CI's
+`equivalence-gate`.
+
 ## Out of scope
 
 Proxy trap gaps (`isExtensible` / `ownKeys` / `construct` / `apply` /
