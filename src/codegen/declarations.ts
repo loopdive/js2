@@ -524,6 +524,17 @@ function functionDeclarationCapturesEnclosingLocal(ctx: CodegenContext, stmt: ts
   return false;
 }
 
+function resolveGenericDeclarationCallSiteTypes(
+  ctx: CodegenContext,
+  name: string,
+  stmt: ts.FunctionDeclaration,
+  sourceFile: ts.SourceFile,
+): { params: ValType[]; results: ValType[] } | null {
+  return resolveGenericCallSiteTypes(ctx, name, stmt, sourceFile, (param, index) =>
+    lowerParamType(ctx, param, name, index, stmt, sourceFile),
+  );
+}
+
 function registerBodylessFunctionDeclaration(
   ctx: CodegenContext,
   stmt: ts.FunctionDeclaration,
@@ -543,7 +554,7 @@ function registerBodylessFunctionDeclaration(
   }
 
   const isGeneric = stmt.typeParameters && stmt.typeParameters.length > 0;
-  const resolved = isGeneric ? resolveGenericCallSiteTypes(ctx, name, sourceFile) : null;
+  const resolved = isGeneric ? resolveGenericDeclarationCallSiteTypes(ctx, name, stmt, sourceFile) : null;
   if (resolved) {
     ctx.genericResolved.set(name, resolved);
   }
@@ -992,7 +1003,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
 
       // Check if this is a generic function — resolve types from call site
       const isGeneric = stmt.typeParameters && stmt.typeParameters.length > 0;
-      const resolved = isGeneric ? resolveGenericCallSiteTypes(ctx, name, sourceFile) : null;
+      const resolved = isGeneric ? resolveGenericDeclarationCallSiteTypes(ctx, name, stmt, sourceFile) : null;
       if (resolved) {
         ctx.genericResolved.set(name, resolved);
       }
