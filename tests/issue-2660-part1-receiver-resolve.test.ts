@@ -76,7 +76,7 @@ describe("#2660 PART-1 — receiver-struct flow map (inert analysis)", () => {
       };
     `;
     const { sf, checker } = checkerForJs(src);
-    const result = analyzeFnctorEscapeGate(checker, sf);
+    const result = analyzeFnctorEscapeGate(checker, [sf]);
     const recv = findReceiver(sf, "node")!;
     expect(recv).toBeDefined();
     expect(result.receiverStruct.get(recv)).toBe("__fnctor_Node");
@@ -95,7 +95,7 @@ describe("#2660 PART-1 — receiver-struct flow map (inert analysis)", () => {
       };
     `;
     const { sf, checker } = checkerForJs(src);
-    const result = analyzeFnctorEscapeGate(checker, sf);
+    const result = analyzeFnctorEscapeGate(checker, [sf]);
     const recv = findReceiver(sf, "scope")!;
     expect(result.receiverStruct.get(recv)).toBe("__fnctor_Scope");
   });
@@ -113,7 +113,7 @@ describe("#2660 PART-1 — receiver-struct flow map (inert analysis)", () => {
       };
     `;
     const { sf, checker } = checkerForJs(src);
-    const result = analyzeFnctorEscapeGate(checker, sf);
+    const result = analyzeFnctorEscapeGate(checker, [sf]);
     const recv = findReceiver(sf, "v");
     // recv may be undefined if no `v.` access — but here `v.x` exists.
     expect(recv).toBeDefined();
@@ -131,7 +131,7 @@ describe("#2660 PART-1 — receiver-struct flow map (inert analysis)", () => {
       };
     `;
     const { sf, checker } = checkerForJs(src);
-    const result = analyzeFnctorEscapeGate(checker, sf);
+    const result = analyzeFnctorEscapeGate(checker, [sf]);
     const recv = findReceiver(sf, "o")!;
     expect(result.receiverStruct.get(recv)).toBeUndefined();
   });
@@ -147,14 +147,14 @@ describe("#2660 PART-1 — receiver-struct flow map (inert analysis)", () => {
       };
     `;
     const { sf, checker } = checkerForJs(src);
-    const result = analyzeFnctorEscapeGate(checker, sf);
+    const result = analyzeFnctorEscapeGate(checker, [sf]);
     const recv = findReceiver(sf, "v")!;
     expect(result.receiverStruct.get(recv)).toBeUndefined();
   });
 
   it("is empty for fnctor-free code", () => {
     const { sf, checker } = checkerForJs(`function f() { return 1; } f();`);
-    const result = analyzeFnctorEscapeGate(checker, sf);
+    const result = analyzeFnctorEscapeGate(checker, [sf]);
     expect(result.receiverStruct.size).toBe(0);
   });
 });
@@ -174,7 +174,7 @@ describe("#2660 PART-1 — resolveReceiverStruct (3-case resolution)", () => {
 
   it("case 1: `this` receiver → fctx.thisStructName (when registered)", () => {
     const { sf, checker } = checkerForJs(src);
-    const result = analyzeFnctorEscapeGate(checker, sf);
+    const result = analyzeFnctorEscapeGate(checker, [sf]);
     const ctx = mockCtx(result, ["__fnctor_Parser", "__fnctor_Node"]);
     const fctx = mockFctx("__fnctor_Parser");
     // Synthesize a `this` expression.
@@ -184,7 +184,7 @@ describe("#2660 PART-1 — resolveReceiverStruct (3-case resolution)", () => {
 
   it("case 1: `this` receiver but thisStructName unset → undefined", () => {
     const { sf, checker } = checkerForJs(src);
-    const result = analyzeFnctorEscapeGate(checker, sf);
+    const result = analyzeFnctorEscapeGate(checker, [sf]);
     const ctx = mockCtx(result, ["__fnctor_Parser"]);
     const fctx = mockFctx(undefined);
     expect(resolveReceiverStruct(ctx, fctx, ts.factory.createThis())).toBeUndefined();
@@ -192,7 +192,7 @@ describe("#2660 PART-1 — resolveReceiverStruct (3-case resolution)", () => {
 
   it("case 2: local in the flow map AND struct registered → the struct name", () => {
     const { sf, checker } = checkerForJs(src);
-    const result = analyzeFnctorEscapeGate(checker, sf);
+    const result = analyzeFnctorEscapeGate(checker, [sf]);
     const ctx = mockCtx(result, ["__fnctor_Node"]);
     const fctx = mockFctx("__fnctor_Parser");
     const recv = findReceiver(sf, "node")!;
@@ -201,7 +201,7 @@ describe("#2660 PART-1 — resolveReceiverStruct (3-case resolution)", () => {
 
   it("case 2 (conservative): flow-map hit but struct NOT registered → undefined", () => {
     const { sf, checker } = checkerForJs(src);
-    const result = analyzeFnctorEscapeGate(checker, sf);
+    const result = analyzeFnctorEscapeGate(checker, [sf]);
     const ctx = mockCtx(result, []); // structMap empty → __fnctor_Node not registered yet
     const fctx = mockFctx("__fnctor_Parser");
     const recv = findReceiver(sf, "node")!;
@@ -210,7 +210,7 @@ describe("#2660 PART-1 — resolveReceiverStruct (3-case resolution)", () => {
 
   it("case 3: an unrelated local receiver → undefined (dynamic path)", () => {
     const { sf, checker } = checkerForJs(src);
-    const result = analyzeFnctorEscapeGate(checker, sf);
+    const result = analyzeFnctorEscapeGate(checker, [sf]);
     const ctx = mockCtx(result, ["__fnctor_Node"]);
     const fctx = mockFctx("__fnctor_Parser");
     // `other` is a number, never in the flow map.

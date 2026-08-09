@@ -53,7 +53,7 @@ function analyze(source: string, ctorNames: readonly string[]) {
     ts.forEachChild(n, walk);
   };
   walk(sf);
-  return analyzeFnctorAllocLabels(program.getTypeChecker(), sf, ctorDeclByName);
+  return analyzeFnctorAllocLabels(program.getTypeChecker(), [sf], ctorDeclByName);
 }
 
 /**
