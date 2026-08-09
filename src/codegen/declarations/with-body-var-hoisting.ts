@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#4269) Module-scope hoisting of a `var` DECLARED INSIDE a `with` body.
+ * (#4264) Module-scope hoisting of a `var` DECLARED INSIDE a `with` body.
  *
  * ## The two things §10.2.11 requires that the module-global path did not give
  *

@@ -89,7 +89,7 @@ function bindingHasOutOfShapePropertyWrite(ctx: CodegenContext, decl: ts.Variabl
 }
 
 /**
- * (#4269) True when `node` sits inside the BODY of a `with` statement, without
+ * (#4264) True when `node` sits inside the BODY of a `with` statement, without
  * crossing a function boundary first.
  *
  * The TypeScript checker gives identifiers inside a `with` body no resolvable
@@ -116,7 +116,7 @@ function isInsideWithBody(node: ts.Node): boolean {
 }
 
 /**
- * (#4269) Does this assignment target `decl`? Normally the oracle answers, but
+ * (#4264) Does this assignment target `decl`? Normally the oracle answers, but
  * inside a `with` body it cannot (see {@link isInsideWithBody}). There, fall
  * back to a NAME match — and only when the oracle resolved NOTHING, so a genuine
  * inner shadow (which the oracle *does* resolve, to a different declaration)

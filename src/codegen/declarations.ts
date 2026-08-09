@@ -1513,7 +1513,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       ctx.externrefAccessorVars.add(decl.name.text);
       return { kind: "externref" };
     }
-    // (#4269) A `var` DECLARED inside a `with` body may never be written at all
+    // (#4264) A `var` DECLARED inside a `with` body may never be written at all
     // — §14.11.2 consults the object environment first, so when the target owns
     // the name the store goes to the object and the hoisted binding keeps its
     // initial `undefined`. A primitive slot cannot represent that value; widen
@@ -2549,7 +2549,7 @@ export function compileDeclarations(
     };
     ctx.currentFunc = initFctx;
 
-    // (#4269) §10.2.11: a `var` hoisted out of a `with` body is instantiated at
+    // (#4264) §10.2.11: a `var` hoisted out of a `with` body is instantiated at
     // script entry with the value `undefined`. A module global's constant init
     // can only be `ref.null.extern`, which the standalone lane does NOT read as
     // `undefined` — so seed the tag-1 singleton here, exactly as the #4182

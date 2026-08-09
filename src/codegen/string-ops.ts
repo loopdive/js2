@@ -9,6 +9,7 @@ import type { Instr, ValType } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import { emitIsUndefinedSingletonExternAt, isAnyValue, undefinedSingletonActive } from "./any-helpers.js";
 import { compileNumericBinaryOp } from "./binary-ops.js";
+import { callableToStringLiteral } from "./callable-to-string.js";
 import { reserveClosedMethodDispatch } from "./closed-method-dispatch.js";
 import { getClosureFuncSelfTypeIdx } from "./closures.js";
 import { compileAndEmitToString, emitToString } from "./coercion-engine.js";
@@ -328,6 +329,20 @@ function compileNativeConcatOperand(ctx: CodegenContext, fctx: FunctionContext, 
     fctx.body.push({ op: "call", funcIdx: toStrIdx });
     emitNativeStringRefFromExternref(ctx, fctx);
     return true;
+  }
+
+  // (#4265) §13.15.3 ToPrimitive of a CALLABLE reaches Function.prototype.toString
+  // (§20.2.3.5), never Object.prototype.toString — so a function operand must
+  // never stringify as "[object Object]". Placed before BOTH dynamic arms
+  // because a callable arrives either as an externref (host object, Proxy) or as
+  // a closure struct ref. See callable-to-string.ts for the spec argument.
+  if (opType.kind === "externref" || opType.kind === "ref" || opType.kind === "ref_null") {
+    const callableText = callableToStringLiteral(tsType);
+    if (callableText !== undefined) {
+      fctx.body.push({ op: "drop" });
+      compileStringLiteral(ctx, fctx, callableText, operand);
+      return true;
+    }
   }
 
   if (opType.kind === "externref") {

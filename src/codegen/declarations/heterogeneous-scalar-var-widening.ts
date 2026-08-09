@@ -155,7 +155,7 @@ function assignmentWidens(ctx: CodegenContext, declTag: JsTag, assigned: ts.Expr
 }
 
 /**
- * (#4269) True when `node` sits inside the BODY of a `with` statement.
+ * (#4264) True when `node` sits inside the BODY of a `with` statement.
  *
  * Deliberately does NOT stop at a function boundary: a module global written
  * from inside a `with` nested in a function loses its value the same way one
@@ -170,7 +170,7 @@ function isInsideWithBody(node: ts.Node): boolean {
 }
 
 /**
- * (#4269) Every module-scoped `var`/`let` in this file, by name.
+ * (#4264) Every module-scoped `var`/`let` in this file, by name.
  *
  * Only built for a file that actually contains a `with` — see
  * {@link withBodyAssignmentWidens} for why the name-keyed lookup is admissible
@@ -190,7 +190,7 @@ function collectModuleScopedVarsByName(sourceFile: ts.SourceFile): Map<string, t
 }
 
 /**
- * (#4269) Widen a primitive-pinned module global assigned from inside a `with`
+ * (#4264) Widen a primitive-pinned module global assigned from inside a `with`
  * body.
  *
  * ## Why the #4204 predicate cannot see this write
@@ -253,7 +253,7 @@ export function collectHeterogeneouslyAssignedModuleVars(
   sourceFile: ts.SourceFile,
 ): ReadonlySet<string> {
   const widened = new Set<string>();
-  // (#4269) Demand-gate: only a file that actually contains a `with` pays for
+  // (#4264) Demand-gate: only a file that actually contains a `with` pays for
   // the name-keyed fallback, and only such a file can change representation.
   const moduleVarsByName = sourceFile.text.includes("with")
     ? collectModuleScopedVarsByName(sourceFile)

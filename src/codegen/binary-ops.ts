@@ -1251,7 +1251,7 @@ export function compileBinaryExpression(
   // the content-compare route (a string is never `===` a non-string, which
   // `__str_equals` already yields), as do `+` and relational ops.
   const isLooseEqNeqForward = op === ts.SyntaxKind.EqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsToken;
-  // (#4269) The string route below is chosen from the LEFT operand's CHECKER
+  // (#4264) The string route below is chosen from the LEFT operand's CHECKER
   // type, and for a representation-widened module global that type is stale:
   // `var st = "parseInt"` still reads `string` to TypeScript after
   // `with (o) { st = parseInt; }` forced the slot to `externref`. Routing such a
