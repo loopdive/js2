@@ -31,6 +31,7 @@ import {
 import { emitBrandCheckTypeError } from "./native-proto.js";
 import { emitFlattenWithInlineFlatFastPath } from "./string-materialize.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
+import { collectConcatOperands, ensureNativeBatchedConcat } from "./native-batched-concat.js";
 import {
   emitStandaloneRegExpToStringFromExpr,
   isStaticallyUndefinedExpr,
@@ -1623,22 +1624,6 @@ export function emitBoolToString(ctx: CodegenContext, fctx: FunctionContext): Va
 // ── Batched string concat chains ─────────────────────────────────────
 
 /**
- * Walk a left-associative (or right-associative) tree of `+` BinaryExpressions
- * whose result type is string, collecting all leaf operands in order.
- * Returns the flat list of operands for the concat chain.
- */
-function collectConcatOperands(ctx: CodegenContext, expr: ts.Expression): ts.Expression[] {
-  if (
-    ts.isBinaryExpression(expr) &&
-    expr.operatorToken.kind === ts.SyntaxKind.PlusToken &&
-    isStringType(ctx.checker.getTypeAtLocation(expr))
-  ) {
-    return [...collectConcatOperands(ctx, expr.left), ...collectConcatOperands(ctx, expr.right)];
-  }
-  return [expr];
-}
-
-/**
  * Fold runs of adjacent compile-time-constant operands in a concat chain
  * into single synthetic string literals. E.g. [var, "a", "b", "c", var2]
  * becomes [var, "abc", var2] — reducing 4 concat ops to 2.
@@ -1863,6 +1848,45 @@ function emitNullableStringEquals(
   });
 }
 
+/** Lower native-string `+`, including the fixed-arity short-chain fast path. */
+function compileNativeStringConcat(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.BinaryExpression,
+): ValType | null | undefined {
+  const constVal = resolveStrictConstant(ctx, expr);
+  if (typeof constVal === "string") return compileStringLiteral(ctx, fctx, constVal, expr);
+
+  if (noJsHost(ctx) && process.env.JS2WASM_NATIVE_BATCHED_CONCAT !== "0") {
+    const operands = collectConcatOperands(ctx, expr);
+    const folded = foldAdjacentConstantOperands(ctx, operands);
+    const batchedIdx = ensureNativeBatchedConcat(ctx, folded.length);
+    if (batchedIdx !== undefined) {
+      for (const operand of folded) {
+        // A flattened nested Symbol must throw before operands to its right.
+        if (tryThrowOnSymbolStringCoercion(ctx, fctx, operand)) return nativeStringType(ctx);
+        compileNativeConcatOperand(ctx, fctx, operand);
+      }
+      fctx.body.push({ op: "call", funcIdx: batchedIdx });
+      return nativeStringType(ctx);
+    }
+  }
+
+  // Standalone/WASI coerces every leaf to `ref $AnyString`; the legacy
+  // JS-host nativeStrings lane retains its raw operand lowering.
+  if (noJsHost(ctx)) {
+    compileNativeConcatOperand(ctx, fctx, expr.left);
+    compileNativeConcatOperand(ctx, fctx, expr.right);
+  } else {
+    compileExpression(ctx, fctx, expr.left);
+    compileExpression(ctx, fctx, expr.right);
+  }
+  const funcIdx = ctx.nativeStrHelpers.get("__str_concat");
+  if (funcIdx === undefined) return undefined;
+  fctx.body.push({ op: "call", funcIdx });
+  return nativeStringType(ctx);
+}
+
 export function compileStringBinaryOp(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1885,39 +1909,8 @@ export function compileStringBinaryOp(
 
     switch (op) {
       case ts.SyntaxKind.PlusToken: {
-        // Constant-fold if both sides are compile-time constants (#1004)
-        const constVal = resolveStrictConstant(ctx, expr);
-        if (typeof constVal === "string") {
-          return compileStringLiteral(ctx, fctx, constVal, expr);
-        }
-        // #1470 — `__str_concat` takes `(ref $AnyString, ref $AnyString)`. A
-        // non-string operand (number, boolean, object, `any`) must be coerced
-        // to a native string first or the module is invalid (the previous code
-        // pushed the raw f64/i32/struct ref and `__str_concat` rejected it).
-        //
-        // This issue targets the standalone / WASI surface (`noJsHost`), where
-        // there is no JS runtime to fall back on. There, every operand is
-        // lowered to a native `ref $AnyString` in pure Wasm via
-        // `compileNativeConcatOperand` (numbers → native `number_toString`,
-        // booleans/null/undefined → native literals, dynamic refs → the
-        // `$__any_to_string` dispatcher). The legacy JS-host `nativeStrings`
-        // path (explicit `nativeStrings: true` / `fast`) is left unchanged here:
-        // its mixed-operand handling has separate, pre-existing limitations and
-        // bridging through `__str_from_extern` mid-body corrupts function
-        // indices, so it stays on the original raw-push behavior.
-        if (noJsHost(ctx)) {
-          compileNativeConcatOperand(ctx, fctx, expr.left);
-          compileNativeConcatOperand(ctx, fctx, expr.right);
-        } else {
-          // concat accepts ref $AnyString — no flatten needed
-          compileExpression(ctx, fctx, expr.left);
-          compileExpression(ctx, fctx, expr.right);
-        }
-        const funcIdx = ctx.nativeStrHelpers.get("__str_concat");
-        if (funcIdx !== undefined) {
-          fctx.body.push({ op: "call", funcIdx });
-          return nativeStringType(ctx);
-        }
+        const result = compileNativeStringConcat(ctx, fctx, expr);
+        if (result !== undefined) return result;
         break;
       }
       case ts.SyntaxKind.EqualsEqualsEqualsToken:
