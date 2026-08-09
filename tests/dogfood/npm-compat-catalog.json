@@ -33,6 +33,17 @@
     "issue": 1032
   },
   {
+    "name": "react",
+    "version": "19.2.6",
+    "tarball": "fixtures/react-19.2.6.tgz",
+    "registryTarball": "https://registry.npmjs.org/react/-/react-19.2.6.tgz",
+    "shasum": "3dadb8e12b2a7934c1d5317973e5dce1301f9a4d",
+    "integrity": "sha512-sfWGGfavi0xr8Pg0sVsyHMAOziVYKgPLNrS7ig+ivMNb3wbCBw3KxtflsGBAwD3gYQlE/AEZsTLgToRrSCjb0Q==",
+    "entryModule": "package/index.js",
+    "shape": "cjs-project",
+    "issue": 3958
+  },
+  {
     "name": "react-dom",
     "version": "19.2.6",
     "tarball": "fixtures/react-dom-19.2.6.tgz",

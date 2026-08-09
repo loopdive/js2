@@ -11,6 +11,7 @@ const EXPECTED_NAMES = [
   "hono",
   "lodash",
   "axios",
+  "react",
   "react-dom",
   "jsdom",
   "webpack",

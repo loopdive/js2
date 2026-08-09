@@ -66,7 +66,9 @@ import {
 import { renderHarnessThrownText } from "./lib/wasm-exn-render.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
-const PACKAGE_NAMES = ["acorn", "marked", "clsx", "cookie", "eslint", "prettier", "react", ...NPM_COMPAT_CATALOG_NAMES];
+const PACKAGE_NAMES = [
+  ...new Set(["acorn", "marked", "clsx", "cookie", "eslint", "prettier", "react", ...NPM_COMPAT_CATALOG_NAMES]),
+];
 // Committed npm API snapshot keeps report generation deterministic and offline.
 // Refresh these together from:
 // https://api.npmjs.org/downloads/point/last-week/{package}
@@ -1644,6 +1646,7 @@ for (const entry of NPM_COMPAT_CATALOG) {
   if (!selectedPackages.has(entry.name)) continue;
   // Handled above with its own upstream suite rather than as a bare
   if (entry.name === "lit") continue;
+  if (entry.name === "react") continue;
   if (entry.name === "react-dom") continue;
   console.log(`[npm-compat] ${entry.name} — bounded published package-entry compile/validate...`);
   const report = await runNpmCompatCatalogHarness(entry.name, { quiet: true });
