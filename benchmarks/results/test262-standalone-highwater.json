@@ -1,9 +1,9 @@
 {
-  "pass": 29026,
-  "host_free_pass": 29026,
-  "official_pass": 28727,
+  "pass": 29242,
+  "host_free_pass": 29242,
+  "official_pass": 28943,
   "official_total": 43505,
-  "sha": "a0d8263f088f8231550926cd8d72b83e620c001e",
-  "generated_at": "2026-08-08T23:52:02Z",
+  "sha": "aa22e6d8d1a03bd4a0bb737b95f80e73feea81ac",
+  "generated_at": "2026-08-09T06:10:47Z",
   "tolerance": 50
 }
