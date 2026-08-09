@@ -331,7 +331,7 @@ Final-head validation before publication:
   equivalence gates passed;
 - hybrid shadow: **37/37 IR, 24 legacy, 0 Unsupported, 0 Invariant**;
 - strict IR-only shadow: expected red on exactly 24 legacy bodies;
-- `check:linear-ir` has a pre-existing current-main ratchet failure
+- `check:linear-ir` had a pre-existing then-current-main ratchet failure
   (`compiled 8 -> 6`, two `vec.set_length` and two string-builder demotions).
   The identical result was reproduced in a clean detached `origin/main`
   worktree at `f23ea5025e04ac`; this checkpoint does not refresh that unrelated
@@ -413,13 +413,40 @@ legacy bodies without changing the 37-unit denominator.
    shadow validation, add semantic/output-shape optimization parity, and delete
    the obsolete legacy implementation in the same PR when no consumers remain.
 
-Resumability before publication: this checkpoint is on
-`codex/3522-constructor-retirement` in the isolated worktree
-`/private/tmp/ts2wasm-3522-constructor-retirement`. It began at
-`49cab5c821297b`; rebase onto the then-current `origin/main`, rerun the measured
-37/22 readiness gates, publish a ready PR, and replace this paragraph with the
-final head/base/PR and gate evidence before suspension. The dirty root checkout
-is outside this worktree and must remain untouched.
+### Published checkpoint handover
+
+Ready PR [#4268](https://github.com/loopdive/js2/pull/4268) publishes
+`codex/3522-constructor-retirement` from the isolated worktree
+`/private/tmp/ts2wasm-3522-constructor-retirement`. The production checkpoint
+is `2cdd8116f8b2a74cabee54fb4d6b7019f53dafe6`, rebased onto `origin/main`
+`6a16f225cb6aa36645375de4a2d35b2170f9937e`. The PR is intentionally ready,
+not draft, and is not in the merge queue at suspension. Do not modify the
+branch after it enters the queue; full Test262 remains merge-queue-only. The
+dirty root checkout is outside this worktree and remains untouched.
+
+Final post-rebase evidence:
+
+- changed-root regressions: **80/80 passed**;
+- constructor/dependency focus: **52/52 passed**;
+- main-overlap closure `$bag`, derivation-default, and eval/finally controls:
+  **47/47 passed**;
+- the exact async IR-only shadow passes with its direct-body poison and firing
+  control, and the #4102 Program ABI closure fixture now carries main's
+  canonical `[func, $arity, $bag, ...captures]` header;
+- typecheck, formatting, normal fallback, zero-attributed shape diagnostics,
+  hybrid readiness, allocation provenance, issue integrity, adoption,
+  optimization retirement, LOC/function budgets, vacuity-shape, oracle, and
+  verdict gates pass; and
+- strict IR-only is expected red only on 22 legacy bodies. The linear ratchet
+  is separately red with the identical result on this branch and clean
+  `origin/main` at `5cb2d525`: compiled `8 -> 6`, two
+  `illegal:instr-vec.set_length`, and two `select:string-builder-candidate`
+  demotions. This checkpoint does not refresh that unrelated baseline.
+
+Resume only after #4268 lands or is explicitly withdrawn. The next production
+transaction is closures and cross-owner calls; keep receiver-derived
+constructor method/accessor dispatch gated until its two incomplete
+optimization-ledger rows have semantic and output-shape IR ownership.
 
 ## Exhaustive source-unit census
 
