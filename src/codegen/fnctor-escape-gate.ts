@@ -50,7 +50,7 @@ import { type AllocLabelResult, analyzeFnctorAllocLabels, fnctorLayoutsEnabled }
 import { applyColdTailSplit } from "./fnctor-cold-tail.js";
 import { applyFnctorLayoutSplit, fnctorLayoutEmitEnabled } from "./fnctor-layout-emit.js"; // (#3927) per-type layout EMISSION
 import { recordFnctorFieldProvenance } from "./fnctor-field-provenance.js";
-import { inferFnctorFieldTypeFromCtorParam } from "./fnctor-ctor-param-types.js";
+import { fnctorFieldNumericWriteViolation, inferFnctorFieldTypeFromCtorParam } from "./fnctor-ctor-param-types.js";
 import { resolveWasmType } from "./index.js";
 
 /** Classification of a `new F()` fnctor allocation site. */
@@ -1613,15 +1613,31 @@ export function deriveFnctorFields(
     // so let that proven dynamic representation override the nominal LHS.
     // (#743) `this.x = <ctor param>` — narrow the slot to what the parameter's
     // call sites agree on. ON by default since 2026-08-08; rationale + acorn
-    // numbers live in `fnctor-ctor-param-types.ts`.
-    const paramInferred = inferFnctorFieldTypeFromCtorParam(ctx, funcDecl, valueExpr, rhsWasm);
+    // numbers live in `fnctor-ctor-param-types.ts`. Since #4250 the narrowing
+    // is additionally gated on the whole-program write-kind verdict inside
+    // that module (fail-closed).
+    const paramInferred = inferFnctorFieldTypeFromCtorParam(ctx, funcDecl, fieldName, valueExpr, rhsWasm);
     const uninferredType =
       ctx.objectHashConsumerTypes.has(rhsType) || ctx.objectHashConsumerTypes.has(carrierType)
         ? carrierWasm
         : lhsWasm.kind === "externref"
           ? rhsWasm
           : lhsWasm;
-    const fieldType = carrierIsDynamicObjectCall ? ({ kind: "externref" } as const) : (paramInferred ?? uninferredType);
+    let fieldType = carrierIsDynamicObjectCall ? ({ kind: "externref" } as const) : (paramInferred ?? uninferredType);
+    // (#4250) The PRE-EXISTING literal arm: a checker-typed numeric slot
+    // (`this.tag = 1` → f64) chosen with no verdict about the field's OTHER
+    // writes loses a later type-changing write (`a.tag = "s"` read back 0 on
+    // main since the machinery shipped). Demote on a PROVEN violating write —
+    // and only on a proven one; the asymmetry with the fail-closed gate on the
+    // param lever is deliberate and recorded in `fnctorFieldNumericWriteViolation`.
+    if (
+      paramInferred === null &&
+      !carrierIsDynamicObjectCall &&
+      (fieldType.kind === "f64" || fieldType.kind === "i32") &&
+      fnctorFieldNumericWriteViolation(ctx, funcDecl, fieldName, fieldType.kind)
+    ) {
+      fieldType = { kind: "externref" } as const;
+    }
     // Presence-tracking is not decided yet — a later unconditional write, or the
     // flow-grown scan below, can still move this field either way — so the
     // narrowing is applied optimistically here and REVERTED once
