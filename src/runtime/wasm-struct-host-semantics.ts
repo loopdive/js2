@@ -2,6 +2,32 @@
 /** Small host-side value/descriptor rules for opaque WasmGC structs. */
 
 export const NO_GENERATED_FIELD = Symbol("no-generated-field");
+export const PRIMITIVE_STRING_UNDEFINED = Symbol("primitive-string-undefined");
+const PRIMITIVE_STRING_INTRINSICS: Readonly<Record<string, Function | undefined>> = Object.freeze({
+  charAt: String.prototype.charAt,
+  charCodeAt: String.prototype.charCodeAt,
+  codePointAt: String.prototype.codePointAt,
+  endsWith: String.prototype.endsWith,
+  includes: String.prototype.includes,
+  indexOf: String.prototype.indexOf,
+  lastIndexOf: String.prototype.lastIndexOf,
+  localeCompare: String.prototype.localeCompare,
+  normalize: String.prototype.normalize,
+  padEnd: String.prototype.padEnd,
+  padStart: String.prototype.padStart,
+  repeat: String.prototype.repeat,
+  slice: String.prototype.slice,
+  startsWith: String.prototype.startsWith,
+  substr: String.prototype.substr,
+  substring: String.prototype.substring,
+  toLowerCase: String.prototype.toLowerCase,
+  toUpperCase: String.prototype.toUpperCase,
+  toString: String.prototype.toString,
+  trim: String.prototype.trim,
+  trimEnd: String.prototype.trimEnd,
+  trimStart: String.prototype.trimStart,
+  valueOf: String.prototype.valueOf,
+});
 
 export function masksField(
   sidecar: Record<PropertyKey, unknown> | undefined,
@@ -46,12 +72,19 @@ export function tryPrimitiveStringMethod(
   args: any[],
   isWasmStruct: (value: any) => boolean,
   apply: (fn: Function, receiver: any, args: any[]) => any,
-): { handled: true; value: any } | undefined {
+): any {
   if (typeof receiver !== "string" || !Array.isArray(args)) return undefined;
-  // RegExp protocol methods and closure arguments retain the full bridge.
-  if (["replace", "replaceAll", "match", "matchAll", "search", "split"].includes(method)) return undefined;
-  for (let i = 0; i < args.length; i++) if (isWasmStruct(args[i])) return undefined;
-  const fn = (receiver as Record<string, any>)[method];
-  if (typeof fn !== "function" || isWasmStruct(fn)) return undefined;
-  return { handled: true, value: apply(fn, receiver, args) };
+  const intrinsic = PRIMITIVE_STRING_INTRINSICS[method];
+  // RegExp protocol methods, closure-valued patches, and unknown names retain
+  // the full bridge. Intrinsic identity keeps String.prototype monkey-patches
+  // observable without allocating a result wrapper on every successful call.
+  if (intrinsic === undefined) return undefined;
+  const fn = (receiver as unknown as Record<string, any>)[method];
+  if (fn !== intrinsic) return undefined;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg !== null && (typeof arg === "object" || typeof arg === "function") && isWasmStruct(arg)) return undefined;
+  }
+  const value = apply(fn, receiver, args);
+  return value === undefined ? PRIMITIVE_STRING_UNDEFINED : value;
 }

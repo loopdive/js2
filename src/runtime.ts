@@ -11486,9 +11486,8 @@ assert._isSameValue = isSameValue;
         return (obj: any, method: string, args: any[]) => {
           if (obj == null) throw new TypeError("Cannot read properties of null (reading '" + method + "')");
           const primitive = wsh.tryPrimitiveStringMethod(obj, method, args, _isWasmStruct, _reflectApply);
-          if (primitive?.handled) return primitive.value;
-          // #983: wrap WasmGC receivers and arg structs in live-mirror Proxies;
-          // callable closure fields preserve JS ToPrimitive error behavior.
+          if (primitive !== undefined) return primitive === wsh.PRIMITIVE_STRING_UNDEFINED ? undefined : primitive;
+          // #983: wrap WasmGC receivers and arg structs in live-mirror Proxies; closure fields preserve ToPrimitive errors.
           const exports = callbackState?.getExports();
           const wrapHostValue = (v: any): any => {
             if (!_isWasmStruct(v)) return v;
