@@ -1,10 +1,11 @@
 {
   "id": "4256",
   "assignee": "ttraenkler/opus-4235-multifile",
-  "requested_by": "ttraenkler/opus-4235-multifile",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "issue-4256-multifile-proto-method-write",
   "claimed_at": "2026-08-09T01:49:26Z",
-  "updated_at": "2026-08-09T01:49:26Z",
-  "write_id": "97260-gpvcsafk"
+  "updated_at": "2026-08-09T02:23:03Z",
+  "write_id": "32342-o0asw7jw",
+  "released_at": "2026-08-09T02:23:03Z"
 }
