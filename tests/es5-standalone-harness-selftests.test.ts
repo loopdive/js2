@@ -45,7 +45,7 @@
 // every entry would read `"fail"` for the wrong reason.
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
 import {
@@ -203,6 +203,39 @@ describe.skipIf(!HARNESS_AVAILABLE)("#4251 standalone harness self-tests", () =>
   beforeAll(async () => {
     await ensureRefusalProviderCached();
   }, 600_000);
+
+  // (#4003) CI-LOAD MITIGATION — not a fix, and not cosmetic.
+  //
+  // `runTest262File` compiles AND runs a standalone module synchronously inside
+  // the vitest worker. Nineteen of those back to back (~73s total, 5-6s for the
+  // propertyHelper entries) starve the worker's event loop, so the birpc
+  // reporter calls queued during those blocking spans miss their deadline and
+  // vitest aborts the whole run with
+  //   Error: [vitest-worker]: Timeout calling "onTaskUpdate"
+  // exiting NONZERO while every assertion PASSED (19/19). Observed twice
+  // consecutively on PR #4258 (73.35s and 72.71s runs), and tracked as a
+  // general pre-commit/CI problem by #4003. The `--pool=forks --singleFork
+  // --no-file-parallelism` flags the changed-root-tests hook already passes do
+  // NOT help: the contention is inside the single worker, not across workers.
+  //
+  // Yielding a macrotask between tests lets the pending RPC responses drain.
+  // Two rounds because a single `setImmediate` still lands ahead of some
+  // queued I/O callbacks (same reason tests/test262-runner.ts uses two).
+  //
+  // Measured A/B locally, same flags CI uses, 2026-08-09:
+  //   without this hook → exit 1, 19/19 assertions pass, 1 onTaskUpdate error
+  //   with    this hook → exit 0, 19/19 assertions pass, 0 errors
+  // The mitigated run was the SLOWER of the two (98.3s of test time vs 86.5s),
+  // so it is not passing merely by being under lighter load.
+  //
+  // The DURABLE fix is the tests/dogfood/acorn.test.ts (#1710) pattern: run the
+  // compile in a CHILD PROCESS so it never touches the worker thread at all.
+  // That is a restructure of this canary suite and deliberately out of scope
+  // for this PR — see the handoff note on #4003.
+  afterEach(async () => {
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+  });
 
   for (const { file, status, note } of EXPECTED) {
     it(`${file} — expected ${status}`, { timeout: 180_000 }, async () => {
