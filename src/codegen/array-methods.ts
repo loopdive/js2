@@ -67,6 +67,7 @@ import { emitStableMergeSort } from "./merge-sort.js"; // (#3902) shared stable 
 import { coerceType, coercionInstrs, defaultValueInstrs, emitGuardedRefCast } from "./type-coercion.js";
 import { staticIntegerRange } from "./analysis/static-numeric-range.js";
 import { tryEmitStaticI32Expression } from "./i32-static-range-expr.js";
+import { countedPushIndexOfUnroll, emitArrayIndexOfScan } from "./array-indexof-scan.js";
 
 // (#3264) Array.prototype-borrow subsystem extracted to array-prototype-borrow.ts;
 // re-export the two public entries so existing importers keep resolving.
@@ -2742,54 +2743,25 @@ function compileArrayIndexOf(
     holeMap = holeToUndefinedInstrs(ctx, fctx);
   }
 
-  const loopBody: Instr[] = [
-    { op: "local.get", index: iTmp },
-    { op: "local.get", index: effLenTmp },
-    { op: "i32.ge_s" },
-    { op: "br_if", depth: 1 },
-
-    { op: "local.get", index: dataTmp },
-    { op: "local.get", index: iTmp },
-    { op: getOp, typeIdx: arrTypeIdx },
-    ...holeMap,
-    { op: "local.get", index: valTmp },
-    ...eqInstrs,
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: ctx.fast
-        ? [
-            { op: "local.get", index: iTmp },
-            { op: "local.set", index: resTmp },
-            { op: "br", depth: 2 }, // break out of block
-          ]
-        : [
-            { op: "local.get", index: iTmp },
-            { op: "f64.convert_i32_s" },
-            { op: "local.set", index: resTmp },
-            { op: "br", depth: 2 }, // break out of block
-          ],
-    },
-
-    { op: "local.get", index: iTmp },
-    { op: "i32.const", value: 1 },
-    { op: "i32.add" },
-    { op: "local.set", index: iTmp },
-    { op: "br", depth: 0 },
-  ];
-
-  fctx.body.push({
-    op: "block",
-    blockType: { kind: "empty" },
-    body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }],
+  emitArrayIndexOfScan(fctx, {
+    fast: ctx.fast,
+    arrTypeIdx,
+    dataLocal: dataTmp,
+    indexLocal: iTmp,
+    effectiveLengthLocal: effLenTmp,
+    valueLocal: valTmp,
+    resultLocal: resTmp,
+    getOp,
+    equality: eqInstrs,
+    holeMap,
+    unroll: countedPushIndexOfUnroll(
+      fctx,
+      ts.isIdentifier(propAccess.expression) ? propAccess.expression.text : undefined,
+      elemType,
+    ),
   });
-
   fctx.body.push({ op: "local.get", index: resTmp });
-
-  if (ctx.fast) {
-    return { kind: "i32" };
-  }
-  return { kind: "f64" };
+  return ctx.fast ? { kind: "i32" } : { kind: "f64" };
 }
 
 /**
