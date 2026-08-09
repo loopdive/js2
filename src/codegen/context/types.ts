@@ -2221,6 +2221,9 @@ export interface CodegenContext {
   /** (#4122) Grounded "every definition of this slot is numeric" verdict from
    *  `analyzeNumericPropertyNames`; absent in the host lane / when disabled. */
   numericLocalVerdict?: (node: ts.Node, name: string) => boolean;
+  /** Whole-program "every definition is a string" evidence for linked
+   *  implicit-any parameter inference. It does not change local storage. */
+  stringLocalVerdict?: (node: ts.Node, name: string) => boolean;
   /**
    * #3673: property names the SOURCE defines as a function-valued member
    * (`collectUserMethodNames`). Consulted by

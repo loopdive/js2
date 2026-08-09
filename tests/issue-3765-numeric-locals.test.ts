@@ -391,6 +391,41 @@ describe("#3765 — carrier verdict application stays structural", () => {
     expect(target.numericFunctionNames).toContain("numericResult");
     expect(calls).toHaveLength(0);
   });
+
+  it("withholds the local oracle across the runtime-eval callable boundary", () => {
+    const calls: PropertyKindVerdicts["isNumericLocal"][] = [];
+    const target: NumericPropertyAnalysisTarget = {
+      numericPropertyNames: new Set(),
+      stringPropertyNames: new Set(),
+      numericFunctionNames: new Set(),
+      runtimeEvalCallableBoundaryEnabled: true,
+      usageInference: {
+        setNumericLocalOracle: (oracle) => calls.push(oracle),
+      },
+    };
+    const sourceFile = ts.createSourceFile(
+      "runtime-eval-provider.ts",
+      `
+        function Box() { this.count = 1; this.label = "ok"; }
+        function numericResult() { return 42; }
+      `,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS,
+    );
+    const saved = process.env.JS2WASM_NUMERIC_LOCALS;
+    Reflect.deleteProperty(process.env, "JS2WASM_NUMERIC_LOCALS");
+    try {
+      applyNumericPropertyAnalysis(target, {}, [sourceFile]);
+    } finally {
+      if (saved === undefined) Reflect.deleteProperty(process.env, "JS2WASM_NUMERIC_LOCALS");
+      else process.env.JS2WASM_NUMERIC_LOCALS = saved;
+    }
+    expect(target.numericPropertyNames).toContain("count");
+    expect(target.stringPropertyNames).toContain("label");
+    expect(target.numericFunctionNames).toContain("numericResult");
+    expect(calls).toHaveLength(0);
+  });
 });
 
 describe("#3765 — `<array>.join()` is a proven string producer", () => {
