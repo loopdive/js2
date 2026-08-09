@@ -2,8 +2,7 @@
 /**
  * #682 / #1539 — Standalone RegExp engine (pure WasmGC, no JS host).
  *
- * #682 landed a reduced literal-substring `.test` (a `{pattern, flags}` struct
- * matched via `indexOf>=0`). #1539 Phase 2a replaces that with a real
+ * #682's reduced literal `.test` is replaced by #1539's real
  * backtracking VM: the pattern is compiled to flat `i32` bytecode at compile
  * time (`regex/{parse,compile}.ts`) and interpreted by `__regex_run`
  * (`native-regex.ts`). The literal-substring case is now the `CHAR`-only
@@ -53,6 +52,7 @@ import {
   REGEXP_MATCH_VEC_STRUCT,
   regexI32ArrayType,
 } from "./native-regex.js";
+import { buildIndexedAnchoredLiteralAltProgram } from "./regex-anchored-alt-index.js";
 import {
   type CompiledRegex,
   parseFlags,
@@ -1083,7 +1083,6 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
   // verbatim as its match payload. `.` (ANY) and any multi-unit escape make
   // source text != matched text, which that path has no way to express.
   const PLAIN = 30;
-
   const readFlatUnit = (dataLocal: number, offLocal: number, indexLocal: number): Instr[] => [
     { op: "local.get", index: dataLocal },
     { op: "local.get", index: offLocal },
@@ -1683,6 +1682,7 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
         },
       ],
     },
+    ...buildIndexedAnchoredLiteralAltProgram(i32ArrIdx, ctx.nativeStrDataTypeIdx),
     { op: "local.get", index: FBITS },
     { op: "i32.const", value: 1 },
     { op: "local.get", index: PROG },
