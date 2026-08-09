@@ -41,6 +41,7 @@ import { bindingHasMixedAssignmentCarrier } from "../analysis/mixed-assignment-c
 import { staticConstStringValues } from "../analysis/static-string-values.js";
 import { staticIntegerRange } from "../analysis/static-numeric-range.js";
 import { tryEmitStaticI32Expression } from "../i32-static-range-expr.js";
+import { tryCompileSingleUnitSplitLengthBinding } from "../derived-split-scalar.js";
 
 function symbolIsReadOnlyThroughLength(
   ctx: CodegenContext,
@@ -249,124 +250,6 @@ function tryCompileUniformSplitLengthBinding(
   if (hasNestedElementReads) {
     (fctx.derivedStaticSplitArrays ??= new Map()).set(symbol, { length });
   }
-  emitTdzInit(ctx, fctx, decl.name.text);
-  return true;
-}
-
-function tryCompileSingleUnitSplitLengthBinding(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  stmt: ts.VariableStatement,
-  decl: ts.VariableDeclaration,
-): boolean {
-  if (
-    !ctx.nativeStrings ||
-    ctx.anyStrTypeIdx < 0 ||
-    ctx.nativeStrTypeIdx < 0 ||
-    ctx.nativeStrDataTypeIdx < 0 ||
-    !(stmt.declarationList.flags & ts.NodeFlags.Const)
-  ) {
-    return false;
-  }
-  if (!ts.isIdentifier(decl.name) || !decl.initializer || !ts.isCallExpression(decl.initializer)) return false;
-  const call = decl.initializer;
-  if (!ts.isPropertyAccessExpression(call.expression) || call.expression.name.text !== "split") return false;
-  if (
-    call.arguments.length !== 1 ||
-    !ts.isStringLiteralLike(call.arguments[0]!) ||
-    call.arguments[0]!.text.length !== 1
-  ) {
-    return false;
-  }
-  const symbol = ctx.checker.getSymbolAtLocation(decl.name);
-  if (!symbol) return false;
-  let onlyLengthReads = true;
-  let scope: ts.Node = decl;
-  while (scope.parent && !ts.isFunctionLike(scope.parent) && !ts.isSourceFile(scope.parent)) scope = scope.parent;
-  scope = scope.parent ?? scope;
-  const visit = (node: ts.Node): void => {
-    if (!onlyLengthReads) return;
-    if (ts.isIdentifier(node) && ctx.checker.getSymbolAtLocation(node) === symbol) {
-      if (node === decl.name) return;
-      const property = node.parent;
-      if (!ts.isPropertyAccessExpression(property) || property.expression !== node || property.name.text !== "length") {
-        onlyLengthReads = false;
-        return;
-      }
-    }
-    forEachChild(node, visit);
-  };
-  visit(scope);
-  if (!onlyLengthReads) return false;
-
-  ensureNativeStringHelpers(ctx);
-  const flatLocal = allocLocal(fctx, `__split_count_flat_${fctx.locals.length}`, flatStringType(ctx));
-  const receiverType = compileExpression(ctx, fctx, call.expression.expression);
-  if (receiverType?.kind === "externref") {
-    coerceType(ctx, fctx, receiverType, { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx });
-  }
-  fctx.body.push({ op: "call", funcIdx: ctx.nativeStrHelpers.get("__str_flatten")! });
-  fctx.body.push({ op: "local.set", index: flatLocal });
-  const dataLocal = allocLocal(fctx, `__split_count_data_${fctx.locals.length}`, {
-    kind: "ref",
-    typeIdx: ctx.nativeStrDataTypeIdx,
-  });
-  const offLocal = allocLocal(fctx, `__split_count_off_${fctx.locals.length}`, { kind: "i32" });
-  const lenLocal = allocLocal(fctx, `__split_count_len_${fctx.locals.length}`, { kind: "i32" });
-  const indexLocal = allocLocal(fctx, `__split_count_i_${fctx.locals.length}`, { kind: "i32" });
-  const countLocal = allocLocal(fctx, `__split_count_${decl.name.text}_${fctx.locals.length}`, { kind: "i32" });
-  fctx.body.push({ op: "local.get", index: flatLocal });
-  fctx.body.push({ op: "struct.get", typeIdx: ctx.nativeStrTypeIdx, fieldIdx: 2 });
-  fctx.body.push({ op: "local.set", index: dataLocal });
-  fctx.body.push({ op: "local.get", index: flatLocal });
-  fctx.body.push({ op: "struct.get", typeIdx: ctx.nativeStrTypeIdx, fieldIdx: 1 });
-  fctx.body.push({ op: "local.set", index: offLocal });
-  fctx.body.push({ op: "local.get", index: flatLocal });
-  fctx.body.push({ op: "struct.get", typeIdx: ctx.nativeStrTypeIdx, fieldIdx: 0 });
-  fctx.body.push({ op: "local.set", index: lenLocal });
-  fctx.body.push({ op: "i32.const", value: 0 });
-  fctx.body.push({ op: "local.set", index: indexLocal });
-  fctx.body.push({ op: "i32.const", value: 1 });
-  fctx.body.push({ op: "local.set", index: countLocal });
-  fctx.body.push({
-    op: "block",
-    blockType: { kind: "empty" },
-    body: [
-      {
-        op: "loop",
-        blockType: { kind: "empty" },
-        body: [
-          { op: "local.get", index: indexLocal },
-          { op: "local.get", index: lenLocal },
-          { op: "i32.ge_s" },
-          { op: "br_if", depth: 1 },
-          { op: "local.get", index: dataLocal },
-          { op: "local.get", index: offLocal },
-          { op: "local.get", index: indexLocal },
-          { op: "i32.add" },
-          { op: "array.get_u", typeIdx: ctx.nativeStrDataTypeIdx },
-          { op: "i32.const", value: call.arguments[0]!.text.charCodeAt(0) },
-          { op: "i32.eq" },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [
-              { op: "local.get", index: countLocal },
-              { op: "i32.const", value: 1 },
-              { op: "i32.add" },
-              { op: "local.set", index: countLocal },
-            ],
-          },
-          { op: "local.get", index: indexLocal },
-          { op: "i32.const", value: 1 },
-          { op: "i32.add" },
-          { op: "local.set", index: indexLocal },
-          { op: "br", depth: 0 },
-        ],
-      },
-    ],
-  });
-  (fctx.derivedStringArrayLengthLocals ??= new Map()).set(symbol, countLocal);
   emitTdzInit(ctx, fctx, decl.name.text);
   return true;
 }

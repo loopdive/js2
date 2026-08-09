@@ -74,6 +74,7 @@ import {
 } from "./builtin-static-globals.js";
 import { tryCompileNativeDisposableStackAnyDisposedGet } from "./disposable-runtime.js";
 import { tryEmitFnctorPrototypeRead } from "./expressions/fnctor-prototype.js";
+import { tryEmitDerivedLengthLocal } from "./derived-split-scalar.js";
 import {
   tryCompileStandaloneRegExpMatchResultRead,
   tryCompileStandaloneRegExpPropertyRead,
@@ -2259,19 +2260,8 @@ export function tryLengthAndNameReads(
   propName: string,
   objType: ts.Type,
 ): PADispatchResult {
-  if (propName === "length" && ts.isIdentifier(expr.expression)) {
-    const symbol = ctx.checker.getSymbolAtLocation(expr.expression);
-    const substring = symbol ? fctx.derivedSubstringReads?.get(symbol) : undefined;
-    if (substring !== undefined) {
-      fctx.body.push({ op: "local.get", index: substring.lenLocal });
-      return { kind: "i32" };
-    }
-    const scalarLengthLocal = symbol ? fctx.derivedStringArrayLengthLocals?.get(symbol) : undefined;
-    if (scalarLengthLocal !== undefined) {
-      fctx.body.push({ op: "local.get", index: scalarLengthLocal });
-      return { kind: "i32" };
-    }
-  }
+  const derivedLength = tryEmitDerivedLengthLocal(ctx, fctx, expr, propName);
+  if (derivedLength !== undefined) return derivedLength;
 
   // `split(literal).length` normally enters the array-length arm below before
   // the string-derived-length dispatcher gets a chance to see the call. If an

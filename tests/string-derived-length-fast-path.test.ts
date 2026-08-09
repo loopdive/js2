@@ -141,6 +141,57 @@ describe("native string derived-length fast paths", () => {
     expect(runWat).not.toContain("array.new");
   });
 
+  it("scalarizes split count and final-field length in one scan", async () => {
+    const source = `
+      export function run(): number {
+        const rows: string[] = ["a,b,c", "solo", "x,y,", "", ",a", "a,,b"];
+        let sum = 0;
+        for (let i = 0; i < 12; i = i + 1) {
+          const columns = rows[i % 6].split(",");
+          sum = sum + columns.length + columns[columns.length - 1].length;
+        }
+        return sum;
+      }
+    `;
+    const scalar = await compileAndRun(source);
+    const saved = process.env.JS2WASM_NATIVE_SPLIT_TAIL_SCALAR;
+    let allocated: Awaited<ReturnType<typeof compileAndRun>>;
+    try {
+      process.env.JS2WASM_NATIVE_SPLIT_TAIL_SCALAR = "0";
+      allocated = await compileAndRun(source);
+    } finally {
+      if (saved === undefined) Reflect.deleteProperty(process.env, "JS2WASM_NATIVE_SPLIT_TAIL_SCALAR");
+      else process.env.JS2WASM_NATIVE_SPLIT_TAIL_SCALAR = saved;
+    }
+    expect(scalar.value).toBe(40);
+    expect(allocated.value).toBe(scalar.value);
+    expect(scalar.runWat).toContain("__split_tail_len");
+    expect(allocated.runWat).not.toContain("__split_tail_len");
+    expect(scalar.runWat).not.toBe(allocated.runWat);
+  });
+
+  it("retains split arrays that escape or mutate", async () => {
+    const escaped = await compileAndRun(`
+      export function run(): number {
+        const columns = "a,b".split(",");
+        function tail(): number { return columns[columns.length - 1].length; }
+        return columns.length + tail();
+      }
+    `);
+    expect(escaped.value).toBe(3);
+    expect(escaped.runWat).not.toContain("__split_tail_len");
+
+    const mutated = await compileAndRun(`
+      export function run(): number {
+        const columns = "a,b".split(",");
+        columns[columns.length - 1] = "tail";
+        return columns.length + columns[columns.length - 1].length;
+      }
+    `);
+    expect(mutated.value).toBe(6);
+    expect(mutated.runWat).not.toContain("__split_tail_len");
+  });
+
   it("folds uniform literal-table prefix and suffix predicates", async () => {
     const { value, runWat } = await compileAndRun(`
       export function run(): number {
