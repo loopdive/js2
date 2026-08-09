@@ -23,14 +23,14 @@ import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { addFuncType, getOrRegisterArrayType, getOrRegisterVecType } from "./registry/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3) stable-regime minting
 import { stringConstantExternrefInstrs } from "./native-strings.js";
+import { buildIndexedAnchoredLiteralAltSearch } from "./regex-anchored-alt-index.js";
 import { ReOp } from "./regex/bytecode.js";
 import { frameStackPushInstrs } from "./regex-scratch-pool.js";
 import { REGEX_STEP_CAP, REGEX_STEP_CAP_LEN_SATURATION, REGEX_STEP_CAP_PER_UNIT } from "./regex/vm.js";
 
 /**
  * Runtime-compiled `^(?:literal|literal|...)$` programs with no flags use this
- * compact, variable-width representation:
- *   [marker, bodyLength, 0, ...UTF-16 body units]
+ * compact representation: [marker, bodyLength, 0, ...UTF-16 body units]
  *
  * `__regex_search` intercepts it before the fixed-width backtracking VM. The
  * negative marker cannot collide with a ReOp. This is a representation-level
@@ -1676,7 +1676,6 @@ export function ensureRegexSearch(ctx: CodegenContext): number {
   const strDataIdx = ctx.nativeStrDataTypeIdx;
   const i32ArrRef: ValType = { kind: "ref", typeIdx: i32Arr };
   const strDataRef: ValType = { kind: "ref", typeIdx: strDataIdx };
-
   const typeIdx = addFuncType(
     ctx,
     [
@@ -1694,7 +1693,6 @@ export function ensureRegexSearch(ctx: CodegenContext): number {
   );
   const funcIdx = mintDefinedFunc(ctx);
   ctx.nativeRegexHelpers.set("__regex_search", funcIdx);
-
   const PROG = 0,
     CTAB = 1,
     NSLOTS = 2,
@@ -1707,12 +1705,13 @@ export function ensureRegexSearch(ctx: CodegenContext): number {
   const I = 9; // current start position
   const PC = 10; // (#3673 round 20) anchored-detection scan cursor
   const LEADCH = 11; // (#3673 round 29) leading literal code unit, -1 when none
-  const ALT_POS = 12;
-  const ALT_INDEX = 13;
-  const ALT_MATCH = 14;
-  const ALT_BODY_LEN = 15;
-
+  const ALT_POS = 12,
+    ALT_INDEX = 13,
+    ALT_MATCH = 14,
+    ALT_BODY_LEN = 15;
+  const indexedLiteralAlt = buildIndexedAnchoredLiteralAltSearch(i32Arr, strDataIdx);
   const body: Instr[] = [
+    ...indexedLiteralAlt.body,
     // Runtime-compiled `^(?:literal|literal|...)$` with no flags. Acorn builds
     // its keyword/reserved-word predicates in this exact generic form. Compare
     // the subject directly against each literal instead of interpreting a
@@ -2100,6 +2099,7 @@ export function ensureRegexSearch(ctx: CodegenContext): number {
       { name: "altIndex", type: { kind: "i32" } },
       { name: "altMatch", type: { kind: "i32" } },
       { name: "altBodyLen", type: { kind: "i32" } },
+      ...indexedLiteralAlt.locals,
     ],
     body,
     exported: false,

@@ -90,28 +90,28 @@ const EXPECTED: ReadonlyArray<{ file: string; status: "pass" | "fail"; note: str
   // ── negative property helpers: must THROW, and the throw must be identifiable
   {
     file: "propertyhelper-verifynotwritable-writable.js",
-    status: "fail",
-    note: "#4251 RC1 — verifyNotWritable DOES throw a Test262Error; `err.constructor !== Test262Error` and `err.constructor.name` is undefined, because `new Test262Error()` is intercepted to an $Error_struct that bypasses the harness's own constructor.",
+    status: "pass",
+    note: "fixed by #4262 — the error-ctor carrier now resolves `err.constructor` through the SAME global `compileIdentifierValueRead` prefers (`$__mod_<name>`), so the identity matches the harness's own declaration.",
   },
   {
     file: "propertyhelper-verifynotenumerable-enumerable.js",
-    status: "fail",
-    note: "#4251 RC1 — same constructor-identity gap.",
+    status: "pass",
+    note: "fixed by #4262 — the error-ctor carrier now resolves `err.constructor` through the SAME global `compileIdentifierValueRead` prefers (`$__mod_<name>`), so the identity matches the harness's own declaration.",
   },
   {
     file: "propertyhelper-verifynotconfigurable-configurable.js",
-    status: "fail",
-    note: "#4251 RC1 — same constructor-identity gap.",
+    status: "pass",
+    note: "fixed by #4262 — the error-ctor carrier now resolves `err.constructor` through the SAME global `compileIdentifierValueRead` prefers (`$__mod_<name>`), so the identity matches the harness's own declaration.",
   },
   {
     file: "propertyhelper-verifywritable-not-writable.js",
-    status: "fail",
-    note: "#4251 RC1 — same constructor-identity gap.",
+    status: "pass",
+    note: "fixed by #4262 — the error-ctor carrier now resolves `err.constructor` through the SAME global `compileIdentifierValueRead` prefers (`$__mod_<name>`), so the identity matches the harness's own declaration.",
   },
   {
     file: "propertyhelper-verifyenumerable-not-enumerable.js",
-    status: "fail",
-    note: "#4251 RC1 — same constructor-identity gap.",
+    status: "pass",
+    note: "fixed by #4262 — the error-ctor carrier now resolves `err.constructor` through the SAME global `compileIdentifierValueRead` prefers (`$__mod_<name>`), so the identity matches the harness's own declaration.",
   },
 
   // ── positive property helpers that ALREADY work — these are the ones a
@@ -149,8 +149,8 @@ const EXPECTED: ReadonlyArray<{ file: string; status: "pass" | "fail"; note: str
   },
   {
     file: "propertyhelper-verifyconfigurable-not-configurable.js",
-    status: "fail",
-    note: "#4251 RC1 — constructor-identity gap on the negative branch.",
+    status: "pass",
+    note: "fixed by #4262 — the error-ctor carrier now resolves `err.constructor` through the SAME global `compileIdentifierValueRead` prefers (`$__mod_<name>`), so the identity matches the harness's own declaration.",
   },
 
   // ── assert.throws: the single most-included harness helper ─────────────────

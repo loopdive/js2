@@ -241,6 +241,7 @@ import {
 } from "./select.js";
 import { verifyIrFunction } from "./verify.js";
 import { prepareIrRuntimeManifest, type PreparedIrRuntimeManifest } from "./intrinsic-support.js";
+import { attachIrExternSupport } from "./extern-support.js";
 import { isIntrinsicId, type IntrinsicId } from "./intrinsics.js";
 import { materializePreparedMathProviders, preparedMathProviderIndex } from "./math-runtime-providers.js";
 import { materializePreparedAsyncHostAdapters } from "../codegen/ir-async-runtime-adapters.js";
@@ -2017,6 +2018,17 @@ export function compileIrPathFunctions(
   ) {
     return finishReport();
   }
+  if (
+    !runGlobalPreparation(
+      () =>
+        (healthyForLower = healthyForLower.map((entry) => {
+          const fn = attachIrExternSupport(entry.fn);
+          return fn === entry.fn ? entry : { ...entry, fn };
+        })),
+    )
+  ) {
+    return finishReport();
+  }
   if (!runGlobalPreparation(() => (healthyForLower = prepareVectors(ctx, healthyForLower)))) return finishReport();
   healthyForLower = verifyFinalAllocArtifacts(healthyForLower, allocRegistry, monoResult.cloneOrigins, (entry, error) =>
     markOwnerFailure(terminalOwnerOf(entry), entry.artifactUnitId, entry.name, error, "verify"),
@@ -3661,6 +3673,7 @@ function makeFromAstResolver(ctx: CodegenContext, moduleBindingResolver?: IrModu
         const f64 = { kind: "f64" } as const;
         return {
           className: "Date",
+          importPrefix: "Date",
           constructorParams: [],
           methods: new Map([
             ["getDate", { params: [externref], results: [f64] }],
@@ -3672,6 +3685,7 @@ function makeFromAstResolver(ctx: CodegenContext, moduleBindingResolver?: IrModu
       }
       return {
         className: info.className,
+        importPrefix: info.importPrefix,
         constructorParams: info.constructorParams,
         methods: info.methods,
         properties: info.properties,

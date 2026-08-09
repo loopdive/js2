@@ -8,6 +8,7 @@ import { fillVecOverlayHelpers } from "./vec-overlay.js";
 import { fillCarrierBagDelete } from "./carrier-bag-delete.js";
 import { fillCarrierBagVisibility } from "./carrier-bag-visibility.js";
 import { fillVecPropsKeySource } from "./vec-props-key-source.js";
+import { fillGopnVecArm, fillVecOverlayPushKeys } from "./vec-overlay-keys.js";
 
 /** Finalize the generic vec overlay before installing the exact `$ObjVec` prototype arm. */
 export function fillObjVecReflectionHelpers(ctx: CodegenContext): void {
@@ -27,6 +28,13 @@ export function fillObjVecReflectionHelpers(ctx: CodegenContext): void {
   // `fillVecOverlayHelpers` above — it does not exist at reserve time. A
   // skipped fill leaves the null placeholder, i.e. the caller keeps refusing.
   fillVecPropsKeySource(ctx);
+  // (#4230 L1) Same pass, same reason as the two above: `__vec_overlay_lookup`
+  // is minted by `fillVecOverlayHelpers`, so the overlay key pusher reserved in
+  // `fillDynamicForinVecArms` gets its real body here. `fillGopnVecArm` is the
+  // other half — the `$__vec_base` arm `__getOwnPropertyNames` never had — and
+  // is placed here so it can bake the same (now-filled) index.
+  fillVecOverlayPushKeys(ctx);
+  fillGopnVecArm(ctx);
   fillObjVecArrayPrototypeArm(ctx);
 }
 
