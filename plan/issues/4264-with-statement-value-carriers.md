@@ -187,10 +187,25 @@ word-mentioning module.
 
 ## Regression evidence
 
-- `language/statements/with` A/B, all 181 files, same process, same eval tier:
-  **0** pass→fail.
-- `tests/equivalence/**` green.
-- `tests/es5-standalone-with.test.ts` (#4231's suite) green.
+Every number below is a real A/B — the head sources were swapped out for
+`upstream/main`'s by FILE COPY (never `git stash`; `refs/stash` is one shared
+stack across worktrees) and the same command re-run.
+
+| check | base | head | delta |
+| --- | --- | --- | --- |
+| `language/statements/with` (181 files, standalone, REFUSAL tier) | 59 pass | 89 pass | **+30 / −0** |
+| `built-ins/Function/prototype` (309) | 152 pass | 152 pass | 0 / 0 |
+| `language/expressions/addition` (48) | 35 pass | 35 pass | 0 / 0 |
+| `language/expressions/concatenation` (5) | 3 pass | 3 pass | 0 / 0 |
+| `tests/equivalence/**` (1664) | 24 fail | 24 fail | **identical failure SET** |
+| `#1387`/`#2663`/`#3025`/`#3364`/`#3956`/`#4179`/`#4182`/`#4204`/`#4206`/`#737` suites (139) | 14 fail | 14 fail | **identical failure SET** |
+
+The 24 equivalence failures and the 14 neighbour failures are pre-existing on
+`upstream/main` e1aeff7c2; the sets were compared by test name, not by count.
+
+`tests/es5-standalone-with-carrier.test.ts` is **4 of 8 RED on base** (the four
+positive cases); the four negative cases pass on base by construction, which is
+the point of including them.
 
 ## What is left, with the mechanism named
 
