@@ -39,6 +39,8 @@ import { runHarness as runClsx } from "../tests/dogfood/clsx-harness.mjs";
 import { runHarness as runCookie } from "../tests/dogfood/cookie-harness.mjs";
 import { correctnessRollup, correctnessVerdict } from "./lib/npm-compat-correctness.mjs"; // (#4127)
 import { runHarness as runEslint } from "../tests/dogfood/eslint-harness.mjs";
+import { runHarness as runEslintWorkload } from "../tests/dogfood/eslint-workload-harness.mjs";
+import { runHarness as runJsdomWorkload } from "../tests/dogfood/jsdom-harness.mjs";
 import { runHarness as runPrettier } from "../tests/dogfood/prettier-harness.mjs";
 import { runHarness as runReact } from "../tests/dogfood/react-harness.mjs";
 import { runHarness as runReactUpstreamSuite } from "../tests/dogfood/react-upstream-suite.mjs";
@@ -1476,6 +1478,20 @@ if (selectedPackages.has("cookie")) {
 if (selectedPackages.has("eslint")) {
   console.log("[npm-compat] eslint — bounded package-entry compile/validate...");
   const eslintReport = await runEslint({ quiet: true });
+  // Do not spend a second bounded compile on a package-entry failure. Once
+  // lib/api.js is a valid module, the workload harness compiles a generated
+  // driver that calls the real Linter.verify API and compares its primitive
+  // diagnostic count with native Node. Until then, retain an explicit blocked
+  // workload row so the correctness axis cannot read as an implicit pass.
+  const eslintWorkload =
+    eslintReport.compile.success && eslintReport.validation.validates ? await runEslintWorkload({ quiet: true }) : null;
+  const eslintTests = eslintWorkload?.tests ?? {
+    kind: "api-workload",
+    status: "blocked",
+    reason: eslintReport.compile.success
+      ? "package-entry validation did not produce a runnable Linter workload"
+      : "package-entry compile blocked before the Linter workload could run",
+  };
   packages.push(
     await buildPackageEntry({
       name: "eslint",
@@ -1484,7 +1500,7 @@ if (selectedPackages.has("eslint")) {
       entryFile: eslintReport.eslint.entryModule.replace(/^package\//, ""),
       shape: "cjs-project",
       report: eslintReport,
-      tests: null,
+      tests: eslintTests,
       perf: null,
     }),
   );
@@ -1631,6 +1647,25 @@ for (const entry of NPM_COMPAT_CATALOG) {
   if (entry.name === "react-dom") continue;
   console.log(`[npm-compat] ${entry.name} — bounded published package-entry compile/validate...`);
   const report = await runNpmCompatCatalogHarness(entry.name, { quiet: true });
+  const workload =
+    entry.name === "jsdom" && report.compile.success && report.validation.validates
+      ? await runJsdomWorkload({ quiet: true })
+      : null;
+  const tests =
+    workload?.tests ??
+    (entry.name === "jsdom"
+      ? {
+          kind: "api-workload",
+          status: "blocked",
+          reason: report.compile.success
+            ? "package-entry validation did not produce a runnable jsdom workload"
+            : "package-entry compile blocked before the jsdom workload could run",
+        }
+      : {
+          kind: "upstream-suite",
+          status: "not-integrated",
+          reason: "not shipped in npm tarball; adapter pending",
+        });
   packages.push(
     await buildPackageEntry({
       name: entry.name,
@@ -1639,11 +1674,7 @@ for (const entry of NPM_COMPAT_CATALOG) {
       entryFile: entry.entryModule.replace(/^package\//, ""),
       shape: entry.shape,
       report,
-      tests: {
-        kind: "upstream-suite",
-        status: "not-integrated",
-        reason: "not shipped in npm tarball; adapter pending",
-      },
+      tests,
       perf: null,
     }),
   );

@@ -23,6 +23,12 @@ substitute harness-authored smoke vectors or imply that validation is a test
 pass. Matching upstream source suites can be pinned and adapted package by
 package, following the existing Acorn/React precedent.
 
+ESLint and jsdom are the two explicit runtime-workload exceptions. Their npm
+tarballs still omit the upstream suites, but each has a separate API workload
+that is only scored after the generated Wasm driver actually runs and matches
+a native Node oracle. A compile timeout or invalid module remains an
+unverified workload, never a pass.
+
 The extracted catalog fixture is also given the installed package's importer
 context (`node_modules`), including pnpm's private dependency links. This keeps
 the published bytes under test while allowing relative imports such as jsdom's
@@ -39,7 +45,7 @@ check, are:
 | **acorn official suite**                | #3729 | `dist/acorn.mjs`          | acorn's own real `test/tests*.js` (~3,500 cases)                            |
 | **clsx** (className joiner)             | #3748 | `dist/clsx.mjs`           | per-op string equality (see below — driver epilogue, not a raw export call) |
 | **cookie** (RFC-6265 parser/serializer) | #3751 | `dist/index.js`           | per-op JSON-normalized equality (direct export calls, no epilogue)          |
-| **eslint** (JavaScript linter)          | #1400 | `lib/api.js`              | bounded full-package compile/validate; runtime diff pending                 |
+| **eslint** (JavaScript linter)          | #1400 | `lib/api.js`              | bounded full-package compile/validate; `Linter.verify` API workload         |
 | **prettier** (code formatter)           | —     | `standalone.mjs`          | bounded package-entry compile/validate; runtime diff pending                |
 | **react** (UI library)                  | —     | `index.js`                | bounded package-entry compile/validate                                      |
 | **react upstream suite**                | —     | `cjs/react.production.js` | React's own real `packages/react/src/__tests__` unit tests                  |
@@ -171,10 +177,43 @@ DOGFOOD_ESLINT=1 pnpm test -- tests/dogfood/eslint.test.ts
 for focused diagnostics. A timeout remains a failed compile result. It is never
 relabelled as validation or runtime success.
 
-The harness currently reports compile/validate separately and leaves the test
-count unavailable until the real `Linter.verify()` proof in #1400 is complete.
-This is intentional: the npm-compat page includes unfinished packages such as
-marked, and ESLint should be equally visible without overstating support.
+The package-entry harness reports compile/validate separately. Once that
+frontier is green, the companion workload is attempted automatically by the
+npm-compat report generator:
+
+```bash
+pnpm run dogfood:eslint-workload
+npx tsx tests/dogfood/eslint-workload-harness.mjs --json
+```
+
+The workload compiles a generated driver outside the extracted fixture, imports
+the verified installed ESLint graph, and returns the number of `semi` rule
+diagnostics for `var x = 1`. The native oracle evaluates that same operation
+against the same installed package at run time. `DOGFOOD_ESLINT_WORKLOAD_TIMEOUT_MS`
+can shorten the bounded probe for local diagnostics.
+
+If the package-entry compile is still blocked, the report leaves the workload
+explicitly unverified. This is intentional: a valid module is not evidence of
+correct `Linter.verify` behavior, and a timeout is not a pass.
+
+## jsdom (#3995)
+
+`jsdom`'s published npm tarball omits its upstream Mocha/Web Platform Tests, so
+there is no honest upstream-suite denominator to report from the fixture alone.
+The package-entry catalog harness still compiles the real `lib/api.js` graph,
+with the installed pnpm importer context wired into the extracted fixture. The
+API workload adds a small consumed DOM check (selector text, list cardinality,
+and serialized markup) and compares the primitive count with native `JSDOM`:
+
+```bash
+pnpm run dogfood:jsdom-workload
+npx tsx tests/dogfood/jsdom-harness.mjs --json
+```
+
+This is explicitly an API smoke workload, not jsdom's upstream suite. It is
+only marked verified after the compiled workload runs and matches the native
+oracle; a compile timeout remains unverified. The npm-compat report generator
+attempts it after the package-entry compile/validation step succeeds.
 
 ## prettier and react
 
