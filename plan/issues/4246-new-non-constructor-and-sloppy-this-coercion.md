@@ -16,6 +16,14 @@ es_edition: 5
 language_feature: new-expression, this-binding, function-semantics
 goal: es5
 related: [4221, 4243, 4190, 4203, 4017, 4192, 1596, 4202]
+func-budget-allow:
+  # The same two edits the loc-budget rationale below covers, seen at function
+  # granularity: the sloppy-`this` reshape and inlined receiver bind/restore
+  # sit inside compileCallExpression's dispatch block (+33), and the
+  # non-constructor guard dispatch sits in compileNewExpression's early
+  # chain (+11). Neither can move out without moving the dispatch itself.
+  - src/codegen/expressions/calls.ts::compileCallExpression
+  - src/codegen/expressions/new-super.ts::compileNewExpression
 loc-budget-allow:
   # calls.ts (+35): both edits are arms of the ONE `.call`/`.apply` dispatch
   # block. The sloppy-`this` reshape must sit at the TOP of that block (above
