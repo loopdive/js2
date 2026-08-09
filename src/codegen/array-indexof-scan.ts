@@ -5,6 +5,14 @@ import type { FunctionContext } from "./context/types.js";
 
 const HOT_COUNTED_PUSH_TRIP_COUNT = 1024;
 const HOT_NUMERIC_INDEX_OF_UNROLL = 32;
+// Four pure comparisons share one miss branch. Eight elements (two batches)
+// kept the hot body compact while still amortizing its loop backedge.
+const HOT_NUMERIC_INDEX_OF_BATCHED_UNROLL = 8;
+const HOT_NUMERIC_INDEX_OF_BRANCH_BATCH = 4;
+
+function batchedIndexOfBranchesEnabled(): boolean {
+  return process.env.JS2WASM_ARRAY_INDEXOF_BATCHED_BRANCHES !== "0";
+}
 
 interface CountedPushProof {
   readonly tripCount: number;
@@ -27,8 +35,8 @@ interface IndexOfScan {
 }
 
 // This is code-selection metadata, not a semantic proof. Keeping it outside
-// FunctionContext avoids making every emitter subsystem depend on this one
-// benchmark-oriented heuristic, while WeakMap keeps its lifetime compile-local.
+// FunctionContext avoids making every emitter subsystem depend on this hot-scan
+// heuristic, while WeakMap keeps its lifetime compile-local.
 const countedPushTripCounts = new WeakMap<FunctionContext, Map<string, number>>();
 
 export function registerCountedPushArray(fctx: FunctionContext, proof: CountedPushProof, vecTypeIdx: number): void {
@@ -46,7 +54,8 @@ export function countedPushIndexOfUnroll(
 ): number {
   const numericElements = elemType.kind === "f64" || elemType.kind === "i32";
   const tripCount = receiverName === undefined ? undefined : countedPushTripCounts.get(fctx)?.get(receiverName);
-  return numericElements && (tripCount ?? 0) >= HOT_COUNTED_PUSH_TRIP_COUNT ? HOT_NUMERIC_INDEX_OF_UNROLL : 1;
+  if (!numericElements || (tripCount ?? 0) < HOT_COUNTED_PUSH_TRIP_COUNT) return 1;
+  return batchedIndexOfBranchesEnabled() ? HOT_NUMERIC_INDEX_OF_BATCHED_UNROLL : HOT_NUMERIC_INDEX_OF_UNROLL;
 }
 
 /** Emit a scalar scan or a wide main loop with a scalar tail. */
@@ -73,6 +82,14 @@ export function emitArrayIndexOfScan(fctx: FunctionContext, scan: IndexOfScan): 
         { op: "br", depth: breakDepth },
       ],
     },
+  ];
+  const equalityAtOffset = (offset: number): Instr[] => [
+    { op: "local.get", index: scan.dataLocal },
+    ...indexInstrs(offset),
+    { op: scan.getOp, typeIdx: scan.arrTypeIdx },
+    ...scan.holeMap,
+    { op: "local.get", index: scan.valueLocal },
+    ...scan.equality,
   ];
   const increment = (amount: number): Instr[] => [
     { op: "local.get", index: scan.indexLocal },
@@ -106,8 +123,27 @@ export function emitArrayIndexOfScan(fctx: FunctionContext, scan: IndexOfScan): 
     { op: "i32.lt_s" },
     { op: "br_if", depth: 1 },
   ];
-  for (let offset = 0; offset < scan.unroll; offset++) {
-    wideLoop.push(...compareAtOffset(offset, 3));
+  const batchBranches = batchedIndexOfBranchesEnabled();
+  for (let offset = 0; offset < scan.unroll; offset += HOT_NUMERIC_INDEX_OF_BRANCH_BATCH) {
+    const end = Math.min(offset + HOT_NUMERIC_INDEX_OF_BRANCH_BATCH, scan.unroll);
+    if (!batchBranches) {
+      for (let candidate = offset; candidate < end; candidate++) {
+        wideLoop.push(...compareAtOffset(candidate, 3));
+      }
+      continue;
+    }
+    for (let candidate = offset; candidate < end; candidate++) {
+      wideLoop.push(...equalityAtOffset(candidate));
+      if (candidate > offset) wideLoop.push({ op: "i32.or" });
+    }
+    // A miss takes one branch for the whole batch. A hit rechecks only that
+    // side-effect-free batch in source order so duplicate values still return
+    // the first matching index.
+    wideLoop.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: Array.from({ length: end - offset }, (_, index) => compareAtOffset(offset + index, 4)).flat(),
+    });
   }
   wideLoop.push(...increment(scan.unroll));
 
