@@ -64,6 +64,7 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
       ctx.protoNamedDirty &&
       ctx.vecAccessorDescriptorDirty &&
       ctx.vecIndexDeleteDirty &&
+      ctx.vecOwnKeysDirty &&
       ctx.dynamicCodeDirty
     ) {
       return;
@@ -88,6 +89,9 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
     if (!ctx.vecIndexDeleteDirty && isIndexDelete(node)) {
       ctx.vecIndexDeleteDirty = true;
     }
+    if (!ctx.vecOwnKeysDirty && isOwnKeysOrDescriptorDefineUse(node)) {
+      ctx.vecOwnKeysDirty = true;
+    }
     // (#4159/#4160) Dynamic code defeats the whole pre-scan: static eval
     // inlining (#1163) splices parsed statements in during BODY compilation,
     // after this pass has finished, so `eval('Array.prototype[0] = 1')` would
@@ -100,6 +104,7 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
       ctx.protoNamedDirty = true;
       ctx.vecAccessorDescriptorDirty = true;
       ctx.vecIndexDeleteDirty = true;
+      ctx.vecOwnKeysDirty = true;
     }
     forEachChild(node, visit);
   };
@@ -249,6 +254,51 @@ function isNonDataDescriptorDefine(node: ts.Node): boolean {
 function isIndexDelete(node: ts.Node): boolean {
   if (!ts.isDeleteExpression(node)) return false;
   return ts.isElementAccessExpression(unwrapExpr(node.expression));
+}
+
+/**
+ * (#4230 L1) `Object`/`Reflect` member names that can either PUT a named
+ * expando into the #3251 overlay companion or ASK for a vec's own key list.
+ * Either one makes `vec-overlay-keys.ts` observable; neither present means it
+ * cannot be, so the whole feature is skipped and emission stays byte-identical.
+ */
+const OWN_KEYS_OR_DEFINE_METHODS = new Set([
+  "defineProperty",
+  "defineProperties",
+  "getOwnPropertyNames",
+  "ownKeys",
+  "getOwnPropertyDescriptors",
+]);
+
+/**
+ * (#4230 L1) Does this node mention a descriptor-defining or own-name-reading
+ * `Object`/`Reflect` builtin?
+ *
+ * Matched on the PROPERTY ACCESS, not the call, so `const f =
+ * Object.getOwnPropertyNames; f(a)` is covered too. `create` is matched only in
+ * call position with two arguments: `Object.create(proto)` installs no
+ * descriptors, and it is far too common an idiom to arm the feature for.
+ *
+ * Deliberately syntactic and per-MODULE, like every other flag in this pre-scan
+ * — it runs before body compilation so a consumer cannot desync from it.
+ */
+function isOwnKeysOrDescriptorDefineUse(node: ts.Node): boolean {
+  if (ts.isCallExpression(node)) {
+    const callee = node.expression;
+    if (
+      ts.isPropertyAccessExpression(callee) &&
+      ts.isIdentifier(callee.expression) &&
+      callee.expression.text === "Object" &&
+      callee.name.text === "create"
+    ) {
+      return node.arguments.length >= 2;
+    }
+    return false;
+  }
+  if (!ts.isPropertyAccessExpression(node) || !ts.isIdentifier(node.expression)) return false;
+  const ns = node.expression.text;
+  if (ns !== "Object" && ns !== "Reflect") return false;
+  return OWN_KEYS_OR_DEFINE_METHODS.has(node.name.text);
 }
 
 /**

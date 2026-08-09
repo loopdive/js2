@@ -36,7 +36,10 @@ import {
   compiledClosureNativeSource,
   createNativeFunctionCallbackBridge,
   installNativeFunctionSourceFacade,
+  invokeNativeFunctionCallback,
+  normalizeModuleCallbackException,
 } from "./runtime/native-function-source.js";
+import { ASYNC_CALLBACK_EXCEPTION_POLICY } from "./ir/async-runtime-providers.js";
 import { _arrayProtoSparseFastPaths } from "./runtime/array-proto-sparse.js"; // (#3103, #1234) sparse-aware Array.prototype fast paths
 import { registerVecMirror, snapshotVecMirrors, reconcileVecMirrors } from "./runtime/vec-mirror-writeback.js"; // (#3603 S1) vec-mirror write-back
 import { createHostCallImport, isHostCallImportName } from "./runtime/host-call-abi.js";
@@ -1544,6 +1547,8 @@ const _test262ErrorConstructors = new WeakSet<Function>();
 // Capture the intrinsics before user code runs so the helper is also immune to
 // later rebinding of Array/Reflect properties.
 const _IntrinsicArray = Array;
+const _intrinsicReflectApply = Reflect.apply;
+const _intrinsicReflectConstruct = Reflect.construct;
 const _intrinsicReflectDefineProperty = Reflect.defineProperty;
 function _denseOwnArgs(args: ArrayLike<any>, length: number): any[] {
   const dense = new _IntrinsicArray<any>(length);
@@ -1670,7 +1675,7 @@ function _wrapWasmClosure(
   // proxies are unwrapped so the body sees the raw struct. Undefined /
   // globalThis receivers keep the plain `__call_fn_<arity>` path, so bare
   // callback invocations are byte-for-byte unchanged.
-  const wrapped = function wasmClosureBridge(this: any, ...args: any[]): any {
+  const dispatch = function wasmClosureDispatch(this: any, ...args: any[]): any {
     const exports = callbackState.getExports();
     const callFn = exports?.[`__call_fn_${arity}`];
     if (typeof callFn !== "function") {
@@ -1737,6 +1742,13 @@ function _wrapWasmClosure(
     const ret = callFn(closure, ...padded);
     return _wasmAccessorGetterReturnWrappers.has(wrapped) ? _maybeWrapAccessorGetterCallable(ret, callbackState) : ret;
   };
+  const wrapped = function wasmClosureBridge(this: any, ...args: any[]): any {
+    try {
+      return _intrinsicReflectApply(dispatch, this, args);
+    } catch (error) {
+      throw normalizeModuleCallbackException(error, callbackState, ASYNC_CALLBACK_EXCEPTION_POLICY);
+    }
+  };
   installNativeFunctionSourceFacade(wrapped);
   _wasmClosureWrapperSource.set(wrapped, { closure, arity });
   if (_canBeWeakKey(closure)) {
@@ -1788,7 +1800,7 @@ function _wrapWasmClosureUnknownArity(
   // probed, -1 = unknown (no export / not a closure). Cached per wrapper — the
   // arity of a given closure struct never changes.
   let realArityCache = -2;
-  const wrapped = function wasmClosureDynamicBridge(this: any, ...args: any[]): any {
+  const dispatch = function wasmClosureDynamicDispatch(this: any, ...args: any[]): any {
     // (#3051 Slice 3) Host-side [[Construct]] (`new bridge(...)` — e.g. V8's
     // `Construct(C_species, «rx, flags»)` in the RegExp @@split protocol): a
     // raw wasm-struct return must be marshalled to its host mirror so the
@@ -1862,6 +1874,15 @@ function _wrapWasmClosureUnknownArity(
     if (typeof callFn !== "function") return undefined;
     const padded = _denseOwnArgs(args, arity);
     return marshalNew(callFn(closure, ...padded));
+  };
+  const wrapped = function wasmClosureDynamicBridge(this: any, ...args: any[]): any {
+    try {
+      return new.target === undefined
+        ? _intrinsicReflectApply(dispatch, this, args)
+        : _intrinsicReflectConstruct(dispatch, args, new.target);
+    } catch (error) {
+      throw normalizeModuleCallbackException(error, callbackState, ASYNC_CALLBACK_EXCEPTION_POLICY);
+    }
   };
   // (#3429) Surface the closure's real declared `.name`/`.length` (codegen's
   // sidecar stamp) on the bridge, mirroring the same stamp in
@@ -2105,6 +2126,34 @@ function _maybeWrapAccessorGetterCallable(
     if (typeof hasRest === "function" && hasRest(val) === 1) return val;
   }
   return _maybeWrapCallableUnknownArity(val, callbackState);
+}
+
+function _invokeGetterCallbackBridge(
+  bridge: (...args: any[]) => any,
+  id: number,
+  cap: any,
+  self: any,
+  args: readonly any[],
+  callbackState?: {
+    getExports: () => Record<string, Function> | undefined;
+    deferToExports?: (fn: () => void) => void;
+  },
+): any {
+  const exports = callbackState?.getExports();
+  const ret = invokeNativeFunctionCallback(id, cap, [self, ...args], callbackState, ASYNC_CALLBACK_EXCEPTION_POLICY);
+  // (#3051 Slice 3) Marshal DATA-struct/vec getter returns to their host
+  // mirror. Closures and setter returns pass through unchanged.
+  if (args.length === 0 && ret != null && typeof ret === "object" && _isWasmStruct(ret)) {
+    try {
+      const isData = exports?.__is_data_struct as unknown as ((v: any) => number) | undefined;
+      if (typeof isData === "function" && isData(ret) === 1) return _wrapForHost(ret, exports);
+      const isVec = exports?.__is_vec as unknown as ((v: any) => number) | undefined;
+      if (typeof isVec === "function" && isVec(ret) === 1) return _wrapForHost(ret, exports);
+    } catch {
+      /* discriminators unavailable — keep the raw return */
+    }
+  }
+  return _wasmAccessorGetterReturnWrappers.has(bridge) ? _maybeWrapAccessorGetterCallable(ret, callbackState) : ret;
 }
 
 /**
@@ -15034,7 +15083,7 @@ assert._isSameValue = isSameValue;
         // closure. Legacy callbacks keep their non-negative `__cb_N` ids and
         // therefore remain byte-for-byte on the existing dispatch path.
         if (id === -1) return _wrapVoidHostCallback(cap, callbackState);
-        return createNativeFunctionCallbackBridge(id, cap, callbackState);
+        return createNativeFunctionCallbackBridge(id, cap, callbackState, ASYNC_CALLBACK_EXCEPTION_POLICY);
       };
     case "getter_callback_maker":
       return (id: number, cap: any) => {
@@ -15043,48 +15092,19 @@ assert._isSameValue = isSameValue;
         // eslint-disable-next-line func-names
         const bridge = function (this: any, ...args: any[]) {
           const exports = callbackState?.getExports();
-          // (#2128) Setter invoked during the module START function (top-level
-          // `o.v = 9` runs before WebAssembly.instantiate returns, so
-          // `getExports()` is still undefined and the dispatch would silently
-          // no-op). Park the write and replay it the moment setExports wires
-          // the instance — same mechanism as #1712's deferred
-          // defineProperties. Only setter calls (args present) are parkable;
-          // a getter needs its value synchronously and keeps returning
-          // undefined pre-wiring.
+          // (#2128) A setter may run during START before exports are wired.
+          // Park that write and replay it through the same normalized edge.
           if (exports === undefined && args.length > 0 && callbackState) {
             const defer = (callbackState as { deferToExports?: (fn: () => void) => void }).deferToExports;
             if (defer) {
               const self = this;
               defer(() => {
-                callbackState.getExports()?.[`__cb_${id}`]?.(cap, self, ...args);
+                invokeNativeFunctionCallback(id, cap, [self, ...args], callbackState, ASYNC_CALLBACK_EXCEPTION_POLICY);
               });
               return undefined;
             }
           }
-          const ret = exports?.[`__cb_${id}`]?.(cap, this, ...args);
-          // (#3051 Slice 3) GETTER returns (no args ⇒ getter; setters return
-          // undefined): a compiled getter body returning an OBJECT LITERAL
-          // (`get lastIndex() { return { valueOf() {…} } }` — the @@split
-          // fake-regexp protocol shape) hands the host consumer a raw WasmGC
-          // struct; V8's ToLength/ToPrimitive on it throws "Cannot convert
-          // object to primitive value" without ever reaching the struct's
-          // valueOf closure. Marshal DATA-struct/vec returns to their host
-          // mirror (positive discriminators only — closures pass through raw,
-          // and plain-call closure bridges elsewhere keep raw returns,
-          // #3123/#2835).
-          if (args.length === 0 && ret != null && typeof ret === "object" && _isWasmStruct(ret)) {
-            try {
-              const isData = exports?.__is_data_struct as unknown as ((v: any) => number) | undefined;
-              if (typeof isData === "function" && isData(ret) === 1) return _wrapForHost(ret, exports);
-              const isVec = exports?.__is_vec as unknown as ((v: any) => number) | undefined;
-              if (typeof isVec === "function" && isVec(ret) === 1) return _wrapForHost(ret, exports);
-            } catch {
-              /* discriminators unavailable — keep the raw return */
-            }
-          }
-          return _wasmAccessorGetterReturnWrappers.has(bridge)
-            ? _maybeWrapAccessorGetterCallable(ret, callbackState)
-            : ret;
+          return _invokeGetterCallbackBridge(bridge, id, cap, this, args, callbackState);
         };
         installNativeFunctionSourceFacade(bridge);
         _wasmGetterCallbackWrappers.add(bridge);
@@ -15895,6 +15915,28 @@ function wrapWithContainment(
 }
 
 /**
+ * These intents resolve to leaf functions that cannot throw or call user code,
+ * so they cannot re-enter Wasm. Their import wrappers therefore do not need the
+ * recursion-depth or catch-all bookkeeping used by general host operations.
+ * Keep this predicate intent-based: `buildImports` is public and must not trust
+ * a caller-supplied import name to imply safe behaviour.
+ */
+function isFastLeafHostImport(imp: ImportDescriptor): boolean {
+  switch (imp.intent.type) {
+    case "box":
+    case "typeof_check":
+    case "truthy_check":
+      return true;
+    case "unbox":
+      return imp.intent.targetType === "boolean";
+    case "builtin":
+      return imp.intent.name === "__get_undefined";
+    default:
+      return false;
+  }
+}
+
+/**
  * Build the WebAssembly import object from a closed manifest.
  *
  * After instantiation, prefer `setInstance(instance)`. It proves the
@@ -16003,6 +16045,28 @@ export function buildImports(
       if (imp.intent.type === "declared_global" && imp.intent.name === "document") {
         fn = () => options.domRoot;
       }
+    }
+
+    // Acorn executes millions of these leaf calls per parse. They cannot throw
+    // or re-enter Wasm, so avoid constructing and invoking the general guarded
+    // wrapper. Preserve import diagnostics and the Wasm signature's fixed
+    // arity. The switch provides rollout containment.
+    const fastLeaf = process.env.JS2WASM_FAST_LEAF_HOST_IMPORTS !== "0" && isFastLeafHostImport(imp);
+    if (fastLeaf && imp.paramCount === 0) {
+      const original = fn;
+      env[imp.name] = function () {
+        if (importCounts) importCounts[importIndex]++;
+        return original();
+      };
+      continue;
+    }
+    if (fastLeaf && imp.paramCount === 1) {
+      const original = fn;
+      env[imp.name] = function (a: any) {
+        if (importCounts) importCounts[importIndex]++;
+        return original(a);
+      };
+      continue;
     }
 
     // Wrap host imports with recursion depth guard + exception capture for catch_all.

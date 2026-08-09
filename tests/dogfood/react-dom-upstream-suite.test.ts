@@ -7,6 +7,8 @@ import { describe, expect, it } from "vitest";
 import { loadReactDomUpstreamSuitePin } from "./setup-react-dom-upstream-suite.mjs";
 // @ts-expect-error — .mjs dogfood setup has no declaration file
 import { loadReactUpstreamSuitePin } from "./setup-react-upstream-suite.mjs";
+// @ts-expect-error — .mjs dogfood harness has no declaration file
+import { isExpectedLateJsdomHostError } from "./react-dom-upstream-suite.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -15,6 +17,16 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ADMITTED_FLOOR = 1900;
 
 describe("react-dom upstream suite", () => {
+  it("quarantines only the known late jsdom removal exception", () => {
+    const expected = {
+      name: "NotFoundError",
+      message: "The node to be removed is not a child of this node.",
+    };
+    expect(isExpectedLateJsdomHostError(expected)).toBe(true);
+    expect(isExpectedLateJsdomHostError({ ...expected, message: "different DOM failure" })).toBe(false);
+    expect(isExpectedLateJsdomHostError({ name: "TypeError", message: expected.message })).toBe(false);
+  });
+
   it("shares one verified revision with the react suite", () => {
     const pin = loadReactDomUpstreamSuitePin();
     const reactPin = loadReactUpstreamSuitePin();
@@ -67,5 +79,7 @@ describe("react-dom upstream suite", () => {
 
     // Frontier reporting, not pass-rate fiction.
     expect(report.results.passed + report.results.failed).toBe(report.results.scored);
+    expect(report.results.nativeHostErrors.every((error: object) => isExpectedLateJsdomHostError(error))).toBe(true);
+    expect(report.summary.nativeHostErrors).toBe(report.results.nativeHostErrors.length);
   });
 });

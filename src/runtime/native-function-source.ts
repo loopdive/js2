@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import type { AsyncCallbackExceptionPolicy } from "../ir/async-runtime-providers.js";
+
 type CallbackState = {
   getExports: () => Record<string, Function> | undefined;
   deferToExports?: (fn: () => void) => void;
@@ -43,6 +45,49 @@ export function compiledClosureNativeSource(value: any, callbackState?: Callback
 }
 
 /**
+ * Remove only this module's Wasm exception carrier at a host callback edge.
+ * A foreign tag, a WebAssembly.RuntimeError, or an ordinary host throw passes
+ * through by identity. The returned payload may itself be any JS value.
+ */
+export function normalizeModuleCallbackException(
+  error: any,
+  callbackState?: CallbackState,
+  exceptionPolicy?: AsyncCallbackExceptionPolicy,
+): any {
+  if (exceptionPolicy !== "module-tag-payload") return error;
+  const exports = callbackState?.getExports();
+  const tag = exports?.__exn_tag ?? exports?.__tag;
+  const WasmException = typeof WebAssembly === "undefined" ? undefined : (WebAssembly as any).Exception;
+  if (typeof WasmException !== "function" || !(error instanceof WasmException) || tag === undefined) {
+    return error;
+  }
+  try {
+    // `getArg` rejects a foreign tag. Checking `is` first makes the policy
+    // explicit on engines that expose it; the guarded getArg is the same
+    // exact-tag proof on older engines.
+    const tagged = error as { is?: (candidate: any) => boolean; getArg: (candidate: any, index: number) => any };
+    if (typeof tagged.is === "function" && !tagged.is(tag)) return error;
+    return tagged.getArg(tag, 0);
+  } catch {
+    return error;
+  }
+}
+
+export function invokeNativeFunctionCallback(
+  id: number,
+  cap: any,
+  args: readonly any[],
+  callbackState?: CallbackState,
+  exceptionPolicy?: AsyncCallbackExceptionPolicy,
+): any {
+  try {
+    return callbackState?.getExports()?.[`__cb_${id}`]?.(cap, ...args);
+  } catch (error) {
+    throw normalizeModuleCallbackException(error, callbackState, exceptionPolicy);
+  }
+}
+
+/**
  * Build the host bridge used by the legacy callback-maker import.
  *
  * Keeping this beside the source facade makes every JS function exposed for a
@@ -54,15 +99,17 @@ export function createNativeFunctionCallbackBridge(
   id: number,
   cap: any,
   callbackState?: CallbackState,
+  exceptionPolicy?: AsyncCallbackExceptionPolicy,
 ): (...args: any[]) => any {
+  const dispatch = (args: any[]): any => invokeNativeFunctionCallback(id, cap, args, callbackState, exceptionPolicy);
   return installNativeFunctionSourceFacade((...args: any[]) => {
     const exports = callbackState?.getExports();
     if (exports === undefined && callbackState?.deferToExports) {
       callbackState.deferToExports(() => {
-        callbackState.getExports()?.[`__cb_${id}`]?.(cap, ...args);
+        dispatch(args);
       });
       return undefined;
     }
-    return exports?.[`__cb_${id}`]?.(cap, ...args);
+    return dispatch(args);
   });
 }

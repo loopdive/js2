@@ -2,6 +2,7 @@
 import { ts } from "../ts-api.js";
 import type { LinearContext, LinearFuncContext } from "./context.js";
 import { addLocal } from "./context.js";
+import { compileLinearStringRepeatCall } from "./string-repeat.js";
 
 type CompileExpression = (ctx: LinearContext, fctx: LinearFuncContext, expr: ts.Expression) => void;
 type CompileStringLiteral = (ctx: LinearContext, fctx: LinearFuncContext, value: string) => void;
@@ -9,6 +10,7 @@ type CompileStringLiteral = (ctx: LinearContext, fctx: LinearFuncContext, value:
 export interface LinearStringMethodCompiler {
   readonly compileExpression: CompileExpression;
   readonly compileExprToI32: CompileExpression;
+  readonly compileExprToF64: CompileExpression;
   readonly compileStringLiteral: CompileStringLiteral;
   readonly isStringExpr: (ctx: LinearContext, fctx: LinearFuncContext, expr: ts.Expression) => boolean;
 }
@@ -136,20 +138,21 @@ export function compileLinearStringMethodCall(
   methodName: string,
   compiler: LinearStringMethodCompiler,
 ): boolean {
-  const { compileExpression, compileExprToI32, compileStringLiteral, isStringExpr } = compiler;
+  const { compileExpression, compileExprToI32, compileExprToF64, compileStringLiteral, isStringExpr } = compiler;
   if (!isStringExpr(ctx, fctx, propAccess.expression)) return false;
 
   if (methodName === "repeat") {
     const repeated = foldLiteralRepeat(propAccess.expression, expr.arguments);
-    if (repeated === undefined) {
-      ctx.errors.push({
-        message: `Unsupported String.repeat() in linear backend: expected a literal receiver and a non-negative integer literal producing at most ${MAX_FOLDED_REPEAT_BYTES} UTF-8 bytes`,
-        ...nodeLoc(expr),
-      });
-      fctx.body.push({ op: "i32.const", value: 0 });
-    } else {
-      compileStringLiteral(ctx, fctx, repeated);
-    }
+    if (repeated !== undefined) compileStringLiteral(ctx, fctx, repeated);
+    else
+      compileLinearStringRepeatCall(
+        ctx,
+        fctx,
+        propAccess.expression,
+        expr.arguments[0],
+        compileExpression,
+        compileExprToF64,
+      );
     return true;
   }
 

@@ -424,8 +424,8 @@ function tryCompileDerivedHostSubstringCharCodeAt(
   method: string,
 ): ValType | null {
   if (ctx.nativeStrings || method !== "charCodeAt" || !ts.isIdentifier(propAccess.expression)) return null;
-  const symbol = ctx.checker.getSymbolAtLocation(propAccess.expression);
-  const substring = symbol ? fctx.derivedSubstringReads?.get(symbol) : undefined;
+  const declaration = ctx.oracle.valueDeclarationOf(propAccess.expression);
+  const substring = declaration ? fctx.derivedSubstringReads?.get(declaration) : undefined;
   const charCodeAtIdx = ctx.jsStringImports.get("charCodeAt");
   if (substring?.kind !== "host" || charCodeAtIdx === undefined) return null;
 
@@ -437,7 +437,7 @@ function tryCompileDerivedHostSubstringCharCodeAt(
     ts.isPropertyAccessExpression(arg.left) &&
     arg.left.name.text === "length" &&
     ts.isIdentifier(arg.left.expression) &&
-    ctx.checker.getSymbolAtLocation(arg.left.expression) === symbol &&
+    ctx.oracle.valueDeclarationOf(arg.left.expression) === declaration &&
     ts.isNumericLiteral(arg.right) &&
     Number(arg.right.text) === 1;
   const indexLocal = allocLocal(fctx, `__host_substring_char_idx_${fctx.locals.length}`, { kind: "i32" });

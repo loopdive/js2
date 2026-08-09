@@ -267,6 +267,15 @@ function assertDirectAsyncBodyAllowed(name: string, isAsync: boolean): void {
   }
 }
 
+function assertDirectFunctionBodyAllowed(name: string): void {
+  const poisoned = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+  if (!poisoned) return;
+  const names = new Set(poisoned.split(",").map((candidate) => candidate.trim()));
+  if (names.has(name)) {
+    throw new Error(`injected direct function-body poison: ${name}`);
+  }
+}
+
 export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclaration, func: WasmFunction): void {
   const sig = ctx.checker.getSignatureFromDeclaration(decl);
   if (!sig) {
@@ -288,6 +297,7 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
   const isAsync = ctx.asyncFunctions.has(func.name);
   const isGenerator = ctx.generatorFunctions.has(func.name);
   assertDirectAsyncBodyAllowed(func.name, isAsync);
+  assertDirectFunctionBodyAllowed(func.name);
   const effectiveRetType = isAsync ? unwrapPromiseType(retType, ctx.checker) : retType;
 
   // Use call-site resolved types for generic functions
@@ -365,7 +375,7 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
   // #1197: detect `number[]` locals whose element storage can lower to i32.
   // Depends on the i32 scalar set so that `arr[i] = sum` (where `sum` is i32)
   // counts as an i32-safe write.
-  const i32SpecializedArrays = collectI32SpecializedArrays(decl, i32CoercedLocals);
+  const i32SpecializedArrays = collectI32SpecializedArrays(decl, i32CoercedLocals, ctx.oracle);
 
   // #2152 — a named function declaration whose body references `this` may be
   // passed by reference as an array-HOF callback (e.g.
