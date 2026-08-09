@@ -51,13 +51,65 @@ work:
   *"keeps constructor off the instance's enumerable own keys"*
   → `expected +0 to be 1`
 
-These are left unfixed deliberately: each is an unrelated behavioural question
-(has the proven-receiver inline path stopped firing? is `$$constructor` now
-enumerable?), and fixing them inside an unrelated PR would pull them into that
-PR's `#3008` gate and hide the diagnosis. **Each needs its own look — the
-assertion may be stale like the two above, or it may be a real regression.**
-Do not assume stale; the `#3617` one in particular reads like a real
-enumerability change.
+These were left unfixed in the PR that found them: each is an unrelated
+behavioural question, and fixing them inside an unrelated PR would pull them
+into that PR's `#3008` gate and hide the diagnosis.
+
+### TRIAGED 2026-08-09 — both STALE PINS, neither a real defect
+
+Diagnosed on pristine `upstream/main` @ `49cab5c82`. **Both suspicions above
+were wrong, and both for the same structural reason: each test compared a
+single SCALAR — a length, a boolean — that two very different causes could
+produce.** A pin that cannot distinguish "the thing I guard broke" from "the
+thing I guard got better" is not a guard.
+
+**`tests/issue-3617.test.ts` — NOT an enumerability regression.** Probed:
+
+| probe | value | meaning |
+| --- | ---: | --- |
+| `Object.keys(new DummyError("boom")).length` | 1 | node/spec says `["message"]` — correct |
+| `hasOwnProperty("constructor")` | 0 | the invariant the test is NAMED for still holds |
+| `hasOwnProperty("message")` | 1 | |
+| `Object.keys(new Empty()).length` | 0 | no leak on a field-less instance |
+| `value.constructor === DummyError` | 1 | back-pointer intact |
+
+`constructor` never leaked. The pin asserted `length === 0`, which pinned the
+BUG — closed fnctor source fields were not surfaced at all, so `message` was
+missing too. Its own comment admitted this ("pin the zero-key baseline").
+`23fcac402` **fix(#3920): standalone reflection over closed structs enumerated
+nothing** made reflection work, `message` correctly appeared, and the stale pin
+went red *looking like* a leak.
+
+**`tests/issue-3685-presence-tracked-proven-reads.test.ts` — a stale FIXTURE,
+and the machinery is intact.** The census showed all four `n.label` reads
+declining `nofield:Node.label`, and the struct said why — `label` is not a
+field. `$__fnctor_Node` is now `(start, type, $$presence_0, $$constructor,
+$$shape, $$resid)`: `500c4f99b` **feat(standalone): instance expando substrate
+(#4194)** routes a field first written from OUTSIDE the constructor into the
+`$$resid` bag, so the fixture stopped producing the shape it was written for.
+
+"The #3685 S2 slice is dead code" would have been a real finding (the slice was
+built for ~156 acorn sites), so it was checked rather than assumed. Positive
+control — conditionally assigned INSIDE the ctor from an UNTYPED param:
+
+```
+(field $label (mut externref)) (field $$presence_0 (mut i32))
+proven=5 inlined=5    4x  ok:Node.label:externref:presence
+```
+
+That is the exact key the file has always asserted: neither the machinery nor
+the census format moved.
+
+**Neither is test262-visible.** Semantics matched plain JavaScript in every
+configuration probed, for both files — so neither contributes to main's floor
+drift, and neither needs attribution back into the #4252/#4254 story.
+
+Fixed by asserting CONTENT instead of a scalar, each with a kill-switch:
+`#3617` gains an `Empty()` control plus exact-key assertions; `#3685` moves to
+a fixture that produces the externref presence slot, and pins BOTH shapes it
+used to have (`presence-nonextern:...:ref_null`, `nofield:Node.label`) as
+kill-switches, since either one silently turns the main assertion into a test
+of nothing.
 
 ## What to do
 
@@ -81,8 +133,10 @@ Two independent pieces of work; the second is the point of this issue.
 
 ## Acceptance criteria
 
-- [ ] The two files named above are triaged and either fixed or recorded with a
-      reason.
+- [x] The two files named above are triaged and either fixed or recorded with a
+      reason. **Done 2026-08-09** — both stale pins, both fixed, verdicts and
+      probes recorded above. This was the *symptom*; everything below is the
+      issue proper and remains open.
 - [ ] The full root `tests/*.test.ts` population is executed on some cadence
       that does not depend on a PR touching each file.
 - [ ] A file that goes red is *discoverable without editing it* — a list, an
