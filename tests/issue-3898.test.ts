@@ -17,6 +17,7 @@
 
 import { describe, it, expect } from "vitest";
 import { compile, buildImports, instantiateWasm } from "../src/index.js";
+import { arrayBenchmarks } from "../benchmarks/suites/arrays.js";
 import { stringBenchmarks } from "../benchmarks/suites/strings.js";
 import { mixedBenchmarks } from "../benchmarks/suites/mixed.js";
 import { flagImplausibleLanes, generateMarkdown, MIN_PLAUSIBLE_NS_PER_OP } from "../benchmarks/report.js";
@@ -242,6 +243,96 @@ describe("#3898 cross-lane equivalence", () => {
       imports.setInstance?.(instance);
 
       const run = (instance.exports as Record<string, Function>).run!;
+      expect(run()).toBe(def.js());
+    },
+    120_000,
+  );
+});
+
+describe("#3898 array callback cross-lane checksums", () => {
+  const names = ["array/map-filter", "array/reduce", "array/forEach", "array/find"];
+  const defs = names.map((name) => arrayBenchmarks.find((def) => def.name === name)!);
+
+  it("keeps every JS callback baseline numeric so the harness compares it", () => {
+    for (const def of defs) {
+      expect(def, `${def?.name ?? "missing definition"} must exist`).toBeDefined();
+      const value = def.js();
+      expect(typeof value, `${def.name} must return its checksum`).toBe("number");
+      expect(Number.isFinite(value as number), `${def.name} returned ${value}`).toBe(true);
+    }
+  });
+
+  it.each(defs)(
+    "$name: optimized gc-native run() matches the JS checksum",
+    async (def) => {
+      const result = await compile(def.source, { fast: true, emitWat: false, optimize: 4 });
+      expect(result.success, `compile failed: ${result.errors?.[0]?.message}`).toBe(true);
+
+      const imports = buildImports(result.imports, {}, result.stringPool);
+      const { instance } = await instantiateWasm(result.binary, imports.env, imports.string_constants);
+      imports.setInstance?.(instance);
+
+      const run = (instance.exports as Record<string, () => number>).run!;
+      expect(run()).toBe(def.js());
+    },
+    120_000,
+  );
+
+  it("records a real callback benchmark checksum mismatch as a failed lane", async () => {
+    const original = defs.find((def) => def.name === "array/reduce")!;
+    const expected = original.js() as number;
+    const previousExitCode = process.exitCode;
+    try {
+      const results = await runBenchmark(
+        {
+          ...original,
+          name: "probe/array-reduce-mismatch",
+          iterations: 1,
+          warmup: 1,
+          js: () => expected + 1,
+        },
+        ["gc-native"],
+      );
+
+      expect(results).toHaveLength(1);
+      expect(results[0]!.status).toBe("failed");
+      expect(results[0]!.failedPhase).toBe("cross-lane");
+      expect(results[0]!.error).toContain("cross-lane mismatch");
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  }, 120_000);
+});
+
+describe("#3898 remaining array cross-lane checksums", () => {
+  const expected = new Map<string, number>([
+    ["array/push-pop", 100_000],
+    ["array/sort-i32", 0],
+    ["array/indexOf", 4_995_000],
+    ["array/slice", 40_000],
+    ["array/reverse", 0],
+  ]);
+  const defs = [...expected.keys()].map((name) => arrayBenchmarks.find((def) => def.name === name)!);
+
+  it("keeps every remaining JS array baseline numeric so the harness compares it", () => {
+    for (const def of defs) {
+      expect(def, `${def?.name ?? "missing definition"} must exist`).toBeDefined();
+      expect(def.js(), `${def.name} returned the wrong checksum`).toBe(expected.get(def.name));
+    }
+  });
+
+  it.each(defs)(
+    "$name: optimized gc-native run() matches the JS checksum",
+    async (def) => {
+      const result = await compile(def.source, { fast: true, emitWat: false, optimize: 4 });
+      expect(result.success, `compile failed: ${result.errors?.[0]?.message}`).toBe(true);
+
+      const imports = buildImports(result.imports, {}, result.stringPool);
+      const { instance } = await instantiateWasm(result.binary, imports.env, imports.string_constants);
+      imports.setInstance?.(instance);
+
+      const run = (instance.exports as Record<string, () => number>).run!;
       expect(run()).toBe(def.js());
     },
     120_000,

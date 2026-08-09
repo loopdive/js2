@@ -5,7 +5,7 @@ status: ready
 assignee: ttraenkler/codex-ir-var
 sprint: current
 created: 2026-07-29
-updated: 2026-07-29
+updated: 2026-08-09
 priority: high
 horizon: s
 feasibility: medium
@@ -13,7 +13,7 @@ task_type: feature
 area: ir, codegen
 language_feature: variable-declarations
 goal: ir-full-coverage
-related: [1372, 2856, 2949, 2952, 3583]
+related: [1372, 2856, 2949, 2952, 3523, 3583, 4273, 4275]
 loc-budget-allow:
   - src/ir/function-local-var.ts
   - src/ir/select.ts
@@ -148,3 +148,26 @@ Retirement parity still requires:
 - Decide whether uninitialized, destructuring, captured, or cross-block
   function-scoped forms should gain exact IR storage or remain explicit
   unsupported shapes.
+
+## 2026-08-09 exact ES2015 literal-harness evidence
+
+#4275's direct-iterator assignment-destructuring audit found a concrete
+pass-rate dependency on the remaining module-global arm. Its 15 resolved-target
+fixtures place the `for-of` statement at script top level. The non-empty forms
+declare `var x;` or `var _;` without an initializer; the empty `[]` forms still
+share the literal Test262 runtime/assert/sta prefix, which contains top-level
+`var` declarations.
+
+An authentic production compile of
+`language/statements/for-of/dstr/array-elem-iter-nrml-close.js` reports the
+source-owned `<module-init>` terminal as
+`body-shape-rejected / vardecl-var-kind:FirstStatement`, with
+`legacyBodyEmitted=true`, `irBodyEmitted=false`, and no IR-compiled function.
+The target loop has no smaller executable terminal in the current inventory.
+
+This evidence does not reopen the completed function-local slice. It freezes
+the next boundary: module-global `var` requires real hoisting/storage identity
+shared with legacy and IR functions, and must compose with #3523's ordered
+prepared module-init transaction. A function-local shadow is not a valid
+implementation. Until that boundary lands, #4275's iterator operation can be
+proved only as substrate and its 15 authentic Test262 rows remain uncredited.

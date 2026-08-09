@@ -3450,6 +3450,8 @@ ${asyncResultExport}`;
 
 /** Categories of test262 tests to scan */
 export const TEST_CATEGORIES = [
+  // ── harness self-tests ──
+  "harness",
   // ── language ──
   "language/arguments-object",
   "language/asi",

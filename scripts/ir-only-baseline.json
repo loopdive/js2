@@ -7,7 +7,7 @@
       "terminalUnitFloor": 37,
       "emittedFloor": 37,
       "irBodyEmittedFloor": 37,
-      "legacyBodyEmittedCeiling": 20,
+      "legacyBodyEmittedCeiling": 16,
       "unsupportedCeiling": 0,
       "unsupportedByCode": {},
       "invariantCeiling": 0

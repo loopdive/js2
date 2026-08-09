@@ -43,8 +43,12 @@ describe("#4103 IR async runtime provider schema", () => {
     const manifest = forward.freeze();
     expect(reverse.freeze()).toEqual(manifest);
     expect(manifest.features).toEqual(ASYNC_RUNTIME_FEATURES);
-    expect(manifest.providers.map((provider) => provider.id)).toEqual(ASYNC_RUNTIME_PROVIDER_IDS);
-    expect(manifest.hostCapabilities).toEqual(ASYNC_HOST_CAPABILITY_IDS);
+    expect(manifest.providers.map((provider) => provider.id)).toEqual(
+      ASYNC_RUNTIME_PROVIDER_IDS.filter((provider) => provider !== "host.value.undefined"),
+    );
+    expect(manifest.hostCapabilities).toEqual(
+      ASYNC_HOST_CAPABILITY_IDS.filter((capability) => capability !== "async.value.undefined"),
+    );
     expect(ASYNC_HOST_ADAPTERS.map((adapter) => adapter.field).sort()).toEqual([
       "Promise_new_pending",
       "Promise_resolve",
@@ -70,6 +74,7 @@ describe("#4103 IR async runtime provider schema", () => {
         kind: "func",
         params: ["i32", "externref"],
         results: ["externref"],
+        exceptionPolicy: "module-tag-payload",
       },
       {
         capability: "async.promise.capability.create",

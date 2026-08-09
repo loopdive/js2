@@ -12,6 +12,7 @@ import { addLocal } from "./context.js";
 import type { ClassLayout } from "./layout.js";
 import { computeClassLayout } from "./layout.js";
 import * as linearCoercion from "./coercion-engine.js";
+import { finalizeLinearArena } from "./export-arena.js";
 import * as numberFormat from "./number-format.js";
 import { addLinearStackArenaRuntime } from "./runtime-stack-arena.js";
 import { compileLinearStringMethodCall } from "./string-methods.js";
@@ -28,7 +29,6 @@ import {
   addSetRuntime,
   addStringRuntime,
   addUint8ArrayRuntime,
-  finalizeLinearHeapLayout,
   FMOD_FN,
 } from "./runtime.js";
 import { linearStringLiteralInstrs } from "./string-literals.js";
@@ -89,10 +89,10 @@ function nodeLoc(node: ts.Node): { line: number; column: number } {
  */
 export interface LinearOptions {
   /**
-   * Expose the explicit arena-management exports `__arena_reset` /
-   * `__arena_used` on the bump allocator. Useful for embedders that reuse a
-   * single instance across many short-lived tasks; off by default so the
-   * common "allocate-and-exit" program pays nothing for them.
+   * Enable conservative exported-call reclamation and expose the explicit
+   * arena-management exports `__arena_reset` / `__arena_used`. Only modules
+   * with primitive boundaries and no heap-backed globals are auto-wrapped;
+   * others retain the monotonic arena so escaped pointers stay live.
    * See {@link import("./runtime.js").ArenaOptions}.
    */
   exposeArenaReset?: boolean;
@@ -269,8 +269,7 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
 
   // ── Emit data segments for string literals ──
   numberFormat.emitLinearStringData(ctx, dataSegmentBase);
-  // Literals are only known now, so the heap floor is fixed up last (#3686).
-  finalizeLinearHeapLayout(mod);
+  finalizeLinearArena(mod, ast, opts.exposeArenaReset);
 
   emitClosureTable(ctx);
 
@@ -433,8 +432,7 @@ export function generateLinearMultiModule(multiAst: MultiTypedAST, opts: LinearO
     }
     mod.dataSegments.push({ offset: DATA_SEGMENT_BASE, bytes });
   }
-  // Literals are only known now, so the heap floor is fixed up last (#3686).
-  finalizeLinearHeapLayout(mod);
+  finalizeLinearArena(mod, multiAst, opts.exposeArenaReset);
 
   emitClosureTable(ctx);
 
