@@ -191,6 +191,49 @@ leaves `number | undefined` and `boolean | undefined` silently wrong.
       compile-time delta, because option (1) vs the blanket fix is exactly a
       cost tradeoff.
 
+## Interaction with #4250 / #743 — checked, does NOT compound
+
+Worth recording because the reasoning is reusable, and because the obvious
+version of it is wrong.
+
+The #743 ctor-param SLOT lever (`JS2WASM_FNCTOR_CTOR_PARAM_SLOTS`, default OFF,
+flipped by #4250) narrows a field's carrier. The tempting argument for "no
+interaction" is *"`T | undefined` never lowers to externref, and the lever only
+fires on externref"* — and the second half is true
+(`fnctor-ctor-param-types.ts:103`, `rhsWasm.kind !== "externref" → return
+null`), but **the first half is false**: per the population table above,
+`object | undefined`, `any` and heterogeneous unions DO lower to externref.
+They are the *correct* rows, correct precisely because externref can carry the
+`$undefined` singleton.
+
+That inverts the question. The risk is not the lever inheriting a broken
+carrier; it is the lever taking a **correct** externref carrier that holds
+`undefined` faithfully and narrowing it to `f64` — **creating** an instance of
+this defect where none existed. A "demote-only" argument does not cover it,
+because the slot lever is a promotion.
+
+**Measured (2026-08-09, standalone), three shapes each engineered so `undefined`
+arrives WITHOUT an `= undefined` literal write** — under-applied constructor
+call `new C()`, an explicit `undefined` argument, and `undefined` via a
+same-typed local:
+
+```
+SLOTS off : C.x slot = externref
+SLOTS=1   : C.x slot = externref     (all three shapes — no narrowing)
+```
+
+So: **no compounding and no creation.** The mechanism, from
+`fable-743-fixpoint` (#4250 lane): the satellite lattice has **no `undefined`
+atom**, so a `this.x = undefined` write contributes DYNAMIC and the write-kind
+verdict is undefined-blind by construction — it can never claim "all writes
+numeric" off an undefined write, and the violation-only paths cannot erase
+undefined evidence because there is none to erase. If this issue's fix ever
+introduces an undefined-capable carrier decision, that verdict needs no change.
+
+The under-application case is the one that would have been most likely to slip
+past the lattice argument (no literal write exists to mark DYNAMIC), and it
+holds there too.
+
 ## Notes
 
 - Found because `tests/issue-2107.test.ts` was red on `main` and nothing runs
