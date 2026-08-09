@@ -162,6 +162,65 @@ function arrayLiteralHasAnyElementContext(ctx: CodegenContext, arr: ts.ArrayLite
 }
 
 /**
+ * Return the statically known own data-property names of an object literal.
+ *
+ * This is deliberately narrower than the full object-literal compiler: a
+ * spread, method/accessor, or dynamic computed key returns `null`. Such a
+ * literal cannot prove that it shares another literal's closed struct carrier,
+ * so an array containing it must use the lossless externref element carrier.
+ */
+function staticObjectLiteralDataKeys(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): string[] | null {
+  const keys = new Set<string>();
+  for (const prop of expr.properties) {
+    if (!ts.isPropertyAssignment(prop) && !ts.isShorthandPropertyAssignment(prop)) return null;
+    const key = resolvePropertyNameText(ctx, prop);
+    if (key === undefined) return null;
+    keys.add(key);
+  }
+  return [...keys].sort();
+}
+
+function unwrapObjectLiteralElement(expr: ts.Expression): ts.ObjectLiteralExpression | null {
+  let current = expr;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isTypeAssertionExpression(current) ||
+    ts.isSatisfiesExpression(current) ||
+    ts.isNonNullExpression(current)
+  ) {
+    current = current.expression;
+  }
+  return ts.isObjectLiteralExpression(current) ? current : null;
+}
+
+/**
+ * Does a first-object array literal contain another element that cannot inhabit
+ * the first object's exact closed struct? `compileArrayLiteral` historically
+ * keyed the vec to element zero, then guarded-cast every later object to it;
+ * differing field sets therefore became null and trapped at construction.
+ */
+function hasHeterogeneousObjectLiteralFields(
+  ctx: CodegenContext,
+  expr: ts.ArrayLiteralExpression,
+  first: ts.Expression,
+): boolean {
+  const firstObject = unwrapObjectLiteralElement(first);
+  if (!firstObject) return false;
+  const firstKeys = staticObjectLiteralDataKeys(ctx, firstObject);
+  if (!firstKeys) return true;
+
+  for (const element of expr.elements) {
+    if (ts.isOmittedExpression(element) || ts.isSpreadElement(element) || _isUndefinedLike(element)) continue;
+    const object = unwrapObjectLiteralElement(element);
+    if (!object) return true;
+    const keys = staticObjectLiteralDataKeys(ctx, object);
+    if (!keys || keys.length !== firstKeys.length || keys.some((key, index) => key !== firstKeys[index])) return true;
+  }
+  return false;
+}
+
+/**
  * Ensure that a struct registered for an object literal includes fields for
  * computed property names that TypeScript cannot statically resolve.
  * When TS returns 0 properties (e.g. { [1+1]: 2 }), we resolve the computed
@@ -3836,6 +3895,7 @@ export function compileArrayLiteral(
     // is assignable to `T`, so widening to it is sound. (`[new Shape(), new
     // Circle()]` — base first — already worked because element 0 IS the
     // supertype; this fixes the subclass-first ordering.)
+    let hasContextualRefCarrier = false;
     if (elemWasm.kind === "ref" || elemWasm.kind === "ref_null") {
       const ctxType = ctx.checker.getContextualType(expr);
       if (ctxType) {
@@ -3850,9 +3910,26 @@ export function compileArrayLiteral(
             ) {
               elemWasm = ctxElemWasm;
             }
+            hasContextualRefCarrier = ctxElemWasm.kind === "ref" || ctxElemWasm.kind === "ref_null";
           }
         }
       }
+    }
+    // (#4289) With no declared common ref carrier, a plain object array is not
+    // allowed to assume every element has element zero's exact closed struct.
+    // `{a: ...}` and `{d: ...}` are distinct WasmGC structs; coercing the latter
+    // into the former emits `ref.test` → `ref.null` → `ref.as_non_null` and
+    // traps while constructing otherwise valid JavaScript. Preserve every
+    // value in the canonical externref vec when the static field sets differ
+    // (or cannot be proven equal). Homogeneous literals and contextually typed
+    // `Array<T>` carriers retain their closed representation.
+    if (
+      !hasSpread &&
+      !hasContextualRefCarrier &&
+      (elemWasm.kind === "ref" || elemWasm.kind === "ref_null") &&
+      hasHeterogeneousObjectLiteralFields(ctx, expr, firstElem)
+    ) {
+      elemWasm = { kind: "externref" };
     }
     // If the literal mixes a `null` literal with another kind (e.g. `[1, null]`),
     // fall back to externref so the null survives. Without this, null gets coerced
