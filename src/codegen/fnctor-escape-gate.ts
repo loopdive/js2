@@ -1479,15 +1479,34 @@ export function analyzeFnctorEscapeGate(
       // any other inline use → neither; stays keep-static.
     }
 
-    // Clause (B) is absolute: ANY typed own-field consumer ⇒ keep-typed (never
-    // reconstruct — hot-path protection). Only then does clause (A) gate the
-    // reconstruct/keep-static split. EXCEPTION (#2681/#2686): a `new this()`
-    // site is always `reconstruct` — the parser instance is consumed
-    // dynamically via `this.<field>` across the fnctor's lifted methods, and A1
-    // (native struct) + A3 (struct read-dispatch) keep its typed-field reads on
-    // `struct.get`, so clause B's `__extern_get`-regression does not apply.
+    // Clause (B): a typed own-field consumer ⇒ keep-typed (hot-path
+    // protection), UNLESS the site ALSO has a dynamic use (#4261). Clause B
+    // used to be absolute, and that produced a silent wrong answer for the
+    // most ordinary composition there is: `var p = new P(1); p.step();
+    // p.pos;`. The field read tripped B ⇒ keep-typed ⇒ P never entered
+    // `approvedNames` ⇒ its prototype methods were NEVER COMPILED (the
+    // #2660 S2 prototype materialization, the #3683 direct-call twins and
+    // the `__fnctor_proto_start` registry are all gated on approval), so the
+    // dynamic `p.step()` resolved nothing at runtime and answered `null`/0 —
+    // while each half alone was correct. A keep-typed lowering structurally
+    // cannot serve a dynamic use; when both are present, correctness of the
+    // dynamic use must win. The hot-path concern that made B absolute is
+    // obsolete here for the same reason the `new this()` exception below
+    // documents: A1 (native struct, #4155 typed instances) + A3 (struct
+    // read-dispatch) keep an APPROVED site's typed-field reads on
+    // `struct.get`, so approving does not move them onto `__extern_get`.
+    // A site with ONLY typed consumers still classifies keep-typed.
+    // STANDALONE-ONLY (narrowest-site wiring): the miscompile is a
+    // standalone-lane defect (the JS-host MOP resolves prototype methods
+    // dynamically and was correct pre-fix, verified byte-identical), so the
+    // host/wasi lanes keep the absolute-B classification unchanged.
+    // EXCEPTION (#2681/#2686): a `new this()` site is always `reconstruct` —
+    // the parser instance is consumed dynamically via `this.<field>` across
+    // the fnctor's lifted methods, with the same A1+A3 rationale.
     let cls: FnctorGateClass;
     if (newThisSites.has(newExpr)) cls = "reconstruct";
+    else if (sawTyped && sawDynamic && standalone === true)
+      cls = "reconstruct"; // (#4261) dynamic use present — see above
     else if (sawTyped) cls = "keep-typed";
     else if (sawDynamic) cls = "reconstruct";
     else cls = "keep-static";
