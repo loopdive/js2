@@ -1,7 +1,13 @@
-# Build the QuickJS "boxed tier" WASI artifact (#4236 slice 1).
+# Build the QuickJS "boxed tier" WASI artifact (#4236 slice 1), then exercise
+# the flag-gated QuickJS eval ENGINE that consumes it (#4238 slice 2).
 #
-# DRAFT — `workflow_dispatch` only. Nothing in the repo consumes the artifact
-# yet; slice 2 (the codegen-linear import/extern work) is what turns this on.
+# NON-REQUIRED, and deliberately not on `pull_request`: it is not in the
+# branch-protection ruleset (docs/ci-policy.md §7 stays at six required checks),
+# and because it never runs on a PR it cannot drive `mergeStateStatus` to
+# UNSTABLE either. `workflow_dispatch` + a weekly cron is the anti-rot floor
+# from #4238 hard-constraint 3 — the QuickJS engine must not decay silently
+# while the interpreter remains the default.
+#
 # Modelled on the `runtime-eval-provider` job in test262-sharded.yml (#4013):
 # build one content-keyed wasm artifact centrally instead of in every consumer.
 #
@@ -30,9 +36,17 @@ on:
         description: "-O2 (fast, ~1.01 MB) or -Oz (~626 KB, ~23% slower)"
         required: false
         default: "-O2"
+  schedule:
+    # Weekly anti-rot sweep (#4238 hard-constraint 3). A `schedule` run supplies
+    # no `inputs`, so every use of them below falls back to the pinned default.
+    - cron: "17 4 * * 1"
 
 permissions:
   contents: read
+
+env:
+  QUICKJS_NG_REF_DEFAULT: "954dc53628e36891f93c359aa60895c2ae3dac6b"
+  OPT_DEFAULT: "-O2"
 
 concurrency:
   # Long build, and the artifact is content-keyed, so let a newer dispatch win.
@@ -44,6 +58,8 @@ jobs:
     name: build libquickjs.wasm (wasm32-wasip1)
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    outputs:
+      hash: ${{ steps.key.outputs.hash }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -62,8 +78,8 @@ jobs:
           set -euo pipefail
           CLANG_V="$(clang-18 --version | head -1)"
           HASH="$(printf '%s|%s|%s|%s|%s' \
-            "${{ inputs.quickjs_ng_ref }}" \
-            "${{ inputs.opt }}" \
+            "${{ inputs.quickjs_ng_ref || env.QUICKJS_NG_REF_DEFAULT }}" \
+            "${{ inputs.opt || env.OPT_DEFAULT }}" \
             "$CLANG_V" \
             "$(sha256sum scripts/quickjs-artifact/qjs_shim.c | cut -d' ' -f1)" \
             "$(sha256sum scripts/quickjs-artifact/build.sh | cut -d' ' -f1)" \
@@ -91,8 +107,8 @@ jobs:
       - name: Build artifact
         if: steps.cache.outputs.cache-hit != 'true'
         env:
-          QUICKJS_NG_REF: ${{ inputs.quickjs_ng_ref }}
-          OPT: ${{ inputs.opt }}
+          QUICKJS_NG_REF: ${{ inputs.quickjs_ng_ref || env.QUICKJS_NG_REF_DEFAULT }}
+          OPT: ${{ inputs.opt || env.OPT_DEFAULT }}
           JOBS: "4"
         run: bash scripts/quickjs-artifact/build.sh
 
@@ -110,7 +126,10 @@ jobs:
             const exports = new Set(WebAssembly.Module.exports(m).map((e) => e.name));
             const required = ["memory", "malloc", "free", "qjs_eval", "qjs_new_object",
               "qjs_get_prop_str", "qjs_set_prop_str", "qjs_dup", "qjs_free_value",
-              "qjs_is_equal", "qjs_to_f64", "qjs_abi_tag_object"];
+              "qjs_is_equal", "qjs_to_f64", "qjs_abi_tag_object",
+              // #4238 slice 2 — the eval adapters value bridge and call path.
+              "qjs_call", "qjs_new_bool", "qjs_new_null", "qjs_new_undefined",
+              "qjs_new_string_len", "qjs_to_cstring_len", "qjs_is_function"];
             const missing = required.filter((n) => !exports.has(n));
             console.log("imports:", imports.map((i) => `${i.module}.${i.name}`).join(", "));
             if (bad.length) { console.error("NON-WASI IMPORTS:", bad); process.exit(1); }
@@ -133,3 +152,62 @@ jobs:
             .tmp/quickjs-artifact/build-info.json
           if-no-files-found: error
           retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  # #4238 slice 2 — the flag-gated eval ENGINE lane.
+  #
+  # NON-REQUIRED by construction (see the header). It compiles the GC adapter
+  # against the artifact this run just produced and runs the scoped eval suite
+  # under `JS2WASM_EVAL_ENGINE=quickjs`, so the QuickJS path cannot rot while
+  # the interpreter stays the default.
+  #
+  # It ALSO runs the interpreter-tier proof suites with NO engine flag set, in
+  # the same job: the load-bearing property of #4238 is that the default path is
+  # untouched, and a lane that only ever exercises the flag would never notice
+  # if it stopped being true.
+  eval-provider-lane:
+    name: quickjs eval-engine lane (non-required)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node and pnpm (cached)
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Download libquickjs.wasm
+        uses: actions/download-artifact@v6
+        with:
+          name: quickjs-wasi-${{ needs.build.outputs.hash }}
+          path: .tmp/quickjs-artifact
+
+      - name: Build the quickjs eval provider (artifact + GC adapter)
+        env:
+          # The selector NEVER builds, so the artifact is handed in explicitly;
+          # this also skips the ~3 min rebuild the acquisition order would
+          # otherwise attempt when the keyed cache dir is cold.
+          JS2WASM_QUICKJS_ARTIFACT_DIR: .tmp/quickjs-artifact
+        run: node --import tsx scripts/build-quickjs-eval-provider.mjs
+
+      - name: Run the quickjs eval lane
+        env:
+          JS2WASM_EVAL_ENGINE: quickjs
+          JS2WASM_QUICKJS_ARTIFACT_DIR: .tmp/quickjs-artifact
+        run: npx vitest run tests/quickjs-eval-provider.test.ts
+
+      - name: Default path is untouched (no engine flag set)
+        run: |
+          npx vitest run \
+            tests/issue-2928-refusal-provider.test.ts \
+            tests/issue-2960.test.ts \
+            tests/issue-2928-e6-provider-cache.test.ts \
+            tests/issue-1102.test.ts \
+            tests/issue-4162.test.ts \
+            tests/issue-2657-raw-wasi-fd-import.test.ts
