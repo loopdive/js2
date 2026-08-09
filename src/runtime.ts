@@ -11485,10 +11485,10 @@ assert._isSameValue = isSameValue;
       if (name === "__extern_method_call")
         return (obj: any, method: string, args: any[]) => {
           if (obj == null) throw new TypeError("Cannot read properties of null (reading '" + method + "')");
-          // #983: wrap wasmGC receiver + arg structs in live-mirror Proxies.
-          // The proxy's `get` trap now exposes closure-field methods as
-          // callable JS functions, so JS ToPrimitive / Array built-ins can
-          // invoke poisoned valueOf/toString and let errors propagate.
+          const primitive = wsh.tryPrimitiveStringMethod(obj, method, args, _isWasmStruct, _reflectApply);
+          if (primitive?.handled) return primitive.value;
+          // #983: wrap WasmGC receivers and arg structs in live-mirror Proxies;
+          // callable closure fields preserve JS ToPrimitive error behavior.
           const exports = callbackState?.getExports();
           const wrapHostValue = (v: any): any => {
             if (!_isWasmStruct(v)) return v;

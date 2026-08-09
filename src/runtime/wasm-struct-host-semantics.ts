@@ -35,3 +35,23 @@ export function unboxSymbol(cache: Map<number, symbol>, value: unknown): number 
   cache.set(id, value);
   return id;
 }
+
+/**
+ * Skip generic WasmGC/closure marshaling for dynamic calls on primitive
+ * strings while preserving dynamic String.prototype lookup.
+ */
+export function tryPrimitiveStringMethod(
+  receiver: any,
+  method: string,
+  args: any[],
+  isWasmStruct: (value: any) => boolean,
+  apply: (fn: Function, receiver: any, args: any[]) => any,
+): { handled: true; value: any } | undefined {
+  if (typeof receiver !== "string" || !Array.isArray(args)) return undefined;
+  // RegExp protocol methods and closure arguments retain the full bridge.
+  if (["replace", "replaceAll", "match", "matchAll", "search", "split"].includes(method)) return undefined;
+  for (let i = 0; i < args.length; i++) if (isWasmStruct(args[i])) return undefined;
+  const fn = (receiver as Record<string, any>)[method];
+  if (typeof fn !== "function" || isWasmStruct(fn)) return undefined;
+  return { handled: true, value: apply(fn, receiver, args) };
+}
