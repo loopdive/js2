@@ -414,9 +414,11 @@ class NpmCompatChart extends HTMLElement {
           ? "own test suite"
           : kind === "upstream-suite"
             ? "upstream suite"
-            : kind === "upstream-api-vectors"
-              ? "upstream API vectors"
-              : "differential ops";
+            : kind === "upstream-unit"
+              ? "selected upstream unit"
+              : kind === "upstream-api-vectors"
+                ? "upstream API vectors"
+                : "differential ops";
       // The pass count is over the SCORED set — tests the native oracle also
       // passes, so a failure is attributable to the compiler. React's suite is
       // welded to Jest/ReactDOM/jsdom, so most of it runs but cannot be scored.

@@ -40,6 +40,7 @@ import { runHarness as runCookie } from "../tests/dogfood/cookie-harness.mjs";
 import { correctnessRollup, correctnessVerdict } from "./lib/npm-compat-correctness.mjs"; // (#4127)
 import { runHarness as runEslint } from "../tests/dogfood/eslint-harness.mjs";
 import { runHarness as runEslintWorkload } from "../tests/dogfood/eslint-workload-harness.mjs";
+import { runHarness as runEslintUpstreamSuite } from "../tests/dogfood/eslint-upstream-suite.mjs";
 import { runHarness as runReduxWorkload } from "../tests/dogfood/redux-workload-harness.mjs";
 import { runHarness as runJsdomWorkload } from "../tests/dogfood/jsdom-harness.mjs";
 import { runHarness as runPrettier } from "../tests/dogfood/prettier-harness.mjs";
@@ -1316,6 +1317,10 @@ function knownBugsFor(name) {
         summary:
           "the real multi-file Linter graph is still beyond the bounded mainline compile/runtime integration frontier",
       },
+      {
+        issue: 4293,
+        summary: "a heterogeneous nested array can coerce later undefined values through the first numeric vec carrier",
+      },
     ],
   };
   return map[name] ?? [];
@@ -1479,8 +1484,9 @@ if (selectedPackages.has("cookie")) {
 }
 
 if (selectedPackages.has("eslint")) {
-  console.log("[npm-compat] eslint — bounded package-entry compile/validate...");
+  console.log("[npm-compat] eslint — bounded package entry + selected original upstream unit...");
   const eslintReport = await runEslint({ quiet: true });
+  const eslintSuite = await runEslintUpstreamSuite({ quiet: true });
   // Do not spend a second bounded compile on a package-entry failure. Once
   // lib/api.js is a valid module, the workload harness compiles a generated
   // driver that calls the real Linter.verify API and compares its primitive
@@ -1488,12 +1494,26 @@ if (selectedPackages.has("eslint")) {
   // workload row so the correctness axis cannot read as an implicit pass.
   const eslintWorkload =
     eslintReport.compile.success && eslintReport.validation.validates ? await runEslintWorkload({ quiet: true }) : null;
-  const eslintTests = eslintWorkload?.tests ?? {
-    kind: "api-workload",
-    status: "blocked",
-    reason: eslintReport.compile.success
-      ? "package-entry validation did not produce a runnable Linter workload"
-      : "package-entry compile blocked before the Linter workload could run",
+  const eslintTests = {
+    kind: "upstream-unit",
+    passed: eslintSuite.results?.passed ?? null,
+    total: eslintSuite.results?.scored ?? null,
+    passRatePct:
+      eslintSuite.results?.scored > 0
+        ? Number(((eslintSuite.results.passed / eslintSuite.results.scored) * 100).toFixed(1))
+        : null,
+    admitted: eslintSuite.extraction?.admitted ?? null,
+    upstreamTestsSeen: eslintSuite.extraction?.upstreamTestsSeen ?? null,
+    harnessIncompatible: 0,
+    scope: eslintSuite.upstreamSuite?.scope ?? null,
+    sourceFiles: eslintSuite.upstreamSuite?.testFiles ?? [],
+    sourceIssue: 4293,
+    packageApiWorkload: eslintWorkload?.tests ?? {
+      status: "blocked",
+      reason: eslintReport.compile.success
+        ? "package-entry validation did not produce a runnable Linter workload"
+        : "package-entry compile blocked before the Linter workload could run",
+    },
   };
   packages.push(
     await buildPackageEntry({
