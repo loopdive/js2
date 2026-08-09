@@ -3432,8 +3432,8 @@ function moduleStorageCompatible(actual: IrType, expected: IrType): boolean {
   return asVal(actual)?.kind === "externref";
 }
 
-/** Emit the legacy module-global TDZ check followed by the symbolic read. */
-function lowerResolvedModuleBindingRead(name: string, binding: ModuleBindingGlobal, cx: LowerCtx): IrValueId {
+/** Emit the exact legacy module-global TDZ guard before a read or write. */
+function lowerResolvedModuleBindingTdzCheck(name: string, binding: ModuleBindingGlobal, cx: LowerCtx): void {
   requireMatchingModuleBindingOwner(binding, cx.ownerUnitId, cx.funcName);
   if (binding.type.kind === "extern") {
     assertNotDeferred(
@@ -3450,10 +3450,23 @@ function lowerResolvedModuleBindingRead(name: string, binding: ModuleBindingGlob
         { kind: "null", ty: irVal({ kind: "externref" }) },
         irVal({ kind: "externref" }),
       );
-      cx.builder.emitThrow(nullExt);
+      const referenceError = cx.builder.emitCall(
+        irRuntimeFuncRef("__new_ReferenceError"),
+        [nullExt],
+        irVal({ kind: "externref" }),
+      );
+      if (referenceError === null) {
+        throw new Error(`ir/from-ast: ReferenceError constructor returned no value (${cx.funcName})`);
+      }
+      cx.builder.emitThrow(referenceError);
     });
     cx.builder.emitIfStmt({ cond, then: thenBody, else: [] });
   }
+}
+
+/** Emit the legacy module-global TDZ check followed by the symbolic read. */
+function lowerResolvedModuleBindingRead(name: string, binding: ModuleBindingGlobal, cx: LowerCtx): IrValueId {
+  lowerResolvedModuleBindingTdzCheck(name, binding, cx);
   return cx.builder.emitGlobalGet(binding.globalRef, binding.type);
 }
 
@@ -8359,6 +8372,7 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
           `ir/from-ast: assignment to module binding "${id.text}" (${describeIrType(writable.type)}) got ${describeIrType(newType)} in ${cx.funcName}`,
         );
       }
+      lowerResolvedModuleBindingTdzCheck(id.text, writable, cx);
       cx.builder.emitGlobalSet(writable.globalRef, newValue);
       return;
     }

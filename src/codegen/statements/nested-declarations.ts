@@ -56,6 +56,7 @@ import {
   flushLateImportShifts,
   registerEmitArgumentsObject,
   registerHoistFunctionDeclarations,
+  VOID_RESULT,
 } from "../shared.js";
 import { definedFuncAt, mintDefinedFunc } from "../func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { pushProgramAbiNestedFunctionDeclaration } from "../program-abi-source-callable-planning.js";
@@ -96,6 +97,58 @@ function extendsOwnClass(ctx: CodegenContext, decl: ts.ClassDeclaration | ts.Cla
   return false;
 }
 
+/**
+ * Emit the runtime evaluation of computed names whose accessor bodies are
+ * owned by the exact prepared-IR route.
+ *
+ * Class shape preparation resolves the semantic key, but it must never execute
+ * the source expression: assignments and other effects belong in the enclosing
+ * function at ClassDefinitionEvaluation. The exact skip set is the gate, so a
+ * dynamic/unsupported computed name keeps the legacy route untouched. Walking
+ * `decl.members` preserves source order and evaluates a getter/setter pair's
+ * two computed names independently, as JavaScript requires.
+ */
+export function emitPreparedAccessorComputedNameEffects(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  decl: ts.ClassDeclaration | ts.ClassExpression,
+): void {
+  const routing = ctx.irClassBodyRouting;
+  const identity = ctx.irPlanningIdentityContext;
+  if (!routing?.skipBodyUnitIds || !identity) return;
+  const classId = identity.classIdByDeclaration.get(decl);
+  if (classId === undefined || identity.declarationByClassId.get(classId) !== decl) return;
+
+  for (const member of decl.members) {
+    if (
+      (!ts.isGetAccessorDeclaration(member) && !ts.isSetAccessorDeclaration(member)) ||
+      !ts.isComputedPropertyName(member.name)
+    ) {
+      continue;
+    }
+    const unitId = identity.unitIdByDeclaration.get(member);
+    if (unitId === undefined || routing.skipBodyUnitIds.has(unitId) !== true) continue;
+    const terminal = identity.terminalByUnitId.get(unitId);
+    const callable = ctx.programAbiClassCallables?.functionForUnit(unitId);
+    const accessor =
+      terminal?.kind === "class-instance-getter" ||
+      terminal?.kind === "class-static-getter" ||
+      terminal?.kind === "class-instance-setter" ||
+      terminal?.kind === "class-static-setter";
+    if (
+      !terminal ||
+      !accessor ||
+      terminal.lexicalOwnerId !== classId ||
+      identity.declarationByUnitId.get(unitId) !== member ||
+      !callable
+    ) {
+      throw new Error(`exact prepared computed accessor ${unitId} has no matching class/callable identity`);
+    }
+    const resultType = compileExpression(ctx, fctx, member.name.expression);
+    if (resultType !== null && resultType !== (VOID_RESULT as unknown as ValType)) fctx.body.push({ op: "drop" });
+  }
+}
+
 export function compileNestedClassDeclaration(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -127,6 +180,7 @@ export function compileNestedClassDeclaration(
       emitThrowTypeError(ctx, fctx, "Classes may not have a static property named 'prototype'");
       return;
     }
+    emitPreparedAccessorComputedNameEffects(ctx, fctx, decl);
     return;
   }
 
@@ -171,8 +225,12 @@ export function compileNestedClassDeclaration(
       funcByName.set(ctx.mod.functions[i]!.name, i);
     }
 
+    // Computed-name expressions execute in the enclosing frame at runtime,
+    // immediately before this class's prepared bodies are installed/materialized.
+    emitPreparedAccessorComputedNameEffects(ctx, fctx, decl);
+
     // Compile constructor and method bodies
-    compileClassBodies(ctx, decl, funcByName, syntheticName);
+    compileClassBodies(ctx, decl, funcByName, syntheticName, ctx.irClassBodyRouting);
 
     // Mark as no longer deferred
     if (isDeferred) ctx.deferredClassBodies.delete(className);

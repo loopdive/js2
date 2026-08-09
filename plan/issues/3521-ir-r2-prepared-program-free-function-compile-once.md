@@ -4,7 +4,7 @@ title: "IR-only R2: prepare-before-emit free-function ownership"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-08-02
+updated: 2026-08-09
 priority: critical
 horizon: xl
 complexity: XL
@@ -20,7 +20,7 @@ model: gpt-5.6-sol
 parent: 3518
 depends_on: [3520]
 required_by: [3522, 3523, 3525, 3526]
-related: [2138, 2855, 3143, 3203, 3518, 3519]
+related: [2138, 2855, 3143, 3203, 3518, 3519, 4260]
 origin: "#3518 R2 — invert single-source free functions from compile/patch to prepare/emit"
 files:
   - src/ir/program.ts
@@ -1058,3 +1058,20 @@ remaining component blockers are source-global storage, TDZ, and module-init
 ownership in #3523, plus throw/exception, `extern.call`, box/unbox, undefined,
 numeric, string, and console support providers in #3526. Those are independent
 of vector layout and remain the next prepared-ownership work.
+
+## 2026-08-09 uncovered provider-transaction violation
+
+#4259's injected pre-seal failure exposed a gap in this issue's existing
+"abort without partial publication" contract. Blocking callable imports and
+providers are currently published through compilation-wide `planPrepared`
+state before the consumer opens its `PreparedProgramAbiScopeTransaction`.
+Aborting that component therefore cannot retract the provider/import draft: a
+TDZ setter leaves a stale host `__new_ReferenceError` reservation or an
+unplanned standalone provider when direct fallback resumes.
+
+#4260 owns the bounded repair and regression matrix. It must stage exact
+provider/import keys with the component, atomically publish them on seal, and
+discard failed-only plans on abort while retaining one canonical provider for a
+healthy component that shares it. Keeping a dead import or weakening the
+missing-locator invariant does not satisfy this parent issue's transaction
+acceptance.

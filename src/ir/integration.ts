@@ -32,6 +32,7 @@ import {
   ensureAnyValueType,
   ensureExternLooseEqHelper,
   ensureExternStrictEqHelper,
+  resolveIrDynamicCarrierType,
 } from "../codegen/any-helpers.js"; // (#2949) boxed-any carrier for IrType.dynamic
 import { ensureDynMemberGet, ensureDynMemberSet } from "../codegen/dyn-read.js"; // (#3053 U1) / (#3795)
 import {
@@ -83,6 +84,7 @@ import {
 import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "../codegen/regexp-runtime-contract.js";
 import { ensureStandaloneRegExpCarrierTestHelper } from "../codegen/regexp-standalone.js";
 import { addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "../codegen/registry/imports.js";
+import { emitWasiErrorConstructor } from "../codegen/registry/error-types.js";
 import {
   planProgramAbiSupportCallableAlias,
   planProgramAbiSupportCallable,
@@ -157,6 +159,7 @@ import {
 import {
   buildIrUnitInventory,
   indexIrTerminalDeclarations,
+  type IrBindingId,
   type IrClassId,
   type IrUnitInventory,
   type IrUnitId,
@@ -206,6 +209,7 @@ import {
 import {
   asVal,
   forEachInstrDeep, // (#2949 slice 3) deep instr walk for preregisterDynamicSupport
+  irDynamic,
   irVal,
   irTypeEquals,
   mapNestedBuffers,
@@ -222,6 +226,7 @@ import {
   type IrStringLengthProvider,
   type IrType,
   type IrTypeRef,
+  type IrValueId,
 } from "./nodes.js";
 import { analyzeEscape } from "./analysis/escape.js";
 import { analyzeOwnership } from "./analysis/ownership.js";
@@ -279,6 +284,7 @@ import {
   prepareDependencyCompleteClosureSupport,
   type PreparedDerivedCallableSlot,
 } from "./prepared-closure-support.js";
+import type { PreparedClassAccessorWritebackEvidence } from "./prepared-component-dependencies.js";
 import { sealDependencyCompletePreparedComponents } from "./prepared-component-sealing.js";
 import { attachIrStringCarrier } from "./string-carrier.js";
 import { attachIrStringSupport } from "./string-support.js";
@@ -440,13 +446,151 @@ interface PreparedClosureTransaction {
   bindLowerResolver(resolver: IrLowerResolver): void;
 }
 
+function exactAccessorWritebackGlobals(
+  instrs: readonly IrInstr[],
+  valueParam: IrValueId,
+): { readonly valueGlobalBindingId: IrBindingId; readonly tdzGlobalBindingId?: IrBindingId } | undefined {
+  const write = instrs.at(-1);
+  if (write?.kind !== "global.set" || write.target.binding.kind !== "source" || write.value !== valueParam) {
+    return undefined;
+  }
+  const valueGlobalBindingId = write.target.binding.bindingId;
+  if (instrs.length === 1) return { valueGlobalBindingId };
+  if (instrs.length !== 4) return undefined;
+  const [tdzRead, tdzMissing, guard] = instrs;
+  if (
+    tdzRead?.kind !== "global.get" ||
+    tdzRead.target.binding.kind !== "source" ||
+    tdzRead.target.binding.bindingId === valueGlobalBindingId ||
+    tdzRead.result === null ||
+    asVal(tdzRead.resultType!)?.kind !== "i32" ||
+    tdzMissing?.kind !== "unary" ||
+    tdzMissing.op !== "i32.eqz" ||
+    tdzMissing.rand !== tdzRead.result ||
+    tdzMissing.result === null ||
+    asVal(tdzMissing.resultType!)?.kind !== "i32" ||
+    guard?.kind !== "if.stmt" ||
+    guard.cond !== tdzMissing.result ||
+    guard.else.length !== 0 ||
+    guard.then.length !== 3
+  ) {
+    return undefined;
+  }
+  const [missingValue, constructError, abrupt] = guard.then;
+  if (
+    missingValue?.kind !== "const" ||
+    missingValue.value.kind !== "null" ||
+    asVal(missingValue.value.ty)?.kind !== "externref" ||
+    missingValue.result === null ||
+    asVal(missingValue.resultType!)?.kind !== "externref" ||
+    constructError?.kind !== "call" ||
+    constructError.target.binding.kind !== "runtime" ||
+    constructError.target.binding.symbol !== "__new_ReferenceError" ||
+    constructError.args.length !== 1 ||
+    constructError.args[0] !== missingValue.result ||
+    constructError.result === null ||
+    asVal(constructError.resultType!)?.kind !== "externref" ||
+    abrupt?.kind !== "throw" ||
+    abrupt.value !== constructError.result
+  ) {
+    return undefined;
+  }
+  return {
+    valueGlobalBindingId,
+    tdzGlobalBindingId: tdzRead.target.binding.bindingId,
+  };
+}
+
+/**
+ * Prove the one dynamic prepared class-member shape without trusting the
+ * compatibility label or the original AST: one exact setter terminal, one
+ * class-typed dummy/self parameter, one dynamic value parameter, and one
+ * unchanged write to a source global before a void return.
+ */
+function prepareClassAccessorWritebackEvidence(
+  ctx: CodegenContext,
+  entries: readonly BuiltFn[],
+  inventory: IrUnitInventory,
+): ReadonlyMap<IrUnitId, PreparedClassAccessorWritebackEvidence> {
+  const candidates = new Map<
+    IrUnitId,
+    { readonly valueGlobalBindingId: IrBindingId; readonly tdzGlobalBindingId?: IrBindingId }
+  >();
+  const classes = new Set(inventory.classes.map(({ id }) => id));
+  for (const entry of entries) {
+    const terminal = inventory.terminalUnits.find(({ id }) => id === entry.terminalOwnerUnitId);
+    const block = entry.fn.blocks.length === 1 ? entry.fn.blocks[0] : undefined;
+    const self = entry.fn.params[0];
+    const value = entry.fn.params[1];
+    const writeback = block && value ? exactAccessorWritebackGlobals(block.instrs, value.value) : undefined;
+    if (
+      entry.classMember !== true ||
+      entry.derivedUnit !== undefined ||
+      entry.artifactUnitId !== entry.terminalOwnerUnitId ||
+      !terminal ||
+      terminal.observedKind !== "class-member" ||
+      (terminal.kind !== "class-instance-setter" && terminal.kind !== "class-static-setter") ||
+      terminal.lexicalOwnerId === null ||
+      !classes.has(terminal.lexicalOwnerId as IrClassId) ||
+      entry.fn.funcKind === "async" ||
+      entry.fn.funcKind === "generator" ||
+      entry.fn.params.length !== 2 ||
+      self?.type.kind !== "class" ||
+      self.type.shape.classId !== terminal.lexicalOwnerId ||
+      value?.type.kind !== "dynamic" ||
+      entry.fn.resultTypes.length !== 0 ||
+      entry.fn.asyncPlan !== undefined ||
+      entry.fn.asyncRuntime !== undefined ||
+      entry.fn.closureSubtype !== undefined ||
+      (entry.fn.slots?.length ?? 0) !== 0 ||
+      !block ||
+      block.blockArgs.length !== 0 ||
+      block.blockArgTypes.length !== 0 ||
+      block.terminator.kind !== "return" ||
+      block.terminator.values.length !== 0 ||
+      !writeback
+    ) {
+      continue;
+    }
+    candidates.set(entry.terminalOwnerUnitId, writeback);
+  }
+  if (process.env.JS2WASM_TEST_MUTATE_IR_ACCESSOR_TDZ_VALUE_PAIR === "1") {
+    const tdzCandidates = [...candidates].filter(([, evidence]) => evidence.tdzGlobalBindingId !== undefined);
+    const first = tdzCandidates[0];
+    const second = tdzCandidates[1];
+    if (first && second) {
+      candidates.set(first[0], { ...first[1], valueGlobalBindingId: second[1].valueGlobalBindingId });
+    }
+  }
+  if (candidates.size === 0 || !ctx.programAbiTypes) return new Map();
+  const carrier = ctx.programAbiTypes.prepareDynamicCarrier(resolveIrDynamicCarrierType(ctx));
+  const exceptionTagTypeRef = [...candidates.values()].some(
+    ({ tdzGlobalBindingId }) => tdzGlobalBindingId !== undefined,
+  )
+    ? ctx.programAbiTypes.prepareExceptionTagType()
+    : undefined;
+  return new Map(
+    [...candidates].map(([unitId, writeback]) => [
+      unitId,
+      Object.freeze({
+        ...writeback,
+        ...(writeback.tdzGlobalBindingId === undefined || exceptionTagTypeRef === undefined
+          ? {}
+          : { tdzExceptionTagTypeRef: exceptionTagTypeRef }),
+        dynamicCarrierRef: carrier.carrierRef,
+        dynamicCarrierValueType: carrier.valueType,
+      }),
+    ]),
+  );
+}
+
 function prepareClosureTransaction(input: {
   readonly ctx: CodegenContext;
   readonly entries: readonly BuiltFn[];
   readonly originalArtifactUnitIds: ReadonlySet<IrUnitId>;
   readonly inventory: IrUnitInventory;
   readonly callableImports: ReadonlyMap<string, Import>;
-  readonly onSealFailure: (terminalUnitId: IrUnitId, error: IrInvariantError) => void;
+  readonly onSealFailure: (terminalUnitId: IrUnitId, error: IrUnsupportedError) => void;
 }): PreparedClosureTransaction {
   let resolveValType: (type: IrType) => ValType = (type) => lowerPreparedClosureSupportType(input.ctx, type);
   const registry = new ClosureStructRegistry(input.ctx, (type) => resolveValType(type));
@@ -457,11 +601,13 @@ function prepareClosureTransaction(input: {
     input.originalArtifactUnitIds,
     registry,
   );
+  const classAccessorWritebacks = prepareClassAccessorWritebackEvidence(input.ctx, input.entries, input.inventory);
   const componentIds = sealDependencyCompletePreparedComponents({
     ctx: input.ctx,
     entries: input.entries,
     inventory: input.inventory,
     closureSupport,
+    classAccessorWritebacks,
     callableImports: input.callableImports,
     onSealFailure: input.onSealFailure,
   });
@@ -865,7 +1011,19 @@ export function compileIrPathFunctions(
       })) ?? [],
     );
   const classIdByShape = new Map<IrClassShape, IrClassId>();
-  if (classShapes) {
+  if (loweringPlans?.classShapesById) {
+    for (const [classId, shape] of loweringPlans.classShapesById) {
+      const declaration = moduleBindingIdentityContext.declarationByClassId.get(classId);
+      if (!declaration || shape.classId !== classId) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "resolve",
+          `ir/integration: exact projected class shape ${shape.className} has stale identity ${shape.classId}`,
+        );
+      }
+      classIdByShape.set(shape, classId);
+    }
+  } else if (classShapes) {
     for (const shape of classShapes.values()) {
       const declaration = moduleBindingIdentityContext.declarationByClassId.get(shape.classId);
       if (!declaration || declaration.name?.text !== shape.className) {
@@ -891,6 +1049,17 @@ export function compileIrPathFunctions(
         "selection-preparation-mismatch",
         "resolve",
         `ir/integration: ${legacyName} has no exact terminal-owner projection`,
+      );
+    }
+    return owner;
+  };
+  const requireTerminalOwnerUnitId = (unitId: IrUnitId): IrLegacyUnitProjectionEntry => {
+    const owner = activeOwnerProjection.getByUnitId(unitId);
+    if (!owner) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `ir/integration: ${unitId} has no exact terminal-owner projection`,
       );
     }
     return owner;
@@ -926,7 +1095,12 @@ export function compileIrPathFunctions(
   // #1370 Phase B: don't short-circuit when only class members are claimed —
   // a source file may declare a class with IR-eligible methods but no
   // top-level FunctionDeclarations.
-  if (selected.funcs.size === 0 && (!selected.classMembers || selected.classMembers.size === 0) && !moduleInitClaim) {
+  if (
+    selected.funcs.size === 0 &&
+    (!selected.classMemberUnitIds || selected.classMemberUnitIds.size === 0) &&
+    (!selected.classMembers || selected.classMembers.size === 0) &&
+    !moduleInitClaim
+  ) {
     return finishReport();
   }
 
@@ -1191,7 +1365,168 @@ export function compileIrPathFunctions(
   //      - Push to `built` with `classMember: true`. The Phase 3 slot
   //        patch performs a typeIdx parity check before overwriting.
   // -------------------------------------------------------------------------
-  if (selected.classMembers && selected.classMembers.size > 0) {
+  if (selected.classMemberUnitIds !== undefined) {
+    for (const selectedUnitId of selected.classMemberUnitIds) {
+      const member = moduleBindingIdentityContext.declarationByUnitId.get(selectedUnitId);
+      const terminal = moduleBindingIdentityContext.terminalByUnitId.get(selectedUnitId);
+      if (
+        !member ||
+        (!ts.isConstructorDeclaration(member) &&
+          !ts.isMethodDeclaration(member) &&
+          !ts.isGetAccessorDeclaration(member) &&
+          !ts.isSetAccessorDeclaration(member)) ||
+        !member.body ||
+        !terminal ||
+        terminal.observedKind !== "class-member"
+      ) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "build",
+          `ir/integration: exact class member ${selectedUnitId} has no callable terminal declaration`,
+        );
+      }
+      const classDeclaration = member.parent;
+      if (!ts.isClassDeclaration(classDeclaration) && !ts.isClassExpression(classDeclaration)) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "build",
+          `ir/integration: exact class member ${selectedUnitId} has no class declaration`,
+        );
+      }
+      const classId = moduleBindingIdentityContext.classIdByDeclaration.get(classDeclaration);
+      const classShape = classId === undefined ? undefined : loweringPlans?.classShapesById?.get(classId);
+      if (!classId || terminal.lexicalOwnerId !== classId || !classShape || classShape.classId !== classId) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "build",
+          `ir/integration: exact class member ${selectedUnitId} has no exact projected class shape`,
+        );
+      }
+      const isCtorMember = ts.isConstructorDeclaration(member);
+      const isStatic = terminal.staticClassMember;
+      const descriptorKind = ts.isMethodDeclaration(member)
+        ? isStatic
+          ? "static"
+          : "method"
+        : ts.isGetAccessorDeclaration(member)
+          ? "getter"
+          : ts.isSetAccessorDeclaration(member)
+            ? "setter"
+            : undefined;
+      const descriptors = isCtorMember
+        ? []
+        : classShape.methods.filter(
+            (candidate) =>
+              candidate.placement?.classId === classId &&
+              candidate.placement.unitId === selectedUnitId &&
+              candidate.placement.staticClassMember === isStatic &&
+              (candidate.memberKind ?? "method") === descriptorKind &&
+              candidate.target?.binding.kind === "unit" &&
+              candidate.target.binding.unitId === selectedUnitId,
+          );
+      const descriptor = descriptors.length === 1 ? descriptors[0] : undefined;
+      if (!isCtorMember && !descriptor) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "build",
+          `ir/integration: exact class member ${selectedUnitId} has no unique placed ${descriptorKind} descriptor`,
+        );
+      }
+      const allocated = ctx.programAbiClassCallables?.functionForUnit(selectedUnitId);
+      if (!allocated) {
+        throw new IrInvariantError(
+          "missing-function-slot",
+          "build",
+          `ir/integration: exact class member ${selectedUnitId} has no observed Program ABI callable`,
+        );
+      }
+      const owner = requireTerminalOwnerUnitId(selectedUnitId);
+      const semanticName = owner.legacyName;
+      try {
+        const paramTypeOverrides = isCtorMember ? classShape.constructorParams : descriptor!.params;
+        const returnTypeOverride = isCtorMember ? undefined : descriptor!.returnType;
+        const ownerUnitId = requireArtifactUnitId(member, semanticName);
+        if (ownerUnitId !== selectedUnitId || ownerUnitId !== owner.unitId) {
+          throw new IrInvariantError(
+            "selection-preparation-mismatch",
+            "build",
+            `ir/integration: ${semanticName} artifact ${ownerUnitId} does not match exact owner ${selectedUnitId}`,
+          );
+        }
+        const result = lowerFunctionAstToIr(member, {
+          exported: false,
+          funcName: semanticName,
+          ownerUnitId,
+          directCalls: directCallsFor(member, ownerUnitId),
+          ...(isCtorMember
+            ? { constructorInitClassShape: classShape, paramTypeOverrides }
+            : terminal.kind === "class-static-method"
+              ? { paramTypeOverrides, returnTypeOverride }
+              : {
+                  // Static accessors retain the legacy leading class-struct
+                  // ABI slot even though bounded bodies may not consume it.
+                  selfParam: { type: { kind: "class", shape: classShape } as IrType },
+                  paramTypeOverrides,
+                  returnTypeOverride,
+                }),
+          calleeTypes,
+          importedCalls: loweringPlans?.importedCalls,
+          topLevelFunctionValues: loweringPlans?.topLevelFunctionValues,
+          hostVoidCallbacks: loweringPlans?.hostVoidCallbacks,
+          classShapes,
+          resolver: fromAstResolver,
+          allocRegistry,
+          checker: ctx.checker,
+          numericLocalScalarForDecl: (decl) => ctx.usageInference.scalarForDecl(decl),
+        });
+        if (result.main.unitId !== selectedUnitId) {
+          throw new IrInvariantError(
+            "selection-preparation-mismatch",
+            "build",
+            `ir/integration: ${semanticName} lowered as ${result.main.unitId}, expected ${selectedUnitId}`,
+          );
+        }
+        const liftedAbiRecords = liftedProgramAbiRecords(result, selectedUnitId, owner.unitId);
+        const mainErrors = verifyBuiltArtifact(result.main, semanticName, false);
+        if (mainErrors.length > 0) {
+          failures.recordVerifierDetails(owner, mainErrors);
+          continue;
+        }
+        const anyLiftedFailed = failures.recordVerifierGroups(
+          owner,
+          result.lifted.map((lifted) => ({
+            details: verifyBuiltArtifact(lifted, semanticName, true),
+            detailPrefix: `synthetic artifact ${lifted.name}: `,
+          })),
+        );
+        if (anyLiftedFailed) continue;
+        built.push({
+          artifactUnitId: selectedUnitId,
+          terminalOwnerUnitId: owner.unitId,
+          // Exact Program ABI identity locates the physical slot. Keep public
+          // compilation evidence on the semantic source label (`A_new` for a
+          // constructor whose physical body is `A_init`).
+          name: semanticName,
+          ownerName: owner.legacyName,
+          fn: result.main,
+          classMember: true,
+        });
+        for (const lifted of result.lifted) {
+          built.push({
+            artifactUnitId: lifted.unitId,
+            terminalOwnerUnitId: owner.unitId,
+            name: lifted.name,
+            ownerName: owner.legacyName,
+            fn: lifted,
+            derivedUnit: liftedAbiRecords.get(lifted.unitId)!,
+            synthesized: true,
+          });
+        }
+      } catch (e) {
+        failures.record(owner, caughtIntegrationFailure(owner.legacyName, e, "build"));
+      }
+    }
+  } else if (selected.classMembers && selected.classMembers.size > 0) {
     for (const stmt of sourceFile.statements) {
       if (!ts.isClassDeclaration(stmt) || !stmt.name) continue;
       const className = stmt.name.text;
@@ -2980,15 +3315,19 @@ function resolveModuleBindingGlobal(ctx: CodegenContext, identity: IrModuleBindi
   }
 
   let type: IrType;
-  let storageKind: "f64" | "i32" | "externref";
+  let storageType: ValType;
   switch (identity.valueKind.kind) {
     case "f64":
       type = { kind: "val", val: { kind: "f64" } };
-      storageKind = "f64";
+      storageType = { kind: "f64" };
       break;
     case "i32":
       type = { kind: "val", val: { kind: "i32" } };
-      storageKind = "i32";
+      storageType = { kind: "i32" };
+      break;
+    case "dynamic":
+      type = irDynamic();
+      storageType = resolveIrDynamicCarrierType(ctx);
       break;
     case "extern":
       if (!ctx.externClasses.has(identity.valueKind.className)) {
@@ -2999,14 +3338,18 @@ function resolveModuleBindingGlobal(ctx: CodegenContext, identity: IrModuleBindi
         );
       }
       type = { kind: "extern", className: identity.valueKind.className };
-      storageKind = "externref";
+      storageType = { kind: "externref" };
       break;
   }
-  if (global.type.kind !== storageKind) {
+  const storageMatches =
+    global.type.kind === storageType.kind &&
+    ((global.type.kind !== "ref" && global.type.kind !== "ref_null") ||
+      (storageType.kind === global.type.kind && storageType.typeIdx === global.type.typeIdx));
+  if (!storageMatches) {
     throw new IrInvariantError(
       "abi-type-index-mismatch",
       "build",
-      `module-init: ${globalName} uses legacy ${global.type.kind} storage but IR resolved ${storageKind}`,
+      `module-init: ${globalName} uses legacy ${global.type.kind} storage but IR resolved ${storageType.kind}`,
     );
   }
 
@@ -3297,14 +3640,6 @@ function externResultClassName(
   }
 }
 
-function resolveDynamicCarrier(ctx: CodegenContext): ValType {
-  if (ctx.fast) {
-    ensureAnyValueType(ctx);
-    return { kind: "ref_null", typeIdx: ctx.anyValueTypeIdx };
-  }
-  return { kind: "externref" };
-}
-
 function resolveStandaloneRegExpTestGlobal(ctx: CodegenContext, plan: IrStaticRegExpTestPlan): IrGlobalRef {
   if (
     plan.globalBindingId === undefined ||
@@ -3544,7 +3879,7 @@ function makeFromAstResolver(ctx: CodegenContext, moduleBindingResolver?: IrModu
       return irImportFuncRef("env", "__defineProperty_desc");
     },
     resolveDynamic() {
-      return resolveDynamicCarrier(ctx);
+      return resolveIrDynamicCarrierType(ctx);
     },
     dynamicCarrierIsExternref() {
       return !ctx.fast;
@@ -3946,6 +4281,13 @@ function resolveAndObserveCallableProvider(
       Array.from({ length: 5 }, () => ({ kind: "externref" }) as const),
       [{ kind: "externref" }],
     );
+  } else if (ref.binding.kind === "runtime" && symbol === "__new_ReferenceError") {
+    if (ctx.wasi || ctx.standalone) {
+      emitWasiErrorConstructor(ctx, "ReferenceError", 1);
+      index = ctx.funcMap.get("__new_ReferenceError");
+    } else {
+      index = ensureLateImport(ctx, "__new_ReferenceError", [{ kind: "externref" }], [{ kind: "externref" }]);
+    }
   } else if (ref.binding.kind === "intrinsic" && symbol.startsWith(IR_VEC_ELEM_SET_PREFIX)) {
     const element = parseIrVectorRuntimeElement(symbol, IR_VEC_ELEM_SET_PREFIX);
     index = element ? ensureVecElemSetForElement(ctx, element) : null;
@@ -4259,7 +4601,7 @@ function makeResolver(
     // registration legacy performs at its own first `any` use.
     // -------------------------------------------------------------------
     resolveDynamic(): ValType {
-      return resolveDynamicCarrier(ctx);
+      return resolveIrDynamicCarrierType(ctx);
     },
     // (#2949 slice 3) Op-emission handle for dynamic box/unbox/tag.test —
     // memoized so all arms of one lowering run share a single handle. The
@@ -4976,27 +5318,14 @@ function preregisterDynamicAndForInSupport(ctx: CodegenContext, fns: readonly Bu
  * avoids a late `ensureExnTag` call mid-emission.
  */
 function preregisterExceptionSupport(ctx: CodegenContext, fns: readonly BuiltFnRef[]): void {
-  const usesExceptions = (instr: IrInstr): boolean => {
-    switch (instr.kind) {
-      case "throw":
-        return true;
-      case "try":
-        return true;
-      case "forof.vec":
-      case "forof.iter":
-      case "forof.string":
-        for (const sub of instr.body) {
-          if (usesExceptions(sub)) return true;
-        }
-        return false;
-      default:
-        return false;
-    }
-  };
   for (const entry of fns) {
     for (const block of entry.fn.blocks) {
       for (const instr of block.instrs) {
-        if (usesExceptions(instr)) {
+        let usesExceptions = false;
+        forEachInstrDeep(instr, (nested) => {
+          if (nested.kind === "throw" || nested.kind === "try") usesExceptions = true;
+        });
+        if (usesExceptions) {
           ensureExnTag(ctx);
           return;
         }
@@ -5999,8 +6328,7 @@ class ClassRegistry {
     }
     if (
       this.identityContext &&
-      (projectedClassId === undefined ||
-        this.identityContext.declarationByClassId.get(shape.classId)?.name?.text !== shape.className)
+      (projectedClassId === undefined || this.identityContext.declarationByClassId.get(shape.classId) === undefined)
     ) {
       throw new IrInvariantError(
         "selection-preparation-mismatch",

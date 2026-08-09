@@ -1,23 +1,147 @@
 ---
 id: 2375
-title: "standalone: TypedArray/ArrayBuffer/DataView.prototype value-read cluster is gated on builtin-ctor reflection in the test262 harness, not the $NativeProto glue"
-status: blocked
-needs_role: architect
+title: "standalone IR dynamic reads on %TypedArray%.prototype miss $NativeProto brand/member lookup (125 ES2015 exposures)"
+status: ready
 sprint: Backlog
 created: 2026-06-19
-updated: 2026-06-19
+updated: 2026-08-09
 priority: medium
 feasibility: hard
 reasoning_effort: max
-task_type: investigation
+task_type: bug
 area: codegen
-language_feature: builtins, reflection, typedarray
+es_edition: 2015
+language_feature: typedarray-nativeproto-member-read
 goal: standalone-mode
-related: [2374, 2376, 2377, 2378, 2193, 2175, 1907, 1888, 2026]
+related: [2374, 2376, 2377, 2378, 2193, 2175, 1907, 1888, 2026, 2872, 3053]
 origin: "2026-06-19 — measure-first probe while extending #2374 value-read glue to the TypedArray family; root-caused 2026-06-19 spec-first deep-dive"
 ---
 
-## RE-GROUND vs current main 218375d60 (2026-06-19, after #2026 classes-as-first-class-values landed)
+# #2375 — IR dynamic member reads must recognize `$NativeProto`
+
+## 2026-08-09 current-main re-ground (supersedes the 2026-06 blocker)
+
+The old premise below — that builtin-constructor reflection prevents the
+TypedArray `$NativeProto` from becoming live — is no longer current. The
+constructor/prototype substrate and TypedArray native-proto glue now exist. A
+fresh exact-ES2015 source/outcome census finds **125 standalone non-pass files
+that expose the next shared seam**: **121 runtime failures and 4 compile
+errors**. This is an exposure count, not a claim that one fix immediately flips
+125 layered tests.
+
+The 125-file predicate is frozen by source shape rather than error text:
+
+- these 24 method-valued directories:
+  `copyWithin`, `entries`, `every`, `fill`, `filter`, `find`, `findIndex`,
+  `forEach`, `includes`, `indexOf`, `join`, `keys`, `lastIndexOf`, `map`,
+  `reduce`, `reduceRight`, `reverse`, `set`, `slice`, `some`, `sort`,
+  `subarray`, `toLocaleString`, and `values`;
+- in every directory, the five files `invoked-as-func.js`,
+  `invoked-as-method.js`, `not-a-constructor.js`, `this-is-not-object.js`, and
+  `this-is-not-typedarray-instance.js` (**24 × 5 = 120**); and
+- `invoked-as-func.js` in the five accessor directories `buffer`,
+  `byteLength`, `byteOffset`, `length`, and `Symbol.toStringTag` (**5**).
+
+Intersect that source list with edition index 4 (`ES2015`) in
+`website/public/benchmarks/results/test262-file-editions.json`, then read the
+same paths from `.test262-cache/test262-standalone-current.jsonl`. The result is
+exactly 125 non-passes: 121 `fail` and four `compile_error`. The accessor rows
+are controls for the broader rerun; method-valued lookup is the first slice.
+
+The current root cause is on the IR path:
+
+```text
+dynamic `TypedArray.prototype` value
+        ↓
+IR `dyn.member_get`
+        ↓
+`__dyn_member_get(recv, key)`
+        ↓
+`__extern_get(recvExtern, keyExtern)`
+        ↓
+no `$NativeProto` brand/member arm → undefined or later host fallback
+```
+
+`$NativeProto` is deliberately a distinct struct carrying `brand`, `parent`,
+and `memberCsv`; it is not `$Object`. The carrier peel in
+`src/codegen/dyn-read.ts` hands every dynamic read to `__extern_get`, whose
+object/prototype walk does not recognize that struct. Static source syntax such
+as `Int8Array.prototype.map` can use `builtin-value-read.ts`, but the Test262
+harness binds `%TypedArray%.prototype` dynamically and then reads `map`,
+`slice`, and siblings from that value. Those reads therefore miss the existing
+native-proto registry and identity-stable closure factory.
+
+### Safest first cohort — 48 invalid-receiver files
+
+The bounded first cohort is the exact-ES2015 intersection of the 24
+method-valued directories listed above with:
+
+- `built-ins/TypedArray/prototype/*/this-is-not-object.js`; and
+- `built-ins/TypedArray/prototype/*/this-is-not-typedarray-instance.js`.
+
+There are **24 method directories × 2 files = 48/48 standalone failures**, and
+all 48 pass in the host lane. `buffer/this-is-not-object.js` and
+`Symbol.toStringTag/this-is-not-object.js` match the broad filename glob but are
+explicitly excluded because they are accessor directories; their
+getter/descriptor behavior adds a separate layer. Representative authentic
+failures are:
+
+- `map/this-is-not-object.js` —
+  `this is undefined Expected a TypeError to be thrown but no exception was thrown at all`
+  (line 24); and
+- `map/this-is-not-typedarray-instance.js` —
+  `this is an Object Expected a TypeError to be thrown but no exception was thrown at all`
+  (line 27).
+
+The measurement uses the exact `ES2015` classifier bucket, fresh oracle-13
+reports generated 2026-08-09 at 01:26:35Z from semantic baseline
+`003bda02856359821fc9653d4e15cbbd885a2a21`, and Test262 checkout
+`b363f29d3c43c626dc852744ad64a0b48a003693`.
+
+### Required implementation boundary
+
+Fix the shared IR/runtime reader rather than adding another
+`TypedArray.prototype.<name>` AST special case:
+
+1. Pre-register the `$NativeProto` type and the exact brand/member closure
+   dependencies before prepared-component and Program-ABI sealing.
+2. Add a `$NativeProto` receiver arm to the `dyn.member_get` lowering/helper.
+   It must use the runtime brand plus exact property key to resolve the existing
+   native-proto member registry/factory, return the same identity-stable method
+   closure as static value reads, and preserve inherited Object-prototype
+   lookup. Unknown members return JavaScript `undefined`.
+3. Preserve `RequireObjectCoercible`, `$Object`, primitive, and host fallback
+   ordering. Standalone lookup must not compile a per-view `env::*` import in an
+   untaken arm.
+4. Start with method-valued members and the 48-file invalid-receiver cohort.
+   Accessor getters, descriptor reflection, detached-buffer semantics, and
+   method-specific validation remain separate measured layers under #2872.
+
+This is the shared continuation of #3053's `dyn.member_get` substrate. #2872
+keeps ownership of the broader TypedArray method-body/validation programme;
+this record owns the missing `$NativeProto` **value-read producer** that feeds
+those bodies.
+
+### Acceptance for the first slice
+
+- [ ] Exact per-file A/B over the 48 invalid-receiver files records 48/48 host
+      controls and the standalone before/after result. Credit only measured
+      runtime passes.
+- [ ] A focused IR test proves the read emits `dyn.member_get` and resolves a
+      `$NativeProto` method value with the same identity as the corresponding
+      static proto-member read; the direct backend does not special-case the
+      source spelling.
+- [ ] Unknown, inherited Object-prototype, method, and accessor keys have
+      explicit controls, with wrong-receiver method calls throwing catchable
+      TypeError rather than trapping.
+- [ ] The complete 125-file exposed set is rerun to report the honest split
+      (pass/fail/compile-error) and identify later layers; no 125-flip claim is
+      made from reachability alone.
+- [ ] TypedArray, other `$NativeProto` builtin families, dynamic-object reads,
+      typecheck, IR fallback checks, and standalone host-import closure stay
+      green.
+
+## Historical re-ground vs main 218375d60 (2026-06-19; superseded)
 
 The #2026 substrate (uniform constructor ABI / classes as first-class values)
 **did move the needle on the init-trap, but NOT on the conformance gate**. Wiring
@@ -64,9 +188,10 @@ it is staged in this investigation only, not committed.
    `Int8Array.prototype` identifier read). This is the harness's actual reflection
    path and is the dominant gate (118/155 files).
 
-Route to architect: spec (1)+(2) as the TypedArray member-reflection runtime
-slice. The value-read object scaffold is ready to fold in once those land.
-Keep `status: blocked`, `needs_role: architect`.
+The historical disposition was to route (1)+(2) to an architect and keep this
+record blocked. The 2026-08-09 re-ground above supersedes that instruction: the
+prerequisite substrate has landed, the next IR/runtime reader seam is known,
+and this issue is now implementation-ready.
 
 ---
 

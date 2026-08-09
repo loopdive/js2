@@ -74,6 +74,20 @@ export function ensureAnyValueType(ctx: CodegenContext): void {
 }
 
 /**
+ * Resolve the one physical carrier used by prepared IR `dynamic` values.
+ *
+ * Program-ABI planning records this exact type symbolically. Legacy allocation
+ * sites that reserve a callable before IR preparation must use the same
+ * contract rather than re-inferring an implicit `any` parameter from a paired
+ * accessor signature (which can narrow it to string, for example).
+ */
+export function resolveIrDynamicCarrierType(ctx: CodegenContext): ValType {
+  if (!ctx.fast) return { kind: "externref" };
+  ensureAnyValueType(ctx);
+  return { kind: "ref_null", typeIdx: ctx.anyValueTypeIdx };
+}
+
+/**
  * (#2106 S1.0) Push the standalone `$undefined` singleton (a `ref $AnyValue`,
  * tag 1) onto the stack. Returns `false` (emitting nothing) when not in
  * standalone/native-strings mode or the singleton was not reserved — callers

@@ -6,6 +6,7 @@
 
 import { isExternalDeclaredClass } from "../checker/type-mapper.js";
 import { ts } from "../ts-api.js";
+import { isBoundedPreparedAccessorClass } from "./class-accessor-safety.js";
 import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId } from "./abi-bindings.js";
 import type { IrBindingId, IrClassId, IrSourceId, IrUnitId } from "./identity.js";
 import type { IrClassShape } from "./nodes.js";
@@ -543,6 +544,7 @@ export function makeIrPrimitiveExpressionClassifier(
 export type IrModuleBindingValueKind =
   | { readonly kind: "f64" }
   | { readonly kind: "i32"; readonly semantic: "boolean" }
+  | { readonly kind: "dynamic" }
   | { readonly kind: "extern"; readonly className: string };
 
 /** Name-compatible binding evidence used only by the pre-R1 planning seam. */
@@ -726,6 +728,26 @@ export interface IrModuleBindingResolverOptions {
    * lanes store it as `(ref null $Map)`, outside this capability's surface.
    */
   readonly allowBuiltinMapExtern: boolean;
+  /** Provisional selector-only access to the bounded top-level accessor family. */
+  readonly allowBoundedTopLevelAccessorSelectionCandidates?: boolean;
+}
+
+const selectedTopLevelAccessorUnitIdsByContext = new WeakMap<IrPlanningIdentityContext, ReadonlySet<IrUnitId>>();
+
+/** Scope exact selected accessor ownership across one synchronous prepared lowering pass. */
+export function withSelectedTopLevelAccessorUnitIds<T>(
+  identityContext: IrPlanningIdentityContext,
+  unitIds: ReadonlySet<IrUnitId>,
+  run: () => T,
+): T {
+  const previous = selectedTopLevelAccessorUnitIdsByContext.get(identityContext);
+  selectedTopLevelAccessorUnitIdsByContext.set(identityContext, new Set(unitIds));
+  try {
+    return run();
+  } finally {
+    if (previous) selectedTopLevelAccessorUnitIdsByContext.set(identityContext, previous);
+    else selectedTopLevelAccessorUnitIdsByContext.delete(identityContext);
+  }
 }
 
 // Builtins which are deliberately excluded by isExternalDeclaredClass but are
@@ -734,7 +756,10 @@ export interface IrModuleBindingResolverOptions {
 const MODULE_EXTERN_BUILTINS = new Set(["Map"]);
 const NON_F64_NATIVE_NUMBER_ALIASES = new Set(["i8", "i16", "i32", "u8", "u16", "u32", "f32"]);
 
-function directTopLevelDeclaration(node: ts.Identifier, checker: ts.TypeChecker): ts.VariableDeclaration | undefined {
+function uniqueTopLevelVariableDeclaration(
+  node: ts.Identifier,
+  checker: ts.TypeChecker,
+): ts.VariableDeclaration | undefined {
   const symbol = checker.getSymbolAtLocation(node);
   if (!symbol) return undefined;
   const sourceFile = node.getSourceFile();
@@ -751,7 +776,16 @@ function directTopLevelDeclaration(node: ts.Identifier, checker: ts.TypeChecker)
     directDeclarations.add(candidate);
   }
   if (directDeclarations.size !== 1) return undefined;
-  const declaration = [...directDeclarations][0]!;
+  return [...directDeclarations][0]!;
+}
+
+function directTopLevelDeclaration(node: ts.Identifier, checker: ts.TypeChecker): ts.VariableDeclaration | undefined {
+  const declaration = uniqueTopLevelVariableDeclaration(node, checker);
+  if (!declaration) return undefined;
+  const sourceFile = node.getSourceFile();
+  const symbol = checker.getSymbolAtLocation(node);
+  if (!symbol) return undefined;
+  const candidates = [symbol.valueDeclaration, ...(symbol.declarations ?? [])];
   const list = declaration.parent as ts.VariableDeclarationList;
   if (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) return declaration;
 
@@ -2014,15 +2048,64 @@ export function makeIrModuleBindingResolver(
     IrModuleBindingIdentity,
     "globalBindingId" | "tdzBindingId" | "storageOwnerUnitId" | "sourceId" | "declarationOrdinal"
   > => bindingLocation(identity.declaration);
+  const nestedAccessorDynamicBinding = (
+    ownerUnitId: IrUnitId,
+    node: ts.Identifier,
+    inspected: IrLegacyModuleBindingInspection,
+    writeValue?: ts.Expression,
+  ): IrLegacyModuleBindingIdentity | undefined => {
+    if (inspected.kind === "supported") return undefined;
+    const owner = identityContext.terminalByUnitId.get(ownerUnitId);
+    const ownerDeclaration = identityContext.declarationByUnitId.get(ownerUnitId);
+    const ownerClass = ownerDeclaration?.parent;
+    const boundedTopLevelAccessor =
+      owner?.containingTerminalOwnerId === undefined &&
+      ownerClass !== undefined &&
+      (ts.isClassDeclaration(ownerClass) || ts.isClassExpression(ownerClass)) &&
+      isBoundedPreparedAccessorClass(ownerClass);
+    const boundedSelectionCandidate =
+      options.allowBoundedTopLevelAccessorSelectionCandidates === true && boundedTopLevelAccessor;
+    const exactSelectedTopLevelAccessor =
+      boundedTopLevelAccessor &&
+      selectedTopLevelAccessorUnitIdsByContext.get(identityContext)?.has(ownerUnitId) === true;
+    const declaration =
+      inspected.kind === "unsupported" ? inspected.declaration : uniqueTopLevelVariableDeclaration(node, checker);
+    if (
+      (owner?.containingTerminalOwnerId === undefined &&
+        !boundedSelectionCandidate &&
+        !exactSelectedTopLevelAccessor) ||
+      !ownerDeclaration ||
+      !ts.isSetAccessorDeclaration(ownerDeclaration) ||
+      ownerDeclaration.parameters.length !== 1 ||
+      !ts.isIdentifier(ownerDeclaration.parameters[0]!.name) ||
+      !declaration ||
+      !ts.isIdentifier(declaration.name) ||
+      declaration.initializer !== undefined ||
+      !ts.isVariableDeclarationList(declaration.parent) ||
+      (declaration.parent.flags & ts.NodeFlags.Const) !== 0
+    ) {
+      return undefined;
+    }
+    const declaredType = checker.getTypeAtLocation(declaration.name);
+    if ((declaredType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) === 0) return undefined;
+    if (writeValue !== undefined) {
+      if (!ts.isIdentifier(writeValue)) return undefined;
+      const parameterName = ownerDeclaration.parameters[0]!.name as ts.Identifier;
+      if (checker.getSymbolAtLocation(writeValue) !== checker.getSymbolAtLocation(parameterName)) return undefined;
+    }
+    return { declaration, mutable: true, valueKind: { kind: "dynamic" } };
+  };
   const inspectDirectBinding = (node: ts.Identifier, writeValue?: ts.Expression): IrModuleBindingInspection => {
     const ownerUnitId = ownerAt(node);
     const inspected = legacy.inspectDirectBinding(node, writeValue);
-    return inspected.kind === "supported"
-      ? {
-          kind: "supported",
-          identity: { ...inspected.identity, ownerUnitId, ...bindingIdentity(inspected.identity) },
-        }
-      : inspected;
+    const identity =
+      inspected.kind === "supported"
+        ? inspected.identity
+        : nestedAccessorDynamicBinding(ownerUnitId, node, inspected, writeValue);
+    if (identity) {
+      return { kind: "supported", identity: { ...identity, ownerUnitId, ...bindingIdentity(identity) } };
+    }
+    return inspected.kind === "unsupported" ? inspected : { kind: "not-direct" };
   };
   const resolve = (node: ts.Identifier, writeValue?: ts.Expression): IrModuleBindingIdentity | undefined => {
     try {

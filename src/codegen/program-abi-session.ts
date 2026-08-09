@@ -2,6 +2,8 @@
 
 import type { FuncTypeDef, GlobalDef, Import, TypeDef, ValType, WasmFunction, WasmModule } from "../ir/types.js";
 import type { IrBindingId, IrClassId, IrSourceId, IrUnitId, IrUnitInventory } from "../ir/identity.js";
+import { irUnitCallableBindingId } from "../ir/callable-bindings.js";
+import { arePairedIrModuleGlobalBindingIds, irClassTypeRef } from "../ir/abi-bindings.js";
 import {
   LegacyAbiAdapter,
   ProgramAbiInvariantError,
@@ -441,20 +443,43 @@ export interface SealedPreparedProgramAbiScope {
 
 type PreparedScopeTransactionState = "open" | "sealed" | "aborted";
 
+export type PreparedProgramAbiBorrowedBindingEvidence =
+  | {
+      readonly kind: "nested-accessor-class-layout";
+      readonly consumerUnitIds: readonly IrUnitId[];
+    }
+  | {
+      readonly kind: "class-setter-writeback-global";
+      readonly consumerUnitIds: readonly IrUnitId[];
+      readonly dynamicCarrierBindingId: IrBindingId;
+    }
+  | {
+      readonly kind: "class-setter-writeback-tdz-global";
+      readonly consumerUnitIds: readonly IrUnitId[];
+      readonly valueGlobalBindingId: IrBindingId;
+    };
+
 /**
  * One-shot discovery transaction for the ABI dependencies of one prepared
  * component. Failed sealing and explicit abort publish no partial scope.
  */
 export class PreparedProgramAbiScopeTransaction {
   readonly #bindingIds = new Set<IrBindingId>();
-  readonly #sealScope: (bindingIds: ReadonlySet<IrBindingId>) => SealedPreparedProgramAbiScope;
+  readonly #borrowedBindings = new Map<IrBindingId, PreparedProgramAbiBorrowedBindingEvidence>();
+  readonly #sealScope: (
+    bindingIds: ReadonlySet<IrBindingId>,
+    borrowedBindings: ReadonlyMap<IrBindingId, PreparedProgramAbiBorrowedBindingEvidence>,
+  ) => SealedPreparedProgramAbiScope;
   readonly #abortScope: () => void;
   #state: PreparedScopeTransactionState = "open";
 
   constructor(
     readonly scopeId: string,
     readonly terminalUnitIds: readonly IrUnitId[],
-    sealScope: (bindingIds: ReadonlySet<IrBindingId>) => SealedPreparedProgramAbiScope,
+    sealScope: (
+      bindingIds: ReadonlySet<IrBindingId>,
+      borrowedBindings: ReadonlyMap<IrBindingId, PreparedProgramAbiBorrowedBindingEvidence>,
+    ) => SealedPreparedProgramAbiScope,
     abortScope: () => void,
   ) {
     Object.freeze(this.terminalUnitIds);
@@ -473,10 +498,32 @@ export class PreparedProgramAbiScopeTransaction {
     this.#bindingIds.add(id);
   }
 
+  includeBorrowedBinding(id: IrBindingId, evidence: PreparedProgramAbiBorrowedBindingEvidence): void {
+    this.#assertOpen("include a borrowed ABI binding");
+    if (this.#bindingIds.has(id)) {
+      throw new ProgramAbiInvariantError(
+        "duplicate-session-draft",
+        `prepared ABI scope ${this.scopeId} included binding ${id} more than once`,
+      );
+    }
+    if (
+      evidence.consumerUnitIds.length === 0 ||
+      new Set(evidence.consumerUnitIds).size !== evidence.consumerUnitIds.length ||
+      evidence.consumerUnitIds.some((unitId) => !this.terminalUnitIds.includes(unitId))
+    ) {
+      throw new ProgramAbiInvariantError(
+        "invalid-callable-provenance",
+        `prepared ABI scope ${this.scopeId} borrowed binding ${id} without a unique exact component consumer set`,
+      );
+    }
+    this.#bindingIds.add(id);
+    this.#borrowedBindings.set(id, Object.freeze({ ...evidence }));
+  }
+
   seal(): SealedPreparedProgramAbiScope {
     this.#assertOpen("seal the prepared ABI scope");
     try {
-      const sealed = this.#sealScope(this.#bindingIds);
+      const sealed = this.#sealScope(this.#bindingIds, this.#borrowedBindings);
       this.#state = "sealed";
       return sealed;
     } catch (error) {
@@ -983,9 +1030,9 @@ export class ProgramAbiSession {
     return new PreparedProgramAbiScopeTransaction(
       scopeId,
       exactTerminalUnitIds,
-      (bindingIds) => {
+      (bindingIds, borrowedBindings) => {
         try {
-          return this.sealPreparedComponentScope(scopeId, exactTerminalUnitIds, bindingIds);
+          return this.sealPreparedComponentScope(scopeId, exactTerminalUnitIds, bindingIds, borrowedBindings);
         } finally {
           close();
         }
@@ -1816,6 +1863,7 @@ export class ProgramAbiSession {
     scopeId: string,
     terminalUnitIds: readonly IrUnitId[],
     requestedBindingIds: ReadonlySet<IrBindingId>,
+    borrowedBindings: ReadonlyMap<IrBindingId, PreparedProgramAbiBorrowedBindingEvidence>,
   ): SealedPreparedProgramAbiScope {
     this.assertPlanning(`seal prepared ABI scope ${scopeId}`);
     if (!this.openPreparedScopeIds.has(scopeId) || this.preparedScopes.has(scopeId)) {
@@ -1841,7 +1889,7 @@ export class ProgramAbiSession {
           `prepared ABI scope ${scopeId} requests unplanned binding ${id}`,
         );
       }
-      this.assertPreparedDependencyRequest(scopeId, new Set(terminalUnitIds), draft);
+      this.assertPreparedDependencyRequest(scopeId, new Set(terminalUnitIds), draft, borrowedBindings.get(id));
     }
 
     const terminalUnitIdSet = new Set(terminalUnitIds);
@@ -1895,7 +1943,8 @@ export class ProgramAbiSession {
       const ownerId = this.assertCanonicalPreparedBindingId(draft);
       const ownerTerminalId = this.terminalOwnerForPreparedDraft(draft, ownerId);
       bindingTerminalOwnerIds.set(id, ownerTerminalId);
-      if (ownerTerminalId !== null && !terminalUnitIdSet.has(ownerTerminalId)) {
+      const borrowing = borrowedBindings.get(id);
+      if (ownerTerminalId !== null && !terminalUnitIdSet.has(ownerTerminalId) && borrowing === undefined) {
         throw new ProgramAbiInvariantError(
           "invalid-callable-provenance",
           `prepared ABI scope ${scopeId} reaches binding ${id} structurally owned by terminal ${ownerTerminalId}`,
@@ -1915,7 +1964,8 @@ export class ProgramAbiSession {
       if (
         draft.intent.kind === "global" &&
         draft.intent.origin === "source" &&
-        (draft.intent.unitId === undefined || !unitIds.has(draft.intent.unitId))
+        (draft.intent.unitId === undefined || !unitIds.has(draft.intent.unitId)) &&
+        borrowing === undefined
       ) {
         throw new ProgramAbiInvariantError(
           "invalid-callable-provenance",
@@ -2164,8 +2214,13 @@ export class ProgramAbiSession {
     scopeId: string,
     terminalUnitIds: ReadonlySet<IrUnitId>,
     draft: ProgramAbiDraft,
+    borrowing?: PreparedProgramAbiBorrowedBindingEvidence,
   ): void {
     const ownerId = this.assertCanonicalPreparedBindingId(draft);
+    if (borrowing) {
+      this.assertPreparedBorrowedDependency(scopeId, terminalUnitIds, draft, borrowing);
+      return;
+    }
     if (draft.intent.kind === "export" || (draft.intent.kind === "callable" && draft.intent.origin === "source")) {
       throw new ProgramAbiInvariantError(
         "invalid-callable-provenance",
@@ -2198,6 +2253,203 @@ export class ProgramAbiSession {
       throw new ProgramAbiInvariantError(
         "invalid-callable-provenance",
         `prepared ABI scope ${scopeId} requested dependency ${draft.id} owned by terminal ${ownerTerminalId}`,
+      );
+    }
+  }
+
+  private assertPreparedBorrowedDependency(
+    scopeId: string,
+    terminalUnitIds: ReadonlySet<IrUnitId>,
+    draft: ProgramAbiDraft,
+    borrowing: PreparedProgramAbiBorrowedBindingEvidence,
+  ): void {
+    if (
+      borrowing.consumerUnitIds.length === 0 ||
+      new Set(borrowing.consumerUnitIds).size !== borrowing.consumerUnitIds.length ||
+      borrowing.consumerUnitIds.some((unitId) => !terminalUnitIds.has(unitId))
+    ) {
+      throw new ProgramAbiInvariantError(
+        "invalid-callable-provenance",
+        `prepared ABI scope ${scopeId} borrowed ${draft.id} without a unique exact component consumer set`,
+      );
+    }
+    const terminals = borrowing.consumerUnitIds.map((unitId) =>
+      this.inventory.terminalUnits.find(({ id }) => id === unitId),
+    );
+    if (terminals.some((terminal) => !terminal || terminal.observedKind !== "class-member")) {
+      throw new ProgramAbiInvariantError(
+        "invalid-callable-provenance",
+        `prepared ABI scope ${scopeId} borrowed ${draft.id} for a non-class terminal`,
+      );
+    }
+    if (borrowing.kind === "nested-accessor-class-layout") {
+      const classIntent = draft.intent.kind === "class" ? draft.intent : undefined;
+      const canonicalClass = classIntent ? this.canonicalDraft(draft.id) : undefined;
+      const classLocator = canonicalClass ? this.locators.get(canonicalClass.id) : undefined;
+      const classType = classLocator?.kind === "type-cell" ? classLocator.cell.current : undefined;
+      const classTypeIdx = classType ? this.module.types.indexOf(classType) : -1;
+      const exactConsumers = terminals.every((terminal) => {
+        if (!terminal || !classIntent) return false;
+        const accessor =
+          terminal.kind === "class-instance-getter" ||
+          terminal.kind === "class-static-getter" ||
+          terminal.kind === "class-instance-setter" ||
+          terminal.kind === "class-static-setter";
+        const callableId = irUnitCallableBindingId(terminal.id);
+        const requestedCallable = this.drafts.get(callableId);
+        const callable = requestedCallable ? this.canonicalDraft(callableId) : undefined;
+        const firstParam = callable?.intent.kind === "callable" ? callable.intent.signature.params[0] : undefined;
+        let parsedFirstParam: { readonly kind?: unknown; readonly typeIdx?: unknown } | undefined;
+        try {
+          parsedFirstParam = firstParam === undefined ? undefined : JSON.parse(firstParam);
+        } catch {
+          parsedFirstParam = undefined;
+        }
+        return (
+          accessor &&
+          terminal.containingTerminalOwnerId !== undefined &&
+          terminal.lexicalOwnerId === classIntent.classId &&
+          this.terminalOwnerForKnownClass(classIntent.classId) === terminal.containingTerminalOwnerId &&
+          classTypeIdx >= 0 &&
+          requestedCallable?.intent.kind === "callable" &&
+          requestedCallable.intent.origin === "source" &&
+          requestedCallable.intent.unitId === terminal.id &&
+          callable?.intent.kind === "callable" &&
+          callable.intent.origin === "source" &&
+          callable.intent.unitId === terminal.id &&
+          (parsedFirstParam?.kind === "ref" || parsedFirstParam?.kind === "ref_null") &&
+          parsedFirstParam.typeIdx === classTypeIdx
+        );
+      });
+      if (!exactConsumers) {
+        throw new ProgramAbiInvariantError(
+          "invalid-callable-provenance",
+          `prepared ABI scope ${scopeId} has no exact nested-accessor layout relation for ${draft.id}`,
+        );
+      }
+      return;
+    }
+
+    if (terminals.length !== 1 || !terminals[0]) {
+      throw new ProgramAbiInvariantError(
+        "invalid-callable-provenance",
+        `prepared ABI scope ${scopeId} borrowed setter binding ${draft.id} for ${terminals.length} consumers`,
+      );
+    }
+    const terminal = terminals[0];
+    const consumerUnitId = terminal.id;
+    const setter = terminal.kind === "class-instance-setter" || terminal.kind === "class-static-setter";
+    if (borrowing.kind === "class-setter-writeback-tdz-global") {
+      const tdzIntent = draft.intent.kind === "global" && draft.intent.origin === "source" ? draft.intent : undefined;
+      const value = this.drafts.get(borrowing.valueGlobalBindingId);
+      const valueIntent =
+        value?.intent.kind === "global" && value.intent.origin === "source" ? value.intent : undefined;
+      const canonicalTdz = tdzIntent ? this.canonicalDraft(draft.id) : undefined;
+      const canonicalValue = valueIntent ? this.canonicalDraft(borrowing.valueGlobalBindingId) : undefined;
+      if (
+        !setter ||
+        terminal.lexicalOwnerId === null ||
+        !tdzIntent ||
+        !tdzIntent.mutable ||
+        tdzIntent.valueType !== canonicalProgramAbiValType({ kind: "i32" }) ||
+        !valueIntent ||
+        !valueIntent.mutable ||
+        !arePairedIrModuleGlobalBindingIds(borrowing.valueGlobalBindingId, draft.id) ||
+        !canonicalValue ||
+        !canonicalTdz ||
+        !arePairedIrModuleGlobalBindingIds(canonicalValue.id, canonicalTdz.id) ||
+        valueIntent.sourceId !== tdzIntent.sourceId ||
+        valueIntent.unitId !== tdzIntent.unitId
+      ) {
+        throw new ProgramAbiInvariantError(
+          "invalid-callable-provenance",
+          `prepared ABI scope ${scopeId} has no exact setter TDZ contract for ${draft.id}`,
+        );
+      }
+      return;
+    }
+
+    const callableId = irUnitCallableBindingId(consumerUnitId);
+    const requestedCallable = this.drafts.get(callableId);
+    const callable = requestedCallable ? this.canonicalDraft(callableId) : undefined;
+    const requestedCarrier = this.drafts.get(borrowing.dynamicCarrierBindingId);
+    const carrier = requestedCarrier ? this.canonicalDraft(borrowing.dynamicCarrierBindingId) : undefined;
+    const sourceGlobalIntent =
+      draft.intent.kind === "global" && draft.intent.origin === "source" ? draft.intent : undefined;
+    const classId = terminal.lexicalOwnerId as IrClassId;
+    const classBindingId = irClassTypeRef(classId, "<prepared-class>").binding.bindingId;
+    const requestedClass = this.drafts.get(classBindingId);
+    const classLayout = requestedClass ? this.canonicalDraft(classBindingId) : undefined;
+    const classParamMatchesLayout = (): boolean => {
+      if (
+        requestedClass?.intent.kind !== "class" ||
+        requestedClass.intent.classId !== classId ||
+        classLayout?.intent.kind !== "class" ||
+        classLayout.intent.classId !== classId ||
+        callable?.intent.kind !== "callable"
+      ) {
+        return false;
+      }
+      const locator = this.locators.get(classLayout.id);
+      const current = locator?.kind === "type-cell" ? locator.cell.current : undefined;
+      const typeIdx = current ? this.module.types.indexOf(current) : -1;
+      if (typeIdx < 0) return false;
+      let parsed: { readonly kind?: unknown; readonly typeIdx?: unknown };
+      try {
+        parsed = JSON.parse(callable.intent.signature.params[0] ?? "") as typeof parsed;
+      } catch {
+        return false;
+      }
+      return (parsed.kind === "ref" || parsed.kind === "ref_null") && parsed.typeIdx === typeIdx;
+    };
+    const carrierMatchesValueType = (): boolean => {
+      if (
+        requestedCarrier?.intent.kind !== "type" ||
+        carrier?.intent.kind !== "type" ||
+        requestedCarrier.structuralReferenceKey === undefined
+      ) {
+        return false;
+      }
+      if (carrier.slotPolicy === "none") {
+        return sourceGlobalIntent !== undefined && carrier.intent.shapeKey === sourceGlobalIntent.valueType;
+      }
+      const locator = this.locators.get(carrier.id);
+      const current = locator?.kind === "type-cell" ? locator.cell.current : undefined;
+      const typeIdx = current ? this.module.types.indexOf(current) : -1;
+      if (typeIdx < 0) return false;
+      let parsed: { readonly kind?: unknown; readonly typeIdx?: unknown };
+      try {
+        parsed = JSON.parse(sourceGlobalIntent?.valueType ?? "") as typeof parsed;
+      } catch {
+        return false;
+      }
+      if ((parsed.kind !== "ref" && parsed.kind !== "ref_null") || parsed.typeIdx !== typeIdx) return false;
+      return canonicalProgramAbiValType({ kind: parsed.kind, typeIdx }) === sourceGlobalIntent?.valueType;
+    };
+    if (
+      !setter ||
+      terminal.lexicalOwnerId === null ||
+      sourceGlobalIntent === undefined ||
+      sourceGlobalIntent.mutable !== true ||
+      sourceGlobalIntent.unitId === undefined ||
+      requestedCallable?.intent.kind !== "callable" ||
+      requestedCallable.intent.origin !== "source" ||
+      requestedCallable.intent.unitId !== consumerUnitId ||
+      requestedCallable.intent.signature.params.length !== 2 ||
+      requestedCallable.intent.signature.params[1] !== sourceGlobalIntent.valueType ||
+      requestedCallable.intent.signature.results.length !== 0 ||
+      callable?.intent.kind !== "callable" ||
+      callable.intent.origin !== "source" ||
+      callable.intent.unitId !== consumerUnitId ||
+      callable.intent.signature.params.length !== 2 ||
+      callable.intent.signature.params[1] !== sourceGlobalIntent.valueType ||
+      callable.intent.signature.results.length !== 0 ||
+      !classParamMatchesLayout() ||
+      !carrierMatchesValueType()
+    ) {
+      throw new ProgramAbiInvariantError(
+        "invalid-callable-provenance",
+        `prepared ABI scope ${scopeId} has no exact dynamic setter writeback contract for ${draft.id}`,
       );
     }
   }
