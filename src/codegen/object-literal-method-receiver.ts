@@ -338,10 +338,7 @@ export function emitObjectLiteralMethodThisRestore(
   fctx: FunctionContext,
   bind: ObjectLiteralMethodReceiverBind,
 ): void {
-  fctx.body.push(
-    { op: "local.get", index: bind.prevLocal },
-    { op: "global.set", index: ctx.currentThisGlobalIdx },
-  );
+  fctx.body.push({ op: "local.get", index: bind.prevLocal }, { op: "global.set", index: ctx.currentThisGlobalIdx });
 }
 
 /**
