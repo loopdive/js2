@@ -9682,7 +9682,7 @@ assert._isSameValue = isSameValue;
           return Number(v);
         };
         return (obj: any) => {
-          if (obj == null) return 0;
+          if (obj == null || Array.isArray(obj)) return obj == null ? 0 : obj.length;
           // Reading .length on an opaque wasmGC struct throws — resolve through
           // the #1629-safe own-descriptor reader (#983 sidecar + vec live length
           // + shape-gated struct field), then the inherited chain.
@@ -16079,7 +16079,7 @@ export function buildImports(
         fn = function (this: any) {
           guardEnter();
           try {
-            return original.call(this);
+            return original();
           } catch (e) {
             lastCaughtException = e;
             throw e;
@@ -16091,7 +16091,7 @@ export function buildImports(
         fn = function (this: any, a: any) {
           guardEnter();
           try {
-            return original.call(this, a);
+            return original(a);
           } catch (e) {
             lastCaughtException = e;
             throw e;
@@ -16103,7 +16103,7 @@ export function buildImports(
         fn = function (this: any, a: any, b: any) {
           guardEnter();
           try {
-            return original.call(this, a, b);
+            return original(a, b);
           } catch (e) {
             lastCaughtException = e;
             throw e;
@@ -16115,7 +16115,7 @@ export function buildImports(
         fn = function (this: any, a: any, b: any, c: any) {
           guardEnter();
           try {
-            return original.call(this, a, b, c);
+            return original(a, b, c);
           } catch (e) {
             lastCaughtException = e;
             throw e;
@@ -16127,7 +16127,7 @@ export function buildImports(
         fn = function (this: any, a: any, b: any, c: any, d: any) {
           guardEnter();
           try {
-            return original.call(this, a, b, c, d);
+            return original(a, b, c, d);
           } catch (e) {
             lastCaughtException = e;
             throw e;
