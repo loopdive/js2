@@ -3618,8 +3618,9 @@ export function compileArrayLiteral(
   // require the universal externref vec carrier; skip contextual tuple lowering
   // and preserve their runtime tag/identity.
   const hasDynamicOrCallableElement = expr.elements.some((element) => {
-    if (ts.isOmittedExpression(element) || ts.isSpreadElement(element)) return false;
-    const fact = ctx.oracle.typeFactOf(element);
+    if (ts.isOmittedExpression(element)) return false;
+    const value = ts.isSpreadElement(element) ? element.expression : element;
+    const fact = ctx.oracle.typeFactOf(value);
     return fact.kind === "any" || fact.kind === "unknown" || fact.kind === "function";
   });
 
@@ -3985,6 +3986,15 @@ export function compileArrayLiteral(
         }
       }
     }
+  }
+  // A spread contributes elements just like an explicit literal slot. In
+  // published/untyped JavaScript its source is commonly `any`; selecting a
+  // concrete vec from the first fixed element (`[boolean, ...anyValue]`) would
+  // coerce every spread value through that primitive representation and can
+  // also violate the enclosing callback's `any[]` result ABI. Preserve the
+  // source values in the universal carrier, including the spread-first shape.
+  if (hasDynamicOrCallableElement) {
+    elemWasm = { kind: "externref" };
   }
   // (#2106 S0) `any[]` element tag-recovery. When the contextual element type is
   // `any`, the first-element heuristic above can pick a bare primitive ValType
