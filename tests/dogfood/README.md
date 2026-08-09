@@ -17,18 +17,20 @@ bounded package-entry harness:
 Every catalog entry pins the canonical npm tarball sha1/integrity and the exact
 published entry file. The package's locked dependency graph is installed so a
 compile failure is not manufactured by omitting declared dependencies. None of
-these seventeen npm tarballs ships its upstream unit-test sources. Their catalog
-cards therefore say “upstream suite — not shipped; adapter pending”; the UUID
-exception has a separate pinned upstream-suite lane described below. Neither
-lane substitutes harness-authored smoke vectors or implies that validation is a
-test pass. Matching upstream source suites can be pinned and adapted package by
-package, following the existing Acorn/React precedent.
+these seventeen npm tarballs ships its upstream unit-test sources. A package
+without a matching source adapter says “upstream suite — not shipped; adapter
+pending”; UUID and the separately listed packages below pin immutable matching
+source revisions instead. Neither lane substitutes harness-authored smoke
+vectors or implies that validation is a test pass. Matching upstream source
+suites can be pinned and adapted package by package, following the existing
+Acorn/React precedent.
 
 ESLint, jsdom, and Redux are the explicit runtime-workload exceptions. Their npm
 tarballs still omit the upstream suites, but each has a separate API workload
 that is only scored after the generated Wasm driver actually runs and matches
-a native Node oracle. A compile timeout or invalid module remains an
-unverified workload, never a pass.
+a native Node oracle. ESLint additionally pins one complete original upstream
+unit file as a deliberately named slice. A compile timeout or invalid module
+remains an unverified workload, never a pass.
 
 The extracted catalog fixture is also given the installed package's importer
 context (`node_modules`), including pnpm's private dependency links. This keeps
@@ -81,6 +83,7 @@ then compares its result with the same operation in native Node.
 | **clsx** (className joiner)             | #3748 | `dist/clsx.mjs`           | per-op string equality (see below — driver epilogue, not a raw export call) |
 | **cookie** (RFC-6265 parser/serializer) | #3751 | `dist/index.js`           | per-op JSON-normalized equality (direct export calls, no epilogue)          |
 | **eslint** (JavaScript linter)          | #1400 | `lib/api.js`              | bounded full-package compile/validate; `Linter.verify` API workload         |
+| **eslint selected upstream unit**       | #4293 | `lib/shared/deep-merge-arrays.js` | all 44 original cases from the matching source tag                    |
 | **prettier** (code formatter)           | —     | `standalone.mjs`          | bounded package-entry compile/validate; runtime diff pending                |
 | **react** (UI library)                  | —     | `index.js`                | bounded package-entry compile/validate                                      |
 | **react upstream suite**                | —     | `cjs/react.production.js` | React's own real `packages/react/src/__tests__` unit tests                  |
@@ -261,6 +264,26 @@ can shorten the bounded probe for local diagnostics.
 If the package-entry compile is still blocked, the report leaves the workload
 explicitly unverified. This is intentional: a valid module is not evidence of
 correct `Linter.verify` behavior, and a timeout is not a pass.
+
+The package-entry timeout does not prevent smaller original units from exposing
+real runtime semantics. ESLint's npm tarball omits its tests, so the selected
+upstream-unit lane clones the exact `v10.0.3` source commit
+`bfce7eaa0ec5d6591fd247b7ff57b51e45fb88a1`, verifies it, and runs all 44 bodies
+from `tests/lib/shared/deep-merge-arrays.js` against the byte-verified published
+implementation:
+
+```bash
+pnpm run dogfood:eslint-upstream-suite
+DOGFOOD_ESLINT_UPSTREAM_SUITE=1 pnpm exec vitest run tests/dogfood/eslint-upstream-suite.test.ts
+```
+
+Only the two CommonJS bindings are adapted: the package-relative implementation
+require points at the pinned npm payload, and `node:assert` is replaced by one
+deterministic `deepStrictEqual` shim shared by the Node and Wasm lanes. No test
+body is transcribed, rejected, or skipped. The current baseline is **44/44 in
+Node and 37/44 in Wasm**; #4293 reduces all seven divergences to the nested-array
+carrier bug. The npm-compat card calls this a “selected upstream unit” so 44/44
+can never be mistaken for ESLint's whole suite.
 
 ## jsdom (#3995)
 
