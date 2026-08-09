@@ -173,6 +173,31 @@ export function planObjectLiteralMethodReceiverBind(
 }
 
 /**
+ * Element-access twin: `obj["m"]()`, where the key is a literal the checker can
+ * still resolve to the same property symbol.
+ *
+ * This form differs from `obj.m()` in one way that matters: the element-access
+ * lowering compiles receiver AND key as one unit, so the receiver cannot be
+ * captured off that evaluation and has to be compiled a SECOND time. The gate is
+ * therefore additionally restricted to a **plain identifier receiver**, whose
+ * re-read is free of observable effects — the same admission #4096 used for the
+ * same reason. `obj.f().m()`, `a[i].m()` and every other computed receiver are
+ * refused rather than evaluated twice.
+ *
+ * A runtime (non-literal) key resolves to no symbol and is refused here; that
+ * shape does not even reach this function today — it falls to the tail
+ * dispatch's drop-everything arm, which is #4252's territory, not this one.
+ */
+export function planElementAccessMethodReceiverBind(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  elemAccess: ts.ElementAccessExpression,
+): ObjectLiteralMethodReceiverBind | undefined {
+  if (!ts.isIdentifier(elemAccess.expression)) return undefined;
+  return planObjectLiteralMethodReceiverBind(ctx, fctx, elemAccess.argumentExpression);
+}
+
+/**
  * Copy the receiver — already on the stack, and left there — into the reserved
  * externref local. Called at the single site where the receiver is compiled, so
  * the receiver expression runs exactly once.

@@ -46,6 +46,7 @@ import {
   captureObjectLiteralMethodReceiver,
   emitObjectLiteralMethodThisInstall,
   finishObjectLiteralMethodCall,
+  planElementAccessMethodReceiverBind,
   planObjectLiteralMethodReceiverBind,
 } from "../object-literal-method-receiver.js";
 
@@ -1252,6 +1253,19 @@ export function compileCallableElementAccessCall(
   //    structurally-typed `(Mw, Mw)` tuple it may already be a closure
   //    struct ref. For native primitive arrays callSigs is empty above,
   //    so we never get here.
+  // `obj["m"]()` on a `this`-reading object-literal function property RAN the
+  // callee but bound no receiver (measured: side effect observed, `this.x`
+  // undefined) — the property-access twin of the same defect. The element-access
+  // lowering fuses receiver and key, so the receiver is compiled once more here;
+  // the plan admits only an identifier receiver, for which that is free.
+  let bind = planElementAccessMethodReceiverBind(ctx, fctx, elemAccess);
+  if (bind) {
+    const recvResult = compileExpression(ctx, fctx, elemAccess.expression);
+    const recvType = recvResult === null || typeof recvResult === "symbol" ? undefined : recvResult;
+    if (!recvType || !captureObjectLiteralMethodReceiver(fctx, recvType, bind)) bind = undefined;
+    if (recvType) fctx.body.push({ op: "drop" });
+  }
+
   const elemResult = compileExpression(ctx, fctx, elemAccess);
   if (!elemResult) return undefined;
   if (elemResult.kind !== "externref" && elemResult.kind !== "ref" && elemResult.kind !== "ref_null") {
@@ -1305,9 +1319,10 @@ export function compileCallableElementAccessCall(
     fctx.body.push({ op: "struct.get", typeIdx: selfTypeIdx, fieldIdx: 0 });
     emitGuardedFuncRefCast(fctx, closureInfo.funcTypeIdx);
     emitNullCheckThrow(ctx, fctx, { kind: "ref_null", typeIdx: closureInfo.funcTypeIdx });
+    if (bind) emitObjectLiteralMethodThisInstall(ctx, fctx, bind);
     fctx.body.push({ op: "call_ref", typeIdx: closureInfo.funcTypeIdx });
 
-    return closureInfo.returnType ?? VOID_RESULT;
+    return finishObjectLiteralMethodCall(ctx, fctx, bind, closureInfo.returnType ?? VOID_RESULT);
   }
 
   // ── (#3205) Multi-candidate order-independent dispatch ──
@@ -1329,8 +1344,9 @@ export function compileCallableElementAccessCall(
   fctx.body.push({ op: "drop" });
 
   const argLocals = collectPropertyCallArgLocals(ctx, fctx, expr, closureInfo.paramTypes);
+  if (bind) emitObjectLiteralMethodThisInstall(ctx, fctx, bind);
   emitRootFuncrefDispatch(ctx, fctx, closureLocal, rootIdx, funcCandidates, argLocals, expectedReturn);
-  return expectedReturn ?? VOID_RESULT;
+  return finishObjectLiteralMethodCall(ctx, fctx, bind, expectedReturn ?? VOID_RESULT);
 }
 
 /** Resolve an `any`-typed receiver method through registered extern classes. */
