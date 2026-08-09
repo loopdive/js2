@@ -4,16 +4,22 @@ import type { BenchmarkDef } from "../harness.js";
 // JS baselines
 // ---------------------------------------------------------------------------
 
-function pushPop(): void {
+function pushPop(): number {
   const arr: number[] = [];
   for (let i = 0; i < 100000; i++) arr.push(i);
-  while (arr.length > 0) arr.pop();
+  let count = 0;
+  while (arr.length > 0) {
+    arr.pop();
+    count++;
+  }
+  return count;
 }
 
-function sortI32(): void {
+function sortI32(): number {
   const arr: number[] = [];
   for (let i = 0; i < 10000; i++) arr.push((i * 37 + 13) % 10000);
   arr.sort((a, b) => a - b);
+  return arr[0]!;
 }
 
 function sortF64(): void {
@@ -37,7 +43,7 @@ function reduceSum(): number {
   return sum;
 }
 
-function indexOfSearch(): void {
+function indexOfSearch(): number {
   // (#3898) Filled with a PERMUTATION, not with `i`. When `arr[i] === i` the
   // whole search collapses to the identity `arr.indexOf(x) === x`, which the
   // wasm lanes proved and constant-folded — they reported ~11 ns/op for a scan
@@ -48,22 +54,25 @@ function indexOfSearch(): void {
   for (let i = 0; i < 10000; i++) arr.push((i * 7919) % 10000);
   let sum = 0;
   for (let i = 0; i < 1000; i++) sum += arr.indexOf(i * 10);
-  void sum;
+  return sum;
 }
 
-function sliceSplice(): void {
+function sliceSplice(): number {
   const arr: number[] = [];
   for (let i = 0; i < 1000; i++) arr.push(i);
+  let total = 0;
   for (let i = 0; i < 100; i++) {
     const sliced = arr.slice(100, 500);
-    void sliced.length;
+    total += sliced.length;
   }
+  return total;
 }
 
-function reverseArr(): void {
+function reverseArr(): number {
   const arr: number[] = [];
   for (let i = 0; i < 10000; i++) arr.push(i);
   for (let i = 0; i < 1000; i++) arr.reverse();
+  return arr[0]!;
 }
 
 function forEachSum(): number {
