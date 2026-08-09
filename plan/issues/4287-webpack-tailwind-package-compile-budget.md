@@ -42,4 +42,3 @@ blocking unrelated changes.
   real compile/validation outcome.
 - Do not raise the timeout as a substitute for fixing duplicated or unbounded
   compiler work; a larger diagnostic run is allowed to locate the next frontier.
-
