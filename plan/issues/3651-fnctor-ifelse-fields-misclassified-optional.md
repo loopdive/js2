@@ -100,3 +100,34 @@ value.
       executes the `parse`, `parseExpressionAt`, and `tokenizer` in-module
       canaries (`2`, `3`, and `4` respectively; 1,704,853-byte artifact).
 - [ ] Typecheck and the scoped codegen regression battery pass.
+
+
+## Adjacent observation from #4241 step 1b (2026-08-09) — the INVERSE direction
+
+Recorded here rather than filed separately, because this issue owns
+conditional-fnctor-field classification and a second id would fragment it.
+Not claiming it is the same defect — it may be the same misclassification seen
+from the other side, or a distinct read-path gap.
+
+**This issue's subject**: a field assigned in BOTH `if`/`else` arms is
+misclassified as OPTIONAL (present, wrongly treated as maybe-absent).
+
+**The observation**: a field assigned in only ONE arm reads back as
+NOT-`undefined` on an instance where that arm did not run (absent, wrongly
+treated as present):
+
+```js
+function Wide(flag) { /* …40 unconditional fields… */ if (flag) { this.rare = 1; } }
+var w = new Wide(0);
+w.rare === undefined   // expected true, measured FALSE
+```
+
+Measured on upstream/main @ `4e90526dd` and identically on the #4241 step-1b
+branch, so the carrier-bag work neither causes nor fixes it. It was found while
+writing the step-1b hazard pins; that test file deliberately does **not** assert
+`w.rare === undefined`, and says so inline, so it cannot fail for this issue's
+reason.
+
+If the two turn out to share a root cause, the presence/optionality
+classification is answering wrongly in both directions and a fix should pin
+both spellings.

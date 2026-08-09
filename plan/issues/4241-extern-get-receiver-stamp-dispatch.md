@@ -644,7 +644,19 @@ itself — i.e. the only carrier that leaks — and the first measurement showed
 population unchanged. The measurement caught the bad reasoning; reading alone had
 not.
 
-### R13. Pre-existing gaps found while writing the pins (NOT this slice)
+### R13. Pre-existing gaps found while writing the pins (NOT this slice) — now FILED
+
+All three A/B'd against pre-1b main and identical on both sides. Ownership was
+checked before filing anything, so two got ids and one was annotated onto the
+issue that already owns its territory:
+
+| gap | disposition |
+| --- | --- |
+| a fnctor prototype-method call returns 0 when the same function also reads a declared field | **#4261** (new — narrowed to a two-line repro with no expando involved at all) |
+| `delete` of a fnctor-instance expando does not take | **#4263** (new — #4165/#4194 are `done`; #4129 explicitly scopes itself to the Reflect spelling and its "the `delete` operator is fine" premise is corrected there) |
+| a conditionally-assigned field does not read back `undefined` on the untaken branch | **annotated onto #3651** (open, owns conditional-fnctor-field classification) rather than duplicated |
+
+Detail below.
 
 A/B'd against pre-1b main, identical on both sides, so they are recorded rather
 than fixed or pinned as passing:
