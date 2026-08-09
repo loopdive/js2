@@ -5,7 +5,7 @@
  * Extracted from codegen/index.ts (#1013).
  */
 import { ts } from "../ts-api.js";
-import { findConstructorImplementation, hasAbstractModifier, hasStaticModifier } from "./ast-modifiers.js";
+import { findConstructorImplementation, hasStaticModifier } from "./ast-modifiers.js";
 import { nativeTypeFromTypeNode, nativeTypeOfDeclaration } from "./native-type-annotations.js";
 import { isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType } from "../ir/types.js";
@@ -1104,8 +1104,8 @@ export function collectClassDeclaration(
     if (ctorRest) ctx.funcRestParams.set(initName, ctorRest);
   }
 
-  // Register method functions (own methods defined on this class)
-  // Skip abstract methods — they have no body and are implemented by subclasses
+  // Register method functions (own methods defined on this class).
+  // Bodyless overload signatures and abstract methods are type-only.
   const ownMethodNames = new Set<string>();
   for (const member of decl.members) {
     if (ts.isMethodDeclaration(member) && member.name) {
@@ -1113,8 +1113,7 @@ export function collectClassDeclaration(
       if (methodName === undefined) continue; // dynamic computed name — skip
       ownMethodNames.add(methodName);
 
-      // Abstract methods have no body — skip generating a wasm function stub
-      if (hasAbstractModifier(member)) continue;
+      if (!member.body) continue;
 
       const fullName = `${className}_${methodName}`;
       const isStatic = hasStaticModifier(member);
@@ -2234,7 +2233,7 @@ function compileClassBodiesInner(
   // both static and instance methods share the same name.
   const compiledMethods = new Set<string>();
   for (const member of decl.members) {
-    if (ts.isMethodDeclaration(member) && member.name) {
+    if (ts.isMethodDeclaration(member) && member.name && member.body) {
       const methodName = resolveClassMemberName(ctx, member.name);
       if (methodName === undefined) continue; // dynamic computed name — skip
       const fullName = `${className}_${methodName}`;
