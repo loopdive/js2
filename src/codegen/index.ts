@@ -415,7 +415,7 @@ import {
   resolveSameShapeFieldNameCollisions,
 } from "./struct-field-exports.js"; // (#3272) extracted verbatim
 import { analyzeBooleanPropertyNames, recoverBooleanStructFieldBrands } from "./struct-field-boolean-brand.js";
-import { applyNumericPropertyAnalysis } from "./numeric-property-analysis.js"; // (#3683 S4a)
+import { analyzeNumericPropertyNames, applyNumericPropertyAnalysis } from "./numeric-property-analysis.js"; // (#3683 S4a)
 import { collectUserMethodNames } from "./user-method-names.js"; // (#3673)
 import {
   registerWasiImports,
@@ -6564,7 +6564,28 @@ export function generateMultiModule(
     ctx.booleanPropertyNames = profilePhase("boolean-property-analysis", () =>
       analyzeBooleanPropertyNames(ctx, multiAst.sourceFiles),
     );
-
+    // (#3765 multi-source parity) The standalone single-source path installs
+    // the definition-site numeric-local oracle before declarations are minted,
+    // but linked `compileMulti` graphs never did. That left JS-package locals
+    // boxed even when every definition in the closed graph is provably numeric
+    // (for example string lengths and `indexOf` results forwarded through an
+    // imported parser). Run the same whole-program analysis over the complete
+    // linked source population and consume only its symbol-scoped local verdict;
+    // field-shape promotion remains owned by the existing single-source path.
+    if (ctx.standalone && process.env.JS2WASM_NUMERIC_LOCALS !== "0") {
+      const localVerdicts = profilePhase("numeric-local-analysis", () =>
+        analyzeNumericPropertyNames(
+          {
+            oracle: ctx.oracle,
+            excludeNames: ctx.booleanPropertyNames,
+          },
+          multiAst.sourceFiles,
+        ),
+      );
+      ctx.usageInference.setNumericLocalOracle(localVerdicts.isNumericLocal);
+      ctx.numericLocalVerdict = localVerdicts.isNumericLocal;
+      ctx.stringLocalVerdict = localVerdicts.isStringLocal;
+    }
     // #1677 — final reconcile before any user function is registered.
     reconcileNativeStrFinalizeShift(ctx);
 
