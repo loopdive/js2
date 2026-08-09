@@ -8526,25 +8526,32 @@ function compileIIFE(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallEx
     }
   }
 
-  // Analyze captured variables from the enclosing scope
+  // Analyze captured variables from the enclosing scope. A module initializer
+  // has an empty local map, so no identifier in this IIFE can become a capture.
+  // Avoid walking the entire IIFE AST in that common case.
+  // This matters for bundled npm packages whose entry point is one giant IIFE
+  // (TypeScript's published `lib/typescript.js` is ~1M AST nodes).
   const body = funcExpr.body;
   const referencedNames = new Set<string>();
-  if (ts.isBlock(body)) {
-    for (const stmt of body.statements) {
-      collectReferencedIdentifiers(stmt, referencedNames);
-    }
-  } else {
-    collectReferencedIdentifiers(body, referencedNames);
-  }
-
-  // Detect which captured variables are written inside the IIFE body
   const writtenInIIFE = new Set<string>();
-  if (ts.isBlock(body)) {
-    for (const stmt of body.statements) {
-      collectWrittenIdentifiers(stmt, writtenInIIFE);
+  const hasCaptureCandidate = fctx.localMap.size > 0;
+  if (hasCaptureCandidate) {
+    if (ts.isBlock(body)) {
+      for (const stmt of body.statements) {
+        collectReferencedIdentifiers(stmt, referencedNames);
+      }
+    } else {
+      collectReferencedIdentifiers(body, referencedNames);
     }
-  } else {
-    collectWrittenIdentifiers(body, writtenInIIFE);
+
+    // Detect which captured variables are written inside the IIFE body
+    if (ts.isBlock(body)) {
+      for (const stmt of body.statements) {
+        collectWrittenIdentifiers(stmt, writtenInIIFE);
+      }
+    } else {
+      collectWrittenIdentifiers(body, writtenInIIFE);
+    }
   }
 
   const ownParamNames = new Set(
