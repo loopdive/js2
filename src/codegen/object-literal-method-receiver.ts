@@ -198,6 +198,79 @@ export function planElementAccessMethodReceiverBind(
 }
 
 /**
+ * Runtime-key twin: `obj[k]()`, where `k` is a variable so no property symbol
+ * exists to interrogate.
+ *
+ * Until #4252 landed this shape did not invoke the callee at all; now it routes
+ * through `tryEmitInlineDynamicCall`, which runs the callee with no receiver —
+ * the same missing writer, one layer down. The gate therefore has to be asked of
+ * the RECEIVER's object literal instead of the member:
+ *
+ *  - the receiver is a plain identifier bound to an **object literal**, so the
+ *    extra read needed to capture it is free and the literal's properties are
+ *    visible;
+ *  - **no property of that literal is arrow-valued.** With a runtime key any
+ *    property could be the callee, so one arrow anywhere in the literal is
+ *    enough to refuse the whole thing;
+ *  - at least one property IS a `this`-reading function expression — otherwise
+ *    there is nothing to fix and the module must stay byte-identical;
+ *  - **neither the KEY nor any ARGUMENT references `this`.** This is the
+ *    ordering gate, and unlike the static arms it cannot be satisfied by moving
+ *    the install: the dynamic dispatch evaluates the whole callee AND its own
+ *    arguments, so the install must precede both. `obj[this.k]()` /
+ *    `obj[k](this.y)` would then read the receiver where the caller's `this` is
+ *    meant — trading one wrong answer for another. Refuse instead.
+ */
+export function planDynamicElementReceiverBind(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  elemAccess: ts.ElementAccessExpression,
+  args: readonly ts.Expression[],
+): ObjectLiteralMethodReceiverBind | undefined {
+  const receiver = elemAccess.expression;
+  if (!ts.isIdentifier(receiver)) return undefined;
+  if (bodyReferencesOwnThis(elemAccess.argumentExpression)) return undefined;
+  for (const a of args) if (bodyReferencesOwnThis(a)) return undefined;
+  const declaration = ctx.oracle.valueDeclarationOf(receiver);
+  if (!declaration || !ts.isVariableDeclaration(declaration)) return undefined;
+  const literal = declaration.initializer;
+  if (!literal || !ts.isObjectLiteralExpression(literal)) return undefined;
+  let demanded = false;
+  for (const p of literal.properties) {
+    if (!ts.isPropertyAssignment(p)) continue;
+    if (ts.isArrowFunction(p.initializer)) return undefined;
+    if (isThisReadingFunctionExpression(p.initializer)) demanded = true;
+  }
+  if (!demanded) return undefined;
+  ensureCurrentThisGlobal(ctx);
+  const seq = fctx.locals.length;
+  return {
+    recvLocal: allocLocal(fctx, `__objm_recv_${seq}`, { kind: "externref" }),
+    prevLocal: allocLocal(fctx, `__objm_prev_${seq}`, { kind: "externref" }),
+  };
+}
+
+/**
+ * Compile `receiver` once purely to capture it into the reserved local, then
+ * drop the value. For call shapes whose own lowering fuses receiver and key (or
+ * owns the whole callee), this is the only way to get the receiver — which is
+ * why those plans admit an identifier receiver only.
+ *
+ * Returns `false` (nothing installable) for a non-reference receiver.
+ */
+export function emitStandaloneReceiverCapture(
+  fctx: FunctionContext,
+  receiverType: ValType | null | symbol,
+  bind: ObjectLiteralMethodReceiverBind,
+): boolean {
+  const type = innerResultValType(receiverType);
+  if (type === undefined) return false;
+  const ok = captureObjectLiteralMethodReceiver(fctx, type, bind);
+  fctx.body.push({ op: "drop" });
+  return ok;
+}
+
+/**
  * Copy the receiver — already on the stack, and left there — into the reserved
  * externref local. Called at the single site where the receiver is compiled, so
  * the receiver expression runs exactly once.
@@ -251,6 +324,23 @@ export function emitObjectLiteralMethodThisInstall(
     { op: "local.set", index: bind.prevLocal },
     { op: "local.get", index: bind.recvLocal },
     { op: "global.set", index: globalIdx },
+  );
+}
+
+/**
+ * Emit ONLY the restore half, with no result on the stack. Used when a
+ * downstream dispatch declined AFTER the install was emitted: leaving the
+ * install standing would leak the receiver into the rest of the frame as
+ * `this`, which is a worse defect than the one being fixed.
+ */
+export function emitObjectLiteralMethodThisRestore(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  bind: ObjectLiteralMethodReceiverBind,
+): void {
+  fctx.body.push(
+    { op: "local.get", index: bind.prevLocal },
+    { op: "global.set", index: ctx.currentThisGlobalIdx },
   );
 }
 

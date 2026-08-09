@@ -45,6 +45,7 @@ import type { ObjectLiteralMethodReceiverBind } from "../object-literal-method-r
 import {
   captureObjectLiteralMethodReceiver,
   emitObjectLiteralMethodThisInstall,
+  emitStandaloneReceiverCapture,
   finishObjectLiteralMethodCall,
   planElementAccessMethodReceiverBind,
   planObjectLiteralMethodReceiverBind,
@@ -1259,11 +1260,8 @@ export function compileCallableElementAccessCall(
   // lowering fuses receiver and key, so the receiver is compiled once more here;
   // the plan admits only an identifier receiver, for which that is free.
   let bind = planElementAccessMethodReceiverBind(ctx, fctx, elemAccess);
-  if (bind) {
-    const recvResult = compileExpression(ctx, fctx, elemAccess.expression);
-    const recvType = recvResult === null || typeof recvResult === "symbol" ? undefined : recvResult;
-    if (!recvType || !captureObjectLiteralMethodReceiver(fctx, recvType, bind)) bind = undefined;
-    if (recvType) fctx.body.push({ op: "drop" });
+  if (bind && !emitStandaloneReceiverCapture(fctx, compileExpression(ctx, fctx, elemAccess.expression), bind)) {
+    bind = undefined;
   }
 
   const elemResult = compileExpression(ctx, fctx, elemAccess);

@@ -101,6 +101,17 @@ describe("#4269 object-literal method call binds its receiver", () => {
     );
   });
 
+  it("reads this.x through an element access with a RUNTIME key", async () => {
+    // Reachable only since #4252 made this shape invoke the callee at all; it
+    // then ran with `this` unbound, which is the same defect one layer down.
+    await bothLanes(
+      `var obj = { x: 42, m: function () { return this.x; } };
+       var k = "m";
+       export function test() { return obj[k](); }`,
+      42,
+    );
+  });
+
   it("binds the innermost receiver of a nested/chained receiver", async () => {
     await bothLanes(
       `var outer = { inner: { x: 7, m: function () { return this.x; } } };
@@ -216,6 +227,20 @@ describe("#4269 object-literal method call binds its receiver", () => {
        o.m = function () { return this.x; };
        export function test() { return o.m(); }`,
       42,
+    );
+  });
+
+  it("refuses the runtime-key bind when an argument reads the caller's this", async () => {
+    // The dynamic dispatch evaluates its own arguments, so the install cannot be
+    // deferred past them. Rather than hand `this.y` the receiver, the bind is
+    // refused outright and the callee keeps today's unbound `this` — a known
+    // wrong answer, not a NEW one. `outer.y` is 9; the argument must be 9.
+    await bothLanes(
+      `var inner = { y: 5, n: function (v) { return v; } };
+       var k = "n";
+       var outer = { y: 9, m: function () { return inner[k](this.y); } };
+       export function test() { return outer.m(); }`,
+      9,
     );
   });
 
