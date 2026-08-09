@@ -113,6 +113,7 @@ import {
   compileCallablePropertyCall,
   compileGetterCallable,
   compileObjectPrototypeFallback,
+  sourceDefinesFunctionMember,
   tryExternClassMethodOnAny,
 } from "./calls-closures.js";
 import { compileExternMethodCall } from "./extern.js";
@@ -1207,7 +1208,14 @@ export function compileReceiverMethodCall(
     if (!receiverClassName || !ctx.classSet.has(receiverClassName)) {
       const recvProps = receiverType.getProperties?.() ?? [];
       const recvPropNames = new Set(recvProps.map((p) => p.name));
-      for (const className of ctx.classSet) {
+      // An `any`/`unknown` receiver (or another property-less structural type)
+      // provides no evidence for a nominal class. Picking the first class that
+      // happens to define the same method name is order-dependent and can run a
+      // private-field body against an unrelated object. Leave those receivers
+      // dynamic so their runtime identity selects the method.
+      const canInferClass =
+        recvProps.length > 0 && (receiverType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) === 0;
+      for (const className of canInferClass ? ctx.classSet : []) {
         if (!ctx.funcMap.has(`${className}_${methodName}`)) continue;
         // (#3123) Never INFER a fnctor-subclass (`class C extends F`, F a
         // top-level plain function) for an any/unknown-typed receiver: the
@@ -3083,7 +3091,60 @@ export function compileReceiverMethodCall(
       // null and it falls through to the generic path.
       const hasSpreadArg = expr.arguments.some((a) => ts.isSpreadElement(a));
       const dispatchArgs: ts.Expression[] | null = hasSpreadArg ? flattenCallArgs(expr.arguments) : [...expr.arguments];
-      if ((ctx.standalone || ctx.wasi) && dispatchArgs !== null && !recvIsBuiltinClass) {
+      const hasKnownUserClassMethod = [...ctx.classSet].some((className) => {
+        const fullName = `${className}_${methodName}`;
+        return ctx.funcMap.has(classMemberFuncKey(ctx, fullName)) || ctx.funcMap.has(fullName);
+      });
+      const userMethodArities: number[] = [];
+      const userMethodFuncsByCarrierShape = new Map<string, Set<number>>();
+      const seenUserMethodCarriers = new Set<string>();
+      let hasUserRestMethod = false;
+      for (const [rawStructName] of ctx.structFields) {
+        const structName = ctx.classExprNameMap.get(rawStructName) ?? rawStructName;
+        if (seenUserMethodCarriers.has(structName)) continue;
+        seenUserMethodCarriers.add(structName);
+        const fullName = `${structName}_${methodName}`;
+        const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName)) ?? ctx.funcMap.get(fullName);
+        if (funcIdx === undefined) continue;
+        const params = getFuncParamTypes(ctx, funcIdx);
+        if (params) userMethodArities.push(Math.max(0, params.length - 1));
+        const fields = ctx.structFields.get(structName) ?? [];
+        const typeIdx = ctx.structMap.get(structName);
+        const typeDef = typeIdx === undefined ? undefined : ctx.mod.types[typeIdx];
+        const superTypeIdx = typeDef?.kind === "struct" ? typeDef.superTypeIdx : -1;
+        const carrierShape = `${superTypeIdx};${fields
+          .map((field) =>
+            field.type.kind === "ref" || field.type.kind === "ref_null"
+              ? `${field.type.kind}:${field.type.typeIdx}`
+              : field.type.kind,
+          )
+          .join(",")}`;
+        let funcsForShape = userMethodFuncsByCarrierShape.get(carrierShape);
+        if (!funcsForShape) {
+          funcsForShape = new Set<number>();
+          userMethodFuncsByCarrierShape.set(carrierShape, funcsForShape);
+        }
+        funcsForShape.add(funcIdx);
+        if (ctx.funcRestParams.has(fullName)) hasUserRestMethod = true;
+      }
+      // The generated dispatcher currently specializes one fixed method ABI.
+      // Activate it on the host lane only when every concrete source candidate
+      // has that same non-rest ABI. Otherwise a subclass override with another
+      // arity can satisfy its base struct's ref.test and silently run the base
+      // body, while a rest vec would be mistaken for one positional argument.
+      const hasUniformUserMethodAbi =
+        userMethodArities.length > 0 &&
+        !hasUserRestMethod &&
+        userMethodArities.every((arity) => arity === userMethodArities[0]) &&
+        [...userMethodFuncsByCarrierShape.values()].every((funcs) => funcs.size === 1);
+      const needsRuntimeUserMethodDispatch =
+        hasUniformUserMethodAbi &&
+        (sourceDefinesFunctionMember(expr.getSourceFile(), methodName) || hasKnownUserClassMethod);
+      if (
+        (ctx.standalone || ctx.wasi || needsRuntimeUserMethodDispatch) &&
+        dispatchArgs !== null &&
+        !recvIsBuiltinClass
+      ) {
         const arity = dispatchArgs.length;
         const dispatchIdx = reserveClosedMethodDispatch(ctx, methodName, arity);
         // #3507 — reserve the native RegExp carrier helper while function
@@ -3278,7 +3339,10 @@ export function compileReceiverMethodCall(
       // (the same pre-existing wasi arg-vec gap noted in the issue). Widening
       // the array-like arms to wasi is a separate, broader change.
       const isSingleDynamicSpread =
-        ctx.standalone && !recvIsBuiltinClass && expr.arguments.length === 1 && ts.isSpreadElement(expr.arguments[0]!);
+        (ctx.standalone || needsRuntimeUserMethodDispatch) &&
+        !recvIsBuiltinClass &&
+        expr.arguments.length === 1 &&
+        ts.isSpreadElement(expr.arguments[0]!);
       if (isSingleDynamicSpread) {
         const dispatchIdx = reserveClosedMethodDispatchVararg(ctx, methodName);
         flushLateImportShifts(ctx, fctx);

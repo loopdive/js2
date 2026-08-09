@@ -56,6 +56,7 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { wrapClosureCallFastArm } from "./closure-call-fast.js"; // (#4185) closure-receiver fast `.call` arm
 import { buildFnctorArrayHofTargetTest } from "./fnctor-array-prototype.js";
 import { resolveVecHostBridgeHelper } from "./vec-access-exports.js";
+import { ensureLateImport } from "./expressions/late-imports.js";
 
 /**
  * (#2583) The callback-free, argument-taking array search/predicate methods
@@ -150,7 +151,8 @@ function varargDispatcherName(methodName: string): string {
  * -> externref`; the call site coerces each argument to externref before the
  * call, and the fill side coerces each back to the method's declared param type.
  *
- * Only meaningful under `ctx.standalone || ctx.wasi` — callers gate on that.
+ * The JS-host lane also uses this for ambiguous user methods on an `any`
+ * receiver; its fallback builds a real host argument array.
  */
 export function reserveClosedMethodDispatch(ctx: CodegenContext, methodName: string, arity = 0): number {
   const name = dispatcherName(methodName, arity);
@@ -165,7 +167,19 @@ export function reserveClosedMethodDispatch(ctx: CodegenContext, methodName: str
   // `__objvec_new`/`__objvec_push`/`__extern_method_call`; the method-name
   // string constant is materialized for the fallback
   // `__extern_method_call(recv, "<name>", [args…])`.
-  ensureObjVecBuilders(ctx);
+  if (ctx.standalone || ctx.wasi) {
+    ensureObjVecBuilders(ctx);
+  } else {
+    ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
+    ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
+    ensureLateImport(
+      ctx,
+      "__extern_method_call",
+      [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+      [{ kind: "externref" }],
+    );
+    addUnionImportsViaRegistry(ctx);
+  }
   addStringConstantGlobal(ctx, methodName);
 
   // (#3117) The fill adds FIELD-STORED-closure arms (a pre-shaped closed struct
@@ -174,7 +188,7 @@ export function reserveClosedMethodDispatch(ctx: CodegenContext, methodName: str
   // NOW so `fillApplyClosure` (which runs before this module's fill) gives it a
   // real body and the fill only READS funcMap (#1719). Degrades to the
   // undefined sentinel when no closure dispatcher exists — never traps.
-  reserveApplyClosure(ctx);
+  if (ctx.standalone || ctx.wasi) reserveApplyClosure(ctx);
 
   // (#2583) For the callback-free array search/predicate methods, the fill adds
   // a native `$__vec_base` brand arm so a genuinely-`any` array receiver runs
@@ -309,11 +323,22 @@ export function reserveClosedMethodDispatchVararg(ctx: CodegenContext, methodNam
   // Pulls in the object runtime (`__objvec_new`/`__objvec_push`/
   // `__extern_method_call` AND `__extern_get_idx`/`__extern_length`) so the fill
   // is read-only. The method-name string constant backs the fallback call.
-  ensureObjVecBuilders(ctx);
+  if (ctx.standalone || ctx.wasi) {
+    ensureObjVecBuilders(ctx);
+  } else {
+    ensureLateImport(
+      ctx,
+      "__extern_method_call",
+      [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+      [{ kind: "externref" }],
+    );
+    ensureLateImport(ctx, "__extern_get_idx", [{ kind: "externref" }, { kind: "f64" }], [{ kind: "externref" }]);
+    addUnionImportsViaRegistry(ctx);
+  }
   addStringConstantGlobal(ctx, methodName);
   // (#3117) Field-stored-closure arms invoke via `__apply_closure` — see the
   // fixed-arity reserve above.
-  reserveApplyClosure(ctx);
+  if (ctx.standalone || ctx.wasi) reserveApplyClosure(ctx);
 
   // Signature: (recv: externref, args: externref) -> externref.
   const typeIdx = addFuncType(
@@ -483,8 +508,8 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     unboxBoolIdx: ctx.funcMap.get("__unbox_boolean"),
   };
   const methodCallIdx = ctx.funcMap.get("__extern_method_call");
-  const objVecNewIdx = ctx.funcMap.get("__objvec_new");
-  const objVecPushIdx = ctx.funcMap.get("__objvec_push");
+  const objVecNewIdx = ctx.funcMap.get(ctx.standalone || ctx.wasi ? "__objvec_new" : "__js_array_new");
+  const objVecPushIdx = ctx.funcMap.get(ctx.standalone || ctx.wasi ? "__objvec_push" : "__js_array_push");
 
   // ── Fixed-arity dispatchers (#2151 Slices 1–3) ──────────────────────────
   for (const key of ctx.closedMethodDispatchNames ?? []) {

@@ -15,7 +15,7 @@ import {
   getFuncRefWrapperRootTypeIdx,
   getOrCreateFuncRefWrapperTypes,
 } from "../closures.js";
-import { compileArrayJoinExtern } from "../array-methods.js";
+import { compileArrayJoinExtern, emitBoundsCheckedArrayGet } from "../array-methods.js";
 import { tryCompileNativeDisposableStackAnyMethodCall } from "../disposable-runtime.js";
 import { noJsHost } from "../js-errors.js";
 import { allocLocal } from "../context/locals.js";
@@ -29,14 +29,23 @@ import {
 } from "../property-access.js";
 import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression, valTypesMatch, VOID_RESULT } from "../shared.js";
-import { defaultValueInstrs, emitGuardedFuncRefCast, emitGuardedRefCast, pushDefaultValue } from "../type-coercion.js";
+import {
+  defaultValueInstrs,
+  emitGuardedFuncRefCast,
+  emitGuardedRefCast,
+  getVecInfo,
+  pushDefaultValue,
+} from "../type-coercion.js";
 import { getFuncParamTypes, getWasmFuncReturnType, isEffectivelyVoidReturn, wasmFuncReturnsVoid } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "./late-imports.js";
 import {
+  buildArgcExtrasSetupFromLocals,
   emitFnctorSubclassDynamicMethodCall,
   emitClosureCallArgcExtras,
   emitResetArgcExtras,
+  emitSetArgc,
   emitWrapperDynamicMethodCall,
+  flattenCallArgs,
   STANDALONE_TA_SCALAR_HOFS,
 } from "./calls.js";
 import { tryCompileGetPrototypeOfIsPrototypeOf } from "./object-get-prototype-of.js";
@@ -102,6 +111,10 @@ function getUserFunctionMemberNames(sf: ts.SourceFile): Set<string> {
   visit(sf);
   _userFunctionMemberNamesCache.set(sf, names);
   return names;
+}
+
+export function sourceDefinesFunctionMember(sf: ts.SourceFile, name: string): boolean {
+  return getUserFunctionMemberNames(sf).has(name);
 }
 
 /**
@@ -314,6 +327,166 @@ function emitRootFuncrefDispatch(
   fctx.body.push(...funcDispatch);
 }
 
+/**
+ * Push the lifted Wasm arguments for a source closure with a rest parameter.
+ * The final lifted formal is a vec struct, whereas the JS call site supplies
+ * zero or more positional values. Return externref copies of those values so
+ * callers that maintain `arguments` can populate `__extras_argv` without
+ * evaluating an argument expression twice.
+ */
+function compileRestClosureArguments(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  info: ClosureInfo,
+): { fixedParamCount: number; restExternLocals: number[] } | null {
+  if (info.hasRestParam !== true || info.paramTypes.length === 0) return null;
+
+  const fixedParamCount = info.paramTypes.length - 1;
+  const flattenedArgs = flattenCallArgs(expr.arguments);
+  const dynamicSpreadIndex = flattenedArgs === null ? expr.arguments.findIndex((arg) => ts.isSpreadElement(arg)) : -1;
+  const supportedDynamicSpread =
+    dynamicSpreadIndex >= 0 &&
+    dynamicSpreadIndex <= fixedParamCount &&
+    dynamicSpreadIndex === expr.arguments.length - 1;
+  // A non-literal spread mixed with fixed/rest values needs a runtime concat.
+  // Leave that shape on the legacy path until it can be materialized exactly;
+  // treating the spread source as one rest element is a silent wrong answer.
+  if (flattenedArgs === null && !supportedDynamicSpread) return null;
+  const callArgs = flattenedArgs ?? [...expr.arguments];
+
+  const restType = info.paramTypes[fixedParamCount]!;
+  if (flattenedArgs === null && dynamicSpreadIndex >= 0) {
+    if (restType.kind !== "ref" && restType.kind !== "ref_null") return null;
+    const vecInfo = getVecInfo(ctx, restType.typeIdx);
+    if (vecInfo === null) return null;
+
+    for (let i = 0; i < dynamicSpreadIndex; i++) {
+      compileExpression(ctx, fctx, callArgs[i]!, info.paramTypes[i]);
+    }
+
+    const spread = callArgs[dynamicSpreadIndex]!;
+    if (!ts.isSpreadElement(spread)) return null;
+    const spreadType = compileExpression(ctx, fctx, spread.expression, restType);
+    if (spreadType === null) {
+      pushDefaultValue(fctx, restType, ctx);
+    } else if (!valTypesMatch(spreadType, restType)) {
+      coerceType(ctx, fctx, spreadType, restType);
+    }
+    const spreadLocal = allocLocal(fctx, `__cc_spread_${fctx.locals.length}`, restType);
+    fctx.body.push({ op: "local.set", index: spreadLocal });
+
+    // A spread after every fixed formal is already exactly the rest vec.
+    if (dynamicSpreadIndex === fixedParamCount) {
+      fctx.body.push({ op: "local.get", index: spreadLocal });
+      return { fixedParamCount, restExternLocals: [] };
+    }
+
+    const dataType: ValType = { kind: "ref", typeIdx: vecInfo.arrTypeIdx };
+    const dataLocal = allocLocal(fctx, `__cc_spread_data_${fctx.locals.length}`, dataType);
+    const lenLocal = allocLocal(fctx, `__cc_spread_len_${fctx.locals.length}`, { kind: "i32" });
+    fctx.body.push({ op: "local.get", index: spreadLocal });
+    if (restType.kind === "ref_null") fctx.body.push({ op: "ref.as_non_null" });
+    fctx.body.push({ op: "struct.get", typeIdx: restType.typeIdx, fieldIdx: 0 });
+    fctx.body.push({ op: "local.set", index: lenLocal });
+    fctx.body.push({ op: "local.get", index: spreadLocal });
+    if (restType.kind === "ref_null") fctx.body.push({ op: "ref.as_non_null" });
+    fctx.body.push({ op: "struct.get", typeIdx: restType.typeIdx, fieldIdx: 1 });
+    fctx.body.push({ op: "local.set", index: dataLocal });
+
+    const consumedByFixed = fixedParamCount - dynamicSpreadIndex;
+    for (let offset = 0; offset < consumedByFixed; offset++) {
+      fctx.body.push({ op: "local.get", index: dataLocal });
+      fctx.body.push({ op: "i32.const", value: offset });
+      emitBoundsCheckedArrayGet(fctx, vecInfo.arrTypeIdx, vecInfo.elemType, ctx);
+      const expected = info.paramTypes[dynamicSpreadIndex + offset]!;
+      if (!valTypesMatch(vecInfo.elemType, expected)) coerceType(ctx, fctx, vecInfo.elemType, expected);
+    }
+
+    const restLenLocal = allocLocal(fctx, `__cc_spread_rest_len_${fctx.locals.length}`, { kind: "i32" });
+    fctx.body.push({ op: "local.get", index: lenLocal });
+    fctx.body.push({ op: "i32.const", value: consumedByFixed });
+    fctx.body.push({ op: "i32.sub" });
+    fctx.body.push({ op: "local.tee", index: restLenLocal });
+    fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "i32.gt_s" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [{ op: "local.get", index: restLenLocal }],
+      else: [{ op: "i32.const", value: 0 }],
+    });
+    fctx.body.push({ op: "local.set", index: restLenLocal });
+    fctx.body.push({ op: "local.get", index: restLenLocal });
+    fctx.body.push({ op: "array.new_default", typeIdx: vecInfo.arrTypeIdx });
+    const restDataLocal = allocLocal(fctx, `__cc_spread_rest_data_${fctx.locals.length}`, dataType);
+    fctx.body.push({ op: "local.set", index: restDataLocal });
+    fctx.body.push({ op: "local.get", index: restDataLocal });
+    fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "local.get", index: dataLocal });
+    fctx.body.push({ op: "i32.const", value: consumedByFixed });
+    fctx.body.push({ op: "local.get", index: restLenLocal });
+    fctx.body.push({
+      op: "array.copy",
+      dstTypeIdx: vecInfo.arrTypeIdx,
+      srcTypeIdx: vecInfo.arrTypeIdx,
+    });
+    fctx.body.push({ op: "local.get", index: restLenLocal });
+    fctx.body.push({ op: "local.get", index: restDataLocal });
+    fctx.body.push({ op: "struct.new", typeIdx: restType.typeIdx });
+    return { fixedParamCount, restExternLocals: [] };
+  }
+
+  for (let i = 0; i < Math.min(callArgs.length, fixedParamCount); i++) {
+    compileExpression(ctx, fctx, callArgs[i]!, info.paramTypes[i]);
+  }
+  for (let i = callArgs.length; i < fixedParamCount; i++) {
+    pushDefaultValue(fctx, info.paramTypes[i]!, ctx);
+  }
+
+  const trailingArgs = callArgs.slice(fixedParamCount);
+  if (trailingArgs.length === 1 && ts.isSpreadElement(trailingArgs[0]!)) {
+    const spreadType = compileExpression(ctx, fctx, trailingArgs[0]!.expression, restType);
+    if (spreadType === null) {
+      pushDefaultValue(fctx, restType, ctx);
+    } else if (!valTypesMatch(spreadType, restType)) {
+      coerceType(ctx, fctx, spreadType, restType);
+    }
+    return { fixedParamCount, restExternLocals: [] };
+  }
+  if (restType.kind !== "ref" && restType.kind !== "ref_null") {
+    pushDefaultValue(fctx, restType, ctx);
+    return { fixedParamCount, restExternLocals: [] };
+  }
+  const vecInfo = getVecInfo(ctx, restType.typeIdx);
+  if (vecInfo === null) {
+    pushDefaultValue(fctx, restType, ctx);
+    return { fixedParamCount, restExternLocals: [] };
+  }
+
+  const restLocals: number[] = [];
+  const restExternLocals: number[] = [];
+  for (let i = fixedParamCount; i < callArgs.length; i++) {
+    const actualType = compileExpression(ctx, fctx, callArgs[i]!, vecInfo.elemType);
+    if (actualType === null) pushDefaultValue(fctx, vecInfo.elemType, ctx);
+    const restLocal = allocLocal(fctx, `__cc_rest_${fctx.locals.length}`, vecInfo.elemType);
+    fctx.body.push({ op: "local.set", index: restLocal });
+    restLocals.push(restLocal);
+
+    fctx.body.push({ op: "local.get", index: restLocal });
+    coerceType(ctx, fctx, vecInfo.elemType, { kind: "externref" });
+    const externLocal = allocLocal(fctx, `__cc_rest_extern_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "local.set", index: externLocal });
+    restExternLocals.push(externLocal);
+  }
+  fctx.body.push({ op: "i32.const", value: restLocals.length });
+  for (const restLocal of restLocals) fctx.body.push({ op: "local.get", index: restLocal });
+  fctx.body.push({ op: "array.new_fixed", typeIdx: vecInfo.arrTypeIdx, length: restLocals.length });
+  fctx.body.push({ op: "struct.new", typeIdx: restType.typeIdx });
+
+  return { fixedParamCount, restExternLocals };
+}
+
 /** Compile a call to a closure variable: closureVar(args...) */
 export function compileClosureCall(
   ctx: CodegenContext,
@@ -433,15 +606,15 @@ export function compileClosureCall(
   // Push closure ref as first arg (self param of the lifted function)
   pushClosureRef();
 
-  // Push call arguments (only up to the closure's declared parameter count)
   const paramCount = info.paramTypes.length;
-  for (let i = 0; i < Math.min(expr.arguments.length, paramCount); i++) {
-    compileExpression(ctx, fctx, expr.arguments[i]!, info.paramTypes[i]);
-  }
-
-  // Pad missing arguments with defaults (arity mismatch)
-  for (let i = expr.arguments.length; i < info.paramTypes.length; i++) {
-    pushDefaultValue(fctx, info.paramTypes[i]!, ctx);
+  const restArgs = compileRestClosureArguments(ctx, fctx, expr, info);
+  if (restArgs === null) {
+    for (let i = 0; i < Math.min(expr.arguments.length, paramCount); i++) {
+      compileExpression(ctx, fctx, expr.arguments[i]!, info.paramTypes[i]);
+    }
+    for (let i = expr.arguments.length; i < paramCount; i++) {
+      pushDefaultValue(fctx, info.paramTypes[i]!, ctx);
+    }
   }
 
   // (#779e/#1511) Overflow args beyond the closure's declared arity are NOT
@@ -449,7 +622,15 @@ export function compileClosureCall(
   // `__argc` so a callee that reads `arguments` sees the true call-site length.
   // emitClosureCallArgcExtras evaluates the overflow args itself (into the
   // global), so we must NOT also evaluate them above. Cleanup after call_ref.
-  emitClosureCallArgcExtras(ctx, fctx, expr.arguments, paramCount);
+  if (restArgs !== null) {
+    fctx.body.push(...buildArgcExtrasSetupFromLocals(ctx, fctx, restArgs.fixedParamCount, restArgs.restExternLocals));
+    // buildArgcExtrasSetupFromLocals assumes every fixed slot was filled; an
+    // under-arity JS call was not, so overwrite argc with the true clamped
+    // call-site count while preserving the already-materialized extras vec.
+    emitSetArgc(ctx, fctx, expr.arguments.length, restArgs.fixedParamCount);
+  } else {
+    emitClosureCallArgcExtras(ctx, fctx, expr.arguments, paramCount);
+  }
 
   // Push the funcref from the closure struct (field 0) and cast to typed ref
   pushClosureRef();
@@ -887,7 +1068,19 @@ export function compileCallablePropertyCall(
     const nonNull = ctx.checker.getNonNullableType(propTsType);
     callSigs = nonNull.getCallSignatures?.();
   }
-  if (!callSigs || callSigs.length === 0) return undefined;
+  if (!callSigs || callSigs.length === 0) {
+    // Published JavaScript often declares a class field without a type and
+    // installs its closure through a computed write (`this[name] = (...) =>`),
+    // so TypeScript cannot recover a call signature for the named field. The
+    // runtime field still carries the real closure. On the JS-host lane, call
+    // it through the ordinary host method bridge instead of letting the
+    // downstream graceful fallback silently drop the invocation.
+    if (fieldType.kind === "externref" && !noJsHost(ctx)) {
+      const dynamic = emitWrapperDynamicMethodCall(ctx, fctx, propAccess.expression, methodName, expr);
+      if (dynamic !== null) return dynamic;
+    }
+    return undefined;
+  }
 
   const sig = callSigs[0]!;
   const sigParamCount = sig.parameters.length;
@@ -897,6 +1090,26 @@ export function compileCallablePropertyCall(
   for (let i = 0; i < sigParamCount; i++) {
     const paramType = ctx.checker.getTypeOfSymbol(sig.parameters[i]!);
     sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
+  }
+
+  // A synthetic wrapper derived from a field's call signature cannot encode
+  // whether its final vec parameter came from source `...rest` or was an
+  // explicit array parameter. If a real stored closure of the same signature
+  // is variadic, the static wrapper path would pass the final positional value
+  // as the vec itself and lose every trailing argument. Let the host bridge
+  // inspect the actual closure allocation and use the rest-aware dispatcher.
+  if (
+    fieldType.kind === "externref" &&
+    !noJsHost(ctx) &&
+    [...ctx.closureInfoByTypeIdx.values()].some(
+      (candidate) =>
+        candidate.hasRestParam === true &&
+        candidate.paramTypes.length === sigParamWasmTypes.length &&
+        candidate.paramTypes.every((param, index) => valTypesMatch(param, sigParamWasmTypes[index]!)),
+    )
+  ) {
+    const dynamic = emitWrapperDynamicMethodCall(ctx, fctx, propAccess.expression, methodName, expr);
+    if (dynamic !== null) return dynamic;
   }
 
   // If the field is a ref type, check if it's a known closure struct
@@ -915,8 +1128,9 @@ export function compileCallablePropertyCall(
         emitNullCheckThrow(ctx, fctx, fieldType);
       }
 
-      // Push call arguments (only up to declared param count)
-      {
+      const restArgs = compileRestClosureArguments(ctx, fctx, expr, closureInfo);
+      if (restArgs === null) {
+        // Push call arguments (only up to declared param count)
         const cpParamCount = closureInfo.paramTypes.length;
         for (let i = 0; i < Math.min(expr.arguments.length, cpParamCount); i++) {
           compileExpression(ctx, fctx, expr.arguments[i]!, closureInfo.paramTypes[i]);
@@ -928,10 +1142,10 @@ export function compileCallablePropertyCall(
             fctx.body.push({ op: "drop" });
           }
         }
-      }
-      // Pad missing arguments
-      for (let i = expr.arguments.length; i < closureInfo.paramTypes.length; i++) {
-        pushDefaultValue(fctx, closureInfo.paramTypes[i]!, ctx);
+        // Pad missing arguments
+        for (let i = expr.arguments.length; i < closureInfo.paramTypes.length; i++) {
+          pushDefaultValue(fctx, closureInfo.paramTypes[i]!, ctx);
+        }
       }
 
       // Get funcref from closure struct field 0 and call_ref — null-check → TypeError (#728)
@@ -1489,7 +1703,7 @@ export function tryExternClassMethodOnAny(
   // FontFaceSet_check; parseIdent/finishToken shadow DOM names too). Refuse and
   // let the generic dynamic dispatch resolve by runtime identity — which also
   // handles genuine extern receivers correctly host-side.
-  if (getUserFunctionMemberNames(expr.getSourceFile()).has(methodName)) return null;
+  if (sourceDefinesFunctionMember(expr.getSourceFile(), methodName)) return null;
 
   // (#1283) The dispatch below emits `externref` hints for every arg and
   // assumes the call's params are all-externref. When iterating in

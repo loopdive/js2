@@ -2313,11 +2313,13 @@ export function compileLiftedClosureBody(
 
   // Temporarily register closure info for named function expressions so
   // recursive calls inside the body are compiled as closure calls.
+  const selfHasRestParam = runtimeParameters(arrow).some((param) => param.dotDotDotToken !== undefined);
   const closureInfoForSelf: ClosureInfo = {
     structTypeIdx,
     funcTypeIdx: liftedFuncTypeIdx,
     returnType: closureReturnType,
     paramTypes: arrowParams,
+    hasRestParam: selfHasRestParam,
   };
   if (funcExprName) {
     ctx.closureMap.set(funcExprName, closureInfoForSelf);
@@ -2340,6 +2342,7 @@ export function compileLiftedClosureBody(
       funcTypeIdx: liftedFuncTypeIdx,
       returnType: closureReturnType,
       paramTypes: arrowParams,
+      hasRestParam: selfHasRestParam,
     });
   }
 
