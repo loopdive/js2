@@ -150,6 +150,17 @@ export class ProgramAbiModuleInitCallableRegistry {
     return observation && definedFuncAt(this.ctx, observation.funcIdx) ? observation.funcIdx : undefined;
   }
 
+  /** Exact preallocated function object for one source before unit planning seals. */
+  functionForSource(sourceFile: ts.SourceFile): WasmFunction | undefined {
+    const unitId = this.identityContext?.moduleInitUnitIdBySourceFile.get(sourceFile);
+    return unitId === undefined ? undefined : this.functionForUnit(unitId);
+  }
+
+  handleForSource(sourceFile: ts.SourceFile): FuncHandle | undefined {
+    const unitId = this.identityContext?.moduleInitUnitIdBySourceFile.get(sourceFile);
+    return unitId === undefined ? undefined : this.handleForUnit(unitId);
+  }
+
   /** Assign semantic owners before generic retained-callable population. */
   planRetained(): void {
     if (this.planned) return;

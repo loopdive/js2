@@ -1151,6 +1151,124 @@ describe("#3521 post-pass prepared-component dependency evidence", () => {
     ]);
   });
 
+  it.each([
+    ["i32", irVal({ kind: "i32" })],
+    ["f64", irVal({ kind: "f64" })],
+  ] as const)("accepts js bitwise operands with concrete %s carriers", (_name, numericType) => {
+    const f = fixture();
+    const bitwise: IrInstr = {
+      kind: "binary",
+      op: "js.bitxor",
+      lhs: asValueId(0),
+      rhs: asValueId(1),
+      result: asValueId(2),
+      resultType: numericType,
+    };
+    const fn: IrFunction = {
+      ...irFunction(f.first, [bitwise]),
+      params: [
+        { value: asValueId(0), name: "lhs", type: numericType },
+        { value: asValueId(1), name: "rhs", type: numericType },
+      ],
+      valueCount: 3,
+    };
+    const report = derivePreparedComponentDependencies({
+      module: { functions: [fn] },
+      terminalUnitIds: new Set([f.first.id]),
+      inventory: f.inventory,
+      abi: abiLookup([sourceCallableEntry(f.first.id)]),
+    });
+
+    expect(report.components[0]!.status).toBe("complete");
+    expect(report.components[0]!.failures).toEqual([]);
+  });
+
+  it("keeps js bitwise operands fail-closed when either carrier is not concrete numeric", () => {
+    const f = fixture();
+    const numericType = irVal({ kind: "f64" });
+    const bitwise: IrInstr = {
+      kind: "binary",
+      op: "js.bitand",
+      lhs: asValueId(0),
+      rhs: asValueId(1),
+      result: asValueId(2),
+      resultType: numericType,
+    };
+    const fn: IrFunction = {
+      ...irFunction(f.first, [bitwise]),
+      params: [
+        { value: asValueId(0), name: "lhs", type: numericType },
+        { value: asValueId(1), name: "rhs", type: { kind: "extern" } },
+      ],
+      valueCount: 3,
+    };
+    const report = derivePreparedComponentDependencies({
+      module: { functions: [fn] },
+      terminalUnitIds: new Set([f.first.id]),
+      inventory: f.inventory,
+      abi: abiLookup([sourceCallableEntry(f.first.id)]),
+    });
+
+    expect(report.components[0]!.status).toBe("blocked");
+    expect(report.components[0]!.failures).toEqual([
+      expect.objectContaining({
+        code: "implicit-support-reference-unavailable",
+        detail: expect.stringContaining("js.bitand may resolve __unbox_number"),
+      }),
+    ]);
+  });
+
+  it("requires prepared exception support for try and nested throw instructions", () => {
+    const f = fixture();
+    const thrownType: IrType = { kind: "extern" };
+    const nestedThrow: IrInstr = {
+      kind: "throw",
+      value: asValueId(0),
+      result: null,
+      resultType: null,
+    };
+    const tryInstr: IrInstr = {
+      kind: "try",
+      body: [nestedThrow],
+      catchClause: { payloadSlot: -1, body: [] },
+      result: null,
+      resultType: null,
+    };
+    const fn: IrFunction = {
+      ...irFunction(f.first, [tryInstr]),
+      params: [{ value: asValueId(0), name: "value", type: thrownType }],
+      valueCount: 1,
+    };
+    const dependencies = (exceptionSupportPrepared: boolean) =>
+      derivePreparedComponentDependencies({
+        module: { functions: [fn] },
+        terminalUnitIds: new Set([f.first.id]),
+        inventory: f.inventory,
+        exceptionSupportPrepared,
+        abi: abiLookup([sourceCallableEntry(f.first.id)]),
+      }).components[0]!;
+
+    const unprepared = dependencies(false);
+    expect(unprepared.status).toBe("blocked");
+    expect(unprepared.failures).toHaveLength(2);
+    expect(unprepared.failures).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "implicit-support-reference-unavailable",
+          detail: expect.stringContaining("try resolves exception tag/support"),
+        }),
+        expect.objectContaining({
+          code: "implicit-support-reference-unavailable",
+          detail: expect.stringContaining("throw resolves exception tag/support"),
+        }),
+      ]),
+    );
+
+    const prepared = dependencies(true);
+    expect(prepared.status).toBe("complete");
+    expect(prepared.failures).toEqual([]);
+  });
+
   it.each(["empty", "unrelated"] as const)(
     "does not accept %s closure evidence for a different final IR object",
     (evidenceKind) => {
