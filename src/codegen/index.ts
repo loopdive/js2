@@ -151,15 +151,13 @@ import {
   buildIrRequestedFunctionSkipProjection,
   correlateIrSkippedBodyNames,
   correlateIrSkippedFunctionNames,
-  mergeIrIntegrationReports,
   type IrExactFunctionClaim,
 } from "./ir-overlay-safety.js";
 import {
   completePreparedIrIntegration,
   computePreparedInheritedIrFirstSkipUnitIds,
   finalizeR3PreparedOwnerPopulation,
-  prepareIrClassMemberBodies,
-  prepareIrFreeFunctionBodies,
+  prepareIrBodies,
   selectR2PreparedFreeFunctions,
   selectR3PreparedPromiseDelayFunctions,
   selectPreparedClassMemberNames,
@@ -3345,8 +3343,8 @@ function planIrFirstBodyRouting(
     ? selectPreparedClassMemberNames(ctx, preliminarySelection, plan.identityPlan)
     : new Set<string>();
   // A class or module owner does not make an unrelated free-function component
-  // direct-owned. Ordinary instance/static methods may enter the same sealed
-  // preparation transaction; constructors and module init remain direct.
+  // direct-owned. Dependency-complete free functions and class members enter
+  // one sealed preparation transaction; module init remains direct.
   // selectR2PreparedFreeFunctions closes candidates over exact local call
   // edges, so any callable edge that crosses into one of those owners removes
   // the complete affected free-function component before preparation.
@@ -3400,32 +3398,22 @@ function planIrFirstBodyRouting(
       // Final-context Promise preparation may reject an occupied/mismatched
       // runtime ABI. Keep that owner on the established direct route.
     } else {
-      const freeFunctionSelection = {
-        funcs: preparedFreeFunctionNames,
-        classMembers: new Set<string>(),
-        moduleInit: undefined,
-      };
-      const preparedFreeFunctions = prepareIrFreeFunctionBodies({
+      const preparedBodies = prepareIrBodies({
         ctx,
         sourceFile,
-        selection: freeFunctionSelection,
-        claimsByUnitId: plan.functionClaimsByUnitId,
-        overrideMap: plan.overrideMap,
-        classShapes: plan.classShapes,
-        loweringPlans: irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, freeFunctionSelection),
-      });
-      const preparedClassMembers = prepareIrClassMemberBodies({
-        ctx,
-        sourceFile,
-        selection: { classMembers: finalClassMemberNames },
+        selection: {
+          funcs: preparedFreeFunctionNames,
+          classMembers: finalClassMemberNames,
+        },
         identityPlan: plan.identityPlan,
+        functionClaimsByUnitId: plan.functionClaimsByUnitId,
         overrideMap: plan.overrideMap,
         classShapes: plan.classShapes,
         projectLoweringPlans: (selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
       });
-      const preparedReport = preparedClassMembers
-        ? mergeIrIntegrationReports(preparedFreeFunctions.report, preparedClassMembers.report)
-        : preparedFreeFunctions.report;
+      const preparedFreeFunctions = preparedBodies.freeFunctions;
+      const preparedClassMembers = preparedBodies.classMembers;
+      const preparedReport = preparedBodies.report;
       const requestedSkipUnitIds = computePreparedInheritedIrFirstSkipUnitIds(inheritedSkipInput);
       for (const entry of preparedFreeFunctions.requestedSkipProjection.entries) {
         requestedSkipUnitIds.add(entry.unitId);
@@ -3974,12 +3962,11 @@ export function generateModule(
     // `unreachable` placeholder are no longer ownership mechanisms for this
     // population.
     //
-    // Dependency-complete top-level methods and accessors now join this
-    // prepared route, including inherited layouts. Constructors, nested
-    // classes, and module init retain the post-direct overlay until their
-    // R3/R4 owners land.
-    // Both reports are joined before telemetry/auditing, so every terminal row
-    // is reconciled once.
+    // Dependency-complete free functions, constructors, methods, and accessors
+    // now join one prepared route, including inherited layouts. Nested classes
+    // and module init retain the post-direct overlay until their R3/R4 owners
+    // land. One report reaches telemetry/auditing, so every terminal row is
+    // reconciled once.
     // Selector-REJECTED functions are never claimed and still compile through
     // the direct path unchanged.
     // Escape hatch (one release, #3143): `JS2WASM_IR_FIRST=0` restores the

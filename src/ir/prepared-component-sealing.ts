@@ -3,6 +3,7 @@
 import type { CodegenContext } from "../codegen/context/types.js";
 import { definedFuncAt } from "../codegen/func-space.js";
 import { planProgramAbiUnitCallable } from "../codegen/program-abi-planning.js";
+import { irClassTypeRef } from "./abi-bindings.js";
 import { irUnitCallableBindingId, irUnitFuncRef } from "./callable-bindings.js";
 import type { IrBindingId, IrUnitId, IrUnitInventory } from "./identity.js";
 import type { IrFunction } from "./nodes.js";
@@ -123,6 +124,35 @@ function planBlockingCallableImports(
   return true;
 }
 
+/**
+ * Publish class layouts only after every candidate body has reached final IR.
+ * A free-function build can still finalize an allocator-owned struct, so
+ * planning these bindings before the combined build would freeze a stale
+ * contract and make the later class-member observation fail closed.
+ */
+function planBlockingClassLayouts(
+  ctx: CodegenContext,
+  report: PreparedComponentDependencyReport,
+  inventory: IrUnitInventory,
+): boolean {
+  const registry = ctx.programAbiTypes;
+  if (!registry) return false;
+  const classIdByBindingId = new Map(
+    inventory.classes.map((record) => [irClassTypeRef(record.id, record.displayName).binding.bindingId, record.id]),
+  );
+  const selected = new Set(
+    report.components.flatMap((component) =>
+      component.failures.flatMap((failure) => {
+        if (failure.code !== "unplanned-abi-binding" || failure.bindingId === undefined) return [];
+        const classId = classIdByBindingId.get(failure.bindingId);
+        return classId !== undefined && registry.canPrepareClassLayout(classId) ? [classId] : [];
+      }),
+    ),
+  );
+  for (const classId of selected) registry.prepareClassLayout(classId);
+  return selected.size > 0;
+}
+
 export function sealDependencyCompletePreparedComponents(input: {
   readonly ctx: CodegenContext;
   readonly entries: readonly PreparedComponentArtifactEntry[];
@@ -180,10 +210,10 @@ export function sealDependencyCompletePreparedComponents(input: {
       entries.flatMap((entry) => (entry.derivedUnit ? ([[entry.derivedUnit.id, entry.derivedUnit]] as const) : [])),
     ).values(),
   ];
-  const derive = (): PreparedComponentDependencyReport =>
+  const derive = (candidateTerminalUnitIds: ReadonlySet<IrUnitId>): PreparedComponentDependencyReport =>
     derivePreparedComponentDependencies({
       module: { functions: entries.map((entry) => entry.fn) },
-      terminalUnitIds,
+      terminalUnitIds: candidateTerminalUnitIds,
       inventory,
       derivedUnits,
       ...(input.closureSupport ? { closureSupport: input.closureSupport } : {}),
@@ -192,9 +222,36 @@ export function sealDependencyCompletePreparedComponents(input: {
         bindingIdsForStructuralReference: (key) => session.bindingIdsForStructuralReference(key),
       },
     });
-  let report = derive();
-  if (planBlockingCallableImports(ctx, report, input.callableImports)) report = derive();
-  if (planBlockingCallableProviders(ctx, report)) report = derive();
+  const candidateTerminalUnitIds = new Set(terminalUnitIds);
+  let report = derive(candidateTerminalUnitIds);
+  for (;;) {
+    if (planBlockingClassLayouts(ctx, report, inventory)) {
+      report = derive(candidateTerminalUnitIds);
+    }
+    if (planBlockingCallableImports(ctx, report, input.callableImports)) {
+      report = derive(candidateTerminalUnitIds);
+    }
+    if (planBlockingCallableProviders(ctx, report)) {
+      report = derive(candidateTerminalUnitIds);
+    }
+
+    // A blocked caller must not withdraw an otherwise complete dependency.
+    // Remove only the exact owners that produced failures, then rederive: any
+    // dependent caller now sees a foreign unit and is peeled on the next
+    // iteration, while independent callees can form their own sealed scope.
+    const failingOwnerUnitIds = new Set(
+      report.components.flatMap((component) =>
+        component.status === "blocked"
+          ? component.failures
+              .map((failure) => failure.ownerUnitId)
+              .filter((unitId) => candidateTerminalUnitIds.has(unitId))
+          : [],
+      ),
+    );
+    if (failingOwnerUnitIds.size === 0) break;
+    for (const unitId of failingOwnerUnitIds) candidateTerminalUnitIds.delete(unitId);
+    report = derive(candidateTerminalUnitIds);
+  }
 
   const componentIdByTerminalUnitId = new Map<IrUnitId, string>();
   for (const component of report.components) {

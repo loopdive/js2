@@ -7,6 +7,10 @@ import { compile, type CompileResult, type IrObservedOutcome } from "../src/inde
 import { buildImports } from "../src/runtime.js";
 
 const SOURCE = readFileSync(new URL("../website/playground/examples/js/classes.ts", import.meta.url), "utf8");
+const ALGORITHMS_SOURCE = readFileSync(
+  new URL("../website/playground/examples/js/algorithms.ts", import.meta.url),
+  "utf8",
+);
 
 const CLASS_TERMINALS = [
   "Animal_new",
@@ -167,7 +171,7 @@ function expectDirectClassShape(result: CompileResult, hostHelperParity = false)
   expect(main).not.toMatch(/__current_this|__argc|__arguments/);
 }
 
-describe("#3522 prepared cross-owner classes.ts main", () => {
+describe("#3522 prepared cross-owner retirement", () => {
   it("retires the GC main body onto exact prepared Animal/Dog dependencies", async () => {
     const result = await compile(SOURCE, {
       fileName: "website/playground/examples/js/classes.ts",
@@ -186,8 +190,8 @@ describe("#3522 prepared cross-owner classes.ts main", () => {
     expect(logs).toEqual(TRACE);
     expect(result.irPostClaimErrors ?? []).toEqual([]);
 
-    // RED before the cross-owner production slice: the current GC overlay still
-    // emits this legacy body first and has no dependency-sealed component ID.
+    // This assertion was the red checkpoint before the combined transaction:
+    // main used to emit a legacy body and had no prepared component ID.
     const main = outcome(result, "function", "main");
     expect(main).toMatchObject({
       kind: "emitted",
@@ -303,5 +307,70 @@ describe("#3522 prepared cross-owner classes.ts main", () => {
       if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
       else process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = previous;
     }
+  });
+
+  it("peels blocked algorithms owners while sealing the independent fibIter dependency", async () => {
+    const result = await compile(ALGORITHMS_SOURCE, {
+      fileName: "website/playground/examples/js/algorithms.ts",
+      experimentalIR: true,
+      trackIrOutcomes: true,
+      emitWat: true,
+      target: "gc",
+    });
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect(outcome(result, "function", "fibIter")).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
+    });
+    expect(
+      (result.irOutcomes ?? [])
+        .filter((candidate) => candidate.legacyBodyEmitted)
+        .map((candidate) => `${candidate.unitKind}:${candidate.displayName}`),
+    ).toEqual([
+      "function:fibMemo",
+      "function:binarySearch",
+      "function:quicksort",
+      "function:joinNums",
+      "function:main",
+      "module-init:<module-init>",
+    ]);
+
+    const fibIter = watFunctionBody(result.wat, "fibIter");
+    expect(fibIter.match(/\(loop/g) ?? []).toHaveLength(1);
+    expect(fibIter).toMatch(/\(local \$\$slot_a f64\)/);
+    expect(fibIter).toMatch(/\(local \$\$slot_b f64\)/);
+    expect(fibIter).toMatch(/\(local \$\$slot_i i32\)/);
+    expect(fibIter).not.toMatch(
+      /\b(?:return_)?call\b|extern\.convert_any|any\.convert_extern|(?:^|_)(?:box|unbox)(?:_|$)/,
+    );
+
+    const logs: string[] = [];
+    (await instantiate(result, (value) => logs.push(String(value)))).main!();
+    expect(logs).toEqual([
+      "── Fibonacci ──",
+      "fib(0) iter=0 memo=0",
+      "fib(1) iter=1 memo=1",
+      "fib(2) iter=1 memo=1",
+      "fib(3) iter=2 memo=2",
+      "fib(4) iter=3 memo=3",
+      "fib(5) iter=5 memo=5",
+      "fib(6) iter=8 memo=8",
+      "fib(7) iter=13 memo=13",
+      "fib(8) iter=21 memo=21",
+      "fib(9) iter=34 memo=34",
+      "fib(30) iter = 832040",
+      "── Binary search ──",
+      "sorted = [1,3,5,8,13,21,34,55,89,144]",
+      "indexOf(13) = 4",
+      "indexOf(34) = 6",
+      "indexOf(7)  = -1",
+      "── Quicksort ──",
+      "before = [5,2,8,1,9,3,7,4,6,0]",
+      "after  = [0,1,2,3,4,5,6,7,8,9]",
+    ]);
   });
 });
