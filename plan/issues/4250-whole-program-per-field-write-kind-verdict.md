@@ -244,7 +244,12 @@ SLOTS flip + verdict dominance.
 
 Known pre-existing on the base branch (NOT this slice; reproduced on untouched
 `166635930`): `issue-3683-numeric-fields` "excludes presence-tracked" and
-"reflection arms" — the #4255 pending test fix owned by the other lane.
+"reflection arms" — fixed by #4255's own final test commit (green after
+merging post-#4255 `upstream/main` in). Still-red INDEPENDENT of this slice:
+`issue-2107` "undefined-any reports typeof 'undefined'" (standalone + wasi) —
+red on pure `upstream/main` @ `4e90526dd` in a clean worktree AND on the
+#4255 branch with all nine of this slice's files reverted (file-copy A/B), so
+it is main's, possibly #4255-flip fallout; flagged to the coordinator.
 
 ## Notes
 
