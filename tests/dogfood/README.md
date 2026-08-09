@@ -17,10 +17,11 @@ bounded package-entry harness:
 Every catalog entry pins the canonical npm tarball sha1/integrity and the exact
 published entry file. The package's locked dependency graph is installed so a
 compile failure is not manufactured by omitting declared dependencies. None of
-these seventeen npm tarballs ships its upstream unit-test sources. Their cards
-therefore say “upstream suite — not shipped; adapter pending”; they do not
-substitute harness-authored smoke vectors or imply that validation is a test
-pass. Matching upstream source suites can be pinned and adapted package by
+these seventeen npm tarballs ships its upstream unit-test sources. Their catalog
+cards therefore say “upstream suite — not shipped; adapter pending”; the UUID
+exception has a separate pinned upstream-suite lane described below. Neither
+lane substitutes harness-authored smoke vectors or implies that validation is a
+test pass. Matching upstream source suites can be pinned and adapted package by
 package, following the existing Acorn/React precedent.
 
 ESLint and jsdom are the two explicit runtime-workload exceptions. Their npm
@@ -50,6 +51,23 @@ check, are:
 | **react** (UI library)                  | —     | `index.js`                | bounded package-entry compile/validate                                      |
 | **react upstream suite**                | —     | `cjs/react.production.js` | React's own real `packages/react/src/__tests__` unit tests                  |
 | **react-dom upstream suite**             | #3982 | `cjs/react-dom*.js`       | ReactDOM's own real `packages/react-dom/src/__tests__` unit tests            |
+| **uuid upstream suite**                 | #3995 | `dist/index.js`           | UUID's own 75 `src/test/*.test.ts` cases                                    |
+
+## uuid v14.0.1 upstream suite (#3995)
+
+```bash
+pnpm run dogfood:uuid-upstream-suite
+DOGFOOD_UUID_UPSTREAM_SUITE=1 pnpm exec vitest run tests/dogfood/uuid-upstream-suite.test.ts
+```
+
+The harness verifies the published `uuid@14.0.1` tarball and clones the
+matching `uuidjs/uuid` tag at commit
+`70177807e9229dfacde2038dc1e722f1828f358a` for the ten original TypeScript test
+files. It runs the same registered test bodies in a native Node oracle and in
+one Wasm module per file; the shared table helper is pinned alongside the test
+files. The 2026-08-09 baseline is **75/75 native, 6/75 Wasm** (exact runtime
+denominator 75). Every failure remains in the JSON report, including the
+invalid `v35` binary and v1/validate/version runtime traps.
 
 ## acorn (#1710)
 

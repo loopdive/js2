@@ -1,0 +1,20 @@
+{
+  "repo": "https://github.com/uuidjs/uuid.git",
+  "tag": "v14.0.1",
+  "commit": "70177807e9229dfacde2038dc1e722f1828f358a",
+  "sourceDirectory": "src/test",
+  "testFiles": [
+    "src/test/parse.test.ts",
+    "src/test/rng.test.ts",
+    "src/test/stringify.test.ts",
+    "src/test/v1.test.ts",
+    "src/test/v35.test.ts",
+    "src/test/v4.test.ts",
+    "src/test/v6.test.ts",
+    "src/test/v7.test.ts",
+    "src/test/validate.test.ts",
+    "src/test/version.test.ts"
+  ],
+  "helperFiles": ["src/test/test_constants.ts"],
+  "_note": "uuid publishes its dist implementation but not src/test. The harness acquires this exact upstream tag, verifies the immutable commit before extracting any tests, and runs every Node test callback (including dynamically generated v35 cases) against the pinned published tarball bytes. test_constants.ts is shared test data, not a test file, and is pinned separately as a helper."
+}

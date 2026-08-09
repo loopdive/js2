@@ -81,6 +81,7 @@ tests/dogfood/.prettier/
 tests/dogfood/.react/
 tests/dogfood/.react-upstream-suite/
 tests/dogfood/.lit-upstream-suite/
+/.uuid-upstream-suite/
 tests/dogfood/.lit-implementation/
 tests/dogfood/.npm-compat/
 tests/dogfood/report/
