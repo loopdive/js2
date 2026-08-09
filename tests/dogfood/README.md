@@ -36,6 +36,30 @@ the published bytes under test while allowing relative imports such as jsdom's
 `tough-cookie` dependency to resolve from the same locked graph. A pin marker
 invalidates stale ignored extractions when a tarball revision changes.
 
+## TypeScript upstream-source compile probe (#1058)
+
+The published TypeScript package contains one large generated JavaScript
+bundle, but the matching upstream tag also contains the original module graph.
+The worker-isolated probe compares those two representations with the same
+`compileProject` options, streams compiler-phase markers, and records periodic
+CPU/RSS heartbeats so a long compile can be distinguished from a blocked
+process:
+
+```bash
+node tests/dogfood/typescript-upstream-build-probe.mjs \
+  --root /path/to/TypeScript-5.9.3 --mode source --timeout-ms 1800000 --heap-mb 4096 --json
+
+node tests/dogfood/typescript-upstream-build-probe.mjs \
+  --root /path/to/TypeScript-5.9.3 --mode bundle --timeout-ms 1800000 --heap-mb 4096 --json
+```
+
+`--mode source` selects `src/typescript/typescript.ts`; `--mode bundle`
+selects `lib/typescript.js`. Pass `--entry <path-relative-to-root>` for a
+narrow upstream-source entry such as a parser workload. The probe defaults to
+a 30-minute budget, a 4 GiB worker heap, and 30-second heartbeats. It reports
+compile and validation separately and never treats elapsed CPU time or a valid
+binary as a package test pass.
+
 The original package-specific harnesses, plus the deeper Acorn conformance
 check, are:
 

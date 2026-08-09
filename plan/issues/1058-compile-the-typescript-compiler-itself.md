@@ -3,7 +3,7 @@ id: 1058
 title: "Compile the TypeScript compiler itself to Wasm — self-hosting stress test"
 status: ready
 created: 2026-04-11
-updated: 2026-06-19
+updated: 2026-08-09
 priority: high
 feasibility: hard
 model: fable
@@ -139,6 +139,128 @@ If compiled scanner+parser produces the same AST as native TypeScript for a set 
 ### Step 5 — Follow-up issues
 
 Expected 5-15 new follow-up issues from Tier 2-3, each scoped narrowly enough for one sprint (one PR).
+
+## Upstream-source experiment (2026-08-09)
+
+### Provenance and comparison lane
+
+The experiment used the exact upstream `microsoft/TypeScript` `v5.9.3` tag
+(`c63de15a992d37f0d6cec03ac7631872838602cb`). The downloaded source archive
+had SHA-256
+`d371a2430d6305290d1bddaf195fdd629d1a8708cda08f4a72fc923b65d36c4a`.
+Its checked-in `lib/typescript.js` and the pinned npm-compat fixture's
+`package/lib/typescript.js` are byte-identical (both SHA-256
+`3ae902c92cc44dace175c0e69e13a4b0899f6983c6121d76b9ab8dd5795e7675`).
+This makes `--mode bundle` versus `--mode source` a representation comparison,
+not a version comparison.
+
+The committed worker-isolated probe runs both representations through the same
+options:
+
+```text
+allowJs: true
+skipSemanticDiagnostics: true
+target: "gc"
+platform: "node"
+```
+
+`allowJs: true` deliberately keeps the npm-compat diagnostic policy identical
+for both lanes; `.ts` files are still parsed as TypeScript by extension. The
+probe streams compiler phases and samples CPU, RSS, and worker event-loop
+utilization, so a bounded timeout is distinguishable from an idle/deadlocked
+process.
+
+```bash
+node tests/dogfood/typescript-upstream-build-probe.mjs \
+  --root /path/to/TypeScript-5.9.3 --mode source \
+  --timeout-ms 1800000 --heap-mb 4096 --json
+```
+
+### Full upstream source
+
+`src/typescript/typescript.ts` resolves **280 input files / 13,780,098 bytes**.
+On the clean overload-fix snapshot
+`1d260d48a0d01ce3319f3017b81bf8f831f4f6f5`, the compiler passed the four
+generic overload-owner frontiers recorded in #4267, #4268, #4270, and #4272.
+At the 900-second cap it was actively emitting bodies: the last completed file
+was `src/compiler/_namespaces/ts.moduleSpecifiers.ts`, followed by
+`src/compiler/checker.ts`. At a near-terminal snapshot it had accumulated
+11:22.67 CPU time; peak observed heap was 1,994.0 MB. This was a throughput
+frontier, not a new semantic diagnostic.
+
+A second run gave the source path twice as long and doubled the worker heap:
+
+| budget | heap limit | result | CPU time | average cores | peak RSS | binary |
+| ---: | ---: | --- | ---: | ---: | ---: | ---: |
+| 1,800,000 ms | 4,096 MiB | bounded timeout | 1,681,964 ms | 0.93 | 2,531.7 MiB | 0 bytes |
+
+That run remained CPU-active and repeatedly grew and garbage-collected its
+heap through the exact 1,800,022 ms wall-clock cutoff. It was measured from the
+npm-compat integration worktree at head
+`8173091329ed37bf7e641e31456005e0e6e79aa4`; unrelated uncommitted dogfood
+changes were present, so use the run as a scale/liveness measurement, not as a
+stable performance baseline. It produced no result object or Wasm binary.
+
+For comparison, the canonical published-bundle catalog run also produces no
+binary before its 600,000 ms cap (`600,076 ms` observed). Upstream source is
+therefore **not a compile-time shortcut today**. Its advantage is structural:
+module boundaries turn the bundle's opaque large-IIFE frontier into named,
+measurable source-file work and exposed four generic overload bugs that are now
+fixed.
+
+### Original parser-source slice
+
+The smallest unmodified parser consumer used this wrapper only to make the
+result observable:
+
+```ts
+import { createSourceFile } from "./src/compiler/parser.js";
+import { ScriptKind, ScriptTarget } from "./src/compiler/types.js";
+
+export function runCase(): number {
+  const source = createSourceFile(
+    "input.ts",
+    "export const answer: number = 6 * 7;",
+    ScriptTarget.Latest,
+    true,
+    ScriptKind.TS,
+  );
+  return source.kind * 1000 + source.statements.length;
+}
+```
+
+Native TypeScript returns **308001** (`SourceFile.kind === 308`, one
+statement). The unchanged upstream parser graph was compiled with:
+
+```bash
+node tests/dogfood/typescript-upstream-build-probe.mjs \
+  --root /path/to/TypeScript-5.9.3 --mode source \
+  --entry js2-parser-workload.ts --timeout-ms 900000 --heap-mb 4096 --json
+```
+
+The resolver admitted **82 input files / 82 user source files / 86 TypeScript
+Program files** and planned 336 module-init statements. It reached the same
+`ts.moduleSpecifiers.ts` → `checker.ts` boundary, then remained CPU-bound until
+the exact 900,028 ms cutoff: 918,534 ms CPU, 1.02 average cores, 1,308.7 MiB
+peak RSS, worker event-loop utilization 1.0, and no binary. Because no Wasm
+module exists, **308001 is only the native oracle; no parser parity or package
+test pass is claimed**.
+
+The unexpected checker dependency is not inherent to parsing. Upstream
+`parser.ts` imports `./_namespaces/ts.js`, and that generated barrel re-exports
+`checker.ts`, the emitter, transformers, builders, watch support, and the rest
+of the compiler. Direct parser source removes the `services`, `server`, and
+`jsTyping` graphs (280 → 82 inputs), but the current recursive resolver retains
+every re-export instead of only the named bindings consumed by the parser.
+
+### Decision
+
+Keep the upstream TypeScript source route as the migration substrate, but do
+not replace the npm-compat package result with it and do not claim that
+TypeScript compiles. The next leverage is generic **consumer-driven barrel
+pruning** or #1046's **separate-module compilation** so `parser.ts` can link
+only the providers of the names it imports. Raising the timeout or heap alone
+does not close the gap; the 4 GiB / 30-minute run proves that.
 
 ## Acceptance criteria
 
