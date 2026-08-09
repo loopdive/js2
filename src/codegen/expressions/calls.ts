@@ -299,6 +299,7 @@ import {
 } from "./calls-guards.js";
 import { reshapeSloppyPrimitiveThisArg } from "./sloppy-this-toobject.js"; // (#4246)
 import { planInlinedReceiver, releaseInlinedReceiver } from "./inlined-call-receiver.js"; // (#4246)
+import { buildHostCallFallbackArm, ensureHostCallFallbackImports, planHostCallFallback } from "./host-call-fallback.js";
 import { analyzeTdzAccessByPos, emitLocalTdzCheck, emitStaticTdzThrow } from "./identifiers.js";
 import {
   emitUndefined,
@@ -3625,6 +3626,7 @@ export function tryEmitInlineDynamicCall(
   ensureFuncValueWrappersRegistered(ctx, expr.getSourceFile());
 
   const arity = expr.arguments.length;
+  const hostCallPlan = planHostCallFallback(arity);
 
   // Pre-filter candidates: formal-param count must be able to satisfy the
   // call arity (>= arity — missing trailing args are padded with `undefined`,
@@ -3755,14 +3757,7 @@ export function tryEmitInlineDynamicCall(
   // captured, so the capture happens after every import insertion this
   // function performs (the stale-capture hazard the note above describes).
   if (!ctx.standalone && !ctx.wasi) {
-    ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
-    ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
-    ensureLateImport(
-      ctx,
-      "__call_function",
-      [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-      [{ kind: "externref" }],
-    );
+    ensureHostCallFallbackImports(ctx, hostCallPlan);
   }
 
   // (#820/#1543) `undefined` externref source for padding missing trailing
@@ -3916,29 +3911,8 @@ export function tryEmitInlineDynamicCall(
   // no host: they keep the legacy null default (their callable shapes are the
   // dedicated proxy/bound/ta-ctor arms above).
   if (!ctx.standalone && !ctx.wasi) {
-    // Imports were ensured (and flushed) up top, before the box/unbox index
-    // capture — only re-look them up here.
-    const arrNew = ctx.funcMap.get("__js_array_new");
-    const arrPush = ctx.funcMap.get("__js_array_push");
-    const callFn = ctx.funcMap.get("__call_function");
-    if (arrNew !== undefined && arrPush !== undefined && callFn !== undefined) {
-      const hostArgsLocal = allocLocal(fctx, `__dyn_hostargs_${fctx.locals.length}`, { kind: "externref" });
-      const hostArm: Instr[] = [
-        { op: "call", funcIdx: arrNew },
-        { op: "local.set", index: hostArgsLocal },
-      ];
-      for (const argLocal of argLocals) {
-        hostArm.push({ op: "local.get", index: hostArgsLocal });
-        hostArm.push({ op: "local.get", index: argLocal });
-        hostArm.push({ op: "call", funcIdx: arrPush });
-      }
-      hostArm.push({ op: "local.get", index: anyLocal });
-      hostArm.push({ op: "extern.convert_any" });
-      hostArm.push({ op: "ref.null.extern" }); // thisArg — undefined for a bare call
-      hostArm.push({ op: "local.get", index: hostArgsLocal });
-      hostArm.push({ op: "call", funcIdx: callFn });
-      dispatch = hostArm;
-    }
+    // Imports were ensured (and flushed) before box/unbox indices were captured.
+    dispatch = buildHostCallFallbackArm(ctx, fctx, hostCallPlan, anyLocal, argLocals) ?? dispatch;
   }
 
   // (#2933) Variadic builtin value-closure arm — INNERMOST (just above the
