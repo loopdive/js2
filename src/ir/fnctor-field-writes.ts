@@ -253,12 +253,15 @@ function recordFieldWrite(
   if (name === undefined) {
     // A dynamic-key write through `this` can name ANY field of that owner (or
     // of every owner when the binder is untracked). A dynamic-key write on a
-    // NON-`this` base (`newNode[prop] = node[prop]` — acorn's `copyNode`) is the
-    // family's DOCUMENTED GAP, shared with #4166's dynamic instance reads and
-    // with the legacy #4117 scan, which has no escape analysis at all. Poisoning
-    // it instead would be a whole-module kill switch that any `for…in` copy
-    // loop trips — measured: it zeroed every acorn field fact.
+    // NON-`this` base (`newNode[prop] = node[prop]` — acorn's `copyNode`) used
+    // to be the family's DOCUMENTED GAP; since #4250 it is a DEFERRED poison,
+    // resolved by receiver provenance: a copy loop whose receiver provably
+    // holds ONE owner's instances poisons only that owner's fields, instead of
+    // being either ignored (unsound — the write-kind verdict exists to catch
+    // exactly the writes the enumeration cannot kind) or a whole-module kill
+    // switch (measured: blanket poisoning zeroed every acorn field fact).
     if (attribution.viaThis) poisonAllFieldsOf(state, attribution.owner);
+    else state.deferredFieldPoisons.push({ receiver: target.expression });
     return;
   }
   state.fieldWrites.push({
@@ -290,10 +293,11 @@ function poisonWriteTarget(state: AnalysisState, target: ts.Node, site: ts.Node)
     const attribution = classifyFieldReceiver(state, t.expression, site);
     if (attribution === undefined) return;
     const name = literalFieldName(t);
-    // Same documented gap as `recordFieldWrite`: a dynamic key on a non-`this`
-    // base names nothing this analysis can localize.
+    // Same deferred treatment as `recordFieldWrite`: a dynamic key on a
+    // non-`this` base is localized by receiver provenance (#4250).
     if (name === undefined) {
       if (attribution.viaThis) poisonAllFieldsOf(state, attribution.owner);
+      else state.deferredFieldPoisons.push({ receiver: t.expression });
     } else poisonFieldName(state, attribution.owner, name);
     return;
   }
@@ -307,7 +311,14 @@ function poisonWriteTarget(state: AnalysisState, target: ts.Node, site: ts.Node)
   }
 }
 
-/** `Object.defineProperty(this, …)` / `Object.assign(this, …)` on a tracked `this`. */
+/**
+ * `Object.defineProperty` / `Object.defineProperties` / `Object.assign` whose
+ * target is `this` (poison the binder's owner directly) or an instance BINDING
+ * (#4250 — defer to receiver provenance; reflection can install accessors or
+ * store arbitrary values, so it must reach the write-kind verdict). A target
+ * that is a tracked METHOD SPACE (`F.prototype` / `F`) stays the method scan's
+ * business (`handleObjectDefine` in fnctor-method-edges.ts).
+ */
 function handleThisFieldDefine(state: AnalysisState, call: ts.CallExpression): void {
   const callee = unwrap(call.expression);
   if (!ts.isPropertyAccessExpression(callee)) return;
@@ -316,13 +327,24 @@ function handleThisFieldDefine(state: AnalysisState, call: ts.CallExpression): v
   const method = callee.name.text;
   if (method !== "defineProperty" && method !== "defineProperties" && method !== "assign") return;
   const first = call.arguments[0];
-  if (first === undefined || unwrap(first).kind !== ts.SyntaxKind.ThisKeyword) return;
+  if (first === undefined) return;
+  const target = unwrap(first);
+  const literalKey = (): string | undefined => {
+    const key = call.arguments[1] !== undefined ? unwrap(call.arguments[1]!) : undefined;
+    return key !== undefined && ts.isStringLiteral(key) ? key.text : undefined;
+  };
+  if (target.kind !== ts.SyntaxKind.ThisKeyword) {
+    if (spaceOfBase(state, target) !== undefined) return; // method-space install — handled elsewhere
+    const key = method === "defineProperty" ? literalKey() : undefined;
+    state.deferredFieldPoisons.push({ receiver: target, ...(key !== undefined ? { name: key } : {}) });
+    return;
+  }
   const attribution = classifyFieldReceiver(state, first, call);
   if (attribution === undefined) return;
   if (method === "defineProperty") {
-    const key = call.arguments[1] !== undefined ? unwrap(call.arguments[1]!) : undefined;
-    if (key !== undefined && ts.isStringLiteral(key)) {
-      poisonFieldName(state, attribution.owner, key.text);
+    const key = literalKey();
+    if (key !== undefined) {
+      poisonFieldName(state, attribution.owner, key);
       return;
     }
   }

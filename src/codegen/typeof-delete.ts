@@ -11,6 +11,7 @@ import { isBooleanType, isStringType, isSymbolType } from "../checker/type-mappe
 import type { Instr, ValType } from "../ir/types.js";
 import { reportError } from "./context/errors.js";
 import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
+import { typeofFoldContradictedByFieldVerdict } from "./fnctor-ctor-param-types.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { isStrictContext } from "./expressions/assignment.js";
@@ -1676,7 +1677,10 @@ export function compileTypeofExpression(
   // Try static resolution first via the shared helper
   if (!forceRuntimeTypeof) {
     const staticResult = staticTypeofForType(ctx, tsType);
-    if (staticResult !== null) {
+    // (#4250) Unsound-fold guard: the checker types a fnctor field from the
+    // constructor's write, so the fold ignores every OTHER write reaching the
+    // field. Killed on a PROVEN write-kind contradiction only.
+    if (staticResult !== null && !typeofFoldContradictedByFieldVerdict(ctx, operand, staticResult)) {
       return compileStringLiteral(ctx, fctx, staticResult);
     }
   }
@@ -1888,6 +1892,12 @@ export function compileTypeofComparison(
     (ts.isPropertyAccessExpression(operand) || ts.isElementAccessExpression(operand)) &&
     chainRootIsGrowable(ctx, operand.expression)
   ) {
+    staticTypeof = null;
+  }
+  // (#4250) Same unsound-fold guard as compileTypeofExpression: a fnctor field
+  // read whose write-kind verdict PROVES a write of a different kind reaches
+  // the field must not const-fold the comparison.
+  if (staticTypeof !== null && typeofFoldContradictedByFieldVerdict(ctx, operand, staticTypeof)) {
     staticTypeof = null;
   }
   if (staticTypeof !== null) {
