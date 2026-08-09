@@ -60,6 +60,10 @@ interface ForkState {
   proc: ChildProcess;
   busy: boolean;
   ready: boolean;
+  active?: {
+    job: QueueItem;
+    timer: ReturnType<typeof setTimeout>;
+  };
 }
 
 type QueueItem = {
@@ -68,8 +72,12 @@ type QueueItem = {
   /** Timeout ceiling in ms — applied from dispatch time, not enqueue time (#1227). */
   timeoutMs: number;
   label?: string;
+  /** Number of times an unexpectedly-dead worker has retried this job. */
+  workerCrashRetries?: number;
   resolve: (r: any) => void;
 };
+
+const MAX_WORKER_CRASH_RETRIES = 1;
 
 export class CompilerPool {
   private forks: ForkState[] = [];
@@ -84,9 +92,10 @@ export class CompilerPool {
   constructor(
     private size = 4,
     workerType: "compile" | "unified" = "compile",
+    workerPathOverride?: string,
   ) {
     const workerFile = workerType === "unified" ? "test262-worker.mjs" : "compiler-fork-worker.mjs";
-    this.workerPath = join(import.meta.dirname ?? __dirname, workerFile);
+    this.workerPath = workerPathOverride ?? join(import.meta.dirname ?? __dirname, workerFile);
     for (let i = 0; i < size; i++) {
       this.forks.push(this.createFork());
     }
@@ -133,6 +142,7 @@ export class CompilerPool {
       const job = this.pending.get(msg.id);
       if (job) {
         this.pending.delete(msg.id);
+        state.active = undefined;
         state.busy = false;
         job.resolve(msg);
         if (msg.recycle === true) {
@@ -143,17 +153,11 @@ export class CompilerPool {
       }
     });
 
-    proc.on("error", (err) => {
-      console.error(`Fork error:`, err.message);
-      state.busy = false;
-      state.ready = false;
-    });
+    proc.on("error", (err) => this.handleForkFailure(state, proc, `error: ${err.message}`));
 
-    proc.on("exit", () => {
-      if (this.shuttingDown) return;
-      if (!state.ready && !state.busy) return;
-      this.respawnFork(state);
-    });
+    proc.on("exit", (code, signal) =>
+      this.handleForkFailure(state, proc, `exit ${code ?? "null"}${signal ? ` (${signal})` : ""}`),
+    );
   }
 
   /** Wait for all forks to be ready */
@@ -295,9 +299,12 @@ export class CompilerPool {
         );
         free.busy = false;
         free.ready = false;
+        free.active = undefined;
         free.proc.kill("SIGKILL");
         this.respawnFork(free);
       }, job.timeoutMs);
+
+      free.active = { job, timer };
 
       // Wrap the resolve so the worker's response clears the timer before
       // the result is delivered. The fork's `message` handler invokes this
@@ -314,6 +321,54 @@ export class CompilerPool {
     }
   }
 
+  /**
+   * Re-run one interrupted job on a fresh process, then surface a bounded
+   * compile error if the same job kills a second worker. A dead fork used to
+   * leave its pending promise unresolved; Vitest then abandoned the rest of
+   * the shard and uploaded a deceptively successful partial JSONL artifact.
+   */
+  private handleForkFailure(state: ForkState, proc: ChildProcess, reason: string) {
+    if (this.shuttingDown || state.proc !== proc) return;
+
+    const active = state.active;
+    const wasReady = state.ready;
+    state.active = undefined;
+    state.busy = false;
+    state.ready = false;
+
+    // Preserve the existing startup-failure behavior. A replacement that
+    // cannot initialize must not create an unbounded respawn loop; there is
+    // no accepted job to recover in this state.
+    if (!active && !wasReady) {
+      console.error(`[pool] worker failed before ready (${reason}); not respawning`);
+      return;
+    }
+
+    if (active) {
+      clearTimeout(active.timer);
+      this.pending.delete(active.job.id);
+      const retries = active.job.workerCrashRetries ?? 0;
+      if (retries < MAX_WORKER_CRASH_RETRIES) {
+        active.job.workerCrashRetries = retries + 1;
+        this.queue.unshift(active.job);
+        console.error(
+          `[pool] worker ${reason}; retrying interrupted job on a fresh worker${active.job.label ? ` [${active.job.label}]` : ""}`,
+        );
+      } else {
+        const error = `worker terminated unexpectedly after retry (${reason})`;
+        active.job.resolve(
+          active.job.msg.execute
+            ? ({ status: "compile_error", error, compileMs: 0 } as TestResult)
+            : ({ ok: false, error, compileMs: 0 } as PoolResult),
+        );
+      }
+    } else {
+      console.error(`[pool] idle worker ${reason}; spawning replacement`);
+    }
+
+    this.respawnFork(state, reason);
+  }
+
   /** Respawn a dead/stuck fork — OS reclaims all memory from the old process */
   private respawnFork(state: ForkState, reason?: string) {
     if (this.shuttingDown) return;
@@ -327,6 +382,7 @@ export class CompilerPool {
     }
     state.busy = false;
     state.ready = false;
+    state.active = undefined;
     state.proc = this.forkProcess();
     this.attachForkHandlers(state, false);
   }
