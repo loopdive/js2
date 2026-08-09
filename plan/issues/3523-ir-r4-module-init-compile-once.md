@@ -4,7 +4,7 @@ title: "IR-only R4: typed ordered module-init compile-once ownership"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-08-02
+updated: 2026-08-09
 priority: critical
 horizon: xl
 complexity: XL
@@ -212,6 +212,45 @@ merge-group Test262 run before landing. The expanded seven-file adjacent
 matrix is **53/57 passing**: the same two #3142 failures reproduce on pristine
 current `main`, and the remaining two rows require the absent optional
 `test262-fyi/data` submodule.
+
+### Builtins checkpoint and remaining-body handover (2026-08-09)
+
+The Builtins externref-ABI checkpoint leaves every one of the 37 targeted
+terminal units with an IR body, but 16 of those units still retain a legacy
+body. This is a measured census, not R4 completion. The exact remaining
+population is:
+
+- **Algorithms — 6 bodies:** module init, `fibMemo`, `binarySearch`,
+  `quicksort`, `joinNums`, and `main`.
+- **Calendar — 10 bodies:** module init, `el`, `mname`, `dimOf`, `fdow`,
+  `priceOf`, `renderCal`, `onDay`, `updFoot`, and `main`.
+
+Retire that population in two atomic production PRs, in this order:
+
+1. **Algorithms, 16 → 10.** Move its module init and five functions through
+   one prepared Program-ABI transaction. Preserve the ordered, exactly-once
+   `Map` initialization and persistence across calls; recursive `fibMemo`;
+   vector use; in-place quicksort mutation; the proven-i32 midpoint without
+   boxing; number formatting and string append behavior; and the exact
+   20-line observable trace. Parity tests must prove all six units emit through
+   IR with no legacy body, fallback, duplicate init, or optimization loss.
+2. **Calendar, 10 → 0.** Move its module init and nine functions through the
+   same ownership model. Preserve source-ordered global initialization, exact
+   `Date` imports, all seven lifted callbacks, and preparation of nested
+   executable syntax. Parity tests must prove all ten units emit through IR
+   with no legacy body or fallback and retain current rendered/runtime
+   behavior.
+
+Both PRs must pass hybrid accounting and IR-only shadow validation, and each
+must reduce the checked legacy-body ceiling by its exact family count. Delete
+an obsolete legacy implementation in the same PR only after the replacement's
+tests and consumer inventory prove it has no remaining callers.
+
+Keep exactly one overlapping production PR active: finish and land Algorithms
+before opening Calendar. Parallel work is limited to disjoint tests,
+inventories, optimization audits, and reviews. This Markdown issue and the
+parent/adjacent `plan/issues` records are the ownership and handover source of
+truth; do not create or use GitHub Issues for this migration checklist.
 
 ### Commit 2 — prepare/lower module init and make fallback one-pass
 

@@ -1,11 +1,11 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #3522 Builtins externref-ABI retirement checkpoint.
+// #3522 Builtins externref-ABI retirement acceptance coverage.
 //
-// The runtime/value and typed-DOM ABI assertions are passing controls on the
-// #4281 checkpoint. The compile-once assertion is deliberately `it.fails`:
-// it states the retirement truth and must be promoted to plain `it` in the
-// production slice that prepares this component and removes its legacy bodies.
+// The four-function DOM component must seal once through IR, preserve the
+// direct backend's observable behavior and typed-host ABI, retain the literal
+// optimizations that used to live only in direct codegen, and never enter the
+// ordinary direct function-body emitter.
 
 import { readFileSync } from "node:fs";
 
@@ -231,6 +231,15 @@ function watCallTargets(wat: string, body: string): string[] {
   return [...body.matchAll(/\b(?:return_)?call (\d+)/g)].map((match) => names[Number(match[1])] ?? "<missing>");
 }
 
+function watGlobalIndex(wat: string, name: string): number | undefined {
+  const imports = [...wat.matchAll(/^\s*\(import .+ \(global(?: \$([^\s(]+))?/gm)].map(
+    (match) => match[1] ?? "<anonymous-import>",
+  );
+  const globals = [...wat.matchAll(/^\s*\(global \$([^\s(]+)/gm)].map((match) => match[1]!);
+  const index = [...imports, ...globals].indexOf(name);
+  return index < 0 ? undefined : index;
+}
+
 describe("#3522 Builtins externref-ABI retirement", () => {
   it("renders the complete Builtins value tree identically through the IR and direct lanes", async () => {
     const ir = await compileBuiltins(true);
@@ -244,7 +253,7 @@ describe("#3522 Builtins externref-ABI retirement", () => {
     expect(ir.irPostClaimErrors ?? []).toEqual([]);
   });
 
-  it("keeps the established typed-DOM provider ABI and WAT calls identical between lanes", async () => {
+  it("keeps the typed-DOM ABI while avoiding generic dispatch and direct-body machinery", async () => {
     const ir = await compileBuiltins(true);
     const direct = await compileBuiltins(false);
     const irDomImports = typedDomImports(ir);
@@ -283,27 +292,29 @@ describe("#3522 Builtins externref-ABI retirement", () => {
       ]),
     );
 
-    // Deliberately do not pin opcode/import-count forms for literal concat,
-    // constant String.includes, or constant shift. Those three optimization
-    // gaps are separate from externref ABI and compile-once correctness.
-  });
-
-  it("records the exact pre-retirement patch-through state for all four terminals", async () => {
-    const result = await compileBuiltins(true);
-    expect(result.irCompiledFuncs ?? []).toEqual(expect.arrayContaining([...TERMINALS]));
     for (const name of TERMINALS) {
-      expect(outcome(result, name)).toMatchObject({
-        kind: "emitted",
-        stage: "patch",
-        legacyBodyEmitted: true,
-        irBodyEmitted: true,
-      });
-      expect(outcome(result, name)).not.toHaveProperty("preparedComponentId");
+      const body = watFunctionBody(ir.wat, name);
+      const targets = watCallTargets(ir.wat, body);
+      expect(body).not.toMatch(/\b(?:call_ref|call_indirect)\b/);
+      expect(body).not.toMatch(/__current_this|__argc|__arguments/);
+      for (const globalName of ["__current_this", "__argc", "__arguments"] as const) {
+        const globalIndex = watGlobalIndex(ir.wat, globalName);
+        if (globalIndex !== undefined) {
+          expect(body).not.toMatch(new RegExp(`\\bglobal\\.(?:get|set) ${globalIndex}\\b`));
+        }
+      }
+      expect(targets).not.toEqual(
+        expect.arrayContaining([expect.stringMatching(/__extern_(?:get|set|call|method_call|new)/)]),
+      );
+      expect(targets).not.toEqual(
+        expect.arrayContaining([expect.stringMatching(/(?:^|_)(?:box|unbox|argc|arguments)(?:_|$)/)]),
+      );
     }
   });
 
-  it.fails("prepares el/crd/rw/main once and retires every legacy body", async () => {
+  it("seals el/crd/rw/main as one IR-only component with no legacy bodies", async () => {
     const result = await compileBuiltins(true);
+    expect(result.irCompiledFuncs ?? []).toEqual(expect.arrayContaining([...TERMINALS]));
     const componentIds = new Set<string>();
     for (const name of TERMINALS) {
       const terminal = outcome(result, name);
@@ -316,10 +327,159 @@ describe("#3522 Builtins externref-ABI retirement", () => {
       componentIds.add(terminal.preparedComponentId!);
     }
     expect(componentIds.size).toBe(1);
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
   });
 
-  // There is currently no poison seam for ordinary direct free-function
-  // bodies (only class and async bodies have one). Add the positive-control +
-  // el/crd/rw/main poison assertion when production introduces that seam.
-  it.todo("proves the retired Builtins component cannot enter the direct free-function emitter");
+  it("proves the sealed component never enters the ordinary direct function-body emitter", async () => {
+    const previous = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+    const controlName = "issue3522OrdinaryDirectPoisonControl";
+    try {
+      process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = TERMINALS.join(",");
+      // Deliberately bypass compileBuiltins(): this must execute a fresh compile
+      // while the poison is live, not reuse the cached acceptance artifact.
+      const retired = await compile(SOURCE, {
+        fileName: "website/playground/examples/js/builtins-poisoned.ts",
+        experimentalIR: true,
+        trackFallbacks: true,
+        trackIrOutcomes: true,
+        target: "gc",
+      });
+      expect(retired.success, retired.errors.map((error) => error.message).join("\n")).toBe(true);
+      for (const name of TERMINALS) {
+        expect(outcome(retired, name)).toMatchObject({
+          kind: "emitted",
+          legacyBodyEmitted: false,
+          irBodyEmitted: true,
+          preparedComponentId: expect.stringMatching(/^prepared-component:/),
+        });
+      }
+
+      process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = controlName;
+      const direct = await compile(`export function ${controlName}(): number { return 7; }`, {
+        fileName: "issue-3522-ordinary-direct-poison-control.ts",
+        experimentalIR: false,
+        target: "gc",
+      });
+      expect(direct.success).toBe(false);
+      expect(direct.errors.map((error) => error.message)).toContain(
+        `Internal error compiling function '${controlName}': injected direct function-body poison: ${controlName}`,
+      );
+    } finally {
+      if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+      else process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previous;
+    }
+  });
+
+  it("fully folds fixed CSS literal concatenations but preserves the four dynamic array-string concatenations", async () => {
+    const result = await compileBuiltins(true);
+    const concatTargets = (name: string): string[] =>
+      watCallTargets(result.wat, watFunctionBody(result.wat, name)).filter((target) =>
+        /(?:^|_)concat(?:_|$)/.test(target),
+      );
+
+    for (const name of ["el", "crd", "rw"] as const) {
+      expect(concatTargets(name), `${name} must not retain a fixed CSS concat`).toEqual([]);
+    }
+    // main has exactly four genuine dynamic array-string concatenations:
+    // arrStr + ",", arrStr + value, "[" + arrStr, and the closing "]".
+    // Its fixed body CSS concat therefore must not add a fifth call.
+    expect(concatTargets("main")).toEqual(["concat_import", "concat_import", "concat_import", "concat_import"]);
+  });
+
+  it("folds immutable literal includes without an import while retaining a dynamic near-miss", async () => {
+    const literalName = "issue3522LiteralIncludes";
+    const literal = await compile(
+      `export function ${literalName}(): boolean { return "Hello, WebAssembly!".includes("Assembly"); }`,
+      {
+        fileName: "issue-3522-literal-includes.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+        emitWat: true,
+        target: "gc",
+      },
+    );
+    expect(literal.success, literal.errors.map((error) => error.message).join("\n")).toBe(true);
+    const literalBody = watFunctionBody(literal.wat, literalName);
+    expect(literalBody).toMatch(/\bi32\.const 1\b/);
+    expect(watCallTargets(literal.wat, literalBody)).not.toEqual(
+      expect.arrayContaining([expect.stringMatching(/includes/i)]),
+    );
+    expect(literal.imports.map((entry) => entry.name)).not.toEqual(
+      expect.arrayContaining([expect.stringMatching(/includes/i)]),
+    );
+
+    const dynamicName = "issue3522DynamicIncludes";
+    const dynamic = await compile(
+      `export function ${dynamicName}(value: string): boolean { return value.includes("Assembly"); }`,
+      {
+        fileName: "issue-3522-dynamic-includes.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+        emitWat: true,
+        target: "gc",
+      },
+    );
+    expect(dynamic.success, dynamic.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(watCallTargets(dynamic.wat, watFunctionBody(dynamic.wat, dynamicName))).toEqual(
+      expect.arrayContaining([expect.stringMatching(/includes/i)]),
+    );
+    expect(dynamic.imports.map((entry) => entry.name)).toEqual(
+      expect.arrayContaining([expect.stringMatching(/includes/i)]),
+    );
+  });
+
+  it("materializes exact constant bitwise values without runtime bitwise work and retains dynamic near-misses", async () => {
+    const constants = await compile(
+      `
+        export function issue3522ConstantShl(): number { return 0xff << 8; }
+        export function issue3522ConstantAnd(): number { return 0xabcd & 0xff; }
+        export function issue3522ConstantOr(): number { return 0x55 | 0xaa; }
+        export function issue3522ConstantXor(): number { return 0xff ^ 0x0f; }
+        export function issue3522ConstantNot(): number { return ~0; }
+      `,
+      {
+        fileName: "issue-3522-constant-bitwise.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+        emitWat: true,
+        target: "gc",
+      },
+    );
+    expect(constants.success, constants.errors.map((error) => error.message).join("\n")).toBe(true);
+    const expected = [
+      ["issue3522ConstantShl", "65280"],
+      ["issue3522ConstantAnd", "205"],
+      ["issue3522ConstantOr", "255"],
+      ["issue3522ConstantXor", "240"],
+      ["issue3522ConstantNot", "-1"],
+    ] as const;
+    for (const [name, value] of expected) {
+      const body = watFunctionBody(constants.wat, name);
+      expect(body).toContain(`f64.const ${value}`);
+      expect(body).not.toMatch(/i32\.(?:shl|shr_s|shr_u|and|or|xor)/);
+      expect(watCallTargets(constants.wat, body)).not.toEqual(
+        expect.arrayContaining([expect.stringMatching(/bit|shift/i)]),
+      );
+    }
+    expect(constants.imports.map((entry) => entry.name)).not.toEqual(
+      expect.arrayContaining([expect.stringMatching(/bit|shift/i)]),
+    );
+
+    const dynamic = await compile(
+      `
+        export function issue3522DynamicShl(value: number): number { return value << 8; }
+        export function issue3522DynamicAnd(value: number): number { return value & 0xff; }
+      `,
+      {
+        fileName: "issue-3522-dynamic-bitwise.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+        emitWat: true,
+        target: "gc",
+      },
+    );
+    expect(dynamic.success, dynamic.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(watFunctionBody(dynamic.wat, "issue3522DynamicShl")).toContain("i32.shl");
+    expect(watFunctionBody(dynamic.wat, "issue3522DynamicAnd")).toContain("i32.and");
+  });
 });
