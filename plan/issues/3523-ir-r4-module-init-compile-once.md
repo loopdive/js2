@@ -38,6 +38,7 @@ loc-budget-allow:
   - src/codegen/index.ts
   - src/codegen/declarations.ts
   - src/ir/integration.ts
+  - src/ir/prepared-component-dependencies.ts
 func-budget-allow:
   - src/codegen/index.ts::generateModule
   - src/codegen/declarations.ts::compileDeclarations
