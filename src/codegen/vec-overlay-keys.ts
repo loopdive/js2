@@ -340,6 +340,16 @@ export function fillVecOverlayPushKeys(ctx: CodegenContext): void {
                 { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
                 { op: "extern.convert_any" },
                 { op: "local.set", index: L_KEY },
+                // A non-STRING key (a symbol) is not an own *name*, and the two
+                // filters below would `ref.cast $AnyStr` it — a TRAP inside a
+                // helper that must never throw. Screen structurally, once.
+                { op: "local.get", index: L_KEY },
+                { op: "any.convert_extern" },
+                { op: "ref.test", typeIdx: anyStrTypeIdx },
+                { op: "i32.eqz" },
+                // depth 0 is this `if` — leaving it lands on the increment
+                // below, i.e. `continue`.
+                { op: "br_if", depth: 0 },
                 // Skip what the vec arm already emitted: `length`, and any
                 // seeded canonical index below `length`.
                 ...keyIs("length"),
