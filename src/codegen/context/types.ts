@@ -1187,14 +1187,14 @@ export interface CodegenContext {
   oracle: TypeOracle;
   /**
    * (#684) Usage-based `any`-local inference oracle. Checker-layer pre-pass that
-   * answers "can this boxed-`any` local declaration be lowered to an unboxed
-   * f64?" — see `src/checker/usage-inference.ts`. Consulted at the local-slot
-   * minting sites (var hoister, let/const hoister, `localTypeForDeclaration`).
-   * Gated by `useUsageInfer`.
+   * answers whether a boxed `any` local can be lowered to f64; see `src/checker/usage-inference.ts`.
+   * Consulted at local-slot minting sites; gated by `useUsageInfer`.
    */
   usageInference: UsageInference;
   /** (#684) Master switch for `usageInference`. Default true. */
   useUsageInfer: boolean;
+  /** Checker-symbol must-analysis for dead hoisted-var entry initialization. */
+  varInitElision: { canElideUndefinedInit(declaration: ts.VariableDeclaration): boolean };
   /** Map from function name to its absolute index (imports + locals) */
   funcMap: Map<string, number>;
   /** Exact IR artifact identity to its allocator-owned defined-function object. */

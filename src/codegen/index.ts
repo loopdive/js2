@@ -183,6 +183,7 @@ import { scanForNewTarget } from "./new-target.js"; // (#2023)
 import { scanForDynamicProto, fillDynamicProtoHelpers } from "./dynamic-proto.js"; // (#802)
 import { scanForArrayHoles, ensureHoleType } from "./array-holes.js"; // (#2001 S1)
 import { hoistedVarRetypesToConcreteRef, inferArrayVecType, usageInferredLocalType } from "./statements/variables.js"; // (#2106 S1 PR-2) hoist undefined-init retype predicate; (#684) usage-based any-local f64 override
+import { canElideHoistedVarUndefined } from "./hoisted-var-init-elision.js";
 import { bindingHasMixedAssignmentCarrier } from "./analysis/mixed-assignment-carrier.js";
 import { symbolBrand } from "./symbol-field-carrier.js";
 import { ensureDynReadHelpers, ensureDynMemberGet } from "./dyn-read.js"; // (#2580 M0) / (#3053 U0)
@@ -8868,9 +8869,8 @@ function hoistVarDecl(ctx: CodegenContext, fctx: FunctionContext, decl: ts.Varia
       fctx.body.push({ op: "local.set", index: localIdx });
       return;
     }
-    // In JS, hoisted `var` variables are `undefined` before their declaration,
-    // not `null`. For externref locals, emit __get_undefined() + local.set (#737).
     if (wasmType.kind === "externref") {
+      if (canElideHoistedVarUndefined(ctx, decl)) return;
       // (#2106 S1 / PR-2) Under the `undefinedSingleton` regime `emitUndefined`
       // produces the NON-null tag-1 `$undefined` singleton. If this var's
       // declaration will retype the slot from externref to a concrete non-any
