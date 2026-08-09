@@ -30,6 +30,7 @@ import {
   _installIteratorHelperPolyfills,
 } from "./runtime/iterator-polyfills.js";
 import { buildStringConstants, buildStringConstants16 } from "./runtime/string-constants.js";
+import { isHostStringSymbolDispatch, makeHostStringPredicateAdapter } from "./runtime/string-predicate-adapter.js";
 export { buildStringConstants, buildStringConstants16 };
 import {
   compiledClosureNativeSource,
@@ -8392,20 +8393,12 @@ function resolveImport(
       // we must NOT coerce the first arg to a primitive: wrap WasmGC structs
       // with `_wrapForHost` so the Proxy translates `arg[Symbol.replace]` →
       // `arg["@@replace"]` and invokes any user-defined method (#1443).
-      const SYMBOL_DISPATCH_METHODS: Set<string> = new Set([
-        "replace",
-        "replaceAll",
-        "match",
-        "matchAll",
-        "search",
-        "split",
-      ]);
       // (#3903) Everything that depends only on `method` is decided ONCE here,
       // at import-resolution time, instead of on every crossing. A string
       // benchmark makes 10k-50k crossings per `run()`, so anything left in the
       // per-call body is multiplied by that. See the per-crossing breakdown in
       // plan/issues/3903-host-call-lane-string-boundary.md.
-      const isSymbolDispatch = SYMBOL_DISPATCH_METHODS.has(method);
+      const isSymbolDispatch = isHostStringSymbolDispatch(method);
       const usesNaNOmitSentinel = method === "includes" || method === "startsWith" || method === "endsWith";
       const isSplit = method === "split";
       const tracksLegacyRegExpState =
@@ -8425,6 +8418,8 @@ function resolveImport(
         }
         return v;
       };
+      const fixedPredicate = makeHostStringPredicateAdapter(method, coerce);
+      if (fixedPredicate) return fixedPredicate;
       // Also hoisted (#3903): was re-allocated per call as the `.map` callback
       // of the Symbol-dispatch branch below.
       const deferDataArg = (value: any): any => _deferStringDataArg(value, callbackState, coerce);
