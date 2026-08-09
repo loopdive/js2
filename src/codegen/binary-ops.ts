@@ -55,6 +55,7 @@ import { compileInstanceOf, compileTypeofComparison } from "./typeof-delete.js";
 import { compileTypedBinaryDispatch } from "./binary-ops-typed-dispatch.js";
 import { foldTypeDisjointThenPromote } from "./strict-eq-type-disjoint.js";
 import { compileInOperator } from "./binary-ops-in.js";
+import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { emitIsUndefF64 } from "./value-tags.js";
 
 // ── Binary operations ─────────────────────────────────────────────────
@@ -1250,6 +1251,23 @@ export function compileBinaryExpression(
   // the content-compare route (a string is never `===` a non-string, which
   // `__str_equals` already yields), as do `+` and relational ops.
   const isLooseEqNeqForward = op === ts.SyntaxKind.EqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsToken;
+  // (#4264) The string route below is chosen from the LEFT operand's CHECKER
+  // type, and for a representation-widened module global that type is stale:
+  // `var st = "parseInt"` still reads `string` to TypeScript after
+  // `with (o) { st = parseInt; }` forced the slot to `externref`. Routing such a
+  // compare to `__str_equals` casts a function externref to `$AnyString`, gets
+  // null on both sides, and answers `true` — the exact asymmetry the
+  // `S12.10_A1.*` battery reports as `#11: myObj.parseInt !== parseInt`
+  // (`st === parseInt` was true while `parseInt === st` was false, because only
+  // the left operand steers the route). `moduleGlobalIsDynamicButStaticallyPrimitive`
+  // is #4204's own name for this disagreement; consult it and fall through to the
+  // runtime-tag cascade, which reads the value instead of the stale type.
+  //
+  // EQUALITY ONLY, deliberately: `+` on such a binding is already correct via the
+  // concat path's externref coercion, and re-routing it would change a hot,
+  // well-tested lowering for no measured gain.
+  const leftIsWidenedPrimitiveGlobal =
+    isEqualityOp && ts.isIdentifier(expr.left) && moduleGlobalIsDynamicButStaticallyPrimitive(ctx, expr.left);
   const rightIsAbstractNonString =
     !rightIsStrLike &&
     (rightTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 &&
@@ -1258,6 +1276,7 @@ export function compileBinaryExpression(
   if (
     !wrapperEquality &&
     isStringType(leftTsType) &&
+    !leftIsWidenedPrimitiveGlobal &&
     !(isLooseEqNeqForward && rightIsAbstractNonString) &&
     (isStringType(rightTsType) ||
       op === ts.SyntaxKind.PlusToken ||

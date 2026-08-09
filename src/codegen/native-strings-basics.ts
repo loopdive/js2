@@ -51,6 +51,30 @@ export function emitStrConcatHelpers(shared: NativeStrShared): void {
       { op: "struct.get", typeIdx: anyStrTypeIdx, fieldIdx: 0 },
       { op: "local.set", index: 3 }, // lenB
 
+      // Empty strings are the identity element for concatenation. Returning
+      // the other immutable string directly avoids allocating and copying a
+      // fresh flat string for common accumulator shapes such as
+      // `let out = ""; out += value`. Keep a compile-time kill switch so the
+      // optimization can be measured against the identical compiler tree.
+      ...(process.env.JS2WASM_STR_CONCAT_EMPTY_IDENTITY === "0"
+        ? []
+        : [
+            { op: "local.get" as const, index: 2 },
+            { op: "i32.eqz" as const },
+            {
+              op: "if" as const,
+              blockType: { kind: "empty" as const },
+              then: [{ op: "local.get" as const, index: 1 }, { op: "return" as const }],
+            },
+            { op: "local.get" as const, index: 3 },
+            { op: "i32.eqz" as const },
+            {
+              op: "if" as const,
+              blockType: { kind: "empty" as const },
+              then: [{ op: "local.get" as const, index: 0 }, { op: "return" as const }],
+            },
+          ]),
+
       // newLen = lenA + lenB
       { op: "local.get", index: 2 },
       { op: "local.get", index: 3 },
