@@ -124,6 +124,20 @@ import {
   resolveStructFieldTypes,
 } from "./declarations/struct-type-registration.js";
 import { profileCount, profilePhase } from "../compile-profile.js";
+
+/** Whether function-body compilation changed the module-init inlining view. */
+function moduleInitInlinableRegistryChanged(
+  before: ReadonlyMap<string, unknown> | undefined,
+  current: ReadonlyMap<string, unknown>,
+): boolean {
+  if (before === undefined) return true;
+  if (before.size !== current.size) return true;
+  for (const [name, info] of before) {
+    if (current.get(name) !== info) return true;
+  }
+  return false;
+}
+
 /**
  * (#1700) Record TypedArray classifications for a user-exported function so
  * the JS-host `wrapExports` can marshal `Uint8Array` params/returns across
@@ -2646,6 +2660,11 @@ export function compileDeclarations(
     ctx.pendingInitBody = compiledInitFctx.body;
   }
 
+  // Snapshot the inlining view after pass 1; an unchanged view makes pass 2
+  // redundant for large bundled IIFEs.
+  const inlinableRegistryBeforeBodies =
+    (hasModuleInits || hasStaticInits) && moduleInitMode === "full" ? new Map(ctx.inlinableFunctions) : undefined;
+
   // (#3419) Last-wins for duplicate top-level function declarations — mirror
   // the collectDeclarations registration skip: only the LAST declaration per
   // name has a registered WasmFunction; compiling a shadowed body would write
@@ -2766,7 +2785,11 @@ export function compileDeclarations(
   // The first compile above still serves early closure/setup discovery.
   // Only the emitting call needs the final-registry recompile; in the other
   // multi-source modes the body it would produce is discarded unread.
-  if ((hasModuleInits || hasStaticInits) && moduleInitMode === "full") {
+  if (
+    (hasModuleInits || hasStaticInits) &&
+    moduleInitMode === "full" &&
+    moduleInitInlinableRegistryChanged(inlinableRegistryBeforeBodies, ctx.inlinableFunctions)
+  ) {
     // (#2965) Reset the program-order-sensitive property state to its
     // pre-pass-1 value so this recompile does not treat pass 1's own
     // defineProperty/freeze effects as pre-existing (see snapshot above).
@@ -2774,6 +2797,8 @@ export function compileDeclarations(
     compiledInitFctx = profilePhase("module-init-pass2", () => compileModuleInitBody());
     ctx.pendingInitBody = compiledInitFctx.body;
     dedupeDiagnosticsFrom(ctx, pass1DiagnosticMark); // (#4195) after pass 2, never before
+  } else if ((hasModuleInits || hasStaticInits) && moduleInitMode === "full") {
+    profileCount("module-init-pass2-skipped", 1);
   }
 
   // Clear pendingInitBody before injection (it lands in mod.functions after this)

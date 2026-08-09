@@ -8470,25 +8470,40 @@ function compileIIFE(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallEx
     }
   }
 
-  // Analyze captured variables from the enclosing scope
+  // Analyze captured variables from the enclosing scope. A module initializer
+  // has an empty local map, and a function context can also contain only names
+  // that are already direct functions. In either case no identifier in this
+  // IIFE can become a capture: the filtering loop below rejects those names
+  // unconditionally. Avoid walking the entire IIFE AST in that common case.
+  // This matters for bundled npm packages whose entry point is one giant IIFE
+  // (TypeScript's published `lib/typescript.js` is ~1M AST nodes).
   const body = funcExpr.body;
   const referencedNames = new Set<string>();
-  if (ts.isBlock(body)) {
-    for (const stmt of body.statements) {
-      collectReferencedIdentifiers(stmt, referencedNames);
-    }
-  } else {
-    collectReferencedIdentifiers(body, referencedNames);
-  }
-
-  // Detect which captured variables are written inside the IIFE body
   const writtenInIIFE = new Set<string>();
-  if (ts.isBlock(body)) {
-    for (const stmt of body.statements) {
-      collectWrittenIdentifiers(stmt, writtenInIIFE);
+  let hasCaptureCandidate = false;
+  for (const name of fctx.localMap.keys()) {
+    if (!ctx.funcMap.has(name)) {
+      hasCaptureCandidate = true;
+      break;
     }
-  } else {
-    collectWrittenIdentifiers(body, writtenInIIFE);
+  }
+  if (hasCaptureCandidate) {
+    if (ts.isBlock(body)) {
+      for (const stmt of body.statements) {
+        collectReferencedIdentifiers(stmt, referencedNames);
+      }
+    } else {
+      collectReferencedIdentifiers(body, referencedNames);
+    }
+
+    // Detect which captured variables are written inside the IIFE body
+    if (ts.isBlock(body)) {
+      for (const stmt of body.statements) {
+        collectWrittenIdentifiers(stmt, writtenInIIFE);
+      }
+    } else {
+      collectWrittenIdentifiers(body, writtenInIIFE);
+    }
   }
 
   const ownParamNames = new Set(

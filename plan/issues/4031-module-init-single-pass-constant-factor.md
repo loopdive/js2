@@ -4,7 +4,7 @@ id: 4031
 title: "The one remaining module-init compile is 51% of the ESLint compile"
 status: ready
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-09
 assignee: unassigned
 priority: high
 feasibility: medium
@@ -16,6 +16,11 @@ goal: npm-library-support
 sprint: current
 es_edition: n/a
 related: [3672, 4001]
+loc-budget-allow:
+  - src/codegen/declarations.ts
+  - src/codegen/expressions/calls.ts
+func-budget-allow:
+  - src/codegen/declarations.ts::compileDeclarations
 ---
 
 # #4031 — the surviving graph-initializer compile dominates the ESLint compile
@@ -57,6 +62,32 @@ do not treat 51 % as a fixed target.
 - Determine whether pass 1's *result* is needed at all, or only its side effects
   on `closureMap` — if the latter, a cheaper discovery walk may replace a full
   statement compile.
+
+## 2026-08-09 progress
+
+The first concrete attribution is a bundled-entry case rather than a uniformly
+expensive statement list. The published TypeScript entry has only two top-level
+statements: a small `var ts = {}` declaration and one 9.1 MB esbuild IIFE. Its
+AST contains about 1.08 million nodes, 11,065 functions, and 9,101 arrows.
+
+Two generic constant factors are now removed in the compiler:
+
+1. `compileIIFE` no longer walks the complete IIFE twice to discover captures
+   when its enclosing function has no possible capture candidate. A module
+   initializer has an empty local map, so this is an exact no-capture proof.
+2. The second module-init pass is now conditional. It is retained whenever
+   compiling intervening function bodies changes the inlinable-function
+   registry; otherwise the first pass is already the final initializer and is
+   reused. This preserves the purpose of pass 2 (late call-site inlining) while
+   avoiding a duplicate compile for bundled entries with no top-level function
+   bodies.
+
+On a 3,000-function IIFE control, the profile changed from pass 1 + pass 2 to
+pass 1 only (`module-init-pass2-skipped=1`). The existing #2965 state-order
+fixture and the IIFE/equivalence suites remain green. The full TypeScript
+bundle is still a bounded compile frontier, so no package-level success claim
+is made yet; the next measurement must be taken with the same supervised
+`compileProject` harness after the change.
 
 ## Acceptance criteria
 

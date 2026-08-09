@@ -4,7 +4,7 @@ title: "compiler: bound recursive package graph traversal for TypeScript"
 status: ready
 sprint: Backlog
 created: 2026-07-30
-updated: 2026-08-01
+updated: 2026-08-09
 priority: medium
 horizon: m
 feasibility: medium
@@ -43,6 +43,29 @@ generic three-minute limit. The remaining work is to reduce or schedule that
 large-package codegen frontier without
 silently dropping its dependency graph; the timeout remains the honest catalog
 result if the extended budget is still exhausted.
+
+## Current frontier and source-build comparison (2026-08-09)
+
+The published entry is a generated CommonJS artifact, not TypeScript source:
+the npm tarball contains no runtime `.ts` files and its `lib/typescript.js` is
+9,112,572 bytes. Parsing it produces two top-level statements, with the second
+being one 9.1 MB esbuild IIFE (about 1.08 million AST nodes, 11,065 functions,
+and 9,101 arrows). The generic #4031 module-init optimization now avoids the
+redundant no-capture AST walk and skips the second initializer compile when no
+new inlinable function was created. This is safe for the published bundle, but
+the full package still needs a supervised compile measurement before its
+catalog timeout can be revised.
+
+An upstream-source experiment is tracked separately from npm compatibility:
+the official v5.9.3 source archive is about 31 MB, `npm ci` takes 22 seconds,
+and TypeScript's own `npm run build:compiler` takes 18 seconds to regenerate
+the same 9.1 MB public bundle. Compiling the public source entry
+`src/typescript/typescript.ts` directly currently fails with 172 diagnostics
+(mostly Node/system and type-resolution gaps), while a small source leaf
+(`src/compiler/corePublic.ts`, 1,318 bytes) compiles to valid zero-import
+standalone Wasm in about 3.3 seconds. This proves a useful source lane, but it
+must not replace the npm lane or be compared as if it were the same artifact;
+the full source graph needs ESM graph, Node builtin, and checker/front-end work.
 
 ## Provenance
 
