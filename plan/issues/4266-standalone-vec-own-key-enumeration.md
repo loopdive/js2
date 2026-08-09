@@ -279,12 +279,38 @@ Two honest caveats about the arms:
   such as `"1.5"`), and the index loop never emits such a key, so it cannot
   introduce a duplicate. Both refinements are covered by the vitest suite.
 
+### Demand gate — PROVED byte-identical, not assumed
+
+`.tmp/identity.mts`: an 8-module corpus that never mentions a descriptor /
+own-key builtin (array for-in, `Object.keys` over an array, array HOFs, dynamic
+object for-in, `delete arr[i]`, string+number, a class, and the one-argument
+`Object.create(proto)` that must NOT arm the gate), compiled on BOTH lanes
+(16 binaries), swapping the six touched sources for their `upstream/main` copies
+by **file copy** (never `git stash`).
+
+**All 16 sha256/length pairs identical.** The `Object.create(proto)` row is the
+one that would break if the pre-scan matched `create` unconditionally.
+
 ### gc/host lane
 
 Unchanged by construction, twice over: every entry point is behind
 `ctx.standalone` (via `vecOwnKeysEnumerationActive`), and in gc/host mode the
 `env::__object_keys` / `env::__extern_has` / `env::__getOwnPropertyNames`
 imports own these paths — the natives this change edits are not even emitted.
+The gc half of the identity corpus above is the measured form of that.
+
+### `tests/equivalence/**` (the gc lane's own suite)
+
+Full run: **24 failed | 1637 passed | 3 todo** across 215 files. Every one of
+the 24 was chased rather than waved off: re-running the 11 failing FILES on the
+BASE arm gives **24 failed | 102 passed**, and the failing test-name lists are
+**identical** (`.tmp/equiv-base.log` vs `.tmp/equiv-new.log`). **Zero
+regressions.**
+
+Worth flagging separately: those 24 (TDZ, null-deref guards, `Reflect.construct`,
+`yield` as expression, …) fail on clean `upstream/main` in this container while
+CI's `equivalence-gate` is green on main — i.e. a local↔CI environment
+divergence that predates this change and is not this issue's to fix.
 
 ## Leftovers — measured, with the mechanism named
 
