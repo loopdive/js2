@@ -55,6 +55,7 @@
 //     `localClasses` set drives that exemption.
 
 import { ts, forEachChild } from "../ts-api.js";
+import type { IrClassId, IrUnitId } from "./identity.js";
 import {
   isAsyncIrReady,
   isUnpreparedAsyncCallee,
@@ -271,6 +272,8 @@ export interface IrSelection {
    *  but `compileIrPathFunctions` does NOT yet patch class-method bodies.
    *  Phase B wires the integration loop. */
   readonly classMembers?: ReadonlySet<string>;
+  /** Exact class-member claims; flat names above are compatibility only. */
+  readonly classMemberUnitIds?: ReadonlySet<IrUnitId>;
   /** Top-level FunctionDeclaration names that did NOT make it into `funcs`,
    *  paired with the rejection reason. Only populated when
    *  `IrSelectionOptions.trackFallbacks` is true. */
@@ -486,6 +489,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * syntax mirror below.
    */
   readonly projectedClassShapes?: ReadonlyMap<string, IrClassShape>;
+  /** Authoritative exact class-shape registry for member-body selection. */
+  readonly projectedClassShapesById?: ReadonlyMap<IrClassId, IrClassShape>;
   /**
    * Checker-backed identity for expressions whose value is an instance of a
    * projected local class. The callback returns the declaration's exact local
@@ -1457,6 +1462,7 @@ function whyNotIrClaimable(
   typeMap: TypeMap | undefined,
   localClasses: ReadonlySet<string>,
   isMethod: boolean = false,
+  preAbiEvidence?: IrStructuralSelectorAccessorAbiEvidence,
 ): IrFallbackReason | null {
   prepareDynamicEqualitySubject(fn, isMethod);
   currentModuleMapGetAliases = new Set<ts.VariableDeclaration>();
@@ -1548,6 +1554,9 @@ function whyNotIrClaimable(
   // / resolveParamType still fall back to the AST annotation, which is
   // sufficient for the explicit-typed-method shape the spec targets.
   const entry = !isMethod && ts.isFunctionDeclaration(fn) && fn.name ? typeMap?.get(fn.name.text) : undefined;
+  if (preAbiEvidence && preAbiEvidence.params.length !== fn.parameters.length) {
+    return "param-type-not-resolvable";
+  }
   const directMutationNames = fn.body ? collectDirectMutationNames(fn.body) : new Set<string>();
 
   let isVoidReturn = false;
@@ -1566,6 +1575,7 @@ function whyNotIrClaimable(
       // #3000-B: a set accessor carries no source-level return type — it is
       // inherently void. Its body is a void tail (the lone `this.#x = v;`
       // property store, accepted by `isPhase1Tail`'s void-tail arm).
+      if (preAbiEvidence && preAbiEvidence.returnType !== "void") return "return-type-not-resolvable";
       isVoidReturn = true;
     } else if (isAsyncFn) {
       // (#1373b C-1) An IR-claimed async fn compiles on the legacy SYNC
@@ -1581,7 +1591,7 @@ function whyNotIrClaimable(
       isVoidReturn = returnResolved === "void";
       isDynamicReturn = returnResolved === "dynamic";
     } else {
-      const returnResolved = resolveReturnType(fn, entry?.returnType);
+      const returnResolved = preAbiEvidence?.returnType ?? resolveReturnType(fn, entry?.returnType);
       if (returnResolved === null) return "return-type-not-resolvable";
       isVoidReturn = returnResolved === "void";
       isDynamicReturn = returnResolved === "dynamic";
@@ -1613,7 +1623,7 @@ function whyNotIrClaimable(
       if (!isPhase1BindingPattern(p.name, scope)) return "destructuring-param-complex";
 
       const mapped = entry?.params[i];
-      const paramResolved = resolveParamType(p, mapped);
+      const paramResolved = preAbiEvidence?.params[i] ?? resolveParamType(p, mapped);
       if (paramResolved === null) return "param-type-not-resolvable";
       // #2949 slice 2 — a DYNAMIC binding pattern (`function f({x}) …` with no
       // annotation/evidence) would need dynamic property access to destructure;
@@ -1639,7 +1649,7 @@ function whyNotIrClaimable(
     if (scope.has(p.name.text)) return "param-shape-rejected";
 
     const mapped = entry?.params[i];
-    const paramResolved = resolveParamType(p, mapped);
+    const paramResolved = preAbiEvidence?.params[i] ?? resolveParamType(p, mapped);
     if (paramResolved === null) return "param-type-not-resolvable";
     if (
       directMutationNames.has(p.name.text) &&
@@ -1771,13 +1781,19 @@ function whyNotIrClaimable(
 }
 
 /** @internal Exact-subject entry used by the structural selector orchestration. */
+export interface IrStructuralSelectorAccessorAbiEvidence {
+  readonly params: readonly "dynamic"[];
+  readonly returnType: "string" | "void";
+}
+
 export function assessIrStructuralSelectorSubject(
   subject: IrClaimableSubject,
   typeMap: TypeMap | undefined,
   localClasses: ReadonlySet<string>,
   isMethod = false,
+  preAbiEvidence?: IrStructuralSelectorAccessorAbiEvidence,
 ): { readonly reason: IrFallbackReason | null; readonly detail?: string } {
-  const reason = whyNotIrClaimable(subject, typeMap, localClasses, isMethod);
+  const reason = whyNotIrClaimable(subject, typeMap, localClasses, isMethod, preAbiEvidence);
   const detail =
     reason === "body-shape-rejected" && SHAPE_DIAG_ON
       ? (takeShapeRejectDetail() ?? "unattributed-arm:helper-internal")
@@ -2539,6 +2555,10 @@ function dynamicUsesAreMoveOnly(
       // Plain assignment re-binds; scan the RHS against the LHS's dyn-ness.
       if (e.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isIdentifier(e.left)) {
         if (expectDyn) return false; // assignment-as-value in a dyn position — slice 3
+        const moduleBinding = currentModuleBindingResolver?.(e.left, e.right);
+        if (moduleBinding?.valueKind.kind === "dynamic") {
+          return rightIsDyn && scanExpr(e.right, true);
+        }
         if (!dynNames.has(e.left.text)) return scanExpr(e.right, false);
         if (isDynShaped(e.right)) return scanExpr(e.right, true);
         const concrete = unwrap(e.right);
@@ -4175,6 +4195,13 @@ function isPhase1Tail(
       return shapeNo("tail-module-storage-unrepresentable", expr);
     }
     if (ts.isBinaryExpression(expr) && ts.isIdentifier(expr.left)) {
+      const exactModuleWrite =
+        expr.operatorToken.kind === ts.SyntaxKind.EqualsToken
+          ? currentModuleBindingResolver?.(expr.left, expr.right)
+          : undefined;
+      if (exactModuleWrite) {
+        return isPhase1Expr(expr.right, scope, localClasses);
+      }
       if (isUnrepresentableModuleBinding(expr.left)) {
         return shapeNo("tail-module-storage-unrepresentable", expr);
       }
@@ -6284,6 +6311,12 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   }
   if (ts.isBinaryExpression(expr)) {
     const binOp = expr.operatorToken.kind;
+    if (binOp === ts.SyntaxKind.EqualsToken && ts.isIdentifier(expr.left)) {
+      const dynamicModuleWrite = currentModuleBindingResolver?.(expr.left, expr.right);
+      if (dynamicModuleWrite?.valueKind.kind === "dynamic") {
+        return isPhase1Expr(expr.right, scope, localClasses);
+      }
+    }
     if (binOp === ts.SyntaxKind.AmpersandAmpersandToken || binOp === ts.SyntaxKind.BarBarToken) {
       if (
         !declaredExpressionHasExactFamily(expr.left, "boolean", scope) ||
@@ -7263,7 +7296,7 @@ export function referencesSuper(node: ts.Node): boolean {
  * `extends mixin(Base)` — deferred). The caller cross-checks the name against
  * `localClasses` to confirm the parent is an IR-projectable user class.
  */
-export function extendsParentName(stmt: ts.ClassDeclaration): string | null {
+export function extendsParentName(stmt: ts.ClassDeclaration | ts.ClassExpression): string | null {
   for (const h of stmt.heritageClauses ?? []) {
     if (h.token !== ts.SyntaxKind.ExtendsKeyword) continue;
     const first = h.types[0]?.expression;

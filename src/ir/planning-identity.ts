@@ -569,6 +569,19 @@ export function buildIrPlanningIdentityContext(inventory: IrUnitInventory): IrPl
         `unit ${unit.id} references unknown terminal owner ${unit.terminalOwnerId}`,
       );
     }
+    if (unit.terminal && unit.containingTerminalOwnerId !== undefined) {
+      const containing = terminalByUnitId.get(unit.containingTerminalOwnerId);
+      if (
+        unit.containingTerminalOwnerId === unit.id ||
+        containing === undefined ||
+        containing.sourceId !== unit.sourceId
+      ) {
+        return planningIdentityInvariant(
+          "invalid-terminal-owner",
+          `nested terminal ${unit.id} references invalid containing terminal ${unit.containingTerminalOwnerId}`,
+        );
+      }
+    }
   }
 
   const unitIdByDeclaration = new Map<ts.Node, IrUnitId>();
@@ -676,6 +689,23 @@ export function buildIrPlanningIdentityContext(inventory: IrUnitInventory): IrPl
       return planningIdentityInvariant(
         "missing-class-declaration",
         `source class ${classRecord.id} has no scanned AST declaration`,
+      );
+    }
+  }
+
+  for (const terminal of inventory.terminalUnits) {
+    if (terminal.containingTerminalOwnerId === undefined) continue;
+    const classRecord =
+      terminal.lexicalOwnerId === null ? undefined : classesById.get(terminal.lexicalOwnerId as IrClassId);
+    if (
+      terminal.observedKind !== "class-member" ||
+      !classRecord ||
+      classRecord.sourceId !== terminal.sourceId ||
+      classRecord.lexicalOwnerId !== terminal.containingTerminalOwnerId
+    ) {
+      return planningIdentityInvariant(
+        "invalid-terminal-owner",
+        `nested terminal ${terminal.id} is detached from its enclosing class/component edge`,
       );
     }
   }
