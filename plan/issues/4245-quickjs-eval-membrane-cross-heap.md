@@ -1,10 +1,11 @@
 ---
 id: 4245
 title: "QuickJS eval membrane — live cross-heap object access both directions + cycle-safe lifetimes (gc_mark), replacing slice-2's copy/box tier"
-status: ready
+status: in-progress
+assignee: ttraenkler/opus-membrane
 sprint: current
 created: 2026-08-08
-updated: 2026-08-08
+updated: 2026-08-09
 priority: high
 horizon: xl
 feasibility: hard
@@ -689,3 +690,207 @@ names. The obvious checks — `/\(type \$Proxy\b/` and
 carries the machinery, which reads as a false negative and briefly looked
 like the premise had failed. Match on `\$\$Proxy` / enumerate
 `\$__proxy_[a-z_]+` identifiers instead.
+
+## Slice 1 — implementation record
+
+Landed 2026-08-09 on `issue-4245-membrane-slice1` (stacked on #4238 slice 3 /
+PR #4321). **`src/` is untouched** — every line of this slice is in `scripts/`
+and `tests/`, so the interpreter provider, acorn and the IR substrate are
+bit-for-bit unchanged and the no-flag path is byte-identical by construction.
+
+### What landed
+
+| file | why |
+| --- | --- |
+| `scripts/quickjs-artifact/qjs_shim.c` | the membrane itself: two `JSClassDef`s (`CompiledObject` / `CompiledFunction`), the shared `JSClassExoticMethods` table, the non-owning `gc_id → wrapper` dedup array + finalizer, `qjs_set_membrane_callbacks`, `qjs_new_wrapper`, `qjs_wrapper_gc_handle` |
+| `scripts/quickjs-artifact/build.sh` | `-Wl,--export-table -Wl,--growable-table` — the trap edge needs the artifact's own `__indirect_function_table` reachable and growable from the harness |
+| `scripts/quickjs-eval-provider.mjs` | adapter: pin registry + `qjsWrapOutbound`/`qjsIsMembraneWrappable`, the five `__membrane_*` exports, the GC→QuickJS conversion table's last row, wrapper mirroring in `qjsPushGlobals` / `qjsPushGlobalLexicalCells` / the direct-eval scope snapshot; harness: `bindQuickjsMembraneCallbacks` link step, the `__indirect_function_table` export assertion, and the `membraneProbe` build-time canary |
+| `tests/quickjs-eval-membrane.test.ts` | new self-gating lane, 18 cases (read/write/create/identity×2/distinct/call/typeof/callback-arg/`in`/`delete`/defineProperty/Symbol/direct-eval object + closure residual/ABI order/stale-artifact) |
+| `tests/quickjs-eval-provider.test.ts` | two #4238 expectations that this slice deliberately RETIRES: the compiled-object refusal and the "object-valued caller binding is shadowed as `undefined`" residual |
+
+### Artifact
+
+The shim changed, so the artifact was rebuilt (reproducibly — a no-change
+rebuild first reproduced the old sha bit-for-bit before the edits went in).
+
+| | key | sha256 |
+| --- | --- | --- |
+| before | `d7ac807e1f14e8e5` | `18caf5889aaaa961f063be31f384f559ff8698a4b12fedaf8aec2524dd84d05f` |
+| **after** | **`d8a5a91d6f183b87`** | **`b0662069c241d0430d91c53a3b0e2d1281fd9eb78dd1c93490b0a9dfa70eec5b`** |
+
+1,016,254 bytes raw / 349,808 gzip (was 1,012,154 / 348,364). It still imports
+ONLY `wasi_snapshot_preview1`; the new export surface is
+`__indirect_function_table` plus the three `qjs_*` wrappers above.
+
+### The trap edge, as built
+
+The plan's §1.3 mechanism works exactly as specified and needed no fallback:
+`table.grow(5)` on the artifact's exported function table, five `table.set`s of
+the adapter's `__membrane_*` exports, one `qjs_set_membrane_callbacks(...)` with
+the slot indices, and C calls them through `((fn_t)(uintptr_t)idx)(…)` — which
+clang lowers to `call_indirect` against that table. **No JS closure is on the
+trap path.** The all-i32 signatures typecheck at the engine level, so a drift
+would be a loud "indirect call type mismatch" on the first trap; none occurred.
+
+The `__membrane_*` ABI is deliberately sentinel-free (the plan's `1`/`2` error
+codes are gone): `get`/`call` return an owned handle where `0` means
+"undefined" / "throw", and `set`/`has`/`delete` return 1/0. Handle ownership
+runs the SAME direction as the shim's ABI note 2 across the callback edge — the
+shim mints and frees `h`, `thisH` and every `argv[i]`; the adapter borrows them.
+
+### DECISION: the callable wrapper was pulled FORWARD into slice 1
+
+The spec's §6 puts the callable class and `__membrane_call` in slice 2. Given
+slice 3's measurement — 230 of 337 quickjs-only failures are the harness's own
+`assert` (182) and `fnGlobalObject` (48) being `ReferenceError` inside eval
+bodies — a data-only slice 1 would have moved that bucket by **zero**: the
+wrapper would make `assert` *visible* and calling it would still be a TypeError.
+
+The delta measured out small, and that is the actual justification, not the
+payoff: the second `JSClassDef` differs from the first by one field (`.call`),
+reuses the same exotic table, the same dedup array and the same finalizer;
+`__membrane_call` is ~25 lines of adapter TS. The only genuinely new thing is
+the invocation itself, and #2928 had already built it —
+`__runtime_eval_apply_callable` is a private intrinsic the standalone compiler
+lowers to `__apply_closure`, whose cross-module AOT-callable-carrier arm exists
+precisely so a separately compiled provider can call back into caller code.
+So: pulled forward. Slice 2 keeps the OUTWARD live view (`qjs_value_ptr`,
+`makeQjsBox`, the collapses, `own_keys`), which is untouched here.
+
+**That intrinsic is the one silent-failure risk in this slice**, because if the
+name-based lowering ever stops firing, the adapter falls back to the stub in its
+own source and every call from evaluated code answers `undefined` — green tests,
+dead membrane. Two guards: the `20` digit of the build-time `membraneProbe`
+canary, and a deliberate check performed while writing this — the stub was
+temporarily poisoned to `return 12345` and the canary still read **4321**,
+proving the stub is dead code and the intrinsic really fires.
+
+### MEASURED — `language/eval-code/` under the flag
+
+Same scoped set, same container, same command as the #4238 slice-3 A/B:
+
+```
+TEST262_TARGET=standalone TEST262_PATH_FILTER='language/eval-code/' \
+  JS2WASM_EVAL_ENGINE=quickjs bash scripts/run-test262-vitest.sh
+```
+
+| engine | pass / total | |
+| --- | --- | --- |
+| quickjs BEFORE this slice (#4238 slice 3) | 442 / 816 | 54.2 % |
+| **quickjs AFTER this slice** | **560 / 816** | **68.6 %** |
+| interpreter (`TEST262_FULL_RUNTIME_EVAL=1`, unchanged) | 779 / 816 | 95.5 % |
+
+**+118 tests.** The whole gain is in the two annexB buckets, which is exactly
+where the harness-`assert` dependency lived:
+
+| sub-corpus | qjs before | **qjs after** | interpreter |
+| --- | --- | --- | --- |
+| `language/eval-code/direct` | 260 / 286 | 260 / 286 | 271 / 286 |
+| `language/eval-code/indirect` | 48 / 61 | 48 / 61 | 56 / 61 |
+| `annexB/…/eval-code/direct` | 92 / 309 | **155 / 309** | 300 / 309 |
+| `annexB/…/eval-code/indirect` | 42 / 160 | **97 / 160** | 152 / 160 |
+
+Bucket 7 is **fully cleared**: zero remaining `assert is not defined` /
+`fnGlobalObject is not defined` failures (was 230).
+
+This is short of the slice-3 record's *projected* ceiling of 672, and the
+projection itself said why — unblocking a test only lets it reach the thing it
+actually tests. The 256 remaining failures bucket as:
+
+| count | shape | owner |
+| --- | --- | --- |
+| 103 | `Expected SameValue(…)` | mostly annexB B.3.3 value/ordering |
+| 64 | "An initialized binding is not created prior to evaluation" | EvalDeclarationInstantiation |
+| 32 | "binding is not reinitialized" | EvalDeclarationInstantiation |
+| 18 + 14 | "f should be an own property" / `f is not defined` | annexB block-function hoisting |
+| ~25 | long tail (redeclaration, `$262.createRealm`, …) | mixed |
+
+i.e. the residual is #4238's **bucket 2** (var-environment fidelity /
+`EvalDeclarationInstantiation`, ~102 quickjs-only before this slice and now the
+dominant term), not the membrane. That bucket belongs to the #4238 scope-bridge
+lane, not to #4245.
+
+Non-regression checks on the same run: `language/*` is unchanged test-for-test
+(260/286 and 48/61 both identical), so nothing the membrane touches cost a
+previously passing test. `language/eval-code/indirect/realm.js` still fails with
+"dereferencing a null pointer [in `__module_init()`]" — pre-existing (that
+bucket's count did not move), `$262.createRealm`, not this slice.
+
+### Acceptance criteria — status after slice 1
+
+- [x] **box 1** — a compiled GC object passed in via a runtime-assembled name is
+      READ and WRITTEN in evaluated code, the compiled side observes the write,
+      and identity is preserved across multiple evals. (Lane cases 1–7; the
+      build-time canary asserts the same four properties as one 4-digit reading.)
+- [ ] box 2 — outward live view (slice 2).
+- [ ] box 3 — lifetimes / leak accounting (slice 3). Retention is
+      context-lifetime here, by design: the wrapper finalizer clears the dedup
+      slot (so a collected wrapper is never handed out again) but does NOT
+      release the adapter's pin, and there is no `gc_mark`.
+- [~] box 4 — the lane exists (`tests/quickjs-eval-membrane.test.ts`, 18 cases)
+      and is green together with `tests/quickjs-eval-provider.test.ts`
+      (46 total). The default-path suites (`issue-2928-refusal-provider`,
+      `issue-2960`, `issue-2928-e6-provider-cache`, `issue-1102`, `issue-4162`,
+      `issue-2657-raw-wasi-fd-import`) are green with no env set: 73 passed,
+      1 skipped.
+- [~] box 5 — residuals below; the outward/lifetime ones are still slices 2–3.
+
+### Residuals measured or enumerated by THIS slice
+
+1. **A raw closure VALUE is not callable across the membrane** — and this one is
+   NEW information, pinned by a lane case. A compiled *top-level function
+   binding* works (the caller wraps it in the #2928 AOT callable carrier before
+   it reaches the seam — that is the whole 230-file win). A closure *value* —
+   `var f = function(){…}` in a caller's local scope, or a closure read off a
+   plain compiled object — is **not** carrier-wrapped by the caller, so it
+   crosses as a plain non-callable wrapper and a call is a loud QuickJS
+   TypeError. Measured, not assumed: `typeof` answers `"object"` and the call
+   throws. An adapter cannot fix this — it cannot invoke another module's
+   private closure struct, which is exactly why the carrier exists. **The
+   follow-up is caller-side codegen** (carrier-wrap closure values written into
+   direct-eval cells and returned by `__extern_get` on non-carrier receivers);
+   filing it is deliberately left to the lead, since it edits `src/` and this
+   issue's hard constraint says to report before touching it.
+2. **Enumeration is empty** — `get_own_property_names` is NULL this slice, so
+   `Object.keys(wrapper)` / `for…in` over a wrapper yields nothing. Slice 2
+   (`__membrane_own_keys` + `qjs_new_array`/`qjs_set_prop_idx`).
+3. **Descriptor flags are synthesized** —
+   `{writable, enumerable, configurable} = true` for anything present;
+   `Object.defineProperty` on a wrapper is a typed TypeError rather than an
+   approximation (lane case).
+4. **Symbol keys are absent / no-op** in both directions, detected via
+   `JS_AtomToValue` + `JS_IsSymbol` so distinct symbols can never alias onto one
+   string key. A lane case asserts the no-op is silent, not a trap.
+5. **No prototype crossing** — the wrapper's own prototype is the class's
+   (null), and every get is answered by the trap, so the compiled object's real
+   chain never appears. `instanceof` across heaps stays meaningless.
+6. **A compiled callable that THROWS unwinds past QuickJS's frames.** Wasm
+   exception tags are module-local and standalone emits single-tag catches, so
+   the caller module's exception propagates from the AOT body straight out
+   through QuickJS's C frames to the caller's own `try`. The observable outcome
+   is right for the dominant case (`assert(false)` inside eval fails the test,
+   catchable by the caller), but a `try/catch` written *inside the evaluated
+   source* does NOT catch it, and QuickJS's per-call bookkeeping is skipped on
+   that path. The context is per-instantiation, so the damage is bounded.
+7. **Retention is context-lifetime** on the compiled side (box 3 above).
+8. `eval` / `Function` are excluded from wrapper mirroring on purpose — the
+   memoized intrinsic markers must stay QuickJS's own natives, or evaluated
+   code's `eval(...)` would route back out into the compiled marker and re-enter
+   the provider mid-evaluation.
+
+### Deviations from the plan
+
+- **Callable class + `__membrane_call` pulled forward from slice 2** (above).
+- **Sentinel-free callback ABI** instead of the plan's `0`/`1`/`2` codes.
+- **Ownership of trap arguments moved to the shim** (the plan had the adapter
+  freeing `argv[i]`); C created them, so C frees them, on every path.
+- **`qjs_get/set/has/delete_prop_len`, `qjs_throw_type_error`, `qjs_run_gc` and
+  `qjs_own_keys` were NOT added.** They serve the outward direction and the
+  lifetime protocol; adding them now would grow the artifact's ABI surface for
+  code no caller has yet.
+- **Classes are registered lazily** from `qjs_new_wrapper` via `JS_GetRuntime` +
+  `JS_IsRegisteredClass`, rather than by an explicit adapter-called init — it
+  removes an ordering obligation from the link step.
+- **Direct-eval scope snapshots also wrap** (the plan named only the globals
+  mirror in slice 1); it is the same one-line predicate, and it is what makes a
+  sloppy caller's local object live inside `with (S)`.
