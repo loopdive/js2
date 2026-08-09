@@ -40,6 +40,33 @@ import { REACT_EXPECT_SHIM, LAST_ERROR_EXPORT, buildTestFunction } from "./react
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPORT_PATH = join(HERE, "report", "react-dom-upstream-suite.json");
 
+let nativeContextFile = "<setup>";
+let nativeContextTest = "<setup>";
+
+export function isExpectedLateJsdomHostError(error) {
+  return error?.name === "NotFoundError" && error?.message === "The node to be removed is not a child of this node.";
+}
+
+function installNativeHostErrorBoundary(nativeHostErrors) {
+  const onUncaught = (error) => {
+    if (!isExpectedLateJsdomHostError(error)) {
+      process.off("uncaughtException", onUncaught);
+      process.nextTick(() => {
+        throw error;
+      });
+      return;
+    }
+    nativeHostErrors.push({
+      file: nativeContextFile,
+      test: nativeContextTest,
+      name: error.name,
+      message: error.message,
+    });
+  };
+  process.on("uncaughtException", onUncaught);
+  return () => process.off("uncaughtException", onUncaught);
+}
+
 // Upstream's `suite` scaffolding is replicated into every lifted test, so a
 // whole file's tests can generate megabytes. Split up front by generated size —
 // a separate lever from the validation-failure subdivision below, which exists
@@ -204,6 +231,7 @@ async function runNative(implementation, tests) {
     const runners = buildNativeRunners(implementation, tests)(nativeRequire);
     const out = [];
     for (const test of tests) {
+      nativeContextTest = test.id;
       let value;
       let error = null;
       try {
@@ -212,6 +240,10 @@ async function runNative(implementation, tests) {
         error = thrown instanceof Error ? thrown.message : String(thrown);
       }
       out.push({ id: test.id, value, error, message: value === 1 ? "" : runners.__lastError() });
+      // React's scheduler shim uses host timers. Give those callbacks one turn
+      // to settle before starting the next upstream test, while the native host
+      // error boundary is still active for any late jsdom exception.
+      await new Promise((resolve) => setImmediate(resolve));
     }
     return out;
   } catch (thrown) {
@@ -227,7 +259,10 @@ async function runNativeByFile(implementation, tests) {
     byFile.get(test.file).push(test);
   }
   const results = [];
-  for (const fileTests of byFile.values()) results.push(...(await runNative(implementation, fileTests)));
+  for (const [file, fileTests] of byFile) {
+    nativeContextFile = file;
+    results.push(...(await runNative(implementation, fileTests)));
+  }
   return results;
 }
 
@@ -366,10 +401,12 @@ export async function runHarness({ quiet = false } = {}) {
   const batchReports = [];
   const runResults = new Map();
   const quarantined = [];
+  const nativeHostErrors = [];
   let admitted = [];
   let totalCompileMs = baseline.compileMs;
   let totalBytes = 0;
   let implementationInvalid = null;
+  const disposeNativeHostErrorBoundary = installNativeHostErrorBoundary(nativeHostErrors);
 
   if (!baseline.validates) {
     // The whole corpus is behind this one fact. The tests still RUN natively so
@@ -466,6 +503,7 @@ export async function runHarness({ quiet = false } = {}) {
           `${validates ? "valid" : `INVALID — ${String(firstError).slice(0, 70)}`}`,
       );
 
+      nativeContextFile = file;
       const nativeResults = new Map((await runNative(implementation, batchTests)).map((e) => [e.id, e]));
       for (const test of batchTests) {
         runResults.set(test.id, {
@@ -481,6 +519,12 @@ export async function runHarness({ quiet = false } = {}) {
       for (const chunk of splitBySize(fileTests)) await compileGroup(file, chunk);
     }
   }
+
+  // A scheduler callback can outlive the final test body. Give late host work
+  // a real macrotask window while the boundary is still installed, then restore
+  // normal process error handling before producing the report.
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  disposeNativeHostErrorBoundary();
 
   const invalidBatches = batchReports.filter((batch) => !batch.validates);
   report.compile = {
@@ -557,6 +601,7 @@ export async function runHarness({ quiet = false } = {}) {
     passed,
     failed,
     harnessIncompatible: tests.length - scored.length,
+    nativeHostErrors,
     tests,
   };
   report.summary = {
@@ -572,6 +617,7 @@ export async function runHarness({ quiet = false } = {}) {
     passed,
     failed,
     harnessIncompatible: report.results.harnessIncompatible,
+    nativeHostErrors: nativeHostErrors.length,
     compileMs: totalCompileMs,
     binaryBytes: report.compile.binaryBytes,
     batches: batchReports.length,
@@ -584,6 +630,9 @@ export async function runHarness({ quiet = false } = {}) {
   mkdirSync(dirname(REPORT_PATH), { recursive: true });
   writeFileSync(REPORT_PATH, `${JSON.stringify(report, null, 2)}\n`);
   log(`[dogfood] ${report.summary.headline}`);
+  if (nativeHostErrors.length > 0) {
+    log(`[dogfood] native oracle recorded ${nativeHostErrors.length} expected late jsdom host error(s)`);
+  }
   log(`[dogfood] full report → ${REPORT_PATH}`);
   return report;
 }
