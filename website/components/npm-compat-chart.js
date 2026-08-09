@@ -66,6 +66,21 @@ class NpmCompatChart extends HTMLElement {
     return `https://www.npmjs.com/package/${name}/v/${version}${code ? "?activeTab=code" : ""}`;
   }
 
+  // An issue reference here is THIS project's markdown issue
+  // (plan/issues/<id>-<slug>.md), not a GitHub issue. The repo has no GitHub
+  // issues, and issue ids share one number sequence with PRs, so
+  // github.com/loopdive/js2/issues/<id> did not 404 — it silently redirected to
+  // an unrelated PULL REQUEST (lodash's #1031 opened "feat(number): add
+  // standalone integer radix toString"). Link the dashboard's markdown viewer,
+  // which resolves a bare id via plan/issues/index.json.
+  //
+  // Relative, not absolute: this page is served both from the domain root and
+  // from a project subpath (loopdive.github.io/js2/), and it always sits one
+  // level above `dashboard/`.
+  _issueUrl(id) {
+    return `dashboard/issue.html?id=${encodeURIComponent(String(id))}`;
+  }
+
   _fmtDate(iso) {
     if (!iso) return "";
     const d = new Date(iso);
@@ -340,7 +355,7 @@ class NpmCompatChart extends HTMLElement {
     const npmPackageUrl = this._npmUrl(pkg);
     const npmCodeUrl = this._npmUrl(pkg, true);
     const issueLink = pkg.issue
-      ? `<a class="issue" href="https://github.com/loopdive/js2/issues/${pkg.issue}" target="_blank" rel="noopener">#${pkg.issue}</a>`
+      ? `<a class="issue" href="${this._issueUrl(pkg.issue)}" target="_blank" rel="noopener">#${pkg.issue}</a>`
       : "";
     const lanes = pkg.perf?.lanes ?? (pkg.perf ? { jsHost: pkg.perf } : {});
     const speedFactor = (lane) => {
@@ -455,7 +470,7 @@ class NpmCompatChart extends HTMLElement {
           pkg.knownBugs
             .map(
               (b) =>
-                `<a href="https://github.com/loopdive/js2/issues/${b.issue}" target="_blank" rel="noopener" title="${this._esc(b.summary)}">#${b.issue}</a>`,
+                `<a href="${this._issueUrl(b.issue)}" target="_blank" rel="noopener" title="${this._esc(b.summary)}">#${b.issue}</a>`,
             )
             .join(" "),
         )
