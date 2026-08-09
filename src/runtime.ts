@@ -16078,7 +16078,7 @@ export function buildImports(
         fn = function (this: any) {
           guardEnter();
           try {
-            return original.call(this);
+            return original();
           } catch (e) {
             lastCaughtException = e;
             throw e;
@@ -16090,7 +16090,7 @@ export function buildImports(
         fn = function (this: any, a: any) {
           guardEnter();
           try {
-            return original.call(this, a);
+            return original(a);
           } catch (e) {
             lastCaughtException = e;
             throw e;
@@ -16102,7 +16102,7 @@ export function buildImports(
         fn = function (this: any, a: any, b: any) {
           guardEnter();
           try {
-            return original.call(this, a, b);
+            return original(a, b);
           } catch (e) {
             lastCaughtException = e;
             throw e;
@@ -16114,7 +16114,7 @@ export function buildImports(
         fn = function (this: any, a: any, b: any, c: any) {
           guardEnter();
           try {
-            return original.call(this, a, b, c);
+            return original(a, b, c);
           } catch (e) {
             lastCaughtException = e;
             throw e;
@@ -16126,7 +16126,7 @@ export function buildImports(
         fn = function (this: any, a: any, b: any, c: any, d: any) {
           guardEnter();
           try {
-            return original.call(this, a, b, c, d);
+            return original(a, b, c, d);
           } catch (e) {
             lastCaughtException = e;
             throw e;
