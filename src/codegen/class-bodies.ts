@@ -5,6 +5,7 @@
  * Extracted from codegen/index.ts (#1013).
  */
 import { ts } from "../ts-api.js";
+import { findConstructorImplementation, hasAbstractModifier, hasStaticModifier } from "./ast-modifiers.js";
 import { nativeTypeFromTypeNode, nativeTypeOfDeclaration } from "./native-type-annotations.js";
 import { isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType } from "../ir/types.js";
@@ -45,8 +46,6 @@ import {
 import {
   cacheStringLiterals,
   extractConstantDefault,
-  hasAbstractModifier,
-  hasStaticModifier,
   hoistLetConstWithTdz, // (#2641) lexical shadowing in class method/ctor/generator bodies
   hoistVarDeclarations, // (#2641)
   resolveWasmType,
@@ -383,7 +382,7 @@ function findNearestAncestorCtorParams(
   while (anc && !seen.has(anc)) {
     seen.add(anc);
     const ancDecl = ctx.classDeclarationMap.get(anc);
-    const ancCtor = ancDecl?.members.find(ts.isConstructorDeclaration) as ts.ConstructorDeclaration | undefined;
+    const ancCtor = ancDecl ? findConstructorImplementation(ancDecl) : undefined;
     if (ancCtor) return ancCtor.parameters;
     anc = ctx.classParentMap.get(anc);
   }
@@ -767,7 +766,7 @@ export function collectClassDeclaration(
   ctx.typeIdxToStructName.set(structTypeIdx, className);
 
   // Find the constructor to determine struct fields from `this.x = ...` assignments
-  const ctor = decl.members.find(ts.isConstructorDeclaration) as ts.ConstructorDeclaration | undefined;
+  const ctor = findConstructorImplementation(decl);
   const ownFields: FieldDef[] = [];
   // (#3673) Declared instance properties, by name — the constructor-assignment
   // pass below needs the DECLARATION to see an explicit native annotation.
@@ -1696,7 +1695,7 @@ function compileClassBodiesInner(
   routing?: ClassBodyCompileRouting,
 ): void {
   // Compile constructor
-  const ctor = decl.members.find(ts.isConstructorDeclaration) as ts.ConstructorDeclaration | undefined;
+  const ctor = findConstructorImplementation(decl);
   const ctorName = `${className}_new`;
   const ctorLocalIdx = funcByName.get(classMemberFuncKey(ctx, ctorName)); // (#1983)
   if (ctorLocalIdx !== undefined && !skipPreparedClassConstructorBody(ctx, funcByName, routing, className, ctorName)) {

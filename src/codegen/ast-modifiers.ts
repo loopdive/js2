@@ -35,3 +35,12 @@ export function hasStaticModifier(node: ts.Node): boolean {
 export function isGeneratorFunction(node: ts.FunctionDeclaration): boolean {
   return node.asteriskToken !== undefined;
 }
+
+/** Return the one executable constructor, ignoring TypeScript overload signatures. */
+export function findConstructorImplementation(
+  declaration: ts.ClassDeclaration | ts.ClassExpression,
+): ts.ConstructorDeclaration | undefined {
+  return declaration.members.find(
+    (member): member is ts.ConstructorDeclaration => ts.isConstructorDeclaration(member) && member.body !== undefined,
+  );
+}
