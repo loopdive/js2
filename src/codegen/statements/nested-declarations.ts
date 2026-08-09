@@ -2710,10 +2710,10 @@ export function emitArgumentsVecBody(
     argsLocalIdx: number;
     arrTmpIdx: number;
   },
+  registerWithHost = true,
 ): void {
   const numArgs = paramTypes.length;
   const { vecTypeIdx: vti, arrTypeIdx: ati, argsLocalIdx: argsLocal, arrTmpIdx: arrTmp } = locals;
-
   // (#2743 a) Register this arguments vec with the host so its `[[Prototype]]`
   // resolves to %Object.prototype% and `.constructor`/`hasOwnProperty` behave
   // like an ordinary Object (§10.4.4). This is a NEW host import; adding it
@@ -2721,7 +2721,7 @@ export function emitArgumentsVecBody(
   // emitted below — so the box/unbox `funcMap` lookups resolve post-shift and
   // already-emitted bodies (this fctx + prior functions) are walked by the
   // flush. Host-mode only: standalone/WASI keeps the bare opaque vec.
-  if (!ctx.standalone && !ctx.wasi) {
+  if (registerWithHost && !ctx.standalone && !ctx.wasi) {
     ensureLateImport(ctx, "__register_arguments", [{ kind: "externref" }], []);
     flushLateImportShifts(ctx, fctx);
   }
@@ -2806,7 +2806,7 @@ export function emitArgumentsVecBody(
   // import + index shift were settled at the top of this function, so the
   // funcMap entry is final here — no further shift between registration and use.
   const registerArgsIdx = ctx.funcMap.get("__register_arguments");
-  if (registerArgsIdx !== undefined && !ctx.standalone && !ctx.wasi) {
+  if (registerWithHost && registerArgsIdx !== undefined && !ctx.standalone && !ctx.wasi) {
     fctx.body.push({ op: "local.get", index: argsLocal });
     fctx.body.push({ op: "extern.convert_any" });
     fctx.body.push({ op: "call", funcIdx: registerArgsIdx });
