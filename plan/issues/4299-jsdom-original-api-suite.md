@@ -73,6 +73,18 @@ misleading.
 5. Report admitted, scored, passed, failed and infrastructure-incompatible
    counts separately on the npm compatibility page.
 
+## Suspended handoff (2026-08-09)
+
+Commit `c1eed0951fd680` adds the pinned upstream-suite accounting and keeps the
+card honest at **0/318 executed** while no implementation binary exists. The
+published branch is `codex/npm-compat-handoff`; there is no separate unfinished
+jsdom worktree or hidden patch.
+
+Resume at the compiler, not the adapter: profile the 180-second
+`compileProject(package/lib/api.js)` child by graph and finalization phase. Do
+not replace jsdom with a reduced implementation, count native-only execution,
+or turn the entry-barrel validation result into a package pass.
+
 ## Acceptance criteria
 
 - [ ] The full published jsdom entry graph emits a WebAssembly binary within a

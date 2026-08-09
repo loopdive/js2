@@ -308,6 +308,22 @@ there is still **no 308001 Wasm parity claim**. The next leverage is
 consumer-driven property specialization of returned method tables—especially
 `createNodeFactory`—plus phase-level profiling of the post-body finalizers.
 
+### Suspended handoff (2026-08-09)
+
+The consumer-driven specialization is committed as `7a50f7fd9a34fd` on the
+published `codex/npm-compat-handoff` branch. There is no later uncommitted
+TypeScript experiment.
+The authoritative dynamic probe remains CPU-active rather than idle: it has
+compiled 3,252 bodies when the 300.3-second child budget terminates it, but it
+never emits a binary. Therefore TypeScript does **not** compile yet and 308001
+is still only the native oracle.
+
+Resume with phase-level profiling after the final body and consumer-driven
+property specialization of returned method tables, starting with
+`createNodeFactory`. Recompiling the upstream TypeScript source is already the
+preferred experiment; merely raising the timeout repeats the measured
+post-body tail without addressing it.
+
 ### Decision
 
 Keep the upstream TypeScript source route as the migration substrate, but do

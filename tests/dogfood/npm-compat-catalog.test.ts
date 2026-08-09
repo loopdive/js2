@@ -75,6 +75,11 @@ describe("npm compatibility package catalog", () => {
     });
   });
 
+  it("opts Stylelint into the explicit Node filesystem capability lane", () => {
+    const entry = NPM_COMPAT_CATALOG.find((candidate: { name: string }) => candidate.name === "stylelint");
+    expect(entry.compileOptions).toEqual({ allowFs: true });
+  });
+
   const selectedPackage = process.env.DOGFOOD_NPM_CATALOG;
   const heavy = selectedPackage ? it : it.skip;
   const selectedTimeoutMs =

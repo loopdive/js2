@@ -493,6 +493,10 @@ class NpmCompatChart extends HTMLElement {
           ${issueLink}
         </div>
         <div class="badges">${badge(compiles, "compiles")}${badge(validates, "validates")}${
+          pkg.capabilities?.nodeFs
+            ? '<span class="badge" title="This compatibility lane explicitly grants the compiled package Node filesystem access.">fs enabled</span>'
+            : ""
+        }${
           // The entry is a re-export barrel with no implementation in it, so
           // the two badges above describe the barrel, not the package. Saying
           // so on the badge line is the point — a green "compiles" next to a

@@ -1331,6 +1331,7 @@ async function buildPackageEntry({ name, version, issue, entryFile, shape, repor
     shape,
     compile: report.compile,
     validation: report.validation,
+    capabilities: report.capabilities ?? null,
     // True when the published entry module is a re-export barrel with no
     // implementation of its own, so `compile`/`validation` above describe the
     // barrel rather than the package's code. Consumers must not present that

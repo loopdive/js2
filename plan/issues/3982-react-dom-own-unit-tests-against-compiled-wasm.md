@@ -185,6 +185,19 @@ DOGFOOD_REACT_DOM_TEST_LIMIT=1 \
 pnpm run dogfood:react-dom-upstream-suite
 ```
 
+### Suspension checkpoint (2026-08-09)
+
+The npm-compat branch is suspended with the current full implementation
+frontier unchanged: `updateForwardRef` references local 202 in a frame with
+only 39 parameters plus 31 locals. No ReactDOM correctness test is scored and
+the tiny entry-barrel validation must not be presented as ReactDOM support.
+The reporting/harness state is on `codex/npm-compat-handoff`; there is no
+separate uncommitted ReactDOM fix to recover.
+
+Resume by mapping local 202 back to its capture owner and freezing the relevant
+deferred capture ABI before emission. Keep the invariant loud—formatting or
+quarantining the malformed body would only hide the invalid module.
+
 ## Remaining blockers (skipped tests in `tests/issue-3982.test.ts`)
 
 36 of the 39 extracted compiler blockers are green. Three are `it.skip` with the

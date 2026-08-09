@@ -155,7 +155,10 @@
     "shasum": "a3a2e6e2e9feab2202463fcf15df74de00140b1c",
     "integrity": "sha512-xVQwyiuxALUBNB2fBe0tmNemg9KqLtdj3T64mioFDar79B2cU8LIyz+3KL6LdiHs9NkeNfwxpKSaIVOY8f112g==",
     "entryModule": "package/lib/index.mjs",
-    "shape": "esm-project"
+    "shape": "esm-project",
+    "compileOptions": {
+      "allowFs": true
+    }
   },
   {
     "name": "three",
