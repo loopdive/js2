@@ -127,7 +127,7 @@ export function finalizePreparedIrSelection(
   ctx: CodegenContext,
   sourceFile: ts.SourceFile,
   plan: IrOverlayPreparationPlan,
-): Pick<IrSelection, "funcs" | "classMembers" | "moduleInit"> {
+): Pick<IrSelection, "funcs" | "classMembers" | "classMemberUnitIds" | "moduleInit"> {
   let finalized = applyIrFinalContextFunctionUnitIds(
     plan,
     prepareIrAmbientClassCallLowering(ctx, plan, plan.safeSelection),

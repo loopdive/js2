@@ -2,7 +2,12 @@
 
 import type { ts } from "../ts-api.js";
 import type { IrUnitId } from "../ir/identity.js";
-import type { IrIntegrationError, IrIntegrationReport, IrIntegrationTerminalEvidence } from "../ir/integration.js";
+import type {
+  IrIntegrationCompiledArtifactEvidence,
+  IrIntegrationError,
+  IrIntegrationReport,
+  IrIntegrationTerminalEvidence,
+} from "../ir/integration.js";
 import type { IrObservedOutcome, IrPreparationFailure } from "../ir/outcomes.js";
 import type { IrLegacyUnitProjection, IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import type { IrSelection } from "../ir/select.js";
@@ -33,8 +38,8 @@ export interface IrIntegrationEvidenceAudit {
 export interface ReconcileIrOverlayOutcomesInput {
   readonly sourceFile: ts.SourceFile;
   readonly identityPlan: IrOverlayIdentityPlan;
-  readonly initialSelection: Pick<IrSelection, "funcs" | "classMembers" | "moduleInit">;
-  readonly preparedSelection: Pick<IrSelection, "funcs" | "classMembers" | "moduleInit">;
+  readonly initialSelection: Pick<IrSelection, "funcs" | "classMembers" | "classMemberUnitIds" | "moduleInit">;
+  readonly preparedSelection: Pick<IrSelection, "funcs" | "classMembers" | "classMemberUnitIds" | "moduleInit">;
   readonly preparationFailuresByUnitId: ReadonlyMap<IrUnitId, IrPreparationFailure>;
   readonly skippedBodyUnitIds: ReadonlySet<IrUnitId>;
   readonly report: IrIntegrationReport;
@@ -95,6 +100,7 @@ export function auditIrIntegrationTerminalEvidence(input: {
   readonly activeOwners: IrLegacyUnitProjection;
   readonly evidence: readonly IrIntegrationTerminalEvidence[];
   readonly compiled?: readonly string[];
+  readonly compiledArtifactEvidence?: readonly IrIntegrationCompiledArtifactEvidence[];
   readonly errors?: readonly IrIntegrationError[];
   readonly terminalCompiledOwners?: readonly string[];
   readonly syntheticCompiledArtifacts?: readonly string[];
@@ -128,12 +134,38 @@ export function auditIrIntegrationTerminalEvidence(input: {
   const syntheticCompiledArtifacts = input.syntheticCompiledArtifacts ?? [];
   if (hasCompiledClassification) {
     const publicCounts = countOccurrences(publicCompiled);
-    const classifiedCounts = countOccurrences([...terminalCompiledOwners, ...syntheticCompiledArtifacts]);
+    // Terminal-owner sidecars intentionally retain the collision-safe legacy
+    // diagnostic label, while the public artifact name is the exact observed
+    // Program ABI callable (and can differ for nested/anonymous classes). The
+    // exact artifact evidence is therefore the classification authority when
+    // present; never infer a physical callable from the owner label.
+    const classifiedPublicNames = input.compiledArtifactEvidence?.map((artifact) => artifact.name) ?? [
+      ...terminalCompiledOwners,
+      ...syntheticCompiledArtifacts,
+    ];
+    const classifiedCounts = countOccurrences(classifiedPublicNames);
     if (
       publicCounts.size !== classifiedCounts.size ||
       [...publicCounts].some(([name, count]) => classifiedCounts.get(name) !== count)
     ) {
       recordMismatch(undefined, "integration compiled telemetry is not completely classified by its sidecar");
+    }
+    if (input.compiledArtifactEvidence) {
+      for (let index = 0; index < input.compiledArtifactEvidence.length; index++) {
+        const artifact = input.compiledArtifactEvidence[index]!;
+        if (artifact.name !== publicCompiled[index]) {
+          recordMismatch(
+            artifact.terminalOwnerUnitId,
+            `compiled artifact ${artifact.artifactUnitId} does not match public callable ${JSON.stringify(publicCompiled[index])}`,
+          );
+        }
+        if (!input.activeOwners.getByUnitId(artifact.terminalOwnerUnitId)) {
+          recordMismatch(
+            artifact.terminalOwnerUnitId,
+            `compiled artifact ${artifact.artifactUnitId} has inactive terminal owner ${artifact.terminalOwnerUnitId}`,
+          );
+        }
+      }
     }
     for (const legacyName of terminalCompiledOwners) {
       const owner = input.activeOwners.getByLegacyName(legacyName);
@@ -246,7 +278,7 @@ export function auditIrIntegrationTerminalEvidence(input: {
 function auditIrSkippedBodySlots(input: {
   readonly sourceFile: ts.SourceFile;
   readonly identityPlan: IrOverlayIdentityPlan;
-  readonly preparedSelection: Pick<IrSelection, "funcs" | "classMembers" | "moduleInit">;
+  readonly preparedSelection: Pick<IrSelection, "funcs" | "classMembers" | "classMemberUnitIds" | "moduleInit">;
   readonly skippedBodyUnitIds: ReadonlySet<IrUnitId>;
   readonly expectedKind: "function" | "class-member";
   readonly label: "function" | "class member";
@@ -264,6 +296,7 @@ function auditIrSkippedBodySlots(input: {
     activeOwners,
     evidence: input.report.terminalEvidence ?? [],
     compiled: input.report.compiled,
+    compiledArtifactEvidence: input.report.compiledArtifactEvidence,
     errors: input.report.errors,
     terminalCompiledOwners: input.report.terminalCompiledOwners,
     syntheticCompiledArtifacts: input.report.syntheticCompiledArtifacts,
@@ -324,7 +357,7 @@ function auditIrSkippedBodySlots(input: {
 export function auditIrSkippedFunctionSlots(input: {
   readonly sourceFile: ts.SourceFile;
   readonly identityPlan: IrOverlayIdentityPlan;
-  readonly preparedSelection: Pick<IrSelection, "funcs" | "classMembers" | "moduleInit">;
+  readonly preparedSelection: Pick<IrSelection, "funcs" | "classMembers" | "classMemberUnitIds" | "moduleInit">;
   readonly skippedFunctionUnitIds: ReadonlySet<IrUnitId>;
   readonly report: IrIntegrationReport;
 }): readonly IrSkippedBodySlotViolation[] {
@@ -340,7 +373,7 @@ export function auditIrSkippedFunctionSlots(input: {
 export function auditIrSkippedClassMemberSlots(input: {
   readonly sourceFile: ts.SourceFile;
   readonly identityPlan: IrOverlayIdentityPlan;
-  readonly preparedSelection: Pick<IrSelection, "funcs" | "classMembers" | "moduleInit">;
+  readonly preparedSelection: Pick<IrSelection, "funcs" | "classMembers" | "classMemberUnitIds" | "moduleInit">;
   readonly skippedClassMemberUnitIds: ReadonlySet<IrUnitId>;
   readonly report: IrIntegrationReport;
 }): readonly IrSkippedBodySlotViolation[] {
@@ -443,6 +476,7 @@ export function reconcileIrOverlayOutcomes(input: ReconcileIrOverlayOutcomesInpu
     activeOwners,
     evidence: input.report.terminalEvidence ?? [],
     compiled: input.report.compiled,
+    compiledArtifactEvidence: input.report.compiledArtifactEvidence,
     errors: input.report.errors,
     terminalCompiledOwners: input.report.terminalCompiledOwners,
     syntheticCompiledArtifacts: input.report.syntheticCompiledArtifacts,

@@ -1,19 +1,20 @@
 ---
 id: 3178
-title: "UMBRELLA: retire the generator/async/Promise HOST machinery in standalone — the 4,467-leaky-pass (10.3 pt) family, measured slice map + shared-substrate design"
+title: "UMBRELLA: retire the generator/async/Promise HOST machinery in standalone — the 4,456-leaky-pass family, measured slice map + shared-substrate design"
 status: ready
 # decomposition delivered 2026-07-17 (fable-3178, children #3386-#3391);
 # umbrella stays open as tracking — #3391 owns the acceptance closeout.
 sprint: current
 created: 2026-07-12
-updated: 2026-07-17
+updated: 2026-08-09
 priority: high
 horizon: xl
 feasibility: hard
 model: fable
 reasoning_effort: max
-task_type: architecture
+task_type: planning
 area: codegen, standalone
+es_edition: multi
 language_feature: generators, async-generators, promises, async-functions
 goal: standalone-mode
 related:
@@ -38,12 +39,39 @@ related:
     3391,
     3538,
     3542,
+    3443,
   ]
-children: [3386, 3387, 3388, 3389, 3390, 3391, 3538, 3542]
+children: [3386, 3387, 3388, 3389, 3390, 3391, 3443, 3538, 3542]
 origin: "2026-07-12 architect (arch-standalone-family-plans): plan/log/standalone-gap-map.md finding — 4,456 leaky passes ride host-import shims, ~90% the generator/async-gen/Promise host machinery. This umbrella is the substrate spec + measured slice ranking the family builds on."
 ---
 
 # #3178 — UMBRELLA: standalone host async-machinery retirement
+
+## 2026-08-09 exact ES2015 residual — Promise reaction callback ABI
+
+A fresh exact-edition census replaces the earlier ~30-test stride-sample
+estimate for the Promise-reaction residual with **40 standalone-only
+failures**: 20 under `built-ins/Promise/all` and 20 under
+`built-ins/Promise/race`. It does not replace the umbrella's 4,456-family
+measurement. All 40 pass in the host lane and fail standalone with
+`illegal cast [in __then_fulfill_*() ← __drain_microtasks]`. Four nearby
+`iter-{next-val,step}-err-reject.js` files also show a then-reaction cast but
+fail in both lanes, so they are controls rather than part of this attribution.
+
+The shared root cause is a pre-ABI escape fact, not one Promise combinator.
+Test262 calls `$DONE` directly with a native string on some paths, which narrows
+its ordinary parameter inference to `$AnyString`; the same function also
+escapes as a Promise reaction, whose protocol ABI may deliver any JavaScript
+value. The frozen reaction wrapper then casts values such as `undefined`, null,
+booleans, numbers, strings, and symbols to `$AnyString` before the callback can
+run.
+
+The repair must mark reaction-visible parameters before Program-ABI
+publication, widen both the prepared-IR and transitional direct views to the
+same dynamic JavaScript carrier, and keep wrapper and callee signatures equal.
+A `$DONE` name check, one guarded cast, or a wrapper-only signature override is
+not sound. #3443 records the exact 40-file acceptance cohort; this umbrella
+owns the shared Promise reaction escape/ABI substrate.
 
 ## 2026-07-23 (fable-3417) — post-F2 honest-FAIL head fixed: #3538
 
@@ -438,4 +466,3 @@ must not be read as progress against them. `__make_callback` does not appear in
 the top 25 refusal names. Non-generator families also show up in the same guard
 output and belong elsewhere: `__js_array_*` / `__array_concat_any` → #3531,
 `SharedArrayBuffer_new` → #674 / #1354.
-

@@ -5,7 +5,7 @@ import type { IrBindingId, IrClassId, IrSourceId } from "../ir/identity.js";
 import type { IrClosureSignature, IrType, IrTypeRef, IrVecLayoutRef } from "../ir/nodes.js";
 import type { IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import { ProgramAbiInvariantError } from "../ir/program-abi.js";
-import type { FuncTypeDef, StructTypeDef, TypeDef } from "../ir/types.js";
+import type { FuncTypeDef, StructTypeDef, TypeDef, ValType } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
 // (#4241) The closure header layout is defined ONCE, in a leaf module both
@@ -28,8 +28,15 @@ const PROGRAM_ABI_TYPE_ROLE = Object.freeze({
   closureSignatureWrapper: 5,
   closureLiftedFunc: 6,
   closureCapturedSubtype: 7,
+  dynamicCarrier: 8,
+  exceptionTagType: 9,
   classLayout: 0,
 } as const);
+
+export interface ProgramAbiDynamicCarrierSupport {
+  readonly carrierRef: IrTypeRef;
+  readonly valueType: string;
+}
 
 export interface ProgramAbiClosureSupportLayoutRequest {
   readonly signature: IrClosureSignature;
@@ -223,6 +230,12 @@ export class ProgramAbiTypeRegistry {
     }
   >();
   private readonly closureSupportLayouts = new Map<string, ObservedClosureSupportLayout>();
+  private dynamicCarrierSupport?: {
+    readonly support: ProgramAbiDynamicCarrierSupport;
+    readonly type?: TypeDef;
+    readonly cell?: ProgramAbiTypeCell;
+  };
+  private exceptionTagTypeRefValue?: IrTypeRef;
   private closureSupportBatchPlanned = false;
   private planned = false;
 
@@ -356,6 +369,116 @@ export class ProgramAbiTypeRegistry {
       const cell = this.session.typeCellFor(nativeType) ?? this.session.createTypeCell(nativeType);
       this.attachTypeLocator(ref.binding.bindingId, cell);
     }
+    return ref;
+  }
+
+  /**
+   * Plan the backend-selected carrier behind an exact prepared `dynamic`
+   * boundary. Slotless `externref` and the remappable `$AnyValue` layout use
+   * one symbolic identity; callers never infer either representation from a
+   * target flag or a raw type index.
+   */
+  prepareDynamicCarrier(carrier: ValType): ProgramAbiDynamicCarrierSupport {
+    if (this.planned) {
+      throw new ProgramAbiInvariantError(
+        "planning-sealed",
+        "cannot prepare the dynamic carrier after retained type planning",
+      );
+    }
+    const entrySourceId = canonicalEntrySource(this.session);
+    const ref = irSupportTypeRef(entrySourceId, "dynamic-carrier", "__ir_dynamic_carrier");
+    const valueType = canonicalProgramAbiValType(carrier);
+    const nativeType =
+      carrier.kind === "ref" || carrier.kind === "ref_null" ? this.ctx.mod.types[carrier.typeIdx] : undefined;
+    if ((carrier.kind === "ref" || carrier.kind === "ref_null") && !nativeType) {
+      throw new ProgramAbiInvariantError(
+        "type-remap-mismatch",
+        `dynamic carrier references absent allocator type ${carrier.typeIdx}`,
+      );
+    }
+    if (!nativeType && carrier.kind !== "externref") {
+      throw new ProgramAbiInvariantError(
+        "type-remap-mismatch",
+        `dynamic carrier ${valueType} is neither externref nor a remappable module type`,
+      );
+    }
+    const cell = nativeType
+      ? (this.session.typeCellFor(nativeType) ?? this.session.createTypeCell(nativeType))
+      : undefined;
+    const existing = this.dynamicCarrierSupport;
+    if (existing) {
+      if (existing.support.valueType !== valueType || existing.type !== nativeType || existing.cell !== cell) {
+        throw new ProgramAbiInvariantError(
+          "type-remap-mismatch",
+          "one compilation selected more than one physical dynamic carrier",
+        );
+      }
+      return existing.support;
+    }
+
+    const structuralReferenceKey = irTypeBindingKey(ref.binding);
+    const base = {
+      id: ref.binding.bindingId,
+      structuralOrder: this.session.structuralOrder.forSource(entrySourceId, {
+        domain: "type" as const,
+        roleOrdinal: PROGRAM_ABI_TYPE_ROLE.dynamicCarrier,
+      }),
+      structuralReferenceKey,
+      displayName: ref.name,
+      intent: {
+        kind: "type" as const,
+        shapeKey: nativeType ? canonicalProgramAbiTypeDef(nativeType) : valueType,
+      },
+    };
+    this.session.ensurePlan(
+      nativeType ? { ...base, slotPolicy: "required", slotSpace: "type" } : { ...base, slotPolicy: "none" },
+    );
+    this.session.registerStructuralReference(ref.binding.bindingId, structuralReferenceKey);
+    if (cell) this.attachTypeLocator(ref.binding.bindingId, cell);
+    const support = Object.freeze({ carrierRef: ref, valueType });
+    this.dynamicCarrierSupport = Object.freeze({ support, ...(nativeType ? { type: nativeType, cell: cell! } : {}) });
+    return support;
+  }
+
+  /**
+   * Plan the exact function type owned by the compilation's singleton
+   * exception tag. Prepared IR normally rejects `throw` because the node has
+   * no symbolic tag operand; the bounded TDZ writeback shape instead carries
+   * this sidecar after proving that its throw is the canonical null-payload
+   * TDZ guard. Tying the ref to the tag's allocator-owned type object keeps
+   * that exception support inside Program-ABI type remapping.
+   */
+  prepareExceptionTagType(): IrTypeRef {
+    if (this.planned) {
+      throw new ProgramAbiInvariantError(
+        "planning-sealed",
+        "cannot prepare the exception-tag type after retained type planning",
+      );
+    }
+    const existing = this.exceptionTagTypeRefValue;
+    if (existing) return existing;
+    const tag = this.ctx.exnTagIdx >= 0 ? this.ctx.mod.tags[this.ctx.exnTagIdx] : undefined;
+    const type = tag ? this.ctx.mod.types[tag.typeIdx] : undefined;
+    if (
+      !tag ||
+      type?.kind !== "func" ||
+      type.params.length !== 1 ||
+      type.params[0]?.kind !== "externref" ||
+      type.results.length !== 0
+    ) {
+      throw new ProgramAbiInvariantError(
+        "type-remap-mismatch",
+        "prepared exception support requires the exact singleton (externref) -> void tag type " +
+          `(tag=${this.ctx.exnTagIdx}, type=${tag?.typeIdx ?? "missing"}, shape=${
+            type ? canonicalProgramAbiTypeDef(type) : "missing"
+          })`,
+      );
+    }
+    const entrySourceId = canonicalEntrySource(this.session);
+    const ref = irSupportTypeRef(entrySourceId, "exception-tag-type", "__ir_exception_tag_type");
+    const cell = this.session.typeCellFor(type) ?? this.session.createTypeCell(type);
+    this.planPreparedSupportType(ref, type, cell, PROGRAM_ABI_TYPE_ROLE.exceptionTagType, 0);
+    this.exceptionTagTypeRefValue = ref;
     return ref;
   }
 
