@@ -638,24 +638,19 @@ export interface AstToIrOptions {
    * accesses resolve via `class.get` / `class.set` against the shape's
    * field list.
    *
-   * Static methods don't get a `selfParam`; constructors don't either —
-   * Phase C synthesises `struct.new + __self` inside the body.
+   * Static methods don't get a `selfParam`; constructor init bodies use the
+   * dedicated final-parameter mode below.
    */
   readonly selfParam?: { readonly type: IrType };
   /**
-   * #3000-C Phase C: set ONLY when lowering a `ConstructorDeclaration`. Names
-   * the class the constructor builds. Unlike `selfParam` (an instance method's
-   * caller-supplied `__self` FIRST param), a constructor is NOT passed `this` —
-   * it ALLOCATES the instance. So when this is set the lowerer:
-   *   - synthesises `this` = `class.alloc(shape)` (a fresh default-initialised
-   *     struct) at body entry and binds it in scope,
-   *   - forces the IR result type to `{ kind: "class"; shape }` (the ctor
-   *     returns the constructed instance — `(ref $struct)`),
-   *   - lowers the ctor body statements as plain (non-tail) statements, then
-   *     synthesises the implicit `return this` epilogue.
-   * Mutually exclusive with `selfParam`.
+   * #3522 constructor retirement: lower a source constructor as the
+   * allocator-independent `<Class>_init` body. User parameters keep their
+   * source order and the caller-supplied class receiver is appended as the
+   * final parameter, matching the frozen direct ABI
+   * `(...ctorParams, self) -> self`. Mutually exclusive with
+   * `selfParam`.
    */
-  readonly constructorClassShape?: IrClassShape;
+  readonly constructorInitClassShape?: IrClassShape;
   /**
    * If present, overrides the IR types for the function's own parameters.
    * Indexed by parameter position. Used when the AST lacks explicit TS
@@ -799,16 +794,11 @@ export function lowerFunctionAstToIr(
   // and a method/function may have one. Type-narrow before access.
   const isGenerator = (ts.isFunctionDeclaration(fn) || ts.isMethodDeclaration(fn)) && !!fn.asteriskToken;
 
-  // #3000-C Phase C: constructor-body lowering. A ConstructorDeclaration has
-  // no `.type` (its return type is implicit — the constructed instance). The
-  // integration walk supplies `options.constructorClassShape`; the lowerer
-  // allocates `this`, runs the body, and returns the instance (see the
-  // `isCtor` branch below). Without the shape we can't form the class-typed
-  // return / `this`, so reject to legacy (defensive — the integration walk
-  // always supplies it).
+  // ConstructorDeclaration has no `.type`; the integration walk supplies the
+  // exact init shape and the caller-provided receiver is returned implicitly.
   const isCtor = ts.isConstructorDeclaration(fn);
-  if (isCtor && !options.constructorClassShape) {
-    throw new Error(`ir/from-ast: constructor lowering requires options.constructorClassShape (${name})`);
+  if (isCtor && (!options.constructorInitClassShape || options.selfParam)) {
+    throw new Error(`ir/from-ast: constructor lowering requires the exact init shape (${name})`);
   }
 
   // Slice 7a (#1169f): `function*` produces a Generator-like externref
@@ -850,7 +840,7 @@ export function lowerFunctionAstToIr(
     ? irVal({ kind: "externref" })
     : // #3000-C: a constructor returns the constructed instance — `(ref $struct)`.
       isCtor
-      ? ({ kind: "class", shape: options.constructorClassShape! } as IrType)
+      ? ({ kind: "class", shape: options.constructorInitClassShape! } as IrType)
       : isVoidReturn
         ? null
         : resolveIrType(effectiveReturnTypeNode, options.returnTypeOverride ?? undefined, `return type of ${name}`);
@@ -932,6 +922,12 @@ export function lowerFunctionAstToIr(
     } else {
       scope.set(p.name, { kind: "local", value: v, type: p.type });
     }
+  }
+  let constructorInitSelf: IrValueId | undefined;
+  if (options.constructorInitClassShape) {
+    const selfType: IrType = { kind: "class", shape: options.constructorInitClassShape };
+    constructorInitSelf = builder.addParam("__self", selfType);
+    scope.set("this", { kind: "local", value: constructorInitSelf, type: selfType });
   }
 
   builder.openBlock();
@@ -1109,14 +1105,9 @@ export function lowerFunctionAstToIr(
   }
 
   if (isCtor) {
-    // #3000-C Phase C: synthesise `this` = a freshly-allocated, default-
-    // initialised instance (NO ctor call — that would recurse into the very
-    // `<className>_new` function we are compiling). Bind it so the body's
-    // `this.field = …` writes route through `class.set` / `class.get`.
-    const shape = options.constructorClassShape!;
-    const thisType: IrType = { kind: "class", shape };
-    const thisV = builder.emitClassAlloc(shape);
-    scope.set("this", { kind: "local", value: thisV, type: thisType });
+    // The AST-free `_new` wrapper allocates; this source-owned `_init` receives
+    // the exact instance as its final parameter and owns all source writes.
+    const thisV = constructorInitSelf!;
     // Constructor body statements are plain (non-tail) statements — the
     // return is the implicit `return this`, not any body statement. Lower
     // each via the body-statement dispatcher (the SAME shapes the selector's

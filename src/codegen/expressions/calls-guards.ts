@@ -23,7 +23,7 @@ import { compileStandaloneRegExpConstructor, isGlobalRegExpIdentifier } from "..
  * and its real callee (`(f)`, `f as T`, `f!`, `<T>f`). Shared by the
  * non-callable guards below.
  */
-function unwrapCallee(expr: ts.Expression): ts.Expression {
+export function unwrapCallee(expr: ts.Expression): ts.Expression {
   let unwrapped: ts.Expression = expr;
   while (
     ts.isParenthesizedExpression(unwrapped) ||
@@ -50,7 +50,7 @@ function unwrapCallee(expr: ts.Expression): ts.Expression {
  * `any` / `unknown` / `unresolvable` / `union` are excluded by construction —
  * only a fact that PROVES non-callability may fire this guard.
  */
-const NEVER_CALLABLE_FACT_KINDS = new Set([
+export const NEVER_CALLABLE_FACT_KINDS = new Set([
   "number",
   "boolean",
   "string",
@@ -131,7 +131,7 @@ export function tryNonCallableValueCall(
  * itself provably non-callable. A `var x;` with neither is evolving-any and is
  * left alone.
  */
-function isEvolvingAnyBinding(ctx: CodegenContext, callee: ts.Expression): boolean {
+export function isEvolvingAnyBinding(ctx: CodegenContext, callee: ts.Expression): boolean {
   if (!ts.isIdentifier(callee)) return false;
   // The global `undefined` is not a binding anyone can reassign.
   if (callee.text === "undefined") return false;
@@ -158,7 +158,7 @@ function isEvolvingAnyBinding(ctx: CodegenContext, callee: ts.Expression): boole
  * `Function` and `Proxy` are excluded — `new Function(...)` IS callable, and a
  * proxy's [[Call]] comes from its target.
  */
-function isFreshlyConstructedNonCallable(ctx: CodegenContext, callee: ts.Expression, factKind: string): boolean {
+export function isFreshlyConstructedNonCallable(ctx: CodegenContext, callee: ts.Expression, factKind: string): boolean {
   const brand = ctx.oracle.builtinReceiverOf(callee);
   // `new Function(...)` really is callable; a proxy's [[Call]] comes from its
   // target. Never let either reach the throw.

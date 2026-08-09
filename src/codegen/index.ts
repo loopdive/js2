@@ -33,6 +33,7 @@ import {
 } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType, WasmFunction, WasmModule } from "../ir/types.js";
 import { createEmptyModule } from "../ir/types.js";
+import { irSupportFuncRef } from "../ir/callable-bindings.js";
 import { compileIrPathFunctions, type IrIntegrationError, type IrIntegrationReport } from "../ir/integration.js";
 import {
   asVal,
@@ -241,6 +242,9 @@ import {
   unshiftExternGetWrapperCtorArm,
 } from "./object-runtime.js";
 import { moduleMentionsObjectIdentifier, moduleReadsConstructorProp } from "./wrapper-constructor-carrier.js"; // (#4223/#4232)
+import { unshiftNativeProtoHasOwnArms } from "./native-proto-own-props.js"; // (#4248) builtin-proto own members
+import { unshiftNativeProtoToPrimitiveArm } from "./native-proto-wrapper-primitive.js"; // (#4248) proto [[PrimitiveValue]]
+import { unshiftExternGetProtoMethodArm } from "./native-proto-instance-method-read.js"; // (#4248) inherited method value
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { fillInstanceTombstones } from "./instance-tombstones.js"; // (#4098 G1 s1) per-instance own-property deletability
 import { fillInstanceProps } from "./instance-props.js"; // (#4194) instance expando bag substrate
@@ -1310,10 +1314,15 @@ function buildIrClassShapes(
       }
     }
     if (!ctorOk) continue;
-    const constructorTarget = callableTarget(
+    const constructorInitTarget = callableTarget(
       ctor ?? stmt,
       ctor ? "class-constructor" : "class-implicit-constructor",
-      "new",
+      "init",
+    );
+    const constructorTarget = irSupportFuncRef(
+      classId,
+      "class-constructor-new",
+      classMemberFuncKey(ctx, `${className}_new`),
     );
 
     // Fields — read from the legacy `structFields` (which fixes the
@@ -1547,7 +1556,8 @@ function buildIrClassShapes(
       fields,
       methods,
       constructorParams,
-      ...(constructorTarget ? { constructorTarget } : {}),
+      constructorTarget,
+      ...(constructorInitTarget ? { constructorInitTarget } : {}),
       // #3000-E: present only for a single-level subclass of a local user class.
       ...(parentShape ? { parent: parentShape } : {}),
     };
@@ -3545,7 +3555,10 @@ export function generateModule(
   // reconstruction lowering but is NOT yet consumed, so emitted Wasm is
   // byte-identical. Side-effect free; safe to run unconditionally (no fnctor
   // `new` sites ⇒ empty result ⇒ no-op).
-  ctx.fnctorEscapeGate = analyzeFnctorEscapeGate(ast.checker, ast.sourceFile, ctx.standalone);
+  // (#4235) The array + explicit `"single"` path tag. `generateMultiModule`
+  // makes the identical call with the whole graph and `"multi"`; keeping the
+  // two call shapes the same is what makes the parity testable.
+  ctx.fnctorEscapeGate = analyzeFnctorEscapeGate(ast.checker, [ast.sourceFile], ctx.standalone, "single");
   // (#3673) Names the source itself defines as function-valued members, so the
   // guarded native-string method lowering can tell a genuine `String.prototype`
   // call apart from a same-named USER method on an object receiver. Cheap
@@ -4477,6 +4490,13 @@ export function generateModule(
     fillInstanceTombstones(ctx); // (#4098 G1 s1) BEFORE the ladders below: they bake its call
     fillInstanceProps(ctx); // (#4194) instance expando carrier + bag get/set + tombstone resurrect
     fillClosedStructHasOwnArms(ctx);
+    // (#4248) A builtin `.prototype` is a `$NativeProto`, not a `$Object`, so
+    // its OWN members are invisible to the table walk. AFTER the closed-struct
+    // prologue so the two arms compose in receiver-shape order.
+    unshiftNativeProtoHasOwnArms(ctx);
+    // (#4248) §15.5.4/§15.6.4/§15.7.4 — the three wrapper prototypes ARE
+    // wrapper objects, so ToPrimitive must answer their [[PrimitiveValue]].
+    unshiftNativeProtoToPrimitiveArm(ctx);
     fillClosedStructOwnPropertyNamesArms(ctx);
     fillClosedStructEnumerationArms(ctx); // (#3920) Object.keys / for…in
     fillClosedStructExternGetArms(ctx);
@@ -4494,6 +4514,10 @@ export function generateModule(
     // (#4223) BEFORE the cache arm (which must stay last): answer
     // `<wrapper>.constructor` from the builtin ctor carrier.
     unshiftExternGetWrapperCtorArm(ctx);
+    // (#4248) §21.1.5 — an inherited builtin-proto METHOD read off a wrapper
+    // instance (or off the prototype through a binding) must yield the same
+    // singleton the static `<Builtin>.prototype.<m>` read does.
+    unshiftExternGetProtoMethodArm(ctx);
     unshiftExternGetProtoCacheArm(ctx);
 
     // (#1904) Fill the standalone native Array.isArray predicate after all
@@ -4695,6 +4719,11 @@ export function generateModule(
     // the functions/types those exports pin are actually reclaimed. No-op when
     // the bridge is published (js-host default).
     stripHostBridgeExports(ctx);
+
+    // (#4257) Re-declare `ref.func` targets that the mid-finalize scan above
+    // could not see: every `__extern_get`/dispatcher body FILL runs after it.
+    // Additive + before dead-elim (which remaps declaredFuncRefs).
+    collectDeclaredFuncRefs(ctx, { additive: true });
 
     // Dead import and type elimination pass
     eliminateDeadLayoutAndPlanProgramAbi(ctx); // #1899 authoritative remap, then #3520 retained ABI
@@ -6278,6 +6307,26 @@ export function generateMultiModule(
   // (#4232) Narrower gate for the ordinary-object arm alone.
   ctx.plainCtorCarrierDemanded =
     ctx.wrapperCtorCarrierDemanded && multiAst.sourceFiles.some((sf) => moduleMentionsObjectIdentifier(sf));
+  // (#4235) Run the fnctor pipeline HERE — the same point in the pass that
+  // `generateModule` runs it, but over the whole module graph.
+  //
+  // Until this landed `generateMultiModule` never assigned `ctx.fnctorEscapeGate`
+  // at all, so on every `compileProject` / `compileMulti` the escape gate, the
+  // presence-bit/hot-cold split (#4211/#4217) and the per-type layout analysis
+  // and emission (#3927) were ALL inert — silently. Not a fallback, not a
+  // warning: the compile succeeded with the unsplit representation, and the
+  // resulting zero was indistinguishable from "this package has no fnctors".
+  // With the layout emission defaulting ON (2026-08-08) that became a lying
+  // default — the flag reported enabled while the machinery never ran, on the
+  // path most of the npm-compat corpus actually compiles through.
+  //
+  // The analysis takes the graph's source files, so its closed-world passes
+  // (write-once admission, allocation-site layout labelling) are closed over the
+  // WHOLE program rather than one file of it; see `analyzeFnctorEscapeGate` for
+  // why each pass is monotone-safe under that widening, and for the two hazards
+  // it handles explicitly (import-alias symbol identity, and cross-module
+  // fnctor NAME collisions, which are refused and COUNTED).
+  ctx.fnctorEscapeGate = analyzeFnctorEscapeGate(multiAst.checker, multiAst.sourceFiles, ctx.standalone, "multi");
   try {
     // WASI target: register linear memory, bump pointer global, and WASI imports
     if (ctx.wasi) {
@@ -6466,6 +6515,18 @@ export function generateMultiModule(
     if (multiAst.sourceFiles.some((sf) => sourceContainsClass(sf))) {
       reserveObjVecArrType(ctx);
     }
+
+    // (#4235) Multi-source parity for the #2773 S1 up-front fnctor struct-type
+    // reservation, in the same relative position the single-source path uses:
+    // after the `$ObjVecArr` reservation, before `collectDeclarations` and
+    // therefore before any body compiles — so `$__fnctor_<Name>`'s type index is
+    // fixed at ONE deterministic point for every pass that reads it. Both calls
+    // are gated on the escape gate having approved something, so a fnctor-free
+    // graph reserves nothing and stays byte-identical.
+    for (const sf of multiAst.sourceFiles) {
+      collectDynamicObjectReturnCarrierTypes(ctx, multiAst.checker, sf);
+    }
+    reserveFnctorStructTypes(ctx);
 
     // (#4133) `ctx.funcMap` is keyed by BARE function name, so two modules that
     // each declare a top-level `function shared()` collide: registration mints a
@@ -6777,6 +6838,13 @@ export function generateMultiModule(
     fillInstanceTombstones(ctx); // (#4098 G1 s1) BEFORE the ladders below: they bake its call
     fillInstanceProps(ctx); // (#4194) instance expando carrier + bag get/set + tombstone resurrect
     fillClosedStructHasOwnArms(ctx);
+    // (#4248) A builtin `.prototype` is a `$NativeProto`, not a `$Object`, so
+    // its OWN members are invisible to the table walk. AFTER the closed-struct
+    // prologue so the two arms compose in receiver-shape order.
+    unshiftNativeProtoHasOwnArms(ctx);
+    // (#4248) §15.5.4/§15.6.4/§15.7.4 — the three wrapper prototypes ARE
+    // wrapper objects, so ToPrimitive must answer their [[PrimitiveValue]].
+    unshiftNativeProtoToPrimitiveArm(ctx);
     fillClosedStructOwnPropertyNamesArms(ctx);
     fillClosedStructEnumerationArms(ctx); // (#3920) Object.keys / for…in
     fillClosedStructExternGetArms(ctx);
@@ -6794,6 +6862,10 @@ export function generateMultiModule(
     // (#4223) BEFORE the cache arm (which must stay last): answer
     // `<wrapper>.constructor` from the builtin ctor carrier.
     unshiftExternGetWrapperCtorArm(ctx);
+    // (#4248) §21.1.5 — an inherited builtin-proto METHOD read off a wrapper
+    // instance (or off the prototype through a binding) must yield the same
+    // singleton the static `<Builtin>.prototype.<m>` read does.
+    unshiftExternGetProtoMethodArm(ctx);
     unshiftExternGetProtoCacheArm(ctx);
     fillRuntimeEvalCallablePropertyGetArm(ctx);
 
@@ -6963,6 +7035,11 @@ export function generateMultiModule(
     // the functions/types those exports pin are actually reclaimed. No-op when
     // the bridge is published (js-host default).
     stripHostBridgeExports(ctx);
+
+    // (#4257) Re-declare `ref.func` targets that the mid-finalize scan above
+    // could not see: every `__extern_get`/dispatcher body FILL runs after it.
+    // Additive + before dead-elim (which remaps declaredFuncRefs).
+    collectDeclaredFuncRefs(ctx, { additive: true });
 
     // Dead import and type elimination pass
     eliminateDeadLayoutAndPlanProgramAbi(ctx); // #1899 authoritative remap, then #3520 retained ABI

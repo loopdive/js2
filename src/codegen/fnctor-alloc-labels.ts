@@ -265,7 +265,19 @@ interface SourceIndex {
   readonly propWrites: readonly ts.BinaryExpression[];
 }
 
-function indexSourceFile(sourceFile: ts.SourceFile): SourceIndex {
+/**
+ * 1-based line of `n`, resolved against the node's OWN source file. (#4235)
+ * Asking one designated file for the position of a node declared in another
+ * silently answers from the wrong file's line table — under a multi-file graph
+ * that turns every label's `line` into a plausible-looking wrong number, and a
+ * diagnostic that lies is worse than one that is absent.
+ */
+function lineOf(n: ts.Node): number {
+  const sf = n.getSourceFile();
+  return sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
+}
+
+function indexSourceFile(sourceFiles: readonly ts.SourceFile[]): SourceIndex {
   const protoIndex = new Map<string, ts.FunctionLikeDeclaration[]>();
   const allFns: ts.FunctionLikeDeclaration[] = [];
   const decls: ts.VariableDeclaration[] = [];
@@ -298,7 +310,11 @@ function indexSourceFile(sourceFile: ts.SourceFile): SourceIndex {
     if (ts.isCallExpression(n)) calls.push(n);
     forEachChild(n, indexNode);
   };
-  indexNode(sourceFile);
+  // (#4235) Index the WHOLE module graph. A layout derived from a strict subset
+  // of a fnctor's allocation sites would omit fields written at the unseen ones
+  // — the emitted `struct.new` would then have the wrong field set. Partial
+  // visibility is not a weaker plan here, it is a wrong one.
+  for (const sf of sourceFiles) indexNode(sf);
   return { protoIndex, allFns, decls, assigns, calls, propWrites };
 }
 
@@ -310,12 +326,13 @@ function indexSourceFile(sourceFile: ts.SourceFile): SourceIndex {
  */
 export function analyzeFnctorAllocLabels(
   checker: ts.TypeChecker,
-  sourceFile: ts.SourceFile,
+  sourceFiles: readonly ts.SourceFile[],
   /** `__fnctor_<Name>` stems to analyse, keyed by the CONSTRUCTOR declaration. */
   ctorDeclByName: ReadonlyMap<string, ts.FunctionLikeDeclaration>,
+  /** (#4235) Which compile path ran this — printed by the diagnostic. */
+  compilePath: "single" | "multi" = "single",
 ): AllocLabelResult {
-  const lineOf = (n: ts.Node): number => sourceFile.getLineAndCharacterOfPosition(n.getStart(sourceFile)).line + 1;
-  const { protoIndex, allFns, decls, assigns, calls, propWrites } = indexSourceFile(sourceFile);
+  const { protoIndex, allFns, decls, assigns, calls, propWrites } = indexSourceFile(sourceFiles);
 
   /**
    * Callee resolution. Checker symbol first, then the syntactic prototype index
@@ -597,7 +614,9 @@ export function analyzeFnctorAllocLabels(
   }
   for (const c of calls) publish(c);
 
-  if (process.env.JS2WASM_FNCTOR_LAYOUT_DIAG === "1") writeLayoutDiag(plans, rounds);
+  if (process.env.JS2WASM_FNCTOR_LAYOUT_DIAG === "1") {
+    writeLayoutDiag(plans, rounds, compilePath, sourceFiles.length);
+  }
 
   return { plans, labelOfExpr };
 }
@@ -653,8 +672,25 @@ function buildPlan(
  * Human-readable plan dump. The per-label field list is the thing a byte number
  * cannot tell you and the first question when a consumer turns out not to know
  * a layout, so it prints in full rather than summarised.
+ *
+ * (#4235) It now leads with the COMPILE PATH and file count, and emits a header
+ * even when there is nothing to report. Before this, a multi-file compile
+ * printed nothing at all — and "no `[alloc-labels]` lines" was read as "this
+ * package has no fnctors" when the truth was "this path never ran the
+ * analysis". A zero must arrive with its provenance attached or it is not a
+ * measurement.
  */
-function writeLayoutDiag(plans: ReadonlyMap<string, FnctorLayoutPlan>, rounds: number): void {
+function writeLayoutDiag(
+  plans: ReadonlyMap<string, FnctorLayoutPlan>,
+  rounds: number,
+  compilePath: "single" | "multi",
+  sourceFileCount: number,
+): void {
+  const planned = [...plans.values()].filter((p) => p.labels.length > 0).length;
+  process.stderr.write(
+    `[alloc-labels] path=${compilePath} files=${sourceFileCount} ` +
+      `families=${plans.size} with-labels=${planned} rounds=${rounds}\n`,
+  );
   for (const plan of plans.values()) {
     if (plan.labels.length === 0) continue;
     process.stderr.write(
