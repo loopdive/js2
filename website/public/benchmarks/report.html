@@ -2229,6 +2229,14 @@
           header.appendChild(
             el("span", { style: { fontSize: "0.8125rem", wordBreak: "break-word" } }, b.label || b.id),
           );
+          // These ids are THIS project's markdown issues (plan/issues/<id>-<slug>.md),
+          // not GitHub issues. The repo has no GitHub issues at all, and issue
+          // ids share one number sequence with PRs — so linking to
+          // github.com/loopdive/js2/issues/<id> did not 404, it silently
+          // redirected to an unrelated PULL REQUEST (e.g. the Temporal bucket's
+          // #661 opened "docs(#1632): escalate Function.bind/toString"). Point
+          // at the dashboard's markdown viewer instead, which resolves a bare
+          // id — including suffixed ones like 1326c — via plan/issues/index.json.
           for (const issue of b.issues || []) {
             const num = String(issue).replace(/^#/, "");
             header.appendChild(
@@ -2236,7 +2244,7 @@
                 "a",
                 {
                   className: "rc-issue-link",
-                  href: "https://github.com/loopdive/js2/issues/" + num,
+                  href: assetPath("dashboard/issue.html?id=" + encodeURIComponent(num)),
                   target: "_blank",
                   rel: "noopener",
                 },

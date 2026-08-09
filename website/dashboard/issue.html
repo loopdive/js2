@@ -180,6 +180,16 @@
     </article>
 
     <script>
+      // The site is served from the domain root (js2.loopdive.com) AND from a
+      // project subpath (loopdive.github.io/js2/). Absolute "/plan/issues/…"
+      // fetches only work in the first case — under the subpath they resolve to
+      // loopdive.github.io/plan/… and 404, so this viewer was unreachable there.
+      // Derive the base the same way benchmarks/report.html does.
+      const BASE_PATH = window.location.pathname.replace(/\/dashboard\/.*$/, "");
+      function issueAsset(path) {
+        return BASE_PATH ? `${BASE_PATH}/${path}` : `/${path}`;
+      }
+
       // Fetch an issue's markdown. `slug` may be a full filename stem
       // (681-pure-wasm-…) or a bare issue id (681 / 1525b). Resolution works in
       // both modes:
@@ -190,15 +200,15 @@
       async function fetchIssueMarkdown(slug) {
         // 1) Try the slug directly (full filename, or a bare id the dev plugin
         //    prefix-resolves).
-        let response = await fetch(`/plan/issues/${slug}.md`);
+        let response = await fetch(issueAsset(`plan/issues/${slug}.md`));
         if (response.ok) return await response.text();
 
         // 2) Fall back: treat the slug as a bare id and resolve via index.json.
-        const index = await fetch("/plan/issues/index.json")
+        const index = await fetch(issueAsset("plan/issues/index.json"))
           .then((r) => (r.ok ? r.json() : null))
           .catch(() => null);
         if (index && index[slug]) {
-          response = await fetch(`/plan/issues/${index[slug]}.md`);
+          response = await fetch(issueAsset(`plan/issues/${index[slug]}.md`));
           if (response.ok) return await response.text();
         }
 
@@ -206,13 +216,17 @@
       }
 
       async function loadIssue() {
-        // Extract slug from URL query parameter
+        // Extract the issue reference from the URL. `slug` is the dashboard's
+        // form (full filename stem); `id` is the numeric form used by callers
+        // that only carry an issue id — the report page's root-cause buckets
+        // and the npm-compat cards. Both funnel into the same resolver, which
+        // already handles a bare id via index.json.
         const params = new URLSearchParams(window.location.search);
-        const slug = params.get("slug");
+        const slug = params.get("slug") || params.get("id");
 
         if (!slug) {
           document.getElementById("content").innerHTML =
-            '<div class="error">Invalid issue URL. Missing slug parameter.</div>';
+            '<div class="error">Invalid issue URL. Missing slug or id parameter.</div>';
           return;
         }
 
