@@ -108,6 +108,9 @@ import { lowerPreparedIrAsyncFunction } from "../codegen/ir-async-frame.js";
 import { preparedIrAsyncFromAstResolver } from "../codegen/async-ir-planning.js";
 import {
   getFuncRefWrapperRootTypeIdx,
+  CLOSURE_CAPTURE_FIELD_BASE,
+  closureArityField,
+  closureBagField,
   getOrCreateFuncRefWrapperTypes,
 } from "../codegen/closures/funcref-wrapper-types.js";
 import { ensureFmod, FMOD_FN } from "../codegen/fmod.js"; // #2945 — on-demand `%` helper materialization
@@ -5870,7 +5873,8 @@ class ClosureStructRegistry {
 
     const fields: FieldDef[] = [
       { name: "func", type: { kind: "funcref" }, mutable: false },
-      { name: "$arity", type: { kind: "i32" }, mutable: false }, // (#3673)
+      closureArityField(), // (#3673)
+      closureBagField(), // (#4241)
     ];
     for (let i = 0; i < captureFieldTypes.length; i++) {
       let ft: ValType;
@@ -5916,7 +5920,7 @@ class ClosureStructRegistry {
     });
 
     const fieldIdxByCap = new Map<number, number>();
-    for (let i = 0; i < captureFieldTypes.length; i++) fieldIdxByCap.set(i, i + 2); // after (#3673) $arity
+    for (let i = 0; i < captureFieldTypes.length; i++) fieldIdxByCap.set(i, i + CLOSURE_CAPTURE_FIELD_BASE); // after (#3673) $arity + (#4241) $bag
 
     const lowering: IrClosureLowering = {
       structTypeIdx: subIdx,
