@@ -691,13 +691,35 @@ if C/D slip a window.
 | 37 | both-engines-fail files (incl. `$262.createRealm` null-deref, 30 shared `SameValue` fails) | not a quickjs delta; belongs to the interpreter/compiler lanes |
 | ~~≤16~~ **0** | ~~`existing-non-enumerable-global-init` IF P3 says the carrier cannot expose non-enumerable names~~ | **STRUCK (P3).** The adapter reads non-enumerable globals — name, value and descriptor — via `Object.getOwnPropertyNames` / `getOwnPropertyDescriptor` on the carrier. In scope for slice B; #4245 slice 2 is not a prerequisite. |
 | ~~~4-6~~ **0** | ~~strict-preamble ↔ source lexical collisions + directive-scanner ASI edges~~ | **STRUCK (Q5).** Both classes are parse-time questions and QuickJS is available as the parser: §1.1′ for the prologue, §1.6′ for the collisions. "The adapter has no parser" was the false premise. |
-| unmeasured, expected 0 | direct eval whose caller is an **arrow with no parameters and no declarations** — indistinguishable from global code at the seam (P4), so its `var`s land on the global object | one line of `src/` codegen fixes it (sentinel seed entry per non-global call site); §2 forbids `src/` edits, and the corpus uses `function` wrappers throughout. Lane case, not engineering. |
+| ~~unmeasured, expected 0~~ **0 — FIX IT** | ~~direct eval whose caller is an **arrow with no parameters and no declarations** — indistinguishable from global code at the seam (P4), so its `var`s land on the global object~~ | **STRUCK (tech lead, 2026-08-09). `src/` IS authorized for this one line in slice C.** §2's adapter-only rule is a good default because it avoids budgets and the oracle ratchet — it is not a correctness principle, and this is a correctness hole: an arrow-caller's `var`s land on the **global object** instead of the activation, silently and with green tests, because the seam cannot distinguish the two callers. "Expected 0 in the corpus" is an argument about *this* test set, not about the compiler. A wrong-scope write that no test happens to observe is exactly the class that surfaces later as an unattributable bug. Slice C emits the sentinel seed entry per non-global call site and carries a lane case with a declaration-free arrow caller; it then owes the equivalence gate and the budgets like any `src/` change. |
 | unmeasured | in-eval `instanceof` against a *mirrored* compiled constructor; sources >64 var names per activation | corpus shows zero occurrences; document, don't engineer |
 | unmeasured, expected small | sources that are **SyntaxErrors as eval code** and whose strictness therefore falls back to `callerStrict` (§1.1′ INCONCLUSIVE) | the real evaluation throws SyntaxError regardless, so strictness is unobservable |
 
 Everything else in the 219 is claimed by a slice above.
 
 ### 6. Projected ceiling (projection, not measurement — labeled as such)
+
+> **AMENDED 2026-08-09 (tech lead) — the number below is STALE. It was computed
+> against a §5 that has since had two rows struck.** P3 moved the ≤16
+> non-enumerable-global files into scope and Q5 moved the ~4–6 strictness/
+> preamble files into scope, so ~21 files that this projection excluded are now
+> claimed by slices B and D. That raises the floor; it does **not** license a
+> claim of 779.
+>
+> What is honest to say now: **779 is no longer excluded by a known residual.**
+> The only *named* remainders left are the 37 both-engines-fail files — which
+> are not part of the 219 and are not this issue's cost — plus three
+> `unmeasured, expected 0` rows. Everything else in the 219 is claimed.
+>
+> What is still unknown, and is the whole risk: **the 10–15 % second-order
+> discount is unmeasured.** Unblocking a test lets it reach the next thing it
+> tests; the membrane projected 672 and landed 560. That discount is the only
+> reason not to state a number here, and it resolves slice by slice, not by
+> analysis. **Do not recompute this projection — replace it with slice B's
+> measured result**, which is the first one large enough to calibrate the
+> discount for the rest.
+>
+> Target for the workstream is **parity at 779**, not the range below.
 
 Slice targets sum to ~190 of the 219 quickjs-only. Applying the slice-3
 lesson (unblocking a test lets it reach the NEXT thing it tests — the
