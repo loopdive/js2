@@ -61,6 +61,7 @@ import { resolveStructName } from "./misc.js";
 import { tryReshapeBindToNamedThisCall } from "../named-this-call.js"; // (#4203)
 import { compileSuperElementMethodCall } from "./new-super.js";
 import { compileCallDispatchTail } from "./stored-member-closure-call.js";
+import { emitPlainObjectDynamicCallWithReceiver } from "./plain-object-dynamic-receiver-call.js";
 import {
   classInstanceHasField,
   coerceNumberMethodArgToF64,
@@ -1416,7 +1417,12 @@ export function compileTailDispatch(
       // its default arm reproduces the historical `ref.null.extern`, so a
       // non-callable read value keeps today's behaviour.
       if (elemAccessReceiverIsPlainObject(ctx, elemAccess)) {
-        const dyn = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
+        // (#4269) …and give that dispatch a receiver. #4252 made the callee RUN;
+        // it still ran with `this` unbound, which is the same silent wrong
+        // answer one layer down. See object-literal-method-receiver.ts for why
+        // the gate is asked of the receiver's literal here and why an argument
+        // that reads `this` refuses the bind outright.
+        const dyn = emitPlainObjectDynamicCallWithReceiver(ctx, fctx, expr, elemAccess);
         if (dyn !== null) return dyn;
       }
 
@@ -1466,7 +1472,8 @@ export function compileTailDispatch(
     // only the call was dropped, which turned a throwing trap into a silent
     // no-op and reported the file as a (vacuous) pass.
     if (elemAccessReceiverIsPlainObject(ctx, elemAccess)) {
-      const dyn = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
+      // (#4269) With a receiver — see the resolved-key twin above.
+      const dyn = emitPlainObjectDynamicCallWithReceiver(ctx, fctx, expr, elemAccess);
       if (dyn !== null) return dyn;
     }
 
