@@ -16,10 +16,12 @@ import { isStandalonePromiseActive } from "./async-scheduler.js"; // (#2637 B2) 
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "./async-frame.js";
 import { genBodyReferencesThis, genBodyReferencesSuper, emitCachedFuncClosureAccess } from "./closures.js"; // (#3132 / #3123 fnctor parent closure)
 import { classMemberFuncKey, fnctorAncestorOfClass } from "./class-member-keys.js"; // (#1983 / #3123)
+import { installAstFreeClassConstructorNewWrapper } from "./class-constructor-wrapper.js";
 import { commitClassStructLayout } from "./class-layout-registration.js";
 import { mintDefinedFunc, pushProgramAbiClassCallable } from "./program-abi-class-callable-planning.js";
 import { setProgramAbiInheritedClassCallableAlias } from "./program-abi-class-callable-planning.js";
 import { absoluteFuncIndex } from "../emit/resolve-layout.js"; // (#1916 S3b) resolve handles for order-stable declaredFuncRefs sort
+import { definedFuncAt } from "./func-space.js";
 import { getOrAssignClassNewTargetId } from "./new-target.js"; // (#2023)
 import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
@@ -1020,13 +1022,19 @@ export function collectClassDeclaration(
   const ctorKey = classMemberFuncKey(ctx, ctorName);
   ctx.funcMap.set(ctorKey, ctorFuncIdx);
 
-  pushProgramAbiClassCallable(ctx, ctor ?? decl, "unit", ctorFuncIdx, {
-    name: ctorKey,
-    typeIdx: ctorTypeIdx,
-    locals: [],
-    body: [],
-    exported: false,
-  });
+  pushProgramAbiClassCallable(
+    ctx,
+    isExternrefBackedClass ? (ctor ?? decl) : decl,
+    isExternrefBackedClass ? "unit" : "constructor-new",
+    ctorFuncIdx,
+    {
+      name: ctorKey,
+      typeIdx: ctorTypeIdx,
+      locals: [],
+      body: [],
+      exported: false,
+    },
+  );
 
   // (#2637 B2.1/B2.3) For a `class … extends Promise` WITH a user constructor,
   // pre-register a SECOND constructor body `${className}_new__onhost`. It has
@@ -1081,7 +1089,7 @@ export function collectClassDeclaration(
     const initFuncIdx = mintDefinedFunc(ctx);
     const initKey = classMemberFuncKey(ctx, initName); // (#1983) collision-free key + display name
     ctx.funcMap.set(initKey, initFuncIdx);
-    pushProgramAbiClassCallable(ctx, decl, "constructor-init", initFuncIdx, {
+    pushProgramAbiClassCallable(ctx, ctor ?? decl, "unit", initFuncIdx, {
       name: initKey,
       typeIdx: initTypeIdx,
       locals: [],
@@ -1334,7 +1342,7 @@ export function collectClassDeclaration(
         if (legacyKey.startsWith(`${ancestor}_`) && !legacyKey.endsWith("_new") && !legacyKey.endsWith("_type")) {
           const suffix = legacyKey.substring(ancestor.length + 1);
           // Skip constructor-related entries
-          if (suffix === "new" || suffix.startsWith("new_")) continue;
+          if (suffix === "new" || suffix.startsWith("new_") || suffix === "init") continue;
           // Check if this is a getter/setter (get_X or set_X)
           const getMatch = suffix.match(/^get_(.+)$/);
           const setMatch = suffix.match(/^set_(.+)$/);
@@ -1529,9 +1537,22 @@ export function buildShapePropFlagsTable(ctx: CodegenContext): void {
   }
 }
 
-/** Scan all function bodies for ref.func instructions and record their targets */
-export function collectDeclaredFuncRefs(ctx: CodegenContext): void {
-  const refs = new Set<number>();
+/**
+ * Scan all function bodies for ref.func instructions and record their targets.
+ *
+ * (#4257) `opts.additive` re-runs the scan over the ALREADY-collected set
+ * instead of replacing it. The one-shot mid-finalize call happens long before
+ * the `__extern_get` / dispatcher body FILLS run, so a `ref.func` whose only
+ * occurrence is inside a late-spliced arm was never declared and the module
+ * failed validation with "undeclared reference to function #N". Two arms
+ * (#2963's method trampolines, #2175's eval callables) had each hand-patched
+ * that by pushing their own index; the additive re-scan generalises the repair
+ * so a new arm cannot reintroduce the bug. Union, never replace: an entry a
+ * caller pushed by hand for a `ref.func` this scan cannot see (element
+ * segments, later rewriters) must survive.
+ */
+export function collectDeclaredFuncRefs(ctx: CodegenContext, opts?: { additive?: boolean }): void {
+  const refs = new Set<number>(opts?.additive ? ctx.mod.declaredFuncRefs : []);
   function scanInstrs(instrs: Instr[]): void {
     for (const instr of instrs) {
       if (instr.op === "ref.func") {
@@ -1632,6 +1653,39 @@ export function compileClassBodies(
   }
 }
 
+function skipPreparedClassConstructorBody(
+  ctx: CodegenContext,
+  funcByName: ReadonlyMap<string, number>,
+  routing: ClassBodyCompileRouting | undefined,
+  className: string,
+  ctorName: string,
+): boolean {
+  if (!routing?.skipBodies.has(ctorName)) return false;
+  const newFuncIdx = ctx.funcMap.get(classMemberFuncKey(ctx, ctorName));
+  const initKey = classMemberFuncKey(ctx, `${className}_init`);
+  const initLocalIdx = funcByName.get(initKey);
+  const initFuncIdx = ctx.funcMap.get(initKey);
+  const initFunc = initLocalIdx === undefined ? undefined : ctx.mod.functions[initLocalIdx];
+  if (routing.preserveSkippedBodies?.has(ctorName)) {
+    if (newFuncIdx === undefined || initFuncIdx === undefined || !initFunc || initFunc.body.length === 0) {
+      throw new Error(`prepared constructor ${ctorName} has no installed IR init body`);
+    }
+    if (definedFuncAt(ctx, initFuncIdx) !== initFunc) {
+      throw new Error(`prepared constructor ${ctorName} has a stale init locator`);
+    }
+    // Preparation installs the AST-free wrapper before component sealing.
+    // The direct pass only proves the support slot survived unchanged.
+    if (definedFuncAt(ctx, newFuncIdx)?.body.length === 0) {
+      throw new Error(`prepared constructor ${ctorName} has no installed allocation wrapper`);
+    }
+  } else {
+    if (!initFunc) throw new Error(`invariant-owned constructor ${ctorName} has no init slot`);
+    initFunc.body = [{ op: "unreachable" }];
+  }
+  routing.skippedNames.push(ctorName);
+  return true;
+}
+
 function compileClassBodiesInner(
   ctx: CodegenContext,
   decl: ts.ClassDeclaration | ts.ClassExpression,
@@ -1645,9 +1699,9 @@ function compileClassBodiesInner(
   const ctor = decl.members.find(ts.isConstructorDeclaration) as ts.ConstructorDeclaration | undefined;
   const ctorName = `${className}_new`;
   const ctorLocalIdx = funcByName.get(classMemberFuncKey(ctx, ctorName)); // (#1983)
-  if (ctorLocalIdx !== undefined) {
-    assertDirectClassBodyAllowed(ctorName);
+  if (ctorLocalIdx !== undefined && !skipPreparedClassConstructorBody(ctx, funcByName, routing, className, ctorName)) {
     const func = ctx.mod.functions[ctorLocalIdx]!;
+    assertDirectClassBodyAllowed(ctorName);
     const params: { name: string; type: ValType }[] = [];
     // (#2086) Match the synthetic forwarder params added during pre-registration
     // from the SAME shared rule — `__arg{i}` externref forwarders (#1833) and/or
@@ -2151,45 +2205,15 @@ function compileClassBodiesInner(
       initFunc.locals = fctx.locals;
       initFunc.body = fctx.body;
 
-      const newBody: Instr[] = [];
-      for (const field of fields) {
-        if (field.name === "__tag") {
-          // Class-specific tag value for instanceof discrimination. The
-          // derived-most class allocates, so a base ctor body running via
-          // the init chain observes the DERIVED tag — that is what makes
-          // `this.method()` in a base ctor virtual-dispatch correctly.
-          const tagValue = ctx.classTagMap.get(className) ?? 0;
-          newBody.push({ op: "i32.const", value: tagValue });
-        } else if (field.type.kind === "f64") {
-          newBody.push({ op: "f64.const", value: 0 });
-        } else if (field.type.kind === "i32") {
-          newBody.push({ op: "i32.const", value: 0 });
-        } else if (field.type.kind === "externref") {
-          newBody.push({ op: "ref.null.extern" });
-        } else if (field.type.kind === "ref" || field.type.kind === "ref_null") {
-          newBody.push({ op: "ref.null", typeIdx: field.type.typeIdx });
-        } else if ((field.type as any).kind === "i64") {
-          newBody.push({ op: "i64.const", value: 0n });
-        } else if ((field.type as any).kind === "eqref") {
-          newBody.push({ op: "ref.null.eq" });
-        } else {
-          newBody.push({ op: "i32.const", value: 0 });
-        }
-      }
-      newBody.push({ op: "struct.new", typeIdx: structTypeIdx });
-      // Stash the fresh instance, push args 0..n-1 then the instance, and
-      // tail-call init (init returns the instance, satisfying `_new`'s
-      // (ref $struct) result type).
-      const newSelfLocal = params.length; // first local after params
-      newBody.push({ op: "local.set", index: newSelfLocal });
-      for (let i = 0; i < params.length; i++) {
-        newBody.push({ op: "local.get", index: i });
-      }
-      newBody.push({ op: "local.get", index: newSelfLocal });
       const initIdxNow = ctx.funcMap.get(classMemberFuncKey(ctx, `${className}_init`)); // (#1983)
-      newBody.push({ op: "return_call", funcIdx: initIdxNow! });
-      func.locals = [{ name: "__self", type: { kind: "ref", typeIdx: structTypeIdx } }];
-      func.body = newBody;
+      const newIdxNow = ctx.funcMap.get(classMemberFuncKey(ctx, ctorName));
+      installAstFreeClassConstructorNewWrapper(ctx, {
+        className,
+        structTypeIdx,
+        fields,
+        newFuncIdx: newIdxNow!,
+        initFuncIdx: initIdxNow!,
+      });
     } else {
       func.locals = fctx.locals;
       func.body = fctx.body;

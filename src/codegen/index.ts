@@ -14,7 +14,7 @@ import { fillNativeConstructDrivers, maxReservedNativeConstructArity } from "./n
 import { fillConstructBoundDriver } from "./construct-bound.js"; // (#4196)
 import { emitVecDefineWritebackExports } from "./vec-define-writeback.js"; // (#3116)
 import { detectArrayReduceFusion } from "./array-reduce-fusion.js";
-import { hoistConstantBoxedNumbers } from "./const-box-hoist.js"; // (#4157)
+import { finalizeModuleValueCaches } from "./module-value-caches.js"; // (#4150/#4157)
 import type { MultiTypedAST, TypedAST } from "../checker/index.js";
 import type { TypeFact, TypeOracle } from "../checker/oracle.js";
 import {
@@ -33,6 +33,7 @@ import {
 } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType, WasmFunction, WasmModule } from "../ir/types.js";
 import { createEmptyModule } from "../ir/types.js";
+import { irSupportFuncRef } from "../ir/callable-bindings.js";
 import { compileIrPathFunctions, type IrIntegrationError, type IrIntegrationReport } from "../ir/integration.js";
 import {
   asVal,
@@ -150,15 +151,13 @@ import {
   buildIrRequestedFunctionSkipProjection,
   correlateIrSkippedBodyNames,
   correlateIrSkippedFunctionNames,
-  mergeIrIntegrationReports,
   type IrExactFunctionClaim,
 } from "./ir-overlay-safety.js";
 import {
   completePreparedIrIntegration,
   computePreparedInheritedIrFirstSkipUnitIds,
   finalizeR3PreparedOwnerPopulation,
-  prepareIrClassMemberBodies,
-  prepareIrFreeFunctionBodies,
+  prepareIrBodies,
   selectR2PreparedFreeFunctions,
   selectR3PreparedPromiseDelayFunctions,
   selectPreparedClassMemberNames,
@@ -241,6 +240,9 @@ import {
   unshiftExternGetWrapperCtorArm,
 } from "./object-runtime.js";
 import { moduleMentionsObjectIdentifier, moduleReadsConstructorProp } from "./wrapper-constructor-carrier.js"; // (#4223/#4232)
+import { unshiftNativeProtoHasOwnArms } from "./native-proto-own-props.js"; // (#4248) builtin-proto own members
+import { unshiftNativeProtoToPrimitiveArm } from "./native-proto-wrapper-primitive.js"; // (#4248) proto [[PrimitiveValue]]
+import { unshiftExternGetProtoMethodArm } from "./native-proto-instance-method-read.js"; // (#4248) inherited method value
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { fillInstanceTombstones } from "./instance-tombstones.js"; // (#4098 G1 s1) per-instance own-property deletability
 import { fillInstanceProps } from "./instance-props.js"; // (#4194) instance expando bag substrate
@@ -1310,10 +1312,15 @@ function buildIrClassShapes(
       }
     }
     if (!ctorOk) continue;
-    const constructorTarget = callableTarget(
+    const constructorInitTarget = callableTarget(
       ctor ?? stmt,
       ctor ? "class-constructor" : "class-implicit-constructor",
-      "new",
+      "init",
+    );
+    const constructorTarget = irSupportFuncRef(
+      classId,
+      "class-constructor-new",
+      classMemberFuncKey(ctx, `${className}_new`),
     );
 
     // Fields — read from the legacy `structFields` (which fixes the
@@ -1547,7 +1554,8 @@ function buildIrClassShapes(
       fields,
       methods,
       constructorParams,
-      ...(constructorTarget ? { constructorTarget } : {}),
+      constructorTarget,
+      ...(constructorInitTarget ? { constructorInitTarget } : {}),
       // #3000-E: present only for a single-level subclass of a local user class.
       ...(parentShape ? { parent: parentShape } : {}),
     };
@@ -3335,8 +3343,8 @@ function planIrFirstBodyRouting(
     ? selectPreparedClassMemberNames(ctx, preliminarySelection, plan.identityPlan)
     : new Set<string>();
   // A class or module owner does not make an unrelated free-function component
-  // direct-owned. Ordinary instance/static methods may enter the same sealed
-  // preparation transaction; constructors and module init remain direct.
+  // direct-owned. Dependency-complete free functions and class members enter
+  // one sealed preparation transaction; module init remains direct.
   // selectR2PreparedFreeFunctions closes candidates over exact local call
   // edges, so any callable edge that crosses into one of those owners removes
   // the complete affected free-function component before preparation.
@@ -3390,32 +3398,22 @@ function planIrFirstBodyRouting(
       // Final-context Promise preparation may reject an occupied/mismatched
       // runtime ABI. Keep that owner on the established direct route.
     } else {
-      const freeFunctionSelection = {
-        funcs: preparedFreeFunctionNames,
-        classMembers: new Set<string>(),
-        moduleInit: undefined,
-      };
-      const preparedFreeFunctions = prepareIrFreeFunctionBodies({
+      const preparedBodies = prepareIrBodies({
         ctx,
         sourceFile,
-        selection: freeFunctionSelection,
-        claimsByUnitId: plan.functionClaimsByUnitId,
-        overrideMap: plan.overrideMap,
-        classShapes: plan.classShapes,
-        loweringPlans: irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, freeFunctionSelection),
-      });
-      const preparedClassMembers = prepareIrClassMemberBodies({
-        ctx,
-        sourceFile,
-        selection: { classMembers: finalClassMemberNames },
+        selection: {
+          funcs: preparedFreeFunctionNames,
+          classMembers: finalClassMemberNames,
+        },
         identityPlan: plan.identityPlan,
+        functionClaimsByUnitId: plan.functionClaimsByUnitId,
         overrideMap: plan.overrideMap,
         classShapes: plan.classShapes,
         projectLoweringPlans: (selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
       });
-      const preparedReport = preparedClassMembers
-        ? mergeIrIntegrationReports(preparedFreeFunctions.report, preparedClassMembers.report)
-        : preparedFreeFunctions.report;
+      const preparedFreeFunctions = preparedBodies.freeFunctions;
+      const preparedClassMembers = preparedBodies.classMembers;
+      const preparedReport = preparedBodies.report;
       const requestedSkipUnitIds = computePreparedInheritedIrFirstSkipUnitIds(inheritedSkipInput);
       for (const entry of preparedFreeFunctions.requestedSkipProjection.entries) {
         requestedSkipUnitIds.add(entry.unitId);
@@ -3964,12 +3962,11 @@ export function generateModule(
     // `unreachable` placeholder are no longer ownership mechanisms for this
     // population.
     //
-    // Dependency-complete top-level methods and accessors now join this
-    // prepared route, including inherited layouts. Constructors, nested
-    // classes, and module init retain the post-direct overlay until their
-    // R3/R4 owners land.
-    // Both reports are joined before telemetry/auditing, so every terminal row
-    // is reconciled once.
+    // Dependency-complete free functions, constructors, methods, and accessors
+    // now join one prepared route, including inherited layouts. Nested classes
+    // and module init retain the post-direct overlay until their R3/R4 owners
+    // land. One report reaches telemetry/auditing, so every terminal row is
+    // reconciled once.
     // Selector-REJECTED functions are never claimed and still compile through
     // the direct path unchanged.
     // Escape hatch (one release, #3143): `JS2WASM_IR_FIRST=0` restores the
@@ -4480,6 +4477,13 @@ export function generateModule(
     fillInstanceTombstones(ctx); // (#4098 G1 s1) BEFORE the ladders below: they bake its call
     fillInstanceProps(ctx); // (#4194) instance expando carrier + bag get/set + tombstone resurrect
     fillClosedStructHasOwnArms(ctx);
+    // (#4248) A builtin `.prototype` is a `$NativeProto`, not a `$Object`, so
+    // its OWN members are invisible to the table walk. AFTER the closed-struct
+    // prologue so the two arms compose in receiver-shape order.
+    unshiftNativeProtoHasOwnArms(ctx);
+    // (#4248) §15.5.4/§15.6.4/§15.7.4 — the three wrapper prototypes ARE
+    // wrapper objects, so ToPrimitive must answer their [[PrimitiveValue]].
+    unshiftNativeProtoToPrimitiveArm(ctx);
     fillClosedStructOwnPropertyNamesArms(ctx);
     fillClosedStructEnumerationArms(ctx); // (#3920) Object.keys / for…in
     fillClosedStructExternGetArms(ctx);
@@ -4497,6 +4501,10 @@ export function generateModule(
     // (#4223) BEFORE the cache arm (which must stay last): answer
     // `<wrapper>.constructor` from the builtin ctor carrier.
     unshiftExternGetWrapperCtorArm(ctx);
+    // (#4248) §21.1.5 — an inherited builtin-proto METHOD read off a wrapper
+    // instance (or off the prototype through a binding) must yield the same
+    // singleton the static `<Builtin>.prototype.<m>` read does.
+    unshiftExternGetProtoMethodArm(ctx);
     unshiftExternGetProtoCacheArm(ctx);
 
     // (#1904) Fill the standalone native Array.isArray predicate after all
@@ -4678,9 +4686,9 @@ export function generateModule(
     // index freeze. No-op unless a gc/host delete-aware read recorded the flag.
     finalizeInModuleInitFlag(ctx);
 
-    // (#4157) Constant number boxes → module globals. Placement contract (why
-    // exactly here) is in const-box-hoist.ts's own doc comment.
-    hoistConstantBoxedNumbers(ctx);
+    // (#4150/#4157) Finalize ambient-global and constant-box caches after every
+    // import global settles. Each pass documents its exact placement contract.
+    finalizeModuleValueCaches(ctx);
 
     // (#2853) Nominal shape branding: structurally-colliding `__anon_*` /
     // `__fnctor_*` shape types get a trailing brand-ref field so the engine's
@@ -4698,6 +4706,11 @@ export function generateModule(
     // the functions/types those exports pin are actually reclaimed. No-op when
     // the bridge is published (js-host default).
     stripHostBridgeExports(ctx);
+
+    // (#4257) Re-declare `ref.func` targets that the mid-finalize scan above
+    // could not see: every `__extern_get`/dispatcher body FILL runs after it.
+    // Additive + before dead-elim (which remaps declaredFuncRefs).
+    collectDeclaredFuncRefs(ctx, { additive: true });
 
     // Dead import and type elimination pass
     eliminateDeadLayoutAndPlanProgramAbi(ctx); // #1899 authoritative remap, then #3520 retained ABI
@@ -6791,6 +6804,13 @@ export function generateMultiModule(
     fillInstanceTombstones(ctx); // (#4098 G1 s1) BEFORE the ladders below: they bake its call
     fillInstanceProps(ctx); // (#4194) instance expando carrier + bag get/set + tombstone resurrect
     fillClosedStructHasOwnArms(ctx);
+    // (#4248) A builtin `.prototype` is a `$NativeProto`, not a `$Object`, so
+    // its OWN members are invisible to the table walk. AFTER the closed-struct
+    // prologue so the two arms compose in receiver-shape order.
+    unshiftNativeProtoHasOwnArms(ctx);
+    // (#4248) §15.5.4/§15.6.4/§15.7.4 — the three wrapper prototypes ARE
+    // wrapper objects, so ToPrimitive must answer their [[PrimitiveValue]].
+    unshiftNativeProtoToPrimitiveArm(ctx);
     fillClosedStructOwnPropertyNamesArms(ctx);
     fillClosedStructEnumerationArms(ctx); // (#3920) Object.keys / for…in
     fillClosedStructExternGetArms(ctx);
@@ -6808,6 +6828,10 @@ export function generateMultiModule(
     // (#4223) BEFORE the cache arm (which must stay last): answer
     // `<wrapper>.constructor` from the builtin ctor carrier.
     unshiftExternGetWrapperCtorArm(ctx);
+    // (#4248) §21.1.5 — an inherited builtin-proto METHOD read off a wrapper
+    // instance (or off the prototype through a binding) must yield the same
+    // singleton the static `<Builtin>.prototype.<m>` read does.
+    unshiftExternGetProtoMethodArm(ctx);
     unshiftExternGetProtoCacheArm(ctx);
     fillRuntimeEvalCallablePropertyGetArm(ctx);
 
@@ -6961,8 +6985,8 @@ export function generateMultiModule(
     // index freeze. No-op unless a gc/host delete-aware read recorded the flag.
     finalizeInModuleInitFlag(ctx);
 
-    // (#4157) Same pass + placement as the single-module pipeline.
-    hoistConstantBoxedNumbers(ctx);
+    // (#4150/#4157) Same module-value caches as the single-module pipeline.
+    finalizeModuleValueCaches(ctx);
 
     // (#2853) Nominal shape branding — same pass + placement as the
     // single-module pipeline (see generateModule): after all instruction
@@ -6977,6 +7001,11 @@ export function generateMultiModule(
     // the functions/types those exports pin are actually reclaimed. No-op when
     // the bridge is published (js-host default).
     stripHostBridgeExports(ctx);
+
+    // (#4257) Re-declare `ref.func` targets that the mid-finalize scan above
+    // could not see: every `__extern_get`/dispatcher body FILL runs after it.
+    // Additive + before dead-elim (which remaps declaredFuncRefs).
+    collectDeclaredFuncRefs(ctx, { additive: true });
 
     // Dead import and type elimination pass
     eliminateDeadLayoutAndPlanProgramAbi(ctx); // #1899 authoritative remap, then #3520 retained ABI

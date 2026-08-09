@@ -4,7 +4,7 @@ title: "IR-only R3: compile-once classes, members, and closures"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-08-03
+updated: 2026-08-09
 priority: critical
 horizon: xl
 complexity: XL
@@ -23,7 +23,7 @@ required_by: [3523, 3525, 3527]
 related: [1370, 1983, 2857, 2951, 3000, 3045, 3144, 3518]
 origin: "#3518 R3 — extend PreparedIrProgram from free functions to every single-source executable class/closure unit"
 files:
-  - src/ir/source-units.ts
+  - src/ir/identity.ts
   - src/ir/program.ts
   - src/ir/prepare.ts
   - src/ir/nodes.ts
@@ -31,7 +31,9 @@ files:
   - src/ir/from-ast.ts
   - src/ir/integration.ts
   - src/ir/prepared-component-dependencies.ts
+  - src/ir/prepared-component-sealing.ts
   - src/codegen/class-bodies.ts
+  - src/codegen/class-constructor-wrapper.ts
   - src/codegen/closures.ts
   - src/codegen/declarations.ts
   - src/codegen/ir-prepared-free-functions.ts
@@ -41,18 +43,23 @@ files:
   - src/codegen/program-abi-type-planning.ts
   - src/codegen/context/types.ts
   - src/codegen/index.ts
+  - scripts/ir-only-baseline.json
+  - plan/log/ir-optimization-retirement-ledger.md
+  - tests/class-expressions.test.ts
+  - tests/issue-3521-prepared-free-function-routing.test.ts
   - tests/issue-3522-ir-class-compile-once.test.ts
+  - tests/issue-3522-ir-cross-owner-free-function.test.ts
   - tests/issue-3522-ir-static-class-method.test.ts
+  - tests/issue-3792-ir-optimization-retirement-gate.test.ts
 loc-budget-allow:
   - src/codegen/class-bodies.ts
-  - src/codegen/declarations.ts
   - src/codegen/index.ts
-  - src/codegen/program-abi-session.ts
-  - src/ir/integration.ts
+  - src/ir/select.ts
 func-budget-allow:
-  - src/codegen/class-bodies.ts::compileClassBodiesInner
-  - src/codegen/declarations.ts::compileDeclarations
-  - src/codegen/index.ts::generateModule
+  - src/codegen/class-bodies.ts::collectClassDeclaration
+  - src/codegen/index.ts::buildIrClassShapes
+  - src/ir/prepared-component-dependencies.ts::collectFunctionEvidence
+  - src/ir/select.ts::whyNotIrClaimable
 ---
 
 # #3522 — IR-only R3: compile-once classes, members, and closures
@@ -94,7 +101,7 @@ Class integration still depends on direct compilation as its ABI producer:
   static globals, and static-init queue mutation.
 - `src/codegen/class-bodies.ts:1551-1740` then compiles constructor/default/
   field work directly. The source constructor body is split across
-  `${Class}_new` and `${Class}_init` support functions
+  generated `${Class}_new` and `${Class}_init` functions
   (`:1043-1075`, `:1642-1692`). Those support units are not represented in the
   current `IrModule` contract.
 - `src/codegen/declarations.ts:1872-2074` recursively eager/deferred-compiles
@@ -330,15 +337,79 @@ Final-head validation before publication:
   equivalence gates passed;
 - hybrid shadow: **37/37 IR, 24 legacy, 0 Unsupported, 0 Invariant**;
 - strict IR-only shadow: expected red on exactly 24 legacy bodies;
-- `check:linear-ir` has a pre-existing current-main ratchet failure
+- `check:linear-ir` had a pre-existing then-current-main ratchet failure
   (`compiled 8 -> 6`, two `vec.set_length` and two string-builder demotions).
   The identical result was reproduced in a clean detached `origin/main`
   worktree at `f23ea5025e04ac`; this checkpoint does not refresh that unrelated
   baseline.
 
+### Explicit-constructor source-body checkpoint (2026-08-09)
+
+The two bounded WasmGC constructors now compile once. The terminal/reporting
+identity remains `Animal_new` / `Dog_new`, but physical ownership is no longer
+ambiguous:
+
+- `_init(sourceParams..., self) -> self` is the exact constructor source-unit
+  callable and the only function that contains source field writes, defaults,
+  and `super(...)` semantics;
+- `_new(sourceParams...) -> self` is a class-owned support callable containing
+  only default/tag allocation, one `struct.new`, argument forwarding, and one
+  `return_call` to the exact `_init`; and
+- `class.new` records both dependencies. Dependency sealing follows the
+  `_new` support binding and the `_init` source unit, while lowering consumes
+  those same exact targets. The constructor source component also pins its own
+  `_new` support binding even though `_init` contains no `class.new`
+  instruction. A derived init records the parent `_init` unit and passes the
+  same receiver.
+
+The wrapper is installed from stable Program ABI handles before the prepared
+component seals. `compileClassBodies` skips the source constructor before its
+direct body emitter/poison seam; it preserves the prepared `_init` and the
+already-installed wrapper. Generic direct `_init` compilation remains for
+constructors that are not yet eligible. In particular, conditional, late, or
+repeated `super()`, externref-backed classes, parameter properties, property
+initializers, implicit constructors, unresolved forward-class parameter ABIs,
+and constructor calls or accessor operations reached through `this`/`super`
+stay direct with typed telemetry and no post-claim demotion. The receiver
+dispatch families remain direct until IR can preserve virtual method and
+getter/setter dispatch rather than statically binding the constructor owner.
+
+The obsolete allocation-owning IR constructor model was deleted in this same
+checkpoint: `constructorClassShape`, `class.alloc`, `emitClassAlloc`,
+`IrClassLowering.allocInstrs`, the duplicate integration allocation prefix,
+and the old `class-constructor-init` support role have no remaining production
+or test consumer. The shared AST-free wrapper is now the single allocation
+implementation used by both prepared and generic-direct init bodies.
+
+Executable parity and output-shape coverage in GC and standalone proves:
+
+- direct constructor-body poison is never entered for `Animal_new` or
+  `Dog_new`, while unsupported constructor controls still enter it;
+- one allocation occurs in each `_new`, source `struct.set` operations occur
+  only in `_init`, and `Dog_init` calls `Animal_init` once on the same receiver;
+- private fields retain native string carriers and unboxed `f64`, with no
+  ambient-`this`, dynamic-member, boxing, or indirect-call ladder; and
+- receiver method calls and getter/setter accesses execute through the direct
+  dispatch path with their observable virtual/accessor behavior intact.
+
+Separate routing-only controls prove that unsafe-super, externref-backed, and
+forward-class-ABI constructors remain direct and still reach the direct-body
+poison seam. Those controls compile and validate but do not execute the
+constructor, so they are not runtime-parity claims.
+
+Fresh readiness measurement is **5/5 entries, 37/37 IR-emitted terminals, 22
+legacy bodies, 0 Unsupported, and 0 Invariant**. Hybrid is READY. Strict
+IR-only is expected red solely on those 22 bodies: the same 20 free functions
+and two module-init bodies listed in the prior handover, with `Animal_new` and
+`Dog_new` removed. The constructor family therefore moves from **24 to 22**
+legacy bodies without changing the 37-unit denominator.
+
 1. Retire `Animal_new` and `Dog_new` by making `_init` the sole source-body
    owner and `_new` an AST-free allocation wrapper; retain same-receiver
-   `Animal_init` chaining and delete the obsolete direct constructor-body path.
+   `Animal_init` chaining and delete the obsolete allocation-owning IR path.
+   **Completed by the 2026-08-09 checkpoint.** Generic direct `_init`
+   compilation intentionally remains for the unsupported constructor shapes
+   named above.
 2. Retire closures and cross-owner calls as one family, then module
    initialization, then runtime/linear-memory helpers. Keep only one
    overlapping production PR active. The class-member selector intentionally
@@ -347,6 +418,137 @@ Final-head validation before publication:
 3. For each family, reduce the measured legacy count, pass hybrid plus strict
    shadow validation, add semantic/output-shape optimization parity, and delete
    the obsolete legacy implementation in the same PR when no consumers remain.
+
+### Published checkpoint handover
+
+Ready PR [#4268](https://github.com/loopdive/js2/pull/4268) publishes
+`codex/3522-constructor-retirement` from the isolated worktree
+`/private/tmp/ts2wasm-3522-constructor-retirement`. The production checkpoint
+is `2cdd8116f8b2a74cabee54fb4d6b7019f53dafe6`, rebased onto `origin/main`
+`6a16f225cb6aa36645375de4a2d35b2170f9937e`. The PR is intentionally ready,
+not draft, and is not in the merge queue at suspension. Do not modify the
+branch after it enters the queue; full Test262 remains merge-queue-only. The
+dirty root checkout is outside this worktree and remains untouched.
+
+Final post-rebase evidence:
+
+- changed-root regressions: **80/80 passed**;
+- constructor/dependency focus: **52/52 passed**;
+- main-overlap closure `$bag`, derivation-default, and eval/finally controls:
+  **47/47 passed**;
+- the exact async IR-only shadow passes with its direct-body poison and firing
+  control, and the #4102 Program ABI closure fixture now carries main's
+  canonical `[func, $arity, $bag, ...captures]` header;
+- typecheck, formatting, normal fallback, zero-attributed shape diagnostics,
+  hybrid readiness, allocation provenance, issue integrity, adoption,
+  optimization retirement, LOC/function budgets, vacuity-shape, oracle, and
+  verdict gates pass; and
+- strict IR-only is expected red only on 22 legacy bodies. The linear ratchet
+  is separately red with the identical result on this branch and clean
+  `origin/main` at `5cb2d525`: compiled `8 -> 6`, two
+  `illegal:instr-vec.set_length`, and two `select:string-builder-candidate`
+  demotions. This checkpoint does not refresh that unrelated baseline.
+
+Resume only after #4268 lands or is explicitly withdrawn. The next production
+transaction is closures and cross-owner calls; keep receiver-derived
+constructor method/accessor dispatch gated until its two incomplete
+optimization-ledger rows have semantic and output-shape IR ownership.
+
+### Cross-owner free-function checkpoint (2026-08-09)
+
+PR #4268 landed on `main` at `464858cfe98e30af7170486bd55131b4ec8bd229`.
+The first cross-owner retirement slice then replaced the split free-function /
+class-member preparation passes with one exact transaction. That transaction
+projects one combined lowering plan, compiles once, seals against the union of
+free-function and class-member claims, routes/defer-checks the combined report
+once, and only then partitions the skip/preserve views used by the two legacy
+declaration seams. A routing unit that belongs to neither or both families is
+a hard invariant. Class layouts are published from final post-pass IR rather
+than before the combined free-function build can finalize their allocator-owned
+structs. When one owner still fails dependency sealing, only that exact owner
+is peeled and the remaining denominator is rederived; a blocked caller no
+longer withdraws an otherwise complete callee, and no body is compiled twice.
+
+Equivalence qualification exposed one additional transaction boundary: a
+component with both a preparable class layout and a hard direct-route blocker
+must not publish the mutable allocator layout before it is peeled. Immutable
+callable imports/providers now preflight first while tolerating only proven
+preparable class blockers. A class layout is published only after it is the
+component's complete remaining blocker set. The explicit dynamic-`super`
+control proves the blocked child and its free caller keep their direct behavior
+and poison seam without leaving a stale ABI draft, while an independent parent
+method can still seal on IR.
+
+This closes the free-function-to-class direction for the bounded WasmGC class
+program. `classes.ts::main` and all ten Animal/Dog constructor, method, and
+accessor terminals now share one prepared component ID and record
+`legacyBodyEmitted: false`, `irBodyEmitted: true`. The reverse direction stays
+conservative: a class member that calls a top-level free function remains on
+the direct component until that complete family is owned atomically. Module
+globals also remain deferred.
+
+Explicit parity evidence now proves:
+
+- the exact nine-line Animal/Dog runtime trace and ordered direct class-call
+  target sequence;
+- one specialized numeric-to-string call, nine typed string-log calls, and
+  eight string concatenations without dynamic boxing;
+- the exact Dog and Animal static tag-test shapes for `instanceof`; and
+- absence of `call_ref`, `call_indirect`, `ref.test`, dynamic extern class
+  dispatch, ambient `this`, argc, and arguments traffic in prepared `main`.
+
+The same maximal sealing transaction independently retires Algorithms
+`fibIter`. Its exact playground run preserves all 20 output lines, and its WAT
+retains `f64` loop-carried `a`/`b`, an `i32` counter slot, one loop, and no
+call, boxing, or extern-carrier traffic. `fibMemo`, binary search, quicksort,
+`joinNums`, Algorithms `main`, and its module initializer remain direct.
+
+Standalone `classes.ts::main` remains an explicit selector-unsupported ambient
+console boundary. Its ten class terminals are still IR-only, and an in-Wasm
+trace sink proves the unchanged direct-main behavior. A default-parameter
+constructor control proves selector-rejected class dependencies and their free
+owner remain direct and still reach the direct-class-body poison seam.
+
+Fresh hybrid shadow validation is **5/5 entries, 37/37 IR-emitted terminals,
+20 legacy bodies, 0 Unsupported, and 0 Invariant**. This checkpoint reduces
+the measured ceiling from **22 to 20** without changing the denominator.
+Strict IR-only remains expected-red solely on these bodies:
+
+- Calendar: module initializer plus nine functions (**10**);
+- Algorithms: module initializer plus five functions (**6**);
+- Builtins: four functions (**4**); and
+- Classes: **0**.
+
+No dedicated legacy implementation is deleted in this slice: `main` uses the
+shared free-function direct emitter, which still has 18 measured consumers.
+Deleting that shared implementation now would remove live fallback behavior;
+its deletion belongs to the final free-function-family retirement that proves
+zero consumers. The resumable branch is
+`codex/3522-cross-owner-retirement` in
+`/private/tmp/ts2wasm-3522-cross-owner-retirement`; the dirty root checkout is
+outside it and remains untouched.
+
+### Published cross-owner handover
+
+Ready PR [#4281](https://github.com/loopdive/js2/pull/4281) publishes this
+checkpoint. It was rebased after overlapping PR #4258 landed and requalified
+without conflict on `origin/main` at
+`517aa2d0debef17373eeadf36d42a775e4c6ddce`. The red checkpoint, production
+transaction, and stale-layout repair commits are respectively
+`c55f7cc9c4e978`, `fd198e02b47276`, and `5add835c833d99`.
+
+Post-rebase qualification is green: changed-root **49/49**, focused
+cross-owner/inherited/`super` parity **28/28**, all four equivalence shards with
+zero new regressions, typecheck, formatting, hybrid shadow, fallback, shape,
+optimization, oracle, budget, vacuity, and issue-integrity gates. Strict
+IR-only is expected red only on the exact 20-body census above. Full Test262 is
+merge-queue-only. Do not modify the PR branch after it enters the queue.
+
+Resume production only after #4281 lands or is explicitly withdrawn. The next
+bounded overlapping family is the four-body Builtins closure/cross-owner
+component (`el`, `crd`, `rw`, `main`); keep one production PR active and use
+parallel agents only for disjoint inventory, parity, optimization audit, and
+review work.
 
 ## Exhaustive source-unit census
 
@@ -377,9 +579,9 @@ Do not equate generated Wasm functions with source bodies. Record explicit
 support relationships:
 
 - A source constructor is one source unit. For a WasmGC class,
-  `<Class>_new` is an allocation wrapper and `<Class>_init` is the support unit
-  that executes field/default/source-constructor semantics. The source body
-  must occur in exactly one of them, never both.
+  `<Class>_init` is that exact source-unit callable and executes
+  field/default/source-constructor semantics. `<Class>_new` is an AST-free
+  class support binding. The source body occurs only in `_init`, never in both.
 - A default constructor receives a deterministic synthetic source-unit ID and
   support units derived from its `IrClassId`.
 - Inherited member aliases point to a canonical parent unit/slot and are not a
@@ -456,9 +658,11 @@ files remain R5/R8.
 
 `tests/issue-3522-ir-class-compile-once.test.ts` must prove:
 
-1. An explicit base constructor, synthesized default constructor, and derived
-   constructor inventory one source body each. `_new` and `_init` are distinct
-   support units; constructor/field code executes once and counters reconcile.
+1. An explicit base constructor and derived constructor inventory one source
+   body each. `_init` is the exact source callable and `_new` is distinct
+   support; constructor/field code executes once and counters reconcile.
+   Synthesized default constructors remain a follow-up family until they have
+   an exact synthetic IR body rather than generic direct init compilation.
 2. Instance/static methods with the same property name, instance/static
    getters/setters, and a top-level synthetic-key collision receive distinct
    IDs, slots, and correct receiver signatures.
@@ -536,7 +740,7 @@ Run adjacent coverage from `tests/issue-1983-funcmap-collision.test.ts`,
 ## Required completion evidence
 
 ```bash
-pnpm exec vitest run tests/issue-3522-ir-class-compile-once.test.ts tests/issue-3522-ir-static-class-method.test.ts tests/issue-1983-funcmap-collision.test.ts tests/issue-3000-1b.test.ts tests/issue-3000-e.test.ts tests/issue-3144-ir-class-claims.test.ts tests/class-expressions.test.ts tests/nested-class-declarations.test.ts --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
+pnpm exec vitest run tests/issue-3522-ir-cross-owner-free-function.test.ts tests/issue-3522-ir-class-compile-once.test.ts tests/issue-3522-ir-static-class-method.test.ts tests/issue-3521-prepared-free-function-routing.test.ts tests/issue-1983-funcmap-collision.test.ts tests/issue-3000-1b.test.ts tests/issue-3000-e.test.ts tests/issue-3144-ir-class-claims.test.ts tests/class-expressions.test.ts tests/nested-class-declarations.test.ts --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
 pnpm run check:ir-only -- --policy=hybrid
 pnpm run check:ir-only -- --policy=ir-only --json
 pnpm run check:ir-fallbacks -- --verbose

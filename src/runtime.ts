@@ -9682,7 +9682,7 @@ assert._isSameValue = isSameValue;
           return Number(v);
         };
         return (obj: any) => {
-          if (obj == null) return 0;
+          if (obj == null || Array.isArray(obj)) return obj == null ? 0 : obj.length;
           // Reading .length on an opaque wasmGC struct throws — resolve through
           // the #1629-safe own-descriptor reader (#983 sidecar + vec live length
           // + shape-gated struct field), then the inherited chain.
@@ -11485,10 +11485,9 @@ assert._isSameValue = isSameValue;
       if (name === "__extern_method_call")
         return (obj: any, method: string, args: any[]) => {
           if (obj == null) throw new TypeError("Cannot read properties of null (reading '" + method + "')");
-          // #983: wrap wasmGC receiver + arg structs in live-mirror Proxies.
-          // The proxy's `get` trap now exposes closure-field methods as
-          // callable JS functions, so JS ToPrimitive / Array built-ins can
-          // invoke poisoned valueOf/toString and let errors propagate.
+          const primitive = wsh.tryPrimitiveStringMethod(obj, method, args, _isWasmStruct, _reflectApply);
+          if (primitive !== undefined) return primitive === wsh.PRIMITIVE_STRING_UNDEFINED ? undefined : primitive;
+          // #983: wrap WasmGC receivers and arg structs in live-mirror Proxies; closure fields preserve ToPrimitive errors.
           const exports = callbackState?.getExports();
           const wrapHostValue = (v: any): any => {
             if (!_isWasmStruct(v)) return v;
@@ -15922,6 +15921,28 @@ function wrapWithContainment(
 }
 
 /**
+ * These intents resolve to leaf functions that cannot throw or call user code,
+ * so they cannot re-enter Wasm. Their import wrappers therefore do not need the
+ * recursion-depth or catch-all bookkeeping used by general host operations.
+ * Keep this predicate intent-based: `buildImports` is public and must not trust
+ * a caller-supplied import name to imply safe behaviour.
+ */
+function isFastLeafHostImport(imp: ImportDescriptor): boolean {
+  switch (imp.intent.type) {
+    case "box":
+    case "typeof_check":
+    case "truthy_check":
+      return true;
+    case "unbox":
+      return imp.intent.targetType === "boolean";
+    case "builtin":
+      return imp.intent.name === "__get_undefined";
+    default:
+      return false;
+  }
+}
+
+/**
  * Build the WebAssembly import object from a closed manifest.
  *
  * After instantiation, prefer `setInstance(instance)`. It proves the
@@ -16032,6 +16053,28 @@ export function buildImports(
       }
     }
 
+    // Acorn executes millions of these leaf calls per parse. They cannot throw
+    // or re-enter Wasm, so avoid constructing and invoking the general guarded
+    // wrapper. Preserve import diagnostics and the Wasm signature's fixed
+    // arity. The switch provides rollout containment.
+    const fastLeaf = process.env.JS2WASM_FAST_LEAF_HOST_IMPORTS !== "0" && isFastLeafHostImport(imp);
+    if (fastLeaf && imp.paramCount === 0) {
+      const original = fn;
+      env[imp.name] = function () {
+        if (importCounts) importCounts[importIndex]++;
+        return original();
+      };
+      continue;
+    }
+    if (fastLeaf && imp.paramCount === 1) {
+      const original = fn;
+      env[imp.name] = function (a: any) {
+        if (importCounts) importCounts[importIndex]++;
+        return original(a);
+      };
+      continue;
+    }
+
     // Wrap host imports with recursion depth guard + exception capture for catch_all.
     //
     // (#4150) Arity-specialized. This wrapper sits on EVERY host import, so its
@@ -16079,7 +16122,7 @@ export function buildImports(
         fn = function (this: any) {
           guardEnter();
           try {
-            return original.call(this);
+            return original();
           } catch (e) {
             lastCaughtException = e;
             throw e;
@@ -16091,7 +16134,7 @@ export function buildImports(
         fn = function (this: any, a: any) {
           guardEnter();
           try {
-            return original.call(this, a);
+            return original(a);
           } catch (e) {
             lastCaughtException = e;
             throw e;
@@ -16103,7 +16146,7 @@ export function buildImports(
         fn = function (this: any, a: any, b: any) {
           guardEnter();
           try {
-            return original.call(this, a, b);
+            return original(a, b);
           } catch (e) {
             lastCaughtException = e;
             throw e;
@@ -16115,7 +16158,7 @@ export function buildImports(
         fn = function (this: any, a: any, b: any, c: any) {
           guardEnter();
           try {
-            return original.call(this, a, b, c);
+            return original(a, b, c);
           } catch (e) {
             lastCaughtException = e;
             throw e;
@@ -16127,7 +16170,7 @@ export function buildImports(
         fn = function (this: any, a: any, b: any, c: any, d: any) {
           guardEnter();
           try {
-            return original.call(this, a, b, c, d);
+            return original(a, b, c, d);
           } catch (e) {
             lastCaughtException = e;
             throw e;

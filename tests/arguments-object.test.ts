@@ -21,4 +21,17 @@ describe("Arguments object", () => {
     `);
     expect(exports.test()).toBe(3);
   });
+
+  it("zero-formal arguments reuses the complete call-site argument list", async () => {
+    const exports = await compileToWasm(`
+      function collect(): number {
+        arguments[0] = arguments[0] + 1;
+        return arguments.length * 100 + arguments[0] + arguments[1];
+      }
+      export function test(): number {
+        return collect(2, 3);
+      }
+    `);
+    expect(exports.test()).toBe(206);
+  });
 });

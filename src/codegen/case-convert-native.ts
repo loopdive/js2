@@ -323,13 +323,14 @@ function buildAsciiFastPath(o: {
                 { op: "br_if", depth: 2 }, // non-ASCII → fall through to the Unicode path
                 get(o.OUTARR),
                 get(o.I),
+                // `(ch - lo) <= (hi - lo)` is the same unsigned interval
+                // test as `ch >= lo && ch <= hi`, with one comparison and no
+                // boolean combine on the per-code-unit ASCII hot path.
                 get(o.CH),
                 c(lo),
-                { op: "i32.ge_u" },
-                get(o.CH),
-                c(hi),
+                { op: "i32.sub" },
+                c(hi - lo),
                 { op: "i32.le_u" },
-                { op: "i32.and" },
                 {
                   op: "if",
                   blockType: { kind: "val", type: i32 },

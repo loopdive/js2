@@ -244,7 +244,7 @@ describe("#3520 production unit-callable Program ABI planning", () => {
 });
 
 describe("#3520 production support-callable Program ABI planning", () => {
-  it("plans an exact class-owned constructor initializer with class-local order", () => {
+  it("plans an exact class-owned AST-free constructor allocator with class-local order", () => {
     const file = source("/repo/class-support.ts", "class Local {} class Other {}");
     const inventory = buildIrUnitInventory([file], { entrySource: file });
     const localClass = inventory.classes.find((record) => record.displayName === "Local")!;
@@ -256,40 +256,40 @@ describe("#3520 production support-callable Program ABI planning", () => {
       results: [{ kind: "externref" }],
     };
     module.types.push(signature);
-    const init = wasmFunction("Local_init", 0);
-    module.functions.push(init);
+    const allocator = wasmFunction("Local_new", 0);
+    module.functions.push(allocator);
 
     const session = new ProgramAbiSession(inventory, module);
     const ctx = createCodegenContext(module, {} as ts.TypeChecker, undefined, session);
-    const ref = irSupportFuncRef(localClass.id, "class-constructor-init", init.name);
+    const ref = irSupportFuncRef(localClass.id, "class-constructor-new", allocator.name);
     expect(() =>
       planProgramAbiSupportCallable(ctx, {
         ref,
         anchor: { kind: "class", classId: otherClass.id },
-        role: "class-constructor-init",
-        roleOrdinal: PROGRAM_ABI_CALLABLE_ROLE.classConstructorInit,
+        role: "class-constructor-new",
+        roleOrdinal: PROGRAM_ABI_CALLABLE_ROLE.classConstructorNew,
         signature,
-        func: init,
+        func: allocator,
       }),
     ).toThrowError(TypeError);
 
     const id = planProgramAbiSupportCallable(ctx, {
       ref,
       anchor: { kind: "class", classId: localClass.id },
-      role: "class-constructor-init",
-      roleOrdinal: PROGRAM_ABI_CALLABLE_ROLE.classConstructorInit,
+      role: "class-constructor-new",
+      roleOrdinal: PROGRAM_ABI_CALLABLE_ROLE.classConstructorNew,
       signature,
-      func: init,
+      func: allocator,
     })!;
     const draft = session.getDraft(id)!;
     expect(draft).toMatchObject({
       structuralOrder: {
         sourceId: localClass.sourceId,
         domainOrdinal: 0,
-        roleOrdinal: PROGRAM_ABI_CALLABLE_ROLE.classConstructorInit,
+        roleOrdinal: PROGRAM_ABI_CALLABLE_ROLE.classConstructorNew,
       },
       structuralReferenceKey: irCallableBindingKey(ref.binding),
-      displayName: init.name,
+      displayName: allocator.name,
       slotPolicy: "required",
       slotSpace: "function",
       intent: {

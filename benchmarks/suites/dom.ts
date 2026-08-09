@@ -98,7 +98,7 @@ function setAttributes(): void {
   }
 }
 
-function readAttributes(): void {
+function readAttributes(): number {
   const elements: MockElement[] = [];
   for (let i = 0; i < 1000; i++) {
     const el = mockDoc.createElement("div");
@@ -107,17 +107,16 @@ function readAttributes(): void {
   }
   let count = 0;
   for (const el of elements) {
-    if (el.getAttribute("data-value") !== null) count++;
+    const v = el.getAttribute("data-value");
+    if (v !== null && v.length > 0) count++;
   }
+  return count;
 }
 
 function modifyText(): void {
-  const elements: MockElement[] = [];
-  for (let i = 0; i < 1000; i++) elements.push(mockDoc.createElement("span"));
-  for (let round = 0; round < 10; round++) {
-    for (const el of elements) {
-      el.textContent = "updated content " + round;
-    }
+  for (let i = 0; i < 1000; i++) {
+    const el = mockDoc.createElement("span");
+    el.textContent = "updated content";
   }
 }
 
@@ -193,7 +192,7 @@ declare class Document {
 }
 declare class Element {
   setAttribute(name: string, value: string): void;
-  getAttribute(name: string): string;
+  getAttribute(name: string): string | null;
 }
 declare const document: Document;
 
@@ -203,7 +202,7 @@ export function run(): number {
     const el = document.createElement("div");
     el.setAttribute("data-value", "test");
     const v = el.getAttribute("data-value");
-    if (v.length > 0) count = count + 1;
+    if (v !== null && v.length > 0) count = count + 1;
   }
   return count;
 }`,
@@ -214,7 +213,8 @@ export function run(): number {
   {
     name: "dom/modify-text",
     iterations: 100,
-    // 1000 createElement + 1000 textContent writes.
+    // 1000 createElement + 1000 textContent writes, matching the JS baseline
+    // above.
     opsPerCall: 2000,
     source: `
 declare class Document {

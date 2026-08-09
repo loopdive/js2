@@ -22,6 +22,54 @@
  * that consume the value in a non-i32 context (#1126's existing pattern).
  */
 import { ts, forEachChild } from "../ts-api.js";
+import type { TypeOracle } from "../checker/oracle.js";
+import { staticIntegerRange } from "./analysis/static-numeric-range.js";
+
+/**
+ * A deliberately narrow range-backed extension to the structural Q-CANON
+ * matcher. Requiring every arithmetic subtree to stay non-negative and within
+ * signed i32 both makes its f64 result exact and rules out observable `-0`.
+ * This admits bounded counted-loop arithmetic such as
+ * `(i * 7919) % 10000` without reopening the overflow/saturation bug fixed by
+ * #2789.
+ */
+function isNonNegativeStaticI32Expression(expr: ts.Expression, oracle: TypeOracle, depth = 0): boolean {
+  if (depth > 32) return false;
+  let current = expr;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isNonNullExpression(current) ||
+    ts.isTypeAssertionExpression(current)
+  ) {
+    current = current.expression;
+  }
+  const range = staticIntegerRange({ oracle }, current);
+  if (
+    range === undefined ||
+    range.min < 0 ||
+    range.max > 0x7fffffff ||
+    Object.is(range.min, -0) ||
+    Object.is(range.max, -0)
+  ) {
+    return false;
+  }
+  if (ts.isNumericLiteral(current) || ts.isIdentifier(current)) return true;
+  if (!ts.isBinaryExpression(current)) return false;
+  const operator = current.operatorToken.kind;
+  if (
+    operator !== ts.SyntaxKind.PlusToken &&
+    operator !== ts.SyntaxKind.MinusToken &&
+    operator !== ts.SyntaxKind.AsteriskToken &&
+    operator !== ts.SyntaxKind.PercentToken
+  ) {
+    return false;
+  }
+  return (
+    isNonNegativeStaticI32Expression(current.left, oracle, depth + 1) &&
+    isNonNegativeStaticI32Expression(current.right, oracle, depth + 1)
+  );
+}
 
 /**
  * Return true if `expr` provably produces a **canonical** signed-32-bit integer
@@ -73,19 +121,22 @@ import { ts, forEachChild } from "../ts-api.js";
 export function isI32SafeExprForArray(
   expr: ts.Expression | undefined,
   i32Locals: ReadonlySet<string>,
+  oracle?: TypeOracle,
   depth = 0,
 ): boolean {
   if (!expr) return false;
   if (depth > 32) return false;
 
+  if (oracle && isNonNegativeStaticI32Expression(expr, oracle)) return true;
+
   if (ts.isParenthesizedExpression(expr)) {
-    return isI32SafeExprForArray(expr.expression, i32Locals, depth + 1);
+    return isI32SafeExprForArray(expr.expression, i32Locals, oracle, depth + 1);
   }
   if (ts.isAsExpression(expr) || ts.isNonNullExpression(expr)) {
-    return isI32SafeExprForArray(expr.expression, i32Locals, depth + 1);
+    return isI32SafeExprForArray(expr.expression, i32Locals, oracle, depth + 1);
   }
   if (ts.isTypeAssertionExpression(expr)) {
-    return isI32SafeExprForArray(expr.expression, i32Locals, depth + 1);
+    return isI32SafeExprForArray(expr.expression, i32Locals, oracle, depth + 1);
   }
 
   if (ts.isNumericLiteral(expr)) {
@@ -102,7 +153,7 @@ export function isI32SafeExprForArray(
     // `~x` always yields a canonical int32; unary `+x` is the identity on an
     // i32-safe operand. Both preserve the canonical-i32 invariant.
     if (op === ts.SyntaxKind.PlusToken || op === ts.SyntaxKind.TildeToken) {
-      return isI32SafeExprForArray(expr.operand, i32Locals, depth + 1);
+      return isI32SafeExprForArray(expr.operand, i32Locals, oracle, depth + 1);
     }
     // #2789: unary `-` can produce negative zero. i32 cannot represent `-0`
     // (it collapses to `+0`), so storing `-0` and then observing the sign of
@@ -114,7 +165,7 @@ export function isI32SafeExprForArray(
     // could hold 0) and `-(expr)` demote to the f64 array.
     if (op === ts.SyntaxKind.MinusToken) {
       if (!ts.isNumericLiteral(expr.operand)) return false;
-      if (!isI32SafeExprForArray(expr.operand, i32Locals, depth + 1)) return false;
+      if (!isI32SafeExprForArray(expr.operand, i32Locals, oracle, depth + 1)) return false;
       return Number(expr.operand.text.replace(/_/g, "")) !== 0;
     }
     return false;
@@ -263,6 +314,7 @@ function collectForCounterNames(decl: ts.FunctionLikeDeclaration): Set<string> {
 export function collectI32SpecializedArrays(
   decl: ts.FunctionLikeDeclaration,
   i32CoercedLocals: ReadonlySet<string>,
+  oracle?: TypeOracle,
 ): Set<string> {
   const result = new Set<string>();
   if (!decl.body || !ts.isBlock(decl.body)) return result;
@@ -356,7 +408,7 @@ export function collectI32SpecializedArrays(
       candidates.has(node.left.expression.text) &&
       !insideNested
     ) {
-      if (!isI32SafeExprForArray(node.right, i32Locals)) {
+      if (!isI32SafeExprForArray(node.right, i32Locals, oracle)) {
         disqualified.add(node.left.expression.text);
       }
     }
@@ -405,13 +457,24 @@ export function collectI32SpecializedArrays(
       const method = node.expression.name.text;
       if (method === "push") {
         for (const arg of node.arguments) {
-          if (ts.isSpreadElement(arg) || !isI32SafeExprForArray(arg, i32Locals)) {
+          if (ts.isSpreadElement(arg) || !isI32SafeExprForArray(arg, i32Locals, oracle)) {
             disqualified.add(arrName);
             break;
           }
         }
+      } else if (
+        method === "indexOf" &&
+        node.arguments.length >= 1 &&
+        node.arguments.length <= 2 &&
+        !ts.isSpreadElement(node.arguments[0]!) &&
+        isI32SafeExprForArray(node.arguments[0]!, i32Locals, oracle)
+      ) {
+        // Read-only and representation-transparent when the strict-equality
+        // search value is itself an exact signed int32. A fractional, `-0`, or
+        // out-of-range search value keeps the f64 backing so compiling the
+        // argument for an i32 element cannot change the match result.
       } else {
-        // .map / .filter / .reduce / .slice / .splice / .indexOf / .includes / etc.
+        // .map / .filter / .reduce / .slice / .splice / .includes / etc.
         // would require f64 element semantics or callback type inference. Skip
         // them all conservatively; future work can lift specific cases.
         disqualified.add(arrName);

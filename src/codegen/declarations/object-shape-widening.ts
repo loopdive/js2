@@ -5,7 +5,7 @@
  * fields. Extracted verbatim from codegen/declarations.ts (#3268).
  */
 import { collectShapes } from "../../shape-inference.js";
-import { forEachChild, ts } from "../../ts-api.js";
+import { forEachChild, getTypeAtLocationBounded, ts } from "../../ts-api.js";
 import { resolveWasmType } from "../index.js";
 import { localGlobalIdx } from "../registry/imports.js";
 import { getArrTypeIdxFromVec, getOrRegisterVecType, registerStructType } from "../registry/types.js";
@@ -95,7 +95,7 @@ export function collectObjectLiteralAssignedPropertyNames(ctx: CodegenContext, s
       ) {
         rhs = rhs.expression;
       }
-      const rhsType = ctx.checker.getTypeAtLocation(rhs);
+      const rhsType = getTypeAtLocationBounded(ctx.checker, rhs);
       const mayCarryObject =
         ts.isObjectLiteralExpression(rhs) ||
         ts.isArrayLiteralExpression(rhs) ||

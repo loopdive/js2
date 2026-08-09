@@ -28,17 +28,44 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { performance } from "node:perf_hooks";
 import { createRequire } from "node:module";
-import { JSDOM } from "jsdom";
 
 import { compile } from "../../src/index.ts";
 import { wrapExports } from "../../src/runtime.ts";
 import { setupReact } from "./setup-react.mjs";
 import { setupReactDomImplementation, setupReactDomUpstreamSuite } from "./setup-react-dom-upstream-suite.mjs";
 import { extractReactUpstreamTests } from "./react-upstream-extract.mjs";
+import { installReactTestEnvironment } from "./react-test-environment.mjs";
 import { REACT_EXPECT_SHIM, LAST_ERROR_EXPORT, buildTestFunction } from "./react-upstream-shim.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPORT_PATH = join(HERE, "report", "react-dom-upstream-suite.json");
+
+let nativeContextFile = "<setup>";
+let nativeContextTest = "<setup>";
+
+export function isExpectedLateJsdomHostError(error) {
+  return error?.name === "NotFoundError" && error?.message === "The node to be removed is not a child of this node.";
+}
+
+function installNativeHostErrorBoundary(nativeHostErrors) {
+  const onUncaught = (error) => {
+    if (!isExpectedLateJsdomHostError(error)) {
+      process.off("uncaughtException", onUncaught);
+      process.nextTick(() => {
+        throw error;
+      });
+      return;
+    }
+    nativeHostErrors.push({
+      file: nativeContextFile,
+      test: nativeContextTest,
+      name: error.name,
+      message: error.message,
+    });
+  };
+  process.on("uncaughtException", onUncaught);
+  return () => process.off("uncaughtException", onUncaught);
+}
 
 // Upstream's `suite` scaffolding is replicated into every lifted test, so a
 // whole file's tests can generate megabytes. Split up front by generated size —
@@ -176,42 +203,6 @@ function withReactDomSetup(test) {
   return { ...test, prelude };
 }
 
-function installDomGlobals() {
-  const dom = new JSDOM("<!doctype html><html><body></body></html>", {
-    url: "http://localhost/",
-    pretendToBeVisual: true,
-  });
-  const window = dom.window;
-  const globals = [
-    "window",
-    "self",
-    "document",
-    "navigator",
-    "Node",
-    "Element",
-    "HTMLElement",
-    "HTMLInputElement",
-    "HTMLSelectElement",
-    "HTMLTextAreaElement",
-    "Event",
-    "CustomEvent",
-    "MouseEvent",
-    "KeyboardEvent",
-    "FocusEvent",
-    "InputEvent",
-    "MutationObserver",
-    "getComputedStyle",
-    "requestAnimationFrame",
-    "cancelAnimationFrame",
-  ];
-  for (const name of globals) {
-    const value = name === "window" || name === "self" ? window : window[name];
-    if (value === undefined) continue;
-    Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
-  }
-  return dom;
-}
-
 function buildModuleSource(implementation, tests) {
   return [
     implementation,
@@ -231,14 +222,16 @@ function buildNativeRunners(implementation, tests) {
       .join(", ")} } };`,
   ].join("\n");
   // eslint-disable-next-line no-new-func
-  return new Function(source);
+  return new Function("require", source);
 }
 
 async function runNative(implementation, tests) {
   try {
-    const runners = buildNativeRunners(implementation, tests)();
+    const nativeRequire = createRequire(import.meta.url);
+    const runners = buildNativeRunners(implementation, tests)(nativeRequire);
     const out = [];
     for (const test of tests) {
+      nativeContextTest = test.id;
       let value;
       let error = null;
       try {
@@ -247,12 +240,30 @@ async function runNative(implementation, tests) {
         error = thrown instanceof Error ? thrown.message : String(thrown);
       }
       out.push({ id: test.id, value, error, message: value === 1 ? "" : runners.__lastError() });
+      // React's scheduler shim uses host timers. Give those callbacks one turn
+      // to settle before starting the next upstream test, while the native host
+      // error boundary is still active for any late jsdom exception.
+      await new Promise((resolve) => setImmediate(resolve));
     }
     return out;
   } catch (thrown) {
     const message = thrown instanceof Error ? thrown.message : String(thrown);
     return tests.map((test) => ({ id: test.id, value: undefined, error: `oracle build failed: ${message}` }));
   }
+}
+
+async function runNativeByFile(implementation, tests) {
+  const byFile = new Map();
+  for (const test of tests) {
+    if (!byFile.has(test.file)) byFile.set(test.file, []);
+    byFile.get(test.file).push(test);
+  }
+  const results = [];
+  for (const [file, fileTests] of byFile) {
+    nativeContextFile = file;
+    results.push(...(await runNative(implementation, fileTests)));
+  }
+  return results;
 }
 
 // Compiles the implementation ALONE — no test code. If this cannot produce a
@@ -312,7 +323,7 @@ function splitBySize(tests) {
 
 export async function runHarness({ quiet = false } = {}) {
   const log = quiet ? () => {} : (...values) => console.log(...values);
-  installDomGlobals();
+  installReactTestEnvironment();
 
   // --- 1. ACQUIRE ----------------------------------------------------------
   const { root: reactRoot, version: reactVersion } = setupReact();
@@ -390,10 +401,12 @@ export async function runHarness({ quiet = false } = {}) {
   const batchReports = [];
   const runResults = new Map();
   const quarantined = [];
+  const nativeHostErrors = [];
   let admitted = [];
   let totalCompileMs = baseline.compileMs;
   let totalBytes = 0;
   let implementationInvalid = null;
+  const disposeNativeHostErrorBoundary = installNativeHostErrorBoundary(nativeHostErrors);
 
   if (!baseline.validates) {
     // The whole corpus is behind this one fact. The tests still RUN natively so
@@ -401,7 +414,10 @@ export async function runHarness({ quiet = false } = {}) {
     // are scored as failures rather than quietly dropped.
     implementationInvalid = { error: String(baseline.error), compileMs: baseline.compileMs };
     admitted = selectedTests;
-    const nativeResults = new Map((await runNative(implementation, selectedTests)).map((e) => [e.id, e]));
+    // Build one native oracle per upstream file.  A single ESM helper import
+    // in one file must not turn every unrelated test into an oracle-build
+    // failure (the extractor records those helpers as dropped scaffolding).
+    const nativeResults = new Map((await runNativeByFile(implementation, selectedTests)).map((e) => [e.id, e]));
     for (const test of selectedTests) {
       runResults.set(test.id, {
         native: nativeResults.get(test.id) ?? {},
@@ -487,6 +503,7 @@ export async function runHarness({ quiet = false } = {}) {
           `${validates ? "valid" : `INVALID — ${String(firstError).slice(0, 70)}`}`,
       );
 
+      nativeContextFile = file;
       const nativeResults = new Map((await runNative(implementation, batchTests)).map((e) => [e.id, e]));
       for (const test of batchTests) {
         runResults.set(test.id, {
@@ -502,6 +519,12 @@ export async function runHarness({ quiet = false } = {}) {
       for (const chunk of splitBySize(fileTests)) await compileGroup(file, chunk);
     }
   }
+
+  // A scheduler callback can outlive the final test body. Give late host work
+  // a real macrotask window while the boundary is still installed, then restore
+  // normal process error handling before producing the report.
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  disposeNativeHostErrorBoundary();
 
   const invalidBatches = batchReports.filter((batch) => !batch.validates);
   report.compile = {
@@ -578,6 +601,7 @@ export async function runHarness({ quiet = false } = {}) {
     passed,
     failed,
     harnessIncompatible: tests.length - scored.length,
+    nativeHostErrors,
     tests,
   };
   report.summary = {
@@ -593,6 +617,7 @@ export async function runHarness({ quiet = false } = {}) {
     passed,
     failed,
     harnessIncompatible: report.results.harnessIncompatible,
+    nativeHostErrors: nativeHostErrors.length,
     compileMs: totalCompileMs,
     binaryBytes: report.compile.binaryBytes,
     batches: batchReports.length,
@@ -605,6 +630,9 @@ export async function runHarness({ quiet = false } = {}) {
   mkdirSync(dirname(REPORT_PATH), { recursive: true });
   writeFileSync(REPORT_PATH, `${JSON.stringify(report, null, 2)}\n`);
   log(`[dogfood] ${report.summary.headline}`);
+  if (nativeHostErrors.length > 0) {
+    log(`[dogfood] native oracle recorded ${nativeHostErrors.length} expected late jsdom host error(s)`);
+  }
   log(`[dogfood] full report → ${REPORT_PATH}`);
   return report;
 }

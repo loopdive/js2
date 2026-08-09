@@ -214,7 +214,9 @@ const STANDALONE_ROOT_CAUSE_BUCKETS = [
   {
     // #3086 — honest-vacuity reclassification. A would-be pass whose harness
     // wrapper or nested callback never executed (so no assertion ran) is scored
-    // `fail` + `vacuous: true` by the runner's vacuity gate (#2463/#2940/#3086).
+    // `fail` + `vacuous: true` by the runner's vacuity gate (#2940/#3086,
+    // implemented by PR #2463 — a PR number, so it is deliberately NOT in the
+    // `issues` list below: those render as links to plan/issues/<id>.md).
     // These are a KNOWN, deliberate honest-metric reclassification, not a
     // codegen root cause — so they get their own bucket rather than falling into
     // `unclassified` (which the strict threshold-0 gate would then trip). Placed
@@ -222,7 +224,7 @@ const STANDALONE_ROOT_CAUSE_BUCKETS = [
     // IS the dropped callback, never the feature the dead assertion targeted, so
     // no feature-path bucket should poach it.
     id: "honest-vacuity-reclassification",
-    issues: ["#3086", "#2940", "#2463"],
+    issues: ["#3086", "#2940"],
     label:
       "Honest-vacuity reclassification (harness/nested callback never executed → no assertion ran; scored vacuous fail, excluded from host_free_pass)",
     match: (record, text) => record.vacuous === true || hasAny(text, ["vacuous:", "no assertion ran"]),

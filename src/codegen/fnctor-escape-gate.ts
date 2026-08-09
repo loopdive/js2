@@ -50,7 +50,7 @@ import { type AllocLabelResult, analyzeFnctorAllocLabels, fnctorLayoutsEnabled }
 import { applyColdTailSplit } from "./fnctor-cold-tail.js";
 import { applyFnctorLayoutSplit, fnctorLayoutEmitEnabled } from "./fnctor-layout-emit.js"; // (#3927) per-type layout EMISSION
 import { recordFnctorFieldProvenance } from "./fnctor-field-provenance.js";
-import { inferFnctorFieldTypeFromCtorParam } from "./fnctor-ctor-param-types.js";
+import { fnctorFieldNumericWriteViolation, inferFnctorFieldTypeFromCtorParam } from "./fnctor-ctor-param-types.js";
 import { resolveWasmType } from "./index.js";
 
 /** Classification of a `new F()` fnctor allocation site. */
@@ -1632,15 +1632,34 @@ export function analyzeFnctorEscapeGate(
       // any other inline use → neither; stays keep-static.
     }
 
-    // Clause (B) is absolute: ANY typed own-field consumer ⇒ keep-typed (never
-    // reconstruct — hot-path protection). Only then does clause (A) gate the
-    // reconstruct/keep-static split. EXCEPTION (#2681/#2686): a `new this()`
-    // site is always `reconstruct` — the parser instance is consumed
-    // dynamically via `this.<field>` across the fnctor's lifted methods, and A1
-    // (native struct) + A3 (struct read-dispatch) keep its typed-field reads on
-    // `struct.get`, so clause B's `__extern_get`-regression does not apply.
+    // Clause (B): a typed own-field consumer ⇒ keep-typed (hot-path
+    // protection), UNLESS the site ALSO has a dynamic use (#4261). Clause B
+    // used to be absolute, and that produced a silent wrong answer for the
+    // most ordinary composition there is: `var p = new P(1); p.step();
+    // p.pos;`. The field read tripped B ⇒ keep-typed ⇒ P never entered
+    // `approvedNames` ⇒ its prototype methods were NEVER COMPILED (the
+    // #2660 S2 prototype materialization, the #3683 direct-call twins and
+    // the `__fnctor_proto_start` registry are all gated on approval), so the
+    // dynamic `p.step()` resolved nothing at runtime and answered `null`/0 —
+    // while each half alone was correct. A keep-typed lowering structurally
+    // cannot serve a dynamic use; when both are present, correctness of the
+    // dynamic use must win. The hot-path concern that made B absolute is
+    // obsolete here for the same reason the `new this()` exception below
+    // documents: A1 (native struct, #4155 typed instances) + A3 (struct
+    // read-dispatch) keep an APPROVED site's typed-field reads on
+    // `struct.get`, so approving does not move them onto `__extern_get`.
+    // A site with ONLY typed consumers still classifies keep-typed.
+    // STANDALONE-ONLY (narrowest-site wiring): the miscompile is a
+    // standalone-lane defect (the JS-host MOP resolves prototype methods
+    // dynamically and was correct pre-fix, verified byte-identical), so the
+    // host/wasi lanes keep the absolute-B classification unchanged.
+    // EXCEPTION (#2681/#2686): a `new this()` site is always `reconstruct` —
+    // the parser instance is consumed dynamically via `this.<field>` across
+    // the fnctor's lifted methods, with the same A1+A3 rationale.
     let cls: FnctorGateClass;
     if (newThisSites.has(newExpr)) cls = "reconstruct";
+    else if (sawTyped && sawDynamic && standalone === true)
+      cls = "reconstruct"; // (#4261) dynamic use present — see above
     else if (sawTyped) cls = "keep-typed";
     else if (sawDynamic) cls = "reconstruct";
     else cls = "keep-static";
@@ -1785,15 +1804,31 @@ export function deriveFnctorFields(
     // so let that proven dynamic representation override the nominal LHS.
     // (#743) `this.x = <ctor param>` — narrow the slot to what the parameter's
     // call sites agree on. ON by default since 2026-08-08; rationale + acorn
-    // numbers live in `fnctor-ctor-param-types.ts`.
-    const paramInferred = inferFnctorFieldTypeFromCtorParam(ctx, funcDecl, valueExpr, rhsWasm);
+    // numbers live in `fnctor-ctor-param-types.ts`. Since #4250 the narrowing
+    // is additionally gated on the whole-program write-kind verdict inside
+    // that module (fail-closed).
+    const paramInferred = inferFnctorFieldTypeFromCtorParam(ctx, funcDecl, fieldName, valueExpr, rhsWasm);
     const uninferredType =
       ctx.objectHashConsumerTypes.has(rhsType) || ctx.objectHashConsumerTypes.has(carrierType)
         ? carrierWasm
         : lhsWasm.kind === "externref"
           ? rhsWasm
           : lhsWasm;
-    const fieldType = carrierIsDynamicObjectCall ? ({ kind: "externref" } as const) : (paramInferred ?? uninferredType);
+    let fieldType = carrierIsDynamicObjectCall ? ({ kind: "externref" } as const) : (paramInferred ?? uninferredType);
+    // (#4250) The PRE-EXISTING literal arm: a checker-typed numeric slot
+    // (`this.tag = 1` → f64) chosen with no verdict about the field's OTHER
+    // writes loses a later type-changing write (`a.tag = "s"` read back 0 on
+    // main since the machinery shipped). Demote on a PROVEN violating write —
+    // and only on a proven one; the asymmetry with the fail-closed gate on the
+    // param lever is deliberate and recorded in `fnctorFieldNumericWriteViolation`.
+    if (
+      paramInferred === null &&
+      !carrierIsDynamicObjectCall &&
+      (fieldType.kind === "f64" || fieldType.kind === "i32") &&
+      fnctorFieldNumericWriteViolation(ctx, funcDecl, fieldName, fieldType.kind)
+    ) {
+      fieldType = { kind: "externref" } as const;
+    }
     // Presence-tracking is not decided yet — a later unconditional write, or the
     // flow-grown scan below, can still move this field either way — so the
     // narrowing is applied optimistically here and REVERTED once
