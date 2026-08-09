@@ -9682,7 +9682,7 @@ assert._isSameValue = isSameValue;
           return Number(v);
         };
         return (obj: any) => {
-          if (obj == null) return 0;
+          if (obj == null || Array.isArray(obj)) return obj == null ? 0 : obj.length;
           // Reading .length on an opaque wasmGC struct throws — resolve through
           // the #1629-safe own-descriptor reader (#983 sidecar + vec live length
           // + shape-gated struct field), then the inherited chain.
