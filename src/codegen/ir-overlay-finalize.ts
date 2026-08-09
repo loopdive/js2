@@ -203,7 +203,12 @@ export function applyIrFinalContextFunctionRetention(
   blockedAnyFunction: boolean,
 ): IrSelection {
   return blockedAnyFunction
-    ? { funcs: retainedFunctionNames, classMembers: new Set(), moduleInit: undefined }
+    ? {
+        funcs: retainedFunctionNames,
+        classMembers: new Set(),
+        classMemberUnitIds: new Set(),
+        moduleInit: undefined,
+      }
     : { ...selection, funcs: retainedFunctionNames };
 }
 

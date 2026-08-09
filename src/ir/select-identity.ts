@@ -11,6 +11,8 @@ import {
 } from "./planning-identity.js";
 import type { IrUnitTypeMap, TypeMap, TypeMapEntry } from "./propagate.js";
 import type { IrRecursiveTypeEvidence } from "./type-evidence.js";
+import type { IrClassMethodDescriptor } from "./nodes.js";
+import { exactPreparedAccessorSyntaxKey, isBoundedPreparedAccessorClass } from "./class-accessor-safety.js";
 import {
   assessIrStructuralSelectorSubject,
   assessModuleInit,
@@ -25,6 +27,7 @@ import {
   type IrFallbackReason,
   type IrSelection,
   type IrSelectionOptions,
+  type IrStructuralSelectorAccessorAbiEvidence,
 } from "./select.js";
 
 interface IrIdentityUnitLabel {
@@ -85,6 +88,8 @@ export interface IrIdentitySelection {
 
 export type IrIdentitySelectionOptions = Omit<IrSelectionOptions, "recursiveTypeEvidence"> & {
   readonly recursiveTypeEvidence?: IrRecursiveTypeEvidence;
+  /** Exact allocator evidence required before a promoted nested accessor may claim its body slot. */
+  readonly nestedClassMemberCallableAvailable?: (unitId: IrUnitId) => boolean;
 };
 
 export interface IrLegacySelectionProjection {
@@ -99,7 +104,22 @@ interface IndexedFunction {
 
 interface IndexedClass {
   readonly classId: IrClassId;
-  readonly declaration: ts.ClassDeclaration;
+  readonly declaration: ts.ClassDeclaration | ts.ClassExpression;
+}
+
+function boundedNestedAccessorAbiEvidence(
+  member: ts.GetAccessorDeclaration | ts.SetAccessorDeclaration,
+  descriptor: IrClassMethodDescriptor | undefined,
+): IrStructuralSelectorAccessorAbiEvidence | undefined {
+  if (!descriptor) return undefined;
+  if (ts.isGetAccessorDeclaration(member)) {
+    return descriptor.params.length === 0 && descriptor.returnType?.kind === "string"
+      ? { params: [], returnType: "string" }
+      : undefined;
+  }
+  return descriptor.params.length === 1 && descriptor.params[0]?.kind === "dynamic" && descriptor.returnType === null
+    ? { params: ["dynamic"], returnType: "void" }
+    : undefined;
 }
 
 function legacyCallerAbiIsProjectedForIdentity(
@@ -257,12 +277,36 @@ function collectClasses(
     }
     classes.push({ classId, declaration });
   }
-  const expected = context.inventory.classes.filter((record) => {
+  const populatedClassIds = new Set(classes.map(({ classId }) => classId));
+  const nestedClassIds = new Set(
+    context.inventory.terminalUnits
+      .filter(
+        (terminal) =>
+          terminal.sourceId === sourceId &&
+          terminal.observedKind === "class-member" &&
+          terminal.containingTerminalOwnerId !== undefined,
+      )
+      .map((terminal) => terminal.lexicalOwnerId as IrClassId),
+  );
+  for (const record of context.inventory.classes) {
+    if (record.sourceId !== sourceId || !nestedClassIds.has(record.id) || populatedClassIds.has(record.id)) continue;
+    const declaration = context.declarationByClassId.get(record.id);
+    if (!declaration || context.classIdByDeclaration.get(declaration) !== record.id) {
+      selectorIdentityInvariant(
+        "missing-class-declaration",
+        `IR identity selector has no exact nested class declaration for ${record.id}`,
+      );
+    }
+    classes.push({ classId: record.id, declaration });
+    populatedClassIds.add(record.id);
+  }
+  const expectedTopLevel = context.inventory.classes.filter((record) => {
     if (record.sourceId !== sourceId) return false;
     const declaration = context.declarationByClassId.get(record.id);
     return declaration?.parent === sourceFile && ts.isClassDeclaration(declaration);
   });
-  if (classes.length !== expected.length || classes.some(({ classId }, index) => classId !== expected[index]?.id)) {
+  const expectedIds = new Set([...expectedTopLevel.map(({ id }) => id), ...nestedClassIds]);
+  if (classes.length !== expectedIds.size || classes.some(({ classId }) => !expectedIds.has(classId))) {
     return selectorIdentityInvariant(
       "missing-class-declaration",
       `IR identity selector class population does not match source ${sourceId}`,
@@ -520,9 +564,15 @@ export function planIrCompilationByIdentity(
 
   const classes = collectClasses(sourceFile, sourceId, identityContext);
   populateClassMemberUnits(sourceId, classes, identityContext, units);
-  const classesByName = new Map<string, IndexedClass[]>();
+  const classesByName = new Map<string, { classId: IrClassId; declaration: ts.ClassDeclaration }[]>();
   for (const indexed of classes) {
-    if (indexed.declaration.name) addNameIndex(classesByName, indexed.declaration.name.text, indexed);
+    if (
+      indexed.declaration.parent === sourceFile &&
+      ts.isClassDeclaration(indexed.declaration) &&
+      indexed.declaration.name
+    ) {
+      addNameIndex(classesByName, indexed.declaration.name.text, indexed);
+    }
   }
 
   const uniqueFunctions = uniqueDeclarationsByName(functionsByName);
@@ -572,14 +622,101 @@ export function planIrCompilationByIdentity(
   }
 
   const classClaims = new Map<IrUnitId, IrIdentityClassMemberClaim>();
-  for (const candidates of classesByName.values()) {
+  const nestedClasses = classes.filter(({ classId }) =>
+    identityContext.inventory.terminalUnits.some(
+      (terminal) => terminal.lexicalOwnerId === classId && terminal.containingTerminalOwnerId !== undefined,
+    ),
+  );
+  const classGroups: readonly (readonly IndexedClass[])[] = [
+    ...classesByName.values(),
+    ...nestedClasses.map((candidate) => [candidate] as const),
+  ];
+  for (const candidates of classGroups) {
     for (const { classId, declaration } of candidates) {
-      const className = declaration.name!.text;
-      const ambiguousClassName = candidates.length !== 1;
-      const projectionGap = localClassHasKnownProjectionGap(className);
+      const nestedClass = nestedClasses.some((candidate) => candidate.classId === classId);
+      const exactClassShape = options.projectedClassShapesById?.get(classId);
+      const className = exactClassShape?.className ?? declaration.name?.text ?? "<anonymous>";
+      const ambiguousClassName = !nestedClass && candidates.length !== 1;
+      const projectionGap = !nestedClass && localClassHasKnownProjectionGap(className);
       const hasParent = declaration.heritageClauses?.some((h) => h.token === ts.SyntaxKind.ExtendsKeyword) ?? false;
       const parentName = extendsParentName(declaration);
       const parentIsLocal = parentName !== null && localClasses.has(parentName);
+      const boundedAccessorClass = isBoundedPreparedAccessorClass(declaration);
+      const boundedTopLevelAccessorClass =
+        !nestedClass && ts.isClassDeclaration(declaration) && declaration.parent === sourceFile && boundedAccessorClass;
+      const exactAccessorClass = nestedClass || boundedTopLevelAccessorClass;
+      const markExactAccessorClassFallback = (): void => {
+        if (!trackFallbacks) return;
+        for (const member of declaration.members) {
+          if ((!ts.isGetAccessorDeclaration(member) && !ts.isSetAccessorDeclaration(member)) || !member.body) continue;
+          const unitId = identityContext.unitIdByDeclaration.get(member);
+          if (unitId !== undefined && identityContext.terminalByUnitId.has(unitId)) {
+            reasons.set(unitId, "class-member-unsupported");
+          }
+        }
+      };
+      if (nestedClass && !boundedAccessorClass) {
+        markExactAccessorClassFallback();
+        continue;
+      }
+      const exactAccessorDescriptors = new Map<
+        ts.GetAccessorDeclaration | ts.SetAccessorDeclaration,
+        IrClassMethodDescriptor
+      >();
+      if (exactAccessorClass) {
+        const occupiedAccessorSlots = new Set<string>();
+        const accessorPlacementByKey = new Map<string, boolean>();
+        let hasAccessorSlotCollision = false;
+        let hasAccessorPlacementCollision = false;
+        let hasUnsafeComputedKey = false;
+        for (const member of declaration.members) {
+          if (!ts.isGetAccessorDeclaration(member) && !ts.isSetAccessorDeclaration(member)) continue;
+          const unitId = identityContext.unitIdByDeclaration.get(member);
+          const descriptorKind = ts.isGetAccessorDeclaration(member) ? "getter" : "setter";
+          const descriptors =
+            unitId === undefined
+              ? []
+              : (exactClassShape?.methods.filter(
+                  (candidate) =>
+                    candidate.placement?.classId === classId &&
+                    candidate.placement.unitId === unitId &&
+                    candidate.placement.staticClassMember === classElementIsStatic(member) &&
+                    candidate.memberKind === descriptorKind &&
+                    candidate.target?.binding.kind === "unit" &&
+                    candidate.target.binding.unitId === unitId,
+                ) ?? []);
+          const descriptor = descriptors.length === 1 ? descriptors[0] : undefined;
+          const syntaxKey = exactPreparedAccessorSyntaxKey(member.name);
+          if (!descriptor || syntaxKey === undefined || descriptor.name !== syntaxKey) {
+            hasUnsafeComputedKey = true;
+            continue;
+          }
+          exactAccessorDescriptors.set(member, descriptor);
+          // The legacy callable slot omits static/instance from its physical
+          // spelling. A second accessor with the same kind + semantic key can
+          // therefore overwrite the first exact UnitId even when their static
+          // flags differ. Reject the whole bounded class before any claim.
+          const slot = `${descriptor.memberKind}:${descriptor.name}`;
+          if (occupiedAccessorSlots.has(slot)) hasAccessorSlotCollision = true;
+          occupiedAccessorSlots.add(slot);
+          // Placement evidence is keyed by class + semantic property name in
+          // the transitional accessor registries. Even when getter/setter
+          // callable names differ, admitting the same key on both the instance
+          // and static sides would let one placement classify the other's
+          // dispatch. Reject the whole exact class before claiming either body.
+          const staticPlacement = classElementIsStatic(member);
+          const priorPlacement = accessorPlacementByKey.get(descriptor.name);
+          if (priorPlacement !== undefined && priorPlacement !== staticPlacement) {
+            hasAccessorPlacementCollision = true;
+          }
+          accessorPlacementByKey.set(descriptor.name, staticPlacement);
+        }
+        if (hasAccessorSlotCollision || hasAccessorPlacementCollision || hasUnsafeComputedKey) {
+          markExactAccessorClassFallback();
+          continue;
+        }
+      }
+      const pendingExactAccessorClaims = new Map<IrUnitId, IrIdentityClassMemberClaim>();
       for (const member of declaration.members) {
         if (
           (!ts.isConstructorDeclaration(member) &&
@@ -623,14 +760,21 @@ export function planIrCompilationByIdentity(
           continue;
         }
         if (ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member)) {
-          if (!member.name || phase1MemberName(member.name) === null || classElementIsStatic(member)) {
+          if (
+            !member.name ||
+            (!exactAccessorClass && (phase1MemberName(member.name) === null || classElementIsStatic(member)))
+          ) {
             if (trackFallbacks) reasons.set(unit.unitId, "class-method");
             continue;
           }
         }
 
         const isStaticMethod = ts.isMethodDeclaration(member) && classElementIsStatic(member);
-        if (options.projectedClassShapes && !ts.isConstructorDeclaration(member)) {
+        let exactMemberDescriptor: IrClassMethodDescriptor | undefined;
+        if (
+          (options.projectedClassShapes || options.projectedClassShapesById) &&
+          !ts.isConstructorDeclaration(member)
+        ) {
           const descriptorName = member.name ? phase1MemberName(member.name) : null;
           const descriptorKind = ts.isMethodDeclaration(member)
             ? isStaticMethod
@@ -639,17 +783,20 @@ export function planIrCompilationByIdentity(
             : ts.isGetAccessorDeclaration(member)
               ? "getter"
               : "setter";
-          const descriptors =
-            descriptorName === null
+          const descriptors = exactAccessorClass
+            ? exactAccessorDescriptors.get(member as ts.GetAccessorDeclaration | ts.SetAccessorDeclaration)
+              ? [exactAccessorDescriptors.get(member as ts.GetAccessorDeclaration | ts.SetAccessorDeclaration)!]
+              : []
+            : descriptorName === null
               ? []
               : (options.projectedClassShapes
-                  .get(className)
+                  ?.get(className)
                   ?.methods.filter(
                     (candidate) =>
                       candidate.name === descriptorName && (candidate.memberKind ?? "method") === descriptorKind,
                   ) ?? []);
-          const descriptor = descriptors.length === 1 ? descriptors[0] : undefined;
-          if (!descriptor) {
+          exactMemberDescriptor = descriptors.length === 1 ? descriptors[0] : undefined;
+          if (!exactMemberDescriptor) {
             if (trackFallbacks) reasons.set(unit.unitId, "class-member-unsupported");
             continue;
           }
@@ -663,11 +810,49 @@ export function planIrCompilationByIdentity(
           if (trackFallbacks) reasons.set(unit.unitId, "class-method");
           continue;
         }
-        const assessment = assessIrStructuralSelectorSubject(member, helperTypes, localClasses, true);
-        if (assessment.reason === null) classClaims.set(unit.unitId, unit);
-        else if (trackFallbacks) {
+        const exactAccessorEvidence =
+          exactAccessorClass && (ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member))
+            ? boundedNestedAccessorAbiEvidence(member, exactMemberDescriptor)
+            : undefined;
+        if (
+          nestedClass &&
+          (ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member)) &&
+          options.nestedClassMemberCallableAvailable?.(unit.unitId) !== true
+        ) {
+          if (trackFallbacks) reasons.set(unit.unitId, "class-member-unsupported");
+          continue;
+        }
+        if (
+          exactAccessorClass &&
+          (ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member)) &&
+          !exactAccessorEvidence
+        ) {
+          if (trackFallbacks) reasons.set(unit.unitId, "class-member-unsupported");
+          continue;
+        }
+        const assessment = assessIrStructuralSelectorSubject(
+          member,
+          helperTypes,
+          localClasses,
+          true,
+          exactAccessorEvidence,
+        );
+        if (assessment.reason === null) {
+          if (exactAccessorClass) pendingExactAccessorClaims.set(unit.unitId, unit);
+          else classClaims.set(unit.unitId, unit);
+        } else if (trackFallbacks) {
           reasons.set(unit.unitId, assessment.reason);
           if (assessment.detail !== undefined) details.set(unit.unitId, assessment.detail);
+        }
+      }
+      if (exactAccessorClass) {
+        const accessorCount = declaration.members.filter(
+          (member) => (ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member)) && !!member.body,
+        ).length;
+        if (pendingExactAccessorClaims.size === accessorCount) {
+          for (const [unitId, claim] of pendingExactAccessorClaims) classClaims.set(unitId, claim);
+        } else {
+          markExactAccessorClassFallback();
         }
       }
     }
@@ -812,6 +997,9 @@ export function projectIrSelectionToLegacy(structural: IrIdentitySelection): IrL
   for (const claim of structural.classMembers?.values() ?? []) {
     if (!omittedUnitIds.has(claim.unitId)) classMembers.add(claim.legacyMatchName);
   }
+  const classMemberUnitIds = new Set(
+    [...(structural.classMembers?.keys() ?? [])].filter((unitId) => !omittedUnitIds.has(unitId)),
+  );
 
   const fallbacks: IrFallback[] | undefined = structural.fallbacks ? [] : undefined;
   if (fallbacks) {
@@ -876,6 +1064,7 @@ export function projectIrSelectionToLegacy(structural: IrIdentitySelection): IrL
     selection: {
       funcs,
       ...(classMembers.size ? { classMembers } : {}),
+      ...(classMemberUnitIds.size ? { classMemberUnitIds } : {}),
       ...(fallbacks ? { fallbacks } : {}),
       ...(localCallees ? { localCallees } : {}),
       ...(moduleInit ? { moduleInit } : {}),

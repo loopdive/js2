@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import type { IrUnitId } from "./identity.js";
-import type { IrClosureSignature, IrFuncRef, IrGlobalRef, IrType } from "./nodes.js";
+import type { IrClassId, IrUnitId } from "./identity.js";
+import type { IrClassShape, IrClosureSignature, IrFuncRef, IrGlobalRef, IrType } from "./nodes.js";
 import type { IrLegacyUnitProjection, IrPlanningIdentityContext } from "./planning-identity.js";
 import type { IrPromiseDelayLoweringPlans } from "./promise-delay-lowering.js";
 import { ts } from "../ts-api.js";
@@ -119,6 +119,8 @@ export interface ModuleBindingGlobal {
 
 export interface IrIntegrationLoweringPlans {
   readonly identityContext: IrPlanningIdentityContext;
+  /** Exact projected classes used by class-member body integration. */
+  readonly classShapesById?: ReadonlyMap<IrClassId, IrClassShape>;
   /** Exact active terminal owners behind the remaining name-keyed integration API. */
   readonly ownerProjection: IrLegacyUnitProjection;
   readonly ownerUnitIdByLegacyName: ReadonlyMap<string, IrUnitId>;
