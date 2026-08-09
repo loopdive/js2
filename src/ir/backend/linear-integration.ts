@@ -46,8 +46,8 @@ import {
   LINEAR_IR_STRING_CHAR_CODE_AT_FN,
   LINEAR_IR_STRING_APPEND_ASCII_FN,
   LINEAR_IR_VEC_INIT_F64_FN,
-  linearStringLiteralInstrs,
 } from "../../codegen-linear/runtime.js";
+import { linearStringLiteralInstrs } from "../../codegen-linear/string-literals.js";
 import { IR_STRING_COMPARE_FN, lowerFunctionAstToIr, type IrFromAstResolver, typeNodeToIr } from "../from-ast.js";
 import { collectIrDirectCallLoweringPlans, type IrDirectCallTarget } from "../ast-lowering-plans.js";
 import { irUnitFuncRef } from "../callable-bindings.js";
