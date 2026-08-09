@@ -162,16 +162,23 @@ test rather than wait for the behavioural symptom.
 
 Scoped run, `TEST262_PATH_FILTER='language/eval-code/'`, `TEST262_TARGET=standalone`:
 
-| tier | before | after |
-| --- | --- | --- |
-| interpreter (`TEST262_FULL_RUNTIME_EVAL=1`) | 779 / 816 | 779 / 816 |
-| refusal (default tier) | see below | see below |
+| tier | before | after | flipped either way |
+| --- | --- | --- | --- |
+| interpreter (`TEST262_FULL_RUNTIME_EVAL=1`) | 779 / 816 | 779 / 816 | **0 / 0** |
+| refusal (default tier) | 279 / 816 | 279 / 816 | **0 / 0** |
 
-**Zero delta, as predicted by the masking above.** The 37 interpreter-tier
-failures are the known #4308 EDI/B.3.3 buckets (16 × `f is not a function`,
-the `existing-block-fn-update` family, etc.), none of them attributable to
-eval-call routing. A zero delta is the honest result: this change buys
-correctness of the predicate, not conformance.
+**Zero delta on both tiers, as predicted by the masking above** — and zero
+per-test flips in *either* direction, not merely an unchanged total. The 37
+interpreter-tier failures are the known #4308 EDI/B.3.3 buckets (16 ×
+`f is not a function`, the `existing-block-fn-update` family, etc.), none of
+them attributable to eval-call routing. A zero delta is the honest result: this
+change buys correctness of the predicate, not conformance.
+
+The **quickjs** engine tier was deliberately not run as a third measurement: on
+this base #4238 slice 3 is unmerged, so direct eval is a typed refusal under
+that engine and the direct/indirect distinction this issue is about is not
+observable there. Measuring it would have produced a number that looks like
+evidence and is not.
 
 ## The fix
 
