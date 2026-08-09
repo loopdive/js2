@@ -41,6 +41,7 @@ async function nativeOracle(setup) {
 export const runHarness = createNpmWorkloadHarness({
   name: "eslint",
   issue: 1400,
+  reportName: "eslint-workload",
   setup: () => setupEslint(),
   driverPath: () => fileURLToPath(DRIVER_PATH),
   driverSource: DRIVER_SOURCE,

@@ -74,6 +74,7 @@ function compileOptions(options) {
  *   driverPath: (setup: object) => string;
  *   driverSource: string;
  *   oracle: (setup: object) => Promise<number> | number;
+ *   reportName?: string;
  *   timeoutMs?: number;
  *   compile?: object;
  * }} config
@@ -208,7 +209,7 @@ export function createNpmWorkloadHarness(config) {
       },
     };
 
-    const reportPath = join(HERE, "report", `${config.name}-surface.json`);
+    const reportPath = join(HERE, "report", `${config.reportName ?? `${config.name}-workload`}-surface.json`);
     mkdirSync(dirname(reportPath), { recursive: true });
     writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
     log(`\n[dogfood] === ${config.name} workload report ===`);

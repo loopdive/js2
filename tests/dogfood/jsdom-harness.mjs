@@ -42,6 +42,7 @@ async function nativeOracle(setup) {
 export const runHarness = createNpmWorkloadHarness({
   name: "jsdom",
   issue: null,
+  reportName: "jsdom-workload",
   setup: () => setupNpmCompatCatalogPackage("jsdom"),
   driverPath: (setup) => join(setup.root, ".js2-jsdom-workload.mjs"),
   driverSource: DRIVER_SOURCE,
