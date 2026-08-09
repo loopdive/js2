@@ -528,6 +528,28 @@ zero consumers. The resumable branch is
 `/private/tmp/ts2wasm-3522-cross-owner-retirement`; the dirty root checkout is
 outside it and remains untouched.
 
+### Published cross-owner handover
+
+Ready PR [#4281](https://github.com/loopdive/js2/pull/4281) publishes this
+checkpoint. It was rebased after overlapping PR #4258 landed and requalified
+without conflict on `origin/main` at
+`517aa2d0debef17373eeadf36d42a775e4c6ddce`. The red checkpoint, production
+transaction, and stale-layout repair commits are respectively
+`c55f7cc9c4e978`, `fd198e02b47276`, and `5add835c833d99`.
+
+Post-rebase qualification is green: changed-root **49/49**, focused
+cross-owner/inherited/`super` parity **28/28**, all four equivalence shards with
+zero new regressions, typecheck, formatting, hybrid shadow, fallback, shape,
+optimization, oracle, budget, vacuity, and issue-integrity gates. Strict
+IR-only is expected red only on the exact 20-body census above. Full Test262 is
+merge-queue-only. Do not modify the PR branch after it enters the queue.
+
+Resume production only after #4281 lands or is explicitly withdrawn. The next
+bounded overlapping family is the four-body Builtins closure/cross-owner
+component (`el`, `crd`, `rw`, `main`); keep one production PR active and use
+parallel agents only for disjoint inventory, parity, optimization audit, and
+review work.
+
 ## Exhaustive source-unit census
 
 Before preparing any body, walk the source once in lexical/source order and
