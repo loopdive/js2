@@ -1,10 +1,11 @@
 ---
 id: 4248
 title: "Standalone: `Number`/`Boolean`/`String`.prototype are not wrapper objects — own members invisible, no [[PrimitiveValue]], default-receiver methods answer null"
-status: in-progress
+status: done
+completed: 2026-08-09
 sprint: current
 created: 2026-08-08
-updated: 2026-08-08
+updated: 2026-08-09
 priority: high
 horizon: m
 feasibility: medium
@@ -22,6 +23,10 @@ loc-budget-allow:
 ---
 
 # #4248 — builtin prototypes are wrapper objects, and standalone treats them as bare metadata
+
+**Outcome: +25 measured, 0 regressions** across three independent root causes
+(RC1 +16, RC2 +3, RC3 +6). Every number below is a sequential, one-file-per-
+process A/B on this branch, not an estimate.
 
 `Number.prototype` in standalone is a `$NativeProto` glue singleton
 (native-proto.ts) — a struct holding a brand, a member CSV and a name. ES5 says
