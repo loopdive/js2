@@ -10,6 +10,11 @@ feasibility: hard
 reasoning_effort: high
 goal: core-semantics
 sprint: 40
+loc-budget-allow:
+  - src/codegen/closures.ts
+  - src/codegen/expressions/calls.ts
+func-budget-allow:
+  - src/codegen/closures.ts::compileArrowAsCallback
 ---
 # #1031 — Compile lodash to Wasm as a real-world test corpus
 
@@ -305,6 +310,32 @@ byte-identical before and after the callback fix (confirmed from selected WAT
 output), so this is not a regression from capture remapping. The full entry
 therefore reports compile success but validation failure and no honest lodash
 API workload is run yet; this blocker needs its own follow-up.
+
+### Full-bundle validation follow-up (2026-08-09)
+
+The two subsequent validation failures were independent representation bugs.
+Conditional direct-call branches used the checker join type as if it were each
+branch's physical Wasm result; the reduced `arrayEach`/`baseForOwn` regression
+now joins the actual emitted result types and returns `42` through both arms.
+
+After that fix, lodash reached a repeated-frame capture failure in `unzip`.
+The `runInContext` function expression is emitted once as a stored closure and
+again through a direct call. Its nested-function capture metadata retained the
+first frame's boxed `MAX_SAFE_INTEGER` slot, while the second frame boxed the
+same binding at a different local. Reading the stale local supplied an unrelated
+reference to the closure constructor. Closure materialization now selects the
+current frame's ref cell only when the recorded capture type, live box registry,
+and current local all agree on the same ref-cell type and the recorded slot does
+not. This deliberately preserves the restricted lookup introduced after the
+broad local-map-first attempt in #1177 regressed Test262.
+
+`tests/issue-1031-lodash-nested-frame-capture.test.ts` reproduces both emissions
+with valid JavaScript. The old code produces valid Wasm but traps with an illegal
+cast during module initialization; the fixed code instantiates and returns
+`42`. The exact pinned lodash 4.18.1 catalog source now compiles to a validating
+Wasm binary. The catalog still has no honest runtime differential workload for
+the monolithic bundle, so this result is recorded as compile + validate rather
+than runtime compatibility.
 
 ### What this PR ships
 

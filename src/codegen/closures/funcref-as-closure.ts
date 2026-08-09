@@ -118,7 +118,34 @@ function emitMemoizedNestedFnClosure(
     // name itself. Guarded on localMap-absence so owner-fctx behavior is
     // unchanged (see the #1177 revert note in calls.ts for why a blanket
     // localMap-first lookup is NOT safe).
-    const capUnresolvedHere = fctx.localMap.get(cap.name) === undefined;
+    const liveBoxLocalIdx = fctx.localMap.get(cap.name);
+    const capUnresolvedHere = liveBoxLocalIdx === undefined;
+    const liveBox = fctx.boxedCaptures?.get(cap.name);
+    const liveBoxType = liveBoxLocalIdx === undefined ? undefined : getLocalType(fctx, liveBoxLocalIdx);
+    const recordedSlotType = getLocalType(fctx, cap.outerLocalIdx);
+    const recordedSlotHasLiveBoxType =
+      liveBox !== undefined &&
+      (recordedSlotType?.kind === "ref" || recordedSlotType?.kind === "ref_null") &&
+      recordedSlotType.typeIdx === liveBox.refCellTypeIdx;
+    // A source function expression can be emitted into more than one Wasm
+    // frame (for example, once as a stored closure and again through a direct
+    // call). Nested-function metadata is source-name keyed, so an immutable
+    // capture can retain the first frame's slot while the second frame has
+    // re-boxed the same binding at a different slot. Select the live cell only
+    // when the capture's expected type, boxed-capture registry, and current
+    // local all identify the same ref-cell type, and the recorded slot no
+    // longer has that representation. This is intentionally narrower than
+    // #1177's reverted blanket localMap-first lookup.
+    const useLiveImmutableBox =
+      !cap.mutable &&
+      liveBoxLocalIdx !== undefined &&
+      liveBox !== undefined &&
+      cap.valType !== undefined &&
+      (cap.valType.kind === "ref" || cap.valType.kind === "ref_null") &&
+      cap.valType.typeIdx === liveBox.refCellTypeIdx &&
+      (liveBoxType?.kind === "ref" || liveBoxType?.kind === "ref_null") &&
+      liveBoxType.typeIdx === liveBox.refCellTypeIdx &&
+      !recordedSlotHasLiveBoxType;
     if (cap.mutable && cap.valType) {
       const refCellTypeIdx = getOrRegisterRefCellType(ctx, cap.valType);
       const boxGlobal = capUnresolvedHere ? ctx.capturedBoxGlobals?.get(cap.name) : undefined;
@@ -153,6 +180,8 @@ function emitMemoizedNestedFnClosure(
         if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
         fctx.boxedCaptures.set(cap.name, { refCellTypeIdx, valType: cap.valType });
       }
+    } else if (useLiveImmutableBox) {
+      fctx.body.push({ op: "local.get", index: liveBoxLocalIdx });
     } else if (capUnresolvedHere && ctx.capturedGlobals.has(cap.name)) {
       // (#2029 family A) Immutable capture promoted to a value global by
       // the accessor-capture pass — read it instead of the out-of-scope
