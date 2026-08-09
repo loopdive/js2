@@ -22,19 +22,19 @@ function sortF64(): void {
   arr.sort((a, b) => a - b);
 }
 
-function mapFilter(): void {
+function mapFilter(): number {
   const arr: number[] = [];
   for (let i = 0; i < 10000; i++) arr.push(i);
   const mapped = arr.map((x) => x * 2);
   const filtered = mapped.filter((x) => x % 3 === 0);
-  void filtered.length;
+  return filtered.length;
 }
 
-function reduceSum(): void {
+function reduceSum(): number {
   const arr: number[] = [];
   for (let i = 0; i < 100000; i++) arr.push(i);
   const sum = arr.reduce((acc, x) => acc + x, 0);
-  void sum;
+  return sum;
 }
 
 function indexOfSearch(): void {
@@ -66,16 +66,17 @@ function reverseArr(): void {
   for (let i = 0; i < 1000; i++) arr.reverse();
 }
 
-function forEachSum(): void {
+function forEachSum(): number {
   const arr: number[] = [];
   for (let i = 0; i < 10000; i++) arr.push(i);
   let sum = 0;
   arr.forEach((x) => {
     sum += x;
   });
+  return sum;
 }
 
-function findElement(): void {
+function findElement(): number {
   const arr: number[] = [];
   for (let i = 0; i < 10000; i++) arr.push(i);
   let sum = 0;
@@ -83,6 +84,7 @@ function findElement(): void {
     const found = arr.find((x) => x === 5000);
     if (found !== undefined) sum += found;
   }
+  return sum;
 }
 
 // ---------------------------------------------------------------------------
