@@ -223,16 +223,6 @@ export interface IrClassLowering {
    * registered (lowering then folds to constant false, legacy parity).
    */
   readonly instanceOfTags: readonly number[];
-  /**
-   * #3000-C: the raw Wasm instruction sequence that allocates a fresh,
-   * default-initialised instance of this class — the default field values
-   * (with the `__tag` slot set to the class's discrimination constant)
-   * followed by `struct.new $structTypeIdx`. Byte-identical to the alloc
-   * prefix the legacy `<className>_new` emits before it tail-calls
-   * `<className>_init` (both derive from `ctx.structFields` / `ctx.classTagMap`).
-   * Consumed by the `class.alloc` IR instr's lowering.
-   */
-  readonly allocInstrs: readonly Instr[];
 }
 
 /**

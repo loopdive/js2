@@ -33,6 +33,7 @@ import {
 } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType, WasmFunction, WasmModule } from "../ir/types.js";
 import { createEmptyModule } from "../ir/types.js";
+import { irSupportFuncRef } from "../ir/callable-bindings.js";
 import { compileIrPathFunctions, type IrIntegrationError, type IrIntegrationReport } from "../ir/integration.js";
 import {
   asVal,
@@ -1310,10 +1311,15 @@ function buildIrClassShapes(
       }
     }
     if (!ctorOk) continue;
-    const constructorTarget = callableTarget(
+    const constructorInitTarget = callableTarget(
       ctor ?? stmt,
       ctor ? "class-constructor" : "class-implicit-constructor",
-      "new",
+      "init",
+    );
+    const constructorTarget = irSupportFuncRef(
+      classId,
+      "class-constructor-new",
+      classMemberFuncKey(ctx, `${className}_new`),
     );
 
     // Fields — read from the legacy `structFields` (which fixes the
@@ -1547,7 +1553,8 @@ function buildIrClassShapes(
       fields,
       methods,
       constructorParams,
-      ...(constructorTarget ? { constructorTarget } : {}),
+      constructorTarget,
+      ...(constructorInitTarget ? { constructorInitTarget } : {}),
       // #3000-E: present only for a single-level subclass of a local user class.
       ...(parentShape ? { parent: parentShape } : {}),
     };
