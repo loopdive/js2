@@ -40,6 +40,7 @@ import { wrapExports } from "../../src/runtime.ts";
 import { setupReact } from "./setup-react.mjs";
 import { setupReactUpstreamSuite } from "./setup-react-upstream-suite.mjs";
 import { extractReactUpstreamTests } from "./react-upstream-extract.mjs";
+import { installReactTestEnvironment } from "./react-test-environment.mjs";
 import { REACT_EXPECT_SHIM, LAST_ERROR_EXPORT, buildTestFunction } from "./react-upstream-shim.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -70,12 +71,18 @@ function buildNativeRunners(tests) {
       .join(", ")} } };`,
   ].join("\n");
   // eslint-disable-next-line no-new-func
-  return new Function("__REACT__", source);
+  return new Function("__REACT__", "require", source);
 }
 
 async function runNative(tests, nativeReact) {
   try {
-    const runners = buildNativeRunners(tests)(nativeReact);
+    // A few upstream tests intentionally require the published ReactDOM
+    // package (for example Portal coverage).  Supplying Node's real resolver
+    // to the native oracle makes that an honest host dependency; the Wasm side
+    // still reports the same call as unavailable if the compiler cannot lower
+    // it, rather than hiding the gap behind an oracle-build failure.
+    const nativeRequire = createRequire(import.meta.url);
+    const runners = buildNativeRunners(tests)(nativeReact, nativeRequire);
     const out = [];
     for (const test of tests) {
       let value;
@@ -129,6 +136,7 @@ function quarantineFromErrors(moduleSource, tests, errors) {
 
 export async function runHarness({ quiet = false } = {}) {
   const log = quiet ? () => {} : (...values) => console.log(...values);
+  installReactTestEnvironment();
 
   // --- 1. ACQUIRE ----------------------------------------------------------
   const { root: packageRoot, version, pin } = setupReact();

@@ -1,10 +1,14 @@
 import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 // @ts-expect-error — .mjs dogfood setup has no declaration file
-import { loadReactUpstreamSuitePin } from "./setup-react-upstream-suite.mjs";
+import { isReactUpstreamSuiteCheckoutValid, loadReactUpstreamSuitePin } from "./setup-react-upstream-suite.mjs";
+// @ts-expect-error — .mjs dogfood environment has no declaration file
+import { installReactTestEnvironment } from "./react-test-environment.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -20,6 +24,29 @@ const ADMITTED_FLOOR = 270;
 const INVALID_BATCH_CEILING = 5;
 
 describe("react upstream suite", () => {
+  it("provides the browser globals used by the native React oracle", () => {
+    const dom = installReactTestEnvironment();
+    try {
+      expect(document.createElement("div").ownerDocument).toBe(document);
+      expect(typeof window.requestAnimationFrame).toBe("function");
+      expect((globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT).toBe(
+        true,
+      );
+    } finally {
+      dom.cleanup();
+    }
+  });
+
+  it("rejects a malformed generated source checkout so setup can repair it", () => {
+    const root = mkdtempSync(join(tmpdir(), "js2-react-suite-"));
+    try {
+      mkdirSync(join(root, ".git"));
+      expect(isReactUpstreamSuiteCheckoutValid(root, "eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401")).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("pins the source revision matching the published React version", () => {
     const pin = loadReactUpstreamSuitePin();
     expect(pin.tag).toBe("v19.2.6");

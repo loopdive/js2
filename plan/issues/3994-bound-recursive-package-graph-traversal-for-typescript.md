@@ -26,6 +26,24 @@ Use bounded or iterative work scheduling for recursive package graph traversal, 
 
 Reproduce: pnpm run dogfood:typescript.
 
+## Current investigation
+
+The first crash is now localized to the generic object-assignment widening
+pre-pass, not module graph resolution. In the pinned TypeScript 5.9.3 entry,
+the checker overflows while asking for the type of the RHS of
+`links.aliasTarget = target || unknownSymbol`. The pre-pass now treats that
+single `RangeError` as an unknown RHS, keeps the conservative object carrier,
+and continues scanning; non-stack checker errors are still propagated. The
+regression is covered by `tests/issue-3994.test.ts`.
+
+That moves the exact package probe past the opaque stack error. The catalog
+budget is now 600 seconds for this unusually large entry, so the compiler can
+continue measuring the post-fix frontier instead of being cut off at the
+generic three-minute limit. The remaining work is to reduce or schedule that
+large-package codegen frontier without
+silently dropping its dependency graph; the timeout remains the honest catalog
+result if the extended budget is still exhausted.
+
 ## Provenance
 
 Migrated on 2026-08-01 from a GitHub issue on `loopdive/js2` (opened 2026-07-30)

@@ -5,7 +5,7 @@ status: done
 completed: 2026-07-31
 sprint: current
 created: 2026-07-25
-updated: 2026-07-31
+updated: 2026-08-09
 assignee: ttraenkler/dev-es3-editions
 priority: high
 horizon: m
@@ -18,6 +18,9 @@ es_edition: es3
 goal: spec-completeness
 related: [3486, 2899, 2900]
 origin: "2026-07-25 lead measurement: ES3 is the oldest edition and the closest to complete; the remaining gap is 3 issues, not a feature list."
+loc-budget-allow:
+  - src/codegen/dyn-read.ts
+  - src/codegen/expressions/assignment.ts
 ---
 
 # #3628 — ≤ES3 edition: close the remaining 43 host-lane failures
@@ -29,6 +32,21 @@ origin: "2026-07-25 lead measurement: ES3 is the oldest edition and the closest 
 > [Closing measurement](#closing-measurement-2026-07-31-host-lane) at the
 > bottom — including the two claims in this file that did **not** survive
 > re-checking.
+
+> **REGRESSION AUDIT, 2026-08-09.** Fresh host and standalone baseline rows
+> were joined to the repository's committed 273-file legacy-edition index.
+> Host reported 271 pass plus two `compile_timeout` rows; both timeout files
+> passed when rerun alone in 0.6–0.7 seconds, so they are long-process baseline
+> artifacts rather than compiler failures. Standalone reported 272 pass plus
+> one real failure,
+> `language/expressions/assignment/S11.13.1_A7_T4.js`. The standalone computed
+> assignment path did not canonicalize an object key before receiver-specific
+> setter dispatch, and it evaluated the RHS before the key. The regression fix
+> performs `ToPropertyKey` once at the Reference boundary before the RHS and
+> applies the same canonicalization to IR `dyn.member_set`. The permanent test
+> reruns all three apparent residuals in both lanes and includes an executed
+> standalone IR-store proof. This is combined fresh-baseline + isolated-rerun
+> evidence, not a new full 273-file sweep.
 
 ## Why this issue exists
 

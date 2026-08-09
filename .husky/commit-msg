@@ -1,0 +1,48 @@
+#!/bin/sh
+# Author-identity guard (2026-08-09, project-lead order): Claude must never be
+# the commit AUTHOR — the author is the human user; Claude appears ONLY as a
+# `Co-Authored-By:` trailer. Agent sessions occasionally inherit a Claude-ish
+# GIT_AUTHOR_NAME/EMAIL from their harness env, which silently misattributes
+# the commit. This hook makes that a loud failure at commit time.
+#
+# Scope: rejects when the AUTHOR ident matches Claude/Anthropic patterns.
+# A Claude co-author trailer in the message is the desired convention and is
+# never rejected here. `--no-verify` bypasses this like any hook — and is
+# already forbidden for commits by project convention (CLAUDE.md / memory).
+
+msg_file="$1"
+
+author_ident=$(git var GIT_AUTHOR_IDENT 2>/dev/null)
+# GIT_AUTHOR_IDENT is "Name <email> timestamp tz" — split name and email.
+author_name=${author_ident%% <*}
+author_email=$(printf '%s' "$author_ident" | sed -n 's/.*<\(.*\)>.*/\1/p')
+
+case_insensitive_match() {
+  # $1 = haystack, $2 = grep -E pattern; BSD/busybox-safe.
+  printf '%s' "$1" | grep -qiE "$2"
+}
+
+CLAUDE_PATTERN='claude|anthropic'
+
+if case_insensitive_match "$author_name" "$CLAUDE_PATTERN" \
+   || case_insensitive_match "$author_email" "$CLAUDE_PATTERN"; then
+  cfg_name=$(git config user.name || echo "")
+  cfg_email=$(git config user.email || echo "")
+  echo "commit-msg: BLOCKED — commit author is '$author_name <$author_email>'." >&2
+  echo "  The author must be the human user; Claude belongs ONLY in a" >&2
+  echo "  'Co-Authored-By:' trailer (project convention, CLAUDE.md)." >&2
+  if case_insensitive_match "$cfg_name$cfg_email" "$CLAUDE_PATTERN"; then
+    echo "  Your git config user.name/user.email is itself Claude-ish — fix it:" >&2
+    echo "    git config user.name  \"<your name>\"" >&2
+    echo "    git config user.email \"<your email>\"" >&2
+  else
+    echo "  Repo config is fine ($cfg_name <$cfg_email>) — the Claude identity" >&2
+    echo "  came from GIT_AUTHOR_NAME/GIT_AUTHOR_EMAIL env overrides. Re-run:" >&2
+    echo "    env -u GIT_AUTHOR_NAME -u GIT_AUTHOR_EMAIL git commit ..." >&2
+  fi
+  echo "  and end the message with:" >&2
+  echo "    Co-Authored-By: Claude <noreply@anthropic.com>" >&2
+  exit 1
+fi
+
+exit 0

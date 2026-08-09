@@ -830,6 +830,13 @@ export function ensureDynMemberSet(ctx: CodegenContext): void {
   const nativeStrictSet = ctx.standalone || ctx.wasi;
   const externSetIdx = ctx.funcMap.get(nativeStrictSet ? "__reflect_set" : "__extern_set_strict");
   if (externSetIdx === undefined) return;
+  // Standalone receiver dispatch contains early-return arms before the
+  // string-keyed object table.  Canonicalize the key at the dynamic Reference
+  // boundary so IR dyn.member_set and legacy computed stores agree.  Host
+  // setters already perform ToPropertyKey themselves.
+  const toPropertyKeyIdx = nativeStrictSet ? ctx.funcMap.get("__to_property_key") : undefined;
+  const canonicalizeKey = (): Instr[] =>
+    toPropertyKeyIdx === undefined ? [] : [{ op: "call", funcIdx: toPropertyKeyIdx }];
   const strictSetFailure = (): Instr[] =>
     buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot assign to read only property", {
       forceInModuleCtor: true,
@@ -924,6 +931,7 @@ export function ensureDynMemberSet(ctx: CodegenContext): void {
         { op: "call", funcIdx: peelIdx },
         { op: "local.get", index: 1 },
         { op: "call", funcIdx: anyToExternIdx },
+        ...canonicalizeKey(),
         { op: "local.get", index: 2 },
         { op: "call", funcIdx: valueToExternIdx },
         ...finishStrictSet(),
@@ -951,6 +959,7 @@ export function ensureDynMemberSet(ctx: CodegenContext): void {
       { op: "local.get", index: 0 },
       { op: "call", funcIdx: peelHostIdx },
       { op: "local.get", index: 1 },
+      ...canonicalizeKey(),
       { op: "local.get", index: 2 },
       ...finishStrictSet(),
     ],

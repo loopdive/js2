@@ -23,6 +23,12 @@ substitute harness-authored smoke vectors or imply that validation is a test
 pass. Matching upstream source suites can be pinned and adapted package by
 package, following the existing Acorn/React precedent.
 
+The extracted catalog fixture is also given the installed package's importer
+context (`node_modules`), including pnpm's private dependency links. This keeps
+the published bytes under test while allowing relative imports such as jsdom's
+`tough-cookie` dependency to resolve from the same locked graph. A pin marker
+invalidates stale ignored extractions when a tarball revision changes.
+
 The original package-specific harnesses, plus the deeper Acorn conformance
 check, are:
 
@@ -223,6 +229,14 @@ Three rules keep the number honest:
 3. **A test the harness cannot reproduce natively is not evidence about the
    compiler.** It is excluded from the score under its own
    `harness-incompatible` bucket instead of being counted as a compiler bug.
+
+Both React harnesses install the same explicit jsdom browser-global set for
+their native oracle. ReactDOM's extractor also removes unsupported ESM helper
+imports before building a `new Function`, recording their bindings as
+unavailable instead of allowing one import to poison every test in a batch.
+Renderer, Jest, and internal-test-utils bindings remain in the explicit
+`harness-incompatible` bucket until equivalent compiled modules are available;
+the harness never turns a native-only adapter into compiler evidence.
 
 Failures stay in the corpus. The vitest wrapper enforces a pass FLOOR, not a
 target, so a regression is caught while the remaining frontier stays visible.
