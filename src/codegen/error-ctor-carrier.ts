@@ -50,6 +50,14 @@ import type { CodegenContext } from "./context/types.js";
  * comparison either, so a caller should fall through to its existing miss).
  */
 export function userErrorCtorCarrierGlobal(ctx: CodegenContext, name: string): number | undefined {
+  // `ctx.classSet` membership means the name is a CLASS, and the identifier
+  // read takes an entirely different path for those (the `funcRefIdx` branch in
+  // `compileIdentifierValueRead` is gated on `!ctx.classSet.has(name)`). The
+  // test262 `wrapTest` preamble declares `class Test262Error`, i.e. the whole
+  // main conformance lane — so preferring `moduleGlobals` there would change
+  // behaviour on ~30k tests for a case whose precedence this function does not
+  // model. Fall straight through to today's answer instead.
+  if (ctx.classSet.has(name)) return ctx.funcClosureGlobals.get(name);
   const moduleGlobalIdx = ctx.moduleGlobals.get(name);
   if (moduleGlobalIdx !== undefined && (ctx.liveFuncBindingGlobals?.has(name) === true || ctx.closureMap.has(name))) {
     return moduleGlobalIdx;
