@@ -201,3 +201,28 @@ Liveness is asserted in-band — the module must carry the
 `__runtime_direct_eval` import (a literal eval argument would be folded by
 `tryStaticEvalInline` and prove nothing), and the expected values are only
 reachable if the `[ok, value]` envelope really surfaced.
+
+### Both engines, against the REAL seam (acceptance box 4)
+
+The committed test is stub-linked on purpose. Separately, the same shape was run
+through `selectCachedRuntimeEvalProvider()` under each engine — sources composed
+at runtime (`"4"+"2"`, `"null"+".x"`), catch reads via `instanceof TypeError`:
+
+| engine (as reported by `selection.engine`) | on `main` | with the fix |
+| --- | --- | --- |
+| `INTERPRETER (… TEST262_FULL_RUNTIME_EVAL=1 …)` | `RuntimeError: illegal cast` | **142** — `eval("42")` = 42, then the TypeError branch |
+| `QUICKJS (artifact 21b8f62e9199, adapter key 1f0737c57ed6cfe3)` | `RuntimeError: illegal cast` | **99** — both direct evals refuse on `main` (#4238 slice 3 is not merged), so −1 + the TypeError branch |
+
+Engine-independent, as claimed: identical trap on `main`, identical repair after,
+and the quickjs column is a real-engine instance of the **refusal** path this
+also broke.
+
+### Not fixed here (deliberate)
+
+The underlying `localMap` leak of a catch parameter past its own scope is left
+alone — the #4182 comment states other resolution paths lean on it, and the
+metadata pairing above is sufficient and far narrower. A general cure belongs
+with proper block scoping, not a trap fix.
+
+`scripts/equivalence-baseline.json` is untouched: the gate reports 12 baseline
+entries now passing, but those come from `main`, not from this change.
