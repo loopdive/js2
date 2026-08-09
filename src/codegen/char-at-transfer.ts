@@ -17,6 +17,7 @@
  */
 import type { Instr, ValType } from "../ir/types.js";
 import { ts } from "../ts-api.js";
+import { BFN_ID_FIELD_IDX } from "./builtin-fn-meta.js";
 import { runtimeToPrimitiveInstrs } from "./coercion-engine.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -278,12 +279,12 @@ function buildTransferredStringProtoApplyArm(
       op: "if",
       blockType: { kind: "empty" },
       then: [
-        // Equivalent metadata structs share one Wasm runtime type. Field 3 is
+        // Equivalent metadata structs share one Wasm runtime type. `bfnid` is
         // the stable exact-identity discriminator minted with the closure.
         { op: "local.get", index: 0 },
         { op: "any.convert_extern" },
         { op: "ref.cast", typeIdx: metaTypeIdx },
-        { op: "struct.get", typeIdx: metaTypeIdx, fieldIdx: 3 },
+        { op: "struct.get", typeIdx: metaTypeIdx, fieldIdx: BFN_ID_FIELD_IDX },
         { op: "i32.const", value: metaTypeIdx },
         { op: "i32.eq" },
         {
