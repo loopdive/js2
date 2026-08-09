@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "generated": "2026-08-03",
+  "generated": "2026-08-09",
   "lanes": {
     "single-host": {
       "entryFloor": 5,
       "terminalUnitFloor": 37,
       "emittedFloor": 37,
       "irBodyEmittedFloor": 37,
-      "legacyBodyEmittedCeiling": 24,
+      "legacyBodyEmittedCeiling": 16,
       "unsupportedCeiling": 0,
       "unsupportedByCode": {},
       "invariantCeiling": 0

@@ -17,10 +17,7 @@ sprint: current
 es_edition: n/a
 related: [3672, 4001]
 loc-budget-allow:
-  - src/codegen/declarations.ts
   - src/codegen/expressions/calls.ts
-func-budget-allow:
-  - src/codegen/declarations.ts::compileDeclarations
 ---
 
 # #4031 — the surviving graph-initializer compile dominates the ESLint compile
@@ -70,24 +67,28 @@ expensive statement list. The published TypeScript entry has only two top-level
 statements: a small `var ts = {}` declaration and one 9.1 MB esbuild IIFE. Its
 AST contains about 1.08 million nodes, 11,065 functions, and 9,101 arrows.
 
-Two generic constant factors are now removed in the compiler:
+One safe constant factor is now removed: `compileIIFE` no longer walks the
+complete IIFE twice to discover captures when the enclosing module initializer
+has an empty local map. That is an exact no-capture proof and matters for
+bundled npm packages whose entry point is one giant IIFE (TypeScript's
+published `lib/typescript.js` is about one million AST nodes).
 
-1. `compileIIFE` no longer walks the complete IIFE twice to discover captures
-   when its enclosing function has no possible capture candidate. A module
-   initializer has an empty local map, so this is an exact no-capture proof.
-2. The second module-init pass is now conditional. It is retained whenever
-   compiling intervening function bodies changes the inlinable-function
-   registry; otherwise the first pass is already the final initializer and is
-   reused. This preserves the purpose of pass 2 (late call-site inlining) while
-   avoiding a duplicate compile for bundled entries with no top-level function
-   bodies.
+An attempted broader optimization used an unchanged inlinable-function
+registry as proof that the second module-init compile was redundant. The proof
+was insufficient: the merge-group Test262 run lost 116 host passes, fell 272
+standalone host-free passes below the committed high-water mark, and grew
+uncatchable trap categories. In a positive-control local A/B, restoring the
+second pass flipped six representative `decodeURI`/`decodeURIComponent` files
+from out-of-bounds traps back to pass with no losses (6 gained, 0 lost across
+8 measured files). The second compile therefore remains conservative while
+this issue stays open for a sounder proof.
 
-On a 3,000-function IIFE control, the profile changed from pass 1 + pass 2 to
-pass 1 only (`module-init-pass2-skipped=1`). The existing #2965 state-order
-fixture and the IIFE/equivalence suites remain green. The full TypeScript
-bundle is still a bounded compile frontier, so no package-level success claim
-is made yet; the next measurement must be taken with the same supervised
-`compileProject` harness after the change.
+The capture-scan skip is intentionally limited to an actually empty local map.
+A function-local binding may shadow a registered top-level function, so the
+presence of a same-named entry in `ctx.funcMap` is not proof that the binding
+cannot be captured. Permanent coverage exercises that boundary. The full
+TypeScript bundle remains a bounded compile frontier; the next measurement
+must use the same supervised `compileProject` harness.
 
 ## Acceptance criteria
 

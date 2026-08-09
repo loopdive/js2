@@ -11,10 +11,11 @@ import {
   type IrPlanningIdentityContext,
 } from "../ir/planning-identity.js";
 import type { IrPromiseDelayLoweringPlan, IrPromiseDelayLoweringPlans } from "../ir/promise-delay-lowering.js";
-import type { IrSelection } from "../ir/select.js";
+import { constructorHasIrSafeReceiverSemantics, type IrSelection } from "../ir/select.js";
 import type { ValType } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
+import { installAstFreeClassConstructorNewWrapper } from "./class-constructor-wrapper.js";
 import { preparedIrAsyncSourceCanSuspend, preparedIrAsyncSourceShape } from "./async-ir-planning.js";
 import { getOrRegisterVecType } from "./registry/types.js";
 import { collectLocalCallEdgesByIdentity } from "./ir-first-gate.js";
@@ -94,8 +95,7 @@ export function computePreparedInheritedIrFirstSkipUnitIds(input: {
   return requestedSkipUnitIds;
 }
 
-export interface PreparedIrFreeFunctionBodies {
-  readonly report: IrIntegrationReport;
+interface PreparedIrBodyFamily {
   readonly requestedSkipProjection: IrLegacyUnitProjection;
   /** Owners settled by the preparation attempt and excluded from the late overlay. */
   readonly completedBodies: ReadonlySet<string>;
@@ -103,15 +103,46 @@ export interface PreparedIrFreeFunctionBodies {
   readonly preserveBodies: ReadonlySet<string>;
 }
 
-export interface PreparedIrClassMemberBodies {
+export interface PreparedIrFreeFunctionBodies extends PreparedIrBodyFamily {}
+
+export interface PreparedIrClassMemberBodies extends PreparedIrBodyFamily {}
+
+export interface PreparedIrBodies {
   readonly report: IrIntegrationReport;
-  readonly requestedSkipProjection: IrLegacyUnitProjection;
-  readonly completedBodies: ReadonlySet<string>;
-  readonly skipBodies: ReadonlySet<string>;
-  readonly preserveBodies: ReadonlySet<string>;
+  readonly freeFunctions: PreparedIrFreeFunctionBodies;
+  readonly classMembers?: PreparedIrClassMemberBodies;
 }
 
-/** Project selected methods/accessors through exact structural class ownership. */
+function topLevelClassDeclarationsByName(sourceFile: ts.SourceFile): ReadonlyMap<string, ts.ClassDeclaration> {
+  const declarations = new Map<string, ts.ClassDeclaration>();
+  for (const statement of sourceFile.statements) {
+    if (ts.isClassDeclaration(statement) && statement.name) declarations.set(statement.name.text, statement);
+  }
+  return declarations;
+}
+
+function classConstructorHierarchyHasIrSafeReceiverSemantics(
+  declaration: ts.ClassDeclaration,
+  declarationsByName: ReadonlyMap<string, ts.ClassDeclaration>,
+  visiting: ReadonlySet<ts.ClassDeclaration> = new Set(),
+): boolean {
+  if (visiting.has(declaration)) return false;
+  const constructorDeclaration = declaration.members.find(ts.isConstructorDeclaration);
+  if (constructorDeclaration && !constructorHasIrSafeReceiverSemantics(constructorDeclaration)) return false;
+  const heritage = declaration.heritageClauses?.find((clause) => clause.token === ts.SyntaxKind.ExtendsKeyword);
+  const baseExpression = heritage?.types[0]?.expression;
+  if (!baseExpression) return true;
+  if (!ts.isIdentifier(baseExpression)) return false;
+  const base = declarationsByName.get(baseExpression.text);
+  if (!base) return false;
+  return classConstructorHierarchyHasIrSafeReceiverSemantics(
+    base,
+    declarationsByName,
+    new Set([...visiting, declaration]),
+  );
+}
+
+/** Project selected constructors/methods/accessors through exact structural class ownership. */
 export function selectPreparedClassMemberNames(
   ctx: CodegenContext,
   selection: Pick<IrSelection, "classMembers">,
@@ -119,6 +150,7 @@ export function selectPreparedClassMemberNames(
 ): ReadonlySet<string> {
   const selectedNames = new Set(selection.classMembers ?? []);
   const memberNames = new Set<string>();
+  const topLevelClassesBySource = new Map<ts.SourceFile, ReadonlyMap<string, ts.ClassDeclaration>>();
   const localCallEdgesBySource = new Map<ts.SourceFile, ReturnType<typeof collectLocalCallEdgesByIdentity>>();
   const localCallEdges = (sourceFile: ts.SourceFile): ReturnType<typeof collectLocalCallEdgesByIdentity> => {
     const cached = localCallEdgesBySource.get(sourceFile);
@@ -141,10 +173,20 @@ export function selectPreparedClassMemberNames(
       ts.isSourceFile(owner.parent) &&
       instanceClassId !== undefined &&
       ctx.programAbiTypes?.canPrepareClassLayout(instanceClassId) === true;
+    let instanceHierarchyIsPreparable = instanceOwnerIsPreparable;
+    if (instanceHierarchyIsPreparable && owner && ts.isClassDeclaration(owner)) {
+      let declarationsByName = topLevelClassesBySource.get(owner.getSourceFile());
+      if (!declarationsByName) {
+        declarationsByName = topLevelClassDeclarationsByName(owner.getSourceFile());
+        topLevelClassesBySource.set(owner.getSourceFile(), declarationsByName);
+      }
+      instanceHierarchyIsPreparable = classConstructorHierarchyHasIrSafeReceiverSemantics(owner, declarationsByName);
+    }
     const instanceBody =
       terminal?.kind === "class-instance-method" ||
       terminal?.kind === "class-instance-getter" ||
       terminal?.kind === "class-instance-setter";
+    const constructorBody = terminal?.kind === "class-constructor";
     // Cross-owner class -> free-function components are the next serial R3
     // family. Preparing only the member would make its direct call target
     // remain legacy-owned and leave no exact AST-site call plan. Keep that
@@ -157,12 +199,14 @@ export function selectPreparedClassMemberNames(
     });
     if (
       selectedNames.has(claim.legacyMatchName) &&
-      (terminal?.kind === "class-static-method" || (instanceBody && instanceOwnerIsPreparable)) &&
+      (terminal?.kind === "class-static-method" ||
+        ((instanceBody || constructorBody) && instanceHierarchyIsPreparable)) &&
       !crossesFreeFunctionBoundary &&
       declaration !== undefined &&
       (ts.isMethodDeclaration(declaration) ||
         ts.isGetAccessorDeclaration(declaration) ||
-        ts.isSetAccessorDeclaration(declaration)) &&
+        ts.isSetAccessorDeclaration(declaration) ||
+        (ts.isConstructorDeclaration(declaration) && constructorHasIrSafeReceiverSemantics(declaration))) &&
       !containsNestedExecutableSyntax(declaration)
     ) {
       memberNames.add(claim.legacyMatchName);
@@ -246,6 +290,12 @@ function bodyProjection(
 
 function r2StableSignatureType(type: IrType | null): boolean {
   if (type === null || type.kind === "string") return true;
+  // #3522 Builtins retirement — opaque host-class contracts have one
+  // backend-independent physical representation in the JS-host lane:
+  // externref. Admission is still fail-closed because
+  // r2SignatureMatchesAllocatedSlot compares that projection with the exact
+  // Program ABI slot before preparation can replace the direct body.
+  if (type.kind === "extern") return true;
   if (type.kind === "vec") {
     const element = asVal(type.elementType);
     return element?.kind === "f64" || element?.kind === "i32";
@@ -278,6 +328,21 @@ function containsNestedExecutableSyntax(declaration: ts.FunctionLikeDeclaration)
   };
   ts.forEachChild(declaration.body, visit);
   return found;
+}
+
+function prepareClassConstructorSupports(ctx: CodegenContext, classShapes: ReadonlyMap<string, IrClassShape>): void {
+  for (const shape of classShapes.values()) {
+    const target = shape.constructorTarget;
+    if (target?.binding.kind !== "support") continue;
+    if (!ctx.programAbiClassCallables) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `prepared class constructor ${shape.classId} has no class-callable ABI registry`,
+      );
+    }
+    ctx.programAbiClassCallables.prepareSupport(target.binding.bindingId);
+  }
 }
 
 function identifierIsRuntimeFunctionValueReference(identifier: ts.Identifier): boolean {
@@ -371,6 +436,7 @@ function sameValType(left: ValType, right: ValType): boolean {
 }
 
 function r2StableValType(ctx: CodegenContext, type: IrType): ValType | undefined {
+  if (type.kind === "extern") return { kind: "externref" };
   if (type.kind === "string") {
     if (!ctx.nativeStrings) return { kind: "externref" };
     return ctx.anyStrTypeIdx >= 0 ? { kind: "ref", typeIdx: ctx.anyStrTypeIdx } : undefined;
@@ -722,8 +788,9 @@ export function finalizeR3PreparedOwnerPopulation(input: {
 }
 
 /**
- * R2 prepares only components whose top-level callable contracts are
- * ABI-stable scalars/strings. Reference-shaped callable contracts, fast-mode
+ * R2 prepares only components whose top-level callable contracts have one
+ * backend-stable Program ABI projection: scalars, strings, selected vectors,
+ * and opaque JS-host externrefs. Other reference-shaped contracts, fast-mode
  * grounded numerics, and async/generator frames still require direct discovery
  * and remain on the post-direct overlay. Nested callable syntax inside an
  * otherwise admitted owner does not by itself block that owner.
@@ -817,69 +884,29 @@ export function selectR2PreparedFreeFunctions(input: {
   );
 }
 
-/** Prepare and install retained free-function IR bodies before direct emission. */
-export function prepareIrFreeFunctionBodies(input: {
-  readonly ctx: CodegenContext;
-  readonly sourceFile: ts.SourceFile;
-  readonly selection: Pick<IrSelection, "funcs">;
-  readonly claimsByUnitId: ReadonlyMap<IrUnitId, IrExactFunctionClaim>;
-  readonly overrideMap: IrTypeOverrideMap;
-  readonly classShapes: ReadonlyMap<string, IrClassShape>;
-  readonly loweringPlans: IrIntegrationLoweringPlans;
-}): PreparedIrFreeFunctionBodies {
-  const freeFunctionSelection: IrSelection = {
-    funcs: new Set(input.selection.funcs),
-    classMembers: new Set<string>(),
-    moduleInit: undefined,
-  };
-  const initialReport: IrIntegrationReport =
-    freeFunctionSelection.funcs.size === 0
-      ? {
-          compiled: [],
-          errors: [],
-          compiledArtifactEvidence: [],
-          terminalEvidence: [],
-          terminalCompiledOwners: [],
-          syntheticCompiledArtifacts: [],
-        }
-      : compileIrPathFunctions(
-          input.ctx,
-          input.sourceFile,
-          freeFunctionSelection,
-          input.overrideMap,
-          input.classShapes,
-          input.loweringPlans,
-          { sealPreparedComponents: true },
-        );
-  const routing = preparedIrBodyRouting(initialReport, input.claimsByUnitId);
-  const report = deferUnsealedPreparedComponents(initialReport, routing.deferredUnitIds, input.claimsByUnitId);
-  const requestedSkipProjection = buildIrRequestedFunctionSkipProjection(routing.irOwnedUnitIds, input.claimsByUnitId);
-  const preparedProjection = buildIrRequestedFunctionSkipProjection(routing.preparedUnitIds, input.claimsByUnitId);
-  const deferredProjection = buildIrRequestedFunctionSkipProjection(routing.deferredUnitIds, input.claimsByUnitId);
-  const deferredBodies = new Set(deferredProjection.entries.map(({ legacyName }) => legacyName));
-  return {
-    report,
-    requestedSkipProjection,
-    completedBodies: new Set([...freeFunctionSelection.funcs].filter((legacyName) => !deferredBodies.has(legacyName))),
-    skipBodies: new Set(requestedSkipProjection.entries.map(({ legacyName }) => legacyName)),
-    preserveBodies: new Set(preparedProjection.entries.map(({ legacyName }) => legacyName)),
-  };
+interface PreparedIrClassMemberPopulation {
+  readonly memberNames: ReadonlySet<string>;
+  readonly claimsByUnitId: ReadonlyMap<IrUnitId, IrExactBodyClaim>;
 }
 
-/** Prepare selected top-level class methods/accessors before direct class bodies. */
-export function prepareIrClassMemberBodies(input: {
+/** Reserve the exact class ABI needed by one combined prepared-body transaction. */
+function prepareIrClassMemberPopulation(input: {
   readonly ctx: CodegenContext;
-  readonly sourceFile: ts.SourceFile;
   readonly selection: Pick<IrSelection, "classMembers">;
   readonly identityPlan: irOverlayIdentity.IrOverlayIdentityPlan;
-  readonly overrideMap: IrTypeOverrideMap;
   readonly classShapes: ReadonlyMap<string, IrClassShape>;
-  readonly projectLoweringPlans: (selection: IrSelection) => IrIntegrationLoweringPlans;
-}): PreparedIrClassMemberBodies | undefined {
+}): PreparedIrClassMemberPopulation | undefined {
   const memberNames = selectPreparedClassMemberNames(input.ctx, input.selection, input.identityPlan);
   const claimsByUnitId = new Map<IrUnitId, IrExactBodyClaim>();
   for (const claim of input.identityPlan.identitySelection.classMembers?.values() ?? []) {
     if (!memberNames.has(claim.legacyMatchName)) continue;
+    if (claimsByUnitId.has(claim.unitId)) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `prepared class member ${claim.unitId} / ${claim.legacyMatchName} has a duplicate structural claim`,
+      );
+    }
     claimsByUnitId.set(claim.unitId, { unitId: claim.unitId, legacyName: claim.legacyMatchName });
   }
   if (claimsByUnitId.size === 0) return undefined;
@@ -888,6 +915,7 @@ export function prepareIrClassMemberBodies(input: {
   for (const unitId of claimsByUnitId.keys()) {
     const terminal = input.identityPlan.identityContext.terminalByUnitId.get(unitId);
     if (
+      terminal?.kind !== "class-constructor" &&
       terminal?.kind !== "class-instance-method" &&
       terminal?.kind !== "class-instance-getter" &&
       terminal?.kind !== "class-instance-setter"
@@ -904,7 +932,7 @@ export function prepareIrClassMemberBodies(input: {
       throw new IrInvariantError(
         "selection-preparation-mismatch",
         "resolve",
-        `prepared instance member ${unitId} has no exact class-layout owner`,
+        `prepared instance member or constructor ${unitId} has no exact class-layout owner`,
       );
     }
     let shape = shapeByClassId.get(classId);
@@ -917,36 +945,221 @@ export function prepareIrClassMemberBodies(input: {
     throw new IrInvariantError(
       "selection-preparation-mismatch",
       "resolve",
-      "prepared instance members require one exact class-layout ABI registry",
+      "prepared instance members and constructors require one exact class-layout ABI registry",
     );
   }
-  for (const classId of classLayouts) input.ctx.programAbiTypes!.prepareClassLayout(classId);
+  // The combined free/class build can still finalize one of these allocator-
+  // owned structs. Dependency sealing publishes every referenced layout from
+  // the final post-pass IR, after that mutation window has closed.
+  prepareClassConstructorSupports(input.ctx, input.classShapes);
+  for (const unitId of claimsByUnitId.keys()) {
+    if (input.identityPlan.identityContext.terminalByUnitId.get(unitId)?.kind !== "class-constructor") continue;
+    const declaration = input.identityPlan.identityContext.declarationByUnitId.get(unitId);
+    const owner = declaration?.parent;
+    const classId =
+      owner !== undefined && ts.isClassDeclaration(owner)
+        ? input.identityPlan.identityContext.classIdByDeclaration.get(owner)
+        : undefined;
+    const shape = classId === undefined ? undefined : shapeByClassId.get(classId);
+    const newTarget = shape?.constructorTarget;
+    const initTarget = shape?.constructorInitTarget;
+    const layout = classId === undefined ? undefined : input.ctx.programAbiTypes!.layoutForClass(classId);
+    if (
+      !classId ||
+      !shape ||
+      newTarget?.binding.kind !== "support" ||
+      initTarget?.binding.kind !== "unit" ||
+      initTarget.binding.unitId !== unitId ||
+      !layout ||
+      !input.ctx.programAbiClassCallables
+    ) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `prepared constructor ${unitId} has no exact _new support / _init unit transaction`,
+      );
+    }
+    const newFuncIdx = input.ctx.programAbiClassCallables.prepareSupport(newTarget.binding.bindingId);
+    const initFuncIdx = input.ctx.programAbiClassCallables.handleForUnit(unitId);
+    if (initFuncIdx === undefined) {
+      throw new IrInvariantError(
+        "missing-function-slot",
+        "resolve",
+        `prepared constructor ${unitId} has no exact _init allocator`,
+      );
+    }
+    installAstFreeClassConstructorNewWrapper(input.ctx, {
+      className: shape.className,
+      structTypeIdx: layout.typeIdx,
+      fields: layout.type.fields,
+      newFuncIdx,
+      initFuncIdx,
+    });
+  }
+  return { memberNames, claimsByUnitId };
+}
+
+function partitionPreparedUnitIds(
+  unitIds: ReadonlySet<IrUnitId>,
+  freeFunctionClaimsByUnitId: ReadonlyMap<IrUnitId, IrExactBodyClaim>,
+  classMemberClaimsByUnitId: ReadonlyMap<IrUnitId, IrExactBodyClaim>,
+  routingKind: "IR-owned" | "prepared" | "deferred",
+): { readonly freeFunctionUnitIds: ReadonlySet<IrUnitId>; readonly classMemberUnitIds: ReadonlySet<IrUnitId> } {
+  const freeFunctionUnitIds = new Set<IrUnitId>();
+  const classMemberUnitIds = new Set<IrUnitId>();
+  for (const unitId of unitIds) {
+    const freeFunction = freeFunctionClaimsByUnitId.has(unitId);
+    const classMember = classMemberClaimsByUnitId.has(unitId);
+    if (freeFunction === classMember) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "patch",
+        `${routingKind} prepared body ${unitId} belongs to ${freeFunction ? "both" : "neither"} routing families`,
+      );
+    }
+    (freeFunction ? freeFunctionUnitIds : classMemberUnitIds).add(unitId);
+  }
+  return { freeFunctionUnitIds, classMemberUnitIds };
+}
+
+/**
+ * Prepare free functions and class members in one dependency-sealing
+ * transaction. Cross-owner components must see one combined claim denominator;
+ * routing either family against only its own claims would reject the other
+ * family's evidence and leave otherwise complete components unsealed.
+ */
+export function prepareIrBodies(input: {
+  readonly ctx: CodegenContext;
+  readonly sourceFile: ts.SourceFile;
+  readonly selection: Pick<IrSelection, "funcs" | "classMembers">;
+  readonly identityPlan: irOverlayIdentity.IrOverlayIdentityPlan;
+  readonly functionClaimsByUnitId: ReadonlyMap<IrUnitId, IrExactFunctionClaim>;
+  readonly overrideMap: IrTypeOverrideMap;
+  readonly classShapes: ReadonlyMap<string, IrClassShape>;
+  readonly projectLoweringPlans: (selection: IrSelection) => IrIntegrationLoweringPlans;
+}): PreparedIrBodies {
+  const freeFunctionNames = new Set(input.selection.funcs);
+  const freeFunctionClaimsByUnitId = new Map<IrUnitId, IrExactFunctionClaim>();
+  for (const legacyName of freeFunctionNames) {
+    const unitId = irOverlayIdentity.requireIrOverlayFunctionUnitId(input.identityPlan, legacyName);
+    const claim = input.functionClaimsByUnitId.get(unitId);
+    if (!claim || claim.legacyName !== legacyName) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `prepared free function ${unitId} / ${legacyName} has no exact structural claim`,
+      );
+    }
+    freeFunctionClaimsByUnitId.set(unitId, claim);
+  }
+
+  const classPopulation = prepareIrClassMemberPopulation({
+    ctx: input.ctx,
+    selection: { classMembers: input.selection.classMembers },
+    identityPlan: input.identityPlan,
+    classShapes: input.classShapes,
+  });
+  if (!classPopulation && freeFunctionNames.size > 0) {
+    prepareClassConstructorSupports(input.ctx, input.classShapes);
+  }
+
+  const claimsByUnitId = new Map<IrUnitId, IrExactBodyClaim>(freeFunctionClaimsByUnitId);
+  for (const [unitId, claim] of classPopulation?.claimsByUnitId ?? []) {
+    if (claimsByUnitId.has(unitId)) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `prepared body ${unitId} is claimed by both free-function and class-member families`,
+      );
+    }
+    claimsByUnitId.set(unitId, claim);
+  }
+
   const selection: IrSelection = {
-    funcs: new Set<string>(),
-    classMembers: memberNames,
+    funcs: freeFunctionNames,
+    classMembers: classPopulation?.memberNames ?? new Set<string>(),
     moduleInit: undefined,
   };
-  const initialReport = compileIrPathFunctions(
-    input.ctx,
-    input.sourceFile,
-    selection,
-    input.overrideMap,
-    input.classShapes,
-    input.projectLoweringPlans(selection),
-    { sealPreparedComponents: true },
-  );
+  const initialReport: IrIntegrationReport =
+    claimsByUnitId.size === 0
+      ? {
+          compiled: [],
+          errors: [],
+          compiledArtifactEvidence: [],
+          terminalEvidence: [],
+          terminalCompiledOwners: [],
+          syntheticCompiledArtifacts: [],
+        }
+      : compileIrPathFunctions(
+          input.ctx,
+          input.sourceFile,
+          selection,
+          input.overrideMap,
+          input.classShapes,
+          input.projectLoweringPlans(selection),
+          { sealPreparedComponents: true },
+        );
   const routing = preparedIrBodyRouting(initialReport, claimsByUnitId);
   const report = deferUnsealedPreparedComponents(initialReport, routing.deferredUnitIds, claimsByUnitId);
-  const requestedSkipProjection = bodyProjection(routing.irOwnedUnitIds, claimsByUnitId);
-  const preparedProjection = bodyProjection(routing.preparedUnitIds, claimsByUnitId);
-  const deferredProjection = bodyProjection(routing.deferredUnitIds, claimsByUnitId);
-  const deferredBodies = new Set(deferredProjection.entries.map(({ legacyName }) => legacyName));
+  const classMemberClaimsByUnitId = classPopulation?.claimsByUnitId ?? new Map<IrUnitId, IrExactBodyClaim>();
+  const irOwnedPartition = partitionPreparedUnitIds(
+    routing.irOwnedUnitIds,
+    freeFunctionClaimsByUnitId,
+    classMemberClaimsByUnitId,
+    "IR-owned",
+  );
+  const preparedPartition = partitionPreparedUnitIds(
+    routing.preparedUnitIds,
+    freeFunctionClaimsByUnitId,
+    classMemberClaimsByUnitId,
+    "prepared",
+  );
+  const deferredPartition = partitionPreparedUnitIds(
+    routing.deferredUnitIds,
+    freeFunctionClaimsByUnitId,
+    classMemberClaimsByUnitId,
+    "deferred",
+  );
+
+  const freeRequestedSkipProjection = buildIrRequestedFunctionSkipProjection(
+    irOwnedPartition.freeFunctionUnitIds,
+    freeFunctionClaimsByUnitId,
+  );
+  const freePreparedProjection = buildIrRequestedFunctionSkipProjection(
+    preparedPartition.freeFunctionUnitIds,
+    freeFunctionClaimsByUnitId,
+  );
+  const freeDeferredProjection = buildIrRequestedFunctionSkipProjection(
+    deferredPartition.freeFunctionUnitIds,
+    freeFunctionClaimsByUnitId,
+  );
+  const freeDeferredBodies = new Set(freeDeferredProjection.entries.map(({ legacyName }) => legacyName));
+  const freeFunctions: PreparedIrFreeFunctionBodies = {
+    requestedSkipProjection: freeRequestedSkipProjection,
+    completedBodies: new Set([...freeFunctionNames].filter((legacyName) => !freeDeferredBodies.has(legacyName))),
+    skipBodies: new Set(freeRequestedSkipProjection.entries.map(({ legacyName }) => legacyName)),
+    preserveBodies: new Set(freePreparedProjection.entries.map(({ legacyName }) => legacyName)),
+  };
+
+  if (!classPopulation) return { report, freeFunctions };
+  const classRequestedSkipProjection = bodyProjection(
+    irOwnedPartition.classMemberUnitIds,
+    classPopulation.claimsByUnitId,
+  );
+  const classPreparedProjection = bodyProjection(preparedPartition.classMemberUnitIds, classPopulation.claimsByUnitId);
+  const classDeferredProjection = bodyProjection(deferredPartition.classMemberUnitIds, classPopulation.claimsByUnitId);
+  const classDeferredBodies = new Set(classDeferredProjection.entries.map(({ legacyName }) => legacyName));
   return {
     report,
-    requestedSkipProjection,
-    completedBodies: new Set([...memberNames].filter((legacyName) => !deferredBodies.has(legacyName))),
-    skipBodies: new Set(requestedSkipProjection.entries.map(({ legacyName }) => legacyName)),
-    preserveBodies: new Set(preparedProjection.entries.map(({ legacyName }) => legacyName)),
+    freeFunctions,
+    classMembers: {
+      requestedSkipProjection: classRequestedSkipProjection,
+      completedBodies: new Set(
+        [...classPopulation.memberNames].filter((legacyName) => !classDeferredBodies.has(legacyName)),
+      ),
+      skipBodies: new Set(classRequestedSkipProjection.entries.map(({ legacyName }) => legacyName)),
+      preserveBodies: new Set(classPreparedProjection.entries.map(({ legacyName }) => legacyName)),
+    },
   };
 }
 

@@ -97,6 +97,7 @@ import {
   pushProgramAbiTopLevelCallable,
 } from "./program-abi-source-callable-planning.js";
 import { heterogeneousWidenedModuleGlobalType } from "./declarations/heterogeneous-scalar-var-widening.js";
+import { withBodyHoistedModuleVarNames } from "./declarations/with-body-var-hoisting.js";
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import { prepareModuleTdzGlobals, registerModuleGlobal } from "./module-global-registration.js";
 import { annexBModuleGlobalSeedsFromTopLevel } from "./annexb-global-live-binding.js";
@@ -124,20 +125,6 @@ import {
   resolveStructFieldTypes,
 } from "./declarations/struct-type-registration.js";
 import { profileCount, profilePhase } from "../compile-profile.js";
-
-/** Whether function-body compilation changed the module-init inlining view. */
-function moduleInitInlinableRegistryChanged(
-  before: ReadonlyMap<string, unknown> | undefined,
-  current: ReadonlyMap<string, unknown>,
-): boolean {
-  if (before === undefined) return true;
-  if (before.size !== current.size) return true;
-  for (const [name, info] of before) {
-    if (current.get(name) !== info) return true;
-  }
-  return false;
-}
-
 /**
  * (#1700) Record TypedArray classifications for a user-exported function so
  * the JS-host `wrapExports` can marshal `Uint8Array` params/returns across
@@ -1526,6 +1513,15 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       ctx.externrefAccessorVars.add(decl.name.text);
       return { kind: "externref" };
     }
+    // (#4264) A `var` DECLARED inside a `with` body may never be written at all
+    // — §14.11.2 consults the object environment first, so when the target owns
+    // the name the store goes to the object and the hoisted binding keeps its
+    // initial `undefined`. A primitive slot cannot represent that value; widen
+    // it. See `with-body-var-hoisting.ts` for the full argument and the seed
+    // that gives the slot its `undefined` at `__module_init` entry.
+    if (ts.isIdentifier(decl.name) && withBodyHoistedModuleVarNames(sourceFile).has(decl.name.text)) {
+      return { kind: "externref" };
+    }
     // #1914 — `var m = re.exec(s)` under standalone gets the precise
     // match-vec ref type so indexed reads stay on the static vec path
     // (externref-widened globals round-trip through __extern_get_idx,
@@ -2553,6 +2549,25 @@ export function compileDeclarations(
     };
     ctx.currentFunc = initFctx;
 
+    // (#4264) §10.2.11: a `var` hoisted out of a `with` body is instantiated at
+    // script entry with the value `undefined`. A module global's constant init
+    // can only be `ref.null.extern`, which the standalone lane does NOT read as
+    // `undefined` — so seed the tag-1 singleton here, exactly as the #4182
+    // Annex B block-function binding below does, and for the same reason. Host
+    // mode is excluded on the same grounds: there `undefined` IS the null
+    // extern, and the singleton would surface to host helpers as an object.
+    if (ctx.standalone || ctx.wasi) {
+      const seededWithVars = new Set<number>();
+      for (const withVarName of withBodyHoistedModuleVarNames(sourceFile)) {
+        const withVarGlobalIdx = ctx.moduleGlobals.get(withVarName);
+        if (withVarGlobalIdx === undefined || seededWithVars.has(withVarGlobalIdx)) continue;
+        if (ctx.mod.globals[localGlobalIdx(ctx, withVarGlobalIdx)]?.type.kind !== "externref") continue;
+        if (!emitUndefinedExtern(ctx, initFctx)) continue;
+        initFctx.body.push({ op: "global.set", index: withVarGlobalIdx });
+        seededWithVars.add(withVarGlobalIdx);
+      }
+    }
+
     // (#2931) Seed each reassigned-function live-binding global with the
     // function's closure BEFORE any user init statement runs, so a read of the
     // name before its reassignment still yields the function. Emitted via
@@ -2659,11 +2674,6 @@ export function compileDeclarations(
     // when addStringConstantGlobal is called during function body compilation.
     ctx.pendingInitBody = compiledInitFctx.body;
   }
-
-  // Snapshot the inlining view after pass 1; an unchanged view makes pass 2
-  // redundant for large bundled IIFEs.
-  const inlinableRegistryBeforeBodies =
-    (hasModuleInits || hasStaticInits) && moduleInitMode === "full" ? new Map(ctx.inlinableFunctions) : undefined;
 
   // (#3419) Last-wins for duplicate top-level function declarations — mirror
   // the collectDeclarations registration skip: only the LAST declaration per
@@ -2785,11 +2795,7 @@ export function compileDeclarations(
   // The first compile above still serves early closure/setup discovery.
   // Only the emitting call needs the final-registry recompile; in the other
   // multi-source modes the body it would produce is discarded unread.
-  if (
-    (hasModuleInits || hasStaticInits) &&
-    moduleInitMode === "full" &&
-    moduleInitInlinableRegistryChanged(inlinableRegistryBeforeBodies, ctx.inlinableFunctions)
-  ) {
+  if ((hasModuleInits || hasStaticInits) && moduleInitMode === "full") {
     // (#2965) Reset the program-order-sensitive property state to its
     // pre-pass-1 value so this recompile does not treat pass 1's own
     // defineProperty/freeze effects as pre-existing (see snapshot above).
@@ -2797,8 +2803,6 @@ export function compileDeclarations(
     compiledInitFctx = profilePhase("module-init-pass2", () => compileModuleInitBody());
     ctx.pendingInitBody = compiledInitFctx.body;
     dedupeDiagnosticsFrom(ctx, pass1DiagnosticMark); // (#4195) after pass 2, never before
-  } else if ((hasModuleInits || hasStaticInits) && moduleInitMode === "full") {
-    profileCount("module-init-pass2-skipped", 1);
   }
 
   // Clear pendingInitBody before injection (it lands in mod.functions after this)

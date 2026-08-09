@@ -3,7 +3,8 @@
 // #3000-E — IR inheritance / `super` emission (single-level `extends` of a
 // local user class).
 //
-// Builds on #3000-C (the `class.alloc` ctor substrate). Before this slice a
+// Builds on #3000-C's constructor substrate, now retired by #3522 into an
+// AST-free `_new` allocation wrapper plus a source-owned `_init`. Before this slice a
 // subclass's members (`Dog_new`, `Dog_speak`, `Dog_get_breed`) all rejected as
 // `class-method`: `buildIrClassShapes` skipped ANY `extends` class, the Phase-B
 // integration walk skipped it wholesale, and the selector's `hasParent` arm
@@ -13,7 +14,7 @@
 //     class, walking the ancestor chain to recover inherited (incl. string)
 //     fields and setting `IrClassShape.parent`.
 //   - Two new IR instrs: `class.super_init` (a derived ctor's `super(args)` →
-//     the PARENT's `<parent>_init` on the already-`class.alloc`'d `self`, NOT a
+//     the PARENT's `<parent>_init` on the already-allocated `self`, NOT a
 //     second alloc) and `class.super_call` (`super.method()` → the parent's
 //     method slot, bypassing a subclass override).
 //   - The selector claims subclass instance members under a local parent and

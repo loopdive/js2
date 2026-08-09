@@ -266,6 +266,8 @@ function unsupportedVoidCallExpression(detail: string): never {
  */
 export interface IrExternClassMeta {
   readonly className: string;
+  /** Exact legacy/import registry prefix; may differ for namespaces. */
+  readonly importPrefix: string;
   readonly constructorParams: readonly ValType[];
   readonly methods: ReadonlyMap<string, { readonly params: readonly ValType[]; readonly results: readonly ValType[] }>;
   readonly properties: ReadonlyMap<string, { readonly type: ValType; readonly readonly: boolean }>;
@@ -638,24 +640,19 @@ export interface AstToIrOptions {
    * accesses resolve via `class.get` / `class.set` against the shape's
    * field list.
    *
-   * Static methods don't get a `selfParam`; constructors don't either —
-   * Phase C synthesises `struct.new + __self` inside the body.
+   * Static methods don't get a `selfParam`; constructor init bodies use the
+   * dedicated final-parameter mode below.
    */
   readonly selfParam?: { readonly type: IrType };
   /**
-   * #3000-C Phase C: set ONLY when lowering a `ConstructorDeclaration`. Names
-   * the class the constructor builds. Unlike `selfParam` (an instance method's
-   * caller-supplied `__self` FIRST param), a constructor is NOT passed `this` —
-   * it ALLOCATES the instance. So when this is set the lowerer:
-   *   - synthesises `this` = `class.alloc(shape)` (a fresh default-initialised
-   *     struct) at body entry and binds it in scope,
-   *   - forces the IR result type to `{ kind: "class"; shape }` (the ctor
-   *     returns the constructed instance — `(ref $struct)`),
-   *   - lowers the ctor body statements as plain (non-tail) statements, then
-   *     synthesises the implicit `return this` epilogue.
-   * Mutually exclusive with `selfParam`.
+   * #3522 constructor retirement: lower a source constructor as the
+   * allocator-independent `<Class>_init` body. User parameters keep their
+   * source order and the caller-supplied class receiver is appended as the
+   * final parameter, matching the frozen direct ABI
+   * `(...ctorParams, self) -> self`. Mutually exclusive with
+   * `selfParam`.
    */
-  readonly constructorClassShape?: IrClassShape;
+  readonly constructorInitClassShape?: IrClassShape;
   /**
    * If present, overrides the IR types for the function's own parameters.
    * Indexed by parameter position. Used when the AST lacks explicit TS
@@ -799,16 +796,11 @@ export function lowerFunctionAstToIr(
   // and a method/function may have one. Type-narrow before access.
   const isGenerator = (ts.isFunctionDeclaration(fn) || ts.isMethodDeclaration(fn)) && !!fn.asteriskToken;
 
-  // #3000-C Phase C: constructor-body lowering. A ConstructorDeclaration has
-  // no `.type` (its return type is implicit — the constructed instance). The
-  // integration walk supplies `options.constructorClassShape`; the lowerer
-  // allocates `this`, runs the body, and returns the instance (see the
-  // `isCtor` branch below). Without the shape we can't form the class-typed
-  // return / `this`, so reject to legacy (defensive — the integration walk
-  // always supplies it).
+  // ConstructorDeclaration has no `.type`; the integration walk supplies the
+  // exact init shape and the caller-provided receiver is returned implicitly.
   const isCtor = ts.isConstructorDeclaration(fn);
-  if (isCtor && !options.constructorClassShape) {
-    throw new Error(`ir/from-ast: constructor lowering requires options.constructorClassShape (${name})`);
+  if (isCtor && (!options.constructorInitClassShape || options.selfParam)) {
+    throw new Error(`ir/from-ast: constructor lowering requires the exact init shape (${name})`);
   }
 
   // Slice 7a (#1169f): `function*` produces a Generator-like externref
@@ -850,7 +842,7 @@ export function lowerFunctionAstToIr(
     ? irVal({ kind: "externref" })
     : // #3000-C: a constructor returns the constructed instance — `(ref $struct)`.
       isCtor
-      ? ({ kind: "class", shape: options.constructorClassShape! } as IrType)
+      ? ({ kind: "class", shape: options.constructorInitClassShape! } as IrType)
       : isVoidReturn
         ? null
         : resolveIrType(effectiveReturnTypeNode, options.returnTypeOverride ?? undefined, `return type of ${name}`);
@@ -932,6 +924,12 @@ export function lowerFunctionAstToIr(
     } else {
       scope.set(p.name, { kind: "local", value: v, type: p.type });
     }
+  }
+  let constructorInitSelf: IrValueId | undefined;
+  if (options.constructorInitClassShape) {
+    const selfType: IrType = { kind: "class", shape: options.constructorInitClassShape };
+    constructorInitSelf = builder.addParam("__self", selfType);
+    scope.set("this", { kind: "local", value: constructorInitSelf, type: selfType });
   }
 
   builder.openBlock();
@@ -1109,14 +1107,9 @@ export function lowerFunctionAstToIr(
   }
 
   if (isCtor) {
-    // #3000-C Phase C: synthesise `this` = a freshly-allocated, default-
-    // initialised instance (NO ctor call — that would recurse into the very
-    // `<className>_new` function we are compiling). Bind it so the body's
-    // `this.field = …` writes route through `class.set` / `class.get`.
-    const shape = options.constructorClassShape!;
-    const thisType: IrType = { kind: "class", shape };
-    const thisV = builder.emitClassAlloc(shape);
-    scope.set("this", { kind: "local", value: thisV, type: thisType });
+    // The AST-free `_new` wrapper allocates; this source-owned `_init` receives
+    // the exact instance as its final parameter and owns all source writes.
+    const thisV = constructorInitSelf!;
     // Constructor body statements are plain (non-tail) statements — the
     // return is the implicit `return this`, not any body statement. Lower
     // each via the body-statement dispatcher (the SAME shapes the selector's
@@ -4221,14 +4214,16 @@ function lowerOptionalExternPropertyAccess(
     throw new Error(`ir/from-ast: lowerOptionalExternPropertyAccess called with non-extern recv in ${cx.funcName}`);
   }
   const className = recvType.className;
+  const resolved = cx.resolver?.resolveExternMember?.(className, propName, "property");
   const info = cx.resolver?.getExternClassInfo?.(className);
-  if (!info) {
+  if (!resolved?.property && !info) {
     throw new Error(`ir/from-ast: extern class ${className} not registered in ${cx.funcName}`);
   }
-  const prop = info.properties.get(propName);
+  const prop = resolved?.property ?? info?.properties.get(propName);
   if (!prop) {
     throw new Error(`ir/from-ast: extern class ${className} has no property "${propName}" in ${cx.funcName}`);
   }
+  const importPrefix = resolved?.importPrefix ?? info?.importPrefix ?? className;
   const propValType = prop.type;
   const resultType: IrType = irVal(propValType);
 
@@ -4269,7 +4264,7 @@ function lowerOptionalExternPropertyAccess(
   // Build the "non-null arm": emit the actual extern-property access.
   let elseValue!: IrValueId;
   const elseBody = cx.builder.collectBodyInstrs(() => {
-    elseValue = cx.builder.emitExternProp(className, propName, recv, resultType);
+    elseValue = cx.builder.emitExternProp(importPrefix, propName, recv, resultType);
   });
 
   return cx.builder.emitIfElse({
@@ -4432,7 +4427,7 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
     if (!prop) {
       throw new Error(`ir/from-ast: extern class ${className} has no property "${propName}" in ${cx.funcName}`);
     }
-    return cx.builder.emitExternProp(className, propName, recv, irVal(prop.type));
+    return cx.builder.emitExternProp(info.importPrefix, propName, recv, irVal(prop.type));
   }
 
   // Slice 13 (#1169p) — vec-shaped receiver (`number[]`, `string[]`, …):
@@ -5525,7 +5520,7 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
       const expectedTy = externInfo.constructorParams[i]!;
       args.push(emitDefaultExternArg(cx, expectedTy));
     }
-    return cx.builder.emitExternNew(className, args);
+    return cx.builder.emitExternNew(externInfo.className, args, externInfo.importPrefix);
   }
 
   if (!shape) {
@@ -6273,11 +6268,12 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   if (recvType.kind === "extern") {
     const className = recvType.className;
     const chained = cx.resolver?.resolveExternMember?.(className, methodName, "method", expr);
-    const method = chained?.method ?? cx.resolver?.getExternClassInfo?.(className)?.methods.get(methodName);
+    const flatInfo = cx.resolver?.getExternClassInfo?.(className);
+    const method = chained?.method ?? flatInfo?.methods.get(methodName);
     if (!method) {
       throw new Error(`ir/from-ast: extern class ${className} has no method "${methodName}" in ${cx.funcName}`);
     }
-    const definingClass = chained?.importPrefix ?? className;
+    const definingClass = chained?.importPrefix ?? flatInfo?.importPrefix ?? className;
     // params[0] is the receiver — userParams = params.slice(1).
     const userParams = method.params.slice(1);
     if (expr.arguments.length > userParams.length) {
@@ -6583,6 +6579,22 @@ function lowerStringMethodCall(
     );
   }
 
+  // #3522 Builtins retirement — preserve the direct path's exact immutable
+  // literal predicate fold before asking the backend-specific method planner.
+  // The receiver was already lowered by lowerMethodCall, and we lower the
+  // search argument here before returning so source evaluation order remains
+  // explicit even though this deliberately narrow proof admits only effect-
+  // free literal/const chains. A second position argument stays on the normal
+  // runtime path.
+  if (methodName === "includes" && args.length === 1 && cx.checker) {
+    const receiverValue = immutableLiteralStringValue(receiverExpr, cx.checker);
+    const searchValue = immutableLiteralStringValue(args[0]!, cx.checker);
+    if (receiverValue !== undefined && searchValue !== undefined) {
+      lowerExpr(args[0]!, cx, { kind: "string" });
+      return cx.builder.emitConst({ kind: "bool", value: receiverValue.includes(searchValue) }, irVal({ kind: "i32" }));
+    }
+  }
+
   if (methodName === "charAt" || methodName === "charCodeAt") {
     const receiverEncoding = inferStringEncoding(receiverExpr, cx);
     const receiverEvidence = typedValueEvidence(receiverExpr, cx.builder.typeOf(recv), receiverEncoding, cx);
@@ -6745,6 +6757,37 @@ function lowerStringMethodCall(
     throw new Error(`ir/from-ast: String.${methodName} produced void result (${cx.funcName})`);
   }
   return r;
+}
+
+function immutableLiteralStringValue(
+  expression: ts.Expression,
+  checker: ts.TypeChecker,
+  seen: ReadonlySet<ts.Symbol> = new Set(),
+): string | undefined {
+  if (ts.isStringLiteralLike(expression)) return expression.text;
+  if (
+    ts.isParenthesizedExpression(expression) ||
+    ts.isAsExpression(expression) ||
+    ts.isNonNullExpression(expression) ||
+    ts.isTypeAssertionExpression(expression)
+  ) {
+    return immutableLiteralStringValue(expression.expression, checker, seen);
+  }
+  if (!ts.isIdentifier(expression)) return undefined;
+  const symbol = checker.getSymbolAtLocation(expression);
+  const declaration = symbol?.valueDeclaration;
+  if (!symbol || seen.has(symbol) || !declaration || !ts.isVariableDeclaration(declaration)) return undefined;
+  const declarationList = declaration.parent;
+  if (
+    !ts.isVariableDeclarationList(declarationList) ||
+    !(declarationList.flags & ts.NodeFlags.Const) ||
+    !declaration.initializer
+  ) {
+    return undefined;
+  }
+  const nextSeen = new Set(seen);
+  nextSeen.add(symbol);
+  return immutableLiteralStringValue(declaration.initializer, checker, nextSeen);
 }
 
 /**

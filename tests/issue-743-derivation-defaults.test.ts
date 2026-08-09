@@ -18,6 +18,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   derivationFlagEnabled,
   dtsEntrypointSeedsFlagEnabled,
+  fieldWriteVerdictEnabled,
   fnctorCtorParamSlotsEnabled,
   fnctorCtorParamTypesFlagEnabled,
   fnctorTypedBindingsFlagEnabled,
@@ -117,30 +118,50 @@ describe("#743 — derivation flag defaults (flipped ON 2026-08-08)", () => {
     }
   });
 
-  it("the field-SLOT sub-lever is OFF by default and needs an explicit 1", () => {
-    // The one flag in this family whose default is OFF, and the one that does
-    // NOT follow the token rule: it types a field slot from the constructor's
-    // writes alone, with no verdict about writes reaching the field elsewhere,
-    // so a later `a.f = "s"` reads back wrong (probe + full argument in
-    // src/derivation-flags.ts). Requiring a literal "1" means no spelling
-    // accident and no "unset ⇒ on" reasoning can turn it on.
-    const saved = process.env.JS2WASM_FNCTOR_CTOR_PARAM_SLOTS;
+  it("the field-SLOT sub-lever follows the token rule since #4250, and the verdict flag dominates it", () => {
+    // Until #4250 this was the family's one default-OFF exception: the
+    // narrowing typed a slot from the constructor's writes alone, so a later
+    // `a.f = "s"` read back wrong. The whole-program write-kind verdict now
+    // gates every narrowing fail-closed inside
+    // `inferFnctorFieldTypeFromCtorParam`, which is what licensed the flip —
+    // and is also why the lever is FORCED OFF whenever the verdict itself is
+    // disabled: the unsound-lever-ON combination must not be reachable by one
+    // stray environment line.
+    const savedSlots = process.env.JS2WASM_FNCTOR_CTOR_PARAM_SLOTS;
+    const savedVerdict = process.env.JS2WASM_FIELD_WRITE_VERDICT;
     try {
       // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
+      delete process.env.JS2WASM_FIELD_WRITE_VERDICT;
+      // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
       delete process.env.JS2WASM_FNCTOR_CTOR_PARAM_SLOTS;
-      expect(fnctorCtorParamSlotsEnabled(), "must be OFF when unset").toBe(false);
-      for (const spelling of ["", "0", "off", "true", "yes", "on", "2"]) {
+      expect(fnctorCtorParamSlotsEnabled(), "ON when unset — the family rule").toBe(true);
+      expect(fieldWriteVerdictEnabled(), "verdict ON when unset").toBe(true);
+      for (const spelling of ["", "0", "off", " OFF "]) {
         process.env.JS2WASM_FNCTOR_CTOR_PARAM_SLOTS = spelling;
-        expect(fnctorCtorParamSlotsEnabled(), `${JSON.stringify(spelling)} must not enable`).toBe(false);
+        expect(fnctorCtorParamSlotsEnabled(), `${JSON.stringify(spelling)} must disable`).toBe(false);
       }
+      for (const spelling of ["1", "on", "yes"]) {
+        process.env.JS2WASM_FNCTOR_CTOR_PARAM_SLOTS = spelling;
+        expect(fnctorCtorParamSlotsEnabled(), `${JSON.stringify(spelling)} keeps it on`).toBe(true);
+      }
+      // The verdict flag DOMINATES: verdict off ⇒ lever off, whatever its own
+      // variable says.
       process.env.JS2WASM_FNCTOR_CTOR_PARAM_SLOTS = "1";
-      expect(fnctorCtorParamSlotsEnabled()).toBe(true);
+      process.env.JS2WASM_FIELD_WRITE_VERDICT = "0";
+      expect(fieldWriteVerdictEnabled()).toBe(false);
+      expect(fnctorCtorParamSlotsEnabled(), "verdict off forces the lever off").toBe(false);
     } finally {
-      if (saved === undefined) {
+      if (savedSlots === undefined) {
         // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
         delete process.env.JS2WASM_FNCTOR_CTOR_PARAM_SLOTS;
       } else {
-        process.env.JS2WASM_FNCTOR_CTOR_PARAM_SLOTS = saved;
+        process.env.JS2WASM_FNCTOR_CTOR_PARAM_SLOTS = savedSlots;
+      }
+      if (savedVerdict === undefined) {
+        // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
+        delete process.env.JS2WASM_FIELD_WRITE_VERDICT;
+      } else {
+        process.env.JS2WASM_FIELD_WRITE_VERDICT = savedVerdict;
       }
     }
   });

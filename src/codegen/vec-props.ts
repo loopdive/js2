@@ -59,12 +59,27 @@ import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { protoIndexRecvGetMissInstrs } from "./proto-index-store.js"; // (#4176) inherited proto-named consult
 import { addFuncType, getOrRegisterVecBaseType } from "./registry/types.js";
 
-/** Reserved helper names (all internal, non-exported). */
+/** Reserved helper names. */
 const IS_VEC_PROP_CARRIER = "__is_vec_prop_carrier";
 const VEC_BAG_LOOKUP = "__vec_bag_lookup";
 const VEC_BAG_ENSURE = "__vec_bag_ensure";
-const VEC_PROP_GET = "__vec_prop_get";
-const VEC_PROP_SET = "__vec_prop_set";
+/**
+ * (#4247) The two terminal bag accessors are EXPORTED so a caller that has
+ * already decided, at compile time, that a key names an ordinary property can
+ * address the bag directly.
+ *
+ * Why direct addressing is required rather than "just call `__extern_set`":
+ * `__extern_set`/`__extern_get` carry a spliced `$__vec_base` prologue that
+ * runs `__unbox_number(key)` first and, when that is not NaN, handles the key
+ * TERMINALLY as a vec element (in-bounds → `array.set`; anything else → silent
+ * no-op) without ever reaching this bag. In standalone `__unbox_number` parses
+ * NATIVE STRINGS (StringToNumber, registry/imports.ts), so even the string
+ * spelling `"4294967295"` is eaten by that prologue. That is right for an
+ * ordinary index and wrong for a §10.4.2.2 non-index key, which is a named
+ * property. `array-nonindex-key.ts` owns that distinction.
+ */
+export const VEC_PROP_GET = "__vec_prop_get";
+export const VEC_PROP_SET = "__vec_prop_set";
 
 /** $VecPropEntry field indices. */
 const F_NEXT = 0;

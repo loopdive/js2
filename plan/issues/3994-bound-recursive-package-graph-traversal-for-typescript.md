@@ -50,11 +50,12 @@ The published entry is a generated CommonJS artifact, not TypeScript source:
 the npm tarball contains no runtime `.ts` files and its `lib/typescript.js` is
 9,112,572 bytes. Parsing it produces two top-level statements, with the second
 being one 9.1 MB esbuild IIFE (about 1.08 million AST nodes, 11,065 functions,
-and 9,101 arrows). The generic #4031 module-init optimization now avoids the
-redundant no-capture AST walk and skips the second initializer compile when no
-new inlinable function was created. This is safe for the published bundle, but
-the full package still needs a supervised compile measurement before its
-catalog timeout can be revised.
+and 9,101 arrows). The generic #4031 optimization now avoids the redundant
+capture-analysis walk when the module initializer has no local capture
+candidates. The attempted second-initializer suppression was rejected after
+merge-group conformance exposed broad regressions, so the conservative second
+compile remains. The full package still needs a supervised compile measurement
+before its catalog timeout can be revised.
 
 An upstream-source experiment is tracked separately from npm compatibility:
 the official v5.9.3 source archive is about 31 MB, `npm ci` takes 22 seconds,

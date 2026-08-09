@@ -543,10 +543,6 @@ function checkInstrEmbeddedTypes(
     case "class.new":
       checkType({ kind: "class", shape: instr.shape }, block, "class.new shape");
       return;
-    case "class.alloc":
-      // #3000-C: same shape type-check as class.new.
-      checkType({ kind: "class", shape: instr.shape }, block, "class.alloc shape");
-      return;
     case "forof.vec":
       checkType(instr.elementType, block, "forof.vec element");
       return;

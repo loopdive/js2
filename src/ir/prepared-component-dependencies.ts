@@ -6,6 +6,7 @@ import type { IrBindingId, IrClassId, IrTerminalUnitRecord, IrUnitId, IrUnitInve
 import {
   forEachInstrDeep,
   type IrClassShape,
+  type IrFuncRef,
   type IrFunction,
   type IrGlobalRef,
   type IrInstr,
@@ -664,7 +665,13 @@ function implicitSupportRequirement(instr: IrInstr, hasPreparedClosureSupport = 
     case "extern.call":
     case "extern.prop":
     case "extern.propSet":
+      return instr.provider
+        ? null
+        : `${instr.kind} resolves host/runtime callables or globals without explicit symbolic refs`;
     case "extern.regex":
+      // Besides RegExp_new, this instruction materializes pattern and flags
+      // through backend-selected string storage. Keep it fail-closed until
+      // all three symbolic dependencies are attached together.
       return `${instr.kind} resolves host/runtime callables or globals without explicit symbolic refs`;
     case "await":
     case "async.return":
@@ -682,7 +689,6 @@ function implicitSupportRequirement(instr: IrInstr, hasPreparedClosureSupport = 
     case "select":
     case "if":
     case "class.new":
-    case "class.alloc":
     case "class.get":
     case "class.set":
     case "class.call":
@@ -711,7 +717,6 @@ function implicitSupportRequirement(instr: IrInstr, hasPreparedClosureSupport = 
 function explicitClassShapes(instr: IrInstr, valueTypes: ReadonlyMap<IrValueId, IrType>): readonly IrClassShape[] {
   switch (instr.kind) {
     case "class.new":
-    case "class.alloc":
     case "class.static_call":
       return [instr.shape];
     case "class.super_init":
@@ -856,7 +861,7 @@ function recordGlobalReference(
 
 function recordExternalCallable(
   evidence: MutableFunctionEvidence,
-  ref: Extract<IrInstr, { kind: "call" }>["target"],
+  ref: IrFuncRef,
   abi: PreparedComponentAbiLookup,
   ownership: OwnershipIndex,
 ): void {
@@ -911,6 +916,31 @@ function recordExternalCallable(
       programAbiBindingId: match?.id ?? null,
     }),
   );
+}
+
+function recordConstructorNewSupportDependency(
+  evidence: MutableFunctionEvidence,
+  fn: IrFunction,
+  terminalOwnerUnitId: IrUnitId,
+  input: DerivePreparedComponentDependenciesInput,
+  ownership: OwnershipIndex,
+): void {
+  if (terminalInventoryUnit(input.inventory, terminalOwnerUnitId)?.kind !== "class-constructor") return;
+  const receiverType = fn.params.at(-1)?.type;
+  const constructorTarget = receiverType?.kind === "class" ? receiverType.shape.constructorTarget : undefined;
+  if (receiverType?.kind !== "class" || constructorTarget?.binding.kind !== "support") {
+    addFailure(evidence, {
+      code: "class-member-callable-unavailable",
+      ownerUnitId: terminalOwnerUnitId,
+      ...(receiverType?.kind === "class" ? { referencedClassId: receiverType.shape.classId } : {}),
+      detail: "prepared constructor init has no exact class-owned _new support dependency",
+    });
+    return;
+  }
+  // The constructor IR body is `<Class>_init`, so it contains no `class.new`
+  // instruction of its own. Pin the AST-free allocation wrapper explicitly
+  // in the same prepared transaction.
+  recordExternalCallable(evidence, constructorTarget, input.abi, ownership);
 }
 
 function collectFunctionEvidence(
@@ -1055,6 +1085,7 @@ function collectFunctionEvidence(
   };
   for (const param of fn.params) collectType(param.type);
   for (const result of fn.resultTypes) collectType(result);
+  recordConstructorNewSupportDependency(evidence, fn, terminalOwnerUnitId, input, ownership);
   if (fn.asyncPlan) {
     if (fn.asyncPlan.abi.fulfillmentType) collectType(fn.asyncPlan.abi.fulfillmentType);
     for (const value of fn.asyncPlan.values) collectType(value.type);
@@ -1107,6 +1138,14 @@ function collectFunctionEvidence(
         if (nested.provider?.kind === "callable") {
           recordExternalCallable(evidence, nested.provider.target, input.abi, ownership);
         }
+      } else if (
+        (nested.kind === "extern.new" ||
+          nested.kind === "extern.call" ||
+          nested.kind === "extern.prop" ||
+          nested.kind === "extern.propSet") &&
+        nested.provider
+      ) {
+        recordExternalCallable(evidence, nested.provider, input.abi, ownership);
       } else if (nested.kind === "closure.new") {
         if (nested.liftedFunc.binding.kind === "unit") {
           recordUnitReference(
@@ -1179,6 +1218,30 @@ function collectFunctionEvidence(
           );
         } else {
           recordExternalCallable(evidence, target, input.abi, ownership);
+        }
+        // `class.new` lowers through the AST-free `<Class>_new` support
+        // wrapper above, but that wrapper tail-calls the exact source-owned
+        // `<Class>_init`. Keep the semantic source edge explicit so sealing
+        // unions a constructing caller with the constructor body it executes.
+        if (nested.kind === "class.new") {
+          const initTarget = shape?.constructorInitTarget;
+          if (initTarget?.binding.kind === "unit") {
+            recordUnitReference(
+              evidence,
+              initTarget.binding.unitId,
+              functionsByUnitId,
+              input.terminalUnitIds,
+              input.abi,
+              ownership,
+            );
+          } else {
+            addFailure(evidence, {
+              code: "class-member-callable-unavailable",
+              ownerUnitId: terminalOwnerUnitId,
+              ...(shape ? { referencedClassId: shape.classId } : {}),
+              detail: "class.new has no exact source-owned constructor init dependency",
+            });
+          }
         }
       }
     });

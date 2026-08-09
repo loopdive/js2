@@ -39,7 +39,6 @@ import {
   irTypeEquals,
 } from "./nodes.js";
 import type { AllocSiteRegistry } from "./alloc-registry.js";
-import { irSupportFuncRef } from "./callable-bindings.js";
 import type { Instr, ValType } from "./types.js";
 import { JsTag, jsTagUnboxKind } from "./js-tag.js";
 import type { IrStringConcatMode, IrStringEncoding } from "./string-runtime.js";
@@ -853,8 +852,8 @@ export class IrFunctionBuilder {
   // --- class ops (#1169d) -------------------------------------------------
 
   /**
-   * Emit `class.new` to construct a class instance via the legacy-registered
-   * `<className>_new` constructor. Caller is responsible for ensuring
+   * Emit `class.new` through the class-owned AST-free `<className>_new`
+   * wrapper. Caller is responsible for ensuring
    * `args[i]` matches `shape.constructorParams[i]`. The arity check below
    * catches mistakes early.
    */
@@ -875,30 +874,6 @@ export class IrFunctionBuilder {
       shape,
       ...(shape.constructorTarget ? { target: shape.constructorTarget } : {}),
       args: [...args],
-      result,
-      resultType,
-      alloc,
-    });
-    return result;
-  }
-
-  /**
-   * #3000-C: emit `class.alloc` — allocate a fresh, default-initialised
-   * instance of `shape`'s class WITHOUT running its constructor. Used by the
-   * IR constructor-body lowering to synthesise `this` at body entry (the ctor
-   * body then writes fields via `class.set`, and the epilogue returns the
-   * instance). Result type is `{ kind: "class"; shape }` → `(ref $struct)`.
-   */
-  emitClassAlloc(shape: IrClassShape): IrValueId {
-    const result = this.allocator.fresh();
-    const resultType: IrType = { kind: "class", shape };
-    this.valueTypes.set(result, resultType);
-    // A fresh struct allocation — same alloc namespace as `class.new` /
-    // `object.new` ("object").
-    const alloc = this.allocId("object", resultType);
-    this.pushInstr({
-      kind: "class.alloc",
-      shape,
       result,
       resultType,
       alloc,
@@ -979,7 +954,7 @@ export class IrFunctionBuilder {
     this.pushInstr({
       kind: "class.super_init",
       parentShape,
-      target: irSupportFuncRef(parentShape.classId, "class-constructor-init", `${parentShape.className}_init`),
+      ...(parentShape.constructorInitTarget ? { target: parentShape.constructorInitTarget } : {}),
       self,
       args: [...args],
       result: null,
@@ -1074,7 +1049,7 @@ export class IrFunctionBuilder {
    * Result type is `{ kind: "extern", className }` — opaque externref
    * carrying the class identity statically.
    */
-  emitExternNew(className: string, args: readonly IrValueId[]): IrValueId {
+  emitExternNew(className: string, args: readonly IrValueId[], importPrefix = className): IrValueId {
     const result = this.allocator.fresh();
     const resultType: IrType = { kind: "extern", className };
     this.valueTypes.set(result, resultType);
@@ -1082,6 +1057,7 @@ export class IrFunctionBuilder {
     this.pushInstr({
       kind: "extern.new",
       className,
+      importPrefix,
       args: [...args],
       result,
       resultType,

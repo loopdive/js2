@@ -12,8 +12,11 @@ import { addLocal } from "./context.js";
 import type { ClassLayout } from "./layout.js";
 import { computeClassLayout } from "./layout.js";
 import * as linearCoercion from "./coercion-engine.js";
+import { finalizeLinearArena } from "./export-arena.js";
 import * as numberFormat from "./number-format.js";
 import { addLinearStackArenaRuntime } from "./runtime-stack-arena.js";
+import { compileLinearStringMethodCall } from "./string-methods.js";
+import { addLinearStringRepeatRuntime, sourceMayUseLinearStringRepeat } from "./string-repeat.js";
 import {
   addArrayRuntime,
   addFmodRuntime,
@@ -26,10 +29,9 @@ import {
   addSetRuntime,
   addStringRuntime,
   addUint8ArrayRuntime,
-  finalizeLinearHeapLayout,
   FMOD_FN,
-  linearStringLiteralInstrs,
 } from "./runtime.js";
+import { linearStringLiteralInstrs } from "./string-literals.js";
 
 /** Type tag for class instances in linear memory */
 const CLASS_TYPE_TAG = 5;
@@ -87,10 +89,10 @@ function nodeLoc(node: ts.Node): { line: number; column: number } {
  */
 export interface LinearOptions {
   /**
-   * Expose the explicit arena-management exports `__arena_reset` /
-   * `__arena_used` on the bump allocator. Useful for embedders that reuse a
-   * single instance across many short-lived tasks; off by default so the
-   * common "allocate-and-exit" program pays nothing for them.
+   * Enable conservative exported-call reclamation and expose the explicit
+   * arena-management exports `__arena_reset` / `__arena_used`. Only modules
+   * with primitive boundaries and no heap-backed globals are auto-wrapped;
+   * others retain the monotonic arena so escaped pointers stay live.
    * See {@link import("./runtime.js").ArenaOptions}.
    */
   exposeArenaReset?: boolean;
@@ -113,6 +115,7 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
   addUint8ArrayRuntime(mod);
   addArrayRuntime(mod);
   addStringRuntime(mod);
+  if (sourceMayUseLinearStringRepeat(ast.sourceFile)) addLinearStringRepeatRuntime(mod);
   addMapRuntime(mod);
   addSetRuntime(mod);
   addNumericMapRuntime(mod);
@@ -266,8 +269,7 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
 
   // ── Emit data segments for string literals ──
   numberFormat.emitLinearStringData(ctx, dataSegmentBase);
-  // Literals are only known now, so the heap floor is fixed up last (#3686).
-  finalizeLinearHeapLayout(mod);
+  finalizeLinearArena(mod, ast, opts.exposeArenaReset);
 
   emitClosureTable(ctx);
 
@@ -289,6 +291,7 @@ export function generateLinearMultiModule(multiAst: MultiTypedAST, opts: LinearO
   addUint8ArrayRuntime(mod);
   addArrayRuntime(mod);
   addStringRuntime(mod);
+  if (multiAst.sourceFiles.some(sourceMayUseLinearStringRepeat)) addLinearStringRepeatRuntime(mod);
   addMapRuntime(mod);
   addSetRuntime(mod);
   addNumericMapRuntime(mod);
@@ -429,8 +432,7 @@ export function generateLinearMultiModule(multiAst: MultiTypedAST, opts: LinearO
     }
     mod.dataSegments.push({ offset: DATA_SEGMENT_BASE, bytes });
   }
-  // Literals are only known now, so the heap floor is fixed up last (#3686).
-  finalizeLinearHeapLayout(mod);
+  finalizeLinearArena(mod, multiAst, opts.exposeArenaReset);
 
   emitClosureTable(ctx);
 
@@ -3470,57 +3472,15 @@ function compileMethodCall(ctx: LinearContext, fctx: LinearFuncContext, expr: ts
     compileMapMethodCall(ctx, fctx, expr, propAccess, methodName);
   } else if (objKind === "Set") {
     compileSetMethodCall(ctx, fctx, expr, propAccess, methodName);
-  } else if (methodName === "split" && isStringExpr(ctx, fctx, propAccess.expression)) {
-    // string.split(sep) → __str_split(str, sep) → i32 (array pointer)
-    const splitIdx = ctx.funcMap.get("__str_split")!;
-    compileExpression(ctx, fctx, propAccess.expression); // str
-    if (expr.arguments.length > 0) {
-      compileExpression(ctx, fctx, expr.arguments[0]); // sep
-    } else {
-      compileStringLiteral(ctx, fctx, "");
-    }
-    fctx.body.push({ op: "call", funcIdx: splitIdx });
-    return;
-  } else if (methodName === "slice" && isStringExpr(ctx, fctx, propAccess.expression)) {
-    // string.slice(start, end) → __str_slice(str, start, end)
-    const sliceIdx = ctx.funcMap.get("__str_slice")!;
-    compileExpression(ctx, fctx, propAccess.expression); // str
-    compileExprToI32(ctx, fctx, expr.arguments[0]); // start → i32
-    if (expr.arguments.length > 1) {
-      compileExprToI32(ctx, fctx, expr.arguments[1]); // end → i32
-    } else {
-      // end = str.length
-      compileExpression(ctx, fctx, propAccess.expression);
-      const strLenIdx = ctx.funcMap.get("__str_len")!;
-      fctx.body.push({ op: "call", funcIdx: strLenIdx });
-    }
-    fctx.body.push({ op: "call", funcIdx: sliceIdx });
-    return;
-  } else if (methodName === "indexOf" && isStringExpr(ctx, fctx, propAccess.expression)) {
-    // string.indexOf(search) → __str_index_of(str, search, 0) → i32, convert to f64
-    const indexOfIdx = ctx.funcMap.get("__str_index_of")!;
-    compileExpression(ctx, fctx, propAccess.expression); // str
-    compileExpression(ctx, fctx, expr.arguments[0]); // search
-    if (expr.arguments.length > 1) {
-      compileExprToI32(ctx, fctx, expr.arguments[1]); // fromIdx
-    } else {
-      fctx.body.push({ op: "i32.const", value: 0 });
-    }
-    fctx.body.push({ op: "call", funcIdx: indexOfIdx });
-    fctx.body.push({ op: "f64.convert_i32_s" });
-    return;
-  } else if (methodName === "startsWith" && isStringExpr(ctx, fctx, propAccess.expression)) {
-    // string.startsWith(prefix) → __str_starts_with(str, prefix)
-    const startsWithIdx = ctx.funcMap.get("__str_starts_with")!;
-    compileExpression(ctx, fctx, propAccess.expression); // str
-    if (expr.arguments.length > 0) {
-      compileExpression(ctx, fctx, expr.arguments[0]); // prefix
-    } else {
-      compileStringLiteral(ctx, fctx, "");
-    }
-    fctx.body.push({ op: "call", funcIdx: startsWithIdx });
-    // Convert i32 result to f64
-    fctx.body.push({ op: "f64.convert_i32_s" });
+  } else if (
+    compileLinearStringMethodCall(ctx, fctx, expr, propAccess, methodName, {
+      compileExpression,
+      compileExprToI32,
+      compileExprToF64,
+      compileStringLiteral,
+      isStringExpr,
+    })
+  ) {
     return;
   } else if (methodName === "toString") {
     // Exact no-radix Number::toString uses the host-free Ryū runtime.

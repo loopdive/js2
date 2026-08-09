@@ -241,6 +241,7 @@ import {
 } from "./select.js";
 import { verifyIrFunction } from "./verify.js";
 import { prepareIrRuntimeManifest, type PreparedIrRuntimeManifest } from "./intrinsic-support.js";
+import { attachIrExternSupport } from "./extern-support.js";
 import { isIntrinsicId, type IntrinsicId } from "./intrinsics.js";
 import { materializePreparedMathProviders, preparedMathProviderIndex } from "./math-runtime-providers.js";
 import { materializePreparedAsyncHostAdapters } from "../codegen/ir-async-runtime-adapters.js";
@@ -1287,17 +1288,17 @@ export function compileIrPathFunctions(
               `ir/integration: ${memberName} artifact ${ownerUnitId} does not match terminal owner ${owner.unitId}`,
             );
           }
-          // #3000-C: a constructor is NOT passed `__self` — it allocates the
-          // instance itself (`constructorClassShape` drives the `class.alloc` +
-          // `return this` synthesis in from-ast). Methods/accessors get the
-          // caller-supplied `selfParam` FIRST param instead.
+          // #3522: the source constructor owns `<Class>_init`. Its receiver is
+          // the final parameter, matching the frozen direct ABI; `<Class>_new`
+          // is an AST-free allocation wrapper. Methods/accessors retain their
+          // caller-supplied FIRST `selfParam`.
           const result = lowerFunctionAstToIr(member, {
             exported: false, // class members are not directly exported
             funcName: memberName,
             ownerUnitId,
             directCalls: directCallsFor(member, ownerUnitId),
             ...(isCtorMember
-              ? { constructorClassShape: classShape, paramTypeOverrides }
+              ? { constructorInitClassShape: classShape, paramTypeOverrides }
               : isStaticMethod
                 ? { paramTypeOverrides, returnTypeOverride }
                 : {
@@ -2014,6 +2015,17 @@ export function compileIrPathFunctions(
       preparedRuntimeManifest = prepared.runtime;
       healthyForLower = [...prepared.entries];
     })
+  ) {
+    return finishReport();
+  }
+  if (
+    !runGlobalPreparation(
+      () =>
+        (healthyForLower = healthyForLower.map((entry) => {
+          const fn = attachIrExternSupport(entry.fn);
+          return fn === entry.fn ? entry : { ...entry, fn };
+        })),
+    )
   ) {
     return finishReport();
   }
@@ -3661,6 +3673,7 @@ function makeFromAstResolver(ctx: CodegenContext, moduleBindingResolver?: IrModu
         const f64 = { kind: "f64" } as const;
         return {
           className: "Date",
+          importPrefix: "Date",
           constructorParams: [],
           methods: new Map([
             ["getDate", { params: [externref], results: [f64] }],
@@ -3672,6 +3685,7 @@ function makeFromAstResolver(ctx: CodegenContext, moduleBindingResolver?: IrModu
       }
       return {
         className: info.className,
+        importPrefix: info.importPrefix,
         constructorParams: info.constructorParams,
         methods: info.methods,
         properties: info.properties,
@@ -5960,40 +5974,6 @@ class RefCellRegistry {
 }
 
 /**
- * #3000-C: the default value pushed for one struct field when allocating a
- * fresh class instance (the `class.alloc` IR instr). Mirrors the `newBody`
- * default switch in `class-bodies.ts` (the legacy `<className>_new` alloc
- * prefix) EXACTLY — the `__tag` slot gets the class discrimination constant,
- * every other field gets its ValType zero/null. Keeping this identical to the
- * legacy switch is what makes the IR-emitted allocation byte-compatible with
- * the struct the legacy path builds.
- */
-function defaultFieldAllocInstr(field: FieldDef, tagValue: number): Instr {
-  if (field.name === "__tag") return { op: "i32.const", value: tagValue };
-  switch (field.type.kind) {
-    case "f64":
-      return { op: "f64.const", value: 0 };
-    case "i32":
-      return { op: "i32.const", value: 0 };
-    case "externref":
-      return { op: "ref.null.extern" };
-    case "ref":
-    case "ref_null":
-      return { op: "ref.null", typeIdx: field.type.typeIdx };
-    case "i64":
-      return { op: "i64.const", value: 0n };
-    case "eqref":
-      return { op: "ref.null.eq" };
-    default:
-      // Legacy fallback for any unhandled type — push i32 0 (mirrors
-      // class-bodies.ts). A mis-typed default can only make `struct.new`
-      // fail validation (a clean legacy fallback via the caller's try),
-      // never miscompile.
-      return { op: "i32.const", value: 0 };
-  }
-}
-
-/**
  * Slice 4 (#1169d): per-class lookup over the legacy class registry.
  *
  * The legacy `collectClassDeclaration` pass (in `class-bodies.ts`)
@@ -6339,41 +6319,40 @@ class ClassRegistry {
     return null;
   }
 
-  /**
-   * Resolve the allocator-owned `<Class>_new` to its exact inventoried source
-   * unit. An omitted constructor is still a real source artifact: the identity
-   * inventory projects one `class-implicit-constructor` unit beneath the class.
-   * Never manufacture a support binding when that unit has no AST body.
-   */
+  /** Resolve the AST-free allocator wrapper owned by the exact class. */
   private constructorRef(classId: IrClassId, physicalName: string): IrFuncRef {
-    const matches = [...(this.identityContext?.unitByUnitId.values() ?? [])].filter(
-      (unit) =>
-        unit.lexicalOwnerId === classId &&
-        (unit.kind === "class-constructor" || unit.kind === "class-implicit-constructor"),
+    return this.supportRef(
+      classId,
+      "class-constructor-new",
+      PROGRAM_ABI_CALLABLE_ROLE.classConstructorNew,
+      physicalName,
     );
-    if (matches.length !== 1) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "resolve",
-        `ir/integration: class ${classId} projects ${matches.length} constructor units; expected exactly one`,
-      );
-    }
-    const funcIdx = this.unitFuncIdx(matches[0]!.id, physicalName);
-    if (funcIdx === undefined) {
-      throw new IrInvariantError(
-        "missing-function-slot",
-        "resolve",
-        `ir/integration: class constructor ${matches[0]!.id} / ${physicalName} has no registered slot`,
-      );
-    }
-    const ref = irUnitFuncRef({ unitId: matches[0]!.id, name: physicalName });
-    this.bindUnitCallableSlot(ref, funcIdx, physicalName);
-    return ref;
   }
 
-  /** Publish the exact class-owned `<Class>_init` support function. */
-  private initRef(classId: IrClassId, physicalName: string): IrFuncRef {
-    const ref = irSupportFuncRef(classId, "class-constructor-init", physicalName);
+  /** Resolve the source-owned `<Class>_init`. */
+  private initRef(shape: IrClassShape, classId: IrClassId, physicalName: string): IrFuncRef {
+    const target = shape.constructorInitTarget;
+    if (target?.binding.kind === "unit") {
+      const funcIdx = this.unitFuncIdx(target.binding.unitId, physicalName);
+      if (funcIdx === undefined) {
+        throw new IrInvariantError(
+          "missing-function-slot",
+          "resolve",
+          `ir/integration: class constructor init ${target.binding.unitId} / ${physicalName} has no registered slot`,
+        );
+      }
+      this.bindUnitCallableSlot(target, funcIdx, physicalName);
+      return target;
+    }
+    throw new IrInvariantError(
+      "missing-function-slot",
+      "resolve",
+      `ir/integration: class constructor init ${classId} / ${physicalName} has no exact source-unit target`,
+    );
+  }
+
+  private supportRef(classId: IrClassId, role: string, roleOrdinal: number, physicalName: string): IrFuncRef {
+    const ref = irSupportFuncRef(classId, role, physicalName);
     const bindingId = ref.binding.kind === "support" ? ref.binding.bindingId : undefined;
     const funcIdx =
       (bindingId === undefined ? undefined : this.ctx.programAbiClassCallables?.handleForSupport(bindingId)) ??
@@ -6383,7 +6362,7 @@ class ClassRegistry {
       throw new IrInvariantError(
         "missing-function-slot",
         "resolve",
-        `ir/integration: class ${classId} has no exact defined init slot ${physicalName}`,
+        `ir/integration: class ${classId} has no exact defined ${role} slot ${physicalName}`,
       );
     }
     const signature = this.ctx.mod.types[func.typeIdx];
@@ -6397,8 +6376,8 @@ class ClassRegistry {
     planProgramAbiSupportCallable(this.ctx, {
       ref,
       anchor: { kind: "class", classId },
-      role: "class-constructor-init",
-      roleOrdinal: PROGRAM_ABI_CALLABLE_ROLE.classConstructorInit,
+      role,
+      roleOrdinal,
       signature,
       func,
     });
@@ -6411,7 +6390,7 @@ class ClassRegistry {
     if (cached) return cached;
 
     // Builtin-backed subclasses (including the JS-host Promise onhost lane)
-    // have no WasmGC `<Class>_init` support function and remain outside this
+    // have no WasmGC source-owned `<Class>_init` callable and remain outside this
     // structural class ABI slice.
     if (this.ctx.classExternrefBackedSet.has(shape.className)) return null;
 
@@ -6443,21 +6422,7 @@ class ClassRegistry {
     // only kind that can be an IR subclass parent), keyed the same way.
     const initFuncName = classMemberFuncKey(ctx, `${shape.className}_init`);
     const constructorFunc = this.constructorRef(classId, constructorFuncName);
-    const initFunc = this.initRef(classId, initFuncName);
-
-    // #3000-C: precompute the default-alloc instruction prefix so the
-    // `class.alloc` IR instr (used by the IR constructor-body lowering to
-    // synthesise `this`) emits the SAME allocation the legacy
-    // `<className>_new` emits before its tail-call to `<className>_init`.
-    // The field defaults + `__tag` constant mirror `class-bodies.ts`
-    // (the `newBody` loop) exactly, keyed off the SAME `layoutFields` /
-    // `classTagMap`, so the emitted `struct.new` prefix is byte-identical.
-    const tagValue = ctx.classTagMap.get(shape.className) ?? 0;
-    const allocInstrs: Instr[] = [];
-    for (const field of layoutFields) {
-      allocInstrs.push(defaultFieldAllocInstr(field, tagValue));
-    }
-    allocInstrs.push({ op: "struct.new", typeIdx: structTypeIdx });
+    const initFunc = this.initRef(shape, classId, initFuncName);
 
     // (#3144) instanceof-compatible tags: own tag + every transitive
     // descendant's. Mirrors legacy `collectInstanceOfTags` (typeof-delete.ts)
@@ -6508,7 +6473,6 @@ class ClassRegistry {
           `ir/integration: class ${memberKind} ${classId} / ${name} has no exact source or inherited ABI owner`,
         );
       },
-      allocInstrs,
     };
     this.cache.set(classId, lowering);
     return lowering;

@@ -21,6 +21,9 @@ const CASES = [
   // ── ASCII fast path ──
   "",
   " ",
+  // Exhaust the byte-sized ASCII domain: the fast path's unsigned interval
+  // check must fold exactly A-Z/a-z and preserve every boundary/control unit.
+  String.fromCharCode(...Array.from({ length: 128 }, (_, codeUnit) => codeUnit)),
   "a",
   "Z",
   "Hello World Test String",

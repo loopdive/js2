@@ -48,6 +48,15 @@ export type AsyncHostCapabilityId = (typeof ASYNC_HOST_CAPABILITY_IDS)[number];
 
 export type AsyncHostAdapterValueType = "externref" | "i32";
 
+/**
+ * Exception policy at the host reaction boundary. A compiled throw crosses
+ * that boundary as a WebAssembly.Exception carrying the original JS value in
+ * this module's exception tag. The host Promise must observe that value, not
+ * the Wasm carrier. Foreign tags and runtime traps are deliberately excluded.
+ */
+export const ASYNC_CALLBACK_EXCEPTION_POLICY = "module-tag-payload" as const;
+export type AsyncCallbackExceptionPolicy = typeof ASYNC_CALLBACK_EXCEPTION_POLICY;
+
 /** Concrete adapter data, deliberately separate from the semantic manifest. */
 export interface AsyncHostAdapter {
   readonly capability: AsyncHostCapabilityId;
@@ -56,6 +65,7 @@ export interface AsyncHostAdapter {
   readonly kind: "func";
   readonly params: readonly AsyncHostAdapterValueType[];
   readonly results: readonly AsyncHostAdapterValueType[];
+  readonly exceptionPolicy?: AsyncCallbackExceptionPolicy;
 }
 
 function adapter(
@@ -63,6 +73,7 @@ function adapter(
   field: string,
   params: readonly AsyncHostAdapterValueType[],
   results: readonly AsyncHostAdapterValueType[],
+  exceptionPolicy?: AsyncCallbackExceptionPolicy,
 ): AsyncHostAdapter {
   return Object.freeze({
     capability,
@@ -71,12 +82,19 @@ function adapter(
     kind: "func",
     params: Object.freeze([...params]),
     results: Object.freeze([...results]),
+    ...(exceptionPolicy === undefined ? {} : { exceptionPolicy }),
   });
 }
 
 /** Exact host adapter surface consumed by the existing async frame engine. */
 export const ASYNC_HOST_ADAPTERS: readonly AsyncHostAdapter[] = Object.freeze([
-  adapter("async.callback.wrap", "__make_callback", ["i32", "externref"], ["externref"]),
+  adapter(
+    "async.callback.wrap",
+    "__make_callback",
+    ["i32", "externref"],
+    ["externref"],
+    ASYNC_CALLBACK_EXCEPTION_POLICY,
+  ),
   adapter("async.promise.capability.create", "Promise_new_pending", [], ["externref"]),
   adapter("async.promise.react", "Promise_then2", ["externref", "externref", "externref"], ["externref"]),
   adapter("async.promise.resolve", "Promise_resolve", ["externref"], ["externref"]),

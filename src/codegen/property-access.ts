@@ -44,6 +44,7 @@ import {
 } from "./builtin-static-globals.js";
 import { emitLazyClassObjectGet, emitLazyProtoGet, findExternInfoForMember } from "./expressions/extern.js";
 import {
+  buildThrowJsErrorInstrs,
   classifyPrivateMember,
   emitPrivateBrandPredicate,
   emitThrowTypeError,
@@ -194,6 +195,11 @@ import {
   tryEnsureNativeProtoBrand,
   typedArrayViewSignedness,
 } from "./builtin-value-read.js"; // (#3267) built-in static/prototype VALUE-read subsystem — extracted
+import {
+  elementAccessTypedArrayName,
+  emitNonIndexVecElementGet,
+  nonArrayIndexNumericKey,
+} from "./array-nonindex-key.js"; // (#4247)
 // (#3267) Re-export the moved symbols other modules import from property-access.js
 // so their `from "./property-access.js"` imports keep resolving unchanged.
 export {
@@ -1072,10 +1078,42 @@ export function isProvablyNonNull(expr: ts.Expression, checker?: ts.TypeChecker)
 export function typeErrorThrowInstrs(ctx: CodegenContext, node?: ts.Node): Instr[] {
   const line = node ? getLine(node) : 0;
   const col = node ? getCol(node) : 0;
-  const message =
+  const detail =
     line > 0 && col > 0
-      ? `TypeError: Cannot access property on null or undefined at ${line}:${col}`
-      : "TypeError: Cannot access property on null or undefined";
+      ? `Cannot access property on null or undefined at ${line}:${col}`
+      : "Cannot access property on null or undefined";
+  // (#4262) In no-JS-host mode throw a REAL `$Error_struct` TypeError instead
+  // of a bare string whose text merely begins with "TypeError: ".
+  //
+  // The string form made `catch (e) { e instanceof TypeError }` answer false
+  // and made the upstream harness's `assert.throws(TypeError, fn)` reject the
+  // throw before it ever compares constructors (`typeof thrown !== 'object'`
+  // short-circuits to "Thrown value was not an object!"). Measured on the ES5
+  // standalone failing set: 19 `e instanceof TypeError` files plus 2
+  // `assert.throws(TypeError, …)` files carry exactly this signature.
+  //
+  // `forceInModuleCtor` is load-bearing, not an optimisation: it resolves
+  // `__new_TypeError` purely through `ctx.funcMap` after
+  // `emitWasiErrorConstructor` has minted it, so NO `ensureLateImport` runs.
+  // That matters because this builder is called from inside half-built `then:`
+  // arrays with no `fctx` to flush against — an import registration here would
+  // be the #1839/#117/#1886 index-shift trap. A defined function minted via
+  // `mintDefinedFunc` carries a STABLE handle (#1916 S3) that no shifter
+  // renumbers, so appending one mid-body is safe.
+  //
+  // The rendered text is UNCHANGED: `__error_to_string` (#2962, §20.5.3.4)
+  // renders `$name + ": " + $message`, and `$name` is "TypeError" — so an
+  // uncaught throw still surfaces as "TypeError: Cannot access property on null
+  // or undefined at L:C" and the runner's signature classification is stable.
+  // Hence the "TypeError: " prefix moves OUT of the message here.
+  //
+  // JS-host mode keeps the string throw (its `__new_TypeError` is an `env`
+  // import, which cannot be registered from here) — the gc lane is
+  // byte-identical.
+  if (noJsHost(ctx)) {
+    return buildThrowJsErrorInstrs(ctx, "TypeError", detail, { forceInModuleCtor: true });
+  }
+  const message = `TypeError: ${detail}`;
   // Register the literal: in legacy mode this adds a `string_constants` global
   // import; in nativeStrings mode it just records the value with sentinel -1
   // so call sites can materialize it inline (#1174).
@@ -5227,6 +5265,29 @@ export function compileElementAccessBody(
     if (!arrDef || arrDef.kind !== "array") {
       reportErrorNoNode(ctx, "Element access: vec data is not array");
       return null;
+    }
+
+    // (#4247) READ twin of the element-write routing in assignment.ts: a
+    // constant key that is NOT an array index per §10.4.2.2 names an ordinary
+    // property in the #3537 expando bag, not an element. Without this the
+    // standalone read saturates the key to `i32.max` and misses the bag the
+    // write just filled. TypedArray views and `arguments` are not array
+    // exotics and keep their own lowering.
+    //
+    // Both lanes, and the read must stay in lockstep with the write: measured,
+    // the gc element read does NOT reach the host property store for a
+    // non-index key either — it takes the same vec element lane — so routing
+    // the write alone would leave gc reading an element the write no longer
+    // set. The pair is what has to agree, in whichever lane.
+    if (
+      elementAccessTypedArrayName(ctx, expr.expression) === undefined &&
+      !(ts.isIdentifier(expr.expression) && expr.expression.text === "arguments")
+    ) {
+      const namedKey = nonArrayIndexNumericKey(ctx, fctx, expr.argumentExpression);
+      if (namedKey !== undefined) {
+        const named = emitNonIndexVecElementGet(ctx, fctx, namedKey);
+        if (named) return named;
+      }
     }
 
     // (#2743 b) `vec[Symbol.iterator]` is %Array.prototype.values%

@@ -9,12 +9,13 @@
 // array-object-proto, linear-uint8-codegen) never transitively pull WASI IO.
 // index.ts re-exports these for backward-compatible import paths.
 
-import type { Instr } from "../ir/types.js";
+import type { FieldDef, Instr } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { addFuncType, getOrRegisterSubviewType } from "./registry/types.js";
 import { deriveFnctorFields } from "./fnctor-escape-gate.js";
 import { coldTailHotFieldLimitFor, coldTailStructName } from "./fnctor-cold-tail.js";
 import { fnctorLayoutPlanFor, reserveFnctorLayoutTypes } from "./fnctor-layout-emit.js"; // (#3927) per-type layouts
+import { INSTANCE_BAG_FIELD, closureBagField } from "./closures/closure-header-layout.js"; // (#4241 step 1b)
 
 /**
  * #1886 Slice B — start of the linear-backed `Uint8Array` arena (page 4,
@@ -110,6 +111,63 @@ export function reserveObjVecArrType(ctx: CodegenContext): void {
 }
 
 /**
+ * (#4241 step 1b) Append the carrier-intrinsic `$bag` expando slot to an
+ * ELIGIBLE fnctor's field list, so its own-property bag lives in the instance
+ * instead of the global `$ClosurePropEntry` registry.
+ *
+ * ## Why this matters — it is a LEAK, not a speed knob
+ * Nothing ever removes a registry entry, so every carrier that grows an expando
+ * is pinned (with its `$Object` bag) for the module's lifetime. Measured on the
+ * acorn self-parse: 75 expando writes per parse, all of them onto
+ * `__fnctor_Parser`, producing exactly ONE new registry entry per parse,
+ * forever. One Parser per parse leaks per parse. (Note the arithmetic: 75
+ * WRITES, 1 entry — 74 of the writes hit the bag the first one created. An
+ * earlier reading of this issue took the write count for the entry count and
+ * overstated the growth 75-fold.)
+ *
+ * ## Why only these fnctors (the deliberately narrow arm)
+ * Eligibility is "the layout passes will not touch this struct":
+ *   - NO layout split (#3927): a split family rebuilds its siblings as
+ *     `[...baseFields, ...moved]`, so a slot added here would have to be
+ *     sequenced against that pass rather than merely appended.
+ *   - NO cold tail (#3927): `appendColdPresenceWords` assigns `presenceBit =
+ *     index` to EVERY field and sizes the presence words `ceil(n/32)`, so a
+ *     `$bag` present at that moment would get presence-tracked and could push
+ *     the word count up — a silent layout change for a field that is not a
+ *     user property.
+ * Class hierarchies are excluded for a different reason and are NOT handled
+ * here at all: `extends` sets `superTypeIdx`, so appending to a parent INSERTS
+ * into every child and shifts that child's own fields. That is the blocker for
+ * the broad arm; see the issue file.
+ *
+ * Standalone-only (the expando-bag substrate does not exist in gc/host mode),
+ * so a host build is byte-identical.
+ *
+ * ## Why appending is safe HERE, by construction
+ * The single fnctor allocation site (`emitFnctorFieldInitializers`) ITERATES
+ * the field list and emits a per-kind default — `externref` gets
+ * `ref.null.extern` — so the `struct.new` operand count stays correct without
+ * touching that site. This mirrors the `__proto__` slot in `class-bodies.ts`,
+ * whose comment states the same invariant. It is also why `$bag` is read by
+ * NAME everywhere and never by index: `property-access-dispatch.ts` can append
+ * further fields to an already-registered struct, so `$bag` does not stay last.
+ */
+function appendInstanceBagSlot(ctx: CodegenContext, fnctorName: string, fields: FieldDef[]): void {
+  if (!ctx.standalone) return;
+  if (fnctorLayoutPlanFor(ctx, fnctorName) !== undefined) return; // split family — excluded
+  // Cold-tailed fnctors ARE eligible. The presence-word hazard does not reach
+  // the base struct: `applyColdTailSplit` moves the COLD subset out and calls
+  // `appendColdPresenceWords(coldFields)` on THAT list, and `$bag` is never in
+  // `coldNames` (it is not a user field), so it stays in the base and is not
+  // presence-tracked. Verified by measurement, not by reading — see the pins.
+  //   NOTE: an earlier draft excluded cold-tailed fnctors on a mis-read of this
+  //   pass, which excluded `__fnctor_Parser` — i.e. the ONLY carrier that leaks
+  //   on the measured corpus — and left registry population unchanged.
+  if (fields.some((f) => f.name === INSTANCE_BAG_FIELD)) return; // idempotent
+  fields.push(closureBagField());
+}
+
+/**
  * #2773 S1 (KEYSTONE) — reserve every reconstructed-fnctor `$__fnctor_<Name>`
  * struct type at the deterministic up-front type-init phase (the same stable
  * point as `reserveTypedArraySubviewTypes` / `reserveObjVecArrType`), so the type
@@ -193,6 +251,7 @@ export function reserveFnctorStructTypes(ctx: CodegenContext): void {
     const decl = gate.ctorDeclByName.get(name);
     if (!decl) continue;
     const fields = deriveFnctorFields(ctx, decl);
+    appendInstanceBagSlot(ctx, name, fields); // (#4241 step 1b) carrier-intrinsic expando bag
     const ty = ctx.mod.types[idx];
     if (ty && ty.kind === "struct") ty.fields = fields; // FILL IN PLACE — index unchanged
     ctx.structFields.set(`__fnctor_${name}`, fields); // candidate-set completeness
