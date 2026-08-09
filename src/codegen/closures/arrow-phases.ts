@@ -74,6 +74,97 @@ function isDirectParameterInitializerClosure(node: ts.ArrowFunction | ts.Functio
 }
 
 /**
+ * A live parameter/capture parameter in the enclosing Wasm frame is a lexical
+ * binding. It wins over any same-named funcMap entry while inheriting captures
+ * and selecting the value to capture. Redux's returned bindActionCreator
+ * function is the untyped-JS package shape.
+ */
+function isEnclosingParameterBinding(fctx: FunctionContext, name: string): boolean {
+  const localIdx = fctx.localMap.get(name);
+  return localIdx !== undefined && localIdx < fctx.params.length;
+}
+
+function isCaptureValueReference(id: ts.Identifier): boolean {
+  const parent = id.parent;
+  if (!parent) return true;
+  if (ts.isVariableDeclaration(parent) && parent.name === id) return false;
+  if (ts.isParameter(parent) && parent.name === id) return false;
+  if (ts.isBindingElement(parent) && parent.name === id) return false;
+  if (
+    (ts.isFunctionDeclaration(parent) ||
+      ts.isFunctionExpression(parent) ||
+      ts.isClassDeclaration(parent) ||
+      ts.isClassExpression(parent)) &&
+    parent.name === id
+  ) {
+    return false;
+  }
+  if (ts.isPropertyAccessExpression(parent) && parent.name === id) return false;
+  if (ts.isPropertyAssignment(parent) && parent.name === id) return false;
+  if (ts.isLabeledStatement(parent) && parent.label === id) return false;
+  if ((ts.isBreakStatement(parent) || ts.isContinueStatement(parent)) && parent.label === id) return false;
+  return true;
+}
+
+function declarationIsInsideClosure(declaration: ts.Declaration, closure: ts.Node): boolean {
+  for (let node: ts.Node | undefined = declaration; node !== undefined; node = node.parent) {
+    if (node === closure) return true;
+    if (ts.isSourceFile(node)) return false;
+  }
+  return false;
+}
+
+/**
+ * The legacy name collector deliberately excludes block-scoped declarations
+ * from its function-wide shadow set. That preserves a genuine outer reference
+ * beside an inner `{ let x }`, but it also means an inner-only `for (let i)`
+ * is initially reported as free. Use checker identity to remove the latter
+ * only when every real use resolves to a declaration inside this closure.
+ */
+function hasReferenceOutsideClosure(ctx: CodegenContext, closure: ts.Node, name: string): boolean {
+  let sawReference = false;
+  let sawOuterReference = false;
+  const visit = (node: ts.Node): void => {
+    if (sawOuterReference) return;
+    if (ts.isIdentifier(node) && node.text === name && isCaptureValueReference(node)) {
+      sawReference = true;
+      const declaration = ctx.oracle.valueDeclarationOf(node);
+      // Unknown identity stays conservative: it may be an imported/global or
+      // dynamically supplied binding, so retain the capture candidate.
+      if (!declaration || !declarationIsInsideClosure(declaration, closure)) {
+        sawOuterReference = true;
+        return;
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(closure);
+  return !sawReference || sawOuterReference;
+}
+
+function removeClosureOwnedBlockBindingCollisions(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  closure: ts.Node,
+  ownLocals: ReadonlySet<string>,
+  referencedNames: Set<string>,
+): void {
+  for (const name of [...referencedNames]) {
+    if (ownLocals.has(name) || !fctx.localMap.has(name)) continue;
+    if (!hasReferenceOutsideClosure(ctx, closure, name)) referencedNames.delete(name);
+  }
+}
+
+function collectClosureParameterReferences(
+  arrow: ts.ArrowFunction | ts.FunctionExpression,
+  referencedNames: Set<string>,
+  ownLocals: ReadonlySet<string>,
+): void {
+  collectParamDefaultReferences(arrow.parameters, referencedNames, ownLocals);
+  for (const parameter of arrow.parameters) collectReferencedIdentifiers(parameter, referencedNames, ownLocals);
+}
+
+/**
  * Phase 1 of compileArrowAsClosure: capture analysis. Scans the arrow /
  * function-expression body (and its parameter default initializers) for free
  * variables, decides which must be boxed (written inside the closure, written
@@ -134,7 +225,7 @@ export function planClosureCaptures(
   // `param.name` (catches binding-pattern element defaults + computed keys) and
   // `param.initializer` (top-level param default) with the same own-locals
   // shadow set, so the param's own binding names stay excluded.
-  collectParamDefaultReferences(arrow.parameters, referencedNames, ownLocals);
+  collectClosureParameterReferences(arrow, referencedNames, ownLocals);
 
   // (#3040) Parameter DEFAULT initializers can reference enclosing-scope names
   // that appear NOWHERE in the body — e.g. `f = async function*([x] = iter)`
@@ -151,9 +242,7 @@ export function planClosureCaptures(
   // become captures. Placed BEFORE the transitive-capture loop so a default that
   // calls a capturing nested function also pulls in that function's transitive
   // captures.
-  for (const p of arrow.parameters) {
-    collectReferencedIdentifiers(p, referencedNames, ownLocals);
-  }
+  removeClosureOwnedBlockBindingCollisions(ctx, fctx, arrow, ownLocals, referencedNames);
   // Direct-eval source is opaque to the static identifier scan. Its lexical
   // ancestors have already promoted all eval-visible bindings to cells; make
   // those cells explicit captures so this closure can forward the live scope.
@@ -168,6 +257,7 @@ export function planClosureCaptures(
   // this closure must also capture first and second so it can pass ref cells to g.
   for (const name of [...referencedNames]) {
     if (ownLocals.has(name)) continue;
+    if (isEnclosingParameterBinding(fctx, name)) continue;
     const transitiveCaptures = ctx.nestedFuncCaptures.get(name);
     if (transitiveCaptures) {
       for (const cap of transitiveCaptures) {
@@ -333,6 +423,7 @@ export function planClosureCaptures(
     // `let length = "outer"` dstr template). Discriminate by index.
     if (
       !createdInParameterEnvironment &&
+      localIdx >= fctx.params.length &&
       ctx.funcMap.has(name) &&
       ctx.funcMap.get(name) !== ctx.jsStringImports.get(name)
     ) {

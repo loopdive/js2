@@ -290,6 +290,78 @@ function transitiveSiblingCaptures(
 }
 
 /**
+ * Capture names required by function declarations that are visible from
+ * `stmt`, but live in an ancestor function's declaration set rather than in
+ * `stmt`'s immediate sibling set.
+ *
+ * `transitiveSiblingCaptures` handles
+ *
+ *     function getState() { return state; }
+ *     function subscribe() { return getState(); }
+ *
+ * but not the Redux shape where `subscribe` contains another declaration:
+ *
+ *     function subscribe() {
+ *       function observeState() { return getState(); }
+ *     }
+ *
+ * `observeState` is lifted into its own Wasm frame. Supplying `getState`'s
+ * captures from the original factory-frame indexes is therefore invalid; it
+ * has to capture the values already threaded into `subscribe` and forward
+ * those slots. Capture metadata is bare-name keyed, so only use it when the
+ * recorded owner declaration is lexically visible from this exact statement.
+ */
+function transitiveVisibleDeclarationCaptures(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.FunctionDeclaration,
+  referencedNames: ReadonlySet<string>,
+  ownLocals: ReadonlySet<string>,
+): ReadonlySet<string> {
+  const out = new Set(transitiveSiblingCaptures(ctx, fctx, stmt));
+
+  for (const functionName of referencedNames) {
+    if (ownLocals.has(functionName)) continue;
+    const owner = ctx.funcMapOwnerDecl.get(functionName);
+    const captures = ctx.nestedFuncCaptures.get(functionName);
+    if (!owner || !captures || captures.length === 0) continue;
+
+    let ownerScope: ts.Node = owner.parent;
+    while (
+      !ts.isSourceFile(ownerScope) &&
+      !ts.isFunctionDeclaration(ownerScope) &&
+      !ts.isFunctionExpression(ownerScope) &&
+      !ts.isArrowFunction(ownerScope) &&
+      !ts.isMethodDeclaration(ownerScope) &&
+      !ts.isConstructorDeclaration(ownerScope) &&
+      !ts.isGetAccessorDeclaration(ownerScope) &&
+      !ts.isSetAccessorDeclaration(ownerScope)
+    ) {
+      if (!ownerScope.parent) break;
+      ownerScope = ownerScope.parent;
+    }
+
+    let visible = false;
+    for (let node: ts.Node | undefined = stmt; node !== undefined; node = node.parent) {
+      if (node === ownerScope) {
+        visible = true;
+        break;
+      }
+    }
+    if (!visible) continue;
+
+    for (const capture of captures) {
+      // A descendant can only re-capture a value that its immediate declaring
+      // frame actually carries. This is the narrow, sound case; inaccessible
+      // cross-module/cross-frame captures remain diagnosed by the frame guard.
+      if (fctx.localMap.has(capture.name)) out.add(capture.name);
+    }
+  }
+
+  return out;
+}
+
+/**
  * (#3038) Collect the outer-scope names that are written inside a nested
  * function scope of `enclosingBody`.
  *
@@ -476,7 +548,7 @@ export function compileNestedFunctionDeclaration(
   // A lifted sibling that references a capturing sibling must receive the
   // same outer values as leading parameters so it can call or materialize the
   // sibling without reading local indices from a different Wasm frame.
-  for (const name of transitiveSiblingCaptures(ctx, fctx, stmt)) {
+  for (const name of transitiveVisibleDeclarationCaptures(ctx, fctx, stmt, referencedNames, ownLocals)) {
     if (!ownLocals.has(name)) referencedNames.add(name);
   }
   const reachesDirectEval = functionMayReachDirectEval(stmt, ctx.oracle);
@@ -1808,7 +1880,7 @@ function preRegisterCapturingSibling(
   const referenced = new Set<string>();
   for (const bodyStmt of stmt.body!.statements) collectReferencedIdentifiers(bodyStmt, referenced, ownLocals);
 
-  let capturesOuter = transitiveSiblingCaptures(ctx, fctx, stmt).size > 0;
+  let capturesOuter = transitiveVisibleDeclarationCaptures(ctx, fctx, stmt, referenced, ownLocals).size > 0;
   for (const name of referenced) {
     if (name === "this" || name === "super" || ownLocals.has(name) || siblingFuncNames.has(name)) continue;
     // A user function in funcMap is not an outer capture. wasm:js-string

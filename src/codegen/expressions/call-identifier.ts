@@ -116,6 +116,18 @@ function emitStringBuiltinNumberResult(ctx: CodegenContext, fctx: FunctionContex
   return { kind: "externref" };
 }
 
+function localBindingShadowsCapturingFunction(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  callee: ts.Identifier,
+): boolean {
+  const name = callee.text;
+  if (!fctx.localMap.has(name) || !ctx.nestedFuncCaptures.has(name)) return false;
+  const callSignatures = ctx.checker.getTypeAtLocation(callee).getCallSignatures?.();
+  const declaration = ctx.oracle.valueDeclarationOf(callee);
+  return !!(callSignatures?.length || (declaration && ts.isParameter(declaration)));
+}
+
 /**
  * (#742) Identifier-callee call dispatch — extracted verbatim from
  * compileCallExpression. Handles the cases where the call target is a bare
@@ -995,7 +1007,10 @@ export function compileIdentifierCall(
     // Narrow trigger: only redirect when ALL of:
     //   1. The current fctx has a local/param with this name (real shadow)
     //   2. The funcMap entry has nestedFuncCaptures (the broken path)
-    //   3. The local has a callable TS type (actually used as a callable)
+    //   3. The local has a callable TS type, OR the checker resolves the
+    //      called identifier to a parameter. The latter covers shipped JS
+    //      without declarations/JSDoc: call syntax proves the value is being
+    //      invoked, while its `any` type has no call signatures.
     //
     // Other shadow cases stay on the funcMap path — direct calls that don't
     // emit cap-prepend logic are already correct, even if a coincidental
@@ -1047,14 +1062,7 @@ export function compileIdentifierCall(
       isOutOfScopeNestedBinding = !visible;
     }
 
-    let isLocallyShadowed = false;
-    if (fctx.localMap.has(funcName) && ctx.nestedFuncCaptures.has(funcName)) {
-      const localCalleeTsType = ctx.checker.getTypeAtLocation(expr.expression);
-      const localCallSigs = localCalleeTsType?.getCallSignatures?.();
-      if (localCallSigs && localCallSigs.length > 0) {
-        isLocallyShadowed = true;
-      }
-    }
+    const isLocallyShadowed = localBindingShadowsCapturingFunction(ctx, fctx, expr.expression);
 
     // (#4133/#4134) `ctx.closureMap` is a THIRD bare-name namespace and it is
     // consulted BEFORE `funcMap`. A visible nested declaration lexically
