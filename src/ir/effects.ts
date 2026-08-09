@@ -133,7 +133,6 @@ export function effectsOf(instr: IrInstr, cache: Map<IrInstr, IrEffects> = new M
     case "vec.new_fixed": // #1804 — fresh vec allocation, pure (like object.new)
     case "refcell.new":
     case "closure.new":
-    case "class.alloc": // #3000-C — fresh default-initialised struct, pure (like object.new; runs no user ctor code)
     case "extern.regex": // NOTE: DCE-kept (may throw) — see KNOWN DIVERGENCE above.
       break;
     // Reads of mutable heap state.

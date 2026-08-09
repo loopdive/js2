@@ -758,7 +758,6 @@ function layoutForAllocation(
     case "object.new":
       return recordLayoutForObject(instr.shape);
     case "class.new":
-    case "class.alloc":
       return recordLayoutForClass(instr.shape);
     case "refcell.new": {
       const inner = site.type.kind === "boxed" ? site.type.inner : valueTypes.get(instr.value);

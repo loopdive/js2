@@ -99,7 +99,7 @@ const SECTIONS = [
       [
         "`ClassDeclaration`",
         "mixed",
-        "Methods adopted incrementally via #1370 (Phase B). Constructor in Phase C.",
+        "Supported top-level constructors/methods/accessors prepare once; wider nested/class-expression families remain incremental (#3522).",
         "#1370",
       ],
       ["`ImportDeclaration`", "deferred", "Module-level concern, not function-body.", "—"],
@@ -140,7 +140,12 @@ const SECTIONS = [
         "Direct calls to claimed funcs work. Externals require whitelist. Optional `?.()` throws.",
         "#1371",
       ],
-      ["`NewExpression`", "mixed", "Class constructors via #1370 Phase C; arbitrary `new` host-bound.", "#1370"],
+      [
+        "`NewExpression`",
+        "mixed",
+        "Supported local WasmGC class construction calls an AST-free `_new` wrapper whose source-owned `_init` body is IR-lowered; arbitrary `new` remains host-bound.",
+        "#3522",
+      ],
       [
         "`PropertyAccessExpression`",
         "mixed",
@@ -191,8 +196,8 @@ const SECTIONS = [
       [
         "`ConstructorDeclaration`",
         "mixed",
-        "#3000-C ctor emission (`class.alloc`); #3000-E `super(...)` chain.",
-        "#3000",
+        "Source bodies lower into self-last `_init`; AST-free `_new` owns allocation and exact `super(...)` chains parent `_init`. Unsafe/externref/forward-ABI forms remain direct.",
+        "#3522",
       ],
       [
         "`GetAccessorDeclaration`",

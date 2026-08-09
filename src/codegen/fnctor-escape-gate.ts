@@ -141,6 +141,34 @@ export interface FnctorEscapeGateResult {
    * `fnctor-alloc-labels.ts`.
    */
   readonly allocLabels?: AllocLabelResult;
+  /**
+   * (#4235) Provenance of THIS analysis run — which compile path produced it,
+   * over how many source files, and every fnctor family the analysis DECLINED
+   * with the reason it declined for.
+   *
+   * The reason this field exists: until #4235 `generateMultiModule` never
+   * assigned `ctx.fnctorEscapeGate` at all, so every multi-file compile
+   * produced ZERO fnctor analysis and that zero was indistinguishable from
+   * "this package has no fnctors". A detector must be able to say "I don't
+   * know"; this is where it says it. `refusals` is a counted ledger, never
+   * silence — the same discipline the IR-fallback budget applies.
+   */
+  readonly provenance: FnctorGateProvenance;
+}
+
+/** (#4235) Which `generate*Module` entry point ran the fnctor pipeline. */
+export type FnctorCompilePath = "single" | "multi";
+
+/** (#4235) Counted refusal reasons — one entry per DECLINED fnctor family. */
+export interface FnctorGateProvenance {
+  /** `single` = `generateModule`, `multi` = `generateMultiModule`. */
+  readonly compilePath: FnctorCompilePath;
+  /** How many source files the whole-program walk actually covered. */
+  readonly sourceFileCount: number;
+  /** Refusal reason → number of fnctor families declined for that reason. */
+  readonly refusals: ReadonlyMap<string, number>;
+  /** The declined fnctor names, for diagnostics (sorted, deterministic). */
+  readonly refusedNames: readonly string[];
 }
 
 /**
@@ -197,15 +225,23 @@ const EMPTY_WRITE_ONCE: ProtoMethodWriteOnceResult = {
   runtimeDefined: new Map(),
 };
 
-const EMPTY_RESULT: FnctorEscapeGateResult = {
-  sites: new Map(),
-  approved: new Set(),
-  approvedNames: new Set(),
-  receiverStruct: new Map(),
-  newThisOwnerNames: new Set(),
-  ctorDeclByName: new Map(),
-  protoMethodWriteOnce: EMPTY_WRITE_ONCE,
-};
+/**
+ * (#4235) The "no fnctor `new` sites at all" result. Carries its provenance so
+ * even the empty answer names the path that produced it — an empty result from
+ * a 146-file graph and one from a single file are different claims.
+ */
+function emptyResult(compilePath: FnctorCompilePath, sourceFileCount: number): FnctorEscapeGateResult {
+  return {
+    sites: new Map(),
+    approved: new Set(),
+    approvedNames: new Set(),
+    receiverStruct: new Map(),
+    newThisOwnerNames: new Set(),
+    ctorDeclByName: new Map(),
+    protoMethodWriteOnce: EMPTY_WRITE_ONCE,
+    provenance: { compilePath, sourceFileCount, refusals: new Map(), refusedNames: [] },
+  };
+}
 
 /**
  * Resolve a fnctor symbol to the function-like declaration that supplies its
@@ -605,7 +641,7 @@ function isFunctionLike(node: ts.Node): node is ts.FunctionLikeDeclaration {
  * {@link ProtoMethodWriteOnceResult} for the contract). Purely syntactic and
  * whole-source-file; no checker, no codegen, no side effects.
  */
-export function analyzeProtoMethodWriteOnce(sourceFile: ts.SourceFile): ProtoMethodWriteOnceResult {
+export function analyzeProtoMethodWriteOnce(sourceFiles: readonly ts.SourceFile[]): ProtoMethodWriteOnceResult {
   const aliasToOwner = new Map<string, string>(); // "pp$8" → "Parser"
   const collidingAliases = new Set<string>();
   const poisoned = new Set<string>();
@@ -617,7 +653,18 @@ export function analyzeProtoMethodWriteOnce(sourceFile: ts.SourceFile): ProtoMet
 
   // Pass 1 — top-level `var pp = F.prototype;` aliases. A name declared twice
   // for DIFFERENT owners is ambiguous: poison both owners and drop the alias.
-  for (const stmt of sourceFile.statements) {
+  //
+  // (#4235) Every pass below now runs over the WHOLE module graph, not one
+  // file. That is not an optimization — it is the only sound closed world for
+  // this analysis. `methods` admits a slot precisely because it saw no SECOND
+  // write; run over one file of a graph it would admit a slot another module
+  // overwrites. Merging is monotone toward safety in every direction the
+  // analysis has: `poisoned` unions, a second write in `writes` flips `bad`,
+  // `otherNameWrites` unions (and its `null` sentinel is the most conservative
+  // state), `inheritedFrom` unions. So more files can only ever REMOVE
+  // admissions.
+  const topLevelStatements = sourceFiles.flatMap((sf) => [...sf.statements]);
+  for (const stmt of topLevelStatements) {
     if (!ts.isVariableStatement(stmt)) continue;
     for (const d of stmt.declarationList.declarations) {
       if (!ts.isIdentifier(d.name) || !d.initializer) continue;
@@ -701,7 +748,7 @@ export function analyzeProtoMethodWriteOnce(sourceFile: ts.SourceFile): ProtoMet
     if (!ts.isIdentifier(a)) return undefined;
     let init: ts.ObjectLiteralExpression | undefined;
     let declCount = 0;
-    for (const stmt of sourceFile.statements) {
+    for (const stmt of topLevelStatements) {
       if (!ts.isVariableStatement(stmt)) continue;
       for (const d of stmt.declarationList.declarations) {
         if (!ts.isIdentifier(d.name) || d.name.text !== a.text) continue;
@@ -738,7 +785,7 @@ export function analyzeProtoMethodWriteOnce(sourceFile: ts.SourceFile): ProtoMet
       }
       forEachChild(n, scan);
     };
-    scan(sourceFile);
+    for (const sf of sourceFiles) scan(sf);
     return ok ? keys : undefined;
   };
 
@@ -781,10 +828,17 @@ export function analyzeProtoMethodWriteOnce(sourceFile: ts.SourceFile): ProtoMet
     }
   };
 
+  // (#4235) `=== sourceFile` became `isSourceFile(…)`: with the walk covering
+  // the graph, "top level of ITS OWN module" is the property that matters, and
+  // an identity test against one designated file would silently demote every
+  // other module's top-level write to "conditional" (⇒ `bad`). That is the safe
+  // direction, but it would make the multi-file result differ from the
+  // single-file one for no reason — the parity this issue exists to establish.
   const isUnconditionalTopLevel = (assignment: ts.Node): boolean =>
     assignment.parent !== undefined &&
     ts.isExpressionStatement(assignment.parent) &&
-    assignment.parent.parent === sourceFile;
+    assignment.parent.parent !== undefined &&
+    ts.isSourceFile(assignment.parent.parent);
 
   const walk = (n: ts.Node): void => {
     if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
@@ -897,7 +951,7 @@ export function analyzeProtoMethodWriteOnce(sourceFile: ts.SourceFile): ProtoMet
     }
     forEachChild(n, walk);
   };
-  walk(sourceFile);
+  for (const sf of sourceFiles) walk(sf);
 
   const methods = new Map<string, ReadonlyMap<string, ts.FunctionLikeDeclaration>>();
   for (const [owner, perOwner] of writes) {
@@ -924,7 +978,7 @@ export function analyzeProtoMethodWriteOnce(sourceFile: ts.SourceFile): ProtoMet
  */
 type ProtoMethodIndex = ReadonlyMap<string, ts.FunctionLikeDeclaration[]>;
 
-function buildProtoMethodIndex(sourceFile: ts.SourceFile): ProtoMethodIndex {
+function buildProtoMethodIndex(sourceFiles: readonly ts.SourceFile[]): ProtoMethodIndex {
   const idx = new Map<string, ts.FunctionLikeDeclaration[]>();
   const walk = (n: ts.Node): void => {
     if (
@@ -942,7 +996,9 @@ function buildProtoMethodIndex(sourceFile: ts.SourceFile): ProtoMethodIndex {
     }
     forEachChild(n, walk);
   };
-  walk(sourceFile);
+  // (#4235) Graph-wide. More indexed bodies for a name can only make it
+  // AMBIGUOUS (≥2 ⇒ unresolved), never resolve it to a wrong callee.
+  for (const sf of sourceFiles) walk(sf);
   return idx;
 }
 
@@ -1166,12 +1222,12 @@ export function writeOnceThisCallReturnStruct(
  */
 function buildReceiverStructMap(
   checker: ts.TypeChecker,
-  sourceFile: ts.SourceFile,
+  sourceFiles: readonly ts.SourceFile[],
   usesBySymbol: ReadonlyMap<ts.Symbol, ts.Identifier[]>,
 ): Map<ts.Expression, string> {
   const map = new Map<ts.Expression, string>();
   const memo = new Map<ts.FunctionLikeDeclaration, string | undefined>();
-  const protoIndex = buildProtoMethodIndex(sourceFile);
+  const protoIndex = buildProtoMethodIndex(sourceFiles);
   const structBySymbol = new Map<ts.Symbol, string>();
   const declarations: ts.VariableDeclaration[] = [];
   const assignments: ts.BinaryExpression[] = [];
@@ -1193,7 +1249,7 @@ function buildReceiverStructMap(
     if (ts.isPropertyAccessExpression(node)) propertyAccesses.push(node);
     forEachChild(node, indexFlowSites);
   };
-  indexFlowSites(sourceFile);
+  for (const sf of sourceFiles) indexFlowSites(sf);
 
   const inferExprStruct = (expression: ts.Expression): string | undefined => {
     const expr = unwrapExpr(expression);
@@ -1352,14 +1408,44 @@ export function resolveReceiverStruct(
 /**
  * #2660 S1 — classify every `new F()` fnctor site in the program.
  *
- * @param checker     the program type checker
- * @param sourceFile  the (already import-preprocessed) module source
+ * (#4235) **Whole-program over the WHOLE module graph.** This used to take a
+ * single `ts.SourceFile` and was called only from `generateModule`, so on every
+ * multi-file compile (`compileProject` / `compileMulti` — most of the npm-compat
+ * corpus) the entire fnctor pipeline was inert and silent. It now takes the
+ * graph's source files and every sub-pass walks all of them.
+ *
+ * Why extending the walk is the SAFE direction, pass by pass:
+ *
+ * - `sites` classification is monotone toward safety. Seeing MORE uses of a
+ *   binding can only add `sawTyped` / `sawDynamic` evidence, and clause B
+ *   (`sawTyped` ⇒ `keep-typed`) is absolute. A use we still fail to see leaves
+ *   the site at `keep-static`, which no lowering consumes — inert, not wrong.
+ * - `analyzeProtoMethodWriteOnce` admits a method ONLY on the absence of a
+ *   second write. Run over one file of a graph it would admit a slot that
+ *   another module overwrites — a real miscompile. Its closed world must be the
+ *   whole graph, which is exactly what this change gives it. Unioning across
+ *   files only ever ADDS writes/poison, never removes.
+ * - `analyzeFnctorAllocLabels` derives per-type layouts from the allocation
+ *   sites it can see; a layout computed from a strict subset of a fnctor's
+ *   allocations would omit fields set at the unseen sites. Whole-graph or not
+ *   at all.
+ *
+ * The one hazard the loop alone does NOT fix is cross-module symbol identity —
+ * see the alias resolution in step 2 and the name-collision refusal in step 3.
+ *
+ * @param checker      the program type checker (shared across the whole graph)
+ * @param sourceFiles  every (already import-preprocessed) module source in the
+ *                     graph; the single-file path passes a one-element array
+ * @param standalone   see below
+ * @param compilePath  which `generate*Module` called us — recorded in the
+ *                     result's provenance so a zero can never again be read
+ *                     without knowing which path produced it
  * @returns a frozen {@link FnctorEscapeGateResult}; empty when no fnctor `new`
  *          sites exist (so the pass is a no-op for class-only / fnctor-free code).
  */
 export function analyzeFnctorEscapeGate(
   checker: ts.TypeChecker,
-  sourceFile: ts.SourceFile,
+  sourceFiles: readonly ts.SourceFile[],
   /**
    * (#3927 default-ON) Whether this compile targets the standalone lane. The
    * per-type-layout ANALYSIS (a second whole-program fixpoint) is only worth
@@ -1369,10 +1455,17 @@ export function analyzeFnctorEscapeGate(
    * (legacy callers) preserves the flag-only behaviour.
    */
   standalone?: boolean,
+  compilePath: FnctorCompilePath = "single",
 ): FnctorEscapeGateResult {
   const sites = new Map<ts.NewExpression, FnctorGateClass>();
   const approved = new Set<ts.NewExpression>();
   const approvedNames = new Set<string>();
+  const refusals = new Map<string, number>();
+  const refusedNames = new Set<string>();
+  const refuse = (name: string, reason: string): void => {
+    refusedNames.add(name);
+    refusals.set(reason, (refusals.get(reason) ?? 0) + 1);
+  };
 
   // 1. Collect every `new F()` whose callee is a fnctor.
   const newSites: { newExpr: ts.NewExpression; ctorSym: ts.Symbol }[] = [];
@@ -1398,33 +1491,90 @@ export function analyzeFnctorEscapeGate(
     }
     forEachChild(node, collect);
   };
-  collect(sourceFile);
-  if (newSites.length === 0) return EMPTY_RESULT;
+  for (const sf of sourceFiles) collect(sf);
+  if (newSites.length === 0) {
+    // (#4235) Even "there are no fnctor `new` sites" must announce itself under
+    // the diagnostic. Returning in silence here is what made the multi-path
+    // zero unreadable: no output was produced BOTH when a package genuinely had
+    // no fnctors and when the path never ran the analysis at all, and those are
+    // the two hypotheses a reader most needs to tell apart.
+    if (process.env.JS2WASM_FNCTOR_LAYOUT_DIAG === "1") {
+      process.stderr.write(
+        `[alloc-labels] path=${compilePath} files=${sourceFiles.length} ` +
+          `families=0 with-labels=0 rounds=0 (no fnctor new-sites in this graph)\n`,
+      );
+    }
+    return emptyResult(compilePath, sourceFiles.length);
+  }
 
   // #2773 S1 — index fnctor name → declaration (first-seen wins, deterministic by
   // source order) for the up-front struct-type reservation pass.
   const ctorDeclByName = new Map<string, ts.FunctionDeclaration | ts.FunctionExpression>();
+  // (#4235) A fnctor NAME whose `new F()` sites resolve to DECLARATIONS IN MORE
+  // THAN ONE source file is refused outright. Everything downstream of this
+  // analysis is keyed by bare NAME — `ctorDeclByName`, `approvedNames`,
+  // `reserveFnctorStructTypes`'s `__fnctor_<Name>` struct key, the whole
+  // `protoMethodWriteOnce` ledger — and a single-source graph made that safe by
+  // construction. A module graph does not: #4133 measured 55 top-level function
+  // names colliding across the 146-file resolved ESLint graph. `first-seen wins`
+  // would then reserve ONE struct shape derived from ONE module's constructor
+  // body and apply it to another module's same-named, differently-shaped fnctor
+  // — a wrong field set, i.e. a miscompile, not a missed optimization. Refusing
+  // costs only the optimization and is COUNTED, so the decline is visible.
+  const declFilesByName = new Map<string, Set<ts.SourceFile>>();
   for (const { ctorSym } of newSites) {
-    if (ctorDeclByName.has(ctorSym.name)) continue;
+    const decl = fnctorDeclFromSymbol(ctorSym);
+    if (!decl) continue;
+    const seen = declFilesByName.get(ctorSym.name);
+    if (seen) seen.add(decl.getSourceFile());
+    else declFilesByName.set(ctorSym.name, new Set([decl.getSourceFile()]));
+  }
+  for (const { ctorSym } of newSites) {
+    if (ctorDeclByName.has(ctorSym.name) || refusedNames.has(ctorSym.name)) continue;
+    if ((declFilesByName.get(ctorSym.name)?.size ?? 0) > 1) {
+      refuse(ctorSym.name, "multi-module-name-collision");
+      continue;
+    }
     const decl = fnctorDeclFromSymbol(ctorSym);
     if (decl) ctorDeclByName.set(ctorSym.name, decl);
   }
 
   // 2. Build a per-binding-symbol index of identifier uses across the program,
   //    so a `const c = new F()` instance's uses can be found by symbol identity.
+  //
+  // (#4235) Cross-module uses land under the IMPORT ALIAS symbol, not the
+  // declaration's symbol: for `import { p } from "./a"; p.foo = 1;` the checker
+  // answers module B's `p` with the alias symbol created by the import
+  // specifier. Without resolving that, module B's uses key differently from
+  // module A's binding and the analysis sees an instance with no uses at all.
+  // That direction is inert rather than wrong (no uses ⇒ `keep-static` ⇒ nothing
+  // consumes it), but it silently forfeits exactly the cross-module escapes this
+  // whole change exists to see. Resolve to the aliased symbol so both sides
+  // share one key.
   const usesBySymbol = new Map<ts.Symbol, ts.Identifier[]>();
+  const canonicalSymbol = (sym: ts.Symbol): ts.Symbol => {
+    if ((sym.flags & ts.SymbolFlags.Alias) === 0) return sym;
+    try {
+      return checker.getAliasedSymbol(sym);
+    } catch {
+      // A malformed / unresolvable alias keeps its own identity. Worst case the
+      // uses stay split, which is the inert direction described above.
+      return sym;
+    }
+  };
   const indexUses = (node: ts.Node): void => {
     if (ts.isIdentifier(node)) {
       const sym = checker.getSymbolAtLocation(node);
       if (sym) {
-        const arr = usesBySymbol.get(sym);
+        const key = canonicalSymbol(sym);
+        const arr = usesBySymbol.get(key);
         if (arr) arr.push(node);
-        else usesBySymbol.set(sym, [node]);
+        else usesBySymbol.set(key, [node]);
       }
     }
     forEachChild(node, indexUses);
   };
-  indexUses(sourceFile);
+  for (const sf of sourceFiles) indexUses(sf);
 
   // #2773 S2b — fnctor NAMES that own a reconstruct-classified `new this()` site
   // (acorn's Parser). Populated during classification below; the #2773 S1 up-front
@@ -1436,6 +1586,9 @@ export function analyzeFnctorEscapeGate(
 
   // 3. Classify each site.
   for (const { newExpr, ctorSym } of newSites) {
+    // (#4235) A name refused above is not classified at all — leaving it out of
+    // `sites` keeps it off every downstream path.
+    if (refusedNames.has(ctorSym.name)) continue;
     const ownFields = collectFnctorOwnFields(ctorSym);
     let sawDynamic = false;
     let sawTyped = false;
@@ -1444,7 +1597,7 @@ export function analyzeFnctorEscapeGate(
     if (bind) {
       // Classify every use of the binding symbol.
       const bindSym = checker.getSymbolAtLocation(bind);
-      const uses = bindSym ? (usesBySymbol.get(bindSym) ?? []) : [];
+      const uses = bindSym ? (usesBySymbol.get(canonicalSymbol(bindSym)) ?? []) : [];
       for (const use of uses) {
         if (use === bind) continue; // the declaration name itself
         const c = classifyUse(checker, use, ownFields);
@@ -1523,17 +1676,35 @@ export function analyzeFnctorEscapeGate(
   // 4. (#2660 PART-1) Build the receiver-struct flow map for local bindings whose
   //    initializer is a single-return-inferable fnctor-returning call. Reuses the
   //    symbol→uses index from step 2. INERT — stored for the PART-2 dispatch.
-  const receiverStruct = buildReceiverStructMap(checker, sourceFile, usesBySymbol);
+  const receiverStruct = buildReceiverStructMap(checker, sourceFiles, usesBySymbol);
+
+  const provenance: FnctorGateProvenance = {
+    compilePath,
+    sourceFileCount: sourceFiles.length,
+    refusals,
+    refusedNames: [...refusedNames].sort(),
+  };
 
   // 5. Optional inert logging (no effect on output).
   if (process.env.JS2WASM_LOG_FNCTOR_GATE === "1" && (sites.size > 0 || receiverStruct.size > 0)) {
     const counts = { reconstruct: 0, "keep-typed": 0, "keep-static": 0 };
     for (const c of sites.values()) counts[c]++;
+    const declined =
+      refusals.size === 0
+        ? "none"
+        : [...refusals]
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([reason, n]) => `${reason}=${n}`)
+            .join(" ");
     // eslint-disable-next-line no-console
     console.error(
-      `[#2660 fnctor-escape-gate] ${sites.size} new F() site(s): ` +
+      // (#4235) The path + file count lead the line: an analysis result read
+      // without knowing which compile path produced it is what made the
+      // multi-file zero invisible for as long as it was.
+      `[#2660 fnctor-escape-gate] path=${compilePath} files=${sourceFiles.length} ` +
+        `${sites.size} new F() site(s): ` +
         `reconstruct=${counts.reconstruct} keep-typed=${counts["keep-typed"]} keep-static=${counts["keep-static"]}; ` +
-        `receiverStruct flow-map entries=${receiverStruct.size}`,
+        `receiverStruct flow-map entries=${receiverStruct.size}; refused: ${declined}`,
     );
   }
 
@@ -1544,9 +1715,10 @@ export function analyzeFnctorEscapeGate(
     receiverStruct,
     newThisOwnerNames,
     ctorDeclByName,
+    provenance,
     // (#3683 S1) inert write-once verdicts — consumed by the S2 typed-twin
     // emission, no lowering reads them yet.
-    protoMethodWriteOnce: analyzeProtoMethodWriteOnce(sourceFile),
+    protoMethodWriteOnce: analyzeProtoMethodWriteOnce(sourceFiles),
     // (#3927) Per-type layout plan. The fixpoint is a second whole-program
     // pass, so it runs only where it can pay: the analysis-only flag forces it
     // (measurement lane, any target); otherwise the emit flag — default ON
@@ -1555,7 +1727,7 @@ export function analyzeFnctorEscapeGate(
     // (`standalone === false`); a legacy caller that passed no target keeps
     // the flag-only behaviour.
     ...(fnctorLayoutsEnabled() || (fnctorLayoutEmitEnabled() && standalone !== false)
-      ? { allocLabels: analyzeFnctorAllocLabels(checker, sourceFile, ctorDeclByName) }
+      ? { allocLabels: analyzeFnctorAllocLabels(checker, sourceFiles, ctorDeclByName, compilePath) }
       : {}),
   };
 }

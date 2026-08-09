@@ -33,6 +33,7 @@ import {
 } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType, WasmFunction, WasmModule } from "../ir/types.js";
 import { createEmptyModule } from "../ir/types.js";
+import { irSupportFuncRef } from "../ir/callable-bindings.js";
 import { compileIrPathFunctions, type IrIntegrationError, type IrIntegrationReport } from "../ir/integration.js";
 import {
   asVal,
@@ -1310,10 +1311,15 @@ function buildIrClassShapes(
       }
     }
     if (!ctorOk) continue;
-    const constructorTarget = callableTarget(
+    const constructorInitTarget = callableTarget(
       ctor ?? stmt,
       ctor ? "class-constructor" : "class-implicit-constructor",
-      "new",
+      "init",
+    );
+    const constructorTarget = irSupportFuncRef(
+      classId,
+      "class-constructor-new",
+      classMemberFuncKey(ctx, `${className}_new`),
     );
 
     // Fields — read from the legacy `structFields` (which fixes the
@@ -1547,7 +1553,8 @@ function buildIrClassShapes(
       fields,
       methods,
       constructorParams,
-      ...(constructorTarget ? { constructorTarget } : {}),
+      constructorTarget,
+      ...(constructorInitTarget ? { constructorInitTarget } : {}),
       // #3000-E: present only for a single-level subclass of a local user class.
       ...(parentShape ? { parent: parentShape } : {}),
     };
@@ -3545,7 +3552,10 @@ export function generateModule(
   // reconstruction lowering but is NOT yet consumed, so emitted Wasm is
   // byte-identical. Side-effect free; safe to run unconditionally (no fnctor
   // `new` sites ⇒ empty result ⇒ no-op).
-  ctx.fnctorEscapeGate = analyzeFnctorEscapeGate(ast.checker, ast.sourceFile, ctx.standalone);
+  // (#4235) The array + explicit `"single"` path tag. `generateMultiModule`
+  // makes the identical call with the whole graph and `"multi"`; keeping the
+  // two call shapes the same is what makes the parity testable.
+  ctx.fnctorEscapeGate = analyzeFnctorEscapeGate(ast.checker, [ast.sourceFile], ctx.standalone, "single");
   // (#3673) Names the source itself defines as function-valued members, so the
   // guarded native-string method lowering can tell a genuine `String.prototype`
   // call apart from a same-named USER method on an object receiver. Cheap
@@ -6278,6 +6288,26 @@ export function generateMultiModule(
   // (#4232) Narrower gate for the ordinary-object arm alone.
   ctx.plainCtorCarrierDemanded =
     ctx.wrapperCtorCarrierDemanded && multiAst.sourceFiles.some((sf) => moduleMentionsObjectIdentifier(sf));
+  // (#4235) Run the fnctor pipeline HERE — the same point in the pass that
+  // `generateModule` runs it, but over the whole module graph.
+  //
+  // Until this landed `generateMultiModule` never assigned `ctx.fnctorEscapeGate`
+  // at all, so on every `compileProject` / `compileMulti` the escape gate, the
+  // presence-bit/hot-cold split (#4211/#4217) and the per-type layout analysis
+  // and emission (#3927) were ALL inert — silently. Not a fallback, not a
+  // warning: the compile succeeded with the unsplit representation, and the
+  // resulting zero was indistinguishable from "this package has no fnctors".
+  // With the layout emission defaulting ON (2026-08-08) that became a lying
+  // default — the flag reported enabled while the machinery never ran, on the
+  // path most of the npm-compat corpus actually compiles through.
+  //
+  // The analysis takes the graph's source files, so its closed-world passes
+  // (write-once admission, allocation-site layout labelling) are closed over the
+  // WHOLE program rather than one file of it; see `analyzeFnctorEscapeGate` for
+  // why each pass is monotone-safe under that widening, and for the two hazards
+  // it handles explicitly (import-alias symbol identity, and cross-module
+  // fnctor NAME collisions, which are refused and COUNTED).
+  ctx.fnctorEscapeGate = analyzeFnctorEscapeGate(multiAst.checker, multiAst.sourceFiles, ctx.standalone, "multi");
   try {
     // WASI target: register linear memory, bump pointer global, and WASI imports
     if (ctx.wasi) {
@@ -6445,6 +6475,18 @@ export function generateMultiModule(
     if (multiAst.sourceFiles.some((sf) => sourceContainsClass(sf))) {
       reserveObjVecArrType(ctx);
     }
+
+    // (#4235) Multi-source parity for the #2773 S1 up-front fnctor struct-type
+    // reservation, in the same relative position the single-source path uses:
+    // after the `$ObjVecArr` reservation, before `collectDeclarations` and
+    // therefore before any body compiles — so `$__fnctor_<Name>`'s type index is
+    // fixed at ONE deterministic point for every pass that reads it. Both calls
+    // are gated on the escape gate having approved something, so a fnctor-free
+    // graph reserves nothing and stays byte-identical.
+    for (const sf of multiAst.sourceFiles) {
+      collectDynamicObjectReturnCarrierTypes(ctx, multiAst.checker, sf);
+    }
+    reserveFnctorStructTypes(ctx);
 
     // (#4133) `ctx.funcMap` is keyed by BARE function name, so two modules that
     // each declare a top-level `function shared()` collide: registration mints a

@@ -6,7 +6,7 @@ import { analyzeSource } from "../src/checker/index.js";
 import { createCodegenContext } from "../src/codegen/context/create-context.js";
 import { compileDeclarations, collectDeclarations } from "../src/codegen/declarations.js";
 import { ProgramAbiSession } from "../src/codegen/program-abi-session.js";
-import { irSupportFuncRef } from "../src/ir/callable-bindings.js";
+import { irSupportFuncRef, irUnitFuncRef } from "../src/ir/callable-bindings.js";
 import { buildIrUnitInventory } from "../src/ir/identity.js";
 import { compileIrPathFunctions } from "../src/ir/integration.js";
 import type { IrClassShape } from "../src/ir/nodes.js";
@@ -58,22 +58,25 @@ describe("#3520 production class integration callable ABI", () => {
 
     const constructorHandle = ctx.programAbiClassCallables?.handleForUnit(implicitConstructor!.id);
     const methodHandle = ctx.programAbiClassCallables?.handleForUnit(valueMethod!.id);
-    const initRef = irSupportFuncRef(emptyClass!.id, "class-constructor-init", "Empty_init");
-    const initHandle =
-      initRef.binding.kind === "support"
-        ? ctx.programAbiClassCallables?.handleForSupport(initRef.binding.bindingId)
+    const constructorNewRef = irSupportFuncRef(emptyClass!.id, "class-constructor-new", "Empty_new");
+    const constructorNewHandle =
+      constructorNewRef.binding.kind === "support"
+        ? ctx.programAbiClassCallables?.handleForSupport(constructorNewRef.binding.bindingId)
         : undefined;
+    const constructorInitRef = irUnitFuncRef({ unitId: implicitConstructor!.id, name: "Empty_init" });
     expect(constructorHandle).toBeDefined();
     expect(methodHandle).toBeDefined();
-    expect(initHandle).toBeDefined();
+    expect(constructorNewHandle).toBeDefined();
+    expect(constructorHandle).toBe(ctx.funcMap.get("Empty_init"));
+    expect(constructorNewHandle).toBe(ctx.funcMap.get("Empty_new"));
     for (const [physicalName, handle] of ctx.funcMap) {
-      if (handle === constructorHandle || handle === methodHandle || handle === initHandle) {
+      if (handle === constructorHandle || handle === methodHandle || handle === constructorNewHandle) {
         ctx.funcMap.delete(physicalName);
       }
     }
     expect([...ctx.funcMap.values()]).not.toContain(constructorHandle);
     expect([...ctx.funcMap.values()]).not.toContain(methodHandle);
-    expect([...ctx.funcMap.values()]).not.toContain(initHandle);
+    expect([...ctx.funcMap.values()]).not.toContain(constructorNewHandle);
 
     const emptyShape: IrClassShape = {
       classId: emptyClass!.id,
@@ -88,6 +91,8 @@ describe("#3520 production class integration callable ABI", () => {
         },
       ],
       constructorParams: [],
+      constructorTarget: constructorNewRef,
+      constructorInitTarget: constructorInitRef,
     };
     const selection: IrSelection = {
       funcs: new Set(["main"]),
@@ -121,5 +126,7 @@ describe("#3520 production class integration callable ABI", () => {
     expect(ctx.irUnitFuncMap.get(implicitConstructor!.id)).toBeDefined();
     expect(ctx.irUnitFuncMap.get(valueMethod!.id)).toBeDefined();
     expect(ctx.irUnitFuncMap.get(main!.id)).toBeDefined();
+    if (constructorNewRef.binding.kind !== "support") throw new Error("expected class-new support reference");
+    expect(session.hasPlan(constructorNewRef.binding.bindingId)).toBe(true);
   });
 });
