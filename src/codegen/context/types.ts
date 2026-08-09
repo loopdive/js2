@@ -1172,6 +1172,8 @@ export interface CodegenContext {
   programAbiExports?: import("../program-abi-export-planning.js").ProgramAbiExportRegistry;
   programAbiTypes?: import("../program-abi-type-planning.js").ProgramAbiTypeRegistry;
   irPlanningIdentityContext?: import("../../ir/planning-identity.js").IrPlanningIdentityContext;
+  /** Exact prepared class-body routing retained while nested bodies compile in scope. */
+  irClassBodyRouting?: import("../class-bodies.js").ClassBodyCompileRouting;
   checker: ts.TypeChecker;
   /** True when the single-file input is an ECMAScript Module goal. Script-goal
    * module init uses the host global object for top-level `this`; module goal

@@ -13,7 +13,7 @@ import {
 export interface IrClassShapeDeclaration {
   readonly classId: IrClassId;
   readonly legacyName: string;
-  readonly declaration: ts.ClassDeclaration;
+  readonly declaration: ts.ClassDeclaration | ts.ClassExpression;
 }
 
 export interface IrClassShapeEntry extends IrClassShapeDeclaration {
@@ -166,7 +166,7 @@ export function resolveIrClassTypeId(
 /** `null` means no extends clause; `undefined` means an unsupported/non-class parent. */
 export function resolveIrParentClassId(
   checker: ts.TypeChecker,
-  declaration: ts.ClassDeclaration,
+  declaration: ts.ClassDeclaration | ts.ClassExpression,
   context: IrPlanningIdentityContext,
 ): IrClassId | null | undefined {
   const heritage = declaration.heritageClauses?.find((clause) => clause.token === ts.SyntaxKind.ExtendsKeyword);
@@ -207,7 +207,7 @@ export function collectIrClassShapeDeclarations(
   sourceFile: ts.SourceFile,
   context: IrPlanningIdentityContext,
 ): readonly IrClassShapeDeclaration[] {
-  requireExactSource(sourceFile, context);
+  const sourceId = requireExactSource(sourceFile, context);
   const occurrences = new Map<string, number>();
   const local: IrClassShapeDeclaration[] = [];
   const authoritativeBySource = new Map<ts.SourceFile, ts.ClassDeclaration[]>();
@@ -250,7 +250,29 @@ export function collectIrClassShapeDeclarations(
       );
     }
   }
-  return local.filter(({ legacyName }) => occurrences.get(legacyName) === 1);
+  const selected = local.filter(({ legacyName }) => occurrences.get(legacyName) === 1);
+  const selectedIds = new Set(selected.map(({ classId }) => classId));
+  const nestedTerminalClassIds = new Set(
+    context.inventory.terminalUnits
+      .filter(
+        (terminal) => terminal.observedKind === "class-member" && terminal.containingTerminalOwnerId !== undefined,
+      )
+      .map((terminal) => terminal.lexicalOwnerId as IrClassId),
+  );
+  for (const record of context.inventory.classes) {
+    if (record.sourceId !== sourceId || !nestedTerminalClassIds.has(record.id)) {
+      continue;
+    }
+    const declaration = context.declarationByClassId.get(record.id);
+    if (!declaration || requireIrClassShapeClassId(declaration, context) !== record.id) {
+      return invariant("class-record-mismatch", `nested class ${record.id} has no exact declaration`);
+    }
+    if (!selectedIds.has(record.id)) {
+      selected.push({ classId: record.id, legacyName: record.displayName, declaration });
+      selectedIds.add(record.id);
+    }
+  }
+  return selected;
 }
 
 /** Create the only name-keyed class-shape view, omitting every ambiguous label. */

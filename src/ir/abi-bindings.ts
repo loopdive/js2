@@ -69,6 +69,52 @@ export function irModuleTdzGlobalBindingId(sourceId: IrSourceId, declarationOrdi
   });
 }
 
+export interface IrModuleGlobalBindingIdentity {
+  readonly sourceId: IrSourceId;
+  readonly declarationOrdinal: number;
+  readonly role: "module-binding" | "module-tdz";
+}
+
+/** Parse only canonical source module-value/TDZ binding IDs. */
+export function parseIrModuleGlobalBindingId(id: IrBindingId): IrModuleGlobalBindingIdentity | undefined {
+  const parts = String(id).split(":");
+  if (parts.length !== 6 || parts[0] !== "ir-binding" || parts[1] !== "v1" || parts[2] !== "global") {
+    return undefined;
+  }
+  let sourceId: string;
+  let role: string;
+  try {
+    sourceId = decodeURIComponent(parts[3]!);
+    role = decodeURIComponent(parts[4]!);
+  } catch {
+    return undefined;
+  }
+  if (!sourceId.startsWith("ir-source:v1:") || (role !== "module-binding" && role !== "module-tdz")) {
+    return undefined;
+  }
+  const ordinalText = parts[5]!;
+  if (!/^\d{16}$/.test(ordinalText)) return undefined;
+  const declarationOrdinal = Number(ordinalText);
+  if (!Number.isSafeInteger(declarationOrdinal)) return undefined;
+  const canonical =
+    role === "module-binding"
+      ? irModuleGlobalBindingId(sourceId as IrSourceId, declarationOrdinal)
+      : irModuleTdzGlobalBindingId(sourceId as IrSourceId, declarationOrdinal);
+  return canonical === id ? { sourceId: sourceId as IrSourceId, declarationOrdinal, role } : undefined;
+}
+
+/** Prove that one value global and one TDZ global belong to the exact same declaration. */
+export function arePairedIrModuleGlobalBindingIds(valueId: IrBindingId, tdzId: IrBindingId): boolean {
+  const value = parseIrModuleGlobalBindingId(valueId);
+  const tdz = parseIrModuleGlobalBindingId(tdzId);
+  return (
+    value?.role === "module-binding" &&
+    tdz?.role === "module-tdz" &&
+    value.sourceId === tdz.sourceId &&
+    value.declarationOrdinal === tdz.declarationOrdinal
+  );
+}
+
 /** Exact source-owned value storage for one top-level declaration ordinal. */
 export function irModuleGlobalRef(sourceId: IrSourceId, declarationOrdinal: number, adapterName: string): IrGlobalRef {
   return globalRef(adapterName, {

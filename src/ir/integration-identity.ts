@@ -105,7 +105,7 @@ function requireExactTerminalDeclaration(
 }
 
 function requireExactClass(
-  declaration: ts.ClassDeclaration,
+  declaration: ts.ClassDeclaration | ts.ClassExpression,
   sourceFile: ts.SourceFile,
   sourceId: IrSourceId,
   context: IrPlanningIdentityContext,
@@ -117,8 +117,8 @@ function requireExactClass(
     context.declarationByClassId.get(classId) !== declaration ||
     !record ||
     record.sourceId !== sourceId ||
-    declaration.parent !== sourceFile ||
     declaration.getSourceFile() !== sourceFile ||
+    (record.lexicalOwnerId === null && (!ts.isClassDeclaration(declaration) || declaration.parent !== sourceFile)) ||
     record.declarationStart !== declaration.getStart(sourceFile) ||
     record.declarationEnd !== declaration.end
   ) {
@@ -183,7 +183,7 @@ function validateProjectedOwners(expected: ReadonlyMap<string, IrUnitId>, plans:
  */
 export function validateIrIntegrationPopulation(
   sourceFile: ts.SourceFile,
-  selection: Pick<IrSelection, "funcs" | "classMembers" | "moduleInit">,
+  selection: Pick<IrSelection, "funcs" | "classMembers" | "classMemberUnitIds" | "moduleInit">,
   plans: IntegrationIdentityPlans,
 ): IrValidatedIntegrationPopulation {
   const context = plans.identityContext;
@@ -224,42 +224,91 @@ export function validateIrIntegrationPopulation(
     );
   }
 
-  const missingMembers = new Set(selection.classMembers ?? []);
-  for (const declaration of sourceFile.statements) {
-    if (!ts.isClassDeclaration(declaration) || !declaration.name) continue;
-    const selectedMembers = declaration.members.flatMap((member) => {
-      const legacyName = classMemberLegacyName(declaration.name!.text, member);
-      return legacyName !== undefined && selection.classMembers?.has(legacyName) ? [{ member, legacyName }] : [];
-    });
-    if (selectedMembers.length === 0) continue;
-    const classId = requireExactClass(declaration, sourceFile, sourceId, context);
-    for (const { member, legacyName } of selectedMembers) {
-      if (!missingMembers.delete(legacyName) || member.parent !== declaration) {
-        integrationMismatch(`selected class member ${JSON.stringify(legacyName)} is not unique in the current AST`);
+  if (selection.classMemberUnitIds !== undefined) {
+    const selectedLegacyNames = new Set<string>();
+    for (const unitId of selection.classMemberUnitIds) {
+      const member = context.declarationByUnitId.get(unitId);
+      const terminal = context.terminalByUnitId.get(unitId);
+      if (
+        !member ||
+        (!ts.isConstructorDeclaration(member) &&
+          !ts.isMethodDeclaration(member) &&
+          !ts.isGetAccessorDeclaration(member) &&
+          !ts.isSetAccessorDeclaration(member)) ||
+        !terminal
+      ) {
+        integrationMismatch(`selected exact class member ${unitId} has no callable declaration`);
       }
-      const terminal = requireExactTerminalDeclaration(
+      const owner = member.parent;
+      if (!ts.isClassDeclaration(owner) && !ts.isClassExpression(owner)) {
+        planningInvariant("class-record-mismatch", `selected exact class member ${unitId} has no class owner`);
+      }
+      const classId = requireExactClass(owner, sourceFile, sourceId, context);
+      const exactTerminal = requireExactTerminalDeclaration(
         member,
         sourceFile,
         sourceId,
-        legacyName,
+        terminal.legacyMatchName,
         "class-member",
         context,
       );
-      const isStatic = classElementIsStatic(member);
-      if (terminal.lexicalOwnerId !== classId || terminal.staticClassMember !== isStatic) {
+      if (
+        exactTerminal.id !== unitId ||
+        exactTerminal.lexicalOwnerId !== classId ||
+        exactTerminal.staticClassMember !== classElementIsStatic(member)
+      ) {
         planningInvariant(
           "terminal-record-mismatch",
-          `selected class member ${terminal.id} does not retain its exact class/static owner`,
+          `selected exact class member ${unitId} does not retain its exact class/static placement`,
         );
       }
-      ownerUnitIdByDeclaration.set(member, terminal.id);
-      addExpectedOwner(expectedOwners, legacyName, terminal.id);
+      ownerUnitIdByDeclaration.set(member, unitId);
+      addExpectedOwner(expectedOwners, terminal.legacyMatchName, unitId);
+      selectedLegacyNames.add(terminal.legacyMatchName);
     }
-  }
-  if (missingMembers.size > 0) {
-    integrationMismatch(
-      `selected class members are absent from the current AST: ${[...missingMembers].sort().join(", ")}`,
-    );
+    for (const legacyName of selection.classMembers ?? []) {
+      if (!selectedLegacyNames.has(legacyName)) {
+        integrationMismatch(`compatibility class member ${JSON.stringify(legacyName)} has no exact selected owner`);
+      }
+    }
+  } else {
+    const missingMembers = new Set(selection.classMembers ?? []);
+    for (const declaration of sourceFile.statements) {
+      if (!ts.isClassDeclaration(declaration) || !declaration.name) continue;
+      const selectedMembers = declaration.members.flatMap((member) => {
+        const legacyName = classMemberLegacyName(declaration.name!.text, member);
+        return legacyName !== undefined && selection.classMembers?.has(legacyName) ? [{ member, legacyName }] : [];
+      });
+      if (selectedMembers.length === 0) continue;
+      const classId = requireExactClass(declaration, sourceFile, sourceId, context);
+      for (const { member, legacyName } of selectedMembers) {
+        if (!missingMembers.delete(legacyName) || member.parent !== declaration) {
+          integrationMismatch(`selected class member ${JSON.stringify(legacyName)} is not unique in the current AST`);
+        }
+        const terminal = requireExactTerminalDeclaration(
+          member,
+          sourceFile,
+          sourceId,
+          legacyName,
+          "class-member",
+          context,
+        );
+        const isStatic = classElementIsStatic(member);
+        if (terminal.lexicalOwnerId !== classId || terminal.staticClassMember !== isStatic) {
+          planningInvariant(
+            "terminal-record-mismatch",
+            `selected class member ${terminal.id} does not retain its exact class/static owner`,
+          );
+        }
+        ownerUnitIdByDeclaration.set(member, terminal.id);
+        addExpectedOwner(expectedOwners, legacyName, terminal.id);
+      }
+    }
+    if (missingMembers.size > 0) {
+      integrationMismatch(
+        `selected class members are absent from the current AST: ${[...missingMembers].sort().join(", ")}`,
+      );
+    }
   }
 
   const population = collectModuleInitPopulation(sourceFile);

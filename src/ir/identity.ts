@@ -145,6 +145,12 @@ export interface IrUnownedSupportUnitRecord extends IrUnitRecordBase {
 export interface IrTerminalUnitRecord extends IrUnitRecordBase {
   readonly terminal: true;
   readonly terminalOwnerId: IrUnitId;
+  /**
+   * Exact enclosing executable when a bounded nested body is promoted to its
+   * own terminal. This is a component edge only: ownership and outcome
+   * routing remain keyed by this terminal's own id.
+   */
+  readonly containingTerminalOwnerId?: IrUnitId;
   readonly unownedReason?: never;
   readonly observedKind: IrTerminalObservedKind;
   readonly legacyKey: string;
@@ -827,6 +833,7 @@ class SourceInventoryBuilder {
     directFailure?: IrPreparationFailure,
     legacyBodyAvailable = true,
     syntheticRole?: IrSyntheticUnitRole,
+    containingTerminalOwnerId?: IrUnitId,
   ): IrTerminalUnitRecord {
     const effectiveSyntheticRole =
       syntheticRole ??
@@ -855,6 +862,7 @@ class SourceInventoryBuilder {
       ...this.position(node),
       terminal: true,
       terminalOwnerId: id,
+      ...(containingTerminalOwnerId ? { containingTerminalOwnerId } : {}),
       observedKind,
       legacyKey: `${this.sourceFile.fileName}::${observedKind}::${legacyMatchName}#${legacyOrdinal}`,
       legacyMatchName,
@@ -941,6 +949,8 @@ class SourceInventoryBuilder {
       displayName,
       compilerOrigin ? compilerClassRole(compilerOrigin) : undefined,
     );
+    const directNestedClass =
+      !topLevelDeclaration && inheritedTerminalOwnerId !== null && lexicalOwnerId === inheritedTerminalOwnerId;
     const deferredModuleInitScans: ((moduleOwner: IrUnitId) => void)[] = [];
     const definitionExpressions: ts.Expression[] = [...decoratorExpressions(node)];
     for (const clause of node.heritageClauses ?? []) {
@@ -1030,33 +1040,44 @@ class SourceInventoryBuilder {
         | ts.SetAccessorDeclaration;
       if (!functionalMember.body) continue;
       if (ts.isConstructorDeclaration(functionalMember)) hasExecutableConstructor = true;
+      const promoteNestedAccessor =
+        directNestedClass &&
+        (ts.isGetAccessorDeclaration(functionalMember) || ts.isSetAccessorDeclaration(functionalMember));
 
-      const unit = topLevelDeclaration
-        ? this.addTerminalUnit(
-            ts.isConstructorDeclaration(functionalMember)
-              ? "class-constructor"
-              : this.classMemberKind(functionalMember),
-            classRecord.id,
-            member,
-            legacyName,
-            "class-member",
-            isStatic,
-            anonymousFailure,
-            true,
-            memberSyntheticRole,
-          )
-        : this.addSupportUnit(
-            ts.isConstructorDeclaration(functionalMember)
-              ? "class-constructor"
-              : this.classMemberKind(functionalMember),
-            classRecord.id,
-            inheritedTerminalOwnerId,
-            member,
-            legacyName,
-            memberSyntheticRole,
-          );
+      const unit =
+        topLevelDeclaration || promoteNestedAccessor
+          ? this.addTerminalUnit(
+              ts.isConstructorDeclaration(functionalMember)
+                ? "class-constructor"
+                : this.classMemberKind(functionalMember),
+              classRecord.id,
+              member,
+              promoteNestedAccessor
+                ? `${legacyName}@nested:${classRecord.declarationStart}:${member.getStart(this.sourceFile)}`
+                : legacyName,
+              "class-member",
+              isStatic,
+              anonymousFailure,
+              true,
+              memberSyntheticRole,
+              promoteNestedAccessor ? (inheritedTerminalOwnerId ?? undefined) : undefined,
+            )
+          : this.addSupportUnit(
+              ts.isConstructorDeclaration(functionalMember)
+                ? "class-constructor"
+                : this.classMemberKind(functionalMember),
+              classRecord.id,
+              inheritedTerminalOwnerId,
+              member,
+              legacyName,
+              memberSyntheticRole,
+            );
       if (ts.isConstructorDeclaration(functionalMember)) explicitConstructor = unit;
-      this.scanCallable(functionalMember, unit.id, topLevelDeclaration ? unit.id : inheritedTerminalOwnerId);
+      this.scanCallable(
+        functionalMember,
+        unit.id,
+        topLevelDeclaration || promoteNestedAccessor ? unit.id : inheritedTerminalOwnerId,
+      );
     }
 
     if (!hasExecutableConstructor && firstInstanceInitializer) {
