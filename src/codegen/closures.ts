@@ -1503,6 +1503,66 @@ export function runtimeParameters(arrow: ts.ArrowFunction | ts.FunctionExpressio
 }
 
 /**
+ * (#4249) True for a declaration the TS **binder never visited** — it has no
+ * `symbol`, so every checker query that resolves through one (notably
+ * `getSignatureFromDeclaration`, which does `getDeclarationOfKind(symbol, …)`)
+ * throws `Cannot read properties of undefined (reading 'declarations' |
+ * 'escapedName')` rather than returning `undefined`.
+ *
+ * The only such nodes in the compiler are foreign ASTs spliced in from a bare
+ * `ts.createSourceFile` parse — today, the eval-inline lifter
+ * (`src/codegen/expressions/eval-inline.ts`). `allNodesInlineSupported` bails on
+ * the node kinds whose codegen it knew reached the checker (function/arrow
+ * expressions, classes), but object-literal **accessors** were missed: they are
+ * fed to `compileArrowAsClosure` through an `as unknown as ts.FunctionExpression`
+ * cast in `emitObjectLiteralAccessorFn`, so `eval("o = {get foo(){…}}")` crashed
+ * the whole compile in the standalone lane.
+ *
+ * Widening the eval bail list instead would have been wrong: on the gc lane the
+ * same splice compiles fine (it routes to `compileArrowAsCallback`, which asks
+ * the checker nothing) and five test262 files PASS through it — bailing would
+ * have traded a standalone crash for a gc regression.
+ */
+function declarationIsUnbound(decl: ts.Declaration): boolean {
+  return (decl as { symbol?: ts.Symbol }).symbol === undefined;
+}
+
+/**
+ * (#4249) The syntactic stand-in for a return type when the checker cannot be
+ * asked (see `declarationIsUnbound`). A body with any value-carrying `return`
+ * yields a value; anything else is void. Nested functions are not descended
+ * into — their `return`s belong to them, not to `fn`.
+ */
+function unboundClosureReturnsAValue(fn: ts.ArrowFunction | ts.FunctionExpression): boolean {
+  const body = fn.body;
+  if (body === undefined) return false;
+  if (!ts.isBlock(body)) return true; // concise arrow body — always a value
+  let found = false;
+  const visit = (n: ts.Node): void => {
+    if (found) return;
+    if (
+      ts.isFunctionDeclaration(n) ||
+      ts.isFunctionExpression(n) ||
+      ts.isArrowFunction(n) ||
+      ts.isClassDeclaration(n) ||
+      ts.isClassExpression(n) ||
+      ts.isMethodDeclaration(n) ||
+      ts.isGetAccessorDeclaration(n) ||
+      ts.isSetAccessorDeclaration(n)
+    ) {
+      return; // a nested function's `return` is not ours
+    }
+    if (ts.isReturnStatement(n) && n.expression !== undefined) {
+      found = true;
+      return;
+    }
+    n.forEachChild(visit);
+  };
+  body.forEachChild(visit);
+  return found;
+}
+
+/**
  * (#2939) Compute the funcref-wrapper signature (user param ValTypes + return
  * ValType) of an arrow / function-expression closure, WITHOUT emitting anything.
  *
@@ -1526,6 +1586,19 @@ export function computeClosureWrapperSig(
   arrow: ts.ArrowFunction | ts.FunctionExpression,
 ): { params: ValType[]; returnType: ValType | null } {
   const isGenerator = ts.isFunctionExpression(arrow) && arrow.asteriskToken !== undefined;
+
+  // (#4249) A foreign, never-bound declaration (an eval-inline splice) cannot be
+  // asked ANY symbol-resolving question. Answer it syntactically instead — which
+  // is also the semantically right answer, since such a body is untyped JS:
+  // every parameter is `any` (externref) and the return is externref iff the
+  // body returns a value. Skipping the checker here is what keeps
+  // `eval("o = {get foo(){…}}")` from taking down the whole compile.
+  if (declarationIsUnbound(arrow)) {
+    return {
+      params: runtimeParameters(arrow).map(() => ({ kind: "externref" as const })),
+      returnType: isGenerator || unboundClosureReturnsAValue(arrow) ? { kind: "externref" } : null,
+    };
+  }
 
   // 1. Parameter types. (#3359) A TS `this` param is type-level only — exclude it.
   const arrowParams: ValType[] = [];
@@ -2185,8 +2258,8 @@ export function compileLiftedClosureBody(
   // local in the lifted fctx and register it in `boxedTdzFlags` +
   // `tdzFlagLocals`. This makes existing TDZ-check call sites (calls.ts,
   // identifiers.ts) automatically route through `struct.get` on the ref cell.
-  // Field-layout invariant: TDZ flag fields come AFTER all value fields,
-  // i.e. fieldIdx = 1 + captures.length + tdzCaptureIndex.
+  // Field-layout invariant: TDZ flag fields come AFTER all value fields, i.e.
+  // fieldIdx = CLOSURE_CAPTURE_FIELD_BASE + captures.length + tdzCaptureIndex.
   {
     const tdzFlaggedCapturesForPrologue = captures.filter((c) => c.hasTdzFlag);
     if (tdzFlaggedCapturesForPrologue.length > 0) {

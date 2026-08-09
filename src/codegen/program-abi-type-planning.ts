@@ -8,6 +8,13 @@ import { ProgramAbiInvariantError } from "../ir/program-abi.js";
 import type { FuncTypeDef, StructTypeDef, TypeDef } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
+// (#4241) The closure header layout is defined ONCE, in a leaf module both
+// this validator and the mint sites can import — see closure-header-layout.ts.
+import {
+  closureSubtypeFieldCount,
+  hasClosureHeaderPrefix,
+  isCanonicalClosureHeader,
+} from "./closures/closure-header-layout.js";
 import { requireIrClassShapeClassId } from "./ir-class-shapes.js";
 import type { ProgramAbiSession, ProgramAbiTypeCell } from "./program-abi-session.js";
 import { canonicalProgramAbiTypeDef, canonicalProgramAbiValType } from "./program-abi-signatures.js";
@@ -736,8 +743,13 @@ export class ProgramAbiTypeRegistry {
     this.requireUniqueAllocatedType(request.liftedFuncType, "closure lifted function type");
     const subtypeIndex = this.requireUniqueAllocatedType(request.capturedSubtypeType, "closure captured subtype");
 
-    const hasCanonicalWrapperFields = (type: StructTypeDef): boolean =>
-      type.fields.length === 2 && type.fields[0]?.type.kind === "funcref" && type.fields[1]?.type.kind === "i32";
+    // (#4241) Derived from the shared header layout, NOT restated here. This
+    // check used to spell the layout out as `length === 2 && funcref && i32`;
+    // when the `$bag` slot was inserted at index 2 the mint sites and this
+    // validator disagreed, and the disagreement did not warn — it THREW, so
+    // every async function in the playground examples failed IR-first with
+    // "non-canonical physical wrapper root" and `check:ir-only` exited 1.
+    const hasCanonicalWrapperFields = (type: StructTypeDef): boolean => isCanonicalClosureHeader(type.fields);
     if (!hasCanonicalWrapperFields(request.wrapperRootType)) {
       throw new ProgramAbiInvariantError(
         "type-remap-mismatch",
@@ -778,9 +790,8 @@ export class ProgramAbiTypeRegistry {
     } else if (
       request.capturedSubtypeType === request.allocationWrapperType ||
       request.capturedSubtypeType.superTypeIdx !== wrapperIndex ||
-      request.capturedSubtypeType.fields.length !== request.captureFieldTypes.length + 2 ||
-      request.capturedSubtypeType.fields[0]?.type.kind !== "funcref" ||
-      request.capturedSubtypeType.fields[1]?.type.kind !== "i32"
+      request.capturedSubtypeType.fields.length !== closureSubtypeFieldCount(request.captureFieldTypes.length) ||
+      !hasClosureHeaderPrefix(request.capturedSubtypeType.fields)
     ) {
       throw new ProgramAbiInvariantError(
         "type-remap-mismatch",

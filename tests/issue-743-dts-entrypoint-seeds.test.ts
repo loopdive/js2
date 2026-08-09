@@ -29,7 +29,15 @@ import { buildIrPlanningIdentityContext, type IrPlanningIdentityContext } from "
 import { buildIrUnitTypeMap } from "../src/ir/propagate.js";
 import { ts } from "../src/ts-api.js";
 
-const ENV_KEYS = ["JS2WASM_DTS_ENTRYPOINT_SEEDS", "JS2WASM_FNCTOR_CTOR_PARAM_TYPES", "JS2WASM_FNCTOR_FIELD_PROVENANCE"];
+const ENV_KEYS = [
+  "JS2WASM_DTS_ENTRYPOINT_SEEDS",
+  "JS2WASM_FNCTOR_CTOR_PARAM_TYPES",
+  "JS2WASM_FNCTOR_FIELD_PROVENANCE",
+  // (#743 defaults flip, 2026-08-08) The field-SLOT consumer is the family's
+  // one deliberately-excluded sub-lever and is opt-in — see
+  // src/derivation-flags.ts. The slot pin below asks for it explicitly.
+  "JS2WASM_FNCTOR_CTOR_PARAM_SLOTS",
+];
 const saved = new Map(ENV_KEYS.map((key) => [key, process.env[key]]));
 afterEach(() => {
   for (const [key, value] of saved) {
@@ -197,20 +205,25 @@ async function compileE2E(withDts: boolean) {
 }
 
 describe("#743 — .d.ts entrypoint seeds end-to-end", () => {
-  it("flag off: byte-identical whether declarations are supplied or not", async () => {
-    // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
-    delete process.env.JS2WASM_DTS_ENTRYPOINT_SEEDS;
+  // (#743 defaults flip, 2026-08-08) OFF is now a SPELLING, not the absence of
+  // one. This test used to establish its baseline by DELETING the variable;
+  // after the flip that arm compiles with seeding ON, so a supplied-`.d.ts`
+  // compile would be compared against an already-seeded baseline and the
+  // byte-identity assertion would pass for the wrong reason.
+  it("flag off (explicit 0/off): byte-identical whether declarations are supplied or not", async () => {
+    process.env.JS2WASM_DTS_ENTRYPOINT_SEEDS = "0";
     const bare = await compileE2E(false);
     const withDts = await compileE2E(true);
-    process.env.JS2WASM_DTS_ENTRYPOINT_SEEDS = "0";
-    const explicitOff = await compileE2E(true);
+    process.env.JS2WASM_DTS_ENTRYPOINT_SEEDS = "off";
+    const wordOff = await compileE2E(true);
     expect(hash(withDts.binary!)).toBe(hash(bare.binary!));
-    expect(hash(explicitOff.binary!)).toBe(hash(bare.binary!));
+    expect(hash(wordOff.binary!)).toBe(hash(bare.binary!));
   });
 
   it("flag on: seeds narrow the downstream fnctor field slot with NO parity demotion", async () => {
     process.env.JS2WASM_DTS_ENTRYPOINT_SEEDS = "1";
     process.env.JS2WASM_FNCTOR_CTOR_PARAM_TYPES = "1";
+    process.env.JS2WASM_FNCTOR_CTOR_PARAM_SLOTS = "1";
     process.env.JS2WASM_FNCTOR_FIELD_PROVENANCE = "1";
     resetFnctorFieldProvenance();
     const seeded = await compileE2E(true);
@@ -225,8 +238,9 @@ describe("#743 — .d.ts entrypoint seeds end-to-end", () => {
   });
 
   it("flag on without declarations: byte-identical to baseline (no declarations → no behavior change)", async () => {
-    // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
-    delete process.env.JS2WASM_DTS_ENTRYPOINT_SEEDS;
+    // Baseline must be explicit-OFF: post-flip, unset would BE the flag-on arm
+    // and this test would compare a compile against itself.
+    process.env.JS2WASM_DTS_ENTRYPOINT_SEEDS = "0";
     const bare = await compileE2E(false);
     process.env.JS2WASM_DTS_ENTRYPOINT_SEEDS = "1";
     const flagOnNoDts = await compileE2E(false);

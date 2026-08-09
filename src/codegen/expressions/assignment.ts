@@ -122,6 +122,7 @@ import { isStrictContext } from "../helpers/is-strict-function.js";
 import { tryCompileStrictFunctionPoisonAssignment } from "../function-poison-pill-access.js";
 import { emitRuntimeEvalAotCallableAdapter } from "../runtime-eval-callable.js";
 import { tryEmitStaticI32Expression } from "../i32-static-range-expr.js";
+import { emitToPropertyKeyOnce } from "./computed-member-reference.js";
 
 /**
  * Emit a null/undefined guard for an externref-typed destructuring source.
@@ -5190,7 +5191,22 @@ function compileExternSetFallback(
   });
   fctx.body.push({ op: "local.set", index: objLocal });
 
-  // Compile value first so we can save it for return
+  // §13.15.2: evaluate and canonicalize the computed key before the RHS.
+  // The native standalone setter has receiver-specific early dispatch arms
+  // which can return before its string-keyed object table performs
+  // ToPropertyKey.  Canonicalizing at the Reference boundary both preserves
+  // the observable ordering and gives every receiver arm the same key.
+  const keyResult = compileExpression(ctx, fctx, target.argumentExpression, {
+    kind: "externref",
+  });
+  if (!keyResult) return null;
+  emitToPropertyKeyOnce(ctx, fctx);
+  const keyLocal = allocLocal(fctx, `__eset_key_${fctx.locals.length}`, {
+    kind: "externref",
+  });
+  fctx.body.push({ op: "local.set", index: keyLocal });
+
+  // Compile value after ToPropertyKey and save it for the assignment result.
   const valResult = compileExpression(ctx, fctx, value, { kind: "externref" });
   if (!valResult) return null;
   const valLocal = allocLocal(fctx, `__eset_val_${fctx.locals.length}`, {
@@ -5200,9 +5216,7 @@ function compileExternSetFallback(
 
   // Push args: obj, key, val
   fctx.body.push({ op: "local.get", index: objLocal });
-  compileExpression(ctx, fctx, target.argumentExpression, {
-    kind: "externref",
-  });
+  fctx.body.push({ op: "local.get", index: keyLocal });
   fctx.body.push({ op: "local.get", index: valLocal });
 
   // (#3374) Bracket writes carry the same PutValue strictness bit as dot writes.

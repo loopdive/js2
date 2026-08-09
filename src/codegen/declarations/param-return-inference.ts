@@ -7,6 +7,7 @@
 import type { DtsSeedAtom } from "../../checker/dts-entrypoint-seeds.js";
 import { isVoidType, unwrapPromiseType } from "../../checker/type-mapper.js";
 import { isSyntacticallyBooleanExpr } from "../../checker/oracle.js";
+import { fnctorCtorParamTypesFlagEnabled } from "../../derivation-flags.js";
 import { forEachChild, ts } from "../../ts-api.js";
 import { isStandalonePromiseActive } from "../async-scheduler.js";
 import { hasAsyncModifier, resolveWasmType } from "../index.js";
@@ -203,12 +204,14 @@ export function inferParamTypeFromCallSites(
     // (#3961) soundness rules below are shared verbatim.
     //
     // Gated with the field half (`fnctor-ctor-param-types.ts`) on the SAME
-    // variable, and checked inline rather than imported to avoid a module cycle
-    // (that module imports this one). The two must not be separable: narrowing
-    // the parameter while the slot stays `externref` re-boxes on every store and
-    // measured strictly WORSE than doing nothing (+27 bytes on a one-field
-    // fixture). Default off — see that module for the acorn numbers.
-    const ctorSitesEnabled = process.env.JS2WASM_FNCTOR_CTOR_PARAM_TYPES === "1";
+    // variable. That module imports this one, so the predicate cannot come from
+    // it without a cycle; it comes from the leaf `src/derivation-flags.ts`,
+    // which is exactly why that module exists (three readers, one spelling).
+    // The two halves must not be separable: narrowing the parameter while the
+    // slot stays `externref` re-boxes on every store and measured strictly
+    // WORSE than doing nothing (+27 bytes on a one-field fixture).
+    // **ON by default since 2026-08-08** — see that module for the acorn numbers.
+    const ctorSitesEnabled = fnctorCtorParamTypesFlagEnabled();
     if (
       (ts.isCallExpression(node) || (ctorSitesEnabled && ts.isNewExpression(node))) &&
       ts.isIdentifier(node.expression) &&

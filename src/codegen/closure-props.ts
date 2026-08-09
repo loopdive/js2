@@ -88,6 +88,42 @@ const F_NEXT = 0;
 const F_KEY = 1;
 const F_BAG = 2;
 
+/**
+ * (#4241) The carrier-intrinsic `$bag` slot name — see `closureBagField()` in
+ * `closures/funcref-wrapper-types.js`. Resolved by NAME (the `$shape` idiom),
+ * never by a baked index, so a later header change cannot silently misread it.
+ */
+const BAG_SLOT_FIELD = "$bag";
+
+/**
+ * (#4241) The carrier roots that carry an intrinsic `$bag` slot, paired with
+ * that slot's field index.
+ *
+ * Splitting the carrier set into SLOTTED and SLOTLESS is the whole fix. A
+ * slotted carrier answers `__closure_bag_lookup` with one `struct.get` and
+ * never enters the `$ClosurePropEntry` registry at all; a slotless one keeps
+ * the original linear registry walk. Measured on the acorn standalone
+ * self-parse before this change: 39,455 lookups/parse, every one of them a
+ * full `ref.eq` walk of a list that grows ~75 entries per parse and is never
+ * pruned — quadratic over a session, and a leak (the registry pinned every
+ * carrier that ever grew a bag).
+ *
+ * Resolution is by FIELD NAME on the type table, so a root that did not get
+ * the slot (e.g. the runtime-eval AOT callable carrier, or a bare
+ * `__StandaloneRegExp`) is automatically routed to the registry rather than
+ * mis-read at a wrong index.
+ */
+function slottedCarrierRoots(ctx: CodegenContext, carrierTypeIdxs: number[]): { typeIdx: number; bagIdx: number }[] {
+  const out: { typeIdx: number; bagIdx: number }[] = [];
+  for (const typeIdx of carrierTypeIdxs) {
+    const def = ctx.mod.types[typeIdx];
+    if (!def || def.kind !== "struct") continue;
+    const bagIdx = def.fields.findIndex((f) => f?.name === BAG_SLOT_FIELD);
+    if (bagIdx >= 0) out.push({ typeIdx, bagIdx });
+  }
+  return out;
+}
+
 /** Build `__extern_get`'s non-object receiver arm. */
 export function buildClosurePropGetMissArm(ctx: CodegenContext, getMiss: () => Instr[]): Instr[] {
   const closurePropGetIdx = ctx.funcMap.get(CLOSURE_PROP_GET);
@@ -319,64 +355,33 @@ function builtinInstanceCarrierTypeIdxs(ctx: CodegenContext): number[] {
 }
 
 /**
- * Fill the reserved closure-own-property helper bodies at FINALIZE, after
- * every closure root is registered and `__extern_get`/`__extern_set`/
- * `__new_plain_object` are in `funcMap`. No-op when the helpers were never
- * reserved (gc/host mode). Mirrors `fillApplyClosure`.
+ * (#4241) Fill the two carrier-bag natives — `__closure_bag_lookup` and
+ * `__closure_bag_ensure`.
+ *
+ * Split out of `fillClosurePropHelpers` when the `$bag` slot pushed that
+ * function past the 300-LOC per-function ceiling (#3400). The seam is the
+ * natural one: everything here is the BAG STORAGE question (where does a
+ * carrier's own-property `$Object` live), while the caller keeps the
+ * PROPERTY-ACCESS question (get / set / method-call routing on a closure
+ * receiver). The two bag natives share the registry-walk locals and the
+ * slotted-carrier arm list, and nothing else in the caller reads them.
+ *
+ * Both bodies are swapped in place under their reserved names, so every
+ * consumer — instance-props, carrier-bag-{hasown,define,delete,visibility},
+ * instance-tombstones, object-integrity-carrier, closed-struct-extern-set —
+ * inherits the slot through the helper NAME, with no call-site edits.
  */
-export function fillClosurePropHelpers(ctx: CodegenContext): void {
-  if (!ctx.closurePropHelpersReserved) return;
-
-  const entryTypeIdx = ctx.closurePropEntryTypeIdx;
-  const headGlobalIdx = ctx.closurePropHeadGlobalIdx;
-  if (entryTypeIdx === undefined || headGlobalIdx === undefined) return;
-
-  const isClosureIdx = ctx.funcMap.get(IS_CLOSURE_PROP_CARRIER);
-  const bagLookupIdx = ctx.funcMap.get(CLOSURE_BAG_LOOKUP);
-  const bagEnsureIdx = ctx.funcMap.get(CLOSURE_BAG_ENSURE);
-  const externGetIdx = ctx.funcMap.get("__extern_get");
-  const externSetIdx = ctx.funcMap.get("__extern_set");
-  const newPlainObjectIdx = ctx.funcMap.get("__new_plain_object");
-
-  const setBody = (name: string, locals: { name: string; type: ValType }[], body: Instr[]): void => {
-    const idx = ctx.funcMap.get(name);
-    if (idx === undefined) return;
-    const fn = definedFuncAt(ctx, idx);
-    if (!fn) return;
-    fn.locals = locals;
-    fn.body = body;
-  };
-
-  // The undefined-read sentinel, matching `__extern_get`'s `getMiss()` factory
-  // (a fresh array each call — shared Instr objects get double-remapped by
-  // finalize walks; see reference_shared_instr_object_dce_double_remap).
-  const getMiss = (): Instr[] => undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }];
-
-  // ── __is_closure_prop_carrier(externref value) -> i32 ──
-  // (#3468 F1) ref.test chain over the closure BASE-wrapper types (same set as
-  // `__is_closure`/`__typeof_function` via `collectClosureBaseWrapperTypeIdxs`);
-  // a base-root test also matches every capturing subtype instance, so this
-  // subsumes the previously narrowed capturing-only carrier set. This is the
-  // stakeholder-ruled widening that lets shared noncapturing wrappers — the
-  // test262 `assert` harness receiver — carry own properties, which makes the
-  // harness assertions FIRE (honest floor de-inflation; see the issue file).
-  // Constant 0 when the module has no closures.
-  {
-    const carrierTypeIdxs = [...collectClosureBaseWrapperTypeIdxs(ctx), ...builtinInstanceCarrierTypeIdxs(ctx)];
-    const body: Instr[] = [
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "local.set", index: 1 }, // __any
-    ];
-    for (const carrierIdx of carrierTypeIdxs) {
-      body.push({ op: "local.get", index: 1 });
-      body.push({ op: "ref.test", typeIdx: carrierIdx });
-      body.push({ op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 1 }, { op: "return" }] });
-    }
-    body.push({ op: "i32.const", value: 0 });
-    setBody(IS_CLOSURE_PROP_CARRIER, [{ name: "__any", type: { kind: "anyref" } }], body);
-  }
-
+function fillCarrierBagHelpers(
+  ctx: CodegenContext,
+  opts: {
+    entryTypeIdx: number;
+    headGlobalIdx: number;
+    newPlainObjectIdx: number | undefined;
+    slotted: { typeIdx: number; bagIdx: number }[];
+    setBody: (name: string, locals: { name: string; type: ValType }[], body: Instr[]) => void;
+  },
+): void {
+  const { entryTypeIdx, headGlobalIdx, newPlainObjectIdx, slotted, setBody } = opts;
   // ── __closure_bag_lookup(externref recv) -> externref ──
   // Walk the list; on `ref.eq(entry.key, recv-as-eqref)` return entry.bag; on
   // end-of-list return the undefined externref. Read-only (never creates).
@@ -418,30 +423,125 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
     { op: "global.get", index: headGlobalIdx },
     { op: "local.set", index: 2 },
   ];
+  //
+  // (#4241) The SLOTTED arms run first and are terminal: one `ref.test` on the
+  // carrier ROOT (which matches every capturing subtype), one `ref.cast`, one
+  // `struct.get $bag`, `return`. A carrier with no expandos reads back the null
+  // the slot was born with — the "no-bag consult is ~free" fast path, and the
+  // 39,455-consults-per-parse case. The registry walk survives ONLY for
+  // slotless carriers (class / fnctor instances, whose slot is a follow-up
+  // slice, plus RegExp/Date and the runtime-eval AOT carrier).
+  //
+  // Emitting the slotted arms in `__closure_bag_lookup` itself — rather than at
+  // its ~340 call sites — is deliberate: every consumer (instance-props,
+  // carrier-bag-{hasown,define,delete,visibility}, instance-tombstones,
+  // object-integrity-carrier, closed-struct-extern-set) inherits the fix
+  // through the helper NAME, with zero call-site edits and no chance of one
+  // surface disagreeing with another about where a bag lives.
+  const slottedLookupArms = (): Instr[] => {
+    const arms: Instr[] = [];
+    for (const { typeIdx, bagIdx } of slotted) {
+      arms.push(
+        { op: "local.get", index: 3 }, // recvAny
+        { op: "ref.test", typeIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: 3 },
+            { op: "ref.cast", typeIdx },
+            { op: "struct.get", typeIdx, fieldIdx: bagIdx },
+            { op: "return" },
+          ],
+        },
+      );
+    }
+    return arms;
+  };
   {
     const onHit: Instr[] = [
       { op: "local.get", index: 2 },
       { op: "struct.get", typeIdx: entryTypeIdx, fieldIdx: F_BAG },
       { op: "return" },
     ];
-    const body: Instr[] = [...narrowRecvToEq, walkLoop(onHit), { op: "ref.null.extern" }];
-    setBody(CLOSURE_BAG_LOOKUP, walkLocals, body);
+    const body: Instr[] = [
+      // recvAny is shared by the slotted arms; the registry walk keeps its own
+      // eqref narrowing (a `ref.cast eq` would trap on a non-eq carrier, so it
+      // must stay AFTER the slotted arms have taken their receivers out).
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "local.set", index: 3 },
+      ...slottedLookupArms(),
+      ...narrowRecvToEq,
+      walkLoop(onHit),
+      { op: "ref.null.extern" },
+    ];
+    setBody(CLOSURE_BAG_LOOKUP, [...walkLocals, { name: "__recvAny", type: { kind: "anyref" } }], body);
   }
 
   // ── __closure_bag_ensure(externref recv) -> externref ──
   // As lookup; on miss allocate a fresh `$Object` bag, prepend a new entry,
   // update the head, and return the bag. Locals: 1 = recvEq, 2 = cur, 3 = bag.
+  //
+  // (#4241) Slotted carriers store the bag IN the receiver: read the slot, and
+  // on null allocate once and `struct.set` it. The bag then dies with its
+  // carrier — which is the memory-correctness half of this change, since the
+  // registry never removed an entry and so pinned every carrier that ever grew
+  // a property for the module's lifetime.
+  //
+  // Query-never-allocates (`carrier-bag-hasown.ts`) is preserved structurally:
+  // only ENSURE writes the slot; LOOKUP is a pure read.
   if (newPlainObjectIdx !== undefined) {
     const ensureLocals: { name: string; type: ValType }[] = [
       ...walkLocals,
       { name: "__bag", type: { kind: "externref" } },
+      { name: "__recvAny", type: { kind: "anyref" } },
     ];
+    const RECV_ANY = 4;
+    const slottedEnsureArms = (): Instr[] => {
+      const arms: Instr[] = [];
+      for (const { typeIdx, bagIdx } of slotted) {
+        arms.push(
+          { op: "local.get", index: RECV_ANY },
+          { op: "ref.test", typeIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: RECV_ANY },
+              { op: "ref.cast", typeIdx },
+              { op: "struct.get", typeIdx, fieldIdx: bagIdx },
+              { op: "local.tee", index: 3 },
+              { op: "ref.is_null" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "local.get", index: RECV_ANY },
+                  { op: "ref.cast", typeIdx },
+                  { op: "call", funcIdx: newPlainObjectIdx },
+                  { op: "local.tee", index: 3 },
+                  { op: "struct.set", typeIdx, fieldIdx: bagIdx },
+                ],
+              },
+              { op: "local.get", index: 3 },
+              { op: "return" },
+            ],
+          },
+        );
+      }
+      return arms;
+    };
     const onHit: Instr[] = [
       { op: "local.get", index: 2 },
       { op: "struct.get", typeIdx: entryTypeIdx, fieldIdx: F_BAG },
       { op: "return" },
     ];
     const body: Instr[] = [
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "local.set", index: RECV_ANY },
+      ...slottedEnsureArms(),
       ...narrowRecvToEq,
       walkLoop(onHit),
       // miss: bag = __new_plain_object()
@@ -457,6 +557,72 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
     ];
     setBody(CLOSURE_BAG_ENSURE, ensureLocals, body);
   }
+}
+
+/**
+ * Fill the reserved closure-own-property helper bodies at FINALIZE, after
+ * every closure root is registered and `__extern_get`/`__extern_set`/
+ * `__new_plain_object` are in `funcMap`. No-op when the helpers were never
+ * reserved (gc/host mode). Mirrors `fillApplyClosure`.
+ */
+export function fillClosurePropHelpers(ctx: CodegenContext): void {
+  if (!ctx.closurePropHelpersReserved) return;
+
+  const entryTypeIdx = ctx.closurePropEntryTypeIdx;
+  const headGlobalIdx = ctx.closurePropHeadGlobalIdx;
+  if (entryTypeIdx === undefined || headGlobalIdx === undefined) return;
+
+  const isClosureIdx = ctx.funcMap.get(IS_CLOSURE_PROP_CARRIER);
+  const bagLookupIdx = ctx.funcMap.get(CLOSURE_BAG_LOOKUP);
+  const bagEnsureIdx = ctx.funcMap.get(CLOSURE_BAG_ENSURE);
+  const externGetIdx = ctx.funcMap.get("__extern_get");
+  const externSetIdx = ctx.funcMap.get("__extern_set");
+  const newPlainObjectIdx = ctx.funcMap.get("__new_plain_object");
+
+  const setBody = (name: string, locals: { name: string; type: ValType }[], body: Instr[]): void => {
+    const idx = ctx.funcMap.get(name);
+    if (idx === undefined) return;
+    const fn = definedFuncAt(ctx, idx);
+    if (!fn) return;
+    fn.locals = locals;
+    fn.body = body;
+  };
+
+  // The undefined-read sentinel, matching `__extern_get`'s `getMiss()` factory
+  // (a fresh array each call — shared Instr objects get double-remapped by
+  // finalize walks; see reference_shared_instr_object_dce_double_remap).
+  const getMiss = (): Instr[] => undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }];
+
+  // (#4241) Computed once and shared by the carrier predicate and BOTH bag
+  // helpers, so the slotted/slotless split cannot drift between them.
+  const carrierTypeIdxs = [...collectClosureBaseWrapperTypeIdxs(ctx), ...builtinInstanceCarrierTypeIdxs(ctx)];
+  const slotted = slottedCarrierRoots(ctx, carrierTypeIdxs);
+
+  // ── __is_closure_prop_carrier(externref value) -> i32 ──
+  // (#3468 F1) ref.test chain over the closure BASE-wrapper types (same set as
+  // `__is_closure`/`__typeof_function` via `collectClosureBaseWrapperTypeIdxs`);
+  // a base-root test also matches every capturing subtype instance, so this
+  // subsumes the previously narrowed capturing-only carrier set. This is the
+  // stakeholder-ruled widening that lets shared noncapturing wrappers — the
+  // test262 `assert` harness receiver — carry own properties, which makes the
+  // harness assertions FIRE (honest floor de-inflation; see the issue file).
+  // Constant 0 when the module has no closures.
+  {
+    const body: Instr[] = [
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "local.set", index: 1 }, // __any
+    ];
+    for (const carrierIdx of carrierTypeIdxs) {
+      body.push({ op: "local.get", index: 1 });
+      body.push({ op: "ref.test", typeIdx: carrierIdx });
+      body.push({ op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 1 }, { op: "return" }] });
+    }
+    body.push({ op: "i32.const", value: 0 });
+    setBody(IS_CLOSURE_PROP_CARRIER, [{ name: "__any", type: { kind: "anyref" } }], body);
+  }
+
+  fillCarrierBagHelpers(ctx, { entryTypeIdx, headGlobalIdx, newPlainObjectIdx, slotted, setBody });
 
   // ── __closure_prop_get(externref obj, externref key) -> externref ──
   // if is_closure(obj) { bag = lookup(obj); if bag != null return __extern_get(bag,key) }

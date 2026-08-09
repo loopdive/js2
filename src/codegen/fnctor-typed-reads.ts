@@ -76,6 +76,7 @@
  * measured default and the evidence behind it.
  */
 import { ts } from "../ts-api.js";
+import { fnctorTypedReadsFlagEnabled } from "../derivation-flags.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { allocLocal } from "./context/locals.js";
@@ -104,17 +105,19 @@ const RESERVED_PROPS: ReadonlySet<string> = new Set(["length", "constructor", "_
 const RESERVED_UNLESS_DECLARED_FIELD: ReadonlySet<string> = new Set(["name"]);
 
 /**
- * OFF by default. `JS2WASM_FNCTOR_TYPED_READS=1` enables the direct
- * `struct.get`/`struct.set` lowering for a struct-typed fnctor receiver.
+ * **ON by default since 2026-08-08** (#743 derivation-defaults flip);
+ * `JS2WASM_FNCTOR_TYPED_READS=0` restores the dynamic member ladder. Spelling
+ * rule: `src/derivation-flags.ts`.
  *
- * The default is set by measurement, not by preference — see the #4155
- * "Phase 2" section for the `standaloneDynamic` A/B, the census counts and the
- * binary sizes that chose it. The switch stays either way: standalone test262
- * only runs in the `merge_group` re-validation, so a one-variable revert has to
- * remain available without a code change.
+ * The previous default was set by measurement — see the #4155 "Phase 2"
+ * section for the `standaloneDynamic` A/B (a wash), the 78 candidate sites and
+ * the binary sizes that chose OFF. Nothing about those numbers changed; the
+ * *criterion* did (derivation ships regardless of measured payoff, 2026-08-08).
+ * The switch stays either way, and now matters more: a one-variable revert has
+ * to remain available without a code change.
  */
 export function fnctorTypedReadsEnabled(): boolean {
-  return process.env.JS2WASM_FNCTOR_TYPED_READS === "1";
+  return fnctorTypedReadsFlagEnabled();
 }
 
 /**

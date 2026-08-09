@@ -43,7 +43,7 @@
  * share an alias oracle, but the questions they answer are distinct.
  */
 import { ts, forEachChild } from "../ts-api.js";
-import type { FieldDef } from "../ir/types.js";
+import type { FieldDef, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { appendFnctorInternalFields } from "./fnctor-identity-fields.js";
 import { type AllocLabelResult, analyzeFnctorAllocLabels, fnctorLayoutsEnabled } from "./fnctor-alloc-labels.js"; // (#3927) per-type layout plan
@@ -1743,6 +1743,12 @@ export function deriveFnctorFields(
 
   const fields: FieldDef[] = [];
   const onlyConditional = new Map<string, boolean>();
+  // (#743) Fields the ctor-param narrowing moved off their uninferred type,
+  // mapped to that uninferred type. Presence-tracking is not known until the
+  // whole constructor (and the flow-grown scan) has been walked, so the
+  // narrowing is applied optimistically and reverted below for any field that
+  // turns out to be presence-tracked.
+  const ctorParamNarrowed = new Map<string, ValType>();
 
   // Record one `this.<field>` slot from an assignment whose LHS is `this.<field>`.
   // `valueExpr` is the value being assigned to THAT field (for type inference) —
@@ -1778,17 +1784,23 @@ export function deriveFnctorFields(
     // early carrier scan records the RHS return type before fnctor reservation,
     // so let that proven dynamic representation override the nominal LHS.
     // (#743) `this.x = <ctor param>` — narrow the slot to what the parameter's
-    // call sites agree on. Off by default; rationale + acorn numbers live in
-    // `fnctor-ctor-param-types.ts`.
+    // call sites agree on. ON by default since 2026-08-08; rationale + acorn
+    // numbers live in `fnctor-ctor-param-types.ts`.
     const paramInferred = inferFnctorFieldTypeFromCtorParam(ctx, funcDecl, valueExpr, rhsWasm);
-    const fieldType = carrierIsDynamicObjectCall
-      ? ({ kind: "externref" } as const)
-      : (paramInferred ??
-        (ctx.objectHashConsumerTypes.has(rhsType) || ctx.objectHashConsumerTypes.has(carrierType)
-          ? carrierWasm
-          : lhsWasm.kind === "externref"
-            ? rhsWasm
-            : lhsWasm));
+    const uninferredType =
+      ctx.objectHashConsumerTypes.has(rhsType) || ctx.objectHashConsumerTypes.has(carrierType)
+        ? carrierWasm
+        : lhsWasm.kind === "externref"
+          ? rhsWasm
+          : lhsWasm;
+    const fieldType = carrierIsDynamicObjectCall ? ({ kind: "externref" } as const) : (paramInferred ?? uninferredType);
+    // Presence-tracking is not decided yet — a later unconditional write, or the
+    // flow-grown scan below, can still move this field either way — so the
+    // narrowing is applied optimistically here and REVERTED once
+    // `onlyConditional` is final (see the revert loop before the S4a promotion).
+    if (paramInferred !== null && !carrierIsDynamicObjectCall) {
+      ctorParamNarrowed.set(fieldName, uninferredType);
+    }
     fields.push({
       name: fieldName,
       type: fieldType,
@@ -1969,6 +1981,33 @@ export function deriveFnctorFields(
       onlyConditional.set(fieldName, true);
       flowGrownNames.add(fieldName);
     }
+  }
+
+  // (#743) REVERT the ctor-param narrowing on any field that turned out to be
+  // presence-tracked. `onlyConditional` is final at this point: the
+  // unconditional-write pass above cleared it where a later write proved the
+  // field always assigned, and the flow-grown scan set it for every field a
+  // method grows.
+  //
+  // This is the SAME carve-out the two promotions below already make, and for
+  // the same reason: a presence-tracked field's `undefined` is expressed by the
+  // read dispatcher's presence check handing back the CARRIER's undefined, and
+  // an f64 slot has no `undefined` to hand back. The #743 narrowing lacks
+  // neither rule nor precedent — it just never consulted them, because while it
+  // was default-OFF nothing exercised the combination.
+  //
+  // It is not a latent-but-harmless mismatch. Measured on
+  //     function T(k) { this.keyword = k; if (k > 100) { this.opt = k; } }
+  // with the flag forced on before this fix: `$opt` derived a physical `f64`
+  // while keeping its `$$presence_0` bit, and a `this.type.opt === undefined`
+  // read came back as a boxed object instead of the number — the expression
+  // returned an opaque value where the flag-off compile returned -800. A wrong
+  // answer, not a slower one, which is why the refusal is unconditional rather
+  // than best-effort.
+  for (const field of fields) {
+    if (onlyConditional.get(field.name) !== true) continue;
+    const uninferred = ctorParamNarrowed.get(field.name);
+    if (uninferred !== undefined) field.type = uninferred;
   }
 
   // (#3683 S4a) Promote provably-numeric slots from the boxed `externref`

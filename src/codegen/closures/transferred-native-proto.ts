@@ -2,6 +2,7 @@
 
 import type { Instr, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
+import { BFN_ID_FIELD_IDX } from "../builtin-fn-meta.js";
 import { buildClosureResultBoxing } from "./result-boxing.js";
 
 export interface TransferredNativeReceiverEntry {
@@ -150,7 +151,7 @@ export function buildTransferredNativeProtoCallInstrs(
         then: [
           { op: "local.get", index: anyLocal },
           { op: "ref.cast", typeIdx: entry.typeIdx },
-          { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: 3 },
+          { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: BFN_ID_FIELD_IDX },
           { op: "i32.const", value: entry.typeIdx },
           { op: "i32.eq" },
           {
