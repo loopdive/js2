@@ -1,7 +1,8 @@
 ---
 id: 4308
 title: "EvalDeclarationInstantiation + Annex B B.3.3 for the QuickJS eval engine — the bucket that dominates the remaining 256 eval-code failures"
-status: ready
+status: in-progress
+assignee: ttraenkler/senior-dev
 sprint: current
 created: 2026-08-09
 updated: 2026-08-09
@@ -103,10 +104,20 @@ afterwards (#4238 slice 3). That approximates scope *reads and writes*; it does
 4. Name-based lowerings can stop firing and fall back to a stub that answers
    `undefined` **with green tests**. Prove liveness by poisoning the stub
    (#4245 slice 1 did exactly this).
-5. **#4305** (open): a succeeding direct eval followed by a throwing one with an
-   `instanceof` catch traps with `RuntimeError: illegal cast` — caller-side
-   codegen, engine-independent. It will appear in eval-heavy runs; it is not
-   this issue's bug, and it pollutes the `unattributed` bucket of #4242's gate.
+5. **#4305** — root-caused and fixed in PR #4339; **the shape first written here
+   was wrong**, corrected 2026-08-09 during slice A. It is NOT "a succeeding
+   direct eval followed by a throwing one with an `instanceof` catch". The
+   trigger is STATIC: `catch` → direct eval → `catch` whose body **reads its
+   parameter**. `instanceof` is incidental (`typeof e === "object"` traps
+   identically), and succeeded-then-threw is incidental (the runtime outcome only
+   decides whether the second handler is entered). Root cause:
+   `fctx.boxedCaptures` is keyed by NAME but describes one specific slot, so a
+   catch clause rebinding that name leaves stale direct-eval cell metadata and
+   the identifier read emits a `ref.cast` to the cell type against a raw
+   exception payload — V8 reports `illegal cast`, which made a scoping bug look
+   like a type bug. It also hit the REFUSAL path, so it was never gated on direct
+   eval succeeding. Caller-side and engine-independent either way: match against
+   this shape, not the old one, before booking an eval-run delta as a regression.
 
 ## Acceptance criteria
 
@@ -556,3 +567,140 @@ flattering and wrong.
   `undefined` — slice-3 defect 1); no `boolean[]` parameters
   (slice-3 defect 2 / #4306); tier-pin every measurement pair or
   `eval-engine-parity.mjs` will refuse it — rightly.
+
+## Slice A — implementation record
+
+Implementer: senior-dev, 2026-08-09. Branch `issue-4308-slice-a-error-identity`,
+stacked on `issue-4245-membrane-slice1` at `e8e43ee86` (PR #4335) per §7.
+**Adapter-only**: `scripts/quickjs-eval-provider.mjs` + lane cases in
+`tests/quickjs-eval-membrane.test.ts`. No `src/` change, no `qjs_shim.c` change.
+
+### P1 — the answer (and where §1.7's preference order was wrong)
+
+Measured with a compiled probe that reproduces test262's `assert.throws`
+comparison exactly, run on BOTH tiers (`.tmp/p1-probe.mjs`, scratch):
+
+| question | quickjs (before) | interpreter |
+| --- | --- | --- |
+| `thrown.constructor === expectedErrorConstructor` | **0** | 1 |
+| `expectedErrorConstructor === <user module>.ReferenceError` | **0** | **1** |
+| `thrown.constructor === <user module>.ReferenceError` | **1** | 1 |
+| in-eval `e instanceof ReferenceError` | 1 | (unsupported by the interpreter's Phase-1 emitter) |
+
+1. **The known-good target is the CALLER'S OWN constructor object.** The
+   interpreter hands `assert.throws` exactly that (`src/interp/loop.ts`
+   `intrinsicErrorConstructor` :565, reached from `envLookup` — and its comment
+   already states the requirement: the identity check "must observe the same
+   constructor carrier as an error thrown by the interpreter").
+2. **The throw side was already correct on both engines.** `qjsErrorFromHandle`'s
+   `new ReferenceError(msg)` yields an instance whose `.constructor` IS the user
+   module's `ReferenceError`: `.constructor` is resolved by the READING module.
+   Nothing on the throw path needed to change.
+3. **Preference (c) of §1.7 — "the adapter's own intrinsics" — is measurably
+   WRONG, and the plan's stated reason for it does not hold.** A standalone
+   module's intrinsic constructor *object* is per-module. Proved by branding:
+   seeding with the adapter's own `ReferenceError` after setting
+   `ctor.__js2wasm_adapter_seeded__ = 7` gave `expected.__js2wasm_adapter_seeded__
+   === 7` (the adapter's object DID arrive) while
+   `(<user module>.ReferenceError).__js2wasm_adapter_seeded__` was `undefined`
+   (a different object). Only `.constructor`, being reader-resolved, is canonical.
+4. **Preference (a) — `globalObject.ReferenceError` — works, and works even for
+   the real test shape** where the module never mentions `ReferenceError` outside
+   the eval string (checked separately before trusting it: the realm carrier
+   still exposes all seven).
+
+**The trap that cost the most time, recorded because it is the workstream's
+recurring silent-no-op class:** the natural guard `typeof ctor === "function"`
+seeds NOTHING. The caller holds its intrinsic constructor as the cross-module
+AOT callable carrier, and the **adapter's** `typeof` answers `"object"` for it
+while the **caller's** `typeof` answers `"function"` for the very same value
+(measured on `raw`, on `__runtime_eval_unwrap_result(raw)`, and on
+`__runtime_eval_unwrap_interpreted_callback(...)` — all three `"object"`). The
+guard compiles, links, runs, and produces a silently unchanged pass count. The
+shipped guard is `qjsIsMembraneWrappable(ctor)`. Liveness was established by
+POISONING the seed (`{poison:i}` in place of the constructors) and observing
+`typeof expected` flip to `"object"` compiled-side.
+
+### What shipped
+
+`qjsSeedIntrinsicErrorIdentities(c, realm)` — one function plus its call site.
+It seeds the existing handle registry with seven (realm constructor handle,
+caller's compiled constructor) pairs, which IS the `qjs_is_equal`-strict lookup
+§1.7 asks for, expressed through machinery that already exists, and it therefore
+fixes both crossings at once:
+
+- **outward**: `qjsPublish`'s `qjsFindBoxIndex` hit returns the caller's
+  constructor instead of minting an opaque published box;
+- **inward**: `qjsToQuickjs`'s `qjsHandleOf` hit returns the realm's own
+  constructor, so a compiled `ReferenceError` crossing in cannot SHADOW the realm
+  intrinsic — which is why in-body `e instanceof ReferenceError` keeps working.
+
+Seeding is **lazy**, hooked at the head of `qjsPushGlobals` (the first point at
+which the caller's realm is in hand, and it precedes every crossing on both the
+direct and the indirect path). It could not live in `qjsEnsureContext`: at
+context-creation time there is no realm to read the constructors from. We do NOT
+mirror the compiled constructors into the realm — QuickJS builds engine-generated
+errors from its internal intrinsics whatever the global binding says.
+
+### Measured result (tier-pinned, this tree, 2026-08-09)
+
+`TEST262_TARGET=standalone TEST262_PATH_FILTER='language/eval-code/'
+JS2WASM_EVAL_ENGINE=quickjs`, 816 files:
+
+| run | pass / 816 |
+| --- | --- |
+| quickjs, pre-slice-A (base = `e8e43ee86`) | **560** |
+| quickjs, post-slice-A | **624** |
+| interpreter (`TEST262_FULL_RUNTIME_EVAL=1`) | **779** (unchanged) |
+
+- **+64, and the done-signal was ≥ 615.** The §0 560 was reproduced by two
+  independent baseline runs with **zero** per-file status disagreement, so the
+  design-grade number of §0 is now gate-grade on this tree.
+- **Regressions: 0**, diffed test-for-test over all 816 files (not totals).
+- All 64 gains are the targeted cluster: `skip-early-err-*`, **56 direct + 8
+  indirect** — precisely §0's `aB-d 56 · aB-i 8` split. No other template moved
+  in either direction.
+- No `illegal cast` rows appeared; the #4305 defect (root-caused and fixed
+  separately in PR #4339 — static shape `catch` → direct eval → `catch` whose
+  body reads its parameter; neither `instanceof` nor a succeed-then-throw
+  sequence is required) is absent from this delta.
+
+### Artifact
+
+**Unmoved, as required**: key `d8a5a91d6f183b87`, `libquickjs.wasm` sha256
+`b0662069c241d0430d91c53a3b0e2d1281fd9eb78dd1c93490b0a9dfa70eec5b`.
+`scripts/quickjs-artifact/` is untouched; the whole slice is adapter TS.
+
+### Lane cases (`tests/quickjs-eval-membrane.test.ts`)
+
+Shaped like the real corpus: sloppy function caller, DIRECT eval,
+`assert.throws(ReferenceError, fn)` only INSIDE the eval string, and `assert` as
+a top-level function declaration carrying `throws` as a property — test262's own
+harness shape. That last detail is load-bearing: with an object-literal `assert`
+the probe fails with `not a function` (its `throws` is an uncarried closure
+value, the residual #4245 slice 1 pinned) and measures nothing about identity.
+
+Cases: identity match · realm-side `instanceof` still true · SECOND and THIRD
+evaluations after the new crossing path (delayed realm corruption) · the
+constructor as an indirect-eval COMPLETION value · in-band
+`__js2wasm_eval_engine` engine identity. Every source is composed through a
+runtime loop (`tryStaticEvalInline` folds literals).
+
+**Anti-vacuity, measured both ways:** on the pre-slice-A adapter these same cases
+FAIL (identity `0`, `sameNameMisses 3` — the corpus's exact
+"different error constructor with the same name" signature); with the slice they
+pass 23/23.
+
+### Residuals this slice deliberately leaves
+
+- A caller that SHADOWS an intrinsic error name on its realm carrier with some
+  other object would have the QuickJS intrinsic mapped to that shadow. Not
+  observed in this corpus; the alternative (a `.name` cross-check) risks
+  disabling the mechanism the way the `typeof` guard did.
+- Outward identity for compiled objects generally is untouched:
+  `qjs_wrapper_gc_handle` is declared in the adapter's externs but **never
+  called**, so a compiled object that crossed inward and comes back out is still
+  an opaque box rather than the original. That is #4245 slice 2's job, not this
+  one; it does not affect the intrinsic-error path.
+- One realm per provider instance is assumed (the seed runs once), exactly as
+  `qjsIntrinsicRealm` already assumes.

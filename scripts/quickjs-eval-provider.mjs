@@ -503,6 +503,14 @@ function qjsReadString(c: number, h: number): string {
 // QuickJS objects that actually cross out, and identity is decided by QuickJS's
 // own strict equality, not by handle-cell address (qjs_dup mints a new cell for
 // the same object).
+//
+// (#4308 slice A) The registry ALSO carries seven pre-seeded pairs that are not
+// "published" values at all: the realm's intrinsic error constructors mapped
+// onto the caller's compiled ones, installed by
+// \`qjsSeedIntrinsicErrorIdentities\` on the first globals push (NOT at context
+// creation — the caller's realm is not in hand until then). They ride here
+// because the identity question is exactly the one this table answers, in both
+// directions.
 
 var qjsBoxHandles: number[] = [];
 var qjsBoxTargets: any[] = [];
@@ -793,6 +801,10 @@ function qjsPropNumber(c: number, obj: number, name: string): number {
  * becomes an opaque box, which AOT sees as a near-empty object (residual — no
  * membrane in this issue) but which unwraps to the SAME handle on the way back
  * in, so identity holds within the provider.
+ *
+ * The registry hit below is ALSO the intrinsic-error substitution (#4308 slice
+ * A): the seven realm error constructors are pre-seeded to the COMPILED ones,
+ * so they cross out as the caller's own \`ReferenceError\`/… rather than a box.
  */
 function qjsPublish(c: number, h: number): any {
   const existing: number = qjsFindBoxIndex(c, h);
@@ -881,6 +893,104 @@ function qjsInstallEngineIdentity(c: number): void {
   qjs_free_raw(namePtr);
 }
 
+/**
+ * (#4308 slice A) Make the realm's intrinsic ERROR CONSTRUCTORS and the
+ * compiled ones the SAME object at the boundary, in both directions.
+ *
+ * The measured failure this fixes (64 \`annexB/…/eval-code/**\` files, the
+ * largest single cluster in the post-membrane gap): inside an eval body
+ * \`assert.throws(ReferenceError, function(){ f; })\` hands the compiled
+ * \`assert.throws\` the QuickJS realm's \`ReferenceError\`, which used to cross out
+ * as an opaque published function box; the callback's throw crosses out through
+ * \`qjsErrorFromHandle\` as an adapter-realm \`new ReferenceError(msg)\`. The
+ * harness then compares \`thrown.constructor !== expectedErrorConstructor\` — two
+ * distinct objects with the same \`name\`, which is verbatim the
+ * "different error constructor with the same name" message those files fail on.
+ *
+ * P1 measured which side is already right, and which source of the compiled
+ * constructor actually works (see the issue's slice-A record):
+ *  - \`thrown.constructor\` is ALREADY the user module's own \`ReferenceError\`,
+ *    on both engines. Nothing on the throw path changes.
+ *  - the INTERPRETER tier — which passes these files — hands \`assert.throws\`
+ *    that same object. That is the known-good target.
+ *  - the adapter's OWN \`ReferenceError\` is NOT it. Preference (c) of the plan's
+ *    §1.7 was measured and REJECTED: seeding with the adapter's intrinsics fires
+ *    (proved by poisoning the seed) and still compares unequal, because a
+ *    standalone module's intrinsic constructor OBJECT is per-module — only the
+ *    error instances' \`.constructor\`, which the READING module resolves, is
+ *    canonical. So the constructors are taken from the CALLER'S REALM
+ *    (preference (a), \`globalObject.ReferenceError\`), which is why this seeding
+ *    is lazy: at context-creation time there is no realm to read them from.
+ *
+ * Mechanism: seed the handle registry with (realm constructor handle, caller's
+ * compiled constructor) pairs. That is deliberately the SAME
+ * \`qjs_is_equal\`-strict lookup the plan calls for, expressed through the
+ * machinery that already exists, and it fixes BOTH crossings at once:
+ *  - OUTWARD, \`qjsPublish\`'s \`qjsFindBoxIndex\` hit returns the compiled
+ *    constructor instead of minting a box, so the harness comparison holds;
+ *  - INWARD, \`qjsToQuickjs\`'s \`qjsHandleOf\` hit returns the realm's own
+ *    constructor instead of a membrane wrapper, so the compiled
+ *    \`ReferenceError\` crossing in cannot SHADOW the realm intrinsic and in-body
+ *    \`e instanceof ReferenceError\` keeps answering true.
+ *
+ * We deliberately do NOT mirror the compiled constructors into the realm:
+ * QuickJS builds engine-generated errors from its internal intrinsics whatever
+ * the global binding says, so a mirror would break realm-side \`instanceof\`
+ * without fixing the comparison.
+ *
+ * A name the caller's realm does not expose (or that the QuickJS realm does not
+ * hold as a function) is left UNMAPPED — old box behaviour — rather than mapped
+ * to something unverified. The realm handles are OWNED and retained for the
+ * context lifetime, the same documented policy as every other registry entry.
+ *
+ * One realm per provider instance is assumed, exactly as \`qjsIntrinsicRealm\`
+ * already assumes; the seed therefore runs once.
+ */
+var qjsIntrinsicErrorsSeeded: boolean = false;
+
+function qjsSeedIntrinsicErrorIdentities(c: number, realm: any): void {
+  if (qjsIntrinsicErrorsSeeded) return;
+  if (realm === undefined || realm === null) return;
+  qjsIntrinsicErrorsSeeded = true;
+  const names: string[] = [
+    "Error",
+    "EvalError",
+    "RangeError",
+    "ReferenceError",
+    "SyntaxError",
+    "TypeError",
+    "URIError",
+  ];
+  const g: number = qjs_global_object(c);
+  for (let i = 0; i < names.length; i += 1) {
+    const name: string = names[i] as string;
+    const ctor: any = __runtime_eval_unwrap_result(realm[name]);
+    // NOT a \`typeof ctor === "function"\` test, and that is MEASURED, not
+    // stylistic: the caller holds its intrinsic constructor as the cross-module
+    // AOT callable carrier, and the ADAPTER's \`typeof\` answers "object" for it
+    // while the CALLER's \`typeof\` answers "function" for the very same value.
+    // A function-typed guard here compiles, links, runs, and silently seeds
+    // nothing — the exact silent-no-op class this workstream keeps paying for.
+    if (!qjsIsMembraneWrappable(ctor)) continue;
+    const namePtr: number = qjsPushCString(name);
+    if (namePtr === 0) continue;
+    const h: number = qjs_get_prop_str(c, g, namePtr);
+    qjs_free_raw(namePtr);
+    if (h === 0) continue;
+    // A realm whose intrinsic is missing or is not callable is not a realm we
+    // can speak for: free the handle and leave that name unmapped rather than
+    // asserting an identity we did not verify.
+    if (qjs_is_function(c, h) === 0) {
+      qjs_free_value(c, h);
+      continue;
+    }
+    qjsBoxHandles.push(h);
+    qjsBoxTargets.push(ctor);
+    qjsBoxExposed.push(ctor);
+  }
+  qjs_free_value(c, g);
+}
+
 function qjsEnsureContext(): number {
   if (qjsContextHandle !== 0) return qjsContextHandle;
   const rt: number = qjs_new_runtime();
@@ -900,6 +1010,12 @@ function qjsEnsureContext(): number {
  */
 function qjsPushGlobals(c: number, globalObject: any): void {
   if (globalObject === undefined || globalObject === null) return;
+  // (#4308 slice A) The first point at which the CALLER'S REALM is in hand, and
+  // it precedes every value crossing on both the direct and the indirect path
+  // (\`qjsEvaluate\` and \`__runtime_direct_eval\` both call this before the eval).
+  // \`__runtime_apply_interpreted\` needs no hook of its own: a realm callback
+  // can only exist after an evaluation that already ran this.
+  qjsSeedIntrinsicErrorIdentities(c, globalObject);
   const g: number = qjs_global_object(c);
   const keys: any = Object.keys(globalObject);
   for (let i = 0; i < keys.length; i += 1) {
