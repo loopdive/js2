@@ -371,7 +371,8 @@ export interface AnalyzeOptions {
    * collected from checker-owned declarations. The extra root contributes NO
    * user-visible diagnostics (its own diagnostics are filtered — a shipped
    * declaration file must never block compiling the package). Only supplied
-   * when `JS2WASM_DTS_ENTRYPOINT_SEEDS=1` resolved a declaration source;
+   * when `JS2WASM_DTS_ENTRYPOINT_SEEDS` (ON by default since 2026-08-08) has
+   * resolved a declaration source;
    * absent → byte-identical behavior.
    */
   entryDeclarationsText?: string;

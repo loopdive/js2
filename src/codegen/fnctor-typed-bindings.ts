@@ -43,8 +43,8 @@
  *
  * ## Admission (all must hold — every decline leaves byte-identical output)
  *
- *   1. standalone; flag `JS2WASM_FNCTOR_TYPED_BINDINGS=1` (default OFF until
- *      the #4157 A/B says otherwise — census runs flag-independently).
+ *   1. standalone; flag `JS2WASM_FNCTOR_TYPED_BINDINGS` (**ON by default since
+ *      2026-08-08**, `=0` disables — census runs flag-independently).
  *   2. `const`/`let`/`var x = new F(...)` where the callee identifier resolves
  *      (by declaration identity, so shadows can't spoof the name) to a
  *      gate-APPROVED fnctor with an up-front reserved struct index. Approval
@@ -89,17 +89,27 @@
  * never overrides a non-externref inference.
  */
 import { ts, forEachChild } from "../ts-api.js";
+import { fnctorTypedBindingsFlagEnabled } from "../derivation-flags.js";
 import type { CodegenContext } from "./context/types.js";
 import type { ValType } from "../ir/types.js";
 import { writeOnceThisCallReturnStruct } from "./fnctor-escape-gate.js";
 
 /**
- * OFF by default. `JS2WASM_FNCTOR_TYPED_BINDINGS=1` enables the retype.
- * The default is set by the #4157 Workstream 1 `standaloneDynamic` A/B —
- * see plan/issues/4155-*.md for the numbers that chose it.
+ * **ON by default since 2026-08-08** (#743 derivation-defaults flip);
+ * `JS2WASM_FNCTOR_TYPED_BINDINGS=0` restores the externref binding slots.
+ * Spelling rule: `src/derivation-flags.ts`.
+ *
+ * The previous default came from the #4157 Workstream 1 `standaloneDynamic`
+ * A/B — see plan/issues/4155-*.md. Two numbers from it stay relevant after the
+ * flip: the retype multiplies typed-read candidate sites 78 → 424 on acorn
+ * (5.4x, which is why flipping the reads flag without this one ships only the
+ * small version), and it is the family's one measurable *cost* — +25,031 B
+ * (+2.9 %) on the acorn standalone binary, from inlined presence read-modify-
+ * write. Every admission rule is sound-by-refusal, so a decline is
+ * byte-identical rather than merely safe.
  */
 export function fnctorTypedBindingsEnabled(): boolean {
-  return process.env.JS2WASM_FNCTOR_TYPED_BINDINGS === "1";
+  return fnctorTypedBindingsFlagEnabled();
 }
 
 /**
