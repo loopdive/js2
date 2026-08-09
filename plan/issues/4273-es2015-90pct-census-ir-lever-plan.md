@@ -17,7 +17,7 @@ es_edition: 2015
 goal: es6
 assignee: "ttraenkler/codex-es6-census"
 test262_count: 11691
-related: [680, 869, 1355, 1430, 1645, 1691, 1750, 2046, 2566, 2662, 2669, 2864, 2866, 2872, 3031, 3177, 3371, 3488, 3531, 3575, 3949, 3975, 4167, 4259, 4274]
+related: [680, 869, 1355, 1430, 1645, 1691, 1750, 2046, 2566, 2662, 2669, 2864, 2866, 2872, 3031, 3177, 3371, 3488, 3531, 3575, 3949, 3975, 4167, 4259, 4274, 4275]
 origin: "2026-08-09 exact-edition ES2015 audit against frozen oracle-v13 two-lane JSONLs and the committed per-file edition map; requested target is 90% and all implementation work must be IR-path work"
 ---
 
@@ -125,7 +125,7 @@ historic issue's old counts remain current.
 | Cohort | Dominant measured mechanism | Repository Markdown owner(s) |
 | --- | --- | --- |
 | generators | eager host buffering breaks suspension; standalone rejects or leaks general state-machine and `yield*` shapes | #680 ready; #2662 blocked; #2864 in-progress |
-| destructuring | IteratorClose, undefined-only defaults, elision stepping, rest draining, generator over-consumption | #2669 ready; #1430 ready; #2566 blocked |
+| destructuring | IteratorClose, undefined-only defaults, elision stepping, rest draining, generator over-consumption | #2669 and #1430 ready; exact IR assignment-pattern child #4275 in-progress; #2566 blocked |
 | TypedArray | callback observation, descriptors, detached buffers, dynamic constructors, standalone concat imports | #2872, #3177, #1645, #3531, #3975, #3488 ready |
 | Symbol.iterator | custom iterator dispatch, spread argument formation, IteratorClose, generator overlap | #2669 and #1750 ready; #1691 blocked |
 | Proxy | ordinary forwarding, descriptor invariants, dynamic MOP/trap dispatch | #1355 in-progress; #3031 ready |
@@ -151,10 +151,13 @@ diagnosis and does not satisfy this issue.
    module-tag `WebAssembly.Exception` wrappers. The fix belongs under the
    `async.callback.wrap` provider contract and must unwrap only this module's
    tagged payload, not foreign Wasm exceptions or `WebAssembly.RuntimeError`.
-3. **Split and attack direct-iterator `for-of` destructuring.** The IR already
-   has `forof.iter`, `iter.*`, and `iter.return`; extend prepared binder
-   ownership for defaults, elisions, rest, and close-on-completion. Exclude
-   generator sources until the suspension substrate is real.
+3. **Split and attack direct-iterator `for-of` destructuring.** #4275 isolates
+   45 top-level assignment-pattern files behind one indexed-array impostor. Its
+   measured 16-file fixed-pattern slice fails in both lanes; 15 are safely
+   IR-routable without first implementing sloppy unresolvable assignment.
+   Repair `forof.iter` completion first, then add exact prepared ownership for
+   inner iterator stepping and assignment; exclude generator sources until
+   suspension is real.
 4. **Represent default-argument presence in the function IR ABI.** The exact
    cohort has 144 same-file non-passes. Add an argc/presence plan; do not carry
    the legacy signalling-NaN sentinel into IR.
