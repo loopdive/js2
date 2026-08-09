@@ -85,7 +85,10 @@ class NpmCompatChart extends HTMLElement {
     if (!iso) return "";
     const d = new Date(iso);
     if (Number.isNaN(d.valueOf())) return "";
-    return d.toISOString().slice(0, 10);
+    // Date AND time (UTC): the artifact refreshes on every merge to main —
+    // several times a day — so a bare date cannot tell a fresh measurement
+    // from a twelve-hour-old one (stakeholder request, 2026-08-09).
+    return `${d.toISOString().slice(0, 16).replace("T", " ")} UTC`;
   }
 
   // ratio = nodeUs / wasmUs. >1 => wasm faster. <1 => node faster.
