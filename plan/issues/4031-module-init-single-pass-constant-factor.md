@@ -4,7 +4,7 @@ id: 4031
 title: "The one remaining module-init compile is 51% of the ESLint compile"
 status: ready
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-09
 assignee: unassigned
 priority: high
 feasibility: medium
@@ -16,6 +16,8 @@ goal: npm-library-support
 sprint: current
 es_edition: n/a
 related: [3672, 4001]
+loc-budget-allow:
+  - src/codegen/expressions/calls.ts
 ---
 
 # #4031 — the surviving graph-initializer compile dominates the ESLint compile
@@ -57,6 +59,36 @@ do not treat 51 % as a fixed target.
 - Determine whether pass 1's *result* is needed at all, or only its side effects
   on `closureMap` — if the latter, a cheaper discovery walk may replace a full
   statement compile.
+
+## 2026-08-09 progress
+
+The first concrete attribution is a bundled-entry case rather than a uniformly
+expensive statement list. The published TypeScript entry has only two top-level
+statements: a small `var ts = {}` declaration and one 9.1 MB esbuild IIFE. Its
+AST contains about 1.08 million nodes, 11,065 functions, and 9,101 arrows.
+
+One safe constant factor is now removed: `compileIIFE` no longer walks the
+complete IIFE twice to discover captures when the enclosing module initializer
+has an empty local map. That is an exact no-capture proof and matters for
+bundled npm packages whose entry point is one giant IIFE (TypeScript's
+published `lib/typescript.js` is about one million AST nodes).
+
+An attempted broader optimization used an unchanged inlinable-function
+registry as proof that the second module-init compile was redundant. The proof
+was insufficient: the merge-group Test262 run lost 116 host passes, fell 272
+standalone host-free passes below the committed high-water mark, and grew
+uncatchable trap categories. In a positive-control local A/B, restoring the
+second pass flipped six representative `decodeURI`/`decodeURIComponent` files
+from out-of-bounds traps back to pass with no losses (6 gained, 0 lost across
+8 measured files). The second compile therefore remains conservative while
+this issue stays open for a sounder proof.
+
+The capture-scan skip is intentionally limited to an actually empty local map.
+A function-local binding may shadow a registered top-level function, so the
+presence of a same-named entry in `ctx.funcMap` is not proof that the binding
+cannot be captured. Permanent coverage exercises that boundary. The full
+TypeScript bundle remains a bounded compile frontier; the next measurement
+must use the same supervised `compileProject` harness.
 
 ## Acceptance criteria
 

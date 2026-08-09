@@ -42,10 +42,10 @@ import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { resolveReceiverStruct } from "../fnctor-escape-gate.js";
 import { tryEmitFixedHostMethodCall } from "../fixed-host-method-call.js";
 import { hostFnctorCallableFallbackImportName, reserveHostFnctorMethodDriver } from "../host-fnctor-method-driver.js";
+import { tryCompileHostStringPredicate } from "../host-string-prefix-suffix.js";
 import { observeHostDynamicMethodCallArity } from "../dynamic-method-call-arity.js";
 import { effectiveLocalCarrier } from "../analysis/mixed-assignment-carrier.js";
 import { staticIntegerRange } from "../analysis/static-numeric-range.js";
-import { staticConstStringValues } from "../analysis/static-string-values.js";
 import {
   emitArrayBufferResize,
   emitArrayBufferSlice,
@@ -2428,39 +2428,15 @@ export function compileReceiverMethodCall(
     const derivedSubstringChar = tryCompileDerivedHostSubstringCharCodeAt(ctx, fctx, expr, propAccess, method);
     if (derivedSubstringChar) return derivedSubstringChar;
 
-    // A host string call costs a Wasm→JS boundary crossing even when immutable
-    // literal-table analysis proves every possible result is identical. Keep
-    // evaluation order (and any receiver/argument trap), then materialize the
-    // uniform boolean directly in Wasm. Native strings retain their own helper
-    // folds below; this arm closes the equivalent host-call benchmark gap.
-    if (
-      !ctx.nativeStrings &&
-      (method === "includes" || method === "startsWith" || method === "endsWith") &&
-      expr.arguments.length === 1
-    ) {
-      const receiverValues = staticConstStringValues(ctx, propAccess.expression);
-      const searchValues = staticConstStringValues(ctx, expr.arguments[0]!);
-      if (receiverValues && searchValues && new Set(searchValues).size === 1) {
-        const search = searchValues[0]!;
-        const results = new Set(
-          receiverValues.map((value) =>
-            method === "includes"
-              ? value.includes(search)
-              : method === "startsWith"
-                ? value.startsWith(search)
-                : value.endsWith(search),
-          ),
-        );
-        if (results.size === 1) {
-          const recv = compileExpression(ctx, fctx, propAccess.expression);
-          if (recv) fctx.body.push({ op: "drop" });
-          const arg = compileExpression(ctx, fctx, expr.arguments[0]!);
-          if (arg) fctx.body.push({ op: "drop" });
-          fctx.body.push({ op: "i32.const", value: results.values().next().value ? 1 : 0 });
-          return { kind: "i32", boolean: true };
-        }
-      }
-    }
+    const hostPrefixSuffix = tryCompileHostStringPredicate(
+      ctx,
+      fctx,
+      expr,
+      propAccess,
+      method,
+      !isStringWrapperType(receiverType) && !sourceHasMethodReassignment(ctx, propAccess.expression, method),
+    );
+    if (hostPrefixSuffix) return hostPrefixSuffix;
 
     // string.toString() and string.valueOf() — identity, just return the string itself.
     // (#1397) Skip the identity short-circuit when the receiver is a String

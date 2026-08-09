@@ -48,7 +48,6 @@ import {
   IR_DYN_METHOD_CALL_1_FN,
   IR_DYN_STRING_REPLACE_FN,
 } from "../codegen/dyn-ops.js";
-import { FMOD_FN } from "../codegen/fmod.js"; // #2945 — `%` lowers to a call of the shared exact-fmod helper
 import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "../codegen/regexp-runtime-contract.js";
 // (#1373b C-1) Leaf-module async helpers (no codegen/index cycle).
 import { staticPromiseResolveSettledExpr, unwrapPromiseTypeNode } from "../codegen/async-static.js";
@@ -81,6 +80,7 @@ import {
 } from "./callable-bindings.js";
 import { collectOuterWrites } from "./closure-captures.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
+import { fmodRefFor, FMOD_FN } from "./fmod-selection.js";
 import {
   requireMatchingModuleBindingOwner,
   requireMatchingLoweringPlanOwner,
@@ -9566,13 +9566,13 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
     // exactness). Deliberately NOT the naive `a - trunc(a/b)*b` sequence —
     // legacy tried that and replaced it (ULP drift, collapse-to-0 for large
     // quotients, overflow to ±Inf; see `src/codegen/fmod.ts`). The symbolic
-    // `__fmod` func ref is materialized on demand by the integration
-    // resolver (`resolveFunc` calls `ensureFmod` — append-only, idempotent).
+    // exact-helper ref is materialized on demand by the integration resolver
+    // (`resolveFunc` calls `ensureFmodIntrinsic` — append-only, idempotent).
     // f64 operands only: i32-typed operands demote to legacy, which keeps
     // its `emitSafeI32Rem` i32 fast mode (trap-free rem semantics).
     case ts.SyntaxKind.PercentToken: {
       requireF64(isF64, "%", cx.funcName);
-      const fmodResult = cx.builder.emitCall(irIntrinsicFuncRef(FMOD_FN), [lhs, rhs], irVal({ kind: "f64" }));
+      const fmodResult = cx.builder.emitCall(fmodRefFor(expr.right, cx.checker), [lhs, rhs], irVal({ kind: "f64" }));
       if (fmodResult === null) {
         // Unreachable: a non-null resultType always yields a value id.
         throw new Error(`ir/from-ast: internal — __fmod call produced no value in ${cx.funcName}`);
