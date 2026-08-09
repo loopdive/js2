@@ -17,7 +17,7 @@ import { setupAcorn } from "./dogfood/setup-acorn.mjs";
 
 function analyze(source: string) {
   const sf = ts.createSourceFile("t.ts", source, ts.ScriptTarget.ES2022, true);
-  return analyzeProtoMethodWriteOnce(sf);
+  return analyzeProtoMethodWriteOnce([sf]);
 }
 
 describe("#3683 S1 — prototype-method write-once analysis", () => {
@@ -108,7 +108,7 @@ describe("#3683 S1 — prototype-method write-once analysis", () => {
     const { entryModulePath } = setupAcorn();
     const source = readFileSync(entryModulePath, "utf-8");
     const sf = ts.createSourceFile("acorn.mjs", source, ts.ScriptTarget.ES2022, true);
-    const r = analyzeProtoMethodWriteOnce(sf);
+    const r = analyzeProtoMethodWriteOnce([sf]);
     expect(r.poisoned.has("Parser")).toBe(false);
     const parser = r.methods.get("Parser");
     expect(parser).toBeDefined();
@@ -156,7 +156,7 @@ describe("#3683 S1b — direct-call admission facts", () => {
     const { entryModulePath } = setupAcorn();
     const source = readFileSync(entryModulePath, "utf-8");
     const sf = ts.createSourceFile("acorn.mjs", source, ts.ScriptTarget.ES2022, true);
-    const r = analyzeProtoMethodWriteOnce(sf);
+    const r = analyzeProtoMethodWriteOnce([sf]);
     // acorn writes `keywordTypes[name] = …` with a dynamic key at init, so
     // name-only shadowing proofs are unavailable — S3 must pair the verdicts
     // with receiver-shape runtime guards. Pin the fact so a future refinement
