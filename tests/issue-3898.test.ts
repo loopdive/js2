@@ -17,6 +17,7 @@
 
 import { describe, it, expect } from "vitest";
 import { compile, buildImports, instantiateWasm } from "../src/index.js";
+import { foldGroundExportCalls } from "../src/compiler/ground-call-fold.js";
 import { arrayBenchmarks } from "../benchmarks/suites/arrays.js";
 import { stringBenchmarks } from "../benchmarks/suites/strings.js";
 import { mixedBenchmarks } from "../benchmarks/suites/mixed.js";
@@ -200,6 +201,12 @@ describe("#3898 benchmark definitions", () => {
       expect(typeof value, `${def.name} must return its accumulator`).toBe("number");
       expect(Number.isFinite(value as number), `${def.name} returned ${value}`).toBe(true);
     }
+  });
+
+  it("keeps the mixed Fibonacci work dependent on its induction variable", () => {
+    const fibonacci = mixedBenchmarks.find((def) => def.name === "mixed/fibonacci")!;
+    expect(fibonacci).toBeDefined();
+    expect(foldGroundExportCalls(fibonacci.source).folded).toBe(0);
   });
 
   it("no JS baseline is fast enough to be impossible", () => {

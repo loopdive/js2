@@ -87,13 +87,18 @@ function textSearch(): number {
 /**
  * The `% MOD` fold is not decoration (#3898).
  *
- * `fib(30)` is 832,040 and the loop runs 10,000 times, so a plain sum reaches
- * 8.32e9 — past 2^31. The gc-native lane infers i32 for the accumulator and
- * wraps to -269,534,592, while JS and the host-call/linear lanes carry it in
- * f64. The cross-lane assertion caught this on the first corrected run. Folding
- * modulo a prime below 2^31 keeps every lane exact *and* in i32 range, so the
- * benchmark compares the same arithmetic everywhere instead of quietly pitting
- * wrapping i32 adds against f64 adds.
+ * Alternating `fib(29)` and `fib(30)` keeps the call dependent on the induction
+ * variable. A constant `fib(30)` is correctly folded by the compiler's ground-
+ * call pass, which would make this benchmark measure only the accumulator loop
+ * and trip the physical plausibility guard once that loop becomes fast enough.
+ *
+ * The calls produce 514,229 and 832,040 and the loop runs 10,000 times, so a
+ * plain sum still reaches 6.73e9 — past 2^31. The gc-native lane can infer i32
+ * for the accumulator while JS and the host-call/linear lanes carry it in f64.
+ * The cross-lane assertion caught that mismatch on the first corrected run.
+ * Folding modulo a prime below 2^31 keeps every lane exact *and* in i32 range,
+ * so the benchmark compares the same arithmetic everywhere instead of quietly
+ * pitting wrapping i32 adds against f64 adds.
  */
 const FIB_MOD = 1000000007;
 
@@ -110,7 +115,7 @@ function fibonacci(): number {
     return b;
   }
   let sum = 0;
-  for (let i = 0; i < 10000; i++) sum = (sum + fib(30)) % FIB_MOD;
+  for (let i = 0; i < 10000; i++) sum = (sum + fib(29 + (i & 1))) % FIB_MOD;
   return sum;
 }
 
@@ -217,6 +222,7 @@ ${variantTable(TEXT_VARIANTS)}
   {
     name: "mixed/fibonacci",
     iterations: 50,
+    // 10,000 induction-dependent fib calls; a constant argument is ground-folded.
     opsPerCall: 10000,
     source: `
 function fib(n: number): number {
@@ -234,7 +240,7 @@ function fib(n: number): number {
 export function run(): number {
   let sum = 0;
   for (let i = 0; i < 10000; i = i + 1) {
-    sum = (sum + fib(30)) % 1000000007;
+    sum = (sum + fib(29 + (i & 1))) % 1000000007;
   }
   return sum;
 }`,
