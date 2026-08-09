@@ -232,6 +232,16 @@ export function fillVecOverlayPushKeys(ctx: CodegenContext): void {
         { op: "f64.convert_i32_s" },
         { op: "f64.lt" },
         { op: "i32.and" },
+        // …and an INTEGER. The round trip below is necessary but NOT
+        // sufficient: `ToString(1.5) === "1.5"`, so `"1.5"` would round-trip
+        // cleanly and be dropped as if it were an index. Measured — the
+        // `t_keys_noncanonical_fraction` row failed on exactly this before the
+        // floor test was added.
+        { op: "local.get", index: L_N },
+        { op: "local.get", index: L_N },
+        { op: "f64.floor" },
+        { op: "f64.eq" },
+        { op: "i32.and" },
         {
           op: "if",
           blockType: { kind: "val", type: I32 },

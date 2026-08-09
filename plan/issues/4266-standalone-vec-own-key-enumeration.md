@@ -1,7 +1,8 @@
 ---
 id: 4266
 title: "Standalone key enumeration over a vec: the #3251 overlay is invisible to `Object.keys`/for-in/`getOwnPropertyNames`, and gOPN has no vec arm at all"
-status: in-progress
+status: done
+completed: 2026-08-09
 sprint: current
 created: 2026-08-09
 updated: 2026-08-09
@@ -15,6 +16,42 @@ es_edition: 5
 language_feature: property-model, descriptors, arrays, enumeration
 goal: es5
 related: [4230, 4222, 4010, 4055, 4071, 3251, 3537, 4159, 4232, 4098]
+# All the SUBSTANCE of this change is in the new satellite module
+# `src/codegen/vec-overlay-keys.ts` (~430 lines), which is why neither god-file
+# grows by more than its call sites:
+#   object-runtime.ts +20 — one import, the `reserveVecOverlayPushKeys` call,
+#     the `bagKeysTail` → `buildBagPushKeys` + overlay push + tail split inside
+#     the EXISTING vec arm, and the one-line `__extern_has` overlay arm. Each is
+#     in-place inside the arm it modifies; extracting them would put a two-line
+#     wrapper behind an import and hide the branch from the code that has to
+#     reason about the arm's stack shape.
+#   context/types.ts +17 — the `vecOwnKeysDirty` field plus its doc comment.
+#     The comment is load-bearing: it records WHY the flag is not folded into
+#     `vecAccessorDescriptorDirty` (that one fires only for a NON-data
+#     descriptor, so it would have missed 15.2.3.6-4-277, the head of the
+#     family). One line of field, sixteen of the reason.
+loc-budget-allow:
+  - src/codegen/object-runtime.ts
+  - src/codegen/context/types.ts
+# Same reason, per function. `fillDynamicForinVecArms` +18: the overlay push had
+# to land INSIDE the existing `__object_keys` / `__object_keys_forin` vec arm
+# (before `bagKeysTail`'s `return`), so the tail is spelled out rather than
+# called — moving it out would mean handing a builder the arm's local numbers
+# and its stack shape. `createCodegenContext` +1 is the one new flag initializer.
+func-budget-allow:
+  - src/codegen/object-runtime.ts::fillDynamicForinVecArms
+  - src/codegen/context/create-context.ts::createCodegenContext
+# coercion-sites: `vec-overlay-keys.ts` is a NEW module that CALLS the canonical
+# engine helpers rather than hand-rolling anything — `number_toString` is the
+# very helper the vec index loop uses to build the index keys this filter has to
+# recognise, and `__str_to_number` is the one `__extern_has`'s numeric arm
+# already parses keys with. Using the SAME two is what makes the dedup filter
+# agree with the loop it is deduplicating against; a private ToString/ToNumber
+# here would be the actual defect. The gate counts per-FILE vocabulary, so code
+# in a new module registers as growth even when the vocabulary is reused
+# verbatim (same grant, same reason, as #4222's `vec-overlay-presence.ts`).
+coercion-sites-allow:
+  - src/codegen/vec-overlay-keys.ts
 ---
 
 # #4266 — the vec key walk over the #3251 overlay (the #4230 L1 follow-up)
@@ -90,13 +127,26 @@ array is the point. So the seeds are filtered by identity:
 - `FLAG_INTERNAL` and `FLAG_DELETED_INDEX` entries are skipped, as in
   `__vec_props_keysrc`.
 
-**Canonicity is a ROUND TRIP, not a parse.** `ToString(ToNumber(key)) === key`.
-"Parses as an in-range number" would silently delete `"00"`, `"1.5"`, `" 1"`,
-`"+1"` — all ordinary named properties. That distinction is pinned by the
-`t_keys_noncanonical_*` rows, which a numeric-parse filter fails. The round trip
-costs one `number_toString` per overlay entry, so it is skipped outright when
-`length === 0` — the dominant shape (`var arrObj = []`), where no index key can
-exist in any store.
+**Canonicity is a ROUND TRIP *plus* an integer test — and the round trip alone
+is NOT enough.** The filter is `n === ToNumber(key)`, `n >= 0`, `n < length`,
+`n === floor(n)`, `ToString(n) === key`.
+
+- Dropping the round trip loses `"00"` / `" 1"` / `"+1"` — they parse to an
+  in-range number but are ordinary named properties.
+- Dropping the **floor** test loses `"1.5"`: `ToString(1.5) === "1.5"`, so a
+  fraction round-trips perfectly and gets discarded as if it were an index.
+  This is not hypothetical — the first cut had exactly the round trip and no
+  floor test, and `t_keys_noncanonical_fraction` measured **2 where Node says
+  3**. The row is in the suite for that reason.
+
+The round trip costs one `number_toString` per overlay entry, so the whole test
+is skipped when `length === 0` — the dominant shape (`var arrObj = []`), where
+no index key can exist in any store.
+
+A **non-string** key (a symbol) is screened structurally before either filter:
+both would `ref.cast $AnyStr` it, which TRAPS inside a helper that must never
+throw. A symbol is not an own *name*, so skipping the entry is also the right
+answer.
 
 ## Demand gate — a module that never asks is byte-identical
 
@@ -146,7 +196,17 @@ answer** — never a trap, never a silent extra key.
 - `src/codegen/array-holes.ts`, `context/types.ts`, `context/create-context.ts` —
   the `vecOwnKeysDirty` pre-scan flag.
 - `tests/es5-standalone-vec-key-enumeration.test.ts` — 18 rows, every
-  expectation the value Node produces for identical source.
+  expectation the value Node produces for identical source, plus a demand-gate
+  test that asserts the native is absent from an unarmed module and present in
+  an armed one.
+
+## Gate status
+
+`check:{loc-budget,func-budget,oracle-ratchet,coercion-sites,pushraw,ir-fallbacks,dead-exports,issues,stack-balance,issue-spec-coverage,issue-ids:against-main}`
+all OK; `npx tsc --noEmit` clean; `npm run lint` exit 0 with zero diagnostics on
+the new file. `check:oracle-ratchet` reports `getTypeAtLocation +0, ctx.checker
++0` — this change asks no type questions at all, it is pure funcMap wiring plus
+one syntactic AST pre-scan.
 
 ## Measurement
 
@@ -185,6 +245,46 @@ Flipped — no scatter, exactly the two predicted families:
   `defineProperty/15.2.3.6-4-277`, `-4-313`, `-4-313-1`;
   `defineProperties/15.2.3.7-6-a-266`, `-a-302`
 - RC2 (gOPN vec arm), 2: `getOwnPropertyNames/15.2.3.4-4-48`, `-4-49`
+
+### Regression watch — all 2,863 currently-PASSING rows this change can reach
+
+`built-ins/Object/{defineProperty,defineProperties,create,keys,getOwnPropertyNames,getOwnPropertyDescriptor,entries,values,assign,freeze,isFrozen,seal,isSealed,getOwnPropertyDescriptors,hasOwn,prototype/hasOwnProperty,prototype/propertyIsEnumerable}`,
+`built-ins/Reflect/ownKeys`, `built-ins/JSON/stringify`,
+`language/statements/for-in`, `language/expressions/{in,delete}` — every row the
+promoted standalone baseline records as `pass`.
+
+| | |
+| --- | --- |
+| rows scored | 2,863 both arms |
+| arm A pass | **2,862** |
+| arm B pass | **2,862** |
+| **net** | **0** |
+| **lost** | **0** |
+| status churn | **0** |
+
+The single non-passing row is the same on both arms and is **not** this change:
+`language/expressions/in/private-field-in-nested.js` →
+`CompileError: … "C_init" failed: local.tee[0] expected type anyref, found i32`.
+It is a `pass` in the promoted baseline, so it is a pre-existing local↔CI
+divergence in the private-field lowering; recorded here rather than waved off.
+
+Two honest caveats about the arms:
+
+- Rows 1–2,740 of arm B ran before the **symbol screen** was added. The screen
+  only prevents a `ref.cast $AnyStr` trap on a symbol-keyed overlay entry, so it
+  can turn a trap into a non-trap and nothing else; no scored row changed
+  category.
+- The **floor** test in the dedup filter also landed after the watch arms. It
+  only makes the filter STRICTER (it stops discarding non-integer numeric keys
+  such as `"1.5"`), and the index loop never emits such a key, so it cannot
+  introduce a duplicate. Both refinements are covered by the vitest suite.
+
+### gc/host lane
+
+Unchanged by construction, twice over: every entry point is behind
+`ctx.standalone` (via `vecOwnKeysEnumerationActive`), and in gc/host mode the
+`env::__object_keys` / `env::__extern_has` / `env::__getOwnPropertyNames`
+imports own these paths — the natives this change edits are not even emitted.
 
 ## Leftovers — measured, with the mechanism named
 
