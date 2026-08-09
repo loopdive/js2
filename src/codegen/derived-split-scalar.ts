@@ -187,7 +187,7 @@ export function tryEmitDerivedLengthLocal(
   if (propName !== "length") return undefined;
   if (ts.isIdentifier(expr.expression)) {
     const symbol = ctx.checker.getSymbolAtLocation(expr.expression);
-    const substring = symbol ? fctx.derivedSubstringReads?.get(symbol) : undefined;
+    const substring = symbol?.valueDeclaration ? fctx.derivedSubstringReads?.get(symbol.valueDeclaration) : undefined;
     const local = substring?.lenLocal ?? (symbol ? fctx.derivedStringArrayLengthLocals?.get(symbol) : undefined);
     if (local === undefined) return undefined;
     fctx.body.push({ op: "local.get", index: local });

@@ -536,6 +536,7 @@ sprint: 0
 | 3529 | 2026-07-21 | IR R0 typed-producer equivalence parity restored: 1,608 pass / 35 fail, one baseline-known improvement, zero new regressions, unchanged baseline; merge-queue boolean-boundary correction restored differential 99/104 | Sprint 74 |
 | 3519 | 2026-07-21 | IR R0 typed outcomes and honest gate: hybrid 5/5, 37 terminal, 31 IR, 6 Unsupported, 0 Invariants, 37 legacy | Sprint 74 |
 | 3652 | 2026-07-26 | Compact Unicode RegExp code-point classes recover the four remaining step-limited property rows without relaxing the ReDoS budget (462/469 current generated rows pass) | Current |
+| 3924 | 2026-08-09 | Sound opt-in linear call-arena reset reclaims primitive-only exported calls while aggregate boundaries and heap-backed globals fall back to monotonic allocation | Current |
 
 > **IR retirement checkpoint:** #3518 remains in progress; #3520 is ready as
 > the next R1 slice. R2–R8 remain blocked on the dependency spine.
