@@ -199,3 +199,15 @@ export function forEachChild<T>(
   }
   return ts.forEachChild(node, cbNode, cbNodeArray);
 }
+
+const BOUNDED_UNKNOWN_TYPE = { flags: ts.TypeFlags.Unknown } as ts.Type;
+
+/** Query a checker type without letting one recursive shape abort a compile. */
+export function getTypeAtLocationBounded(checker: ts.TypeChecker, node: ts.Node): ts.Type {
+  try {
+    return checker.getTypeAtLocation(node);
+  } catch (error) {
+    if (error instanceof RangeError && /Maximum call stack/i.test(error.message)) return BOUNDED_UNKNOWN_TYPE;
+    throw error;
+  }
+}

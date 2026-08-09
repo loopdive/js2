@@ -92,31 +92,26 @@
     {
       "name": "typescript",
       "version": "5.9.3",
-      "issue": null,
+      "issue": 3994,
       "entryFile": "lib/typescript.js",
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 12752,
-        "timedOut": false,
-        "timeoutMs": 180000,
-        "errorCount": 1,
+        "durationMs": 600076,
+        "timedOut": true,
+        "timeoutMs": 600000,
+        "errorCount": 0,
         "binaryBytes": 0,
         "categories": {
-          "compiler-diagnostic": {
+          "compile-budget": {
             "count": 1,
-            "sample": "Codegen error: Maximum call stack size exceeded"
+            "sample": "compileProject exceeded the 600000ms budget"
           }
-        },
-        "errors": [
-          {
-            "message": "Codegen error: Maximum call stack size exceeded"
-          }
-        ]
+        }
       },
       "validation": {
         "validates": false,
-        "firstError": "Codegen error: Maximum call stack size exceeded"
+        "firstError": "compileProject exceeded the 600000ms budget"
       },
       "tests": {
         "kind": "upstream-suite",
