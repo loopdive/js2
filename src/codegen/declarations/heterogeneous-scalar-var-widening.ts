@@ -155,6 +155,92 @@ function assignmentWidens(ctx: CodegenContext, declTag: JsTag, assigned: ts.Expr
 }
 
 /**
+ * (#4269) True when `node` sits inside the BODY of a `with` statement.
+ *
+ * Deliberately does NOT stop at a function boundary: a module global written
+ * from inside a `with` nested in a function loses its value the same way one
+ * written at top level does.
+ */
+function isInsideWithBody(node: ts.Node): boolean {
+  let prev: ts.Node | undefined;
+  for (let cur: ts.Node | undefined = node; cur; prev = cur, cur = cur.parent) {
+    if (prev !== undefined && ts.isWithStatement(cur) && cur.statement === prev) return true;
+  }
+  return false;
+}
+
+/**
+ * (#4269) Every module-scoped `var`/`let` in this file, by name.
+ *
+ * Only built for a file that actually contains a `with` — see
+ * {@link withBodyAssignmentWidens} for why the name-keyed lookup is admissible
+ * there and nowhere else, and CLAUDE.md's `#3364` note for why bare-name keying
+ * is otherwise forbidden.
+ */
+function collectModuleScopedVarsByName(sourceFile: ts.SourceFile): Map<string, ts.VariableDeclaration> {
+  const byName = new Map<string, ts.VariableDeclaration>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && isModuleScoped(node)) {
+      if (!byName.has(node.name.text)) byName.set(node.name.text, node);
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sourceFile, visit);
+  return byName;
+}
+
+/**
+ * (#4269) Widen a primitive-pinned module global assigned from inside a `with`
+ * body.
+ *
+ * ## Why the #4204 predicate cannot see this write
+ *
+ * Inside a `with` body the checker resolves NOTHING — §14.11's object
+ * Environment Record can bind any name at runtime, so TypeScript gives every
+ * identifier there `any` and no value declaration. So both halves of the #4204
+ * test fail at once: `variableDeclarationOf(target)` is `undefined`, and the
+ * RHS's tag is `mixed`. The slot therefore keeps the initializer's narrow
+ * representation and the assignment is destroyed by coercion:
+ *
+ * ```js
+ * var st = "parseInt";                    // (mut (ref null $string))
+ * with (o) { st = parseInt; }             // o owns parseInt ⇒ a function
+ * st === parseInt                         // true — both read back null
+ * ```
+ *
+ * That single mechanism is what stalls the whole `S12.10_A1.*` battery at
+ * assertion #11 (`myObj.parseInt !== parseInt`): the value the object
+ * environment supplied never survives the store.
+ *
+ * ## Why `mixed` widens HERE but not in the #4204 rule
+ *
+ * #4204 refuses to widen on `mixed` because an unresolvable RHS is not evidence
+ * of heterogeneity. Inside a `with` body it is not merely unresolvable — it is
+ * dynamically resolved *by construction*, and no static tag can constrain it.
+ * That is the same reasoning #4204 already applies to a bare `this` receiver,
+ * applied to the one other construct the spec defines as dynamically scoped.
+ *
+ * ## Blast radius
+ *
+ * A file with no `with` statement never reaches this predicate, so its globals
+ * are typed byte-identically to before. Within a `with`-bearing file it widens
+ * only bindings whose slot is a primitive AND whose target the oracle could not
+ * resolve (a resolved target keeps #4204's precise verdict, including a
+ * deliberate refusal).
+ */
+function withBodyAssignmentWidens(
+  ctx: CodegenContext,
+  target: ts.Identifier,
+  moduleVarsByName: Map<string, ts.VariableDeclaration>,
+  initializerTagOf: (decl: ts.VariableDeclaration) => JsTag | "none",
+): boolean {
+  if (ctx.oracle.variableDeclarationOf(target) !== undefined) return false;
+  if (!isInsideWithBody(target)) return false;
+  const named = moduleVarsByName.get(target.text);
+  return named !== undefined && initializerTagOf(named) !== "none";
+}
+
+/**
  * Names of module-scoped `var`/`let` bindings whose primitive-pinned slot is
  * provably too narrow for some assignment in this source file.
  *
@@ -167,6 +253,11 @@ export function collectHeterogeneouslyAssignedModuleVars(
   sourceFile: ts.SourceFile,
 ): ReadonlySet<string> {
   const widened = new Set<string>();
+  // (#4269) Demand-gate: only a file that actually contains a `with` pays for
+  // the name-keyed fallback, and only such a file can change representation.
+  const moduleVarsByName = sourceFile.text.includes("with")
+    ? collectModuleScopedVarsByName(sourceFile)
+    : new Map<string, ts.VariableDeclaration>();
   /** Declaration → its initializer tag, or `undefined` when it cannot widen. */
   const declTagCache = new WeakMap<ts.VariableDeclaration, JsTag | "none">();
 
@@ -196,6 +287,8 @@ export function collectHeterogeneouslyAssignedModuleVars(
       if (decl !== undefined && decl.getSourceFile() === sourceFile) {
         const declTag = initializerTagOf(decl);
         if (declTag !== "none" && assignmentWidens(ctx, declTag, node.right)) widened.add(node.left.text);
+      } else if (moduleVarsByName.size > 0 && withBodyAssignmentWidens(ctx, node.left, moduleVarsByName, initializerTagOf)) {
+        widened.add(node.left.text);
       }
     }
     ts.forEachChild(node, visit);
