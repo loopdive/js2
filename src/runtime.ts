@@ -30,6 +30,7 @@ import {
   _installIteratorHelperPolyfills,
 } from "./runtime/iterator-polyfills.js";
 import { buildStringConstants, buildStringConstants16 } from "./runtime/string-constants.js";
+import { fixedExternMethodCallArity, makeFixedExternMethodCall } from "./runtime/fixed-extern-method-call.js";
 export { buildStringConstants, buildStringConstants16 };
 import {
   compiledClosureNativeSource,
@@ -9055,19 +9056,18 @@ function resolveImport(
     }
     case "builtin": {
       const name = intent.name;
-      // (#1644 Slice B) __bigint_ctor: §21.2.1.1 BigInt(value).
-      //   1. ToPrimitive(value, number)
-      //   2. If prim is a Number → NumberToBigInt: RangeError unless it is a
-      //      safe integer (NaN / ±Infinity / non-integer all throw RangeError).
-      //   3. Otherwise → ToBigInt(prim): bigint identity; boolean → 0n/1n;
-      //      string → StringToBigInt (SyntaxError on malformed numeric string);
-      //      Symbol → TypeError.
-      // Returns the bigint as a wasm i64 (JS-BigInt-integration).
-      // (#2678) Date.parse / new Date(<string>) in HOST mode. Host strings are
-      // real `wasm:js-string` externrefs, so the JS `Date.parse` runs directly
-      // (and is more format-complete than the native ISO parser). Registered
-      // up-front by collectDateParseHostImports (declarations.ts) so its funcidx
-      // is stable. Returns f64 ms (NaN on an unparseable string).
+      const fixedMethodArity = fixedExternMethodCallArity(name);
+      if (fixedMethodArity !== undefined) {
+        const canonical = resolveImport(
+          { type: "builtin", name: "__extern_method_call" },
+          deps,
+          callbackState,
+          globalSandbox,
+          instanceState,
+        );
+        return makeFixedExternMethodCall(fixedMethodArity, canonical);
+      }
+      // #1644/#2678: spec BigInt-to-i64 and host Date.parse for wasm:js-string externrefs.
       if (name === "__date_parse_host") return (s: any): number => Date.parse(s);
       if (name === "__bigint_ctor") {
         return (v: any): bigint => {
