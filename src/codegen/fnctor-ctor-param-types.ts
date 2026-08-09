@@ -37,8 +37,18 @@
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
 import type { ValType } from "../ir/types.js";
-import { computeFnctorGraphCtorParamFacts, computeFnctorGraphCtorThisReadFacts } from "../ir/fnctor-method-edges.js";
-import { fnctorCtorParamSlotsEnabled, fnctorCtorParamTypesFlagEnabled } from "../derivation-flags.js";
+import {
+  computeFnctorGraphCtorParamFacts,
+  computeFnctorGraphCtorThisReadFacts,
+  computeFnctorGraphFieldVerdicts,
+  computeFnctorGraphFieldWriteJoins,
+} from "../ir/fnctor-method-edges.js";
+import type { LatticeType } from "../ir/propagate.js";
+import {
+  fieldWriteVerdictEnabled,
+  fnctorCtorParamSlotsEnabled,
+  fnctorCtorParamTypesFlagEnabled,
+} from "../derivation-flags.js";
 import { inferParamTypeFromCallSites } from "./declarations/param-return-inference.js";
 
 /**
@@ -66,6 +76,117 @@ export function fnctorCtorParamTypesEnabled(): boolean {
   return fnctorCtorParamTypesFlagEnabled();
 }
 
+/** Kinds the write-kind verdict accepts for an f64 slot (numeric subdomains). */
+function verdictIsNumeric(fact: LatticeType | undefined): boolean {
+  return fact !== undefined && (fact.kind === "f64" || fact.kind === "i32" || fact.kind === "u32");
+}
+
+/**
+ * (#4250) The fail-closed write-kind gate for a would-be f64 slot: TRUE only
+ * when the whole-program verdict positively proves that every enumerable write
+ * reaching `Owner.<field>` is numeric. Absent owner (anonymous, ambiguous
+ * name, poisonAllCtors, unconverged fixpoint), absent field, and any
+ * merely-UNPROVEN write all answer FALSE — a narrowing this cannot justify is
+ * a silent wrong answer waiting for the first type-changing write, which is
+ * exactly the hole that kept `JS2WASM_FNCTOR_CTOR_PARAM_SLOTS` off (#4255).
+ */
+function verdictAllowsNumericSlot(
+  ctx: CodegenContext,
+  funcDecl: ts.FunctionDeclaration | ts.FunctionExpression,
+  fieldName: string,
+): boolean {
+  const ctorName = funcDecl.name?.text;
+  if (ctorName === undefined) return false;
+  const verdict = computeFnctorGraphFieldVerdicts(funcDecl.getSourceFile(), ctx).get(ctorName)?.get(fieldName);
+  return verdictIsNumeric(verdict);
+}
+
+/**
+ * (#4250) The proven-violation veto for the PRE-EXISTING literal slot choice:
+ * TRUE when the verdict POSITIVELY finds a reaching write whose value cannot
+ * live in the numeric slot the checker chose (`this.tag = 1; … a.tag = "s"` —
+ * main's original miscompile). Deliberately NOT fail-closed, unlike the gate
+ * above: the literal arm has shipped since the fnctor machinery existed, and
+ * demoting every long-shipped slot that merely has an UNPROVEN same-named
+ * write in the module would be a mass de-optimization of working programs for
+ * no observed defect. The residual exposure (an unproven write that turns out
+ * non-numeric at runtime) is exactly main's pre-#4250 exposure, now strictly
+ * reduced; the asymmetry with the fail-closed lever gate is recorded in the
+ * issue file.
+ */
+export function fnctorFieldNumericWriteViolation(
+  ctx: CodegenContext,
+  funcDecl: ts.FunctionDeclaration | ts.FunctionExpression,
+  fieldName: string,
+  slotKind: "f64" | "i32",
+): boolean {
+  if (!fieldWriteVerdictEnabled()) return false;
+  const ctorName = funcDecl.name?.text;
+  if (ctorName === undefined) return false;
+  // The RAW join, not the guarded verdict: a poison anywhere in the module
+  // must not ERASE the enumerated string write that proves the violation.
+  const join = computeFnctorGraphFieldWriteJoins(funcDecl.getSourceFile(), ctx).get(ctorName)?.get(fieldName);
+  if (join === undefined) return false;
+  // The i32 slot the literal arm produces is the BOOL-branded one (`this.x =
+  // true`); a proven non-bool write breaks it just like a proven non-number
+  // breaks f64.
+  const allowed =
+    slotKind === "f64" ? new Set(["f64", "i32", "u32", "unknown", "dynamic"]) : new Set(["bool", "unknown", "dynamic"]);
+  if (join.kind === "union") return join.members.some((m) => !allowed.has(m.kind));
+  return !allowed.has(join.kind);
+}
+
+/** The typeof result a lattice write-kind maps to, or null when it has none. */
+function typeofOfKind(kind: string): string | null {
+  switch (kind) {
+    case "f64":
+    case "i32":
+    case "u32":
+      return "number";
+    case "string":
+      return "string";
+    case "bool":
+      return "boolean";
+    case "object":
+      return "object";
+    default:
+      return null; // unknown / dynamic / union — no single answer
+  }
+}
+
+/**
+ * (#4250) TRUE when a compile-time `typeof <recv>.<field>` fold is POSITIVELY
+ * contradicted by the field's write-kind verdict — the checker types the
+ * property from the constructor's write, so `var A = function A() { this.tag
+ * = 1; }; a.tag = "s"; typeof a.tag` folded to `"number"` while the runtime
+ * value is a string. Fires only on a PROVEN disagreement (a verdict kind, or
+ * any union member, that maps to a DIFFERENT typeof string): a merely-unproven
+ * verdict keeps the fold, mirroring the literal-slot veto's asymmetry — the
+ * fold has shipped for every checker-typed property since the beginning, and
+ * killing it wherever the analysis cannot see would de-optimize working
+ * programs for no observed defect.
+ */
+export function typeofFoldContradictedByFieldVerdict(
+  ctx: CodegenContext,
+  operand: ts.Expression,
+  folded: string,
+): boolean {
+  if (!fieldWriteVerdictEnabled()) return false;
+  if (!ts.isPropertyAccessExpression(operand) || ts.isPrivateIdentifier(operand.name)) return false;
+  const ownerName = ctx.oracle.declaredNameOf(operand.expression);
+  if (ownerName === undefined) return false;
+  // RAW join for the same reason as the slot veto: proven contradictions must
+  // survive an unrelated module-wide poison.
+  const join = computeFnctorGraphFieldWriteJoins(operand.getSourceFile(), ctx).get(ownerName)?.get(operand.name.text);
+  if (join === undefined) return false;
+  const disagrees = (kind: string): boolean => {
+    const t = typeofOfKind(kind);
+    return t !== null && t !== folded;
+  };
+  if (join.kind === "union") return join.members.some((m) => disagrees(m.kind));
+  return disagrees(join.kind);
+}
+
 /**
  * The narrowed slot type for `this.<field> = <param>`, or null to leave the
  * existing checker-derived choice alone.
@@ -73,17 +194,16 @@ export function fnctorCtorParamTypesEnabled(): boolean {
 export function inferFnctorFieldTypeFromCtorParam(
   ctx: CodegenContext,
   funcDecl: ts.FunctionDeclaration | ts.FunctionExpression,
+  fieldName: string,
   valueExpr: ts.Expression,
   rhsWasm: ValType,
 ): ValType | null {
   if (!fnctorCtorParamTypesEnabled()) return null;
-  // (#743 defaults flip, 2026-08-08) The SLOT half is the family's one
-  // deliberately-excluded sub-lever and stays OFF unless
-  // `JS2WASM_FNCTOR_CTOR_PARAM_SLOTS=1`: it types a field from the
-  // constructor's writes alone, with no verdict about writes reaching that
-  // field from anywhere else, and a later `a.f = "s"` then reads back wrong.
-  // Full argument, both probed arms, and what would unblock it:
-  // `src/derivation-flags.ts`.
+  // (#743 defaults flip, 2026-08-08; unblocked by #4250) The SLOT half types a
+  // field from the constructor's write, so it is only sound together with the
+  // whole-program write-kind verdict consulted below — which is why
+  // `fnctorCtorParamSlotsEnabled` is OFF whenever the verdict is disabled
+  // (`src/derivation-flags.ts`).
   if (!fnctorCtorParamSlotsEnabled()) return null;
   // STANDALONE ONLY. The narrowing's trust boundary is "the module owns every
   // write to this slot" — the same boundary the #3683 S4a numeric promotion
@@ -110,6 +230,11 @@ export function inferFnctorFieldTypeFromCtorParam(
   while (ts.isBinaryExpression(carrier) && carrier.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
     carrier = carrier.right;
   }
+
+  // (#4250) THE WRITE-KIND GATE, ahead of every arm: no narrowing unless the
+  // whole-program verdict proves every enumerable write reaching this field is
+  // numeric. The arms below only ever justify the CONSTRUCTOR's write.
+  if (!verdictAllowsNumericSlot(ctx, funcDecl, fieldName)) return null;
 
   // (#743) A `this.<y>` READ (the value is a FIELD of the instance under
   // construction) or a `<param>.<y>` READ (`this.start = p.start` — acorn's

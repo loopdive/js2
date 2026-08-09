@@ -98,6 +98,22 @@ export interface FieldWrite {
   readonly receiver?: ts.Expression;
 }
 
+/**
+ * (#4250) A field-poison whose OWNER cannot be named at scan time: the write
+ * (or reflection call, or dynamic-key delete) targets a non-`this` receiver,
+ * so which owner's fields it can reach is a provenance question. Resolved by
+ * `fnctor-receiver-provenance.ts` AFTER its parameter-provenance fixpoint:
+ * receiver ⇒ R → poison R's `name` (or all of R's fields when `name` is
+ * absent); receiver ⇒ ⊤ → poison the name for every owner (or every field of
+ * every owner); receiver ⇒ ⊥ (null/undefined/builtin instance) → reaches no
+ * tracked slot, nothing to poison.
+ */
+export interface DeferredFieldPoison {
+  readonly receiver: ts.Expression;
+  /** Literal property name; absent = any field of the receiver's owner. */
+  readonly name?: string;
+}
+
 /** Mutable working state threaded through the analysis phases. */
 export interface AnalysisState {
   readonly sourceFile: ts.SourceFile;
@@ -133,6 +149,8 @@ export interface AnalysisState {
   readonly fieldDynamicPerOwner: Map<IrUnitId, Set<string>>;
   /** Owners whose entire field set is unknowable (`this[k] = v`, …). */
   readonly fieldPoisonedOwners: Set<IrUnitId>;
+  /** (#4250) Poisons awaiting receiver provenance — see {@link DeferredFieldPoison}. */
+  readonly deferredFieldPoisons: DeferredFieldPoison[];
   poisonAllFields: boolean;
   poisonAllMethods: boolean;
   poisonAllCtors: boolean;
@@ -148,9 +166,27 @@ export interface AnalysisState {
 export interface GraphFacts {
   readonly paramFacts: ReadonlyMap<string, readonly LatticeType[]>;
   readonly thisReadFacts: ReadonlyMap<ts.Node, LatticeType>;
+  /**
+   * (#4250) Per-owner per-field write-kind verdicts, POISON-GUARDED: DYNAMIC
+   * wherever any cannot-see path exists. The fail-closed side — what a
+   * narrowing must positively pass.
+   */
+  readonly fieldVerdicts: ReadonlyMap<string, ReadonlyMap<string, LatticeType>>;
+  /**
+   * (#4250) The raw per-field write JOINS, poison-free: exactly what the
+   * enumerated writes store. The violation-detection side — a poison can add
+   * unseen writes but never erases seen evidence, so a proven type-changing
+   * write stays provable in a module that also trips a poison.
+   */
+  readonly fieldWriteJoins: ReadonlyMap<string, ReadonlyMap<string, LatticeType>>;
 }
 
-export const EMPTY_FACTS: GraphFacts = { paramFacts: new Map(), thisReadFacts: new Map() };
+export const EMPTY_FACTS: GraphFacts = {
+  paramFacts: new Map(),
+  thisReadFacts: new Map(),
+  fieldVerdicts: new Map(),
+  fieldWriteJoins: new Map(),
+};
 
 /** Keys of an object literal, or a top-level once-declared var holding one. */
 export function resolveLiteralKeys(sourceFile: ts.SourceFile, arg: ts.Expression): Set<string> | undefined {

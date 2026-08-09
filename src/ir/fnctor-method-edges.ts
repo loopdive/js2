@@ -117,6 +117,7 @@ import {
   type ThisContext,
   buildWriteIndex,
   collectCtorCarrierFacts,
+  collectFieldVerdicts,
   evalValueExpr,
   instanceAtomFor,
   runFieldPass,
@@ -163,6 +164,36 @@ export function computeFnctorGraphCtorThisReadFacts(
   return graphFacts(sourceFile, host).thisReadFacts;
 }
 
+/**
+ * (#4250) Post-fixpoint per-owner per-field WRITE-KIND VERDICTS — the join
+ * over every write the analysis can enumerate as reaching `Owner.<field>`,
+ * DYNAMIC on every cannot-see path (escaped owner, replaced prototype,
+ * computed-key writes, `delete`, reflection — the deferred receiver-provenance
+ * poisons included). A slot-narrowing consumer must refuse any narrowing this
+ * map cannot positively justify: absent owner, absent field, or a non-matching
+ * kind all mean NO.
+ */
+export function computeFnctorGraphFieldVerdicts(
+  sourceFile: ts.SourceFile,
+  host: { checker: ts.TypeChecker },
+): ReadonlyMap<string, ReadonlyMap<string, LatticeType>> {
+  return graphFacts(sourceFile, host).fieldVerdicts;
+}
+
+/**
+ * (#4250) The poison-FREE per-field write joins — the VIOLATION-detection
+ * companion of {@link computeFnctorGraphFieldVerdicts}: exactly what the
+ * enumerated writes store, with no cannot-see widening. Positive evidence of a
+ * type-changing write (the `string` member of `union[f64,string]`) survives a
+ * module-wide poison here; nothing in this map ever licenses a narrowing.
+ */
+export function computeFnctorGraphFieldWriteJoins(
+  sourceFile: ts.SourceFile,
+  host: { checker: ts.TypeChecker },
+): ReadonlyMap<string, ReadonlyMap<string, LatticeType>> {
+  return graphFacts(sourceFile, host).fieldWriteJoins;
+}
+
 function graphFacts(sourceFile: ts.SourceFile, host: { checker: ts.TypeChecker }): GraphFacts {
   const cached = memo.get(sourceFile);
   if (cached) return cached;
@@ -197,6 +228,7 @@ function analyze(sourceFile: ts.SourceFile, checker: ts.TypeChecker): GraphFacts
     fieldDynamicNames: new Set(),
     fieldDynamicPerOwner: new Map(),
     fieldPoisonedOwners: new Set(),
+    deferredFieldPoisons: [],
     poisonAllFields: false,
     poisonAllMethods: false,
     poisonAllCtors: false,
@@ -236,6 +268,11 @@ function analyze(sourceFile: ts.SourceFile, checker: ts.TypeChecker): GraphFacts
     out.set(node.name, entries.get(node.id)!.params);
   }
   const thisReadFacts = collectCtorCarrierFacts(state, solved.fx, nameCounts);
+  const { guarded: fieldVerdicts, rawJoins: fieldWriteJoins } = collectFieldVerdicts(
+    state,
+    solved.fieldFacts,
+    nameCounts,
+  );
 
   // Inert diagnostics (JS2WASM_LOG_FNCTOR_GRAPH=1) — mirrors the escape gate's
   // JS2WASM_LOG_FNCTOR_GATE pattern; zero effect on output.
@@ -278,7 +315,7 @@ function analyze(sourceFile: ts.SourceFile, checker: ts.TypeChecker): GraphFacts
     // eslint-disable-next-line no-console
     console.error(lines.join("\n"));
   }
-  return { paramFacts: out, thisReadFacts };
+  return { paramFacts: out, thisReadFacts, fieldVerdicts, fieldWriteJoins };
 }
 
 // ── Phase 1: top-level callables ──────────────────────────────────────────────
