@@ -30,6 +30,7 @@ import {
 } from "./closures.js";
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "./async-frame.js"; // (#3132 S2) obj-literal async-gen method drive
 import { addFunctionOwnLocals } from "./binding-info.js";
+import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { emitHoleSentinel } from "./array-holes.js"; // (#2001 S1)
 import { ensureStrToCharVecHelper, stringConstantExternrefInstrs } from "./native-strings.js";
@@ -216,6 +217,50 @@ function hasHeterogeneousObjectLiteralFields(
     if (!object) return true;
     const keys = staticObjectLiteralDataKeys(ctx, object);
     if (!keys || keys.length !== firstKeys.length || keys.some((key, index) => key !== firstKeys[index])) return true;
+  }
+  return false;
+}
+
+/** Exact synthetic classes constructed by every real element, when provable. */
+function exactConstructedClassNames(ctx: CodegenContext, expr: ts.ArrayLiteralExpression): string[] | null {
+  const names: string[] = [];
+  for (const element of expr.elements) {
+    if (ts.isOmittedExpression(element) || ts.isSpreadElement(element) || _isUndefinedLike(element)) return null;
+    let value: ts.Expression = element;
+    while (
+      ts.isParenthesizedExpression(value) ||
+      ts.isAsExpression(value) ||
+      ts.isTypeAssertionExpression(value) ||
+      ts.isSatisfiesExpression(value) ||
+      ts.isNonNullExpression(value)
+    ) {
+      value = value.expression;
+    }
+    if (!ts.isNewExpression(value)) return null;
+    const name = exactClassExpressionTypeName(ctx, ctx.checker.getTypeAtLocation(value.expression));
+    if (!name) return null;
+    names.push(name);
+  }
+  return names;
+}
+
+function classExtendsCarrier(ctx: CodegenContext, className: string, carrierName: string): boolean {
+  const seen = new Set<string>();
+  let current: string | undefined = className;
+  while (current && !seen.has(current)) {
+    if (current === carrierName) return true;
+    seen.add(current);
+    current = ctx.classParentMap.get(current);
+  }
+  return false;
+}
+
+/** Whether the selected ref is a genuine common base of all exact classes. */
+function isCommonClassCarrier(ctx: CodegenContext, elemWasm: ValType, classNames: readonly string[]): boolean {
+  if (elemWasm.kind !== "ref" && elemWasm.kind !== "ref_null") return false;
+  for (const [carrierName, typeIdx] of ctx.structMap) {
+    if (typeIdx !== elemWasm.typeIdx) continue;
+    if (classNames.every((className) => classExtendsCarrier(ctx, className, carrierName))) return true;
   }
   return false;
 }
@@ -3928,6 +3973,21 @@ export function compileArrayLiteral(
       !hasContextualRefCarrier &&
       (elemWasm.kind === "ref" || elemWasm.kind === "ref_null") &&
       hasHeterogeneousObjectLiteralFields(ctx, expr, firstElem)
+    ) {
+      elemWasm = { kind: "externref" };
+    }
+    // (#4290) A contextual union such as `(RegExpRouter | TrieRouter)[]`
+    // can make TypeScript report that same union for each `new` expression.
+    // The generic type mapper then picks one concrete struct for the union,
+    // even though the other constructor returns an unrelated struct. Preserve
+    // the exact declaration identities of imported class expressions: when
+    // they differ and the selected carrier is not a real common base, use the
+    // universal ref vec instead of guard-casting a valid instance to null.
+    const constructedClassNames = !hasSpread ? exactConstructedClassNames(ctx, expr) : null;
+    if (
+      constructedClassNames &&
+      new Set(constructedClassNames).size > 1 &&
+      !isCommonClassCarrier(ctx, elemWasm, constructedClassNames)
     ) {
       elemWasm = { kind: "externref" };
     }

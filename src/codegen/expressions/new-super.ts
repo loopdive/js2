@@ -3530,15 +3530,6 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   // `any`/none, so `symbol` is undefined). Used by the #1679 build path below.
   let thisFnctorSym: ts.Symbol | undefined;
 
-  // For class expressions (const C = class { ... }), the symbol name may be
-  // the internal anonymous name (e.g. "__class"). Look up the mapped name first,
-  // then fall back to the identifier used in the new expression.
-  if (className && !ctx.classSet.has(className)) {
-    const mapped = ctx.classExprNameMap.get(className);
-    if (mapped) {
-      className = mapped;
-    }
-  }
   // (#3163) Resolve the callee identifier THROUGH cast/paren wrappers —
   // `new (P as any)()` must construct exactly like `new P()`. The raw-node
   // `ts.isIdentifier(expr.expression)` gates below made every cast-wrapped
@@ -3549,6 +3540,52 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   // never changes the runtime VALUE, so symbol resolution on the unwrapped
   // identifier reflects the actual binding.
   const calleeIdent = ts.isIdentifier(unwrappedNonId) ? unwrappedNonId : undefined;
+
+  // (#4288) Published JavaScript commonly spells classes as `var C = class {}`.
+  // TypeScript gives every one of those anonymous class types the display name
+  // `__class`, which is not a binding identity: a global string lookup is
+  // necessarily last-writer-wins across modules. Follow the direct callee's
+  // symbol (and import alias) to the exact ClassExpression AST node first, then
+  // recover the synthetic name registered for that node. Hono imports three
+  // such router classes; without this identity path each `new Router()` became
+  // `new Hono()` and recursively re-entered Hono's initializer.
+  let boundClassExpressionName: string | undefined;
+  if (calleeIdent) {
+    let boundSymbol = ctx.checker.getSymbolAtLocation(calleeIdent);
+    const seenAliases = new Set<ts.Symbol>();
+    while (boundSymbol && (boundSymbol.flags & ts.SymbolFlags.Alias) !== 0 && !seenAliases.has(boundSymbol)) {
+      seenAliases.add(boundSymbol);
+      try {
+        const target = ctx.checker.getAliasedSymbol(boundSymbol);
+        if (target === boundSymbol) break;
+        boundSymbol = target;
+      } catch {
+        break;
+      }
+    }
+    for (const declaration of boundSymbol?.getDeclarations() ?? []) {
+      const initializer = ts.isVariableDeclaration(declaration) ? declaration.initializer : undefined;
+      const candidate = initializer ? unwrapNewTarget(initializer) : declaration;
+      if (!ts.isClassExpression(candidate)) continue;
+      const syntheticName = ctx.anonClassExprNames.get(candidate);
+      if (syntheticName && ctx.classSet.has(syntheticName)) {
+        boundClassExpressionName = syntheticName;
+        break;
+      }
+    }
+  }
+
+  if (boundClassExpressionName) {
+    className = boundClassExpressionName;
+  } else if (className && !ctx.classSet.has(className)) {
+    // Compatibility fallback for class expressions whose exact binding is not
+    // statically available (for example `let C; C = class {}`). Internal symbol
+    // names are safe here only after the exact declaration path above missed.
+    const mapped = ctx.classExprNameMap.get(className);
+    if (mapped) {
+      className = mapped;
+    }
+  }
   // #3371: a compiler-synthesized `new` used by standalone Reflect.construct
   // has no checker-owned type for the synthetic NewExpression itself. The
   // callee is still the original source identifier, so retain the exact native

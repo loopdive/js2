@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts, forEachChild } from "../ts-api.js";
 import { registerAnnexBGlobalLiveBindings } from "./annexb-global-live-binding.js";
+import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { emitToBoolean } from "./coercion-engine.js";
 import { emitWasiErrorConstructor, fillExternGetErrorProps } from "./registry/error-types.js";
 import { analyzeLinearUint8 } from "./linear-uint8-analysis.js";
@@ -7940,8 +7941,10 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
       return { kind: "externref" };
     }
 
-    let name = sym?.name;
-    // Map class expression symbol names to their synthetic names
+    let name = exactClassExpressionTypeName(ctx, tsType) ?? sym?.name;
+    // Map class expression display names to their synthetic names only when
+    // declaration identity was unavailable. Unrelated anonymous classes all
+    // use `__class`, so this fallback cannot safely override an exact match.
     if (name && !ctx.structMap.has(name)) {
       name = ctx.classExprNameMap.get(name) ?? name;
     }
