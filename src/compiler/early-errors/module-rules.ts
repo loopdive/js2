@@ -39,6 +39,15 @@ export function checkExportDefaultDeclaration(ctx: EarlyErrorContext): void {
 export function checkDuplicateExportNames(ctx: EarlyErrorContext): void {
   const { sourceFile } = ctx;
   const exportedNames = new Map<string, ts.Node>();
+  // TypeScript overload signatures are erased and therefore do not each add
+  // an ECMAScript runtime export. Only the same-name body-bearing
+  // implementation contributes the exported name (#4267).
+  const overloadImplementations = new Set<string>();
+  for (const statement of sourceFile.statements) {
+    if (ts.isFunctionDeclaration(statement) && statement.name && statement.body) {
+      overloadImplementations.add(statement.name.text);
+    }
+  }
   for (const stmt of sourceFile.statements) {
     if (ts.isExportDeclaration(stmt)) {
       if (stmt.exportClause && ts.isNamedExports(stmt.exportClause)) {
@@ -75,6 +84,7 @@ export function checkDuplicateExportNames(ctx: EarlyErrorContext): void {
       ts.canHaveModifiers(stmt) &&
       ts.getModifiers(stmt as ts.HasModifiers)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)
     ) {
+      if (!stmt.body && overloadImplementations.has(stmt.name.text)) continue;
       const isDefault = ts.getModifiers(stmt as ts.HasModifiers)?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword);
       const name = isDefault ? "default" : stmt.name.text;
       if (exportedNames.has(name)) {

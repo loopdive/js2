@@ -898,9 +898,9 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   // GlobalDeclarationInstantiation (§16.1.7) instantiates only the LAST
   // definition per name. Registering every duplicate created one dead stub
   // WasmFunction per shadowed declaration and compiled the shadowed body
-  // against the survivor's signature (transient garbage). Skip shadowed
-  // duplicates outright — only declarations WITH a body participate, so
-  // TS overload signatures (bodyless) keep their existing behavior.
+  // against the survivor's signature (transient garbage). The same map also
+  // identifies TypeScript overload sets: their bodyless signatures are
+  // type-only, while the one body-bearing declaration is the runtime callable.
   const lastTopLevelFnWithBody = new Map<string, ts.FunctionDeclaration>();
   for (const stmt of sourceFile.statements) {
     if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.body && !hasDeclareModifier(stmt)) {
@@ -913,9 +913,9 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     if (ts.isFunctionDeclaration(stmt) && (stmt.name || hasExportModifier(stmt))) {
       // Skip ambient stubs: `declare function`, and `.d.ts` implicit-declare (#1282).
       if (hasDeclareModifier(stmt) || stmt.getSourceFile().isDeclarationFile) continue;
-      // (#3419) Shadowed duplicate — a later same-name top-level declaration
-      // wins; this one is never observable.
-      if (stmt.name && stmt.body && lastTopLevelFnWithBody.get(stmt.name.text) !== stmt) continue;
+      // (#3419/#4267) Keep the canonical body; erase its shadowed bodies and type-only overload signatures.
+      const implementation = stmt.name ? lastTopLevelFnWithBody.get(stmt.name.text) : undefined;
+      if (implementation && (stmt.body ? implementation !== stmt : true)) continue;
 
       // Anonymous `export default function() {}` gets the synthetic name "default"
       const name = stmt.name ? stmt.name.text : "default";
