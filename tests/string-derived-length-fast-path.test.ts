@@ -102,6 +102,31 @@ describe("native string derived-length fast paths", () => {
     expect(runWat).not.toContain("call $__str_trim");
   });
 
+  it("computes non-uniform trim lengths without allocating substring views", async () => {
+    const { value, runWat } = await compileAndRun(`
+      export function run(): number {
+        const padded: string[] = ["  a ", "\\u2003beta\\uFEFF", "\\t\\n", " gamma"];
+        let sum = 0;
+        for (let i = 0; i < 16; i = i + 1) {
+          sum = sum + padded[i % 4].trim().length;
+        }
+        return sum;
+      }
+    `);
+    expect(value).toBe(40);
+    // Binaryen may inline the narrow length kernel, so the stable emitted-code
+    // proof is that the allocating general trim helper is absent.
+    expect(runWat).not.toContain("call $__str_trim");
+
+    const custom = await compileAndRun(`
+      export function run(): number {
+        const value = { trim(): string { return "xy"; } };
+        return value.trim().length;
+      }
+    `);
+    expect(custom.value).toBe(2);
+  });
+
   it("counts a dynamic one-code-unit split without allocating the result array", async () => {
     const { value, runWat } = await compileAndRun(`
       export function run(): number {
