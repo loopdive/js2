@@ -31,6 +31,7 @@ files:
   - src/ir/from-ast.ts
   - src/ir/integration.ts
   - src/ir/prepared-component-dependencies.ts
+  - src/ir/prepared-component-sealing.ts
   - src/codegen/class-bodies.ts
   - src/codegen/class-constructor-wrapper.ts
   - src/codegen/closures.ts
@@ -42,9 +43,14 @@ files:
   - src/codegen/program-abi-type-planning.ts
   - src/codegen/context/types.ts
   - src/codegen/index.ts
+  - scripts/ir-only-baseline.json
+  - plan/log/ir-optimization-retirement-ledger.md
   - tests/class-expressions.test.ts
+  - tests/issue-3521-prepared-free-function-routing.test.ts
   - tests/issue-3522-ir-class-compile-once.test.ts
+  - tests/issue-3522-ir-cross-owner-free-function.test.ts
   - tests/issue-3522-ir-static-class-method.test.ts
+  - tests/issue-3792-ir-optimization-retirement-gate.test.ts
 loc-budget-allow:
   - src/codegen/class-bodies.ts
   - src/codegen/index.ts
@@ -448,6 +454,102 @@ transaction is closures and cross-owner calls; keep receiver-derived
 constructor method/accessor dispatch gated until its two incomplete
 optimization-ledger rows have semantic and output-shape IR ownership.
 
+### Cross-owner free-function checkpoint (2026-08-09)
+
+PR #4268 landed on `main` at `464858cfe98e30af7170486bd55131b4ec8bd229`.
+The first cross-owner retirement slice then replaced the split free-function /
+class-member preparation passes with one exact transaction. That transaction
+projects one combined lowering plan, compiles once, seals against the union of
+free-function and class-member claims, routes/defer-checks the combined report
+once, and only then partitions the skip/preserve views used by the two legacy
+declaration seams. A routing unit that belongs to neither or both families is
+a hard invariant. Class layouts are published from final post-pass IR rather
+than before the combined free-function build can finalize their allocator-owned
+structs. When one owner still fails dependency sealing, only that exact owner
+is peeled and the remaining denominator is rederived; a blocked caller no
+longer withdraws an otherwise complete callee, and no body is compiled twice.
+
+Equivalence qualification exposed one additional transaction boundary: a
+component with both a preparable class layout and a hard direct-route blocker
+must not publish the mutable allocator layout before it is peeled. Immutable
+callable imports/providers now preflight first while tolerating only proven
+preparable class blockers. A class layout is published only after it is the
+component's complete remaining blocker set. The explicit dynamic-`super`
+control proves the blocked child and its free caller keep their direct behavior
+and poison seam without leaving a stale ABI draft, while an independent parent
+method can still seal on IR.
+
+This closes the free-function-to-class direction for the bounded WasmGC class
+program. `classes.ts::main` and all ten Animal/Dog constructor, method, and
+accessor terminals now share one prepared component ID and record
+`legacyBodyEmitted: false`, `irBodyEmitted: true`. The reverse direction stays
+conservative: a class member that calls a top-level free function remains on
+the direct component until that complete family is owned atomically. Module
+globals also remain deferred.
+
+Explicit parity evidence now proves:
+
+- the exact nine-line Animal/Dog runtime trace and ordered direct class-call
+  target sequence;
+- one specialized numeric-to-string call, nine typed string-log calls, and
+  eight string concatenations without dynamic boxing;
+- the exact Dog and Animal static tag-test shapes for `instanceof`; and
+- absence of `call_ref`, `call_indirect`, `ref.test`, dynamic extern class
+  dispatch, ambient `this`, argc, and arguments traffic in prepared `main`.
+
+The same maximal sealing transaction independently retires Algorithms
+`fibIter`. Its exact playground run preserves all 20 output lines, and its WAT
+retains `f64` loop-carried `a`/`b`, an `i32` counter slot, one loop, and no
+call, boxing, or extern-carrier traffic. `fibMemo`, binary search, quicksort,
+`joinNums`, Algorithms `main`, and its module initializer remain direct.
+
+Standalone `classes.ts::main` remains an explicit selector-unsupported ambient
+console boundary. Its ten class terminals are still IR-only, and an in-Wasm
+trace sink proves the unchanged direct-main behavior. A default-parameter
+constructor control proves selector-rejected class dependencies and their free
+owner remain direct and still reach the direct-class-body poison seam.
+
+Fresh hybrid shadow validation is **5/5 entries, 37/37 IR-emitted terminals,
+20 legacy bodies, 0 Unsupported, and 0 Invariant**. This checkpoint reduces
+the measured ceiling from **22 to 20** without changing the denominator.
+Strict IR-only remains expected-red solely on these bodies:
+
+- Calendar: module initializer plus nine functions (**10**);
+- Algorithms: module initializer plus five functions (**6**);
+- Builtins: four functions (**4**); and
+- Classes: **0**.
+
+No dedicated legacy implementation is deleted in this slice: `main` uses the
+shared free-function direct emitter, which still has 18 measured consumers.
+Deleting that shared implementation now would remove live fallback behavior;
+its deletion belongs to the final free-function-family retirement that proves
+zero consumers. The resumable branch is
+`codex/3522-cross-owner-retirement` in
+`/private/tmp/ts2wasm-3522-cross-owner-retirement`; the dirty root checkout is
+outside it and remains untouched.
+
+### Published cross-owner handover
+
+Ready PR [#4281](https://github.com/loopdive/js2/pull/4281) publishes this
+checkpoint. It was rebased after overlapping PR #4258 landed and requalified
+without conflict on `origin/main` at
+`517aa2d0debef17373eeadf36d42a775e4c6ddce`. The red checkpoint, production
+transaction, and stale-layout repair commits are respectively
+`c55f7cc9c4e978`, `fd198e02b47276`, and `5add835c833d99`.
+
+Post-rebase qualification is green: changed-root **49/49**, focused
+cross-owner/inherited/`super` parity **28/28**, all four equivalence shards with
+zero new regressions, typecheck, formatting, hybrid shadow, fallback, shape,
+optimization, oracle, budget, vacuity, and issue-integrity gates. Strict
+IR-only is expected red only on the exact 20-body census above. Full Test262 is
+merge-queue-only. Do not modify the PR branch after it enters the queue.
+
+Resume production only after #4281 lands or is explicitly withdrawn. The next
+bounded overlapping family is the four-body Builtins closure/cross-owner
+component (`el`, `crd`, `rw`, `main`); keep one production PR active and use
+parallel agents only for disjoint inventory, parity, optimization audit, and
+review work.
+
 ## Exhaustive source-unit census
 
 Before preparing any body, walk the source once in lexical/source order and
@@ -638,7 +740,7 @@ Run adjacent coverage from `tests/issue-1983-funcmap-collision.test.ts`,
 ## Required completion evidence
 
 ```bash
-pnpm exec vitest run tests/issue-3522-ir-class-compile-once.test.ts tests/issue-3522-ir-static-class-method.test.ts tests/issue-1983-funcmap-collision.test.ts tests/issue-3000-1b.test.ts tests/issue-3000-e.test.ts tests/issue-3144-ir-class-claims.test.ts tests/class-expressions.test.ts tests/nested-class-declarations.test.ts --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
+pnpm exec vitest run tests/issue-3522-ir-cross-owner-free-function.test.ts tests/issue-3522-ir-class-compile-once.test.ts tests/issue-3522-ir-static-class-method.test.ts tests/issue-3521-prepared-free-function-routing.test.ts tests/issue-1983-funcmap-collision.test.ts tests/issue-3000-1b.test.ts tests/issue-3000-e.test.ts tests/issue-3144-ir-class-claims.test.ts tests/class-expressions.test.ts tests/nested-class-declarations.test.ts --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
 pnpm run check:ir-only -- --policy=hybrid
 pnpm run check:ir-only -- --policy=ir-only --json
 pnpm run check:ir-fallbacks -- --verbose
