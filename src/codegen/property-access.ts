@@ -44,6 +44,7 @@ import {
 } from "./builtin-static-globals.js";
 import { emitLazyClassObjectGet, emitLazyProtoGet, findExternInfoForMember } from "./expressions/extern.js";
 import {
+  buildThrowJsErrorInstrs,
   classifyPrivateMember,
   emitPrivateBrandPredicate,
   emitThrowTypeError,
@@ -1077,10 +1078,42 @@ export function isProvablyNonNull(expr: ts.Expression, checker?: ts.TypeChecker)
 export function typeErrorThrowInstrs(ctx: CodegenContext, node?: ts.Node): Instr[] {
   const line = node ? getLine(node) : 0;
   const col = node ? getCol(node) : 0;
-  const message =
+  const detail =
     line > 0 && col > 0
-      ? `TypeError: Cannot access property on null or undefined at ${line}:${col}`
-      : "TypeError: Cannot access property on null or undefined";
+      ? `Cannot access property on null or undefined at ${line}:${col}`
+      : "Cannot access property on null or undefined";
+  // (#4262) In no-JS-host mode throw a REAL `$Error_struct` TypeError instead
+  // of a bare string whose text merely begins with "TypeError: ".
+  //
+  // The string form made `catch (e) { e instanceof TypeError }` answer false
+  // and made the upstream harness's `assert.throws(TypeError, fn)` reject the
+  // throw before it ever compares constructors (`typeof thrown !== 'object'`
+  // short-circuits to "Thrown value was not an object!"). Measured on the ES5
+  // standalone failing set: 19 `e instanceof TypeError` files plus 2
+  // `assert.throws(TypeError, …)` files carry exactly this signature.
+  //
+  // `forceInModuleCtor` is load-bearing, not an optimisation: it resolves
+  // `__new_TypeError` purely through `ctx.funcMap` after
+  // `emitWasiErrorConstructor` has minted it, so NO `ensureLateImport` runs.
+  // That matters because this builder is called from inside half-built `then:`
+  // arrays with no `fctx` to flush against — an import registration here would
+  // be the #1839/#117/#1886 index-shift trap. A defined function minted via
+  // `mintDefinedFunc` carries a STABLE handle (#1916 S3) that no shifter
+  // renumbers, so appending one mid-body is safe.
+  //
+  // The rendered text is UNCHANGED: `__error_to_string` (#2962, §20.5.3.4)
+  // renders `$name + ": " + $message`, and `$name` is "TypeError" — so an
+  // uncaught throw still surfaces as "TypeError: Cannot access property on null
+  // or undefined at L:C" and the runner's signature classification is stable.
+  // Hence the "TypeError: " prefix moves OUT of the message here.
+  //
+  // JS-host mode keeps the string throw (its `__new_TypeError` is an `env`
+  // import, which cannot be registered from here) — the gc lane is
+  // byte-identical.
+  if (noJsHost(ctx)) {
+    return buildThrowJsErrorInstrs(ctx, "TypeError", detail, { forceInModuleCtor: true });
+  }
+  const message = `TypeError: ${detail}`;
   // Register the literal: in legacy mode this adds a `string_constants` global
   // import; in nativeStrings mode it just records the value with sentinel -1
   // so call sites can materialize it inline (#1174).
