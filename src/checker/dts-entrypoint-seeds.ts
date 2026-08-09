@@ -33,10 +33,12 @@
 //    interface/object types (`options: Options`) intentionally collect as
 //    `null` (unseedable) so the report can name them.
 //
-// Everything is gated on `JS2WASM_DTS_ENTRYPOINT_SEEDS=1` (default OFF): with
-// the flag off, `resolveDtsEntryDeclarations` returns undefined, no extra
-// Program root is added, no seed map exists, and compilation is byte-identical.
+// Everything is gated on `JS2WASM_DTS_ENTRYPOINT_SEEDS` (**ON by default since
+// 2026-08-08**; `=0` disables): with the flag off, `resolveDtsEntryDeclarations`
+// returns undefined, no extra Program root is added, no seed map exists, and
+// compilation is byte-identical to the pre-flip compiler.
 
+import { dtsEntrypointSeedsFlagEnabled } from "../derivation-flags.js";
 import { getDefaultEnvironment } from "../env.js";
 import { ts } from "../ts-api.js";
 
@@ -56,9 +58,22 @@ export type DtsSeedAtom = "f64" | "string";
  */
 export type DtsEntrypointSeeds = ReadonlyMap<string, readonly (DtsSeedAtom | null)[]>;
 
-/** Default OFF until measured (#743). Re-read per call so tests can flip it. */
+/**
+ * **ON by default since 2026-08-08** (#743 derivation-defaults flip);
+ * `JS2WASM_DTS_ENTRYPOINT_SEEDS=0` restores the pre-flip behaviour. Spelling
+ * rule and rationale: `src/derivation-flags.ts`. Re-read per call so tests can
+ * flip it.
+ *
+ * Default-ON widens this pass's reach beyond anything it was measured on: the
+ * on-disk sibling discovery below fires for ANY `.js`/`.mjs`/`.cjs` entry with
+ * a neighbouring declaration file, and the only corpus it was measured against
+ * is acorn (where it moved nothing: census 54/1/41 unchanged, +336 B). What
+ * bounds the risk is not the measurement but the seed restriction — only
+ * `string`/`number`, the two declared types whose export boundary already
+ * guards a violating external caller.
+ */
 export function dtsEntrypointSeedsEnabled(): boolean {
-  return process.env.JS2WASM_DTS_ENTRYPOINT_SEEDS === "1";
+  return dtsEntrypointSeedsFlagEnabled();
 }
 
 /**

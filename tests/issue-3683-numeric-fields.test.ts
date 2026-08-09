@@ -55,9 +55,29 @@ async function buildLane(source: string, env: Record<string, string>): Promise<L
   }
 }
 
-/** Compile with the promotion ON and OFF. */
+/**
+ * Compile with the promotion ON and OFF.
+ *
+ * (#743 defaults flip, 2026-08-08) BOTH lanes pin
+ * `JS2WASM_FNCTOR_CTOR_PARAM_TYPES=0`. This suite's whole method is a
+ * differential whose OFF lane reproduces the PRE-S4a field shapes, and
+ * `expectPromoted` asserts that lane is still `externref`. The #743 ctor-param
+ * narrowing reaches some of the same slots by a different route, so with it ON
+ * the control lane is no longer pre-S4a and nine pins failed on their BASELINE
+ * assertion — which would have read as "S4a broke" when S4a had not moved.
+ *
+ * Holding it off in both lanes keeps this suite measuring exactly one variable,
+ * which is what it is for. The #743 × S4a interaction is deliberately NOT
+ * covered here: the two passes reach an f64 slot under different proofs
+ * (name-keyed whole-program vs ctor-param call-site agreement) and the
+ * difference between them is recorded in plan/issues/743-*.md, not smuggled
+ * into a suite that would then be testing two things at once.
+ */
 async function lanes(source: string): Promise<{ on: Lane; off: Lane }> {
-  return { on: await buildLane(source, {}), off: await buildLane(source, { JS2WASM_NUMERIC_FIELDS: "0" }) };
+  return {
+    on: await buildLane(source, { JS2WASM_FNCTOR_CTOR_PARAM_TYPES: "0" }),
+    off: await buildLane(source, { JS2WASM_NUMERIC_FIELDS: "0", JS2WASM_FNCTOR_CTOR_PARAM_TYPES: "0" }),
+  };
 }
 
 /**
@@ -67,11 +87,25 @@ async function lanes(source: string): Promise<{ on: Lane; off: Lane }> {
  */
 function fieldType(wat: string, klass: string, field: string): string | undefined {
   const line = wat.split("\n").find((l) => l.includes(`$__fnctor_${klass}`) && l.includes("(struct"));
-  // The hidden presence companions are literally named `$has_<f>`, so the field
-  // name itself can contain a `$` — escape before it becomes a regex anchor.
+  // Hidden companion fields carry a leading `$` of their own, so a field name
+  // can contain `$` — escape before it becomes a regex anchor.
   const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const match = line?.match(new RegExp(`\\(field \\$${escaped} \\(mut ([^)]*)\\)\\)`));
   return match?.[1];
+}
+
+/**
+ * The declared types of the struct's presence companions, in field order.
+ *
+ * Presence tracking used to emit one boolean companion per field, named
+ * `$$has_<f>`; it is now a PACKED WORD (`$$presence_0`, one bit per tracked
+ * field). This helper asks "is this struct presence-tracked at all", which is
+ * the question the pins actually need, so a future re-packing or renumbering
+ * changes one function instead of every assertion.
+ */
+function presenceWordTypes(wat: string, klass: string): string[] {
+  const line = wat.split("\n").find((l) => l.includes(`$__fnctor_${klass}`) && l.includes("(struct"));
+  return [...(line ?? "").matchAll(/\(field \$\$presence_\d+ \(mut ([^)]*)\)\)/g)].map((m) => m[1]!);
 }
 
 /** `field` moved from the boxed carrier to a raw f64 because of this slice. */
@@ -157,7 +191,14 @@ a.maybe = 3;
 a.n = 4;
 export function test(): number { return 1; }`;
     const l = await lanes(conditional);
-    expect(fieldType(l.on.wat, "A", "$has_maybe")).toBe("i32");
+    // Corroboration that the fixture really IS presence-tracked — without it
+    // `expectUnchanged` could pass vacuously, on a field that was never a
+    // promotion candidate. This asserted `$$has_maybe` until 2026-08-09;
+    // presence became a packed word (`$$presence_0`) at some point before then
+    // and the assertion had been reading `undefined` ever since. Verified
+    // against pristine upstream/main @ d0019f86e: same failure, same value, so
+    // this is main-side drift and not a flag interaction.
+    expect(presenceWordTypes(l.on.wat, "A")).toEqual(["i32"]);
     expectUnchanged(l, "A", "maybe");
     // Positive control: the SAME field, assigned unconditionally, promotes.
     const unconditional = conditional.replace("if (flag) { this.maybe = n; }", "this.maybe = n;");
@@ -288,13 +329,23 @@ export function test(): number {
     );
     expectPromoted(l, "P", "pos");
     // The claim is COHERENCE, not completeness: the two lanes must answer
-    // identically. (They currently answer 3 — the computed read and `hasOwn`
-    // arms work, while `getOwnPropertyDescriptor` / `Object.keys` /
-    // `JSON.stringify` over a standalone fnctor instance are pre-existing gaps
-    // that behave the same with and without the promotion. Asserting the ideal
-    // 31 here would pin an unrelated bug rather than this slice.)
+    // identically. Asserting the ideal 31 here would pin unrelated bugs rather
+    // than this slice, so the absolute value records which arms work TODAY:
+    //
+    //   1  computed read `p["pos"]`                      works
+    //   2  hasOwnProperty                                works
+    //   8  Object.keys                                   works (gained since
+    //                                                    this pin was written)
+    //   4  getOwnPropertyDescriptor().value              still a gap
+    //   16 JSON.stringify                                still a gap
+    //
+    // = 11. It said 3 until 2026-08-09; `Object.keys` over a standalone fnctor
+    // instance started working and nothing updated the number, so the pin had
+    // been red on main. Verified against pristine upstream/main @ d0019f86e —
+    // same failure, same value — and 11 is stable across all four
+    // derivation-flag configurations, so it is not a flag interaction.
     expect(l.on.result).toBe(l.off.result);
-    expect(l.on.result).toBe(3);
+    expect(l.on.result).toBe(11);
   });
 
   it("a promoted slot enumerates and reads back through `for…in`", async () => {

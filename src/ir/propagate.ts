@@ -82,6 +82,7 @@
 //   it is not a full CFG analysis.
 
 import type { DtsEntrypointSeeds } from "../checker/dts-entrypoint-seeds.js";
+import { fnctorCtorParamTypesFlagEnabled } from "../derivation-flags.js";
 import { ts, forEachChild } from "../ts-api.js";
 import { buildIrUnitInventory, type IrUnitId } from "./identity.js";
 import {
@@ -660,11 +661,7 @@ function buildCallGraph(
       // `new F` without parens has NO argument list → empty argExprs
       // (all-params-under-applied). Full rationale + transitive proof:
       // tests/issue-743-ctor-sites-in-fixpoint.test.ts.
-      if (
-        process.env.JS2WASM_FNCTOR_CTOR_PARAM_TYPES === "1" &&
-        ts.isNewExpression(node) &&
-        ts.isIdentifier(node.expression)
-      ) {
+      if (fnctorCtorParamTypesFlagEnabled() && ts.isNewExpression(node) && ts.isIdentifier(node.expression)) {
         const callee = resolveCallTarget(node.expression);
         if (callee && decls.has(callee)) {
           sites.push({ callee, argExprs: node.arguments === undefined ? [] : node.arguments.slice() });

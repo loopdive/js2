@@ -311,6 +311,9 @@ describe("#743 evaluator extensions — end to end", () => {
   beforeEach(() => {
     resetFnctorFieldProvenance();
     process.env.JS2WASM_FNCTOR_FIELD_PROVENANCE = "1";
+    // (#743 defaults flip) The field-SLOT consumer is opt-in — see
+    // src/derivation-flags.ts. These pins are about it, so they ask for it.
+    process.env.JS2WASM_FNCTOR_CTOR_PARAM_SLOTS = "1";
   });
   afterEach(() => {
     resetFnctorFieldProvenance();
@@ -320,6 +323,8 @@ describe("#743 evaluator extensions — end to end", () => {
     // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
     if (savedProv === undefined) delete process.env.JS2WASM_FNCTOR_FIELD_PROVENANCE;
     else process.env.JS2WASM_FNCTOR_FIELD_PROVENANCE = savedProv;
+    // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
+    delete process.env.JS2WASM_FNCTOR_CTOR_PARAM_SLOTS;
   });
 
   it("a const-and-conditional slot emits f64 with the flag on, externref with it off, same answer", async () => {
@@ -329,8 +334,9 @@ describe("#743 evaluator extensions — end to end", () => {
     const onResult = await run(on.binary);
     expect(onResult).toBe(1);
 
-    // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
-    delete process.env.JS2WASM_FNCTOR_CTOR_PARAM_TYPES;
+    // (#743 defaults flip, 2026-08-08) OFF is a SPELLING now — unset is ON, so
+    // deleting the variable here would silently test the flag-ON path.
+    process.env.JS2WASM_FNCTOR_CTOR_PARAM_TYPES = "0";
     const off = await compileE2E();
     expect(off.slots.get("S.flags")).toBe("externref");
     expect(await run(off.binary)).toEqual(onResult);
