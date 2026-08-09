@@ -287,7 +287,10 @@ export function collectHeterogeneouslyAssignedModuleVars(
       if (decl !== undefined && decl.getSourceFile() === sourceFile) {
         const declTag = initializerTagOf(decl);
         if (declTag !== "none" && assignmentWidens(ctx, declTag, node.right)) widened.add(node.left.text);
-      } else if (moduleVarsByName.size > 0 && withBodyAssignmentWidens(ctx, node.left, moduleVarsByName, initializerTagOf)) {
+      } else if (
+        moduleVarsByName.size > 0 &&
+        withBodyAssignmentWidens(ctx, node.left, moduleVarsByName, initializerTagOf)
+      ) {
         widened.add(node.left.text);
       }
     }
