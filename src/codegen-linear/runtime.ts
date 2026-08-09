@@ -5,8 +5,8 @@ import {
   LINEAR_STRING_PAYLOAD_PREFIX_BYTES,
   LINEAR_STRING_PAYLOAD_SIZE_OFFSET,
 } from "../ir/analysis/linear-memory-plan.js";
-import type { LinearContext } from "./context.js";
 import { hashProbeAdvanceInstrs, hashProbeInitInstrs } from "./emit-idioms.js";
+import { isLinearStringLiteralCacheGlobal } from "./string-literals.js";
 
 /** Heap starts at byte offset 1024 (leave low addresses for null/sentinel) */
 const HEAP_START = 1024;
@@ -258,6 +258,16 @@ export function finalizeLinearHeapLayout(mod: WasmModule): void {
   }
   const oldHeapStart = init.value;
   const newHeapStart = Math.max(oldHeapStart, align8(dataEnd));
+
+  // Arena reset invalidates every lazily interned literal pointer. Clear the
+  // caches with the heap rewind so the next use rematerializes valid records.
+  const arenaReset = mod.functions.find((func) => func.name === "__arena_reset");
+  if (arenaReset !== undefined) {
+    for (let index = 0; index < mod.globals.length; index++) {
+      if (!isLinearStringLiteralCacheGlobal(mod.globals[index]!.name)) continue;
+      arenaReset.body.push({ op: "i32.const", value: 0 }, { op: "global.set", index });
+    }
+  }
 
   // Data segments are initialised before any code runs, so the *declared*
   // minimum has to cover them (memory.grow in __malloc is too late).
@@ -2806,30 +2816,6 @@ export function addLinearIrStringRuntime(mod: WasmModule): void {
     },
     5,
   );
-}
-
-/** Materialize a literal through canonical UTF-8 data and `__str_from_data`. */
-export function linearStringLiteralInstrs(
-  ctx: LinearContext,
-  value: string,
-  strFromDataIdx = ctx.funcMap.get("__str_from_data"),
-  plannedBytes?: readonly number[],
-): readonly Instr[] {
-  const encoded = plannedBytes === undefined ? [...new TextEncoder().encode(value)] : [...plannedBytes];
-  let literal = ctx.stringLiterals.get(value);
-  if (literal === undefined) {
-    literal = { offset: ctx.dataSegmentOffset, bytes: encoded };
-    ctx.stringLiterals.set(value, literal);
-    ctx.dataSegmentOffset += literal.bytes.length;
-  } else if (literal.bytes.length !== encoded.length || literal.bytes.some((byte, index) => byte !== encoded[index])) {
-    throw new Error(`linear string runtime: conflicting data bytes for ${JSON.stringify(value)}`);
-  }
-  if (strFromDataIdx === undefined) throw new Error("linear string runtime: __str_from_data helper missing");
-  return [
-    { op: "i32.const", value: literal.offset },
-    { op: "i32.const", value: literal.bytes.length },
-    { op: "call", funcIdx: strFromDataIdx },
-  ];
 }
 
 /**

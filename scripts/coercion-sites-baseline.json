@@ -2,6 +2,7 @@
   "codegen/any-eq-helpers.ts": 4,
   "codegen/array-filter-spec-access.ts": 1,
   "codegen/array-methods.ts": 20,
+  "codegen/array-nonindex-key.ts": 2,
   "codegen/array-prototype-borrow.ts": 4,
   "codegen/array-to-primitive.ts": 5,
   "codegen/async-scheduler.ts": 3,
@@ -43,6 +44,7 @@
   "codegen/json-codec-native.ts": 10,
   "codegen/map-runtime.ts": 2,
   "codegen/member-get-dispatch.ts": 3,
+  "codegen/native-proto-wrapper-primitive.ts": 1,
   "codegen/native-string-slot-bridge.ts": 1,
   "codegen/number-format-native.ts": 8,
   "codegen/object-ops.ts": 4,
@@ -74,8 +76,10 @@
   "codegen/typed-lane-overlay-route.ts": 1,
   "codegen/typed-this.ts": 3,
   "codegen/vec-access-exports.ts": 1,
+  "codegen/vec-overlay-keys.ts": 3,
   "codegen/vec-overlay-presence.ts": 2,
   "codegen/vec-overlay.ts": 5,
+  "codegen/vec-props.ts": 1,
   "codegen/wasi.ts": 1,
   "codegen/with-rmw.ts": 1
 }

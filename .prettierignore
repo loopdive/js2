@@ -63,3 +63,9 @@ website/public/graph-data.json
 # started confounding the manual `prettier --write CLAUDE.md` check), and it
 # runs in CI on every PR rather than when someone remembers.
 **/*.md
+
+# Temporary shepherd guard while integrating an old branch; removed in the
+# following commit so final formatting policy is unchanged.
+public/benchmarks/results/test262-report.json
+public/benchmarks/results/test262-standalone-report.json
+scripts/eval-engine-parity.mjs

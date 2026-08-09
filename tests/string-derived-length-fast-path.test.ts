@@ -73,6 +73,103 @@ describe("native string derived-length fast paths", () => {
     expect(mutated.value).toBe(2);
   });
 
+  it("scalar-replaces non-escaping ASCII case results", async () => {
+    const source = `
+        export function run(): number {
+          const values: string[] = ["Hello", "WORLD"];
+          let sum = 0;
+          for (let i = 0; i < 10; i = i + 1) {
+            const value = values[i % 2];
+            const lower = value.toLowerCase();
+            const upper = value.toUpperCase();
+            sum = sum + lower.charCodeAt(i % 5) + upper.charCodeAt(i % 5);
+          }
+          return sum;
+        }
+      `;
+    const proven = await compileAndRun(source);
+    const saved = process.env.JS2WASM_NATIVE_ASCII_CASE_SCALAR;
+    let unicode: Awaited<ReturnType<typeof compileAndRun>>;
+    try {
+      process.env.JS2WASM_NATIVE_ASCII_CASE_SCALAR = "0";
+      unicode = await compileAndRun(source);
+    } finally {
+      if (saved === undefined) Reflect.deleteProperty(process.env, "JS2WASM_NATIVE_ASCII_CASE_SCALAR");
+      else process.env.JS2WASM_NATIVE_ASCII_CASE_SCALAR = saved;
+    }
+    expect(proven.value).toBe(1848);
+    expect(unicode.value).toBe(proven.value);
+    expect(proven.runWat).not.toBe(unicode.runWat);
+    expect(proven.runWat.match(/\bcall\b/g)?.length ?? 0).toBeLessThan(unicode.runWat.match(/\bcall\b/g)?.length ?? 0);
+  });
+
+  it("routes escaping proven-ASCII results through compact helpers", async () => {
+    const source = `
+      export function run(): number {
+        const values: string[] = ["Hello", "WORLD"];
+        const upper = values[0].toUpperCase();
+        return upper === "HELLO" ? upper.length : 0;
+      }
+    `;
+    const proven = await compileAndRun(source);
+    const saved = process.env.JS2WASM_NATIVE_PROVEN_ASCII_CASE;
+    let unicode: Awaited<ReturnType<typeof compileAndRun>>;
+    try {
+      process.env.JS2WASM_NATIVE_PROVEN_ASCII_CASE = "0";
+      unicode = await compileAndRun(source);
+    } finally {
+      if (saved === undefined) Reflect.deleteProperty(process.env, "JS2WASM_NATIVE_PROVEN_ASCII_CASE");
+      else process.env.JS2WASM_NATIVE_PROVEN_ASCII_CASE = saved;
+    }
+    expect(proven.value).toBe(5);
+    expect(unicode.value).toBe(proven.value);
+    expect(proven.runWat).not.toBe(unicode.runWat);
+  });
+
+  it("keeps non-ASCII and mutable case receivers on Unicode helpers", async () => {
+    const nonAscii = await compileAndRun(
+      `
+        export function run(): number {
+          const values: string[] = ["éx"];
+          return values[0].toUpperCase().charCodeAt(0);
+        }
+      `,
+    );
+    expect(nonAscii.value).toBe("É".charCodeAt(0));
+    expect(nonAscii.runWat).not.toContain("call $__str_toUpperCase_ascii");
+
+    const mutable = await compileAndRun(`
+      export function run(): number {
+        const values: string[] = ["ascii"];
+        values[0] = "ß";
+        return values[0].toUpperCase().length;
+      }
+    `);
+    expect(mutable.value).toBe(2);
+  });
+
+  it("preserves ASCII case charCodeAt bounds and declines escaping results", async () => {
+    const bounded = await compileAndRun(`
+      export function run(): number {
+        const lower = "Ab".toLowerCase();
+        const inBounds = lower.charCodeAt(0);
+        const below = lower.charCodeAt(-1);
+        const above = lower.charCodeAt(2);
+        return inBounds + (below !== below ? 1 : 0) + (above !== above ? 1 : 0);
+      }
+    `);
+    expect(bounded.value).toBe("a".charCodeAt(0) + 2);
+
+    const escaped = await compileAndRun(`
+      export function run(): number {
+        const upper = "ab".toUpperCase();
+        function read(): number { return upper.charCodeAt(0); }
+        return upper === "AB" ? read() : 0;
+      }
+    `);
+    expect(escaped.value).toBe("A".charCodeAt(0));
+  });
+
   it("elides equal-literal replacement only without substitution tokens", async () => {
     const equal = await compileAndRun(`export function run(): number { return "a fox".replace("fox", "cat").length; }`);
     expect(equal.value).toBe(5);
@@ -100,6 +197,31 @@ describe("native string derived-length fast paths", () => {
     expect(value).toBe(80);
     expect(runWat).not.toContain("call $__str_split");
     expect(runWat).not.toContain("call $__str_trim");
+  });
+
+  it("computes non-uniform trim lengths without allocating substring views", async () => {
+    const { value, runWat } = await compileAndRun(`
+      export function run(): number {
+        const padded: string[] = ["  a ", "\\u2003beta\\uFEFF", "\\t\\n", " gamma"];
+        let sum = 0;
+        for (let i = 0; i < 16; i = i + 1) {
+          sum = sum + padded[i % 4].trim().length;
+        }
+        return sum;
+      }
+    `);
+    expect(value).toBe(40);
+    // Binaryen may inline the narrow length kernel, so the stable emitted-code
+    // proof is that the allocating general trim helper is absent.
+    expect(runWat).not.toContain("call $__str_trim");
+
+    const custom = await compileAndRun(`
+      export function run(): number {
+        const value = { trim(): string { return "xy"; } };
+        return value.trim().length;
+      }
+    `);
+    expect(custom.value).toBe(2);
   });
 
   it("counts a dynamic one-code-unit split without allocating the result array", async () => {
