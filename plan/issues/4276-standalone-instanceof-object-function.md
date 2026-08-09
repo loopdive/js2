@@ -215,6 +215,17 @@ lowering is demand-gated to exactly the two forms it claims.
 **20 are RED on `upstream/main`** (15 unit + the 5 upstream files above); all 42
 green with the fix.
 
+**Neighbouring suites, both arms:** `tests/es5-standalone-instanceof.test.ts`
+(green), `tests/equivalence/{struct-field-index,destructuring-require-object-coercible}`
+— the only two equivalence files that use `instanceof` at all — 14/14 green,
+`tests/es5-standalone-harness-selftests.test.ts` 19/19 with **no ratchet entry
+flipping** (nothing to promote to `"pass"`). `tests/issue-2984.test.ts` fails 3
+**host-lane** cases — verified failing IDENTICALLY on `upstream/main` with the
+change reverted by file copy, so pre-existing and unrelated. The full
+`tests/equivalence` run OOMs in this container (a documented local limitation);
+CI's `equivalence-gate` covers it, and the gc-lane byte-identity result bounds
+the risk to zero for that lane.
+
 ## Acceptance criteria
 
 - [x] `x instanceof Object` answers `true` for a dynamic object/array/function/
