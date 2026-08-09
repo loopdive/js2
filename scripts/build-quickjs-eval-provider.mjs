@@ -50,6 +50,8 @@ import {
   QUICKJS_ADAPTER_COMPILE_OPTIONS,
   QUICKJS_ADAPTER_EXTERNS,
   QUICKJS_BUILD_SCRIPT,
+  QUICKJS_DIRECT_CANARY_EXPECTATIONS,
+  QUICKJS_DIRECT_CANARY_SOURCE,
   QUICKJS_IMPORT_MODULE,
   quickjsAdapterCachePath,
   quickjsArtifactCacheDir,
@@ -206,45 +208,62 @@ async function verifyQuickjsProvider(compile, adapterBinary, artifact) {
   // as a bare LinkError inside the canary, with nothing pointing at the shim.
   assertQuickjsArtifactExports(quickjsModule);
 
-  const canary = await compile(QUICKJS_ADAPTER_CANARY_SOURCE, {
-    ...QUICKJS_ADAPTER_COMPILE_OPTIONS,
-    fileName: "quickjs-eval-canary.ts",
-    // The CANARY is an ordinary user module — it must NOT carry the adapter's
-    // provider-build enablers, or it would not be the module shape we serve.
-    externNativeTypes: false,
-    externImportModule: undefined,
-    importMemory: undefined,
-  });
-  if (!canary.success || !canary.binary) {
-    const detail = (canary.errors ?? [])
-      .filter((e) => e.severity === "error" || e.severity === undefined)
-      .slice(0, 5)
-      .map((e) => e.message ?? String(e))
-      .join("; ");
-    throw new Error(`quickjs canary user module failed to compile: ${detail || "unknown"}`);
-  }
-  const canaryModule = new WebAssembly.Module(canary.binary);
-  const linksProvider = WebAssembly.Module.imports(canaryModule).some((i) => i.module === RUNTIME_EVAL_IMPORT_MODULE);
-  if (!linksProvider) {
-    throw new Error(`quickjs canary does not import ${RUNTIME_EVAL_IMPORT_MODULE} — it would verify nothing`);
-  }
-  const instance = new WebAssembly.Instance(canaryModule, {
-    [RUNTIME_EVAL_IMPORT_MODULE]: instantiateRuntimeEvalNamespace({
-      engine: "quickjs",
-      adapterModule,
-      quickjsModule,
-    }),
-  });
-  instance.exports._start?.();
+  // Two canary compiles. The second one only differs by
+  // `inferModuleStrictArguments: false`, and that difference is the whole point:
+  // any source with a top-level `export` is module code, module code is strict,
+  // and the SLOPPY `with (S)` direct-eval arm is therefore unreachable from the
+  // first compile. Verifying only the strict arm would leave half the tier
+  // unproven — and the sloppy arm is the one test262's script-goal files use.
+  const runCanary = async (source, fileName, expectations, extra) => {
+    const canary = await compile(source, {
+      ...QUICKJS_ADAPTER_COMPILE_OPTIONS,
+      fileName,
+      // The CANARY is an ordinary user module — it must NOT carry the adapter's
+      // provider-build enablers, or it would not be the module shape we serve.
+      externNativeTypes: false,
+      externImportModule: undefined,
+      importMemory: undefined,
+      ...extra,
+    });
+    if (!canary.success || !canary.binary) {
+      const detail = (canary.errors ?? [])
+        .filter((e) => e.severity === "error" || e.severity === undefined)
+        .slice(0, 5)
+        .map((e) => e.message ?? String(e))
+        .join("; ");
+      throw new Error(`quickjs canary ${fileName} failed to compile: ${detail || "unknown"}`);
+    }
+    const canaryModule = new WebAssembly.Module(canary.binary);
+    const linksProvider = WebAssembly.Module.imports(canaryModule).some((i) => i.module === RUNTIME_EVAL_IMPORT_MODULE);
+    if (!linksProvider) {
+      throw new Error(`quickjs canary ${fileName} does not import ${RUNTIME_EVAL_IMPORT_MODULE} — it verifies nothing`);
+    }
+    const instance = new WebAssembly.Instance(canaryModule, {
+      [RUNTIME_EVAL_IMPORT_MODULE]: instantiateRuntimeEvalNamespace({
+        engine: "quickjs",
+        adapterModule,
+        quickjsModule,
+      }),
+    });
+    instance.exports._start?.();
+    for (const { probe, expected, why } of expectations) {
+      const actual = instance.exports[probe]();
+      if (actual !== expected) {
+        throw new Error(`quickjs canary ${probe}() returned ${actual}, expected ${expected} (${why})`);
+      }
+    }
+  };
+
   // One reading per capability the engine claims. `engineIdentityProbe === 7`
   // ("quickjs".length) is the anti-vacuity anchor: it is a real QuickJS STRING
   // on the realm, so no compile-time fold and no other engine can produce it.
-  for (const { probe, expected, why } of QUICKJS_ADAPTER_CANARY_EXPECTATIONS) {
-    const actual = instance.exports[probe]();
-    if (actual !== expected) {
-      throw new Error(`quickjs canary ${probe}() returned ${actual}, expected ${expected} (${why})`);
-    }
-  }
+  await runCanary(QUICKJS_ADAPTER_CANARY_SOURCE, "quickjs-eval-canary.ts", QUICKJS_ADAPTER_CANARY_EXPECTATIONS, {});
+  await runCanary(
+    QUICKJS_DIRECT_CANARY_SOURCE,
+    "quickjs-eval-direct-canary.ts",
+    QUICKJS_DIRECT_CANARY_EXPECTATIONS,
+    { inferModuleStrictArguments: false },
+  );
 }
 
 async function main() {

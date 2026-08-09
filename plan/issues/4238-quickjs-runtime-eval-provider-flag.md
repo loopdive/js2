@@ -1,14 +1,20 @@
 ---
 id: 4238
 title: "QuickJS-backed runtime-eval provider behind a flag — swap the eval engine, keep the Acorn+interpreter default until migration completes (#4236 variant C MVP)"
-status: in-progress
+status: done
+completed: 2026-08-09
 sprint: current
 created: 2026-08-08
 updated: 2026-08-09
-# Slice 2 (2026-08-09) touches NO src/ file — the whole value bridge lives in
-# the js2wasm-compiled adapter source under scripts/, so it adds no loc/func/
-# oracle budget grants. Status stays in-progress: slice 3 (direct-eval scope
-# snapshot + the eval-code residual measurement, acceptance box 4) is open.
+# Slices 2 and 3 (2026-08-09) touch NO src/ file — the whole value bridge AND
+# the direct-eval caller-scope snapshot live in the js2wasm-compiled adapter
+# source under scripts/, so they add no loc/func/oracle budget grants. All six
+# acceptance boxes are ticked as of slice 3: box 4 closed with a MEASURED
+# eval-code A/B (quickjs 442/816 vs interpreter 779/816 on the same set, same
+# container) rather than the spec's estimates. Follow-on work is tracked
+# elsewhere: the dominant residual is the #4245 membrane, and slice 3 uncovered
+# two compiler defects recorded under "Slice 3 — implementation record" that
+# each need their own issue.
 # Slice 1 landed the three option-gated compiler enablers (§2). Every new code
 # path is behind `ctx.externNativeTypes` / `ctx.externImportModule` /
 # `ctx.importMemory`, all default-off, so a compile that does not set them is
@@ -130,9 +136,10 @@ does NOT change. User modules compile identically under both engines.
       *(slice 2 — `tests/quickjs-eval-provider.test.ts`, 17/17; residuals in
       "Slice 2 — implementation record" below. The eval-code test262 SUBSET
       measurement is slice 3's done-signal, per §7.)*
-- [ ] Direct-eval scope semantics: MVP level defined, implemented or
+- [x] Direct-eval scope semantics: MVP level defined, implemented or
       explicitly deferred with the residual documented here. *(defined in §4;
-      slices 1–2 ship the typed refusal, slice 3 implements the snapshot.)*
+      slices 1–2 shipped the typed refusal, slice 3 implements the
+      snapshot + write-back and records the MEASURED residual table below.)*
 - [x] Engine selection is observable (e.g. provider reports its tier/engine
       string) so tests can assert which engine served an eval. *(slice 1:
       `selection.engine`, the QUICKJS message, and the in-band
@@ -621,7 +628,7 @@ run `language/eval-code/` under `JS2WASM_EVAL_ENGINE=quickjs`
 machinery per #2928's remeasurement template) and **record the pass/residual
 numbers in this file** against the interpreter's 797/816.
 *Done-signal:* acceptance box 4 checked with the measured residual list
-committed here.
+committed here. **Landed 2026-08-09 — see "Slice 3 — implementation record".**
 
 ### Out of scope (explicit)
 
@@ -856,3 +863,210 @@ behaviour is unchanged).
   it looks like a flake.
 - Then run `language/eval-code/` under the flag and record the numbers here
   against the interpreter's 797/816.
+
+## Slice 3 — implementation record (2026-08-09)
+
+**Done-signal met.** DIRECT eval works under `JS2WASM_EVAL_ENGINE=quickjs`:
+evaluated code reads the caller's live bindings, a sloppy caller's writes land
+back in the live cells, eval-created sloppy `var`s persist in the 64-slot
+activation state pool across entries of the same activation and are invisible
+everywhere else, and the global-lexical-cell carrier is mirrored in both
+directions. Still zero JS behind the seam beyond `wasi-stub.mjs`, the 4-import
+`js2wasm:runtime-eval` ABI is unchanged, and **no `src/` file is touched** — the
+whole slice lives in the js2wasm-compiled adapter source under `scripts/`.
+
+**Artifact unchanged**: key `d7ac807e1f14e8e5`, `libquickjs.wasm` sha256
+`18caf5889aaaa961f063be31f384f559ff8698a4b12fedaf8aec2524dd84d05f`. The
+realm-side helpers the direct route needs are installed by *evaluating* them in
+QuickJS on first use rather than by adding shim exports, precisely so the
+artifact hash does not move.
+
+Lane: `tests/quickjs-eval-provider.test.ts` **28/28 green** (17 from slice 2 plus
+11 slice-3 cases).
+
+### Mechanism (as implemented)
+
+The caller hands 12 arguments; ten describe its scope. They are flattened
+outermost-first — outer captures, current activation, the persistent pool, then
+call-site lexical shadows — so an inner layer's cell replaces an outer one of
+the same name, which is the env-record chain collapsed into one object `S`.
+
+| caller | wrapper | writes |
+| --- | --- | --- |
+| sloppy | `with (S) { <source> }` — QuickJS runs the scope walk natively | land on `S`, copied back into the live cells |
+| strict | `"use strict";` `undefined;` `{ const x = S.x; … <source> }` | throw (assignment to a constant) — documented residual |
+
+Three details that are load-bearing rather than stylistic:
+
+1. **`undefined;` after the strict prologue.** A Script's completion value is the
+   last NON-EMPTY statement value (`UpdateEmpty`), so a bare `"use strict";` in
+   front of a block that completes empty makes `eval("var x = 1")` answer the
+   **string `"use strict"`**. Seeding `V` with `undefined` restores `undefined`.
+   The sloppy arm needs no guard: `WithStatement` is specified to
+   `UpdateEmpty(C, undefined)` itself.
+2. **The strict preamble is BLOCK-scoped.** A `const` preamble at QuickJS global
+   scope persists, so the *second* direct eval from the same caller would be a
+   redeclaration `SyntaxError`. This is the exact class the "evaluate twice"
+   regression test exists to catch, and it is asserted in both arms.
+3. **New sloppy bindings are found by a realm diff, not by parsing.**
+   `with (S) { var n = 1 }` hoists `n` onto the QuickJS realm (the with-object
+   only intercepts the *assignment*), so a before/after
+   `Object.getOwnPropertyNames(globalThis)` diff names exactly what the eval
+   added. A primitive is moved into a pool vacancy — the interpreter's own
+   nameCell/valueCell discipline — and then removed from the realm. A `var` at
+   QuickJS global scope is **non-configurable**, so `delete` silently fails and
+   the helper falls back to writing `undefined`; the adapter therefore also
+   remembers every name it has ever created, so a *later* activation that
+   redeclares one is still mirrorable even though the realm diff can no longer
+   see it.
+
+### Primitive-only filter (the delayed-corruption class, re-hit as predicted)
+
+Slice 2's brief warned that slice 3 would meet the same shape with cells, and it
+does: there are now four write-back paths into carriers the caller keeps across
+provider entries (the realm object, the global lexical cells, the direct-eval
+caller cells, and the pool). All four go through the same pair of filters —
+`qjsIsMirrorablePrimitive` on the compiled side and the new shared
+`qjsIsMirrorableTag` on the QuickJS side. A non-primitive written through any of
+them would break a *later* entry, not the current one, which is why the lane
+asserts a **second and third** evaluation and their types
+(`sloppyTwiceProbe`, `strictDirectTwiceProbe`), and re-asserts that a
+post-direct-eval `(0, eval)` still routes to the engine
+(`sloppyThrowProbe`) — a single-eval test cannot observe this class at all.
+
+### Two defects found while building this
+
+1. **`interface EvalBindingCell { value: any }` + an explicit cast is REQUIRED
+   to touch a caller cell.** Reading `cell.value` off an `any` compiles to the
+   generic object-property path and answers **`undefined`** for a ref cell —
+   silently, for every binding. Measured: an early adapter read all five caller
+   bindings as `undefined` and looked like "the caller passes empty cells".
+   `scripts/runtime-eval-provider.mjs`'s `exposeRuntimeEvalSlots` uses the
+   untyped spelling and is presumably a no-op for the same reason (harmless
+   there, since it only re-wraps).
+2. **A `boolean[]` passed as a PARAMETER reads back `undefined`.** The first cut
+   carried a parallel `snapshotted: boolean[]` into the write-back helper;
+   `names: string[]` and `cells: any[]` crossed fine, the booleans did not, and
+   every write-back was skipped. Worked around by re-deriving the predicate from
+   the cell's (still unchanged) value instead of carrying it. This is a compiler
+   defect, not a design constraint — worth its own issue.
+
+### Pre-existing caller-side trap this slice UNCOVERED (not caused by it)
+
+In ONE function, a direct eval that **succeeds** followed (in a later `try`) by
+one that **throws**, where the catch uses `instanceof`, traps with
+`RuntimeError: illegal cast`.
+
+- It reproduces with a **six-line stub adapter** that ignores every scope
+  argument and just returns `[true, 10]` then `[false, TypeError]`, so it is
+  caller-side codegen and **engine-independent**.
+- `throw`-then-`succeed`, both-succeed, both-throw, and the same pair split
+  across two functions all pass. Only success→throw→`instanceof` in one function
+  traps.
+- It was **unreachable** under this engine before slice 3 because direct eval
+  always refused, so no success could precede a throw.
+- `tests/quickjs-eval-provider.test.ts` sidesteps it by giving each strict case
+  its own function; the comment there says so. It is very likely reachable on
+  the interpreter tier too, and it will bite #4242's parity run — it needs its
+  own issue and a `src/` fix, which this slice deliberately did not attempt
+  (project-lead directive: touch no `src/` file).
+
+### MEASURED residual — `language/eval-code/` A/B (acceptance box 4)
+
+Both numbers were measured **on the same scoped set, in the same container, on
+the same day**, so they are directly comparable; the spec's remembered "797/816"
+for the interpreter is superseded by the 779/816 re-measured here.
+
+```
+TEST262_TARGET=standalone TEST262_PATH_FILTER='language/eval-code/' \
+  JS2WASM_EVAL_ENGINE=quickjs bash scripts/run-test262-vitest.sh     # 442/816
+TEST262_TARGET=standalone TEST262_PATH_FILTER='language/eval-code/' \
+  TEST262_FULL_RUNTIME_EVAL=1 bash scripts/run-test262-vitest.sh     # 779/816
+```
+
+| engine | pass / total | |
+| --- | --- | --- |
+| interpreter (`TEST262_FULL_RUNTIME_EVAL=1`) | **779 / 816** | 95.5 % |
+| quickjs (`JS2WASM_EVAL_ENGINE=quickjs`) | **442 / 816** | 54.2 % |
+
+**337 quickjs-only failures, 0 quickjs-only passes.** The engine is strictly
+behind on this set — no test the interpreter fails is recovered by QuickJS.
+
+By sub-corpus, which is where the number actually comes from:
+
+| sub-corpus | quickjs | interpreter |
+| --- | --- | --- |
+| `language/eval-code/direct` | 260 / 286 (91 %) | 271 / 286 (95 %) |
+| `language/eval-code/indirect` | 48 / 61 (79 %) | 56 / 61 (92 %) |
+| `annexB/…/eval-code/direct` | 92 / 309 (30 %) | 300 / 309 (97 %) |
+| `annexB/…/eval-code/indirect` | 42 / 160 (26 %) | 152 / 160 (95 %) |
+
+The direct-eval **scope bridge this slice built is not the problem**: the core
+`language/eval-code/direct` bucket is within 11 tests of the interpreter. The
+41-point overall gap is almost entirely the annexB B.3.3 families, and inside
+those it is one cause.
+
+#### The six predicted buckets, measured — and the seventh that dominates
+
+"quickjs-only" = fails under quickjs AND passes under the interpreter, i.e. the
+true cost of the engine choice. Spec §4's estimates are in the last column.
+
+| # | bucket | fails (qjs) | quickjs-ONLY | §4 estimate |
+| --- | --- | --- | --- | --- |
+| 7 | **compiled callables/objects cannot cross INTO evaluated code** (NEW) | 230 | **230** | not enumerated |
+| 2 | var-environment fidelity (EvalDeclarationInstantiation, B.3.3) | 126 | **102** | "~13 files" |
+| 3 | strict-caller write-back + TDZ interleaving | 6 | **5** | (unsized) |
+| 1 | caller-context `new.target` / `super` | 10 | **0** | "~4 + ~6" |
+| 5/6 | object-valued bindings · mid-eval visibility | 2 | **0** | (unsized) |
+| 4 | mapped-`arguments` severing contract | 0 | **0** | "tests fail under the flag" |
+
+Four corrections to the spec's expectations, all of them load-bearing for what
+gets worked on next:
+
+1. **Bucket 7 was not on the list and is 68 % of the loss.** Evaluated code
+   cannot call a COMPILED function, so the test262 harness's own `assert`
+   (182 failures) and `fnGlobalObject` (48) are `ReferenceError: … is not
+   defined` inside the eval body and the test dies before it tests anything.
+   This is **not** a direct-eval residual — it hits indirect eval identically —
+   and it is exactly the membrane #4245 exists to build (spec §"Out of scope":
+   "compiled GC objects crossing into QuickJS … separate future issue"). It was
+   invisible until now because direct eval refused, so the eval-code corpus
+   could not be run at all. **Projected ceiling if only the membrane landed:
+   672/816 ≈ 82 %** — a projection, not a measurement: an unblocked test can
+   still fail later in its body.
+2. **Bucket 1 costs nothing relative to the interpreter.** `new.target` is 0/4
+   and `super-*` 6/12 on BOTH engines. The estimate of ~10 affected files was
+   accurate; the assumption that they were a quickjs *regression* was not.
+3. **Bucket 4 costs nothing at all**: the `*arguments*` family is **192/192 on
+   both engines**. The predicted mapped-arguments failures do not occur — those
+   tests exercise an eval that DECLARES `arguments`, which the snapshot handles.
+4. **Bucket 2 is ~8× the estimate** (102 quickjs-only, not ~13). The write-back
+   approximates EvalDeclarationInstantiation; it does not implement it, and
+   annexB B.3.3 block-function hoisting is where that shows.
+
+Completion-value semantics, which the wrapper design targeted directly, are
+**21/21 on both engines** (`cptn-*`) — the `undefined;` guard and the
+`with`/block wrapper choices are carrying their weight.
+
+### Slice-3 residuals (all typed + catchable, none silent)
+
+Slice 2's list still stands. Added by this slice:
+
+1. **A strict caller's writes to caller bindings throw** (assignment to a
+   constant) instead of updating. Spec-predicted; measured cost 5 tests.
+2. **A strict caller's eval that RE-declares a caller binding name with
+   `let`/`const`/`class` is a `SyntaxError`** — the preamble already bound it in
+   the same block. Mitigated by only declaring names the source mentions as a
+   whole token, not eliminated. (The sloppy `with` arm has no such limitation.)
+3. **`this` inside direct eval is the QuickJS realm's global object**, not the
+   caller's `this`. Correct for the sloppy free-call shape that dominates
+   test262; wrong for a method caller. `this-value-*` is 5/6 on both engines.
+4. **An eval-created binding that is not a primitive** (a function declaration,
+   typically) has no pool representation, so it stays on the QuickJS realm and
+   is reachable from evaluated code but not mirrored into the caller's variable
+   environment. This is most of bucket 2.
+5. **Pool capacity is 64 names per activation** (the caller's
+   `DIRECT_EVAL_STATE_BINDING_CAPACITY`). Beyond that a created binding is not
+   persisted — never mis-slotted, just dropped.
+6. **The realm-diff is `Object.getOwnPropertyNames`-based**, so a binding an
+   eval creates with a non-identifier or symbol key is not mirrored.
