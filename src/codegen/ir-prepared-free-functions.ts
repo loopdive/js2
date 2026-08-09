@@ -290,6 +290,12 @@ function bodyProjection(
 
 function r2StableSignatureType(type: IrType | null): boolean {
   if (type === null || type.kind === "string") return true;
+  // #3522 Builtins retirement — opaque host-class contracts have one
+  // backend-independent physical representation in the JS-host lane:
+  // externref. Admission is still fail-closed because
+  // r2SignatureMatchesAllocatedSlot compares that projection with the exact
+  // Program ABI slot before preparation can replace the direct body.
+  if (type.kind === "extern") return true;
   if (type.kind === "vec") {
     const element = asVal(type.elementType);
     return element?.kind === "f64" || element?.kind === "i32";
@@ -430,6 +436,7 @@ function sameValType(left: ValType, right: ValType): boolean {
 }
 
 function r2StableValType(ctx: CodegenContext, type: IrType): ValType | undefined {
+  if (type.kind === "extern") return { kind: "externref" };
   if (type.kind === "string") {
     if (!ctx.nativeStrings) return { kind: "externref" };
     return ctx.anyStrTypeIdx >= 0 ? { kind: "ref", typeIdx: ctx.anyStrTypeIdx } : undefined;
@@ -781,8 +788,9 @@ export function finalizeR3PreparedOwnerPopulation(input: {
 }
 
 /**
- * R2 prepares only components whose top-level callable contracts are
- * ABI-stable scalars/strings. Reference-shaped callable contracts, fast-mode
+ * R2 prepares only components whose top-level callable contracts have one
+ * backend-stable Program ABI projection: scalars, strings, selected vectors,
+ * and opaque JS-host externrefs. Other reference-shaped contracts, fast-mode
  * grounded numerics, and async/generator frames still require direct discovery
  * and remain on the post-direct overlay. Nested callable syntax inside an
  * otherwise admitted owner does not by itself block that owner.
