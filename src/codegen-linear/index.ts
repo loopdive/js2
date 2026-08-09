@@ -15,6 +15,7 @@ import * as linearCoercion from "./coercion-engine.js";
 import * as numberFormat from "./number-format.js";
 import { addLinearStackArenaRuntime } from "./runtime-stack-arena.js";
 import { compileLinearStringMethodCall } from "./string-methods.js";
+import { addLinearStringRepeatRuntime, sourceMayUseLinearStringRepeat } from "./string-repeat.js";
 import {
   addArrayRuntime,
   addFmodRuntime,
@@ -114,6 +115,7 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
   addUint8ArrayRuntime(mod);
   addArrayRuntime(mod);
   addStringRuntime(mod);
+  if (sourceMayUseLinearStringRepeat(ast.sourceFile)) addLinearStringRepeatRuntime(mod);
   addMapRuntime(mod);
   addSetRuntime(mod);
   addNumericMapRuntime(mod);
@@ -290,6 +292,7 @@ export function generateLinearMultiModule(multiAst: MultiTypedAST, opts: LinearO
   addUint8ArrayRuntime(mod);
   addArrayRuntime(mod);
   addStringRuntime(mod);
+  if (multiAst.sourceFiles.some(sourceMayUseLinearStringRepeat)) addLinearStringRepeatRuntime(mod);
   addMapRuntime(mod);
   addSetRuntime(mod);
   addNumericMapRuntime(mod);
@@ -3475,6 +3478,7 @@ function compileMethodCall(ctx: LinearContext, fctx: LinearFuncContext, expr: ts
     compileLinearStringMethodCall(ctx, fctx, expr, propAccess, methodName, {
       compileExpression,
       compileExprToI32,
+      compileExprToF64,
       compileStringLiteral,
       isStringExpr,
     })
