@@ -1,11 +1,10 @@
 {
   "id": "4167",
-  "assignee": "ttraenkler/claude-fable",
-  "requested_by": "ttraenkler@users.noreply.github.com",
-  "status": "released",
-  "branch": "claude/acorn-performance-optimization-hagjht",
-  "claimed_at": "2026-08-06T11:25:03Z",
-  "updated_at": "2026-08-06T11:32:34Z",
-  "write_id": "9180-pzp6f15e",
-  "released_at": "2026-08-06T11:32:34Z"
+  "assignee": "ttraenkler/codex-es6-promise",
+  "requested_by": "ttraenkler/codex-es6-promise",
+  "status": "in-progress",
+  "branch": "codex/es6-promise-exception-ir",
+  "claimed_at": "2026-08-09T07:14:59Z",
+  "updated_at": "2026-08-09T07:14:59Z",
+  "write_id": "43117-d3wpb64k"
 }
