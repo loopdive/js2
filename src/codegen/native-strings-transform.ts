@@ -40,6 +40,11 @@ export function emitStrCaseHelpers(shared: NativeStrShared): void {
     const typeIdx = addFuncType(ctx, [strRef], [strRef]);
     const funcIdx = mintDefinedFunc(ctx);
     ctx.nativeStrHelpers.set("__str_toLowerCase", funcIdx);
+    // Retain an explicit handle after the public name is re-pointed at the
+    // full-Unicode helper below. Proven-ASCII call sites can safely use this
+    // compact implementation without paying for the Unicode bail-out path.
+    ctx.nativeStrHelpers.set("__str_toLowerCase_ascii", funcIdx);
+    ctx.funcMap.set("__str_toLowerCase_ascii", funcIdx);
 
     // params: s(0)
     // locals: len(1), srcData(2), newArr(3), i(4), ch(5), sOff(6)
@@ -95,11 +100,9 @@ export function emitStrCaseHelpers(shared: NativeStrShared): void {
               { op: "local.get", index: 4 },
               { op: "local.get", index: 5 },
               { op: "i32.const", value: 65 },
-              { op: "i32.ge_u" },
-              { op: "local.get", index: 5 },
-              { op: "i32.const", value: 90 },
+              { op: "i32.sub" },
+              { op: "i32.const", value: 25 },
               { op: "i32.le_u" },
-              { op: "i32.and" },
               {
                 op: "if",
                 blockType: { kind: "val", type: { kind: "i32" } },
@@ -127,7 +130,7 @@ export function emitStrCaseHelpers(shared: NativeStrShared): void {
     ];
 
     pushDefinedFunc(ctx, funcIdx, {
-      name: "__str_toLowerCase",
+      name: "__str_toLowerCase_ascii",
       typeIdx,
       locals: [
         { name: "len", type: { kind: "i32" } },
@@ -148,6 +151,8 @@ export function emitStrCaseHelpers(shared: NativeStrShared): void {
     const typeIdx = addFuncType(ctx, [strRef], [strRef]);
     const funcIdx = mintDefinedFunc(ctx);
     ctx.nativeStrHelpers.set("__str_toUpperCase", funcIdx);
+    ctx.nativeStrHelpers.set("__str_toUpperCase_ascii", funcIdx);
+    ctx.funcMap.set("__str_toUpperCase_ascii", funcIdx);
 
     // params: s(0)
     // locals: len(1), srcData(2), newArr(3), i(4), ch(5), sOff(6)
@@ -203,11 +208,9 @@ export function emitStrCaseHelpers(shared: NativeStrShared): void {
               { op: "local.get", index: 4 },
               { op: "local.get", index: 5 },
               { op: "i32.const", value: 97 },
-              { op: "i32.ge_u" },
-              { op: "local.get", index: 5 },
-              { op: "i32.const", value: 122 },
+              { op: "i32.sub" },
+              { op: "i32.const", value: 25 },
               { op: "i32.le_u" },
-              { op: "i32.and" },
               {
                 op: "if",
                 blockType: { kind: "val", type: { kind: "i32" } },
@@ -235,7 +238,7 @@ export function emitStrCaseHelpers(shared: NativeStrShared): void {
     ];
 
     pushDefinedFunc(ctx, funcIdx, {
-      name: "__str_toUpperCase",
+      name: "__str_toUpperCase_ascii",
       typeIdx,
       locals: [
         { name: "len", type: { kind: "i32" } },
