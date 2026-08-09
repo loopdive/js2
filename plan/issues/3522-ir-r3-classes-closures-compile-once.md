@@ -469,6 +469,16 @@ structs. When one owner still fails dependency sealing, only that exact owner
 is peeled and the remaining denominator is rederived; a blocked caller no
 longer withdraws an otherwise complete callee, and no body is compiled twice.
 
+Equivalence qualification exposed one additional transaction boundary: a
+component with both a preparable class layout and a hard direct-route blocker
+must not publish the mutable allocator layout before it is peeled. Immutable
+callable imports/providers now preflight first while tolerating only proven
+preparable class blockers. A class layout is published only after it is the
+component's complete remaining blocker set. The explicit dynamic-`super`
+control proves the blocked child and its free caller keep their direct behavior
+and poison seam without leaving a stale ABI draft, while an independent parent
+method can still seal on IR.
+
 This closes the free-function-to-class direction for the bounded WasmGC class
 program. `classes.ts::main` and all ten Animal/Dog constructor, method, and
 accessor terminals now share one prepared component ID and record

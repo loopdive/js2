@@ -309,6 +309,63 @@ describe("#3522 prepared cross-owner retirement", () => {
     }
   });
 
+  it("does not publish a mutable class layout for a component already blocked on dynamic super access", async () => {
+    const source = `
+      class Parent {
+        greet(): string { return "hello"; }
+      }
+      class Child extends Parent {
+        greet(): string { return super["greet"]() + " world"; }
+      }
+      export function test(): string {
+        const child = new Child();
+        return child.greet();
+      }
+    `;
+    const options = {
+      fileName: "peeled-class-layout-control.ts",
+      experimentalIR: true,
+      trackIrOutcomes: true,
+      target: "gc" as const,
+    };
+    const result = await compile(source, options);
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect(outcome(result, "class-member", "Parent_greet")).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
+    });
+    expect(outcome(result, "class-member", "Child_greet")).toMatchObject({
+      kind: "unsupported",
+      stage: "select",
+      code: "body-shape-rejected",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(outcome(result, "function", "test")).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: true,
+      irBodyEmitted: true,
+    });
+    expect((await instantiate(result)).test!()).toBe("hello world");
+
+    const previous = process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY;
+    try {
+      process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = "Child_greet";
+      const poisoned = await compile(source, options);
+      expect(poisoned.success).toBe(false);
+      expect(
+        poisoned.errors.some((error) => error.message.includes("injected direct class-body poison: Child_greet")),
+      ).toBe(true);
+    } finally {
+      if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
+      else process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = previous;
+    }
+  });
+
   it("peels blocked algorithms owners while sealing the independent fibIter dependency", async () => {
     const result = await compile(ALGORITHMS_SOURCE, {
       fileName: "website/playground/examples/js/algorithms.ts",

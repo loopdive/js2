@@ -5,12 +5,13 @@ import { definedFuncAt } from "../codegen/func-space.js";
 import { planProgramAbiUnitCallable } from "../codegen/program-abi-planning.js";
 import { irClassTypeRef } from "./abi-bindings.js";
 import { irUnitCallableBindingId, irUnitFuncRef } from "./callable-bindings.js";
-import type { IrBindingId, IrUnitId, IrUnitInventory } from "./identity.js";
+import type { IrBindingId, IrClassId, IrUnitId, IrUnitInventory } from "./identity.js";
 import type { IrFunction } from "./nodes.js";
 import { IrInvariantError } from "./outcomes.js";
 import {
   derivePreparedComponentDependencies,
   type PreparedComponentClosureSupportEvidence,
+  type PreparedComponentDependencyFailure,
   type PreparedComponentDependencyReport,
 } from "./prepared-component-dependencies.js";
 import type { ProgramAbiDerivedUnitRecord } from "./program-abi.js";
@@ -25,7 +26,21 @@ export interface PreparedComponentArtifactEntry {
   readonly moduleInit?: boolean;
 }
 
-function planBlockingCallableProviders(ctx: CodegenContext, report: PreparedComponentDependencyReport): boolean {
+function preparableClassLayoutId(
+  ctx: CodegenContext,
+  classIdByBindingId: ReadonlyMap<IrBindingId, IrClassId>,
+  failure: PreparedComponentDependencyFailure,
+): IrClassId | undefined {
+  if (failure.code !== "unplanned-abi-binding" || failure.bindingId === undefined) return undefined;
+  const classId = classIdByBindingId.get(failure.bindingId);
+  return classId !== undefined && ctx.programAbiTypes?.canPrepareClassLayout(classId) === true ? classId : undefined;
+}
+
+function planBlockingCallableProviders(
+  ctx: CodegenContext,
+  report: PreparedComponentDependencyReport,
+  classIdByBindingId: ReadonlyMap<IrBindingId, IrClassId>,
+): boolean {
   const registry = ctx.programAbiCallableProviders;
   if (!registry) return false;
   const selectedKeys = new Set<string>();
@@ -42,9 +57,10 @@ function planBlockingCallableProviders(ctx: CodegenContext, report: PreparedComp
       component.failures.length === 0 ||
       !component.failures.every(
         (failure) =>
-          failure.code === "unplanned-abi-binding" &&
-          failure.structuralReferenceKey !== undefined &&
-          unresolvedKeys.has(failure.structuralReferenceKey),
+          preparableClassLayoutId(ctx, classIdByBindingId, failure) !== undefined ||
+          (failure.code === "unplanned-abi-binding" &&
+            failure.structuralReferenceKey !== undefined &&
+            unresolvedKeys.has(failure.structuralReferenceKey)),
       ) ||
       providerImports === undefined
     ) {
@@ -80,6 +96,7 @@ function planBlockingCallableImports(
   ctx: CodegenContext,
   report: PreparedComponentDependencyReport,
   catalog: ReadonlyMap<string, Import>,
+  classIdByBindingId: ReadonlyMap<IrBindingId, IrClassId>,
 ): boolean {
   const selected = new Set<Import>();
   const providers = ctx.programAbiCallableProviders;
@@ -94,6 +111,7 @@ function planBlockingCallableImports(
     const allFailuresArePlannableCallables =
       component.failures.length > 0 &&
       component.failures.every((failure) => {
+        if (preparableClassLayoutId(ctx, classIdByBindingId, failure) !== undefined) return true;
         const key = failure.structuralReferenceKey;
         return (
           failure.code === "unplanned-abi-binding" &&
@@ -133,22 +151,25 @@ function planBlockingCallableImports(
 function planBlockingClassLayouts(
   ctx: CodegenContext,
   report: PreparedComponentDependencyReport,
-  inventory: IrUnitInventory,
+  classIdByBindingId: ReadonlyMap<IrBindingId, IrClassId>,
 ): boolean {
   const registry = ctx.programAbiTypes;
   if (!registry) return false;
-  const classIdByBindingId = new Map(
-    inventory.classes.map((record) => [irClassTypeRef(record.id, record.displayName).binding.bindingId, record.id]),
-  );
-  const selected = new Set(
-    report.components.flatMap((component) =>
-      component.failures.flatMap((failure) => {
-        if (failure.code !== "unplanned-abi-binding" || failure.bindingId === undefined) return [];
-        const classId = classIdByBindingId.get(failure.bindingId);
-        return classId !== undefined && registry.canPrepareClassLayout(classId) ? [classId] : [];
-      }),
-    ),
-  );
+  const selected = new Set<IrClassId>();
+  for (const component of report.components) {
+    const classIds = component.failures.flatMap((failure) => {
+      const classId = preparableClassLayoutId(ctx, classIdByBindingId, failure);
+      return classId === undefined ? [] : [classId];
+    });
+    // Class layouts are mutable allocator objects until the remaining direct
+    // owners finish. Publishing one for a component that already has another
+    // hard failure would leave a stale ABI draft behind when that component is
+    // peeled back to the direct route. Only publish when the layouts are the
+    // complete blocking set, so this iteration either seals the component or
+    // makes no class-layout mutation at all.
+    if (classIds.length === 0 || classIds.length !== component.failures.length) continue;
+    for (const classId of classIds) selected.add(classId);
+  }
   for (const classId of selected) registry.prepareClassLayout(classId);
   return selected.size > 0;
 }
@@ -223,15 +244,21 @@ export function sealDependencyCompletePreparedComponents(input: {
       },
     });
   const candidateTerminalUnitIds = new Set(terminalUnitIds);
+  const classIdByBindingId = new Map(
+    inventory.classes.map((record) => [irClassTypeRef(record.id, record.displayName).binding.bindingId, record.id]),
+  );
   let report = derive(candidateTerminalUnitIds);
   for (;;) {
-    if (planBlockingClassLayouts(ctx, report, inventory)) {
+    // Plan immutable callable support first while treating a preparable class
+    // layout as a deferred blocker. Only after every other failure has cleared
+    // may the mutable allocator-owned layout be published.
+    if (planBlockingCallableImports(ctx, report, input.callableImports, classIdByBindingId)) {
       report = derive(candidateTerminalUnitIds);
     }
-    if (planBlockingCallableImports(ctx, report, input.callableImports)) {
+    if (planBlockingCallableProviders(ctx, report, classIdByBindingId)) {
       report = derive(candidateTerminalUnitIds);
     }
-    if (planBlockingCallableProviders(ctx, report)) {
+    if (planBlockingClassLayouts(ctx, report, classIdByBindingId)) {
       report = derive(candidateTerminalUnitIds);
     }
 
