@@ -1026,6 +1026,115 @@ export type IrClaimableSubject =
   | ts.GetAccessorDeclaration
   | ts.SetAccessorDeclaration;
 
+function staticClassMemberName(name: ts.PropertyName): string | undefined {
+  if (ts.isIdentifier(name) || ts.isPrivateIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) {
+    return name.text;
+  }
+  if (
+    ts.isComputedPropertyName(name) &&
+    (ts.isStringLiteral(name.expression) || ts.isNumericLiteral(name.expression))
+  ) {
+    return name.expression.text;
+  }
+  return undefined;
+}
+
+function constructorReceiverCallableMembers(owner: ts.ClassDeclaration | ts.ClassExpression): {
+  readonly names: ReadonlySet<string>;
+  readonly hasDynamicName: boolean;
+} {
+  const names = new Set<string>();
+  let hasDynamicName = false;
+  const topLevelClasses = new Map<string, ts.ClassDeclaration>();
+  for (const statement of owner.getSourceFile().statements) {
+    if (ts.isClassDeclaration(statement) && statement.name) topLevelClasses.set(statement.name.text, statement);
+  }
+  const seen = new Set<ts.ClassDeclaration | ts.ClassExpression>();
+  let current: ts.ClassDeclaration | ts.ClassExpression | undefined = owner;
+  while (current && !seen.has(current)) {
+    seen.add(current);
+    for (const member of current.members) {
+      if (
+        !ts.isMethodDeclaration(member) &&
+        !ts.isGetAccessorDeclaration(member) &&
+        !ts.isSetAccessorDeclaration(member)
+      ) {
+        continue;
+      }
+      const name = staticClassMemberName(member.name);
+      if (name === undefined) hasDynamicName = true;
+      else names.add(name);
+    }
+    const heritage: ts.HeritageClause | undefined = current.heritageClauses?.find(
+      (clause) => clause.token === ts.SyntaxKind.ExtendsKeyword,
+    );
+    const baseExpression: ts.Expression | undefined = heritage?.types[0]?.expression;
+    current = baseExpression && ts.isIdentifier(baseExpression) ? topLevelClasses.get(baseExpression.text) : undefined;
+  }
+  return { names, hasDynamicName };
+}
+
+/**
+ * An IR init body receives an already allocated receiver. A derived body must
+ * initialize it with exactly one leading `super(...)`. Calls reached through
+ * `this` remain direct until class-call lowering preserves virtual dispatch;
+ * binding them to the constructor's static class would bypass overrides.
+ */
+export function constructorHasIrSafeReceiverSemantics(declaration: ts.ConstructorDeclaration): boolean {
+  const owner = declaration.parent;
+  if (!owner || (!ts.isClassDeclaration(owner) && !ts.isClassExpression(owner))) return false;
+  const isDerived = owner.heritageClauses?.some((clause) => clause.token === ts.SyntaxKind.ExtendsKeyword) ?? false;
+  if (isDerived) {
+    const first = declaration.body?.statements[0];
+    if (
+      !first ||
+      !ts.isExpressionStatement(first) ||
+      !ts.isCallExpression(first.expression) ||
+      first.expression.expression.kind !== ts.SyntaxKind.SuperKeyword
+    ) {
+      return false;
+    }
+  }
+  let superCalls = 0;
+  let hasReceiverDerivedCall = false;
+  let hasReceiverCallableMemberAccess = false;
+  const callableMembers = constructorReceiverCallableMembers(owner);
+  const referencesThis = (node: ts.Node): boolean => {
+    if (node.kind === ts.SyntaxKind.ThisKeyword) return true;
+    let found = false;
+    ts.forEachChild(node, (child) => {
+      if (!found && referencesThis(child)) found = true;
+    });
+    return found;
+  };
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.SuperKeyword) superCalls++;
+    if (ts.isCallExpression(node) && referencesThis(node.expression)) hasReceiverDerivedCall = true;
+    if (
+      (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+      (node.expression.kind === ts.SyntaxKind.ThisKeyword || node.expression.kind === ts.SyntaxKind.SuperKeyword)
+    ) {
+      const name = ts.isPropertyAccessExpression(node)
+        ? staticClassMemberName(node.name)
+        : node.argumentExpression &&
+            (ts.isStringLiteral(node.argumentExpression) || ts.isNumericLiteral(node.argumentExpression))
+          ? node.argumentExpression.text
+          : undefined;
+      if (
+        node.expression.kind === ts.SyntaxKind.SuperKeyword ||
+        name === undefined ||
+        callableMembers.hasDynamicName ||
+        callableMembers.names.has(name)
+      ) {
+        hasReceiverCallableMemberAccess = true;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(declaration.body!);
+  return (!isDerived || superCalls === 1) && !hasReceiverDerivedCall && !hasReceiverCallableMemberAccess;
+}
+
 /**
  * Variant of `isIrClaimable` that returns the rejection reason instead of a
  * boolean. Returns null on accept. Used by `planIrCompilation` when
@@ -1589,6 +1698,7 @@ function whyNotIrClaimable(
     // stays correct. Flat classes whose fields are declared without an
     // initialiser and assigned in the body (the common shape, e.g. classes.ts's
     // `Animal`) are unaffected.
+    if (!constructorHasIrSafeReceiverSemantics(fn)) return "body-shape-rejected";
     for (const p of fn.parameters) {
       const isParamProperty = p.modifiers?.some(
         (m) =>

@@ -195,6 +195,11 @@ import {
   tryEnsureNativeProtoBrand,
   typedArrayViewSignedness,
 } from "./builtin-value-read.js"; // (#3267) built-in static/prototype VALUE-read subsystem — extracted
+import {
+  elementAccessTypedArrayName,
+  emitNonIndexVecElementGet,
+  nonArrayIndexNumericKey,
+} from "./array-nonindex-key.js"; // (#4247)
 // (#3267) Re-export the moved symbols other modules import from property-access.js
 // so their `from "./property-access.js"` imports keep resolving unchanged.
 export {
@@ -5260,6 +5265,29 @@ export function compileElementAccessBody(
     if (!arrDef || arrDef.kind !== "array") {
       reportErrorNoNode(ctx, "Element access: vec data is not array");
       return null;
+    }
+
+    // (#4247) READ twin of the element-write routing in assignment.ts: a
+    // constant key that is NOT an array index per §10.4.2.2 names an ordinary
+    // property in the #3537 expando bag, not an element. Without this the
+    // standalone read saturates the key to `i32.max` and misses the bag the
+    // write just filled. TypedArray views and `arguments` are not array
+    // exotics and keep their own lowering.
+    //
+    // Both lanes, and the read must stay in lockstep with the write: measured,
+    // the gc element read does NOT reach the host property store for a
+    // non-index key either — it takes the same vec element lane — so routing
+    // the write alone would leave gc reading an element the write no longer
+    // set. The pair is what has to agree, in whichever lane.
+    if (
+      elementAccessTypedArrayName(ctx, expr.expression) === undefined &&
+      !(ts.isIdentifier(expr.expression) && expr.expression.text === "arguments")
+    ) {
+      const namedKey = nonArrayIndexNumericKey(ctx, fctx, expr.argumentExpression);
+      if (namedKey !== undefined) {
+        const named = emitNonIndexVecElementGet(ctx, fctx, namedKey);
+        if (named) return named;
+      }
     }
 
     // (#2743 b) `vec[Symbol.iterator]` is %Array.prototype.values%

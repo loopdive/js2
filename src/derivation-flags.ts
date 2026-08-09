@@ -108,14 +108,29 @@ export function fnctorCtorParamTypesFlagEnabled(): boolean {
  * flag-on and flag-off) is a bad trade in the one direction that matters, so
  * the DEFAULT stays sound and the lever stays opt-in.
  *
- * ## What unblocks it
+ * ## What unblocked it (#4250, 2026-08-09)
  *
- * A whole-program per-field write-kind verdict — "every write reaching this
- * field is numeric" — which does not exist today. `numericPropertyNames`
- * (#3683 S4a) is close but demands ALL writes be *syntactically* numeric,
- * which is exactly why acorn's `Parser.pos` never qualified for it and why
- * this lever was built in the first place. Tracked as its own slice; see
- * `plan/issues/743-whole-program-type-flow-analysis.md` for the cross-link.
+ * The whole-program per-field WRITE-KIND VERDICT
+ * (`computeFnctorGraphFieldVerdicts`, `src/ir/fnctor-method-edges.ts`): the
+ * join over every write the satellite can enumerate as reaching
+ * `Owner.<field>`, with every cannot-see path — escaped owner, replaced
+ * prototype, computed-key writes, `delete`, reflection — answering DYNAMIC.
+ * `inferFnctorFieldTypeFromCtorParam` now refuses any narrowing the verdict
+ * cannot positively justify (fail-closed: an absent owner, an absent field, a
+ * merely-UNPROVEN write all mean NO), which closes the hole above: the later
+ * `a.f = "s"` is an enumerated write, its string contribution widens the
+ * verdict, and the slot stays `externref`. With that in place this flag joins
+ * the family's unset-⇒-ON rule.
+ *
+ * The lever is only defensible WITH the verdict, so disabling the verdict
+ * (`JS2WASM_FIELD_WRITE_VERDICT=0`) forces this lever OFF regardless of its
+ * own variable — the unsound-lever-ON combination cannot be reached by one
+ * stray environment line.
+ *
+ * (`numericPropertyNames` — #3683 S4a — remains what it was: name-keyed and
+ * syntactic-only, which is exactly why acorn's `Parser.pos` never qualified
+ * for it and why the verdict had to come from the satellite's value facts
+ * instead.)
  *
  * Note the deliberately narrow scope: this flag does NOT gate the `new`-site
  * PARAMETER narrowing in either inference lane. A parameter's writes ARE its
@@ -124,7 +139,26 @@ export function fnctorCtorParamTypesFlagEnabled(): boolean {
  * ships ON.
  */
 export function fnctorCtorParamSlotsEnabled(): boolean {
-  return process.env.JS2WASM_FNCTOR_CTOR_PARAM_SLOTS === "1";
+  return fieldWriteVerdictEnabled() && derivationFlagEnabled(process.env.JS2WASM_FNCTOR_CTOR_PARAM_SLOTS);
+}
+
+/**
+ * `JS2WASM_FIELD_WRITE_VERDICT` — the #4250 per-field write-kind verdict, in
+ * BOTH of its consumer roles:
+ *
+ *  1. the fail-closed gate inside `inferFnctorFieldTypeFromCtorParam` (see the
+ *     SLOTS flag above, which this one dominates), and
+ *  2. the proven-violation veto on the PRE-EXISTING literal slot choice in
+ *     `deriveFnctorFields` — the `this.tag = 1; … a.tag = "s"` miscompile that
+ *     was reachable on `main` with every flag off since the fnctor machinery
+ *     shipped.
+ *
+ * OFF restores the pre-#4250 behaviour of role 2 and forces the SLOTS lever
+ * off (role 1 has no sound OFF state of its own). Same token rule as the rest
+ * of the family.
+ */
+export function fieldWriteVerdictEnabled(): boolean {
+  return derivationFlagEnabled(process.env.JS2WASM_FIELD_WRITE_VERDICT);
 }
 
 /**

@@ -29,6 +29,7 @@ const EXTERNREF = irVal({ kind: "externref" });
 const WRAPPER_FIELDS: readonly FieldDef[] = Object.freeze([
   Object.freeze({ name: "func", type: { kind: "funcref" }, mutable: false }),
   Object.freeze({ name: "$arity", type: { kind: "i32" }, mutable: false }),
+  Object.freeze({ name: "$bag", type: { kind: "externref" }, mutable: true }),
 ]);
 
 function physicalType(type: IrType): ValType {

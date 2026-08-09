@@ -774,9 +774,6 @@ function collectUses(instr: IrInstr): readonly IrValueId[] {
     // Slice 4 (#1169d): class ops.
     case "class.new":
       return instr.args;
-    case "class.alloc":
-      // #3000-C: no SSA operands.
-      return [];
     case "class.get":
       return [instr.value];
     case "class.set":

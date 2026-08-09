@@ -66,6 +66,7 @@ import {
   reifyCurrentDirectEvalBindings,
 } from "../direct-eval-environment.js";
 import { annexBHoistCancels } from "../annexb-cancel.js";
+import { emitArgumentsVecTail } from "../arguments-vector-tail.js";
 
 /**
  * §15.7.1 ClassDefinitionEvaluation: the class name binding is added to the
@@ -2787,79 +2788,19 @@ export function emitArgumentsVecBody(
   fctx.body.push({ op: "i32.add" });
   fctx.body.push({ op: "local.set", index: totalLenLocal });
 
-  // arr = array.new_default(totalLen)
-  fctx.body.push({ op: "local.get", index: totalLenLocal });
-  fctx.body.push({ op: "array.new_default", typeIdx: ati });
-  fctx.body.push({ op: "local.set", index: arrTmp });
-
-  // Fill formals: arr[i] = box(param[i + paramOffset])
-  // Guard each slot with `if (i < argc)` so we only fill actually-passed args.
-  // When argc < numArgs (fewer args than formal params), the array is smaller
-  // than numArgs and unguarded writes would be OOB.
-  for (let i = 0; i < numArgs; i++) {
-    const thenInstrs: Instr[] = [];
-    thenInstrs.push({ op: "local.get", index: arrTmp });
-    thenInstrs.push({ op: "i32.const", value: i });
-    thenInstrs.push({ op: "local.get", index: i + paramOffset });
-    const pt = paramTypes[i]!;
-    if (pt.kind === "f64") {
-      const boxIdx = ctx.funcMap.get("__box_number");
-      if (boxIdx !== undefined) {
-        thenInstrs.push({ op: "call", funcIdx: boxIdx });
-      } else {
-        thenInstrs.push({ op: "drop" });
-        thenInstrs.push({ op: "ref.null.extern" });
-      }
-    } else if (pt.kind === "i32") {
-      thenInstrs.push({ op: "f64.convert_i32_s" });
-      const boxIdx = ctx.funcMap.get("__box_number");
-      if (boxIdx !== undefined) {
-        thenInstrs.push({ op: "call", funcIdx: boxIdx });
-      } else {
-        thenInstrs.push({ op: "drop" });
-        thenInstrs.push({ op: "ref.null.extern" });
-      }
-    } else if (pt.kind === "ref" || pt.kind === "ref_null") {
-      thenInstrs.push({ op: "extern.convert_any" });
-    }
-    thenInstrs.push({ op: "array.set", typeIdx: ati });
-
-    // Emit: if (i < argc) { ...thenInstrs }
-    fctx.body.push({ op: "i32.const", value: i });
-    fctx.body.push({ op: "local.get", index: argcLocal });
-    fctx.body.push({ op: "i32.lt_s" });
-    fctx.body.push({
-      op: "if",
-      blockType: { kind: "empty" },
-      then: thenInstrs,
-      else: [],
-    });
-  }
-
-  // Copy non-empty extras after the ABI-supplied formal prefix, not every declared parameter (#3420).
-  fctx.body.push({ op: "local.get", index: extrasLenLocal });
-  fctx.body.push({ op: "i32.eqz" });
-  fctx.body.push({
-    op: "if",
-    blockType: { kind: "empty" },
-    then: [],
-    else: [
-      { op: "local.get", index: arrTmp },
-      { op: "local.get", index: argcLocal },
-      { op: "local.get", index: extrasLocal },
-      { op: "ref.as_non_null" },
-      { op: "struct.get", typeIdx: vti, fieldIdx: 1 },
-      { op: "i32.const", value: 0 },
-      { op: "local.get", index: extrasLenLocal },
-      { op: "array.copy", dstTypeIdx: ati, srcTypeIdx: ati },
-    ],
+  emitArgumentsVecTail(ctx, fctx, {
+    paramTypes,
+    paramOffset,
+    numArgs,
+    vecTypeIdx: vti,
+    arrTypeIdx: ati,
+    argsLocalIdx: argsLocal,
+    arrTmpIdx: arrTmp,
+    extrasLocalIdx: extrasLocal,
+    extrasLenLocalIdx: extrasLenLocal,
+    totalLenLocalIdx: totalLenLocal,
+    argcLocalIdx: argcLocal,
   });
-
-  // vec = { length: totalLen, data: arr }
-  fctx.body.push({ op: "local.get", index: totalLenLocal });
-  fctx.body.push({ op: "local.get", index: arrTmp });
-  fctx.body.push({ op: "struct.new", typeIdx: vti });
-  fctx.body.push({ op: "local.set", index: argsLocal });
 
   // (#2743 a) Tag the freshly-built vec as an ordinary arguments Object. The
   // import + index shift were settled at the top of this function, so the

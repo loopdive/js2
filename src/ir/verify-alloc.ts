@@ -42,8 +42,6 @@ const ALLOC_INSTR_KIND: Readonly<Record<string, AllocKind>> = {
   "refcell.new": "refcell",
   // class.new constructs an object via its <Class>_new ctor (black-box body).
   "class.new": "object",
-  // #3000-C: class.alloc allocates a fresh default-initialised instance.
-  "class.alloc": "object",
   "extern.new": "extern",
   "extern.regex": "extern",
   "string.const": "string",

@@ -10,16 +10,11 @@
 // was BYTE-INERT: the legacy `${Class}_new` body still emitted. The re-grounding
 // measured exactly this — `Animal_new` ABSENT from `irCompiledFuncs`.
 //
-// #3000-C makes the claim honest. `from-ast` lowers a constructor by
-// synthesising `this` via the new `class.alloc` IR instr (a fresh, default-
-// initialised struct — NOT a `class.new` ctor call, which would recurse into
-// the very function being compiled), running the ctor body statements as plain
-// statements, and synthesising the implicit `return this` epilogue. Phase-B
-// integration builds the `ConstructorDeclaration` under `${Class}_new` with NO
-// `selfParam` (a ctor allocates; it is not passed `__self`), and the Phase-3
-// slot patch's typeIdx-parity guard ensures the IR body's signature matches the
-// legacy `${Class}_new` slot exactly (else it keeps legacy — worst case
-// byte-inert, never a miscompile).
+// #3000-C made the claim honest; #3522 retired its original allocation-owning
+// IR shape. `from-ast` now lowers the source body into `${Class}_init`, whose
+// final parameter is the already allocated `this`, and synthesises the
+// implicit `return this` epilogue. An AST-free `${Class}_new` support wrapper
+// owns the one allocation and tail-calls that exact init source unit.
 //
 // PROOF OF GENUINE EMISSION (non-vacuity): `CompileResult.irCompiledFuncs` lists
 // the members whose slots were ACTUALLY patched with an IR body — a selector
@@ -99,7 +94,7 @@ describe("#3000-C — IR constructor emission (flat classes) — genuine emissio
     expect(Number((exports.test as () => unknown)())).toBe(7);
   });
 
-  it("an empty constructor body emits (alloc + return this) and constructs", async () => {
+  it("an empty constructor init emits and its AST-free wrapper constructs", async () => {
     const src = `
       class E { constructor() {} }
       export function test(): number { const e = new E(); e; return 42; }
@@ -113,9 +108,8 @@ describe("#3000-C — IR constructor emission (flat classes) — genuine emissio
 });
 
 describe("#3000-C — construction-effect guards (reject to legacy, stay correct)", () => {
-  // A PropertyDeclaration initialiser runs at construction; the IR ctor path
-  // only lowers the ctor body, so the class is rejected to legacy — the ctor
-  // slot must NOT be IR-emitted, and construction must remain correct.
+  // A PropertyDeclaration initialiser runs at construction; the current IR
+  // init path lowers only the explicit ctor body, so this remains direct.
   it("class with a field initialiser is NOT IR-claimed but still constructs correctly", async () => {
     const src = `
       class C { x: number = 5; constructor(y: number) { this.x = this.x + y; } }
@@ -128,8 +122,8 @@ describe("#3000-C — construction-effect guards (reject to legacy, stay correct
     expect(Number((exports.test as () => unknown)())).toBe(15); // 5 + 10 — initialiser ran
   });
 
-  // A parameter property (`constructor(private v)`) declares AND assigns a field
-  // — not lowered by the IR ctor path, so the class is rejected to legacy.
+  // A parameter property declares and assigns a field outside the explicit
+  // body, so it remains direct until that source effect is represented in IR.
   it("class with a parameter property is NOT IR-claimed", async () => {
     const src = `
       class D { constructor(private v: number) {} getV(): number { return this.v; } }
