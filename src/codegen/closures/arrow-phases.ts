@@ -27,6 +27,8 @@ import {
 import { addFunctionOwnLocals } from "../binding-info.js";
 import {
   closureArityField,
+  closureBagField,
+  closureBagInitInstr,
   getOrCreateConstructibleFuncRefWrapperTypes,
   getOrCreateFuncRefWrapperTypes,
 } from "./funcref-wrapper-types.js";
@@ -425,7 +427,11 @@ export function mintClosureStructTypes(
       liftedParams = [{ kind: "ref", typeIdx: liftedSelfTypeIdx }, ...arrowParams];
     } else {
       // Fallback: create a unique struct type
-      const structFields = [{ name: "func", type: { kind: "funcref" as const }, mutable: false }, closureArityField()];
+      const structFields = [
+        { name: "func", type: { kind: "funcref" as const }, mutable: false },
+        closureArityField(),
+        closureBagField(),
+      ];
       structTypeIdx = ctx.mod.types.length;
       ctx.mod.types.push({
         kind: "struct",
@@ -440,6 +446,7 @@ export function mintClosureStructTypes(
     const structFields = [
       { name: "func", type: { kind: "funcref" as const }, mutable: false },
       closureArityField(),
+      closureBagField(),
       ...captures.map((c) => buildCaptureFieldDef(ctx, c)),
     ];
 
@@ -783,6 +790,7 @@ export function emitClosureConstruction(
   // arity + captured values
   fctx.body.push({ op: "ref.func", funcIdx: liftedFuncIdx });
   fctx.body.push({ op: "i32.const", value: arity });
+  fctx.body.push(closureBagInitInstr()); // (#4241) $bag — no expandos at birth
   for (const cap of captures) {
     if (cap.mutable) {
       // Check if the outer scope already has this variable boxed (nested closure case)
