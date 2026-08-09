@@ -57,12 +57,77 @@ reverted via file copies — **not** `git stash`, which is a shared stack across
 worktrees). The baseline fails identically, so #4235 is exactly neutral on it:
 it neither caused nor fixed this.
 
-**Root cause NOT yet identified.** Two candidates were excluded by direct
-experiment — temporarily wiring `collectUserMethodNames` into
-`generateMultiModule` did not flip `c2`/`c3`, and neither did
-`applyNumericPropertyAnalysis`. Start from the remaining Part-B rows, or from
-the `this`-receiver dispatch itself (`FunctionContext.thisStructName` /
-`typed-this.ts`), which #2660's substrate routes differently.
+### Narrowing (2026-08-09) — it is NOT the analysis, and NOT the setter
+
+Measured after #4235 landed the pipeline on the multi path, so the escape gate
+now runs on both. Minimal repro (`.tmp/repro-4256.mts` shape), one file,
+`target: "standalone"`, driven through both compilers:
+
+```ts
+function K(p: any) { this.a = p; this.n = 0; }
+K.prototype.setN = function (v: any) { this.n = v; };
+function make(p: any) { const k = new K(p); k.extra = 1; return k; }
+export function mustLand(): number { const k: any = make(1); k.setN(7); return (k.n as number) === 7 ? 1 : 0; }
+```
+
+| probe | single | multi |
+| --- | --- | --- |
+| `mustLand` — proto-method `this.n = v` (POSITIVE CONTROL) | PASS | **FAIL(0)** |
+| read back via another proto method | PASS | **FAIL(0)** |
+| string-valued proto-method write | PASS | **FAIL(0)** |
+| `k.extra = 1` plain own-field write (negative control) | PASS | PASS |
+| ctor-assigned `this.a` (negative control) | PASS | PASS |
+
+Ruled OUT, each by direct comparison:
+
+- **Not the escape-gate analysis.** Both paths print exactly
+  `1 new F() site(s): reconstruct=1 keep-typed=0 keep-static=0;
+  receiverStruct flow-map entries=3`. Identical verdicts.
+- **Not the struct shape.** Both emit
+  `(type $__fnctor_K (struct (field $a …) (field $n (mut f64)) (field $extra …)
+  (field $$presence_0 (mut i32)) (field $$constructor externref)))`. The
+  written field `$n` is `(mut f64)` on both. (`$a` differs — `f64` single vs
+  `externref` multi — which is the `applyNumericPropertyAnalysis` row below,
+  and is NOT the defect: `$n` is identical and still fails.)
+- **Not the setter.** `$__set_member_n` is structurally identical on both
+  (same `ref.test` / `ref.cast` / `struct.set <t> 1` shape, modulo type
+  renumbering).
+
+**The divergence is the CALL helper.** `$__call_m_setN_1` differs
+structurally:
+
+- **single** — walks the prototype (`global.get <proto>`, two calls) and then
+  `ref.test`s the resolved callee against a closure type with an arity check
+  (`struct.get … i32.const 1 i32.le_s`), i.e. a specialized, arity-checked
+  prototype dispatch.
+- **multi** — a much shorter generic sequence (build argvec → generic invoke),
+  with no prototype-walk and no arity check.
+
+So the multi path invokes `setN` through the generic dynamic method-call arm,
+and the receiver that reaches `$__set_member_n` there evidently fails its
+`ref.test (ref $__fnctor_K)`, taking the else arm and dropping the write.
+
+Two further facts that constrain the mechanism:
+
+- Removing EITHER the factory or the `k.extra = 1` expando makes the repro
+  fail on **single** too. So the write only lands when the instance is
+  `reconstruct`-approved AND reaches the specialized dispatch — the specialized
+  arm is load-bearing for correctness here, not just for speed.
+- Excluded by direct experiment (temporarily wired into `generateMultiModule`,
+  neither flipped the result): `collectUserMethodNames` and
+  `applyNumericPropertyAnalysis`.
+
+**Next step:** find what gates the specialized arm of `$__call_m_<name>_<arity>`
+— it is not in `closed-method-dispatch.ts` (no fnctor/ctx-field gate there), so
+it is emitted by whichever pass installs the fnctor prototype dispatch
+(`fnctor-prototype.ts` / `typed-this.ts` / `object-runtime.ts:~1544`, all of
+which read `fnctorEscapeGate.approvedNames`) — and check whether its
+precondition is one of the ten Part-B rows.
+
+**Note on grepping the WAT while working this:** `.tmp/*.wat` contains NUL
+bytes, so plain `grep` treats it as binary and prints **nothing** — which reads
+exactly like "the symbol is absent". Use `grep -a`. This produced two false
+"it's not there" conclusions during this investigation before being caught.
 
 ## Part B — ten more single-path-only setup steps
 
