@@ -344,6 +344,87 @@ queued, and run full Test262 only through the merge queue. Do not start the
 Calendar production branch until this checkpoint lands or is explicitly
 withdrawn.
 
+### Calendar retirement oracle and resumable handover (2026-08-09)
+
+The final Calendar family has a disjoint test-only checkpoint on branch
+`codex/3523-calendar-test-oracle`:
+
+- `c3384c7748302ecfcff65f8bbc16176e711a7349` adds the deterministic runtime,
+  DOM, `Date`, callback, and direct-codegen optimization reference;
+- `7eef50559a2bcaaf54df50138b8eec68c389bf01` hardens the disabled production
+  contract around the exact ten-row IR-only outcome, seventeen emitted
+  artifacts, nine function skips, callback retirement, numeric Program-ABI
+  global access, relative body/binary ceilings, and mutation-free collision
+  fallback.
+
+The active portion passes **4/4** and the **7** final retirement tests remain
+intentionally skipped until production satisfies them. The oracle exercises
+twelve renders; December/January navigation; hover and selection isolation;
+the exact `2300`/`2800`/`2550 EUR` totals; clear/save behavior; fourteen ordered
+`Date` snapshots; 1,120 callback registrations; and the seven exact statically
+lifted callback owners. The final gates reject every legacy `__cb_N` body and
+require the direct fallback artifact to remain byte/import/runtime-identical
+after a preflight collision.
+
+The Calendar 10 → 0 implementation is ready once the Algorithms PR lands. It
+is a prepared-transaction problem, not a request for new IR instruction
+lowering:
+
+1. Generalize the exact-`Map` module-init selector into a capability-based
+   ordinary-host lexical-initializer selector. Require exact source/module
+   identity, Wasm-start/exactly-once invocation, one-to-one plan
+   binding/evaluation order, and exact global/TDZ Program-ABI IDs. Keep
+   `var`, destructuring, missing/multiple initializers, executable/class
+   statements, deferred startup, and incompatible modes fail-closed.
+2. Extend only the R2 prepared-free-function selector to admit arrows named by
+   `plan.hostVoidCallbacks`, with exact owner and contiguous ordinal. Walk the
+   admitted callback bodies and reject every unplanned nested function/class;
+   do not relax the stricter class/Promise nested-executable rule.
+3. Before any TDZ/global/import/callable mutation, preflight the callback maker,
+   every required `Date` import, and exact uncontested typed-DOM providers. Any
+   loss rejects all ten terminals with one typed unsupported reason and zero
+   prepared skips. The `Document_createElement` collision is a known-red
+   contract until this provider check exists.
+4. After `prepareIrBodies`, require exactly ten patched terminal owners, one
+   non-empty component, seventeen artifacts with correct owners, no errors or
+   deferred/preserved bodies, and the exact nine function plus one module-init
+   skip projection. A mismatch after successful preflight is an invariant and
+   must abort compilation; partial direct fallback is forbidden.
+
+Optimization parity is part of the transaction, not follow-up cleanup:
+
+- elide module-binding TDZ guards only for exact post-Wasm-start function
+  owners proven non-escaping; module init, class bodies, deferred/standalone/
+  WASI paths, unknown escapes, and stale evidence retain guards;
+- lower a constant nonterminating `if` without `else` directly into its body
+  without lowering/evaluating the condition twice;
+- use the IR's native `i32` vector length in the two safe Calendar reads,
+  preserving unsigned bounds checks and array reads while removing the
+  `f64` conversion/truncation pairs;
+- coalesce adjacent literal concat leaves only with single-use/provenance
+  proof, canonical deep nested-buffer string preparation, and refreshed
+  allocation/encoding metadata. The required Calendar shape is
+  `__concat_8: 1 → 0`, `__concat_7: 0 → 1` with unchanged leaf order.
+
+Resume sequence:
+
+1. Shepherd PR #4323 at its frozen head through full merge-queue Test262 and
+   verify that exact head is an ancestor of landed `main`.
+2. Create a fresh isolated Calendar production worktree from landed
+   `origin/main`; do not modify the dirty root checkout.
+3. Cherry-pick the two test checkpoint commits above, remeasure one clean
+   landed-main direct/IR baseline, and delete the temporary alternative
+   byte/local snapshots rather than accepting either as a production ceiling.
+4. Implement the generic selector/preflight/transaction changes and the four
+   optimization parity items in one overlapping production PR. Enable all
+   seven final Calendar tests only when the complete contract passes.
+5. Lower the checked legacy-body ceiling **10 → 0**, update the IR-only shadow
+   baseline and optimization-retirement ledger, run the full focused and
+   repository gates, open a ready PR, and freeze its exact head once queued.
+
+Do not create a GitHub Issue for this work. This Markdown record remains the
+source of truth for ownership, acceptance, and handover.
+
 ### Commit 2 — prepare/lower module init and make fallback one-pass
 
 - Extend from-AST lowering for every planned top-level entry and static intent.
