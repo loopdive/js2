@@ -45,6 +45,7 @@ import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./re
 import { staticConstStringValues } from "./analysis/static-string-values.js";
 import { staticIntegerRange } from "./analysis/static-numeric-range.js";
 import { tryEmitStaticI32Expression } from "./i32-static-range-expr.js";
+import { tryEmitStaticNeedleIndexOf } from "./static-needle-indexof.js";
 import {
   getArrTypeIdxFromVec,
   getOrRegisterRefCellType,
@@ -2549,14 +2550,8 @@ export function compileNativeStringMethodCall(
     fctx.body.push({ op: "local.set", index: local });
     return local;
   };
-  // (#2160 wrapper-strmethod) Compile the RECEIVER into a native-string local
-  // honoring `receiverOverride`. The two-string-argument arms (indexOf /
-  // lastIndexOf / includes / startsWith / endsWith) store the receiver in a
-  // local before pushing args, so they cannot use `emitReceiver()` inline; they
-  // previously called `compileStringValueToLocal(propAccess.expression, …)`,
-  // which ignores the override and re-compiles the raw receiver expression — a
-  // trap for a `new String(x)` wrapper (the override extracts its primitive
-  // slot). Route the receiver through `emitReceiver()` so the override applies.
+  // Store two-string method receivers once and honor the wrapper-method
+  // override; recompiling the raw receiver would lose `new String(x)`'s slot.
   const compileReceiverToLocal = (name: string): number => {
     const local = allocLocal(fctx, `${name}_${fctx.locals.length}`, nativeStringType(ctx));
     emitReceiver();
@@ -2580,12 +2575,8 @@ export function compileNativeStringMethodCall(
     }
   }
 
-  // An immutable literal table sometimes feeds a string predicate whose
-  // result is identical for every entry. Preserve the receiver read/trap, but
-  // skip flattening and scanning when the full result is known. This is a
-  // narrow source-level constant propagation, not a benchmark-name special
-  // case: mutations, aliases, dynamic search values, and dynamic positions all
-  // retain the ordinary native helper path.
+  // Fold an immutable literal table only when every entry has the same result;
+  // mutations, aliases, and dynamic search/position values keep the helper.
   if (
     !receiverOverride &&
     (method === "startsWith" || method === "endsWith") &&
@@ -2980,9 +2971,18 @@ export function compileNativeStringMethodCall(
     fctx.body.push({ op: "call", funcIdx });
     return nativeStringType(ctx);
   }
-
-  // indexOf: native helper
   if (method === "indexOf") {
+    if (
+      tryEmitStaticNeedleIndexOf({
+        ctx,
+        fctx,
+        expr,
+        receiverOverridePresent: receiverOverride !== undefined,
+        emit: [compileReceiverToLocal, compileStringValueToLocal, compileIntegerValueToLocal],
+      })
+    ) {
+      return { kind: "i32" };
+    }
     const receiverLocal = compileReceiverToLocal("__str_indexOf_recv");
     const searchLocal = compileStringValueToLocal(expr.arguments[0], "undefined", "__str_indexOf_search");
     const fromLocal = compileIntegerValueToLocal(expr.arguments[1], 0, "__str_indexOf_from");
