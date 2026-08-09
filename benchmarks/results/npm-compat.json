@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-08T22:24:11.466Z",
+  "generatedAt": "2026-08-09T11:12:43.888Z",
   "correctness": {
     "definition": {
       "verified": "a differential workload ran against native Node and every operation matched",
@@ -9,8 +9,8 @@
     "oracle": "native Node executing the same pinned package, computed at run time; never read from a committed pin",
     "counts": {
       "verified": 2,
-      "divergent": 3,
-      "unverified": 18
+      "divergent": 4,
+      "unverified": 17
     },
     "verified": [
       "cookie",
@@ -19,7 +19,8 @@
     "divergent": [
       "acorn",
       "clsx",
-      "lit"
+      "lit",
+      "react-dom"
     ],
     "unverified": [
       "axios",
@@ -31,7 +32,6 @@
       "marked",
       "moment",
       "prettier",
-      "react-dom",
       "redux",
       "styled-components",
       "stylelint",
@@ -65,7 +65,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 1884,
+        "durationMs": 1848,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -97,7 +97,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 600076,
+        "durationMs": 600210,
         "timedOut": true,
         "timeoutMs": 600000,
         "errorCount": 0,
@@ -134,9 +134,9 @@
       "shape": "esm-direct",
       "compile": {
         "success": true,
-        "durationMs": 23889,
+        "durationMs": 22963,
         "errorCount": 0,
-        "binaryBytes": 621552,
+        "binaryBytes": 619944,
         "categories": {}
       },
       "validation": {
@@ -164,45 +164,45 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "parse(own 226KB dist bundle).body.length",
-            "wasmUs": 4254222.79900001,
-            "nodeUs": 10501.8679999921,
-            "wasmStdUs": 771994.3712032946,
-            "nodeStdUs": 1847.1973794809971,
-            "ratio": 0.002468574989175614,
-            "ratioStd": 0.0005588622159864511,
+            "wasmUs": 3176615.6539999936,
+            "nodeUs": 10867.557000019588,
+            "wasmStdUs": 12348.827517598125,
+            "nodeStdUs": 3080.8344553777965,
+            "ratio": 0.0034211117062069385,
+            "ratioStd": 0.0009778538358550552,
             "iters": 1,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              4224297.253000027,
-              4254222.79900001,
-              4257221.961999982,
-              4223473.14799999,
-              4249342.6369999945,
-              4313834.986000001,
-              4277278.23700002,
-              6690945.160999982,
-              4117992.777999985
+              3176615.6539999936,
+              3165821.366999997,
+              3186154.5730000073,
+              3166035.548999993,
+              3163264.5600000108,
+              3171104.434000008,
+              3197430.1699999776,
+              3190597.3389999997,
+              3192779.0169999935
             ],
             "nodeSamplesUs": [
-              16296.189000015147,
-              10482.993999990867,
-              10554.747999995016,
-              11977.562000014586,
-              10333.061999990605,
-              10549.027000000933,
-              10327.72300002398,
-              10501.8679999921,
-              10300.072999991244
+              10867.557000019588,
+              10878.708000003826,
+              11994.325000006938,
+              20752.22200001008,
+              10817.799000011291,
+              11044.389999995474,
+              10827.486000023782,
+              10841.602000000421,
+              10842.940999980783
             ],
-            "compileDurationMs": 32102.250330999996,
-            "wasmCompileMs": 1.7665589999960503,
-            "instantiateMs": 6.007882999998401,
-            "wireMs": 0.19115899999451358,
-            "wrapMs": 0.34624900000926573,
-            "binaryBytes": 346331,
-            "moduleImportCount": 1150,
-            "functionImportCount": 78,
+            "compileDurationMs": 29899.265045999993,
+            "wasmCompileMs": 7.110172000000603,
+            "instantiateMs": 11.141072999991593,
+            "wireMs": 0.30655100000149105,
+            "wrapMs": 0.4974359999905573,
+            "binaryBytes": 344716,
+            "moduleImportCount": 1155,
+            "functionImportCount": 83,
             "expectedChecksum": 422,
             "actualChecksum": 422,
             "testCompiledToWasm": false,
@@ -214,41 +214,41 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "parse(own 226KB dist bundle).body.length",
-            "wasmUs": 0.5710000055842102,
-            "nodeUs": 10688.928199990187,
-            "wasmStdUs": 0.08121422758924181,
-            "nodeStdUs": 306.98856077010646,
-            "ratio": 18719.663914983623,
-            "ratioStd": 2699.9002606813797,
-            "iters": 5,
+            "wasmUs": 0.10147826169091075,
+            "nodeUs": 13607.392739130022,
+            "wasmStdUs": 0.026139052696242407,
+            "nodeStdUs": 468.3445459258297,
+            "ratio": 134091.70114261837,
+            "ratioStd": 23070.83673498123,
+            "iters": 23,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.7633999921381474,
-              0.4507999983616173,
-              0.51499999826774,
-              0.5490000010468066,
-              0.6271999911405146,
-              0.5471999989822507,
-              0.5849999957717955,
-              0.5710000055842102,
-              0.6012000027112663
+              0.1773043490095955,
+              0.08839130421857472,
+              0.09278260910397639,
+              0.11239130475112925,
+              0.08491304470226169,
+              0.11586956679821014,
+              0.10147826169091075,
+              0.09934782587072771,
+              0.11195652136255219
             ],
             "nodeSamplesUs": [
-              10948.827799991705,
-              10806.824199995026,
-              11013.074000005145,
-              10688.928199990187,
-              10146.434199996293,
-              10898.288999998476,
-              10121.970199991483,
-              10673.377599997912,
-              10570.031999994535
+              13687.979304345587,
+              12527.86573912928,
+              13717.337086956199,
+              13607.392739130022,
+              13663.128304348389,
+              12553.12539130429,
+              13534.572782609916,
+              13490.40921739019,
+              13817.298478259625
             ],
-            "compileDurationMs": 86327.734539,
-            "moduleCompileDurationMs": 0.3486130000092089,
-            "instantiateDurationMs": 0.024847000022418797,
-            "firstBatchDurationMs": 0.09558899997500703,
+            "compileDurationMs": 85211.63978,
+            "moduleCompileDurationMs": 0.5294759999960661,
+            "instantiateDurationMs": 0.02781100000720471,
+            "firstBatchDurationMs": 0.07806500000879169,
             "binaryBytes": 74,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -263,8 +263,8 @@
             "staticEvaluation": {
               "operationEvaluatedInWasm": true,
               "operationResultType": "number",
-              "stageDurationMs": 279.8681670000078,
-              "stageBinaryBytes": 1646308,
+              "stageDurationMs": 258.2509399999981,
+              "stageBinaryBytes": 1657055,
               "stageModuleImportCount": 0
             }
           },
@@ -273,43 +273,43 @@
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
             "sampleOp": "parse(runtime-suffixed own 226KB dist bundle).body.length",
-            "wasmUs": 108330.22000000346,
-            "nodeUs": 11023.197666664297,
-            "wasmStdUs": 1982.440021633548,
-            "nodeStdUs": 135.19997512198432,
-            "ratio": 0.1017555181431732,
-            "ratioStd": 0.0028236834210808867,
+            "wasmUs": 104642.20299998608,
+            "nodeUs": 11488.281333333967,
+            "wasmStdUs": 1558.33828431845,
+            "nodeStdUs": 331.29834536087156,
+            "ratio": 0.10978630995885566,
+            "ratioStd": 0.0027463877798671447,
             "iters": 3,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              109210.54300000348,
-              108637.71266666784,
-              108987.89899999974,
-              106626.91866666621,
-              110646.22933334128,
-              108330.22000000346,
-              104567.70366666994,
-              105366.97433334,
-              105391.49033334495
+              107812.40566666627,
+              106506.56766665634,
+              107133.63866667108,
+              104960.25566667474,
+              104642.20299998608,
+              103507.91800000782,
+              103459.55799999258,
+              103635.5919999963,
+              104213.87633332051
             ],
             "nodeSamplesUs": [
-              11023.197666664297,
-              11001.376666671908,
-              10957.357666668637,
-              11062.761666660663,
-              11059.278666662673,
-              10948.904999997467,
-              11426.927333329028,
-              11017.470333337164,
-              11040.232666671121
+              11516.16666665844,
+              11488.281333333967,
+              12509.015333334295,
+              11458.170333333934,
+              11514.338333334308,
+              11642.907333327457,
+              11477.802999996735,
+              11384.072000005594,
+              11373.505666657971
             ],
-            "compileDurationMs": 87659.47285100003,
-            "moduleCompileDurationMs": 13.95816099998774,
-            "instantiateDurationMs": 9.822964999999385,
-            "moduleInitDurationMs": 21.101988999987952,
-            "firstBatchDurationMs": 393.9523250000202,
-            "binaryBytes": 1646540,
+            "compileDurationMs": 82257.25428699999,
+            "moduleCompileDurationMs": 10.028760000015609,
+            "instantiateDurationMs": 6.587494999985211,
+            "moduleInitDurationMs": 17.670128000027034,
+            "firstBatchDurationMs": 280.8730930000311,
+            "binaryBytes": 1657287,
             "moduleImportCount": 0,
             "functionImportCount": 0,
             "expectedChecksum": 422,
@@ -353,36 +353,36 @@
             "runtimeArgumentSuppliedAfterCompile": true
           }
         },
-        "wasmUs": 4254222.79900001,
-        "nodeUs": 10501.8679999921,
-        "wasmStdUs": 771994.3712032946,
-        "nodeStdUs": 1847.1973794809971,
-        "ratio": 0.002468574989175614,
-        "ratioStd": 0.0005588622159864511,
+        "wasmUs": 3176615.6539999936,
+        "nodeUs": 10867.557000019588,
+        "wasmStdUs": 12348.827517598125,
+        "nodeStdUs": 3080.8344553777965,
+        "ratio": 0.0034211117062069385,
+        "ratioStd": 0.0009778538358550552,
         "iters": 1,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          4224297.253000027,
-          4254222.79900001,
-          4257221.961999982,
-          4223473.14799999,
-          4249342.6369999945,
-          4313834.986000001,
-          4277278.23700002,
-          6690945.160999982,
-          4117992.777999985
+          3176615.6539999936,
+          3165821.366999997,
+          3186154.5730000073,
+          3166035.548999993,
+          3163264.5600000108,
+          3171104.434000008,
+          3197430.1699999776,
+          3190597.3389999997,
+          3192779.0169999935
         ],
         "nodeSamplesUs": [
-          16296.189000015147,
-          10482.993999990867,
-          10554.747999995016,
-          11977.562000014586,
-          10333.061999990605,
-          10549.027000000933,
-          10327.72300002398,
-          10501.8679999921,
-          10300.072999991244
+          10867.557000019588,
+          10878.708000003826,
+          11994.325000006938,
+          20752.22200001008,
+          10817.799000011291,
+          11044.389999995474,
+          10827.486000023782,
+          10841.602000000421,
+          10842.940999980783
         ]
       },
       "knownBugs": [
@@ -405,9 +405,9 @@
       "shape": "esm-direct",
       "compile": {
         "success": true,
-        "durationMs": 343,
+        "durationMs": 330,
         "errorCount": 9,
-        "binaryBytes": 19386,
+        "binaryBytes": 19483,
         "categories": {
           "other": {
             "count": 9,
@@ -444,40 +444,40 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "parseCookie(8-pair header); verify a/h",
-            "wasmUs": 233.43986322733602,
-            "nodeUs": 0.6280995800786153,
-            "wasmStdUs": 23.901237877981313,
-            "nodeStdUs": 0.00554976956325081,
-            "ratio": 0.002690626919477497,
-            "ratioStd": 0.00029960343264495075,
-            "iters": 1667,
+            "wasmUs": 260.03176777938916,
+            "nodeUs": 0.5879566198956974,
+            "wasmStdUs": 94.65767901856287,
+            "nodeStdUs": 0.0037860443132609815,
+            "ratio": 0.002261095345836819,
+            "ratioStd": 0.0009250569955318878,
+            "iters": 6201,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              189.8806670665767,
-              203.2566940611724,
-              211.70051109778177,
-              222.79025134971994,
-              233.43986322733602,
-              239.78447990401062,
-              248.5621559688049,
-              259.1856898620236,
-              263.56185482904715
+              134.2956921464342,
+              176.70682228672794,
+              193.1028984034856,
+              237.91090759554854,
+              260.03176777938916,
+              302.7359820996629,
+              330.9067411707758,
+              386.03937800354987,
+              438.3244533139844
             ],
             "nodeSamplesUs": [
-              0.6309964007043783,
-              0.627835032998863,
-              0.6248722255568512,
-              0.6280995800786153,
-              0.6224979004299186,
-              0.6132729454317991,
-              0.6281901619536215,
-              0.628250149993788,
-              0.6337906418680523
+              0.5913688114864838,
+              0.5838092243206672,
+              0.5822015803912858,
+              0.5858238993757467,
+              0.5904850830474033,
+              0.5930524109032951,
+              0.5879566198956974,
+              0.5892507659992717,
+              0.5823341396609025
             ],
-            "binaryBytes": 15263,
-            "moduleImportCount": 136,
-            "functionImportCount": 34,
+            "binaryBytes": 15278,
+            "moduleImportCount": 139,
+            "functionImportCount": 37,
             "expectedChecksum": 1,
             "actualChecksum": 1,
             "testCompiledToWasm": false,
@@ -488,41 +488,41 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "parseCookie(8-pair header); verify a/h",
-            "wasmUs": 0.0009447294158876135,
-            "nodeUs": 0.5993088275627346,
-            "wasmStdUs": 0.000014876677076324426,
-            "nodeStdUs": 0.00306583255362244,
-            "ratio": 634.3708764478964,
-            "ratioStd": 10.75445132668678,
-            "iters": 441175,
+            "wasmUs": 0.0009432910759701437,
+            "nodeUs": 0.6133575179249109,
+            "wasmStdUs": 0.000007634442396580998,
+            "nodeStdUs": 0.000727677857514852,
+            "ratio": 650.2314434535416,
+            "ratioStd": 5.263261080611545,
+            "iters": 456489,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.000982746075817272,
-              0.0009447294158876135,
-              0.0009432764775986025,
-              0.0009615572052051233,
-              0.0009704380347468131,
-              0.0009408012693675576,
-              0.000965714285717714,
-              0.0009393483310785466,
-              0.0009432764775986025
+              0.0009431793537142174,
+              0.0009443666769450322,
+              0.0009615302887663534,
+              0.0009415560944545276,
+              0.0009432034507363839,
+              0.0009439482659884118,
+              0.0009432910759701437,
+              0.0009408989044362594,
+              0.0009606956575030834
             ],
             "nodeSamplesUs": [
-              0.5988830056100798,
-              0.5970487085623802,
-              0.5984720371733709,
-              0.5993623301410477,
-              0.5993088275627346,
-              0.5986933371111465,
-              0.6001118286394576,
-              0.5997903349011072,
-              0.6083458582194877
+              0.615127076446593,
+              0.6132640655086741,
+              0.6137585155393112,
+              0.6138757122296419,
+              0.6144715798189865,
+              0.6128380946748546,
+              0.6129012813013818,
+              0.61301900593453,
+              0.6133575179249109
             ],
-            "compileDurationMs": 387.001304000034,
-            "moduleCompileDurationMs": 0.33546899998327717,
-            "instantiateDurationMs": 0.030907999956980348,
-            "firstBatchDurationMs": 0.047279000049456954,
+            "compileDurationMs": 399.51657099998556,
+            "moduleCompileDurationMs": 0.22792500001378357,
+            "instantiateDurationMs": 0.024034000001847744,
+            "firstBatchDurationMs": 0.03339200001209974,
             "binaryBytes": 103,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -540,43 +540,43 @@
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
             "sampleOp": "parseCookie(8-pair runtime-generated header); verify a/h",
-            "wasmUs": 8.278853927219629,
-            "nodeUs": 0.7983429662531073,
-            "wasmStdUs": 0.030134909983691987,
-            "nodeStdUs": 0.0031897305189443137,
-            "ratio": 0.0964315801766082,
-            "ratioStd": 0.0005684329632896858,
-            "iters": 27233,
+            "wasmUs": 7.991146715329575,
+            "nodeUs": 0.7716911018429196,
+            "wasmStdUs": 0.02246783683701571,
+            "nodeStdUs": 0.018234919840345296,
+            "ratio": 0.09656825601294108,
+            "ratioStd": 0.002384729431066785,
+            "iters": 28770,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              8.243420702824272,
-              8.249064150112167,
-              8.252637461902935,
-              8.262119487386364,
-              8.335817978187468,
-              8.299223478868184,
-              8.311988910513625,
-              8.278853927219629,
-              8.297683692578406
+              8.036204588113206,
+              7.991146715329575,
+              7.990975773375437,
+              7.9835549183161545,
+              8.051470072992919,
+              7.990673131734809,
+              7.986432012513851,
+              8.000573722627351,
+              8.002382794578473
             ],
             "nodeSamplesUs": [
-              0.8006709874052071,
-              0.7963486211573436,
-              0.7983429662531073,
-              0.8046497264335774,
-              0.7967462637246443,
-              0.7963092571520758,
-              0.8021482759886083,
-              0.8046867036319246,
-              0.7982666250494923
+              0.7721932568632844,
+              0.7735057351405048,
+              0.7716911018429196,
+              0.8285613486267818,
+              0.7695480709069861,
+              0.769877163711113,
+              0.7693429961767394,
+              0.7726055961073113,
+              0.7676843587083494
             ],
-            "compileDurationMs": 2941.479824000038,
-            "moduleCompileDurationMs": 3.9264880000264384,
-            "instantiateDurationMs": 0.27678900002501905,
-            "moduleInitDurationMs": 0.4680170000065118,
-            "firstBatchDurationMs": 1.275560999987647,
-            "binaryBytes": 46997,
+            "compileDurationMs": 2897.480218999961,
+            "moduleCompileDurationMs": 0.6567130000330508,
+            "instantiateDurationMs": 0.20149500004481524,
+            "moduleInitDurationMs": 0.3626560000120662,
+            "firstBatchDurationMs": 1.1788049999740906,
+            "binaryBytes": 49907,
             "moduleImportCount": 0,
             "functionImportCount": 0,
             "expectedChecksum": 1,
@@ -588,36 +588,36 @@
             "runtimeArgumentSuppliedAfterCompile": true
           }
         },
-        "wasmUs": 233.43986322733602,
-        "nodeUs": 0.6280995800786153,
-        "wasmStdUs": 23.901237877981313,
-        "nodeStdUs": 0.00554976956325081,
-        "ratio": 0.002690626919477497,
-        "ratioStd": 0.00029960343264495075,
-        "iters": 1667,
+        "wasmUs": 260.03176777938916,
+        "nodeUs": 0.5879566198956974,
+        "wasmStdUs": 94.65767901856287,
+        "nodeStdUs": 0.0037860443132609815,
+        "ratio": 0.002261095345836819,
+        "ratioStd": 0.0009250569955318878,
+        "iters": 6201,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          189.8806670665767,
-          203.2566940611724,
-          211.70051109778177,
-          222.79025134971994,
-          233.43986322733602,
-          239.78447990401062,
-          248.5621559688049,
-          259.1856898620236,
-          263.56185482904715
+          134.2956921464342,
+          176.70682228672794,
+          193.1028984034856,
+          237.91090759554854,
+          260.03176777938916,
+          302.7359820996629,
+          330.9067411707758,
+          386.03937800354987,
+          438.3244533139844
         ],
         "nodeSamplesUs": [
-          0.6309964007043783,
-          0.627835032998863,
-          0.6248722255568512,
-          0.6280995800786153,
-          0.6224979004299186,
-          0.6132729454317991,
-          0.6281901619536215,
-          0.628250149993788,
-          0.6337906418680523
+          0.5913688114864838,
+          0.5838092243206672,
+          0.5822015803912858,
+          0.5858238993757467,
+          0.5904850830474033,
+          0.5930524109032951,
+          0.5879566198956974,
+          0.5892507659992717,
+          0.5823341396609025
         ]
       },
       "knownBugs": [
@@ -636,7 +636,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 43702,
+        "durationMs": 38011,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -644,18 +644,18 @@
         "categories": {
           "compiler-diagnostic": {
             "count": 1,
-            "sample": "Codegen error: stack-balance invariant (entry): '__closure_106' references local 152, but only 2 params + 28 locals are declared (locals: 2:__self_cast, 3:undefined, 4:methodName, 5:Array, 6:strSymbols, 7:chr, 8:trailing, 9:__tmp_7, 10:__nve_recv_8, 11:__nve_idx_9, 12:__nve_any_10, 13:__emc_recv_11, 14:__emc_args_12, 15:__arr_join_vec_13, 16:__arr_join_data_14, 17:__arr_join_len_15, 18:__arr_join_i_16, 19:__arr_join_res_17, 20:__arr_join_sep_18, 21:__tmp_19, 22:__vec_mat_20, 23:__vec_len_21, 24:__vec_arr_22, 25:__vec_idx_23, 26:__emc_recv_24, 27:__emc_args_25, 28:__tmp_26, 29:__tmp_27; body: [{\"op\":\"local.get\",\"index\":0},{\"op\":\"ref.cast\",\"typeIdx\":316},{\"op\":\"local.tee\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":2},{\"op\":\"local.set\",\"index\":3},{\"op\":\"local.get\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":3},{\"op\":\"local.set\",\"index\":4},{\"op\":\"local.get\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":4},{\"op\":\"local.set\",\"index\":5},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"local.set\",\"index\":6},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"local.set\",\"index\":7},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"local.set\",\"index\":8},{\"op\":\"ref.null.extern\"},{\"op\":\"local.set\",\"index\":1},{\"op\":\"local.get\",\"index\":152},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":2097189},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":152},{\"op\":\"local.get\",\"index\":150},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":2097200},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":44}],\"else\":[{\"op\":\"call\",\"funcIdx\":40}]},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":6},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1354},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":9},{\"op\":\"local.set\",\"index\":10},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"local.set\",\"index\":11},{\"op\":\"local.get\",\"index\":10},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":2},{\"op\":\"local.get\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":4},{\"op\":\"i32.or\"},{\"op\":\"local.get\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":28},{\"op\":\"i32.or\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":10},{\"op\":\"local.get\",\"index\":11},{\"op\":\"i32.trunc_sat_f64_s\"},{\"op\":\"call\",\"funcIdx\":142}],\"else\":[{\"op\":\"local.get\",\"index\":10},{\"op\":\"local.get\",\"index\":11},{\"op\":\"call\",\"funcIdx\":32},{\"op\":\"call\",\"funcIdx\":4}]}],\"else\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":13},{\"op\":\"call\",\"funcIdx\":41},{\"op\":\"local.tee\",\"index\":14},{\"op\":\"global.get\",\"index\":1862},{\"op\":\"call\",\"funcIdx\":42},{\"op\":\"local.get\",\"index\":13},{\"op\":\"global.get\",\"index\":1355},{\"op\":\"local.get\",\"index\":14},{\"op\":\"call\",\"funcIdx\":43}]},{\"op\":\"local.set\",\"index\":7},{\"op\":\"local.get\",\"index\":6},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8},{\"op\":\"local.get\",\"index\":5},{\"op\":\"local.get\",\"index\":6},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":21},{\"op\":\"ref.test\",\"typeIdx\":2},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"ref_null\",\"typeIdx\":2}},\"then\":[{\"op\":\"local.get\",\"index\":21},{\"op\":\"ref.cast_null\",\"typeIdx\":2}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":46},{\"op\":\"local.tee\",\"index\":22},{\"op\":\"call\",\"funcIdx\":22},{\"op\":\"i32.trunc_sat_f64_s\"},{\"op\":\"local.tee\",\"index\":23},{\"op\":\"array.new_default\",\"typeIdx\":1},{\"op\":\"local.set\",\"index\":24},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"local.set\",\"index\":25},{\"op\":\"block\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"loop\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"local.get\",\"index\":25},{\"op\":\"local.get\",\"index\":23},{\"op\":\"i32.ge_u\"},{\"op\":\"br_if\",\"depth\":1},{\"op\":\"local.get\",\"index\":24},{\"op\":\"local.get\",\"index\":25},{\"op\":\"local.get\",\"index\":22},{\"op\":\"local.get\",\"index\":25},{\"op\":\"f64.convert_i32_s\"},{\"op\":\"call\",\"funcIdx\":32},{\"op\":\"call\",\"funcIdx\":4},{\"op\":\"array.set\",\"typeIdx\":1},{\"op\":\"local.get\",\"index\":25},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"i32.add\"},{\"op\":\"local.set\",\"index\":25},{\"op\":\"br\",\"depth\":0}]}]},{\"op\":\"local.get\",\"index\":23},{\"op\":\"local.get\",\"index\":24},{\"op\":\"struct.new\",\"typeIdx\":2}]},{\"op\":\"f64.const\",\"value\":1},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":2097448},{\"op\":\"local.tee\",\"index\":15},{\"op\":\"local.get\",\"index\":15},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1032},{\"op\":\"call\",\"funcIdx\":50},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"struct.get\",\"typeIdx\":2,\"fieldIdx\":0},{\"op\":\"local.set\",\"index\":17},{\"op\":\"local.get\",\"index\":15},{\"op\":\"struct.get\",\"typeIdx\":2,\"fieldIdx\":1},{\"op\":\"local.set\",\"index\":16},{\"op\":\"global.get\",\"index\":419},{\"op\":\"local.set\",\"index\":20},{\"op\":\"global.get\",\"index\":419},{\"op\":\"local.set\",\"index\":19},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"local.set\",\"index\":18},{\"op\":\"block\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"loop\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":17},{\"op\":\"i32.ge_s\"},{\"op\":\"br_if\",\"depth\":1},{\"op\":\"local.get\",\"index\":18},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"i32.eq\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":16},{\"op\":\"array.len\"},{\"op\":\"i32.lt_s\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":16},{\"op\":\"local.get\",\"index\":18},{\"op\":\"array.get\",\"typeIdx\":1},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.test\",\"typeIdx\":58},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":58}]}],\"else\":[{\"op\":\"global.get\",\"index\":419}]},{\"op\":\"local.set\",\"index\":19}],\"else\":[{\"op\":\"local.get\",\"index\":19},{\"op\":\"local.get\",\"index\":20},{\"op\":\"call\",\"funcIdx\":9},{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":16},{\"op\":\"array.len\"},{\"op\":\"i32.lt_s\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":16},{\"op\":\"local.get\",\"index\":18},{\"op\":\"array.get\",\"typeIdx\":1},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.test\",\"typeIdx\":58},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":58}]}],\"else\":[{\"op\":\"global.get\",\"index\":419}]},{\"op\":\"call\",\"funcIdx\":9},{\"op\":\"local.set\",\"index\":19}]},{\"op\":\"local.get\",\"index\":18},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"i32.add\"},{\"op\":\"local.set\",\"index\":18},{\"op\":\"br\",\"depth\":0}]}]},{\"op\":\"local.get\",\"index\":19},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":19}]}],\"else\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":26},{\"op\":\"call\",\"funcIdx\":41},{\"op\":\"local.tee\",\"index\":27},{\"op\":\"global.get\",\"index\":1863},{\"op\":\"call\",\"funcIdx\":42},{\"op\":\"local.get\",\"index\":26},{\"op\":\"global.get\",\"index\":747},{\"op\":\"local.get\",\"index\":27},{\"op\":\"call\",\"funcIdx\":43}]},{\"op\":\"local.set\",\"index\":8},{\"op\":\"ref.null.extern\"},{\"op\":\"local.set\",\"index\":28},{\"op\":\"local.get\",\"index\":8},{\"op\":\"local.set\",\"index\":29},{\"op\":\"local.get\",\"index\":28},{\"op\":\"local.get\",\"index\":29},{\"op\":\"call\",\"funcIdx\":51},{\"op\":\"return\"}]) (at src/codegen/stack-balance.ts:274:13)"
+            "sample": "Codegen error: stack-balance invariant (entry): '__closure_106' references local 152, but only 2 params + 28 locals are declared (locals: 2:__self_cast, 3:undefined, 4:methodName, 5:Array, 6:strSymbols, 7:chr, 8:trailing, 9:__tmp_7, 10:__nve_recv_8, 11:__nve_idx_9, 12:__nve_any_10, 13:__emc_recv_11, 14:__emc_arg_12, 15:__arr_join_vec_13, 16:__arr_join_data_14, 17:__arr_join_len_15, 18:__arr_join_i_16, 19:__arr_join_res_17, 20:__arr_join_sep_18, 21:__tmp_19, 22:__vec_mat_20, 23:__vec_len_21, 24:__vec_arr_22, 25:__vec_idx_23, 26:__emc_recv_24, 27:__emc_arg_25, 28:__tmp_26, 29:__tmp_27; body: [{\"op\":\"local.get\",\"index\":0},{\"op\":\"ref.cast\",\"typeIdx\":316},{\"op\":\"local.tee\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":3},{\"op\":\"local.set\",\"index\":3},{\"op\":\"local.get\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":4},{\"op\":\"local.set\",\"index\":4},{\"op\":\"local.get\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":5},{\"op\":\"local.set\",\"index\":5},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"local.set\",\"index\":6},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"local.set\",\"index\":7},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"local.set\",\"index\":8},{\"op\":\"ref.null.extern\"},{\"op\":\"local.set\",\"index\":1},{\"op\":\"local.get\",\"index\":152},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":2097189},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":152},{\"op\":\"local.get\",\"index\":150},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":2097200},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":47}],\"else\":[{\"op\":\"call\",\"funcIdx\":40}]},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":6},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1354},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":9},{\"op\":\"local.set\",\"index\":10},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"local.set\",\"index\":11},{\"op\":\"local.get\",\"index\":10},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":2},{\"op\":\"local.get\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":4},{\"op\":\"i32.or\"},{\"op\":\"local.get\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":33},{\"op\":\"i32.or\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":10},{\"op\":\"local.get\",\"index\":11},{\"op\":\"i32.trunc_sat_f64_s\"},{\"op\":\"call\",\"funcIdx\":148}],\"else\":[{\"op\":\"local.get\",\"index\":10},{\"op\":\"local.get\",\"index\":11},{\"op\":\"call\",\"funcIdx\":32},{\"op\":\"call\",\"funcIdx\":4}]}],\"else\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":13},{\"op\":\"global.get\",\"index\":1857},{\"op\":\"local.set\",\"index\":14},{\"op\":\"local.get\",\"index\":13},{\"op\":\"global.get\",\"index\":1355},{\"op\":\"local.get\",\"index\":14},{\"op\":\"call\",\"funcIdx\":41}]},{\"op\":\"local.set\",\"index\":7},{\"op\":\"local.get\",\"index\":6},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8},{\"op\":\"local.get\",\"index\":5},{\"op\":\"local.get\",\"index\":6},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":21},{\"op\":\"ref.test\",\"typeIdx\":2},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"ref_null\",\"typeIdx\":2}},\"then\":[{\"op\":\"local.get\",\"index\":21},{\"op\":\"ref.cast_null\",\"typeIdx\":2}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":49},{\"op\":\"local.tee\",\"index\":22},{\"op\":\"call\",\"funcIdx\":22},{\"op\":\"i32.trunc_sat_f64_s\"},{\"op\":\"local.tee\",\"index\":23},{\"op\":\"array.new_default\",\"typeIdx\":1},{\"op\":\"local.set\",\"index\":24},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"local.set\",\"index\":25},{\"op\":\"block\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"loop\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"local.get\",\"index\":25},{\"op\":\"local.get\",\"index\":23},{\"op\":\"i32.ge_u\"},{\"op\":\"br_if\",\"depth\":1},{\"op\":\"local.get\",\"index\":24},{\"op\":\"local.get\",\"index\":25},{\"op\":\"local.get\",\"index\":22},{\"op\":\"local.get\",\"index\":25},{\"op\":\"f64.convert_i32_s\"},{\"op\":\"call\",\"funcIdx\":32},{\"op\":\"call\",\"funcIdx\":4},{\"op\":\"array.set\",\"typeIdx\":1},{\"op\":\"local.get\",\"index\":25},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"i32.add\"},{\"op\":\"local.set\",\"index\":25},{\"op\":\"br\",\"depth\":0}]}]},{\"op\":\"local.get\",\"index\":23},{\"op\":\"local.get\",\"index\":24},{\"op\":\"struct.new\",\"typeIdx\":2}]},{\"op\":\"f64.const\",\"value\":1},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":2097457},{\"op\":\"local.tee\",\"index\":15},{\"op\":\"local.get\",\"index\":15},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1032},{\"op\":\"call\",\"funcIdx\":53},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"struct.get\",\"typeIdx\":2,\"fieldIdx\":0},{\"op\":\"local.set\",\"index\":17},{\"op\":\"local.get\",\"index\":15},{\"op\":\"struct.get\",\"typeIdx\":2,\"fieldIdx\":1},{\"op\":\"local.set\",\"index\":16},{\"op\":\"global.get\",\"index\":419},{\"op\":\"local.set\",\"index\":20},{\"op\":\"global.get\",\"index\":419},{\"op\":\"local.set\",\"index\":19},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"local.set\",\"index\":18},{\"op\":\"block\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"loop\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":17},{\"op\":\"i32.ge_s\"},{\"op\":\"br_if\",\"depth\":1},{\"op\":\"local.get\",\"index\":18},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"i32.eq\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":16},{\"op\":\"array.len\"},{\"op\":\"i32.lt_s\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":16},{\"op\":\"local.get\",\"index\":18},{\"op\":\"array.get\",\"typeIdx\":1},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.test\",\"typeIdx\":64},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":62}]}],\"else\":[{\"op\":\"global.get\",\"index\":419}]},{\"op\":\"local.set\",\"index\":19}],\"else\":[{\"op\":\"local.get\",\"index\":19},{\"op\":\"local.get\",\"index\":20},{\"op\":\"call\",\"funcIdx\":9},{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":16},{\"op\":\"array.len\"},{\"op\":\"i32.lt_s\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":16},{\"op\":\"local.get\",\"index\":18},{\"op\":\"array.get\",\"typeIdx\":1},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.test\",\"typeIdx\":64},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":62}]}],\"else\":[{\"op\":\"global.get\",\"index\":419}]},{\"op\":\"call\",\"funcIdx\":9},{\"op\":\"local.set\",\"index\":19}]},{\"op\":\"local.get\",\"index\":18},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"i32.add\"},{\"op\":\"local.set\",\"index\":18},{\"op\":\"br\",\"depth\":0}]}]},{\"op\":\"local.get\",\"index\":19},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":19}]}],\"else\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":26},{\"op\":\"global.get\",\"index\":1858},{\"op\":\"local.set\",\"index\":27},{\"op\":\"local.get\",\"index\":26},{\"op\":\"global.get\",\"index\":747},{\"op\":\"local.get\",\"index\":27},{\"op\":\"call\",\"funcIdx\":41}]},{\"op\":\"local.set\",\"index\":8},{\"op\":\"ref.null.extern\"},{\"op\":\"local.set\",\"index\":28},{\"op\":\"local.get\",\"index\":8},{\"op\":\"local.set\",\"index\":29},{\"op\":\"local.get\",\"index\":28},{\"op\":\"local.get\",\"index\":29},{\"op\":\"call\",\"funcIdx\":54},{\"op\":\"return\"}]) (at src/codegen/stack-balance.ts:274:13)"
           }
         },
         "errors": [
           {
-            "message": "Codegen error: stack-balance invariant (entry): '__closure_106' references local 152, but only 2 params + 28 locals are declared (locals: 2:__self_cast, 3:undefined, 4:methodName, 5:Array, 6:strSymbols, 7:chr, 8:trailing, 9:__tmp_7, 10:__nve_recv_8, 11:__nve_idx_9, 12:__nve_any_10, 13:__emc_recv_11, 14:__emc_args_12, 15:__arr_join_vec_13, 16:__arr_join_data_14, 17:__arr_join_len_15, 18:__arr_join_i_16, 19:__arr_join_res_17, 20:__arr_join_sep_18, 21:__tmp_19, 22:__vec_mat_20, 23:__vec_len_21, 24:__vec_arr_22, 25:__vec_idx_23, 26:__emc_recv_24, 27:__emc_args_25, 28:__tmp_26, 29:__tmp_27; body: [{\"op\":\"local.get\",\"index\":0},{\"op\":\"ref.cast\",\"typeIdx\":316},{\"op\":\"local.tee\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":2},{\"op\":\"local.set\",\"index\":3},{\"op\":\"local.get\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":3},{\"op\":\"local.set\",\"index\":4},{\"op\":\"local.get\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":4},{\"op\":\"local.set\",\"index\":5},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"local.set\",\"index\":6},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"local.set\",\"index\":7},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"local.set\",\"index\":8},{\"op\":\"ref.null.extern\"},{\"op\":\"local.set\",\"index\":1},{\"op\":\"local.get\",\"index\":152},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":2097189},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":152},{\"op\":\"local.get\",\"index\":150},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":2097200},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":44}],\"else\":[{\"op\":\"call\",\"funcIdx\":40}]},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":6},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1354},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":9},{\"op\":\"local.set\",\"index\":10},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"local.set\",\"index\":11},{\"op\":\"local.get\",\"index\":10},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":2},{\"op\":\"local.get\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":4},{\"op\":\"i32.or\"},{\"op\":\"local.get\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":28},{\"op\":\"i32.or\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":10},{\"op\":\"local.get\",\"index\":11},{\"op\":\"i32.trunc_sat_f64_s\"},{\"op\":\"call\",\"funcIdx\":142}],\"else\":[{\"op\":\"local.get\",\"index\":10},{\"op\":\"local.get\",\"index\":11},{\"op\":\"call\",\"funcIdx\":32},{\"op\":\"call\",\"funcIdx\":4}]}],\"else\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":13},{\"op\":\"call\",\"funcIdx\":41},{\"op\":\"local.tee\",\"index\":14},{\"op\":\"global.get\",\"index\":1862},{\"op\":\"call\",\"funcIdx\":42},{\"op\":\"local.get\",\"index\":13},{\"op\":\"global.get\",\"index\":1355},{\"op\":\"local.get\",\"index\":14},{\"op\":\"call\",\"funcIdx\":43}]},{\"op\":\"local.set\",\"index\":7},{\"op\":\"local.get\",\"index\":6},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8},{\"op\":\"local.get\",\"index\":5},{\"op\":\"local.get\",\"index\":6},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":21},{\"op\":\"ref.test\",\"typeIdx\":2},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"ref_null\",\"typeIdx\":2}},\"then\":[{\"op\":\"local.get\",\"index\":21},{\"op\":\"ref.cast_null\",\"typeIdx\":2}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":46},{\"op\":\"local.tee\",\"index\":22},{\"op\":\"call\",\"funcIdx\":22},{\"op\":\"i32.trunc_sat_f64_s\"},{\"op\":\"local.tee\",\"index\":23},{\"op\":\"array.new_default\",\"typeIdx\":1},{\"op\":\"local.set\",\"index\":24},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"local.set\",\"index\":25},{\"op\":\"block\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"loop\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"local.get\",\"index\":25},{\"op\":\"local.get\",\"index\":23},{\"op\":\"i32.ge_u\"},{\"op\":\"br_if\",\"depth\":1},{\"op\":\"local.get\",\"index\":24},{\"op\":\"local.get\",\"index\":25},{\"op\":\"local.get\",\"index\":22},{\"op\":\"local.get\",\"index\":25},{\"op\":\"f64.convert_i32_s\"},{\"op\":\"call\",\"funcIdx\":32},{\"op\":\"call\",\"funcIdx\":4},{\"op\":\"array.set\",\"typeIdx\":1},{\"op\":\"local.get\",\"index\":25},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"i32.add\"},{\"op\":\"local.set\",\"index\":25},{\"op\":\"br\",\"depth\":0}]}]},{\"op\":\"local.get\",\"index\":23},{\"op\":\"local.get\",\"index\":24},{\"op\":\"struct.new\",\"typeIdx\":2}]},{\"op\":\"f64.const\",\"value\":1},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":2097448},{\"op\":\"local.tee\",\"index\":15},{\"op\":\"local.get\",\"index\":15},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1032},{\"op\":\"call\",\"funcIdx\":50},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"struct.get\",\"typeIdx\":2,\"fieldIdx\":0},{\"op\":\"local.set\",\"index\":17},{\"op\":\"local.get\",\"index\":15},{\"op\":\"struct.get\",\"typeIdx\":2,\"fieldIdx\":1},{\"op\":\"local.set\",\"index\":16},{\"op\":\"global.get\",\"index\":419},{\"op\":\"local.set\",\"index\":20},{\"op\":\"global.get\",\"index\":419},{\"op\":\"local.set\",\"index\":19},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"local.set\",\"index\":18},{\"op\":\"block\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"loop\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":17},{\"op\":\"i32.ge_s\"},{\"op\":\"br_if\",\"depth\":1},{\"op\":\"local.get\",\"index\":18},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"i32.eq\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":16},{\"op\":\"array.len\"},{\"op\":\"i32.lt_s\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":16},{\"op\":\"local.get\",\"index\":18},{\"op\":\"array.get\",\"typeIdx\":1},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.test\",\"typeIdx\":58},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":58}]}],\"else\":[{\"op\":\"global.get\",\"index\":419}]},{\"op\":\"local.set\",\"index\":19}],\"else\":[{\"op\":\"local.get\",\"index\":19},{\"op\":\"local.get\",\"index\":20},{\"op\":\"call\",\"funcIdx\":9},{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":16},{\"op\":\"array.len\"},{\"op\":\"i32.lt_s\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":16},{\"op\":\"local.get\",\"index\":18},{\"op\":\"array.get\",\"typeIdx\":1},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.test\",\"typeIdx\":58},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":58}]}],\"else\":[{\"op\":\"global.get\",\"index\":419}]},{\"op\":\"call\",\"funcIdx\":9},{\"op\":\"local.set\",\"index\":19}]},{\"op\":\"local.get\",\"index\":18},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"i32.add\"},{\"op\":\"local.set\",\"index\":18},{\"op\":\"br\",\"depth\":0}]}]},{\"op\":\"local.get\",\"index\":19},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":19}]}],\"else\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":26},{\"op\":\"call\",\"funcIdx\":41},{\"op\":\"local.tee\",\"index\":27},{\"op\":\"global.get\",\"index\":1863},{\"op\":\"call\",\"funcIdx\":42},{\"op\":\"local.get\",\"index\":26},{\"op\":\"global.get\",\"index\":747},{\"op\":\"local.get\",\"index\":27},{\"op\":\"call\",\"funcIdx\":43}]},{\"op\":\"local.set\",\"index\":8},{\"op\":\"ref.null.extern\"},{\"op\":\"local.set\",\"index\":28},{\"op\":\"local.get\",\"index\":8},{\"op\":\"local.set\",\"index\":29},{\"op\":\"local.get\",\"index\":28},{\"op\":\"local.get\",\"index\":29},{\"op\":\"call\",\"funcIdx\":51},{\"op\":\"return\"}]) (at src/codegen/stack-balance.ts:274:13)"
+            "message": "Codegen error: stack-balance invariant (entry): '__closure_106' references local 152, but only 2 params + 28 locals are declared (locals: 2:__self_cast, 3:undefined, 4:methodName, 5:Array, 6:strSymbols, 7:chr, 8:trailing, 9:__tmp_7, 10:__nve_recv_8, 11:__nve_idx_9, 12:__nve_any_10, 13:__emc_recv_11, 14:__emc_arg_12, 15:__arr_join_vec_13, 16:__arr_join_data_14, 17:__arr_join_len_15, 18:__arr_join_i_16, 19:__arr_join_res_17, 20:__arr_join_sep_18, 21:__tmp_19, 22:__vec_mat_20, 23:__vec_len_21, 24:__vec_arr_22, 25:__vec_idx_23, 26:__emc_recv_24, 27:__emc_arg_25, 28:__tmp_26, 29:__tmp_27; body: [{\"op\":\"local.get\",\"index\":0},{\"op\":\"ref.cast\",\"typeIdx\":316},{\"op\":\"local.tee\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":3},{\"op\":\"local.set\",\"index\":3},{\"op\":\"local.get\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":4},{\"op\":\"local.set\",\"index\":4},{\"op\":\"local.get\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":5},{\"op\":\"local.set\",\"index\":5},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"local.set\",\"index\":6},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"local.set\",\"index\":7},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"local.set\",\"index\":8},{\"op\":\"ref.null.extern\"},{\"op\":\"local.set\",\"index\":1},{\"op\":\"local.get\",\"index\":152},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":2097189},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":152},{\"op\":\"local.get\",\"index\":150},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":2097200},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":47}],\"else\":[{\"op\":\"call\",\"funcIdx\":40}]},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":6},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1354},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":9},{\"op\":\"local.set\",\"index\":10},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"local.set\",\"index\":11},{\"op\":\"local.get\",\"index\":10},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":2},{\"op\":\"local.get\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":4},{\"op\":\"i32.or\"},{\"op\":\"local.get\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":33},{\"op\":\"i32.or\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":10},{\"op\":\"local.get\",\"index\":11},{\"op\":\"i32.trunc_sat_f64_s\"},{\"op\":\"call\",\"funcIdx\":148}],\"else\":[{\"op\":\"local.get\",\"index\":10},{\"op\":\"local.get\",\"index\":11},{\"op\":\"call\",\"funcIdx\":32},{\"op\":\"call\",\"funcIdx\":4}]}],\"else\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":13},{\"op\":\"global.get\",\"index\":1857},{\"op\":\"local.set\",\"index\":14},{\"op\":\"local.get\",\"index\":13},{\"op\":\"global.get\",\"index\":1355},{\"op\":\"local.get\",\"index\":14},{\"op\":\"call\",\"funcIdx\":41}]},{\"op\":\"local.set\",\"index\":7},{\"op\":\"local.get\",\"index\":6},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8},{\"op\":\"local.get\",\"index\":5},{\"op\":\"local.get\",\"index\":6},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":21},{\"op\":\"ref.test\",\"typeIdx\":2},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"ref_null\",\"typeIdx\":2}},\"then\":[{\"op\":\"local.get\",\"index\":21},{\"op\":\"ref.cast_null\",\"typeIdx\":2}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":49},{\"op\":\"local.tee\",\"index\":22},{\"op\":\"call\",\"funcIdx\":22},{\"op\":\"i32.trunc_sat_f64_s\"},{\"op\":\"local.tee\",\"index\":23},{\"op\":\"array.new_default\",\"typeIdx\":1},{\"op\":\"local.set\",\"index\":24},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"local.set\",\"index\":25},{\"op\":\"block\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"loop\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"local.get\",\"index\":25},{\"op\":\"local.get\",\"index\":23},{\"op\":\"i32.ge_u\"},{\"op\":\"br_if\",\"depth\":1},{\"op\":\"local.get\",\"index\":24},{\"op\":\"local.get\",\"index\":25},{\"op\":\"local.get\",\"index\":22},{\"op\":\"local.get\",\"index\":25},{\"op\":\"f64.convert_i32_s\"},{\"op\":\"call\",\"funcIdx\":32},{\"op\":\"call\",\"funcIdx\":4},{\"op\":\"array.set\",\"typeIdx\":1},{\"op\":\"local.get\",\"index\":25},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"i32.add\"},{\"op\":\"local.set\",\"index\":25},{\"op\":\"br\",\"depth\":0}]}]},{\"op\":\"local.get\",\"index\":23},{\"op\":\"local.get\",\"index\":24},{\"op\":\"struct.new\",\"typeIdx\":2}]},{\"op\":\"f64.const\",\"value\":1},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":2097457},{\"op\":\"local.tee\",\"index\":15},{\"op\":\"local.get\",\"index\":15},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1032},{\"op\":\"call\",\"funcIdx\":53},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"struct.get\",\"typeIdx\":2,\"fieldIdx\":0},{\"op\":\"local.set\",\"index\":17},{\"op\":\"local.get\",\"index\":15},{\"op\":\"struct.get\",\"typeIdx\":2,\"fieldIdx\":1},{\"op\":\"local.set\",\"index\":16},{\"op\":\"global.get\",\"index\":419},{\"op\":\"local.set\",\"index\":20},{\"op\":\"global.get\",\"index\":419},{\"op\":\"local.set\",\"index\":19},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"local.set\",\"index\":18},{\"op\":\"block\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"loop\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":17},{\"op\":\"i32.ge_s\"},{\"op\":\"br_if\",\"depth\":1},{\"op\":\"local.get\",\"index\":18},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"i32.eq\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":16},{\"op\":\"array.len\"},{\"op\":\"i32.lt_s\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":16},{\"op\":\"local.get\",\"index\":18},{\"op\":\"array.get\",\"typeIdx\":1},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.test\",\"typeIdx\":64},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":62}]}],\"else\":[{\"op\":\"global.get\",\"index\":419}]},{\"op\":\"local.set\",\"index\":19}],\"else\":[{\"op\":\"local.get\",\"index\":19},{\"op\":\"local.get\",\"index\":20},{\"op\":\"call\",\"funcIdx\":9},{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":16},{\"op\":\"array.len\"},{\"op\":\"i32.lt_s\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":16},{\"op\":\"local.get\",\"index\":18},{\"op\":\"array.get\",\"typeIdx\":1},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.test\",\"typeIdx\":64},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":62}]}],\"else\":[{\"op\":\"global.get\",\"index\":419}]},{\"op\":\"call\",\"funcIdx\":9},{\"op\":\"local.set\",\"index\":19}]},{\"op\":\"local.get\",\"index\":18},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"i32.add\"},{\"op\":\"local.set\",\"index\":18},{\"op\":\"br\",\"depth\":0}]}]},{\"op\":\"local.get\",\"index\":19},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":19}]}],\"else\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":26},{\"op\":\"global.get\",\"index\":1858},{\"op\":\"local.set\",\"index\":27},{\"op\":\"local.get\",\"index\":26},{\"op\":\"global.get\",\"index\":747},{\"op\":\"local.get\",\"index\":27},{\"op\":\"call\",\"funcIdx\":41}]},{\"op\":\"local.set\",\"index\":8},{\"op\":\"ref.null.extern\"},{\"op\":\"local.set\",\"index\":28},{\"op\":\"local.get\",\"index\":8},{\"op\":\"local.set\",\"index\":29},{\"op\":\"local.get\",\"index\":28},{\"op\":\"local.get\",\"index\":29},{\"op\":\"call\",\"funcIdx\":54},{\"op\":\"return\"}]) (at src/codegen/stack-balance.ts:274:13)"
           }
         ]
       },
       "validation": {
         "validates": false,
-        "firstError": "Codegen error: stack-balance invariant (entry): '__closure_106' references local 152, but only 2 params + 28 locals are declared (locals: 2:__self_cast, 3:undefined, 4:methodName, 5:Array, 6:strSymbols, 7:chr, 8:trailing, 9:__tmp_7, 10:__nve_recv_8, 11:__nve_idx_9, 12:__nve_any_10, 13:__emc_recv_11, 14:__emc_args_12, 15:__arr_join_vec_13, 16:__arr_join_data_14, 17:__arr_join_len_15, 18:__arr_join_i_16, 19:__arr_join_res_17, 20:__arr_join_sep_18, 21:__tmp_19, 22:__vec_mat_20, 23:__vec_len_21, 24:__vec_arr_22, 25:__vec_idx_23, 26:__emc_recv_24, 27:__emc_args_25, 28:__tmp_26, 29:__tmp_27; body: [{\"op\":\"local.get\",\"index\":0},{\"op\":\"ref.cast\",\"typeIdx\":316},{\"op\":\"local.tee\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":2},{\"op\":\"local.set\",\"index\":3},{\"op\":\"local.get\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":3},{\"op\":\"local.set\",\"index\":4},{\"op\":\"local.get\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":4},{\"op\":\"local.set\",\"index\":5},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"local.set\",\"index\":6},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"local.set\",\"index\":7},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"local.set\",\"index\":8},{\"op\":\"ref.null.extern\"},{\"op\":\"local.set\",\"index\":1},{\"op\":\"local.get\",\"index\":152},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":2097189},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":152},{\"op\":\"local.get\",\"index\":150},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":2097200},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":44}],\"else\":[{\"op\":\"call\",\"funcIdx\":40}]},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":6},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1354},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":9},{\"op\":\"local.set\",\"index\":10},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"local.set\",\"index\":11},{\"op\":\"local.get\",\"index\":10},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":2},{\"op\":\"local.get\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":4},{\"op\":\"i32.or\"},{\"op\":\"local.get\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":28},{\"op\":\"i32.or\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":10},{\"op\":\"local.get\",\"index\":11},{\"op\":\"i32.trunc_sat_f64_s\"},{\"op\":\"call\",\"funcIdx\":142}],\"else\":[{\"op\":\"local.get\",\"index\":10},{\"op\":\"local.get\",\"index\":11},{\"op\":\"call\",\"funcIdx\":32},{\"op\":\"call\",\"funcIdx\":4}]}],\"else\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":13},{\"op\":\"call\",\"funcIdx\":41},{\"op\":\"local.tee\",\"index\":14},{\"op\":\"global.get\",\"index\":1862},{\"op\":\"call\",\"funcIdx\":42},{\"op\":\"local.get\",\"index\":13},{\"op\":\"global.get\",\"index\":1355},{\"op\":\"local.get\",\"index\":14},{\"op\":\"call\",\"funcIdx\":43}]},{\"op\":\"local.set\",\"index\":7},{\"op\":\"local.get\",\"index\":6},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8},{\"op\":\"local.get\",\"index\":5},{\"op\":\"local.get\",\"index\":6},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":21},{\"op\":\"ref.test\",\"typeIdx\":2},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"ref_null\",\"typeIdx\":2}},\"then\":[{\"op\":\"local.get\",\"index\":21},{\"op\":\"ref.cast_null\",\"typeIdx\":2}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":46},{\"op\":\"local.tee\",\"index\":22},{\"op\":\"call\",\"funcIdx\":22},{\"op\":\"i32.trunc_sat_f64_s\"},{\"op\":\"local.tee\",\"index\":23},{\"op\":\"array.new_default\",\"typeIdx\":1},{\"op\":\"local.set\",\"index\":24},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"local.set\",\"index\":25},{\"op\":\"block\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"loop\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"local.get\",\"index\":25},{\"op\":\"local.get\",\"index\":23},{\"op\":\"i32.ge_u\"},{\"op\":\"br_if\",\"depth\":1},{\"op\":\"local.get\",\"index\":24},{\"op\":\"local.get\",\"index\":25},{\"op\":\"local.get\",\"index\":22},{\"op\":\"local.get\",\"index\":25},{\"op\":\"f64.convert_i32_s\"},{\"op\":\"call\",\"funcIdx\":32},{\"op\":\"call\",\"funcIdx\":4},{\"op\":\"array.set\",\"typeIdx\":1},{\"op\":\"local.get\",\"index\":25},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"i32.add\"},{\"op\":\"local.set\",\"index\":25},{\"op\":\"br\",\"depth\":0}]}]},{\"op\":\"local.get\",\"index\":23},{\"op\":\"local.get\",\"index\":24},{\"op\":\"struct.new\",\"typeIdx\":2}]},{\"op\":\"f64.const\",\"value\":1},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":2097448},{\"op\":\"local.tee\",\"index\":15},{\"op\":\"local.get\",\"index\":15},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1032},{\"op\":\"call\",\"funcIdx\":50},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"struct.get\",\"typeIdx\":2,\"fieldIdx\":0},{\"op\":\"local.set\",\"index\":17},{\"op\":\"local.get\",\"index\":15},{\"op\":\"struct.get\",\"typeIdx\":2,\"fieldIdx\":1},{\"op\":\"local.set\",\"index\":16},{\"op\":\"global.get\",\"index\":419},{\"op\":\"local.set\",\"index\":20},{\"op\":\"global.get\",\"index\":419},{\"op\":\"local.set\",\"index\":19},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"local.set\",\"index\":18},{\"op\":\"block\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"loop\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":17},{\"op\":\"i32.ge_s\"},{\"op\":\"br_if\",\"depth\":1},{\"op\":\"local.get\",\"index\":18},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"i32.eq\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":16},{\"op\":\"array.len\"},{\"op\":\"i32.lt_s\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":16},{\"op\":\"local.get\",\"index\":18},{\"op\":\"array.get\",\"typeIdx\":1},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.test\",\"typeIdx\":58},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":58}]}],\"else\":[{\"op\":\"global.get\",\"index\":419}]},{\"op\":\"local.set\",\"index\":19}],\"else\":[{\"op\":\"local.get\",\"index\":19},{\"op\":\"local.get\",\"index\":20},{\"op\":\"call\",\"funcIdx\":9},{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":16},{\"op\":\"array.len\"},{\"op\":\"i32.lt_s\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":16},{\"op\":\"local.get\",\"index\":18},{\"op\":\"array.get\",\"typeIdx\":1},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.test\",\"typeIdx\":58},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":58}]}],\"else\":[{\"op\":\"global.get\",\"index\":419}]},{\"op\":\"call\",\"funcIdx\":9},{\"op\":\"local.set\",\"index\":19}]},{\"op\":\"local.get\",\"index\":18},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"i32.add\"},{\"op\":\"local.set\",\"index\":18},{\"op\":\"br\",\"depth\":0}]}]},{\"op\":\"local.get\",\"index\":19},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":19}]}],\"else\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":26},{\"op\":\"call\",\"funcIdx\":41},{\"op\":\"local.tee\",\"index\":27},{\"op\":\"global.get\",\"index\":1863},{\"op\":\"call\",\"funcIdx\":42},{\"op\":\"local.get\",\"index\":26},{\"op\":\"global.get\",\"index\":747},{\"op\":\"local.get\",\"index\":27},{\"op\":\"call\",\"funcIdx\":43}]},{\"op\":\"local.set\",\"index\":8},{\"op\":\"ref.null.extern\"},{\"op\":\"local.set\",\"index\":28},{\"op\":\"local.get\",\"index\":8},{\"op\":\"local.set\",\"index\":29},{\"op\":\"local.get\",\"index\":28},{\"op\":\"local.get\",\"index\":29},{\"op\":\"call\",\"funcIdx\":51},{\"op\":\"return\"}]) (at src/codegen/stack-balance.ts:274:13)"
+        "firstError": "Codegen error: stack-balance invariant (entry): '__closure_106' references local 152, but only 2 params + 28 locals are declared (locals: 2:__self_cast, 3:undefined, 4:methodName, 5:Array, 6:strSymbols, 7:chr, 8:trailing, 9:__tmp_7, 10:__nve_recv_8, 11:__nve_idx_9, 12:__nve_any_10, 13:__emc_recv_11, 14:__emc_arg_12, 15:__arr_join_vec_13, 16:__arr_join_data_14, 17:__arr_join_len_15, 18:__arr_join_i_16, 19:__arr_join_res_17, 20:__arr_join_sep_18, 21:__tmp_19, 22:__vec_mat_20, 23:__vec_len_21, 24:__vec_arr_22, 25:__vec_idx_23, 26:__emc_recv_24, 27:__emc_arg_25, 28:__tmp_26, 29:__tmp_27; body: [{\"op\":\"local.get\",\"index\":0},{\"op\":\"ref.cast\",\"typeIdx\":316},{\"op\":\"local.tee\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":3},{\"op\":\"local.set\",\"index\":3},{\"op\":\"local.get\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":4},{\"op\":\"local.set\",\"index\":4},{\"op\":\"local.get\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":5},{\"op\":\"local.set\",\"index\":5},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"local.set\",\"index\":6},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"local.set\",\"index\":7},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"local.set\",\"index\":8},{\"op\":\"ref.null.extern\"},{\"op\":\"local.set\",\"index\":1},{\"op\":\"local.get\",\"index\":152},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":2097189},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":152},{\"op\":\"local.get\",\"index\":150},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":2097200},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":47}],\"else\":[{\"op\":\"call\",\"funcIdx\":40}]},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":6},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1354},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":9},{\"op\":\"local.set\",\"index\":10},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"local.set\",\"index\":11},{\"op\":\"local.get\",\"index\":10},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":2},{\"op\":\"local.get\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":4},{\"op\":\"i32.or\"},{\"op\":\"local.get\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":33},{\"op\":\"i32.or\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":10},{\"op\":\"local.get\",\"index\":11},{\"op\":\"i32.trunc_sat_f64_s\"},{\"op\":\"call\",\"funcIdx\":148}],\"else\":[{\"op\":\"local.get\",\"index\":10},{\"op\":\"local.get\",\"index\":11},{\"op\":\"call\",\"funcIdx\":32},{\"op\":\"call\",\"funcIdx\":4}]}],\"else\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":13},{\"op\":\"global.get\",\"index\":1857},{\"op\":\"local.set\",\"index\":14},{\"op\":\"local.get\",\"index\":13},{\"op\":\"global.get\",\"index\":1355},{\"op\":\"local.get\",\"index\":14},{\"op\":\"call\",\"funcIdx\":41}]},{\"op\":\"local.set\",\"index\":7},{\"op\":\"local.get\",\"index\":6},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8},{\"op\":\"local.get\",\"index\":5},{\"op\":\"local.get\",\"index\":6},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":21},{\"op\":\"ref.test\",\"typeIdx\":2},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"ref_null\",\"typeIdx\":2}},\"then\":[{\"op\":\"local.get\",\"index\":21},{\"op\":\"ref.cast_null\",\"typeIdx\":2}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":49},{\"op\":\"local.tee\",\"index\":22},{\"op\":\"call\",\"funcIdx\":22},{\"op\":\"i32.trunc_sat_f64_s\"},{\"op\":\"local.tee\",\"index\":23},{\"op\":\"array.new_default\",\"typeIdx\":1},{\"op\":\"local.set\",\"index\":24},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"local.set\",\"index\":25},{\"op\":\"block\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"loop\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"local.get\",\"index\":25},{\"op\":\"local.get\",\"index\":23},{\"op\":\"i32.ge_u\"},{\"op\":\"br_if\",\"depth\":1},{\"op\":\"local.get\",\"index\":24},{\"op\":\"local.get\",\"index\":25},{\"op\":\"local.get\",\"index\":22},{\"op\":\"local.get\",\"index\":25},{\"op\":\"f64.convert_i32_s\"},{\"op\":\"call\",\"funcIdx\":32},{\"op\":\"call\",\"funcIdx\":4},{\"op\":\"array.set\",\"typeIdx\":1},{\"op\":\"local.get\",\"index\":25},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"i32.add\"},{\"op\":\"local.set\",\"index\":25},{\"op\":\"br\",\"depth\":0}]}]},{\"op\":\"local.get\",\"index\":23},{\"op\":\"local.get\",\"index\":24},{\"op\":\"struct.new\",\"typeIdx\":2}]},{\"op\":\"f64.const\",\"value\":1},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":2097457},{\"op\":\"local.tee\",\"index\":15},{\"op\":\"local.get\",\"index\":15},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1032},{\"op\":\"call\",\"funcIdx\":53},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"struct.get\",\"typeIdx\":2,\"fieldIdx\":0},{\"op\":\"local.set\",\"index\":17},{\"op\":\"local.get\",\"index\":15},{\"op\":\"struct.get\",\"typeIdx\":2,\"fieldIdx\":1},{\"op\":\"local.set\",\"index\":16},{\"op\":\"global.get\",\"index\":419},{\"op\":\"local.set\",\"index\":20},{\"op\":\"global.get\",\"index\":419},{\"op\":\"local.set\",\"index\":19},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"local.set\",\"index\":18},{\"op\":\"block\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"loop\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":17},{\"op\":\"i32.ge_s\"},{\"op\":\"br_if\",\"depth\":1},{\"op\":\"local.get\",\"index\":18},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"i32.eq\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":16},{\"op\":\"array.len\"},{\"op\":\"i32.lt_s\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":16},{\"op\":\"local.get\",\"index\":18},{\"op\":\"array.get\",\"typeIdx\":1},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.test\",\"typeIdx\":64},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":62}]}],\"else\":[{\"op\":\"global.get\",\"index\":419}]},{\"op\":\"local.set\",\"index\":19}],\"else\":[{\"op\":\"local.get\",\"index\":19},{\"op\":\"local.get\",\"index\":20},{\"op\":\"call\",\"funcIdx\":9},{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":16},{\"op\":\"array.len\"},{\"op\":\"i32.lt_s\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":16},{\"op\":\"local.get\",\"index\":18},{\"op\":\"array.get\",\"typeIdx\":1},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.test\",\"typeIdx\":64},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":62}]}],\"else\":[{\"op\":\"global.get\",\"index\":419}]},{\"op\":\"call\",\"funcIdx\":9},{\"op\":\"local.set\",\"index\":19}]},{\"op\":\"local.get\",\"index\":18},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"i32.add\"},{\"op\":\"local.set\",\"index\":18},{\"op\":\"br\",\"depth\":0}]}]},{\"op\":\"local.get\",\"index\":19},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":19}]}],\"else\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":26},{\"op\":\"global.get\",\"index\":1858},{\"op\":\"local.set\",\"index\":27},{\"op\":\"local.get\",\"index\":26},{\"op\":\"global.get\",\"index\":747},{\"op\":\"local.get\",\"index\":27},{\"op\":\"call\",\"funcIdx\":41}]},{\"op\":\"local.set\",\"index\":8},{\"op\":\"ref.null.extern\"},{\"op\":\"local.set\",\"index\":28},{\"op\":\"local.get\",\"index\":8},{\"op\":\"local.set\",\"index\":29},{\"op\":\"local.get\",\"index\":28},{\"op\":\"local.get\",\"index\":29},{\"op\":\"call\",\"funcIdx\":54},{\"op\":\"return\"}]) (at src/codegen/stack-balance.ts:274:13)"
       },
       "tests": {
         "kind": "upstream-suite",
@@ -678,7 +678,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": true,
-        "durationMs": 1843,
+        "durationMs": 1788,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -716,7 +716,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 180167,
+        "durationMs": 180091,
         "timedOut": true,
         "timeoutMs": 180000,
         "errorCount": 0,
@@ -754,11 +754,11 @@
       "shape": "cjs-project",
       "compile": {
         "success": true,
-        "durationMs": 1892,
+        "durationMs": 1885,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
-        "binaryBytes": 3670,
+        "binaryBytes": 3601,
         "categories": {}
       },
       "validation": {
@@ -768,18 +768,20 @@
       "tests": {
         "kind": "upstream-suite",
         "passed": 0,
-        "total": 0,
+        "total": 288,
         "passRatePct": 0,
         "admitted": 1942,
         "upstreamTestsSeen": 2003,
-        "harnessIncompatible": 1942,
+        "harnessIncompatible": 1654,
         "implementationInvalidTests": null,
         "implementationError": "Codegen error: Do not know how to serialize a BigInt",
         "sourceIssue": 3982
       },
       "correctness": {
-        "status": "unverified",
-        "reason": "workload 'upstream-suite' ran zero operations"
+        "status": "divergent",
+        "passed": 0,
+        "total": 288,
+        "reason": "288 of 288 operations diverged from native node"
       },
       "perf": null,
       "knownBugs": [],
@@ -793,7 +795,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 3049,
+        "durationMs": 3038,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -831,7 +833,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 120146,
+        "durationMs": 120134,
         "timedOut": true,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -868,7 +870,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 13294,
+        "durationMs": 18911,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -910,9 +912,9 @@
       "shape": "esm-driver-epilogue",
       "compile": {
         "success": true,
-        "durationMs": 253,
+        "durationMs": 201,
         "errorCount": 0,
-        "binaryBytes": 8263,
+        "binaryBytes": 8299,
         "categories": {}
       },
       "validation": {
@@ -939,38 +941,38 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "op_two_strings.length (host-owned arguments)",
-            "wasmUs": 1.0357502870263804,
-            "nodeUs": 0.03515402350347571,
-            "wasmStdUs": 0.02750606076408863,
-            "nodeStdUs": 0.0001706549973375316,
-            "ratio": 0.033940636023768095,
-            "ratioStd": 0.0008781517261495738,
-            "iters": 214266,
+            "wasmUs": 0.7178079069935949,
+            "nodeUs": 0.045792576669517214,
+            "wasmStdUs": 0.06672950719953023,
+            "nodeStdUs": 0.047053102886998405,
+            "ratio": 0.06379502959407471,
+            "ratioStd": 0.08569810694744177,
+            "iters": 279120,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              1.0859358320964654,
-              1.0493292496243976,
-              0.9869265352410812,
-              1.0425961141759668,
-              1.013060079527459,
-              1.002655829669778,
-              1.0335296687295934,
-              1.0471188335995432,
-              1.0357502870263804
+              0.6647441208081851,
+              0.7143042132416706,
+              0.7327831004587,
+              0.7371337417596281,
+              0.7178079069935949,
+              0.7327788263113667,
+              0.8052132774433565,
+              0.5974631842933857,
+              0.5850346553453933
             ],
             "nodeSamplesUs": [
-              0.03534325557951118,
-              0.035125078173751566,
-              0.03510245209209882,
-              0.035353075149642636,
-              0.035460619043516016,
-              0.03508239291325389,
-              0.03515402350347571,
-              0.03513967218308383,
-              0.03558556187160994
+              0.0466478897965623,
+              0.045792576669517214,
+              0.04565751289773948,
+              0.045682957151118725,
+              0.04558687302952004,
+              0.04554864574380512,
+              0.046440498710177344,
+              0.15878508526804472,
+              0.15938188950980794
             ],
-            "binaryBytes": 2100,
+            "binaryBytes": 2126,
             "moduleImportCount": 21,
             "functionImportCount": 16,
             "expectedChecksum": 7,
@@ -983,41 +985,41 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "op_two_strings.length (driver compiled to Wasm)",
-            "wasmUs": 0.0009494535953491942,
-            "nodeUs": 0.019974381408176266,
-            "wasmStdUs": 0.0000016312567923496587,
-            "nodeStdUs": 0.00005930513986188936,
-            "ratio": 21.03776477967836,
-            "ratioStd": 0.06831991393165442,
-            "iters": 3931793,
+            "wasmUs": 0.000949322493224351,
+            "nodeUs": 0.019894238552771205,
+            "wasmStdUs": 0.000004732006784103634,
+            "nodeStdUs": 0.00009731580828817305,
+            "ratio": 20.956249003645645,
+            "ratioStd": 0.09982096306167824,
+            "iters": 4261950,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.0009512166586613573,
-              0.000950472723251465,
-              0.0009509875011263205,
-              0.0009482966168397019,
-              0.0009468059483372477,
-              0.0009494535953491942,
-              0.0009481971711138775,
-              0.0009464618305264541,
-              0.0009495833071436022
+              0.0009494142352693483,
+              0.0009505684017823198,
+              0.000949322493224351,
+              0.0009502019028883234,
+              0.000949214326784197,
+              0.0009483539224995674,
+              0.0009537089829849588,
+              0.000939430776991978,
+              0.0009390825795688217
             ],
             "nodeSamplesUs": [
-              0.02001139581865073,
-              0.01993535926230467,
-              0.019974381408176266,
-              0.020017822148831153,
-              0.020074500615868122,
-              0.01995005433906952,
-              0.019941502769842752,
-              0.019850692037964038,
-              0.019978448509367232
+              0.02003623411818093,
+              0.019967082908054646,
+              0.019894238552771205,
+              0.019848874576203632,
+              0.019842172714373028,
+              0.01996257652014111,
+              0.020149696500435053,
+              0.019846707258421813,
+              0.01989392601977237
             ],
-            "compileDurationMs": 385.63366200000746,
-            "moduleCompileDurationMs": 0.3689310000045225,
-            "instantiateDurationMs": 0.057478000002447516,
-            "firstBatchDurationMs": 0.0397749999538064,
+            "compileDurationMs": 374.59731899999315,
+            "moduleCompileDurationMs": 0.3631160000222735,
+            "instantiateDurationMs": 0.026689999969676137,
+            "firstBatchDurationMs": 0.05443100002594292,
             "binaryBytes": 103,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -1035,42 +1037,42 @@
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
             "sampleOp": "op_two_strings.length (runtime-generated arguments; driver compiled to Wasm)",
-            "wasmUs": 0.4527786287943531,
-            "nodeUs": 0.05873402807574418,
-            "wasmStdUs": 0.00951700642245158,
-            "nodeStdUs": 0.00042215926585350156,
-            "ratio": 0.12971908199850243,
-            "ratioStd": 0.002590892775938549,
-            "iters": 596672,
+            "wasmUs": 0.407402036089318,
+            "nodeUs": 0.05553989115454944,
+            "wasmStdUs": 0.001617813924863531,
+            "nodeStdUs": 0.00031975134697495935,
+            "ratio": 0.13632698473400112,
+            "ratioStd": 0.0005542882285512583,
+            "iters": 671778,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.48168942400514886,
-              0.4532556848653848,
-              0.4557386135096096,
-              0.4576174715756678,
-              0.4518448410516643,
-              0.4527786287943531,
-              0.44996016069123584,
-              0.4502120612329954,
-              0.44909051539202405
+              0.41191648729193536,
+              0.407402036089318,
+              0.40679003926895213,
+              0.4071335307199789,
+              0.40877892398978166,
+              0.4065951623900138,
+              0.4073634236310152,
+              0.40969138614250433,
+              0.4078016472703542
             ],
             "nodeSamplesUs": [
-              0.05900078770244656,
-              0.05809966112036176,
-              0.05856445584837565,
-              0.05873402807574418,
-              0.058929679958230306,
-              0.058792983414760566,
-              0.058159405837759484,
-              0.05850615748685193,
-              0.05956174581680322
+              0.05592967468421942,
+              0.05553989115454944,
+              0.054829838130996296,
+              0.05543664424846774,
+              0.05567327897016963,
+              0.05551024296724842,
+              0.05502093995340218,
+              0.055679169308910974,
+              0.05554230713128327
             ],
-            "compileDurationMs": 1973.367178000044,
-            "moduleCompileDurationMs": 0.7309100000420585,
-            "instantiateDurationMs": 0.15982900001108646,
-            "firstBatchDurationMs": 0.4263290000380948,
-            "binaryBytes": 34144,
+            "compileDurationMs": 1946.3727550000185,
+            "moduleCompileDurationMs": 0.6541389999911189,
+            "instantiateDurationMs": 0.13877899997169152,
+            "firstBatchDurationMs": 0.3626959999674,
+            "binaryBytes": 37003,
             "moduleImportCount": 0,
             "functionImportCount": 0,
             "expectedChecksum": 14,
@@ -1082,36 +1084,36 @@
             "runtimeArgumentSuppliedAfterCompile": true
           }
         },
-        "wasmUs": 1.0357502870263804,
-        "nodeUs": 0.03515402350347571,
-        "wasmStdUs": 0.02750606076408863,
-        "nodeStdUs": 0.0001706549973375316,
-        "ratio": 0.033940636023768095,
-        "ratioStd": 0.0008781517261495738,
-        "iters": 214266,
+        "wasmUs": 0.7178079069935949,
+        "nodeUs": 0.045792576669517214,
+        "wasmStdUs": 0.06672950719953023,
+        "nodeStdUs": 0.047053102886998405,
+        "ratio": 0.06379502959407471,
+        "ratioStd": 0.08569810694744177,
+        "iters": 279120,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          1.0859358320964654,
-          1.0493292496243976,
-          0.9869265352410812,
-          1.0425961141759668,
-          1.013060079527459,
-          1.002655829669778,
-          1.0335296687295934,
-          1.0471188335995432,
-          1.0357502870263804
+          0.6647441208081851,
+          0.7143042132416706,
+          0.7327831004587,
+          0.7371337417596281,
+          0.7178079069935949,
+          0.7327788263113667,
+          0.8052132774433565,
+          0.5974631842933857,
+          0.5850346553453933
         ],
         "nodeSamplesUs": [
-          0.03534325557951118,
-          0.035125078173751566,
-          0.03510245209209882,
-          0.035353075149642636,
-          0.035460619043516016,
-          0.03508239291325389,
-          0.03515402350347571,
-          0.03513967218308383,
-          0.03558556187160994
+          0.0466478897965623,
+          0.045792576669517214,
+          0.04565751289773948,
+          0.045682957151118725,
+          0.04558687302952004,
+          0.04554864574380512,
+          0.046440498710177344,
+          0.15878508526804472,
+          0.15938188950980794
         ]
       },
       "knownBugs": [
@@ -1130,7 +1132,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 180227,
+        "durationMs": 180216,
         "timedOut": true,
         "timeoutMs": 180000,
         "errorCount": 0,
@@ -1167,7 +1169,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": false,
-        "durationMs": 947,
+        "durationMs": 789,
         "errorCount": 64,
         "binaryBytes": 0,
         "categories": {
@@ -1230,7 +1232,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 120151,
+        "durationMs": 120128,
         "timedOut": true,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -1267,7 +1269,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 2521,
+        "durationMs": 2374,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -1308,17 +1310,69 @@
       "entryFile": "build/index.mjs",
       "shape": "esm-project",
       "compile": {
-        "success": true,
-        "durationMs": 1891,
+        "success": false,
+        "durationMs": 10359,
         "timedOut": false,
         "timeoutMs": 120000,
-        "errorCount": 0,
-        "binaryBytes": 2410,
-        "categories": {}
+        "errorCount": 15,
+        "binaryBytes": 0,
+        "categories": {
+          "compiler-diagnostic": {
+            "count": 15,
+            "sample": "async shape not supported: this suspension point (await / for-await) sits inside a `try` whose overall body shape the async engine cannot drive yet, and the synchronous fallback would SILENTLY drop awaited rejections (execution would continue past a rejected await; catch/finally would not run). Restructure toward canonical awaits — top-level `await p` / `const x = await p` / `return await p` statements, try/catch(/finally) without awaits in loops/conditions inside the try — or hoist the await out of the try (#3587)"
+          }
+        },
+        "errors": [
+          {
+            "message": "async shape not supported: this suspension point (await / for-await) sits inside a `try` whose overall body shape the async engine cannot drive yet, and the synchronous fallback would SILENTLY drop awaited rejections (execution would continue past a rejected await; catch/finally would not run). Restructure toward canonical awaits — top-level `await p` / `const x = await p` / `return await p` statements, try/catch(/finally) without awaits in loops/conditions inside the try — or hoist the await out of the try (#3587)"
+          },
+          {
+            "message": "Missing __make_getter_callback import"
+          },
+          {
+            "message": "Missing __make_getter_callback import"
+          },
+          {
+            "message": "Missing __make_getter_callback import"
+          },
+          {
+            "message": "Missing __make_getter_callback import"
+          },
+          {
+            "message": "Missing __make_getter_callback import"
+          },
+          {
+            "message": "Missing __make_getter_callback import"
+          },
+          {
+            "message": "Missing __make_getter_callback import"
+          },
+          {
+            "message": "Missing __make_getter_callback import"
+          },
+          {
+            "message": "Missing __make_getter_callback import"
+          },
+          {
+            "message": "Missing __make_getter_callback import"
+          },
+          {
+            "message": "Missing __make_getter_callback import"
+          },
+          {
+            "message": "Missing __make_getter_callback import"
+          },
+          {
+            "message": "Missing __make_getter_callback import"
+          },
+          {
+            "message": "Missing __make_getter_callback import"
+          }
+        ]
       },
       "validation": {
-        "validates": true,
-        "firstError": null
+        "validates": false,
+        "firstError": "async shape not supported: this suspension point (await / for-await) sits inside a `try` whose overall body shape the async engine cannot drive yet, and the synchronous fallback would SILENTLY drop awaited rejections (execution would continue past a rejected await; catch/finally would not run). Restructure toward canonical awaits — top-level `await p` / `const x = await p` / `return await p` statements, try/catch(/finally) without awaits in loops/conditions inside the try — or hoist the await out of the try (#3587)"
       },
       "tests": {
         "kind": "upstream-suite",
@@ -1341,7 +1395,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 2672,
+        "durationMs": 2383,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -1349,18 +1403,18 @@
         "categories": {
           "compiler-diagnostic": {
             "count": 1,
-            "sample": "Codegen error: stack-balance invariant (entry): 'observeState' references local 19, but only 1 params + 8 locals are declared (locals: 1:observerAsObserver, 2:__nullchk_1, 3:__emc_recv_2, 4:__emc_args_3, 5:__boxed_isDispatching, 6:__boxed_currentState, 7:__tdz_box_isDispatching, 8:__tdz_box_currentState; body: [{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":1},{\"op\":\"local.tee\",\"index\":2},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":145},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":2},{\"op\":\"global.get\",\"index\":146},{\"op\":\"call\",\"funcIdx\":1},{\"op\":\"call\",\"funcIdx\":26},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":3},{\"op\":\"call\",\"funcIdx\":43},{\"op\":\"local.tee\",\"index\":4},{\"op\":\"local.get\",\"index\":19},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"local.get\",\"index\":11},{\"op\":\"struct.new\",\"typeIdx\":34},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":2097173},{\"op\":\"call\",\"funcIdx\":44},{\"op\":\"local.get\",\"index\":3},{\"op\":\"global.get\",\"index\":146},{\"op\":\"local.get\",\"index\":4},{\"op\":\"call\",\"funcIdx\":55},{\"op\":\"drop\"}]}]) (at src/codegen/stack-balance.ts:274:13)"
+            "sample": "Codegen error: stack-balance invariant (entry): 'observeState' references local 19, but only 1 params + 8 locals are declared (locals: 1:observerAsObserver, 2:__nullchk_1, 3:__emc_recv_2, 4:__boxed_isDispatching, 5:__boxed_currentState, 6:__tdz_box_isDispatching, 7:__tdz_box_currentState, 8:__emc_arg_7; body: [{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":1},{\"op\":\"local.tee\",\"index\":2},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":145},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":2},{\"op\":\"global.get\",\"index\":146},{\"op\":\"call\",\"funcIdx\":1},{\"op\":\"call\",\"funcIdx\":26},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":3},{\"op\":\"local.get\",\"index\":19},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":4},{\"op\":\"local.get\",\"index\":11},{\"op\":\"struct.new\",\"typeIdx\":34},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"call\",\"funcIdx\":2097173},{\"op\":\"local.set\",\"index\":8},{\"op\":\"local.get\",\"index\":3},{\"op\":\"global.get\",\"index\":146},{\"op\":\"local.get\",\"index\":8},{\"op\":\"call\",\"funcIdx\":55},{\"op\":\"drop\"}]}]) (at src/codegen/stack-balance.ts:274:13)"
           }
         },
         "errors": [
           {
-            "message": "Codegen error: stack-balance invariant (entry): 'observeState' references local 19, but only 1 params + 8 locals are declared (locals: 1:observerAsObserver, 2:__nullchk_1, 3:__emc_recv_2, 4:__emc_args_3, 5:__boxed_isDispatching, 6:__boxed_currentState, 7:__tdz_box_isDispatching, 8:__tdz_box_currentState; body: [{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":1},{\"op\":\"local.tee\",\"index\":2},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":145},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":2},{\"op\":\"global.get\",\"index\":146},{\"op\":\"call\",\"funcIdx\":1},{\"op\":\"call\",\"funcIdx\":26},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":3},{\"op\":\"call\",\"funcIdx\":43},{\"op\":\"local.tee\",\"index\":4},{\"op\":\"local.get\",\"index\":19},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"local.get\",\"index\":11},{\"op\":\"struct.new\",\"typeIdx\":34},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":2097173},{\"op\":\"call\",\"funcIdx\":44},{\"op\":\"local.get\",\"index\":3},{\"op\":\"global.get\",\"index\":146},{\"op\":\"local.get\",\"index\":4},{\"op\":\"call\",\"funcIdx\":55},{\"op\":\"drop\"}]}]) (at src/codegen/stack-balance.ts:274:13)"
+            "message": "Codegen error: stack-balance invariant (entry): 'observeState' references local 19, but only 1 params + 8 locals are declared (locals: 1:observerAsObserver, 2:__nullchk_1, 3:__emc_recv_2, 4:__boxed_isDispatching, 5:__boxed_currentState, 6:__tdz_box_isDispatching, 7:__tdz_box_currentState, 8:__emc_arg_7; body: [{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":1},{\"op\":\"local.tee\",\"index\":2},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":145},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":2},{\"op\":\"global.get\",\"index\":146},{\"op\":\"call\",\"funcIdx\":1},{\"op\":\"call\",\"funcIdx\":26},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":3},{\"op\":\"local.get\",\"index\":19},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":4},{\"op\":\"local.get\",\"index\":11},{\"op\":\"struct.new\",\"typeIdx\":34},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"call\",\"funcIdx\":2097173},{\"op\":\"local.set\",\"index\":8},{\"op\":\"local.get\",\"index\":3},{\"op\":\"global.get\",\"index\":146},{\"op\":\"local.get\",\"index\":8},{\"op\":\"call\",\"funcIdx\":55},{\"op\":\"drop\"}]}]) (at src/codegen/stack-balance.ts:274:13)"
           }
         ]
       },
       "validation": {
         "validates": false,
-        "firstError": "Codegen error: stack-balance invariant (entry): 'observeState' references local 19, but only 1 params + 8 locals are declared (locals: 1:observerAsObserver, 2:__nullchk_1, 3:__emc_recv_2, 4:__emc_args_3, 5:__boxed_isDispatching, 6:__boxed_currentState, 7:__tdz_box_isDispatching, 8:__tdz_box_currentState; body: [{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":1},{\"op\":\"local.tee\",\"index\":2},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":145},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":2},{\"op\":\"global.get\",\"index\":146},{\"op\":\"call\",\"funcIdx\":1},{\"op\":\"call\",\"funcIdx\":26},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":3},{\"op\":\"call\",\"funcIdx\":43},{\"op\":\"local.tee\",\"index\":4},{\"op\":\"local.get\",\"index\":19},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"local.get\",\"index\":11},{\"op\":\"struct.new\",\"typeIdx\":34},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":2097173},{\"op\":\"call\",\"funcIdx\":44},{\"op\":\"local.get\",\"index\":3},{\"op\":\"global.get\",\"index\":146},{\"op\":\"local.get\",\"index\":4},{\"op\":\"call\",\"funcIdx\":55},{\"op\":\"drop\"}]}]) (at src/codegen/stack-balance.ts:274:13)"
+        "firstError": "Codegen error: stack-balance invariant (entry): 'observeState' references local 19, but only 1 params + 8 locals are declared (locals: 1:observerAsObserver, 2:__nullchk_1, 3:__emc_recv_2, 4:__boxed_isDispatching, 5:__boxed_currentState, 6:__tdz_box_isDispatching, 7:__tdz_box_currentState, 8:__emc_arg_7; body: [{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":1},{\"op\":\"local.tee\",\"index\":2},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":145},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":2},{\"op\":\"global.get\",\"index\":146},{\"op\":\"call\",\"funcIdx\":1},{\"op\":\"call\",\"funcIdx\":26},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":3},{\"op\":\"local.get\",\"index\":19},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":4},{\"op\":\"local.get\",\"index\":11},{\"op\":\"struct.new\",\"typeIdx\":34},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"call\",\"funcIdx\":2097173},{\"op\":\"local.set\",\"index\":8},{\"op\":\"local.get\",\"index\":3},{\"op\":\"global.get\",\"index\":146},{\"op\":\"local.get\",\"index\":8},{\"op\":\"call\",\"funcIdx\":55},{\"op\":\"drop\"}]}]) (at src/codegen/stack-balance.ts:274:13)"
       },
       "tests": {
         "kind": "upstream-suite",
@@ -1383,7 +1437,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 12720,
+        "durationMs": 10543,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -1391,18 +1445,18 @@
         "categories": {
           "compiler-diagnostic": {
             "count": 1,
-            "sample": "Codegen error: stack-balance invariant (entry): '__fnctor_Duration_new' references local 80, but only 1 params + 59 locals are declared (locals: 1:__self, 2:__fnctor_ctor_1, 3:normalizedInput, 4:years, 5:__nullchk_4, 6:__sd_any_5, 7:__sd_res_6, 8:__tmp_7, 9:quarters, 10:__nullchk_9, 11:__sd_any_10, 12:__sd_res_11, 13:months, 14:__nullchk_13, 15:__sd_any_14, 16:__sd_res_15, 17:weeks, 18:__nullchk_17, 19:__sd_any_18, 20:__sd_res_19, 21:__nullchk_20, 22:__sd_any_21, 23:__sd_res_22, 24:days, 25:__nullchk_24, 26:__sd_any_25, 27:__sd_res_26, 28:hours, 29:__nullchk_28, 30:__sd_any_29, 31:__sd_res_30, 32:minutes, 33:__nullchk_32, 34:__sd_any_33, 35:__sd_res_34, 36:seconds, 37:__nullchk_36, 38:__sd_any_37, 39:__sd_res_38, 40:milliseconds, 41:__nullchk_40, 42:__sd_any_41, 43:__sd_res_42, 44:__prop_assign_43, 45:__prop_recv_44, 46:__prop_assign_45, 47:__prop_recv_46, 48:__prop_assign_47, 49:__prop_recv_48, 50:__prop_assign_49, 51:__prop_recv_50, 52:__prop_assign_51, 53:__prop_recv_52, 54:__boxed_globalLocale, 55:__boxed_hookCallback, 56:__prop_assign_55, 57:__prop_recv_56, 58:__emc_recv_57, 59:__emc_args_58; body: [{\"op\":\"i32.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"ref.null.extern\"},{\"op\":\"ref.null.extern\"},{\"op\":\"struct.new\",\"typeIdx\":189},{\"op\":\"local.set\",\"index\":1},{\"op\":\"global.get\",\"index\":1617},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"ref.func\",\"funcIdx\":2097512},{\"op\":\"i32.const\",\"value\":10},{\"op\":\"struct.new\",\"typeIdx\":191},{\"op\":\"extern.convert_any\"},{\"op\":\"global.set\",\"index\":1617}],\"else\":[]},{\"op\":\"global.get\",\"index\":1617},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.cast\",\"typeIdx\":191},{\"op\":\"extern.convert_any\"},{\"op\":\"local.set\",\"index\":2},{\"op\":\"local.get\",\"index\":1},{\"op\":\"extern.convert_any\"},{\"op\":\"local.get\",\"index\":2},{\"op\":\"call\",\"funcIdx\":77},{\"op\":\"local.get\",\"index\":17},{\"op\":\"local.get\",\"index\":0},{\"op\":\"call\",\"funcIdx\":2097239},{\"op\":\"local.tee\",\"index\":3},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1268},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":5},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097448},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1687}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":4},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":10},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1269},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":10},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":11},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097474},{\"op\":\"local.tee\",\"index\":12},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1687}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":9},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":14},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1270},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":14},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":15},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097449},{\"op\":\"local.tee\",\"index\":16},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1687}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":13},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":18},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1271},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":18},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":19},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097475},{\"op\":\"local.tee\",\"index\":20},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":21},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1272},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":21},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":22},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097476},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.tee\",\"index\":23},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1687}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":17},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":25},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1273},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":25},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":26},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097446},{\"op\":\"local.tee\",\"index\":27},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1687}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":24},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":29},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1274},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":29},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":30},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097450},{\"op\":\"local.tee\",\"index\":31},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1687}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":28},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":33},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1275},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":33},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":34},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097451},{\"op\":\"local.tee\",\"index\":35},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1687}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":32},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":37},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1276},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":37},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":38},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097452},{\"op\":\"local.tee\",\"index\":39},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1687}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":36},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":41},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1277},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":41},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":42},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097453},{\"op\":\"local.tee\",\"index\":43},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1687}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":40},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":80},{\"op\":\"local.get\",\"index\":50},{\"op\":\"local.get\",\"index\":3},{\"op\":\"call\",\"funcIdx\":2097470},{\"op\":\"local.set\",\"index\":44},{\"op\":\"local.tee\",\"index\":45},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1343},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":45},{\"op\":\"local.get\",\"index\":44},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":0}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":40},{\"op\":\"local.get\",\"index\":36},{\"op\":\"f64.const\",\"value\":1000},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":32},{\"op\":\"f64.const\",\"value\":60000},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":28},{\"op\":\"f64.const\",\"value\":1000},{\"op\":\"f64.mul\"},{\"op\":\"f64.const\",\"value\":60},{\"op\":\"f64.mul\"},{\"op\":\"f64.const\",\"value\":60},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":46},{\"op\":\"local.tee\",\"index\":47},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1344},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":47},{\"op\":\"local.get\",\"index\":46},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":1}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":24},{\"op\":\"local.get\",\"index\":17},{\"op\":\"f64.const\",\"value\":7},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":48},{\"op\":\"local.tee\",\"index\":49},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1345},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":49},{\"op\":\"local.get\",\"index\":48},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":2}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":13},{\"op\":\"local.get\",\"index\":9},{\"op\":\"f64.const\",\"value\":3},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":4},{\"op\":\"f64.const\",\"value\":12},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":50},{\"op\":\"local.tee\",\"index\":51},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1346},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":51},{\"op\":\"local.get\",\"index\":50},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":3}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":69},{\"op\":\"local.set\",\"index\":52},{\"op\":\"local.tee\",\"index\":53},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1347},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":53},{\"op\":\"local.get\",\"index\":52},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":4}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":68},{\"op\":\"struct.new\",\"typeIdx\":42},{\"op\":\"local.tee\",\"index\":54},{\"op\":\"local.get\",\"index\":66},{\"op\":\"local.get\",\"index\":65},{\"op\":\"local.get\",\"index\":67},{\"op\":\"local.get\",\"index\":5},{\"op\":\"local.get\",\"index\":121},{\"op\":\"struct.new\",\"typeIdx\":42},{\"op\":\"local.tee\",\"index\":55},{\"op\":\"call\",\"funcIdx\":41},{\"op\":\"call\",\"funcIdx\":2097393},{\"op\":\"local.set\",\"index\":56},{\"op\":\"local.tee\",\"index\":57},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1348},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":57},{\"op\":\"local.get\",\"index\":56},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":5}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"extern.convert_any\"},{\"op\":\"local.set\",\"index\":58},{\"op\":\"call\",\"funcIdx\":43},{\"op\":\"local.set\",\"index\":59},{\"op\":\"local.get\",\"index\":58},{\"op\":\"global.get\",\"index\":1281},{\"op\":\"local.get\",\"index\":59},{\"op\":\"call\",\"funcIdx\":45},{\"op\":\"drop\"},{\"op\":\"local.get\",\"index\":1}]) (at src/codegen/stack-balance.ts:274:13)"
+            "sample": "Codegen error: stack-balance invariant (entry): '__fnctor_Duration_new' references local 80, but only 1 params + 58 locals are declared (locals: 1:__self, 2:__fnctor_ctor_1, 3:normalizedInput, 4:years, 5:__nullchk_4, 6:__sd_any_5, 7:__sd_res_6, 8:__tmp_7, 9:quarters, 10:__nullchk_9, 11:__sd_any_10, 12:__sd_res_11, 13:months, 14:__nullchk_13, 15:__sd_any_14, 16:__sd_res_15, 17:weeks, 18:__nullchk_17, 19:__sd_any_18, 20:__sd_res_19, 21:__nullchk_20, 22:__sd_any_21, 23:__sd_res_22, 24:days, 25:__nullchk_24, 26:__sd_any_25, 27:__sd_res_26, 28:hours, 29:__nullchk_28, 30:__sd_any_29, 31:__sd_res_30, 32:minutes, 33:__nullchk_32, 34:__sd_any_33, 35:__sd_res_34, 36:seconds, 37:__nullchk_36, 38:__sd_any_37, 39:__sd_res_38, 40:milliseconds, 41:__nullchk_40, 42:__sd_any_41, 43:__sd_res_42, 44:__prop_assign_43, 45:__prop_recv_44, 46:__prop_assign_45, 47:__prop_recv_46, 48:__prop_assign_47, 49:__prop_recv_48, 50:__prop_assign_49, 51:__prop_recv_50, 52:__prop_assign_51, 53:__prop_recv_52, 54:__boxed_globalLocale, 55:__boxed_hookCallback, 56:__prop_assign_55, 57:__prop_recv_56, 58:__emc_recv_57; body: [{\"op\":\"i32.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"ref.null.extern\"},{\"op\":\"ref.null.extern\"},{\"op\":\"struct.new\",\"typeIdx\":189},{\"op\":\"local.set\",\"index\":1},{\"op\":\"global.get\",\"index\":1616},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"ref.func\",\"funcIdx\":2097514},{\"op\":\"i32.const\",\"value\":10},{\"op\":\"ref.null.extern\"},{\"op\":\"struct.new\",\"typeIdx\":191},{\"op\":\"extern.convert_any\"},{\"op\":\"global.set\",\"index\":1616}],\"else\":[]},{\"op\":\"global.get\",\"index\":1616},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.cast\",\"typeIdx\":191},{\"op\":\"extern.convert_any\"},{\"op\":\"local.set\",\"index\":2},{\"op\":\"local.get\",\"index\":1},{\"op\":\"extern.convert_any\"},{\"op\":\"local.get\",\"index\":2},{\"op\":\"call\",\"funcIdx\":82},{\"op\":\"local.get\",\"index\":17},{\"op\":\"local.get\",\"index\":0},{\"op\":\"call\",\"funcIdx\":2097240},{\"op\":\"local.tee\",\"index\":3},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1267},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":5},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097449},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":4},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":10},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1268},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":10},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":11},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097476},{\"op\":\"local.tee\",\"index\":12},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":9},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":14},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1269},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":14},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":15},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097450},{\"op\":\"local.tee\",\"index\":16},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":13},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":18},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1270},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":18},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":19},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097477},{\"op\":\"local.tee\",\"index\":20},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":21},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1271},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":21},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":22},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097478},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.tee\",\"index\":23},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":17},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":25},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1272},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":25},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":26},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097447},{\"op\":\"local.tee\",\"index\":27},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":24},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":29},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1273},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":29},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":30},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097451},{\"op\":\"local.tee\",\"index\":31},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":28},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":33},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1274},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":33},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":34},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097452},{\"op\":\"local.tee\",\"index\":35},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":32},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":37},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1275},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":37},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":38},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097453},{\"op\":\"local.tee\",\"index\":39},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":36},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":41},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1276},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":41},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":42},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097454},{\"op\":\"local.tee\",\"index\":43},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":40},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":80},{\"op\":\"local.get\",\"index\":50},{\"op\":\"local.get\",\"index\":3},{\"op\":\"call\",\"funcIdx\":2097472},{\"op\":\"local.set\",\"index\":44},{\"op\":\"local.tee\",\"index\":45},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1342},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":45},{\"op\":\"local.get\",\"index\":44},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":0}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":40},{\"op\":\"local.get\",\"index\":36},{\"op\":\"f64.const\",\"value\":1000},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":32},{\"op\":\"f64.const\",\"value\":60000},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":28},{\"op\":\"f64.const\",\"value\":1000},{\"op\":\"f64.mul\"},{\"op\":\"f64.const\",\"value\":60},{\"op\":\"f64.mul\"},{\"op\":\"f64.const\",\"value\":60},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":46},{\"op\":\"local.tee\",\"index\":47},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1343},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":47},{\"op\":\"local.get\",\"index\":46},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":1}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":24},{\"op\":\"local.get\",\"index\":17},{\"op\":\"f64.const\",\"value\":7},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":48},{\"op\":\"local.tee\",\"index\":49},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1344},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":49},{\"op\":\"local.get\",\"index\":48},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":2}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":13},{\"op\":\"local.get\",\"index\":9},{\"op\":\"f64.const\",\"value\":3},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":4},{\"op\":\"f64.const\",\"value\":12},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":50},{\"op\":\"local.tee\",\"index\":51},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1345},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":51},{\"op\":\"local.get\",\"index\":50},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":3}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":73},{\"op\":\"local.set\",\"index\":52},{\"op\":\"local.tee\",\"index\":53},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1346},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":53},{\"op\":\"local.get\",\"index\":52},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":4}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":68},{\"op\":\"struct.new\",\"typeIdx\":45},{\"op\":\"local.tee\",\"index\":54},{\"op\":\"local.get\",\"index\":66},{\"op\":\"local.get\",\"index\":65},{\"op\":\"local.get\",\"index\":67},{\"op\":\"local.get\",\"index\":5},{\"op\":\"local.get\",\"index\":121},{\"op\":\"struct.new\",\"typeIdx\":45},{\"op\":\"local.tee\",\"index\":55},{\"op\":\"call\",\"funcIdx\":41},{\"op\":\"call\",\"funcIdx\":2097394},{\"op\":\"local.set\",\"index\":56},{\"op\":\"local.tee\",\"index\":57},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1347},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":57},{\"op\":\"local.get\",\"index\":56},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":5}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"extern.convert_any\"},{\"op\":\"local.tee\",\"index\":58},{\"op\":\"global.get\",\"index\":1280},{\"op\":\"call\",\"funcIdx\":58},{\"op\":\"drop\"},{\"op\":\"local.get\",\"index\":1}]) (at src/codegen/stack-balance.ts:274:13)"
           }
         },
         "errors": [
           {
-            "message": "Codegen error: stack-balance invariant (entry): '__fnctor_Duration_new' references local 80, but only 1 params + 59 locals are declared (locals: 1:__self, 2:__fnctor_ctor_1, 3:normalizedInput, 4:years, 5:__nullchk_4, 6:__sd_any_5, 7:__sd_res_6, 8:__tmp_7, 9:quarters, 10:__nullchk_9, 11:__sd_any_10, 12:__sd_res_11, 13:months, 14:__nullchk_13, 15:__sd_any_14, 16:__sd_res_15, 17:weeks, 18:__nullchk_17, 19:__sd_any_18, 20:__sd_res_19, 21:__nullchk_20, 22:__sd_any_21, 23:__sd_res_22, 24:days, 25:__nullchk_24, 26:__sd_any_25, 27:__sd_res_26, 28:hours, 29:__nullchk_28, 30:__sd_any_29, 31:__sd_res_30, 32:minutes, 33:__nullchk_32, 34:__sd_any_33, 35:__sd_res_34, 36:seconds, 37:__nullchk_36, 38:__sd_any_37, 39:__sd_res_38, 40:milliseconds, 41:__nullchk_40, 42:__sd_any_41, 43:__sd_res_42, 44:__prop_assign_43, 45:__prop_recv_44, 46:__prop_assign_45, 47:__prop_recv_46, 48:__prop_assign_47, 49:__prop_recv_48, 50:__prop_assign_49, 51:__prop_recv_50, 52:__prop_assign_51, 53:__prop_recv_52, 54:__boxed_globalLocale, 55:__boxed_hookCallback, 56:__prop_assign_55, 57:__prop_recv_56, 58:__emc_recv_57, 59:__emc_args_58; body: [{\"op\":\"i32.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"ref.null.extern\"},{\"op\":\"ref.null.extern\"},{\"op\":\"struct.new\",\"typeIdx\":189},{\"op\":\"local.set\",\"index\":1},{\"op\":\"global.get\",\"index\":1617},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"ref.func\",\"funcIdx\":2097512},{\"op\":\"i32.const\",\"value\":10},{\"op\":\"struct.new\",\"typeIdx\":191},{\"op\":\"extern.convert_any\"},{\"op\":\"global.set\",\"index\":1617}],\"else\":[]},{\"op\":\"global.get\",\"index\":1617},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.cast\",\"typeIdx\":191},{\"op\":\"extern.convert_any\"},{\"op\":\"local.set\",\"index\":2},{\"op\":\"local.get\",\"index\":1},{\"op\":\"extern.convert_any\"},{\"op\":\"local.get\",\"index\":2},{\"op\":\"call\",\"funcIdx\":77},{\"op\":\"local.get\",\"index\":17},{\"op\":\"local.get\",\"index\":0},{\"op\":\"call\",\"funcIdx\":2097239},{\"op\":\"local.tee\",\"index\":3},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1268},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":5},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097448},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1687}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":4},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":10},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1269},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":10},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":11},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097474},{\"op\":\"local.tee\",\"index\":12},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1687}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":9},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":14},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1270},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":14},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":15},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097449},{\"op\":\"local.tee\",\"index\":16},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1687}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":13},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":18},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1271},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":18},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":19},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097475},{\"op\":\"local.tee\",\"index\":20},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":21},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1272},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":21},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":22},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097476},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.tee\",\"index\":23},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1687}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":17},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":25},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1273},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":25},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":26},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097446},{\"op\":\"local.tee\",\"index\":27},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1687}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":24},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":29},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1274},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":29},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":30},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097450},{\"op\":\"local.tee\",\"index\":31},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1687}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":28},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":33},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1275},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":33},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":34},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097451},{\"op\":\"local.tee\",\"index\":35},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1687}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":32},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":37},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1276},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":37},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":38},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097452},{\"op\":\"local.tee\",\"index\":39},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1687}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":36},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":41},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1277},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":41},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":42},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097453},{\"op\":\"local.tee\",\"index\":43},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1687}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":40},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":80},{\"op\":\"local.get\",\"index\":50},{\"op\":\"local.get\",\"index\":3},{\"op\":\"call\",\"funcIdx\":2097470},{\"op\":\"local.set\",\"index\":44},{\"op\":\"local.tee\",\"index\":45},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1343},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":45},{\"op\":\"local.get\",\"index\":44},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":0}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":40},{\"op\":\"local.get\",\"index\":36},{\"op\":\"f64.const\",\"value\":1000},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":32},{\"op\":\"f64.const\",\"value\":60000},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":28},{\"op\":\"f64.const\",\"value\":1000},{\"op\":\"f64.mul\"},{\"op\":\"f64.const\",\"value\":60},{\"op\":\"f64.mul\"},{\"op\":\"f64.const\",\"value\":60},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":46},{\"op\":\"local.tee\",\"index\":47},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1344},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":47},{\"op\":\"local.get\",\"index\":46},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":1}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":24},{\"op\":\"local.get\",\"index\":17},{\"op\":\"f64.const\",\"value\":7},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":48},{\"op\":\"local.tee\",\"index\":49},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1345},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":49},{\"op\":\"local.get\",\"index\":48},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":2}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":13},{\"op\":\"local.get\",\"index\":9},{\"op\":\"f64.const\",\"value\":3},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":4},{\"op\":\"f64.const\",\"value\":12},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":50},{\"op\":\"local.tee\",\"index\":51},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1346},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":51},{\"op\":\"local.get\",\"index\":50},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":3}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":69},{\"op\":\"local.set\",\"index\":52},{\"op\":\"local.tee\",\"index\":53},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1347},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":53},{\"op\":\"local.get\",\"index\":52},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":4}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":68},{\"op\":\"struct.new\",\"typeIdx\":42},{\"op\":\"local.tee\",\"index\":54},{\"op\":\"local.get\",\"index\":66},{\"op\":\"local.get\",\"index\":65},{\"op\":\"local.get\",\"index\":67},{\"op\":\"local.get\",\"index\":5},{\"op\":\"local.get\",\"index\":121},{\"op\":\"struct.new\",\"typeIdx\":42},{\"op\":\"local.tee\",\"index\":55},{\"op\":\"call\",\"funcIdx\":41},{\"op\":\"call\",\"funcIdx\":2097393},{\"op\":\"local.set\",\"index\":56},{\"op\":\"local.tee\",\"index\":57},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1348},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":57},{\"op\":\"local.get\",\"index\":56},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":5}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"extern.convert_any\"},{\"op\":\"local.set\",\"index\":58},{\"op\":\"call\",\"funcIdx\":43},{\"op\":\"local.set\",\"index\":59},{\"op\":\"local.get\",\"index\":58},{\"op\":\"global.get\",\"index\":1281},{\"op\":\"local.get\",\"index\":59},{\"op\":\"call\",\"funcIdx\":45},{\"op\":\"drop\"},{\"op\":\"local.get\",\"index\":1}]) (at src/codegen/stack-balance.ts:274:13)"
+            "message": "Codegen error: stack-balance invariant (entry): '__fnctor_Duration_new' references local 80, but only 1 params + 58 locals are declared (locals: 1:__self, 2:__fnctor_ctor_1, 3:normalizedInput, 4:years, 5:__nullchk_4, 6:__sd_any_5, 7:__sd_res_6, 8:__tmp_7, 9:quarters, 10:__nullchk_9, 11:__sd_any_10, 12:__sd_res_11, 13:months, 14:__nullchk_13, 15:__sd_any_14, 16:__sd_res_15, 17:weeks, 18:__nullchk_17, 19:__sd_any_18, 20:__sd_res_19, 21:__nullchk_20, 22:__sd_any_21, 23:__sd_res_22, 24:days, 25:__nullchk_24, 26:__sd_any_25, 27:__sd_res_26, 28:hours, 29:__nullchk_28, 30:__sd_any_29, 31:__sd_res_30, 32:minutes, 33:__nullchk_32, 34:__sd_any_33, 35:__sd_res_34, 36:seconds, 37:__nullchk_36, 38:__sd_any_37, 39:__sd_res_38, 40:milliseconds, 41:__nullchk_40, 42:__sd_any_41, 43:__sd_res_42, 44:__prop_assign_43, 45:__prop_recv_44, 46:__prop_assign_45, 47:__prop_recv_46, 48:__prop_assign_47, 49:__prop_recv_48, 50:__prop_assign_49, 51:__prop_recv_50, 52:__prop_assign_51, 53:__prop_recv_52, 54:__boxed_globalLocale, 55:__boxed_hookCallback, 56:__prop_assign_55, 57:__prop_recv_56, 58:__emc_recv_57; body: [{\"op\":\"i32.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"ref.null.extern\"},{\"op\":\"ref.null.extern\"},{\"op\":\"struct.new\",\"typeIdx\":189},{\"op\":\"local.set\",\"index\":1},{\"op\":\"global.get\",\"index\":1616},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"ref.func\",\"funcIdx\":2097514},{\"op\":\"i32.const\",\"value\":10},{\"op\":\"ref.null.extern\"},{\"op\":\"struct.new\",\"typeIdx\":191},{\"op\":\"extern.convert_any\"},{\"op\":\"global.set\",\"index\":1616}],\"else\":[]},{\"op\":\"global.get\",\"index\":1616},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.cast\",\"typeIdx\":191},{\"op\":\"extern.convert_any\"},{\"op\":\"local.set\",\"index\":2},{\"op\":\"local.get\",\"index\":1},{\"op\":\"extern.convert_any\"},{\"op\":\"local.get\",\"index\":2},{\"op\":\"call\",\"funcIdx\":82},{\"op\":\"local.get\",\"index\":17},{\"op\":\"local.get\",\"index\":0},{\"op\":\"call\",\"funcIdx\":2097240},{\"op\":\"local.tee\",\"index\":3},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1267},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":5},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097449},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":4},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":10},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1268},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":10},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":11},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097476},{\"op\":\"local.tee\",\"index\":12},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":9},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":14},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1269},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":14},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":15},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097450},{\"op\":\"local.tee\",\"index\":16},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":13},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":18},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1270},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":18},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":19},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097477},{\"op\":\"local.tee\",\"index\":20},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":21},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1271},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":21},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":22},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097478},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.tee\",\"index\":23},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":17},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":25},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1272},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":25},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":26},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097447},{\"op\":\"local.tee\",\"index\":27},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":24},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":29},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1273},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":29},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":30},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097451},{\"op\":\"local.tee\",\"index\":31},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":28},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":33},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1274},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":33},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":34},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097452},{\"op\":\"local.tee\",\"index\":35},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":32},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":37},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1275},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":37},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":38},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097453},{\"op\":\"local.tee\",\"index\":39},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":36},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":41},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1276},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":41},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":42},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097454},{\"op\":\"local.tee\",\"index\":43},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":40},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":80},{\"op\":\"local.get\",\"index\":50},{\"op\":\"local.get\",\"index\":3},{\"op\":\"call\",\"funcIdx\":2097472},{\"op\":\"local.set\",\"index\":44},{\"op\":\"local.tee\",\"index\":45},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1342},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":45},{\"op\":\"local.get\",\"index\":44},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":0}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":40},{\"op\":\"local.get\",\"index\":36},{\"op\":\"f64.const\",\"value\":1000},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":32},{\"op\":\"f64.const\",\"value\":60000},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":28},{\"op\":\"f64.const\",\"value\":1000},{\"op\":\"f64.mul\"},{\"op\":\"f64.const\",\"value\":60},{\"op\":\"f64.mul\"},{\"op\":\"f64.const\",\"value\":60},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":46},{\"op\":\"local.tee\",\"index\":47},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1343},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":47},{\"op\":\"local.get\",\"index\":46},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":1}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":24},{\"op\":\"local.get\",\"index\":17},{\"op\":\"f64.const\",\"value\":7},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":48},{\"op\":\"local.tee\",\"index\":49},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1344},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":49},{\"op\":\"local.get\",\"index\":48},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":2}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":13},{\"op\":\"local.get\",\"index\":9},{\"op\":\"f64.const\",\"value\":3},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":4},{\"op\":\"f64.const\",\"value\":12},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":50},{\"op\":\"local.tee\",\"index\":51},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1345},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":51},{\"op\":\"local.get\",\"index\":50},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":3}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":73},{\"op\":\"local.set\",\"index\":52},{\"op\":\"local.tee\",\"index\":53},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1346},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":53},{\"op\":\"local.get\",\"index\":52},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":4}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":68},{\"op\":\"struct.new\",\"typeIdx\":45},{\"op\":\"local.tee\",\"index\":54},{\"op\":\"local.get\",\"index\":66},{\"op\":\"local.get\",\"index\":65},{\"op\":\"local.get\",\"index\":67},{\"op\":\"local.get\",\"index\":5},{\"op\":\"local.get\",\"index\":121},{\"op\":\"struct.new\",\"typeIdx\":45},{\"op\":\"local.tee\",\"index\":55},{\"op\":\"call\",\"funcIdx\":41},{\"op\":\"call\",\"funcIdx\":2097394},{\"op\":\"local.set\",\"index\":56},{\"op\":\"local.tee\",\"index\":57},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1347},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":57},{\"op\":\"local.get\",\"index\":56},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":5}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"extern.convert_any\"},{\"op\":\"local.tee\",\"index\":58},{\"op\":\"global.get\",\"index\":1280},{\"op\":\"call\",\"funcIdx\":58},{\"op\":\"drop\"},{\"op\":\"local.get\",\"index\":1}]) (at src/codegen/stack-balance.ts:274:13)"
           }
         ]
       },
       "validation": {
         "validates": false,
-        "firstError": "Codegen error: stack-balance invariant (entry): '__fnctor_Duration_new' references local 80, but only 1 params + 59 locals are declared (locals: 1:__self, 2:__fnctor_ctor_1, 3:normalizedInput, 4:years, 5:__nullchk_4, 6:__sd_any_5, 7:__sd_res_6, 8:__tmp_7, 9:quarters, 10:__nullchk_9, 11:__sd_any_10, 12:__sd_res_11, 13:months, 14:__nullchk_13, 15:__sd_any_14, 16:__sd_res_15, 17:weeks, 18:__nullchk_17, 19:__sd_any_18, 20:__sd_res_19, 21:__nullchk_20, 22:__sd_any_21, 23:__sd_res_22, 24:days, 25:__nullchk_24, 26:__sd_any_25, 27:__sd_res_26, 28:hours, 29:__nullchk_28, 30:__sd_any_29, 31:__sd_res_30, 32:minutes, 33:__nullchk_32, 34:__sd_any_33, 35:__sd_res_34, 36:seconds, 37:__nullchk_36, 38:__sd_any_37, 39:__sd_res_38, 40:milliseconds, 41:__nullchk_40, 42:__sd_any_41, 43:__sd_res_42, 44:__prop_assign_43, 45:__prop_recv_44, 46:__prop_assign_45, 47:__prop_recv_46, 48:__prop_assign_47, 49:__prop_recv_48, 50:__prop_assign_49, 51:__prop_recv_50, 52:__prop_assign_51, 53:__prop_recv_52, 54:__boxed_globalLocale, 55:__boxed_hookCallback, 56:__prop_assign_55, 57:__prop_recv_56, 58:__emc_recv_57, 59:__emc_args_58; body: [{\"op\":\"i32.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"ref.null.extern\"},{\"op\":\"ref.null.extern\"},{\"op\":\"struct.new\",\"typeIdx\":189},{\"op\":\"local.set\",\"index\":1},{\"op\":\"global.get\",\"index\":1617},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"ref.func\",\"funcIdx\":2097512},{\"op\":\"i32.const\",\"value\":10},{\"op\":\"struct.new\",\"typeIdx\":191},{\"op\":\"extern.convert_any\"},{\"op\":\"global.set\",\"index\":1617}],\"else\":[]},{\"op\":\"global.get\",\"index\":1617},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.cast\",\"typeIdx\":191},{\"op\":\"extern.convert_any\"},{\"op\":\"local.set\",\"index\":2},{\"op\":\"local.get\",\"index\":1},{\"op\":\"extern.convert_any\"},{\"op\":\"local.get\",\"index\":2},{\"op\":\"call\",\"funcIdx\":77},{\"op\":\"local.get\",\"index\":17},{\"op\":\"local.get\",\"index\":0},{\"op\":\"call\",\"funcIdx\":2097239},{\"op\":\"local.tee\",\"index\":3},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1268},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":5},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097448},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1687}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":4},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":10},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1269},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":10},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":11},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097474},{\"op\":\"local.tee\",\"index\":12},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1687}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":9},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":14},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1270},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":14},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":15},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097449},{\"op\":\"local.tee\",\"index\":16},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1687}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":13},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":18},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1271},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":18},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":19},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097475},{\"op\":\"local.tee\",\"index\":20},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":21},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1272},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":21},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":22},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097476},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.tee\",\"index\":23},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1687}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":17},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":25},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1273},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":25},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":26},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097446},{\"op\":\"local.tee\",\"index\":27},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1687}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":24},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":29},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1274},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":29},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":30},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097450},{\"op\":\"local.tee\",\"index\":31},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1687}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":28},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":33},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1275},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":33},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":34},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097451},{\"op\":\"local.tee\",\"index\":35},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1687}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":32},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":37},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1276},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":37},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":38},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097452},{\"op\":\"local.tee\",\"index\":39},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1687}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":36},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":41},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1277},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":41},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":42},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097453},{\"op\":\"local.tee\",\"index\":43},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1687}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":40},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":80},{\"op\":\"local.get\",\"index\":50},{\"op\":\"local.get\",\"index\":3},{\"op\":\"call\",\"funcIdx\":2097470},{\"op\":\"local.set\",\"index\":44},{\"op\":\"local.tee\",\"index\":45},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1343},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":45},{\"op\":\"local.get\",\"index\":44},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":0}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":40},{\"op\":\"local.get\",\"index\":36},{\"op\":\"f64.const\",\"value\":1000},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":32},{\"op\":\"f64.const\",\"value\":60000},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":28},{\"op\":\"f64.const\",\"value\":1000},{\"op\":\"f64.mul\"},{\"op\":\"f64.const\",\"value\":60},{\"op\":\"f64.mul\"},{\"op\":\"f64.const\",\"value\":60},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":46},{\"op\":\"local.tee\",\"index\":47},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1344},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":47},{\"op\":\"local.get\",\"index\":46},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":1}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":24},{\"op\":\"local.get\",\"index\":17},{\"op\":\"f64.const\",\"value\":7},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":48},{\"op\":\"local.tee\",\"index\":49},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1345},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":49},{\"op\":\"local.get\",\"index\":48},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":2}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":13},{\"op\":\"local.get\",\"index\":9},{\"op\":\"f64.const\",\"value\":3},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":4},{\"op\":\"f64.const\",\"value\":12},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":50},{\"op\":\"local.tee\",\"index\":51},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1346},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":51},{\"op\":\"local.get\",\"index\":50},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":3}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":69},{\"op\":\"local.set\",\"index\":52},{\"op\":\"local.tee\",\"index\":53},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1347},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":53},{\"op\":\"local.get\",\"index\":52},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":4}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":68},{\"op\":\"struct.new\",\"typeIdx\":42},{\"op\":\"local.tee\",\"index\":54},{\"op\":\"local.get\",\"index\":66},{\"op\":\"local.get\",\"index\":65},{\"op\":\"local.get\",\"index\":67},{\"op\":\"local.get\",\"index\":5},{\"op\":\"local.get\",\"index\":121},{\"op\":\"struct.new\",\"typeIdx\":42},{\"op\":\"local.tee\",\"index\":55},{\"op\":\"call\",\"funcIdx\":41},{\"op\":\"call\",\"funcIdx\":2097393},{\"op\":\"local.set\",\"index\":56},{\"op\":\"local.tee\",\"index\":57},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1348},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":57},{\"op\":\"local.get\",\"index\":56},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":5}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"extern.convert_any\"},{\"op\":\"local.set\",\"index\":58},{\"op\":\"call\",\"funcIdx\":43},{\"op\":\"local.set\",\"index\":59},{\"op\":\"local.get\",\"index\":58},{\"op\":\"global.get\",\"index\":1281},{\"op\":\"local.get\",\"index\":59},{\"op\":\"call\",\"funcIdx\":45},{\"op\":\"drop\"},{\"op\":\"local.get\",\"index\":1}]) (at src/codegen/stack-balance.ts:274:13)"
+        "firstError": "Codegen error: stack-balance invariant (entry): '__fnctor_Duration_new' references local 80, but only 1 params + 58 locals are declared (locals: 1:__self, 2:__fnctor_ctor_1, 3:normalizedInput, 4:years, 5:__nullchk_4, 6:__sd_any_5, 7:__sd_res_6, 8:__tmp_7, 9:quarters, 10:__nullchk_9, 11:__sd_any_10, 12:__sd_res_11, 13:months, 14:__nullchk_13, 15:__sd_any_14, 16:__sd_res_15, 17:weeks, 18:__nullchk_17, 19:__sd_any_18, 20:__sd_res_19, 21:__nullchk_20, 22:__sd_any_21, 23:__sd_res_22, 24:days, 25:__nullchk_24, 26:__sd_any_25, 27:__sd_res_26, 28:hours, 29:__nullchk_28, 30:__sd_any_29, 31:__sd_res_30, 32:minutes, 33:__nullchk_32, 34:__sd_any_33, 35:__sd_res_34, 36:seconds, 37:__nullchk_36, 38:__sd_any_37, 39:__sd_res_38, 40:milliseconds, 41:__nullchk_40, 42:__sd_any_41, 43:__sd_res_42, 44:__prop_assign_43, 45:__prop_recv_44, 46:__prop_assign_45, 47:__prop_recv_46, 48:__prop_assign_47, 49:__prop_recv_48, 50:__prop_assign_49, 51:__prop_recv_50, 52:__prop_assign_51, 53:__prop_recv_52, 54:__boxed_globalLocale, 55:__boxed_hookCallback, 56:__prop_assign_55, 57:__prop_recv_56, 58:__emc_recv_57; body: [{\"op\":\"i32.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"ref.null.extern\"},{\"op\":\"ref.null.extern\"},{\"op\":\"struct.new\",\"typeIdx\":189},{\"op\":\"local.set\",\"index\":1},{\"op\":\"global.get\",\"index\":1616},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"ref.func\",\"funcIdx\":2097514},{\"op\":\"i32.const\",\"value\":10},{\"op\":\"ref.null.extern\"},{\"op\":\"struct.new\",\"typeIdx\":191},{\"op\":\"extern.convert_any\"},{\"op\":\"global.set\",\"index\":1616}],\"else\":[]},{\"op\":\"global.get\",\"index\":1616},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.cast\",\"typeIdx\":191},{\"op\":\"extern.convert_any\"},{\"op\":\"local.set\",\"index\":2},{\"op\":\"local.get\",\"index\":1},{\"op\":\"extern.convert_any\"},{\"op\":\"local.get\",\"index\":2},{\"op\":\"call\",\"funcIdx\":82},{\"op\":\"local.get\",\"index\":17},{\"op\":\"local.get\",\"index\":0},{\"op\":\"call\",\"funcIdx\":2097240},{\"op\":\"local.tee\",\"index\":3},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1267},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":5},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097449},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":4},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":10},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1268},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":10},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":11},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097476},{\"op\":\"local.tee\",\"index\":12},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":9},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":14},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1269},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":14},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":15},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097450},{\"op\":\"local.tee\",\"index\":16},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":13},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":18},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1270},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":18},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":19},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097477},{\"op\":\"local.tee\",\"index\":20},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":21},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1271},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":21},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":22},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097478},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.tee\",\"index\":23},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":17},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":25},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1272},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":25},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":26},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097447},{\"op\":\"local.tee\",\"index\":27},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":24},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":29},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1273},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":29},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":30},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097451},{\"op\":\"local.tee\",\"index\":31},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":28},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":33},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1274},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":33},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":34},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097452},{\"op\":\"local.tee\",\"index\":35},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":32},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":37},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1275},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":37},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":38},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097453},{\"op\":\"local.tee\",\"index\":39},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":36},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":41},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1276},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":41},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":42},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097454},{\"op\":\"local.tee\",\"index\":43},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":40},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":80},{\"op\":\"local.get\",\"index\":50},{\"op\":\"local.get\",\"index\":3},{\"op\":\"call\",\"funcIdx\":2097472},{\"op\":\"local.set\",\"index\":44},{\"op\":\"local.tee\",\"index\":45},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1342},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":45},{\"op\":\"local.get\",\"index\":44},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":0}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":40},{\"op\":\"local.get\",\"index\":36},{\"op\":\"f64.const\",\"value\":1000},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":32},{\"op\":\"f64.const\",\"value\":60000},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":28},{\"op\":\"f64.const\",\"value\":1000},{\"op\":\"f64.mul\"},{\"op\":\"f64.const\",\"value\":60},{\"op\":\"f64.mul\"},{\"op\":\"f64.const\",\"value\":60},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":46},{\"op\":\"local.tee\",\"index\":47},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1343},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":47},{\"op\":\"local.get\",\"index\":46},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":1}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":24},{\"op\":\"local.get\",\"index\":17},{\"op\":\"f64.const\",\"value\":7},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":48},{\"op\":\"local.tee\",\"index\":49},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1344},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":49},{\"op\":\"local.get\",\"index\":48},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":2}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":13},{\"op\":\"local.get\",\"index\":9},{\"op\":\"f64.const\",\"value\":3},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":4},{\"op\":\"f64.const\",\"value\":12},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":50},{\"op\":\"local.tee\",\"index\":51},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1345},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":51},{\"op\":\"local.get\",\"index\":50},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":3}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":73},{\"op\":\"local.set\",\"index\":52},{\"op\":\"local.tee\",\"index\":53},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1346},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":53},{\"op\":\"local.get\",\"index\":52},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":4}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":68},{\"op\":\"struct.new\",\"typeIdx\":45},{\"op\":\"local.tee\",\"index\":54},{\"op\":\"local.get\",\"index\":66},{\"op\":\"local.get\",\"index\":65},{\"op\":\"local.get\",\"index\":67},{\"op\":\"local.get\",\"index\":5},{\"op\":\"local.get\",\"index\":121},{\"op\":\"struct.new\",\"typeIdx\":45},{\"op\":\"local.tee\",\"index\":55},{\"op\":\"call\",\"funcIdx\":41},{\"op\":\"call\",\"funcIdx\":2097394},{\"op\":\"local.set\",\"index\":56},{\"op\":\"local.tee\",\"index\":57},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1347},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":57},{\"op\":\"local.get\",\"index\":56},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":5}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"extern.convert_any\"},{\"op\":\"local.tee\",\"index\":58},{\"op\":\"global.get\",\"index\":1280},{\"op\":\"call\",\"funcIdx\":58},{\"op\":\"drop\"},{\"op\":\"local.get\",\"index\":1}]) (at src/codegen/stack-balance.ts:274:13)"
       },
       "tests": {
         "kind": "upstream-suite",
@@ -1425,7 +1479,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": false,
-        "durationMs": 180102,
+        "durationMs": 180097,
         "timedOut": true,
         "timeoutMs": 180000,
         "errorCount": 0,
@@ -1462,16 +1516,16 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 7356,
+        "durationMs": 7245,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
-        "binaryBytes": 204414,
+        "binaryBytes": 243668,
         "categories": {}
       },
       "validation": {
         "validates": false,
-        "firstError": "WebAssembly.Module(): Compiling function #216:\"nt\" failed: local.tee[0] expected type (ref null 208), found local.get of type i32 @+102100"
+        "firstError": "WebAssembly.Module(): Compiling function #224:\"nt\" failed: local.tee[0] expected type (ref null 229), found local.get of type i32 @+115211"
       },
       "tests": {
         "kind": "upstream-suite",
@@ -1494,41 +1548,26 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 9597,
+        "durationMs": 7957,
         "timedOut": false,
         "timeoutMs": 120000,
-        "errorCount": 6,
+        "errorCount": 1,
         "binaryBytes": 0,
         "categories": {
           "compiler-diagnostic": {
-            "count": 6,
-            "sample": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
+            "count": 1,
+            "sample": "Codegen error: inherited class callable Hookified_once has no exact canonical class unit (at src/codegen/program-abi-class-callable-planning.ts:282:13)"
           }
         },
         "errors": [
           {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "async shape not supported: this suspension point (await / for-await) sits inside a `try` whose overall body shape the async engine cannot drive yet, and the synchronous fallback would SILENTLY drop awaited rejections (execution would continue past a rejected await; catch/finally would not run). Restructure toward canonical awaits — top-level `await p` / `const x = await p` / `return await p` statements, try/catch(/finally) without awaits in loops/conditions inside the try — or hoist the await out of the try (#3587)"
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "IR path: could not resolve types for loadExtendedConfig: object TypeNode TypeReference could not be lowered to IrType.object"
-          },
-          {
-            "message": "IR path: could not resolve types for warnDeprecatedRule: object TypeNode TypeReference could not be lowered to IrType.object"
+            "message": "Codegen error: inherited class callable Hookified_once has no exact canonical class unit (at src/codegen/program-abi-class-callable-planning.ts:282:13)"
           }
         ]
       },
       "validation": {
         "validates": false,
-        "firstError": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
+        "firstError": "Codegen error: inherited class callable Hookified_once has no exact canonical class unit (at src/codegen/program-abi-class-callable-planning.ts:282:13)"
       },
       "tests": {
         "kind": "upstream-suite",
@@ -1551,34 +1590,34 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 1724,
+        "durationMs": 3256,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
-        "binaryBytes": 201,
+        "binaryBytes": 82421,
         "categories": {}
       },
       "validation": {
-        "validates": true,
-        "firstError": null
+        "validates": false,
+        "firstError": "WebAssembly.Module(): Compiling function #93:\"y_addInitializer\" failed: local.tee[0] expected type (ref null 2), found f64.const of type f64 @+25003"
       },
       "entryIsBarrel": true,
       "tests": {
         "kind": "upstream-suite",
         "passed": 8,
-        "total": 16,
-        "passRatePct": 50,
+        "total": 57,
+        "passRatePct": 14.04,
         "admitted": 583,
         "upstreamTestsSeen": 587,
-        "harnessIncompatible": 557,
+        "harnessIncompatible": 516,
         "implementationInvalidTests": 448,
         "sourceIssue": 3977
       },
       "correctness": {
         "status": "divergent",
         "passed": 8,
-        "total": 16,
-        "reason": "8 of 16 operations diverged from native node"
+        "total": 57,
+        "reason": "49 of 57 operations diverged from native node"
       },
       "perf": null,
       "knownBugs": [],

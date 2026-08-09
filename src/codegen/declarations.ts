@@ -106,6 +106,7 @@ import {
   pushProgramAbiTopLevelCallable,
 } from "./program-abi-source-callable-planning.js";
 import { heterogeneousWidenedModuleGlobalType } from "./declarations/heterogeneous-scalar-var-widening.js";
+import { withBodyHoistedModuleVarNames } from "./declarations/with-body-var-hoisting.js";
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import { prepareModuleTdzGlobals, registerModuleGlobal } from "./module-global-registration.js";
 import { annexBModuleGlobalSeedsFromTopLevel } from "./annexb-global-live-binding.js";
@@ -1753,6 +1754,15 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       ctx.externrefAccessorVars.add(decl.name.text);
       return { kind: "externref" };
     }
+    // (#4264) A `var` DECLARED inside a `with` body may never be written at all
+    // — §14.11.2 consults the object environment first, so when the target owns
+    // the name the store goes to the object and the hoisted binding keeps its
+    // initial `undefined`. A primitive slot cannot represent that value; widen
+    // it. See `with-body-var-hoisting.ts` for the full argument and the seed
+    // that gives the slot its `undefined` at `__module_init` entry.
+    if (ts.isIdentifier(decl.name) && withBodyHoistedModuleVarNames(sourceFile).has(decl.name.text)) {
+      return { kind: "externref" };
+    }
     // #1914 — `var m = re.exec(s)` under standalone gets the precise
     // match-vec ref type so indexed reads stay on the static vec path
     // (externref-widened globals round-trip through __extern_get_idx,
@@ -2772,6 +2782,25 @@ export function compileDeclarations(
       savedBodies: [],
     };
     ctx.currentFunc = initFctx;
+
+    // (#4264) §10.2.11: a `var` hoisted out of a `with` body is instantiated at
+    // script entry with the value `undefined`. A module global's constant init
+    // can only be `ref.null.extern`, which the standalone lane does NOT read as
+    // `undefined` — so seed the tag-1 singleton here, exactly as the #4182
+    // Annex B block-function binding below does, and for the same reason. Host
+    // mode is excluded on the same grounds: there `undefined` IS the null
+    // extern, and the singleton would surface to host helpers as an object.
+    if (ctx.standalone || ctx.wasi) {
+      const seededWithVars = new Set<number>();
+      for (const withVarName of withBodyHoistedModuleVarNames(sourceFile)) {
+        const withVarGlobalIdx = ctx.moduleGlobals.get(withVarName);
+        if (withVarGlobalIdx === undefined || seededWithVars.has(withVarGlobalIdx)) continue;
+        if (ctx.mod.globals[localGlobalIdx(ctx, withVarGlobalIdx)]?.type.kind !== "externref") continue;
+        if (!emitUndefinedExtern(ctx, initFctx)) continue;
+        initFctx.body.push({ op: "global.set", index: withVarGlobalIdx });
+        seededWithVars.add(withVarGlobalIdx);
+      }
+    }
 
     // (#2931) Seed each reassigned-function live-binding global with the
     // function's closure BEFORE any user init statement runs, so a read of the

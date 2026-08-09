@@ -73,8 +73,8 @@ function inventoryFixture(source: string, rows: unknown[], options: { marker?: b
 describe("#3792 IR optimization retirement ledger gate", () => {
   it("accepts the committed ledger and reports a non-empty measured inventory", () => {
     const summary = checkLedgerFile("plan/log/ir-optimization-retirement-ledger.md");
-    expect(summary.rows).toBe(22);
-    expect(summary.complete).toBe(11);
+    expect(summary.rows).toBe(37);
+    expect(summary.complete).toBe(24);
     expect(summary.retirementReady).toBe(1);
     expect(summary.sourceAnchors).toBe(2);
     expect(summary.sourceInventoryVersion).toBe("v1");
@@ -367,7 +367,7 @@ function malformedOptimization() {}
       { encoding: "utf8" },
     );
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("21/22 rows are not ready");
+    expect(result.stderr).toContain("36/37 rows are not ready");
     expect(result.stderr).toContain("IR-OPT-NUMERIC-SWITCH-PROOF");
   });
 });

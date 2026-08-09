@@ -804,10 +804,10 @@ export interface FunctionContext {
   derivedStringArrayLengthLocals?: Map<ts.Symbol, number>;
   /** Static split arrays whose identity and elements are observed only by proven nested length reads. */
   derivedStaticSplitArrays?: Map<ts.Symbol, { length: number }>;
-  /** Scalar descriptors for const substring results with no identity escape. */
+  /** Scalar descriptors for const derived strings with no identity escape. */
   derivedSubstringReads?: Map<
-    ts.Symbol,
-    | { kind: "native"; dataLocal: number; offLocal: number; lenLocal: number; minLen: number }
+    ts.Declaration,
+    | { kind: "native" | "lower" | "upper"; dataLocal: number; offLocal: number; lenLocal: number; minLen: number }
     | { kind: "host"; receiverLocal: number; offLocal: number; lenLocal: number; minLen: number }
   >;
   /**
@@ -1459,6 +1459,23 @@ export interface CodegenContext {
    * emission, no runtime guard.
    */
   vecIndexDeleteDirty: boolean;
+  /**
+   * (#4230 L1) The module mentions a descriptor-defining or own-name-reading
+   * `Object`/`Reflect` builtin — `defineProperty`, `defineProperties`, a
+   * two-argument `create`, `getOwnPropertyNames`, `ownKeys`,
+   * `getOwnPropertyDescriptors`. Consumer: `vec-overlay-keys.ts`, which unions
+   * the #3251 overlay companion into `Object.keys` / for-in /
+   * `getOwnPropertyNames` and gives the last of those the `$__vec_base` arm it
+   * never had.
+   *
+   * Deliberately NOT folded into `vecAccessorDescriptorDirty`: that flag is
+   * set only for a NON-data descriptor (#4159 needs it for the accessor
+   * write-back hole), while a plain `defineProperty(arr, "p", {value: 12})`
+   * lands a named expando in the overlay that must still enumerate. Clear ⇒ not
+   * one instruction, local, type or function is added, so a module that never
+   * asks about own keys is byte-identical.
+   */
+  vecOwnKeysDirty: boolean;
   /**
    * (#4159/#4160) `eval` / `Function` present ⇒ forces BOTH flags above.
    * Load-bearing: static eval inlining (#1163) splices statements in during

@@ -29,14 +29,21 @@ The field consensus for AOT source→Wasm compilers, captured as recommendation
 - The linear backend's allocator is a **bump/arena**: `__malloc` advances a
   single `__heap_ptr` global (8-byte aligned) and **frees nothing**.
   Reclamation happens implicitly when the Wasm instance is dropped — the
-  allocate-and-exit model. This is the **default and only** mode (#1856).
+  allocate-and-exit model. This remains the **default** mode (#1856).
 - `__malloc` **grows linear memory on demand** (`memory.grow`) when a request
   would exceed the current pages, so the arena is usable for non-trivial
   programs rather than silently overflowing the initial 64 KiB page.
 - An opt-in `allocator: "arena-reset"` (`--allocator arena-reset`) adds
   `__arena_reset()` (O(1) rewind of the whole arena) and `__arena_used()` for
-  embedders that reuse one instance across many short-lived tasks. Off by
-  default so the common case pays nothing.
+  embedders that reuse one instance across many short-lived tasks. It also
+  reclaims automatically at eligible host-call boundaries: when every export
+  has primitive parameters/results and every module global is primitive, a
+  wrapper rewinds immediately before entering each exported function. Internal
+  calls target the unwrapped function and never rewind a live caller's arena.
+- Eligibility is deliberately module-wide. Any aggregate export boundary or
+  heap-backed module global disables automatic rewinds for all exports, keeping
+  returned or escaped pointers live. The explicit management exports remain
+  available for embedders that can establish those lifetimes themselves.
 - We **do not** ship a pluggable GC abstraction. If reclamation within a
   single long-lived run is ever genuinely needed, we will commit to **one**
   fixed strategy (tracing, or RC-with-a-cycle-collector) — chosen and recorded
@@ -47,8 +54,12 @@ The field consensus for AOT source→Wasm compilers, captured as recommendation
 ## Consequences
 
 - Smallest-binary, fastest path for standalone/WASI programs; the bump
-  runtime is ~135 bytes and adds no per-allocation metadata. The
-  `arena-reset` exports cost ~86 bytes and only when requested.
+  runtime is ~135 bytes and adds no per-allocation metadata. The reset runtime
+  and one small wrapper per eligible export are emitted only when requested.
+- Automatic reset preserves a completed call's arena until the next eligible
+  host call begins. It does not reclaim within one call; workloads that exhaust
+  memory inside a single invocation still need an algorithmic fix or a future
+  fixed collection strategy.
 - No cycle-collection or fragmentation handling on the linear backend — by
   design. Workloads that need that target the WasmGC backend instead.
 - The "one fixed strategy, decided later" stance keeps the door open without

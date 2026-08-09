@@ -41,6 +41,7 @@ import { bindingHasMixedAssignmentCarrier } from "../analysis/mixed-assignment-c
 import { staticConstStringValues } from "../analysis/static-string-values.js";
 import { staticIntegerRange } from "../analysis/static-numeric-range.js";
 import { tryEmitStaticI32Expression } from "../i32-static-range-expr.js";
+import { tryCompileDerivedAsciiCaseBinding as tryAsciiCase } from "../derived-ascii-case.js";
 
 function symbolIsReadOnlyThroughLength(
   ctx: CodegenContext,
@@ -386,8 +387,6 @@ function tryCompileDerivedSubstringBinding(
   if (!ts.isPropertyAccessExpression(call.expression) || call.expression.name.text !== "substring") return false;
   if (call.arguments.length !== 2) return false;
 
-  const symbol = ctx.checker.getSymbolAtLocation(decl.name);
-  if (!symbol) return false;
   let descriptorOnly = true;
   const scope = (() => {
     let node: ts.Node = decl;
@@ -396,7 +395,7 @@ function tryCompileDerivedSubstringBinding(
   })();
   const visit = (node: ts.Node): void => {
     if (!descriptorOnly) return;
-    if (ts.isIdentifier(node) && ctx.checker.getSymbolAtLocation(node) === symbol) {
+    if (ts.isIdentifier(node) && ctx.oracle.valueDeclarationOf(node) === decl) {
       if (node === decl.name) return;
       const property = node.parent;
       if (!ts.isPropertyAccessExpression(property) || property.expression !== node) {
@@ -462,7 +461,7 @@ function tryCompileDerivedSubstringBinding(
     fctx.body.push({ op: "local.get", index: startLocal });
     fctx.body.push({ op: "i32.sub" });
     fctx.body.push({ op: "local.set", index: lenLocal });
-    (fctx.derivedSubstringReads ??= new Map()).set(symbol, {
+    (fctx.derivedSubstringReads ??= new Map()).set(decl, {
       kind: "host",
       receiverLocal,
       offLocal: startLocal,
@@ -563,7 +562,7 @@ function tryCompileDerivedSubstringBinding(
   fctx.body.push({ op: "i32.sub" });
   fctx.body.push({ op: "local.set", index: lenLocal });
   const minLen = orderedInBounds ? endRange!.min - startRange!.max : 0;
-  (fctx.derivedSubstringReads ??= new Map()).set(symbol, {
+  (fctx.derivedSubstringReads ??= new Map()).set(decl, {
     kind: "native",
     dataLocal,
     offLocal,
@@ -1372,10 +1371,9 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         }
       }
     }
-
     if (tryCompileUniformSplitLengthBinding(ctx, fctx, stmt, decl)) continue;
     if (tryCompileSingleUnitSplitLengthBinding(ctx, fctx, stmt, decl)) continue;
-    if (tryCompileDerivedSubstringBinding(ctx, fctx, stmt, decl)) continue;
+    if (tryAsciiCase(ctx, fctx, stmt, decl) || tryCompileDerivedSubstringBinding(ctx, fctx, stmt, decl)) continue;
     if (tryCompileUniformIndexPresenceBinding(ctx, fctx, stmt, decl)) continue;
 
     // #1210: string-builder rewrite for `let s = "";` followed by an
