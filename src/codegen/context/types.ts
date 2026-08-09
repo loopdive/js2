@@ -2168,6 +2168,12 @@ export interface CodegenContext {
    */
   numericReturnTypes?: Map<string, ValType>;
   /**
+   * Standalone implicit-`any` returns proven numeric independently of the
+   * function's parameter carriers. Unlike {@link numericReturnTypes}, these
+   * facts do not require every parameter to be f64/i32 at declaration time.
+   */
+  bindingAwareNumericReturnTypes?: Map<string, ValType>;
+  /**
    * #2847: property names whose complete source definition/write set is
    * boolean-producing. Used to preserve JS boolean identity through untyped
    * numeric carriers and sidecar writes; computed conservatively per module.

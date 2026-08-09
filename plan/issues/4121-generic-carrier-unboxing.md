@@ -17,9 +17,11 @@ related: [684, 1167c, 1168, 2855, 3683, 3754, 3765, 4118, 4122, 2773, 1624]
 origin: "measured on upstream/main d369562d7, 2026-08-03, investigating the residual 10x vs node on real npm packages"
 loc-budget-allow:
   - src/codegen/context/types.ts
+  - src/codegen/declarations.ts
   - src/codegen/index.ts
   - src/codegen/object-runtime.ts
 func-budget-allow:
+  - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
   - src/codegen/object-runtime.ts::ensureObjectRuntime
 ---

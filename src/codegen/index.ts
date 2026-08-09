@@ -340,6 +340,7 @@ import {
   collectDynamicObjectReturnCarrierTypes,
   inferImplicitAnyParamType,
   inferNumericReturnTypes,
+  inferBindingAwareNumericReturnTypes,
   collectEmptyObjectWidening,
   collectObjectLiteralAssignedPropertyNames,
   collectGrowableObjectLiterals,
@@ -3878,6 +3879,7 @@ export function generateModule(
     // collectDeclarations so the inferred f64 return shows up directly in
     // the function's signature instead of being patched after the fact.
     ctx.numericReturnTypes = inferNumericReturnTypes(ctx, ast.sourceFile);
+    ctx.bindingAwareNumericReturnTypes = inferBindingAwareNumericReturnTypes(ctx, [ast.sourceFile]);
     ctx.booleanPropertyNames = analyzeBooleanPropertyNames(ctx, [ast.sourceFile]);
 
     // #1677 — final reconcile of native-string helper indices before any USER
@@ -6462,6 +6464,9 @@ export function generateMultiModule(
       ctx.numericLocalVerdict = localVerdicts.isNumericLocal;
       ctx.stringLocalVerdict = localVerdicts.isStringLocal;
     }
+    ctx.bindingAwareNumericReturnTypes = profilePhase("binding-aware-numeric-return-inference", () =>
+      inferBindingAwareNumericReturnTypes(ctx, multiAst.sourceFiles),
+    );
     // #1677 — final reconcile before any user function is registered.
     reconcileNativeStrFinalizeShift(ctx);
 
