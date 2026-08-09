@@ -9,6 +9,7 @@ import type { Instr, ValType } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import { emitIsUndefinedSingletonExternAt, isAnyValue, undefinedSingletonActive } from "./any-helpers.js";
 import { compileNumericBinaryOp } from "./binary-ops.js";
+import { callableToStringLiteral } from "./callable-to-string.js";
 import { reserveClosedMethodDispatch } from "./closed-method-dispatch.js";
 import { getClosureFuncSelfTypeIdx } from "./closures.js";
 import { compileAndEmitToString, emitToString } from "./coercion-engine.js";
@@ -45,7 +46,9 @@ import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./re
 import { resolveStrictConstant, staticStringLength } from "./analysis/static-string-constants.js";
 import { staticConstStringValues } from "./analysis/static-string-values.js";
 import { staticIntegerRange } from "./analysis/static-numeric-range.js";
+import { emitDerivedNativeCharCodeRead, selectProvenAsciiCaseHelper } from "./derived-ascii-case.js";
 import { tryEmitStaticI32Expression } from "./i32-static-range-expr.js";
+import { tryEmitStaticNeedleIndexOf } from "./static-needle-indexof.js";
 import {
   getArrTypeIdxFromVec,
   getOrRegisterRefCellType,
@@ -329,6 +332,20 @@ function compileNativeConcatOperand(ctx: CodegenContext, fctx: FunctionContext, 
     fctx.body.push({ op: "call", funcIdx: toStrIdx });
     emitNativeStringRefFromExternref(ctx, fctx);
     return true;
+  }
+
+  // (#4265) §13.15.3 ToPrimitive of a CALLABLE reaches Function.prototype.toString
+  // (§20.2.3.5), never Object.prototype.toString — so a function operand must
+  // never stringify as "[object Object]". Placed before BOTH dynamic arms
+  // because a callable arrives either as an externref (host object, Proxy) or as
+  // a closure struct ref. See callable-to-string.ts for the spec argument.
+  if (opType.kind === "externref" || opType.kind === "ref" || opType.kind === "ref_null") {
+    const callableText = callableToStringLiteral(tsType);
+    if (callableText !== undefined) {
+      fctx.body.push({ op: "drop" });
+      compileStringLiteral(ctx, fctx, callableText, operand);
+      return true;
+    }
   }
 
   if (opType.kind === "externref") {
@@ -2510,14 +2527,8 @@ export function compileNativeStringMethodCall(
     fctx.body.push({ op: "local.set", index: local });
     return local;
   };
-  // (#2160 wrapper-strmethod) Compile the RECEIVER into a native-string local
-  // honoring `receiverOverride`. The two-string-argument arms (indexOf /
-  // lastIndexOf / includes / startsWith / endsWith) store the receiver in a
-  // local before pushing args, so they cannot use `emitReceiver()` inline; they
-  // previously called `compileStringValueToLocal(propAccess.expression, …)`,
-  // which ignores the override and re-compiles the raw receiver expression — a
-  // trap for a `new String(x)` wrapper (the override extracts its primitive
-  // slot). Route the receiver through `emitReceiver()` so the override applies.
+  // Store two-string method receivers once and honor the wrapper-method
+  // override; recompiling the raw receiver would lose `new String(x)`'s slot.
   const compileReceiverToLocal = (name: string): number => {
     const local = allocLocal(fctx, `${name}_${fctx.locals.length}`, nativeStringType(ctx));
     emitReceiver();
@@ -2541,12 +2552,8 @@ export function compileNativeStringMethodCall(
     }
   }
 
-  // An immutable literal table sometimes feeds a string predicate whose
-  // result is identical for every entry. Preserve the receiver read/trap, but
-  // skip flattening and scanning when the full result is known. This is a
-  // narrow source-level constant propagation, not a benchmark-name special
-  // case: mutations, aliases, dynamic search values, and dynamic positions all
-  // retain the ordinary native helper path.
+  // Fold an immutable literal table only when every entry has the same result;
+  // mutations, aliases, and dynamic search/position values keep the helper.
   if (
     !receiverOverride &&
     (method === "startsWith" || method === "endsWith") &&
@@ -2598,9 +2605,9 @@ export function compileNativeStringMethodCall(
   // the resulting position is outside [0, string length).
   if (method === "charCodeAt") {
     if (!receiverOverride && ts.isIdentifier(propAccess.expression)) {
-      const symbol = ctx.checker.getSymbolAtLocation(propAccess.expression);
-      const substring = symbol ? fctx.derivedSubstringReads?.get(symbol) : undefined;
-      if (substring?.kind === "native") {
+      const declaration = ctx.oracle.valueDeclarationOf(propAccess.expression);
+      const substring = declaration ? fctx.derivedSubstringReads?.get(declaration) : undefined;
+      if (substring && substring.kind !== "host") {
         const idxLocal = allocLocal(fctx, `__substring_char_idx_${fctx.locals.length}`, { kind: "i32" });
         const arg = expr.arguments[0];
         const isLengthMinusOne =
@@ -2610,7 +2617,7 @@ export function compileNativeStringMethodCall(
           ts.isPropertyAccessExpression(arg.left) &&
           arg.left.name.text === "length" &&
           ts.isIdentifier(arg.left.expression) &&
-          ctx.checker.getSymbolAtLocation(arg.left.expression) === symbol &&
+          ctx.oracle.valueDeclarationOf(arg.left.expression) === declaration &&
           ts.isNumericLiteral(arg.right) &&
           Number(arg.right.text) === 1;
         if (isLengthMinusOne) {
@@ -2629,14 +2636,7 @@ export function compileNativeStringMethodCall(
         const provenInBounds =
           (range !== undefined && range.min >= 0 && range.max < substring.minLen) ||
           (isLengthMinusOne && substring.minLen > 0);
-        const read: Instr[] = [
-          { op: "local.get", index: substring.dataLocal },
-          { op: "local.get", index: substring.offLocal },
-          { op: "local.get", index: idxLocal },
-          { op: "i32.add" },
-          { op: "array.get_u", typeIdx: ctx.nativeStrDataTypeIdx },
-          { op: "f64.convert_i32_u" },
-        ];
+        const read = emitDerivedNativeCharCodeRead(ctx, fctx, substring, idxLocal);
         if (provenInBounds) {
           fctx.body.push(...read);
         } else {
@@ -2941,9 +2941,18 @@ export function compileNativeStringMethodCall(
     fctx.body.push({ op: "call", funcIdx });
     return nativeStringType(ctx);
   }
-
-  // indexOf: native helper
   if (method === "indexOf") {
+    if (
+      tryEmitStaticNeedleIndexOf({
+        ctx,
+        fctx,
+        expr,
+        receiverOverridePresent: receiverOverride !== undefined,
+        emit: [compileReceiverToLocal, compileStringValueToLocal, compileIntegerValueToLocal],
+      })
+    ) {
+      return { kind: "i32" };
+    }
     const receiverLocal = compileReceiverToLocal("__str_indexOf_recv");
     const searchLocal = compileStringValueToLocal(expr.arguments[0], "undefined", "__str_indexOf_search");
     const fromLocal = compileIntegerValueToLocal(expr.arguments[1], 0, "__str_indexOf_from");
@@ -3223,7 +3232,8 @@ export function compileNativeStringMethodCall(
       if (argType) fctx.body.push({ op: "drop" });
     }
     const helperName = `__str_${method.replace("Locale", "")}`;
-    const funcIdx = ctx.nativeStrHelpers.get(helperName)!;
+    const selectedHelper = selectProvenAsciiCaseHelper(ctx, propAccess.expression, helperName, !receiverOverride);
+    const funcIdx = ctx.nativeStrHelpers.get(selectedHelper)!;
     fctx.body.push({ op: "call", funcIdx });
     return nativeStringType(ctx);
   }

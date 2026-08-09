@@ -40,6 +40,7 @@ import { pushBody } from "../context/bodies.js";
 import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { resolveReceiverStruct } from "../fnctor-escape-gate.js";
+import { tryEmitFixedHostMethodCall } from "../fixed-host-method-call.js";
 import { hostFnctorCallableFallbackImportName, reserveHostFnctorMethodDriver } from "../host-fnctor-method-driver.js";
 import { tryCompileHostStringPredicate } from "../host-string-prefix-suffix.js";
 import { observeHostDynamicMethodCallArity } from "../dynamic-method-call-arity.js";
@@ -423,8 +424,8 @@ function tryCompileDerivedHostSubstringCharCodeAt(
   method: string,
 ): ValType | null {
   if (ctx.nativeStrings || method !== "charCodeAt" || !ts.isIdentifier(propAccess.expression)) return null;
-  const symbol = ctx.checker.getSymbolAtLocation(propAccess.expression);
-  const substring = symbol ? fctx.derivedSubstringReads?.get(symbol) : undefined;
+  const declaration = ctx.oracle.valueDeclarationOf(propAccess.expression);
+  const substring = declaration ? fctx.derivedSubstringReads?.get(declaration) : undefined;
   const charCodeAtIdx = ctx.jsStringImports.get("charCodeAt");
   if (substring?.kind !== "host" || charCodeAtIdx === undefined) return null;
 
@@ -436,7 +437,7 @@ function tryCompileDerivedHostSubstringCharCodeAt(
     ts.isPropertyAccessExpression(arg.left) &&
     arg.left.name.text === "length" &&
     ts.isIdentifier(arg.left.expression) &&
-    ctx.checker.getSymbolAtLocation(arg.left.expression) === symbol &&
+    ctx.oracle.valueDeclarationOf(arg.left.expression) === declaration &&
     ts.isNumericLiteral(arg.right) &&
     Number(arg.right.text) === 1;
   const indexLocal = allocLocal(fctx, `__host_substring_char_idx_${fctx.locals.length}`, { kind: "i32" });
@@ -3509,19 +3510,13 @@ export function compileReceiverMethodCall(
       }
 
       // (#799 WI3) Generic host-delegated method call for any/externref receivers.
-      // Builds a JS array of arguments and calls __extern_method_call(obj, methodName, args).
-      // (#965) For known built-in class identifiers (Object, Array, Proxy, etc.) that would
-      // otherwise compile to ref.null.extern, use __get_builtin to get the real JS object.
+      // #965: resolve known built-in receivers through __get_builtin rather than null.
       {
         observeHostDynamicMethodCallArity(ctx, expr.arguments);
-        // (#1888 Slice 2) Under --target standalone the native
-        // __extern_method_call reads its args via __extern_length /
-        // __extern_get_idx over a $ObjVec (no JS array exists). Build the args
-        // list with the native $ObjVec builders instead of the host
-        // __js_array_new / __js_array_push. JS-host / WASI keep the host
-        // imports unchanged (byte-for-byte). Per the #1472 S3 note, the
-        // __js_array_* builders are NOT globally safe to alias (real JS arrays
-        // elsewhere depend on them) — so this is a per-call-site swap.
+        if (tryEmitFixedHostMethodCall(ctx, fctx, expr, propAccess, methodName)) return { kind: "externref" };
+        // #1888: standalone builds a native $ObjVec; fixed JS-host calls were
+        // handled above. Larger/spread host calls and WASI use the array bridge.
+        // #1472: the JS-array builders are not globally safe to alias.
         let arrNewIdx: number | undefined;
         let arrPushIdx: number | undefined;
         if (ctx.standalone) {

@@ -268,3 +268,92 @@ reaches the brand-recovery prologue).
 
 Projected: WP1–WP6 midpoints sum to ~+380–460 → 90 % is reachable without
 touching `with`/eval.
+
+---
+
+## Program outcome (2026-08-09) — 85.11 % → 88.71 %, goal NOT met
+
+Five waves ran. The measured trajectory, each number taken from the promoted
+standalone baseline after the wave's PR merged (not from the wave's own A/B):
+
+| point | pass / 8,115 | rate | source |
+| --- | --- | --- | --- |
+| start | 6,907 | 85.11 % | spec baseline, sha `a06fe8f3` |
+| waves 1+2 (#4234) | 7,043 | 86.79 % | promoted baseline |
+| wave 3 (#4249) | 7,130 | 87.86 % | promoted baseline |
+| wave 4 (#4258) | 7,199 | **88.71 %** | promoted baseline |
+| waves 5 + instanceof | in flight | ~89.2–89.5 % projected | #4299, #4302, #4311 |
+
+**90 % (7,304) was not reached, and the gap is not a scheduling problem — the
+reachable pool was overestimated at the outset.** The spec projected
+"+380–460 → 90 % is reachable without touching `with`/eval". Actual landed
+total across five waves is roughly +290 with three PRs still queued.
+
+### Why the projection missed: signature-matching instead of causal analysis
+
+Three separately-sized levers each collapsed when measured, and all three failed
+the same way — a bucket was sized by counting files whose *error text* matched a
+pattern, without checking whether the pattern was the *cause*:
+
+| lever | estimated | causal | landed |
+| --- | --- | --- | --- |
+| error-object model (`e instanceof TypeError`) | 42 | 4 | 4 |
+| `Function.prototype` ToString | 44 | 15 reachable | 0 |
+| `instanceof Object` family | ~105 | 13 | 6 |
+
+- The **42** counted 19 files that actually belong to the native-proto
+  brand-check lever (`Number.prototype.toString.call(new String())` throws
+  nothing, so the test's own `Test262Error` is what gets caught) plus 23 with
+  spurious throws from unrelated bugs. See #4262.
+- The **44** split three ways: 15 are `[object Object]` (value right, string
+  wrong) and **27 cannot be moved by any stringification fix** because the
+  function value cannot be obtained at all. The static fix landed and moved
+  zero. See #4265.
+- The **~105** came from an all-scope count whose largest sub-bucket is
+  `Array.prototype.<m> is not yet callable as a value` — files that merely
+  *mention* `instanceof Boolean` in an unrelated assertion. See #4276.
+
+**Rule for the next program: size a bucket by root cause, on a sample read
+by hand, before committing to a target.** An error-signature histogram is a
+starting point for investigation, never an estimate.
+
+### Two claims on the record that measurement overturned
+
+- **#4251's RC1 was wrong and would have made things worse.** It proposed a
+  shadow guard so a declared `Test262Error` falls to the fnctor path;
+  re-measured, a renamed control on that path *loses* `e.name` and `String(e)`
+  and gains nothing, across #2902's ~2,779 host-free tests. The real defect was
+  the carrier: a user function value lives in **two** globals and the
+  error-props filler read the one the identifier reader does not prefer.
+- **#4231's RC-I is withdrawn as a mechanism.** `st_NaN`/`st_Infinity` pass
+  after #4264's value-carrier fixes with no change to intrinsic folding — the
+  fold never lost those values, the carrier did.
+
+### What is actually left, with mechanisms named
+
+| item | size | blocker |
+| --- | --- | --- |
+| #4265 runtime ToString arm in `$__any_to_string` | 15 | premise unverified: does every closure representation subtype `getFuncRefWrapperRootTypeIdx`? |
+| wrapper-`instanceof` arm (#4276, reverted) | 8 | unmasks a §10.4.3 defect — `Function.prototype.call` boxes a primitive `this` into `$WrapperBoolean` in strict mode |
+| builtin-prototype + global own-property records | ~22 | needs real own-property records on those objects |
+| non-enumerable INDEX still enumerated (#4266) | 2 | index loop gates on presence, never on the overlay's `FLAG_ENUMERABLE`; hot dense path, needs its own A/B |
+| `hasOwnProperty` vec-index widening | unknown | #4010-S3 measured **−684** passes when done naively; needs a several-hundred-file sweep, not a scoped one |
+
+`with` (#4264) is now largely retired as a lever: 89 of 181 pass, and the
+40 remaining compile errors are the unbuilt Tier-2 nested-closure route
+(#671/#1387), not a `with` defect.
+
+### Process notes worth carrying forward
+
+- **`obj.m()` did not bind its receiver on either lane** (#4269) — a real
+  correctness bug in everyday JavaScript, fixed, with a *measured* 0 conformance
+  delta: a positive control fired 0 of 515 files, and all 29 shape-matched
+  candidates turned out to be name collisions. test262 does not contain the
+  idiom. The honest evidence gap is npm-compat/dogfood, not more test262.
+- **The #4251 harness ratchet earned its keep**: it caught a self-test that
+  *silently started passing* (fixed by #4230 between recording and integration),
+  which is the failure direction nobody watches for.
+- **Measurement hygiene that changed results**: prebuild the runtime-eval
+  provider or eval-mentioning modules fail to *link* (#4162) and a +7 reads as
+  +2; Node 22's host RegExp rejects ES2025 inline modifiers and manufactures
+  phantom compile_errors, so all measurement is Node 25.

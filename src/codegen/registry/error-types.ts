@@ -46,6 +46,7 @@ import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js"; // (#1916 S
 import type { Instr, ValType } from "../../ir/types.js";
 
 import { BUILTIN_TYPE_TAGS } from "../builtin-tags.js";
+import { userErrorCtorCarrierGlobal } from "../error-ctor-carrier.js"; // (#4262) carrier precedence
 import { addFuncType, getOrRegisterErrorStructType } from "./types.js";
 import { addStringConstantGlobal } from "./imports.js";
 import { nativeStringLiteralInstrs, stringConstantExternrefInstrs } from "../native-strings.js";
@@ -400,10 +401,21 @@ export function fillExternGetErrorProps(ctx: CodegenContext): void {
   // (`__new_<Name>` present AND a closure singleton exists), which excludes
   // every builtin error name (they have no user function declaration and thus
   // no `funcClosureGlobals` entry).
+  //
+  // (#4262) The carrier is resolved by `userErrorCtorCarrierGlobal`, NOT by
+  // `ctx.funcClosureGlobals` directly. `funcClosureGlobals` is the LOWER-
+  // precedence of the two carriers a function value can live in: the bare
+  // identifier read takes `ctx.moduleGlobals` first whenever the declaration is
+  // closure-backed or reassigned, which the literal upstream harness always is
+  // (`assert.js` closes over `Test262Error`). Answering the fn-closure
+  // singleton there returned a function that was `!==` the name AND had no
+  // property bag, so `err.constructor.name` read `undefined` — the
+  // `Expected a Test262Error, but a "undefined" was thrown.` self-test
+  // signature. See src/codegen/error-substrate.ts for the measured evidence.
   const userCtorArms: Instr[] = [];
   for (const name of USER_ERROR_CTOR_IDENTITY_NAMES) {
     if (!ctx.funcMap.has(`__new_${name}`)) continue;
-    const closureGlobalIdx = ctx.funcClosureGlobals.get(name);
+    const closureGlobalIdx = userErrorCtorCarrierGlobal(ctx, name);
     if (closureGlobalIdx === undefined) continue;
     userCtorArms.push(
       ...errRef(),

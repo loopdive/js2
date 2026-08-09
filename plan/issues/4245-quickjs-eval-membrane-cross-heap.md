@@ -649,3 +649,43 @@ in THIS file.
   (#4238 slice 3 owns it); Symbol-key traps; descriptor-fidelity traps;
   shared exception tag / trap error envelope (future issue); `with(S)`
   membrane scope objects; linear lane (#4236 slice 2).
+
+## Premise validation — the outward Proxy claim is CONFIRMED, and it is standalone-only
+
+Verified 2026-08-09 (lead) by direct inspection of emitted WAT for a plain
+dynamic-access module (`o[k]` get / set / `k in o`), because the decision
+table's "outward live view" row rests entirely on this and slice 2 would be
+unbuildable if it were false.
+
+**`target: "standalone"` — CONFIRMED.** The module carries, with no eval and
+no Proxy in the source:
+
+| emitted | evidence |
+| --- | --- |
+| `$$Proxy` struct | fields `ptag i32`, `ptarget (mut anyref)`, `phandler (mut anyref)`, `ptraps`, `revoked (mut i32)` |
+| `$$ProxyTraps` struct | all 12 trap fields (`get`/`set`/`has`/`apply`/`deleteProperty`/`getOwnPropertyDescriptor`/`getPrototypeOf`/`setPrototypeOf`/`isExtensible`/`preventExtensions`/`ownKeys`/`defineProperty`) |
+| 12 `__proxy_call_*` drivers | `get set has delete gopd gpo spo isext prevext ownkeys define apply` |
+| 12 `__proxy_*_dispatch` fns | one per trap (ownkeys has keys+names variants) |
+| `__extern_get` / `__extern_set` / `__extern_has` | all present |
+
+So an adapter-minted Proxy IS structurally canonical with the consumer's and
+dispatches its trap closures with zero user-codegen change, as the row claims.
+
+**SCOPE LIMIT the row does not state: this is target-specific.** The same
+source compiled for the DEFAULT (JS-host) target emits **none** of it — a
+2,274-byte module whose dynamic access lowers to a **host import**
+`env::__extern_get` (full import list also carries `__box_number`,
+`__unbox_number`, `__extern_is_undefined`). There is no in-module MOP to
+canonicalize against, so the outward-live-view trick does **not** apply
+there. This is fine for this issue — the eval provider lane is standalone,
+and a JS-host consumer has a JS runtime available anyway — but the membrane
+implementer must not assume cross-target coverage, and any future
+"membrane for the JS-host lane" is a separate design.
+
+**Probe trap, recorded so it is not re-hit:** the WAT emits the type as
+`$$Proxy` (DOUBLE dollar) and the `ref.test` guards use type INDICES, not
+names. The obvious checks — `/\(type \$Proxy\b/` and
+`/ref\.test.*\$Proxy/` — therefore both return ZERO on a module that fully
+carries the machinery, which reads as a false negative and briefly looked
+like the premise had failed. Match on `\$\$Proxy` / enumerate
+`\$__proxy_[a-z_]+` identifiers instead.
