@@ -31,8 +31,11 @@ import {
   type IrFunction,
   type IrInstr,
   type IrInstrBinary,
+  type IrInstrStringConcat,
+  type IrInstrStringConst,
   type IrInstrUnary,
   type IrTerminator,
+  type IrType,
   type IrUnop,
   type IrValueId,
   mapNestedBuffers,
@@ -49,10 +52,14 @@ export function constantFold(fn: IrFunction, registry?: AllocSiteRegistry): IrFu
   // seed is global across blocks — inter-block constant references are
   // valid in Phase 2+ IR, so folding needs to see them.
   const constDefs = new Map<IrValueId, IrConst>();
+  const stringDefs = new Map<IrValueId, IrInstrStringConst>();
   for (const block of fn.blocks) {
     for (const instr of block.instrs) {
       if (instr.kind === "const" && instr.result !== null) {
         constDefs.set(instr.result, instr.value);
+      }
+      if (instr.kind === "string.const" && instr.result !== null) {
+        stringDefs.set(instr.result, instr);
       }
     }
   }
@@ -66,7 +73,11 @@ export function constantFold(fn: IrFunction, registry?: AllocSiteRegistry): IrFu
   // buffers, but must NOT leak to siblings after the buffer — a `const` inside a
   // loop/if body does not dominate code following it. Valid structured IR only
   // references already-defined values, so inheriting the parent scope is sound.
-  const foldInstr = (instr: IrInstr, scope: Map<IrValueId, IrConst>): IrInstr => {
+  const foldInstr = (
+    instr: IrInstr,
+    scope: Map<IrValueId, IrConst>,
+    stringScope: Map<IrValueId, IrInstrStringConst>,
+  ): IrInstr => {
     // 0. A pre-existing `const` is visible to later ops in this scope. Top-level
     // consts are already globally pre-seeded; this records buffer-interior ones
     // (which are NOT pre-seeded) so a `binary(const, const)` later in the same
@@ -74,8 +85,11 @@ export function constantFold(fn: IrFunction, registry?: AllocSiteRegistry): IrFu
     if (instr.kind === "const" && instr.result !== null && !scope.has(instr.result)) {
       scope.set(instr.result, instr.value);
     }
+    if (instr.kind === "string.const" && instr.result !== null && !stringScope.has(instr.result)) {
+      stringScope.set(instr.result, instr);
+    }
     // 1. Fold this instr's own operands (binary/unary → const).
-    let rewritten = tryFoldInstr(instr, scope);
+    let rewritten = tryFoldInstr(instr, scope, stringScope);
     if (rewritten !== instr) {
       changed = true;
       if (instr.alloc !== undefined && rewritten.alloc === undefined) {
@@ -84,9 +98,12 @@ export function constantFold(fn: IrFunction, registry?: AllocSiteRegistry): IrFu
       if (rewritten.kind === "const" && rewritten.result !== null) {
         scope.set(rewritten.result, rewritten.value);
       }
+      if (rewritten.kind === "string.const" && rewritten.result !== null) {
+        stringScope.set(rewritten.result, rewritten);
+      }
     }
     // 2. Recurse into nested buffers (loop/if/for-of/try) with a child scope.
-    rewritten = mapNestedBuffers(rewritten, (buffer) => foldBuffer(buffer, scope));
+    rewritten = mapNestedBuffers(rewritten, (buffer) => foldBuffer(buffer, scope, stringScope));
     if (rewritten !== instr) changed = true;
     return rewritten;
   };
@@ -94,12 +111,17 @@ export function constantFold(fn: IrFunction, registry?: AllocSiteRegistry): IrFu
   // Fold a buffer in order under a child scope cloned from `parent`. Returns the
   // same array reference when nothing inside changed (so mapNestedBuffers can
   // preserve instr identity up the chain).
-  const foldBuffer = (buffer: readonly IrInstr[], parent: Map<IrValueId, IrConst>): readonly IrInstr[] => {
+  const foldBuffer = (
+    buffer: readonly IrInstr[],
+    parent: Map<IrValueId, IrConst>,
+    stringParent: Map<IrValueId, IrInstrStringConst>,
+  ): readonly IrInstr[] => {
     const child = new Map(parent);
+    const stringChild = new Map(stringParent);
     let bufChanged = false;
     const out: IrInstr[] = [];
     for (const instr of buffer) {
-      const folded = foldInstr(instr, child);
+      const folded = foldInstr(instr, child, stringChild);
       if (folded !== instr) bufChanged = true;
       out.push(folded);
     }
@@ -110,7 +132,7 @@ export function constantFold(fn: IrFunction, registry?: AllocSiteRegistry): IrFu
     const newInstrs: IrInstr[] = [];
     let blockChanged = false;
     for (const instr of block.instrs) {
-      const rewritten = foldInstr(instr, constDefs);
+      const rewritten = foldInstr(instr, constDefs, stringDefs);
       if (rewritten !== instr) blockChanged = true;
       newInstrs.push(rewritten);
     }
@@ -142,9 +164,14 @@ export function constantFold(fn: IrFunction, registry?: AllocSiteRegistry): IrFu
 // Instruction folding
 // ---------------------------------------------------------------------------
 
-function tryFoldInstr(instr: IrInstr, constDefs: ReadonlyMap<IrValueId, IrConst>): IrInstr {
+function tryFoldInstr(
+  instr: IrInstr,
+  constDefs: ReadonlyMap<IrValueId, IrConst>,
+  stringDefs: ReadonlyMap<IrValueId, IrInstrStringConst>,
+): IrInstr {
   if (instr.kind === "binary") return tryFoldBinary(instr, constDefs);
   if (instr.kind === "unary") return tryFoldUnary(instr, constDefs);
+  if (instr.kind === "string.concat") return tryFoldStringConcat(instr, stringDefs);
   // (#1392) `if` is value-producing but its arms are sequences of IR
   // instrs, not constants. We DON'T fold the arms themselves here (the
   // arm buffers hold their own instrs that constant-fold can be re-run
@@ -159,7 +186,7 @@ function tryFoldBinary(instr: IrInstrBinary, constDefs: ReadonlyMap<IrValueId, I
   const l = constDefs.get(instr.lhs);
   const r = constDefs.get(instr.rhs);
   if (!l || !r) return instr;
-  const folded = foldBinary(instr.op, l, r);
+  const folded = foldBinary(instr.op, l, r, instr.resultType);
   if (!folded) return instr;
   return {
     kind: "const",
@@ -167,6 +194,26 @@ function tryFoldBinary(instr: IrInstrBinary, constDefs: ReadonlyMap<IrValueId, I
     result: instr.result,
     resultType: instr.resultType,
     site: instr.site,
+  };
+}
+
+function tryFoldStringConcat(
+  instr: IrInstrStringConcat,
+  stringDefs: ReadonlyMap<IrValueId, IrInstrStringConst>,
+): IrInstr {
+  const lhs = stringDefs.get(instr.lhs);
+  const rhs = stringDefs.get(instr.rhs);
+  if (!lhs || !rhs) return instr;
+  return {
+    kind: "string.const",
+    value: lhs.value + rhs.value,
+    result: instr.result,
+    resultType: instr.resultType,
+    ...(instr.site === undefined ? {} : { site: instr.site }),
+    // A concat and its value-preserving literal replacement are both string
+    // allocations. Keep the stable allocation identity so registry hygiene
+    // and later ownership passes observe one continuous site.
+    ...(instr.alloc === undefined ? {} : { alloc: instr.alloc }),
   };
 }
 
@@ -225,7 +272,7 @@ function isConstTruthy(c: IrConst): boolean | null {
 // Opcode dispatch tables
 // ---------------------------------------------------------------------------
 
-type BinaryFolder = (l: IrConst, r: IrConst) => IrConst | null;
+type BinaryFolder = (l: IrConst, r: IrConst, resultType: IrType | null) => IrConst | null;
 
 const BINARY_FOLD_TABLE: Readonly<Record<IrBinop, BinaryFolder>> = {
   // f64 arithmetic — IEEE-754 semantics match JS number math, so plain
@@ -272,19 +319,19 @@ const BINARY_FOLD_TABLE: Readonly<Record<IrBinop, BinaryFolder>> = {
   // re-coerced to f64. Uses native JS operators which already implement
   // ToInt32 and ToUint32 — so the constants we produce match what the
   // backend would produce at runtime.
-  "js.bitand": (l, r) => jsBitwiseF64(l, r, (a, b) => a & b),
-  "js.bitor": (l, r) => jsBitwiseF64(l, r, (a, b) => a | b),
-  "js.bitxor": (l, r) => jsBitwiseF64(l, r, (a, b) => a ^ b),
-  "js.shl": (l, r) => jsBitwiseF64(l, r, (a, b) => a << b),
-  "js.shr_s": (l, r) => jsBitwiseF64(l, r, (a, b) => a >> b),
+  "js.bitand": (l, r, resultType) => jsBitwise(l, r, resultType, (a, b) => a & b),
+  "js.bitor": (l, r, resultType) => jsBitwise(l, r, resultType, (a, b) => a | b),
+  "js.bitxor": (l, r, resultType) => jsBitwise(l, r, resultType, (a, b) => a ^ b),
+  "js.shl": (l, r, resultType) => jsBitwise(l, r, resultType, (a, b) => a << b),
+  "js.shr_s": (l, r, resultType) => jsBitwise(l, r, resultType, (a, b) => a >> b),
   // `>>>` returns a Uint32 in JS — wrap explicitly so TS doesn't widen
   // the lambda return to `number` ambiguously, and so the const f64 we
   // produce is the unsigned interpretation.
-  "js.shr_u": (l, r) => jsBitwiseF64(l, r, (a, b) => a >>> b),
+  "js.shr_u": (l, r, resultType) => jsBitwise(l, r, resultType, (a, b) => a >>> b),
 };
 
-function foldBinary(op: IrBinop, l: IrConst, r: IrConst): IrConst | null {
-  return BINARY_FOLD_TABLE[op](l, r);
+function foldBinary(op: IrBinop, l: IrConst, r: IrConst, resultType: IrType | null): IrConst | null {
+  return BINARY_FOLD_TABLE[op](l, r, resultType);
 }
 
 function foldUnary(op: IrUnop, rand: IrConst): IrConst | null {
@@ -404,7 +451,23 @@ function i32CmpUnsigned(l: IrConst, r: IrConst, fn: (a: number, b: number) => bo
  * result; we just box it back as `kind: "f64"` so downstream IR sees an
  * f64-typed constant matching the result type the lowerer will emit.
  */
-function jsBitwiseF64(l: IrConst, r: IrConst, fn: (a: number, b: number) => number): IrConst | null {
-  if (l.kind !== "f64" || r.kind !== "f64") return null;
-  return { kind: "f64", value: fn(l.value, r.value) };
+function jsBitwise(
+  l: IrConst,
+  r: IrConst,
+  resultType: IrType | null,
+  fn: (a: number, b: number) => number,
+): IrConst | null {
+  const left = jsNumericConst(l);
+  const right = jsNumericConst(r);
+  if (left === null || right === null || resultType?.kind !== "val") return null;
+  const value = fn(left, right);
+  if (resultType.val.kind === "f64") return { kind: "f64", value };
+  if (resultType.val.kind === "i32") return { kind: "i32", value: value | 0 };
+  return null;
+}
+
+function jsNumericConst(value: IrConst): number | null {
+  if (value.kind === "f64" || value.kind === "i32") return value.value;
+  if (value.kind === "bool") return value.value ? 1 : 0;
+  return null;
 }

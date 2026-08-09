@@ -6,6 +6,7 @@ import type { IrBindingId, IrClassId, IrTerminalUnitRecord, IrUnitId, IrUnitInve
 import {
   forEachInstrDeep,
   type IrClassShape,
+  type IrFuncRef,
   type IrFunction,
   type IrGlobalRef,
   type IrInstr,
@@ -664,7 +665,13 @@ function implicitSupportRequirement(instr: IrInstr, hasPreparedClosureSupport = 
     case "extern.call":
     case "extern.prop":
     case "extern.propSet":
+      return instr.provider
+        ? null
+        : `${instr.kind} resolves host/runtime callables or globals without explicit symbolic refs`;
     case "extern.regex":
+      // Besides RegExp_new, this instruction materializes pattern and flags
+      // through backend-selected string storage. Keep it fail-closed until
+      // all three symbolic dependencies are attached together.
       return `${instr.kind} resolves host/runtime callables or globals without explicit symbolic refs`;
     case "await":
     case "async.return":
@@ -854,7 +861,7 @@ function recordGlobalReference(
 
 function recordExternalCallable(
   evidence: MutableFunctionEvidence,
-  ref: Extract<IrInstr, { kind: "call" }>["target"],
+  ref: IrFuncRef,
   abi: PreparedComponentAbiLookup,
   ownership: OwnershipIndex,
 ): void {
@@ -1131,6 +1138,14 @@ function collectFunctionEvidence(
         if (nested.provider?.kind === "callable") {
           recordExternalCallable(evidence, nested.provider.target, input.abi, ownership);
         }
+      } else if (
+        (nested.kind === "extern.new" ||
+          nested.kind === "extern.call" ||
+          nested.kind === "extern.prop" ||
+          nested.kind === "extern.propSet") &&
+        nested.provider
+      ) {
+        recordExternalCallable(evidence, nested.provider, input.abi, ownership);
       } else if (nested.kind === "closure.new") {
         if (nested.liftedFunc.binding.kind === "unit") {
           recordUnitReference(
