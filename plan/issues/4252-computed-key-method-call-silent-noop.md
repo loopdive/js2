@@ -12,6 +12,16 @@ task_type: bug
 area: codegen
 goal: es5
 related: [1100, 1306, 1355, 1472, 2963, 3031, 3166, 4232]
+loc-budget-allow:
+  # +27: both element-access fallback sites in the tail dispatch now route
+  # through tryEmitInlineDynamicCall behind the narrow plain-object oracle
+  # gate, replacing the ref.null.extern drop. The routing must live at the
+  # two fallback sites themselves — they ARE the dispatch's default arms.
+  - src/codegen/expressions/call-tail-dispatch.ts
+func-budget-allow:
+  # Same change at function granularity: the two fallback arms are inside
+  # compileTailDispatch (+26); the predicate lives in the oracle.
+  - src/codegen/expressions/call-tail-dispatch.ts::compileTailDispatch
 ---
 
 ## Summary
