@@ -277,8 +277,12 @@ export class ProgramAbiClassCallableRegistry {
       );
     }
     const canonicalUnitId = canonicalUnitIds[0]!;
-    const canonical = this.identityContext.terminalByUnitId.get(canonicalUnitId);
-    if (!canonical || canonical.lexicalOwnerId === null || !canonical.kind.startsWith("class-")) {
+    const canonical = this.identityContext.unitByUnitId.get(canonicalUnitId);
+    const canonicalClass =
+      canonical?.lexicalOwnerId === null || canonical?.lexicalOwnerId === undefined
+        ? undefined
+        : this.identityContext.declarationByClassId.get(canonical.lexicalOwnerId as IrClassId);
+    if (!canonical || !canonicalClass || !canonical.kind.startsWith("class-")) {
       throw new ProgramAbiInvariantError(
         "missing-source-unit",
         `inherited class callable ${displayName} has no exact canonical class unit`,
