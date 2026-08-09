@@ -4710,6 +4710,11 @@ export function generateModule(
     // the bridge is published (js-host default).
     stripHostBridgeExports(ctx);
 
+    // (#4257) Re-declare `ref.func` targets that the mid-finalize scan above
+    // could not see: every `__extern_get`/dispatcher body FILL runs after it.
+    // Additive + before dead-elim (which remaps declaredFuncRefs).
+    collectDeclaredFuncRefs(ctx, { additive: true });
+
     // Dead import and type elimination pass
     eliminateDeadLayoutAndPlanProgramAbi(ctx); // #1899 authoritative remap, then #3520 retained ABI
 
@@ -6967,6 +6972,11 @@ export function generateMultiModule(
     // the functions/types those exports pin are actually reclaimed. No-op when
     // the bridge is published (js-host default).
     stripHostBridgeExports(ctx);
+
+    // (#4257) Re-declare `ref.func` targets that the mid-finalize scan above
+    // could not see: every `__extern_get`/dispatcher body FILL runs after it.
+    // Additive + before dead-elim (which remaps declaredFuncRefs).
+    collectDeclaredFuncRefs(ctx, { additive: true });
 
     // Dead import and type elimination pass
     eliminateDeadLayoutAndPlanProgramAbi(ctx); // #1899 authoritative remap, then #3520 retained ABI
