@@ -1,0 +1,8 @@
+{
+  "repo": "https://github.com/eslint/eslint.git",
+  "tag": "v10.0.3",
+  "commit": "bfce7eaa0ec5d6591fd247b7ff57b51e45fb88a1",
+  "testFiles": ["tests/lib/shared/deep-merge-arrays.js"],
+  "implementationModule": "lib/shared/deep-merge-arrays.js",
+  "_note": "ESLint's published npm tarball omits its unit tests. This pin acquires the exact source revision matching eslint@10.0.3 and runs every original test body in the selected deep-merge-arrays unit file against the byte-verified published implementation. The file is an honest first upstream slice, not a claim about ESLint's entire test suite."
+}

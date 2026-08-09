@@ -141,6 +141,7 @@
     "dogfood:cookie": "npx tsx tests/dogfood/cookie-harness.mjs",
     "dogfood:eslint": "npx tsx tests/dogfood/eslint-harness.mjs",
     "dogfood:eslint-workload": "npx tsx tests/dogfood/eslint-workload-harness.mjs",
+    "dogfood:eslint-upstream-suite": "npx tsx tests/dogfood/eslint-upstream-suite.mjs",
     "dogfood:prettier": "npx tsx tests/dogfood/prettier-harness.mjs",
     "dogfood:react": "npx tsx tests/dogfood/react-harness.mjs",
     "dogfood:react-upstream-suite": "npx tsx tests/dogfood/react-upstream-suite.mjs",
