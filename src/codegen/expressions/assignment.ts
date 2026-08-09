@@ -102,6 +102,11 @@ import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { resolveEffectiveStructName } from "../property-access.js";
 import { emitOverlayRoutedElementSet, overlayRouteActive } from "../typed-lane-overlay-route.js"; // (#4159 S5)
 import {
+  elementAccessTypedArrayName,
+  emitNonIndexVecElementSet,
+  nonArrayIndexNumericKey,
+} from "../array-nonindex-key.js"; // (#4247) §10.4.2.2 named-key routing + the relocated TA-view-name helper
+import {
   compileStringBuilderAppend,
   emitStringBuilderAppendCodeUnit,
   getBuilderInfo,
@@ -129,21 +134,6 @@ import { emitToPropertyKeyOnce } from "./computed-member-reference.js";
  * Throws TypeError if the value in `srcLocal` is null or the JS undefined sentinel.
  * Per spec §14.3.3.1 RequireObjectCoercible / §8.4.2 GetIterator.
  */
-/**
- * (#2593) Recover the typed-array VIEW NAME of an element-assignment receiver
- * (`a[i] = v`) from its TS type, so the write site can special-case
- * `Uint8ClampedArray` (ToUint8Clamp) vs the modulo-truncating integer views.
- * Returns undefined when the receiver is not a recognised typed-array view.
- */
-function elementAccessTypedArrayName(ctx: CodegenContext, receiver: ts.Expression): string | undefined {
-  const t = ctx.checker.getTypeAtLocation(receiver);
-  let name = t.getSymbol()?.name ?? t.aliasSymbol?.name;
-  if ((!name || !TYPED_ARRAY_NAMES.has(name)) && ts.isNewExpression(receiver) && ts.isIdentifier(receiver.expression)) {
-    name = receiver.expression.text;
-  }
-  return name && TYPED_ARRAY_NAMES.has(name) ? name : undefined;
-}
-
 function emitExternrefAssignDestructureGuard(ctx: CodegenContext, fctx: FunctionContext, srcLocal: number): void {
   // ref.is_null check (catches JS null when encoded as ref.null.extern).
   // Build a fresh Instr[] for each if-then: sharing a single array across two
@@ -4740,6 +4730,25 @@ function compileElementAssignment(
     if (!arrDef || arrDef.kind !== "array") {
       reportError(ctx, target, "Assignment: vec data is not array");
       return null;
+    }
+    // (#4247) §10.4.2.2 — a constant numeric key that is NOT an array index
+    // (`4294967295`, `4294967296`, `-1`, `1.1`, `NaN`, `Infinity`) is an
+    // ordinary NAMED property: it goes to the #3537 expando bag and must leave
+    // `length` alone. The vec grow sequence below would instead saturate the
+    // key to `i32.max` and TRAP the module trying to allocate the backing
+    // array. TypedArray views and `arguments` are NOT array exotics, so they
+    // keep their own lowering.
+    if (
+      elementAccessTypedArrayName(ctx, target.expression) === undefined &&
+      !(ts.isIdentifier(target.expression) && target.expression.text === "arguments")
+    ) {
+      const namedKey = nonArrayIndexNumericKey(ctx, fctx, target.argumentExpression);
+      if (namedKey !== undefined) {
+        const named = emitNonIndexVecElementSet(ctx, fctx, arrType, namedKey, value, (e, h) =>
+          compileExpression(ctx, fctx, e, h),
+        );
+        if (named) return named;
+      }
     }
     // (#4159 S5) Overlay-aware routed WRITE — twin of the S3 read routing;
     // rationale + exclusions in typed-lane-overlay-route.ts. `arguments` keeps
