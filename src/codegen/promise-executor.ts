@@ -34,6 +34,7 @@ import type { Instr, ValType } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import { compileArrowAsClosure } from "./closures.js";
 import { allocLocal } from "./context/locals.js";
+import { closureBagInitInstr } from "./closures/closure-header-layout.js"; // (#4241) $bag operand
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import { ensureExnTag } from "./registry/imports.js";
 import { coerceType, emitGuardedFuncRefCast, pushDefaultValue } from "./type-coercion.js";
@@ -131,6 +132,7 @@ export function emitStandalonePromiseFromExecutor(
   const emitSettleValue = (clFuncIdx: number, dst: number): void => {
     fctx.body.push({ op: "ref.func", funcIdx: clFuncIdx });
     fctx.body.push({ op: "i32.const", value: 1 }); // (#3673) $arity — settle fns take 1 arg
+    fctx.body.push(closureBagInitInstr()); // (#4241) $bag
     fctx.body.push({ op: "local.get", index: pLocal });
     fctx.body.push({ op: "struct.new", typeIdx: capTypeIdx });
     fctx.body.push({ op: "extern.convert_any" });
@@ -270,6 +272,7 @@ export function emitStandalonePromiseFromExecutorValue(
   const emitSettleValue = (clFuncIdx: number, dst: number): void => {
     fctx.body.push({ op: "ref.func", funcIdx: clFuncIdx });
     fctx.body.push({ op: "i32.const", value: 1 }); // (#3673) $arity — settle fns take 1 arg
+    fctx.body.push(closureBagInitInstr()); // (#4241) $bag
     fctx.body.push({ op: "local.get", index: pLocal });
     fctx.body.push({ op: "struct.new", typeIdx: capTypeIdx });
     fctx.body.push({ op: "extern.convert_any" });

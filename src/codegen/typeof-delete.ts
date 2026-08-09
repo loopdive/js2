@@ -419,7 +419,10 @@ export function compileDeleteExpression(
     };
     if (resolveWithBinding(fctx, ident.text)?.kind === "dynamic") {
       emitOuterDelete();
-      return { kind: "i32" };
+      // (#4231 RC-B) §13.5.1.2 evaluates to a BOOLEAN. Returning a bare
+      // `{kind:"i32"}` made an externref consumer box the result as a NUMBER, so
+      // `del = delete p3` inside a `with` yielded `1` and `del === true` failed.
+      return { kind: "i32", boolean: true };
     }
     // (#2726 group (a)) §13.5.1.2 step 4: `delete IdentifierReference` whose
     // reference is UNRESOLVABLE (the name resolves to NO binding anywhere — not
@@ -1546,7 +1549,7 @@ export function compileTypeofExpression(
       if (annexBModule) return annexBModule;
       const withBinding = findWithBinding(fctx, ident.text);
       if (withBinding) {
-        return compileStringLiteral(ctx, fctx, staticTypeofForWasmType(withBinding.field.type));
+        return compileStringLiteral(ctx, fctx, staticTypeofForWasmType(ctx, withBinding.field.type));
       }
       const sym = ctx.checker.getSymbolAtLocation(ident);
       const hasValueDecl = !!sym?.valueDeclaration;
@@ -1735,10 +1738,21 @@ export function compileTypeofExpression(
   return { kind: "externref" };
 }
 
-function staticTypeofForWasmType(type: ValType): string {
+function staticTypeofForWasmType(ctx: CodegenContext, type: ValType): string {
   if (type.kind === "i32") return type.symbol === true ? "symbol" : "boolean";
   if (type.kind === "f32" || type.kind === "f64" || type.kind === "i64") return "number";
+  // (#4231 RC-D) A `with`-bound STRING field is a ref to one of the native
+  // string types, not an object. Without this it fell into the `"object"`
+  // catch-all below and `with ({s:'a'}) { typeof s }` answered "object".
+  if ((type.kind === "ref" || type.kind === "ref_null") && isNativeStringTypeIdx(ctx, type.typeIdx)) {
+    return "string";
+  }
   return "object";
+}
+
+/** True for the WasmGC type indices that carry a JS string value. */
+function isNativeStringTypeIdx(ctx: CodegenContext, typeIdx: number): boolean {
+  return typeIdx === ctx.anyStrTypeIdx || typeIdx === ctx.nativeStrTypeIdx;
 }
 
 /**
@@ -1787,7 +1801,7 @@ export function compileTypeofComparison(
     if (ts.isIdentifier(ident)) {
       const withBinding = findWithBinding(fctx, ident.text);
       if (withBinding) {
-        const actual = staticTypeofForWasmType(withBinding.field.type);
+        const actual = staticTypeofForWasmType(ctx, withBinding.field.type);
         const matches = actual === stringLiteral;
         const result = isEq ? (matches ? 1 : 0) : matches ? 0 : 1;
         fctx.body.push({ op: "i32.const", value: result });

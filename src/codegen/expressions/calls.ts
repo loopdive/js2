@@ -22,6 +22,7 @@ import type { Instr, ValType } from "../../ir/types.js";
 import { compileArrayMethodCall, compileArrayPrototypeCall, resolveArrayInfo } from "../array-methods.js";
 import { emitGlobalThisGopdFold } from "../dyn-read.js"; // (#2984)
 import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js"; // (#1916 S3b) stable-regime minting
+import { buildClosureResultBoxing } from "../closures/result-boxing.js"; // (#4082) the single closure-result→externref decision
 import { emitCollectionIteratorVec, ensureMapGroupBy } from "../map-runtime.js"; // (#42) native Set/Map → vec, shared with spread / Array.from; (#3149) native Map.groupBy
 import { isCollectionReflectiveCallShape, tryCompileCollectionReflectiveCall } from "../collections-brand.js"; // (#2604/#3171) {Map,Set,WeakMap,WeakSet}.prototype.METHOD.call brand-check
 import { classMemberFuncKey, fnctorAncestorOfClass } from "../class-member-keys.js"; // (#1983 / #3123)
@@ -2110,6 +2111,7 @@ function emitBoundFnValueFromLocals(
     fctx.body.push({ op: "call", funcIdx: objVecPushIdx });
   }
   fctx.body.push({ op: "local.get", index: argsVecLocal });
+  fctx.body.push({ op: "ref.null.extern" }); // (#4241) $bag — no expandos at birth
   fctx.body.push({ op: "struct.new", typeIdx: bfIdx });
   fctx.body.push({ op: "extern.convert_any" });
 }
@@ -4033,19 +4035,16 @@ export function tryEmitInlineDynamicCall(
     callBody.push({ op: "ref.cast", typeIdx: cand.info.funcTypeIdx });
     callBody.push({ op: "call_ref", typeIdx: cand.info.funcTypeIdx });
 
-    // Coerce return value to externref.
-    const ret = cand.info.returnType;
-    if (ret === null) {
-      callBody.push({ op: "ref.null.extern" });
-    } else if (ret.kind === "f64") {
-      callBody.push({ op: "call", funcIdx: boxNumberIdx });
-    } else if (ret.kind === "i32") {
-      callBody.push({ op: "f64.convert_i32_s" });
-      callBody.push({ op: "call", funcIdx: boxNumberIdx });
-    } else if (ret.kind === "ref" || ret.kind === "ref_null") {
-      callBody.push({ op: "extern.convert_any" });
-    }
-    // externref: no conversion
+    // Coerce return value to externref — the ONE shared decision (#4082
+    // `buildClosureResultBoxing`), not a fourth private copy. The private copy
+    // this replaces tested `ret.kind === "i32"` and unconditionally emitted
+    // `f64.convert_i32_s` + `__box_number`, which is brand-blind: an `i32`
+    // slot backs `number`, `boolean` (1/0) and symbol handles alike (#2785),
+    // so a boolean-returning closure reached through this inline ladder handed
+    // back the NUMBER 0/1. That is what made test262's `isConfigurable()`
+    // answer `0` instead of `false` and `verifyProperty` report
+    // "<p> descriptor should (not) be configurable".
+    callBody.push(...buildClosureResultBoxing(ctx, cand.info.returnType, boxNumberIdx));
 
     // (#820/#1543) Discriminate by the *funcref* signature, not the struct
     // type. Every `__fn_wrap_*` struct subtypes the single root wrapper, so

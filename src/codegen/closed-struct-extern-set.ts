@@ -14,7 +14,7 @@
  *     (measured on the #4194 fixture: `n["type"] = "T2"` reads back unchanged
  *     in standalone; native and js-host both apply it);
  *   - acorn's `copyNode` (`for (p in node) newNode[p] = node[p]`) copied
- *     nothing even after #4219/#4229 made the enumeration half real — which is
+ *     nothing even after #4219/#4243 made the enumeration half real — which is
  *     the measured zero-effect that blocks flipping the #3927 per-type-layout
  *     emission default-ON.
  *

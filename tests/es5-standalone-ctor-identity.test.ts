@@ -31,7 +31,16 @@ async function runStandalone(source: string): Promise<Record<string, unknown>> {
   if (typeof exports._start === "function") exports._start();
   const out: Record<string, unknown> = {};
   for (const [name, fn] of Object.entries(exports)) {
-    if (name !== "_start" && typeof fn === "function") out[name] = fn();
+    // (#4232) Skip COMPILER-RESERVED exports. `closure-exports.ts` emits the
+    // JS-host method-closure bridge as `__\0js2_call_fn_method_argc_<n>` — the
+    // NUL is deliberate, precisely so the name cannot collide with a
+    // source-level identifier. A sweep that asserts an exact object shape must
+    // therefore exclude them, or the assertion silently doubles as a "did any
+    // unrelated change arm the host bridge?" check and breaks on a cost
+    // regression rather than a semantic one. That is what happened when the
+    // #4232 plain-`Object` carrier first landed: all five failures here had
+    // every asserted VALUE correct and only the extra keys differed.
+    if (name !== "_start" && typeof fn === "function" && !name.includes("\0")) out[name] = fn();
   }
   return out;
 }

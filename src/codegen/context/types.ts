@@ -2553,6 +2553,14 @@ export interface CodegenContext {
    * (emitNativeCaseConversion). Registered once on first use.
    */
   caseTableArrTypeIdx?: number;
+  /**
+   * (#4234) Immutable `(array f64)` type index for the decimal-scaling
+   * power-of-ten table used by the native string→number parsers
+   * (`parse-number-native.ts`). Registered once on first use.
+   */
+  pow10ArrTypeIdx?: number;
+  /** (#4234) Global index of the `10^0 … 10^308` table built on that type. */
+  pow10TableGlobalIdx?: number;
   /** #1588 PR-B: i8 backing array + Utf8String subtype indices. -1 when
    *  `utf8Storage` is off (types not registered). */
   utf8StrDataTypeIdx: number;
@@ -3138,6 +3146,15 @@ export interface CodegenContext {
    *  never reads `.constructor` mints nothing and emits byte-identical
    *  output. */
   wrapperCtorCarrierDemanded?: boolean;
+  /** (#4232) True when `wrapperCtorCarrierDemanded` holds AND the module
+   *  mentions the `Object` identifier — the NARROWER gate for the
+   *  ordinary-object (`Object(null)`) arm alone. That arm answers from
+   *  `emitBuiltinNamespaceObject`, which materializes the whole `Object`
+   *  static surface as closures and thereby arms the JS-host method-closure
+   *  bridge; riding the shared flag put that surface into every standalone
+   *  module reading `.constructor` anywhere, including ones only ever asking
+   *  about a primitive wrapper (#4034's unconditional-pull-in hazard). */
+  plainCtorCarrierDemanded?: boolean;
   /** (#4187) Identifier names appearing as the receiver of a member delete
    *  (`delete r.k` / `delete r[e]`), pre-scanned by
    *  `scanModuleMemberDeletes`. Consulted ONLY by the standalone arm of

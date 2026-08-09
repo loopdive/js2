@@ -26,6 +26,7 @@ import {
   flushLateImportShifts as flushLateImportShiftsShared,
 } from "../shared.js";
 import {
+  closureBagInitInstr,
   getFuncSignature,
   getOrCreateConstructibleFuncRefWrapperTypes,
   getOrCreateFuncRefWrapperTypes,
@@ -288,9 +289,10 @@ export function emitObjectMethodAsClosure(
     methodTargetsImport: methodFuncIdx < ctx.numImportFuncs,
   });
 
-  // Emit: ref.func $trampoline, (#3673) $arity, struct.new $closure_struct
+  // Emit: ref.func $trampoline, (#3673) $arity, (#4241) $bag, struct.new $closure_struct
   fctx.body.push({ op: "ref.func", funcIdx: trampolineFuncIdx });
   fctx.body.push({ op: "i32.const", value: userParams.length });
+  fctx.body.push(closureBagInitInstr());
   fctx.body.push({ op: "struct.new", typeIdx: structTypeIdx });
 
   return { kind: "ref", typeIdx: structTypeIdx };
@@ -552,6 +554,7 @@ function emitLazyClosureCacheAccess(
   const initBody: Instr[] = [
     { op: "ref.func", funcIdx: trampolineFuncIdx },
     { op: "i32.const", value: arity }, // (#3673) $arity
+    closureBagInitInstr(), // (#4241) $bag
     ...(constructible ? ([{ op: "i32.const", value: 1 }] satisfies Instr[]) : []),
     { op: "struct.new", typeIdx: structTypeIdx },
     { op: "extern.convert_any" },
@@ -881,6 +884,52 @@ export function ensureFuncClosureSingleton(
 
   observeProgramAbiFunctionValue(ctx, funcIdx, trampolineFuncIdx, cacheGlobalIdx);
   return { cacheGlobalIdx, trampolineFuncIdx, closureStructTypeIdx: structTypeIdx };
+}
+
+/**
+ * (#4243) The externref-only half of {@link emitCachedFuncClosureAccess}: leave
+ * the canonical cached closure for `funcName` on the stack as an `externref`,
+ * skipping the `any.convert_extern` + `ref.cast` struct recovery.
+ *
+ * ## Why the cast is worth skipping when the caller only needs a value
+ * `ensureFuncClosureSingleton` memoizes the trampoline + cache global by NAME
+ * but recomputes `closureStructTypeIdx` from the `constructible` flag on every
+ * call, and the constructible wrapper is a SUBTYPE of the plain one
+ * (`superTypeIdx: base.structTypeIdx` in `getOrCreateConstructibleFuncRefWrapperTypes`).
+ * So two callers that disagree about the flag share one cache global and
+ * disagree about the struct — and the direction matters: a `ref.cast` to the
+ * base succeeds on a stored constructible wrapper, but a cast to the
+ * constructible type TRAPS on a stored base wrapper. That is a live hazard
+ * (`RuntimeError: illegal cast`), reproduced while adding the `arguments.callee`
+ * seed, where a module-init binding seed stored the base wrapper first.
+ *
+ * A caller that wants a first-class value — not a `call_ref` fast path — never
+ * needs the struct view, so it should not pay that cast. `arguments.callee` is
+ * exactly that caller: the value is stored into a property descriptor as an
+ * externref and is never dispatched from the seed site.
+ *
+ * Returns false when no singleton could be established, leaving `fctx.body`
+ * untouched so the caller can decline cleanly.
+ */
+export function emitCachedFuncClosureExternref(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  funcName: string,
+  funcIdx: number,
+  constructible = false,
+): boolean {
+  const singleton = ensureFuncClosureSingleton(ctx, funcName, funcIdx, constructible);
+  if (!singleton) return false;
+  const { cacheGlobalIdx, trampolineFuncIdx, closureStructTypeIdx } = singleton;
+  emitLazyClosureCacheAccess(
+    fctx,
+    cacheGlobalIdx,
+    trampolineFuncIdx,
+    closureStructTypeIdx,
+    ctx.closureInfoByTypeIdx.get(closureStructTypeIdx)?.paramTypes.length ?? 0,
+    constructible,
+  );
+  return true;
 }
 
 export function emitCachedFuncClosureAccess(

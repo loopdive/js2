@@ -30,6 +30,7 @@ import { reportError } from "./context/errors.js";
 import { reportSilentFallback } from "./fallback-telemetry.js";
 import { resolveLiftedMethodThisStruct } from "./fnctor-escape-gate.js"; // (#2681/#2686 A3) lifted-method `this`→struct
 import { allocLocal, allocTempLocal, getLocalType } from "./context/locals.js";
+import { seedLiftedClosureArgumentsCallee } from "./arguments-callee.js"; // (#4243) §10.6 step 13.a
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import {
   addFuncType,
@@ -2184,8 +2185,8 @@ export function compileLiftedClosureBody(
   // local in the lifted fctx and register it in `boxedTdzFlags` +
   // `tdzFlagLocals`. This makes existing TDZ-check call sites (calls.ts,
   // identifiers.ts) automatically route through `struct.get` on the ref cell.
-  // Field-layout invariant: TDZ flag fields come AFTER all value fields,
-  // i.e. fieldIdx = 1 + captures.length + tdzCaptureIndex.
+  // Field-layout invariant: TDZ flag fields come AFTER all value fields, i.e.
+  // fieldIdx = CLOSURE_CAPTURE_FIELD_BASE + captures.length + tdzCaptureIndex.
   {
     const tdzFlaggedCapturesForPrologue = captures.filter((c) => c.hasTdzFlag);
     if (tdzFlaggedCapturesForPrologue.length > 0) {
@@ -2302,6 +2303,9 @@ export function compileLiftedClosureBody(
       argsLocalIdx: argsLocal,
       arrTmpIdx: arrTmp,
     });
+
+    // (#4243) §10.6 step 13.a — `callee` on a non-strict arguments object.
+    seedLiftedClosureArgumentsCallee(ctx, liftedFctx, arrow, argsLocal);
   }
 
   let conciseBodyHasValue = false;
