@@ -70,17 +70,17 @@ local measurement and CI rather than only one runner.
 
 ## Test Results
 
-Measured on compiler `a71186c3b34b` with the pinned Test262 commit
+Measured on compiler `b97e49a1dd80` with the pinned Test262 commit
 `b363f29d3c43`. Both commands used the maintained sharded runner, the literal
 upstream harness, `--official-scope-only`, and
 `TEST262_PATH_FILTER="test/harness/"`.
 
 | Lane | Pass | Fail | Compile error | Skip | Unique rows |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| GC | 45 | 71 | 0 | 0 | 116 |
-| standalone | 51 | 64 | 1 | 0 | 116 |
+| GC | 52 | 64 | 0 | 0 | 116 |
+| standalone | 62 | 53 | 1 | 0 | 116 |
 
-The pass sets overlap on 25 files; 20 pass only in GC and 26 pass only in
+The pass sets overlap on 29 files; 23 pass only in GC and 33 pass only in
 standalone. The honest headline is therefore not “the harness passes,” but “all
 116 harness self-tests are now measured.”
 
@@ -88,7 +88,7 @@ GC failure categories:
 
 | Category | Count |
 | --- | ---: |
-| other | 56 |
+| other | 49 |
 | missing builtin | 10 |
 | type error | 3 |
 | runtime error | 1 |
@@ -98,8 +98,8 @@ Standalone failure categories:
 
 | Category | Count |
 | --- | ---: |
-| assertion failure | 35 |
-| other | 17 |
+| assertion failure | 30 |
+| other | 11 |
 | illegal cast | 6 |
 | type error | 3 |
 | null dereference | 3 |
