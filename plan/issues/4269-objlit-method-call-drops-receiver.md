@@ -329,6 +329,23 @@ pre-existing. Every other suite run (`issue-4096`, `issue-4252`,
 `es5-standalone-this-and-construct`, `call-expression-patterns`,
 `computed-props`) is green: 72/75 across the set, the 3 being those pre-existing.
 
+### Harness-fidelity ratchet (#4251)
+
+`tests/es5-standalone-harness-selftests.test.ts`: **19/19 pass**, no entry
+moves. Nothing pinned there flips `"fail"` → `"pass"`, so no ratchet entry needs
+updating — consistent with the population finding above (the upstream harness
+writes its helpers as function declarations and descriptors, not as
+`{ m: function () { … this … } }` called through the object).
+
+### Re-verified after merging `upstream/main` (through #4262 / #4281)
+
+#4262 reworked the error substrate and touched `property-access.ts`, which this
+change's call sites import (`emitNullCheckThrow`, `emitExternrefToStructGet`).
+Re-ran on the merged tree: `tsc --noEmit` clean, the 18-case suite green, all
+gates green, and the demand-gate byte-identity table re-measured end to end —
+**28 of 36 cells (18 shapes × 2 lanes) identical, and exactly the 4 target
+shapes changed on both lanes**, unchanged from the pre-merge measurement.
+
 ## Deliberately NOT done, with the mechanism named
 
 1. **`return typeof this` / `return "ab" + this.x` from an object-literal method
