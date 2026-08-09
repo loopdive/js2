@@ -61,6 +61,7 @@ import { resolveStructName } from "./misc.js";
 import { tryReshapeBindToNamedThisCall } from "../named-this-call.js"; // (#4203)
 import { compileSuperElementMethodCall } from "./new-super.js";
 import { compileCallDispatchTail } from "./stored-member-closure-call.js";
+import { emitPlainObjectDynamicCallWithReceiver } from "./plain-object-dynamic-receiver-call.js";
 import {
   classInstanceHasField,
   coerceNumberMethodArgToF64,
@@ -68,6 +69,7 @@ import {
   compileConditionalCallee,
   compileFunctionBind,
   compileIIFE,
+  elemAccessReceiverIsPlainObject,
   elemAccessReceiverIsUserClass,
   emitBoundFunctionCall,
   emitClosureCallArgcExtras,
@@ -1405,6 +1407,25 @@ export function compileTailDispatch(
         if (dyn !== null) return dyn;
       }
 
+      // (#4252) Runtime-key call on a PLAIN OBJECT receiver: `o[k]()` where `k`
+      // is a variable that const-folds to a key for which no builtin/class
+      // method matched. The element READ is already correct (`var g = o[k]; g()`
+      // invokes; `typeof o[k] === 'function'` answers true) — only the
+      // INVOCATION was dropped by the fallback below, silently, yielding
+      // `undefined` with the callee never entered. Route the same
+      // ref.test-guarded dynamic closure dispatch the user-class arm above uses;
+      // its default arm reproduces the historical `ref.null.extern`, so a
+      // non-callable read value keeps today's behaviour.
+      if (elemAccessReceiverIsPlainObject(ctx, elemAccess)) {
+        // (#4269) …and give that dispatch a receiver. #4252 made the callee RUN;
+        // it still ran with `this` unbound, which is the same silent wrong
+        // answer one layer down. See object-literal-method-receiver.ts for why
+        // the gate is asked of the receiver's literal here and why an argument
+        // that reads `this` refuses the bind outright.
+        const dyn = emitPlainObjectDynamicCallWithReceiver(ctx, fctx, expr, elemAccess);
+        if (dyn !== null) return dyn;
+      }
+
       // Fallback for resolved element access calls that didn't match any known method:
       // compile receiver, discard; compile each argument for side effects; return externref.
       {
@@ -1440,6 +1461,19 @@ export function compileTailDispatch(
     // historical behaviour. A non-closure read value hits the safe default arm.
     if (elemAccessReceiverIsUserClass(ctx, elemAccess)) {
       const dyn = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
+      if (dyn !== null) return dyn;
+    }
+    // (#4252) The unresolved-key twin of the plain-object arm above:
+    // `traps[trap]()` where `trap` is a parameter, so no static key exists. This
+    // is the shape the test262 harness self-tests `proxytrapshelper-{default,
+    // overrides}.js` exercise — `allowProxyTraps` hands back an object literal
+    // of 14 functions and the test calls `traps[trap]()` for each. The dynamic
+    // element read canonicalises the key at runtime and finds the right slot;
+    // only the call was dropped, which turned a throwing trap into a silent
+    // no-op and reported the file as a (vacuous) pass.
+    if (elemAccessReceiverIsPlainObject(ctx, elemAccess)) {
+      // (#4269) With a receiver — see the resolved-key twin above.
+      const dyn = emitPlainObjectDynamicCallWithReceiver(ctx, fctx, expr, elemAccess);
       if (dyn !== null) return dyn;
     }
 

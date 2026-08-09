@@ -88,6 +88,51 @@ function bindingHasOutOfShapePropertyWrite(ctx: CodegenContext, decl: ts.Variabl
   return widens;
 }
 
+/**
+ * (#4264) True when `node` sits inside the BODY of a `with` statement, without
+ * crossing a function boundary first.
+ *
+ * The TypeScript checker gives identifiers inside a `with` body no resolvable
+ * value declaration — by design, since §14.11's object Environment Record can
+ * bind any name at runtime. That is correct for TYPE inference and fatal for
+ * CARRIER inference: the walk below asks `variableDeclarationOf` whether an
+ * assignment targets `decl`, gets `undefined` for every write inside a `with`,
+ * and concludes the binding is single-domain. The slot then keeps the
+ * initializer's narrow representation and the assignment is destroyed by
+ * coercion — `var st = "parseInt"; with (o) { st = parseInt; }` stores a
+ * function externref into a native-string slot and reads back `null`.
+ *
+ * The predicate is the gate for the name-match fallback: it fires only for
+ * sources that actually contain a `with`, so a module without one takes the
+ * identical analysis it did before.
+ */
+function isInsideWithBody(node: ts.Node): boolean {
+  let prev: ts.Node | undefined;
+  for (let cur: ts.Node | undefined = node; cur; prev = cur, cur = cur.parent) {
+    if (prev !== undefined && ts.isWithStatement(cur) && cur.statement === prev) return true;
+    if (ts.isFunctionLike(cur)) return false;
+  }
+  return false;
+}
+
+/**
+ * (#4264) Does this assignment target `decl`? Normally the oracle answers, but
+ * inside a `with` body it cannot (see {@link isInsideWithBody}). There, fall
+ * back to a NAME match — and only when the oracle resolved NOTHING, so a genuine
+ * inner shadow (which the oracle *does* resolve, to a different declaration)
+ * still excludes the write.
+ */
+function assignmentTargetsDeclaration(
+  ctx: CodegenContext,
+  target: ts.Identifier,
+  decl: ts.VariableDeclaration,
+  declName: string,
+): boolean {
+  const resolved = ctx.oracle.variableDeclarationOf(target);
+  if (resolved !== undefined) return resolved === decl;
+  return target.text === declName && isInsideWithBody(target);
+}
+
 export function bindingHasMixedAssignmentCarrier(ctx: CodegenContext, decl: ts.VariableDeclaration): boolean {
   if (!ts.isIdentifier(decl.name)) return false;
   if (!decl.initializer) return false;
@@ -97,6 +142,7 @@ export function bindingHasMixedAssignmentCarrier(ctx: CodegenContext, decl: ts.V
   const initialTag = ctx.oracle.staticJsTypeOf(decl.initializer);
   if (initialTag === "mixed") return false;
   const initialDomain = carrierDomain(initialTag);
+  const declName = decl.name.text;
   const scope = containingScope(decl);
   // (#4131) An Annex B B.3.3 block/`if`/`case`-nested `function F` in this same
   // var scope is a HIDDEN cross-domain assignment to `F`: B.3.3.1 step 3.f writes
@@ -130,7 +176,11 @@ export function bindingHasMixedAssignmentCarrier(ctx: CodegenContext, decl: ts.V
     if (mixed) return;
     if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
       const target = stripParens(node.left);
-      if (ts.isIdentifier(target) && target !== decl.name && ctx.oracle.variableDeclarationOf(target) === decl) {
+      if (
+        ts.isIdentifier(target) &&
+        target !== decl.name &&
+        assignmentTargetsDeclaration(ctx, target, decl, declName)
+      ) {
         const assignedTag = ctx.oracle.staticJsTypeOf(node.right);
         const unresolvable = assignedTag === "mixed";
         if (unresolvable ? !provenNumeric : carrierDomain(assignedTag) !== initialDomain) {

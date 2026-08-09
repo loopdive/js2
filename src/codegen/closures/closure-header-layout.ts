@@ -57,6 +57,15 @@ export function closureArityField(): { name: string; type: ValType; mutable: fal
  * factory everywhere is what guarantees that. The `$` prefix keeps it out of
  * name enumeration and getter emission, matching `$arity` and `$shape`.
  */
+/**
+ * (#4241) The field NAME of the carrier-intrinsic expando bag. Exported so
+ * every consumer resolves the slot by NAME rather than by index — the slot does
+ * not stay last (`property-access-dispatch.ts` appends fields to already-
+ * registered structs) and it sits at different indices in different carrier
+ * families (index 2 in the closure header, appended in an instance carrier).
+ */
+export const INSTANCE_BAG_FIELD = "$bag";
+
 export function closureBagField(): { name: string; type: ValType; mutable: true } {
   return { name: "$bag", type: { kind: "externref" }, mutable: true };
 }
