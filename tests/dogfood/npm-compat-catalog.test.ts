@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 // @ts-expect-error — .mjs dogfood helpers have no declaration files
@@ -52,25 +53,38 @@ describe("npm compatibility package catalog", () => {
     expect(canonical).toEqual(expect.arrayContaining(EXPECTED_NAMES));
   });
 
+  it("wires jsdom's published dependency graph into its extracted fixture", () => {
+    const setup = setupNpmCompatCatalogPackage("jsdom");
+    expect(setup.dependencyNodeModulesPath).toBeTruthy();
+    expect(existsSync(join(setup.root, "node_modules", "tough-cookie"))).toBe(true);
+    expect(existsSync(join(setup.root, "node_modules", "whatwg-url"))).toBe(true);
+  });
+
   const selectedPackage = process.env.DOGFOOD_NPM_CATALOG;
   const heavy = selectedPackage ? it : it.skip;
-  heavy("records the selected package's bounded compile and validation frontier", { timeout: 240_000 }, async () => {
-    expect(EXPECTED_NAMES).toContain(selectedPackage);
-    const report = await runNpmCompatCatalogHarness(selectedPackage, { quiet: true });
-    expect(report[selectedPackage!]?.version).toBe(
-      NPM_COMPAT_CATALOG.find((entry: { name: string }) => entry.name === selectedPackage)?.version,
-    );
-    expect(typeof report.compile.success).toBe("boolean");
-    expect(typeof report.validation.validates).toBe("boolean");
-    // (#4127) `diff.runnable === false` is a FACT about this harness (it
-    // compiles and validates, it never runs the package), not a property worth
-    // asserting on its own — asserting it was how "we never checked" stayed
-    // indistinguishable from "we checked and it was fine". What must hold is
-    // that the report says so on the record: the correctness axis is present
-    // and explicitly `unverified`, with a reason.
-    expect(report.diff.runnable).toBe(false);
-    expect(report.correctness.status).toBe("unverified");
-    expect(report.correctness.reason).toEqual(expect.any(String));
-    expect(report.correctness.reason.length).toBeGreaterThan(0);
-  });
+  const selectedTimeoutMs =
+    NPM_COMPAT_CATALOG.find((entry: { name: string }) => entry.name === selectedPackage)?.timeoutMs ?? 120_000;
+  heavy(
+    "records the selected package's bounded compile and validation frontier",
+    { timeout: Math.max(240_000, selectedTimeoutMs + 60_000) },
+    async () => {
+      expect(EXPECTED_NAMES).toContain(selectedPackage);
+      const report = await runNpmCompatCatalogHarness(selectedPackage, { quiet: true });
+      expect(report[selectedPackage!]?.version).toBe(
+        NPM_COMPAT_CATALOG.find((entry: { name: string }) => entry.name === selectedPackage)?.version,
+      );
+      expect(typeof report.compile.success).toBe("boolean");
+      expect(typeof report.validation.validates).toBe("boolean");
+      // (#4127) `diff.runnable === false` is a FACT about this harness (it
+      // compiles and validates, it never runs the package), not a property worth
+      // asserting on its own — asserting it was how "we never checked" stayed
+      // indistinguishable from "we checked and it was fine". What must hold is
+      // that the report says so on the record: the correctness axis is present
+      // and explicitly `unverified`, with a reason.
+      expect(report.diff.runnable).toBe(false);
+      expect(report.correctness.status).toBe("unverified");
+      expect(report.correctness.reason).toEqual(expect.any(String));
+      expect(report.correctness.reason.length).toBeGreaterThan(0);
+    },
+  );
 });
