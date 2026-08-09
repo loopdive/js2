@@ -73,6 +73,38 @@ Measured result with all three corrections applied:
 Lodash and Moment remain separate residuals under the same package-frontier
 umbrella; a Redux compile/validation win is not evidence that either is fixed.
 
+## 2026-08-09 measured Moment fnctor-constructor residual
+
+On integrated baseline `e1f0525b0170d6`, the pinned Moment 2.30.1 entry reached
+the synthesized `__fnctor_Duration_new` constructor but emitted references to
+the factory frame's capture slots: `ordering@80`, `locales@66`,
+`baseConfig@65`, `localeFamilies@67`, `hookCallback@121`, and the mutable
+`globalLocale@212`. The constructor frame declared only one user parameter and
+59 locals, so stack-balance correctly rejected the first `local.get 80`.
+
+The generic correction gives every synthesized fnctor constructor the same
+leading capture contract as a lifted nested function: immutable captures are
+value parameters, mutable captures are shared ref-cell parameters, and TDZ
+flag cells (when present) follow the value captures. The call site resolves
+each capture from the caller's live frame or promoted cell global, then emits
+user arguments and the standalone constructor-identity parameter. The ctor
+body registers those parameters before compiling sibling calls, so no source
+or package name is special-cased.
+
+Measured on the same pinned entry after the correction:
+
+- `node --import tsx tests/dogfood/npm-compat-catalog-harness.mjs --package moment --json`
+  succeeds: 379,959-byte binary, `WebAssembly.validate` succeeds in 9.4 s.
+- Focused runtime regression `tests/issue-3996-fnctor-constructor-captures.test.ts`
+  passes: two synthesized `Box` instances share a mutable sibling capture and
+  return the native-equivalent result `27`.
+- Moment's catalog harness has no differential workload yet, so package
+  correctness remains **unverified** after compile/validation.
+
+The earlier frame-index failure is resolved. Any next Moment residual should be
+recorded separately from this constructor-frame fix rather than weakening the
+frame invariant.
+
 ## Provenance
 
 Migrated on 2026-08-01 from a GitHub issue on `loopdive/js2` (opened 2026-07-30)

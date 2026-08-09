@@ -109,7 +109,10 @@ import {
   appendFnctorConstructorParam,
   emitFnctorConstructorArguments,
   emitFnctorFieldInitializers,
+  fnctorCaptureLayout,
   fnctorConstructorParams,
+  fnctorUserParamTypes,
+  registerFnctorCaptureParams,
 } from "../fnctor-constructor-identity.js";
 import { funcSignatureOf, mintDefinedFunc, pushDefinedFunc } from "../func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 
@@ -1510,8 +1513,9 @@ function compileNewFunctionDeclaration(
     const paramType = ctx.checker.getTypeAtLocation(param);
     userCtorParams.push(resolveWasmType(ctx, paramType));
   }
-  const ctorIdentityParamIdx = userCtorParams.length;
-  const ctorParams = fnctorConstructorParams(ctx, userCtorParams);
+  const captureLayout = fnctorCaptureLayout(ctx, funcName);
+  const ctorIdentityParamIdx = captureLayout.allParamTypes.length + userCtorParams.length;
+  const ctorParams = fnctorConstructorParams(ctx, userCtorParams, captureLayout.allParamTypes);
 
   const ctorName = `${structName}_new`;
   const ctorResults: ValType[] = [{ kind: "ref", typeIdx: structTypeIdx }];
@@ -1536,6 +1540,18 @@ function compileNewFunctionDeclaration(
 
   // 4. Compile the constructor body
   const paramDefs: { name: string; type: ValType }[] = [];
+  for (let i = 0; i < captureLayout.captures.length; i++) {
+    const capture = captureLayout.captures[i]!;
+    paramDefs.push({ name: capture.name, type: captureLayout.valueParamTypes[i]! });
+  }
+  for (const capture of captureLayout.captures) {
+    if (capture.hasTdzFlag) {
+      const flagIndex =
+        captureLayout.captures.slice(0, captureLayout.captures.indexOf(capture) + 1).filter((entry) => entry.hasTdzFlag)
+          .length - 1;
+      paramDefs.push({ name: `__tdz_box_${capture.name}`, type: captureLayout.tdzFlagParamTypes[flagIndex]! });
+    }
+  }
   for (let i = 0; i < funcDecl.parameters.length; i++) {
     const p = funcDecl.parameters[i]!;
     paramDefs.push({
@@ -1564,6 +1580,7 @@ function compileNewFunctionDeclaration(
   for (let i = 0; i < ctorFctx.params.length; i++) {
     ctorFctx.localMap.set(ctorFctx.params[i]!.name, i);
   }
+  registerFnctorCaptureParams(ctx, ctorFctx, captureLayout);
 
   // (#3927 per-type layouts) A split family allocates the layout the caller
   // hinted (via the per-family hint global), defaulting to the full-union
@@ -1653,7 +1670,7 @@ function compileNewFunctionDeclaration(
   // would read the PREVIOUS function's params and coerce arguments against the
   // wrong types (observed: `call[0] expected externref, found (ref null $N)`).
   const paramTypes: ValType[] | undefined = userCtorParams;
-  emitFnctorConstructorArguments(ctx, fctx, expr.expression, args, paramTypes);
+  emitFnctorConstructorArguments(ctx, fctx, funcName, expr.expression, args, paramTypes);
   // Re-lookup funcIdx in case addUnionImports shifted indices
   const finalCtorIdx = ctx.funcMap.get(classMemberFuncKey(ctx, ctorName)) ?? ctorFuncIdx; // (#1983)
   maybeSetArgcForKnownCall(ctx, fctx, ctorName, args.length, paramTypes?.length ?? args.length);
@@ -3605,9 +3622,9 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       const ctorFuncIdx = ctx.funcMap.get(cachedFnCtor.ctorFuncName);
       if (ctorFuncIdx !== undefined) {
         const allParamTypes = getFuncParamTypes(ctx, ctorFuncIdx);
-        const paramTypes = ctx.standalone ? allParamTypes?.slice(0, -1) : allParamTypes;
+        const paramTypes = fnctorUserParamTypes(ctx, className, allParamTypes);
         const args = expr.arguments ?? [];
-        emitFnctorConstructorArguments(ctx, fctx, expr.expression, args, paramTypes);
+        emitFnctorConstructorArguments(ctx, fctx, className, expr.expression, args, paramTypes);
         maybeSetArgcForKnownCall(ctx, fctx, cachedFnCtor.ctorFuncName, args.length, paramTypes?.length ?? args.length);
         fctx.body.push({ op: "call", funcIdx: ctorFuncIdx });
         return { kind: "ref", typeIdx: cachedFnCtor.structTypeIdx };
@@ -3670,9 +3687,9 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       const ctorFuncIdx = ctx.funcMap.get(cachedFnCtor.ctorFuncName);
       if (ctorFuncIdx !== undefined) {
         const allParamTypes = getFuncParamTypes(ctx, ctorFuncIdx);
-        const paramTypes = ctx.standalone ? allParamTypes?.slice(0, -1) : allParamTypes;
+        const paramTypes = fnctorUserParamTypes(ctx, fnName, allParamTypes);
         const args = expr.arguments ?? [];
-        emitFnctorConstructorArguments(ctx, fctx, expr.expression, args, paramTypes);
+        emitFnctorConstructorArguments(ctx, fctx, fnName, expr.expression, args, paramTypes);
         const finalIdx = ctx.funcMap.get(cachedFnCtor.ctorFuncName) ?? ctorFuncIdx;
         maybeSetArgcForKnownCall(ctx, fctx, cachedFnCtor.ctorFuncName, args.length, paramTypes?.length ?? args.length);
         fctx.body.push({ op: "call", funcIdx: finalIdx });
