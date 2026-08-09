@@ -17,7 +17,7 @@ es_edition: 2015
 goal: es6
 assignee: "ttraenkler/codex-es6-census"
 test262_count: 11691
-related: [680, 869, 1355, 1430, 1645, 1691, 1750, 2046, 2566, 2662, 2669, 2864, 2866, 2872, 3031, 3177, 3371, 3488, 3531, 3575, 3949, 3975, 4167, 4259, 4274, 4275]
+related: [680, 869, 1355, 1430, 1645, 1691, 1750, 2046, 2566, 2662, 2669, 2864, 2866, 2872, 3031, 3177, 3371, 3488, 3531, 3575, 3949, 3975, 4167, 4259, 4274, 4275, 4277]
 origin: "2026-08-09 exact-edition ES2015 audit against frozen oracle-v13 two-lane JSONLs and the committed per-file edition map; requested target is 90% and all implementation work must be IR-path work"
 ---
 
@@ -130,7 +130,7 @@ historic issue's old counts remain current.
 | Symbol.iterator | custom iterator dispatch, spread argument formation, IteratorClose, generator overlap | #2669 and #1750 ready; #1691 blocked |
 | Proxy | ordinary forwarding, descriptor invariants, dynamic MOP/trap dispatch | #1355 in-progress; #3031 ready |
 | Symbol | native symbol carrier, symbol-key property storage, agent-wide registry and cross-realm identity | #2866 ready; true realms now #4274 |
-| default parameters | omitted versus explicit `undefined`, argument presence/argc, TDZ, method lowering | #869 ready; #3949 in-progress; patterns also #2669 |
+| default parameters | omitted versus explicit `undefined`, dynamic value identity, argument presence, TDZ, method lowering | exact IR child #4277 ready; legacy #869 ready; #3949 in-progress; patterns also #2669 |
 | classes | captured outer binding writes from accessor setters were dropped at the class/module-init boundary | #4259 on ready PR #4290 |
 | Reflect | receiver/prototype semantics, descriptors, arbitrary distinct NewTarget | #2046 in-progress; #1355 in-progress; residual after done #3371 |
 | species | observable constructor/`@@species`, returned object validation, realm/prototype identity | #3575, #3177, #2623 ready |
@@ -158,9 +158,11 @@ diagnosis and does not satisfy this issue.
    Repair `forof.iter` completion first, then add exact prepared ownership for
    inner iterator stepping and assignment; exclude generator sources until
    suspension is real.
-4. **Represent default-argument presence in the function IR ABI.** The exact
-   cohort has 144 same-file non-passes. Add an argc/presence plan; do not carry
-   the legacy signalling-NaN sentinel into IR.
+4. **Represent default-argument presence in the function IR ABI.** #4277
+   partitions the exact cohort's 144 pinned same-file non-passes and freezes a
+   15-file dynamic-carrier slice (eight non-generator forms). Add a callee-side
+   undefined-only plan; do not carry the legacy signalling-NaN sentinel into
+   IR.
 5. **Work runtime/MOP families through explicit IR providers.** Reflect
    descriptor/get/set subsets, TypedArray callback observation, and the
    standalone concat/import boundary are contained before Proxy, species, or
