@@ -238,6 +238,7 @@ export function sealDependencyCompletePreparedComponents(input: {
       inventory,
       derivedUnits,
       ...(input.closureSupport ? { closureSupport: input.closureSupport } : {}),
+      exceptionSupportPrepared: ctx.exnTagIdx >= 0,
       abi: {
         get: (id) => session.getDraft(id),
         bindingIdsForStructuralReference: (key) => session.bindingIdsForStructuralReference(key),

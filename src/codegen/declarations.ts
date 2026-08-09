@@ -17,7 +17,8 @@ import {
   mapTsTypeToWasm,
   unwrapPromiseType,
 } from "../checker/type-mapper.js";
-import type { FieldDef, Instr, StructTypeDef, ValType, WasmFunction } from "../ir/types.js";
+import type { FieldDef, FuncHandle, Instr, StructTypeDef, ValType, WasmFunction } from "../ir/types.js";
+import { MODULE_INIT_UNIT_NAME } from "../ir/module-init.js";
 import { collectShapes } from "../shape-inference.js";
 // (#3623) Total classification of top-level ExpressionStatements, so the
 // allow-list's fall-through leaves evidence instead of silently dropping an
@@ -2071,6 +2072,31 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
  */
 export type ModuleInitMode = "full" | "discover" | "skip";
 
+/** Prepare-before-direct ownership for the exact source module initializer. */
+export interface ModuleInitBodyCompileRouting {
+  readonly skipBody: boolean;
+  readonly preserveSkippedBody: boolean;
+  readonly skippedNames: string[];
+}
+
+/**
+ * Reserve the Program ABI module-init callable before prepared IR lowering.
+ * Direct fallback later fills this same object; successful preparation keeps
+ * the IR body in place, so both routes preserve one exact startup handle.
+ */
+export function preallocateModuleInitCallable(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
+  if (ctx.programAbiModuleInitCallables?.functionForSource(sourceFile)) return;
+  const initTypeIdx = addFuncType(ctx, [], [], "__module_init_type");
+  const initFuncIdx = mintDefinedFunc(ctx);
+  pushProgramAbiModuleInitCallable(ctx, sourceFile, initFuncIdx, {
+    name: "__module_init",
+    typeIdx: initTypeIdx,
+    locals: [],
+    body: [],
+    exported: false,
+  });
+}
+
 /** Compile all function bodies (including class constructors and methods) */
 /**
  * Third pass — compile function bodies into the slots pre-allocated by
@@ -2101,6 +2127,7 @@ export function compileDeclarations(
   preserveSkippedBodies?: ReadonlySet<string>,
   classBodyRouting?: ClassBodyCompileRouting,
   moduleInitMode: ModuleInitMode = "full",
+  moduleInitBodyRouting?: ModuleInitBodyCompileRouting,
 ): string[] | undefined {
   const skippedNames: string[] | undefined = skipBodies ? [] : undefined;
   // Build a map from function name → index within ctx.mod.functions
@@ -2488,6 +2515,18 @@ export function compileDeclarations(
   const hasModuleInits = ctx.moduleInitStatements.length > 0 || hasLiveFuncSeeds;
   const hasStaticInits = ctx.staticInitExprs.length > 0;
   let compiledInitFctx: FunctionContext | null = null;
+  const skipModuleInitBody = moduleInitMode === "full" && moduleInitBodyRouting?.skipBody === true;
+  if (skipModuleInitBody) {
+    const preallocated = ctx.programAbiModuleInitCallables?.functionForSource(sourceFile);
+    if (!preallocated) {
+      throw new Error("prepared module initializer has no exact preallocated Program ABI slot");
+    }
+    if (!moduleInitBodyRouting.preserveSkippedBody) {
+      preallocated.locals = [];
+      preallocated.body = [{ op: "unreachable" }];
+    }
+    moduleInitBodyRouting.skippedNames.push(MODULE_INIT_UNIT_NAME);
+  }
 
   // (#2965) The module-init body is compiled TWICE (the second pass, below,
   // re-runs after top-level function bodies so call sites see the final
@@ -2534,6 +2573,9 @@ export function compileDeclarations(
   let pass1DiagnosticMark = 0;
 
   function compileModuleInitBody(): FunctionContext {
+    if (process.env.JS2WASM_TEST_POISON_DIRECT_MODULE_INIT_BODY === "1") {
+      throw new Error("injected direct module-init body poison");
+    }
     const initFctx: FunctionContext = {
       name: "__module_init",
       params: [],
@@ -2666,7 +2708,7 @@ export function compileDeclarations(
   // Pass 1 seeds closure/setup discovery for the bodies compiled below. It is
   // skipped only in `"skip"` mode, where an earlier source already ran it over
   // the same complete statement list.
-  if ((hasModuleInits || hasStaticInits) && moduleInitMode !== "skip") {
+  if ((hasModuleInits || hasStaticInits) && moduleInitMode !== "skip" && !skipModuleInitBody) {
     profileCount("module-init-statements", ctx.moduleInitStatements.length);
     pass1DiagnosticMark = ctx.errors.length; // (#4195) see dedupeDiagnosticsFrom
     compiledInitFctx = profilePhase("module-init-pass1", () => compileModuleInitBody());
@@ -2795,7 +2837,7 @@ export function compileDeclarations(
   // The first compile above still serves early closure/setup discovery.
   // Only the emitting call needs the final-registry recompile; in the other
   // multi-source modes the body it would produce is discarded unread.
-  if ((hasModuleInits || hasStaticInits) && moduleInitMode === "full") {
+  if ((hasModuleInits || hasStaticInits) && moduleInitMode === "full" && !skipModuleInitBody) {
     // (#2965) Reset the program-order-sensitive property state to its
     // pre-pass-1 value so this recompile does not treat pass 1's own
     // defineProperty/freeze effects as pre-existing (see snapshot above).
@@ -2822,7 +2864,11 @@ export function compileDeclarations(
   // `"discover"`/`"skip"` never inject: each injection mints a fresh function
   // holding a full copy of the graph initializer, and only the last one is
   // ever reachable (via `startFuncIdx` / the `__module_init` export).
-  if (moduleInitMode === "full" && compiledInitFctx && compiledInitFctx.body.length > 0) {
+  const routedInitFunc = skipModuleInitBody
+    ? ctx.programAbiModuleInitCallables?.functionForSource(sourceFile)
+    : undefined;
+  const emittedInitBody = compiledInitFctx?.body ?? routedInitFunc?.body;
+  if (moduleInitMode === "full" && emittedInitBody && emittedInitBody.length > 0) {
     ctx.mod.hasTopLevelStatements = true;
 
     // Create a standalone __module_init and run it automatically via the Wasm
@@ -2854,15 +2900,25 @@ export function compileDeclarations(
     // standalone/WASI `_start` model and gives the diff-test HOST lane the same
     // fully-wired runtime; late-import shifting keeps its function index aligned with every other export.
     const exportModuleInit = ctx.deferTopLevelInit && !ctx.wasi;
-    const initTypeIdx = addFuncType(ctx, [], [], "__module_init_type");
-    const initFuncIdx = mintDefinedFunc(ctx);
-    pushProgramAbiModuleInitCallable(ctx, sourceFile, initFuncIdx, {
-      name: "__module_init",
-      typeIdx: initTypeIdx,
-      locals: compiledInitFctx.locals,
-      body: compiledInitFctx.body,
-      exported: exportModuleInit,
-    });
+    const existingInitFunc = ctx.programAbiModuleInitCallables?.functionForSource(sourceFile);
+    const existingInitFuncIdx = ctx.programAbiModuleInitCallables?.handleForSource(sourceFile);
+    let initFuncIdx: FuncHandle;
+    if (existingInitFunc && existingInitFuncIdx !== undefined) {
+      initFuncIdx = existingInitFuncIdx;
+      existingInitFunc.locals = compiledInitFctx?.locals ?? existingInitFunc.locals;
+      existingInitFunc.body = emittedInitBody;
+      existingInitFunc.exported = exportModuleInit;
+    } else {
+      const initTypeIdx = addFuncType(ctx, [], [], "__module_init_type");
+      initFuncIdx = mintDefinedFunc(ctx);
+      pushProgramAbiModuleInitCallable(ctx, sourceFile, initFuncIdx, {
+        name: "__module_init",
+        typeIdx: initTypeIdx,
+        locals: compiledInitFctx?.locals ?? [],
+        body: emittedInitBody,
+        exported: exportModuleInit,
+      });
+    }
     if (exportModuleInit) {
       // (#3505) compileMulti calls compileDeclarations once per source file
       // against one accumulating context. Each pass emits a progressively

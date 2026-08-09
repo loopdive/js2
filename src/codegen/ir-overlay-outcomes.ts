@@ -248,8 +248,8 @@ function auditIrSkippedBodySlots(input: {
   readonly identityPlan: IrOverlayIdentityPlan;
   readonly preparedSelection: Pick<IrSelection, "funcs" | "classMembers" | "moduleInit">;
   readonly skippedBodyUnitIds: ReadonlySet<IrUnitId>;
-  readonly expectedKind: "function" | "class-member";
-  readonly label: "function" | "class member";
+  readonly expectedKind: "function" | "class-member" | "module-init";
+  readonly label: "function" | "class member" | "module initializer";
   readonly report: IrIntegrationReport;
 }): readonly IrSkippedBodySlotViolation[] {
   if (input.skippedBodyUnitIds.size === 0) return [];
@@ -349,6 +349,22 @@ export function auditIrSkippedClassMemberSlots(input: {
     skippedBodyUnitIds: input.skippedClassMemberUnitIds,
     expectedKind: "class-member",
     label: "class member",
+  });
+}
+
+/** Prove the skipped source initializer reached one exact terminal result. */
+export function auditIrSkippedModuleInitSlot(input: {
+  readonly sourceFile: ts.SourceFile;
+  readonly identityPlan: IrOverlayIdentityPlan;
+  readonly preparedSelection: Pick<IrSelection, "funcs" | "classMembers" | "moduleInit">;
+  readonly skippedModuleInitUnitIds: ReadonlySet<IrUnitId>;
+  readonly report: IrIntegrationReport;
+}): readonly IrSkippedBodySlotViolation[] {
+  return auditIrSkippedBodySlots({
+    ...input,
+    skippedBodyUnitIds: input.skippedModuleInitUnitIds,
+    expectedKind: "module-init",
+    label: "module initializer",
   });
 }
 

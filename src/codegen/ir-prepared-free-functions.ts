@@ -13,6 +13,7 @@ import {
 import type { IrPromiseDelayLoweringPlan, IrPromiseDelayLoweringPlans } from "../ir/promise-delay-lowering.js";
 import { constructorHasIrSafeReceiverSemantics, type IrSelection } from "../ir/select.js";
 import type { ValType } from "../ir/types.js";
+import { MODULE_INIT_UNIT_NAME } from "../ir/module-init.js";
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
 import { installAstFreeClassConstructorNewWrapper } from "./class-constructor-wrapper.js";
@@ -107,10 +108,15 @@ export interface PreparedIrFreeFunctionBodies extends PreparedIrBodyFamily {}
 
 export interface PreparedIrClassMemberBodies extends PreparedIrBodyFamily {}
 
+export interface PreparedIrModuleInitBody extends PreparedIrBodyFamily {
+  readonly unitId: IrUnitId;
+}
+
 export interface PreparedIrBodies {
   readonly report: IrIntegrationReport;
   readonly freeFunctions: PreparedIrFreeFunctionBodies;
   readonly classMembers?: PreparedIrClassMemberBodies;
+  readonly moduleInit?: PreparedIrModuleInitBody;
 }
 
 function topLevelClassDeclarationsByName(sourceFile: ts.SourceFile): ReadonlyMap<string, ts.ClassDeclaration> {
@@ -1003,23 +1009,31 @@ function partitionPreparedUnitIds(
   unitIds: ReadonlySet<IrUnitId>,
   freeFunctionClaimsByUnitId: ReadonlyMap<IrUnitId, IrExactBodyClaim>,
   classMemberClaimsByUnitId: ReadonlyMap<IrUnitId, IrExactBodyClaim>,
+  moduleInitClaimsByUnitId: ReadonlyMap<IrUnitId, IrExactBodyClaim>,
   routingKind: "IR-owned" | "prepared" | "deferred",
-): { readonly freeFunctionUnitIds: ReadonlySet<IrUnitId>; readonly classMemberUnitIds: ReadonlySet<IrUnitId> } {
+): {
+  readonly freeFunctionUnitIds: ReadonlySet<IrUnitId>;
+  readonly classMemberUnitIds: ReadonlySet<IrUnitId>;
+  readonly moduleInitUnitIds: ReadonlySet<IrUnitId>;
+} {
   const freeFunctionUnitIds = new Set<IrUnitId>();
   const classMemberUnitIds = new Set<IrUnitId>();
+  const moduleInitUnitIds = new Set<IrUnitId>();
   for (const unitId of unitIds) {
     const freeFunction = freeFunctionClaimsByUnitId.has(unitId);
     const classMember = classMemberClaimsByUnitId.has(unitId);
-    if (freeFunction === classMember) {
+    const moduleInit = moduleInitClaimsByUnitId.has(unitId);
+    const familyCount = Number(freeFunction) + Number(classMember) + Number(moduleInit);
+    if (familyCount !== 1) {
       throw new IrInvariantError(
         "selection-preparation-mismatch",
         "patch",
-        `${routingKind} prepared body ${unitId} belongs to ${freeFunction ? "both" : "neither"} routing families`,
+        `${routingKind} prepared body ${unitId} belongs to ${familyCount} routing families`,
       );
     }
-    (freeFunction ? freeFunctionUnitIds : classMemberUnitIds).add(unitId);
+    (freeFunction ? freeFunctionUnitIds : classMember ? classMemberUnitIds : moduleInitUnitIds).add(unitId);
   }
-  return { freeFunctionUnitIds, classMemberUnitIds };
+  return { freeFunctionUnitIds, classMemberUnitIds, moduleInitUnitIds };
 }
 
 /**
@@ -1031,7 +1045,7 @@ function partitionPreparedUnitIds(
 export function prepareIrBodies(input: {
   readonly ctx: CodegenContext;
   readonly sourceFile: ts.SourceFile;
-  readonly selection: Pick<IrSelection, "funcs" | "classMembers">;
+  readonly selection: Pick<IrSelection, "funcs" | "classMembers" | "moduleInit">;
   readonly identityPlan: irOverlayIdentity.IrOverlayIdentityPlan;
   readonly functionClaimsByUnitId: ReadonlyMap<IrUnitId, IrExactFunctionClaim>;
   readonly overrideMap: IrTypeOverrideMap;
@@ -1075,10 +1089,26 @@ export function prepareIrBodies(input: {
     claimsByUnitId.set(unitId, claim);
   }
 
+  const moduleInitClaimsByUnitId = new Map<IrUnitId, IrExactBodyClaim>();
+  if (input.selection.moduleInit?.reason === null && input.selection.moduleInit.stmtCount > 0) {
+    const unitId = input.identityPlan.identityContext.moduleInitUnitIdBySourceFile.get(input.sourceFile);
+    const terminal = unitId ? input.identityPlan.identityContext.terminalByUnitId.get(unitId) : undefined;
+    if (!unitId || terminal?.observedKind !== "module-init" || terminal.legacyMatchName !== MODULE_INIT_UNIT_NAME) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "prepared module initializer has no exact structural claim",
+      );
+    }
+    const claim = { unitId, legacyName: MODULE_INIT_UNIT_NAME };
+    moduleInitClaimsByUnitId.set(unitId, claim);
+    claimsByUnitId.set(unitId, claim);
+  }
+
   const selection: IrSelection = {
     funcs: freeFunctionNames,
     classMembers: classPopulation?.memberNames ?? new Set<string>(),
-    moduleInit: undefined,
+    moduleInit: input.selection.moduleInit,
   };
   const initialReport: IrIntegrationReport =
     claimsByUnitId.size === 0
@@ -1106,18 +1136,21 @@ export function prepareIrBodies(input: {
     routing.irOwnedUnitIds,
     freeFunctionClaimsByUnitId,
     classMemberClaimsByUnitId,
+    moduleInitClaimsByUnitId,
     "IR-owned",
   );
   const preparedPartition = partitionPreparedUnitIds(
     routing.preparedUnitIds,
     freeFunctionClaimsByUnitId,
     classMemberClaimsByUnitId,
+    moduleInitClaimsByUnitId,
     "prepared",
   );
   const deferredPartition = partitionPreparedUnitIds(
     routing.deferredUnitIds,
     freeFunctionClaimsByUnitId,
     classMemberClaimsByUnitId,
+    moduleInitClaimsByUnitId,
     "deferred",
   );
 
@@ -1141,25 +1174,53 @@ export function prepareIrBodies(input: {
     preserveBodies: new Set(freePreparedProjection.entries.map(({ legacyName }) => legacyName)),
   };
 
-  if (!classPopulation) return { report, freeFunctions };
-  const classRequestedSkipProjection = bodyProjection(
-    irOwnedPartition.classMemberUnitIds,
-    classPopulation.claimsByUnitId,
-  );
-  const classPreparedProjection = bodyProjection(preparedPartition.classMemberUnitIds, classPopulation.claimsByUnitId);
-  const classDeferredProjection = bodyProjection(deferredPartition.classMemberUnitIds, classPopulation.claimsByUnitId);
-  const classDeferredBodies = new Set(classDeferredProjection.entries.map(({ legacyName }) => legacyName));
+  const classRequestedSkipProjection = classPopulation
+    ? bodyProjection(irOwnedPartition.classMemberUnitIds, classPopulation.claimsByUnitId)
+    : undefined;
+  const classPreparedProjection = classPopulation
+    ? bodyProjection(preparedPartition.classMemberUnitIds, classPopulation.claimsByUnitId)
+    : undefined;
+  const classDeferredProjection = classPopulation
+    ? bodyProjection(deferredPartition.classMemberUnitIds, classPopulation.claimsByUnitId)
+    : undefined;
+  const classDeferredBodies = new Set(classDeferredProjection?.entries.map(({ legacyName }) => legacyName) ?? []);
+  const moduleClaim = moduleInitClaimsByUnitId.values().next().value as IrExactBodyClaim | undefined;
+  const moduleRequestedSkipProjection = moduleClaim
+    ? bodyProjection(irOwnedPartition.moduleInitUnitIds, moduleInitClaimsByUnitId)
+    : undefined;
+  const modulePreparedProjection = moduleClaim
+    ? bodyProjection(preparedPartition.moduleInitUnitIds, moduleInitClaimsByUnitId)
+    : undefined;
+  const moduleDeferredProjection = moduleClaim
+    ? bodyProjection(deferredPartition.moduleInitUnitIds, moduleInitClaimsByUnitId)
+    : undefined;
+  const moduleDeferredBodies = new Set(moduleDeferredProjection?.entries.map(({ legacyName }) => legacyName) ?? []);
   return {
     report,
     freeFunctions,
-    classMembers: {
-      requestedSkipProjection: classRequestedSkipProjection,
-      completedBodies: new Set(
-        [...classPopulation.memberNames].filter((legacyName) => !classDeferredBodies.has(legacyName)),
-      ),
-      skipBodies: new Set(classRequestedSkipProjection.entries.map(({ legacyName }) => legacyName)),
-      preserveBodies: new Set(classPreparedProjection.entries.map(({ legacyName }) => legacyName)),
-    },
+    ...(classPopulation && classRequestedSkipProjection && classPreparedProjection
+      ? {
+          classMembers: {
+            requestedSkipProjection: classRequestedSkipProjection,
+            completedBodies: new Set(
+              [...classPopulation.memberNames].filter((legacyName) => !classDeferredBodies.has(legacyName)),
+            ),
+            skipBodies: new Set(classRequestedSkipProjection.entries.map(({ legacyName }) => legacyName)),
+            preserveBodies: new Set(classPreparedProjection.entries.map(({ legacyName }) => legacyName)),
+          },
+        }
+      : {}),
+    ...(moduleClaim && moduleRequestedSkipProjection && modulePreparedProjection
+      ? {
+          moduleInit: {
+            unitId: moduleClaim.unitId,
+            requestedSkipProjection: moduleRequestedSkipProjection,
+            completedBodies: new Set(moduleDeferredBodies.has(MODULE_INIT_UNIT_NAME) ? [] : [MODULE_INIT_UNIT_NAME]),
+            skipBodies: new Set(moduleRequestedSkipProjection.entries.map(({ legacyName }) => legacyName)),
+            preserveBodies: new Set(modulePreparedProjection.entries.map(({ legacyName }) => legacyName)),
+          },
+        }
+      : {}),
   };
 }
 
@@ -1176,6 +1237,7 @@ export function completePreparedIrIntegration(input: {
   readonly preparedReport?: IrIntegrationReport;
   readonly preparedLegacyNames?: ReadonlySet<string>;
   readonly preparedClassMemberLegacyNames?: ReadonlySet<string>;
+  readonly preparedModuleInitLegacyNames?: ReadonlySet<string>;
   readonly projectLoweringPlans: (selection: IrSelection) => IrIntegrationLoweringPlans;
 }): IrIntegrationReport {
   const remainingSelection: IrSelection = input.preparedReport
@@ -1186,7 +1248,9 @@ export function completePreparedIrIntegration(input: {
             (legacyName) => !input.preparedClassMemberLegacyNames?.has(legacyName),
           ),
         ),
-        moduleInit: input.selection.moduleInit,
+        moduleInit: input.preparedModuleInitLegacyNames?.has(MODULE_INIT_UNIT_NAME)
+          ? undefined
+          : input.selection.moduleInit,
       }
     : {
         funcs: new Set(input.selection.funcs),
