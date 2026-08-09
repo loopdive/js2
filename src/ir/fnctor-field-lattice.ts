@@ -276,6 +276,61 @@ export function runFieldPass(fx: FixpointCtx, writeIndex: Map<IrUnitId, Map<stri
 }
 
 /**
+ * (#4250) The per-owner, per-field WRITE-KIND VERDICT: the converged join over
+ * every write the analysis can enumerate as reaching `owner.<name>`, with every
+ * cannot-see path answered DYNAMIC — the poison guards of `readFieldFact`,
+ * minus its definiteness snapshot (the verdict is about which VALUES writes
+ * store, not about whether a read can observe `undefined`; presence tracking
+ * owns the latter).
+ *
+ * This is the fact a slot-narrowing consumer must consult before giving a
+ * field a machine slot: a slot must hold every value every reaching write can
+ * store. Name-keyed like `paramFacts` (unique callable names only) so codegen
+ * never touches an `IrUnitId`.
+ */
+export function collectFieldVerdicts(
+  state: AnalysisState,
+  fieldFacts: FieldFacts,
+  nameCounts: ReadonlyMap<string, number>,
+): {
+  readonly guarded: ReadonlyMap<string, ReadonlyMap<string, LatticeType>>;
+  readonly rawJoins: ReadonlyMap<string, ReadonlyMap<string, LatticeType>>;
+} {
+  const guarded = new Map<string, ReadonlyMap<string, LatticeType>>();
+  const rawJoins = new Map<string, ReadonlyMap<string, LatticeType>>();
+  const fx: FixpointCtx = {
+    state,
+    entries: new Map(),
+    fieldFacts,
+    atoms: new Map(),
+    resolver: () => undefined,
+    buildScope: () => new Map(),
+  };
+  for (const [owner, names] of state.fieldNamesByOwner) {
+    const node = state.nodes.get(owner);
+    if (node === undefined || node.kind !== "callable" || nameCounts.get(node.name) !== 1) continue;
+    const perFieldGuarded = new Map<string, LatticeType>();
+    const perFieldRaw = new Map<string, LatticeType>();
+    for (const name of names) {
+      // `readFieldFact` with the name itself as the snapshot: every guard
+      // applies, the definiteness check is vacuously satisfied.
+      perFieldGuarded.set(name, readFieldFact(fx, owner, name, new Set([name])));
+      // The RAW join is the poison-FREE view. A poison means "writes we cannot
+      // see may also reach this field" — it can never ERASE the writes we DID
+      // enumerate, so positive violation evidence (the string member of
+      // `union[f64,string]`) must survive a module-wide poison. Without this
+      // split, one dictionary-object computed write anywhere in a module
+      // (acorn has ~20) would blank the very evidence that fixes the
+      // `this.tag = 1; a.tag = "s"` miscompile.
+      perFieldRaw.set(name, fieldFacts.get(owner)?.get(name) ?? core.UNKNOWN);
+    }
+    guarded.set(node.name, perFieldGuarded);
+    rawJoins.set(node.name, perFieldRaw);
+  }
+  return { guarded, rawJoins };
+}
+
+/**
  * Post-convergence: the resolved value of every non-identifier carrier of a
  * CONSTRUCTOR field write, keyed by the carrier node the consumer will compute.
  *
