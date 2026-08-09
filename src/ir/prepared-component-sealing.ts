@@ -7,9 +7,10 @@ import { irClassTypeRef } from "./abi-bindings.js";
 import { irUnitCallableBindingId, irUnitFuncRef } from "./callable-bindings.js";
 import type { IrBindingId, IrClassId, IrUnitId, IrUnitInventory } from "./identity.js";
 import type { IrFunction } from "./nodes.js";
-import { IrInvariantError } from "./outcomes.js";
+import { IrInvariantError, IrUnsupportedError } from "./outcomes.js";
 import {
   derivePreparedComponentDependencies,
+  type PreparedClassAccessorWritebackEvidence,
   type PreparedComponentClosureSupportEvidence,
   type PreparedComponentDependencyFailure,
   type PreparedComponentDependencyReport,
@@ -179,8 +180,9 @@ export function sealDependencyCompletePreparedComponents(input: {
   readonly entries: readonly PreparedComponentArtifactEntry[];
   readonly inventory: IrUnitInventory;
   readonly closureSupport?: PreparedComponentClosureSupportEvidence;
+  readonly classAccessorWritebacks?: ReadonlyMap<IrUnitId, PreparedClassAccessorWritebackEvidence>;
   readonly callableImports: ReadonlyMap<string, Import>;
-  readonly onSealFailure: (terminalUnitId: IrUnitId, error: IrInvariantError) => void;
+  readonly onSealFailure: (terminalUnitId: IrUnitId, error: IrUnsupportedError) => void;
 }): ReadonlyMap<IrUnitId, string> {
   const { ctx, entries, inventory } = input;
   const session = ctx.programAbiSession;
@@ -192,6 +194,9 @@ export function sealDependencyCompletePreparedComponents(input: {
     );
   }
   const terminalUnitIds = new Set(entries.map((entry) => entry.terminalOwnerUnitId));
+  const classMemberTerminalUnitIds = new Set(
+    entries.filter((entry) => entry.classMember === true).map((entry) => entry.terminalOwnerUnitId),
+  );
   const terminalCallableBindingIds = new Set<IrBindingId>();
   for (const entry of entries) {
     const terminalUnitId = entry.terminalOwnerUnitId;
@@ -238,6 +243,7 @@ export function sealDependencyCompletePreparedComponents(input: {
       inventory,
       derivedUnits,
       ...(input.closureSupport ? { closureSupport: input.closureSupport } : {}),
+      ...(input.classAccessorWritebacks ? { classAccessorWritebacks: input.classAccessorWritebacks } : {}),
       abi: {
         get: (id) => session.getDraft(id),
         bindingIdsForStructuralReference: (key) => session.bindingIdsForStructuralReference(key),
@@ -263,41 +269,154 @@ export function sealDependencyCompletePreparedComponents(input: {
     }
 
     // A blocked caller must not withdraw an otherwise complete dependency.
-    // Remove only the exact owners that produced failures, then rederive: any
-    // dependent caller now sees a foreign unit and is peeled on the next
+    // Remove only the exact owners that produced non-retryable failures, then
+    // rederive. A class-layout-only owner stays in the candidate set while a
+    // hard sibling is peeled; the next iteration can then publish its layout
+    // and seal it instead of needlessly withdrawing a sound prepared body.
+    // Any dependent caller sees the peeled unit as foreign on the next
     // iteration, while independent callees can form their own sealed scope.
     const failingOwnerUnitIds = new Set(
       report.components.flatMap((component) =>
         component.status === "blocked"
           ? component.failures
+              .filter((failure) => preparableClassLayoutId(ctx, classIdByBindingId, failure) === undefined)
               .map((failure) => failure.ownerUnitId)
               .filter((unitId) => candidateTerminalUnitIds.has(unitId))
           : [],
       ),
     );
     if (failingOwnerUnitIds.size === 0) break;
-    for (const unitId of failingOwnerUnitIds) candidateTerminalUnitIds.delete(unitId);
+    for (const unitId of failingOwnerUnitIds) {
+      if (classMemberTerminalUnitIds.has(unitId)) {
+        const ownerFailures = report.components.flatMap((component) =>
+          component.failures.filter((failure) => failure.ownerUnitId === unitId),
+        );
+        const detail = ownerFailures.map((failure) => `${failure.code}: ${failure.detail}`).join("; ");
+        input.onSealFailure(
+          unitId,
+          new IrUnsupportedError(
+            "late-preparation-unsupported",
+            "resolve",
+            `prepared class-member owner ${unitId} has incomplete dependencies: ${detail}`,
+            ownerFailures,
+          ),
+        );
+      }
+      candidateTerminalUnitIds.delete(unitId);
+    }
     report = derive(candidateTerminalUnitIds);
   }
 
   const componentIdByTerminalUnitId = new Map<IrUnitId, string>();
   for (const component of report.components) {
-    if (component.status !== "complete") continue;
+    if (component.status !== "complete") {
+      const detail =
+        component.failures.length === 0
+          ? "dependency discovery returned no failure evidence"
+          : component.failures.map((failure) => `${failure.code}: ${failure.detail}`).join("; ");
+      const failure = new IrUnsupportedError(
+        "late-preparation-unsupported",
+        "resolve",
+        `prepared component ${component.id} has incomplete dependencies: ${detail}`,
+        component.failures,
+      );
+      for (const terminalUnitId of component.terminalUnitIds) input.onSealFailure(terminalUnitId, failure);
+      continue;
+    }
     try {
       const scope = session.beginPreparedComponentScope(component.id, component.terminalUnitIds);
-      const requestedBindingIds = new Set(
-        component.abiDependencies
-          .filter(({ kind }) => ["external-callable", "external-global", "class-layout", "support"].includes(kind))
-          .map((dependency) => dependency.bindingId),
-      );
-      for (const bindingId of requestedBindingIds) scope.includeBinding(bindingId);
-      scope.seal();
+      let sealStarted = false;
+      try {
+        const requestedDependencies = new Map<IrBindingId, typeof component.abiDependencies>();
+        for (const dependency of component.abiDependencies) {
+          if (
+            dependency.borrowing === undefined &&
+            !["external-callable", "external-global", "class-layout", "support"].includes(dependency.kind)
+          ) {
+            continue;
+          }
+          requestedDependencies.set(dependency.bindingId, [
+            ...(requestedDependencies.get(dependency.bindingId) ?? []),
+            dependency,
+          ]);
+        }
+        for (const [bindingId, dependencies] of requestedDependencies) {
+          const borrowed = dependencies.filter((dependency) => dependency.borrowing !== undefined);
+          if (borrowed.length === 0) {
+            scope.includeBinding(bindingId);
+            continue;
+          }
+          if (borrowed.length !== dependencies.length) {
+            throw new IrInvariantError(
+              "selection-preparation-mismatch",
+              "resolve",
+              `prepared component ${component.id} mixes borrowed and owned evidence for ${bindingId}`,
+            );
+          }
+          const consumerUnitIds = [...new Set(borrowed.map(({ ownerUnitId }) => ownerUnitId))];
+          const first = borrowed[0]!.borrowing!;
+          if (borrowed.some(({ borrowing }) => borrowing?.kind !== first.kind)) {
+            throw new IrInvariantError(
+              "selection-preparation-mismatch",
+              "resolve",
+              `prepared component ${component.id} has incompatible borrow proofs for ${bindingId}`,
+            );
+          }
+          if (first.kind === "nested-accessor-class-layout") {
+            scope.includeBorrowedBinding(bindingId, { kind: first.kind, consumerUnitIds });
+          } else if (first.kind === "class-setter-writeback-global") {
+            if (
+              borrowed.some(
+                ({ borrowing }) =>
+                  borrowing?.kind !== first.kind || borrowing.dynamicCarrierBindingId !== first.dynamicCarrierBindingId,
+              )
+            ) {
+              throw new IrInvariantError(
+                "selection-preparation-mismatch",
+                "resolve",
+                `prepared component ${component.id} has incompatible dynamic-carrier proofs for ${bindingId}`,
+              );
+            }
+            scope.includeBorrowedBinding(bindingId, {
+              kind: first.kind,
+              consumerUnitIds,
+              dynamicCarrierBindingId: first.dynamicCarrierBindingId,
+            });
+          } else {
+            if (
+              borrowed.some(
+                ({ borrowing }) =>
+                  borrowing?.kind !== first.kind || borrowing.valueGlobalBindingId !== first.valueGlobalBindingId,
+              )
+            ) {
+              throw new IrInvariantError(
+                "selection-preparation-mismatch",
+                "resolve",
+                `prepared component ${component.id} has incompatible TDZ proofs for ${bindingId}`,
+              );
+            }
+            scope.includeBorrowedBinding(bindingId, {
+              kind: first.kind,
+              consumerUnitIds,
+              valueGlobalBindingId: first.valueGlobalBindingId,
+            });
+          }
+        }
+        if (process.env.JS2WASM_TEST_INJECT_IR_PREPARED_SEAL_FAILURE === "1") {
+          throw new Error(`injected prepared ABI seal failure for ${component.id}`);
+        }
+        sealStarted = true;
+        scope.seal();
+      } catch (error) {
+        if (!sealStarted) scope.abort();
+        throw error;
+      }
       for (const terminalUnitId of component.terminalUnitIds) {
         componentIdByTerminalUnitId.set(terminalUnitId, component.id);
       }
     } catch (error) {
-      const failure = new IrInvariantError(
-        "selection-preparation-mismatch",
+      const failure = new IrUnsupportedError(
+        "late-preparation-unsupported",
         "resolve",
         `dependency-complete component ${component.id} failed ABI sealing: ${
           error instanceof Error ? error.message : String(error)

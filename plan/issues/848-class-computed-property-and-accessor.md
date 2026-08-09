@@ -3,14 +3,18 @@ id: 848
 title: "Class computed property and accessor correctness (1,015 tests)"
 status: done
 created: 2026-03-28
-updated: 2026-04-14
+updated: 2026-08-09
 completed: 2026-04-14
 priority: high
 feasibility: medium
 reasoning_effort: high
+task_type: bug
+es_edition: 2015
+language_feature: class-computed-properties, class-accessors
 goal: crash-free
 sprint: 30
 parent: 779
+related: [4259]
 test262_fail: 1015
 ---
 # #848 -- Class computed property and accessor correctness (1,015 tests)
@@ -132,6 +136,23 @@ In `src/codegen/index.ts` (class compilation):
 - No regressions in equivalence tests
 
 ### Remaining limitations
-- Accessor-name tests that use function-local `var` declarations modified by setter closures still fail (pre-existing closure scope limitation)
+- The accessor-name outer-binding writeback residual is now tracked by #4259.
+  Fresh two-lane IR outcome evidence corrects the earlier generic
+  "function-local closure scope" diagnosis: the exact tests are nested class
+  accessor bodies that never enter prepared IR ownership, while IR already has
+  the symbolic global write needed for the assignment. The repair is therefore
+  nested getter/setter source-unit preparation and exact Program-ABI routing,
+  not another direct-backend capture special case.
 - Computed keys using runtime values (arrow functions, generators, undefined variables) can't be resolved statically
 - `String()` calls with non-constant arguments fall through to externref dispatch
+
+### Residual handoff (2026-08-09)
+
+An exact ES2015 census found **72 files per lane** (18 in each of class
+expression/statement × instance/static accessor-name) failing because a setter
+leaves the enclosing `stringSet` binding `undefined`. Four representative files
+reproduce alone through the authentic harness in both GC/host and standalone.
+#4259 owns that IR-first residual and its **84 files per lane (168 outcomes)**
+regression set, including **72 targeted files per lane (144 writeback
+outcomes)**; this issue remains completed for its original computed-name,
+accessor-storage, and static/instance dispatch scope.
