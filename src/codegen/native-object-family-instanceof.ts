@@ -140,14 +140,16 @@ export function tryEmitNativeObjectFamilyInstanceOf(
     // §7.3.20 step 3 — an unboxed numeric/boolean primitive is never an object.
     fctx.body.push({ op: "drop" });
     fctx.body.push({ op: "i32.const", value: 0 });
-    return I32;
+    return { kind: "i32" };
   }
   if (!leftType) {
     fctx.body.push({ op: "ref.null.extern" });
   } else if (leftType.kind !== "externref") {
     coerceType(ctx, fctx, leftType, EXTERNREF);
   }
-  const valLocal = allocLocal(fctx, `__io_fam_${fctx.locals.length}`, EXTERNREF);
+  // A FRESH ValType object per local — the shared `EXTERNREF` singleton is used
+  // only for the (read-only) signature and coercion arguments.
+  const valLocal = allocLocal(fctx, `__io_fam_${fctx.locals.length}`, { kind: "externref" });
   fctx.body.push({ op: "local.set", index: valLocal });
 
   const then: Instr[] = [{ op: "i32.const", value: 0 }];
@@ -166,8 +168,8 @@ export function tryEmitNativeObjectFamilyInstanceOf(
   // FIRST and separately.
   fctx.body.push({ op: "local.get", index: valLocal });
   fctx.body.push({ op: "ref.is_null" });
-  fctx.body.push({ op: "if", blockType: { kind: "val", type: I32 }, then, else: otherwise });
-  return I32;
+  fctx.body.push({ op: "if", blockType: { kind: "val", type: { kind: "i32" } }, then, else: otherwise });
+  return { kind: "i32" };
 }
 
 function buildPredicate(

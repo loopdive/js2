@@ -172,12 +172,48 @@ file copy (never `git stash`). Compared by failing-test NAME, not by count.
 
 | bucket | files | base pass | fixed pass | Δ |
 | --- | ---: | ---: | ---: | ---: |
-| ≤ES5 wrapper-instanceof candidates | 40 | 16 | **21** | **+5** |
-| all-scope wrapper-instanceof candidates | 148 | — | — | see below |
+| ≤ES5 wrapper-instanceof candidates | 40 | 16 | **21** | **+5 / −0** |
+| broad prefix (see below) | 841 | 672 | **675** | **+3 / −0** |
+| affected files outside that prefix | 113 | 37 | **40** | **+3 / −0** |
 
-Gained (≤ES5): `Object/create/15.2.3.5-2-2`, `Object/create/15.2.3.5-4-2`,
-`Object/create/15.2.3.5-4-4`, `Object/getOwnPropertyDescriptor/15.2.3.3-4-247`,
-`language/expressions/instanceof/S11.8.6_A6_T3`. **Lost: 0.**
+The broad arm is **exhaustive over the plausibly-affected population and sampled
+on the rest**: every file in `built-ins/{Object,Function,String,Number,Boolean}`,
+`language/expressions/{instanceof,object}` and `language/types/object` that
+mentions `instanceof <builtin>` (141 in the prefix + 113 outside it), plus a
+deterministic 700-file random sample of the remaining ≤ES5 files in those
+buckets. The sample is compared by **sha256 of the emitted binary** as well as by
+verdict, so collateral codegen change is visible even where the verdict does not
+move.
+
+**Byte-identity result over the 841-file overlap: 825 binaries identical, 14
+different — and every one of the 14 literally contains `instanceof Object` or
+`instanceof Function`.** No collateral effect at scale.
+
+**Union of gains — 6 files, 0 regressions:**
+
+| file | form |
+| --- | --- |
+| `built-ins/Object/create/15.2.3.5-2-2` | `newObj instanceof Object` |
+| `built-ins/Object/create/15.2.3.5-4-2` | `newObj instanceof Object` |
+| `built-ins/Object/create/15.2.3.5-4-4` | `this instanceof Object` in an accessor |
+| `built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-247` | `desc instanceof Object` |
+| `language/expressions/instanceof/S11.8.6_A6_T3` | `MyFunct instanceof Function` |
+| `language/statements/async-function/syntax-declaration-line-terminators-allowed` | `foo instanceof Function` (async fn) |
+
+The last one is not a flake and not in the enumeration's ≤ES5 scope: its base
+row is `assert(foo instanceof Function)` failing with a different binary sha. It
+is the closure-snapshot half of the fix paying out where the enumeration did not
+predict it.
+
+**Focused byte-identity A/B (8 sources × 2 lanes, sha256):** all four
+no-`instanceof` sources identical in BOTH lanes; the **gc/JS-host lane identical
+for all eight**; in standalone only `instanceof Object` and `instanceof Function`
+differ — `instanceof Date` and `instanceof Number` are byte-identical. The
+lowering is demand-gated to exactly the two forms it claims.
+
+**Test suite:** `tests/issue-4276-instanceof-object-family.test.ts`, 42 cases.
+**20 are RED on `upstream/main`** (15 unit + the 5 upstream files above); all 42
+green with the fix.
 
 ## Acceptance criteria
 
