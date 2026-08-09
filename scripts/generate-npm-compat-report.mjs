@@ -1317,10 +1317,6 @@ function knownBugsFor(name) {
         summary:
           "the real multi-file Linter graph is still beyond the bounded mainline compile/runtime integration frontier",
       },
-      {
-        issue: 4293,
-        summary: "a heterogeneous nested array can coerce later undefined values through the first numeric vec carrier",
-      },
     ],
   };
   return map[name] ?? [];

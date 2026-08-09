@@ -281,9 +281,9 @@ Only the two CommonJS bindings are adapted: the package-relative implementation
 require points at the pinned npm payload, and `node:assert` is replaced by one
 deterministic `deepStrictEqual` shim shared by the Node and Wasm lanes. No test
 body is transcribed, rejected, or skipped. The current baseline is **44/44 in
-Node and 37/44 in Wasm**; #4293 reduces all seven divergences to the nested-array
-carrier bug. The npm-compat card calls this a “selected upstream unit” so 44/44
-can never be mistaken for ESLint's whole suite.
+both Node and Wasm**. #4293 fixed the generic nested-array carrier bug exposed by
+the seven former divergences. The npm-compat card calls this a “selected
+upstream unit” so 44/44 can never be mistaken for ESLint's whole suite.
 
 ## jsdom (#3995)
 

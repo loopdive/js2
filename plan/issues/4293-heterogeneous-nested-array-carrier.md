@@ -1,9 +1,10 @@
 ---
 id: 4293
 title: "Array literal: nested heterogeneous element carriers are coerced to the first inner vec"
-status: ready
+status: done
 created: 2026-08-09
 updated: 2026-08-09
+completed: 2026-08-09
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -15,6 +16,10 @@ sprint: current
 required_by: [1400]
 es_edition: ES2015
 related: [1021, 2021, 3244, 4289]
+loc-budget-allow:
+  - src/codegen/literals.ts
+func-budget-allow:
+  - src/codegen/literals.ts::compileArrayLiteral
 ---
 
 # #4293 — heterogeneous nested arrays use the first inner vec carrier
@@ -98,3 +103,18 @@ inhabit it without semantic conversion.
   cases, and matches Node 44/44 with no rejected or skipped case.
 - The full ESLint package-entry compile budget remains reported separately; a
   unit-slice improvement must not be presented as whole-package validation.
+
+## Resolution
+
+`compileArrayLiteral` now compares the compiler-resolved element carriers of
+statically known nested `Array`/`ReadonlyArray` values. If the inner carriers
+differ, the outer literal selects a common `vec<externref>` carrier for its
+rows, so each inner array is copied without converting its JavaScript values
+through the first row's element representation. Rows with the same resolved
+carrier retain their existing compact representation; a homogeneous numeric
+matrix still uses numeric vecs.
+
+The regression covers later `undefined`, boolean, string, `null`, and object
+values; separately bound rows; object identity and fields; and a homogeneous
+numeric control. The immutable ESLint v10.0.3 unit now reports **44/44** matching
+cases in both Wasm and Node, with zero rejected or skipped bodies.

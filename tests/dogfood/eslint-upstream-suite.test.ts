@@ -33,8 +33,10 @@ describe("ESLint v10.0.3 upstream suite", () => {
     expect(report.extraction.rejected).toBe(0);
     expect(report.results.nativePassed).toBe(44);
     expect(report.results.scored).toBe(44);
-    expect(report.results.passed).toBeGreaterThanOrEqual(37);
-    expect(report.results.passed + report.results.failed).toBe(report.results.scored);
+    expect(report.results.passed).toBe(44);
+    expect(report.results.failed).toBe(0);
+    expect(report.results.failedIndices).toEqual([]);
+    expect(report.results.runtimeError).toBeNull();
     expect(report.compile.success).toBe(true);
     expect(report.compile.validates).toBe(true);
   });

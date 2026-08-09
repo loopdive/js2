@@ -221,6 +221,52 @@ function hasHeterogeneousObjectLiteralFields(
   return false;
 }
 
+function unwrapArrayCarrierExpression(expr: ts.Expression): ts.Expression {
+  let current = expr;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isTypeAssertionExpression(current) ||
+    ts.isSatisfiesExpression(current) ||
+    ts.isNonNullExpression(current)
+  ) {
+    current = current.expression;
+  }
+  return current;
+}
+
+function nestedArrayElementCarrier(ctx: CodegenContext, expr: ts.Expression): ValType | null {
+  const nested = unwrapArrayCarrierExpression(expr);
+  const nestedType = ctx.checker.getTypeAtLocation(nested);
+  const symbol = (nestedType as ts.TypeReference).symbol ?? nestedType.symbol;
+  if (symbol?.name !== "Array" && symbol?.name !== "ReadonlyArray") return null;
+  const elementType = ctx.checker.getTypeArguments(nestedType as ts.TypeReference)[0];
+  return elementType ? resolveWasmType(ctx, elementType) : null;
+}
+
+/**
+ * Does an array-of-arrays require distinct inner element carriers? If so, the
+ * parent must select a vec<externref> carrier for every inner array rather than
+ * coercing later inner vecs through the first one's element representation.
+ */
+function hasHeterogeneousNestedArrayCarriers(
+  ctx: CodegenContext,
+  expr: ts.ArrayLiteralExpression,
+  first: ts.Expression,
+): boolean {
+  const firstCarrier = nestedArrayElementCarrier(ctx, first);
+  if (!firstCarrier) return false;
+
+  for (const element of expr.elements) {
+    if (ts.isOmittedExpression(element) || _isUndefinedLike(element)) continue;
+    if (ts.isSpreadElement(element)) return false;
+    const carrier = nestedArrayElementCarrier(ctx, element);
+    if (!carrier) return false;
+    if (!valTypesMatch(carrier, firstCarrier)) return true;
+  }
+  return false;
+}
+
 /** Exact synthetic classes constructed by every real element, when provable. */
 function exactConstructedClassNames(ctx: CodegenContext, expr: ts.ArrayLiteralExpression): string[] | null {
   const names: string[] = [];
@@ -4226,6 +4272,21 @@ export function compileArrayLiteral(
         }
       }
     }
+  }
+  // (#4293) An array-of-arrays cannot use the first inner vec as a closed
+  // carrier when later inner arrays select a different element
+  // representation. `[[0], [undefined]]` historically coerced the second
+  // externref vec to the first f64 vec, turning undefined into numeric NaN
+  // before any consumer ran. Normalize only proven heterogeneous nested
+  // arrays to vec<externref>; homogeneous numeric matrices keep their compact
+  // vec<f64> carrier.
+  if (
+    !hasSpread &&
+    (elemWasm.kind === "ref" || elemWasm.kind === "ref_null") &&
+    hasHeterogeneousNestedArrayCarriers(ctx, expr, firstElem)
+  ) {
+    const innerVecIdx = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
+    elemWasm = { kind: "ref_null", typeIdx: innerVecIdx };
   }
   // (#3543) Preserve the carrier that a nested heterogeneous literal ACTUALLY
   // builds in an `any` context. With `unionAnyRep` enabled, the outer literal's
