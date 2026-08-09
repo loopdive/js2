@@ -24,15 +24,19 @@ related: [1370, 1983, 2857, 2951, 3000, 3045, 3144, 3518]
 origin: "#3518 R3 — extend PreparedIrProgram from free functions to every single-source executable class/closure unit"
 files:
   - src/ir/identity.ts
+  - src/ir/builder.ts
+  - src/ir/extern-support.ts
   - src/ir/program.ts
   - src/ir/prepare.ts
   - src/ir/nodes.ts
   - src/ir/select.ts
   - src/ir/from-ast.ts
   - src/ir/integration.ts
+  - src/ir/passes/constant-fold.ts
   - src/ir/prepared-component-dependencies.ts
   - src/ir/prepared-component-sealing.ts
   - src/codegen/class-bodies.ts
+  - src/codegen/function-body.ts
   - src/codegen/class-constructor-wrapper.ts
   - src/codegen/closures.ts
   - src/codegen/declarations.ts
@@ -54,10 +58,18 @@ files:
 loc-budget-allow:
   - src/codegen/class-bodies.ts
   - src/codegen/index.ts
+  - src/ir/builder.ts
+  - src/ir/from-ast.ts
+  - src/ir/integration.ts
+  - src/ir/nodes.ts
   - src/ir/select.ts
 func-budget-allow:
   - src/codegen/class-bodies.ts::collectClassDeclaration
+  - src/codegen/function-body.ts::compileFunctionBody
   - src/codegen/index.ts::buildIrClassShapes
+  - src/ir/from-ast.ts::lowerMethodCall
+  - src/ir/integration.ts::compileIrPathFunctions
+  - src/ir/integration.ts::makeFromAstResolver
   - src/ir/prepared-component-dependencies.ts::collectFunctionEvidence
   - src/ir/select.ts::whyNotIrClaimable
 ---
@@ -549,6 +561,73 @@ bounded overlapping family is the four-body Builtins closure/cross-owner
 component (`el`, `crd`, `rw`, `main`); keep one production PR active and use
 parallel agents only for disjoint inventory, parity, optimization audit, and
 review work.
+
+### Builtins externref-ABI checkpoint (2026-08-09)
+
+PR #4281 landed at `b76cb519041494fcb28de69e6ec29bed58edafe4` with
+full merge-group Test262 and equivalence qualification green. The next serial
+transaction retires the four Builtins functions `el`, `crd`, `rw`, and `main`.
+They now pass R2 selection with exact externref slot parity, lower to final IR,
+and seal as one dependency-complete prepared component. Every DOM, Math,
+number-format, and string provider is represented by an exact symbolic Program
+ABI reference before sealing; lowering consumes that same reference.
+
+Extern instructions no longer hide member dependencies behind compatibility
+names. After the target-neutral runtime manifest freezes, a final
+provider-attachment pass records exact imports for construction, method calls,
+property reads, and property writes. It never mutates the semantic `asyncPlan`;
+backend attachments may appear only in ordinary final IR or `asyncRuntime`.
+Semantic extern class brands remain separate from lookup spellings and import
+prefixes so namespace-owned classes such as `ListFormat` resolve
+`Intl_ListFormat_new`, not `ListFormat_new`. RegExp literal IR intentionally
+remains fail-closed: its constructor plus pattern/flags string storage
+dependencies must be made explicit together in a later runtime family, not
+partially admitted here.
+
+The direct backend's three reachable Builtins optimizations now have explicit
+IR owners and parity evidence:
+
+- literal-only string concat chains fold to one `string.const` while preserving
+  result, source-site, and allocation identity;
+- exact immutable literal/const-chain `String.includes` calls fold to one
+  boolean constant while mutable/dynamic/position-argument shapes retain the
+  runtime method; and
+- constant JS bitwise operations fold with result-aware signed-i32 versus f64
+  unsigned semantics, including shift-count masking.
+
+The unchanged full fake-DOM oracle proves all 81 elements, the 9/9/4/6 card
+shape, all 24 values, every CSS string, and IR/direct equality. WAT evidence
+pins the eight typed DOM imports, excludes generic extern dispatch and direct
+body framing, requires zero fixed CSS concat calls, requires the immutable
+includes result `i32.const 1`, and requires exact bitwise results
+`65280/205/255/240/-1`. Dynamic negative controls keep the corresponding
+runtime concat/includes/bitwise operations. A fresh uncached poison run proves
+all four prepared names bypass `compileFunctionBody`, while an IR-disabled
+ordinary function proves the seam is live.
+
+Fresh hybrid shadow validation is **5/5 entries, 37/37 IR-emitted terminals,
+16 legacy bodies, 0 Unsupported, and 0 Invariant**. This checkpoint reduces
+the measured ceiling from **20 to 16** without changing the denominator.
+Strict IR-only is expected red solely on:
+
+- Algorithms: module initializer plus `fibMemo`, `binarySearch`, `quicksort`,
+  `joinNums`, and `main` (**6**); and
+- Calendar: module initializer plus `el`, `mname`, `dimOf`, `fdow`, `priceOf`,
+  `renderCal`, `onDay`, `updFoot`, and `main` (**10**).
+
+No shared direct implementation is deleted in this checkpoint.
+`compileFunctionBody` still owns these 16 measured consumers and broader hybrid
+coverage, so deleting it here would remove live fallback behavior. The next
+single production transaction is the six-body Algorithms component together
+with its module initializer under #3523. It must preserve Map lifetime,
+recursion, vector/quicksort representation, the native i32 midpoint shift,
+number formatting, string append, and exact 20-line output before banking
+**16 → 10**. Calendar remains the final bounded **10 → 0** family.
+
+The resumable production branch is `codex/3522-builtins-retirement` in
+`/private/tmp/ts2wasm-3522-builtins-retirement`. The dirty root checkout is
+outside it and remains untouched. Publish this branch as one ready PR, freeze
+it once queued, and run full Test262 only through the merge queue.
 
 ## Exhaustive source-unit census
 

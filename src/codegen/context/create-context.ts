@@ -131,6 +131,7 @@ export function createCodegenContext(
     protoNamedDirty: false, // (#4176) scanForArrayHoles: named write onto a branded builtin's .prototype
     vecAccessorDescriptorDirty: false, // (#4159) scanForArrayHoles: a non-data descriptor may exist somewhere
     vecIndexDeleteDirty: false, // (#4222) scanForArrayHoles: a `delete arr[i]` may tombstone an index
+    vecOwnKeysDirty: false, // (#4230 L1) scanForArrayHoles: a descriptor define / own-name read is present
     dynamicCodeDirty: false, // (#4159/#4160) scanForArrayHoles: eval/Function present ⇒ both flags above forced
     usesVecValue: false, // (#2083) flipped by genuine getOrRegisterVecType usage
     // (#4035) "auto" = the JS host needs the bridge as its calling convention,
