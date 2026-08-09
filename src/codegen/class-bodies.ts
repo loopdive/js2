@@ -1768,6 +1768,7 @@ function compileClassBodiesInner(
       isConstructor: true,
       isDerivedConstructor: ctx.classParentMap.has(className),
     };
+    fctx.activationEntryBody = fctx.body;
 
     // Re-resolve the constructor (and init) function types now that all class
     // struct types are registered. Constructor parameter types that reference
@@ -2329,6 +2330,7 @@ function compileClassBodiesInner(
         // `emitUndefined` because static methods have no `this` param.
         isStaticContext: isStatic ? true : undefined,
       };
+      fctx.activationEntryBody = fctx.body;
 
       // Re-resolve the function type now that all class struct types are registered.
       // During the collection phase, forward-referenced class types (e.g., a method
@@ -2666,6 +2668,7 @@ function compileClassBodiesInner(
         enclosingClassName: className,
         isStaticContext: getterIsStatic ? true : undefined,
       };
+      fctx.activationEntryBody = fctx.body;
 
       // Re-resolve getter function type (see method type re-resolution above)
       {
@@ -2779,6 +2782,7 @@ function compileClassBodiesInner(
         enclosingClassName: className,
         isStaticContext: setterIsStatic ? true : undefined,
       };
+      fctx.activationEntryBody = fctx.body;
 
       // Re-resolve setter function type (see method type re-resolution above)
       {
@@ -2940,6 +2944,7 @@ function emitPromiseSubclassOnHostCtor(
     // dispatching this body via `__call_fn_method_1`; `this` reads that global.
     readsCurrentThis: true,
   };
+  fctx.activationEntryBody = fctx.body;
 
   // Re-resolve the function type now that all struct types are registered
   // (parity with the direct-new ctor's re-resolution).

@@ -544,6 +544,12 @@ export interface FunctionContext {
   sourceFunctionStrict?: boolean;
   /** Root function body where an activation-entry snapshot must be inserted. */
   callerStrictEntryBody?: Instr[];
+  /**
+   * Root instruction buffer for source-function activation prologues. Unlike
+   * `body`, this remains stable while conditional/loop arms temporarily swap
+   * in detached instruction buffers.
+   */
+  activationEntryBody?: Instr[];
   /** Activation-local snapshot of the immediate caller's source strictness. */
   callerStrictLocalIdx?: number;
   /** Parameters (these are the first N locals) */

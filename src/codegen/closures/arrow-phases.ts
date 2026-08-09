@@ -58,7 +58,156 @@ export type ArrowClosureCapture = {
    * closure (forces value-boxing too — see planClosureCaptures).
    */
   hasTdzFlag: boolean;
+  /**
+   * The closure is constructed in a potentially-skipped top-level body and
+   * captures a source binding whose box can safely be initialized in the
+   * dominating parent buffer immediately before that body.
+   */
+  eagerDominatingBox: boolean;
 };
+
+function assignmentTargetWritesName(target: ts.Node, name: string): boolean {
+  if (ts.isIdentifier(target)) return target.text === name;
+  if (ts.isBindingElement(target)) return assignmentTargetWritesName(target.name, name);
+  if (ts.isArrayBindingPattern(target) || ts.isObjectBindingPattern(target)) {
+    return target.elements.some((element) => assignmentTargetWritesName(element, name));
+  }
+  if (
+    ts.isParenthesizedExpression(target) ||
+    ts.isAsExpression(target) ||
+    ts.isNonNullExpression(target) ||
+    ts.isTypeAssertionExpression(target)
+  ) {
+    return assignmentTargetWritesName(target.expression, name);
+  }
+  if (ts.isArrayLiteralExpression(target)) {
+    return target.elements.some((element) => {
+      if (ts.isOmittedExpression(element)) return false;
+      return assignmentTargetWritesName(ts.isSpreadElement(element) ? element.expression : element, name);
+    });
+  }
+  if (ts.isObjectLiteralExpression(target)) {
+    return target.properties.some((property) => {
+      if (ts.isShorthandPropertyAssignment(property)) return property.name.text === name;
+      if (ts.isPropertyAssignment(property)) return assignmentTargetWritesName(property.initializer, name);
+      if (ts.isSpreadAssignment(property)) return assignmentTargetWritesName(property.expression, name);
+      return false;
+    });
+  }
+  return false;
+}
+
+function bindingWrittenBeforeClosure(
+  root: ts.Node,
+  closure: ts.ArrowFunction | ts.FunctionExpression,
+  name: string,
+): boolean {
+  const closureStart = closure.getStart();
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found || node === closure) return;
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+      node.left.getStart() < closureStart &&
+      assignmentTargetWritesName(node.left, name)
+    ) {
+      found = true;
+      return;
+    }
+    if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken) &&
+      node.operand.getStart() < closureStart &&
+      assignmentTargetWritesName(node.operand, name)
+    ) {
+      found = true;
+      return;
+    }
+    if (
+      (ts.isForInStatement(node) || ts.isForOfStatement(node)) &&
+      node.initializer.getStart() < closureStart &&
+      (ts.isVariableDeclarationList(node.initializer)
+        ? node.initializer.declarations.some((declaration) => assignmentTargetWritesName(declaration.name, name))
+        : assignmentTargetWritesName(node.initializer, name))
+    ) {
+      found = true;
+      return;
+    }
+    if (
+      ts.isVariableDeclaration(node) &&
+      node.initializer !== undefined &&
+      node.name.getStart() < closureStart &&
+      assignmentTargetWritesName(node.name, name)
+    ) {
+      found = true;
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  visit(root);
+  return found;
+}
+
+function directInitializedLocalBeforeRegion(
+  body: ts.Block,
+  region: ts.Node,
+  name: string,
+): ts.VariableDeclaration | undefined {
+  for (const statement of body.statements) {
+    if (statement === region) break;
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (ts.isIdentifier(declaration.name) && declaration.name.text === name && declaration.initializer) {
+        return declaration;
+      }
+    }
+  }
+  return undefined;
+}
+
+function canBoxBindingInDominatingParent(
+  fctx: FunctionContext,
+  closure: ts.ArrowFunction | ts.FunctionExpression,
+  name: string,
+  localIdx: number,
+): boolean {
+  const entryBody = fctx.activationEntryBody;
+  if (
+    !entryBody ||
+    fctx.body === entryBody ||
+    fctx.sourceFunctionStrict === false ||
+    fctx.savedBodies.length === 0 ||
+    fctx.savedBodies[0] !== entryBody
+  ) {
+    return false;
+  }
+
+  let owner: ts.Node | undefined = closure.parent;
+  while (owner && !ts.isFunctionLike(owner)) owner = owner.parent;
+  if (!owner || ts.isSourceFile(owner)) return false;
+  const ownerBody = (owner as ts.FunctionLikeDeclarationBase).body;
+  if (!ownerBody || !ts.isBlock(ownerBody)) return false;
+  let region: ts.Node = closure;
+  while (region.parent && region.parent !== ownerBody) region = region.parent;
+  if (region.parent !== ownerBody) return false;
+
+  const sourceParameter = owner.parameters.find(
+    (parameter) => ts.isIdentifier(parameter.name) && parameter.name.text === name,
+  );
+  const safeSourceParameter =
+    localIdx < fctx.params.length && sourceParameter !== undefined && sourceParameter.initializer === undefined;
+  const safeInitializedLocal =
+    localIdx >= fctx.params.length && directInitializedLocalBeforeRegion(ownerBody, region, name) !== undefined;
+  if (!safeSourceParameter && !safeInitializedLocal) return false;
+
+  // The parent buffer already contains every preceding top-level statement,
+  // so writes before `region` are reflected in the value we box there. Refuse
+  // only when the detached region itself writes the parameter before closure
+  // construction; those writes were already emitted against the raw slot.
+  return !bindingWrittenBeforeClosure(region, closure, name);
+}
 
 /** A closure created directly while an enclosing function's parameter
  * environment is being initialized cannot see declarations from that
@@ -383,6 +532,7 @@ export function planClosureCaptures(
      * (uninit), so the closure must see post-init mutations through the ref cell.
      */
     hasTdzFlag: boolean;
+    eagerDominatingBox: boolean;
   }[] = [];
   for (const name of referencedNames) {
     let localIdx = fctx.localMap.get(name);
@@ -469,6 +619,8 @@ export function planClosureCaptures(
     // Check if the variable is already boxed from a previous closure capture.
     // If so, the local already holds a ref cell — don't wrap it again.
     const alreadyBoxed = !!fctx.boxedCaptures?.has(name);
+    const eagerDominatingBox =
+      isMutable && !alreadyBoxed && canBoxBindingInDominatingParent(fctx, arrow, name, localIdx);
     // #1177: If we found the TDZ flag via fctx.locals scan (block-scope shadow
     // cleared tdzFlagLocals), seed fctx.tdzFlagLocals so downstream emit code
     // (including the construction-time emit below and the call-site TDZ check)
@@ -477,7 +629,7 @@ export function planClosureCaptures(
       if (!fctx.tdzFlagLocals) fctx.tdzFlagLocals = new Map();
       if (!fctx.tdzFlagLocals.has(name)) fctx.tdzFlagLocals.set(name, tdzFlagIdxFromScan);
     }
-    captures.push({ name, type, localIdx, mutable: isMutable, alreadyBoxed, hasTdzFlag });
+    captures.push({ name, type, localIdx, mutable: isMutable, alreadyBoxed, hasTdzFlag, eagerDominatingBox });
   }
 
   return { captures, selfBindingName };
@@ -877,6 +1029,29 @@ export function emitClosureConstruction(
   structTypeIdx: number,
   arity: number,
 ): void {
+  // A construction site in a conditional arm cannot own the canonical box for
+  // a captured parameter: compilation re-aims all later reads to that box even
+  // when the arm is skipped at runtime. Materialize proven-safe boxes in the
+  // top-level parent buffer immediately before the conditional instruction.
+  // Appending (rather than unshifting to function entry) preserves any writes
+  // performed by preceding statements — Hono normalizes `path` before the
+  // conditional callback that first captures it.
+  for (const cap of captures) {
+    if (!cap.eagerDominatingBox || fctx.boxedCaptures?.has(cap.name)) continue;
+    const entryBody = fctx.activationEntryBody;
+    if (!entryBody) continue;
+    const refCellTypeIdx = getOrRegisterRefCellType(ctx, cap.type);
+    const boxedLocalIdx = allocLocal(fctx, `__boxed_${cap.name}`, { kind: "ref", typeIdx: refCellTypeIdx });
+    entryBody.push(
+      { op: "local.get", index: cap.localIdx },
+      { op: "struct.new", typeIdx: refCellTypeIdx },
+      { op: "local.set", index: boxedLocalIdx },
+    );
+    cap.localIdx = boxedLocalIdx;
+    fctx.localMap.set(cap.name, boxedLocalIdx);
+    (fctx.boxedCaptures ??= new Map()).set(cap.name, { refCellTypeIdx, valType: cap.type });
+  }
+
   // 7. At the creation site, emit struct.new with funcref + (#3673) declared
   // arity + captured values
   fctx.body.push({ op: "ref.func", funcIdx: liftedFuncIdx });
