@@ -4266,6 +4266,37 @@ export function compileObjectKeysOrValues(
   return { kind: "ref_null", typeIdx: vecTypeIdx };
 }
 
+function emitRuntimePropertyIntrospection(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  receiver: ts.Expression,
+  key: ts.Expression,
+  checkEnumerability: boolean,
+): boolean {
+  const importName = checkEnumerability ? "__propertyIsEnumerable" : "__hasOwnProperty";
+  const predicateIdx = ensureLateImport(
+    ctx,
+    importName,
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "i32" }],
+  );
+  flushLateImportShifts(ctx, fctx);
+  if (predicateIdx === undefined) return false;
+
+  const recvType = compileExpression(ctx, fctx, receiver);
+  if (recvType && (recvType.kind === "ref" || recvType.kind === "ref_null")) {
+    fctx.body.push({ op: "extern.convert_any" });
+  } else if (recvType && recvType.kind !== "externref") {
+    coerceType(ctx, fctx, recvType, { kind: "externref" });
+  }
+  const keyType = compileExpression(ctx, fctx, key, { kind: "externref" });
+  if (keyType && keyType.kind !== "externref") {
+    coerceType(ctx, fctx, keyType, { kind: "externref" });
+  }
+  fctx.body.push({ op: "call", funcIdx: predicateIdx });
+  return true;
+}
+
 /**
  * Compile obj.hasOwnProperty(key) / obj.propertyIsEnumerable(key).
  * For WasmGC structs all own fields are enumerable, so both methods behave
@@ -4656,28 +4687,7 @@ export function compilePropertyIntrospection(
     }
 
     if (needsRuntime && (receiverWasm.kind === "ref" || receiverWasm.kind === "ref_null")) {
-      // Coerce the struct receiver to externref and dispatch to the runtime
-      // helper. Mirrors the externref branch above (line 2393).
-      const importName = isPropertyIsEnumerable ? "__propertyIsEnumerable" : "__hasOwnProperty";
-      const hopIdx = ensureLateImport(
-        ctx,
-        importName,
-        [{ kind: "externref" }, { kind: "externref" }],
-        [{ kind: "i32" }],
-      );
-      flushLateImportShifts(ctx, fctx);
-      if (hopIdx !== undefined) {
-        const recvType = compileExpression(ctx, fctx, propAccess.expression);
-        if (recvType && (recvType.kind === "ref" || recvType.kind === "ref_null")) {
-          fctx.body.push({ op: "extern.convert_any" });
-        } else if (recvType && recvType.kind !== "externref") {
-          coerceType(ctx, fctx, recvType, { kind: "externref" });
-        }
-        const argType = compileExpression(ctx, fctx, arg, { kind: "externref" });
-        if (argType && argType.kind !== "externref") {
-          coerceType(ctx, fctx, argType, { kind: "externref" });
-        }
-        fctx.body.push({ op: "call", funcIdx: hopIdx });
+      if (emitRuntimePropertyIntrospection(ctx, fctx, propAccess.expression, arg, isPropertyIsEnumerable)) {
         return { kind: "i32", boolean: true };
       }
     }
@@ -4718,7 +4728,19 @@ export function compilePropertyIntrospection(
     return { kind: "i32", boolean: true };
   }
 
-  // Dynamic key: runtime string comparison against known field names
+  // Dynamic keys cannot be answered from the declared struct shape alone.
+  // Ordinary computed writes live in the host sidecar / standalone carrier
+  // bag, and deletes can tombstone a declared field. Route the same concrete
+  // struct receiver through the shared runtime/native predicate used by
+  // Object.hasOwn so all three sources of own-property state agree. (#4298)
+  if (receiverWasm.kind === "ref" || receiverWasm.kind === "ref_null") {
+    if (emitRuntimePropertyIntrospection(ctx, fctx, propAccess.expression, arg, isPropertyIsEnumerable)) {
+      return { kind: "i32", boolean: true };
+    }
+  }
+
+  // Fallback for a receiver whose concrete runtime predicate is unavailable:
+  // compare the key against the statically known field names.
   const allFieldNames = new Set<string>();
   if (structFieldNames) {
     for (const f of structFieldNames) allFieldNames.add(f);

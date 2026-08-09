@@ -61,6 +61,20 @@ describe("npm compatibility package catalog", () => {
     expect(existsSync(join(setup.root, "node_modules", "whatwg-url"))).toBe(true);
   });
 
+  it("records jsdom's exact original API-suite frontier without claiming it ran", () => {
+    const entry = NPM_COMPAT_CATALOG.find((candidate: { name: string }) => candidate.name === "jsdom");
+    expect(entry.issue).toBe(4299);
+    expect(entry.upstreamSuite).toEqual({
+      repo: "https://github.com/jsdom/jsdom.git",
+      tag: "v30.0.1",
+      commit: "6584485f094d5b271553005b68804c93a455c002",
+      testDirectory: "test/api",
+      testFiles: 17,
+      totalTests: 318,
+      upstreamSkipped: 0,
+    });
+  });
+
   const selectedPackage = process.env.DOGFOOD_NPM_CATALOG;
   const heavy = selectedPackage ? it : it.skip;
   const selectedTimeoutMs =

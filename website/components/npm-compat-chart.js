@@ -405,8 +405,10 @@ class NpmCompatChart extends HTMLElement {
         status,
         reason,
         admitted,
+        executed,
         upstreamTestsSeen,
         harnessIncompatible,
+        quarantined,
         implementationInvalidTests,
       } = pkg.tests;
       const label =
@@ -422,12 +424,12 @@ class NpmCompatChart extends HTMLElement {
       // The pass count is over the SCORED set — tests the native oracle also
       // passes, so a failure is attributable to the compiler. React's suite is
       // welded to Jest/ReactDOM/jsdom, so most of it runs but cannot be scored.
-      // Both numbers are shown: "39/55" alone would hide that 272 tests ran,
-      // and "272 run" alone would imply they were all scored.
+      // Selection, execution and scoring are separate: compile-quarantined
+      // tests must not be described as run.
       const slice = upstreamTestsSeen
-        ? ` <span class="muted">${admitted} of ${upstreamTestsSeen} run${
+        ? ` <span class="muted">${executed ?? admitted} of ${upstreamTestsSeen} executed${
             harnessIncompatible ? `, ${harnessIncompatible} need unavailable infra` : ""
-          }${
+          }${quarantined ? `, ${quarantined} compile-quarantined` : ""}${
             // Not the same thing as "needs unavailable infra": these tests were
             // blocked by the COMPILER — the package's own implementation does
             // not produce a valid module (#3978) — so hiding them inside the

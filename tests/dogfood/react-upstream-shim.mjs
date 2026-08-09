@@ -11,6 +11,12 @@
 // difference between two hand-written shims.
 
 export const REACT_EXPECT_SHIM = `
+// React's upstream Jest transform injects this build-time constant. The
+// implementation under test is react.production.js, so both the native oracle
+// and compiled lane must execute the original assertions with the production
+// value instead of relying on an ambient host global.
+var __DEV__ = false;
+
 var __lastError = "";
 
 function __objectIs(a, b) {

@@ -342,14 +342,15 @@ bodies and assertions are upstream's — nothing is transcribed or reworded.
 
 Three rules keep the number honest:
 
-1. **Everything runs; the SCORE is what is guarded.** All 272 upstream tests
-   that upstream does not itself `.skip` are compiled and executed, including
+1. **Everything is accounted for; the SCORE is what is guarded.** All 272
+   upstream tests that upstream does not itself `.skip` are admitted, including
    the ones reaching for ReactDOM, `act`, `jest.*` or a `document`. Those are
    expected to fail — a failure that is run and counted is more honest than a
    test filtered out before it runs. What they are not is _compiler evidence_:
    the native oracle fails them too, so they land in `harness-incompatible` and
-   sit outside the pass rate. The report prints all three numbers (run, scored,
-   infra-blocked) so neither can hide the other.
+   sit outside the pass rate. Eight more are compile-quarantined by name rather
+   than described as executed. The report prints selected, executed, scored,
+   infra-blocked and quarantined counts so none can hide another.
 2. **The `expect` shim implements only the matchers the admitted tests use**
    (`SUPPORTED_MATCHERS`); a test using anything else is rejected rather than
    scored against an approximation of Jest. The same shim source runs on both
@@ -368,6 +369,15 @@ the harness never turns a native-only adapter into compiler evidence.
 
 Failures stay in the corpus. The vitest wrapper enforces a pass FLOOR, not a
 target, so a regression is caught while the remaining frontier stays visible.
+
+Current exact result (2026-08-09): **64/64** natively scoreable upstream tests
+pass against compiled Wasm. The harness admits 272 of React's 273 tests (one is
+upstream-skipped), executes 264, reports 200 as needing unavailable
+Jest/renderer infrastructure on both lanes, and keeps eight explicitly
+compile-quarantined. The production
+`__DEV__ = false` constant is embedded in the shared native/Wasm source because
+that is the transform React itself applies to `react.production.js`; it does
+not precompute a test result.
 
 ## lit upstream suite (#3977)
 

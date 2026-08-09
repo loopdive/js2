@@ -63,7 +63,17 @@
     "integrity": "sha512-52v7mUVUfNQVYYqE1lcdaymWL0njO7lTLUog6ZvW2U5KsbiLk/GnZlVJ+qx0xfNJZ6Gn+KSpPNE52vurbxZwrA==",
     "entryModule": "package/lib/api.js",
     "shape": "cjs-project",
-    "timeoutMs": 180000
+    "issue": 4299,
+    "timeoutMs": 180000,
+    "upstreamSuite": {
+      "repo": "https://github.com/jsdom/jsdom.git",
+      "tag": "v30.0.1",
+      "commit": "6584485f094d5b271553005b68804c93a455c002",
+      "testDirectory": "test/api",
+      "testFiles": 17,
+      "totalTests": 318,
+      "upstreamSkipped": 0
+    }
   },
   {
     "name": "webpack",

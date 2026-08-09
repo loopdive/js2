@@ -1567,8 +1567,10 @@ if (selectedPackages.has("react")) {
         total: reactSuite.results?.scored ?? null,
         passRatePct: reactSuite.summary?.passRatePct ?? null,
         admitted: reactSuite.extraction?.admitted ?? null,
+        executed: reactSuite.results?.executed ?? null,
         upstreamTestsSeen: reactSuite.extraction?.upstreamTestsSeen ?? null,
         harnessIncompatible: reactSuite.results?.harnessIncompatible ?? null,
+        quarantined: reactSuite.compile?.quarantined?.length ?? null,
         sourceIssue: 3958,
       },
       perf: null,
@@ -1673,8 +1675,34 @@ for (const entry of NPM_COMPAT_CATALOG) {
       ? await workloadRunner({ quiet: true })
       : null;
   const hasApiWorkload = workloadRunner !== null;
+  const upstreamSuite = entry.upstreamSuite;
+  const upstreamTests = upstreamSuite
+    ? {
+        kind: "upstream-suite",
+        status: report.compile.success && report.validation.validates ? "not-integrated" : "compile-blocked",
+        reason:
+          report.compile.success && report.validation.validates
+            ? `${upstreamSuite.totalTests} original upstream tests identified; runtime adapter pending`
+            : `${upstreamSuite.totalTests} original upstream tests identified; none ran because the package entry emitted no valid binary`,
+        admitted: 0,
+        executed: 0,
+        upstreamTestsSeen: upstreamSuite.totalTests,
+        harnessIncompatible: 0,
+        quarantined: 0,
+        sourceIssue: entry.issue ?? null,
+        upstreamPin: {
+          repo: upstreamSuite.repo,
+          tag: upstreamSuite.tag,
+          commit: upstreamSuite.commit,
+          testDirectory: upstreamSuite.testDirectory,
+          testFiles: upstreamSuite.testFiles,
+          upstreamSkipped: upstreamSuite.upstreamSkipped,
+        },
+      }
+    : null;
   const tests =
     workload?.tests ??
+    upstreamTests ??
     (hasApiWorkload
       ? {
           kind: "api-workload",

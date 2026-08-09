@@ -377,6 +377,7 @@ export async function runHarness({ quiet = false } = {}) {
   }
 
   report.results = {
+    executed: tests.length,
     scored: scored.length,
     passed,
     failed,
@@ -385,16 +386,17 @@ export async function runHarness({ quiet = false } = {}) {
     tests,
   };
   report.summary = {
-    // Three numbers, not one. "39/55" alone hides that 272 upstream tests ran;
-    // "272 admitted" alone hides that most of them cannot be scored because the
-    // native oracle fails them too.
+    // One score cannot expose tests rejected by compilation or by the native
+    // oracle. Keep selected, executed, compiler-quarantined and infrastructure
+    // counts distinct.
     headline:
       `${passed}/${scored.length} scored upstream React tests pass against compiled Wasm ` +
-      `(${report.extraction.admitted} of ${report.extraction.upstreamTestsSeen} upstream tests run; ` +
-      `${tests.length - scored.length} need infrastructure the harness cannot supply)`,
+      `(${tests.length} of ${report.extraction.upstreamTestsSeen} upstream tests executed; ` +
+      `${quarantined.length} compile-quarantined; ${tests.length - scored.length} need infrastructure)`,
     passRatePct: scored.length ? Number(((passed / scored.length) * 100).toFixed(2)) : 0,
     upstreamTestsSeen: report.extraction.upstreamTestsSeen,
     admitted: report.extraction.admitted,
+    executed: tests.length,
     scored: scored.length,
     passed,
     failed,

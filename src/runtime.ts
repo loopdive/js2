@@ -10459,15 +10459,17 @@ assert._isSameValue = isSameValue;
               // (#2179) Static struct fields — UNCHANGED legacy filter (drop
               // deleted keys + non-enumerable redefinitions).
               if (fieldNames) for (const k of fieldNames) if (isEnumerable(k)) result.push(k);
-              // Dynamic assignment creates an ordinary enumerable own data
-              // property even when the compiler's fixed struct shape has no
-              // slot for the key. Those values live in `_wasmStructProps` and
-              // have no descriptor-table entry (absence means the default
-              // writable+enumerable+configurable attributes). Enumerate every
-              // such sidecar key, while honoring an explicit non-enumerable
-              // descriptor and hiding accessor implementation bookkeeping.
-              // Redux's `finalReducers[key] = reducer` depends on this exact
-              // Object.keys round trip.
+              // (#4298) ADD every own enumerable sidecar key beyond the static
+              // struct shape. Ordinary assignment creates an enumerable own data
+              // property even though it has no explicit descriptor-table entry;
+              // requiring `_wasmPropDescs` here made `Object.keys` return `[]`
+              // for React's dynamically assembled props while direct reads still
+              // worked. The for-in path already treats a descriptor-less sidecar
+              // entry as enumerable, so this also restores agreement between the
+              // two enumeration surfaces. Explicit non-enumerable descriptors,
+              // tombstones and accessor bookkeeping remain filtered. React's
+              // dynamically assembled props and Redux's `finalReducers[key]`
+              // both depend on this exact Object.keys round trip.
               if (sc) {
                 for (const k of Object.getOwnPropertyNames(sc)) {
                   if (k.startsWith("__get_") || k.startsWith("__set_")) continue;
