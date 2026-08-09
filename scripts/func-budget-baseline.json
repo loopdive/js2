@@ -1,5 +1,5 @@
 {
-  "generated": "2026-08-03",
+  "generated": "2026-08-08",
   "threshold": 300,
   "functions": {
     "src/codegen-linear/index.ts::compileBinaryExpression": 420,
@@ -60,7 +60,7 @@
     "src/codegen/expressions/call-tail-dispatch.ts::compileTailDispatch": 1810,
     "src/codegen/expressions/calls-closures.ts::compileCallablePropertyCall": 371,
     "src/codegen/expressions/calls.ts::compileCallExpression": 1729,
-    "src/codegen/expressions/calls.ts::tryEmitInlineDynamicCall": 610,
+    "src/codegen/expressions/calls.ts::tryEmitInlineDynamicCall": 601,
     "src/codegen/expressions/identifiers.ts::compileIdentifierCore": 720,
     "src/codegen/expressions/new-builtin-globals.ts::tryCompileBuiltinGlobalNew": 1141,
     "src/codegen/expressions/new-indexed.ts::tryCompileIndexedBuiltinNew": 638,
