@@ -44,6 +44,7 @@ import { tryCompileStandaloneSplitSeparator, tryCompileStandaloneStringValueRepl
 import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
 import { staticConstStringValues } from "./analysis/static-string-values.js";
 import { staticIntegerRange } from "./analysis/static-numeric-range.js";
+import { emitDerivedNativeCharCodeRead, selectProvenAsciiCaseHelper } from "./derived-ascii-case.js";
 import { tryEmitStaticI32Expression } from "./i32-static-range-expr.js";
 import {
   getArrTypeIdxFromVec,
@@ -2637,9 +2638,9 @@ export function compileNativeStringMethodCall(
   // the resulting position is outside [0, string length).
   if (method === "charCodeAt") {
     if (!receiverOverride && ts.isIdentifier(propAccess.expression)) {
-      const symbol = ctx.checker.getSymbolAtLocation(propAccess.expression);
-      const substring = symbol ? fctx.derivedSubstringReads?.get(symbol) : undefined;
-      if (substring?.kind === "native") {
+      const declaration = ctx.oracle.valueDeclarationOf(propAccess.expression);
+      const substring = declaration ? fctx.derivedSubstringReads?.get(declaration) : undefined;
+      if (substring && substring.kind !== "host") {
         const idxLocal = allocLocal(fctx, `__substring_char_idx_${fctx.locals.length}`, { kind: "i32" });
         const arg = expr.arguments[0];
         const isLengthMinusOne =
@@ -2649,7 +2650,7 @@ export function compileNativeStringMethodCall(
           ts.isPropertyAccessExpression(arg.left) &&
           arg.left.name.text === "length" &&
           ts.isIdentifier(arg.left.expression) &&
-          ctx.checker.getSymbolAtLocation(arg.left.expression) === symbol &&
+          ctx.oracle.valueDeclarationOf(arg.left.expression) === declaration &&
           ts.isNumericLiteral(arg.right) &&
           Number(arg.right.text) === 1;
         if (isLengthMinusOne) {
@@ -2668,14 +2669,7 @@ export function compileNativeStringMethodCall(
         const provenInBounds =
           (range !== undefined && range.min >= 0 && range.max < substring.minLen) ||
           (isLengthMinusOne && substring.minLen > 0);
-        const read: Instr[] = [
-          { op: "local.get", index: substring.dataLocal },
-          { op: "local.get", index: substring.offLocal },
-          { op: "local.get", index: idxLocal },
-          { op: "i32.add" },
-          { op: "array.get_u", typeIdx: ctx.nativeStrDataTypeIdx },
-          { op: "f64.convert_i32_u" },
-        ];
+        const read = emitDerivedNativeCharCodeRead(ctx, fctx, substring, idxLocal);
         if (provenInBounds) {
           fctx.body.push(...read);
         } else {
@@ -3262,7 +3256,8 @@ export function compileNativeStringMethodCall(
       if (argType) fctx.body.push({ op: "drop" });
     }
     const helperName = `__str_${method.replace("Locale", "")}`;
-    const funcIdx = ctx.nativeStrHelpers.get(helperName)!;
+    const selectedHelper = selectProvenAsciiCaseHelper(ctx, propAccess.expression, helperName, !receiverOverride);
+    const funcIdx = ctx.nativeStrHelpers.get(selectedHelper)!;
     fctx.body.push({ op: "call", funcIdx });
     return nativeStringType(ctx);
   }
