@@ -16,7 +16,7 @@ language_feature: destructuring-binding
 es_edition: 2015
 goal: es6
 parent: 4273
-related: [680, 1169, 1182, 1347, 1430, 1642, 2566, 2669, 2952, 3643]
+related: [680, 1169, 1182, 1347, 1430, 1642, 2566, 2669, 2952, 3523, 3643, 3783]
 assignee: "ttraenkler/codex-es6-forof-dstr-ir"
 test262_count: 45
 origin: "2026-08-09 pinned exact-ES2015 census: 45 top-level for-of ArrayAssignmentPattern files consume a direct custom iterator; GC is 1 pass/44 fail and standalone is 0 pass/45 fail. Legacy lowering indexes the iterable instead of running the iterator protocol."
@@ -77,6 +77,45 @@ because this fixture happens not to reach it. Slice A0 therefore routes 15/15
 files through IR and leaves that one file on the coherent fallback until IR
 owns sloppy unresolvable assignment to the global object. Slice A may claim all
 16 through IR only after that separate language semantic is implemented.
+
+### Authentic literal-harness ownership blocker (2026-08-09)
+
+The 15-file A0 classification is a sound **language-operation** boundary, but
+it is not yet an immediately scoreable prepared-IR terminal. An authentic
+`runTest262File` assembly concatenates the runtime shim, `assert.js`, `sta.js`,
+and the untouched body at top level. The target `for` statement therefore
+belongs to the source's single `<module-init>` terminal; it is not a nested
+function that can be selected independently.
+
+A production compile of
+`array-elem-iter-nrml-close.js` with
+`JS2WASM_IR_SHAPE_DIAG=1`, `experimentalIR: true`, and
+`trackIrOutcomes: true` reports:
+
+```text
+unitKind=module-init
+displayName=<module-init>
+kind=unsupported
+code=body-shape-rejected
+detail=vardecl-var-kind:FirstStatement
+legacyBodyEmitted=true
+irBodyEmitted=false
+irCompiledFuncs=[]
+```
+
+The non-empty fixtures also declare their destinations as top-level
+uninitialized `var x;` / `var _;`. The four empty-pattern fixtures have no
+destination, but the literal harness prefix itself still contains top-level
+`var`, so they hit the same terminal gate. Allowing the loop selector alone
+does not change this outcome.
+
+#3783 owns genuine module-global `var` storage and hoisting; #3523 owns the
+typed ordered module-init plan and prepared emission transaction. Shadowing a
+script `var` with a function-local slot, wrapping only this Test262 body in a
+synthetic function, or crediting a synthetic unit test would change observable
+global semantics and is forbidden. The iterator substrate may land first, but
+none of the 15 A0 rows is credited until the authentic module-init terminal is
+IR-owned once.
 
 Slice A paths are:
 
@@ -196,8 +235,10 @@ file flips.
 
 - Introduce one exact source-site plan shared by selector and lowering, for
   example `forOfDestructuringPlan(stmt)`. It returns a frozen plan only for
-  Slice A0's 15 safely routable files and `undefined` otherwise. The 16th file
-  remains fallback until unresolved sloppy assignment is prepared.
+  Slice A0's resolved-target **operation shapes** and `undefined` otherwise.
+  The 16th file remains fallback until unresolved sloppy assignment is
+  prepared. Authentic Test262 ownership additionally requires #3783/#3523;
+  function-local probes are substrate evidence, not file flips.
 - Prove every non-empty target is an already-existing writable mutable slot.
   Do not create bindings. Reject const/TDZ, unresolved or module/global names,
   captures, duplicate/unsafe targets, defaults, rest, elisions, nesting,
@@ -315,6 +356,10 @@ cleanup, `tests/issue-1347.test.ts` for throw-wins precedence, and
       undeclared-target outlier remains a coherent fallback until sloppy
       unresolvable PutValue is owned; linear or otherwise unavailable backends
       reject before claim without host-import leakage or false credit.
+- [ ] The literal-harness `<module-init>` terminal containing each target loop
+      is emitted once by prepared IR through #3783/#3523-compatible
+      module-global storage; no local shadow, body-only wrapper, or synthetic
+      probe is counted as a Test262 pass-rate gain.
 - [ ] Targeted loop terminals and assignment stores are emitted once by
       prepared IR, with no legacy body and no Test262-shaped code path.
 - [ ] Slices B and C reach 27 and 33 files respectively without regressing prior

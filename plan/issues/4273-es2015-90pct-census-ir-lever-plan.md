@@ -17,7 +17,7 @@ es_edition: 2015
 goal: es6
 assignee: "ttraenkler/codex-es6-census"
 test262_count: 11691
-related: [680, 869, 1355, 1430, 1645, 1691, 1750, 2046, 2566, 2662, 2669, 2864, 2866, 2872, 3031, 3177, 3371, 3488, 3531, 3575, 3949, 3975, 4167, 4259, 4274, 4275, 4277]
+related: [680, 869, 1355, 1430, 1645, 1691, 1750, 2046, 2566, 2662, 2669, 2864, 2866, 2872, 3031, 3177, 3371, 3488, 3523, 3531, 3575, 3783, 3949, 3975, 4167, 4259, 4274, 4275, 4277]
 origin: "2026-08-09 exact-edition ES2015 audit against frozen oracle-v13 two-lane JSONLs and the committed per-file edition map; requested target is 90% and all implementation work must be IR-path work"
 ---
 
@@ -125,7 +125,7 @@ historic issue's old counts remain current.
 | Cohort | Dominant measured mechanism | Repository Markdown owner(s) |
 | --- | --- | --- |
 | generators | eager host buffering breaks suspension; standalone rejects or leaks general state-machine and `yield*` shapes | #680 ready; #2662 blocked; #2864 in-progress |
-| destructuring | IteratorClose, undefined-only defaults, elision stepping, rest draining, generator over-consumption | #2669 and #1430 ready; exact IR assignment-pattern child #4275 in-progress; #2566 blocked |
+| destructuring | IteratorClose, undefined-only defaults, elision stepping, rest draining, generator over-consumption; literal-harness top-level loops also hit whole-module-init ownership | #2669 and #1430 ready; exact IR assignment-pattern child #4275 in-progress behind #3783/#3523; #2566 blocked |
 | TypedArray | callback observation, descriptors, detached buffers, dynamic constructors, standalone concat imports | #2872, #3177, #1645, #3531, #3975, #3488 ready |
 | Symbol.iterator | custom iterator dispatch, spread argument formation, IteratorClose, generator overlap | #2669 and #1750 ready; #1691 blocked |
 | Proxy | ordinary forwarding, descriptor invariants, dynamic MOP/trap dispatch | #1355 in-progress; #3031 ready |
@@ -151,18 +151,21 @@ diagnosis and does not satisfy this issue.
    module-tag `WebAssembly.Exception` wrappers. The fix belongs under the
    `async.callback.wrap` provider contract and must unwrap only this module's
    tagged payload, not foreign Wasm exceptions or `WebAssembly.RuntimeError`.
-3. **Split and attack direct-iterator `for-of` destructuring.** #4275 isolates
-   45 top-level assignment-pattern files behind one indexed-array impostor. Its
-   measured 16-file fixed-pattern slice fails in both lanes; 15 are safely
-   IR-routable without first implementing sloppy unresolvable assignment.
-   Repair `forof.iter` completion first, then add exact prepared ownership for
-   inner iterator stepping and assignment; exclude generator sources until
-   suspension is real.
-4. **Represent default-argument presence in the function IR ABI.** #4277
+3. **Represent default-argument presence in the function IR ABI.** #4277
    partitions the exact cohort's 144 pinned same-file non-passes and freezes a
    15-file dynamic-carrier slice (eight non-generator forms). Add a callee-side
    undefined-only plan; do not carry the legacy signalling-NaN sentinel into
    IR.
+4. **Build the direct-iterator `for-of` destructuring substrate, then unlock
+   its literal-harness terminal.** #4275 isolates 45 top-level
+   assignment-pattern files behind one indexed-array impostor. Its measured
+   16-file fixed-pattern slice fails in both lanes, but an authentic prepared
+   report now proves all of those loops live inside the one literal-harness
+   `<module-init>` terminal, which first rejects at `vardecl-var-kind` and emits
+   no IR body. Repair `forof.iter` completion and the structured inner iterator
+   operation without score credit, then use #3783/#3523's genuine module-global
+   and ordered module-init ownership before claiming the 15 resolved-target
+   rows. Exclude generator sources until suspension is real.
 5. **Work runtime/MOP families through explicit IR providers.** Reflect
    descriptor/get/set subsets, TypedArray callback observation, and the
    standalone concat/import boundary are contained before Proxy, species, or

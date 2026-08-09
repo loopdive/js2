@@ -4,7 +4,7 @@ title: "IR-only R4: typed ordered module-init compile-once ownership"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-08-02
+updated: 2026-08-09
 priority: critical
 horizon: xl
 complexity: XL
@@ -20,7 +20,7 @@ model: gpt-5.6-sol
 parent: 3518
 depends_on: [3521, 3522]
 required_by: [3525]
-related: [1789, 2796, 2931, 2965, 2992, 3142, 3517, 3518]
+related: [1789, 2796, 2931, 2965, 2992, 3142, 3517, 3518, 3783, 4273, 4275]
 origin: "#3518 R4 — replace compile-first/patch-later __module_init with typed ordered prepare-before-emit ownership"
 files:
   - src/ir/module-init.ts
@@ -95,6 +95,22 @@ The existing module-init claim is an overlay over a legacy ABI and body:
 #3142 made a narrow initializer population claimable. #3517 removes the last
 measured Algorithms initializer residual. Neither proves compile-once
 ownership, includes the omitted side channels, or makes the legacy slot dead.
+
+### 2026-08-09 Test262 scoring dependency
+
+#4275 supplies a direct pass-rate witness for this structural boundary. Its 15
+resolved-target ES2015 `for-of` assignment-destructuring fixtures all place the
+target loop in the literal harness's source-owned `<module-init>` terminal. A
+production outcome report for `array-elem-iter-nrml-close.js` rejects that
+terminal at `vardecl-var-kind:FirstStatement`, emits the legacy init body, and
+emits no IR body. The loop cannot be selected as a smaller function terminal.
+
+Consequently a prepared iterator instruction and green function-local probe do
+not move those Test262 rows. R4 must consume #3783's genuine module-global
+`var`/hoisting representation and emit the complete ordered terminal once;
+wrapping the test body alone or shadowing its script globals would be false IR
+ownership. This is an exact conformance dependency, not a request to add
+Test262-shaped routing to R4.
 
 ## Typed `ModuleInitPlan` contract
 
