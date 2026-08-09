@@ -43,6 +43,8 @@ import type { NativeStrShared } from "./native-strings-shared.js";
 export const STR_WS_START_FN = "__str_ws_start";
 /** One past the last index in `[from, to)` that is not whitespace (else `from`). */
 export const STR_WS_END_FN = "__str_ws_end";
+/** Runtime trim length without allocating the substring view. */
+export const STR_TRIM_LENGTH_FN = "__str_trim_length";
 
 /**
  * `ws = (c == 0x20) | (c - 0x09 <=u 4)`, then — only for `c > 0x7F` — the
@@ -262,6 +264,112 @@ export function emitStrWsSpanHelpers(shared: NativeStrShared): void {
 
     pushDefinedFunc(ctx, funcIdx, {
       name: STR_WS_END_FN,
+      typeIdx,
+      locals,
+      body: wrapBodyWithFlatten(body, [0]),
+      exported: false,
+    });
+  }
+
+  // --- __str_trim_length: fused two-sided scan, no substring allocation ---
+  {
+    // This helper has one parameter (the span helpers above have three), so
+    // its six locals begin at index 1 rather than index 3.
+    const LI = 1;
+    const LN = 2;
+    const LDATA = 3;
+    const LOFF = 4;
+    const LC = 5;
+    const LWS = 6;
+    const typeIdx = addFuncType(ctx, [strRef], [{ kind: "i32" }]);
+    const funcIdx = mintDefinedFunc(ctx);
+    ctx.nativeStrHelpers.set(STR_TRIM_LENGTH_FN, funcIdx);
+
+    const body: Instr[] = [
+      { op: "i32.const", value: 0 },
+      { op: "local.set", index: LI },
+      { op: "local.get", index: 0 },
+      { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 },
+      { op: "local.set", index: LN },
+      { op: "local.get", index: 0 },
+      { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 2 },
+      { op: "local.set", index: LDATA },
+      { op: "local.get", index: 0 },
+      { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 1 },
+      { op: "local.set", index: LOFF },
+      // Advance the lower boundary.
+      {
+        op: "block",
+        blockType: { kind: "empty" },
+        body: [
+          {
+            op: "loop",
+            blockType: { kind: "empty" },
+            body: [
+              { op: "local.get", index: LI },
+              { op: "local.get", index: LN },
+              { op: "i32.ge_s" },
+              { op: "br_if", depth: 1 },
+              { op: "local.get", index: LDATA },
+              { op: "local.get", index: LOFF },
+              { op: "local.get", index: LI },
+              { op: "i32.add" },
+              { op: "array.get_u", typeIdx: strDataTypeIdx },
+              { op: "local.set", index: LC },
+              ...inlineWsTest(LC, LWS, isWsIdx),
+              { op: "local.get", index: LWS },
+              { op: "i32.eqz" },
+              { op: "br_if", depth: 1 },
+              { op: "local.get", index: LI },
+              { op: "i32.const", value: 1 },
+              { op: "i32.add" },
+              { op: "local.set", index: LI },
+              { op: "br", depth: 0 },
+            ],
+          },
+        ],
+      },
+      // Retreat the upper boundary, never crossing the lower one.
+      {
+        op: "block",
+        blockType: { kind: "empty" },
+        body: [
+          {
+            op: "loop",
+            blockType: { kind: "empty" },
+            body: [
+              { op: "local.get", index: LN },
+              { op: "local.get", index: LI },
+              { op: "i32.le_s" },
+              { op: "br_if", depth: 1 },
+              { op: "local.get", index: LDATA },
+              { op: "local.get", index: LOFF },
+              { op: "local.get", index: LN },
+              { op: "i32.add" },
+              { op: "i32.const", value: 1 },
+              { op: "i32.sub" },
+              { op: "array.get_u", typeIdx: strDataTypeIdx },
+              { op: "local.set", index: LC },
+              ...inlineWsTest(LC, LWS, isWsIdx),
+              { op: "local.get", index: LWS },
+              { op: "i32.eqz" },
+              { op: "br_if", depth: 1 },
+              { op: "local.get", index: LN },
+              { op: "i32.const", value: 1 },
+              { op: "i32.sub" },
+              { op: "local.set", index: LN },
+              { op: "br", depth: 0 },
+            ],
+          },
+        ],
+      },
+      { op: "local.get", index: LN },
+      { op: "local.get", index: LI },
+      { op: "i32.sub" },
+    ];
+
+    pushDefinedFunc(ctx, funcIdx, {
+      name: STR_TRIM_LENGTH_FN,
       typeIdx,
       locals,
       body: wrapBodyWithFlatten(body, [0]),
