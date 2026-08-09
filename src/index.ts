@@ -428,6 +428,14 @@ export interface CompileOptions {
    */
   useUsageInfer?: boolean;
   /**
+   * (#4218) Which backend answers `ctx.oracle` type queries. `"checker"`
+   * (default) is the TS5 `ts.TypeChecker`; `"inhouse"` is the checker-free
+   * binder + annotation-propagation backend; `"differential"` answers from the
+   * checker while recording where the in-house backend disagrees. Unset falls
+   * back to the `JS2WASM_ORACLE_BACKEND` env var, then `"checker"`.
+   */
+  oracleBackend?: import("./checker/oracle-backend.js").OracleBackend;
+  /**
    * (#2141 S2/S3, #2626) Tag-5 boxed-VALUE equality classifier — the
    * three-way true-class dispatch inside the both-tags-5 arm of
    * `__any_eq`/`__any_strict_eq`: Number×Number → `f64.eq` (#2040),
