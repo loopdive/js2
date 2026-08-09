@@ -3163,6 +3163,102 @@ function captureFreeNumericInlineBody(
   return body.map((instr) => ({ ...instr }));
 }
 
+/**
+ * Resolve a callback name by checker binding identity rather than by its
+ * spelling in `funcMap`. The function map is intentionally name-indexed, so a
+ * user function can collide with a lexical local of the same name.
+ */
+function callbackBindingDeclaration(
+  ctx: CodegenContext,
+  arrow: ts.ArrowFunction | ts.FunctionExpression,
+  body: ts.ConciseBody,
+  name: string,
+): ts.Declaration | undefined {
+  let declaration: ts.Declaration | undefined;
+  let sawReference = false;
+  let ambiguous = false;
+
+  const isReferenceIdentifier = (node: ts.Identifier): boolean => {
+    const parent = node.parent;
+    if (!parent) return true;
+    if (ts.isVariableDeclaration(parent) && parent.name === node) return false;
+    if (ts.isParameter(parent) && parent.name === node) return false;
+    if (ts.isBindingElement(parent) && parent.name === node) return false;
+    if (
+      (ts.isFunctionDeclaration(parent) ||
+        ts.isFunctionExpression(parent) ||
+        ts.isClassDeclaration(parent) ||
+        ts.isClassExpression(parent)) &&
+      parent.name === node
+    ) {
+      return false;
+    }
+    if (ts.isPropertyAccessExpression(parent) && parent.name === node) return false;
+    if (ts.isPropertyAssignment(parent) && parent.name === node) return false;
+    if (ts.isLabeledStatement(parent) && parent.label === node) return false;
+    if ((ts.isBreakStatement(parent) || ts.isContinueStatement(parent)) && parent.label === node) return false;
+    return true;
+  };
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isIdentifier(node) && node.text === name && isReferenceIdentifier(node)) {
+      sawReference = true;
+      const resolved = ctx.oracle.valueDeclarationOf(node);
+      if (!resolved) {
+        ambiguous = true;
+      } else if (declaration && declaration !== resolved) {
+        ambiguous = true;
+      } else {
+        declaration = resolved;
+      }
+    }
+    node.forEachChild(visit);
+  };
+
+  if (ts.isBlock(body)) {
+    for (const statement of body.statements) visit(statement);
+  } else {
+    visit(body);
+  }
+  for (const parameter of arrow.parameters) {
+    if (parameter.initializer) visit(parameter.initializer);
+    if (!ts.isIdentifier(parameter.name)) visit(parameter.name);
+  }
+
+  if (!sawReference) return undefined;
+  if (ambiguous || !declaration) return undefined;
+  return declaration;
+}
+
+/** Whether a checker declaration denotes a callable value in `funcMap`. */
+function isCallbackFunctionDeclaration(declaration: ts.Declaration | undefined): boolean {
+  if (!declaration) return false;
+  if (
+    ts.isFunctionDeclaration(declaration) ||
+    ts.isFunctionExpression(declaration) ||
+    ts.isArrowFunction(declaration) ||
+    ts.isMethodDeclaration(declaration) ||
+    ts.isGetAccessorDeclaration(declaration) ||
+    ts.isSetAccessorDeclaration(declaration) ||
+    ts.isClassDeclaration(declaration) ||
+    ts.isClassExpression(declaration)
+  ) {
+    return true;
+  }
+  if (!ts.isVariableDeclaration(declaration) || !declaration.initializer) return false;
+  let initializer = declaration.initializer;
+  while (
+    ts.isParenthesizedExpression(initializer) ||
+    ts.isAsExpression(initializer) ||
+    ts.isTypeAssertionExpression(initializer) ||
+    ts.isNonNullExpression(initializer) ||
+    ts.isSatisfiesExpression(initializer)
+  ) {
+    initializer = initializer.expression;
+  }
+  return ts.isFunctionExpression(initializer) || ts.isArrowFunction(initializer) || ts.isClassExpression(initializer);
+}
+
 /** Compile an arrow function as a host callback via __make_callback.
  *  Captures are bundled into a per-instance GC struct (not shared globals). */
 /**
@@ -3226,6 +3322,11 @@ export function compileArrowAsCallback(
   // initializer / binding-pattern element default / computed key (see the
   // rationale on the identical scan in `compileArrowAsClosure`).
   collectParamDefaultReferences(arrow.parameters, referencedNames, ownLocals);
+  // Keep the direct references separate from names added by the transitive
+  // nested-function walk below. A transitive name is a real environment value
+  // needed by that nested function even when a same-spelled user function is
+  // present in the global `funcMap`.
+  const directReferencedNames = new Set(referencedNames);
 
   // A host callback can call a capturing nested declaration. Its callback
   // frame must carry that declaration's environment just like a lifted Wasm
@@ -3256,12 +3357,22 @@ export function compileArrowAsCallback(
   for (const name of referencedNames) {
     const localIdx = fctx.localMap.get(name);
     if (localIdx === undefined) continue;
-    // #2669: skip names bound to a *user* function (a function reference, not a
-    // captured variable) — but NOT a wasm:js-string builtin import
-    // (concat/length/equals/substring/charCodeAt), which lives in funcMap yet
-    // must not block capture of a same-named outer local (e.g. the test262
-    // `let length = "outer"` dstr template). Discriminate by index.
-    if (ctx.funcMap.has(name) && ctx.funcMap.get(name) !== ctx.jsStringImports.get(name)) continue;
+    // #2669: skip a name only when the checker says THIS callback reference
+    // resolves to a callable declaration. `funcMap` is name-indexed, so its
+    // entry can collide with a lexical local (lodash's `result` callback).
+    // Names added transitively above are always environment captures; the
+    // nested function's capture record already proves that they are needed.
+    const bindingDeclaration = directReferencedNames.has(name)
+      ? callbackBindingDeclaration(ctx, arrow, body, name)
+      : undefined;
+    if (
+      ctx.funcMap.has(name) &&
+      ctx.funcMap.get(name) !== ctx.jsStringImports.get(name) &&
+      directReferencedNames.has(name) &&
+      isCallbackFunctionDeclaration(bindingDeclaration)
+    ) {
+      continue;
+    }
     // Skip if the name is the arrow's own parameter (including destructuring bindings)
     if (isOwnParamName(arrow, name)) continue;
     const type =

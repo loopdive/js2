@@ -3,7 +3,7 @@ id: 1031
 title: "Compile lodash to Wasm as a real-world stress test; harvest error patterns"
 status: done
 created: 2026-04-11
-updated: 2026-04-14
+updated: 2026-08-09
 completed: 2026-04-14
 priority: high
 feasibility: hard
@@ -280,6 +280,31 @@ All four reference `parent: 1031`. #1060 + #1061 unlock the "compile a real loda
 
 - Acceptance criterion "one Tier 1 module compiles and runs correctly" is **not yet met**. Reclassify per the dispatch's worst-case branch: "demonstrate what the blocker is so the next attempt can unblock."
 - Architecture Principle (dual-mode JS host) not violated — no compiler source was modified in this PR.
+
+### Callback frame follow-up (2026-08-09)
+
+The pinned npm-compat catalog entry now reaches code generation without the
+previous callback-frame failure. In lodash 4.18.1, the callback at
+`lodash.js:6835` reads the function-local array `result`, while the same
+module also registers a user function named `result` in the global `funcMap`.
+The old name-only skip therefore omitted the real capture and left the callback
+body with an outer-frame local index (`__cb_26` → local 258).
+
+`compileArrowAsCallback` now asks the checker for the declaration behind each
+direct callback reference before applying the function-map skip. A lexical
+binding wins over a same-spelled function entry; transitive nested-function
+captures are retained as environment values. The reduced regression is
+`tests/dogfood/lodash-callback-frame-regression.mjs` and compares the compiled
+callback result (`"a|b"`) with native Node. With the old skip it traps with an
+illegal cast; with the fix it validates, instantiates, and matches the oracle.
+
+The full published entry remains blocked by a separate latent validator defect:
+the catalog harness reports `transform` (function #813) with
+`expected externref, got (ref null 2)`. The emitted `transform` function is
+byte-identical before and after the callback fix (confirmed from selected WAT
+output), so this is not a regression from capture remapping. The full entry
+therefore reports compile success but validation failure and no honest lodash
+API workload is run yet; this blocker needs its own follow-up.
 
 ### What this PR ships
 

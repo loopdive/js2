@@ -39,6 +39,16 @@ invalidates stale ignored extractions when a tarball revision changes.
 The original package-specific harnesses, plus the deeper Acorn conformance
 check, are:
 
+The focused lodash callback-capture regression can be run without extracting
+the full package:
+
+```bash
+node --import tsx tests/dogfood/lodash-callback-frame-regression.mjs
+```
+
+It compiles a reduced `stringToPath` shape, validates and instantiates the Wasm,
+then compares its result with the same operation in native Node.
+
 | package                                 | issue | entry file                | oracle diff                                                                 |
 | --------------------------------------- | ----- | ------------------------- | --------------------------------------------------------------------------- |
 | **acorn** (JS parser)                   | #1710 | `dist/acorn.mjs`          | structural AST diff (`ast-diff.mjs`)                                        |
