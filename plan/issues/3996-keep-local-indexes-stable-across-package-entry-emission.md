@@ -16,6 +16,9 @@ goal: dogfood
 related: []
 loc-budget-allow:
   - src/codegen/closure-exports.ts
+  - src/codegen/context/types.ts
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/fnctor-constructor-identity.ts
   - src/codegen/statements/nested-declarations.ts
   - src/codegen/expressions/call-identifier.ts
   - src/codegen/object-ops.ts
@@ -123,6 +126,35 @@ Measured on the same pinned entry after the correction:
 The earlier frame-index failure is resolved. Any next Moment residual should be
 recorded separately from this constructor-frame fix rather than weakening the
 frame invariant.
+
+## 2026-08-09 measured Lodash cached-constructor ABI residual
+
+The capture forwarding added for Moment exposed a separate cache-consistency
+bug in the pinned Lodash 4.18.1 entry. `LodashWrapper`'s synthesized constructor
+was first minted with no leading captures. Later compilation of the repeated
+`runInContext` frame replaced the bare-name `nestedFuncCaptures` entry with an
+`undefined` capture. Cached `new LodashWrapper(...)` sites then recomputed that
+new layout while still calling the immutable old Wasm signature. In
+`wrapperClone`, this shifted the expected type of `wrapper.__wrapped__` and
+emitted an `i32` where the constructor expected `externref`, so the package
+compiled but failed `WebAssembly.validate`.
+
+The generic correction stores the exact capture layout in `funcConstructorMap`
+when the constructor function and its Wasm type are created. Every cache hit
+uses that same snapshot both to recover the user-parameter suffix and to emit
+capture arguments. Later changes to global, bare-name capture discovery can no
+longer mutate an already-minted constructor ABI.
+
+Measured after the correction:
+
+- The focused source regression fails validation before the fix and now runs to
+  the native-equivalent result `42`.
+- `tests/issue-3996-fnctor-constructor-captures.test.ts` remains green with
+  result `27`, retaining the Moment capture-forwarding behavior.
+- The exact pinned Lodash catalog harness compiles a 1,458,438-byte binary in
+  about 25.9 s and `WebAssembly.validate` succeeds.
+- Lodash still has no runtime differential workload in the catalog harness, so
+  package correctness remains **unverified** beyond compile and validation.
 
 ## Provenance
 

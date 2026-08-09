@@ -1537,6 +1537,7 @@ function compileNewFunctionDeclaration(
   ctx.funcConstructorMap.set(funcName, {
     structTypeIdx,
     ctorFuncName: ctorName,
+    captureLayout,
   });
 
   // 4. Compile the constructor body
@@ -1671,7 +1672,7 @@ function compileNewFunctionDeclaration(
   // would read the PREVIOUS function's params and coerce arguments against the
   // wrong types (observed: `call[0] expected externref, found (ref null $N)`).
   const paramTypes: ValType[] | undefined = userCtorParams;
-  emitFnctorConstructorArguments(ctx, fctx, funcName, expr.expression, args, paramTypes);
+  emitFnctorConstructorArguments(ctx, fctx, captureLayout, expr.expression, args, paramTypes);
   // Re-lookup funcIdx in case addUnionImports shifted indices
   const finalCtorIdx = ctx.funcMap.get(classMemberFuncKey(ctx, ctorName)) ?? ctorFuncIdx; // (#1983)
   maybeSetArgcForKnownCall(ctx, fctx, ctorName, args.length, paramTypes?.length ?? args.length);
@@ -3634,9 +3635,9 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       const ctorFuncIdx = ctx.funcMap.get(cachedFnCtor.ctorFuncName);
       if (ctorFuncIdx !== undefined) {
         const allParamTypes = getFuncParamTypes(ctx, ctorFuncIdx);
-        const paramTypes = fnctorUserParamTypes(ctx, className, allParamTypes);
+        const paramTypes = fnctorUserParamTypes(ctx, cachedFnCtor.captureLayout, allParamTypes);
         const args = expr.arguments ?? [];
-        emitFnctorConstructorArguments(ctx, fctx, className, expr.expression, args, paramTypes);
+        emitFnctorConstructorArguments(ctx, fctx, cachedFnCtor.captureLayout, expr.expression, args, paramTypes);
         maybeSetArgcForKnownCall(ctx, fctx, cachedFnCtor.ctorFuncName, args.length, paramTypes?.length ?? args.length);
         fctx.body.push({ op: "call", funcIdx: ctorFuncIdx });
         return { kind: "ref", typeIdx: cachedFnCtor.structTypeIdx };
@@ -3699,9 +3700,9 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       const ctorFuncIdx = ctx.funcMap.get(cachedFnCtor.ctorFuncName);
       if (ctorFuncIdx !== undefined) {
         const allParamTypes = getFuncParamTypes(ctx, ctorFuncIdx);
-        const paramTypes = fnctorUserParamTypes(ctx, fnName, allParamTypes);
+        const paramTypes = fnctorUserParamTypes(ctx, cachedFnCtor.captureLayout, allParamTypes);
         const args = expr.arguments ?? [];
-        emitFnctorConstructorArguments(ctx, fctx, fnName, expr.expression, args, paramTypes);
+        emitFnctorConstructorArguments(ctx, fctx, cachedFnCtor.captureLayout, expr.expression, args, paramTypes);
         const finalIdx = ctx.funcMap.get(cachedFnCtor.ctorFuncName) ?? ctorFuncIdx;
         maybeSetArgcForKnownCall(ctx, fctx, cachedFnCtor.ctorFuncName, args.length, paramTypes?.length ?? args.length);
         fctx.body.push({ op: "call", funcIdx: finalIdx });

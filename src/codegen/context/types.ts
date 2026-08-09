@@ -3577,7 +3577,15 @@ export interface CodegenContext {
   /** Per-shape default property flags table */
   shapePropFlags: Map<number, Uint8Array>;
   /** Cache for function-constructor struct types */
-  funcConstructorMap: Map<string, { structTypeIdx: number; ctorFuncName: string }>;
+  funcConstructorMap: Map<
+    string,
+    {
+      structTypeIdx: number;
+      ctorFuncName: string;
+      /** Exact leading-capture ABI used when the synthesized constructor was minted. */
+      captureLayout: import("../fnctor-constructor-identity.js").FnctorCaptureLayout;
+    }
+  >;
   /**
    * (#2660 S2) Per-fnctor prototype `$Object` — fnctor symbol name → module
    * global index (`mut externref`) holding a native `$Object` for `F.prototype`.

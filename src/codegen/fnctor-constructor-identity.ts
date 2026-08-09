@@ -10,7 +10,14 @@ import { getOrRegisterRefCellType, refCellValueType } from "./registry/types.js"
 import { coerceType, compileExpression } from "./shared.js";
 import { pushDefaultValue } from "./type-coercion.js";
 
-type FnctorCapture = NonNullable<ReturnType<CodegenContext["nestedFuncCaptures"]["get"]>>[number];
+export interface FnctorCapture {
+  name: string;
+  outerLocalIdx: number;
+  mutable?: boolean;
+  valType?: ValType;
+  hasTdzFlag?: boolean;
+  outerTdzFlagIdx?: number;
+}
 
 export interface FnctorCaptureLayout {
   captures: readonly FnctorCapture[];
@@ -21,7 +28,7 @@ export interface FnctorCaptureLayout {
 
 /** Resolve the leading capture-parameter layout for a synthesized fnctor ctor. */
 export function fnctorCaptureLayout(ctx: CodegenContext, funcName: string): FnctorCaptureLayout {
-  const captures = ctx.nestedFuncCaptures.get(funcName) ?? [];
+  const captures = (ctx.nestedFuncCaptures.get(funcName) ?? []).map((capture) => ({ ...capture }));
   const valueParamTypes = captures.map((capture) => {
     if (capture.mutable && capture.valType) {
       return { kind: "ref" as const, typeIdx: getOrRegisterRefCellType(ctx, capture.valType) };
@@ -52,11 +59,11 @@ export function fnctorConstructorParams(
 /** Recover the user-visible constructor parameters from a cached ctor signature. */
 export function fnctorUserParamTypes(
   ctx: CodegenContext,
-  funcName: string,
+  captureLayout: FnctorCaptureLayout,
   allParamTypes: ValType[] | undefined,
 ): ValType[] | undefined {
   if (!allParamTypes) return undefined;
-  const firstUser = fnctorCaptureLayout(ctx, funcName).allParamTypes.length;
+  const firstUser = captureLayout.allParamTypes.length;
   const end = ctx.standalone ? -1 : undefined;
   return allParamTypes.slice(firstUser, end);
 }
@@ -221,7 +228,7 @@ export function emitFnctorFieldInitializers(
 export function emitFnctorConstructorArguments(
   ctx: CodegenContext,
   fctx: FunctionContext,
-  funcName: string,
+  captureLayout: FnctorCaptureLayout,
   callee: ts.Expression,
   args: readonly ts.Expression[],
   userParamTypes: ValType[] | undefined,
@@ -240,11 +247,10 @@ export function emitFnctorConstructorArguments(
     fctx.body.push({ op: "local.set", index: constructorIdentityLocal });
   }
 
-  const layout = fnctorCaptureLayout(ctx, funcName);
-  for (let i = 0; i < layout.captures.length; i++) {
-    emitFnctorCaptureArgument(ctx, fctx, layout.captures[i]!, layout.valueParamTypes[i]!);
+  for (let i = 0; i < captureLayout.captures.length; i++) {
+    emitFnctorCaptureArgument(ctx, fctx, captureLayout.captures[i]!, captureLayout.valueParamTypes[i]!);
   }
-  for (const capture of layout.captures) {
+  for (const capture of captureLayout.captures) {
     if (capture.hasTdzFlag) emitFnctorCaptureFlagArgument(ctx, fctx, capture);
   }
 
