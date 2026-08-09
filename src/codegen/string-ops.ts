@@ -2363,10 +2363,10 @@ export function compileStringIntegerArg(
     fctx.body.push({ op: "i32.const", value: 0 });
     return;
   }
-  // #2600 — the index/position is `ToIntegerOrInfinity(arg)` = truncate-toward-
-  // zero of `ToNumber(arg)` (§7.1.5), NOT a direct i32 coercion. In standalone
-  // a fast i32 coercion of a fractional / non-numeric-typed position
-  // (`"1.9"`, `{valueOf(){…}}`, `true`) resolves to a wrong index. Route the
+  // Range-proven integer positions avoid the f64 ToInteger lowering.
+  if (tryEmitStaticI32Expression(ctx, fctx, arg)) return;
+  // #2600 — the index/position is `ToIntegerOrInfinity(arg)` = truncate-toward-zero of `ToNumber(arg)` (§7.1.5), NOT a direct i32 coercion. In standalone
+  // a fast i32 coercion of a fractional / non-numeric-typed position (`"1.9"`, `{valueOf(){…}}`, `true`) resolves to a wrong index. Route the
   // arg through the existing numeric coercion engine to f64 (string →
   // `__str_to_number`, object → ToPrimitive("number") — both already present
   // for `+str` / `Number(x)`), then apply ToIntegerOrInfinity (NaN → 0, then
