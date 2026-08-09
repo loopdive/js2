@@ -464,6 +464,24 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
       }
 
       if (finallyInstrs) {
+        // (#4249) Snapshot the depth baselines BEFORE the inner-try `+1`.
+        //
+        // `finallyInlineDelta` (control-flow.ts) retargets a clone by
+        // `current − baseline`, so the baseline must name the depth the clone
+        // was COMPILED at — which is `+1` (the try block), NOT the `+2` of this
+        // catch body (try block + the inner try that wraps it so the finally
+        // also runs on a catch-body throw). Capturing it after the `++` made
+        // every break/continue inside a catch body inline the finally at delta
+        // 0, one label too shallow: a `finally { continue; }` reached from
+        // `catch { break; }` branched to the enclosing TRY instead of the loop,
+        // so control fell out of the try and ran the statements AFTER it
+        // (`language/statements/try/S12.14_A9..A12_T4` CHECK#2 — the loop body
+        // executed its post-try tail, `fin2` ended at -1). The sibling
+        // catch_all insertion sites already pass an explicit
+        // `cloneFinallyAtDepth(1)` for exactly this reason; the break/continue
+        // site is the one that derived its delta and got it wrong.
+        const catchBreakBaseline = fctx.breakStack.slice();
+        const catchContinueBaseline = fctx.continueStack.slice();
         for (let i = 0; i < fctx.breakStack.length; i++) fctx.breakStack[i]!++;
         for (let i = 0; i < fctx.continueStack.length; i++) fctx.continueStack[i]!++;
         adjustRethrowDepth(fctx, 1);
@@ -476,8 +494,8 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
           cloneFinallyAtDepth,
           breakStackLen: fctx.breakStack.length,
           continueStackLen: fctx.continueStack.length,
-          breakDepthBaseline: fctx.breakStack.slice(),
-          continueDepthBaseline: fctx.continueStack.slice(),
+          breakDepthBaseline: catchBreakBaseline,
+          continueDepthBaseline: catchContinueBaseline,
         });
       }
 

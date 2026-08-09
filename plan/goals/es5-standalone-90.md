@@ -238,6 +238,27 @@ Waves 1+2 merged as loopdive/js2#4234 → official ES5 standalone
 (#4231), `Number.prototype`-as-wrapper (~25 files, #4234 → #4223 lane),
 correctly-rounded strtod (#4234), `Array(n)` hole carrier (#4222).
 
+## Wave 4 outcome (2026-08-08)
+
+| WP | Issue | Flips | Key mechanism |
+| --- | --- | --- | --- |
+| eval-spliced accessors + try/finally | #4249 | +9 standalone (+4 gc collateral) | a never-bound eval-splice node answered syntactically instead of via the checker; a catch-body finally clone inlined at the depth it was COMPILED at |
+
+Measured per-bucket, sequentially, zero regressions (`built-ins/RegExp` and
+`built-ins/RegExp/prototype/exec` re-measured identically; the equivalence gate
+reports no new failures). `language/expressions/object` 0→5 (7→0
+compile_error), `language/statements/try` 0→4 standalone / 3→7 gc.
+
+**The largest lever surfaced by wave 4 is NOT an ES5-bucket item**: standalone
+throws error **strings**, not `Error` objects
+(`typeErrorThrowInstrs`, `src/codegen/property-access.ts`), so every
+`e instanceof TypeError` answers false. **42 ES5 standalone failures** carry
+that signature (23 raw `TypeError: Cannot access property on null or undefined`
++ 19 `e instanceof TypeError`). It belongs to the `error-model` goal — see
+#4249 for the sizing and the second, independent half (native-proto method
+closures are not dispatch candidates, so a bare or element-access call never
+reaches the brand-recovery prologue).
+
 ## Wave plan
 
 - **Wave 1 (parallel, disjoint):** WP3-split, WP1, WP5, WP4-filter.
