@@ -64,22 +64,24 @@ The following measurements are independent and must not be conflated:
 | Adoption matrix                                  |       **18 / 58 rows IR-owned** | Those syntax rows have an IR implementation in measured configurations | Their legacy handlers are unreachable in mixed functions or at module scope |
 | Front-end reachability                           | **59,676 legacy-only fn-lines** | Approximate final deletion opportunity                                 | Those lines are dormant today                                               |
 | Runtime/builtin reachability                     |               **~47K fn-lines** | Behavior emission must gain IR-owned entry points                      | Those routines should be deleted with the front-end                         |
-| Bounded host terminal readiness                  | **37/37 IR; 22 legacy bodies** | Every measured terminal has an IR body and no typed blocker remains    | The remaining direct bodies or global runtime/linear paths are unreachable  |
+| Bounded host terminal readiness                  | **37/37 IR; 20 legacy bodies** | Every measured terminal has an IR body and no typed blocker remains    | The remaining direct bodies or global runtime/linear paths are unreachable  |
 
-R0 is complete. After the #3522 explicit-constructor transaction, the bounded
+R0 is complete. After the #3522 cross-owner class transaction, the bounded
 hybrid gate is green at 5/5 entries, 37 terminal units, 37 emitted IR bodies,
-0 typed Unsupported outcomes, 0 Invariants, and 22 legacy bodies. Strict
-IR-only is still red only because those 22 terminal units retain direct bodies.
+0 typed Unsupported outcomes, 0 Invariants, and 20 legacy bodies. Strict
+IR-only is still red only because those 20 terminal units retain direct bodies.
+The same final-IR sealing pass also separates the independent Algorithms
+`fibIter` leaf from its blocked callers, so that body now compiles once too.
 
 Additional blockers:
 
-- The bounded top-level class family now prepares all ten constructor/method/
-  accessor bodies once. Explicit WasmGC constructors bind their source unit to
-  `_init`; one AST-free `_new` support wrapper owns allocation. Implicit,
-  externref-backed, unsafe-super, forward-ABI, nested-class, and closure
-  families still retain the typed direct route until their complete family
-  transactions land. Constructor receiver calls and getter/setter accesses
-  also remain direct until IR preserves their virtual/accessor dispatch.
+- The bounded WasmGC `classes.ts` component now prepares `main` together with
+  all ten constructor/method/accessor terminals in one exact transaction.
+  Explicit constructors bind their source unit to `_init`; one AST-free `_new`
+  support wrapper owns allocation. Standalone `classes.ts::main` remains the
+  explicit ambient-console selector boundary, while implicit, externref-backed,
+  unsafe-super, forward-ABI, nested-class, and closure families retain the
+  typed direct route until their complete transactions land.
 - #3142 made module init claimable and patchable, but it still compiles the
   legacy `__module_init` first. Claimability is not compile-once ownership.
 - Multi-source/M0 is a per-source, post-legacy overlay; fast-mode multi-source,
@@ -88,7 +90,7 @@ Additional blockers:
   same whole-program IR contract as WasmGC.
 - The R0 typed gate has replaced substring-matched build-error policy. Its
   current strict failure is expected: the bounded lane has no Unsupported or
-  Invariant outcomes, but 20 free functions and two module initializers still
+  Invariant outcomes, but 18 free functions and two module initializers still
   emit legacy bodies.
 - The normal fallback gate now reconciles preliminary selector labels with
   source-qualified terminal outcomes. Its async-function bucket fell from four

@@ -21,6 +21,14 @@ function outcome(result: CompileResult, name: string): IrObservedOutcome {
   return observed;
 }
 
+function classMemberOutcome(result: CompileResult, name: string): IrObservedOutcome {
+  const observed = result.irOutcomes?.find(
+    (candidate) => candidate.unitKind === "class-member" && candidate.displayName === name,
+  );
+  if (!observed) throw new Error(`missing class-member outcome for ${name}`);
+  return observed;
+}
+
 async function instantiate(result: CompileResult): Promise<Record<string, Function>> {
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
@@ -416,7 +424,7 @@ describe("#3521 prepare-before-emit free-function routing", () => {
     expect((await instantiate(result)).answer!()).toBe(42);
   });
 
-  it("defers unsealed module-global and class-owned dependencies to the post-direct overlay", async () => {
+  it("defers module globals but seals free-to-class dependencies in one prepared component", async () => {
     const moduleGlobal = await compile(
       `
       let answer = 42;
@@ -439,7 +447,10 @@ describe("#3521 prepare-before-emit free-function routing", () => {
 
     const classOwned = await compile(
       `
-      class Answer { value(): number { return 42; } }
+      class Answer {
+        constructor() {}
+        value(): number { return 42; }
+      }
       export function readClass(): number { return new Answer().value(); }
       `,
       {
@@ -449,12 +460,21 @@ describe("#3521 prepare-before-emit free-function routing", () => {
       },
     );
     expect(classOwned.success, classOwned.errors.map((error) => error.message).join("\n")).toBe(true);
-    expect(classOwned.irFirstSkipped ?? []).not.toContain("readClass");
-    expect(outcome(classOwned, "readClass")).toMatchObject({
+    expect(classOwned.irFirstSkipped ?? []).toContain("readClass");
+    const readClass = outcome(classOwned, "readClass");
+    const answerValue = classMemberOutcome(classOwned, "Answer_value");
+    expect(readClass).toMatchObject({
       kind: "emitted",
-      legacyBodyEmitted: true,
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
+    });
+    expect(answerValue).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
       irBodyEmitted: true,
     });
+    expect(readClass.preparedComponentId).toBe(answerValue.preparedComponentId);
     expect((await instantiate(classOwned)).readClass!()).toBe(42);
   });
 

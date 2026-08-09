@@ -93,7 +93,7 @@ import {
   isDefinePropertyReceiverLiteral,
 } from "./struct-accessor-closure.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
-
+import { registerCountedPushArray } from "./array-indexof-scan.js";
 /**
  * Check if a TS expression is "undefined-like" — OmittedExpression (array hole),
  * undefined keyword, identifier `undefined`, void expression, or any of the
@@ -3431,7 +3431,7 @@ export function compileTupleLiteral(
  */
 function detectCountedPushLoop(
   expr: ts.ArrayLiteralExpression,
-): { tripCount: number; call: ts.CallExpression } | undefined {
+): { tripCount: number; call: ts.CallExpression; arrayName: string } | undefined {
   // Walk up: ArrayLiteralExpression → VariableDeclaration → VariableDeclarationList → VariableStatement → Block/SourceFile
   const varDecl = expr.parent;
   if (!varDecl || !ts.isVariableDeclaration(varDecl) || !ts.isIdentifier(varDecl.name)) return undefined;
@@ -3519,7 +3519,7 @@ function detectCountedPushLoop(
   if (callExpr.expression.expression.text !== arrName) return undefined;
   if (callExpr.arguments.length !== 1) return undefined;
 
-  return { tripCount, call: callExpr };
+  return { tripCount, call: callExpr, arrayName: arrName };
 }
 
 /**
@@ -3862,7 +3862,7 @@ export function compileArrayLiteral(
       return null;
     }
     if (countedPush) {
-      (fctx.presizedArrayPushCalls ??= new Map()).set(countedPush.call, vecTypeIdx);
+      registerCountedPushArray(fctx, countedPush, vecTypeIdx);
     }
 
     if (fillBoundExpr !== null) {

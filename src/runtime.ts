@@ -30,6 +30,7 @@ import {
   _installIteratorHelperPolyfills,
 } from "./runtime/iterator-polyfills.js";
 import { buildStringConstants, buildStringConstants16 } from "./runtime/string-constants.js";
+import { fixedExternMethodCallArity, makeFixedExternMethodCall } from "./runtime/fixed-extern-method-call.js";
 export { buildStringConstants, buildStringConstants16 };
 import {
   compiledClosureNativeSource,
@@ -9074,19 +9075,18 @@ function resolveImport(
     }
     case "builtin": {
       const name = intent.name;
-      // (#1644 Slice B) __bigint_ctor: §21.2.1.1 BigInt(value).
-      //   1. ToPrimitive(value, number)
-      //   2. If prim is a Number → NumberToBigInt: RangeError unless it is a
-      //      safe integer (NaN / ±Infinity / non-integer all throw RangeError).
-      //   3. Otherwise → ToBigInt(prim): bigint identity; boolean → 0n/1n;
-      //      string → StringToBigInt (SyntaxError on malformed numeric string);
-      //      Symbol → TypeError.
-      // Returns the bigint as a wasm i64 (JS-BigInt-integration).
-      // (#2678) Date.parse / new Date(<string>) in HOST mode. Host strings are
-      // real `wasm:js-string` externrefs, so the JS `Date.parse` runs directly
-      // (and is more format-complete than the native ISO parser). Registered
-      // up-front by collectDateParseHostImports (declarations.ts) so its funcidx
-      // is stable. Returns f64 ms (NaN on an unparseable string).
+      const fixedMethodArity = fixedExternMethodCallArity(name);
+      if (fixedMethodArity !== undefined) {
+        const canonical = resolveImport(
+          { type: "builtin", name: "__extern_method_call" },
+          deps,
+          callbackState,
+          globalSandbox,
+          instanceState,
+        );
+        return makeFixedExternMethodCall(fixedMethodArity, canonical);
+      }
+      // #1644/#2678: spec BigInt-to-i64 and host Date.parse for wasm:js-string externrefs.
       if (name === "__date_parse_host") return (s: any): number => Date.parse(s);
       if (name === "__bigint_ctor") {
         return (v: any): bigint => {
@@ -15959,6 +15959,28 @@ function wrapWithContainment(
 }
 
 /**
+ * These intents resolve to leaf functions that cannot throw or call user code,
+ * so they cannot re-enter Wasm. Their import wrappers therefore do not need the
+ * recursion-depth or catch-all bookkeeping used by general host operations.
+ * Keep this predicate intent-based: `buildImports` is public and must not trust
+ * a caller-supplied import name to imply safe behaviour.
+ */
+function isFastLeafHostImport(imp: ImportDescriptor): boolean {
+  switch (imp.intent.type) {
+    case "box":
+    case "typeof_check":
+    case "truthy_check":
+      return true;
+    case "unbox":
+      return imp.intent.targetType === "boolean";
+    case "builtin":
+      return imp.intent.name === "__get_undefined";
+    default:
+      return false;
+  }
+}
+
+/**
  * Build the WebAssembly import object from a closed manifest.
  *
  * After instantiation, prefer `setInstance(instance)`. It proves the
@@ -16067,6 +16089,28 @@ export function buildImports(
       if (imp.intent.type === "declared_global" && imp.intent.name === "document") {
         fn = () => options.domRoot;
       }
+    }
+
+    // Acorn executes millions of these leaf calls per parse. They cannot throw
+    // or re-enter Wasm, so avoid constructing and invoking the general guarded
+    // wrapper. Preserve import diagnostics and the Wasm signature's fixed
+    // arity. The switch provides rollout containment.
+    const fastLeaf = process.env.JS2WASM_FAST_LEAF_HOST_IMPORTS !== "0" && isFastLeafHostImport(imp);
+    if (fastLeaf && imp.paramCount === 0) {
+      const original = fn;
+      env[imp.name] = function () {
+        if (importCounts) importCounts[importIndex]++;
+        return original();
+      };
+      continue;
+    }
+    if (fastLeaf && imp.paramCount === 1) {
+      const original = fn;
+      env[imp.name] = function (a: any) {
+        if (importCounts) importCounts[importIndex]++;
+        return original(a);
+      };
+      continue;
     }
 
     // Wrap host imports with recursion depth guard + exception capture for catch_all.

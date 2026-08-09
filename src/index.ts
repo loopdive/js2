@@ -725,10 +725,13 @@ export interface CompileOptions {
    * deliberately no pluggable GC abstraction.
    *
    * - `"bump"` (default): the plain allocate-and-exit arena, smallest binary.
-   * - `"arena-reset"`: same allocator, but also exports `__arena_reset()`
-   *   (O(1) rewind of the whole arena) and `__arena_used()` (bytes
-   *   allocated). Use this when an embedder reuses one instance across many
-   *   short-lived tasks and wants to reclaim between them.
+   * - `"arena-reset"`: same allocator, plus safe between-call reclamation and
+   *   the `__arena_reset()` / `__arena_used()` management exports. When every
+   *   exported parameter/result and module global is primitive, the compiler
+   *   inserts a host-boundary wrapper that rewinds immediately before the next
+   *   call. Aggregate boundaries or heap-backed globals conservatively keep
+   *   the monotonic arena so returned/escaped pointers remain live; the host
+   *   may still use the explicit reset once it knows those lifetimes ended.
    * - `"analysis-stack"`: for single-source functions accepted by the optional
    *   IR path, promote fixed-size owned/non-escaping allocations into a
    *   function-scoped stack region. Direct-backend, multi-module, unsupported,

@@ -42,9 +42,12 @@ import {
 } from "./regexp-standalone.js";
 import { tryCompileStandaloneSplitSeparator, tryCompileStandaloneStringValueReplace } from "./string-search-value.js";
 import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
+import { resolveStrictConstant, staticStringLength } from "./analysis/static-string-constants.js";
 import { staticConstStringValues } from "./analysis/static-string-values.js";
 import { staticIntegerRange } from "./analysis/static-numeric-range.js";
+import { emitDerivedNativeCharCodeRead, selectProvenAsciiCaseHelper } from "./derived-ascii-case.js";
 import { tryEmitStaticI32Expression } from "./i32-static-range-expr.js";
+import { tryEmitStaticNeedleIndexOf } from "./static-needle-indexof.js";
 import {
   getArrTypeIdxFromVec,
   getOrRegisterRefCellType,
@@ -1678,60 +1681,54 @@ function foldAdjacentConstantOperands(ctx: CodegenContext, operands: ts.Expressi
   return result;
 }
 
-/**
- * Resolve a compile-time constant, but only for truly immutable values.
- * Unlike resolveConstantExpression, this does NOT resolve let/var declarations —
- * only string/numeric literals, const variables, and expressions composed of those.
- * This prevents incorrect folding of mutable variables in loops.
- */
-function resolveStrictConstant(ctx: CodegenContext, expr: ts.Expression): string | number | undefined {
-  if (ts.isStringLiteral(expr)) return expr.text;
-  if (ts.isNumericLiteral(expr)) return Number(expr.text);
-  if (ts.isParenthesizedExpression(expr)) return resolveStrictConstant(ctx, expr.expression);
+/** Emit the branch-free ConsString construction licensed by a >=64 RHS proof. */
+function emitProvenRopeConcat(ctx: CodegenContext, fctx: FunctionContext, rhsLength: number): void {
+  const rhs = allocLocal(fctx, `__rope_rhs_${fctx.locals.length}`, nativeStringType(ctx));
+  const lhs = allocLocal(fctx, `__rope_lhs_${fctx.locals.length}`, nativeStringType(ctx));
+  fctx.body.push({ op: "local.set", index: rhs });
+  fctx.body.push({ op: "local.set", index: lhs });
+  fctx.body.push({ op: "local.get", index: lhs });
+  fctx.body.push({ op: "struct.get", typeIdx: ctx.anyStrTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "i32.const", value: rhsLength });
+  fctx.body.push({ op: "i32.add" });
+  fctx.body.push({ op: "local.get", index: lhs });
+  fctx.body.push({ op: "local.get", index: rhs });
+  fctx.body.push({ op: "struct.new", typeIdx: ctx.consStrTypeIdx });
+}
 
-  // Only resolve const variable references
-  if (ts.isIdentifier(expr)) {
-    const sym = ctx.checker.getSymbolAtLocation(expr);
-    if (sym) {
-      const decl = sym.valueDeclaration;
-      if (decl && ts.isVariableDeclaration(decl) && decl.initializer) {
-        const declList = decl.parent;
-        if (ts.isVariableDeclarationList(declList) && (declList.flags & ts.NodeFlags.Const) !== 0) {
-          return resolveStrictConstant(ctx, decl.initializer);
-        }
-      }
-    }
-    return undefined;
+/** Compile native string `+`, including the statically-proven rope arm. */
+function compileNativeStringConcat(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.BinaryExpression,
+): ValType | null {
+  const constVal = resolveStrictConstant(ctx, expr);
+  if (typeof constVal === "string") return compileStringLiteral(ctx, fctx, constVal, expr);
+
+  // #1470 — `__str_concat` takes two native strings. Standalone/WASI must
+  // coerce mixed operands in Wasm; the legacy JS-host native-string mode keeps
+  // its established raw operand path.
+  if (noJsHost(ctx)) {
+    compileNativeConcatOperand(ctx, fctx, expr.left);
+    compileNativeConcatOperand(ctx, fctx, expr.right);
+  } else {
+    compileExpression(ctx, fctx, expr.left);
+    compileExpression(ctx, fctx, expr.right);
   }
 
-  // Binary expressions (recurse strictly)
-  if (ts.isBinaryExpression(expr)) {
-    const left = resolveStrictConstant(ctx, expr.left);
-    const right = resolveStrictConstant(ctx, expr.right);
-    if (left === undefined || right === undefined) return undefined;
-    if (typeof left === "string" || typeof right === "string") {
-      if (expr.operatorToken.kind === ts.SyntaxKind.PlusToken) {
-        return String(left) + String(right);
-      }
-      return undefined;
-    }
-    if (expr.operatorToken.kind === ts.SyntaxKind.PlusToken) return left + right;
-    return undefined;
+  const staticRhsLength = staticStringLength(ctx, expr.right);
+  if (process.env.JS2WASM_NATIVE_PROVEN_ROPE_CONCAT !== "0" && (staticRhsLength ?? 0) >= 64) {
+    emitProvenRopeConcat(ctx, fctx, staticRhsLength!);
+    return nativeStringType(ctx);
   }
 
-  // Template literals
-  if (ts.isTemplateExpression(expr)) {
-    let result = expr.head.text;
-    for (const span of expr.templateSpans) {
-      const val = resolveStrictConstant(ctx, span.expression);
-      if (val === undefined) return undefined;
-      result += String(val) + span.literal.text;
-    }
-    return result;
+  const funcIdx = ctx.nativeStrHelpers.get("__str_concat");
+  if (funcIdx === undefined) {
+    reportError(ctx, expr, `Unsupported string operator: ${ts.SyntaxKind[ts.SyntaxKind.PlusToken]}`);
+    return null;
   }
-  if (ts.isNoSubstitutionTemplateLiteral(expr)) return expr.text;
-
-  return undefined;
+  fctx.body.push({ op: "call", funcIdx });
+  return nativeStringType(ctx);
 }
 
 /** Create a synthetic TS string literal node for use in codegen. */
@@ -1884,42 +1881,8 @@ export function compileStringBinaryOp(
     const strFlattenIdx = ctx.nativeStrHelpers.get("__str_flatten")!;
 
     switch (op) {
-      case ts.SyntaxKind.PlusToken: {
-        // Constant-fold if both sides are compile-time constants (#1004)
-        const constVal = resolveStrictConstant(ctx, expr);
-        if (typeof constVal === "string") {
-          return compileStringLiteral(ctx, fctx, constVal, expr);
-        }
-        // #1470 — `__str_concat` takes `(ref $AnyString, ref $AnyString)`. A
-        // non-string operand (number, boolean, object, `any`) must be coerced
-        // to a native string first or the module is invalid (the previous code
-        // pushed the raw f64/i32/struct ref and `__str_concat` rejected it).
-        //
-        // This issue targets the standalone / WASI surface (`noJsHost`), where
-        // there is no JS runtime to fall back on. There, every operand is
-        // lowered to a native `ref $AnyString` in pure Wasm via
-        // `compileNativeConcatOperand` (numbers → native `number_toString`,
-        // booleans/null/undefined → native literals, dynamic refs → the
-        // `$__any_to_string` dispatcher). The legacy JS-host `nativeStrings`
-        // path (explicit `nativeStrings: true` / `fast`) is left unchanged here:
-        // its mixed-operand handling has separate, pre-existing limitations and
-        // bridging through `__str_from_extern` mid-body corrupts function
-        // indices, so it stays on the original raw-push behavior.
-        if (noJsHost(ctx)) {
-          compileNativeConcatOperand(ctx, fctx, expr.left);
-          compileNativeConcatOperand(ctx, fctx, expr.right);
-        } else {
-          // concat accepts ref $AnyString — no flatten needed
-          compileExpression(ctx, fctx, expr.left);
-          compileExpression(ctx, fctx, expr.right);
-        }
-        const funcIdx = ctx.nativeStrHelpers.get("__str_concat");
-        if (funcIdx !== undefined) {
-          fctx.body.push({ op: "call", funcIdx });
-          return nativeStringType(ctx);
-        }
-        break;
-      }
+      case ts.SyntaxKind.PlusToken:
+        return compileNativeStringConcat(ctx, fctx, expr);
       case ts.SyntaxKind.EqualsEqualsEqualsToken:
       case ts.SyntaxKind.EqualsEqualsToken: {
         const funcIdx = ctx.nativeStrHelpers.get("__str_equals");
@@ -2549,14 +2512,8 @@ export function compileNativeStringMethodCall(
     fctx.body.push({ op: "local.set", index: local });
     return local;
   };
-  // (#2160 wrapper-strmethod) Compile the RECEIVER into a native-string local
-  // honoring `receiverOverride`. The two-string-argument arms (indexOf /
-  // lastIndexOf / includes / startsWith / endsWith) store the receiver in a
-  // local before pushing args, so they cannot use `emitReceiver()` inline; they
-  // previously called `compileStringValueToLocal(propAccess.expression, …)`,
-  // which ignores the override and re-compiles the raw receiver expression — a
-  // trap for a `new String(x)` wrapper (the override extracts its primitive
-  // slot). Route the receiver through `emitReceiver()` so the override applies.
+  // Store two-string method receivers once and honor the wrapper-method
+  // override; recompiling the raw receiver would lose `new String(x)`'s slot.
   const compileReceiverToLocal = (name: string): number => {
     const local = allocLocal(fctx, `${name}_${fctx.locals.length}`, nativeStringType(ctx));
     emitReceiver();
@@ -2580,12 +2537,8 @@ export function compileNativeStringMethodCall(
     }
   }
 
-  // An immutable literal table sometimes feeds a string predicate whose
-  // result is identical for every entry. Preserve the receiver read/trap, but
-  // skip flattening and scanning when the full result is known. This is a
-  // narrow source-level constant propagation, not a benchmark-name special
-  // case: mutations, aliases, dynamic search values, and dynamic positions all
-  // retain the ordinary native helper path.
+  // Fold an immutable literal table only when every entry has the same result;
+  // mutations, aliases, and dynamic search/position values keep the helper.
   if (
     !receiverOverride &&
     (method === "startsWith" || method === "endsWith") &&
@@ -2637,9 +2590,9 @@ export function compileNativeStringMethodCall(
   // the resulting position is outside [0, string length).
   if (method === "charCodeAt") {
     if (!receiverOverride && ts.isIdentifier(propAccess.expression)) {
-      const symbol = ctx.checker.getSymbolAtLocation(propAccess.expression);
-      const substring = symbol ? fctx.derivedSubstringReads?.get(symbol) : undefined;
-      if (substring?.kind === "native") {
+      const declaration = ctx.oracle.valueDeclarationOf(propAccess.expression);
+      const substring = declaration ? fctx.derivedSubstringReads?.get(declaration) : undefined;
+      if (substring && substring.kind !== "host") {
         const idxLocal = allocLocal(fctx, `__substring_char_idx_${fctx.locals.length}`, { kind: "i32" });
         const arg = expr.arguments[0];
         const isLengthMinusOne =
@@ -2649,7 +2602,7 @@ export function compileNativeStringMethodCall(
           ts.isPropertyAccessExpression(arg.left) &&
           arg.left.name.text === "length" &&
           ts.isIdentifier(arg.left.expression) &&
-          ctx.checker.getSymbolAtLocation(arg.left.expression) === symbol &&
+          ctx.oracle.valueDeclarationOf(arg.left.expression) === declaration &&
           ts.isNumericLiteral(arg.right) &&
           Number(arg.right.text) === 1;
         if (isLengthMinusOne) {
@@ -2668,14 +2621,7 @@ export function compileNativeStringMethodCall(
         const provenInBounds =
           (range !== undefined && range.min >= 0 && range.max < substring.minLen) ||
           (isLengthMinusOne && substring.minLen > 0);
-        const read: Instr[] = [
-          { op: "local.get", index: substring.dataLocal },
-          { op: "local.get", index: substring.offLocal },
-          { op: "local.get", index: idxLocal },
-          { op: "i32.add" },
-          { op: "array.get_u", typeIdx: ctx.nativeStrDataTypeIdx },
-          { op: "f64.convert_i32_u" },
-        ];
+        const read = emitDerivedNativeCharCodeRead(ctx, fctx, substring, idxLocal);
         if (provenInBounds) {
           fctx.body.push(...read);
         } else {
@@ -2980,9 +2926,18 @@ export function compileNativeStringMethodCall(
     fctx.body.push({ op: "call", funcIdx });
     return nativeStringType(ctx);
   }
-
-  // indexOf: native helper
   if (method === "indexOf") {
+    if (
+      tryEmitStaticNeedleIndexOf({
+        ctx,
+        fctx,
+        expr,
+        receiverOverridePresent: receiverOverride !== undefined,
+        emit: [compileReceiverToLocal, compileStringValueToLocal, compileIntegerValueToLocal],
+      })
+    ) {
+      return { kind: "i32" };
+    }
     const receiverLocal = compileReceiverToLocal("__str_indexOf_recv");
     const searchLocal = compileStringValueToLocal(expr.arguments[0], "undefined", "__str_indexOf_search");
     const fromLocal = compileIntegerValueToLocal(expr.arguments[1], 0, "__str_indexOf_from");
@@ -3262,7 +3217,8 @@ export function compileNativeStringMethodCall(
       if (argType) fctx.body.push({ op: "drop" });
     }
     const helperName = `__str_${method.replace("Locale", "")}`;
-    const funcIdx = ctx.nativeStrHelpers.get(helperName)!;
+    const selectedHelper = selectProvenAsciiCaseHelper(ctx, propAccess.expression, helperName, !receiverOverride);
+    const funcIdx = ctx.nativeStrHelpers.get(selectedHelper)!;
     fctx.body.push({ op: "call", funcIdx });
     return nativeStringType(ctx);
   }
