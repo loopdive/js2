@@ -1,9 +1,9 @@
 ---
 id: 3396
 title: "standalone: closure-env / promise-reaction / for-loop struct type A used where type B expected — struct.set/get/call-param invalid Wasm (~70 tests)"
-status: in-progress
-assignee: ttraenkler/fable-dev-5
-sprint: current
+status: done
+completed: 2026-07-23
+sprint: 75
 created: 2026-07-18
 updated: 2026-07-18
 priority: high

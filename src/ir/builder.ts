@@ -10,6 +10,7 @@ import {
   asBlockId,
   asLabelId,
   asValueId,
+  closureSignatureEquals,
   irVal,
   irDynamic,
   AllocKind,
@@ -17,6 +18,7 @@ import {
   IrBinop,
   IrBlock,
   IrBlockId,
+  IrClassMemberKind,
   IrClassShape,
   IrClosureSignature,
   IrConst,
@@ -34,10 +36,13 @@ import {
   IrUnop,
   IrValueId,
   IrValueIdAllocator,
+  irTypeEquals,
 } from "./nodes.js";
 import type { AllocSiteRegistry } from "./alloc-registry.js";
 import type { Instr, ValType } from "./types.js";
 import { JsTag, jsTagUnboxKind } from "./js-tag.js";
+import type { IrStringConcatMode, IrStringEncoding } from "./string-runtime.js";
+import { INTRINSIC_DEFINITIONS, type IntrinsicId } from "./intrinsics.js";
 
 interface OpenBlock {
   readonly id: IrBlockId;
@@ -51,6 +56,10 @@ export class IrFunctionBuilder {
   private readonly params: IrParam[] = [];
   private readonly finished: IrBlock[] = [];
   private readonly valueTypes = new Map<IrValueId, IrType>();
+  // Exact i32 values widened to f64. SSA values are immutable, so a later
+  // truncation of the widened result can always recover the original i32 even
+  // when unrelated instructions were emitted between the two conversions.
+  private readonly exactI32Widenings = new Map<IrValueId, IrValueId>();
   private current: OpenBlock | null = null;
   // Block IDs are assigned from a monotonic counter rather than from
   // `finished.length`, so forward references (br_if with a not-yet-opened
@@ -78,7 +87,7 @@ export class IrFunctionBuilder {
   private nextLabelId = 0;
 
   constructor(
-    private readonly name: string,
+    private readonly id: Pick<IrFunction, "unitId" | "name">,
     private readonly resultTypes: readonly IrType[],
     private readonly exported = false,
     // #1586: module-global allocation-site registry. Optional so test builders
@@ -100,7 +109,7 @@ export class IrFunctionBuilder {
 
   addParam(name: string, type: IrType): IrValueId {
     if (this.current !== null) {
-      throw new Error(`IrFunctionBuilder: params must be declared before the first block (func ${this.name})`);
+      throw new Error(`IrFunctionBuilder: params must be declared before the first block (func ${this.id.name})`);
     }
     const value = this.allocator.fresh();
     this.valueTypes.set(value, type);
@@ -112,7 +121,7 @@ export class IrFunctionBuilder {
 
   openBlock(blockArgTypes: readonly IrType[] = []): IrBlockId {
     if (this.current !== null) {
-      throw new Error(`IrFunctionBuilder: previous block not terminated (func ${this.name})`);
+      throw new Error(`IrFunctionBuilder: previous block not terminated (func ${this.id.name})`);
     }
     const id = asBlockId(this.nextBlockId++);
     this.current = this.makeOpen(id, blockArgTypes);
@@ -135,10 +144,10 @@ export class IrFunctionBuilder {
    */
   openReservedBlock(id: IrBlockId, blockArgTypes: readonly IrType[] = []): void {
     if (this.current !== null) {
-      throw new Error(`IrFunctionBuilder: previous block not terminated (func ${this.name})`);
+      throw new Error(`IrFunctionBuilder: previous block not terminated (func ${this.id.name})`);
     }
     if (!this.reserved.has(id)) {
-      throw new Error(`IrFunctionBuilder: block ${id as number} was not reserved (func ${this.name})`);
+      throw new Error(`IrFunctionBuilder: block ${id as number} was not reserved (func ${this.id.name})`);
     }
     this.reserved.delete(id);
     this.current = this.makeOpen(id, blockArgTypes);
@@ -198,6 +207,35 @@ export class IrFunctionBuilder {
     return result;
   }
 
+  /** Emit one closed semantic intrinsic before any runtime provider is chosen. */
+  emitIntrinsic(id: IntrinsicId, args: readonly IrValueId[], site?: IrSiteId): IrValueId {
+    const definition = INTRINSIC_DEFINITIONS[id];
+    if (args.length !== definition.signature.params.length) {
+      throw new Error(
+        `IrFunctionBuilder: ${id} expects ${definition.signature.params.length} argument(s), received ${args.length}`,
+      );
+    }
+    for (let index = 0; index < args.length; index++) {
+      const actual = this.typeOf(args[index]!);
+      const expected = definition.signature.params[index]!;
+      if (!irTypeEquals(actual, expected)) {
+        throw new Error(`IrFunctionBuilder: ${id} argument ${index} does not match its semantic signature`);
+      }
+    }
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, definition.signature.result);
+    this.pushInstr({
+      kind: "intrinsic",
+      id,
+      version: definition.signature.version,
+      args: [...args],
+      result,
+      resultType: definition.signature.result,
+      ...(site ? { site } : {}),
+    });
+    return result;
+  }
+
   emitGlobalGet(target: IrGlobalRef, resultType: IrType): IrValueId {
     const result = this.allocator.fresh();
     this.valueTypes.set(result, resultType);
@@ -217,9 +255,24 @@ export class IrFunctionBuilder {
   }
 
   emitUnary(op: IrUnop, rand: IrValueId, resultType: IrType): IrValueId {
+    // (#3741) `i32.trunc_sat_f64_s(f64.convert_i32_s(x))` === `x` for every
+    // i32 `x`: the widening is exact (every int32 is representable in f64) and
+    // the saturating truncation of an exact in-range integer is the identity.
+    //
+    // This matters because #3741 gives provably-int32 locals an i32 Wasm slot
+    // and widens on EVERY read, so that no consumer observes the promotion.
+    // Without this cancellation the single most common consumer — an array
+    // index, `arr[i]` — would pay `convert` + `trunc_sat` where it used to pay
+    // just `trunc_sat`, i.e. the promotion would PESSIMIZE indexed loops.
+    //
+    if (op === "i32.trunc_sat_f64_s") {
+      const exactI32 = this.exactI32Widenings.get(rand);
+      if (exactI32 !== undefined) return exactI32;
+    }
     const result = this.allocator.fresh();
     this.valueTypes.set(result, resultType);
     this.pushInstr({ kind: "unary", op, rand, result, resultType });
+    if (op === "f64.convert_i32_s") this.exactI32Widenings.set(result, rand);
     return result;
   }
 
@@ -293,12 +346,17 @@ export class IrFunctionBuilder {
     return result;
   }
 
-  emitStringConcat(lhs: IrValueId, rhs: IrValueId): IrValueId {
+  emitStringConcat(
+    lhs: IrValueId,
+    rhs: IrValueId,
+    encodingEvidence?: IrStringEncoding,
+    concatMode: IrStringConcatMode = "immutable",
+  ): IrValueId {
     const result = this.allocator.fresh();
     const resultType: IrType = { kind: "string" };
     this.valueTypes.set(result, resultType);
     const alloc = this.allocId("string", resultType);
-    this.pushInstr({ kind: "string.concat", lhs, rhs, result, resultType, alloc });
+    this.pushInstr({ kind: "string.concat", lhs, rhs, result, resultType, alloc, encodingEvidence, concatMode });
     return result;
   }
 
@@ -310,11 +368,42 @@ export class IrFunctionBuilder {
     return result;
   }
 
-  emitStringLen(value: IrValueId): IrValueId {
+  emitStringLen(value: IrValueId, inputEncoding?: IrStringEncoding): IrValueId {
     const result = this.allocator.fresh();
     const resultType: IrType = { kind: "val", val: { kind: "f64" } };
     this.valueTypes.set(result, resultType);
-    this.pushInstr({ kind: "string.len", value, result, resultType });
+    this.pushInstr({ kind: "string.len", value, result, resultType, inputEncoding });
+    return result;
+  }
+
+  emitStringCharAt(
+    value: IrValueId,
+    index: IrValueId,
+    inputEncoding: IrStringEncoding,
+    encodingEvidence: IrStringEncoding,
+  ): IrValueId {
+    const result = this.allocator.fresh();
+    const resultType: IrType = { kind: "string" };
+    this.valueTypes.set(result, resultType);
+    const alloc = this.allocId("string", resultType);
+    this.pushInstr({
+      kind: "string.char_at",
+      value,
+      index,
+      inputEncoding,
+      encodingEvidence,
+      result,
+      resultType,
+      alloc,
+    });
+    return result;
+  }
+
+  emitStringCharCodeAt(value: IrValueId, index: IrValueId, inputEncoding: IrStringEncoding): IrValueId {
+    const result = this.allocator.fresh();
+    const resultType: IrType = { kind: "val", val: { kind: "f64" } };
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "string.char_code_at", value, index, inputEncoding, result, resultType });
     return result;
   }
 
@@ -352,7 +441,7 @@ export class IrFunctionBuilder {
   emitBox(value: IrValueId, toType: IrType): IrValueId {
     if (this.typeOf(value).kind === "dynamic") {
       throw new Error(
-        `IrFunctionBuilder: emitBox operand ${value} is already dynamic — re-boxing a dynamic value is invalid (#2949 R1) (func ${this.name})`,
+        `IrFunctionBuilder: emitBox operand ${value} is already dynamic — re-boxing a dynamic value is invalid (#2949 R1) (func ${this.id.name})`,
       );
     }
     const result = this.allocator.fresh();
@@ -385,7 +474,7 @@ export class IrFunctionBuilder {
     const payload = jsTagUnboxKind(jsTag);
     if (payload === null) {
       throw new Error(
-        `IrFunctionBuilder: emitUnbox with payload-less JsTag ${JsTag[jsTag]} is invalid — use emitTagTest (#2949 R2) (func ${this.name})`,
+        `IrFunctionBuilder: emitUnbox with payload-less JsTag ${JsTag[jsTag]} is invalid — use emitTagTest (#2949 R2) (func ${this.id.name})`,
       );
     }
     const payloadVal: ValType =
@@ -431,7 +520,7 @@ export class IrFunctionBuilder {
   emitDynTruthy(value: IrValueId): IrValueId {
     if (this.typeOf(value).kind !== "dynamic") {
       throw new Error(
-        `IrFunctionBuilder: emitDynTruthy operand ${value} is not dynamic — general truthiness applies only to the boxed-any carrier (#2949 S5.1) (func ${this.name})`,
+        `IrFunctionBuilder: emitDynTruthy operand ${value} is not dynamic — general truthiness applies only to the boxed-any carrier (#2949 S5.1) (func ${this.id.name})`,
       );
     }
     const resultType = irVal({ kind: "i32" });
@@ -459,7 +548,7 @@ export class IrFunctionBuilder {
   emitDynToNumber(value: IrValueId): IrValueId {
     if (this.typeOf(value).kind !== "dynamic") {
       throw new Error(
-        `IrFunctionBuilder: emitDynToNumber operand ${value} is not dynamic — carrier ToNumber applies only to the boxed-any carrier (#2949 S5.3) (func ${this.name})`,
+        `IrFunctionBuilder: emitDynToNumber operand ${value} is not dynamic — carrier ToNumber applies only to the boxed-any carrier (#2949 S5.3) (func ${this.id.name})`,
       );
     }
     const resultType = irVal({ kind: "f64" });
@@ -492,7 +581,7 @@ export class IrFunctionBuilder {
     ] as const) {
       if (this.typeOf(v).kind !== "dynamic") {
         throw new Error(
-          `IrFunctionBuilder: emitDynEq ${label} operand ${v} is not dynamic — carrier equality applies only to boxed-any operands; box concrete operands first (#2949 S5.2) (func ${this.name})`,
+          `IrFunctionBuilder: emitDynEq ${label} operand ${v} is not dynamic — carrier equality applies only to boxed-any operands; box concrete operands first (#2949 S5.2) (func ${this.id.name})`,
         );
       }
     }
@@ -531,7 +620,7 @@ export class IrFunctionBuilder {
     ] as const) {
       if (this.typeOf(v).kind !== "dynamic") {
         throw new Error(
-          `IrFunctionBuilder: emitDynMemberGet ${label} operand ${v} is not dynamic — the dynamic member read applies only to boxed-any carriers; box the receiver/key first (#3053 U1 / #2949 S5.4) (func ${this.name})`,
+          `IrFunctionBuilder: emitDynMemberGet ${label} operand ${v} is not dynamic — the dynamic member read applies only to boxed-any carriers; box the receiver/key first (#3053 U1 / #2949 S5.4) (func ${this.id.name})`,
         );
       }
     }
@@ -540,6 +629,26 @@ export class IrFunctionBuilder {
     this.valueTypes.set(result, resultType);
     this.pushInstr({ kind: "dyn.member_get", recv, key, result, resultType });
     return result;
+  }
+
+  /**
+   * Emit the void, strict statement-position write dual of
+   * {@link emitDynMemberGet}. Receiver, key, and value must already use the
+   * canonical dynamic carrier; conversion is explicit at the AST producer.
+   */
+  emitDynMemberSet(recv: IrValueId, key: IrValueId, value: IrValueId): void {
+    for (const [label, v] of [
+      ["recv", recv],
+      ["key", key],
+      ["value", value],
+    ] as const) {
+      if (this.typeOf(v).kind !== "dynamic") {
+        throw new Error(
+          `IrFunctionBuilder: emitDynMemberSet ${label} operand ${v} is not dynamic — the dynamic member write accepts only boxed-any carriers (#3795) (func ${this.id.name})`,
+        );
+      }
+    }
+    this.pushInstr({ kind: "dyn.member_set", recv, key, value, result: null, resultType: null });
   }
 
   // --- object ops (#1169b) ------------------------------------------------
@@ -554,7 +663,7 @@ export class IrFunctionBuilder {
   emitObjectNew(shape: IrObjectShape, values: readonly IrValueId[]): IrValueId {
     if (values.length !== shape.fields.length) {
       throw new Error(
-        `IrFunctionBuilder: object.new value count ${values.length} != shape field count ${shape.fields.length} (func ${this.name})`,
+        `IrFunctionBuilder: object.new value count ${values.length} != shape field count ${shape.fields.length} (func ${this.id.name})`,
       );
     }
     const result = this.allocator.fresh();
@@ -619,7 +728,7 @@ export class IrFunctionBuilder {
   ): IrValueId {
     if (captureFieldTypes.length !== captures.length) {
       throw new Error(
-        `IrFunctionBuilder: closure.new captureFieldTypes count ${captureFieldTypes.length} != captures count ${captures.length} (func ${this.name})`,
+        `IrFunctionBuilder: closure.new captureFieldTypes count ${captureFieldTypes.length} != captures count ${captures.length} (func ${this.id.name})`,
       );
     }
     const result = this.allocator.fresh();
@@ -659,11 +768,14 @@ export class IrFunctionBuilder {
 
   /**
    * Invoke a closure value. Caller passes `resultType` (= signature.returnType)
-   * for the SSA def.
+   * for the SSA def, or null for a void call in statement position.
    */
-  emitClosureCall(callee: IrValueId, args: readonly IrValueId[], resultType: IrType): IrValueId {
-    const result = this.allocator.fresh();
-    this.valueTypes.set(result, resultType);
+  emitClosureCall(callee: IrValueId, args: readonly IrValueId[], resultType: IrType | null): IrValueId | null {
+    let result: IrValueId | null = null;
+    if (resultType !== null) {
+      result = this.allocator.fresh();
+      this.valueTypes.set(result, resultType);
+    }
     this.pushInstr({
       kind: "closure.call",
       callee,
@@ -740,15 +852,15 @@ export class IrFunctionBuilder {
   // --- class ops (#1169d) -------------------------------------------------
 
   /**
-   * Emit `class.new` to construct a class instance via the legacy-registered
-   * `<className>_new` constructor. Caller is responsible for ensuring
+   * Emit `class.new` through the class-owned AST-free `<className>_new`
+   * wrapper. Caller is responsible for ensuring
    * `args[i]` matches `shape.constructorParams[i]`. The arity check below
    * catches mistakes early.
    */
   emitClassNew(shape: IrClassShape, args: readonly IrValueId[]): IrValueId {
     if (args.length !== shape.constructorParams.length) {
       throw new Error(
-        `IrFunctionBuilder: class.new arg count ${args.length} != constructor arity ${shape.constructorParams.length} (func ${this.name}, class ${shape.className})`,
+        `IrFunctionBuilder: class.new arg count ${args.length} != constructor arity ${shape.constructorParams.length} (func ${this.id.name}, class ${shape.className})`,
       );
     }
     const result = this.allocator.fresh();
@@ -760,31 +872,8 @@ export class IrFunctionBuilder {
     this.pushInstr({
       kind: "class.new",
       shape,
+      ...(shape.constructorTarget ? { target: shape.constructorTarget } : {}),
       args: [...args],
-      result,
-      resultType,
-      alloc,
-    });
-    return result;
-  }
-
-  /**
-   * #3000-C: emit `class.alloc` — allocate a fresh, default-initialised
-   * instance of `shape`'s class WITHOUT running its constructor. Used by the
-   * IR constructor-body lowering to synthesise `this` at body entry (the ctor
-   * body then writes fields via `class.set`, and the epilogue returns the
-   * instance). Result type is `{ kind: "class"; shape }` → `(ref $struct)`.
-   */
-  emitClassAlloc(shape: IrClassShape): IrValueId {
-    const result = this.allocator.fresh();
-    const resultType: IrType = { kind: "class", shape };
-    this.valueTypes.set(result, resultType);
-    // A fresh struct allocation — same alloc namespace as `class.new` /
-    // `object.new` ("object").
-    const alloc = this.allocId("object", resultType);
-    this.pushInstr({
-      kind: "class.alloc",
-      shape,
       result,
       resultType,
       alloc,
@@ -826,17 +915,16 @@ export class IrFunctionBuilder {
     });
   }
 
-  /**
-   * Emit `class.call` to invoke an instance method. `resultType` is the
-   * method descriptor's `returnType` (or `null` for void). Returns `null`
-   * for void methods — callers using the result in expression position
-   * must reject `null` themselves.
+  /** Invoke an instance member while keeping semantic kind separate from its
+   * compatibility spelling. A void method/setter returns `null`.
    */
   emitClassCall(
     receiver: IrValueId,
     methodName: string,
+    memberKind: Exclude<IrClassMemberKind, "static">,
     args: readonly IrValueId[],
     resultType: IrType | null,
+    target?: IrFuncRef,
   ): IrValueId | null {
     let result: IrValueId | null = null;
     if (resultType !== null) {
@@ -846,7 +934,9 @@ export class IrFunctionBuilder {
     this.pushInstr({
       kind: "class.call",
       receiver,
+      memberKind,
       methodName,
+      ...(target ? { target } : {}),
       args: [...args],
       result,
       resultType,
@@ -864,6 +954,7 @@ export class IrFunctionBuilder {
     this.pushInstr({
       kind: "class.super_init",
       parentShape,
+      ...(parentShape.constructorInitTarget ? { target: parentShape.constructorInitTarget } : {}),
       self,
       args: [...args],
       result: null,
@@ -883,6 +974,7 @@ export class IrFunctionBuilder {
     methodName: string,
     args: readonly IrValueId[],
     resultType: IrType | null,
+    target?: IrFuncRef,
   ): IrValueId | null {
     let result: IrValueId | null = null;
     if (resultType !== null) {
@@ -894,6 +986,7 @@ export class IrFunctionBuilder {
       parentShape,
       receiver,
       methodName,
+      ...(target ? { target } : {}),
       args: [...args],
       result,
       resultType,
@@ -930,6 +1023,7 @@ export class IrFunctionBuilder {
     methodName: string,
     args: readonly IrValueId[],
     resultType: IrType | null,
+    target?: IrFuncRef,
   ): IrValueId | null {
     let result: IrValueId | null = null;
     if (resultType !== null) {
@@ -940,6 +1034,7 @@ export class IrFunctionBuilder {
       kind: "class.static_call",
       shape,
       methodName,
+      ...(target ? { target } : {}),
       args: [...args],
       result,
       resultType,
@@ -954,7 +1049,7 @@ export class IrFunctionBuilder {
    * Result type is `{ kind: "extern", className }` — opaque externref
    * carrying the class identity statically.
    */
-  emitExternNew(className: string, args: readonly IrValueId[]): IrValueId {
+  emitExternNew(className: string, args: readonly IrValueId[], importPrefix = className): IrValueId {
     const result = this.allocator.fresh();
     const resultType: IrType = { kind: "extern", className };
     this.valueTypes.set(result, resultType);
@@ -962,6 +1057,7 @@ export class IrFunctionBuilder {
     this.pushInstr({
       kind: "extern.new",
       className,
+      importPrefix,
       args: [...args],
       result,
       resultType,
@@ -1063,7 +1159,7 @@ export class IrFunctionBuilder {
   typeOf(value: IrValueId): IrType {
     const t = this.valueTypes.get(value);
     if (t === undefined) {
-      throw new Error(`IrFunctionBuilder: unknown value ${value} in func ${this.name}`);
+      throw new Error(`IrFunctionBuilder: unknown value ${value} in func ${this.id.name}`);
     }
     return t;
   }
@@ -1073,21 +1169,21 @@ export class IrFunctionBuilder {
     readonly captureFieldTypes: readonly IrType[];
   }): IrFunction {
     if (this.current !== null) {
-      throw new Error(`IrFunctionBuilder: finish() while block ${this.current.id} still open (func ${this.name})`);
+      throw new Error(`IrFunctionBuilder: finish() while block ${this.current.id} still open (func ${this.id.name})`);
     }
     if (this.reserved.size > 0) {
       const ids = [...this.reserved].map((b) => b as number).join(",");
-      throw new Error(`IrFunctionBuilder: reserved block(s) [${ids}] never opened (func ${this.name})`);
+      throw new Error(`IrFunctionBuilder: reserved block(s) [${ids}] never opened (func ${this.id.name})`);
     }
     if (this.finished.length === 0) {
-      throw new Error(`IrFunctionBuilder: function ${this.name} has no blocks`);
+      throw new Error(`IrFunctionBuilder: function ${this.id.name} has no blocks`);
     }
     // Blocks may have been pushed out-of-order (a forward-referenced block is
     // opened after blocks allocated during its predecessor's lowering). The
     // verifier and the lowerer both expect `blocks[i].id === i`.
     const sorted = [...this.finished].sort((a, b) => (a.id as number) - (b.id as number));
     return {
-      name: this.name,
+      ...this.id,
       params: this.params,
       resultTypes: [...this.resultTypes],
       blocks: sorted,
@@ -1109,7 +1205,7 @@ export class IrFunctionBuilder {
    */
   setFuncKind(kind: "regular" | "generator" | "async"): void {
     if (kind !== "regular" && this.funcKind !== "regular" && this.funcKind !== kind) {
-      throw new Error(`IrFunctionBuilder: setFuncKind conflict in ${this.name} (was ${this.funcKind}, now ${kind})`);
+      throw new Error(`IrFunctionBuilder: setFuncKind conflict in ${this.id.name} (was ${this.funcKind}, now ${kind})`);
     }
     this.funcKind = kind;
   }
@@ -1123,7 +1219,7 @@ export class IrFunctionBuilder {
    */
   setGeneratorBufferSlot(slotIndex: number): void {
     if (this.funcKind !== "generator") {
-      throw new Error(`IrFunctionBuilder: setGeneratorBufferSlot requires funcKind=generator (${this.name})`);
+      throw new Error(`IrFunctionBuilder: setGeneratorBufferSlot requires funcKind=generator (${this.id.name})`);
     }
     this.generatorBufferSlot = slotIndex;
   }
@@ -1146,11 +1242,10 @@ export class IrFunctionBuilder {
    * operand through — see lower.ts `case "await"`). Only valid inside
    * `funcKind === "async"` functions.
    */
-  emitAwait(operand: IrValueId): IrValueId {
+  emitAwait(operand: IrValueId, resultType: IrType = { kind: "val", val: { kind: "externref" } }): IrValueId {
     if (this.funcKind !== "async") {
-      throw new Error(`IrFunctionBuilder: emitAwait requires funcKind=async (${this.name})`);
+      throw new Error(`IrFunctionBuilder: emitAwait requires funcKind=async (${this.id.name})`);
     }
-    const resultType: IrType = { kind: "val", val: { kind: "externref" } };
     const result = this.allocator.fresh();
     this.valueTypes.set(result, resultType);
     this.pushInstr({ kind: "await", operand, result, resultType });
@@ -1160,7 +1255,7 @@ export class IrFunctionBuilder {
   /** Emit a `gen.push` instr — push a yielded value onto the buffer. */
   emitGenPush(value: IrValueId): void {
     if (this.funcKind !== "generator") {
-      throw new Error(`IrFunctionBuilder: emitGenPush requires funcKind=generator (${this.name})`);
+      throw new Error(`IrFunctionBuilder: emitGenPush requires funcKind=generator (${this.id.name})`);
     }
     this.pushInstr({ kind: "gen.push", value, result: null, resultType: null });
   }
@@ -1173,10 +1268,10 @@ export class IrFunctionBuilder {
    */
   emitGenEpilogue(): IrValueId {
     if (this.funcKind !== "generator") {
-      throw new Error(`IrFunctionBuilder: emitGenEpilogue requires funcKind=generator (${this.name})`);
+      throw new Error(`IrFunctionBuilder: emitGenEpilogue requires funcKind=generator (${this.id.name})`);
     }
     if (this.generatorBufferSlot === undefined) {
-      throw new Error(`IrFunctionBuilder: emitGenEpilogue requires setGeneratorBufferSlot first (${this.name})`);
+      throw new Error(`IrFunctionBuilder: emitGenEpilogue requires setGeneratorBufferSlot first (${this.id.name})`);
     }
     const result = this.allocator.fresh();
     const resultType: IrType = irVal({ kind: "externref" });
@@ -1196,7 +1291,7 @@ export class IrFunctionBuilder {
    */
   emitGenYieldStar(inner: IrValueId): void {
     if (this.funcKind !== "generator") {
-      throw new Error(`IrFunctionBuilder: emitGenYieldStar requires funcKind=generator (${this.name})`);
+      throw new Error(`IrFunctionBuilder: emitGenYieldStar requires funcKind=generator (${this.id.name})`);
     }
     this.pushInstr({ kind: "gen.yieldStar", inner, result: null, resultType: null });
   }
@@ -1213,17 +1308,17 @@ export class IrFunctionBuilder {
    */
   emitGenSetReturn(value: IrValueId): void {
     if (this.funcKind !== "generator") {
-      throw new Error(`IrFunctionBuilder: emitGenSetReturn requires funcKind=generator (${this.name})`);
+      throw new Error(`IrFunctionBuilder: emitGenSetReturn requires funcKind=generator (${this.id.name})`);
     }
     if (this.generatorBufferSlot === undefined) {
-      throw new Error(`IrFunctionBuilder: emitGenSetReturn requires setGeneratorBufferSlot first (${this.name})`);
+      throw new Error(`IrFunctionBuilder: emitGenSetReturn requires setGeneratorBufferSlot first (${this.id.name})`);
     }
     this.pushInstr({ kind: "gen.setReturn", value, result: null, resultType: null });
   }
 
   private requireBlock(): OpenBlock {
     if (this.current === null) {
-      throw new Error(`IrFunctionBuilder: no open block (func ${this.name})`);
+      throw new Error(`IrFunctionBuilder: no open block (func ${this.id.name})`);
     }
     return this.current;
   }
@@ -1260,7 +1355,7 @@ export class IrFunctionBuilder {
   emitSlotRead(slotIndex: number): IrValueId {
     const slot = this.slotDefs[slotIndex];
     if (!slot) {
-      throw new Error(`IrFunctionBuilder: slot.read with unknown index ${slotIndex} (func ${this.name})`);
+      throw new Error(`IrFunctionBuilder: slot.read with unknown index ${slotIndex} (func ${this.id.name})`);
     }
     const result = this.allocator.fresh();
     const resultType = irVal(slot.type);
@@ -1285,7 +1380,7 @@ export class IrFunctionBuilder {
   emitSlotReadAs(slotIndex: number, asType: IrType): IrValueId {
     const slot = this.slotDefs[slotIndex];
     if (!slot) {
-      throw new Error(`IrFunctionBuilder: slot.read with unknown index ${slotIndex} (func ${this.name})`);
+      throw new Error(`IrFunctionBuilder: slot.read with unknown index ${slotIndex} (func ${this.id.name})`);
     }
     const result = this.allocator.fresh();
     this.valueTypes.set(result, asType);
@@ -1297,7 +1392,7 @@ export class IrFunctionBuilder {
   emitSlotWrite(slotIndex: number, value: IrValueId): void {
     const slot = this.slotDefs[slotIndex];
     if (!slot) {
-      throw new Error(`IrFunctionBuilder: slot.write with unknown index ${slotIndex} (func ${this.name})`);
+      throw new Error(`IrFunctionBuilder: slot.write with unknown index ${slotIndex} (func ${this.id.name})`);
     }
     this.pushInstr({ kind: "slot.write", slotIndex, value, result: null, resultType: null });
   }
@@ -1310,6 +1405,15 @@ export class IrFunctionBuilder {
     const resultType: IrType = irVal({ kind: "f64" });
     this.valueTypes.set(result, resultType);
     this.pushInstr({ kind: "vec.len", vec, result, resultType });
+    return result;
+  }
+
+  /** Read a proven vector length without the JavaScript-number promotion. */
+  emitVecLenI32(vec: IrValueId): IrValueId {
+    const result = this.allocator.fresh();
+    const resultType: IrType = irVal({ kind: "i32" });
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "vec.len", vec, integer: true, result, resultType });
     return result;
   }
 
@@ -1336,14 +1440,38 @@ export class IrFunctionBuilder {
     });
   }
 
+  /** Update the logical i32 length of an already-allocated vector. */
+  emitVecSetLength(vec: IrValueId, lengthI32: IrValueId): void {
+    this.pushInstr({
+      kind: "vec.set_length",
+      vec,
+      length: lengthI32,
+      result: null,
+      resultType: null,
+    });
+  }
+
   /** Construct a fixed vec whose result uses the resolver's `vecRefType`, so
    * downstream `vec.get`/`.length`/`for-of` reads retain the same identity. */
-  emitVecNewFixed(elements: readonly IrValueId[], elementType: IrType, vecRefType: IrType): IrValueId {
+  emitVecNewFixed(
+    elements: readonly IrValueId[],
+    elementType: IrType,
+    vecRefType: IrType,
+    capacity = elements.length,
+  ): IrValueId {
     const result = this.allocator.fresh();
     const resultType = vecRefType;
     this.valueTypes.set(result, resultType);
     const alloc = this.allocId("array", resultType);
-    this.pushInstr({ kind: "vec.new_fixed", elements: [...elements], elementType, result, resultType, alloc });
+    this.pushInstr({
+      kind: "vec.new_fixed",
+      elements: [...elements],
+      elementType,
+      capacity,
+      result,
+      resultType,
+      alloc,
+    });
     return result;
   }
 
@@ -1413,6 +1541,24 @@ export class IrFunctionBuilder {
   emitCoerceToExternref(value: IrValueId): IrValueId {
     const result = this.allocator.fresh();
     const resultType: IrType = irVal({ kind: "externref" });
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "coerce.to_externref", value, result, resultType });
+    return result;
+  }
+
+  /**
+   * Pack an internal closure into the canonical externref callable ABI.
+   * This is intentionally the only closure→callable conversion: signatures
+   * must match exactly, so the boundary does not introduce callback
+   * covariance or broaden selection.
+   */
+  emitCallablePack(value: IrValueId, signature: IrClosureSignature): IrValueId {
+    const valueType = this.typeOf(value);
+    if (valueType.kind !== "closure" || !closureSignatureEquals(valueType.signature, signature)) {
+      throw new Error(`IrFunctionBuilder: callable pack requires an exact closure signature (func ${this.id.name})`);
+    }
+    const result = this.allocator.fresh();
+    const resultType: IrType = { kind: "callable", signature };
     this.valueTypes.set(result, resultType);
     this.pushInstr({ kind: "coerce.to_externref", value, result, resultType });
     return result;
@@ -1660,6 +1806,46 @@ export class IrFunctionBuilder {
       cond: args.cond,
       then: args.then,
       else: args.else,
+      result: null,
+      resultType: null,
+    });
+  }
+
+  /**
+   * #2952 slice 4 — emit a break-only labeled frame (`lbl: { ... }` over a
+   * non-loop statement). Body pre-collected via `collectBodyInstrs`;
+   * `br.label{label, "break"}` inside it exits the frame.
+   */
+  emitLabeledBlock(args: { label: IrLabelId; body: readonly IrInstr[] }): void {
+    this.pushInstr({
+      kind: "labeled.block",
+      label: args.label,
+      body: args.body,
+      result: null,
+      resultType: null,
+    });
+  }
+
+  /**
+   * #2952 slice 4 — emit a `switch` over literal tests. `tests[k]` is the
+   * clause-k literal (null = default); `bodies[k]` its statement buffer
+   * (falls through into k+1 unless it breaks). `breakLabel` is the exit
+   * frame `break` targets (allocate via `freshLoopLabel`).
+   */
+  emitSwitch(args: {
+    disc: IrValueId;
+    discSlot: number;
+    tests: readonly (number | null)[];
+    bodies: readonly (readonly IrInstr[])[];
+    breakLabel: IrLabelId;
+  }): void {
+    this.pushInstr({
+      kind: "switch",
+      disc: args.disc,
+      discSlot: args.discSlot,
+      tests: args.tests,
+      bodies: args.bodies,
+      breakLabel: args.breakLabel,
       result: null,
       resultType: null,
     });

@@ -5,7 +5,7 @@ CMD=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)
 if [ -z "$CMD" ]; then exit 0; fi
 if ! echo "$CMD" | grep -qE 'npm test|vitest|pnpm run test'; then exit 0; fi
 
-LOGFILE="/workspace/.claude/nonces/test-memory-log.jsonl"
+LOGFILE="${CLAUDE_PROJECT_DIR:-/workspace}/.claude/nonces/test-memory-log.jsonl"
 AVAIL=$(free -m | awk '/Mem/{print $7}')
 TYPE="unknown"
 if echo "$CMD" | grep -q 'equivalence'; then TYPE="equiv"; elif echo "$CMD" | grep -q 'test262'; then TYPE="test262"; fi

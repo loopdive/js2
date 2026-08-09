@@ -17,6 +17,7 @@ import {
 import type { Instr, ValType } from "../../ir/types.js";
 import { emitCachedFuncClosureAccess, emitFuncRefAsClosure } from "../closures.js";
 import { emitNativeGlobalThisObject } from "../array-object-proto.js";
+import { tryEmitNativeUserCtorInstanceOf } from "../native-user-instanceof.js";
 import { emitLazyClassObjectGet } from "./extern.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import {
@@ -35,10 +36,17 @@ import { emitUndefined, ensureLateImport, flushLateImportShifts, shiftLateImport
 import { emitStringBuilderRead, getBuilderInfo } from "../string-builder.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { BUILTIN_TYPE_TAGS, isBuiltinSubtype, isBuiltinTypeName } from "../builtin-tags.js";
+import { ensureDateStruct } from "./builtins.js"; // (#1325) native $__Date struct for host-free `instanceof Date`
+import { ensureStandaloneRegExpStruct } from "../regexp-standalone.js"; // (#1325) native RegExp struct for host-free `instanceof RegExp`
+import { getOrRegisterPromiseType } from "../async-scheduler.js"; // (#1325) native $Promise struct for host-free `instanceof Promise`
 import { getOrRegisterErrorStructType, isWasiErrorName } from "../registry/error-types.js";
 import { allocLocal } from "../context/locals.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportSilentFallback } from "../fallback-telemetry.js";
+import { annexBReadIsUnbound, collectAnnexBCancelSites } from "../annexb-cancel.js";
+import { emitAnnexBUnboundReferenceError } from "../js-errors.js";
+import { resolveBuiltinCtorAliasName, tryEmitNonCallableRhsThrow } from "../native-ordinary-instanceof.js";
+import { isObjectFamilyCtorName, tryEmitNativeObjectFamilyInstanceOf } from "../native-object-family-instanceof.js";
 import { emitTaCtorValue } from "../dataview-native.js";
 import { taCtorKindOf } from "../registry/types.js";
 import { emitThrowReferenceError, emitThrowTypeError, noJsHost } from "./helpers.js";
@@ -50,6 +58,12 @@ import {
   isSupportedBuiltinNamespace,
 } from "../builtin-static-globals.js";
 import { tryEmitPromiseSubclassValue } from "./promise-subclass.js";
+import {
+  emitImplicitGlobalRead,
+  emitRuntimeEvalGlobalRead,
+  emitRuntimeEvalSharedValueUnwrap,
+} from "../global-environment.js";
+import { emitStandaloneIntrinsicEvalValue, emitStandaloneIntrinsicFunctionValue } from "./eval-inline.js";
 
 /**
  * #1473 — Build the set of `$Error_struct` `$tag` values compatible with an
@@ -551,28 +565,23 @@ function compileIdentifierCore(ctx: CodegenContext, fctx: FunctionContext, id: t
   if (cancelRanges && cancelRanges.length > 0) {
     const pos = id.getStart();
     const insideDeclaringBlock = cancelRanges.some((r) => pos >= r.start && pos < r.end);
-    if (!insideDeclaringBlock) {
-      const msg = `${name} is not defined`;
-      if (noJsHost(ctx)) {
-        emitThrowReferenceError(ctx, fctx, msg);
-        fctx.body.push({ op: "unreachable" });
-        return { kind: "externref" };
-      }
-      const throwRefErrIdx = ensureLateImport(ctx, "__throw_reference_error", [{ kind: "externref" }], []);
-      flushLateImportShifts(ctx, fctx);
-      if (throwRefErrIdx !== undefined) {
-        addStringConstantGlobal(ctx, msg);
-        const strIdx = ctx.stringGlobalMap.get(msg)!;
-        fctx.body.push({ op: "global.get", index: strIdx });
-        fctx.body.push({ op: "call", funcIdx: throwRefErrIdx });
-        fctx.body.push({ op: "unreachable" });
-      } else {
-        const tagIdx = ensureExnTag(ctx);
-        fctx.body.push({ op: "ref.null.extern" });
-        fctx.body.push({ op: "throw", tagIdx });
-      }
-      return { kind: "externref" };
-    }
+    if (!insideDeclaringBlock) return emitAnnexBUnboundReferenceError(ctx, fctx, name);
+  }
+
+  // (#3980, Annex B B.3.3) The `fctx.annexBCancelled` map above is per-
+  // FunctionContext, so it is invisible inside NESTED function bodies — yet that
+  // is exactly where the 96 `annexB/language/*-skip-early-err-*` reads live
+  // (`assert.throws(ReferenceError, function () { f; })`). It also only sees a
+  // `function` whose direct parent is a `Block` shadowed by a sibling `let`.
+  // `collectAnnexBCancelSites` is the position-based, whole-SourceFile
+  // counterpart: it covers the `if`-clause and `switch` case/default declaration
+  // positions plus lexical loop heads and destructuring `catch` parameters, and
+  // it answers for a read ANYWHERE in the module. Memoized per SourceFile and
+  // short-circuiting on the (near-universally) empty site list, so non-Annex-B
+  // modules are byte-identical.
+  const annexBSites = collectAnnexBCancelSites(id.getSourceFile());
+  if (annexBSites.length > 0 && annexBReadIsUnbound(annexBSites, id)) {
+    return emitAnnexBUnboundReferenceError(ctx, fctx, name);
   }
 
   // (#2552 Phase 2) A bare value READ of an Annex B B.3.3 block-nested function
@@ -637,6 +646,18 @@ function compileIdentifierCore(ctx: CodegenContext, fctx: FunctionContext, id: t
         undefined /* propName */,
         false /* throwOnNull — ref cells use default for uninitialized captures */,
       );
+      // Direct-eval cells cross a separately compiled provider module. Values
+      // written by that provider use the canonical `$RuntimeEvalValue`
+      // carrier; rebuild the caller module's primitive box before ordinary AOT
+      // consumers narrow or unbox it. Other closure-capture cells retain their
+      // existing representation and byte shape.
+      if (
+        boxed.valType.kind === "externref" &&
+        boxed.refCellTypeIdx === fctx.directEvalRefCellTypeIdx &&
+        ctx.runtimeEvalGlobalFunctionBindings === true
+      ) {
+        emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+      }
       return boxed.valType;
     }
 
@@ -658,7 +679,12 @@ function compileIdentifierCore(ctx: CodegenContext, fctx: FunctionContext, id: t
     // runtime `undefined` to NaN before `=== undefined` / any-param uses can
     // observe it. Return the raw externref; numeric consumers coerce at
     // their own use site (ToNumber(undefined) = NaN matches JS).
-    if (declaredType.kind === "externref" && !fctx.undefWidenedLocals?.has(name)) {
+    if (
+      declaredType.kind === "externref" &&
+      !fctx.undefWidenedLocals?.has(name) &&
+      !fctx.forInIdentifierVars?.has(name) &&
+      !fctx.mixedAssignmentCarrierVars?.has(name)
+    ) {
       const narrowedType = ctx.checker.getTypeAtLocation(id);
       const narrowed = narrowTypeToUnbox(ctx, fctx, narrowedType);
       if (narrowed) return narrowed;
@@ -807,12 +833,77 @@ function compileIdentifierCore(ctx: CodegenContext, fctx: FunctionContext, id: t
     return mType;
   }
 
+  // A first-class read of the unshadowed global `%eval%` (`var indirect =
+  // eval`) must produce the provider's callable, realm-stable intrinsic
+  // marker. Syntactic direct/sequence calls are intercepted in calls.ts before
+  // identifier lowering reaches this branch; this is the value path that used
+  // to fall through to `ref.null.extern` and made every AOT eval alias inert.
+  if (ctx.standalone && name === "eval") {
+    const declaration = ctx.oracle.valueDeclarationOf(id);
+    const isGlobalIntrinsic = declaration === undefined || declaration.getSourceFile().isDeclarationFile;
+    if (isGlobalIntrinsic) {
+      const valueType = emitStandaloneIntrinsicEvalValue(ctx, fctx);
+      if (valueType !== undefined) return valueType;
+    }
+  }
+  // `%Function%` is a genuine realm-owned callable in runtime-eval builds.
+  // Direct `Function(...)` / `new Function(...)` syntax is intercepted before
+  // identifier lowering; this branch preserves first-class aliases and the
+  // constructor identity inherited by provider-owned interpreted functions.
+  if (ctx.standalone && name === "Function") {
+    const declaration = ctx.oracle.valueDeclarationOf(id);
+    const isGlobalIntrinsic = declaration === undefined || declaration.getSourceFile().isDeclarationFile;
+    if (isGlobalIntrinsic) {
+      const valueType = emitStandaloneIntrinsicFunctionValue(ctx, fctx);
+      if (valueType !== undefined) return valueType;
+    }
+  }
+  if (ctx.sloppyImplicitGlobals?.has(name)) return emitImplicitGlobalRead(ctx, fctx, name);
   // Standalone built-in namespace values (Array/Object) materialize as lazy
   // open-object singletons before ambient lib declarations can route them to
   // host globals.
   if (ctx.standalone && isSupportedBuiltinNamespace(name)) {
     const builtinObject = emitBuiltinNamespaceObject(ctx, fctx, name);
     if (builtinObject) return builtinObject;
+  }
+
+  // Host/gc: an ambient extern constructor used as a VALUE must resolve to the
+  // real host constructor object.  The extern-class registry normally serves
+  // only `new X()` and instance member dispatch, so a bare value read such as
+  // ReactDOM's feature selection
+  //
+  //   typeof AbortController !== "undefined" ? AbortController : fallback
+  //
+  // previously fell through to null.  Resolve every registered, unshadowed
+  // extern constructor through globalThis generically; this covers Web/API
+  // constructors without extending the TypedArray/ERM name allowlists below.
+  // Standalone/WASI deliberately keep their native/no-host behavior.
+  if (
+    !ctx.standalone &&
+    !ctx.wasi &&
+    ctx.externClasses.has(name) &&
+    fctx.localMap.get(name) === undefined &&
+    !(fctx.boxedCaptures?.has(name) ?? false) &&
+    !ctx.classSet.has(name)
+  ) {
+    const gtFuncIdx = ensureLateImport(ctx, "__get_globalThis", [], [{ kind: "externref" }]);
+    const getIdx = ensureLateImport(
+      ctx,
+      "__extern_get",
+      [{ kind: "externref" }, { kind: "externref" }],
+      [{ kind: "externref" }],
+    );
+    flushLateImportShifts(ctx, fctx);
+    if (gtFuncIdx !== undefined && getIdx !== undefined) {
+      fctx.body.push({ op: "call", funcIdx: gtFuncIdx });
+      addStringConstantGlobal(ctx, name);
+      const strGlobalIdx = ctx.stringGlobalMap.get(name);
+      fctx.body.push(
+        strGlobalIdx !== undefined ? { op: "global.get", index: strGlobalIdx } : { op: "ref.null.extern" },
+      );
+      fctx.body.push({ op: "call", funcIdx: getIdx });
+      return { kind: "externref" };
+    }
   }
 
   // (#3087) Host/gc lane: a bare TypedArray constructor name used as a VALUE
@@ -1125,6 +1216,13 @@ function compileIdentifierCore(ctx: CodegenContext, fctx: FunctionContext, id: t
     !isInternalHelperName() &&
     !ctx.classSet.has(name)
   ) {
+    const valueDecl = ctx.checker.getSymbolAtLocation(id)?.valueDeclaration;
+    const isOrdinaryFunctionDecl =
+      noJsHost(ctx) &&
+      valueDecl !== undefined &&
+      ts.isFunctionDeclaration(valueDecl) &&
+      valueDecl.asteriskToken === undefined &&
+      !(valueDecl.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false);
     // Check if there's already a closure registered (e.g. from closureMap)
     const existingClosure = ctx.closureMap.get(name);
     if (existingClosure) {
@@ -1151,13 +1249,13 @@ function compileIdentifierCore(ctx: CodegenContext, fctx: FunctionContext, id: t
     // no captures are required.
     const nestedCaptures = ctx.nestedFuncCaptures.get(name);
     if (!nestedCaptures || nestedCaptures.length === 0) {
-      const cachedRefType = emitCachedFuncClosureAccess(ctx, fctx, name, funcRefIdx);
+      const cachedRefType = emitCachedFuncClosureAccess(ctx, fctx, name, funcRefIdx, isOrdinaryFunctionDecl);
       if (cachedRefType) {
         return cachedRefType;
       }
     }
     // Fallback: per-site closure struct (with captures, or if cache emit failed).
-    const refType = emitFuncRefAsClosure(ctx, fctx, name, funcRefIdx);
+    const refType = emitFuncRefAsClosure(ctx, fctx, name, funcRefIdx, isOrdinaryFunctionDecl);
     if (refType) return refType;
   }
 
@@ -1168,6 +1266,10 @@ function compileIdentifierCore(ctx: CodegenContext, fctx: FunctionContext, id: t
   // lib.d.ts and should use the fallback default instead.
   const sym = ctx.checker.getSymbolAtLocation(id);
   if (!sym) {
+    if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalGlobalFunctionBindings) {
+      const dynamicGlobal = emitRuntimeEvalGlobalRead(ctx, fctx, name, false);
+      if (dynamicGlobal !== null) return dynamicGlobal;
+    }
     // Truly undeclared variable — throw a proper ReferenceError instance.
     // The previous emission was a raw `throw ref.null.extern`, which surfaced
     // to JS as `null` so `e instanceof ReferenceError` was false (#1380,
@@ -1530,6 +1632,11 @@ function emitDynamicInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
     return { kind: "i32" };
   }
 
+  // (#2916) §7.3.20 step 1, host-free: a provably non-callable OBJECT RHS
+  // throws. Declines (null) in gc/host mode — see native-ordinary-instanceof.ts.
+  const nonCallableThrow = tryEmitNonCallableRhsThrow(ctx, fctx, expr);
+  if (nonCallableThrow) return nonCallableThrow;
+
   // (#2702) `__instanceof_check` implements §13.10.2 InstanceofOperator +
   // §7.3.20 OrdinaryHasInstance and returns a tri-state (0/1/2) so the
   // non-object / non-callable / custom-@@hasInstance cases are handled
@@ -1662,7 +1769,29 @@ function nativeBuiltinInstanceOfTypeIdxs(ctx: CodegenContext, ctorName: string):
     case "String":
       return keep(ctx.wrapperStringTypeIdx);
     case "Boolean":
+      // NOT force-registered via `ensureWrapperTypes` — see the "Measured and
+      // deliberately reverted" note in `native-object-family-instanceof.ts`.
       return keep(ctx.wrapperBooleanTypeIdx);
+    case "Date":
+      // (#1325) `new Date()` lowers to a distinct `$__Date` WasmGC struct
+      // (one i64 timestamp field). Register-or-fetch its type idx so
+      // `ref.test $__Date` answers `d instanceof Date` host-free even when the
+      // LHS is `any` (the static `tryStaticInstanceOf` path already covers a
+      // statically-typed `Date` LHS). `ensureDateStruct` is idempotent and
+      // type-only (no funcidx shift), so calling it here is compile-order-safe.
+      return keep(ensureDateStruct(ctx));
+    case "RegExp":
+      // (#1325) A RegExp literal / `new RegExp(...)` lowers to the distinct
+      // `$__StandaloneRegExp` struct; `ref.test` against it answers
+      // `r instanceof RegExp` host-free. Idempotent, type-only registration.
+      return keep(ensureStandaloneRegExpStruct(ctx));
+    case "Promise":
+      // (#1325) A Promise lowers to the distinct `$Promise` struct
+      // (state/value/callbacks). `ref.test` against it answers
+      // `p instanceof Promise` host-free. `getOrRegisterPromiseType` is
+      // idempotent and type-only (registers the struct type + scheduler state
+      // bookkeeping; no funcidx shift), so calling it here is compile-order-safe.
+      return keep(getOrRegisterPromiseType(ctx));
     default:
       return undefined;
   }
@@ -1774,6 +1903,11 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
     }
   }
 
+  // (#2916) `var OBJECT = Object; x instanceof OBJECT` — resolve the builtin
+  // behind an alias so the builtin dispatch below is not skipped (host-free
+  // only; gc/host keeps its runtime predicate). See native-ordinary-instanceof.ts.
+  ctorName = resolveBuiltinCtorAliasName(ctx, expr.right, ctorName) ?? ctorName;
+
   if (!ctorName) {
     return emitDynamicInstanceOf(ctx, fctx, expr);
   }
@@ -1807,6 +1941,11 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
     identifierHasSourceDeclaration(ctx, expr.right) &&
     userErrorParent === undefined
   ) {
+    // (#3962) Host-free answer for a plain user function constructor — the
+    // `e instanceof Test262Error` shape, 26 of the 36 ≤ES5 sole leaks of
+    // `env::__instanceof_check`. Declines to null and leaves this path unchanged.
+    const nativeCtor = noJsHost(ctx) ? tryEmitNativeUserCtorInstanceOf(ctx, fctx, expr, ctorName) : null;
+    if (nativeCtor) return nativeCtor;
     return emitDynamicInstanceOf(ctx, fctx, expr);
   }
 
@@ -1903,11 +2042,22 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
   // answer can only CONVERT a failing test — never regress a passing one; and
   // gc/host stays byte-identical (this branch is skipped when a JS host is
   // present). Error-family RHS was already handled natively above. A builtin we
-  // do not yet model natively (Object, Date, RegExp, Promise, ArrayBuffer, ...)
-  // or an unresolvable non-builtin ctor falls to a conservative `0` (a missed
-  // conversion, never a wrong `true` — #2916). NEVER emit the host import here.
+  // do not yet model natively (Object, Promise, ArrayBuffer, DataView, typed
+  // arrays, ...) or an unresolvable non-builtin ctor falls to a conservative `0`
+  // (a missed conversion, never a wrong `true` — #2916). Date and RegExp ARE now
+  // modeled (#1325, distinct $__Date / $__StandaloneRegExp structs). NEVER emit
+  // the host import here.
   if (noJsHost(ctx)) {
     const typeIdxs = nativeBuiltinInstanceOfTypeIdxs(ctx, ctorName);
+    // `Object` and `Function` cannot be answered by a backing-struct membership
+    // list — see `native-object-family-instanceof.ts` for why (no finite list /
+    // snapshot-at-lowering-time). Route them through the finalize-corrected
+    // `typeof` classifiers instead, OR-ing in the membership list so the answer
+    // is never weaker than the one it replaces.
+    if (isObjectFamilyCtorName(ctorName)) {
+      const viaTypeof = tryEmitNativeObjectFamilyInstanceOf(ctx, fctx, expr, ctorName, typeIdxs);
+      if (viaTypeof) return viaTypeof;
+    }
     if (typeIdxs !== undefined) {
       return emitNativeInstanceOfMembership(ctx, fctx, expr, typeIdxs);
     }

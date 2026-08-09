@@ -233,6 +233,14 @@ jobs:
           ./node_modules/.bin/esbuild src/runtime.ts --bundle --platform=node --format=esm \
             --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
 
+      # (#2928 E7) Mirror test262-sharded.yml: the standalone lane links the
+      # refusal runtime-eval provider so eval-mentioning modules instantiate.
+      # An emergency-heal baseline measured WITHOUT it would publish a
+      # standalone number the ordinary lane can no longer reproduce.
+      - name: Prebuild refusal runtime-eval provider (#2928)
+        if: matrix.target.test262_target == 'standalone'
+        run: node scripts/build-runtime-eval-provider.mjs --refusal-only
+
       - name: Run shard
         run: |
           mkdir -p vitest-blob
@@ -248,11 +256,34 @@ jobs:
           fi
 
       - name: Upload shard artifacts
+        id: upload_shard
         uses: actions/upload-artifact@v6
         if: always()
+        # #3404 — continue on a transient upload flake so the retry below can
+        # run; only if BOTH attempts fail does the shard (and thus the
+        # merge-and-promote job that `needs:` it) fail. Observed 2026-07-18:
+        # standalone shard 49's upload timed out (ETIMEDOUT on CreateArtifact)
+        # and aborted the entire standalone-heal promote until a human reran it.
+        continue-on-error: true
         with:
           retention-days: 1
           name: emergency-${{ matrix.target.name }}-shard-${{ matrix.chunk }}
+          path: |
+            benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl
+          if-no-files-found: warn
+
+      # #3404 — retry a transient artifact-upload flake once. Idempotent +
+      # `overwrite` clears any partially finalized artifact. A genuinely empty
+      # shard (no result file) is a `warn`, not a failure, so it never triggers
+      # this retry and the merge step's incomplete-data guard still catches a
+      # real missing chunk.
+      - name: Retry shard artifact upload on transient flake (#3404)
+        if: always() && steps.upload_shard.outcome == 'failure'
+        uses: actions/upload-artifact@v6
+        with:
+          retention-days: 1
+          name: emergency-${{ matrix.target.name }}-shard-${{ matrix.chunk }}
+          overwrite: true
           path: |
             benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl
           if-no-files-found: warn
@@ -425,6 +456,7 @@ jobs:
           BASELINE_DEPLOY_KEY: ${{ secrets.BASELINE_DEPLOY_KEY }}
           # (#3335) Trap-growth gate tolerance — see check-baseline-trap-growth.ts.
           BASELINE_TRAP_GROWTH_ALLOW: ${{ vars.BASELINE_TRAP_GROWTH_ALLOW || '0' }}
+          NTFY_URL: ${{ secrets.NTFY_URL }}
         run: |
           PASS=${{ steps.sanity.outputs.pass }}
           TOTAL=${{ steps.sanity.outputs.total }}
@@ -454,7 +486,7 @@ jobs:
           # fix in test262-sharded.yml promote-baseline). New runs/<sha> files
           # are staged via `git add -A --sparse`.
           git clone --depth=1 --filter=blob:none --no-checkout git@github.com:loopdive/js2wasm-baselines.git /tmp/js2wasm-baselines
-          git -C /tmp/js2wasm-baselines sparse-checkout set --no-cone '/*' '!/runs/*' '/runs/index.json'
+          git -C /tmp/js2wasm-baselines sparse-checkout set --no-cone '/*' '!/runs/*' '/runs/index.json' '/runs/editions-index.json' '/runs/standalone-index.json'
           git -C /tmp/js2wasm-baselines checkout main
 
           # (#3335) Trap-growth gate: refuse to bake a main-side increase of any
@@ -510,6 +542,16 @@ jobs:
             console.log('Skipped duplicate entry');
           }
           "
+
+          # Append per-ES-edition + standalone trend history (landing-page
+          # mini graphs). Both editions.json (regenerated above) and the
+          # standalone report are already fresh on disk in this job.
+          # Best-effort — never blocks the baseline refresh pipeline.
+          node scripts/append-run-history.mjs \
+            --runs-dir /tmp/js2wasm-baselines/runs \
+            --editions website/public/benchmarks/results/test262-editions.json \
+            --standalone-report /tmp/js2wasm-baselines/test262-standalone-current.json \
+            --sha "${{ github.sha }}" || echo "::warning::append-run-history failed (non-fatal)"
 
           # Commit and push to baselines repo
           cd /tmp/js2wasm-baselines
@@ -607,7 +649,42 @@ jobs:
       # and baseline-summary-sync.yml: snapshot the small promote JSON files,
       # hard-checkout a CLEAN tip of main on each attempt, re-apply, commit
       # [skip ci], push via the deploy key, retry on the merge-queue race.
+      # (#3915) Same merge-queue gate the other main-pushers carry. This step
+      # is the LAST un-gated push to `main` in the repo, and every push to
+      # `main` — `[skip ci]` included — rebuilds the queued merge groups and
+      # discards their in-flight validations. It is safe to defer here because
+      # this main-repo commit is an AUDIT COPY: the authoritative push (to
+      # `loopdive/js2wasm-baselines`, above) is untouched, and the hourly,
+      # already-gated `baseline-summary-sync.yml` re-lands this exact file set
+      # from that repo under a 6h staleness floor. That declared fallback is
+      # why `--fallback` is passed and no local floor is needed. An EMERGENCY
+      # (forced) run is a recovery path and never defers.
+      - name: Gate the main audit push on the merge queue
+        id: queue_gate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          FORCE_ARG=""
+          if [ "${IS_FORCED}" = "true" ]; then FORCE_ARG="--force"; fi
+          # `|| RC=$?`, not a bare call then `RC=$?`: the default step shell is
+          # `bash -e {0}`, so a bare non-zero exit aborts the step before the
+          # next line runs — the DEFER path would look like a step failure.
+          RC=0
+          node scripts/main-push-queue-gate.mjs \
+            --repo "$GITHUB_REPOSITORY" \
+            --reason "test262 baseline audit commit" \
+            --fallback "the hourly gated baseline-summary-sync.yml (#1951)" \
+            $FORCE_ARG || RC=$?
+          if [ "$RC" -eq 10 ]; then
+            echo "decision=defer" >> "$GITHUB_OUTPUT"
+          else
+            [ "$RC" -eq 0 ] || echo "::warning title=main-push-queue-gate::gate exited ${RC}; failing open"
+            echo "decision=proceed" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Commit baseline refresh to main (audit trail)
+        if: steps.queue_gate.outputs.decision != 'defer'
         env:
           MAIN_DEPLOY_KEY: ${{ secrets.MAIN_DEPLOY_KEY }}
         run: |
@@ -629,6 +706,8 @@ jobs:
             public/benchmarks/results/test262-standalone-report.json \
             website/public/benchmarks/results/test262-editions.json \
             website/public/benchmarks/results/test262-category-editions.json
+          # #2871 follow-up — per-file edition index (Error Patterns / Skipped Tests filter).
+          git add -f website/public/benchmarks/results/test262-file-editions.json 2>/dev/null || true
           # #3381 — the #2097 standalone high-water mark (raised earlier). Tolerant
           # add: present on main, but never let a missing file abort the stage.
           git add -f benchmarks/results/test262-standalone-highwater.json 2>/dev/null || true

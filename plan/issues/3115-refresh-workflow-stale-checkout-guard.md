@@ -1,7 +1,7 @@
 ---
 id: 3115
 title: "Refresh workflow stale-checkout guard: recompute source-derived baselines after re-anchor"
-status: in-progress
+status: ready
 sprint: current
 created: 2026-07-09
 updated: 2026-07-09

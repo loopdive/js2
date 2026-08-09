@@ -1,0 +1,4130 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-20T01:47:14.103Z",
+  "capture": {
+    "mode": "optimized",
+    "canonical": false,
+    "label": "noncanonical-darwin-arm64-local",
+    "workflowRunUrl": null,
+    "crossMachineComparisonPermitted": false
+  },
+  "repository": {
+    "commit": "d7386a1a2179b4160cd058c2df5c3651a8f232c7",
+    "dirty": false
+  },
+  "dependency": {
+    "issue": 3478,
+    "pr": 3432,
+    "requiredGreenHead": "4c7e3a01d31275163ec9940e864c7292f6961b20",
+    "validatedFixCommit": "559109b723d8c08c0469594db9591f40b1fdfad0",
+    "supersededPatchEquivalentCommit": "2509181c33516ca1fe2462f7008650f2d99eb129"
+  },
+  "environment": {
+    "os": "darwin",
+    "arch": "arm64",
+    "release": "25.3.0",
+    "cpu": "Apple M1 Pro",
+    "cpuCount": 8,
+    "node": "v22.16.0",
+    "pnpm": "10.30.2",
+    "clang": {
+      "path": "/usr/bin/clang",
+      "version": "Apple clang version 17.0.0 (clang-1700.6.3.2)\nTarget: arm64-apple-darwin25.3.0\nThread model: posix\nInstalledDir: /Library/Developer/CommandLineTools/usr/bin"
+    },
+    "porfforCommit": "60a1d41d60580ff4faa38ffd5f7783d23df68bad",
+    "porfforExpectedCommit": "60a1d41d60580ff4faa38ffd5f7783d23df68bad"
+  },
+  "fixture": {
+    "path": "tests/fixtures/porffor-source-to-native-canary.ts",
+    "sha256": "b140de2b6e1f012da594cc62336e74a1e1b39ef484eb3d30f221a392b5b1235d",
+    "bytes": 249,
+    "function": "porfforSourceNativeCanary",
+    "iterations": 200000,
+    "oracle": {
+      "fixedSeeds": [
+        -7,
+        0,
+        4,
+        31
+      ],
+      "fixedOutputs": [
+        -535,
+        235,
+        675,
+        3645
+      ],
+      "seedFormula": "((index * 17) % 257) - 128",
+      "seedFormulaVersion": 1,
+      "checksumDecimal": "46965020"
+    }
+  },
+  "methodology": {
+    "warmupRounds": 5,
+    "measuredRounds": 21,
+    "freshCompilerWorkers": true,
+    "freshNativeProcesses": true,
+    "initTimed": false,
+    "timer": "CLOCK_PROCESS_CPUTIME_ID",
+    "runtimeRss": "whole-process high-water RSS",
+    "quantile": "R-7 linear interpolation, h = (n - 1) * p",
+    "compileFlags": [
+      "-O3",
+      "-DNDEBUG",
+      "-std=gnu11",
+      "-DJS2_AB_ITERATIONS=200000",
+      "-fno-lto",
+      "-Werror",
+      "-Wno-unused-function",
+      "-ffunction-sections",
+      "-fdata-sections",
+      "-c"
+    ],
+    "linkFlags": [
+      "-O3",
+      "-fno-lto",
+      "-Wl,-dead_strip"
+    ],
+    "noLto": true,
+    "harnessObjectReused": true,
+    "harnessCompileWallMs": 171.20512499999995,
+    "harnessCompilePeakRssBytes": 46481408,
+    "interleaveOrders": [
+      {
+        "phase": "warmup",
+        "round": 0,
+        "rows": [
+          "direct-porffor-gc",
+          "direct-porffor-bump",
+          "js2-porffor-arena-v1",
+          "js2-porffor-analysis-stack-arena-v1"
+        ]
+      },
+      {
+        "phase": "warmup",
+        "round": 1,
+        "rows": [
+          "direct-porffor-bump",
+          "js2-porffor-arena-v1",
+          "js2-porffor-analysis-stack-arena-v1",
+          "direct-porffor-gc"
+        ]
+      },
+      {
+        "phase": "warmup",
+        "round": 2,
+        "rows": [
+          "js2-porffor-arena-v1",
+          "js2-porffor-analysis-stack-arena-v1",
+          "direct-porffor-gc",
+          "direct-porffor-bump"
+        ]
+      },
+      {
+        "phase": "warmup",
+        "round": 3,
+        "rows": [
+          "js2-porffor-analysis-stack-arena-v1",
+          "direct-porffor-gc",
+          "direct-porffor-bump",
+          "js2-porffor-arena-v1"
+        ]
+      },
+      {
+        "phase": "warmup",
+        "round": 4,
+        "rows": [
+          "direct-porffor-gc",
+          "direct-porffor-bump",
+          "js2-porffor-arena-v1",
+          "js2-porffor-analysis-stack-arena-v1"
+        ]
+      },
+      {
+        "phase": "measured",
+        "round": 0,
+        "rows": [
+          "direct-porffor-bump",
+          "js2-porffor-arena-v1",
+          "js2-porffor-analysis-stack-arena-v1",
+          "direct-porffor-gc"
+        ]
+      },
+      {
+        "phase": "measured",
+        "round": 1,
+        "rows": [
+          "js2-porffor-arena-v1",
+          "js2-porffor-analysis-stack-arena-v1",
+          "direct-porffor-gc",
+          "direct-porffor-bump"
+        ]
+      },
+      {
+        "phase": "measured",
+        "round": 2,
+        "rows": [
+          "js2-porffor-analysis-stack-arena-v1",
+          "direct-porffor-gc",
+          "direct-porffor-bump",
+          "js2-porffor-arena-v1"
+        ]
+      },
+      {
+        "phase": "measured",
+        "round": 3,
+        "rows": [
+          "direct-porffor-gc",
+          "direct-porffor-bump",
+          "js2-porffor-arena-v1",
+          "js2-porffor-analysis-stack-arena-v1"
+        ]
+      },
+      {
+        "phase": "measured",
+        "round": 4,
+        "rows": [
+          "direct-porffor-bump",
+          "js2-porffor-arena-v1",
+          "js2-porffor-analysis-stack-arena-v1",
+          "direct-porffor-gc"
+        ]
+      },
+      {
+        "phase": "measured",
+        "round": 5,
+        "rows": [
+          "js2-porffor-arena-v1",
+          "js2-porffor-analysis-stack-arena-v1",
+          "direct-porffor-gc",
+          "direct-porffor-bump"
+        ]
+      },
+      {
+        "phase": "measured",
+        "round": 6,
+        "rows": [
+          "js2-porffor-analysis-stack-arena-v1",
+          "direct-porffor-gc",
+          "direct-porffor-bump",
+          "js2-porffor-arena-v1"
+        ]
+      },
+      {
+        "phase": "measured",
+        "round": 7,
+        "rows": [
+          "direct-porffor-gc",
+          "direct-porffor-bump",
+          "js2-porffor-arena-v1",
+          "js2-porffor-analysis-stack-arena-v1"
+        ]
+      },
+      {
+        "phase": "measured",
+        "round": 8,
+        "rows": [
+          "direct-porffor-bump",
+          "js2-porffor-arena-v1",
+          "js2-porffor-analysis-stack-arena-v1",
+          "direct-porffor-gc"
+        ]
+      },
+      {
+        "phase": "measured",
+        "round": 9,
+        "rows": [
+          "js2-porffor-arena-v1",
+          "js2-porffor-analysis-stack-arena-v1",
+          "direct-porffor-gc",
+          "direct-porffor-bump"
+        ]
+      },
+      {
+        "phase": "measured",
+        "round": 10,
+        "rows": [
+          "js2-porffor-analysis-stack-arena-v1",
+          "direct-porffor-gc",
+          "direct-porffor-bump",
+          "js2-porffor-arena-v1"
+        ]
+      },
+      {
+        "phase": "measured",
+        "round": 11,
+        "rows": [
+          "direct-porffor-gc",
+          "direct-porffor-bump",
+          "js2-porffor-arena-v1",
+          "js2-porffor-analysis-stack-arena-v1"
+        ]
+      },
+      {
+        "phase": "measured",
+        "round": 12,
+        "rows": [
+          "direct-porffor-bump",
+          "js2-porffor-arena-v1",
+          "js2-porffor-analysis-stack-arena-v1",
+          "direct-porffor-gc"
+        ]
+      },
+      {
+        "phase": "measured",
+        "round": 13,
+        "rows": [
+          "js2-porffor-arena-v1",
+          "js2-porffor-analysis-stack-arena-v1",
+          "direct-porffor-gc",
+          "direct-porffor-bump"
+        ]
+      },
+      {
+        "phase": "measured",
+        "round": 14,
+        "rows": [
+          "js2-porffor-analysis-stack-arena-v1",
+          "direct-porffor-gc",
+          "direct-porffor-bump",
+          "js2-porffor-arena-v1"
+        ]
+      },
+      {
+        "phase": "measured",
+        "round": 15,
+        "rows": [
+          "direct-porffor-gc",
+          "direct-porffor-bump",
+          "js2-porffor-arena-v1",
+          "js2-porffor-analysis-stack-arena-v1"
+        ]
+      },
+      {
+        "phase": "measured",
+        "round": 16,
+        "rows": [
+          "direct-porffor-bump",
+          "js2-porffor-arena-v1",
+          "js2-porffor-analysis-stack-arena-v1",
+          "direct-porffor-gc"
+        ]
+      },
+      {
+        "phase": "measured",
+        "round": 17,
+        "rows": [
+          "js2-porffor-arena-v1",
+          "js2-porffor-analysis-stack-arena-v1",
+          "direct-porffor-gc",
+          "direct-porffor-bump"
+        ]
+      },
+      {
+        "phase": "measured",
+        "round": 18,
+        "rows": [
+          "js2-porffor-analysis-stack-arena-v1",
+          "direct-porffor-gc",
+          "direct-porffor-bump",
+          "js2-porffor-arena-v1"
+        ]
+      },
+      {
+        "phase": "measured",
+        "round": 19,
+        "rows": [
+          "direct-porffor-gc",
+          "direct-porffor-bump",
+          "js2-porffor-arena-v1",
+          "js2-porffor-analysis-stack-arena-v1"
+        ]
+      },
+      {
+        "phase": "measured",
+        "round": 20,
+        "rows": [
+          "direct-porffor-bump",
+          "js2-porffor-arena-v1",
+          "js2-porffor-analysis-stack-arena-v1",
+          "direct-porffor-gc"
+        ]
+      }
+    ],
+    "sanitizerOptions": null
+  },
+  "rows": [
+    {
+      "id": "direct-porffor-gc",
+      "sourceSha256": "b140de2b6e1f012da594cc62336e74a1e1b39ef484eb3d30f221a392b5b1235d",
+      "valueAbi": "boxed-jsval",
+      "renderedParameterCount": 3,
+      "allocation": {
+        "policy": "porffor-default-gc",
+        "scope": "global",
+        "objectBytes": 56,
+        "objectBytesIsEstimate": true,
+        "allocationIds": [],
+        "allocationClasses": [
+          "gc"
+        ]
+      },
+      "safety": {
+        "generatedC": "plain-pinned-porffor",
+        "generatedCMutations": [
+          "entry suppression before render",
+          "single pinned LP64 i64 printf vararg cast"
+        ],
+        "sanitizerExpectation": "misaligned-object-entry-ubsan",
+        "performanceAuthority": "ub-contaminated-non-authoritative",
+        "finding": {
+          "kind": "misaligned-dynamic-object-f64",
+          "objectEntryStrideBytes": 20,
+          "payloadOffsetBytes": 8,
+          "secondEntryPayloadOffsetBytes": 28,
+          "requiredAlignmentBytes": 8,
+          "rawAccessSites": {
+            "gcLoads": 2,
+            "entryStores": 3,
+            "entryLoads": 1
+          }
+        }
+      },
+      "validity": {
+        "performanceAuthority": "ub-contaminated-non-authoritative",
+        "knownUndefinedBehavior": true,
+        "explanation": "plain pinned Porffor reproducibly fails UBSan on misaligned dynamic-object f64 access; optimized values are UB-contaminated and non-authoritative"
+      },
+      "artifacts": {
+        "renderedCBytes": 186848,
+        "wrapperBytes": 390,
+        "combinedCBytes": 187238,
+        "cSha256": "f86c2ab2e5798a9ce4d43aa2a86b3237466474c09d1cc3393ae0eb414bc275cc",
+        "renderedCSha256": "8dd5f0be49386b638cf3a631393573fe77aaecdeef2f1ff9ca6d3dc77660c93c",
+        "objectBytes": 127984,
+        "executableBytes": 108568
+      },
+      "commandProvenance": {
+        "directPorfforArgumentModel": [
+          "porf",
+          "c",
+          "--module",
+          "-O1",
+          "/Users/thomas/Documents/Arbeit/Startup/Projekte/Mosaic/code/@loopdive/ts2wasm/.codex/worktrees/codex/3482-direct-porffor-ab/tests/fixtures/porffor-source-to-native-canary.ts",
+          "/Users/thomas/Documents/Arbeit/Startup/Projekte/Mosaic/code/@loopdive/ts2wasm/.codex/worktrees/codex/3482-direct-porffor-ab/.tmp/porffor-direct-ab-darwin-20260720/.rounds/warmup-00-0-direct-porffor-gc/porffor-raw.c"
+        ],
+        "compatibilityNormalizations": [
+          "single pinned LP64 i64 printf vararg cast"
+        ],
+        "plainGeneratedC": "entry suppressed before render; rendered C otherwise changes only at the disclosed pinned LP64 printf cast"
+      },
+      "warmups": [
+        {
+          "round": 0,
+          "order": 0,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.8085419999999885,
+            "porfforCodegenMs": 25.42166700000007,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 12.575666999999953,
+            "sourceToCWorkerWallMs": 1032.135167,
+            "clangCompileMs": 760.0148749999998,
+            "clangLinkMs": 121.31679200000008,
+            "totalBuildWallMs": 1913.4668339999998
+          },
+          "compilerPeakRssBytes": 332251136,
+          "clangPeakRssBytes": 86507520,
+          "runtimeCpuNs": 20112000,
+          "runtimePeakRssBytes": 27656192,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 127984,
+          "executableBytes": 108568,
+          "cSha256": "f86c2ab2e5798a9ce4d43aa2a86b3237466474c09d1cc3393ae0eb414bc275cc"
+        },
+        {
+          "round": 1,
+          "order": 3,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.5158340000000408,
+            "porfforCodegenMs": 23.70316600000001,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 12.017417000000023,
+            "sourceToCWorkerWallMs": 935.8132500000011,
+            "clangCompileMs": 737.8330000000005,
+            "clangLinkMs": 45.46491699999933,
+            "totalBuildWallMs": 1719.111167000001
+          },
+          "compilerPeakRssBytes": 332218368,
+          "clangPeakRssBytes": 86786048,
+          "runtimeCpuNs": 17463000,
+          "runtimePeakRssBytes": 27639808,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 127984,
+          "executableBytes": 108568,
+          "cSha256": "f86c2ab2e5798a9ce4d43aa2a86b3237466474c09d1cc3393ae0eb414bc275cc"
+        },
+        {
+          "round": 2,
+          "order": 2,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.4968750000000455,
+            "porfforCodegenMs": 25.337374999999952,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 12.34941600000002,
+            "sourceToCWorkerWallMs": 937.6101249999992,
+            "clangCompileMs": 733.4911250000005,
+            "clangLinkMs": 48.14379199999894,
+            "totalBuildWallMs": 1719.2450419999986
+          },
+          "compilerPeakRssBytes": 329793536,
+          "clangPeakRssBytes": 86523904,
+          "runtimeCpuNs": 20349000,
+          "runtimePeakRssBytes": 27639808,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 127984,
+          "executableBytes": 108568,
+          "cSha256": "f86c2ab2e5798a9ce4d43aa2a86b3237466474c09d1cc3393ae0eb414bc275cc"
+        },
+        {
+          "round": 3,
+          "order": 1,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.329417000000035,
+            "porfforCodegenMs": 24.709707999999978,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 12.372250000000008,
+            "sourceToCWorkerWallMs": 957.0145830000001,
+            "clangCompileMs": 727.3325829999994,
+            "clangLinkMs": 47.17816599999787,
+            "totalBuildWallMs": 1731.5253319999974
+          },
+          "compilerPeakRssBytes": 332267520,
+          "clangPeakRssBytes": 86310912,
+          "runtimeCpuNs": 20535000,
+          "runtimePeakRssBytes": 27656192,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 127984,
+          "executableBytes": 108568,
+          "cSha256": "f86c2ab2e5798a9ce4d43aa2a86b3237466474c09d1cc3393ae0eb414bc275cc"
+        },
+        {
+          "round": 4,
+          "order": 0,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.17933400000004,
+            "porfforCodegenMs": 23.971457999999984,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 12.651124999999979,
+            "sourceToCWorkerWallMs": 958.3609580000011,
+            "clangCompileMs": 723.690208,
+            "clangLinkMs": 54.75929200000246,
+            "totalBuildWallMs": 1736.8104580000036
+          },
+          "compilerPeakRssBytes": 331808768,
+          "clangPeakRssBytes": 86048768,
+          "runtimeCpuNs": 17754000,
+          "runtimePeakRssBytes": 27656192,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 127984,
+          "executableBytes": 108568,
+          "cSha256": "f86c2ab2e5798a9ce4d43aa2a86b3237466474c09d1cc3393ae0eb414bc275cc"
+        }
+      ],
+      "samples": [
+        {
+          "round": 0,
+          "order": 3,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.0092500000000655,
+            "porfforCodegenMs": 24.875541999999996,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 12.221917000000076,
+            "sourceToCWorkerWallMs": 953.8890840000022,
+            "clangCompileMs": 724.3776670000007,
+            "clangLinkMs": 52.29883400000108,
+            "totalBuildWallMs": 1730.565585000004
+          },
+          "compilerPeakRssBytes": 326025216,
+          "clangPeakRssBytes": 86917120,
+          "runtimeCpuNs": 17808000,
+          "runtimePeakRssBytes": 27656192,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 127984,
+          "executableBytes": 108568,
+          "cSha256": "f86c2ab2e5798a9ce4d43aa2a86b3237466474c09d1cc3393ae0eb414bc275cc"
+        },
+        {
+          "round": 1,
+          "order": 2,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.4566670000000386,
+            "porfforCodegenMs": 25.568957999999952,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 12.889125000000035,
+            "sourceToCWorkerWallMs": 944.1171669999967,
+            "clangCompileMs": 737.9018329999963,
+            "clangLinkMs": 51.873124999998254,
+            "totalBuildWallMs": 1733.8921249999912
+          },
+          "compilerPeakRssBytes": 332496896,
+          "clangPeakRssBytes": 86081536,
+          "runtimeCpuNs": 17925000,
+          "runtimePeakRssBytes": 27639808,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 127984,
+          "executableBytes": 108568,
+          "cSha256": "f86c2ab2e5798a9ce4d43aa2a86b3237466474c09d1cc3393ae0eb414bc275cc"
+        },
+        {
+          "round": 2,
+          "order": 1,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.448541999999975,
+            "porfforCodegenMs": 26.68845799999997,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 13.398625000000038,
+            "sourceToCWorkerWallMs": 998.0835000000006,
+            "clangCompileMs": 899.4895410000026,
+            "clangLinkMs": 53.52154200000223,
+            "totalBuildWallMs": 1951.0945830000055
+          },
+          "compilerPeakRssBytes": 332513280,
+          "clangPeakRssBytes": 86605824,
+          "runtimeCpuNs": 18521000,
+          "runtimePeakRssBytes": 27639808,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 127984,
+          "executableBytes": 108568,
+          "cSha256": "f86c2ab2e5798a9ce4d43aa2a86b3237466474c09d1cc3393ae0eb414bc275cc"
+        },
+        {
+          "round": 3,
+          "order": 0,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.432666999999924,
+            "porfforCodegenMs": 23.944792000000007,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 13.998249999999985,
+            "sourceToCWorkerWallMs": 964.4822920000006,
+            "clangCompileMs": 754.7615000000005,
+            "clangLinkMs": 47.41187499999796,
+            "totalBuildWallMs": 1766.655666999999
+          },
+          "compilerPeakRssBytes": 332627968,
+          "clangPeakRssBytes": 85770240,
+          "runtimeCpuNs": 19591000,
+          "runtimePeakRssBytes": 27672576,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 127984,
+          "executableBytes": 108568,
+          "cSha256": "f86c2ab2e5798a9ce4d43aa2a86b3237466474c09d1cc3393ae0eb414bc275cc"
+        },
+        {
+          "round": 4,
+          "order": 3,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.418124999999918,
+            "porfforCodegenMs": 24.576875000000086,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 12.356750000000034,
+            "sourceToCWorkerWallMs": 951.8790420000005,
+            "clangCompileMs": 741.2444169999944,
+            "clangLinkMs": 46.553083000006154,
+            "totalBuildWallMs": 1739.676542000001
+          },
+          "compilerPeakRssBytes": 335249408,
+          "clangPeakRssBytes": 86982656,
+          "runtimeCpuNs": 21204000,
+          "runtimePeakRssBytes": 27639808,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 127984,
+          "executableBytes": 108568,
+          "cSha256": "f86c2ab2e5798a9ce4d43aa2a86b3237466474c09d1cc3393ae0eb414bc275cc"
+        },
+        {
+          "round": 5,
+          "order": 2,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.7347919999999704,
+            "porfforCodegenMs": 25.446792000000073,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 12.815875000000005,
+            "sourceToCWorkerWallMs": 948.4169170000096,
+            "clangCompileMs": 733.5902499999938,
+            "clangLinkMs": 51.156749999994645,
+            "totalBuildWallMs": 1733.163916999998
+          },
+          "compilerPeakRssBytes": 327860224,
+          "clangPeakRssBytes": 85999616,
+          "runtimeCpuNs": 19228000,
+          "runtimePeakRssBytes": 27623424,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 127984,
+          "executableBytes": 108568,
+          "cSha256": "f86c2ab2e5798a9ce4d43aa2a86b3237466474c09d1cc3393ae0eb414bc275cc"
+        },
+        {
+          "round": 6,
+          "order": 1,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.218166999999994,
+            "porfforCodegenMs": 27.674082999999996,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 14.390625,
+            "sourceToCWorkerWallMs": 957.6288329999952,
+            "clangCompileMs": 744.6780829999916,
+            "clangLinkMs": 49.76233300000604,
+            "totalBuildWallMs": 1752.0692489999929
+          },
+          "compilerPeakRssBytes": 332316672,
+          "clangPeakRssBytes": 86032384,
+          "runtimeCpuNs": 22439000,
+          "runtimePeakRssBytes": 27672576,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 127984,
+          "executableBytes": 108568,
+          "cSha256": "f86c2ab2e5798a9ce4d43aa2a86b3237466474c09d1cc3393ae0eb414bc275cc"
+        },
+        {
+          "round": 7,
+          "order": 0,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.372250000000008,
+            "porfforCodegenMs": 25.001582999999982,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 12.450000000000045,
+            "sourceToCWorkerWallMs": 968.2714580000029,
+            "clangCompileMs": 729.5419999999867,
+            "clangLinkMs": 51.16704200000095,
+            "totalBuildWallMs": 1748.9804999999906
+          },
+          "compilerPeakRssBytes": 334282752,
+          "clangPeakRssBytes": 86376448,
+          "runtimeCpuNs": 17992000,
+          "runtimePeakRssBytes": 27672576,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 127984,
+          "executableBytes": 108568,
+          "cSha256": "f86c2ab2e5798a9ce4d43aa2a86b3237466474c09d1cc3393ae0eb414bc275cc"
+        },
+        {
+          "round": 8,
+          "order": 3,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.298999999999978,
+            "porfforCodegenMs": 23.688666000000012,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 12.763207999999963,
+            "sourceToCWorkerWallMs": 1000.7639579999959,
+            "clangCompileMs": 732.3031250000058,
+            "clangLinkMs": 47.462083000005805,
+            "totalBuildWallMs": 1780.5291660000075
+          },
+          "compilerPeakRssBytes": 327041024,
+          "clangPeakRssBytes": 86097920,
+          "runtimeCpuNs": 18504000,
+          "runtimePeakRssBytes": 27656192,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 127984,
+          "executableBytes": 108568,
+          "cSha256": "f86c2ab2e5798a9ce4d43aa2a86b3237466474c09d1cc3393ae0eb414bc275cc"
+        },
+        {
+          "round": 9,
+          "order": 2,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.396624999999972,
+            "porfforCodegenMs": 24.863000000000056,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 12.771292000000017,
+            "sourceToCWorkerWallMs": 944.8837090000015,
+            "clangCompileMs": 736.3629579999979,
+            "clangLinkMs": 47.49262499999895,
+            "totalBuildWallMs": 1728.7392919999984
+          },
+          "compilerPeakRssBytes": 324501504,
+          "clangPeakRssBytes": 86540288,
+          "runtimeCpuNs": 18400000,
+          "runtimePeakRssBytes": 27656192,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 127984,
+          "executableBytes": 108568,
+          "cSha256": "f86c2ab2e5798a9ce4d43aa2a86b3237466474c09d1cc3393ae0eb414bc275cc"
+        },
+        {
+          "round": 10,
+          "order": 1,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.6178750000000264,
+            "porfforCodegenMs": 25.755667000000017,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 13.864916000000107,
+            "sourceToCWorkerWallMs": 950.4666670000006,
+            "clangCompileMs": 718.8503339999879,
+            "clangLinkMs": 52.615291000009165,
+            "totalBuildWallMs": 1721.9322919999977
+          },
+          "compilerPeakRssBytes": 333627392,
+          "clangPeakRssBytes": 86441984,
+          "runtimeCpuNs": 19900000,
+          "runtimePeakRssBytes": 27639808,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 127984,
+          "executableBytes": 108568,
+          "cSha256": "f86c2ab2e5798a9ce4d43aa2a86b3237466474c09d1cc3393ae0eb414bc275cc"
+        },
+        {
+          "round": 11,
+          "order": 0,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.358500000000049,
+            "porfforCodegenMs": 24.92904199999998,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 13.131457999999952,
+            "sourceToCWorkerWallMs": 987.0677080000023,
+            "clangCompileMs": 722.5547499999957,
+            "clangLinkMs": 47.6765000000014,
+            "totalBuildWallMs": 1757.2989579999994
+          },
+          "compilerPeakRssBytes": 335626240,
+          "clangPeakRssBytes": 86097920,
+          "runtimeCpuNs": 17550000,
+          "runtimePeakRssBytes": 27639808,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 127984,
+          "executableBytes": 108568,
+          "cSha256": "f86c2ab2e5798a9ce4d43aa2a86b3237466474c09d1cc3393ae0eb414bc275cc"
+        },
+        {
+          "round": 12,
+          "order": 3,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.698082999999997,
+            "porfforCodegenMs": 25.284375000000068,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 12.519625000000019,
+            "sourceToCWorkerWallMs": 947.0770000000048,
+            "clangCompileMs": 720.2795419999893,
+            "clangLinkMs": 49.151457999993,
+            "totalBuildWallMs": 1716.507999999987
+          },
+          "compilerPeakRssBytes": 334561280,
+          "clangPeakRssBytes": 86884352,
+          "runtimeCpuNs": 18060000,
+          "runtimePeakRssBytes": 27672576,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 127984,
+          "executableBytes": 108568,
+          "cSha256": "f86c2ab2e5798a9ce4d43aa2a86b3237466474c09d1cc3393ae0eb414bc275cc"
+        },
+        {
+          "round": 13,
+          "order": 2,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.1235840000000508,
+            "porfforCodegenMs": 23.287582999999927,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 12.402250000000095,
+            "sourceToCWorkerWallMs": 940.7193750000151,
+            "clangCompileMs": 716.3041249999951,
+            "clangLinkMs": 48.508625000016764,
+            "totalBuildWallMs": 1705.532125000027
+          },
+          "compilerPeakRssBytes": 331218944,
+          "clangPeakRssBytes": 87162880,
+          "runtimeCpuNs": 17491000,
+          "runtimePeakRssBytes": 27639808,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 127984,
+          "executableBytes": 108568,
+          "cSha256": "f86c2ab2e5798a9ce4d43aa2a86b3237466474c09d1cc3393ae0eb414bc275cc"
+        },
+        {
+          "round": 14,
+          "order": 1,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.339375000000018,
+            "porfforCodegenMs": 25.391417000000047,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 12.753458000000023,
+            "sourceToCWorkerWallMs": 943.5584999999846,
+            "clangCompileMs": 729.2751670000143,
+            "clangLinkMs": 47.439916000002995,
+            "totalBuildWallMs": 1720.273583000002
+          },
+          "compilerPeakRssBytes": 332808192,
+          "clangPeakRssBytes": 86589440,
+          "runtimeCpuNs": 22580000,
+          "runtimePeakRssBytes": 27639808,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 127984,
+          "executableBytes": 108568,
+          "cSha256": "f86c2ab2e5798a9ce4d43aa2a86b3237466474c09d1cc3393ae0eb414bc275cc"
+        },
+        {
+          "round": 15,
+          "order": 0,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.341042000000016,
+            "porfforCodegenMs": 25.380124999999907,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 13.284332999999947,
+            "sourceToCWorkerWallMs": 941.0849999999919,
+            "clangCompileMs": 728.1673329999903,
+            "clangLinkMs": 51.36637500001234,
+            "totalBuildWallMs": 1720.6187079999945
+          },
+          "compilerPeakRssBytes": 331857920,
+          "clangPeakRssBytes": 85573632,
+          "runtimeCpuNs": 21097000,
+          "runtimePeakRssBytes": 27656192,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 127984,
+          "executableBytes": 108568,
+          "cSha256": "f86c2ab2e5798a9ce4d43aa2a86b3237466474c09d1cc3393ae0eb414bc275cc"
+        },
+        {
+          "round": 16,
+          "order": 3,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.2615829999999733,
+            "porfforCodegenMs": 24.881999999999948,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 11.817084000000023,
+            "sourceToCWorkerWallMs": 921.7683330000145,
+            "clangCompileMs": 701.3843329999945,
+            "clangLinkMs": 46.8409999999858,
+            "totalBuildWallMs": 1669.9936659999948
+          },
+          "compilerPeakRssBytes": 331038720,
+          "clangPeakRssBytes": 86032384,
+          "runtimeCpuNs": 18994000,
+          "runtimePeakRssBytes": 27639808,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 127984,
+          "executableBytes": 108568,
+          "cSha256": "f86c2ab2e5798a9ce4d43aa2a86b3237466474c09d1cc3393ae0eb414bc275cc"
+        },
+        {
+          "round": 17,
+          "order": 2,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.1917909999999665,
+            "porfforCodegenMs": 23.918208999999933,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 12.226375000000075,
+            "sourceToCWorkerWallMs": 904.5753329999861,
+            "clangCompileMs": 740.0578749999986,
+            "clangLinkMs": 47.283165999979246,
+            "totalBuildWallMs": 1691.916373999964
+          },
+          "compilerPeakRssBytes": 321683456,
+          "clangPeakRssBytes": 87015424,
+          "runtimeCpuNs": 17605000,
+          "runtimePeakRssBytes": 27639808,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 127984,
+          "executableBytes": 108568,
+          "cSha256": "f86c2ab2e5798a9ce4d43aa2a86b3237466474c09d1cc3393ae0eb414bc275cc"
+        },
+        {
+          "round": 18,
+          "order": 1,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.1481670000000577,
+            "porfforCodegenMs": 24.703666,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 11.973374999999919,
+            "sourceToCWorkerWallMs": 907.5946249999979,
+            "clangCompileMs": 685.299457999994,
+            "clangLinkMs": 45.59525000001304,
+            "totalBuildWallMs": 1638.489333000005
+          },
+          "compilerPeakRssBytes": 332480512,
+          "clangPeakRssBytes": 85884928,
+          "runtimeCpuNs": 17672000,
+          "runtimePeakRssBytes": 27623424,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 127984,
+          "executableBytes": 108568,
+          "cSha256": "f86c2ab2e5798a9ce4d43aa2a86b3237466474c09d1cc3393ae0eb414bc275cc"
+        },
+        {
+          "round": 19,
+          "order": 0,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.063458999999966,
+            "porfforCodegenMs": 23.78033300000004,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 11.909167000000025,
+            "sourceToCWorkerWallMs": 916.1608330000017,
+            "clangCompileMs": 701.6359579999989,
+            "clangLinkMs": 45.593250000005355,
+            "totalBuildWallMs": 1663.390041000006
+          },
+          "compilerPeakRssBytes": 333398016,
+          "clangPeakRssBytes": 86360064,
+          "runtimeCpuNs": 21697000,
+          "runtimePeakRssBytes": 27656192,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 127984,
+          "executableBytes": 108568,
+          "cSha256": "f86c2ab2e5798a9ce4d43aa2a86b3237466474c09d1cc3393ae0eb414bc275cc"
+        },
+        {
+          "round": 20,
+          "order": 3,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.3616250000000036,
+            "porfforCodegenMs": 25.140333000000055,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 11.811959000000002,
+            "sourceToCWorkerWallMs": 951.3378749999974,
+            "clangCompileMs": 741.8940419999999,
+            "clangLinkMs": 53.47399999998743,
+            "totalBuildWallMs": 1746.7059169999848
+          },
+          "compilerPeakRssBytes": 333250560,
+          "clangPeakRssBytes": 86867968,
+          "runtimeCpuNs": 18655000,
+          "runtimePeakRssBytes": 27656192,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 127984,
+          "executableBytes": 108568,
+          "cSha256": "f86c2ab2e5798a9ce4d43aa2a86b3237466474c09d1cc3393ae0eb414bc275cc"
+        }
+      ],
+      "summary": {
+        "runtimeCpuMs": {
+          "q1": 17.925,
+          "median": 18.521,
+          "q3": 19.9
+        },
+        "runtimePeakRssBytes": {
+          "q1": 27639808,
+          "median": 27639808,
+          "q3": 27656192
+        },
+        "compilerPeakRssBytes": {
+          "q1": 331038720,
+          "median": 332496896,
+          "q3": 333398016
+        },
+        "clangPeakRssBytes": {
+          "q1": 86032384,
+          "median": 86376448,
+          "q3": 86867968
+        },
+        "totalBuildWallMs": {
+          "q1": 1716.507999999987,
+          "median": 1730.565585000004,
+          "q3": 1748.9804999999906
+        },
+        "compilePhasesMs": {
+          "porfforParseMs": {
+            "q1": 3.218166999999994,
+            "median": 3.358500000000049,
+            "q3": 3.432666999999924
+          },
+          "porfforCodegenMs": {
+            "q1": 24.576875000000086,
+            "median": 24.92904199999998,
+            "q3": 25.391417000000047
+          },
+          "js2SourceToLinearTelemetryMs": null,
+          "js2IrToPorfforMs": null,
+          "porfforLoadMs": null,
+          "porfforRenderMs": {
+            "q1": 12.226375000000075,
+            "median": 12.753458000000023,
+            "q3": 13.131457999999952
+          },
+          "sourceToCWorkerWallMs": {
+            "q1": 941.0849999999919,
+            "median": 948.4169170000096,
+            "q3": 957.6288329999952
+          },
+          "clangCompileMs": {
+            "q1": 720.2795419999893,
+            "median": 729.5419999999867,
+            "q3": 740.0578749999986
+          },
+          "clangLinkMs": {
+            "q1": 47.41187499999796,
+            "median": 48.508625000016764,
+            "q3": 51.36637500001234
+          },
+          "totalBuildWallMs": {
+            "q1": 1716.507999999987,
+            "median": 1730.565585000004,
+            "q3": 1748.9804999999906
+          }
+        }
+      }
+    },
+    {
+      "id": "direct-porffor-bump",
+      "sourceSha256": "b140de2b6e1f012da594cc62336e74a1e1b39ef484eb3d30f221a392b5b1235d",
+      "valueAbi": "boxed-jsval",
+      "renderedParameterCount": 3,
+      "allocation": {
+        "policy": "porffor-gc-false-bump",
+        "scope": "global",
+        "objectBytes": 56,
+        "objectBytesIsEstimate": true,
+        "allocationIds": [],
+        "allocationClasses": [
+          "bump"
+        ]
+      },
+      "safety": {
+        "generatedC": "plain-pinned-porffor",
+        "generatedCMutations": [
+          "entry suppression before render",
+          "single pinned LP64 i64 printf vararg cast"
+        ],
+        "sanitizerExpectation": "misaligned-object-entry-ubsan",
+        "performanceAuthority": "ub-contaminated-non-authoritative",
+        "finding": {
+          "kind": "misaligned-dynamic-object-f64",
+          "objectEntryStrideBytes": 20,
+          "payloadOffsetBytes": 8,
+          "secondEntryPayloadOffsetBytes": 28,
+          "requiredAlignmentBytes": 8,
+          "rawAccessSites": {
+            "gcLoads": 0,
+            "entryStores": 3,
+            "entryLoads": 1
+          }
+        }
+      },
+      "validity": {
+        "performanceAuthority": "ub-contaminated-non-authoritative",
+        "knownUndefinedBehavior": true,
+        "explanation": "plain pinned Porffor reproducibly fails UBSan on misaligned dynamic-object f64 access; optimized values are UB-contaminated and non-authoritative"
+      },
+      "artifacts": {
+        "renderedCBytes": 105517,
+        "wrapperBytes": 343,
+        "combinedCBytes": 105860,
+        "cSha256": "6042e033b1142b0acc9ff0bb48f4e9f9d2640e3e0c7259d7391ded6e2edfacf0",
+        "renderedCSha256": "9edf0adba0ea04679b3eb76adc375da533467ff409879b50f0f90854c4ed0517",
+        "objectBytes": 75968,
+        "executableBytes": 73736
+      },
+      "commandProvenance": {
+        "directPorfforArgumentModel": [
+          "porf",
+          "c",
+          "--module",
+          "-O1",
+          "--no-gc",
+          "/Users/thomas/Documents/Arbeit/Startup/Projekte/Mosaic/code/@loopdive/ts2wasm/.codex/worktrees/codex/3482-direct-porffor-ab/tests/fixtures/porffor-source-to-native-canary.ts",
+          "/Users/thomas/Documents/Arbeit/Startup/Projekte/Mosaic/code/@loopdive/ts2wasm/.codex/worktrees/codex/3482-direct-porffor-ab/.tmp/porffor-direct-ab-darwin-20260720/.rounds/warmup-00-1-direct-porffor-bump/porffor-raw.c"
+        ],
+        "compatibilityNormalizations": [
+          "single pinned LP64 i64 printf vararg cast"
+        ],
+        "plainGeneratedC": "entry suppressed before render; rendered C otherwise changes only at the disclosed pinned LP64 printf cast"
+      },
+      "warmups": [
+        {
+          "round": 0,
+          "order": 1,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.2499159999999847,
+            "porfforCodegenMs": 26.149250000000052,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 12.241540999999984,
+            "sourceToCWorkerWallMs": 991.1779999999999,
+            "clangCompileMs": 413.8132919999998,
+            "clangLinkMs": 48.26362499999959,
+            "totalBuildWallMs": 1453.2549169999993
+          },
+          "compilerPeakRssBytes": 325025792,
+          "clangPeakRssBytes": 75333632,
+          "runtimeCpuNs": 13267000,
+          "runtimePeakRssBytes": 23773184,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 75968,
+          "executableBytes": 73736,
+          "cSha256": "6042e033b1142b0acc9ff0bb48f4e9f9d2640e3e0c7259d7391ded6e2edfacf0"
+        },
+        {
+          "round": 1,
+          "order": 0,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.357083999999986,
+            "porfforCodegenMs": 25.035624999999982,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 10.793290999999954,
+            "sourceToCWorkerWallMs": 947.551125,
+            "clangCompileMs": 418.06816700000127,
+            "clangLinkMs": 50.28912500000115,
+            "totalBuildWallMs": 1415.9084170000024
+          },
+          "compilerPeakRssBytes": 331038720,
+          "clangPeakRssBytes": 74874880,
+          "runtimeCpuNs": 12094000,
+          "runtimePeakRssBytes": 23773184,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 75968,
+          "executableBytes": 73736,
+          "cSha256": "6042e033b1142b0acc9ff0bb48f4e9f9d2640e3e0c7259d7391ded6e2edfacf0"
+        },
+        {
+          "round": 2,
+          "order": 3,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.593833000000018,
+            "porfforCodegenMs": 24.52979199999993,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 10.853958000000034,
+            "sourceToCWorkerWallMs": 957.4075830000002,
+            "clangCompileMs": 400.3667499999974,
+            "clangLinkMs": 49.79174999999668,
+            "totalBuildWallMs": 1407.5660829999943
+          },
+          "compilerPeakRssBytes": 334479360,
+          "clangPeakRssBytes": 74203136,
+          "runtimeCpuNs": 12108000,
+          "runtimePeakRssBytes": 23773184,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 75968,
+          "executableBytes": 73736,
+          "cSha256": "6042e033b1142b0acc9ff0bb48f4e9f9d2640e3e0c7259d7391ded6e2edfacf0"
+        },
+        {
+          "round": 3,
+          "order": 2,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.5901669999999513,
+            "porfforCodegenMs": 25.111167000000023,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 11.094749999999976,
+            "sourceToCWorkerWallMs": 960.4990419999995,
+            "clangCompileMs": 407.69287500000064,
+            "clangLinkMs": 46.31737499999872,
+            "totalBuildWallMs": 1414.5092919999988
+          },
+          "compilerPeakRssBytes": 331841536,
+          "clangPeakRssBytes": 74383360,
+          "runtimeCpuNs": 12018000,
+          "runtimePeakRssBytes": 23773184,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 75968,
+          "executableBytes": 73736,
+          "cSha256": "6042e033b1142b0acc9ff0bb48f4e9f9d2640e3e0c7259d7391ded6e2edfacf0"
+        },
+        {
+          "round": 4,
+          "order": 1,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.491999999999962,
+            "porfforCodegenMs": 24.57466599999998,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 11.317209000000048,
+            "sourceToCWorkerWallMs": 952.1627090000002,
+            "clangCompileMs": 417.6332500000026,
+            "clangLinkMs": 52.23841600000014,
+            "totalBuildWallMs": 1422.034375000003
+          },
+          "compilerPeakRssBytes": 329908224,
+          "clangPeakRssBytes": 75333632,
+          "runtimeCpuNs": 12084000,
+          "runtimePeakRssBytes": 23773184,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 75968,
+          "executableBytes": 73736,
+          "cSha256": "6042e033b1142b0acc9ff0bb48f4e9f9d2640e3e0c7259d7391ded6e2edfacf0"
+        }
+      ],
+      "samples": [
+        {
+          "round": 0,
+          "order": 0,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.369957999999997,
+            "porfforCodegenMs": 24.95712500000002,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 11.833708000000001,
+            "sourceToCWorkerWallMs": 958.7132500000007,
+            "clangCompileMs": 431.2983749999985,
+            "clangLinkMs": 47.53795900000114,
+            "totalBuildWallMs": 1437.5495840000003
+          },
+          "compilerPeakRssBytes": 331087872,
+          "clangPeakRssBytes": 75087872,
+          "runtimeCpuNs": 12018000,
+          "runtimePeakRssBytes": 23773184,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 75968,
+          "executableBytes": 73736,
+          "cSha256": "6042e033b1142b0acc9ff0bb48f4e9f9d2640e3e0c7259d7391ded6e2edfacf0"
+        },
+        {
+          "round": 1,
+          "order": 3,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.5930419999999685,
+            "porfforCodegenMs": 25.13758299999995,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 11.226833000000056,
+            "sourceToCWorkerWallMs": 941.974749999994,
+            "clangCompileMs": 411.56699999999546,
+            "clangLinkMs": 46.17691699999705,
+            "totalBuildWallMs": 1399.7186669999865
+          },
+          "compilerPeakRssBytes": 329793536,
+          "clangPeakRssBytes": 74842112,
+          "runtimeCpuNs": 12624000,
+          "runtimePeakRssBytes": 23773184,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 75968,
+          "executableBytes": 73736,
+          "cSha256": "6042e033b1142b0acc9ff0bb48f4e9f9d2640e3e0c7259d7391ded6e2edfacf0"
+        },
+        {
+          "round": 2,
+          "order": 2,
+          "compilePhasesMs": {
+            "porfforParseMs": 4.075416000000018,
+            "porfforCodegenMs": 26.56479200000001,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 11.675417000000039,
+            "sourceToCWorkerWallMs": 1019.5549580000006,
+            "clangCompileMs": 418.5032080000019,
+            "clangLinkMs": 49.09516699999949,
+            "totalBuildWallMs": 1487.153333000002
+          },
+          "compilerPeakRssBytes": 329547776,
+          "clangPeakRssBytes": 74907648,
+          "runtimeCpuNs": 15398000,
+          "runtimePeakRssBytes": 23773184,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 75968,
+          "executableBytes": 73736,
+          "cSha256": "6042e033b1142b0acc9ff0bb48f4e9f9d2640e3e0c7259d7391ded6e2edfacf0"
+        },
+        {
+          "round": 3,
+          "order": 1,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.469291999999996,
+            "porfforCodegenMs": 25.157832999999982,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 12.295333000000028,
+            "sourceToCWorkerWallMs": 1006.4614159999983,
+            "clangCompileMs": 404.85791600000084,
+            "clangLinkMs": 47.5514170000024,
+            "totalBuildWallMs": 1458.8707490000015
+          },
+          "compilerPeakRssBytes": 328351744,
+          "clangPeakRssBytes": 74448896,
+          "runtimeCpuNs": 12061000,
+          "runtimePeakRssBytes": 23773184,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 75968,
+          "executableBytes": 73736,
+          "cSha256": "6042e033b1142b0acc9ff0bb48f4e9f9d2640e3e0c7259d7391ded6e2edfacf0"
+        },
+        {
+          "round": 4,
+          "order": 0,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.6204159999999774,
+            "porfforCodegenMs": 24.15341699999999,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 11.327541999999994,
+            "sourceToCWorkerWallMs": 943.2532920000012,
+            "clangCompileMs": 414.9094580000092,
+            "clangLinkMs": 48.49870799999917,
+            "totalBuildWallMs": 1406.6614580000096
+          },
+          "compilerPeakRssBytes": 328138752,
+          "clangPeakRssBytes": 75120640,
+          "runtimeCpuNs": 12151000,
+          "runtimePeakRssBytes": 23773184,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 75968,
+          "executableBytes": 73736,
+          "cSha256": "6042e033b1142b0acc9ff0bb48f4e9f9d2640e3e0c7259d7391ded6e2edfacf0"
+        },
+        {
+          "round": 5,
+          "order": 3,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.1572079999999687,
+            "porfforCodegenMs": 26.07854199999997,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 12.175624999999968,
+            "sourceToCWorkerWallMs": 959.0126659999951,
+            "clangCompileMs": 411.4790830000129,
+            "clangLinkMs": 50.564457999993465,
+            "totalBuildWallMs": 1421.0562070000015
+          },
+          "compilerPeakRssBytes": 335151104,
+          "clangPeakRssBytes": 75169792,
+          "runtimeCpuNs": 12405000,
+          "runtimePeakRssBytes": 23773184,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 75968,
+          "executableBytes": 73736,
+          "cSha256": "6042e033b1142b0acc9ff0bb48f4e9f9d2640e3e0c7259d7391ded6e2edfacf0"
+        },
+        {
+          "round": 6,
+          "order": 2,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.249458000000004,
+            "porfforCodegenMs": 24.755999999999972,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 12.109541000000036,
+            "sourceToCWorkerWallMs": 959.6236669999926,
+            "clangCompileMs": 417.92662500000733,
+            "clangLinkMs": 50.59604199999012,
+            "totalBuildWallMs": 1428.14633399999
+          },
+          "compilerPeakRssBytes": 329531392,
+          "clangPeakRssBytes": 74661888,
+          "runtimeCpuNs": 12780000,
+          "runtimePeakRssBytes": 23773184,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 75968,
+          "executableBytes": 73736,
+          "cSha256": "6042e033b1142b0acc9ff0bb48f4e9f9d2640e3e0c7259d7391ded6e2edfacf0"
+        },
+        {
+          "round": 7,
+          "order": 1,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.2767089999999826,
+            "porfforCodegenMs": 24.76129100000003,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 11.66604099999995,
+            "sourceToCWorkerWallMs": 938.2675829999935,
+            "clangCompileMs": 407.7020829999965,
+            "clangLinkMs": 47.8471669999999,
+            "totalBuildWallMs": 1393.8168329999899
+          },
+          "compilerPeakRssBytes": 334102528,
+          "clangPeakRssBytes": 74760192,
+          "runtimeCpuNs": 12264000,
+          "runtimePeakRssBytes": 23773184,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 75968,
+          "executableBytes": 73736,
+          "cSha256": "6042e033b1142b0acc9ff0bb48f4e9f9d2640e3e0c7259d7391ded6e2edfacf0"
+        },
+        {
+          "round": 8,
+          "order": 0,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.2912919999999986,
+            "porfforCodegenMs": 24.353458000000046,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 11.226042000000007,
+            "sourceToCWorkerWallMs": 987.4024999999965,
+            "clangCompileMs": 414.3511670000007,
+            "clangLinkMs": 53.03666700000758,
+            "totalBuildWallMs": 1454.7903340000048
+          },
+          "compilerPeakRssBytes": 327139328,
+          "clangPeakRssBytes": 74711040,
+          "runtimeCpuNs": 15284000,
+          "runtimePeakRssBytes": 23773184,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 75968,
+          "executableBytes": 73736,
+          "cSha256": "6042e033b1142b0acc9ff0bb48f4e9f9d2640e3e0c7259d7391ded6e2edfacf0"
+        },
+        {
+          "round": 9,
+          "order": 3,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.314624999999978,
+            "porfforCodegenMs": 25.580124999999953,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 11.557957999999985,
+            "sourceToCWorkerWallMs": 950.932209000006,
+            "clangCompileMs": 415.7690419999999,
+            "clangLinkMs": 46.88712500000838,
+            "totalBuildWallMs": 1413.5883760000143
+          },
+          "compilerPeakRssBytes": 333283328,
+          "clangPeakRssBytes": 74039296,
+          "runtimeCpuNs": 12035000,
+          "runtimePeakRssBytes": 23773184,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 75968,
+          "executableBytes": 73736,
+          "cSha256": "6042e033b1142b0acc9ff0bb48f4e9f9d2640e3e0c7259d7391ded6e2edfacf0"
+        },
+        {
+          "round": 10,
+          "order": 2,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.5889589999999316,
+            "porfforCodegenMs": 26.534041000000002,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 11.079833000000008,
+            "sourceToCWorkerWallMs": 950.9582910000026,
+            "clangCompileMs": 414.6423749999958,
+            "clangLinkMs": 46.20337499999732,
+            "totalBuildWallMs": 1411.8040409999958
+          },
+          "compilerPeakRssBytes": 327778304,
+          "clangPeakRssBytes": 74924032,
+          "runtimeCpuNs": 12374000,
+          "runtimePeakRssBytes": 23773184,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 75968,
+          "executableBytes": 73736,
+          "cSha256": "6042e033b1142b0acc9ff0bb48f4e9f9d2640e3e0c7259d7391ded6e2edfacf0"
+        },
+        {
+          "round": 11,
+          "order": 1,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.279125000000022,
+            "porfforCodegenMs": 24.247749999999996,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 11.094249999999988,
+            "sourceToCWorkerWallMs": 962.4292920000007,
+            "clangCompileMs": 412.21820799999114,
+            "clangLinkMs": 47.81424999999581,
+            "totalBuildWallMs": 1422.4617499999877
+          },
+          "compilerPeakRssBytes": 333955072,
+          "clangPeakRssBytes": 74465280,
+          "runtimeCpuNs": 12460000,
+          "runtimePeakRssBytes": 23773184,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 75968,
+          "executableBytes": 73736,
+          "cSha256": "6042e033b1142b0acc9ff0bb48f4e9f9d2640e3e0c7259d7391ded6e2edfacf0"
+        },
+        {
+          "round": 12,
+          "order": 0,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.140333000000055,
+            "porfforCodegenMs": 25.582207999999923,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 11.69074999999998,
+            "sourceToCWorkerWallMs": 940.3681250000081,
+            "clangCompileMs": 407.83462500000314,
+            "clangLinkMs": 47.40429099999892,
+            "totalBuildWallMs": 1395.6070410000102
+          },
+          "compilerPeakRssBytes": 336592896,
+          "clangPeakRssBytes": 74416128,
+          "runtimeCpuNs": 14701000,
+          "runtimePeakRssBytes": 23773184,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 75968,
+          "executableBytes": 73736,
+          "cSha256": "6042e033b1142b0acc9ff0bb48f4e9f9d2640e3e0c7259d7391ded6e2edfacf0"
+        },
+        {
+          "round": 13,
+          "order": 3,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.4645420000000513,
+            "porfforCodegenMs": 25.611291999999935,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 12.381417000000056,
+            "sourceToCWorkerWallMs": 936.7795000000042,
+            "clangCompileMs": 398.21495900000446,
+            "clangLinkMs": 49.371083000005456,
+            "totalBuildWallMs": 1384.365542000014
+          },
+          "compilerPeakRssBytes": 325369856,
+          "clangPeakRssBytes": 74432512,
+          "runtimeCpuNs": 12684000,
+          "runtimePeakRssBytes": 23773184,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 75968,
+          "executableBytes": 73736,
+          "cSha256": "6042e033b1142b0acc9ff0bb48f4e9f9d2640e3e0c7259d7391ded6e2edfacf0"
+        },
+        {
+          "round": 14,
+          "order": 2,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.083917000000042,
+            "porfforCodegenMs": 24.28525000000002,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 10.99249999999995,
+            "sourceToCWorkerWallMs": 918.3712499999965,
+            "clangCompileMs": 385.6959590000042,
+            "clangLinkMs": 46.750417000002926,
+            "totalBuildWallMs": 1350.8176260000037
+          },
+          "compilerPeakRssBytes": 336674816,
+          "clangPeakRssBytes": 74661888,
+          "runtimeCpuNs": 12746000,
+          "runtimePeakRssBytes": 23773184,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 75968,
+          "executableBytes": 73736,
+          "cSha256": "6042e033b1142b0acc9ff0bb48f4e9f9d2640e3e0c7259d7391ded6e2edfacf0"
+        },
+        {
+          "round": 15,
+          "order": 1,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.44341600000007,
+            "porfforCodegenMs": 25.057249999999954,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 12.610125000000039,
+            "sourceToCWorkerWallMs": 964.9004999999888,
+            "clangCompileMs": 416.3778749999765,
+            "clangLinkMs": 46.618124999979045,
+            "totalBuildWallMs": 1427.8964999999444
+          },
+          "compilerPeakRssBytes": 326008832,
+          "clangPeakRssBytes": 74399744,
+          "runtimeCpuNs": 14648000,
+          "runtimePeakRssBytes": 23773184,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 75968,
+          "executableBytes": 73736,
+          "cSha256": "6042e033b1142b0acc9ff0bb48f4e9f9d2640e3e0c7259d7391ded6e2edfacf0"
+        },
+        {
+          "round": 16,
+          "order": 0,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.376457999999957,
+            "porfforCodegenMs": 26.425500000000056,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 11.971000000000004,
+            "sourceToCWorkerWallMs": 937.0897089999926,
+            "clangCompileMs": 414.67720799997915,
+            "clangLinkMs": 47.127791999984765,
+            "totalBuildWallMs": 1398.8947089999565
+          },
+          "compilerPeakRssBytes": 331628544,
+          "clangPeakRssBytes": 74825728,
+          "runtimeCpuNs": 12592000,
+          "runtimePeakRssBytes": 23773184,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 75968,
+          "executableBytes": 73736,
+          "cSha256": "6042e033b1142b0acc9ff0bb48f4e9f9d2640e3e0c7259d7391ded6e2edfacf0"
+        },
+        {
+          "round": 17,
+          "order": 3,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.1871660000000475,
+            "porfforCodegenMs": 23.657459000000017,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 11.367791000000011,
+            "sourceToCWorkerWallMs": 940.2552499999874,
+            "clangCompileMs": 415.3573750000214,
+            "clangLinkMs": 47.58491600002162,
+            "totalBuildWallMs": 1403.1975410000305
+          },
+          "compilerPeakRssBytes": 324599808,
+          "clangPeakRssBytes": 74317824,
+          "runtimeCpuNs": 12014000,
+          "runtimePeakRssBytes": 23773184,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 75968,
+          "executableBytes": 73736,
+          "cSha256": "6042e033b1142b0acc9ff0bb48f4e9f9d2640e3e0c7259d7391ded6e2edfacf0"
+        },
+        {
+          "round": 18,
+          "order": 2,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.1709999999999354,
+            "porfforCodegenMs": 23.405250000000024,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 11.038250000000062,
+            "sourceToCWorkerWallMs": 924.5607080000045,
+            "clangCompileMs": 389.358041999978,
+            "clangLinkMs": 46.90204200000153,
+            "totalBuildWallMs": 1360.820791999984
+          },
+          "compilerPeakRssBytes": 328990720,
+          "clangPeakRssBytes": 74940416,
+          "runtimeCpuNs": 11796000,
+          "runtimePeakRssBytes": 23773184,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 75968,
+          "executableBytes": 73736,
+          "cSha256": "6042e033b1142b0acc9ff0bb48f4e9f9d2640e3e0c7259d7391ded6e2edfacf0"
+        },
+        {
+          "round": 19,
+          "order": 1,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.220124999999939,
+            "porfforCodegenMs": 24.77712500000007,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 11.441124999999943,
+            "sourceToCWorkerWallMs": 930.845541000017,
+            "clangCompileMs": 395.58150000000023,
+            "clangLinkMs": 46.221292000001995,
+            "totalBuildWallMs": 1372.6483330000192
+          },
+          "compilerPeakRssBytes": 333021184,
+          "clangPeakRssBytes": 74514432,
+          "runtimeCpuNs": 11819000,
+          "runtimePeakRssBytes": 23773184,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 75968,
+          "executableBytes": 73736,
+          "cSha256": "6042e033b1142b0acc9ff0bb48f4e9f9d2640e3e0c7259d7391ded6e2edfacf0"
+        },
+        {
+          "round": 20,
+          "order": 0,
+          "compilePhasesMs": {
+            "porfforParseMs": 3.825917000000004,
+            "porfforCodegenMs": 25.825417000000016,
+            "js2SourceToLinearTelemetryMs": null,
+            "js2IrToPorfforMs": null,
+            "porfforLoadMs": null,
+            "porfforRenderMs": 12.119458000000009,
+            "sourceToCWorkerWallMs": 956.0795839999919,
+            "clangCompileMs": 405.29870899999514,
+            "clangLinkMs": 47.10845800000243,
+            "totalBuildWallMs": 1408.4867509999895
+          },
+          "compilerPeakRssBytes": 331874304,
+          "clangPeakRssBytes": 75415552,
+          "runtimeCpuNs": 12119000,
+          "runtimePeakRssBytes": 23773184,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 75968,
+          "executableBytes": 73736,
+          "cSha256": "6042e033b1142b0acc9ff0bb48f4e9f9d2640e3e0c7259d7391ded6e2edfacf0"
+        }
+      ],
+      "summary": {
+        "runtimeCpuMs": {
+          "q1": 12.061,
+          "median": 12.405,
+          "q3": 12.746
+        },
+        "runtimePeakRssBytes": {
+          "q1": 23773184,
+          "median": 23773184,
+          "q3": 23773184
+        },
+        "compilerPeakRssBytes": {
+          "q1": 328138752,
+          "median": 329793536,
+          "q3": 333283328
+        },
+        "clangPeakRssBytes": {
+          "q1": 74448896,
+          "median": 74711040,
+          "q3": 74924032
+        },
+        "totalBuildWallMs": {
+          "q1": 1395.6070410000102,
+          "median": 1408.4867509999895,
+          "q3": 1427.8964999999444
+        },
+        "compilePhasesMs": {
+          "porfforParseMs": {
+            "q1": 3.220124999999939,
+            "median": 3.314624999999978,
+            "q3": 3.469291999999996
+          },
+          "porfforCodegenMs": {
+            "q1": 24.353458000000046,
+            "median": 25.057249999999954,
+            "q3": 25.611291999999935
+          },
+          "js2SourceToLinearTelemetryMs": null,
+          "js2IrToPorfforMs": null,
+          "porfforLoadMs": null,
+          "porfforRenderMs": {
+            "q1": 11.226833000000056,
+            "median": 11.66604099999995,
+            "q3": 12.109541000000036
+          },
+          "sourceToCWorkerWallMs": {
+            "q1": 938.2675829999935,
+            "median": 950.932209000006,
+            "q3": 959.6236669999926
+          },
+          "clangCompileMs": {
+            "q1": 405.29870899999514,
+            "median": 412.21820799999114,
+            "q3": 415.3573750000214
+          },
+          "clangLinkMs": {
+            "q1": 46.88712500000838,
+            "median": 47.53795900000114,
+            "q3": 48.49870799999917
+          },
+          "totalBuildWallMs": {
+            "q1": 1395.6070410000102,
+            "median": 1408.4867509999895,
+            "q3": 1427.8964999999444
+          }
+        }
+      }
+    },
+    {
+      "id": "js2-porffor-arena-v1",
+      "sourceSha256": "b140de2b6e1f012da594cc62336e74a1e1b39ef484eb3d30f221a392b5b1235d",
+      "valueAbi": "raw-f64",
+      "renderedParameterCount": 1,
+      "allocation": {
+        "policy": "arena-v1",
+        "scope": "per-site",
+        "objectBytes": 24,
+        "objectBytesIsEstimate": false,
+        "allocationIds": [
+          0,
+          1
+        ],
+        "allocationClasses": [
+          "arena",
+          "arena"
+        ]
+      },
+      "safety": {
+        "generatedC": "js2-porffor-ir",
+        "generatedCMutations": [
+          "single pinned LP64 i64 printf vararg cast"
+        ],
+        "sanitizerExpectation": "clean",
+        "performanceAuthority": "within-machine-informational",
+        "finding": null
+      },
+      "validity": {
+        "performanceAuthority": "within-machine-informational",
+        "knownUndefinedBehavior": false,
+        "explanation": "sanitizer-clean behavior is required; optimized values are informational within this capture"
+      },
+      "artifacts": {
+        "renderedCBytes": 28608,
+        "wrapperBytes": 210,
+        "combinedCBytes": 28818,
+        "cSha256": "2959a4eef72690346b11a7ed964b4323dbc849998e95537a2a56ffd6c5ef3ea5",
+        "renderedCSha256": "fd43fd5171762861d587bb868afb0cd66208a41efaadcb48e21f0041cc09e624",
+        "objectBytes": 2280,
+        "executableBytes": 34056
+      },
+      "commandProvenance": {
+        "js2CompileOptions": {
+          "target": "linear",
+          "allocator": "bump",
+          "fileName": "/Users/thomas/Documents/Arbeit/Startup/Projekte/Mosaic/code/@loopdive/ts2wasm/.codex/worktrees/codex/3482-direct-porffor-ab/tests/fixtures/porffor-source-to-native-canary.ts"
+        },
+        "telemetry": "getLastLinearIrReport captured immediately after the public compile",
+        "lowering": "lowerIrModuleToPorffor(report.irModule, { memoryPlan: report.memoryPlan, prefs: { gc: false } })"
+      },
+      "warmups": [
+        {
+          "round": 0,
+          "order": 2,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 560.9502920000001,
+            "js2IrToPorfforMs": 2.4685839999999644,
+            "porfforLoadMs": 66.32995899999992,
+            "porfforRenderMs": 2.882415999999921,
+            "sourceToCWorkerWallMs": 1481.3913750000002,
+            "clangCompileMs": 62.95641700000033,
+            "clangLinkMs": 51.53141699999924,
+            "totalBuildWallMs": 1595.8792089999997
+          },
+          "compilerPeakRssBytes": 403439616,
+          "clangPeakRssBytes": 48381952,
+          "runtimeCpuNs": 1790000,
+          "runtimePeakRssBytes": 10911744,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 2280,
+          "executableBytes": 34056,
+          "cSha256": "2959a4eef72690346b11a7ed964b4323dbc849998e95537a2a56ffd6c5ef3ea5"
+        },
+        {
+          "round": 1,
+          "order": 1,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 553.917875,
+            "js2IrToPorfforMs": 2.3064170000000104,
+            "porfforLoadMs": 62.436292000000094,
+            "porfforRenderMs": 3.0121659999999792,
+            "sourceToCWorkerWallMs": 1461.7904999999992,
+            "clangCompileMs": 60.693083000000115,
+            "clangLinkMs": 51.09791699999914,
+            "totalBuildWallMs": 1573.5814999999984
+          },
+          "compilerPeakRssBytes": 404471808,
+          "clangPeakRssBytes": 48660480,
+          "runtimeCpuNs": 1522000,
+          "runtimePeakRssBytes": 10911744,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 2280,
+          "executableBytes": 34056,
+          "cSha256": "2959a4eef72690346b11a7ed964b4323dbc849998e95537a2a56ffd6c5ef3ea5"
+        },
+        {
+          "round": 2,
+          "order": 0,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 545.078458,
+            "js2IrToPorfforMs": 2.3178750000001855,
+            "porfforLoadMs": 65.14804200000003,
+            "porfforRenderMs": 3.045041000000083,
+            "sourceToCWorkerWallMs": 1454.7474160000002,
+            "clangCompileMs": 63.522625000001426,
+            "clangLinkMs": 50.12266699999964,
+            "totalBuildWallMs": 1568.3927080000012
+          },
+          "compilerPeakRssBytes": 403521536,
+          "clangPeakRssBytes": 48513024,
+          "runtimeCpuNs": 1470000,
+          "runtimePeakRssBytes": 10911744,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 2280,
+          "executableBytes": 34056,
+          "cSha256": "2959a4eef72690346b11a7ed964b4323dbc849998e95537a2a56ffd6c5ef3ea5"
+        },
+        {
+          "round": 3,
+          "order": 3,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 545.1804589999999,
+            "js2IrToPorfforMs": 2.2439589999999043,
+            "porfforLoadMs": 65.65308300000015,
+            "porfforRenderMs": 3.0283750000000964,
+            "sourceToCWorkerWallMs": 1450.1438339999986,
+            "clangCompileMs": 60.9387080000015,
+            "clangLinkMs": 52.1919170000001,
+            "totalBuildWallMs": 1563.2744590000002
+          },
+          "compilerPeakRssBytes": 403865600,
+          "clangPeakRssBytes": 48545792,
+          "runtimeCpuNs": 1467000,
+          "runtimePeakRssBytes": 10911744,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 2280,
+          "executableBytes": 34056,
+          "cSha256": "2959a4eef72690346b11a7ed964b4323dbc849998e95537a2a56ffd6c5ef3ea5"
+        },
+        {
+          "round": 4,
+          "order": 2,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 550.571916,
+            "js2IrToPorfforMs": 3.878417000000127,
+            "porfforLoadMs": 59.05154100000004,
+            "porfforRenderMs": 3.0272910000001048,
+            "sourceToCWorkerWallMs": 1451.1555420000004,
+            "clangCompileMs": 64.03291600000375,
+            "clangLinkMs": 52.947791999999026,
+            "totalBuildWallMs": 1568.1362500000032
+          },
+          "compilerPeakRssBytes": 406618112,
+          "clangPeakRssBytes": 48300032,
+          "runtimeCpuNs": 1464000,
+          "runtimePeakRssBytes": 10911744,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 2280,
+          "executableBytes": 34056,
+          "cSha256": "2959a4eef72690346b11a7ed964b4323dbc849998e95537a2a56ffd6c5ef3ea5"
+        }
+      ],
+      "samples": [
+        {
+          "round": 0,
+          "order": 1,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 548.7993749999999,
+            "js2IrToPorfforMs": 2.335499999999911,
+            "porfforLoadMs": 58.96570800000018,
+            "porfforRenderMs": 3.055874999999787,
+            "sourceToCWorkerWallMs": 1436.5682089999973,
+            "clangCompileMs": 49.82170800000313,
+            "clangLinkMs": 49.447375000003376,
+            "totalBuildWallMs": 1535.8372920000038
+          },
+          "compilerPeakRssBytes": 401768448,
+          "clangPeakRssBytes": 48201728,
+          "runtimeCpuNs": 1413000,
+          "runtimePeakRssBytes": 10911744,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 2280,
+          "executableBytes": 34056,
+          "cSha256": "2959a4eef72690346b11a7ed964b4323dbc849998e95537a2a56ffd6c5ef3ea5"
+        },
+        {
+          "round": 1,
+          "order": 0,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 543.4909170000001,
+            "js2IrToPorfforMs": 2.5234579999998914,
+            "porfforLoadMs": 58.80083400000012,
+            "porfforRenderMs": 3.4391249999998763,
+            "sourceToCWorkerWallMs": 1428.5600420000046,
+            "clangCompileMs": 55.75433300000441,
+            "clangLinkMs": 45.0615420000031,
+            "totalBuildWallMs": 1529.3759170000121
+          },
+          "compilerPeakRssBytes": 405962752,
+          "clangPeakRssBytes": 48480256,
+          "runtimeCpuNs": 1537000,
+          "runtimePeakRssBytes": 10928128,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 2280,
+          "executableBytes": 34056,
+          "cSha256": "2959a4eef72690346b11a7ed964b4323dbc849998e95537a2a56ffd6c5ef3ea5"
+        },
+        {
+          "round": 2,
+          "order": 3,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 556.0617919999999,
+            "js2IrToPorfforMs": 2.4703329999999823,
+            "porfforLoadMs": 63.5400410000002,
+            "porfforRenderMs": 3.1752080000001115,
+            "sourceToCWorkerWallMs": 1471.849500000004,
+            "clangCompileMs": 55.9041670000006,
+            "clangLinkMs": 53.556125000002794,
+            "totalBuildWallMs": 1581.3097920000073
+          },
+          "compilerPeakRssBytes": 402358272,
+          "clangPeakRssBytes": 48185344,
+          "runtimeCpuNs": 1563000,
+          "runtimePeakRssBytes": 10911744,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 2280,
+          "executableBytes": 34056,
+          "cSha256": "2959a4eef72690346b11a7ed964b4323dbc849998e95537a2a56ffd6c5ef3ea5"
+        },
+        {
+          "round": 3,
+          "order": 2,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 576.9983329999999,
+            "js2IrToPorfforMs": 2.4915419999999813,
+            "porfforLoadMs": 62.690667000000076,
+            "porfforRenderMs": 3.0555410000001757,
+            "sourceToCWorkerWallMs": 1494.3690829999978,
+            "clangCompileMs": 59.039082999996026,
+            "clangLinkMs": 52.20083400000294,
+            "totalBuildWallMs": 1605.6089999999967
+          },
+          "compilerPeakRssBytes": 392052736,
+          "clangPeakRssBytes": 48611328,
+          "runtimeCpuNs": 1531000,
+          "runtimePeakRssBytes": 10911744,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 2280,
+          "executableBytes": 34056,
+          "cSha256": "2959a4eef72690346b11a7ed964b4323dbc849998e95537a2a56ffd6c5ef3ea5"
+        },
+        {
+          "round": 4,
+          "order": 1,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 557.71175,
+            "js2IrToPorfforMs": 2.5074580000000424,
+            "porfforLoadMs": 67.66237499999988,
+            "porfforRenderMs": 3.2867499999999836,
+            "sourceToCWorkerWallMs": 1477.9436249999999,
+            "clangCompileMs": 59.45941599999787,
+            "clangLinkMs": 47.95329099999799,
+            "totalBuildWallMs": 1585.3563319999957
+          },
+          "compilerPeakRssBytes": 396607488,
+          "clangPeakRssBytes": 48398336,
+          "runtimeCpuNs": 1467000,
+          "runtimePeakRssBytes": 10911744,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 2280,
+          "executableBytes": 34056,
+          "cSha256": "2959a4eef72690346b11a7ed964b4323dbc849998e95537a2a56ffd6c5ef3ea5"
+        },
+        {
+          "round": 5,
+          "order": 0,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 570.9632089999999,
+            "js2IrToPorfforMs": 2.3560829999998987,
+            "porfforLoadMs": 60.988624999999956,
+            "porfforRenderMs": 3.0856670000000577,
+            "sourceToCWorkerWallMs": 1499.9195420000033,
+            "clangCompileMs": 54.378458999999566,
+            "clangLinkMs": 53.639584000004106,
+            "totalBuildWallMs": 1607.937585000007
+          },
+          "compilerPeakRssBytes": 404373504,
+          "clangPeakRssBytes": 48381952,
+          "runtimeCpuNs": 1457000,
+          "runtimePeakRssBytes": 10911744,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 2280,
+          "executableBytes": 34056,
+          "cSha256": "2959a4eef72690346b11a7ed964b4323dbc849998e95537a2a56ffd6c5ef3ea5"
+        },
+        {
+          "round": 6,
+          "order": 3,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 544.797583,
+            "js2IrToPorfforMs": 2.161542000000054,
+            "porfforLoadMs": 64.30987499999992,
+            "porfforRenderMs": 3.6372080000001006,
+            "sourceToCWorkerWallMs": 1462.123458999995,
+            "clangCompileMs": 55.22058300000208,
+            "clangLinkMs": 48.71587499999441,
+            "totalBuildWallMs": 1566.0599169999914
+          },
+          "compilerPeakRssBytes": 400310272,
+          "clangPeakRssBytes": 48201728,
+          "runtimeCpuNs": 1501000,
+          "runtimePeakRssBytes": 10911744,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 2280,
+          "executableBytes": 34056,
+          "cSha256": "2959a4eef72690346b11a7ed964b4323dbc849998e95537a2a56ffd6c5ef3ea5"
+        },
+        {
+          "round": 7,
+          "order": 2,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 564.9129999999999,
+            "js2IrToPorfforMs": 2.0924999999999727,
+            "porfforLoadMs": 61.01691699999992,
+            "porfforRenderMs": 3.0343340000001717,
+            "sourceToCWorkerWallMs": 1463.3035839999939,
+            "clangCompileMs": 55.79908300000534,
+            "clangLinkMs": 55.22729199999594,
+            "totalBuildWallMs": 1574.3299589999951
+          },
+          "compilerPeakRssBytes": 400982016,
+          "clangPeakRssBytes": 48480256,
+          "runtimeCpuNs": 1421000,
+          "runtimePeakRssBytes": 10911744,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 2280,
+          "executableBytes": 34056,
+          "cSha256": "2959a4eef72690346b11a7ed964b4323dbc849998e95537a2a56ffd6c5ef3ea5"
+        },
+        {
+          "round": 8,
+          "order": 1,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 566.491417,
+            "js2IrToPorfforMs": 2.5278330000001006,
+            "porfforLoadMs": 63.67033400000014,
+            "porfforRenderMs": 3.137749999999869,
+            "sourceToCWorkerWallMs": 1521.3373750000028,
+            "clangCompileMs": 54.77083300000231,
+            "clangLinkMs": 55.14816700000665,
+            "totalBuildWallMs": 1631.2563750000118
+          },
+          "compilerPeakRssBytes": 399376384,
+          "clangPeakRssBytes": 48349184,
+          "runtimeCpuNs": 1468000,
+          "runtimePeakRssBytes": 10911744,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 2280,
+          "executableBytes": 34056,
+          "cSha256": "2959a4eef72690346b11a7ed964b4323dbc849998e95537a2a56ffd6c5ef3ea5"
+        },
+        {
+          "round": 9,
+          "order": 0,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 561.1037499999999,
+            "js2IrToPorfforMs": 2.642749999999978,
+            "porfforLoadMs": 62.47900000000004,
+            "porfforRenderMs": 3.052708000000166,
+            "sourceToCWorkerWallMs": 1478.9790000000066,
+            "clangCompileMs": 53.88016699999571,
+            "clangLinkMs": 53.46575000000303,
+            "totalBuildWallMs": 1586.3249170000054
+          },
+          "compilerPeakRssBytes": 403341312,
+          "clangPeakRssBytes": 48152576,
+          "runtimeCpuNs": 1530000,
+          "runtimePeakRssBytes": 10911744,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 2280,
+          "executableBytes": 34056,
+          "cSha256": "2959a4eef72690346b11a7ed964b4323dbc849998e95537a2a56ffd6c5ef3ea5"
+        },
+        {
+          "round": 10,
+          "order": 3,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 580.223416,
+            "js2IrToPorfforMs": 2.706000000000131,
+            "porfforLoadMs": 70.26870800000006,
+            "porfforRenderMs": 3.2902090000000044,
+            "sourceToCWorkerWallMs": 1755.1732080000074,
+            "clangCompileMs": 59.61341600000742,
+            "clangLinkMs": 48.820000000006985,
+            "totalBuildWallMs": 1863.6066240000218
+          },
+          "compilerPeakRssBytes": 340000768,
+          "clangPeakRssBytes": 48332800,
+          "runtimeCpuNs": 1461000,
+          "runtimePeakRssBytes": 10911744,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 2280,
+          "executableBytes": 34056,
+          "cSha256": "2959a4eef72690346b11a7ed964b4323dbc849998e95537a2a56ffd6c5ef3ea5"
+        },
+        {
+          "round": 11,
+          "order": 2,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 560.431,
+            "js2IrToPorfforMs": 2.4668340000000626,
+            "porfforLoadMs": 64.63933300000008,
+            "porfforRenderMs": 3.242625000000089,
+            "sourceToCWorkerWallMs": 1455.3135420000035,
+            "clangCompileMs": 58.617792000004556,
+            "clangLinkMs": 49.89366700001119,
+            "totalBuildWallMs": 1563.8250010000193
+          },
+          "compilerPeakRssBytes": 400883712,
+          "clangPeakRssBytes": 48201728,
+          "runtimeCpuNs": 1461000,
+          "runtimePeakRssBytes": 10911744,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 2280,
+          "executableBytes": 34056,
+          "cSha256": "2959a4eef72690346b11a7ed964b4323dbc849998e95537a2a56ffd6c5ef3ea5"
+        },
+        {
+          "round": 12,
+          "order": 1,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 553.035708,
+            "js2IrToPorfforMs": 2.2993329999999332,
+            "porfforLoadMs": 71.44620899999995,
+            "porfforRenderMs": 3.1304170000000795,
+            "sourceToCWorkerWallMs": 1485.2605829999957,
+            "clangCompileMs": 56.44941599998856,
+            "clangLinkMs": 48.86937499999476,
+            "totalBuildWallMs": 1590.579373999979
+          },
+          "compilerPeakRssBytes": 402505728,
+          "clangPeakRssBytes": 48218112,
+          "runtimeCpuNs": 1523000,
+          "runtimePeakRssBytes": 10911744,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 2280,
+          "executableBytes": 34056,
+          "cSha256": "2959a4eef72690346b11a7ed964b4323dbc849998e95537a2a56ffd6c5ef3ea5"
+        },
+        {
+          "round": 13,
+          "order": 0,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 544.126542,
+            "js2IrToPorfforMs": 2.201667000000043,
+            "porfforLoadMs": 65.1248750000002,
+            "porfforRenderMs": 3.128417000000127,
+            "sourceToCWorkerWallMs": 1430.6697080000013,
+            "clangCompileMs": 53.74008299999696,
+            "clangLinkMs": 47.41849999999977,
+            "totalBuildWallMs": 1531.828290999998
+          },
+          "compilerPeakRssBytes": 404045824,
+          "clangPeakRssBytes": 48201728,
+          "runtimeCpuNs": 1498000,
+          "runtimePeakRssBytes": 10911744,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 2280,
+          "executableBytes": 34056,
+          "cSha256": "2959a4eef72690346b11a7ed964b4323dbc849998e95537a2a56ffd6c5ef3ea5"
+        },
+        {
+          "round": 14,
+          "order": 3,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 556.00525,
+            "js2IrToPorfforMs": 2.215249999999969,
+            "porfforLoadMs": 59.10654100000011,
+            "porfforRenderMs": 3.150833000000148,
+            "sourceToCWorkerWallMs": 1438.937082999997,
+            "clangCompileMs": 57.99908300000243,
+            "clangLinkMs": 52.59329099999741,
+            "totalBuildWallMs": 1549.529456999997
+          },
+          "compilerPeakRssBytes": 400998400,
+          "clangPeakRssBytes": 48480256,
+          "runtimeCpuNs": 1484000,
+          "runtimePeakRssBytes": 10911744,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 2280,
+          "executableBytes": 34056,
+          "cSha256": "2959a4eef72690346b11a7ed964b4323dbc849998e95537a2a56ffd6c5ef3ea5"
+        },
+        {
+          "round": 15,
+          "order": 2,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 550.085958,
+            "js2IrToPorfforMs": 2.8882089999999607,
+            "porfforLoadMs": 61.07383400000003,
+            "porfforRenderMs": 3.051917000000003,
+            "sourceToCWorkerWallMs": 1485.2679580000113,
+            "clangCompileMs": 54.93116700000246,
+            "clangLinkMs": 54.11016599999857,
+            "totalBuildWallMs": 1594.3092910000123
+          },
+          "compilerPeakRssBytes": 402669568,
+          "clangPeakRssBytes": 48381952,
+          "runtimeCpuNs": 1488000,
+          "runtimePeakRssBytes": 10911744,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 2280,
+          "executableBytes": 34056,
+          "cSha256": "2959a4eef72690346b11a7ed964b4323dbc849998e95537a2a56ffd6c5ef3ea5"
+        },
+        {
+          "round": 16,
+          "order": 1,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 524.322667,
+            "js2IrToPorfforMs": 2.168083000000024,
+            "porfforLoadMs": 61.00170900000012,
+            "porfforRenderMs": 2.963416999999936,
+            "sourceToCWorkerWallMs": 1436.2764170000155,
+            "clangCompileMs": 50.06629200000316,
+            "clangLinkMs": 49.86383299998124,
+            "totalBuildWallMs": 1536.206542
+          },
+          "compilerPeakRssBytes": 405143552,
+          "clangPeakRssBytes": 48529408,
+          "runtimeCpuNs": 1496000,
+          "runtimePeakRssBytes": 10911744,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 2280,
+          "executableBytes": 34056,
+          "cSha256": "2959a4eef72690346b11a7ed964b4323dbc849998e95537a2a56ffd6c5ef3ea5"
+        },
+        {
+          "round": 17,
+          "order": 0,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 532.545709,
+            "js2IrToPorfforMs": 2.2603330000001733,
+            "porfforLoadMs": 58.17587500000013,
+            "porfforRenderMs": 3.0650000000000546,
+            "sourceToCWorkerWallMs": 1414.501041999989,
+            "clangCompileMs": 50.835332999995444,
+            "clangLinkMs": 47.88266699999804,
+            "totalBuildWallMs": 1513.2190419999824
+          },
+          "compilerPeakRssBytes": 401735680,
+          "clangPeakRssBytes": 48332800,
+          "runtimeCpuNs": 1451000,
+          "runtimePeakRssBytes": 10911744,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 2280,
+          "executableBytes": 34056,
+          "cSha256": "2959a4eef72690346b11a7ed964b4323dbc849998e95537a2a56ffd6c5ef3ea5"
+        },
+        {
+          "round": 18,
+          "order": 3,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 538.019166,
+            "js2IrToPorfforMs": 2.1369170000000395,
+            "porfforLoadMs": 62.38533400000006,
+            "porfforRenderMs": 3.1104589999999916,
+            "sourceToCWorkerWallMs": 1407.1800419999927,
+            "clangCompileMs": 54.86312500000349,
+            "clangLinkMs": 47.5652500000142,
+            "totalBuildWallMs": 1509.6084170000104
+          },
+          "compilerPeakRssBytes": 401145856,
+          "clangPeakRssBytes": 48103424,
+          "runtimeCpuNs": 1554000,
+          "runtimePeakRssBytes": 10911744,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 2280,
+          "executableBytes": 34056,
+          "cSha256": "2959a4eef72690346b11a7ed964b4323dbc849998e95537a2a56ffd6c5ef3ea5"
+        },
+        {
+          "round": 19,
+          "order": 2,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 549.2244160000001,
+            "js2IrToPorfforMs": 2.2605839999998807,
+            "porfforLoadMs": 72.01712499999985,
+            "porfforRenderMs": 3.167791999999963,
+            "sourceToCWorkerWallMs": 1625.9652080000087,
+            "clangCompileMs": 320.5089169999992,
+            "clangLinkMs": 216.89979199998197,
+            "totalBuildWallMs": 2163.37391699999
+          },
+          "compilerPeakRssBytes": 385204224,
+          "clangPeakRssBytes": 48381952,
+          "runtimeCpuNs": 1451000,
+          "runtimePeakRssBytes": 10911744,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 2280,
+          "executableBytes": 34056,
+          "cSha256": "2959a4eef72690346b11a7ed964b4323dbc849998e95537a2a56ffd6c5ef3ea5"
+        },
+        {
+          "round": 20,
+          "order": 1,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 554.0502079999999,
+            "js2IrToPorfforMs": 2.5019589999999425,
+            "porfforLoadMs": 63.09833300000014,
+            "porfforRenderMs": 3.041500000000042,
+            "sourceToCWorkerWallMs": 1471.33262500001,
+            "clangCompileMs": 55.00845799999661,
+            "clangLinkMs": 48.61920800001826,
+            "totalBuildWallMs": 1574.9602910000249
+          },
+          "compilerPeakRssBytes": 402587648,
+          "clangPeakRssBytes": 48218112,
+          "runtimeCpuNs": 1430000,
+          "runtimePeakRssBytes": 10911744,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 2280,
+          "executableBytes": 34056,
+          "cSha256": "2959a4eef72690346b11a7ed964b4323dbc849998e95537a2a56ffd6c5ef3ea5"
+        }
+      ],
+      "summary": {
+        "runtimeCpuMs": {
+          "q1": 1.457,
+          "median": 1.484,
+          "q3": 1.523
+        },
+        "runtimePeakRssBytes": {
+          "q1": 10911744,
+          "median": 10911744,
+          "q3": 10911744
+        },
+        "compilerPeakRssBytes": {
+          "q1": 400310272,
+          "median": 401735680,
+          "q3": 402669568
+        },
+        "clangPeakRssBytes": {
+          "q1": 48201728,
+          "median": 48332800,
+          "q3": 48398336
+        },
+        "totalBuildWallMs": {
+          "q1": 1536.206542,
+          "median": 1574.9602910000249,
+          "q3": 1594.3092910000123
+        },
+        "compilePhasesMs": {
+          "porfforParseMs": null,
+          "porfforCodegenMs": null,
+          "js2SourceToLinearTelemetryMs": {
+            "q1": 544.797583,
+            "median": 554.0502079999999,
+            "q3": 561.1037499999999
+          },
+          "js2IrToPorfforMs": {
+            "q1": 2.215249999999969,
+            "median": 2.3560829999998987,
+            "q3": 2.5074580000000424
+          },
+          "porfforLoadMs": {
+            "q1": 61.00170900000012,
+            "median": 62.690667000000076,
+            "q3": 64.63933300000008
+          },
+          "porfforRenderMs": {
+            "q1": 3.0555410000001757,
+            "median": 3.128417000000127,
+            "q3": 3.1752080000001115
+          },
+          "sourceToCWorkerWallMs": {
+            "q1": 1436.5682089999973,
+            "median": 1471.33262500001,
+            "q3": 1485.2679580000113
+          },
+          "clangCompileMs": {
+            "q1": 54.378458999999566,
+            "median": 55.22058300000208,
+            "q3": 57.99908300000243
+          },
+          "clangLinkMs": {
+            "q1": 48.61920800001826,
+            "median": 49.86383299998124,
+            "q3": 53.556125000002794
+          },
+          "totalBuildWallMs": {
+            "q1": 1536.206542,
+            "median": 1574.9602910000249,
+            "q3": 1594.3092910000123
+          }
+        }
+      }
+    },
+    {
+      "id": "js2-porffor-analysis-stack-arena-v1",
+      "sourceSha256": "b140de2b6e1f012da594cc62336e74a1e1b39ef484eb3d30f221a392b5b1235d",
+      "valueAbi": "raw-f64",
+      "renderedParameterCount": 1,
+      "allocation": {
+        "policy": "analysis-stack-arena-v1",
+        "scope": "per-site",
+        "objectBytes": 24,
+        "objectBytesIsEstimate": false,
+        "allocationIds": [
+          0,
+          1
+        ],
+        "allocationClasses": [
+          "stack",
+          "stack"
+        ]
+      },
+      "safety": {
+        "generatedC": "js2-porffor-ir",
+        "generatedCMutations": [
+          "single pinned LP64 i64 printf vararg cast"
+        ],
+        "sanitizerExpectation": "clean",
+        "performanceAuthority": "within-machine-informational",
+        "finding": null
+      },
+      "validity": {
+        "performanceAuthority": "within-machine-informational",
+        "knownUndefinedBehavior": false,
+        "explanation": "sanitizer-clean behavior is required; optimized values are informational within this capture"
+      },
+      "artifacts": {
+        "renderedCBytes": 29781,
+        "wrapperBytes": 210,
+        "combinedCBytes": 29991,
+        "cSha256": "926fb6c9904256c3712a5c058ff8e8547d08505a03bed9f3bf5ef3e7c4406489",
+        "renderedCSha256": "d065162c11264315b2cf8876883246d34c153eee310d6d9396c43d9af3afe157",
+        "objectBytes": 3880,
+        "executableBytes": 34056
+      },
+      "commandProvenance": {
+        "js2CompileOptions": {
+          "target": "linear",
+          "allocator": "analysis-stack",
+          "fileName": "/Users/thomas/Documents/Arbeit/Startup/Projekte/Mosaic/code/@loopdive/ts2wasm/.codex/worktrees/codex/3482-direct-porffor-ab/tests/fixtures/porffor-source-to-native-canary.ts"
+        },
+        "telemetry": "getLastLinearIrReport captured immediately after the public compile",
+        "lowering": "lowerIrModuleToPorffor(report.irModule, { memoryPlan: report.memoryPlan, prefs: { gc: false } })"
+      },
+      "warmups": [
+        {
+          "round": 0,
+          "order": 3,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 551.6513339999999,
+            "js2IrToPorfforMs": 2.5797919999999976,
+            "porfforLoadMs": 67.49408300000005,
+            "porfforRenderMs": 3.9302499999998872,
+            "sourceToCWorkerWallMs": 1459.4999159999998,
+            "clangCompileMs": 56.11675000000105,
+            "clangLinkMs": 51.040915999999925,
+            "totalBuildWallMs": 1566.6575820000007
+          },
+          "compilerPeakRssBytes": 404963328,
+          "clangPeakRssBytes": 49020928,
+          "runtimeCpuNs": 771000,
+          "runtimePeakRssBytes": 1310720,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 3880,
+          "executableBytes": 34056,
+          "cSha256": "926fb6c9904256c3712a5c058ff8e8547d08505a03bed9f3bf5ef3e7c4406489"
+        },
+        {
+          "round": 1,
+          "order": 2,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 562.6107499999999,
+            "js2IrToPorfforMs": 2.6446249999999054,
+            "porfforLoadMs": 60.31379199999992,
+            "porfforRenderMs": 3.5195830000000115,
+            "sourceToCWorkerWallMs": 1457.7129999999997,
+            "clangCompileMs": 51.991416999999274,
+            "clangLinkMs": 46.874541999999565,
+            "totalBuildWallMs": 1556.5789589999986
+          },
+          "compilerPeakRssBytes": 402817024,
+          "clangPeakRssBytes": 48873472,
+          "runtimeCpuNs": 711000,
+          "runtimePeakRssBytes": 1310720,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 3880,
+          "executableBytes": 34056,
+          "cSha256": "926fb6c9904256c3712a5c058ff8e8547d08505a03bed9f3bf5ef3e7c4406489"
+        },
+        {
+          "round": 2,
+          "order": 1,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 549.0893340000001,
+            "js2IrToPorfforMs": 3.0793330000001333,
+            "porfforLoadMs": 61.668957999999975,
+            "porfforRenderMs": 3.5384999999998854,
+            "sourceToCWorkerWallMs": 1440.069875000001,
+            "clangCompileMs": 53.089334000000235,
+            "clangLinkMs": 47.44212499999776,
+            "totalBuildWallMs": 1540.601333999999
+          },
+          "compilerPeakRssBytes": 400293888,
+          "clangPeakRssBytes": 48955392,
+          "runtimeCpuNs": 718000,
+          "runtimePeakRssBytes": 1310720,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 3880,
+          "executableBytes": 34056,
+          "cSha256": "926fb6c9904256c3712a5c058ff8e8547d08505a03bed9f3bf5ef3e7c4406489"
+        },
+        {
+          "round": 3,
+          "order": 0,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 552.676,
+            "js2IrToPorfforMs": 2.7563330000000406,
+            "porfforLoadMs": 67.05124999999998,
+            "porfforRenderMs": 3.652125000000069,
+            "sourceToCWorkerWallMs": 1465.5737919999992,
+            "clangCompileMs": 59.17120799999975,
+            "clangLinkMs": 49.9229579999992,
+            "totalBuildWallMs": 1574.6679579999982
+          },
+          "compilerPeakRssBytes": 405553152,
+          "clangPeakRssBytes": 48971776,
+          "runtimeCpuNs": 719000,
+          "runtimePeakRssBytes": 1310720,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 3880,
+          "executableBytes": 34056,
+          "cSha256": "926fb6c9904256c3712a5c058ff8e8547d08505a03bed9f3bf5ef3e7c4406489"
+        },
+        {
+          "round": 4,
+          "order": 3,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 556.1956670000001,
+            "js2IrToPorfforMs": 3.1412920000000213,
+            "porfforLoadMs": 65.05487499999981,
+            "porfforRenderMs": 3.792165999999952,
+            "sourceToCWorkerWallMs": 1460.1247499999954,
+            "clangCompileMs": 55.8182500000039,
+            "clangLinkMs": 49.284667000007175,
+            "totalBuildWallMs": 1565.2276670000065
+          },
+          "compilerPeakRssBytes": 401473536,
+          "clangPeakRssBytes": 49332224,
+          "runtimeCpuNs": 1147000,
+          "runtimePeakRssBytes": 1310720,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 3880,
+          "executableBytes": 34056,
+          "cSha256": "926fb6c9904256c3712a5c058ff8e8547d08505a03bed9f3bf5ef3e7c4406489"
+        }
+      ],
+      "samples": [
+        {
+          "round": 0,
+          "order": 2,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 541.3107499999999,
+            "js2IrToPorfforMs": 2.7395829999998114,
+            "porfforLoadMs": 63.73095900000021,
+            "porfforRenderMs": 3.5718329999999696,
+            "sourceToCWorkerWallMs": 1442.898540999995,
+            "clangCompileMs": 58.537791999995534,
+            "clangLinkMs": 49.9030830000047,
+            "totalBuildWallMs": 1551.3394159999953
+          },
+          "compilerPeakRssBytes": 401588224,
+          "clangPeakRssBytes": 49086464,
+          "runtimeCpuNs": 728000,
+          "runtimePeakRssBytes": 1310720,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 3880,
+          "executableBytes": 34056,
+          "cSha256": "926fb6c9904256c3712a5c058ff8e8547d08505a03bed9f3bf5ef3e7c4406489"
+        },
+        {
+          "round": 1,
+          "order": 1,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 543.471334,
+            "js2IrToPorfforMs": 2.7993750000000546,
+            "porfforLoadMs": 59.961667000000034,
+            "porfforRenderMs": 3.585749999999962,
+            "sourceToCWorkerWallMs": 1416.8196669999961,
+            "clangCompileMs": 55.483791999999085,
+            "clangLinkMs": 49.13195899999846,
+            "totalBuildWallMs": 1521.4354179999937
+          },
+          "compilerPeakRssBytes": 403800064,
+          "clangPeakRssBytes": 48939008,
+          "runtimeCpuNs": 731000,
+          "runtimePeakRssBytes": 1310720,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 3880,
+          "executableBytes": 34056,
+          "cSha256": "926fb6c9904256c3712a5c058ff8e8547d08505a03bed9f3bf5ef3e7c4406489"
+        },
+        {
+          "round": 2,
+          "order": 0,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 594.1714579999998,
+            "js2IrToPorfforMs": 3.4738330000000133,
+            "porfforLoadMs": 61.16420799999992,
+            "porfforRenderMs": 3.693708000000015,
+            "sourceToCWorkerWallMs": 1778.8669999999984,
+            "clangCompileMs": 58.352584000000206,
+            "clangLinkMs": 51.98287499999424,
+            "totalBuildWallMs": 1889.2024589999928
+          },
+          "compilerPeakRssBytes": 410599424,
+          "clangPeakRssBytes": 49135616,
+          "runtimeCpuNs": 839000,
+          "runtimePeakRssBytes": 1310720,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 3880,
+          "executableBytes": 34056,
+          "cSha256": "926fb6c9904256c3712a5c058ff8e8547d08505a03bed9f3bf5ef3e7c4406489"
+        },
+        {
+          "round": 3,
+          "order": 3,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 575.4893339999999,
+            "js2IrToPorfforMs": 2.8430829999999787,
+            "porfforLoadMs": 62.964750000000095,
+            "porfforRenderMs": 4.182291999999961,
+            "sourceToCWorkerWallMs": 1499.448749999996,
+            "clangCompileMs": 54.725124999997206,
+            "clangLinkMs": 49.98549999999523,
+            "totalBuildWallMs": 1604.1593749999884
+          },
+          "compilerPeakRssBytes": 356679680,
+          "clangPeakRssBytes": 49119232,
+          "runtimeCpuNs": 754000,
+          "runtimePeakRssBytes": 1310720,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 3880,
+          "executableBytes": 34056,
+          "cSha256": "926fb6c9904256c3712a5c058ff8e8547d08505a03bed9f3bf5ef3e7c4406489"
+        },
+        {
+          "round": 4,
+          "order": 2,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 557.729583,
+            "js2IrToPorfforMs": 2.9467919999999594,
+            "porfforLoadMs": 63.98916699999995,
+            "porfforRenderMs": 3.6843750000000455,
+            "sourceToCWorkerWallMs": 1485.466333000004,
+            "clangCompileMs": 58.62141700000211,
+            "clangLinkMs": 50.1255000000092,
+            "totalBuildWallMs": 1594.2132500000153
+          },
+          "compilerPeakRssBytes": 405127168,
+          "clangPeakRssBytes": 49250304,
+          "runtimeCpuNs": 727000,
+          "runtimePeakRssBytes": 1310720,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 3880,
+          "executableBytes": 34056,
+          "cSha256": "926fb6c9904256c3712a5c058ff8e8547d08505a03bed9f3bf5ef3e7c4406489"
+        },
+        {
+          "round": 5,
+          "order": 1,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 557.7910829999998,
+            "js2IrToPorfforMs": 2.55337499999996,
+            "porfforLoadMs": 65.34975000000009,
+            "porfforRenderMs": 3.8130409999998847,
+            "sourceToCWorkerWallMs": 1472.9995830000116,
+            "clangCompileMs": 59.9543330000015,
+            "clangLinkMs": 51.091207999998005,
+            "totalBuildWallMs": 1584.0451240000111
+          },
+          "compilerPeakRssBytes": 406011904,
+          "clangPeakRssBytes": 49217536,
+          "runtimeCpuNs": 771000,
+          "runtimePeakRssBytes": 1310720,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 3880,
+          "executableBytes": 34056,
+          "cSha256": "926fb6c9904256c3712a5c058ff8e8547d08505a03bed9f3bf5ef3e7c4406489"
+        },
+        {
+          "round": 6,
+          "order": 0,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 588.6369589999999,
+            "js2IrToPorfforMs": 2.9326670000000377,
+            "porfforLoadMs": 61.18095799999992,
+            "porfforRenderMs": 3.5712499999999636,
+            "sourceToCWorkerWallMs": 1496.090458000006,
+            "clangCompileMs": 59.75099999998929,
+            "clangLinkMs": 48.442250000007334,
+            "totalBuildWallMs": 1604.2837080000027
+          },
+          "compilerPeakRssBytes": 403210240,
+          "clangPeakRssBytes": 49004544,
+          "runtimeCpuNs": 733000,
+          "runtimePeakRssBytes": 1310720,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 3880,
+          "executableBytes": 34056,
+          "cSha256": "926fb6c9904256c3712a5c058ff8e8547d08505a03bed9f3bf5ef3e7c4406489"
+        },
+        {
+          "round": 7,
+          "order": 3,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 594.122875,
+            "js2IrToPorfforMs": 2.7480829999999514,
+            "porfforLoadMs": 66.23124999999982,
+            "porfforRenderMs": 3.75654099999997,
+            "sourceToCWorkerWallMs": 1509.1339580000058,
+            "clangCompileMs": 56.69537499999569,
+            "clangLinkMs": 48.5882910000073,
+            "totalBuildWallMs": 1614.4176240000088
+          },
+          "compilerPeakRssBytes": 381534208,
+          "clangPeakRssBytes": 49217536,
+          "runtimeCpuNs": 724000,
+          "runtimePeakRssBytes": 1310720,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 3880,
+          "executableBytes": 34056,
+          "cSha256": "926fb6c9904256c3712a5c058ff8e8547d08505a03bed9f3bf5ef3e7c4406489"
+        },
+        {
+          "round": 8,
+          "order": 2,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 560.6430409999999,
+            "js2IrToPorfforMs": 2.795166999999992,
+            "porfforLoadMs": 61.99183300000004,
+            "porfforRenderMs": 3.831709000000046,
+            "sourceToCWorkerWallMs": 1465.3046250000043,
+            "clangCompileMs": 55.53049999999348,
+            "clangLinkMs": 49.99483300000429,
+            "totalBuildWallMs": 1570.829958000002
+          },
+          "compilerPeakRssBytes": 400982016,
+          "clangPeakRssBytes": 49184768,
+          "runtimeCpuNs": 751000,
+          "runtimePeakRssBytes": 1310720,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 3880,
+          "executableBytes": 34056,
+          "cSha256": "926fb6c9904256c3712a5c058ff8e8547d08505a03bed9f3bf5ef3e7c4406489"
+        },
+        {
+          "round": 9,
+          "order": 1,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 550.558791,
+            "js2IrToPorfforMs": 3.075458000000026,
+            "porfforLoadMs": 59.84783400000015,
+            "porfforRenderMs": 4.099457999999913,
+            "sourceToCWorkerWallMs": 1445.3092090000137,
+            "clangCompileMs": 54.78695800001151,
+            "clangLinkMs": 47.77750000001106,
+            "totalBuildWallMs": 1547.8736670000362
+          },
+          "compilerPeakRssBytes": 400572416,
+          "clangPeakRssBytes": 49348608,
+          "runtimeCpuNs": 726000,
+          "runtimePeakRssBytes": 1310720,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 3880,
+          "executableBytes": 34056,
+          "cSha256": "926fb6c9904256c3712a5c058ff8e8547d08505a03bed9f3bf5ef3e7c4406489"
+        },
+        {
+          "round": 10,
+          "order": 0,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 577.504292,
+            "js2IrToPorfforMs": 2.7613749999998163,
+            "porfforLoadMs": 68.71737499999995,
+            "porfforRenderMs": 3.4555410000000393,
+            "sourceToCWorkerWallMs": 1496.7376250000088,
+            "clangCompileMs": 64.0862080000079,
+            "clangLinkMs": 52.00170799999614,
+            "totalBuildWallMs": 1612.825541000013
+          },
+          "compilerPeakRssBytes": 405667840,
+          "clangPeakRssBytes": 49053696,
+          "runtimeCpuNs": 738000,
+          "runtimePeakRssBytes": 1310720,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 3880,
+          "executableBytes": 34056,
+          "cSha256": "926fb6c9904256c3712a5c058ff8e8547d08505a03bed9f3bf5ef3e7c4406489"
+        },
+        {
+          "round": 11,
+          "order": 3,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 546.479042,
+            "js2IrToPorfforMs": 3.1431669999999485,
+            "porfforLoadMs": 59.6206659999998,
+            "porfforRenderMs": 3.5422499999999673,
+            "sourceToCWorkerWallMs": 1432.9076659999992,
+            "clangCompileMs": 53.932875000013155,
+            "clangLinkMs": 49.82804199999373,
+            "totalBuildWallMs": 1536.668583000006
+          },
+          "compilerPeakRssBytes": 400195584,
+          "clangPeakRssBytes": 49250304,
+          "runtimeCpuNs": 725000,
+          "runtimePeakRssBytes": 1310720,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 3880,
+          "executableBytes": 34056,
+          "cSha256": "926fb6c9904256c3712a5c058ff8e8547d08505a03bed9f3bf5ef3e7c4406489"
+        },
+        {
+          "round": 12,
+          "order": 2,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 555.544625,
+            "js2IrToPorfforMs": 2.6705000000001746,
+            "porfforLoadMs": 63.44075000000021,
+            "porfforRenderMs": 3.5425830000001497,
+            "sourceToCWorkerWallMs": 1475.158792000002,
+            "clangCompileMs": 55.62116699999024,
+            "clangLinkMs": 49.76745800000208,
+            "totalBuildWallMs": 1580.5474169999943
+          },
+          "compilerPeakRssBytes": 404291584,
+          "clangPeakRssBytes": 49217536,
+          "runtimeCpuNs": 760000,
+          "runtimePeakRssBytes": 1310720,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 3880,
+          "executableBytes": 34056,
+          "cSha256": "926fb6c9904256c3712a5c058ff8e8547d08505a03bed9f3bf5ef3e7c4406489"
+        },
+        {
+          "round": 13,
+          "order": 1,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 559.002708,
+            "js2IrToPorfforMs": 3.0260829999999714,
+            "porfforLoadMs": 61.782375,
+            "porfforRenderMs": 4.273458000000119,
+            "sourceToCWorkerWallMs": 1432.7354999999952,
+            "clangCompileMs": 60.62849999999162,
+            "clangLinkMs": 49.020707999996375,
+            "totalBuildWallMs": 1542.3847079999832
+          },
+          "compilerPeakRssBytes": 404635648,
+          "clangPeakRssBytes": 49250304,
+          "runtimeCpuNs": 728000,
+          "runtimePeakRssBytes": 1310720,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 3880,
+          "executableBytes": 34056,
+          "cSha256": "926fb6c9904256c3712a5c058ff8e8547d08505a03bed9f3bf5ef3e7c4406489"
+        },
+        {
+          "round": 14,
+          "order": 0,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 545.842333,
+            "js2IrToPorfforMs": 2.711917000000085,
+            "porfforLoadMs": 66.57925,
+            "porfforRenderMs": 3.8430829999999787,
+            "sourceToCWorkerWallMs": 1453.816833000019,
+            "clangCompileMs": 61.61933400001726,
+            "clangLinkMs": 51.09962500000256,
+            "totalBuildWallMs": 1566.5357920000388
+          },
+          "compilerPeakRssBytes": 403275776,
+          "clangPeakRssBytes": 49020928,
+          "runtimeCpuNs": 710000,
+          "runtimePeakRssBytes": 1310720,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 3880,
+          "executableBytes": 34056,
+          "cSha256": "926fb6c9904256c3712a5c058ff8e8547d08505a03bed9f3bf5ef3e7c4406489"
+        },
+        {
+          "round": 15,
+          "order": 3,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 556.220083,
+            "js2IrToPorfforMs": 2.720207999999957,
+            "porfforLoadMs": 60.57791699999984,
+            "porfforRenderMs": 3.553083000000015,
+            "sourceToCWorkerWallMs": 1454.6081249999988,
+            "clangCompileMs": 60.55725000001257,
+            "clangLinkMs": 49.562667000020156,
+            "totalBuildWallMs": 1564.7280420000316
+          },
+          "compilerPeakRssBytes": 401637376,
+          "clangPeakRssBytes": 49004544,
+          "runtimeCpuNs": 732000,
+          "runtimePeakRssBytes": 1310720,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 3880,
+          "executableBytes": 34056,
+          "cSha256": "926fb6c9904256c3712a5c058ff8e8547d08505a03bed9f3bf5ef3e7c4406489"
+        },
+        {
+          "round": 16,
+          "order": 2,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 573.227708,
+            "js2IrToPorfforMs": 3.0657920000001013,
+            "porfforLoadMs": 57.06112499999995,
+            "porfforRenderMs": 3.601124999999911,
+            "sourceToCWorkerWallMs": 1445.6169170000067,
+            "clangCompileMs": 58.32712500001071,
+            "clangLinkMs": 49.25883299999987,
+            "totalBuildWallMs": 1553.2028750000172
+          },
+          "compilerPeakRssBytes": 404144128,
+          "clangPeakRssBytes": 48824320,
+          "runtimeCpuNs": 727000,
+          "runtimePeakRssBytes": 1310720,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 3880,
+          "executableBytes": 34056,
+          "cSha256": "926fb6c9904256c3712a5c058ff8e8547d08505a03bed9f3bf5ef3e7c4406489"
+        },
+        {
+          "round": 17,
+          "order": 1,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 535.5498339999999,
+            "js2IrToPorfforMs": 2.558332999999948,
+            "porfforLoadMs": 62.85970800000018,
+            "porfforRenderMs": 3.6006660000000466,
+            "sourceToCWorkerWallMs": 1415.0815000000002,
+            "clangCompileMs": 56.07179200000246,
+            "clangLinkMs": 48.68404200000805,
+            "totalBuildWallMs": 1519.8373340000107
+          },
+          "compilerPeakRssBytes": 403701760,
+          "clangPeakRssBytes": 48889856,
+          "runtimeCpuNs": 712000,
+          "runtimePeakRssBytes": 1310720,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 3880,
+          "executableBytes": 34056,
+          "cSha256": "926fb6c9904256c3712a5c058ff8e8547d08505a03bed9f3bf5ef3e7c4406489"
+        },
+        {
+          "round": 18,
+          "order": 0,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 554.0612919999999,
+            "js2IrToPorfforMs": 2.8440840000000662,
+            "porfforLoadMs": 68.08483299999989,
+            "porfforRenderMs": 4.200832999999875,
+            "sourceToCWorkerWallMs": 1464.2876249999972,
+            "clangCompileMs": 53.39374999998836,
+            "clangLinkMs": 49.557792000006884,
+            "totalBuildWallMs": 1567.2391669999924
+          },
+          "compilerPeakRssBytes": 405192704,
+          "clangPeakRssBytes": 48988160,
+          "runtimeCpuNs": 732000,
+          "runtimePeakRssBytes": 1310720,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 3880,
+          "executableBytes": 34056,
+          "cSha256": "926fb6c9904256c3712a5c058ff8e8547d08505a03bed9f3bf5ef3e7c4406489"
+        },
+        {
+          "round": 19,
+          "order": 3,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 524.670792,
+            "js2IrToPorfforMs": 3.03125,
+            "porfforLoadMs": 58.480375000000095,
+            "porfforRenderMs": 3.617958000000044,
+            "sourceToCWorkerWallMs": 1561.8631250000035,
+            "clangCompileMs": 52.92658400000073,
+            "clangLinkMs": 48.33695799999987,
+            "totalBuildWallMs": 1663.126667000004
+          },
+          "compilerPeakRssBytes": 377602048,
+          "clangPeakRssBytes": 49119232,
+          "runtimeCpuNs": 731000,
+          "runtimePeakRssBytes": 1310720,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 3880,
+          "executableBytes": 34056,
+          "cSha256": "926fb6c9904256c3712a5c058ff8e8547d08505a03bed9f3bf5ef3e7c4406489"
+        },
+        {
+          "round": 20,
+          "order": 2,
+          "compilePhasesMs": {
+            "porfforParseMs": null,
+            "porfforCodegenMs": null,
+            "js2SourceToLinearTelemetryMs": 586.615833,
+            "js2IrToPorfforMs": 2.7766249999999673,
+            "porfforLoadMs": 63.17720799999984,
+            "porfforRenderMs": 4.397584000000052,
+            "sourceToCWorkerWallMs": 1503.6105830000015,
+            "clangCompileMs": 52.736791999981506,
+            "clangLinkMs": 48.76199999998789,
+            "totalBuildWallMs": 1605.109374999971
+          },
+          "compilerPeakRssBytes": 401850368,
+          "clangPeakRssBytes": 49168384,
+          "runtimeCpuNs": 748000,
+          "runtimePeakRssBytes": 1310720,
+          "checksumDecimal": "46965020",
+          "fixedOutputs": [
+            -535,
+            235,
+            675,
+            3645
+          ],
+          "iterations": 200000,
+          "objectBytes": 3880,
+          "executableBytes": 34056,
+          "cSha256": "926fb6c9904256c3712a5c058ff8e8547d08505a03bed9f3bf5ef3e7c4406489"
+        }
+      ],
+      "summary": {
+        "runtimeCpuMs": {
+          "q1": 0.727,
+          "median": 0.731,
+          "q3": 0.748
+        },
+        "runtimePeakRssBytes": {
+          "q1": 1310720,
+          "median": 1310720,
+          "q3": 1310720
+        },
+        "compilerPeakRssBytes": {
+          "q1": 400982016,
+          "median": 403275776,
+          "q3": 404635648
+        },
+        "clangPeakRssBytes": {
+          "q1": 49004544,
+          "median": 49119232,
+          "q3": 49217536
+        },
+        "totalBuildWallMs": {
+          "q1": 1551.3394159999953,
+          "median": 1570.829958000002,
+          "q3": 1604.2837080000027
+        },
+        "compilePhasesMs": {
+          "porfforParseMs": null,
+          "porfforCodegenMs": null,
+          "js2SourceToLinearTelemetryMs": {
+            "q1": 546.479042,
+            "median": 557.729583,
+            "q3": 575.4893339999999
+          },
+          "js2IrToPorfforMs": {
+            "q1": 2.7395829999998114,
+            "median": 2.7993750000000546,
+            "q3": 3.0260829999999714
+          },
+          "porfforLoadMs": {
+            "q1": 60.57791699999984,
+            "median": 62.85970800000018,
+            "q3": 63.98916699999995
+          },
+          "porfforRenderMs": {
+            "q1": 3.5718329999999696,
+            "median": 3.6843750000000455,
+            "q3": 3.8430829999999787
+          },
+          "sourceToCWorkerWallMs": {
+            "q1": 1445.3092090000137,
+            "median": 1465.3046250000043,
+            "q3": 1496.7376250000088
+          },
+          "clangCompileMs": {
+            "q1": 54.78695800001151,
+            "median": 56.69537499999569,
+            "q3": 59.75099999998929
+          },
+          "clangLinkMs": {
+            "q1": 48.76199999998789,
+            "median": 49.562667000020156,
+            "q3": 49.99483300000429
+          },
+          "totalBuildWallMs": {
+            "q1": 1551.3394159999953,
+            "median": 1570.829958000002,
+            "q3": 1604.2837080000027
+          }
+        }
+      }
+    }
+  ],
+  "interpretation": {
+    "endToEndConflates": [
+      "frontend",
+      "value-abi",
+      "layout",
+      "ir",
+      "allocator"
+    ],
+    "directNumberAbi": "ordinary TypeScript number is boxed Porffor jsval; two hidden jsval call slots are asserted",
+    "directObjectLayout": "approximately 56 bytes per dynamic object at the pinned commit",
+    "js2NumberAbi": "raw f64 benchmark boundary",
+    "js2ObjectLayout": "24-byte fixed record (8-byte header plus two f64 fields)",
+    "allocationScope": "Porffor policy is global; JS2 stack promotion is per allocation site",
+    "policyIsolationPair": [
+      "js2-porffor-arena-v1",
+      "js2-porffor-analysis-stack-arena-v1"
+    ],
+    "onlyPolicyIsolatingComparison": true,
+    "handBuiltPolicyProof": "#3300 remains the hand-built-IR policy proof and is not this direct source A/B",
+    "directPlainPorfforSafety": "plain direct Porffor has known misaligned f64 dynamic-object entry accesses; its optimized timings are UB-contaminated and non-authoritative",
+    "sanitizerContract": "direct rows must reproduce the pinned UBSan misalignment; JS2 rows must complete with exact outputs/checksum and no sanitizer finding"
+  }
+}

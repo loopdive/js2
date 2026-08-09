@@ -18,6 +18,9 @@
 import { describe, it, expect } from "vitest";
 import { compile, compileProject } from "../src/index.js";
 import { instantiateWithRuntime } from "./equivalence/helpers.js";
+import { ESLINT_DEV_DEPENDENCY_SKIP, requireEslintFile, resolveEslintFile } from "./helpers/eslint.js";
+
+const ESLINT_APPLY_DISABLE_DIRECTIVES = resolveEslintFile("lib/linter/apply-disable-directives.js");
 
 async function run(src: string, fn = "test"): Promise<unknown> {
   const result = await compile(src);
@@ -73,11 +76,15 @@ describe("#2688 — struct-element .map result-array element type", () => {
     ).toBe(30);
   });
 
-  it("eslint apply-disable-directives.js compiles AND validates (Linter.verify path)", async () => {
-    const r = await compileProject("/workspace/node_modules/eslint/lib/linter/apply-disable-directives.js", {
-      allowJs: true,
-    } as Parameters<typeof compileProject>[1]);
-    expect(r.success, JSON.stringify(r.errors?.slice?.(0, 2))).toBe(true);
-    expect(WebAssembly.validate(r.binary), "apply-disable-directives.js binary must validate").toBe(true);
-  });
+  it.skipIf(ESLINT_APPLY_DISABLE_DIRECTIVES === null)(
+    `eslint apply-disable-directives.js compiles AND validates (Linter.verify path) ${ESLINT_DEV_DEPENDENCY_SKIP}`,
+    async () => {
+      const entry = requireEslintFile(ESLINT_APPLY_DISABLE_DIRECTIVES, "lib/linter/apply-disable-directives.js");
+      const r = await compileProject(entry, {
+        allowJs: true,
+      } as Parameters<typeof compileProject>[1]);
+      expect(r.success, JSON.stringify(r.errors?.slice?.(0, 2))).toBe(true);
+      expect(WebAssembly.validate(r.binary), "apply-disable-directives.js binary must validate").toBe(true);
+    },
+  );
 });

@@ -3,7 +3,7 @@ id: 3283
 title: "standalone dstr runtime-semantics — Opus-now unblocked slices (lazy-defaults, obj-rest ToPrimitive, abrupt-step errors, gen brand-check)"
 status: wont-fix
 resolution: "superseded by intervening substrate — slices 1&4 already resolved on main (#3223 obj-rest, lazy-default fix); residuals belong to #3132/#3164/#3032/#3086. No code fix warranted (verified 2026-07-14)."
-sprint: current
+sprint: 75
 created: 2026-07-14
 completed: 2026-07-14
 priority: high

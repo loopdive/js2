@@ -108,16 +108,18 @@ describe("#2660 S3a — reconstruct approved empty-body new F() as $Object (stan
     ).toBe(3);
   });
 
-  it("STRUCT-BINDING GUARD: const c = new Con() (nominal instance type) is NOT reconstructed → no trap (status quo 0)", async () => {
+  it("STRUCT-BINDING GUARD: nominal instance is not reconstructed and a missing read stays undefined", async () => {
     // The binding's ALLOCATED local is `(ref $__fnctor_Con)`, not externref, so
     // G4 declines — returning externref into a struct-ref local would
-    // ref.cast-trap. S3a leaves this to S3b (binding-retype). Status quo: the
-    // inherited read misses (0) but the module is valid and does not trap.
+    // ref.cast-trap. S3a leaves this to S3b (binding-retype). The inherited
+    // read therefore misses, and the numeric export observes Number(undefined)
+    // as NaN; the module remains valid and does not trap. A result of 7 would
+    // mean this site had been reconstructed despite the guard.
     expect(
       await runStandalone(
         `function Con(){}; Con.prototype = {foo:7}; export function test():number{ const c = new Con(); return (c as any).foo; }`,
       ),
-    ).toBe(0);
+    ).toBeNaN();
   });
 
   it("no F.prototype assignment → reconstructed instance has an empty proto, no trap (0)", async () => {

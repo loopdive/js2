@@ -1,8 +1,7 @@
 ---
 id: 2141
 title: "Retire the tag-5 box-the-externref ABI: make consumers tag-agnostic, then allow honest generic boxing"
-status: in-progress
-assignee: ttraenkler/fable-tag5
+status: ready
 sprint: current
 created: 2026-06-12
 updated: 2026-07-17

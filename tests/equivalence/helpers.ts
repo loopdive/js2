@@ -1,5 +1,6 @@
 import { expect } from "vitest";
 import { compile, type CompileResult } from "../../src/index.js";
+import { isWasiErrorName } from "../../src/codegen/registry/error-types.js";
 import { buildStringConstants, buildImports as buildRuntimeImports } from "../../src/runtime.js";
 import ts from "typescript";
 import { readFileSync } from "node:fs";
@@ -210,6 +211,37 @@ export function buildImports(result: CompileResult): WebAssembly.Imports {
       return Object.getOwnPropertyDescriptor(obj, prop);
     },
   };
+
+  // #3529 P5 — manual-instantiation equivalence tests still need faithful
+  // host constructors for the eight built-in Error-family manifest imports.
+  // Reuse the production resolver for only those exact descriptors so
+  // constructor argument trimming, AggregateError, and native prototypes stay
+  // aligned with `src/runtime.ts::buildImports` without turning this compact
+  // helper into an unrestricted second runtime implementation.
+  const errorConstructorImports = result.imports.filter((descriptor) => {
+    if (descriptor.module !== "env" || descriptor.kind !== "func") {
+      return false;
+    }
+    if (descriptor.name === "__new_AggregateError") {
+      return descriptor.intent.type === "builtin" && descriptor.intent.name === "__new_AggregateError";
+    }
+    if (!descriptor.name.startsWith("__new_")) return false;
+    const errorName = descriptor.name.slice("__new_".length);
+    // The seven ordinary Error-family constructors use the generic exact-class
+    // bridge. AggregateError is intentionally excluded here: only its
+    // specialised builtin intent owns the iterable/message/options ABI above.
+    return (
+      errorName !== "AggregateError" &&
+      isWasiErrorName(errorName) &&
+      descriptor.intent.type === "extern_class" &&
+      descriptor.intent.action === "new" &&
+      descriptor.intent.className === errorName
+    );
+  });
+  if (errorConstructorImports.length > 0) {
+    Object.assign(env, buildRuntimeImports(errorConstructorImports, undefined, result.stringPool).env);
+  }
+
   return {
     env,
     "wasm:js-string": jsStringPolyfill,
@@ -222,23 +254,23 @@ export function buildImports(result: CompileResult): WebAssembly.Imports {
  *
  * Unlike calling `buildImports` + `WebAssembly.instantiate` directly, this
  * overlays the runtime's faithful host imports (struct sidecar reads,
- * iterator protocol) AND registers the wasm exports via `setExports` so
+ * iterator protocol) AND registers the wasm instance via `setInstance` so
  * runtime callbacks like `__extern_get`'s `__sget_<field>` struct-getter
- * fallback work. Direct `buildImports` callers that skip `setExports` see
+ * fallback work. Direct `buildImports` callers that skip `setInstance` see
  * `undefined` for opaque WasmGC struct fields, which makes destructuring
  * defaults wrongly fire in the harness even when the real runtime is correct.
  */
 export async function instantiateWithRuntime(result: CompileResult) {
   const imports = buildImports(result);
-  let setExportsFn: ((exports: Record<string, Function>) => void) | undefined;
+  let setInstanceFn: ((instance: WebAssembly.Instance) => void) | undefined;
   if (result.imports && result.imports.length > 0) {
     const runtimeResult = buildRuntimeImports(result.imports, undefined, result.stringPool);
-    setExportsFn = runtimeResult.setExports;
+    setInstanceFn = runtimeResult.setInstance;
     imports.env = { ...(imports.env as Record<string, Function>), ...runtimeResult.env };
     if (runtimeResult.string_constants) imports.string_constants = runtimeResult.string_constants;
   }
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  if (setExportsFn) setExportsFn(instance.exports as Record<string, Function>);
+  setInstanceFn?.(instance);
   return instance;
 }
 
@@ -258,10 +290,10 @@ export async function compileToWasm(source: string) {
   // Use the runtime's buildImports for full host import support (iterator protocol, etc.)
   // Merge with the manual buildImports for wasm:js-string polyfill and string_constants.
   const manualImports = buildImports(result);
-  let setExportsFn: ((exports: Record<string, Function>) => void) | undefined;
+  let setInstanceFn: ((instance: WebAssembly.Instance) => void) | undefined;
   if (result.imports && result.imports.length > 0) {
     const runtimeResult = buildRuntimeImports(result.imports, undefined, result.stringPool);
-    setExportsFn = runtimeResult.setExports;
+    setInstanceFn = runtimeResult.setInstance;
     // Merge: runtime env overrides manual env, keep manual wasm:js-string and string_constants
     const mergedEnv = { ...(manualImports.env as Record<string, Function>), ...runtimeResult.env };
     manualImports.env = mergedEnv;
@@ -272,9 +304,7 @@ export async function compileToWasm(source: string) {
   }
   const { instance } = await WebAssembly.instantiate(result.binary, manualImports);
   // Set exports so runtime callbacks (iterator protocol, struct field getters) can access them
-  if (setExportsFn) {
-    setExportsFn(instance.exports as Record<string, Function>);
-  }
+  setInstanceFn?.(instance);
   return instance.exports as Record<string, Function>;
 }
 

@@ -20,7 +20,7 @@ name: Auto-park merge_group CI failures
 # do nothing. The job-level guard is the entire point of routing through the
 # helper script rather than reacting to `conclusion` inline.
 #
-# This is ADDITIVE — it does not modify auto-enqueue / queue-unstick /
+# This is ADDITIVE — it does not modify auto-enqueue /
 # merge-group-sweeper. Labelling + commenting do not need to trigger a
 # downstream workflow, so the default GITHUB_TOKEN is sufficient (no App token).
 

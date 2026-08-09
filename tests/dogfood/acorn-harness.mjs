@@ -102,7 +102,14 @@ export async function runHarness({ quiet = false } = {}) {
   let result;
   let threw = null;
   try {
-    result = await compile(acornSource, { fileName: "acorn.mjs" });
+    // #3717 — acorn is plain pre-strict-mode JS; compiling it through full
+    // strict-mode TS type-checking surfaces a wall of legitimate-but-irrelevant
+    // strict-null-check diagnostics (verified against real `tsc --strict`, not
+    // a compiler bug). skipSemanticDiagnostics routes around this exact class
+    // of noise, same as the other three acorn dogfood scripts
+    // (acorn-corpus.mjs/acorn-probe.mjs/acorn-test262.mjs) already do — this
+    // harness was the one outlier still doing full semantic checking.
+    result = await compile(acornSource, { fileName: "acorn.mjs", skipSemanticDiagnostics: true });
   } catch (e) {
     threw = e instanceof Error ? `${e.message}` : String(e);
   }
@@ -183,13 +190,13 @@ export async function runHarness({ quiet = false } = {}) {
       // (#1712) Wire the host runtime's exports hook so exports-backed
       // capabilities (closure wrapping, __sget_* struct reads, deferred
       // start-window Object.defineProperties) work on this convenience path.
-      importObject.__setExports?.(instance.exports);
+      importObject.__setInstance?.(instance);
       // (#1712) Marshal struct/vec returns to plain JS via wrapExports —
       // a raw `exports.parse` returns an opaque WasmGC struct that diffs as
       // an empty object. wrapExports (#1504) recursively converts the node
       // graph (struct fields via __sget_*, sidecar props, vecs as arrays)
       // so diffAst compares real tree shape.
-      const exp = wrapExports(instance.exports, { signatures: result.exportSignatures });
+      const exp = wrapExports(instance, { signatures: result.exportSignatures });
       report.diff.exports = Object.keys(exp).slice(0, 40);
       if (typeof exp.parse === "function") {
         compiledParse = (src, opts) => exp.parse(src, opts);

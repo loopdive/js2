@@ -1,8 +1,7 @@
 ---
 id: 3103
 title: "Split src/runtime.ts (15,032 LOC) host runtime by concern; decompose resolveImport (6,517-line function)"
-status: in-progress
-assignee: ttraenkler/opus-splitrt
+status: ready
 sprint: current
 created: 2026-07-09
 updated: 2026-07-17

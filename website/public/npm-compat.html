@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>js2wasm — npm package compatibility</title>
+    <meta
+      name="description"
+      content="Which real, pinned npm packages compile with js2wasm, how many of their tests pass, and how the compiled Wasm performs head-to-head against the same package running natively under Node."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #060a14;
+        --surface: rgba(255, 255, 255, 0.05);
+        --surface-2: rgba(255, 255, 255, 0.08);
+        --border: rgba(255, 255, 255, 0.12);
+        --text: #ffffff;
+        --text-muted: rgba(255, 255, 255, 0.46);
+        --text-faint: rgba(255, 255, 255, 0.35);
+        --accent: #6c8aff;
+        --green: #4ade80;
+        --red: #f87171;
+        --yellow: #fbbf24;
+        --radius: 0;
+        --font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        --mono: "JetBrains Mono", "SF Mono", SFMono-Regular, Consolas, monospace;
+        /* nav component variables */
+        --fg: #ffffff;
+        --fg-soft: rgba(255, 255, 255, 0.68);
+        --fg-faint: rgba(255, 255, 255, 0.46);
+        --line: rgba(255, 255, 255, 0.12);
+        --line-strong: rgba(255, 255, 255, 0.22);
+        --surface-hover: rgba(255, 255, 255, 0.08);
+        --nav: rgba(6, 10, 20, 0.45);
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        --page-pad-x: clamp(24px, 4vw, 48px);
+        font-family: var(--font);
+        background: var(--bg);
+        color: var(--text);
+        line-height: 1.45;
+        padding: 82px var(--page-pad-x) 18px;
+        min-height: 100vh;
+      }
+      header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+        padding-bottom: 14px;
+        border-bottom: 1px solid var(--border);
+      }
+      header h1 {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 20px;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+      }
+      header h1 img {
+        width: 38px;
+        height: auto;
+        display: block;
+      }
+      header .meta {
+        font-size: 12px;
+        color: var(--text-muted);
+      }
+      header .meta a {
+        color: var(--text-muted);
+      }
+      footer {
+        margin-top: 40px;
+        padding-top: 18px;
+        border-top: 1px solid var(--border);
+        font-size: 12px;
+        color: var(--text-muted);
+        line-height: 1.6;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 18px 32px;
+      }
+      footer h2 {
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--text-faint);
+        margin-bottom: 6px;
+        font-weight: 600;
+      }
+      footer a {
+        color: var(--fg-soft);
+      }
+      footer code {
+        font-family: var(--mono);
+        font-size: 0.92em;
+        color: var(--fg-soft);
+      }
+    </style>
+  </head>
+  <body>
+    <site-nav
+      base="./"
+      links='[{"label":"Home","href":"./"},{"label":"Get Started","href":"./getting-started/"},{"label":"Conformance","href":"./benchmarks/report.html"},{"label":"npm Packages","href":"./npm-compat.html"},{"label":"Blog","href":"./blog/"}]'
+    ></site-nav>
+
+    <header>
+      <h1>
+        <img src="./npm-logo-white.svg" alt="npm" />
+        package compatibility
+      </h1>
+      <div class="meta">
+        Compiled from pinned, published npm tarballs ·
+        <a href="https://github.com/loopdive/js2/tree/main/tests/dogfood" target="_blank" rel="noopener">
+          tests/dogfood
+        </a>
+        · measured
+        <span id="npm-compat-measured">…</span>
+      </div>
+    </header>
+
+    <npm-compat-chart
+      src="./benchmarks/results/npm-compat.json"
+      history-src="./benchmarks/results/npm-compat-history.json"
+    ></npm-compat-chart>
+
+    <footer>
+      <div>
+        <h2>What is measured</h2>
+        Each package is compiled from the exact, pinned, published npm tarball — not a reimplementation or a hand-picked
+        snippet. The same tarball is also the native oracle, so any divergence is a compiler bug, never version skew.
+      </div>
+      <div>
+        <h2>Tests</h2>
+        <strong>Own test suite</strong>
+        means the package's real tests run against the compiled output.
+        <strong>Differential ops</strong>
+        means a smaller, harness-authored set of representative calls is compared against native instead — a real
+        signal, but not the same thing. The two are never conflated.
+      </div>
+      <div>
+        <h2>Performance</h2>
+        Charts show Wasm speed relative to the same pinned package in Node on a linear scale; the
+        <strong>Node 1×</strong>
+        line is the baseline. The global control switches between JS-host and standalone runs. Precompilation adds
+        compile-time-static inputs, which may be optimized away; with it off, inputs arrive after compilation. Static
+        and dynamic results stay separate. Values are medians of 9 warmed-up rounds.
+      </div>
+      <div>
+        <h2>Divergences</h2>
+        Every divergence is a compiler bug, filed as its own issue and linked on the card — never worked around or
+        hidden to make the numbers look better. Packages without a committed, reproducible harness are deliberately not
+        listed.
+      </div>
+    </footer>
+
+    <script type="module" src="./components/site-nav.js"></script>
+    <script type="module" src="./components/npm-compat-chart.js"></script>
+  </body>
+</html>

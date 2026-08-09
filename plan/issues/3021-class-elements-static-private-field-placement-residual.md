@@ -1,8 +1,7 @@
 ---
 id: 3021
 title: "spec gap: class elements — static/private field & method placement residual (~1,522 default-lane fails)"
-status: in-progress
-assignee: ttraenkler/opus-3021s1
+status: ready
 sprint: current
 created: 2026-07-03
 updated: 2026-07-05

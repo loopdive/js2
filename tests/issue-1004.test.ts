@@ -3,6 +3,7 @@
 // lowers to `s += FRAG.repeat(N)`. These tests pin byte-identical semantics for
 // the optimizable cases and confirm the guard declines unsafe shapes.
 import { describe, expect, it } from "vitest";
+import { compile } from "../src/index.js";
 import { compileAndInstantiate } from "../src/runtime.js";
 
 async function runStr(src: string): Promise<string> {
@@ -24,6 +25,19 @@ describe("#1004 counted string-append aggregation", () => {
           return str.length;
         }`),
     ).toBe(5000);
+  });
+
+  it("preserves the counted aggregation instead of routing the loop through IR", async () => {
+    const result = await compile(`
+      export function test(): number {
+        let str = "";
+        for (let i = 0; i < 1000; i++) str = str + "abcde";
+        return str.length;
+      }
+    `);
+    expect(result.success).toBe(true);
+    expect(result.irCompiledFuncs ?? []).not.toContain("test");
+    expect(result.wat).not.toContain("i32.lt_s");
   });
 
   it("produces the byte-identical string", async () => {

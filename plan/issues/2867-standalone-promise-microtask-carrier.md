@@ -1,8 +1,7 @@
 ---
 id: 2867
 title: "Standalone: Promise / async microtask leaks Promise_resolve/reject/then + __make_callback host imports"
-status: in-progress
-assignee: ttraenkler/sendev-carriergap4
+status: ready
 created: 2026-06-30
 updated: 2026-07-02
 priority: high

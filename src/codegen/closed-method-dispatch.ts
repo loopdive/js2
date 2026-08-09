@@ -50,7 +50,12 @@ import { ensureObjVecBuilders, reserveApplyClosure } from "./object-runtime.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType, getOrRegisterVecBaseType } from "./registry/types.js";
 import { addUnionImportsViaRegistry } from "./shared.js";
+import { ensureArgcGlobal } from "./statements/nested-declarations.js"; // (#3673 round 13) direct-call argc preset
+import { CLOSURE_ARITY_FIELD_IDX, getFuncRefWrapperRootTypeIdx } from "./closures/funcref-wrapper-types.js"; // (#3673 round 13) under-application gate
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
+import { wrapClosureCallFastArm } from "./closure-call-fast.js"; // (#4185) closure-receiver fast `.call` arm
+import { buildFnctorArrayHofTargetTest } from "./fnctor-array-prototype.js";
+import { resolveVecHostBridgeHelper } from "./vec-access-exports.js";
 
 /**
  * (#2583) The callback-free, argument-taking array search/predicate methods
@@ -189,14 +194,20 @@ export function reserveClosedMethodDispatch(ctx: CodegenContext, methodName: str
     addUnionImportsViaRegistry(ctx);
   }
 
+  // #3507 — the `$NativeRegExp` test/1 brand arm returns a real JS boolean.
+  // Register boxing before the call site mints the helper so finalize remains
+  // read-only and no import shift can invalidate baked indices.
+  if (ctx.standalone && methodName === "test" && arity === 1) {
+    addUnionImportsViaRegistry(ctx);
+  }
+
   // (#2927) For the in-place array MUTATION methods (`push`/`pop`), register the
   // native `$__vec_base` brand-arm deps NOW so the fill only READS funcMap
   // (#1719): the `$__vec_base` supertype and `__box_number` (push returns an i32
-  // length that the arm boxes). The carrier-generic `__vec_push` / `__vec_pop`
-  // helper is reserved by the CALL SITE (`calls.ts`, which already imports
+  // length that the arm boxes). The carrier-generic helper is reserved by the
+  // CALL SITE (`calls.ts`, which already imports
   // `reserveVecMethodHelper` from `../index.js` — importing it here would form an
-  // eval-time circular-import cycle: `index.ts` imports this module for
-  // `fillClosedMethodDispatch`). Standalone/wasi only.
+  // eval-time circular-import cycle). Standalone/wasi only.
   if ((ctx.standalone || ctx.wasi) && VEC_MUTATE_METHODS.has(methodName) && isVecMutateForm(methodName, arity)) {
     getOrRegisterVecBaseType(ctx);
     addUnionImportsViaRegistry(ctx); // __box_number for the push new-length result
@@ -517,6 +528,88 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
       ];
     } else {
       current = [{ op: "ref.null.extern" }];
+    }
+
+    // (#3673 round 13) Cached-method DIRECT-call arm, wrapped around the
+    // innermost open fallback only (closed-struct / HOF / iterator /
+    // collection arms keep their existing precedence). On a
+    // `__method_cache_lookup` hit — the receiver's fnctor-prototype method
+    // was already resolved once through the slow path — call
+    // `__call_fn_method_<arity>` directly with the unpacked args, skipping
+    // the per-call `$ObjVec` allocation, `__extern_method_call`, and
+    // `__apply_closure`. argc is preset to the actual count and reset to the
+    // -1 sentinel after, exactly mirroring `fillApplyClosure`.
+    // The scratch local's slot is only known once the fill's `locals` array is
+    // finalized far below (`dispFn.locals = locals`), so the arm is built with
+    // placeholder indices collected in `mcPatchInstrs` and patched there.
+    const mcPatchInstrs: Instr[] = [];
+    {
+      const lookupIdx = ctx.funcMap.get("__method_cache_lookup");
+      const callFnMethodIdx = ctx.funcMap.get(`__call_fn_method_${arity}`);
+      const nullishIdx = ctx.funcMap.get("__nullish_to_null");
+      const rootIdx = getFuncRefWrapperRootTypeIdx(ctx);
+      if (lookupIdx !== undefined && callFnMethodIdx !== undefined && rootIdx !== undefined) {
+        const mLocal = (op: "local.get" | "local.set" | "local.tee"): Instr => {
+          const instr: Instr = { op, index: -1 };
+          mcPatchInstrs.push(instr);
+          return instr;
+        };
+        const argcGlobalIdx = ensureArgcGlobal(ctx);
+        current = [
+          { op: "local.get", index: 0 },
+          ...stringConstantExternrefInstrs(ctx, methodName),
+          { op: "call", funcIdx: lookupIdx },
+          ...(nullishIdx !== undefined ? ([{ op: "call", funcIdx: nullishIdx }] satisfies Instr[]) : []),
+          mLocal("local.tee"),
+          { op: "ref.is_null" },
+          { op: "i32.eqz" },
+          // Direct-call eligibility: the exact-arity export only carries
+          // closures with formals <= call-site arity. An UNDER-applied call
+          // (declared > arity) must take the legacy path, whose
+          // `__apply_closure` #3592 widening pads the missing args — so gate
+          // on the root wrapper's declared-$arity field.
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: [
+              mLocal("local.get"),
+              { op: "any.convert_extern" },
+              { op: "ref.test", typeIdx: rootIdx },
+              {
+                op: "if",
+                blockType: { kind: "val", type: { kind: "i32" } },
+                then: [
+                  mLocal("local.get"),
+                  { op: "any.convert_extern" },
+                  { op: "ref.cast", typeIdx: rootIdx },
+                  { op: "struct.get", typeIdx: rootIdx, fieldIdx: CLOSURE_ARITY_FIELD_IDX },
+                  { op: "i32.const", value: arity },
+                  { op: "i32.le_s" },
+                ],
+                else: [{ op: "i32.const", value: 0 }],
+              },
+            ],
+            else: [{ op: "i32.const", value: 0 }],
+          },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "externref" } },
+            then: [
+              { op: "i32.const", value: arity },
+              { op: "global.set", index: argcGlobalIdx },
+              { op: "local.get", index: 0 },
+              mLocal("local.get"),
+              ...Array.from({ length: arity }, (_, a): Instr => ({ op: "local.get", index: 1 + a })),
+              { op: "call", funcIdx: callFnMethodIdx },
+              mLocal("local.set"),
+              { op: "i32.const", value: -1 },
+              { op: "global.set", index: argcGlobalIdx },
+              mLocal("local.get"),
+            ],
+            else: current,
+          },
+        ];
+      }
     }
 
     // (#2903) ITERATOR fallback arm for the eager Iterator-helper methods
@@ -902,8 +995,8 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     // never fires standalone). Route to the carrier-generic `__vec_push` /
     // `__vec_pop` helpers (reserved at reserve-time; body filled in the finalize
     // vec-export pass).
-    const vecPushIdx = ctx.funcMap.get("__vec_push");
-    const vecPopIdx = ctx.funcMap.get("__vec_pop");
+    const vecPushIdx = resolveVecHostBridgeHelper(ctx, "push");
+    const vecPopIdx = resolveVecHostBridgeHelper(ctx, "pop");
     const wantVecMutArm =
       (ctx.standalone || ctx.wasi) &&
       VEC_MUTATE_METHODS.has(methodName) &&
@@ -1116,12 +1209,9 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
           ...((isReduceForm ? [{ op: "i32.const", value: arity >= 2 ? 1 : 0 }] : []) satisfies Instr[]), // hasInit
           { op: "call", funcIdx: hofFuncIdx },
         ];
+        const arrayHofTargetTest = buildFnctorArrayHofTargetTest(ctx, anyLocalIdx, ctx.vecBaseTypeIdx, objVecTypeIdx);
         current = [
-          { op: "local.get", index: anyLocalIdx },
-          { op: "ref.test", typeIdx: ctx.vecBaseTypeIdx },
-          { op: "local.get", index: anyLocalIdx },
-          { op: "ref.test", typeIdx: objVecTypeIdx },
-          { op: "i32.or" },
+          ...arrayHofTargetTest,
           {
             op: "if",
             blockType: { kind: "val", type: { kind: "externref" } },
@@ -1161,6 +1251,44 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
             else: current,
           },
         ];
+      }
+    }
+
+    // #3507 — helper/object/array carriers erase a native RegExp to externref.
+    // Dispatch `.test(subject)` by the runtime `$NativeRegExp` brand, not by
+    // the first ambient extern class named `test`. User closed-struct methods
+    // are wrapped outside this arm below and therefore retain precedence.
+    let wrapNativeRegExpTest: ((fallback: Instr[]) => Instr[]) | undefined;
+    {
+      const regexpTypeIdx = ctx.structMap.get("__StandaloneRegExp");
+      const regexpTestIdx = ctx.funcMap.get("__regexp_test_carrier");
+      const boxBoolIdx = ctx.funcMap.get("__box_boolean");
+      if (
+        ctx.standalone &&
+        methodName === "test" &&
+        arity === 1 &&
+        regexpTypeIdx !== undefined &&
+        regexpTestIdx !== undefined &&
+        boxBoolIdx !== undefined
+      ) {
+        wrapNativeRegExpTest = (fallback: Instr[]): Instr[] => [
+          { op: "local.get", index: anyLocalIdx },
+          { op: "ref.test", typeIdx: regexpTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "externref" } },
+            then: [
+              { op: "local.get", index: 0 },
+              { op: "local.get", index: 1 },
+              { op: "call", funcIdx: regexpTestIdx },
+              { op: "call", funcIdx: boxBoolIdx },
+            ],
+            else: fallback,
+          },
+        ];
+        if (process.env.JS2WASM_REGEXP_TEST_OUTER_BRAND === "0") {
+          current = wrapNativeRegExpTest(current);
+        }
       }
     }
 
@@ -1225,6 +1353,29 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
         { op: "ref.test", typeIdx: entry.typeIdx },
         { op: "if", blockType: { kind: "val", type: { kind: "externref" } }, then: callAndCoerce, else: current },
       ];
+    }
+
+    // A `$NativeRegExp` is representation-disjoint from every user closed
+    // struct and field-carrier arm wrapped above. Put the same native `test`
+    // brand arm outermost so tokenizer calls do one ref.test before entering
+    // the regex engine instead of walking the generated user-method ladder.
+    // The inner arm remains the fallback under the kill switch and keeps the
+    // construction order of all unrelated dispatchers byte-identical.
+    if (process.env.JS2WASM_REGEXP_TEST_OUTER_BRAND !== "0" && wrapNativeRegExpTest !== undefined) {
+      current = wrapNativeRegExpTest(current);
+    }
+
+    // (#4185) Closure-receiver fast `.call` arm, outermost (see
+    // closure-call-fast.ts) — appends its own scratch local BEFORE the
+    // round-13 patch below computes its slot, so both stay distinct.
+    current = wrapClosureCallFastArm(ctx, methodName, arity, anyLocalIdx, current, locals);
+
+    // (#3673 round 13) Patch the cached-direct-call arm's scratch-local slot
+    // now that the locals array is final.
+    if (mcPatchInstrs.length > 0) {
+      const mResLocal = arity + 1 + locals.length;
+      locals.push({ name: "__mc_m", type: { kind: "externref" } });
+      for (const instr of mcPatchInstrs) (instr as { index: number }).index = mResLocal;
     }
 
     dispFn.locals = locals;

@@ -1,8 +1,7 @@
 ---
 id: 3037
 title: "Object-identity canonicalization substrate for standalone dynamic reads (foundation under #3027 / V2-S3b reader-arm)"
-status: in-progress
-assignee: ttraenkler/fable-identity
+status: ready
 sprint: current
 model: fable
 fable_role: spec

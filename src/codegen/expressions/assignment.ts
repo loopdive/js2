@@ -5,8 +5,10 @@
 import { ts, forEachChild } from "../../ts-api.js";
 import { isBooleanType, isExternalDeclaredClass, isStringType } from "../../checker/type-mapper.js";
 import { integrityVarKey } from "../widened-var-key.js";
+import { PROP_FLAG_ACCESSOR, PROP_FLAG_WRITABLE } from "../object-ops.js";
 import type { FieldDef, Instr, ValType } from "../../ir/types.js";
 import { emitBoundsCheckedArrayGet, resolveArrayInfo } from "../array-methods.js";
+import { emitArraySetLengthValidation } from "../array-length-define.js"; // (#4222) §10.4.2.4 step 3
 import { emitHoleToUndefined } from "../array-holes.js";
 import { tryEmitLinearU8ElementCompound, tryEmitLinearU8ElementSet } from "../linear-uint8-codegen.js";
 import { emitAnyAdd, emitModulo, emitToInt32, emitToUint8Clamp } from "../binary-ops.js";
@@ -34,6 +36,9 @@ import { emitTaDynViewElementSet, emitTaViewElementSet } from "../dataview-nativ
 import { buildDestructureNullThrow, patternIteratorStepCount } from "../destructuring-params.js";
 import { resolveComputedKeyExpression } from "../literals.js";
 import { resolveReceiverStruct } from "../fnctor-escape-gate.js"; // (#2681/#2686 A3) pinned-struct write dispatch
+import { presenceSetInstrs, presenceSlotOf } from "../fnctor-presence-bits.js"; // (#3780) packed own-presence flags
+import { tryEmitFnctorTypedFieldSet } from "../fnctor-typed-reads.js"; // (#4155 Phase 2) struct-typed fnctor receiver
+import { tryEmitTypedThisFieldSet } from "../typed-this.js"; // (#3683 S2) typed-`this` field write
 import { reserveMemberSetDispatch } from "../member-set-dispatch.js"; // (#2681/#2686 A3) pre-check set dispatcher
 import { reserveMemberGetDispatch } from "../member-get-dispatch.js"; // (#2681/#2686) symmetric struct read for compound
 import {
@@ -57,11 +62,18 @@ import { tryCompileFnctorPrototypeAssign } from "./fnctor-prototype.js";
 import { reserveAccessorSetDriver } from "../accessor-driver.js";
 import { S5C_STRUCT_ACCESSOR_CLOSURE } from "../struct-accessor-closure.js";
 import {
+  findUnresolvableInArrayPattern,
+  findUnresolvableInObjectPattern,
+  NOT_UNRESOLVABLE,
+  tryCompileUnresolvableIdentifierAssign,
+} from "./unresolvable-assign.js";
+import {
   arrayIteratorOverrideGlobalIdx,
   emitArrayProtoIteratorDrive,
   maybeCaptureArrayProtoOverride,
 } from "./proto-override.js";
 import {
+  buildThrowJsErrorInstrs,
   classifyPrivateMember,
   emitCoercedLocalSet,
   emitSuperUninitializedThisGuard,
@@ -85,8 +97,15 @@ import { tryCompileStandaloneRegExpLastIndexWrite } from "../regexp-standalone.j
 import { tryCompileStandaloneDetachedWrite } from "../dataview-native.js"; // (#3173) $DETACHBUFFER marker write
 import { externrefBackedOwnFieldBacking, getOrRegisterErrorStructType } from "../registry/error-types.js";
 import { ensureObjectRuntime } from "../object-runtime.js";
+import { compileCoercionRhs } from "../char-at-transfer.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { resolveEffectiveStructName } from "../property-access.js";
+import { emitOverlayRoutedElementSet, overlayRouteActive } from "../typed-lane-overlay-route.js"; // (#4159 S5)
+import {
+  elementAccessTypedArrayName,
+  emitNonIndexVecElementSet,
+  nonArrayIndexNumericKey,
+} from "../array-nonindex-key.js"; // (#4247) §10.4.2.2 named-key routing + the relocated TA-view-name helper
 import {
   compileStringBuilderAppend,
   emitStringBuilderAppendCodeUnit,
@@ -94,33 +113,27 @@ import {
   type StringBuilderInfo,
 } from "../string-builder.js";
 import {
+  captureDynamicWithHasBindings,
   compileWithBindingAssignment,
-  emitCaptureWithHasBinding,
   emitDynamicWithSet,
   resolveWithBinding,
 } from "../with-scope.js";
-import { isStrictFunction } from "../helpers/is-strict-function.js";
+import {
+  emitGlobalEnvironmentKey,
+  emitGlobalEnvironmentObject,
+  ensureGlobalEnvironmentOperation,
+} from "../global-environment.js";
+import { isStrictContext } from "../helpers/is-strict-function.js";
+import { tryCompileStrictFunctionPoisonAssignment } from "../function-poison-pill-access.js";
+import { emitRuntimeEvalAotCallableAdapter } from "../runtime-eval-callable.js";
+import { tryEmitStaticI32Expression } from "../i32-static-range-expr.js";
+import { emitToPropertyKeyOnce } from "./computed-member-reference.js";
 
 /**
  * Emit a null/undefined guard for an externref-typed destructuring source.
  * Throws TypeError if the value in `srcLocal` is null or the JS undefined sentinel.
  * Per spec §14.3.3.1 RequireObjectCoercible / §8.4.2 GetIterator.
  */
-/**
- * (#2593) Recover the typed-array VIEW NAME of an element-assignment receiver
- * (`a[i] = v`) from its TS type, so the write site can special-case
- * `Uint8ClampedArray` (ToUint8Clamp) vs the modulo-truncating integer views.
- * Returns undefined when the receiver is not a recognised typed-array view.
- */
-function elementAccessTypedArrayName(ctx: CodegenContext, receiver: ts.Expression): string | undefined {
-  const t = ctx.checker.getTypeAtLocation(receiver);
-  let name = t.getSymbol()?.name ?? t.aliasSymbol?.name;
-  if ((!name || !TYPED_ARRAY_NAMES.has(name)) && ts.isNewExpression(receiver) && ts.isIdentifier(receiver.expression)) {
-    name = receiver.expression.text;
-  }
-  return name && TYPED_ARRAY_NAMES.has(name) ? name : undefined;
-}
-
 function emitExternrefAssignDestructureGuard(ctx: CodegenContext, fctx: FunctionContext, srcLocal: number): void {
   // ref.is_null check (catches JS null when encoded as ref.null.extern).
   // Build a fresh Instr[] for each if-then: sharing a single array across two
@@ -148,6 +161,41 @@ function emitExternrefAssignDestructureGuard(ctx: CodegenContext, fctx: Function
       else: [],
     });
   }
+}
+
+/**
+ * (#3546) After a local write to a `__module_init` MODULE-BINDING shadow local
+ * (recorded by the top-level closure declaration in
+ * `fctx.moduleBindingShadowLocals`), re-sync the `$__mod_<name>` global so the
+ * reassignment is visible to every OTHER function's read/call (which resolve
+ * through the global, not the shadow). Pre-fix, `let f = () => 1; f = () => 2;`
+ * at module top level updated only the shadow — cross-function `f()` silently
+ * kept the FIRST closure.
+ *
+ * Exact name→index match keeps this inert for genuine function-locals and
+ * block-scoped shadows (they use different local slots). Expects the assigned
+ * value to be ON THE STACK (post-`local.tee`); net stack effect is zero.
+ */
+function emitModuleShadowGlobalSync(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  name: string,
+  localIdx: number,
+  stackType: ValType,
+): void {
+  if (fctx.moduleBindingShadowLocals?.get(name) !== localIdx) return;
+  const moduleIdx = ctx.moduleGlobals.get(name);
+  if (moduleIdx === undefined) return;
+  const globalDef = ctx.mod.globals[localGlobalIdx(ctx, moduleIdx)];
+  const globalType = globalDef?.type;
+  fctx.body.push({ op: "local.get", index: localIdx });
+  if (globalType?.kind === "externref" && (stackType.kind === "ref" || stackType.kind === "ref_null")) {
+    // Box on store — the #3534 invariant: the global stays externref.
+    fctx.body.push({ op: "extern.convert_any" });
+  } else if (globalType && !valTypesMatch(stackType, globalType)) {
+    coerceType(ctx, fctx, stackType, globalType);
+  }
+  fctx.body.push({ op: "global.set", index: moduleIdx });
 }
 
 export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, expr: ts.BinaryExpression): InnerResult {
@@ -193,7 +241,7 @@ export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, ex
       // chain, innermost-first; (2) evaluate the RHS ONCE into an externref temp;
       // (3) cascade-write using the pre-captured i32s, falling to the lexical
       // write when none matched.
-      const captures = captureDynamicWithHasBindings(ctx, fctx, expr.left);
+      const captures = captureDynamicWithHasBindings(ctx, fctx, expr.left.text);
       const rhsType = compileExpression(ctx, fctx, expr.right, { kind: "externref" });
       if (!rhsType) {
         reportError(ctx, expr, "Failed to compile dynamic-with assignment value");
@@ -444,14 +492,17 @@ export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, ex
           updateLocalType(fctx, localIdx, resultType);
           fctx.body.push({ op: "local.tee", index: localIdx });
           emitMappedArgParamSync(ctx, fctx, localIdx, resultType);
+          emitModuleShadowGlobalSync(ctx, fctx, name, localIdx, resultType);
           return resultType;
         }
         fctx.body.push({ op: "local.tee", index: localIdx });
         emitMappedArgParamSync(ctx, fctx, localIdx, effectiveLocalType);
+        emitModuleShadowGlobalSync(ctx, fctx, name, localIdx, effectiveLocalType);
         return effectiveLocalType;
       }
       fctx.body.push({ op: "local.tee", index: localIdx });
       emitMappedArgParamSync(ctx, fctx, localIdx, resultType);
+      emitModuleShadowGlobalSync(ctx, fctx, name, localIdx, resultType);
       return resultType;
     }
     // (#3039) Boxed captured global — write THROUGH the ref cell (struct.set
@@ -516,70 +567,32 @@ export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, ex
       } else if (globalType && !valTypesMatch(resultType, globalType)) {
         coerceType(ctx, fctx, resultType, globalType);
       }
+      const runtimeEvalAotFunctionWrite =
+        ctx.runtimeEvalGlobalFunctionBindings === true &&
+        ctx.liveFuncBindingGlobals?.has(name) === true &&
+        (ts.isFunctionExpression(expr.right) ||
+          ts.isArrowFunction(expr.right) ||
+          (ts.isIdentifier(expr.right) && ctx.funcMap.has(expr.right.text)));
+      if (runtimeEvalAotFunctionWrite) emitRuntimeEvalAotCallableAdapter(ctx, fctx);
       // Re-read index: RHS compilation may shift globals via addStringConstantGlobal
       const moduleIdxPost = ctx.moduleGlobals.get(name)!;
       fctx.body.push({ op: "global.set", index: moduleIdxPost });
       fctx.body.push({ op: "global.get", index: moduleIdxPost });
       return globalType ?? resultType;
     }
-    // §6.2.5.6 PutValue steps 2.b–2.d: assigning to an unresolvable
-    // reference in non-strict code creates/updates a property on the current
-    // realm's global object. The old fallback allocated a function local, so
-    // the assignment itself appeared to work but reflective reads through
-    // globalThis/Object.getOwnPropertyDescriptor could not observe it
-    // (test262 11.13.1-4-1). Keep this host-only: standalone/WASI need a
-    // separate native-global-object write path and must not leak host imports.
-    if (
-      !ctx.standalone &&
-      !ctx.wasi &&
-      !isStrictContext(expr.left, ctx.inferModuleStrictArguments) &&
-      isUnresolvableIdent(ctx, fctx, expr.left)
-    ) {
-      const gtIdx = ensureLateImport(ctx, "__get_globalThis", [], [{ kind: "externref" }]);
-      const setIdx = ensureLateImport(
-        ctx,
-        "__extern_set",
-        [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-        [],
-      );
-      flushLateImportShifts(ctx, fctx);
-
-      if (gtIdx !== undefined && setIdx !== undefined) {
-        // §13.15.2 evaluates the RHS once, PutValue consumes that value, and
-        // the assignment expression then returns the same RHS value. Preserve
-        // its native representation in a temp while boxing only the copy sent
-        // through the host object's [[Set]] bridge.
-        const resultType = compileExpression(ctx, fctx, expr.right);
-        if (!resultType) return null;
-        const resultTmp = allocLocal(fctx, `__implicit_global_rhs_${fctx.locals.length}`, resultType);
-        fctx.body.push({ op: "local.set", index: resultTmp });
-
-        // RHS compilation may have registered additional late imports, so use
-        // the current function indices rather than the pre-RHS snapshots.
-        const finalGtIdx = ctx.funcMap.get("__get_globalThis");
-        if (finalGtIdx === undefined) return null;
-        fctx.body.push({ op: "call", funcIdx: finalGtIdx });
-        addStringConstantGlobal(ctx, name);
-        fctx.body.push(...stringConstantExternrefInstrs(ctx, name));
-        fctx.body.push({ op: "local.get", index: resultTmp });
-        if (resultType.kind !== "externref") {
-          coerceType(ctx, fctx, resultType, { kind: "externref" });
-        }
-        // Boxing may itself register a late import and shift every later
-        // function index; resolve the setter only after that coercion.
-        const finalSetIdx = ctx.funcMap.get("__extern_set");
-        if (finalSetIdx === undefined) return null;
-        fctx.body.push({ op: "call", funcIdx: finalSetIdx });
-        fctx.body.push({ op: "local.get", index: resultTmp });
-        return resultType;
-      }
-    }
+    // §6.2.5.6 PutValue step 6 — sloppy creates a global-object property,
+    // strict throws ReferenceError. Both arms live in `unresolvable-assign.ts`
+    // (#3985): they are one decision sharing one predicate and one carrier, and
+    // splitting them is how the strict half stayed missing.
+    const unresolvable = tryCompileUnresolvableIdentifierAssign(ctx, fctx, expr.left, expr.right);
+    if (unresolvable !== NOT_UNRESOLVABLE) return unresolvable;
 
     // Graceful fallback for other unresolved identifiers: auto-allocate a
     // local so compilation can continue. This handles class/object method
-    // bodies that reference outer-scope variables not yet captured. Strict
-    // unresolvable-reference throws and standalone implicit-global semantics
-    // are tracked separately.
+    // bodies that reference outer-scope variables not yet captured (those
+    // resolve in the TS checker, so `isUnresolvableIdent` is false for them and
+    // the strict arm above does not claim them). Standalone implicit-global
+    // semantics are tracked separately.
     {
       const resultType = compileExpression(ctx, fctx, expr.right);
       if (!resultType) return null;
@@ -618,40 +631,9 @@ export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, ex
  * absent on the inner object cascades to the next-outer `with`, then to the
  * lexical write. When no with-scope resolves, do the plain lexical/global write.
  */
-/**
- * (#2061 fix) Capture `HasBinding(scope, name)` into an i32 temp for EVERY
- * candidate dynamic-`with` scope on the cascade chain, BEFORE the RHS is
- * evaluated (§13.15.2 — the LHS Reference is resolved before the RHS). Returns a
- * Map keyed by the dynamic scope object → its captured i32 local index, which
- * `emitDynamicWithIdentifierWrite` then branches on instead of recomputing
- * HasBinding post-RHS. Walks innermost-first, truncating the matched scope each
- * step (same cascade shape as the write itself).
- */
-function captureDynamicWithHasBindings(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  id: ts.Identifier,
-): Map<object, number> {
-  const out = new Map<object, number>();
-  let scopes = fctx.withScopes;
-  const saved = fctx.withScopes;
-  try {
-    // Walk the cascade: resolve, capture, truncate the matched scope, repeat.
-    while (scopes && scopes.length > 0) {
-      const res = resolveWithBinding(fctx, id.text);
-      if (res?.kind !== "dynamic") break; // static hit / lexical → no more gates
-      out.set(res.scope, emitCaptureWithHasBinding(ctx, fctx, res.scope, id.text));
-      const matchedIdx = scopes.lastIndexOf(res.scope);
-      scopes = scopes.slice(0, matchedIdx);
-      fctx.withScopes = scopes;
-    }
-  } finally {
-    fctx.withScopes = saved;
-  }
-  return out;
-}
-
-function emitDynamicWithIdentifierWrite(
+/** (#2663 Slice 3) `captureDynamicWithHasBindings` moved to `with-scope.ts` so
+ *  the read-modify-write path (`x += v`, `x++`) shares the same capture. */
+export function emitDynamicWithIdentifierWrite(
   ctx: CodegenContext,
   fctx: FunctionContext,
   id: ts.Identifier,
@@ -795,68 +777,43 @@ function emitIdentifierWriteFromLocal(
     return;
   }
 
-  // Undeclared (sloppy implicit global): auto-allocate a local holding the value.
+  // (#4231 RC-F) A name the pre-scan already classified as a property of the
+  // realm's global object (`this.p1 = 1` or a top-level implicit `p1 = 1`,
+  // #3956/#2726) has REAL storage — the global object — and `emitImplicitGlobalRead`
+  // reads it from there. Auto-allocating a local for it below was actively
+  // destructive, and silently so: `allocLocal` registers the name in
+  // `fctx.localMap`, so from that point on EVERY bare read of the name in this
+  // function resolves to the fresh local instead of the global object.
+  //
+  // The `with` cascade is where this bites, because it compiles this fallback as
+  // the HasBinding-MISS arm of a branch that is normally NOT TAKEN:
+  //
+  //   with (o) { p1 = 'x1'; delete p3; }   // o owns p1 ⇒ the else arm never runs
+  //   if (p1 !== 1) …                      // …but reads the else arm's local ⇒ null
+  //
+  // So merely *compiling* an unreachable fallback poisoned every later read.
+  // That is the whole `S12.10_A1.*` family's assertion #1 (`p1 === 1` reading
+  // `null`), and it needs the object write, not a local.
+  if (ctx.sloppyImplicitGlobals?.has(name) && emitGlobalEnvironmentObject(ctx, fctx)) {
+    const setIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__extern_set");
+    if (setIdx !== undefined) {
+      emitGlobalEnvironmentKey(ctx, fctx, name);
+      fctx.body.push({ op: "local.get", index: rhsLocalIdx });
+      fctx.body.push({ op: "call", funcIdx: setIdx });
+      return;
+    }
+    // The global-environment setter is unavailable — drop the receiver we just
+    // pushed and fall through to the auto-local so the write is not lost.
+    fctx.body.push({ op: "drop" });
+  }
+
+  // Genuinely undeclared and not pre-scanned: auto-allocate a local.
   const newLocalIdx = allocLocal(fctx, name, { kind: "externref" });
   fctx.body.push({ op: "local.get", index: rhsLocalIdx });
   fctx.body.push({ op: "local.set", index: newLocalIdx });
 }
 
-/**
- * Detect strict-mode context for a node (§10.2.1).
- * A node is in strict mode if:
- *   - Containing source file starts with `"use strict";` directive.
- *   - Inside a class body (classes are always strict).
- *   - Inside a function whose body begins with `"use strict";`.
- */
-export function isStrictContext(node: ts.Node, inferModuleStrict = true): boolean {
-  let current: ts.Node | undefined = node;
-  while (current) {
-    if (
-      ts.isFunctionDeclaration(current) ||
-      ts.isFunctionExpression(current) ||
-      ts.isArrowFunction(current) ||
-      ts.isMethodDeclaration(current) ||
-      ts.isGetAccessorDeclaration(current) ||
-      ts.isSetAccessorDeclaration(current) ||
-      ts.isConstructorDeclaration(current)
-    ) {
-      return isStrictFunction(current, inferModuleStrict);
-    }
-    if (ts.isSourceFile(current)) {
-      for (const stmt of current.statements) {
-        if (ts.isExpressionStatement(stmt) && ts.isStringLiteral(stmt.expression)) {
-          if (stmt.expression.text === "use strict") return true;
-        } else {
-          break;
-        }
-      }
-      const internal = current as ts.SourceFile & { externalModuleIndicator?: ts.Node };
-      return (
-        inferModuleStrict &&
-        (internal.externalModuleIndicator !== undefined || current.impliedNodeFormat === ts.ModuleKind.ESNext)
-      );
-    }
-    if (ts.isClassDeclaration(current) || ts.isClassExpression(current)) return true;
-    if (
-      ts.isFunctionDeclaration(current) ||
-      ts.isFunctionExpression(current) ||
-      ts.isArrowFunction(current) ||
-      ts.isMethodDeclaration(current)
-    ) {
-      if (current.body && ts.isBlock(current.body)) {
-        for (const stmt of current.body.statements) {
-          if (ts.isExpressionStatement(stmt) && ts.isStringLiteral(stmt.expression)) {
-            if (stmt.expression.text === "use strict") return true;
-          } else {
-            break;
-          }
-        }
-      }
-    }
-    current = current.parent;
-  }
-  return false;
-}
+export { isStrictContext } from "../helpers/is-strict-function.js";
 
 /** True when this binding is the receiver of a static Object.defineProperty call. */
 function sourceDefinesProperty(ctx: CodegenContext, receiver: ts.Identifier, propName: string): boolean {
@@ -921,93 +878,6 @@ function objectLiteralInitializerHasProperty(ctx: CodegenContext, receiver: ts.I
     }
     return ts.isComputedPropertyName(name) && resolveComputedKeyExpression(ctx, name.expression) === propName;
   });
-}
-
-/**
- * True if `id` is an identifier that cannot be resolved to any binding the
- * compiler knows about. Mirrors the check in identifiers.ts:393 for reads
- * but also excludes bindings that only exist in the codegen (locals, captures,
- * globals, func imports).
- */
-export function isUnresolvableIdent(ctx: CodegenContext, fctx: FunctionContext, id: ts.Identifier): boolean {
-  const name = id.text;
-  if (fctx.localMap.has(name)) return false;
-  if (fctx.boxedCaptures?.has(name)) return false;
-  if (ctx.capturedGlobals.has(name)) return false;
-  if (ctx.moduleGlobals.has(name)) return false;
-  if (ctx.funcMap.has(name)) return false;
-  // For shorthand property assignments `{x}` the checker returns the synthetic
-  // property symbol (SymbolFlags.Property = 4) even when `x` has no value
-  // binding in scope. The real value lookup is via getShorthandAssignmentValueSymbol.
-  if (id.parent && ts.isShorthandPropertyAssignment(id.parent) && id.parent.name === id) {
-    const valSym = (
-      ctx.checker as unknown as {
-        getShorthandAssignmentValueSymbol?: (n: ts.Node) => ts.Symbol | undefined;
-      }
-    ).getShorthandAssignmentValueSymbol?.(id.parent);
-    return !valSym;
-  }
-  const sym = ctx.checker.getSymbolAtLocation(id);
-  if (!sym) return true;
-  const decls = sym.declarations;
-  if (!decls || decls.length === 0) return true;
-  for (const d of decls) {
-    if (d !== id) return false;
-  }
-  return true;
-}
-
-export function findUnresolvableInObjectPattern(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  target: ts.ObjectLiteralExpression,
-): boolean {
-  for (const prop of target.properties) {
-    if (ts.isShorthandPropertyAssignment(prop)) {
-      if (isUnresolvableIdent(ctx, fctx, prop.name)) return true;
-    } else if (ts.isPropertyAssignment(prop)) {
-      let targetExpr = prop.initializer;
-      if (ts.isBinaryExpression(targetExpr) && targetExpr.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-        targetExpr = targetExpr.left;
-      }
-      if (ts.isIdentifier(targetExpr) && isUnresolvableIdent(ctx, fctx, targetExpr)) return true;
-      if (ts.isObjectLiteralExpression(targetExpr) && findUnresolvableInObjectPattern(ctx, fctx, targetExpr))
-        return true;
-      if (ts.isArrayLiteralExpression(targetExpr) && findUnresolvableInArrayPattern(ctx, fctx, targetExpr)) return true;
-    } else if (ts.isSpreadAssignment(prop)) {
-      if (ts.isIdentifier(prop.expression) && isUnresolvableIdent(ctx, fctx, prop.expression)) return true;
-    }
-  }
-  return false;
-}
-
-export function findUnresolvableInArrayPattern(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  target: ts.ArrayLiteralExpression,
-): boolean {
-  for (const element of target.elements) {
-    if (ts.isOmittedExpression(element)) continue;
-    if (ts.isIdentifier(element) && isUnresolvableIdent(ctx, fctx, element)) return true;
-    if (
-      ts.isSpreadElement(element) &&
-      ts.isIdentifier(element.expression) &&
-      isUnresolvableIdent(ctx, fctx, element.expression)
-    ) {
-      return true;
-    }
-    if (
-      ts.isBinaryExpression(element) &&
-      element.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isIdentifier(element.left) &&
-      isUnresolvableIdent(ctx, fctx, element.left)
-    ) {
-      return true;
-    }
-    if (ts.isArrayLiteralExpression(element) && findUnresolvableInArrayPattern(ctx, fctx, element)) return true;
-    if (ts.isObjectLiteralExpression(element) && findUnresolvableInObjectPattern(ctx, fctx, element)) return true;
-  }
-  return false;
 }
 
 /**
@@ -3370,6 +3240,24 @@ function tryEmitPinnedStructMemberSet(
 
   // Evaluate the receiver (reference before value), coerce to externref.
   const objResult = compileExpression(ctx, fctx, target.expression);
+  // (#2660 S3b) A receiver whose COMPILED ValType is already the pinned
+  // `$__fnctor_<F>` struct (a retyped binding) skips the box + `ref.test`
+  // dispatcher round-trip: one `struct.set` (+ presence bit when tracked).
+  // Same hook as `compilePropertyAssignmentExternSet`; declines fall through
+  // byte-identically (the reserve above is idempotent and shared).
+  {
+    const fnctorTypedSet = tryEmitFnctorTypedFieldSet(
+      ctx,
+      fctx,
+      target,
+      propName,
+      objResult,
+      value,
+      () => typeErrorThrowInstrs(ctx, target),
+      (valType) => ensureI32Condition(fctx, valType, ctx),
+    );
+    if (fnctorTypedSet !== undefined) return fnctorTypedSet;
+  }
   if (objResult && objResult.kind !== "externref") {
     coerceType(ctx, fctx, objResult, { kind: "externref" });
   } else if (!objResult) {
@@ -3380,7 +3268,15 @@ function tryEmitPinnedStructMemberSet(
 
   // Evaluate the value, coerce/box to externref.
   const valResult = compileExpression(ctx, fctx, value);
-  if (valResult && valResult.kind !== "externref") {
+  if (valResult && ctx.booleanPropertyNames.has(propName)) {
+    // #2847: a dynamic method bridge may already have boxed an untyped
+    // boolean-returning closure as numeric externref 0/1. The whole-program
+    // property analysis proves this write is boolean, so normalize through
+    // ToBoolean and re-box with the boolean brand before it reaches the
+    // member-set dispatcher/sidecar.
+    ensureI32Condition(fctx, valResult, ctx);
+    coerceType(ctx, fctx, { kind: "i32", boolean: true }, { kind: "externref" });
+  } else if (valResult && valResult.kind !== "externref") {
     coerceType(ctx, fctx, valResult, { kind: "externref" });
   } else if (!valResult) {
     fctx.body.push({ op: "ref.null.extern" });
@@ -3397,6 +3293,97 @@ function tryEmitPinnedStructMemberSet(
   return { kind: "externref" };
 }
 
+/**
+ * (#4154) `o.#x = v` where the receiver is statically an `externref` — emit the
+ * §7.3.28 PrivateBrandCheck as a real branch instead of letting the call-arg
+ * repair pass narrow the receiver with an unguarded `ref.cast_null`.
+ *
+ * The receiver externref is expected on the stack top (the caller has just
+ * compiled `target.expression`); it is popped into a temp so the value can be
+ * evaluated on a clean stack.
+ *
+ * Evaluation order follows §13.15.2 + §6.2.5.6: base first, then the RHS, and
+ * only then PutValue → PrivateSet, which is where the brand check throws. So a
+ * side-effecting RHS still runs before the TypeError, exactly as in a real
+ * engine.
+ *
+ * Emits:
+ * ```wat
+ *   local.set  $recv                     ;; receiver, externref
+ *   <value>                              ;; coerced to the setter's value param
+ *   local.set  $val
+ *   local.get  $recv
+ *   any.convert_extern
+ *   ref.test   $Class                    ;; the brand check
+ *   (if
+ *     (then local.get $recv; any.convert_extern; ref.cast_null $Class
+ *           local.get $val; call $Class_set_x)
+ *     (else <throw TypeError>))
+ *   local.get  $val                      ;; `=` evaluates to the RHS
+ * ```
+ */
+function compilePrivateSetterWithBrandCheck(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  spec: {
+    value: ts.Expression;
+    setterName: string;
+    funcIdx: number;
+    setterParamTypes: ValType[] | undefined;
+    brandTypeIdx: number;
+    privateName: string;
+  },
+): ValType | null {
+  const { value, setterName, funcIdx, setterParamTypes, brandTypeIdx, privateName } = spec;
+  const recvTmp = allocTempLocal(fctx, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: recvTmp });
+
+  const valResult = compileExpression(ctx, fctx, value, setterParamTypes?.[1]);
+  if (!valResult) {
+    releaseTempLocal(fctx, recvTmp);
+    return null;
+  }
+  const tmpVal = allocLocal(fctx, `__priv_setter_assign_${fctx.locals.length}`, valResult);
+  fctx.body.push({ op: "local.set", index: tmpVal });
+
+  // The throw arm is built BEFORE `finalSetterIdx` is read: it can add a late
+  // `__new_TypeError` import, which shifts every defined function's index.
+  // `buildThrowJsErrorInstrs` self-flushes the already-emitted body against
+  // that shift, so reading funcMap afterwards yields the relocated index.
+  const throwInstrs = buildThrowJsErrorInstrs(
+    ctx,
+    "TypeError",
+    `Cannot write private member #${privateName} to an object whose class did not declare it`,
+    { flush: fctx },
+  );
+  const finalSetterIdx = ctx.funcMap.get(setterName) ?? funcIdx;
+
+  const callArm: Instr[] = [
+    { op: "local.get", index: recvTmp },
+    { op: "any.convert_extern" },
+    { op: "ref.cast_null", typeIdx: brandTypeIdx },
+  ];
+  // Setter declaring only the self param takes no value argument.
+  if (setterParamTypes && setterParamTypes.length > 1) {
+    callArm.push({ op: "local.get", index: tmpVal });
+  }
+  callArm.push({ op: "call", funcIdx: finalSetterIdx });
+
+  fctx.body.push({ op: "local.get", index: recvTmp });
+  fctx.body.push({ op: "any.convert_extern" });
+  fctx.body.push({ op: "ref.test", typeIdx: brandTypeIdx });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: callArm,
+    else: throwInstrs, // terminal throw — stack-polymorphic, validates as void
+  });
+  // `=` evaluates to the RHS, not the setter's return.
+  fctx.body.push({ op: "local.get", index: tmpVal });
+  releaseTempLocal(fctx, recvTmp);
+  return valResult;
+}
+
 function compilePropertyAssignment(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -3404,6 +3391,27 @@ function compilePropertyAssignment(
   value: ts.Expression,
 ): InnerResult {
   const objType = ctx.checker.getTypeAtLocation(target.expression);
+
+  const poisonResult = tryCompileStrictFunctionPoisonAssignment(ctx, fctx, target, value);
+  if (poisonResult !== undefined) return poisonResult;
+
+  // (#3872) Non-writable DATA property — `defineProperty(o,"p",{writable:false})`
+  // then `o.p = v`. Sits at the TOP, before any lowering-path selection, because
+  // §10.1.9.2 OrdinarySetWithOwnDescriptor step 2.b decides the write FAILS
+  // regardless of which backend would have performed it. Placing it lower (next
+  // to the frozen consult) fixed only the host lane: the standalone lowering
+  // returns through an earlier branch and never reached it.
+  //
+  // This must be a COMPILE-TIME throw, not a runtime one. The standalone
+  // `__extern_set_strict` is deliberately aliased to the non-throwing native
+  // `__extern_set` (object-runtime.ts, #2017) because the native runtime has no
+  // TypeError bridge — so the runtime path can suppress the store but can never
+  // raise. Emitting the throw here is what gives standalone the strict-mode
+  // TypeError without building that bridge.
+  if (!ts.isPrivateIdentifier(target.name)) {
+    const nonWritable = tryEmitNonWritablePropertyWrite(ctx, fctx, target, value, target.name.text);
+    if (nonWritable !== undefined) return nonWritable;
+  }
 
   // (#2660 S2) `F.prototype = rhs` whole-reassign on a user function constructor
   // (standalone): store `rhs` (built as a native `$Object` when a plain literal)
@@ -3502,6 +3510,37 @@ function compilePropertyAssignment(
         // is a no-op when the types already match, so the gc/host lane (whose
         // receiver is already the struct ref) stays byte-identical.
         const selfParamType = setterParamTypes?.[0];
+        // (#4154) §7.3.28 PrivateBrandCheck. When the receiver is statically an
+        // `externref` but the setter declares `(ref null $Class)`, SOMETHING has
+        // to narrow it. Left alone, nothing here does — and the generic call-arg
+        // repair in `fixCallArgTypesInBody` (stack-balance.ts) splices a bare
+        // `any.convert_extern; ref.cast_null $Class` in front of the call. On a
+        // receiver that does not carry the brand that is an UNCATCHABLE
+        // `illegal cast` trap, where the spec requires a catchable TypeError —
+        // so `assert.throws(TypeError, …)` cannot even run. Emit the narrowing
+        // ourselves, guarded by `ref.test` on the same type the cast would use
+        // (identical subtype relation, so every receiver the cast accepted still
+        // takes the call path), and throw on the miss.
+        //
+        // `ref.test` is false for null, which is also correct: PutValue on a
+        // Private Reference does `ToObject(base)` first, and `ToObject(null)`
+        // throws TypeError too.
+        const brandTypeIdx =
+          selfParamType &&
+          (selfParamType.kind === "ref" || selfParamType.kind === "ref_null") &&
+          (recvResult.kind === "externref" || recvResult.kind === "ref_extern")
+            ? selfParamType.typeIdx
+            : undefined;
+        if (brandTypeIdx !== undefined) {
+          return compilePrivateSetterWithBrandCheck(ctx, fctx, {
+            value,
+            setterName,
+            funcIdx,
+            setterParamTypes,
+            brandTypeIdx,
+            privateName: target.name.text,
+          });
+        }
         if (
           (ctx.standalone || ctx.wasi) &&
           selfParamType &&
@@ -3602,7 +3641,7 @@ function compilePropertyAssignment(
     return { kind: "f64" }; // unreachable, but need a type
   }
 
-  // Handle static property assignment: ClassName.staticProp = value
+  // Handle declared and dynamically-added static properties on a class value.
   if (ts.isIdentifier(target.expression) && ctx.classSet.has(target.expression.text)) {
     const clsName = target.expression.text;
     const propName = ts.isPrivateIdentifier(target.name) ? "__priv_" + target.name.text.slice(1) : target.name.text;
@@ -3619,8 +3658,8 @@ function compilePropertyAssignment(
       fctx.body.push({ op: "local.get", index: tmpVal });
       return valType;
     }
+    return compilePropertyAssignmentExternSet(ctx, fctx, target, value, propName, true);
   }
-
   // #1697: `this.X = v` / `this.#X = v` inside a static method body —
   // mirror the read path's ThisKeyword+staticContext arm in
   // property-access.ts:1427. Without this, the LHS is `this` (not an
@@ -3657,6 +3696,28 @@ function compilePropertyAssignment(
         return valType;
       }
     }
+  }
+
+  // (#3496) `globalThis.<name> = value` is always a write to the realm's
+  // intrinsic global object, never a field write on a compiler-generated
+  // structural type. A bare `globalThis` captured in an object literal (the
+  // standard `$262 = { global: globalThis }` harness shape) makes TypeScript's
+  // enormous `typeof globalThis` type reachable and therefore registerable as
+  // a Wasm struct. Letting the generic resolution below see that struct makes
+  // later global-property writes cast the native standalone `$Object`
+  // singleton to the unrelated structural type; the guarded cast yields null
+  // and module initialization throws before the property can be installed.
+  //
+  // Mirror the dedicated `globalThis` read path: keep the receiver on its
+  // externref/native-object representation regardless of which structural
+  // types happen to have been registered elsewhere in the program. The
+  // ordinary runtime setter preserves strictness and remains dual-mode for
+  // host/GC versus standalone/WASI.
+  if (ts.isIdentifier(target.expression) && target.expression.text === "globalThis") {
+    const propName = ts.isPrivateIdentifier(target.name) ? `__priv_${target.name.text.slice(1)}` : target.name.text;
+    const wrapRuntimeEvalCallable =
+      ctx.runtimeEvalCallableBoundaryEnabled === true && isStaticallyCallableExpression(ctx, value);
+    return compilePropertyAssignmentExternSet(ctx, fctx, target, value, propName, false, wrapRuntimeEvalCallable);
   }
 
   // Handle externref property set
@@ -3716,10 +3777,9 @@ function compilePropertyAssignment(
       // Convert f64 to i32 if needed
       const newLenTmp = allocLocal(fctx, `__arr_len_set_nl_${fctx.locals.length}`, { kind: "i32" });
       if (valType.kind === "f64") {
-        // Saturating truncation: NaN/Infinity/out-of-range lengths clamp
-        // instead of trapping the module. Matches every other length
-        // conversion in this file (#1834).
-        fctx.body.push({ op: "i32.trunc_sat_f64_s" as any });
+        // (#4222) §10.4.2.4 ArraySetLength step 3 — RangeError, not a clamp;
+        // body in array-length-define.ts, which owns the defineProperty forms.
+        emitArraySetLengthValidation(ctx, fctx);
       }
       fctx.body.push({ op: "local.set", index: newLenTmp });
       // Set vec.length = newLen
@@ -3747,6 +3807,14 @@ function compilePropertyAssignment(
   // a struct instance hits the slot on BOTH sides and a genuine proxy hits the
   // sidecar on BOTH sides — consistent either way. Runs BEFORE the delete-aware
   // write so it wins for pinned receivers.
+  // (#3683 S2 branch b) TYPED-`this` field WRITE inside a twin — the pinned
+  // dispatcher's `$__fnctor_F` arm inlined against the twin prologue's
+  // already-cast local. Runs first; declines fall through unchanged.
+  {
+    const typedSet = tryEmitTypedThisFieldSet(ctx, fctx, target, value, ensureI32Condition);
+    if (typedSet !== undefined) return typedSet;
+  }
+
   {
     const pinnedThis =
       target.expression.kind === ts.SyntaxKind.ThisKeyword && fctx.thisStructName !== undefined
@@ -3915,7 +3983,29 @@ function compilePropertyAssignment(
   if (structTypeIdx === undefined || !fields) return null;
 
   const fieldIdx = fields.findIndex((f) => f.name === fieldName);
-  if (fieldIdx === -1) return null;
+  if (fieldIdx === -1) {
+    // (#4149) The receiver resolved to a KNOWN struct shape that provably lacks
+    // this own field — a post-hoc property ADD (`var e = {}; e.f = fn`). The old
+    // `return null` here made the whole assignment vanish: the caller's fallback
+    // evaluated the RHS for side effects and dropped it, so nothing was ever
+    // stored and every later dynamic read (`__extern_get` through an alias of
+    // the same object) answered null. That is exactly the CommonJS/UMD wrapper
+    // shape (`exports.parse = …` then `m.exports.parse(...)` — acorn defect #6).
+    // Route the write through the dynamic sidecar instead, the same terminal the
+    // unresolved-shape branch above uses: on standalone an empty-literal object
+    // is a native `$Object`, so `__extern_set` stores and the aliased
+    // `__extern_get` read finds it; on gc/host the host sidecar does the same.
+    //
+    // Landing this write is what lets a class body whose field was never
+    // declared (`set #m(v) { this._v = v; }` — `_v` has no declaration) actually
+    // store. Two test262 brand-check tests consequently run PAST their first
+    // assert and reach a pre-existing latent `illegal cast` on the subsequent
+    // foreign-receiver private access; that is a reclassification of an
+    // already-failing test, declared under `trap-growth-allow` in
+    // plan/issues/4149-*.md and tracked for a real fix in #4154.
+    return compilePropertyAssignmentExternSet(ctx, fctx, target, value, fieldName);
+  }
+  const presenceSlot = presenceSlotOf(fields, fieldName);
 
   const structSelfType: ValType = { kind: "ref_null", typeIdx: structTypeIdx };
   const structObjResult = compileExpression(ctx, fctx, target.expression, structSelfType);
@@ -3932,10 +4022,9 @@ function compilePropertyAssignment(
   // `new Foo()`, `this`) — no trap is possible there and the check is dead
   // weight. Mirrors the array-element write guard below (`isProvablyNonNull`).
   const guardNull = structObjResult.kind === "ref_null" && !isProvablyNonNull(target.expression, ctx.checker);
-  const valType = compileExpression(ctx, fctx, value, fields[fieldIdx]!.type);
-  if (!valType) return null;
-  // Save value so the assignment expression returns the RHS.
-  const tmpVal = allocLocal(fctx, `__prop_assign_${fctx.locals.length}`, valType);
+  const trackedValue = compileCoercionRhs(ctx, fctx, value, fields[fieldIdx]!.type, typeName, fieldName);
+  if (!trackedValue) return null;
+  const [valType, tmpVal] = trackedValue;
   if (guardNull) {
     // stack: [receiver, value] — stash value, then null-check the receiver.
     fctx.body.push({ op: "local.set", index: tmpVal });
@@ -3950,8 +4039,19 @@ function compilePropertyAssignment(
         { op: "local.get", index: tmpRecv },
         { op: "local.get", index: tmpVal },
         { op: "struct.set", typeIdx: structTypeIdx, fieldIdx },
+        ...(presenceSlot ? presenceSetInstrs(structTypeIdx, presenceSlot, tmpRecv) : []),
       ],
     });
+  } else if (presenceSlot) {
+    // Preserve the receiver as well as the RHS so the hidden presence slot can
+    // be marked after the real field write.
+    fctx.body.push({ op: "local.set", index: tmpVal });
+    const tmpRecv = allocLocal(fctx, `__prop_recv_${fctx.locals.length}`, structSelfType);
+    fctx.body.push({ op: "local.set", index: tmpRecv });
+    fctx.body.push({ op: "local.get", index: tmpRecv });
+    fctx.body.push({ op: "local.get", index: tmpVal });
+    fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx });
+    for (const instr of presenceSetInstrs(structTypeIdx, presenceSlot, tmpRecv)) fctx.body.push(instr);
   } else {
     fctx.body.push({ op: "local.tee", index: tmpVal });
     fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx });
@@ -3959,6 +4059,19 @@ function compilePropertyAssignment(
   fctx.body.push({ op: "local.get", index: tmpVal });
 
   return valType;
+}
+
+/** Conservative proof used only for the linked runtime-eval global seam. */
+function isStaticallyCallableExpression(ctx: CodegenContext, value: ts.Expression): boolean {
+  const expr = skipTransparentExpressions(value);
+  if (
+    ts.isFunctionExpression(expr) ||
+    ts.isArrowFunction(expr) ||
+    (ts.isIdentifier(expr) && (ctx.funcMap.has(expr.text) || ctx.topLevelFunctionNames.has(expr.text)))
+  ) {
+    return true;
+  }
+  return ctx.oracle.signatureOf(expr) !== undefined;
 }
 
 /**
@@ -3974,10 +4087,30 @@ function compilePropertyAssignmentExternSet(
   value: ts.Expression,
   propName: string,
   forceRuntimeSet = false,
+  wrapRuntimeEvalCallable = false,
 ): InnerResult {
   // Compile object expression and convert to externref
   const objResult = compileExpression(ctx, fctx, target.expression);
   if (!objResult) return null;
+  // (#4155 Phase 2) Struct-typed receiver + own mutable data slot → one
+  // `struct.set` instead of the externref hop + `__extern_set` ladder. Never
+  // when a runtime accessor descriptor forced this path (`forceRuntimeSet`) or
+  // the runtime-eval callable wrap is needed — those must stay dynamic.
+  // Flag-gated (declines are byte-identical); flag-independent census under
+  // JS2WASM_FNCTOR_TYPED_READS_DEBUG.
+  if (!forceRuntimeSet && !wrapRuntimeEvalCallable) {
+    const fnctorTypedSet = tryEmitFnctorTypedFieldSet(
+      ctx,
+      fctx,
+      target,
+      propName,
+      objResult,
+      value,
+      () => typeErrorThrowInstrs(ctx, target),
+      (valType) => ensureI32Condition(fctx, valType, ctx),
+    );
+    if (fnctorTypedSet !== undefined) return fnctorTypedSet;
+  }
   if (objResult.kind === "externref") {
     // already externref
   } else if (objResult.kind === "ref" || objResult.kind === "ref_null") {
@@ -3995,8 +4128,21 @@ function compilePropertyAssignmentExternSet(
   // Compile value as externref and save
   const valResult = compileExpression(ctx, fctx, value);
   if (!valResult) return null;
-  if (valResult.kind !== "externref") {
+  if (ctx.booleanPropertyNames.has(propName)) {
+    ensureI32Condition(fctx, valResult, ctx);
+    coerceType(ctx, fctx, { kind: "i32", boolean: true }, { kind: "externref" });
+  } else if (valResult.kind !== "externref") {
     coerceType(ctx, fctx, valResult, { kind: "externref" });
+  }
+  let assignmentResultLocal: number | undefined;
+  if (wrapRuntimeEvalCallable) {
+    // PutValue returns the ORIGINAL RHS, not the internal adapter stored on the
+    // realm object. Preserve identity for `(globalThis.f = f) === f`.
+    assignmentResultLocal = allocLocal(fctx, `__runtime_eval_aot_rhs_${fctx.locals.length}`, {
+      kind: "externref",
+    });
+    fctx.body.push({ op: "local.tee", index: assignmentResultLocal });
+    emitRuntimeEvalAotCallableAdapter(ctx, fctx);
   }
   const valLocal = allocLocal(fctx, `__paset_val_${fctx.locals.length}`, { kind: "externref" });
   fctx.body.push({ op: "local.set", index: valLocal });
@@ -4043,7 +4189,7 @@ function compilePropertyAssignmentExternSet(
   }
 
   // Return the assigned value
-  fctx.body.push({ op: "local.get", index: valLocal });
+  fctx.body.push({ op: "local.get", index: assignmentResultLocal ?? valLocal });
   return { kind: "externref" };
 }
 
@@ -4148,12 +4294,133 @@ function emitSetterCallWithDummy(
   return valResult;
 }
 
+/**
+ * (#3872) Write to a non-writable DATA property recorded by `Object.defineProperty`.
+ *
+ * `ctx.definedPropertyFlags` is the compile-time mirror of the descriptor
+ * attributes, keyed `<integrityVarKey>:<propName>` and carrying
+ * `PROP_FLAG_WRITABLE`. `Object.defineProperty` writes it; until now nothing on
+ * the assignment path read it, so `defineProperty(o,"p",{writable:false});
+ * o.p = 20` neither threw nor (on host) left the value alone.
+ *
+ * Measured lane asymmetry that shapes this fix — standalone already suppresses
+ * the store (`o.p` stays 10) and only omits the strict-mode TypeError, while
+ * host lets the write land (`o.p` becomes 20). Emitting the compile-away branch
+ * here covers both: the throw standalone was missing, and the suppression host
+ * was missing, without duplicating the suppression standalone already performs
+ * (this returns before any store is emitted).
+ *
+ * Deliberately narrow — only fires for a statically-recorded, non-accessor,
+ * non-writable data property on an identifier receiver. Anything the
+ * compile-time mirror cannot see falls through to the ordinary path, which for
+ * dynamic receivers already consults the runtime `FLAG_WRITABLE` companion
+ * table via `__extern_set`.
+ */
+export function isNonWritableDataProperty(ctx: CodegenContext, receiver: ts.Expression, propName: string): boolean {
+  if (!ts.isIdentifier(receiver)) return false;
+  const key = `${integrityVarKey(ctx, receiver)}:${propName}`;
+
+  // (#3872) ONLY an EXPLICIT `writable: false` counts. Both lowering arms of
+  // `Object.defineProperty` record into this set; nothing else is consulted.
+  //
+  // In particular `definedPropertyFlags` must NOT be used here. That map is
+  // approximate about writability: `applyDescriptorFlags` starts from
+  // `PROP_FLAG_DEFINED` and leaves the WRITABLE bit clear when the descriptor
+  // OMITS `writable` — correct for a fresh define (omitted attributes default
+  // to false) but wrong for a REDEFINE, where omitted means "keep existing".
+  // Its historical consumers (gOPD reporting, redefine validation) tolerated
+  // that; making it decide whether a WRITE is legal did not.
+  //
+  // Measured cost of getting this wrong: 27 deterministic test262 regressions,
+  // e.g. `mapped-arguments-nonconfigurable-4.js`, which does
+  // `Object.defineProperty(arguments,"0",{configurable:false})` — never
+  // mentioning `writable` — and then expects `arguments[0] = 2` to LAND.
+  return ctx.nonWritableExternKeys.has(key);
+}
+
+function tryEmitNonWritablePropertyWrite(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  target: ts.PropertyAccessExpression,
+  value: ts.Expression,
+  propName: string,
+): InnerResult | undefined {
+  if (!isNonWritableDataProperty(ctx, target.expression, propName)) return undefined;
+
+  // §13.15.2: the RHS is evaluated before Set is attempted, so its side effects
+  // must still happen even though the store never lands.
+  const rhsType = compileExpression(ctx, fctx, value);
+  if (rhsType === null) return null;
+
+  if (isStrictContext(target, ctx.inferModuleStrictArguments)) {
+    fctx.body.push({ op: "drop" });
+    emitThrowTypeError(ctx, fctx, `Cannot assign to read only property '${propName}' of object`);
+    return rhsType;
+  }
+
+  // Sloppy mode: the write silently does not happen; the expression yields the RHS.
+  return rhsType;
+}
+
+/**
+ * (#3420) Element write to a frozen receiver — `Object.freeze(a); a[i] = v`.
+ *
+ * The two pre-existing `frozenVars` consults (`emitAssignToTarget` and the
+ * property-assign path) both test `ts.isPropertyAccessExpression`, so they only
+ * ever covered `o.x = v`. `ElementAccessExpression` never consulted the frozen
+ * bit at all: the write fell straight through to the vec store, which stored
+ * anyway (and grew the backing array for an index past the end).
+ *
+ * The originally filed symptom was an uncatchable `oob` trap; that is gone (the
+ * #2744 integrity substrate plus #3742/#3750 landed since). The defect measured
+ * on current main is a SILENT successful write, which is strictly worse than a
+ * trap — `assert.throws(TypeError, …)` sees no throw and no wrong value either.
+ *
+ * Returns `undefined` when the receiver is not statically known to be frozen,
+ * so the caller falls through to the ordinary store path untouched.
+ */
+function tryEmitFrozenElementWriteNoOp(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  target: ts.ElementAccessExpression,
+  value: ts.Expression,
+): InnerResult | undefined {
+  if (!ts.isIdentifier(target.expression)) return undefined;
+  if (!ctx.frozenVars.has(integrityVarKey(ctx, target.expression))) return undefined;
+
+  // Spec evaluation order (§13.15.2): the MemberExpression and its key are
+  // evaluated, then the RHS, and only THEN does Set fail. Emit the key and the
+  // RHS for their side effects (`a[f()] = g()` must still call both) and drop
+  // the key; the RHS value stays as the assignment expression's result.
+  const keyType = compileExpression(ctx, fctx, target.argumentExpression);
+  if (keyType !== null) {
+    fctx.body.push({ op: "drop" });
+  }
+
+  const rhsType = compileExpression(ctx, fctx, value);
+  if (rhsType === null) return null;
+
+  if (isStrictContext(target, ctx.inferModuleStrictArguments)) {
+    fctx.body.push({ op: "drop" });
+    emitThrowTypeError(ctx, fctx, "Cannot assign to read only property of frozen object");
+    // Unreachable after the throw, but the assignment expression still needs a
+    // type for the surrounding expression stack.
+    return rhsType;
+  }
+
+  // Sloppy mode: the write silently does not happen; `a[i] = v` evaluates to v.
+  return rhsType;
+}
+
 function compileElementAssignment(
   ctx: CodegenContext,
   fctx: FunctionContext,
   target: ts.ElementAccessExpression,
   value: ts.Expression,
 ): InnerResult {
+  const poisonResult = tryCompileStrictFunctionPoisonAssignment(ctx, fctx, target, value);
+  if (poisonResult !== undefined) return poisonResult;
+
   // (#2709) `super[super()] = value` PutValue: SuperProperty reference resolution
   // runs GetThisBinding() FIRST (§13.3.7.1 step 2), throwing ReferenceError before
   // the inner super() (in the key) or the RHS is evaluated. Emit that throw here,
@@ -4165,6 +4432,39 @@ function compileElementAssignment(
     emitSuperUninitializedThisGuard(ctx, fctx, target.argumentExpression)
   ) {
     return VOID_RESULT;
+  }
+
+  // (#3420) Frozen receiver: `a[i] = v` where `a` was passed to Object.freeze.
+  // Per §10.4.2.1 / OrdinarySet EVERY element write on a frozen object fails —
+  // its own data properties are non-writable AND it is non-extensible, so
+  // neither an existing index nor a fresh one may be set. Sloppy mode fails
+  // silently; strict mode throws a catchable TypeError.
+  const frozenNoOp = tryEmitFrozenElementWriteNoOp(ctx, fctx, target, value);
+  if (frozenNoOp !== undefined) return frozenNoOp;
+
+  // (#3872) COMPUTED write to a non-writable data property — `o[k] = v` where
+  // the key resolves statically. This is the third assignment form the issue
+  // names (dot / computed / compound); the dot and compound arms live in
+  // `compilePropertyAssignment` and `compilePropertyCompoundAssignment`.
+  //
+  // Host already handled this through the runtime `__extern_set_strict` consult
+  // of `FLAG_WRITABLE`; standalone did NOT, because its `__extern_set_strict` is
+  // deliberately aliased to the non-throwing native `__extern_set` (#2017) — no
+  // TypeError bridge. So the throw has to be emitted at compile time here too.
+  if (ts.isIdentifier(target.expression)) {
+    const key = resolveComputedKeyExpression(ctx, target.argumentExpression);
+    if (key !== undefined && isNonWritableDataProperty(ctx, target.expression, key)) {
+      // §13.15.2 order: key and RHS still evaluate, then the Set fails.
+      const keyType = compileExpression(ctx, fctx, target.argumentExpression);
+      if (keyType !== null) fctx.body.push({ op: "drop" });
+      const rhsType = compileExpression(ctx, fctx, value);
+      if (rhsType === null) return null;
+      if (isStrictContext(target, ctx.inferModuleStrictArguments)) {
+        fctx.body.push({ op: "drop" });
+        emitThrowTypeError(ctx, fctx, `Cannot assign to read only property '${key}' of object`);
+      }
+      return rhsType;
+    }
   }
 
   // #1886 Slice B: linear-backed Uint8Array write `buf[i] = v` →
@@ -4274,7 +4574,7 @@ function compileElementAssignment(
       arrType.kind === "externref" &&
       ctx.standalone &&
       ctx.moduleUsesDynTaView &&
-      isNumericIndexExpression(ctx, target.argumentExpression)
+      isNumericIndexExpression(ctx, target.argumentExpression, fctx)
     ) {
       const dynR = emitTaDynViewElementSet(ctx, fctx, target.argumentExpression, value, (e, h) =>
         compileExpression(ctx, fctx, e, h),
@@ -4431,6 +4731,38 @@ function compileElementAssignment(
       reportError(ctx, target, "Assignment: vec data is not array");
       return null;
     }
+    // (#4247) §10.4.2.2 — a constant numeric key that is NOT an array index
+    // (`4294967295`, `4294967296`, `-1`, `1.1`, `NaN`, `Infinity`) is an
+    // ordinary NAMED property: it goes to the #3537 expando bag and must leave
+    // `length` alone. The vec grow sequence below would instead saturate the
+    // key to `i32.max` and TRAP the module trying to allocate the backing
+    // array. TypedArray views and `arguments` are NOT array exotics, so they
+    // keep their own lowering.
+    if (
+      elementAccessTypedArrayName(ctx, target.expression) === undefined &&
+      !(ts.isIdentifier(target.expression) && target.expression.text === "arguments")
+    ) {
+      const namedKey = nonArrayIndexNumericKey(ctx, fctx, target.argumentExpression);
+      if (namedKey !== undefined) {
+        const named = emitNonIndexVecElementSet(ctx, fctx, arrType, namedKey, value, (e, h) =>
+          compileExpression(ctx, fctx, e, h),
+        );
+        if (named) return named;
+      }
+    }
+    // (#4159 S5) Overlay-aware routed WRITE — twin of the S3 read routing;
+    // rationale + exclusions in typed-lane-overlay-route.ts. `arguments` keeps
+    // the legacy path (mapped-args reverse sync #849); TA views keep theirs.
+    if (
+      overlayRouteActive(ctx) &&
+      elementAccessTypedArrayName(ctx, target.expression) === undefined &&
+      !(ts.isIdentifier(target.expression) && target.expression.text === "arguments")
+    ) {
+      const routed = emitOverlayRoutedElementSet(ctx, fctx, target.argumentExpression, value, (e, h) =>
+        compileExpression(ctx, fctx, e, h),
+      );
+      if (routed) return routed;
+    }
     // Save vec ref and index in locals for reuse
     const vecLocal = allocLocal(fctx, `__vec_${fctx.locals.length}`, arrType);
     fctx.body.push({ op: "local.set", index: vecLocal });
@@ -4447,12 +4779,12 @@ function compileElementAssignment(
         else: [],
       });
     }
-    // #1179: hint i32 directly so an i32 loop index doesn't take an f64 round-trip.
-    // compileExpression with i32 hint emits i32.trunc_sat_f64_s for non-i32 results
-    // via coerceType, matching the previous behavior for f64 indices.
-    const idxResult = compileExpression(ctx, fctx, target.argumentExpression, {
-      kind: "i32",
-    });
+    // Preserve range-proven counted-loop index arithmetic as i32. Fall back to
+    // the existing conversion path when constants, bounds, or overflow safety
+    // cannot be established.
+    const idxResult = tryEmitStaticI32Expression(ctx, fctx, target.argumentExpression)
+      ? ({ kind: "i32" } as const)
+      : compileExpression(ctx, fctx, target.argumentExpression, { kind: "i32" });
     if (!idxResult) {
       reportError(ctx, target, "Failed to compile element index");
       return null;
@@ -4868,7 +5200,22 @@ function compileExternSetFallback(
   });
   fctx.body.push({ op: "local.set", index: objLocal });
 
-  // Compile value first so we can save it for return
+  // §13.15.2: evaluate and canonicalize the computed key before the RHS.
+  // The native standalone setter has receiver-specific early dispatch arms
+  // which can return before its string-keyed object table performs
+  // ToPropertyKey.  Canonicalizing at the Reference boundary both preserves
+  // the observable ordering and gives every receiver arm the same key.
+  const keyResult = compileExpression(ctx, fctx, target.argumentExpression, {
+    kind: "externref",
+  });
+  if (!keyResult) return null;
+  emitToPropertyKeyOnce(ctx, fctx);
+  const keyLocal = allocLocal(fctx, `__eset_key_${fctx.locals.length}`, {
+    kind: "externref",
+  });
+  fctx.body.push({ op: "local.set", index: keyLocal });
+
+  // Compile value after ToPropertyKey and save it for the assignment result.
   const valResult = compileExpression(ctx, fctx, value, { kind: "externref" });
   if (!valResult) return null;
   const valLocal = allocLocal(fctx, `__eset_val_${fctx.locals.length}`, {
@@ -4878,9 +5225,7 @@ function compileExternSetFallback(
 
   // Push args: obj, key, val
   fctx.body.push({ op: "local.get", index: objLocal });
-  compileExpression(ctx, fctx, target.argumentExpression, {
-    kind: "externref",
-  });
+  fctx.body.push({ op: "local.get", index: keyLocal });
   fctx.body.push({ op: "local.get", index: valLocal });
 
   // (#3374) Bracket writes carry the same PutValue strictness bit as dot writes.

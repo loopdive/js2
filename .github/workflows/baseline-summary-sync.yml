@@ -89,7 +89,19 @@ jobs:
           node scripts/compare-test262-artifact.mjs --type report \
             --baseline public/benchmarks/results/test262-standalone-report.json \
             --candidate /tmp/js2wasm-baselines/test262-standalone-report.json && STANDALONE_UNCHANGED=1
-          if [ "$HOST_UNCHANGED" = "1" ] && [ "$STANDALONE_UNCHANGED" = "1" ]; then
+          # (#3953) The #2097 high-water mark is a THIRD drift axis, independent
+          # of the two report compares above. A stale mark can coexist with
+          # semantically-identical reports (the mark lags whenever the promote's
+          # main-repo commit is deferred by #1951, which is most of the time
+          # under two-lane merge velocity), and a floor that is too LOW never
+          # fires its gate — so nothing else in this repo would notice. Exit 1 =
+          # STALE, exit 2 = UNKNOWN ("cannot see"); BOTH force a sync, because
+          # "I could not determine the mark's age" must never render as fresh.
+          HIGHWATER_STALE=0
+          node scripts/check-highwater-staleness.mjs \
+            --report /tmp/js2wasm-baselines/test262-standalone-report.json \
+            --annotate || HIGHWATER_STALE=1
+          if [ "$HOST_UNCHANGED" = "1" ] && [ "$STANDALONE_UNCHANGED" = "1" ] && [ "$HIGHWATER_STALE" = "0" ]; then
             echo "Committed summary already matches the baselines repo — nothing to sync."
             echo "sync=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -110,9 +122,22 @@ jobs:
           # stranded (#3379, follow-up to #3375's host-compare fix).
           COMMITTED_TS=$(git log -1 --format=%ct -- public/benchmarks/results/test262-report.json 2>/dev/null || echo 0)
           AGE_H=$(( ($(date +%s) - ${COMMITTED_TS:-0}) / 3600 ))
-          echo "Drift detected (host_unchanged=$HOST_UNCHANGED standalone_unchanged=$STANDALONE_UNCHANGED); queue=${QUEUE_LEN:-?} committed-summary age=${AGE_H}h force=$FORCE"
-          if [ "$FORCE" != "true" ] && [ -n "$QUEUE_LEN" ] && [ "$QUEUE_LEN" -gt 0 ] 2>/dev/null && [ "$AGE_H" -lt 6 ]; then
-            echo "Merge queue busy and summary <6h old — skipping this cycle (#1951)."
+          # (#3953) A stale high-water mark ALSO earns the busy-queue bypass, but
+          # only at the SAME 6h floor the committed summary uses — otherwise this
+          # hourly job would push (and trigger a queue rebuild) every hour the
+          # mark lags. Re-run the detector at 6h rather than reusing the 3h
+          # verdict above: 3h decides "is there anything to sync", 6h decides
+          # "is it worth a queue-rebuild right now". Without this the two guards
+          # DEADLOCK — promote defers because the queue is busy, and this job
+          # skips because the queue is busy and the reports are fresh, so the
+          # mark strands indefinitely. That deadlock is the #3953 defect.
+          HIGHWATER_STALE_6H=0
+          node scripts/check-highwater-staleness.mjs \
+            --report /tmp/js2wasm-baselines/test262-standalone-report.json \
+            --max-age-hours 6 >/dev/null 2>&1 || HIGHWATER_STALE_6H=1
+          echo "Drift detected (host_unchanged=$HOST_UNCHANGED standalone_unchanged=$STANDALONE_UNCHANGED highwater_stale=$HIGHWATER_STALE highwater_stale_6h=$HIGHWATER_STALE_6H); queue=${QUEUE_LEN:-?} committed-summary age=${AGE_H}h force=$FORCE"
+          if [ "$FORCE" != "true" ] && [ -n "$QUEUE_LEN" ] && [ "$QUEUE_LEN" -gt 0 ] 2>/dev/null && [ "$AGE_H" -lt 6 ] && [ "$HIGHWATER_STALE_6H" = "0" ]; then
+            echo "Merge queue busy, summary <6h old, high-water mark fresh — skipping this cycle (#1951)."
             echo "sync=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -147,8 +172,11 @@ jobs:
           node --experimental-strip-types scripts/generate-editions.ts \
             --results /tmp/js2wasm-baselines/test262-current.jsonl || \
             echo "WARN: generate-editions failed (non-fatal) — edition buckets may lag"
-          node scripts/sync-conformance-numbers.mjs || \
-            echo "WARN: sync-conformance-numbers failed (non-fatal) — docs may drift"
+          # NOTE: sync-conformance-numbers is deliberately NOT run here. It
+          # derives the standalone line from the high-water mark, which is not
+          # raised until further down — running it now would sync the docs to
+          # the PRE-raise value and commit that alongside the POST-raise mark.
+          # See the call sited after the raise below.
           # #2108 — coercion-site drift baseline (pure source-grep). The
           # promote-baseline job in test262-sharded.yml is the primary refresher
           # on every push to main; this hourly fallback re-anchors it too so a
@@ -160,6 +188,54 @@ jobs:
           # only the date would change, so a stable main stays commit-free.
           node scripts/check-loc-budget.mjs --update || \
             echo "WARN: loc-budget baseline update failed (non-fatal)"
+          # #3400 R-FUNC twin: bank per-function shrinkage into the func-budget
+          # baseline (shrink-only floor; the PR gate is change-scoped so this
+          # only feeds the --all audit + no-git fallback). Non-fatal.
+          node scripts/check-func-budget.mjs --update-on-decrease || \
+            echo "WARN: func-budget baseline update failed (non-fatal)"
+          # (#3953) #2097 STANDALONE HIGH-WATER RAISE — this workflow is the
+          # fallback carrier the promote job's #1951 deferral message has always
+          # NAMED ("it will land via ... the hourly baseline-summary-sync") but
+          # could not actually be, because it never staged the file (grep
+          # "highwater" over this workflow returned 0 hits before this change).
+          #
+          # Consequence, measured 2026-08-02: promote's raise EXECUTED
+          # (26546 → 27019, run 30756312728) and was then discarded with the
+          # deferred commit, 37 merge commits in a row. The mark was load-bearing
+          # on the queue happening to be empty at promote time. Effective floor
+          # 26496 vs reality 27021 = 525 passes of silent permissive headroom.
+          #
+          # TWO-WRITER RACE — why last-writer-wins is safe here. After this
+          # change the mark has two writers: promote-baseline (on an empty queue)
+          # and this job (hourly). They can interleave, but the script is a
+          # RAISE-ONLY ratchet: it rewrites the file only when the measured
+          # host-free count strictly EXCEEDS the committed one, so any interleaving
+          # yields max(writes) and neither writer can lower the mark. The only
+          # ordering hazard would be writing a value computed against a DIFFERENT
+          # (older) committed mark than the one on disk at commit time — which is
+          # why the re-anchor loop below re-reads the mark from the freshly
+          # fetched tip and recomputes, rather than replaying this snapshot.
+          #
+          # Provenance is the baselines repo's own `baseline_sha` — the revision
+          # actually MEASURED — not this job's checkout sha, which is unrelated
+          # to the measurement. Non-fatal: a stale mark must never wedge the sync.
+          SA_REPORT=/tmp/js2wasm-baselines/test262-standalone-report.json
+          HW_SHA=$(node -e "try{console.log(JSON.parse(require('fs').readFileSync('$SA_REPORT','utf8')).baseline_sha||'')}catch{console.log('')}")
+          node scripts/check-standalone-highwater.mjs \
+            --report "$SA_REPORT" --update ${HW_SHA:+--sha "$HW_SHA"} || \
+            echo "WARN: high-water raise failed (non-fatal) — mark may lag"
+
+          # Sync the prose docs LAST, after BOTH inputs are final: the JS-host
+          # number from test262-current.json (copied above) and the standalone
+          # line from the high-water mark (raised immediately above). Running it
+          # before the raise — as this job did until #4211 — committed a NEW mark
+          # next to a README synced from the OLD one, so main shipped internally
+          # inconsistent and every open PR then failed the `quality` gate's
+          # sync:conformance:check until some unrelated PR happened to carry the
+          # repair commit. Observed three times on 2026-08-07 and it parked nine
+          # PRs that morning.
+          node scripts/sync-conformance-numbers.mjs || \
+            echo "WARN: sync-conformance-numbers failed (non-fatal) — docs may drift"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -179,10 +255,18 @@ jobs:
               git add -f website/public/benchmarks/results/test262-editions.json || true
             [ -f website/public/benchmarks/results/test262-category-editions.json ] && \
               git add -f website/public/benchmarks/results/test262-category-editions.json || true
+            # #2871 follow-up — per-file edition index consumed by the report page's
+            # Error Patterns / Skipped Tests edition filter.
+            [ -f website/public/benchmarks/results/test262-file-editions.json ] && \
+              git add -f website/public/benchmarks/results/test262-file-editions.json || true
             # #2108 — coercion-site drift baseline, refreshed just above.
             git add -f scripts/coercion-sites-baseline.json 2>/dev/null || true
             # #3131 — LOC-budget baseline, refreshed just above (sole writer).
             git add -f scripts/loc-budget-baseline.json 2>/dev/null || true
+            git add -f scripts/func-budget-baseline.json 2>/dev/null || true
+            # (#3953) The #2097 high-water mark, raised just above. THIS LINE is
+            # the fix: without it the raise wrote a file nothing ever committed.
+            git add -f benchmarks/results/test262-standalone-highwater.json 2>/dev/null || true
             git add -f README.md ROADMAP.md CLAUDE.md plan/goals/goal-graph.md \
               2>/dev/null || true
           }
@@ -231,7 +315,35 @@ jobs:
             # (pure source measure; main is its sole writer now).
             node scripts/check-loc-budget.mjs --update || \
               echo "WARN: loc-budget baseline recompute on re-anchored tip failed (non-fatal)"
+            node scripts/check-func-budget.mjs --update-on-decrease || \
+              echo "WARN: func-budget baseline recompute on re-anchored tip failed (non-fatal)"
             git add -f scripts/loc-budget-baseline.json 2>/dev/null || true
+            git add -f scripts/func-budget-baseline.json 2>/dev/null || true
+            # (#3953) STALE-CHECKOUT GUARD for the high-water mark — same shape
+            # as the coercion/LOC guards above, and load-bearing for the
+            # two-writer race described in the raise step. The re-apply loop just
+            # copied OUR snapshot of the mark over the re-anchored tip; if
+            # promote-baseline raised the mark HIGHER while we were working, that
+            # copy would silently LOWER it — turning a raise-only ratchet into a
+            # last-writer-wins clobber. So discard our copy, take the mark from
+            # the freshly fetched tip, and re-run the raise against THAT. The
+            # ratchet then compares the new measurement to main's actual current
+            # mark, so the committed value is always max(ours, main's).
+            git checkout deploykey/main -- benchmarks/results/test262-standalone-highwater.json 2>/dev/null || true
+            node scripts/check-standalone-highwater.mjs \
+              --report "$SA_REPORT" --update ${HW_SHA:+--sha "$HW_SHA"} || \
+              echo "WARN: high-water recompute on re-anchored tip failed (non-fatal)"
+            git add -f benchmarks/results/test262-standalone-highwater.json 2>/dev/null || true
+            # (#4211) The re-apply loop restored the README we synced against
+            # our ORIGINAL mark, and the recompute immediately above may have
+            # landed on a different one (main's tip is max(ours, main's)). So
+            # re-sync against the mark that is actually about to be committed,
+            # and re-stage the prose docs. Without this the re-anchor path
+            # commits the same old-mark/new-mark mismatch the fresh path used to.
+            node scripts/sync-conformance-numbers.mjs || \
+              echo "WARN: sync-conformance-numbers on re-anchored tip failed (non-fatal)"
+            git add -f README.md ROADMAP.md CLAUDE.md plan/goals/goal-graph.md \
+              2>/dev/null || true
             if git diff --cached --quiet; then
               echo "Summary already current on main after re-anchor — nothing to push."
               PUSHED=1

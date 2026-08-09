@@ -5,9 +5,16 @@ import {
   analyzeMultiSource,
   analyzeSource,
   IncrementalLanguageService,
+  IncrementalProjectLanguageService,
   type TypedAST,
   type MultiTypedAST,
+  type ProjectModuleResolutions,
 } from "./checker/index.js";
+import {
+  collectDtsEntrypointSeeds,
+  DTS_ENTRY_DECLS_NAME,
+  resolveDtsEntryDeclarations,
+} from "./checker/dts-entrypoint-seeds.js";
 import { getNullablePrimitiveInfo } from "./checker/type-mapper.js";
 import { generateLinearModule, generateLinearMultiModule } from "./codegen-linear/index.js";
 import { resetCompileDepth } from "./codegen/expressions.js";
@@ -16,6 +23,11 @@ import type { CodegenOptions } from "./codegen/context/types.js";
 import { assertCodegenRegistrationsComplete } from "./codegen/shared.js";
 import { isFatalCodegenDiagnostic } from "./codegen/context/errors.js";
 import type { WasmModule } from "./ir/types.js";
+import {
+  findSmallestNodeAtPosition,
+  isBindingPatternFalsePositive,
+  isJsDefaultInferredParamFalsePositive,
+} from "./compiler/argument-diagnostics.js";
 import {
   buildImportManifest,
   checkJsTypeCoverage,
@@ -26,7 +38,7 @@ import { applyCabiTransform, generateDts, generateImportsHelper, widenNonDefault
 import {
   detectEarlyErrors,
   pushSourceAnchoredDiagnostic,
-  rewriteEvalSuperCall,
+  rewriteEvalSuperCallWithMap,
   validateHardenedMode,
   validateSafeMode,
 } from "./compiler/validation.js";
@@ -35,15 +47,22 @@ import { WasmEncoder } from "./emit/encoder.js";
 import { generateSourceMap } from "./emit/sourcemap.js";
 import { emitWat } from "./emit/wat.js";
 import { applyDefineSubstitutions, applyDefineSubstitutionsWithMap } from "./compiler/define-substitution.js";
+import { collectGraphNodeBuiltinImports } from "./compiler/node-builtin-import-collector.js";
 import { rewriteCjsRequire, rewriteCjsRequireWithMap } from "./cjs-rewrite.js";
 import { preprocessImports } from "./import-resolver.js";
 import { PositionMap } from "./position-map.js";
+import { profileCount, profilePhase } from "./compile-profile.js";
 import { injectProcessStdinPrelude } from "./process-stdin-prelude.js";
 import { injectIteratorStaticsPrelude } from "./iterator-statics-prelude.js";
-import { elideDeadTopLevelBindings } from "./deadcode-elide.js";
+import * as irIds from "./compiler/ir-outcome-inventory.js";
+import { buildLinearOptions } from "./compiler/linear-options.js";
 import type { CompileError, CompileOptions, CompileResult } from "./index.js";
 import { optimizeBinaryAsync } from "./optimize.js";
 import { generateWit } from "./wit-generator.js";
+import {
+  foldGroundCallsInMultiFilesForCompile as foldGroundCallsInMulti,
+  foldGroundExportCallsForCompile as foldGroundCalls,
+} from "./compiler/ground-call-fold.js";
 export { compileToObjectSource } from "./compiler/output.js";
 export type { ObjectCompileResult } from "./compiler/output.js";
 
@@ -107,65 +126,6 @@ const HARD_TS_DIAG_CODES = new Set([
   1213, // "Identifier expected. 'X' is a reserved word in strict mode. Class definitions are automatically in strict mode."
   1214, // "Identifier expected. 'X' is a reserved word in strict mode. Modules are automatically in strict mode."
 ]);
-
-/**
- * #862: TypeScript infers `function f([,])` as `function f([,]: [any?])` — a tuple type.
- * A call site like `f(generator)` then trips TS2345 even though, in JS/TS at runtime,
- * a binding-pattern parameter destructures any iterable per ECMA-262 §13.3.3.6
- * (IteratorBindingInitialization). Suppress 2345 when the target parameter uses an
- * array/object binding pattern and lacks an explicit type annotation — the inferred
- * tuple type is a TypeScript fiction that does not reflect runtime semantics.
- */
-function isBindingPatternFalsePositive(diag: ts.Diagnostic, checker: ts.TypeChecker): boolean {
-  if (diag.code !== 2345) return false;
-  const file = diag.file;
-  if (!file || diag.start === undefined) return false;
-  const pos = diag.start;
-  function findNode(node: ts.Node): ts.Node | undefined {
-    if (pos < node.getStart(file) || pos >= node.getEnd()) return undefined;
-    let found: ts.Node = node;
-    node.forEachChild((child) => {
-      const inner = findNode(child);
-      if (inner) found = inner;
-    });
-    return found;
-  }
-  let n: ts.Node | undefined = findNode(file);
-  while (n && !ts.isCallExpression(n) && !ts.isNewExpression(n)) {
-    n = n.parent;
-  }
-  if (!n || !(ts.isCallExpression(n) || ts.isNewExpression(n))) return false;
-  const args = n.arguments;
-  if (!args) return false;
-  let argIdx = -1;
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i]!;
-    if (pos >= a.getStart(file) && pos < a.getEnd()) {
-      argIdx = i;
-      break;
-    }
-  }
-  if (argIdx < 0) return false;
-  const sig = checker.getResolvedSignature(n);
-  if (!sig) return false;
-  const paramDecl = sig.getDeclaration()?.parameters?.[argIdx];
-  if (!paramDecl) return false;
-  if (paramDecl.type) return false; // explicit annotation — respect it
-  return ts.isArrayBindingPattern(paramDecl.name) || ts.isObjectBindingPattern(paramDecl.name);
-}
-
-function findSmallestNodeAtPosition(file: ts.SourceFile, pos: number): ts.Node | undefined {
-  function visit(node: ts.Node): ts.Node | undefined {
-    if (pos < node.getStart(file) || pos >= node.getEnd()) return undefined;
-    let found: ts.Node = node;
-    node.forEachChild((child) => {
-      const inner = visit(child);
-      if (inner) found = inner;
-    });
-    return found;
-  }
-  return visit(file);
-}
 
 function isDescendantOf(node: ts.Node, ancestor: ts.Node): boolean {
   let current: ts.Node | undefined = node;
@@ -413,17 +373,37 @@ function remapDiagnosticPosition(
     return diag.file.getLineAndCharacterOfPosition(processedStart);
   }
   const origOffset = Math.min(Math.max(0, positionMap.toInputOffset(processedStart)), originalSource.length);
+  return originalLineAndCharacter(originalSource, origOffset);
+}
+
+function originalLineAndCharacter(source: string, offset: number): { line: number; character: number } {
   // Resolve line/column from the original text. Counting newlines is O(offset)
   // but diagnostics are few; a shared line-start index would be premature here.
   let line = 0;
   let lastNewline = -1;
-  for (let i = 0; i < origOffset; i++) {
-    if (originalSource.charCodeAt(i) === 10 /* \n */) {
+  for (let i = 0; i < offset; i++) {
+    if (source.charCodeAt(i) === 10 /* \n */) {
       line++;
       lastNewline = i;
     }
   }
-  return { line, character: origOffset - lastNewline - 1 };
+  return { line, character: offset - lastNewline - 1 };
+}
+
+/** Map opt-in IR ledger locations through the same preprocessor map as diagnostics. */
+function remapIrOutcomePositions(
+  outcomes: NonNullable<CompileResult["irOutcomes"]>,
+  processedFile: ts.SourceFile,
+  originalSource: string,
+  positionMap: PositionMap,
+): NonNullable<CompileResult["irOutcomes"]> {
+  if (positionMap.isIdentity) return outcomes;
+  return outcomes.map((outcome) => {
+    const processedOffset = processedFile.getPositionOfLineAndCharacter(outcome.line - 1, outcome.column - 1);
+    const originalOffset = Math.min(Math.max(0, positionMap.toInputOffset(processedOffset)), originalSource.length);
+    const original = originalLineAndCharacter(originalSource, originalOffset);
+    return { ...outcome, line: original.line + 1, column: original.character + 1 };
+  });
 }
 
 function isGuardedNullablePrimitiveDiagnostic(diag: ts.Diagnostic, checker: ts.TypeChecker): boolean {
@@ -520,6 +500,7 @@ function isInOperatorOperandDiagnostic(diag: ts.Diagnostic): boolean {
 function isHardTypeScriptDiagnostic(diag: ts.Diagnostic, checker?: ts.TypeChecker): boolean {
   if (diag.category !== 1 || !HARD_TS_DIAG_CODES.has(diag.code)) return false;
   if (checker && isBindingPatternFalsePositive(diag, checker)) return false;
+  if (checker && isJsDefaultInferredParamFalsePositive(diag, checker)) return false;
   if (checker && isGuardedNullablePrimitiveDiagnostic(diag, checker)) return false;
   if (isProxyHandlerTrapDiagnostic(diag)) return false;
   if (isInOperatorOperandDiagnostic(diag)) return false;
@@ -644,8 +625,13 @@ function detectRawWasiImports(source: string): { rawWasi: Set<string>; memAccess
   return { rawWasi, memAccessors };
 }
 
-/** The canonical empty failure result. #1927 — replaces the inline copies. */
-function failResult(errors: CompileError[]): CompileResult {
+type FailureTelemetry = Pick<
+  CompileResult,
+  "fallbackCounts" | "irPostClaimErrors" | "irCompiledFuncs" | "irFirstSkipped" | "irOutcomes"
+>;
+
+/** The canonical failure result, retaining any telemetry codegen already produced. */
+function failResult(errors: CompileError[], telemetry: Partial<FailureTelemetry> = {}): CompileResult {
   return {
     binary: new Uint8Array(0),
     wat: "",
@@ -657,6 +643,7 @@ function failResult(errors: CompileError[]): CompileResult {
     imports: [],
     hasMain: false,
     hasTopLevelStatements: false,
+    ...telemetry,
   };
 }
 
@@ -676,7 +663,10 @@ async function applyOptimize(
 ): Promise<CompileResult> {
   if (!options.optimize || !result.success) return result;
   const level = typeof options.optimize === "number" ? options.optimize : 3;
-  const optResult = await optimizeBinaryAsync(result.binary, { level });
+  const optResult = await optimizeBinaryAsync(result.binary, {
+    level,
+    preserveNames: options.preserveDebugNames,
+  });
   if (optResult.optimized) {
     result.binary = optResult.binary;
   }
@@ -694,11 +684,9 @@ async function applyOptimize(
  * `wasiNodeFsFuncs` / `allowFs` / `jsxRuntime`, silently giving multi-file
  * users a weaker, different compiler with the IR overlay off.
  *
- * `prep` carries the single-source-only import-preprocessing results
- * (`nodeBuiltins`, `wasiNodeFsFuncs`, `jsxRuntime`). They are `undefined` for
- * the multi paths because `analyzeMultiSource` / `analyzeFiles` resolve imports
- * through the TS program rather than `preprocessImports`; collecting them for
- * multi mode is a separate, larger change (tracked alongside #2138).
+ * `prep` carries import preprocessing/collection results. Single-source uses
+ * `preprocessImports`; multi-source separately collects graph-wide Node/WASI
+ * metadata while retaining real module declarations.
  */
 function buildCodegenOptions(
   options: CompileOptions,
@@ -709,6 +697,7 @@ function buildCodegenOptions(
     wasiRawImports?: Set<string>;
     wasiMemAccessors?: Set<string>;
     jsxRuntime?: import("./import-resolver.js").JsxRuntimeImport;
+    dtsEntrypointSeeds?: import("./checker/dts-entrypoint-seeds.js").DtsEntrypointSeeds;
   },
 ): CodegenOptions {
   // (#86) Measurement-integrity guard. The standalone / wasi codegen regime is
@@ -733,6 +722,7 @@ function buildCodegenOptions(
     sourceMap: emitSourceMap,
     fast: options.fast,
     nativeStrings: options.nativeStrings,
+    hostBridge: options.hostBridge,
     utf8Storage: options.utf8Storage,
     testRuntime: options.testRuntime,
     wasi: options.target === "wasi",
@@ -748,6 +738,8 @@ function buildCodegenOptions(
     useUsageInfer: options.useUsageInfer,
     // (#2141 S2/S3, #2626) tag-5 boxed-VALUE eq classifier flag (default off).
     tag5ValueEqClassifier: options.tag5ValueEqClassifier,
+    // (#4173) fast tag-pair dispatch in the dynamic-eq helpers (default on).
+    fastStrictEq: options.fastStrictEq,
     // (#2106 S1) standalone $undefined tag-1 singleton regime flag (default off).
     undefinedSingleton: options.undefinedSingleton,
     // (#2796) Diff-test-harness fidelity — defer top-level init to an export so
@@ -763,20 +755,26 @@ function buildCodegenOptions(
     // revert. Forwarded to ALL drivers now (#1927); `generateMultiModule`
     // ignores it until #2138 wires the IR overlay into the multi generator.
     experimentalIR: options.experimentalIR !== false,
+    // #3519 — opt-in typed terminal ledger; routing remains hybrid.
+    trackIrOutcomes: options.trackIrOutcomes === true,
     // (#2973) Forward the IR-first opt-out. The eval / new Function host shims
     // set this so a post-claim IR-first hard error in a sub-compile is not
     // swallowed by the shim's fallback catch into a silent wrong answer.
     disableIrFirst: options.disableIrFirst === true,
-    // Single-source-only import-preprocessing results (undefined in multi mode).
-    // #1927: multi paths do not yet collect node-builtin / fs / jsx imports —
-    // they resolve imports through the TS program; closing that gap is a
-    // separate change (tracked alongside #2138).
+    // Import preprocessing/collection results. JSX remains single-source-only;
+    // Node/WASI metadata is also collected graph-wide in compileMultiSource.
     nodeBuiltins: prep?.nodeBuiltins,
     wasiNodeFsFuncs: prep?.wasiNodeFsFuncs,
     wasiRawImports: prep?.wasiRawImports,
     wasiMemAccessors: prep?.wasiMemAccessors,
     allowFs: options.allowFs ?? false,
+    // (#4238 slice 1) internal provider-build enablers — all default-off, so a
+    // compile that does not set them is byte-identical.
+    externNativeTypes: options.externNativeTypes === true,
+    externImportModule: options.externImportModule,
+    importMemory: options.importMemory,
     jsxRuntime: prep?.jsxRuntime,
+    dtsEntrypointSeeds: prep?.dtsEntrypointSeeds,
   };
 }
 
@@ -792,6 +790,7 @@ interface PipelineInput {
   errors: CompileError[];
   /** Resolved codegen option bundle (see buildCodegenOptions). */
   codegenOptions: CodegenOptions;
+  irInventoryOptions?: irIds.IrInventoryOptions;
   /** For source-map sourcesContent: original-name → original text. */
   sourcesContent: Map<string, string>;
   /** Anchor file for pushSourceAnchoredDiagnostic on codegen/emit throws. */
@@ -817,6 +816,51 @@ function isWasmException(e: unknown): boolean {
     !!(WebAssembly as unknown as { Exception?: Function }).Exception &&
     e instanceof (WebAssembly as unknown as { Exception: Function }).Exception
   );
+}
+
+const STANDALONE_DYNAMIC_IMPORT_ERROR =
+  "Standalone dynamic import is unsupported until compileMulti provides internal module records and namespace objects";
+
+/**
+ * #3494 — catch eager import() before codegen, including top-level await paths
+ * that the flattened module initializer may not lower through
+ * compileCallExpression. A standalone binary cannot satisfy the host loader,
+ * and compileMulti has no honest internal module-record substitute yet.
+ *
+ * #3509 — ordinary arrow/function-expression bodies are runtime-trap eligible:
+ * creating one needs no loader, and calls.ts emits a host-free TypeError if its
+ * import executes. Async/generator functions stay fatal here because a direct
+ * synchronous throw would not preserve their rejection/lazy-throw semantics.
+ */
+function detectStandaloneDynamicImports(sourceFile: ts.SourceFile): CompileError[] {
+  const errors: CompileError[] = [];
+  const canTrapAtRuntime = (call: ts.CallExpression): boolean => {
+    for (let parent: ts.Node | undefined = call.parent; parent; parent = parent.parent) {
+      if (!ts.isFunctionLike(parent)) continue;
+      if (!ts.isArrowFunction(parent) && !ts.isFunctionExpression(parent)) return false;
+      const isAsync = parent.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
+      const isGenerator = ts.isFunctionExpression(parent) && parent.asteriskToken !== undefined;
+      return !isAsync && !isGenerator;
+    }
+    return false;
+  };
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+      if (canTrapAtRuntime(node)) return;
+      const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
+      errors.push({
+        message: STANDALONE_DYNAMIC_IMPORT_ERROR,
+        line: line + 1,
+        column: character + 1,
+        severity: "error",
+        file: sourceFile.fileName,
+      });
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return errors;
 }
 
 /**
@@ -872,6 +916,16 @@ function runPipeline(input: PipelineInput): CompileResult {
     }
   }
 
+  // Step 1a-ii: target-capability validation. This is deliberately independent
+  // of allowJs: Test262 module fixtures use JavaScript source, and silently
+  // skipping this gate there produced a success result with no runnable import
+  // semantics for top-level `await import(...)`.
+  if (options.target === "standalone") {
+    const dynamicImportErrors = userSourceFiles.flatMap(detectStandaloneDynamicImports);
+    errors.push(...dynamicImportErrors);
+    if (dynamicImportErrors.length > 0) return failResult(errors);
+  }
+
   // Step 1b: Safe mode validation for all user source files.
   if (options.safe) {
     const safeErrors: CompileError[] = [];
@@ -909,23 +963,24 @@ function runPipeline(input: PipelineInput): CompileResult {
   let capturedIrCompiledFuncs: import("./index.js").CompileResult["irCompiledFuncs"];
   // (#2138) IR-first skip telemetry — populated when IR-first is active (default as of #3143).
   let capturedIrFirstSkipped: import("./index.js").CompileResult["irFirstSkipped"];
+  // #3519 — retain terminal outcomes even when a later codegen/emit check fails.
+  let capturedIrOutcomes: import("./index.js").CompileResult["irOutcomes"];
   try {
     if (useLinear) {
       mod = multiAst
         ? generateLinearMultiModule(multiAst, { exposeArenaReset: options.allocator === "arena-reset" })
-        : generateLinearModule(entryAst, {
-            exposeArenaReset: options.allocator === "arena-reset",
-            allocationPolicy: options.allocator === "analysis-stack" ? "analysis-stack-arena-v1" : "arena-v1",
-          });
+        : generateLinearModule(entryAst, buildLinearOptions(options, input.irInventoryOptions));
       // Fail the compile on unsupported linear-backend constructs instead of
       // emitting a structurally invalid binary (#1868).
       if (collectLinearCodegenErrors(mod, errors)) {
         return failResult(errors);
       }
     } else {
-      const result = multiAst
-        ? generateMultiModule(multiAst, input.codegenOptions)
-        : generateModule(entryAst, input.codegenOptions);
+      const result = profilePhase("codegen", () =>
+        multiAst
+          ? generateMultiModule(multiAst, input.codegenOptions)
+          : generateModule(entryAst, input.codegenOptions, input.irInventoryOptions),
+      );
       mod = result.module;
       capturedFallbackCounts = result.fallbackCounts;
       capturedIrPostClaimErrors = result.irPostClaimErrors;
@@ -957,8 +1012,9 @@ function runPipeline(input: PipelineInput): CompileResult {
         }
       }
       capturedIrCompiledFuncs = result.irCompiledFuncs;
+      capturedIrOutcomes = result.irOutcomes;
       capturedIrFirstSkipped = multiAst
-        ? undefined // generateMultiModule has no IR overlay yet — the #2138 multi seam is a follow-on slice
+        ? undefined // #2138 M0 multi overlay is compile-twice only; it never enables IR-first body skipping
         : (result as ReturnType<typeof generateModule>).irFirstSkipped;
       // Propagate codegen errors with source locations. #1921 — a deliberate
       // "degrade" diagnostic is surfaced as a non-fatal "warning"; the fatal
@@ -973,7 +1029,13 @@ function runPipeline(input: PipelineInput): CompileResult {
       }
       // #1921 — gate on severity, not a "Codegen error:" message prefix.
       if (result.errors.some(isFatalCodegenDiagnostic)) {
-        return failResult(errors);
+        return failResult(errors, {
+          fallbackCounts: capturedFallbackCounts,
+          irPostClaimErrors: capturedIrPostClaimErrors,
+          irCompiledFuncs: capturedIrCompiledFuncs,
+          irFirstSkipped: capturedIrFirstSkipped,
+          irOutcomes: capturedIrOutcomes,
+        });
       }
     }
   } catch (e) {
@@ -986,7 +1048,13 @@ function runPipeline(input: PipelineInput): CompileResult {
       `Codegen error: ${e instanceof Error ? e.message : String(e)}`,
       "error",
     );
-    return failResult(errors);
+    return failResult(errors, {
+      fallbackCounts: capturedFallbackCounts,
+      irPostClaimErrors: capturedIrPostClaimErrors,
+      irCompiledFuncs: capturedIrCompiledFuncs,
+      irFirstSkipped: capturedIrFirstSkipped,
+      irOutcomes: capturedIrOutcomes,
+    });
   }
 
   // Step 2b: Apply C ABI transformations if requested (linear target only).
@@ -1029,7 +1097,13 @@ function runPipeline(input: PipelineInput): CompileResult {
       `Binary emit error: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`,
       "error",
     );
-    return failResult(errors);
+    return failResult(errors, {
+      fallbackCounts: capturedFallbackCounts,
+      irPostClaimErrors: capturedIrPostClaimErrors,
+      irCompiledFuncs: capturedIrCompiledFuncs,
+      irFirstSkipped: capturedIrFirstSkipped,
+      irOutcomes: capturedIrOutcomes,
+    });
   }
 
   // Step 3b: Optimize — applied by the async entry adapters via applyOptimize,
@@ -1039,7 +1113,10 @@ function runPipeline(input: PipelineInput): CompileResult {
   let wat = "";
   if (emitWatOutput) {
     try {
-      wat = emitWat(mod);
+      wat = emitWat(
+        mod,
+        options.emitWatOnlyFunctions ? { onlyFunctions: new Set(options.emitWatOnlyFunctions) } : undefined,
+      );
     } catch (e) {
       pushSourceAnchoredDiagnostic(
         errors,
@@ -1082,6 +1159,7 @@ function runPipeline(input: PipelineInput): CompileResult {
     irPostClaimErrors: capturedIrPostClaimErrors,
     irCompiledFuncs: capturedIrCompiledFuncs,
     irFirstSkipped: capturedIrFirstSkipped,
+    irOutcomes: capturedIrOutcomes,
   };
 }
 
@@ -1109,7 +1187,10 @@ export async function compileSource(
 
   if (options.optimize && result.success) {
     const level = typeof options.optimize === "number" ? options.optimize : 3;
-    const optResult = await optimizeBinaryAsync(result.binary, { level });
+    const optResult = await optimizeBinaryAsync(result.binary, {
+      level,
+      preserveNames: options.preserveDebugNames,
+    });
     if (optResult.optimized) {
       result.binary = optResult.binary;
     }
@@ -1140,9 +1221,8 @@ export function compileSourceSync(
   // (e.g., test262 worker pool), causing false "depth exceeded" errors.
   resetCompileDepth();
 
-  // #2146 — fail fast (with the offending module named) if any codegen delegate
-  // was never wired, instead of throwing an obscure "X not yet registered" deep
-  // inside codegen only when the relevant feature is exercised. This entry pulls
+  // #2146 — fail fast if any codegen delegate was never wired, instead of
+  // throwing an obscure error only when the relevant feature is exercised. This entry pulls
   // in every registrar module statically (via the codegen imports above), so the
   // assertion always passes on the production path; it only fires if a future
   // refactor breaks the registrar-import chain.
@@ -1203,10 +1283,9 @@ export function compileSourceSync(
   // #1491 — detect named fs imports for both WASI (#1035 syscall path) and the
   // new JS-host imports (non-WASI). Detection is identical; the codegen branch
   // is selected based on `ctx.wasi` + `ctx.allowFs`.
-  // #1928 — `rewriteEvalSuperCall` only rewrites `eval("…super()…")` to a
-  // same-line throwing IIFE (a rare early-error edge); it never shifts lines, so
-  // it contributes an identity map and is omitted from the composition.
-  const cjsRewritten2 = rewriteEvalSuperCall(cjsRewritten);
+  // #1928/#1054 — same-line eval/super rewrites still contribute structural provenance.
+  const evalResult = rewriteEvalSuperCallWithMap(cjsRewritten);
+  const cjsRewritten2 = evalResult.source;
   const wasiNodeFsFuncs = detectNodeFsImports(cjsRewritten);
   // #2657 — raw `wasi_snapshot_preview1` fd_read/fd_write imports + the
   // `wasm:memory` inline linear-memory accessors (detected pre-preprocessing,
@@ -1215,10 +1294,9 @@ export function compileSourceSync(
   const { rawWasi: wasiRawImports, memAccessors: wasiMemAccessors } = detectRawWasiImports(cjsRewritten);
   const preprocessed = preprocessImports(cjsRewritten2, { wasi: options.target === "wasi" });
   let processedSource = preprocessed.source;
-  // Composed map: processedSource → original source. Pipeline output order is
-  // define → stdin-prelude → cjs → (eval/super, identity) → imports, so compose
-  // outermost-first.
+  // Compose imports → eval/super → CJS → Iterator → stdin → define back to the original source.
   const positionMap = preprocessed.positionMap
+    .compose(evalResult.positionMap)
     .compose(cjsResult.positionMap)
     .compose(iterStaticsResult.positionMap)
     .compose(stdinResult.positionMap)
@@ -1228,6 +1306,7 @@ export function compileSourceSync(
   let isJsMode = options.allowJs === true || (options.fileName?.endsWith(".js") ?? false);
   const defaultFileName = options.fileName ?? (isJsMode ? "input.js" : "input.ts");
   const effectiveFileName = options.moduleName ?? defaultFileName;
+  let irInventory = irIds.maybe(positionMap, options.trackIrOutcomes || options.target === "linear");
   // #2645/#2736 — `--target node`/`deno` (formerly `--platform node`) implies
   // node-style emulation so the ambient surface and the importable `node:<mod>`
   // capability gate share one target model. This EFFECTIVE flag drives the
@@ -1239,31 +1318,37 @@ export function compileSourceSync(
   // prelude) was injected ahead of a `.js`-named user file, parse the combined
   // unit under the TS grammar so the prelude's TS syntax (type annotations,
   // `private`, signature declarations) isn't hard-rejected with TS8009/8010/8017.
-  // ScriptKind-only override; the `.js`-derived semantics (lenient checking)
-  // stay intact. Byte-neutral when no prelude was injected.
-  const forceTsGrammar = stdinResult.injected || iterStaticsResult.injected;
+  // ScriptKind-only override; `.js`-derived lenient checking stays intact.
+  const forceTsGrammar = stdinResult.injected || iterStaticsResult.injected || preprocessed.requiresTsGrammar;
 
-  // Step 1a: #3418 — host-free targets only: elide provably-dead top-level
-  // pure bindings BEFORE the parse, so never-invoked function bodies (e.g. the
-  // test262 harness shim's `var print = function () { console.log(...) }` /
-  // `var $262 = { detachArrayBuffer: ... structuredClone ... }` when the
-  // program never mentions them) don't register host imports in the unified
-  // collector. Strictly same-length whitespace blanking → identity map, no
-  // positionMap composition needed; bails (source untouched) on any syntax
-  // error. Host `gc`/`linear` targets are excluded and stay byte-identical.
+  processedSource = foldGroundCalls(processedSource, effectiveFileName, options.optimize, isJsMode && !forceTsGrammar);
+
+  // Step 1a: #3418 — host-free targets elide dead pure top-level bindings before
+  // parsing so unreachable bodies do not register host imports.
   if (options.target === "standalone" || options.target === "wasi") {
-    processedSource = elideDeadTopLevelBindings(
-      processedSource,
-      isJsMode && !forceTsGrammar ? ts.ScriptKind.JS : ts.ScriptKind.TS,
-    ).source;
+    const scriptKind = isJsMode && !forceTsGrammar ? ts.ScriptKind.JS : ts.ScriptKind.TS;
+    const elision = irIds.elideWithIrIds(processedSource, effectiveFileName, scriptKind, irInventory);
+    processedSource = elision.source;
+    irInventory = elision.inventoryOptions;
   }
 
+  // (#743) Flag-gated (`JS2WASM_DTS_ENTRYPOINT_SEEDS`, **ON by default since
+  // 2026-08-08**; `=0` disables): resolve the entry's shipped sibling `.d.ts`
+  // (explicit option or on-disk sibling). `undefined` — which is still the
+  // common case, since most entries have no sibling declaration file — leaves
+  // every path below byte-identical.
+  const dtsEntryDecls = resolveDtsEntryDeclarations(options.fileName, options.entryDeclarations);
+
   let ast: TypedAST;
-  if (languageService) {
+  if (languageService && dtsEntryDecls === undefined) {
     // Incremental path: reuse cached lib files via the language service
     languageService.updateSource(processedSource, effectiveFileName, forceTsGrammar);
     ast = languageService.analyze({
-      allowJs: options.allowJs,
+      // A `.js` unit may be parsed with TS grammar after preprocessing injects
+      // typed declarations (timers/import stubs). Keep its JS environment and
+      // lib-global resolution explicit: the language service otherwise infers
+      // allowJs from the forced ScriptKind.TS and drops ambient DOM bindings.
+      allowJs: isJsMode,
       skipSemanticDiagnostics: options.skipSemanticDiagnostics,
       ...(options.platform ? { platform: options.platform } : {}),
     });
@@ -1274,6 +1359,7 @@ export function compileSourceSync(
       emulateNode: options.emulateNode,
       forceTsGrammar,
       ...(options.platform ? { platform: options.platform } : {}),
+      ...(dtsEntryDecls !== undefined ? { entryDeclarationsText: dtsEntryDecls } : {}),
     });
   }
 
@@ -1396,16 +1482,21 @@ export function compileSourceSync(
     return failResult(errors);
   }
 
-  // #1927 — everything from ES early-error detection down through emit is the
-  // shared pipeline core. The single-source path is the only one that runs the
-  // full pre-parse rewrite prologue + import preprocessing above; it threads the
-  // single-source-only `nodeBuiltins`/`wasiNodeFsFuncs`/`jsxRuntime` through
-  // `buildCodegenOptions`. `compileSourceSync` stays synchronous and never runs
-  // wasm-opt (the `eval` host shim contract) — `runPipeline` stops before it.
+  // (#743) Seed map consumed verbatim by BOTH inference lanes (IR fixpoint and
+  // legacy call-site scan) — one shared object, so the lanes cannot see
+  // different seeds. Undefined whenever the flag is off or nothing is seedable.
+  const dtsSeeds =
+    dtsEntryDecls !== undefined
+      ? collectDtsEntrypointSeeds(ast.program.getSourceFile(DTS_ENTRY_DECLS_NAME), ast.sourceFile)
+      : undefined;
+
+  // #1927 — everything from ES early-error detection through emit is shared.
+  // This single-source path runs the full rewrite prologue and threads its data
+  // into codegen; the synchronous eval contract stops before wasm-opt.
   const emitSourceMap = options.sourceMap === true;
   const sourcesContent = new Map<string, string>();
   sourcesContent.set(effectiveFileName, source);
-  return runPipeline({
+  const result = runPipeline({
     userSourceFiles: [ast.sourceFile],
     entryAst: ast,
     multiAst: null,
@@ -1416,7 +1507,9 @@ export function compileSourceSync(
       wasiRawImports,
       wasiMemAccessors,
       jsxRuntime: preprocessed.jsxRuntime,
+      ...(dtsSeeds ? { dtsEntrypointSeeds: dtsSeeds } : {}),
     }),
+    ...(irInventory ? { irInventoryOptions: irInventory } : {}),
     sourcesContent,
     diagnosticAnchor: ast.sourceFile,
     // #1958 — single-source: the lone source is the entry, so always run ES
@@ -1425,6 +1518,10 @@ export function compileSourceSync(
     runEarlyErrorsOnAllowJs: true,
     options,
   });
+  if (result.irOutcomes) {
+    result.irOutcomes = remapIrOutcomePositions(result.irOutcomes, ast.sourceFile, source, positionMap);
+  }
+  return result;
 }
 
 /**
@@ -1435,6 +1532,8 @@ export async function compileMultiSource(
   files: Record<string, string>,
   entryFile: string,
   options: CompileOptions = {},
+  projectService?: IncrementalProjectLanguageService,
+  projectResolutions?: ProjectModuleResolutions,
 ): Promise<CompileResult> {
   const errors: CompileError[] = [];
 
@@ -1446,20 +1545,39 @@ export async function compileMultiSource(
   // Rewrite CJS `const X = require('Y')` to ESM `import X from 'Y'` (#1279) across
   // every input file. This runs before TypeScript's analyzer so the require() calls
   // are seen as proper module imports during cross-file resolution.
-  const processedFiles = Object.fromEntries(Object.entries(definedFiles).map(([k, v]) => [k, rewriteCjsRequire(v)]));
+  const rewrittenFiles = profilePhase("cjs-rewrite", () =>
+    Object.fromEntries(Object.entries(definedFiles).map(([k, v]) => [k, rewriteCjsRequire(v)])),
+  );
+  const processedFiles = profilePhase("ground-call-fold", () =>
+    foldGroundCallsInMulti(rewrittenFiles, entryFile, options.optimize),
+  );
+  profileCount("input-files", Object.keys(processedFiles).length);
 
-  const multiAst = analyzeMultiSource(processedFiles, entryFile, undefined, {
+  const analyzeOptions = {
     allowJs: options.allowJs,
     skipSemanticDiagnostics: options.skipSemanticDiagnostics,
     // #2528 — propagate the ambient-platform selection into multi-file analysis.
     ...(options.platform ? { platform: options.platform } : {}),
-  });
+  };
+  let multiAst: MultiTypedAST;
+  if (projectService && projectResolutions === undefined) {
+    profilePhase("analyze/update-project", () => projectService.updateProject(processedFiles, entryFile));
+    multiAst = profilePhase("analyze/checker", () => projectService.analyze(analyzeOptions));
+  } else {
+    multiAst = profilePhase("analyze", () =>
+      analyzeMultiSource(processedFiles, entryFile, undefined, analyzeOptions, projectResolutions),
+    );
+  }
+  profileCount("source-files", multiAst.sourceFiles.length);
+  profileCount("program-files", multiAst.program.getSourceFiles().length);
 
   // When allowJs is set (e.g. compiling npm packages like lodash-es), only report
   // diagnostics from the entry file — dependency files may have TS errors we can't
-  // control (missing globals, JSDoc param issues, etc.).
+  // control (missing globals, JSDoc param issues, etc.). strictJsSyntax is the
+  // explicit exception for syntax-test graphs whose complete literal JavaScript
+  // input is owned by the caller (#3506).
   const isEntryDiag = (diag: { file?: { fileName: string } }) =>
-    !options.allowJs || !diag.file || diag.file === multiAst.entryFile;
+    !options.allowJs || options.strictJsSyntax === true || !diag.file || diag.file === multiAst.entryFile;
 
   for (const diag of multiAst.diagnostics) {
     if (diag.category === 1 && isEntryDiag(diag)) {
@@ -1483,9 +1601,11 @@ export async function compileMultiSource(
 
   // When allowJs is set, don't bail on TS diagnostics — JS packages with JSDoc
   // annotations produce many false-positive errors (TS1016 optional params,
-  // TS2322 type mismatches, TS8017 signature-in-JS, etc.). Codegen handles it fine.
+  // TS2322 type mismatches, TS8017 signature-in-JS, etc.). Codegen handles it
+  // fine. strictJsSyntax restores only the syntactic rejection gate; semantic
+  // JavaScript diagnostics retain the existing allowJs policy.
   const hasSyntaxErrors =
-    !options.allowJs &&
+    (!options.allowJs || options.strictJsSyntax === true) &&
     multiAst.syntacticDiagnostics.some(
       (d) => d.category === 1 && isEntryDiag(d) && multiAst.sourceFiles.some((sf) => d.file === sf),
     );
@@ -1528,12 +1648,12 @@ export async function compileMultiSource(
   // single-source path uses (`detectNodeFsImports` / `detectRawWasiImports`) over
   // the CJS-rewritten file map so codegen lowers those calls module-wide. The
   // unions are empty for any program that imports none of these modules, so
-  // existing multi-file compiles stay byte-identical. (`nodeBuiltins`/`jsxRuntime`
-  // are a separate, larger preprocessImports-parity change — tracked alongside
-  // #2138.)
+  // existing multi-file compiles stay byte-identical. JSX runtime collection
+  // remains a separate preprocessImports-parity change.
   const wasiNodeFsFuncs = new Set<string>();
   const wasiRawImports = new Set<string>();
   const wasiMemAccessors = new Set<string>();
+  const nodeBuiltins = collectGraphNodeBuiltinImports(Object.values(processedFiles));
   for (const content of Object.values(processedFiles)) {
     for (const name of detectNodeFsImports(content)) wasiNodeFsFuncs.add(name);
     const { rawWasi, memAccessors } = detectRawWasiImports(content);
@@ -1547,12 +1667,18 @@ export async function compileMultiSource(
       multiAst,
       errors,
       codegenOptions: buildCodegenOptions(options, emitSourceMap, {
+        nodeBuiltins,
         wasiNodeFsFuncs,
         wasiRawImports,
         wasiMemAccessors,
       }),
       sourcesContent,
       diagnosticAnchor: multiAst.entryFile,
+      // #3506 — retain real `.js` roots (`allowJs`) while allowing a syntax
+      // oracle to opt back into the ECMAScript early-error pass. Kept separate
+      // from strictJsSyntax because resolution-phase tests must observe the
+      // linked graph without manufacturing a parse rejection.
+      runEarlyErrorsOnAllowJs: options.enforceJsEarlyErrors === true,
       options,
     }),
     options,

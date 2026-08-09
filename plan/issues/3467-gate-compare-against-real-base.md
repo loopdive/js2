@@ -1,9 +1,9 @@
 ---
 id: 3467
 title: "test262 regression gate: compare each PR against its REAL merge-base commit (per-SHA cache), not a drifting promoted snapshot"
-status: in-review
-assignee: senior-dev-3467
-sprint: current
+status: done
+completed: 2026-07-23
+sprint: 75
 priority: high
 horizon: l
 feasibility: medium

@@ -102,6 +102,28 @@ export function isStrictFunction(
   return result;
 }
 
+/** Decide whether an arbitrary node is evaluated as strict-mode code. */
+export function isStrictContext(node: ts.Node, inferModuleStrict = true): boolean {
+  for (let current: ts.Node | undefined = node; current; current = current.parent) {
+    if (
+      ts.isFunctionDeclaration(current) ||
+      ts.isFunctionExpression(current) ||
+      ts.isArrowFunction(current) ||
+      ts.isMethodDeclaration(current) ||
+      ts.isGetAccessorDeclaration(current) ||
+      ts.isSetAccessorDeclaration(current) ||
+      ts.isConstructorDeclaration(current)
+    ) {
+      return isStrictFunction(current, inferModuleStrict);
+    }
+    if (ts.isClassDeclaration(current) || ts.isClassExpression(current)) return true;
+    if (ts.isSourceFile(current)) {
+      return hasUseStrictPrologue(current.statements) || (inferModuleStrict && isModuleSourceFile(current));
+    }
+  }
+  return false;
+}
+
 /**
  * (#2743) IsSimpleParameterList (ECMA-262 §15.1.3). A FormalParameters list is
  * "simple" iff every element is a plain `BindingIdentifier` with no default

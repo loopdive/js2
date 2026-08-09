@@ -322,15 +322,22 @@ describe("#1539 standalone String.prototype.split — no JS host, matches native
   });
 });
 
-describe("#1539 standalone narrowed refusals (Phase 2a)", () => {
-  async function expectRefused(src: string): Promise<void> {
-    const r = await compile(src, { target: "standalone" });
-    expect(r.success, `expected refusal for:\n${src}`).toBe(false);
-    expect(r.errors.some((e) => /#1539|#1474/.test(e.message))).toBe(true);
-  }
-
-  it("refuses dynamic new RegExp(var)", async () => {
-    await expectRefused(`export function f(p: string): boolean { return new RegExp(p).test("x"); }`);
+describe("#1539 standalone runtime constructor and unicode support", () => {
+  it("supports a runtime string passed to new RegExp(var)", async () => {
+    const src = `
+      function matches(pattern: string, input: string): boolean {
+        return new RegExp(pattern).test(input);
+      }
+      export function run(): boolean {
+        return matches("x", "xx") && !matches("y", "xx");
+      }
+    `;
+    const r = await compile(src, { fileName: "test.ts", target: "standalone" });
+    expect(r.success, r.success ? "" : r.errors?.[0]?.message).toBe(true);
+    const mod = await WebAssembly.compile(r.binary);
+    expect(WebAssembly.Module.imports(mod).filter((i) => /RegExp/.test(i.name))).toEqual([]);
+    const { instance } = await WebAssembly.instantiate(r.binary, {});
+    expect((instance.exports as { run(): number }).run()).toBe(1);
   });
   // #1912 Phase 2b landed backreferences, word boundaries, and the class
   // compatibility forms; #1911 Phase 2d Slice A landed lookarounds, inline

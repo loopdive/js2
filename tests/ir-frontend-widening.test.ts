@@ -36,6 +36,9 @@ import {
 import { _internals, lowerTypeToIrType, type LatticeType } from "../src/ir/propagate.js";
 import { UnionStructRegistry, UNION_TAG_F64, UNION_TAG_I32 } from "../src/ir/passes/tagged-union-types.js";
 import type { StructTypeDef, ValType } from "../src/ir/types.js";
+import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
+
+const irIdentities = createTestIrFunctionIdentityFactory("ir-frontend-widening");
 
 // ---------------------------------------------------------------------------
 // Change 1 — IrType discriminated union + helpers
@@ -313,7 +316,7 @@ describe("#1168 — tag.test lowering (criterion 4)", () => {
     const paramId = asValueId(0);
     const tagTestResult = asValueId(1);
     const fn: IrFunction = {
-      name: "testFunc",
+      ...irIdentities.next("testFunc"),
       params: [{ value: paramId, type: unionType, name: "x" }],
       resultTypes: [irVal({ kind: "i32" })],
       blocks: [

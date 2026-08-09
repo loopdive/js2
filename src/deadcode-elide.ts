@@ -154,12 +154,91 @@ export function elideDeadTopLevelBindings(
   // A mention is (name, position). Ownership by a candidate statement is
   // positional: candidates are top-level statements, so ranges are disjoint.
   const mentions: { name: string; pos: number }[] = [];
+  const unknownDynamicCodePositions: number[] = [];
+  const handledDynamicIdentifiers = new Set<number>();
   const record = (name: string, pos: number): void => {
     if (byName.has(name)) mentions.push({ name, pos });
   };
+  const containsIdentifier = (sourceText: string, name: string): boolean => {
+    let from = 0;
+    while (from <= sourceText.length) {
+      const at = sourceText.indexOf(name, from);
+      if (at < 0) return false;
+      const before = at === 0 ? "" : sourceText[at - 1]!;
+      const afterAt = at + name.length;
+      const after = afterAt >= sourceText.length ? "" : sourceText[afterAt]!;
+      const ident = (ch: string): boolean => /[A-Za-z0-9_$]/.test(ch);
+      if (!ident(before) && !ident(after)) return true;
+      from = at + name.length;
+    }
+    return false;
+  };
+  const recordLiteralDynamicSource = (sourceText: string, pos: number): void => {
+    for (const name of byName.keys()) {
+      if (containsIdentifier(sourceText, name)) record(name, pos);
+    }
+    // A literal outer program can itself launch computed dynamic code. Parsing
+    // recursively would add a second evaluator to this small pre-pass; keeping
+    // every candidate is the sound bounded fallback for that uncommon shape.
+    if (containsIdentifier(sourceText, "eval") || containsIdentifier(sourceText, "Function")) {
+      unknownDynamicCodePositions.push(pos);
+    }
+  };
+  const unwrapCallee = (expression: ts.Expression): ts.Expression => {
+    let current = expression;
+    while (
+      ts.isParenthesizedExpression(current) ||
+      ts.isAsExpression(current) ||
+      ts.isNonNullExpression(current) ||
+      ts.isTypeAssertionExpression(current)
+    ) {
+      current = current.expression;
+    }
+    return current;
+  };
   const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
+      const callee = unwrapCallee(node.expression);
+      let kind: "eval" | "Function" | undefined;
+      let dynamicIdentifier: ts.Identifier | undefined;
+      if (ts.isIdentifier(callee) && (callee.text === "eval" || callee.text === "Function")) {
+        kind = callee.text;
+        dynamicIdentifier = callee;
+      } else if (
+        ts.isBinaryExpression(callee) &&
+        callee.operatorToken.kind === ts.SyntaxKind.CommaToken &&
+        ts.isIdentifier(callee.right) &&
+        callee.right.text === "eval"
+      ) {
+        kind = "eval";
+        dynamicIdentifier = callee.right;
+      }
+      if (kind && dynamicIdentifier) {
+        handledDynamicIdentifiers.add(dynamicIdentifier.getStart(sf));
+        const args = node.arguments ?? [];
+        if (kind === "eval") {
+          const sourceArg = args[0];
+          if (sourceArg && ts.isStringLiteralLike(sourceArg)) {
+            recordLiteralDynamicSource(sourceArg.text, node.getStart(sf));
+          } else if (sourceArg) {
+            unknownDynamicCodePositions.push(node.getStart(sf));
+          }
+        } else if (args.some((arg) => !ts.isStringLiteralLike(arg))) {
+          unknownDynamicCodePositions.push(node.getStart(sf));
+        } else {
+          for (const arg of args) recordLiteralDynamicSource((arg as ts.StringLiteralLike).text, node.getStart(sf));
+        }
+      }
+    }
     if (ts.isIdentifier(node)) {
-      record(node.text, node.getStart(sf));
+      const pos = node.getStart(sf);
+      if ((node.text === "eval" || node.text === "Function") && !handledDynamicIdentifiers.has(pos)) {
+        // An escaped/aliased evaluator may later receive computed source. This
+        // also covers `var Ctor = Function; new Ctor(dynamicBody)` once the
+        // alias candidate is revived by its use.
+        unknownDynamicCodePositions.push(pos);
+      }
+      record(node.text, pos);
     } else if (ts.isStringLiteralLike(node)) {
       // StringLiteral | NoSubstitutionTemplateLiteral — cooked text.
       record(node.text, node.getStart(sf));
@@ -193,6 +272,19 @@ export function elideDeadTopLevelBindings(
         }
       }
     }
+  }
+
+  // §19.2.1.1 PerformEval parses its String argument as a Script, and
+  // §20.2.1.1.1 CreateDynamicFunction parses parameter/body strings against
+  // the current realm's global environment. Computed source can therefore name
+  // any candidate without leaving a static mention, so a surviving unknown
+  // source keeps everything. Literal source was recorded name-by-name above;
+  // treating it as unknown would revive the unused `$262.evalScript` shim,
+  // whose own computed eval would then poison every literal-eval compilation.
+  // A dynamic call inside a still-dropped candidate cannot execute and does not
+  // pin unrelated bindings.
+  if (unknownDynamicCodePositions.some((pos) => owner(pos)?.dropped !== true)) {
+    for (const cand of candidates) cand.dropped = false;
   }
 
   const dropped = candidates.filter((c) => c.dropped);

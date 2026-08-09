@@ -16,8 +16,27 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 import { ts } from "../src/ts-api.js";
 import { negativeCompileErrorMatches } from "../scripts/negative-verdict.mjs";
+// (#3613) ONE renderer for a thrown Wasm payload, shared with the CI worker.
+// Two copies "kept in sync" by a comment is exactly how the local lane came to
+// report the opaque #2870 label where CI reported the real assertion text.
+import {
+  renderHarnessThrownText,
+  safeStringifyThrown as sharedSafeStringifyThrown,
+  tryNativeExnRender as sharedTryNativeExnRender,
+} from "../scripts/lib/wasm-exn-render.mjs";
+import { isModuleGoal } from "../scripts/test262-module-goal.mjs";
+// (#4162) ONE import-object finaliser, shared with scripts/test262-worker.mjs
+// and tests/test262-shared.ts. This lane used to instantiate the binary
+// directly, so a standalone module linking `js2wasm:runtime-eval` died at
+// instantiate and reported a LINK error in place of the test's real signature.
+// That is not a niche shape: the `$262.evalScript` shim `assembleOriginalHarness`
+// injects into EVERY test contains a direct `eval`, so any test keeping it
+// reachable carries the module-level import. Measured on one 162-file ES5 lever:
+// 82 files masked, 18 of them actually passing.
+import { instantiateTest262Module } from "../scripts/test262-import-object.mjs";
 import { restoreHostBuiltins } from "./test262-restore-builtins.js";
 import { assembleOriginalHarness, type OriginalHarnessVariant } from "./test262-original-harness.js";
+import { SANDBOX_GLOBAL_NAMES } from "../scripts/test262-sandbox-globals.mjs";
 
 // #1310: per-shard global isolation for test262.
 //
@@ -40,57 +59,12 @@ import { assembleOriginalHarness, type OriginalHarnessVariant } from "./test262-
 // vm realm's built-ins as properties on it — `ctx.Array` is `undefined`.
 // We therefore use `vm.runInContext("...")` to extract the realm's
 // built-ins explicitly and copy the references onto the sandbox object.
-const SANDBOX_GLOBAL_NAMES: ReadonlyArray<string> = [
-  "Array",
-  "Object",
-  "Function",
-  "String",
-  "Number",
-  "Boolean",
-  "Symbol",
-  "Promise",
-  "Map",
-  "Set",
-  "WeakMap",
-  "WeakSet",
-  "Date",
-  "RegExp",
-  "Error",
-  "TypeError",
-  "RangeError",
-  "SyntaxError",
-  "ReferenceError",
-  "Math",
-  "JSON",
-  "Reflect",
-  // (#3419) The TypedArray cluster + binary-data builtins. The oracle-v8
-  // literal harness (testTypedArray.js) reads these as VALUES off globalThis
-  // (`Object.getPrototypeOf(Int8Array)`, `[Int8Array, Uint8Array, …]`); before
-  // this list included them, `__extern_get(globalThis, "Int8Array")` returned
-  // undefined in the sandbox and the whole TypedArray harness died at
-  // `Object.getPrototypeOf(undefined)` — ~2k tests. Same vm realm as the rest
-  // of the sandbox, so intra-sandbox identities hold.
-  "ArrayBuffer",
-  "SharedArrayBuffer",
-  "DataView",
-  "Int8Array",
-  "Uint8Array",
-  "Uint8ClampedArray",
-  "Int16Array",
-  "Uint16Array",
-  "Int32Array",
-  "Uint32Array",
-  "Float16Array",
-  "Float32Array",
-  "Float64Array",
-  "BigInt64Array",
-  "BigUint64Array",
-  "BigInt",
-  "EvalError",
-  "URIError",
-  "AggregateError",
-  "Proxy",
-];
+//
+// (#3441) The name list itself now lives in the single shared source
+// scripts/test262-sandbox-globals.mjs (imported above as SANDBOX_GLOBAL_NAMES),
+// so this runner lane and the sharded-CI worker (scripts/test262-worker.mjs)
+// can never drift again — the #3419 TypedArray cluster (+ Atomics) is applied
+// to both by construction.
 
 const SENTINEL_KEYS: ReadonlyArray<readonly string[]> = [
   ["Array", "prototype", "push"],
@@ -3476,6 +3450,8 @@ ${asyncResultExport}`;
 
 /** Categories of test262 tests to scan */
 export const TEST_CATEGORIES = [
+  // ── harness self-tests ──
+  "harness",
   // ── language ──
   "language/arguments-object",
   "language/asi",
@@ -3577,6 +3553,9 @@ export const TEST_CATEGORIES = [
 
 const TEST262_ROOT = join(import.meta.dirname ?? ".", "..", "test262");
 
+/** Provenance prefix for this lane's runtime-eval tier announcement (#2928 E7). */
+const RUNTIME_EVAL_PROVIDER_LABEL = "test262-in-process";
+
 export function findTestFiles(category: string): string[] {
   const dir = join(TEST262_ROOT, "test", category);
   if (!existsSync(dir)) return [];
@@ -3672,14 +3651,7 @@ export function standaloneHostImportError(target: string | undefined, imports: r
 /** Default per-test timeout in milliseconds (prevents infinite-loop hangs) */
 const TEST_TIMEOUT_MS = 15000;
 
-export function isModuleGoal(category: string, meta: Test262Meta, source: string): boolean {
-  if (category === "language/module-code") return true;
-  if (category === "language/import") return true;
-  if (category === "language/export") return true;
-  if (meta.flags?.includes("module")) return true;
-  if (/\b(?:import|export)\b/.test(source)) return true;
-  return false;
-}
+export { isModuleGoal };
 
 export function buildNegativeCompileSource(source: string, meta: Test262Meta, category: string): string {
   const strippedSource = source.replace(/\/\*---[\s\S]*?---\*\//, "");
@@ -3702,6 +3674,13 @@ export async function handleNegativeTest(
   meta: Test262Meta,
   relPath: string,
   category: string,
+  // (#4162) The compile target. This parameter did not exist: the body below
+  // referenced a bare `target` identifier that was NEVER BOUND in this scope,
+  // so building the compile options threw `ReferenceError: target is not
+  // defined` — inside the `try` whose `catch` reports `status: "pass"`. Every
+  // parse/early/resolution-phase negative test routed here therefore passed
+  // VACUOUSLY, with `compileMs` ~0.05 because nothing was ever compiled.
+  target?: "standalone",
 ): Promise<TestResult | null> {
   if (!meta.negative) return null;
 
@@ -3718,14 +3697,21 @@ export async function handleNegativeTest(
     // strict-mode checks (eval/arguments binding, octal literals, etc.) apply.
     const minimalWrapped = buildNegativeCompileSource(source, meta, category);
 
+    // (#4162) Built OUTSIDE the try on purpose. The `catch` below reports
+    // `status: "pass"` for anything thrown, which is right for a `compile()`
+    // rejection and catastrophic for a harness bug — a ReferenceError from this
+    // very expression is what made this whole branch vacuous. A harness defect
+    // must crash loudly, never launder itself into a conformance pass.
+    const compileOptions = {
+      fileName: "test.ts",
+      emitWat: false,
+      ...(target ? { target } : {}),
+    };
+
     let compileMs = 0;
     const compileStart = performance.now();
     try {
-      const result = await compile(minimalWrapped, {
-        fileName: "test.ts",
-        emitWat: false,
-        ...(target ? { target } : {}),
-      });
+      const result = await compile(minimalWrapped, compileOptions);
       compileMs = performance.now() - compileStart;
       const totalMs = performance.now() - totalStart;
       const timing: TestTiming = {
@@ -3753,7 +3739,14 @@ export async function handleNegativeTest(
       try {
         const sandbox = getTestSandbox();
         const imports = buildImports(result.imports, undefined, result.stringPool, { globalSandbox: sandbox });
-        await WebAssembly.instantiate(result.binary, imports);
+        // (#4162) Shared seam: without it a standalone module linking
+        // `js2wasm:runtime-eval` throws a LINK error here, which this catch
+        // would score as "wasm validation rejected it" — a second way for the
+        // instrument's own gap to become a conformance pass.
+        await instantiateTest262Module(result.binary, imports, {
+          target,
+          providerLabel: RUNTIME_EVAL_PROVIDER_LABEL,
+        });
       } catch {
         // Instantiation failed — counts as expected error
         const totalMs2 = performance.now() - totalStart;
@@ -3941,16 +3934,9 @@ function decodeVLQSegment(segment: string): number[] {
  * it: on failure fall back to a stable label so the recorded signature reflects
  * that the module threw a non-JS-stringifiable Wasm-GC payload.
  */
-function safeStringifyThrown(v: any): string {
-  try {
-    return String(v);
-  } catch {
-    const t = typeof v;
-    return t === "object" || t === "function"
-      ? "uncaught Wasm-GC exception (non-stringifiable payload)"
-      : `uncaught Wasm exception (${t})`;
-  }
-}
+// (#3613) Re-exported from the SHARED renderer so this lane and the CI worker
+// cannot drift again. The doc comment above is retained for the #2870 history.
+const safeStringifyThrown = sharedSafeStringifyThrown;
 
 /**
  * (#2962) Render a natively-thrown Wasm-GC payload through the module's own
@@ -3964,20 +3950,8 @@ function safeStringifyThrown(v: any): string {
  * or anything throws — the caller then falls back to the #2870 opaque label.
  * The 64k cap is defensive (a corrupt length must not build a giant string).
  */
-function tryNativeExnRender(instance: any, payload: any): string | null {
-  try {
-    const prep = instance?.exports?.__exn_render_prepare;
-    const chr = instance?.exports?.__exn_render_char;
-    if (typeof prep !== "function" || typeof chr !== "function") return null;
-    const len = prep(payload);
-    if (typeof len !== "number" || len <= 0 || len > 65536) return null;
-    let out = "";
-    for (let i = 0; i < len; i++) out += String.fromCharCode(chr(i));
-    return out;
-  } catch {
-    return null;
-  }
-}
+// (#3613) See safeStringifyThrown above — one implementation, both lanes.
+const tryNativeExnRender = sharedTryNativeExnRender;
 
 export function extractWasmExceptionMessage(err: any, instance: any): string {
   if (typeof WebAssembly !== "undefined" && err instanceof (WebAssembly as any).Exception) {
@@ -4117,25 +4091,29 @@ interface OriginalVariantResult {
   wasm_sha?: string;
 }
 
-function originalHarnessThrownText(error: unknown, instance?: WebAssembly.Instance): string {
-  if (typeof WebAssembly !== "undefined" && error instanceof WebAssembly.Exception && instance) {
-    try {
-      const exports = instance.exports as Record<string, any>;
-      const tag = exports.__exn_tag ?? exports.__tag;
-      const payload = tag ? error.getArg(tag, 0) : undefined;
-      if (payload != null && (typeof payload === "object" || typeof payload === "function")) {
-        const name = (payload as { name?: unknown }).name;
-        const message = (payload as { message?: unknown }).message;
-        if (typeof name === "string") return `${name}${message ? `: ${String(message)}` : ""}`;
-      }
-      if (payload !== undefined && payload !== null) return safeStringifyThrown(payload);
-    } catch {
-      // Fall through to the guarded generic renderer.
-    }
-  }
-  if (error instanceof Error) return `${error.name}: ${error.message}`;
-  return safeStringifyThrown(error);
-}
+/**
+ * (#3613) Now a thin alias over the SHARED renderer
+ * (`scripts/lib/wasm-exn-render.mjs`).
+ *
+ * The local copy this replaces was missing the `tryNativeExnRender` step the
+ * CI worker has always taken, so on the standalone lane every `Test262Error`
+ * surfaced here as the opaque #2870 label ("uncaught Wasm-GC exception
+ * (non-stringifiable payload)") while CI reported the real assertion text.
+ * Consequences: message-derived triage against the local runner saw one giant
+ * undifferentiated bucket, and a standalone runtime-negative test could not
+ * match its expected error TYPE (`originalNegativeMatches` searches the
+ * detail for `meta.negative.type`, which the opaque label does not contain).
+ *
+ * `oracle-version-exempt:` this is the LOCAL in-process runner only. The
+ * committed baseline rows are produced exclusively by
+ * `scripts/test262-worker.mjs`, whose behaviour is byte-unchanged — the shared
+ * policy IS the worker's existing policy. No baseline row can reclassify; the
+ * change only makes the local lane stop disagreeing with CI.
+ */
+const originalHarnessThrownText = renderHarnessThrownText as (
+  error: unknown,
+  instance?: WebAssembly.Instance,
+) => string;
 
 function originalNegativeMatches(meta: Test262Meta, detail: string): boolean {
   const expected = meta.negative?.type;
@@ -4209,7 +4187,25 @@ async function runOriginalHarnessVariant(
         emitWat: false,
         skipSemanticDiagnostics: true,
         inferModuleStrictArguments: meta.flags?.includes("module") === true,
-        ...(target ? { target } : { deferTopLevelInit: true }),
+        // (#2860 F3) Standalone joins the host lane's deferTopLevelInit rule
+        // (mirrors scripts/test262-worker.mjs doCompile): under the `(start)`
+        // model every top-level throw — i.e. every runtime failure in
+        // original-harness mode — surfaced from WebAssembly.instantiate with
+        // instance === null, making the #2962 native exception render
+        // unreachable and collapsing ~8,600 standalone failures onto the
+        // opaque "wasm exception during module init" label. The exec path
+        // below already calls the exported __module_init after setInstance.
+        ...(target ? { target } : {}),
+        ...(target === undefined || target === "standalone" ? { deferTopLevelInit: true } : {}),
+        // (#4035) The harness INSPECTS the module from JS — it renders native
+        // exception payloads via `__exn_render_*` (#2962) and drains the
+        // host-free print sink via `__stdout_*` (#3469). Standalone/WASI now
+        // default to `hostBridge: "off"` (a deployed pure-Wasm module needs
+        // only its own exports), so the runner must ask for the bridge
+        // explicitly or those two channels vanish and the conformance numbers
+        // collapse onto opaque labels. This is the harness opt-in the flag was
+        // designed around; do not drop it to "shrink the test binaries".
+        hostBridge: "always",
       });
     } catch (error) {
       compileMs = performance.now() - compileStarted;
@@ -4278,9 +4274,12 @@ async function runOriginalHarnessVariant(
         globalSandbox: sandbox,
       }) as any;
       const instantiateStarted = performance.now();
-      ({ instance } = await WebAssembly.instantiate(result.binary, imports));
+      instance = await instantiateTest262Module(result.binary, imports, {
+        target,
+        providerLabel: RUNTIME_EVAL_PROVIDER_LABEL,
+      });
       instantiateMs = performance.now() - instantiateStarted;
-      imports.setExports?.(instance.exports);
+      imports.setInstance?.(instance);
 
       const executeStarted = performance.now();
       const moduleInit = (instance.exports as Record<string, any>).__module_init;
@@ -4509,7 +4508,7 @@ export async function runSyntheticTest262File(
     meta.negative &&
     (meta.negative.phase === "parse" || meta.negative.phase === "early" || meta.negative.phase === "resolution")
   ) {
-    const negResult = await handleNegativeTest(source, meta, relPath, category);
+    const negResult = await handleNegativeTest(source, meta, relPath, category, target);
     if (negResult) return negResult;
   }
 
@@ -4533,6 +4532,7 @@ export async function runSyntheticTest262File(
 
   // Wrap the test
   const { source: wrappedSource, bodyLineOffset } = wrapTest(source, meta, target);
+  const moduleGoal = isModuleGoal(category, meta, source);
 
   /** Adjust error line numbers to refer to the original source file.
    *  The wrapped source has a variable preamble and stripped comments,
@@ -4582,20 +4582,27 @@ export async function runSyntheticTest262File(
       // only genuine module-goal tests infer module-strictness; script tests
       // keep mapped `arguments` despite the synthetic `export function test()`
       // wrapper. Matches `test262-shared.ts`.
-      inferModuleStrictArguments: isModuleGoal(category, meta, source),
+      inferModuleStrictArguments: moduleGoal,
       // (#2095) standalone lane for the baseline validator (default host/gc).
       // (#3049 C1 / #3123) Host lane defers top-level init (export
       // `__module_init`, no wasm `(start)` section) so top-level code runs
-      // AFTER `setExports` has wired the runtime — aligned with
+      // AFTER `setInstance` has wired the runtime — aligned with
       // `scripts/compiler-fork-worker.mjs` (#1251 both-paths rule). The
-      // standalone/wasi lane keeps its own `_start` model and is untouched.
+      // wasi/linear lanes keep their own `_start` model and are untouched.
+      // (#2860 F3) The STANDALONE lane joins the defer rule (mirrors the
+      // worker's doCompile): under `(start)` a top-level throw surfaced from
+      // instantiate with instance === null, so the #2962 native exception
+      // render was unreachable and standalone failures collapsed onto the
+      // opaque "wasm exception during module init" label. The exec path
+      // below already calls the exported __module_init after setInstance.
       // MODULE-GOAL tests are EXCLUDED: the multi-module (FIXTURE) link
       // already synthesizes per-module init plumbing, and adding the
       // deferred-export flag there emitted a SECOND `__module_init` export in
       // one binary — V8 rejects it ("Duplicate export name '__module_init'"),
       // which is exactly the 6-file `language/module-code/*` regression that
       // parked the stack PR #2835/#2839 in the merge queue.
-      ...(target ? { target } : isModuleGoal(category, meta, source) ? {} : { deferTopLevelInit: true }),
+      ...(target ? { target } : {}),
+      ...(moduleGoal || (target !== undefined && target !== "standalone") ? {} : { deferTopLevelInit: true }),
       // #1251: align with the sharded runner — both `scripts/compiler-fork-worker.mjs`
       // (the production path that records the committed JSONL) and `tests/test262-vitest.test.ts`
       // FIXTURE multi-compile pass `skipSemanticDiagnostics: true`. Without this flag,
@@ -4755,14 +4762,18 @@ export async function runSyntheticTest262File(
     const importResult = buildImports(result.imports, undefined, result.stringPool, { globalSandbox: sandbox });
     const imports = importResult as any;
     const instantiateStart = performance.now();
-    ({ instance } = await WebAssembly.instantiate(result.binary, imports));
+    // (#4162) Same shared seam as the original-harness lane — this legacy
+    // wrapper lane also accepts `target: "standalone"` (#2095), so it had the
+    // identical runtime-eval link hole.
+    instance = await instantiateTest262Module(result.binary, imports, {
+      target,
+      providerLabel: RUNTIME_EVAL_PROVIDER_LABEL,
+    });
     instantiateMs = performance.now() - instantiateStart;
-    // Provide exports back to the runtime so __sget_* getters are discoverable
-    if (typeof importResult.setExports === "function") {
-      importResult.setExports(instance.exports as any);
-    }
+    // Provide the branded instance so callbacks and host bridges are discoverable.
+    importResult.setInstance?.(instance);
     // (#3049 C1) Deferred top-level init (host lane): run the exported
-    // `__module_init` now that `setExports` has wired the runtime. Inside the
+    // `__module_init` now that `setInstance` has wired the runtime. Inside the
     // same try as instantiate + test(), so a top-level throw keeps the exact
     // classification it had when it surfaced from the `(start)` section
     // (runtime-negative → pass, else fail — see the catch below).
@@ -5097,6 +5108,23 @@ export function classifyError(errorMsg: string | undefined): string | undefined 
   if (/^returned -1\b/.test(errorMsg)) return "exception_in_test";
   if (/^returned \d+/.test(errorMsg)) return "assertion_fail";
 
+  // (#3468 F1) A message beginning with "Test262Error" is by construction a
+  // rendered ASSERTION THROW (the #2962 standalone exception renderer prefixes
+  // the constructor name), never a genuine Wasm trap: a real trap aborts the
+  // module with a host RuntimeError message ("out of bounds memory access",
+  // "unreachable" …) that carries no Test262Error prefix. This rule must sit
+  // BEFORE the trap regexes for exactly the #3285 reason above — assertion
+  // TEXT quoting the test's own words ("following shrink (out of bounds)
+  // Expected SameValue(«8», «0»)…") was matching /out of bounds/ etc. and
+  // mis-binning honest assertion fails as uncatchable traps, false-positive-
+  // tripping the #3189 trap ratchet (seen live on the F1 merge_group run
+  // 30043224652: 6 Test262Error rows counted as NEW oob — including
+  // Temporal/Duration/…/result-out-of-range-1.js, the SAME file the v4 fix
+  // caught for the "returned N" shape; measured baseline also carries 3 such
+  // false "unreachable" rows). Label-only relabel (no pass/fail flips) —
+  // covered by the same ORACLE_VERSION 10 bump as the #3468 F1 de-inflation.
+  if (/^Test262Error\b/.test(errorMsg)) return "assertion_fail";
+
   // Wasm traps
   if (/dereferencing a null/i.test(errorMsg)) return "null_deref";
   if (/illegal cast/i.test(errorMsg)) return "illegal_cast";
@@ -5113,13 +5141,9 @@ export function classifyError(errorMsg: string | undefined): string | undefined 
 
   // (Assertion "returned N" patterns are classified at the TOP of this
   // function — before the trap regexes — see the #3285 comment there.)
-  // (#2962) A thrown Test262Error IS an assertion failure by definition. The
-  // standalone exception renderer (#2962) surfaces these as
-  // "Test262Error: <assert text>" — before it, such failures were the opaque
-  // #2870 label and fell to "other". Host-lane records are unaffected: there
-  // the payload is a real JS Error and the recorded message is `.message`
-  // WITHOUT the constructor-name prefix.
-  if (/^Test262Error\b/.test(errorMsg)) return "assertion_fail";
+  // (#2962/#3468 F1) The `^Test262Error` → assertion_fail rule moved to the
+  // TOP of this function, before the trap regexes — see the #3468 comment
+  // there (assertion text quoting trap words was stealing the row).
 
   // Wasm compile/validation errors (from instantiation). (#3187) Order matters:
   // classify GENUINE invalid-Wasm FIRST so an instantiation error that quotes

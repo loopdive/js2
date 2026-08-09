@@ -25,6 +25,9 @@ benchmarks/results/*.json
 !benchmarks/results/size-benchmarks.json
 !benchmarks/results/loadtime-benchmarks.json
 !benchmarks/results/test262-standalone-highwater.json
+!benchmarks/results/npm-compat.json
+!benchmarks/results/npm-compat-perf.json
+!benchmarks/results/npm-compat-history.json
 benchmarks/results/*.md
 benchmarks/results/*.txt
 # #1528 — the ~15 MB test262 baseline JSONL lives in loopdive/js2wasm-baselines.
@@ -32,6 +35,7 @@ benchmarks/results/*.txt
 # but it must never be re-committed to this repo.
 benchmarks/results/test262-current.jsonl
 benchmarks/results/test262-results.jsonl
+benchmarks/results/test262-run.log
 .pnpm-store/
 .claude/settings.local.json
 .claude/max-load
@@ -45,7 +49,7 @@ benchmarks/results/test262-results.jsonl
 .codex/ci-status/
 .codex/symphony/
 .codex/dispatch/
-.test262-cache/
+.test262-cache
 output/
 examples/native-messaging/out/
 scripts/compiler-bundle.mjs
@@ -68,6 +72,17 @@ tests/test*_check*.ts
 # tests/dogfood/fixtures/ IS committed, but the extracted source and the
 # regenerated surface report are derived and stay out of git.
 tests/dogfood/.acorn/
+tests/dogfood/.marked/
+tests/dogfood/.acorn-test-suite/
+tests/dogfood/.cookie/
+tests/dogfood/.clsx/
+tests/dogfood/.eslint/
+tests/dogfood/.prettier/
+tests/dogfood/.react/
+tests/dogfood/.react-upstream-suite/
+tests/dogfood/.lit-upstream-suite/
+tests/dogfood/.lit-implementation/
+tests/dogfood/.npm-compat/
 tests/dogfood/report/
 /check-*.ts
 /check-*.mts
@@ -121,3 +136,4 @@ examples/native-messaging/node-fs.wasm
 
 # Claude Code session transcripts (bind-mounted into devcontainer, host-persisted)
 .claude-sessions/
+tests/dogfood/.react-dom-upstream-suite-impl/

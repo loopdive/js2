@@ -22,6 +22,8 @@ import { UNDEF_F64_BITS } from "./value-tags.js"; // (#3315)
 import { addImport, addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { compileObjectLiteralAsExternref } from "./literals.js";
+// (#3178) done/value reads on native IteratorResult structs — late-bound via
+// shared.ts (a static member-get-dispatch.ts import here is an eval-time cycle).
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureExternRestObject } from "./object-runtime.js";
 import { emitLocalTdzInit } from "./statements/tdz.js";
@@ -37,6 +39,7 @@ import {
   ensureBindingLocals,
   ensureLateImport,
   flushLateImportShifts,
+  reserveMemberGetDispatchLate,
   valTypesMatch,
 } from "./shared.js";
 import { buildVecFromExternref, getVecInfo } from "./type-coercion.js";
@@ -737,11 +740,38 @@ export function destructureParamObjectExternref(
     getIdx = ctx.funcMap.get("__extern_get");
     if (getIdx === undefined) continue;
 
-    fctx.body.push({ op: "local.get", index: paramIdx });
-    // #1623 — nativeStrings has a -1 sentinel global index; materialize the
-    // key string inline as externref instead of `global.get -1`.
-    for (const instr of stringConstantExternrefInstrs(ctx, propNameText)) fctx.body.push(instr);
-    fctx.body.push({ op: "call", funcIdx: getIdx });
+    // (#3178) `done`/`value` destructured off a native generator IteratorResult:
+    // raw `__extern_get` only understands $Object receivers, so
+    // `.then(({ done, value }) => …)` on an async-gen `next()` result read
+    // undefined/undefined (the 280-test yield*-error template family, #3417 F2
+    // harvest). Route these two keys through the finalize-filled
+    // `__get_member_<name>` dispatcher (#2674) instead — it enumerates every
+    // struct candidate owning the field at FINALIZE (so gen-result structs
+    // registered after this destructure site still get an arm), boxes the
+    // boolean-branded `done` via `__box_boolean` (#3050) and the sentinel f64
+    // `value` undefined-aware (#2979), and falls back to `__extern_get` for
+    // every non-struct receiver — identical semantics there. Other keys keep
+    // the raw `__extern_get` read (minimal dispatch surface; widen only with
+    // corpus evidence). Not under wasi (matches the property-access gate).
+    let readViaDispatcher = false;
+    if (!ctx.wasi && (propNameText === "done" || propNameText === "value")) {
+      const dispIdx = reserveMemberGetDispatchLate(ctx, propNameText, fctx);
+      if (dispIdx !== undefined) {
+        // Re-read post-reserve: the reserve may add late imports and shift indices.
+        const refreshedGetIdx = ctx.funcMap.get("__extern_get");
+        if (refreshedGetIdx !== undefined) getIdx = refreshedGetIdx;
+        fctx.body.push({ op: "local.get", index: paramIdx });
+        fctx.body.push({ op: "call", funcIdx: dispIdx });
+        readViaDispatcher = true;
+      }
+    }
+    if (!readViaDispatcher) {
+      fctx.body.push({ op: "local.get", index: paramIdx });
+      // #1623 — nativeStrings has a -1 sentinel global index; materialize the
+      // key string inline as externref instead of `global.get -1`.
+      for (const instr of stringConstantExternrefInstrs(ctx, propNameText)) fctx.body.push(instr);
+      fctx.body.push({ op: "call", funcIdx: getIdx });
+    }
 
     const elemType: ValType = { kind: "externref" };
 
@@ -1606,10 +1636,27 @@ export function destructureParamArray(
       // runtime into a `__vec_externref` — byte-identical for the downstream
       // `__extern_length` / `__extern_get_idx` reads below. JS-host mode keeps
       // the import (byte-identical).
+      // (#3643 Slice A) §8.6.2 `BindingPattern : ArrayBindingPattern` performs
+      // GetIterator (§7.4.2) on the RHS, which throws TypeError for a
+      // non-iterable — `var [p] = {a:1}` must throw, not bind `undefined`.
+      // The non-strict `__array_from_iter_n` falls through to the host
+      // `Array.from(obj)` array-like fallback, which answers `[]`, so every
+      // array-pattern form (single, multi, rest, param, array-like RHS)
+      // silently bound `undefined`. Array SPREAD was already correct because it
+      // uses the STRICT unbounded drain; destructuring is the arm that was never
+      // wired to strictness. Use the strict bounded twin here.
+      //
+      // Standalone/WASI keep the native `__array_from_iter_n`: there is no
+      // native strict arm yet, and emitting `env::__array_from_iter_n_strict`
+      // would leak a host import and break zero-import instantiation (#2904).
+      // The host-free lane therefore keeps its measured pre-existing behaviour —
+      // this slice is host-lane only by construction, with the native strict arm
+      // left as an explicit follow-up.
+      const fbIterName = ctx.standalone || ctx.wasi ? "__array_from_iter_n" : "__array_from_iter_n_strict";
       if (ctx.standalone || ctx.wasi) {
         ensureNativeArrayFromIterN(ctx);
       } else {
-        ensureLateImport(ctx, "__array_from_iter_n", [{ kind: "externref" }, { kind: "f64" }], [{ kind: "externref" }]);
+        ensureLateImport(ctx, fbIterName, [{ kind: "externref" }, { kind: "f64" }], [{ kind: "externref" }]);
       }
       flushLateImportShifts(ctx, fctx);
 
@@ -1727,7 +1774,7 @@ export function destructureParamArray(
       // re-reading by name is the fix (idempotent — no new import is added here).
       const fbLenFnFinal = ctx.funcMap.get("__extern_length");
       const fbGetIdxFnFinal = ctx.funcMap.get("__extern_get_idx");
-      const fbIterFnFinal = ctx.funcMap.get("__array_from_iter_n");
+      const fbIterFnFinal = ctx.funcMap.get(fbIterName);
       if (fbLenFnFinal !== undefined && fbGetIdxFnFinal !== undefined && fbIterFnFinal !== undefined) {
         const fbMatTmp = allocLocal(fctx, `__dparam_fb_mat_${fctx.locals.length}`, { kind: "externref" });
         const fbLenTmp = allocLocal(fctx, `__dparam_fb_len_${fctx.locals.length}`, { kind: "i32" });

@@ -20,8 +20,8 @@ async function run(src: string): Promise<Record<string, any>> {
   expect(r.success, JSON.stringify(r.errors)).toBe(true);
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports);
-  if (imports.setExports) imports.setExports(instance.exports as Record<string, Function>);
-  return wrapExports(instance.exports);
+  imports.setInstance?.(instance);
+  return wrapExports(instance);
 }
 
 async function runRaw(src: string): Promise<Record<string, any>> {
@@ -29,8 +29,8 @@ async function runRaw(src: string): Promise<Record<string, any>> {
   expect(r.success, JSON.stringify(r.errors)).toBe(true);
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports);
-  if (imports.setExports) imports.setExports(instance.exports as Record<string, Function>);
-  return wrapExports(instance.exports, { marshal: false });
+  imports.setInstance?.(instance);
+  return wrapExports(instance, { marshal: false });
 }
 
 describe("#1504 — wrapExports marshals struct/array returns to plain JS", () => {

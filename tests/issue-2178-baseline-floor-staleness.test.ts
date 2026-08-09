@@ -55,22 +55,97 @@ describe("#2178 — pathsTouchTest262 mirrors the test262-paths allowlist", () =
   });
 
   it("stays in lockstep with scripts/test262-paths-match.sh", () => {
-    // The JS mirror and the shell source of truth must agree. Spot-check a
-    // representative path set through BOTH and assert identical verdicts.
+    // The JS mirror and the shell source of truth must agree — for EVERY
+    // target, since the per-lane merge_group gating in test262-sharded.yml
+    // reads the shell script while the floor-staleness check reads the mirror.
+    // Spot-check a representative path set through BOTH and assert identical
+    // verdicts.
     const cases = [
+      ".github/actions/setup-node-pnpm/action.yml",
       "src/a/b.ts",
       "tests/test262-chunk1.test.ts",
       "tests/test262-runner.ts",
       "scripts/diff-test262.ts",
+      "tests/test262-slow-tests.json",
+      "tests/test262-slow-tests-standalone.json",
+      "tests/test262-slow-tests-future-lane.json",
       "README.md",
       "docs/x.md",
       "plan/y.md",
       "benchmarks/results/test262-current.json",
     ];
     const sh = resolve(ROOT, "scripts/test262-paths-match.sh");
-    for (const p of cases) {
-      const shellVerdict = execFileSync("bash", [sh], { input: p, encoding: "utf8" }).trim() === "true";
-      expect(pathsTouchTest262(p)).toBe(shellVerdict);
+    for (const target of ["any", "host", "standalone"] as const) {
+      const args = target === "any" ? [sh] : [sh, "--target", target];
+      for (const p of cases) {
+        const shellVerdict = execFileSync("bash", args, { input: p, encoding: "utf8" }).trim() === "true";
+        expect(pathsTouchTest262(p, target), `${p} @ ${target}`).toBe(shellVerdict);
+      }
+    }
+  });
+});
+
+describe("per-lane test262 path gating (merge_group single-lane runs)", () => {
+  // The merge_group `changes` job drops a whole shard lane (66 js-host or 36
+  // standalone jobs) when the queued diff provably cannot move it. That is only
+  // sound while the lane-exclusive set stays exactly the shard-weight maps —
+  // everything else, `src/**` above all, must stay both-lane.
+  it("narrows ONLY the per-lane shard-weight maps", () => {
+    expect(pathsTouchTest262("tests/test262-slow-tests-standalone.json", "standalone")).toBe(true);
+    expect(pathsTouchTest262("tests/test262-slow-tests-standalone.json", "host")).toBe(false);
+    expect(pathsTouchTest262("tests/test262-slow-tests.json", "host")).toBe(true);
+    expect(pathsTouchTest262("tests/test262-slow-tests.json", "standalone")).toBe(false);
+    // Both still count as test262-relevant for the coarse "run at all?" question.
+    expect(pathsTouchTest262("tests/test262-slow-tests-standalone.json")).toBe(true);
+    expect(pathsTouchTest262("tests/test262-slow-tests.json")).toBe(true);
+  });
+
+  it("keeps the entire compiler both-lane — `target: standalone` is a flag, not a source tree", () => {
+    for (const p of [
+      "src/compiler.ts",
+      "src/codegen/expressions.ts",
+      "src/codegen-linear/index.ts",
+      "src/runtime.ts",
+      "src/runtime/wasi-polyfill.ts",
+    ]) {
+      expect(pathsTouchTest262(p, "host"), p).toBe(true);
+      expect(pathsTouchTest262(p, "standalone"), p).toBe(true);
+    }
+  });
+
+  it("keeps shared runner/config paths both-lane", () => {
+    for (const p of [
+      "package.json",
+      "pnpm-lock.yaml",
+      "vitest.config.ts",
+      "tests/test262-runner.ts",
+      "tests/test262-shared.ts",
+      "tests/test262-chunk1.test.ts",
+      "scripts/test262-worker.mjs",
+      ".github/workflows/test262-sharded.yml",
+      // The matcher itself: a change to the gating logic must re-validate
+      // everything it could newly skip.
+      "scripts/test262-paths-match.sh",
+      // An unclassified future weight-map variant falls back to both lanes
+      // rather than silently becoming irrelevant.
+      "tests/test262-slow-tests-future-lane.json",
+    ]) {
+      expect(pathsTouchTest262(p, "host"), p).toBe(true);
+      expect(pathsTouchTest262(p, "standalone"), p).toBe(true);
+    }
+  });
+
+  it("never lets a mixed diff drop a lane that one of its paths touches", () => {
+    const blob = "tests/test262-slow-tests-standalone.json\nsrc/compiler.ts";
+    expect(pathsTouchTest262(blob, "host")).toBe(true);
+    expect(pathsTouchTest262(blob, "standalone")).toBe(true);
+  });
+
+  it("irrelevant paths stay irrelevant for every lane", () => {
+    for (const p of ["README.md", "docs/x.md", "plan/y.md", "benchmarks/results/test262-current.json"]) {
+      expect(pathsTouchTest262(p, "any"), p).toBe(false);
+      expect(pathsTouchTest262(p, "host"), p).toBe(false);
+      expect(pathsTouchTest262(p, "standalone"), p).toBe(false);
     }
   });
 });

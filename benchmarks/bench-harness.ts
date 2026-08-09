@@ -13,9 +13,7 @@ export async function compileAndRun(source: string, options: CompileOptions = {}
   }
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  if (imports.setExports) {
-    imports.setExports(instance.exports as Record<string, Function>);
-  }
+  imports.setInstance?.(instance);
   return instance.exports as Record<string, Function>;
 }
 

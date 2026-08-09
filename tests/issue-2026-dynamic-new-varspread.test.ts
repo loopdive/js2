@@ -30,6 +30,17 @@ async function runTest(src: string, exportName = "test"): Promise<unknown> {
   return exp[exportName]!();
 }
 
+async function runStandalone(src: string, exportName = "test"): Promise<unknown> {
+  const r = await compile(src, { fileName: "test.ts", target: "standalone" });
+  if (!r.success) throw new Error(`compile failed: ${r.errors[0]?.message}`);
+  const mod = await WebAssembly.compile(r.binary);
+  const envImports = WebAssembly.Module.imports(mod).filter((entry) => entry.module === "env");
+  expect(envImports).toEqual([]);
+  const instance = await WebAssembly.instantiate(mod, {});
+  const exp = instance.exports as Record<string, () => unknown>;
+  return exp[exportName]!();
+}
+
 describe("issue #2026 / #53: variable-spread dynamic new", () => {
   it("threads a variable (non-literal) spread into the dynamic ctor", async () => {
     const src = `
@@ -56,6 +67,62 @@ function make(K: any, rest: number[]): any { return new K(1, ...rest); }
 export function test(): number { const p = make(P, [2, 3]); return p.x + p.y + p.z; }
 `;
     expect(await runTest(src)).toBe(6);
+  });
+
+  it("normalizes an any-typed array carrier in host and standalone", async () => {
+    // test262 harness helpers are JavaScript, so an untyped `constructArgs`
+    // parameter reaches codegen as externref even though the runtime value is a
+    // boxed Wasm vec. The dynamic-new argv builder must recover and flatten it.
+    const src = `
+class P {
+  x: number; y: number; z: number;
+  constructor(a: number, b: number, c: number) { this.x = a; this.y = b; this.z = c; }
+}
+function make(K: any, constructArgs: any): any { return new K(...constructArgs); }
+export function test(): number {
+  const p = make(P, [4, 5, 6, 99]); // surplus arg is not threaded past ctor arity
+  return p.x * 100 + p.y * 10 + p.z;
+}
+`;
+    expect(await runTest(src)).toBe(456);
+    expect(await runStandalone(src)).toBe(456);
+  });
+
+  it("evaluates mixed positional and any-spread arguments once in source order", async () => {
+    const src = `
+let order = 0;
+function mark(value: number): number { order = order * 10 + value; return value; }
+function markSpread(): any { order = order * 10 + 2; return [2]; }
+class P {
+  code: number;
+  constructor(a: number, b: number, c: number) { this.code = a * 100 + b * 10 + c; }
+}
+function make(K: any): any { return new K(mark(1), ...markSpread(), mark(3)); }
+export function test(): number {
+  const p = make(P);
+  return order * 1000 + p.code;
+}
+`;
+    expect(await runTest(src)).toBe(123_123);
+    expect(await runStandalone(src)).toBe(123_123);
+  });
+
+  it("keeps runtime-spread non-constructors as catchable TypeErrors", async () => {
+    const src = `
+class P { constructor(value: number) {} }
+function make(K: any, args: any): any { return new K(...args); }
+export function test(): number {
+  const args: any = [1];
+  try {
+    make(42, args);
+    return 0;
+  } catch (error) {
+    return error instanceof TypeError ? 1 : 2;
+  }
+}
+`;
+    expect(await runTest(src)).toBe(1);
+    expect(await runStandalone(src)).toBe(1);
   });
 
   it("dispatches a variable spread to the right shape-colliding class by tag", async () => {

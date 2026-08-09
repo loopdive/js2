@@ -606,7 +606,7 @@ agent requires the TaskList and SendMessage mechanisms.
   document. This methodology document synthesizes it for an
   external reader; that one is the authoritative source.
 - For agent contributors: `.claude/agents/developer.md` and
-  `.claude/skills/dev-self-merge.md`.
+  `.claude/skills/dev-self-merge/SKILL.md`.
 
 ---
 

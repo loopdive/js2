@@ -77,10 +77,10 @@ export function truthyEnv(v: string | undefined): boolean {
 
 /**
  * Whether a *strict* class should hard-fail in the current environment.
- * Auto-on under CI / vitest / `NODE_ENV=test`, mirroring
- * `irVerifierHardFailureEnabled` (index.ts:934), or forced via
+ * Auto-on under CI / vitest / `NODE_ENV=test`, or forced via
  * `JS2WASM_STRICT_FALLBACKS=1`. Phase 0 has no strict classes, so this only
- * matters once a class is promoted.
+ * matters once a class is promoted. Typed IR Invariants are independently
+ * always fatal and do not use this environment gate.
  */
 export function strictFallbacksEnabled(env: Record<string, string | undefined> = process.env): boolean {
   return (

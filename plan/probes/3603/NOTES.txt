@@ -1,0 +1,89 @@
+#3603 — verifyProperty vacuity: probe + measurement harness
+===========================================================
+
+These are the exact scripts that produced every number in
+plan/issues/3603-verifyproperty-vacuous-both-lanes.md. They live under plan/
+deliberately: `format:check` and `lint` are scoped to src/ tests/ scripts/, so
+nothing here is linted, formatted or executed by CI. Run them by hand with
+`npx tsx <file>` (or `node` for the .mjs) from a worktree root.
+
+Run order
+---------
+  node   plan/probes/3603/census.mjs            # exact static census; writes vp-files.txt
+  npx tsx plan/probes/3603/probe.mts            # A/B wrong-expectation control, both lanes
+  npx tsx plan/probes/3603/inner.mts            # fine-grained observation channel (standalone)
+  npx tsx plan/probes/3603/inner2.mts           # uncurryThis mechanism probe (standalone)
+  npx tsx plan/probes/3603/inner3.mts           # FIX BOUNDARY: object-construction shapes
+  npx tsx plan/probes/3603/uncurry.mts          # two-lane uncurryThis check via runTest262File
+  npx tsx plan/probes/3603/ab.mts calibrate A   # detector calibration, one arm PER PROCESS
+  npx tsx plan/probes/3603/ab.mts calibrate B
+  npx tsx plan/probes/3603/ab.mts armA 600 20260725   # stock, harvests the pass list
+  npx tsx plan/probes/3603/ab.mts armA2               # ATTRIBUTION CONTROL (structure, no throws)
+  npx tsx plan/probes/3603/ab.mts armB                # detector
+  VP_LANE=host npx tsx plan/probes/3603/ab.mts armA 600 20260725   # host lane
+
+census.mjs needs vp-files.txt to be written next to it before ab.mts can sample;
+ab.mts reads/writes its artefacts in its own directory.
+
+Safety
+------
+ab.mts REPLACES this worktree's test262/harness symlink with a private real copy
+for the duration of a run, and restores the symlink on every exit path
+(including process.on("exit")). That is what keeps the instrumented harness
+invisible to other agents sharing /workspace/test262. If a run is SIGKILLed,
+check `ls -la test262/ | grep harness` and restore the symlink by hand:
+
+  rm -rf test262/harness && ln -s /workspace/test262/harness test262/harness
+
+Nothing here modifies compiler or runner source. There is no committed
+force-disable switch.
+
+WORKTREE-SAFE IS NOT SELF-SAFE (learned the hard way, 2026-07-26)
+----------------------------------------------------------------
+The swap above protects OTHER AGENTS. It does NOT protect YOU from your own
+concurrent measurement in the SAME worktree. While armA2/armB are in flight the
+worktree's propertyHelper.js is the INSTRUMENTED one, in which all five
+`__push(failures, …)` sites are replaced by `__vpPush`. Any other harness-
+dependent probe you run in that window silently measures the instrumented
+harness — `__push` is never called, so anything keyed on it reports ZERO and
+tests that should fail come back `pass`.
+
+This produced two consecutive false "0 firings" results for the #3603 S1
+write-back sweep. It was caught ONLY because the second run embedded three
+known-firing POSITIVE CONTROLS in the same process and they failed to fire.
+
+Rules:
+  * Never run a harness-dependent measurement while an arm is running in the
+    same worktree. Serialize, or use a second worktree.
+  * Every sweep that can report zero MUST embed an in-run positive control.
+    A zero without a control is not a result.
+  * To check the current state:
+      ls -ld test262/harness                                   # symlink = clean
+      grep -c '__vpChecks\|__vpFailMsg\|__vpPush' test262/harness/propertyHelper.js
+    A non-zero count means an instrumented harness is installed RIGHT NOW.
+
+Traps that cost real time (see the issue for the full list)
+----------------------------------------------------------
+* A probe function must be `export`ed; a plain top-level declaration is not
+  auto-exported and reads back as undefined.
+* The exported accessor's parameter needs `/** @param {number} i */` or the
+  compile fails on implicit any.
+* Do NOT compare an untyped export parameter to a numeric literal directly
+  (`if (i === 0)` never matches on standalone). Coerce first: `var j = i + 0;`.
+* A Wasm trap is not catchable by the compiled try/catch — catch around the
+  accessor call on the JS side.
+* Host-lane probes need the real import object; use runTest262File, not
+  WebAssembly.instantiate(binary, {}).
+* Do NOT use Object.keys(desc)/getOwnPropertyNames(desc) as a detector yardstick
+  — through an untyped parameter they return 0 on standalone, which silently
+  disarms the detector and yields a null result that looks clean.
+
+results/
+--------
+Raw per-file verdicts from the 2026-07-25 run on origin/main @ ab69ad9d20ceec,
+600-file uniform sample, mulberry32 seed 20260725, standalone lane:
+
+  armA-standalone.tsv       stock harness            161 pass / 381 fail / 53 skip / 5 CE
+  armA2-standalone.tsv      structure, no throws     161 pass  (attribution control)
+  armB-standalone.tsv       structure + detectors      3 pass / 158 fail
+  armA-standalone-pass.txt  the 161 files arms A2/B were run over

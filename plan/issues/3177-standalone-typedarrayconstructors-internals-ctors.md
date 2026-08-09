@@ -1,8 +1,7 @@
 ---
 id: 3177
 title: "standalone: TypedArrayConstructors internals + ctors — integer-indexed MOP internals, ctor arg protocols, from/of, per-ctor identity (356 gap tests)"
-status: in-progress
-assignee: ttraenkler/fable-3177
+status: ready
 created: 2026-07-12
 updated: 2026-07-16
 priority: high
@@ -56,6 +55,22 @@ loc-budget-allow:
   - src/codegen/expressions/calls.ts
   - src/codegen/object-ops.ts
   - src/codegen/object-runtime-descriptors.ts
+  # (slice 5, of/from statics): the shared native `__ta_from_arraylike`
+  # builder lives in dataview-native.ts (the TA-construct subsystem, already
+  # allowed above); the `$__ta_ctor` `.of`/`.from` runtime two-arm MUST sit at
+  # the any-receiver method-dispatch site in call-receiver-method.ts — the same
+  # emitter the #2872 dyn-view `.fill`/`.reverse` two-arm and the #3140 `.bind`
+  # arm already extend (extracting that dispatch chain is the #3182 epic's call,
+  # not this slice's).
+  - src/codegen/expressions/call-receiver-method.ts
+# func-budget-allow (slice 5): the of/from two-arm was EXTRACTED to a new
+# module-level `tryEmitTaStaticOfFrom` (~130 LOC, under the 300 ceiling), so the
+# already-over-300 `compileReceiverMethodCall` grows only +6 — the minimal
+# gated dispatch call (`if (…) { const r = tryEmitTaStaticOfFrom(…); if (r) …}`).
+# The god-function itself is not further splittable in this slice (the #3182
+# consolidation epic owns that); +6 for a new method dispatch is intended.
+func-budget-allow:
+  - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
 # coercion-sites-allow: the NEW module's 4 uses (number_toString ×2,
 # __str_to_number, __unbox_number) are the exact §7.1.21
 # CanonicalNumericIndexString round-trip + the finalize-safe ToNumber the
@@ -251,9 +266,8 @@ the upgraded static-windowed RangeError path.
 - `Object.getPrototypeOf(ta) === TA.prototype` identity (≈10 rows across
   ctors/\*: defined-length/-offset, returns-new-instance, returns-object,
   as-array-returns, same-ctor-returns-new-cloned…) needs per-kind PROTO
-  $Object singletons + a "prototype" [[Get]] arm on `$__ta_ctor` + a
-  `__getPrototypeOf` dyn-view arm — the W-C mechanism; composes #2901's
-  intrinsic-ctor pattern (`emitTypedArrayIntrinsicCtorObject`).
+  $Object singletons + a "prototype" [[Get]] arm on `$**ta_ctor`+ a`**getPrototypeOf` dyn-view arm — the W-C mechanism; composes #2901's
+intrinsic-ctor pattern (`emitTypedArrayIntrinsicCtorObject`).
 - `TA(1)` WITHOUT new → TypeError (§23.2.5.1 step 1, undefined-newtarget-
   throws ×8): calling a `$__ta_ctor` value as a function currently returns
   undefined silently — needs a `ref.test $__ta_ctor → throw TypeError` arm
@@ -339,10 +353,10 @@ What landed:
   exists; set/reflect_set lazily create it. Flipped the whole
   `key-is-not-numeric-index` / `key-is-not-canonical-index` /
   `detached-buffer-key-is-*` / `key-is-symbol` families across
-  Get/Set/Delete/HasProperty (§10.4.5 "Otherwise, return Ordinary*").
+  Get/Set/Delete/HasProperty (§10.4.5 "Otherwise, return Ordinary\*").
 - **§10.4.5.1 [[GetOwnProperty]]** — `__getOwnPropertyDescriptor` dyn-view
   arm: valid canonical index → fresh data descriptor `{value, w:T, e:T,
-  c:T}` (via `__new_plain_object`/`__extern_set`/`__box_boolean`); invalid →
+c:T}` (via `__new_plain_object`/`__extern_set`/`__box_boolean`); invalid →
   undefined; ordinary keys → expando read-back.
 - **§10.4.5.3 [[DefineOwnProperty]]** — dyn-view arms in
   `__defineProperty_value` (validate: invalid index / accessor bit /
@@ -387,6 +401,69 @@ Known residuals:
   the same sentinel discipline — a follow-on, NOT this issue).
 - `__object_keys` does not append expando keys yet (OwnPropertyKeys
   enumeration of non-index own props).
+
+### Slice 5 — `%TypedArray%.of` / `.from` statics (PR: issue-3177-slice5-from-of, 2026-07-24, dev-std-2/Opus)
+
+Measured gap (current main, host vs standalone over `TypedArray{,Constructors}/
+{from,of}`, 73 files): 55 host-pass / 38 sa-pass / **23 gap**. Branch:
+50 sa-pass / **11 gap** = **+12 fail→pass, 0 regressions** (host-pass count
+unchanged at 55; every flip is a construction row). Verified against a clean
+`origin/main` worktree — the one remaining scoped-suite failure
+(`tests/issue-3177.test.ts` `[[Delete]]: valid index → false`) reproduces on
+main HEAD, i.e. PRE-EXISTING, not this slice.
+
+`TA.of(v0,…)` / `TA.from(src[, mapfn[, thisArg]])` on a `$__ta_ctor` receiver
+VALUE (the `testWithTypedArrayConstructors` harness shape) were unimplemented —
+the call fell to the open-object dispatcher, returned an empty/undefined result,
+and every `result.length` read trapped ("uncaught Wasm-GC exception").
+
+What landed:
+
+- **`__ta_from_arraylike(ctor, carrier) → externref`** (dataview-native.ts) —
+  the shared native builder. Reads `carrier` through the dynamic
+  `__extern_length` / `__extern_get_idx` arm (so a `$ObjVec`, an array-like
+  `$Object`, or a plain vec are all indexable uniformly), builds a fresh
+  same-kind `$__ta_dyn_view` of length `max(ToInteger(carrier.length), 0)`, and
+  byte-encodes each `ToNumber`'d element on the ctor's RUNTIME kind
+  (Uint8Clamped clamp included) via the existing `emitDynEncodeDispatch` codec.
+  The dyn-view rep yields `.constructor` / `Object.getPrototypeOf` identity for
+  free (slices 1/3). noJsHost + defined-func only (no import shift).
+- **Runtime `ref.test $__ta_ctor` two-arm** at the any-receiver method-dispatch
+  site (call-receiver-method.ts, alongside the #2872 `.fill`/#3140 `.bind`
+  arms). THEN builds the carrier — `of` packs its args into a `$ObjVec`; `from`
+  normalizes its source via `__array_from_iter_n` (no/undefined mapfn) or
+  `__array_from_mapped` (a present, non-nullish mapfn — composes
+  `__array_from_iter_n` + `__hof_map`, a compile-time-known-argc runtime nullish
+  branch on the mapfn) — then calls `__ta_from_arraylike`. ELSE is the ordinary
+  dispatcher, byte-identical to today (Array.of/from, user objects unaffected).
+  Gated `noJsHost && ctx.taCtorTypeIdx >= 0`, so host/gc and TA-free modules are
+  byte-inert.
+
+Flipped (12): of/{new-instance-empty, new-instance, nan-conversion}, from/
+{new-instance-empty, new-instance-without-mapfn, new-instance-with-mapfn,
+new-instance-from-zero, new-instance-from-ordinary-object,
+new-instance-from-sparse-array, nan-conversion, mapfn-arguments} + the
+`TypedArray/of/new-instance` twin. Verified: tests/issue-3177-fromof.test.ts
+(16/16 — of values/null-coerce/clamp/signed + identity, from array/array-like/
+mapfn/(value,index)/undefined-mapfn + identity, Array.of/from non-hijack guard);
+scoped suites issue-3177 / issue-2872-ta-dynview-reduce-includes green (the
+pre-existing `[[Delete]]` row excepted).
+
+Deferred (documented boundary — NOT this slice):
+
+- **Iterable (non-array-like) source** — `TA.from(new Set(…))` reads length 0
+  (the `__array_from_iter_n` drain doesn't yet normalize a builtin iterable into
+  an indexable carrier); the "true iterable-protocol ctor arm". A test pins the
+  current non-crashing behavior.
+- **`mapfn-is-not-callable` TypeError** — needs a finalize-fill IsCallable check
+  (`buildClosureRefTestArms`, reserve-then-fill like `__bind_dyn`); a
+  non-callable mapfn currently traps rather than throwing TypeError.
+- **`this`-as-ctor / custom-ctor** rows (`new-instance-using-custom-ctor`,
+  `custom-ctor-returns-smaller-instance-throws`) — need `.of`/`.from` to honor a
+  caller-supplied `this` constructor (species-style).
+- **Reflective `%TypedArray%.{of,from}.{length,name}` + `prop-desc`** (6 rows) —
+  a different mechanism (reflective descriptor synthesis over the intrinsic
+  method), not construction.
 
 ### Remaining (next slices — release+reclaim per phase)
 

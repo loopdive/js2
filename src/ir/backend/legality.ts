@@ -14,6 +14,53 @@ import type { ValType } from "../types.js";
 
 export type IrBackendKind = "wasmgc" | "linear" | "bytecode" | "porffor";
 
+/** Source/target features whose availability is known before IR construction. */
+export type IrBackendTargetCapability =
+  | "host-date-snapshot"
+  | "host-regexp-constructor"
+  | "host-object-define-property"
+  | "standalone-native-regexp-test-carrier"
+  | "legacy-numeric-array-global";
+
+/**
+ * The target facts needed by pre-claim capability checks. Keep this smaller
+ * than CodegenContext so the selector and non-Wasm backends can share the
+ * legality decision without depending on legacy codegen state.
+ */
+export interface IrBackendTargetProfile {
+  readonly backend: IrBackendKind;
+  readonly target: "gc" | "linear" | "standalone" | "wasi";
+  readonly allowHostImports: boolean;
+  /** Legacy fast-array storage has a distinct ABI not yet represented in IR. */
+  readonly fast?: boolean;
+}
+
+/**
+ * Answer predictable target/provider questions before build/lower.
+ *
+ * This is deliberately separate from verifyIrBackendLegality: a false result
+ * is an expected source/target capability exit, while a later legality error
+ * after this function returned true is an Invariant (the backend promise was
+ * contradicted).
+ */
+export function supportsIrBackendTargetCapability(
+  profile: IrBackendTargetProfile,
+  capability: IrBackendTargetCapability,
+): boolean {
+  switch (capability) {
+    case "host-date-snapshot":
+      return profile.backend === "wasmgc" && profile.target === "gc" && profile.allowHostImports;
+    case "host-regexp-constructor":
+      return profile.backend === "wasmgc" && profile.target === "gc" && profile.allowHostImports;
+    case "host-object-define-property":
+      return profile.backend === "wasmgc" && profile.target === "gc" && profile.allowHostImports;
+    case "standalone-native-regexp-test-carrier":
+      return profile.backend === "wasmgc" && profile.target === "standalone" && !profile.allowHostImports;
+    case "legacy-numeric-array-global":
+      return profile.backend === "wasmgc" && profile.fast !== true;
+  }
+}
+
 export interface IrBackendLegalityError {
   readonly message: string;
   readonly func: string;
@@ -103,6 +150,17 @@ function linearInstrError(instr: IrInstr): string | null {
           // null/ref/string/undefined consts are representation-divergent.
           return `linear backend does not support const '${instr.value.kind}'`;
       }
+    case "intrinsic":
+      switch (instr.id) {
+        case "math.abs":
+        case "math.ceil":
+        case "math.floor":
+        case "math.sqrt":
+        case "math.trunc":
+          return null;
+        default:
+          return `linear backend does not support semantic intrinsic '${instr.id}' without a native backend operation`;
+      }
     case "binary":
     case "unary":
     case "select":
@@ -114,6 +172,8 @@ function linearInstrError(instr: IrInstr): string | null {
     case "string.concat":
     case "string.eq":
     case "string.len":
+    case "string.char_at":
+    case "string.char_code_at":
     // #2956 L2: aggregates and primitive ref-cells use i32 arena pointers,
     // with field access emitted as typed linear-memory loads/stores.
     case "object.new":
@@ -140,6 +200,13 @@ function linearInstrError(instr: IrInstr): string | null {
     // kinds above (#1852/#1527 axis rule).
     case "br.label":
     case "if.stmt":
+    // #2952 slice 4 — labeled.block is one core `block`; switch is the
+    // block-per-case ladder (core blocks + i32/f64.eq + br/br_table). The
+    // LinearEmitter's sink IS Instr[], so the switch arm's
+    // requireInstrSink holds (unlike porffor/bytecode, which stay
+    // rejected below).
+    case "labeled.block":
+    case "switch":
       return null;
     default:
       return `linear backend does not support IR instruction '${instr.kind}' at the function-lowering boundary`;
@@ -242,6 +309,11 @@ function porfforInstrError(instr: IrInstr): string | null {
     case "if.stmt":
     case "while.loop":
     case "for.loop":
+    case "string.const":
+    case "string.concat":
+    case "string.len":
+    case "string.char_at":
+    case "string.char_code_at":
       return null;
     default:
       return `porffor backend does not support IR instruction '${instr.kind}' before typed Porffor lowering`;
@@ -272,6 +344,21 @@ function porfforBinopLegal(op: IrBinop): boolean {
     case "i32.le_u":
     case "i32.gt_u":
     case "i32.ge_u":
+    // (#3758) native i32 arithmetic — `binaryOp` (porffor/sink.ts) maps
+    // these to a plain typed `+`/`-`/`*` Porffor node over i32 operands, the
+    // same shape as any other typed scalar op in this profile.
+    case "i32.add":
+    case "i32.sub":
+    case "i32.mul":
+    // #3499: lower.ts expands these through backend-neutral typed scalar
+    // primitives (ToInt32, native i32 bitwise op, and signed/unsigned result
+    // conversion). No raw Wasm instruction reaches the Porffor sink.
+    case "js.bitand":
+    case "js.bitor":
+    case "js.bitxor":
+    case "js.shl":
+    case "js.shr_s":
+    case "js.shr_u":
       return true;
     default:
       return false;
@@ -282,6 +369,12 @@ function backendTypeError(backend: IrBackendKind, type: IrType): string | null {
   if (backend === "wasmgc") return null;
   if (backend === "linear") {
     if (type.kind === "string") return null;
+    if (type.kind === "vec") {
+      const element = asVal(type.elementType);
+      return element?.kind === "f64"
+        ? null
+        : `${backend} backend does not support vec element IR type '${type.elementType.kind}'`;
+    }
     if (type.kind === "object") return linearAggregateTypeError(type);
     if (type.kind === "boxed") {
       const inner = asVal(type.inner);
@@ -300,6 +393,13 @@ function backendTypeError(backend: IrBackendKind, type: IrType): string | null {
     return bytecodeValTypeError(v);
   }
   if (type.kind === "object") return porfforAggregateTypeError(type);
+  if (type.kind === "string") return null;
+  if (type.kind === "vec") {
+    const element = asVal(type.elementType);
+    return element?.kind === "f64"
+      ? null
+      : `${backend} backend does not support vec element IR type '${type.elementType.kind}'`;
+  }
   const v = asVal(type);
   if (!v) return `porffor backend does not support IR type '${type.kind}'`;
   return porfforValTypeError(v);
@@ -402,6 +502,7 @@ function checkNestedTypeShapes(
       for (const field of type.shape.fields) checkType(field.type, block, `${where}.${field.name}`);
       return;
     case "closure":
+    case "callable":
       for (let i = 0; i < type.signature.params.length; i++)
         checkType(type.signature.params[i]!, block, `${where}.param${i}`);
       if (type.signature.returnType) checkType(type.signature.returnType, block, `${where}.return`);
@@ -442,10 +543,6 @@ function checkInstrEmbeddedTypes(
     case "class.new":
       checkType({ kind: "class", shape: instr.shape }, block, "class.new shape");
       return;
-    case "class.alloc":
-      // #3000-C: same shape type-check as class.new.
-      checkType({ kind: "class", shape: instr.shape }, block, "class.alloc shape");
-      return;
     case "forof.vec":
       checkType(instr.elementType, block, "forof.vec element");
       return;
@@ -478,6 +575,11 @@ function nestedInstrBuffers(instr: IrInstr): readonly (readonly IrInstr[])[] {
     // #2952 slice 2 — statement-level if arms.
     case "if.stmt":
       return [instr.then, instr.else];
+    // #2952 slice 4 — labeled block / switch clause buffers.
+    case "labeled.block":
+      return [instr.body];
+    case "switch":
+      return instr.bodies;
     default:
       return [];
   }

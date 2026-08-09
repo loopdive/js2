@@ -64,7 +64,9 @@ import {
 } from "../src/ir/index.js";
 import { createEmptyModule } from "../src/ir/types.js";
 import type { FuncTypeDef } from "../src/ir/types.js";
+import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
 
+const identities = createTestIrFunctionIdentityFactory("issue-2949-s5-5-dyn-arith");
 const F64: IrType = irVal({ kind: "f64" });
 const I32: IrType = irVal({ kind: "i32" });
 const DYN: IrType = irDynamic();
@@ -78,6 +80,7 @@ function irFromSource(src: string, paramTypes: readonly IrType[], returnType: Ir
   const fnDecl = ast.sourceFile.statements.find((s) => ts.isFunctionDeclaration(s)) as ts.FunctionDeclaration;
   return lowerFunctionAstToIr(fnDecl, {
     exported: true,
+    ownerUnitId: identities.next(fnDecl.name!.text).unitId,
     paramTypeOverrides: paramTypes,
     returnTypeOverride: returnType,
   }).main;
@@ -278,7 +281,7 @@ describe("#2949 S5.5 — from-ast lowers dynamic numeric arithmetic via dyn.to_n
  * claims.
  */
 function gcWrapperF64(name: string, callee: string, arity: 1 | 2): IrFunction {
-  const b = new IrFunctionBuilder(name, [F64], true);
+  const b = new IrFunctionBuilder(identities.next(name), [F64], true);
   const a = b.addParam("a", F64);
   const c = arity === 2 ? b.addParam("c", F64) : null;
   b.openBlock();
@@ -292,7 +295,7 @@ function gcWrapperF64(name: string, callee: string, arity: 1 | 2): IrFunction {
 }
 
 function gcWrapperBool(name: string, callee: string): IrFunction {
-  const b = new IrFunctionBuilder(name, [F64], true);
+  const b = new IrFunctionBuilder(identities.next(name), [F64], true);
   const a = b.addParam("a", I32);
   b.openBlock();
   const da = b.emitBox(a, irDynamic(JsTag.Boolean));

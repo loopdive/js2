@@ -100,15 +100,13 @@ parentPort.on("message", async (msg) => {
       return;
     }
 
-    // Wire up setExports for callback support
-    if (typeof importObj.setExports === "function") {
-      importObj.setExports(instance.exports);
-    }
+    // Wire the branded instance for callback and host-bridge support.
+    importObj.setInstance?.(instance);
 
     // (#3049 C1) Deferred top-level init: the fork worker compiles with
     // `deferTopLevelInit: true`, so the module's top-level code did NOT run
     // during instantiate — run the exported `__module_init` now that
-    // `setExports` has wired the runtime (`__sget_*` / `__vec_*` exports),
+    // `setInstance` has wired the runtime (`__sget_*` / `__vec_*` exports),
     // mirroring the #2796 diff-test host lane. Classification mirrors the
     // pre-defer behavior where the same throw surfaced from the `(start)`
     // section inside `WebAssembly.instantiate`: a runtime-negative test's

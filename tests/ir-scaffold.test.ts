@@ -28,7 +28,9 @@ import {
   type IrFunction,
   type IrType,
 } from "../src/ir/index.js";
+import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
 
+const identities = createTestIrFunctionIdentityFactory("ir-scaffold");
 const SOURCE = `
   export function fortyTwo(): number { return 42; }
   export function seven(): number { return 7; }
@@ -111,7 +113,7 @@ describe("ir scaffold — phase 1", () => {
     const vId = asValueId(7);
     const bId = asBlockId(0);
     const bad: IrFunction = {
-      name: "bad",
+      ...identities.next("bad"),
       params: [],
       resultTypes: [irVal({ kind: "f64" })],
       blocks: [
@@ -146,7 +148,7 @@ describe("ir scaffold — phase 1", () => {
 
   it("builder → verifier → (smoke) for a zero-arg function", () => {
     const t: IrType = irVal({ kind: "f64" });
-    const b = new IrFunctionBuilder("smoke", [t], true);
+    const b = new IrFunctionBuilder(identities.next("smoke"), [t], true);
     b.openBlock();
     const v = b.emitConst({ kind: "f64", value: 3.14 }, t);
     b.terminate({ kind: "return", values: [v] });
@@ -160,7 +162,10 @@ describe("ir scaffold — phase 1", () => {
   it("AST → IR produces a shape the verifier accepts", () => {
     const ast = analyzeSource(`export function answer(): number { return 42; }`);
     const fnDecl = ast.sourceFile.statements.find((s) => ts.isFunctionDeclaration(s)) as ts.FunctionDeclaration;
-    const ir = lowerFunctionAstToIr(fnDecl, { exported: true });
+    const ir = lowerFunctionAstToIr(fnDecl, {
+      exported: true,
+      ownerUnitId: identities.next("answer").unitId,
+    }).main;
     expect(verifyIrFunction(ir)).toEqual([]);
     expect(ir.blocks).toHaveLength(1);
     expect(ir.blocks[0].terminator.kind).toBe("return");

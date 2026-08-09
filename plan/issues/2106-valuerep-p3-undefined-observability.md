@@ -3,13 +3,14 @@ id: 2106
 model: fable
 fable_role: spec
 title: "value-rep P3: undefined observability — UNDEF_F64 sentinel, union-collapse reversal (flagged), standalone $undefined singleton"
-status: in-progress
+status: done
+completed: 2026-07-24
 model: fable
 fable_role: spec
-assignee: ttraenkler/opus-regexp
-sprint: current
+sprint: 76
 created: 2026-06-11
-updated: 2026-07-17
+updated: 2026-07-24
+split_note: "2026-07-24 (lead-approved split): the P3 headline deliverable — the observable-`undefined` channel — SHIPPED via PR #1701 (commit 347f3c79a). Marked `done` against that shipped scope. The OPEN value-rep numeric-leg remainder (S1 standalone $undefined singleton + S2 sNaN + S3 number|undefined→externref + S4 union-collapse + typeof-null) is atomic fable/value-rep substrate and is carved into #3580 (tagged value-rep-substrate). Full diagnosis history stays in this body; #3580 is the live tracker for the remainder."
 s1_note: "S1 (standalone tag-1 $undefined singleton) NOT COMPLETE — PR #2025 was AUTO-PARKED in merge_group (2026-06-24): standalone high-water floor breached (pass 23729 vs mark 24956), NET −1245 test262 rows (1654 regressed / 409 gained). Root cause (diagnosed by sdev-s1fix 2026-06-25, see '## S1 merge_group regression — diagnosis'): S1.1 flipped the CONSUMER __extern_is_undefined to singleton-only but did NOT flip the matching PRODUCERS (notably __extern_get's missing-key return at object-runtime.ts:856, still ref.null.extern), so destructuring/param defaults stop firing. This is the architect-spec's full ~40-site producer+consumer sweep done as a partial subset — there is NO narrow floor-saving fix. RESOLUTION 2026-06-25: S1.1+S1.2 behavioral flips REVERTED on the branch (kept inert S1.0); PR #2025 re-targets to a floor-neutral revert. S1 to be re-landed as a fully-scoped complete sweep (architect re-spec). REMAINING slices unchanged: S2 (sNaN carve-out), S3 (number|undefined→externref), S4 (union-collapse reversal), typeof-null→object."
 priority: high
 feasibility: hard
@@ -39,6 +40,13 @@ reconcile_note: "2026-06-24 (PO reconcile vs upstream/main): SUSPENDED, not dev-
 ---
 
 # #2106 — T | undefined collapses to bare T
+
+> **DONE (2026-07-24, lead-approved split).** The P3 headline — the observable-
+> `undefined` channel — shipped via **PR #1701** (commit `347f3c79a`). This issue
+> is `done` against that shipped scope. The OPEN value-rep numeric-leg remainder
+> (S1 standalone `$undefined` singleton + S2–S4 + typeof-null) is atomic
+> fable/value-rep substrate, now tracked in **#3580**. The full diagnosis history
+> below is retained as reference for #3580.
 
 > **2026-06-26 — rescheduled to s67 (upcoming).** PR #1961 (standalone strict-eq
 > over type-erased nullish — the manual rep-block partial) CLOSED as superseded.

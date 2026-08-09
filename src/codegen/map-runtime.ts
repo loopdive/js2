@@ -34,6 +34,7 @@ import type { InnerResult } from "./shared.js";
 import { compileArrowAsClosure, compileExpression, VOID_RESULT } from "./shared.js";
 import { isNullOrUndefinedLiteral } from "./destructuring-params.js";
 import { emitReceiverBrandCheck, type ReceiverBrandSpec } from "./receiver-brand.js";
+import { emitThrowTypeError } from "./js-errors.js";
 import { coercionInstrs } from "./type-coercion.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2/S3) positional-read chokepoint + stable-regime minting
 
@@ -427,6 +428,34 @@ export function ensureMapHelpers(ctx: CodegenContext): void {
           { op: "local.get", index: 2 },
           { op: "i64.xor" },
           { op: "i32.wrap_i64" },
+          // (#3951) Murmur3 finalizer — REQUIRED, not a refinement. The bare
+          // xor-fold leaves the low bits zero for integer keys (a small integer
+          // as an f64 has an all-zero low mantissa), and the caller's bucket
+          // index is `hash & (cap-1)` — exactly those bits — so every integer
+          // key hashed to bucket 0 and lookups were O(n). Bucket-only change;
+          // measurements and full analysis on plan/issues/3951-*.md.
+          { op: "local.set", index: 3 },
+          { op: "local.get", index: 3 },
+          { op: "local.get", index: 3 },
+          { op: "i32.const", value: 16 },
+          { op: "i32.shr_u" },
+          { op: "i32.xor" },
+          { op: "i32.const", value: 0x85ebca6b | 0 },
+          { op: "i32.mul" },
+          { op: "local.set", index: 3 },
+          { op: "local.get", index: 3 },
+          { op: "local.get", index: 3 },
+          { op: "i32.const", value: 13 },
+          { op: "i32.shr_u" },
+          { op: "i32.xor" },
+          { op: "i32.const", value: 0xc2b2ae35 | 0 },
+          { op: "i32.mul" },
+          { op: "local.set", index: 3 },
+          { op: "local.get", index: 3 },
+          { op: "local.get", index: 3 },
+          { op: "i32.const", value: 16 },
+          { op: "i32.shr_u" },
+          { op: "i32.xor" },
           { op: "i32.const", value: 0x3fffffff },
           { op: "i32.and" },
           { op: "return" },
@@ -1707,7 +1736,33 @@ export function tryCompileNativeCollectionForEach(
     ts.isArrowFunction(cbArg) ||
     ts.isFunctionExpression(cbArg) ||
     (ts.isIdentifier(cbArg) && (ctx.funcMap.has(cbArg.text) || ctx.closureMap.has(cbArg.text)));
-  if (!willBeClosure) return undefined;
+  if (!willBeClosure) {
+    // (#3573) Spec 24.1.3.5 / 24.2.3.6: "If IsCallable(callbackfn) is false,
+    // throw a TypeError". A statically non-callable LITERAL argument (`null` /
+    // `undefined` / number / boolean / string) can never be a closure, so emit
+    // the TypeError natively rather than fall through to the host
+    // `Map_forEach`/`Set_forEach` import (a standalone host-leak → compile
+    // error). A dynamic value (variable / call result) still routes to the
+    // general path.
+    const staticNonCallable =
+      cbArg.kind === ts.SyntaxKind.NullKeyword ||
+      cbArg.kind === ts.SyntaxKind.TrueKeyword ||
+      cbArg.kind === ts.SyntaxKind.FalseKeyword ||
+      ts.isNumericLiteral(cbArg) ||
+      ts.isStringLiteral(cbArg) ||
+      ts.isNoSubstitutionTemplateLiteral(cbArg) ||
+      (ts.isIdentifier(cbArg) && cbArg.text === "undefined" && !fctx.localMap.has("undefined"));
+    if (!staticNonCallable) return undefined;
+    // Evaluate the receiver for its side effects first (this native path only
+    // fires for a statically Set/Map receiver, so its [[SetData]]/[[MapData]]
+    // brand check is already satisfied), then throw. The throw is terminal /
+    // stack-polymorphic, so nothing is left on the value stack (VOID_RESULT).
+    const recvExpr = reflective !== undefined ? reflective.recvExpr : propAccess.expression;
+    compileExpression(ctx, fctx, recvExpr);
+    fctx.body.push({ op: "drop" });
+    emitThrowTypeError(ctx, fctx, `${isSet ? "Set" : "Map"}.prototype.forEach callback is not a function`);
+    return VOID_RESULT;
+  }
 
   // Map struct field layout (matches ensureMapHelpers' local constants).
   const M_ENTRIES = 1;

@@ -117,7 +117,7 @@ export function escapeWatString(s: string): string {
 }
 
 /** Emit a WAT text representation of the IR module */
-export function emitWat(mod: WasmModule): string {
+export function emitWat(mod: WasmModule, opts?: { onlyFunctions?: Set<string> }): string {
   const lines: string[] = [];
   const indent = (depth: number) => "  ".repeat(depth);
   const inlineableTypes = computeInlineableTypes(mod);
@@ -174,7 +174,8 @@ export function emitWat(mod: WasmModule): string {
   for (const elem of mod.elements) {
     const offsetStr = elem.offset.map((i) => formatInstr(i, 0)).join(" ");
     const funcStr = elem.funcIndices.map(resolveFuncIdx).join(" ");
-    lines.push(`${indent(1)}(elem (offset ${offsetStr}) func ${funcStr})`);
+    const tableStr = elem.tableIdx === 0 ? "" : ` (table ${elem.tableIdx})`;
+    lines.push(`${indent(1)}(elem${tableStr} (offset ${offsetStr}) func ${funcStr})`);
   }
 
   // Declarative element segment for ref.func targets
@@ -197,6 +198,7 @@ export function emitWat(mod: WasmModule): string {
 
   for (let i = 0; i < mod.functions.length; i++) {
     const f = mod.functions[i]!;
+    if (opts?.onlyFunctions && !opts.onlyFunctions.has(f.name)) continue;
     lines.push(formatFunction(f, i + numImportFuncs, mod, inlineableTypes));
   }
 
@@ -414,6 +416,8 @@ function formatInstr(instr: Instr, _depth: number): string {
       return `br ${instr.depth}`;
     case "br_if":
       return `br_if ${instr.depth}`;
+    case "br_table":
+      return `br_table ${[...instr.targets, instr.defaultDepth].join(" ")}`;
     case "call":
       return `call ${resolveFuncIdx(instr.funcIdx)}`;
     case "return_call":

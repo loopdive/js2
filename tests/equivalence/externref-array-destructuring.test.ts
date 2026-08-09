@@ -59,7 +59,7 @@ describe("externref array destructuring (#518)", () => {
       }
     `;
     const result = await compile(source);
-    expect(result.success).toBe(true);
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     const destructErrors = result.errors.filter((e) => e.message.includes("Cannot destructure"));
     expect(destructErrors).toEqual([]);
   });

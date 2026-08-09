@@ -142,20 +142,38 @@ export function test(): number {
     expect(await runNative(src)).toBe(56);
   });
 
-  it("default/optional-param object-literal generator method BAILS to host (closure-trampoline argc gap)", async () => {
-    // (#2581 eject fix) Object-literal methods are invoked through the closure
-    // trampoline, which does not set the `__argc_default` global the param-default
-    // check reads — so the native factory would yield the wrong value
-    // (`{ *m(d=5){yield d} }.m()` → 0 instead of 5). These bail to the host path
-    // (valid module, host imports) where defaults apply correctly. A class method
-    // generator with a default stays native (called directly, argc set).
+  it("DEFAULT-param object-literal generator method lowers NATIVELY (#3948 — was: bail to host)", async () => {
+    // (#3948) Pre-fix this asserted the eager-host bail, on a diagnosis that was
+    // wrong twice over. The mechanism was NOT the closure trampoline — a plain
+    // `o.m()` is a direct call and does reach `maybeSetArgcForKnownCall`; what it
+    // found there was an empty `ctx.funcOptionalParams`, because object-literal
+    // methods were the one method form that never registered optional-param
+    // metadata. And the remedy was not sound either: routing to the eager-buffer
+    // HOST path does not apply the default correctly — measured on the host lane,
+    // this same source yields 0 there too. So the bail bought no correctness, only
+    // a `__gen_*` leak. #3948 registers the metadata in literals.ts, which makes
+    // the argc-driven default fire in both lanes, and lifts the bail.
     const src = `export function test(): number {
   const o = { *m(d: number = 5) { yield d; } };
   return (o.m().next().value as number);
 }`;
+    expect(await runNative(src)).toBe(5);
+  });
+
+  it("OPTIONAL(`?`)-param object-literal generator method still bails to host (value-rep gap)", async () => {
+    // (#3948) The `questionToken` half of the old bail SURVIVES, and was measured
+    // rather than inherited: with the argc registration in place, `a?: number`
+    // still lowers to a bare f64 with no `undefined` inhabitant, so the missing-arg
+    // branch has nothing to bind and the body reads 0, not 42. Admitting it would
+    // trade a leak for a wrong value. The same 0 comes out of a NON-generator
+    // `{ m(a?: number) }`, so this is a value-representation gap, not a gate one.
+    const src = `export function test(): number {
+  const o = { *m(d?: number) { yield d === undefined ? 42 : d; } };
+  return (o.m().next().value as number);
+}`;
     const { binary, genImports } = await compileNoHost(src);
-    expect(genImports.length, "default-param objlit generator must bail to host").toBeGreaterThan(0);
-    expect(WebAssembly.validate(binary), "default-param bail module must be valid Wasm").toBe(true);
+    expect(genImports.length, "optional-param objlit generator must still bail to host").toBeGreaterThan(0);
+    expect(WebAssembly.validate(binary), "optional-param bail module must be valid Wasm").toBe(true);
   });
 
   it("explicit-arg (no default) object-literal generator method stays native", async () => {

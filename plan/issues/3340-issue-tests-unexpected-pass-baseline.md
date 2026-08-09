@@ -1,9 +1,11 @@
 ---
 id: 3340
 title: "issue-tests: keep inverted expected-failure sentinels out of the root baseline"
-status: ready
+status: done
+completed: 2026-07-24
+assignee: ttraenkler/dev-opus-search
 created: 2026-07-17
-updated: 2026-07-17
+updated: 2026-07-24
 priority: high
 feasibility: medium
 reasoning_effort: medium
@@ -162,3 +164,44 @@ improvements from regressions.
   pass and a genuine failure; inspect the partial JSON and merged report.
 - Validate the baseline diff against the current external baseline and confirm
   exactly the three stale IDs are removed by this slice.
+
+## Progress — LANDED (dev-opus-search, 2026-07-24)
+
+Unmasked the 3 stale inverted sentinels + built the durable gate-level
+distinction (per lead: the durable part is the gate, not just the unmask).
+
+**Unmask (the 3 banked improvements now assert CORRECT behavior):**
+- `tests/issue-2143-validate-unoptimized.test.ts` — `array/02-push-pop.js` +
+  `control/12-for-in-object.js` moved from `KNOWN_MALFORMED` (asserting
+  `validate === false`) to `NOW_VALID` positive guards (compile + validate). The
+  malformed-set is now empty with a one-way-ratchet comment; the #2143 detection
+  mechanism stays.
+- `tests/real-world-wasi.test.ts` — the `reads process.argv` `it.fails` (now an
+  unexpected pass: the native-string codegen defect that made it emit an invalid
+  binary is fixed) → a positive validity guard. Runtime argv semantics remain
+  and are pointed at **#3337** (validity only asserted here).
+
+**Durable gate (`scripts/issue-tests-gate.mjs`):** a new `unexpectedPasses`
+classification — an `it.fails` whose body passes (vitest status "failed" +
+"Expect test to fail") is split OUT of `failing` into `unexpectedPasses`, which
+(a) is never seeded into `knownFailures` (bootstrap/`--update`) and (b) hard-
+fails the run BEFORE any baseline write, forcing promotion. Threaded through the
+shard partial artifact + `mergePartials` so sharded runs preserve it.
+
+**Fixture:** `tests/issue-3340.test.ts` (3/3) drives the gate CLI in merge mode:
+unexpected-pass → exit 1 + `UNEXPECTED PASS` (never baselined); ordinary
+baselined failure → exit 0 (control); genuine new regression → exit 1 +
+`REGRESSION` (gate not weakened).
+
+**Baseline:** the 3 stale IDs ratchet out post-merge — the converted tests no
+longer fail, so the post-merge `--update` (full-rewrite from current `failing`)
+drops them; they can never be re-absorbed because an inverted sentinel now
+hard-fails.
+
+**Deferred (noted, not blocking):** the optional static "policy check" (approach
+step 6 — reject a NEW positive fixture asserting valid source must fail
+`WebAssembly.validate`, exempting encoder-negative tests) is a secondary
+write-time guard on top of the runtime `unexpectedPasses` gate; left as a
+follow-up since the runtime gate already catches the class at maintenance time.
+
+**Validated:** issue-2143 3/3, real-world-wasi 7/7, issue-3340 3/3; tsc clean.

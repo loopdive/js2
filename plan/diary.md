@@ -294,3 +294,109 @@ close (sprint/66 tag, PR #2146). **Net +305 passes.** 22 issues done + 1 wont-fi
 fnctor-reconstruct, IR effect-model lane (#2134–#2141), async/Promise (#2613/#2614),
 Proxy (#1355/#2618), standalone residual tails, type-oracle/pipeline refactors, and
 the newly-unblocked substrate slices (#2710/#2722/#2724 for implementation in s67).
+
+## Sprint 73 (2026-07-19 → 2026-07-21) — honest Test262 parity and external runner
+
+**Baseline**: JS-host 28,294 / 43,106 (65.6%) → **30,282 / 43,099
+(70.3%)**; standalone 27,378 / 43,106 (63.5%) → **28,136 / 43,106
+(65.3%)**. 28 issues completed; 191 remain `sprint: current`.
+
+The project runner and test262.fyi path now execute the original harness with
+matching source assembly, fixture graphs, negative-test checks, async completion,
+and verdict classification. The stricter oracle exposed silent false passes;
+compiler and runner fixes converted the real supported cases back to passes.
+`@loopdive/js2` gained the reusable `js2-test262` CLI for a first standalone-only
+test262.fyi publication. Early IR/self-host/Porffor integration slices also
+landed, while the architecture epics remain open.
+
+The merge queue caught a 29-test illegal-cast regression in the JS-host closure
+ABI before landing. It was fixed at the standalone `Reflect.construct` marker
+boundary instead of being excused. Sprint bookkeeping drift was also repaired:
+16 completed issues were normalized into sprint 73, and all unfinished work was
+carried forward without retagging it to a numbered sprint.
+
+### 2026-07-21 — v0.64.1 proxy metadata correction
+
+Post-publish verification found that `js2wasm@0.64.0` still depended on
+`@loopdive/js2@0.60.1`: the release script bumped the proxy package version but
+not its dependency. #3516 repaired the release transaction, added a tag-publish
+lockstep check, and superseded the immutable npm metadata with v0.64.1. The
+published `js2wasm@0.64.1` proxy now depends exactly on
+`@loopdive/js2@0.64.1`, and npm, JSR, and the GitHub release were verified.
+
+## Sprint 74 (2026-07-21) — IR R0 truth boundary
+
+IR retirement R0 is delivered. #3519 added typed terminal outcomes and an
+honest `check:ir-only` policy gate; #3529 recovered the 154 compilation
+failures that strict outcome handling exposed without expanding the equivalence
+baseline. Full equivalence has zero new failures. One baseline-known case now
+passes and remains deliberately unratcheted in this recovery slice.
+
+The bounded hybrid lane is green with 31 / 37 IR-emitted units, six typed
+Unsupported units, zero Invariants, and complete accounting. Strict remains
+correctly non-green on the same six typed blockers and all 37 legacy-emitted
+bodies. The broader #3518 program remains open: #3520 is the next ready R1
+slice, and R2–R8 stay blocked behind it and their dependency chain.
+
+The previous v0.64.1 patch is published and verified, including the matching
+`js2wasm` proxy dependency on `@loopdive/js2@0.64.1`. PR #3483's advisory
+merge-group differential then caught one lost boolean brand in
+`closures/10-mutual.js`; PR #3486 retained the brand through IR and boxed it
+with `__box_boolean`, restoring the 99 / 104 differential floor without a
+baseline update. Sprint 74 closed at that corrected R0 boundary,
+`a9b276c0eed97b2ce29b7ccaa29ebc5f4853e08d`, and the exact `sprint/74` tag is
+published there. Authoritative merge-group Test262 run 29857062450 passed at
+the same SHA: JS-host remained 30,282 / 43,099 and standalone improved by 13
+passes to 28,149 / 43,106. The close harvest cross-referenced all >50-row
+failure families and filed only one new Markdown owner: Backlog #3531 for 216
+standalone array-concat/JS-array host-import leaks. v0.65.0 is cut from the
+resulting `main` before execution pauses.
+
+## 2026-07-21 21:41 — v0.65.0 published and verified
+
+- Release PR #3488 merged to `main` at
+  `14bdb88682b92ae2c081e19a2ef1bdf749e389c8` after CI, differential, and the
+  full merge-group Test262 matrix passed. The annotated `v0.65.0` tag peels
+  exactly to release commit `4ae9b1fd9b4c52fa7848c9ac011c3320748a6c8a`.
+- Publish workflow
+  [29862176875](https://github.com/loopdive/js2/actions/runs/29862176875)
+  passed version verification and published `@loopdive/js2`, the `js2wasm`
+  proxy, JSR, and the public GitHub release.
+- Independent registry checks found both npm packages at `0.65.0` with the
+  release commit as `gitHead`, the proxy dependency pinned exactly to
+  `@loopdive/js2@0.65.0`, JSR latest at `0.65.0`, and a fresh
+  `npx js2wasm@0.65.0 --version` returning `0.65.0`.
+- No Test262 run logs or equivalence baselines were changed by the release.
+
+## 2026-07-30 23:55 — sprint 77 frozen (late), de-inflation reflected, worktree-prune incident
+
+- **Sprint 77 frozen with `--force`** at `88e12f2`: 79 issues re-tagged
+  `sprint: current` → `sprint: 77`, 242 rolled forward, `plan/issues/sprints/77.md`
+  written. Range `sprint-77/begin` (bb5b414, 2026-07-24) .. 2026-07-30 —
+  1,541 commits, 671 merged PRs.
+- **Frozen late, and the record says so.** No freeze ran at the budget rollover
+  (the token-budget source is still unwired, #2751), so `freeze-sprint.mjs` was
+  invoked after the fact. It re-tags by current frontmatter, not by date, so the
+  window spans the intended tail *plus* the following days.
+- **Host count fell 30,364 → 29,856 and that is the win, not a regression.**
+  `ORACLE_VERSION` moved 10 → 12 inside the window (`69493a7`, the declared
+  re-baseline for the #3603 host de-inflation). The oracle bump *is* the
+  verdict-logic change, so both sides of the comparison classify rows
+  differently — the counts are different quantities, not a delta. Standalone
+  highwater 22,626 (official 22,394 / 43,106).
+- **#3658 resolved.** The landing-page summary sync had frozen at
+  `15:43Z / 30390-43098` while reporting SUCCESS five times; it is committing
+  every few hours again (verified through 2026-07-30 20:44). The *hardening* —
+  fail loudly when new baseline data yields no commit — is still open.
+- **Incident: `git worktree prune` run from inside the container deleted the
+  host session's live worktree registrations.** The repo is shared — the host
+  sees it at `/Volumes/Archiv Mini/...` with worktrees under `/private/tmp/js2-*`,
+  invisible from `/workspace`, therefore reported `prunable`. One `.git`, one
+  registry. It caught active work (`js2-3836-repair` advanced
+  `b96b016 → 0fc0989` between two commands). Committed work survived in the
+  shared object store; registrations did not. Recovery is host-side
+  `git worktree repair`. Rule recorded: `prunable` here means "not visible from
+  where I'm standing", never "stale", and worktree cleanup is host-side work.
+- `/workspace` was 1,279 commits behind and is now level with `origin/main`.
+  The 13 dirty files reverted to get there were each verified: every local-only
+  line already existed on `main` in evolved form. Nothing unique lost.

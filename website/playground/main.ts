@@ -14,7 +14,8 @@ import * as ts from "typescript";
 import "./ts-lib-files.js";
 import { compile, compileMulti } from "../../src/index.js";
 import { optimizeBinaryAsync } from "../../src/optimize.js";
-import { buildImports, buildStringConstants, instantiateWasm } from "../../src/runtime.js";
+import { buildImports } from "../../src/runtime.js";
+import { instantiatePlaygroundModule } from "./runtime-wiring.js";
 import { WasmTreemap, parseWasm, parseWasmSpans, SECTION_COLORS } from "./wasm-treemap.js";
 import type { WasmData, WasmSection, WasmFunctionBody, ByteSpan } from "./wasm-treemap.js";
 import { LayoutManager, clearSavedLayout, getDefaultLayout, getMobileDefaultLayout } from "./layout.js";
@@ -3966,10 +3967,7 @@ function buildEnv(
   result: ReturnType<typeof compile>,
   log: (msg: string) => void,
   previewRoot?: HTMLElement,
-): {
-  env: Record<string, Function>;
-  setExports: (exports: Record<string, Function>) => void;
-} {
+): ReturnType<typeof buildImports> {
   const doc = previewRoot
     ? {
         get body() {
@@ -4003,12 +4001,16 @@ function buildEnv(
 
   // Build closed env from the compiler-generated manifest.
   // The deps object provides declared globals (document, window, performance).
-  const imports = buildImports(result.imports, {
-    document: doc,
-    window: sandboxGlobal,
-    performance: performance,
-    globalThis: sandboxGlobal,
-  });
+  const imports = buildImports(
+    result.imports,
+    {
+      document: doc,
+      window: sandboxGlobal,
+      performance: performance,
+      globalThis: sandboxGlobal,
+    },
+    result.stringPool,
+  );
   const env = imports.env;
 
   // Override console_log variants to redirect to the playground's console panel
@@ -4017,16 +4019,7 @@ function buildEnv(
   env.console_log_bool = (v: number) => log(v ? "true" : "false");
   env.console_log_externref = (v: unknown) => log(String(v));
 
-  let setExportsFn = imports.setExports;
-  if (!setExportsFn) {
-    // Provide a no-op if no callbacks are in the manifest
-    setExportsFn = () => {};
-  }
-
-  return {
-    env,
-    setExports: setExportsFn,
-  };
+  return imports;
 }
 
 async function runOnly() {
@@ -4055,7 +4048,7 @@ async function runOnly() {
   const usesDom = detectDomUsage(result);
   const logs: string[] = [];
 
-  const { env, setExports } = buildEnv(
+  const imports = buildEnv(
     result,
     (msg) => {
       logs.push(msg);
@@ -4066,14 +4059,9 @@ async function runOnly() {
 
   let wasmExports: Record<string, any> | undefined;
   try {
-    const { instance, nativeBuiltins } = await instantiateWasm(
-      result.binary as BufferSource,
-      env,
-      buildStringConstants(result.stringPool),
-    );
+    const { instance, nativeBuiltins } = await instantiatePlaygroundModule(result.binary as BufferSource, imports);
 
     wasmExports = instance.exports as Record<string, any>;
-    setExports(wasmExports as Record<string, Function>);
     if (typeof wasmExports.main === "function") {
       const returnValue = wasmExports.main();
       if (returnValue !== undefined) logs.push(`→ ${returnValue}`);
@@ -4217,15 +4205,10 @@ async function runBenchmark() {
     log("Binaryen optimization skipped.");
   }
 
-  const { env: wasmEnv, setExports } = buildEnv(lastResult, () => {});
-  const { instance, nativeBuiltins } = await instantiateWasm(
-    optResult.binary as BufferSource,
-    wasmEnv,
-    buildStringConstants(lastResult.stringPool),
-  );
+  const imports = buildEnv(lastResult, () => {});
+  const { instance, nativeBuiltins } = await instantiatePlaygroundModule(optResult.binary as BufferSource, imports);
   log(`wasm:js-string → ${nativeBuiltins ? "native builtins" : "JS polyfill"}`);
   const wasmExports = instance.exports as Record<string, Function>;
-  setExports(wasmExports);
 
   // Discover bench_* exports
   const benchNames = Object.keys(wasmExports)

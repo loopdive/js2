@@ -1,5 +1,6 @@
 import type { CompileError, CompileOptions } from "../index.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { PositionMap, type CompilerSourceOriginSpan, type SourceEdit } from "../position-map.js";
 import { forEachChild, ts } from "../ts-api.js";
 import { detectEarlyErrors } from "./early-errors/index.js";
 
@@ -253,7 +254,7 @@ function validateHardenedMode(
  * - Direct eval from a derived constructor would legitimately allow
  *   super(), but test262 has no passing tests covering that pattern.
  */
-function rewriteEvalSuperCall(source: string): string {
+function rewriteEvalSuperCallWithMap(source: string): { source: string; positionMap: PositionMap } {
   const hasSuperCall = (s: string) => /\bsuper\s*\(/.test(s);
   const replacement = `((function(){throw new SyntaxError("super() not allowed in eval (early error)")}()))`;
 
@@ -265,11 +266,44 @@ function rewriteEvalSuperCall(source: string): string {
   const directDq = new RegExp(`(^|[^\\w$.])eval\\s*\\(\\s*"(${dqBody})"\\s*\\)`, "g");
 
   let out = source;
-  out = out.replace(indirectSq, (full, body) => (hasSuperCall(body) ? replacement : full));
-  out = out.replace(indirectDq, (full, body) => (hasSuperCall(body) ? replacement : full));
-  out = out.replace(directSq, (full, prefix, body) => (hasSuperCall(body) ? `${prefix}${replacement}` : full));
-  out = out.replace(directDq, (full, prefix, body) => (hasSuperCall(body) ? `${prefix}${replacement}` : full));
-  return out;
+  let positionMap = PositionMap.identity();
+  const apply = (pattern: RegExp, bodyIndex: number, prefixIndex?: number): void => {
+    const edits: SourceEdit[] = [];
+    out = out.replace(pattern, (...args: unknown[]) => {
+      const full = args[0] as string;
+      const body = args[bodyIndex] as string;
+      if (!hasSuperCall(body)) return full;
+      const prefix = prefixIndex === undefined ? "" : (args[prefixIndex] as string);
+      const generated = prefix + replacement;
+      const functionStart = generated.indexOf("function");
+      const compilerOrigins: CompilerSourceOriginSpan[] = [
+        {
+          start: functionStart,
+          end: generated.length,
+          origin: { producer: "eval-super-rewrite", role: "early-error-thrower" },
+        },
+      ];
+      const offset = args.at(-2) as number;
+      edits.push({
+        origStart: offset,
+        origEnd: offset + full.length,
+        newLength: generated.length,
+        compilerOrigins,
+      });
+      return generated;
+    });
+    if (edits.length > 0) positionMap = new PositionMap(edits).compose(positionMap);
+  };
+
+  apply(indirectSq, 1);
+  apply(indirectDq, 1);
+  apply(directSq, 2, 1);
+  apply(directDq, 2, 1);
+  return { source: out, positionMap };
+}
+
+function rewriteEvalSuperCall(source: string): string {
+  return rewriteEvalSuperCallWithMap(source).source;
 }
 
 export {
@@ -279,6 +313,7 @@ export {
   hasExportModifier,
   pushSourceAnchoredDiagnostic,
   rewriteEvalSuperCall,
+  rewriteEvalSuperCallWithMap,
   validateHardenedMode,
   validateSafeMode,
 };

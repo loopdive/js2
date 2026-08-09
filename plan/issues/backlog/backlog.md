@@ -2,6 +2,103 @@
 
 Lightweight pointer index for unscheduled issues that need sprint candidacy. Authoritative status lives in each issue file's frontmatter.
 
+## 2026-08-09 — Prepared provider transaction rollback
+
+- [#4260](../4260-prepared-provider-plans-leak-across-aborted-component-seal.md)
+  — make blocking callable-provider and import plans commit or abort with their
+  prepared component, so a failed seal cannot leave a stale
+  `__new_ReferenceError` reservation or an unplanned direct fallback.
+
+## 2026-08-09 — ES2015 TypedArray native-prototype reads
+
+- [#2375](../2375-typedarray-nativeproto-value-read-init-trap.md) — add the
+  missing IR/runtime `$NativeProto` arm for dynamic method-valued reads. The
+  first exact cohort is 48 host-pass/standalone-fail invalid-receiver files;
+  the frozen 125-file exposure set remains a layered rerun, not a promised
+  125-pass slice.
+
+## 2026-08-09 — ES2015 class accessor IR writeback (done)
+
+- [#4259](../4259-es2015-class-accessor-outer-binding-writeback-ir.md) —
+  **Done:** prepared IR owns the bounded class declaration/expression getter and
+  setter bodies, and exact class-root writes reach them during module init. On
+  the frozen 84-file set, all 72 positives now pass in each lane; the 12
+  computed-error controls remain unchanged.
+
+## 2026-07-29 — npm standalone versus JS-host performance lanes
+
+- [#3781](../3781-npm-perf-standalone-js-host-lanes.md) — split every npm
+  performance result into a host-free standalone lane, where the package and
+  benchmark driver are compiled into Wasm together, and a JS-host lane, where
+  Node owns inputs, the repeated-call loop, result observation, and assertions.
+  Unsupported standalone packages remain visible as explicit failure rows.
+- [#3782](../3782-acorn-linked-standalone-module-start.md) — Acorn's
+  linked standalone graph now compiles to a valid 1.67 MB zero-import binary,
+  after #3781 removed a left-deep synthetic string-concat chain, but the module
+  still throws during start-function initialization. Isolate the token/prototype/
+  regexp/table initializer and restore a real standalone timing.
+
+## 2026-07-29 — Acorn Wasm performance (in progress)
+
+- [#3780](../3780-acorn-wasm-faster-than-node.md) — make the real pinned
+  parameterized `acorn@8.16.0 parse(source, options)` self-host operation faster
+  in optimized Wasm than native Node, while retaining exact AST behavior for
+  changed sources and options. Export-result caching is excluded from official
+  timings. Corrected result: 1,279,410.541 µs Wasm versus 4,323.208 µs Node
+  (295.94x Node advantage), with 3,507/3,518 unchanged.
+
+## 2026-07-29 — cookie Wasm performance (in progress)
+
+- [#3779](../3779-cookie-wasm-faster-than-node.md) — make the real pinned
+  parameterized `cookie@2.0.1 parseCookie(header)` operation faster in optimized
+  Wasm than native Node. Export-result caching is excluded from official
+  timings. Corrected result: 143.1675 µs Wasm versus 0.2631 µs Node (544.13x
+  Node advantage), with the existing 18/21 correctness surface unchanged.
+
+## 2026-07-29 — clsx Wasm performance
+
+- [#3778](../3778-clsx-wasm-faster-than-node.md) — make the real pinned
+  `clsx@2.1.1` hot operation faster compiled to optimized Wasm than the same
+  package running natively in Node. **Done:** the official nine-round rerun is
+  0.0106524 µs Wasm versus 0.0492999 µs Node (**4.6281x faster**), with the
+  existing 17/18 correctness result unchanged. A bounded pure-subset partial
+  evaluator removes all 112 inner host crossings from the closed hot export;
+  `pnpm run benchmark:clsx` provides the focused non-writing setup.
+
+## 2026-07-26 — compiled Acorn full-Test262 differential follow-ups
+
+The #1712 acceptance branch compares pinned compiled Acorn 8.16.0 against
+node-acorn on every Git-tracked Test262 JavaScript parser input, including exact
+positions and Test262 strict/module variants. The clean published-head
+four-shard result is **53,259/53,259 exact files** and
+**102,312/102,312 exact variants**, with zero mismatches. Recursive
+Wasm→host→Wasm prototype-method dispatch is stack-flat, dynamic indexed and
+nested-vec mutations update the live compiled backing, lexical early errors
+preserve null sentinels, and arbitrary-width BigInt literals remain exact.
+[#2802](../2802-nested-any-vec-multipush-join-first-element-drop.md) and
+[#2846](../2846-acorn-bigint-literal-corrupted-to-f64.md) are completed under
+the #1712 umbrella; no parser-fidelity residual remains in this census.
+
+## 2026-07-26 — TypeScript frontend incremental reuse
+
+- [#700](../700-superseded-reuse-typescript-host-state.md) — **in review,
+  PRs #3645 / #3650**: replace per-build TypeScript Program/checker construction
+  with persistent single- and multi-file Language Services. Measured edited
+  single-file rebuilds improve 2.2–2.6× and unchanged rebuilds 4.1–6.2×, with
+  Program invalidation, cross-service isolation, JS byte parity, 100-source
+  sequential isolation, and Test262 fixture-graph reuse covered by focused
+  tests.
+
+## 2026-07-26 — Test262 linked-harness implementation
+
+- [#3451](../3451-linked-harness-wasm-separate-compilation.md) — **in progress,
+  high priority, hard, XL.** Slice 1 now provides the deterministic
+  strict-neutral harness/body split, target-specific content keys, and a
+  maintained-corpus inventory: 64 harness sources / 128 target objects versus
+  82,628 potential harness-bearing variants per lane, with 82,660 authoritative
+  split-parity checks. Next is the two-target `assert.sameValue` linked smoke,
+  gated on WasmGC/shared-realm linker substrate.
+
 ## 2026-07-17 - /harvest-errors (baselines run 20260717-151504, 32,139 pass)
 
 Harvested both lanes (default JS-host + standalone) from
@@ -87,18 +184,72 @@ Updated (not new): [#1524](../1524-test262-harness-resizable-buffer-ctors-fixtur
 
 Investigated, no new issue needed: #2940's default-lane 1,496-record "vacuous harness-wrapper callback" tag is the **intended** honest reclassification (not a regression) — already tracked for policy ratchet by #3001/#3004. Most standalone-lane uncited patterns (`Cannot convert object to primitive`, `illegal cast` in iterator dstr, `Property description must be an object`, etc.) map cleanly onto existing open issues (#1900/#2733/#2042/#2864/#2875) — counts noted in harvest, no duplicates filed.
 
-## 2026-06-30 — IR front-end migration ratchet (queued `sprint: current`)
+## 2026-07-21 — IR-only default and direct-front-end retirement (current priority)
 
-Direct-AST→Wasm → typed-IR migration, sliced by `IrFallbackReason` bucket. Epic
-[#2855](../2855-ir-frontend-migration-ratchet-buckets-to-zero.md) (tracking;
-supersedes stale `#1530`). Queued children (`sprint: current`, `status: ready`):
+The explicit completion directive supersedes the June 30 demotion of IR work.
+The active program is
+[#3518](../3518-ir-only-default-and-direct-frontend-retirement.md), a staged
+prepare-before-emit migration that remains **in-progress**, rather than another
+fallback-count sweep:
 
-- [#2856](../2856-ir-body-shape-rejected-to-zero.md) — `body-shape-rejected` (31) → 0 — high, horizon L (dominant).
-- [#2857](../2857-ir-class-method-residual-to-zero.md) — `class-method` (6) → 0 — medium, horizon M (#1370 Phase C/D/E residual).
-- [#2858](../2858-ir-call-graph-closure-to-zero.md) — `call-graph-closure` (7) → 0 — medium, horizon M (depends_on #2856+#2857).
-- [#2859](../2859-ir-param-type-not-resolvable-to-zero.md) — `param-type-not-resolvable` (1) → 0 — low, horizon S.
+- [#3529](../3529-ir-r0-typed-producer-equivalence-parity.md) — **done
+  2026-07-21**: restored full-equivalence parity at 1,608 passing / 35 failing
+  against 36 committed known failures. One baseline-known case now passes,
+  there are zero new regressions, and the baseline is unchanged.
+- [#3519](../3519-ir-only-typed-outcomes-and-honest-gate.md) — **done
+  2026-07-21**: landed typed emitted/Unsupported/Invariant outcomes and the
+  honest gate. Hybrid is green at 5/5 entries, 37 terminal units, 31 emitted IR
+  bodies, 6 Unsupported, 0 Invariants, and 37 legacy bodies; strict is
+  intentionally red on the six typed blockers plus legacy emission.
+- [#3520](../3520-ir-r1-source-qualified-identity-program-abi.md) — **ready,
+  critical, current**: R1 source-qualified identities and whole-program ABI;
+  this is the next executable retirement slice.
+- [#3521](../3521-ir-r2-prepared-program-free-function-compile-once.md) —
+  **blocked, critical, current**: R2 Prepared-program ownership and compile-once
+  top-level free functions; depends on #3520.
+- [#3522](../3522-ir-r3-classes-closures-compile-once.md) — **blocked,
+  critical, current**: R3 exhaustive classes/members/closures and support-unit
+  ownership; depends on #3521.
+- [#3523](../3523-ir-r4-module-init-compile-once.md) — **blocked, critical,
+  current**: R4 typed ordered module-init and exactly-once startup; depends on
+  #3521 and #3522.
+- [#3525](../3525-ir-r5-whole-program-multi-source-ownership.md) — **blocked,
+  critical, current**: R5 one Prepared owner/ABI/init plan across single- and
+  multi-source/M0; depends on #3520–#3523.
+- [#3526](../3526-ir-r6-semantic-runtime-contract.md) — **blocked, critical,
+  current**: R6 typed intrinsic/runtime-feature/host-capability contract,
+  pre-lowering manifest freeze, and measured provider-family slices; depends
+  on #3521.
+- [#3527](../3527-ir-r7-ast-free-async-plan.md) — **blocked, critical,
+  current**: R7 AST-free suspension plans and canonical async ABI through the
+  existing frame engine; depends on #3522, #3525, and #3526.
+- [#3528](../3528-ir-r8-shared-linear-prepared-program.md) — **blocked,
+  critical, current**: R8 linear consumption of the exact shared Prepared
+  program with zero direct AST lowering; depends on #3525–#3527.
+- [#3090](../3090-shrink-codegen-delete-dormant-legacy-handlers.md) — blocked
+  R10 deletion ledger. The remaining ~59,676 frontend fn-lines are still
+  reachable and may be deleted only after #3518 R9.
+- [#2950](../2950-ir-first-default-flip-retire-compile-twice.md) — completed
+  historical default-flip milestone; its undelivered retirement scope moved to
+  #3518.
+- [#3142](../3142-ir-module-level-statement-adoption.md) — completed
+  module-init claim/patch milestone; compile-once module ownership remains R4.
 
-Deferred (not queued): `async-function` (4) → #1373b.
+The earlier corpus-ratchet epic
+[#2855](../2855-ir-frontend-migration-ratchet-buckets-to-zero.md) is now closed
+as the narrow function-level milestone. Its children are complete:
+
+- [#2856](../2856-ir-body-shape-rejected-to-zero.md) — `body-shape-rejected` 31 → 0 — **done 2026-07-21**.
+- [#2857](../2857-ir-class-method-residual-to-zero.md) — `class-method` 6 → 0 — done.
+- [#2858](../2858-ir-call-graph-closure-to-zero.md) — `call-graph-closure` 7 → 0 — done.
+- [#2859](../2859-ir-param-type-not-resolvable-to-zero.md) — `param-type-not-resolvable` 1 → 0 — done.
+
+The final R0 lane records six typed Unsupported units: `async-function` (2),
+`call-graph-closure` (1), `body-shape` (1), and static class members (2).
+Corpus-zero reasons remain non-strict until their source-language coverage is
+genuinely complete. Classes, module init, M0, linear, runtime entry points,
+fail-closed defaulting, and reachability deletion remain separate structural
+gates under #3518.
 
 ## 2026-06-23 — Sprint-65 value-rep substrate landings (session)
 

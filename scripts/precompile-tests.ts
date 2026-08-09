@@ -18,9 +18,9 @@ import { join, relative } from "path";
 import { createHash } from "crypto";
 import { availableParallelism } from "os";
 import { CompilerPool, type PoolResult } from "./compiler-pool.js";
+import { isModuleGoal } from "./test262-module-goal.mjs";
 import {
   findTestFiles,
-  isModuleGoal,
   matchesPathFilter,
   parseMeta,
   shouldSkip,

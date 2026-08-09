@@ -11,12 +11,16 @@ import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
 import { ts } from "../ts-api.js";
 import { emitCachedFuncClosureAccess } from "./closures.js";
+import { pushBuiltinCtorOwnPropSeed } from "./builtin-ctor-own-props.js";
+import { BUILTIN_STATIC_METHOD_ARITY, pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
+import { ensureStandaloneBuiltinStaticMethodClosure } from "./builtin-value-read.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
+import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 
 const SUPPORTED_STATIC_PROPS: ReadonlyMap<string, readonly string[]> = new Map([
   ["Array", ["isArray"]],
@@ -87,6 +91,23 @@ export const BUILTIN_CONSTRUCTOR_IDENTITY_NAMES: ReadonlySet<string> = new Set([
   "DisposableStack",
   "AsyncDisposableStack",
   "SuppressedError",
+  // (#4223) The primitive-WRAPPER constructors. #3006 left them out and #4200
+  // recorded the consequence explicitly: with no carrier, the bare identifier
+  // read `null` while `<B>.prototype.constructor` read `undefined`, so
+  // `Object(5).constructor === Number` compared `undefined === null` — false on
+  // BOTH sides, and no amount of work on the wrapper's `.constructor` read
+  // could have made it true. The carrier is what makes the RHS a real object.
+  //
+  // Safe by the same argument as the Error family above: every SYNTACTIC use of
+  // these names is intercepted before identifier resolution — `Number(x)` /
+  // `new Number(x)` at the call/construct site, `Number.MAX_VALUE` and
+  // `Number.prototype` at the property-access site, `typeof Number` at the
+  // typeof fold, `x instanceof Number` at the instanceof lowering. Only the
+  // BARE-VALUE read changes, and it changes from `ref.null.extern` (a value no
+  // conforming program can observe as the constructor) to the carrier.
+  "Number",
+  "String",
+  "Boolean",
 ]);
 
 export function isBuiltinConstructorIdentityName(name: string): boolean {
@@ -137,16 +158,37 @@ export function emitBuiltinConstructorIdentity(
     ctx.builtinObjectGlobals.set(key, globalIdx);
   }
 
+  // (#2984 ctor-carrier own props) The carrier is materialized through a local
+  // so the §17/§20 own data properties (`length`/`name`/`prototype`) can be
+  // installed on it before it is published to the global. Without them the
+  // carrier is an EMPTY `$Object`, and every RUNTIME descriptor query
+  // test262's `verifyProperty` makes through its any-typed harness parameter
+  // (`hasOwnProperty`, `gOPD`, for-in, write, delete) answers "absent".
+  const objLocal = allocLocal(fctx, `__builtin_ctor_${builtinName}_obj_${fctx.locals.length}`, {
+    kind: "externref",
+  });
+  const initBody: Instr[] = [
+    { op: "call", funcIdx: newObjectIdx },
+    { op: "local.set", index: objLocal },
+  ];
+
+  // (#2182 pattern) `savedBody` is detached during the swap; register it in
+  // `liveBodies` so a late-import funcidx shift walks it too.
+  const savedBody = fctx.body;
+  fctx.body = initBody;
+  ctx.liveBodies.add(savedBody);
+  try {
+    pushBuiltinCtorOwnPropSeed(ctx, fctx, builtinName, objLocal);
+    fctx.body.push({ op: "local.get", index: objLocal });
+    fctx.body.push({ op: "global.set", index: globalIdx });
+  } finally {
+    fctx.body = savedBody;
+    ctx.liveBodies.delete(savedBody);
+  }
+
   fctx.body.push({ op: "global.get", index: globalIdx });
   fctx.body.push({ op: "ref.is_null" });
-  fctx.body.push({
-    op: "if",
-    blockType: { kind: "empty" },
-    then: [
-      { op: "call", funcIdx: newObjectIdx },
-      { op: "global.set", index: globalIdx },
-    ],
-  });
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: initBody, else: [] });
   fctx.body.push({ op: "global.get", index: globalIdx });
   return { kind: "externref" };
 }
@@ -257,6 +299,11 @@ export function emitBuiltinStaticMethodValue(
   builtinName: string,
   propName: string,
 ): ValType | null {
+  const closure = ensureStandaloneBuiltinStaticMethodClosure(ctx, builtinName, propName);
+  if (closure) {
+    fctx.body.push(...pushBuiltinFnSingletonValueInstrs(ctx, closure));
+    return closure.type;
+  }
   const funcIdx = ensureBuiltinStaticFunc(ctx, builtinName, propName);
   if (funcIdx === undefined) return null;
   return emitCachedFuncClosureAccess(ctx, fctx, hiddenName(builtinName, propName), funcIdx);
@@ -269,17 +316,79 @@ function coerceTopToExternref(fctx: FunctionContext, valueType: ValType | null):
   }
 }
 
+/**
+ * Install the runtime-visible own properties of the JSON namespace carrier.
+ *
+ * Direct `JSON.parse` / `JSON.stringify` reads have dedicated compiler paths,
+ * but test262's descriptor helpers pass `JSON` through an `any`-typed
+ * parameter. That loses the syntactic namespace identity and reaches the
+ * native `$Object` MOP, where the carrier used to be empty. Seed the same
+ * identity-stable builtin-function singletons used by direct VALUE reads so
+ * dynamic gOPD/hasOwn/property access observe genuine own method properties.
+ *
+ * This deliberately does NOT add the methods to `SUPPORTED_STATIC_PROPS`:
+ * doing so would reroute direct calls through the older Array/Object-only
+ * `emitBuiltinStaticMethodValue` path. The carrier seed is a separate runtime
+ * reflection surface.
+ */
+function pushJsonNamespaceOwnPropSeed(ctx: CodegenContext, fctx: FunctionContext, objLocal: number): void {
+  if (!ctx.standalone && !ctx.wasi) return;
+  const defineIdx = ctx.funcMap.get("__defineProperty_value");
+  if (defineIdx === undefined) return;
+
+  // §17 builtin methods: { writable:true, enumerable:false,
+  // configurable:true }.
+  const METHOD_FLAGS = 0x01 | 0x04;
+  for (const prop of ["parse", "stringify", "rawJSON", "isRawJSON"] as const) {
+    const closure = ensureStandaloneBuiltinStaticMethodClosure(ctx, "JSON", prop);
+    if (!closure) continue;
+    fctx.body.push({ op: "local.get", index: objLocal });
+    addStringConstantGlobal(ctx, prop);
+    fctx.body.push(...stringConstantExternrefInstrs(ctx, prop));
+    fctx.body.push(...pushBuiltinFnSingletonValueInstrs(ctx, closure));
+    fctx.body.push({ op: "extern.convert_any" });
+    fctx.body.push({ op: "f64.const", value: METHOD_FLAGS });
+    fctx.body.push({ op: "call", funcIdx: defineIdx });
+    fctx.body.push({ op: "drop" });
+  }
+
+  // §25.5.3 JSON[@@toStringTag] = "JSON":
+  // { writable:false, enumerable:false, configurable:true }.
+  const boxSymbolIdx = ensureLateImport(ctx, "__box_symbol", [{ kind: "i32" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+  if (boxSymbolIdx === undefined) return;
+  fctx.body.push({ op: "local.get", index: objLocal });
+  fctx.body.push({ op: "i32.const", value: 4 }); // Symbol.toStringTag
+  fctx.body.push({ op: "call", funcIdx: boxSymbolIdx });
+  addStringConstantGlobal(ctx, "JSON");
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, "JSON"));
+  fctx.body.push({ op: "f64.const", value: 0x04 });
+  fctx.body.push({ op: "call", funcIdx: defineIdx });
+  fctx.body.push({ op: "drop" });
+}
+
 export function emitBuiltinNamespaceObject(
   ctx: CodegenContext,
   fctx: FunctionContext,
   builtinName: string,
 ): ValType | null {
-  const props = SUPPORTED_STATIC_PROPS.get(builtinName);
-  if (!props) return null;
+  const baselineProps = SUPPORTED_STATIC_PROPS.get(builtinName);
+  if (!baselineProps) return null;
+  // A namespace carrier is materialized only when the namespace is used as a
+  // value. At that demand point, source its complete function-valued own
+  // surface from the same canonical registry that drives static value
+  // metadata/closure materialization. This lets runtime reflection through
+  // stored/uncurried helpers observe the same ownership as direct access.
+  const props = Array.from(
+    new Set([
+      ...baselineProps,
+      ...(builtinName === "JSON" ? [] : Object.keys(BUILTIN_STATIC_METHOD_ARITY[builtinName] ?? {})),
+    ]),
+  );
 
   ensureObjectRuntime(ctx);
   const newObjectIdx = ctx.funcMap.get("__new_plain_object")!;
-  const setIdx = ctx.funcMap.get("__extern_set")!;
+  const defineValueIdx = ctx.funcMap.get("__defineProperty_value")!;
 
   let globalIdx = ctx.builtinObjectGlobals.get(builtinName);
   if (globalIdx === undefined) {
@@ -315,8 +424,21 @@ export function emitBuiltinNamespaceObject(
       fctx.body.push(...stringConstantExternrefInstrs(ctx, prop));
       const valueType = emitBuiltinStaticMethodValue(ctx, fctx, builtinName, prop);
       coerceTopToExternref(fctx, valueType);
-      fctx.body.push({ op: "call", funcIdx: setIdx });
+      // Builtin static methods are writable, non-enumerable, configurable.
+      // Host descriptor encoding: value bits 0b101 + all three specified bits
+      // + hasValue = 0xBD.
+      fctx.body.push({ op: "f64.const", value: 0xbd });
+      fctx.body.push({ op: "call", funcIdx: defineValueIdx });
+      fctx.body.push({ op: "drop" });
     }
+    if (builtinName === "JSON") {
+      pushJsonNamespaceOwnPropSeed(ctx, fctx, objLocal);
+    }
+    // (#2984 ctor-carrier own props) The Error-family / `Array` / `Object`
+    // carriers are CONSTRUCTOR objects, so they also own `length`/`name`/
+    // `prototype`. No-op for the true namespaces (`Math`/`JSON`/`Reflect`),
+    // which own none of the three.
+    pushBuiltinCtorOwnPropSeed(ctx, fctx, builtinName, objLocal);
     fctx.body.push({ op: "local.get", index: objLocal });
     fctx.body.push({ op: "global.set", index: globalIdx });
   } finally {

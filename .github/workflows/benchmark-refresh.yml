@@ -1,218 +1,538 @@
 name: Refresh Benchmarks
 
 on:
+  pull_request:
+    branches: [main]
   push:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      allow_performance_regressions:
-        description: "Allow performance regressions and continue anyway"
-        required: false
-        default: false
-        type: boolean
 
+# PR code is measured with read-only repository access. The deploy key and
+# write permissions exist only in promote-benchmarks, which never runs for PRs.
 permissions:
-  contents: write
-  pull-requests: read
+  contents: read
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  NODE_VERSION: "25.7.0"
+  PNPM_VERSION: "10.30.2"
+  RUST_TOOLCHAIN_VERSION: "1.94.1"
+  WASMTIME_VERSION: "46.0.1"
+  WASMTIME_SHA256: "9ae0b17ea298bcc52277a8208d6ab7fae8e1a89579672f9d82f9d86c116edb62"
+  JAVY_VERSION: "8.1.1"
+  JAVY_SHA256: "4bec224e1d51827808fd063541a2b4d94cf474744636b692be63e7a29bec83a6"
 
 concurrency:
   group: benchmark-refresh-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  refresh-benchmarks:
+  measure-and-gate:
     if: github.repository == 'loopdive/js2' && (github.event_name != 'push' || github.actor != 'github-actions[bot]')
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    outputs:
+      source_sha: ${{ steps.refs.outputs.candidate_sha }}
 
     steps:
-      - name: Checkout
+      - name: Resolve immutable source revisions
+        id: refs
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "candidate_sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          echo "baseline_sha=${{ github.event.pull_request.base.sha || '' }}" >> "$GITHUB_OUTPUT"
+          echo "BENCHMARK_GENERATED_AT=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" >> "$GITHUB_ENV"
+
+      - name: Checkout candidate
         uses: actions/checkout@v5
         with:
-          fetch-depth: 1
-          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ steps.refs.outputs.candidate_sha }}
+          path: candidate
+          fetch-depth: 0
+          submodules: false
+          persist-credentials: false
 
-      - name: Setup Node
+      - name: Checkout PR base
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.refs.outputs.baseline_sha }}
+          path: baseline
+          fetch-depth: 1
+          submodules: false
+          persist-credentials: false
+
+      - name: Detect benchmark timing methodology migration
+        if: github.event_name == 'pull_request'
+        id: timing_methodology
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed="false"
+          for path in \
+            benchmarks/harness.ts \
+            benchmarks/timing.ts \
+            scripts/generate-size-benchmarks.ts
+          do
+            if ! cmp -s "baseline/$path" "candidate/$path"; then
+              changed="true"
+            fi
+          done
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+          if [ "$changed" = "true" ]; then
+            echo "::notice title=Benchmark timing migration::Both revisions will be measured and packaged, but their runtime values use different timing methodology. This workflow-changing PR requires review; same-method runtime gating resumes after merge."
+          fi
+
+      - name: Detect auxiliary benchmark changes
+        id: auxiliary
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate_sha="${{ steps.refs.outputs.candidate_sha }}"
+          comparison_sha=""
+          if [ "${{ github.event_name }}" = "push" ]; then
+            comparison_sha="${{ github.event.before }}"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            comparison_sha="$(git -C candidate rev-parse "${candidate_sha}^" 2>/dev/null || true)"
+          fi
+
+          # Auxiliary controls never participate in a PR gate. They are
+          # refreshed only after landing on main, and only when one of their
+          # own inputs changed. Every other event carries forward the last
+          # accepted Javy/StarlingMonkey values and their source provenance.
+          auxiliary_mode="inherit"
+          if [ "${{ github.event_name }}" != "pull_request" ] &&
+             [ "${{ github.ref }}" = "refs/heads/main" ] &&
+             [ -n "$comparison_sha" ] &&
+             [ "$comparison_sha" != "0000000000000000000000000000000000000000" ] &&
+             git -C candidate cat-file -e "${comparison_sha}^{commit}"
+          then
+            changed="$(
+              git -C candidate diff --name-only "$comparison_sha" "$candidate_sha" -- \
+                .github/workflows/benchmark-refresh.yml \
+                benchmarks/wasmtime-cold-host \
+                package.json \
+                pnpm-lock.yaml \
+                scripts/generate-wasmtime-hot-runtime.mjs \
+                scripts/lib/landing-benchmark-corpus.mjs \
+                scripts/lib/landing-module-size.mjs \
+                scripts/lib/landing-runtime-timing.mjs \
+                scripts/lib/landing-wasmtime-runtime.mjs \
+                website/public/benchmarks/competitive/programs
+            )"
+            if [ -n "$changed" ]; then
+              auxiliary_mode="measure"
+              echo "Auxiliary benchmark inputs changed:"
+              echo "$changed"
+            fi
+          fi
+
+          echo "mode=$auxiliary_mode" >> "$GITHUB_OUTPUT"
+          echo "BENCHMARK_AUXILIARY_MODE=$auxiliary_mode" >> "$GITHUB_ENV"
+          echo "BENCHMARK_AUXILIARY_SOURCE_SHA=$comparison_sha" >> "$GITHUB_ENV"
+          echo "Auxiliary benchmark mode: $auxiliary_mode"
+
+          legacy_manifest_javy="false"
+          if [ "${{ github.event_name }}" = "pull_request" ] &&
+             [ -f baseline/scripts/benchmark-lifecycle.mjs ] &&
+             ! grep -Fq 'not-used (auxiliary measurements inherited)' baseline/scripts/benchmark-lifecycle.mjs
+          then
+            legacy_manifest_javy="true"
+            echo "Trusted PR base requires a Javy version while packaging inherited auxiliary data."
+          fi
+          echo "legacy_manifest_javy=$legacy_manifest_javy" >> "$GITHUB_OUTPUT"
+
+      - name: Setup pinned Node
         uses: actions/setup-node@v6
         with:
-          node-version: latest
-          check-latest: true
+          node-version: ${{ env.NODE_VERSION }}
 
-      - name: Setup pnpm via Corepack
+      - name: Setup pinned pnpm
+        shell: bash
         run: |
+          set -euo pipefail
           corepack enable
-          corepack prepare pnpm@10.30.2 --activate
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Snapshot current performance baseline
+      - name: Install pinned Rust
+        shell: bash
         run: |
-          # Canonical committed location is `benchmarks/results/`
-          # (see scripts/generate-playground-benchmark-sidebar.mjs RESULTS_PATH).
-          # The `public/` and `playground/public/` copies are derived artifacts —
-          # they were LFS-tracked until commit 616a7a528 (#1170 LFS migration,
-          # 2026-04-25), which untracked all `public/benchmarks/results/*.json`.
-          # Prefer the committed location; fall back to derived copies in case
-          # someone has them locally (no functional difference — same payload).
-          mkdir -p benchmark-baseline
-          if [ -f benchmarks/results/playground-benchmark-sidebar.json ]; then
-            cp benchmarks/results/playground-benchmark-sidebar.json benchmark-baseline/playground-benchmark-sidebar.json
-          elif [ -f website/public/benchmarks/results/playground-benchmark-sidebar.json ]; then
-            cp website/public/benchmarks/results/playground-benchmark-sidebar.json benchmark-baseline/playground-benchmark-sidebar.json
-          elif [ -f website/playground/public/benchmarks/results/playground-benchmark-sidebar.json ]; then
-            cp website/playground/public/benchmarks/results/playground-benchmark-sidebar.json benchmark-baseline/playground-benchmark-sidebar.json
-          else
-            echo "Missing committed playground benchmark baseline."
-            exit 2
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN_VERSION" --profile minimal --no-self-update
+          echo "RUSTUP_TOOLCHAIN=$RUST_TOOLCHAIN_VERSION" >> "$GITHUB_ENV"
+
+      - name: Install and verify pinned Wasmtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/benchmark-tools"
+          mkdir -p "$tools"
+
+          wasmtime_archive="$tools/wasmtime.tar.xz"
+          curl --fail --location --retry 3 \
+            "https://github.com/bytecodealliance/wasmtime/releases/download/v${WASMTIME_VERSION}/wasmtime-v${WASMTIME_VERSION}-x86_64-linux.tar.xz" \
+            --output "$wasmtime_archive"
+          echo "${WASMTIME_SHA256}  ${wasmtime_archive}" | sha256sum --check
+          tar -xJf "$wasmtime_archive" -C "$tools"
+
+          echo "$tools/wasmtime-v${WASMTIME_VERSION}-x86_64-linux" >> "$GITHUB_PATH"
+
+      - name: Install and verify pinned Javy
+        if: steps.auxiliary.outputs.mode == 'measure' || steps.auxiliary.outputs.legacy_manifest_javy == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/benchmark-tools"
+          javy_archive="$tools/javy.gz"
+          curl --fail --location --retry 3 \
+            "https://github.com/bytecodealliance/javy/releases/download/v${JAVY_VERSION}/javy-x86_64-linux-v${JAVY_VERSION}.gz" \
+            --output "$javy_archive"
+          echo "${JAVY_SHA256}  ${javy_archive}" | sha256sum --check
+          gzip --decompress --stdout "$javy_archive" > "$tools/javy"
+          chmod +x "$tools/javy"
+
+          echo "$tools" >> "$GITHUB_PATH"
+          echo "JAVY_BIN=$tools/javy" >> "$GITHUB_ENV"
+          "$tools/javy" --version | grep -F "${JAVY_VERSION}"
+
+      - name: Verify toolchain versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --version | grep -Fx "v${NODE_VERSION}"
+          pnpm --version | grep -Fx "${PNPM_VERSION}"
+          rustc --version | grep -F "rustc ${RUST_TOOLCHAIN_VERSION}"
+          cargo --version
+          wasmtime --version | grep -F "${WASMTIME_VERSION}"
+
+      - name: Install candidate dependencies
+        run: pnpm --dir candidate install --frozen-lockfile
+
+      - name: Install baseline dependencies
+        if: github.event_name == 'pull_request'
+        run: pnpm --dir baseline install --frozen-lockfile
+
+      - name: Remove checkout-stale benchmark outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$BENCHMARK_AUXILIARY_MODE" = "inherit" ]; then
+            if [ "${{ github.event_name }}" = "pull_request" ]; then
+              auxiliary_source="$GITHUB_WORKSPACE/baseline"
+            else
+              auxiliary_source="$GITHUB_WORKSPACE/candidate"
+            fi
+            auxiliary_baseline="$RUNNER_TEMP/benchmark-auxiliary-baseline"
+            mkdir -p "$auxiliary_baseline"
+            cp \
+              "$auxiliary_source/benchmarks/results/wasm-host-wasmtime-hot-runtime.json" \
+              "$auxiliary_baseline/runtime.json"
+            cp \
+              "$auxiliary_source/benchmarks/results/wasm-host-wasmtime-module-size-per-test.json" \
+              "$auxiliary_baseline/module-size.json"
+            auxiliary_source_sha="$(
+              node -e \
+                'const fs = require("node:fs"); const manifest = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); if (!/^[0-9a-f]{40}$/.test(manifest.sourceSha || "")) process.exit(1); process.stdout.write(manifest.sourceSha);' \
+                "$auxiliary_source/benchmarks/results/benchmark-manifest.json"
+            )"
+            echo "BENCHMARK_AUXILIARY_SOURCE_SHA=$auxiliary_source_sha" >> "$GITHUB_ENV"
+            echo "BENCHMARK_AUXILIARY_RUNTIME_BASELINE=$auxiliary_baseline/runtime.json" >> "$GITHUB_ENV"
+            echo "BENCHMARK_AUXILIARY_SIZE_BASELINE=$auxiliary_baseline/module-size.json" >> "$GITHUB_ENV"
           fi
 
-      - name: Refresh benchmark artifacts
-        run: pnpm run refresh:benchmarks
+          clear_current_outputs() {
+            local results="$1/benchmarks/results"
+            rm -f \
+              "$results/latest.json" \
+              "$results/latest.md" \
+              "$results/playground-benchmark-sidebar.json" \
+              "$results/playground-benchmark-sidebar-no-jit.json" \
+              "$results/size-benchmarks.json" \
+              "$results/loadtime-benchmarks.json" \
+              "$results/wasm-host-wasmtime-hot-runtime.json" \
+              "$results/wasm-host-wasmtime-module-size-per-test.json"
+            rm -rf "$results/loadtime"
+          }
+          clear_current_outputs candidate
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            clear_current_outputs baseline
+          fi
+          echo "Preserved history.json; every current-run output must now be recreated before packaging."
 
-      - name: Compare landing-page benchmark performance
-        id: benchmark_diff
+      # Both sides run sequentially in this one job, on the same physical
+      # runner and pinned toolchain. This removes committed-baseline machine
+      # drift from the PR verdict.
+      - name: Measure PR base on the same runner
+        id: base_measurement
+        if: github.event_name == 'pull_request'
+        env:
+          BENCHMARK_SOURCE_SHA: ${{ steps.refs.outputs.baseline_sha }}
+        run: |
+          set -euo pipefail
+          if [ ! -f baseline/scripts/benchmark-lifecycle.mjs ]; then
+            echo "bootstrap=true" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Benchmark lifecycle bootstrap::The base branch has no lifecycle script. This introduction run keeps the existing trusted sidebar gate; the full trusted-base gate activates after merge."
+          else
+            echo "bootstrap=false" >> "$GITHUB_OUTPUT"
+          fi
+          pnpm --dir baseline run refresh:benchmarks
+          if [ -f baseline/scripts/benchmark-lifecycle.mjs ]; then
+            pnpm --dir baseline run refresh:benchmarks:wasmtime
+            node baseline/scripts/benchmark-lifecycle.mjs package \
+              --root "$GITHUB_WORKSPACE/baseline" \
+              --output "$GITHUB_WORKSPACE/baseline-snapshot" \
+              --source-sha "$BENCHMARK_SOURCE_SHA"
+          fi
+
+      - name: Measure candidate
+        env:
+          BENCHMARK_SOURCE_SHA: ${{ steps.refs.outputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          pnpm --dir candidate run refresh:benchmarks
+          pnpm --dir candidate run refresh:benchmarks:wasmtime
+          if [ "${{ github.event_name }}" = "pull_request" ] && [ -f baseline/scripts/benchmark-lifecycle.mjs ]; then
+            lifecycle="$GITHUB_WORKSPACE/baseline/scripts/benchmark-lifecycle.mjs"
+          else
+            lifecycle="$GITHUB_WORKSPACE/candidate/scripts/benchmark-lifecycle.mjs"
+          fi
+          node "$lifecycle" package \
+            --root "$GITHUB_WORKSPACE/candidate" \
+            --output "$GITHUB_WORKSPACE/candidate-snapshot" \
+            --source-sha "$BENCHMARK_SOURCE_SHA"
+          node "$lifecycle" validate \
+            --snapshot "$GITHUB_WORKSPACE/candidate-snapshot" \
+            --source-sha "$BENCHMARK_SOURCE_SHA"
+
+      - name: Compare same-run PR base and candidate
+        # Performance data is advisory. Keep the comparison, artifact, and
+        # step-level failure visible without blocking the PR or merge queue.
+        continue-on-error: true
+        if: |
+          github.event_name == 'pull_request' &&
+          steps.base_measurement.outputs.bootstrap != 'true' &&
+          steps.timing_methodology.outputs.changed != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p benchmark-reports
+          node baseline/scripts/benchmark-lifecycle.mjs compare \
+            --baseline "$GITHUB_WORKSPACE/baseline-snapshot" \
+            --candidate "$GITHUB_WORKSPACE/candidate-snapshot" \
+            | tee benchmark-reports/performance-regressions.txt
+
+      - name: Record timing methodology migration
+        if: github.event_name == 'pull_request' && steps.timing_methodology.outputs.changed == 'true'
         run: |
           mkdir -p benchmark-reports
-          set +e
-          node scripts/diff-playground-benchmarks.mjs \
-            --baseline benchmark-baseline/playground-benchmark-sidebar.json \
-            --candidate website/public/benchmarks/results/playground-benchmark-sidebar.json \
+          echo "Runtime comparison is informational for this timing-methodology migration; both snapshots validated successfully." \
+            > benchmark-reports/performance-regressions.txt
+
+      - name: Run trusted bootstrap sidebar gate
+        if: github.event_name == 'pull_request' && steps.base_measurement.outputs.bootstrap == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p benchmark-reports
+          node baseline/scripts/diff-playground-benchmarks.mjs \
+            --baseline "$GITHUB_WORKSPACE/baseline/benchmarks/results/playground-benchmark-sidebar.json" \
+            --candidate "$GITHUB_WORKSPACE/candidate/benchmarks/results/playground-benchmark-sidebar.json" \
             --max-relative-regression 0.50 \
             --max-wasm-slowdown 0.40 \
+            | tee benchmark-reports/performance-regressions.txt
+
+      - name: Record main refresh report
+        if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p benchmark-reports
+          echo "Candidate ${SOURCE_SHA} generated successfully; main promotion is handled by the trusted follow-on job." \
             > benchmark-reports/performance-regressions.txt
-          exit_code=$?
-          set -e
-          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
-          if [ "$exit_code" -ne 0 ] && [ "$exit_code" -ne 1 ]; then
-            echo "Unexpected benchmark diff exit code $exit_code"
-            exit "$exit_code"
-          fi
-          if [ "$exit_code" -eq 1 ]; then
-            echo "regressions=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "regressions=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Print performance regressions (informational on push, gating on PR + workflow_dispatch)
-        if: steps.benchmark_diff.outputs.regressions == 'true'
-        run: |
-          echo "Landing-page benchmark regressions detected relative to benchmarks/results/playground-benchmark-sidebar.json:"
-          cat benchmark-reports/performance-regressions.txt
-          echo
-          echo "Gating policy (#1525, docs/ci-policy.md §6):"
-          echo "  - pull_request:     HARD GATE — this workflow fails on regression."
-          echo "                      The committed baseline is now CI-runner-derived (#1216),"
-          echo "                      so wasm:js-ratio drift is small enough to gate against."
-          echo "  - push (main):      informational only — the auto-commit step below skips on"
-          echo "                      regression, which is the right outcome (don't promote"
-          echo "                      regressed numbers)."
-          echo "  - workflow_dispatch: enforced unless allow_performance_regressions=true."
-          echo
-          echo "Override (PR only): set BENCHMARK_STRICT=0 in the workflow env to demote back to"
-          echo "  informational. Only do this with explicit reviewer sign-off."
-
-      - name: Fail on performance regressions (PR + workflow_dispatch)
-        # #1525 — PR path is now a hard gate (#1216 made the baseline
-        # CI-runner-derived, so wasm:js drift is small enough to enforce).
-        # workflow_dispatch: existing behaviour (enforced unless
-        # allow_performance_regressions=true).
-        # push to main: this step is skipped; the auto-commit step further
-        # below already refuses to promote regressed numbers.
-        if: |
-          steps.benchmark_diff.outputs.regressions == 'true' && (
-            (github.event_name == 'pull_request' && env.BENCHMARK_STRICT != '0') ||
-            (github.event_name == 'workflow_dispatch' && !inputs.allow_performance_regressions)
-          )
         env:
-          # Escape hatch: set BENCHMARK_STRICT=0 in workflow env to demote the
-          # PR-event gate back to informational. Default (unset) = strict.
-          BENCHMARK_STRICT: ${{ env.BENCHMARK_STRICT || '1' }}
-        run: |
-          echo "Failing workflow due to landing-page benchmark regressions."
-          echo "Event: ${{ github.event_name }}; strict=${BENCHMARK_STRICT}"
-          exit 1
+          SOURCE_SHA: ${{ steps.refs.outputs.candidate_sha }}
 
-      - name: Upload benchmark artifacts
-        uses: actions/upload-artifact@v6
+      - name: Upload complete candidate snapshot
         if: always()
+        uses: actions/upload-artifact@v6
         with:
-          retention-days: 1
-          name: benchmark-refresh-report
+          name: benchmark-candidate-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
+            candidate-snapshot/**
             benchmark-reports/**
-            benchmarks/results/latest.json
-            benchmarks/results/latest.md
-            benchmarks/results/history.json
-            benchmarks/results/playground-benchmark-sidebar.json
-            benchmarks/results/playground-benchmark-sidebar-no-jit.json
-            benchmarks/results/size-benchmarks.json
-            website/public/benchmarks/results/latest.json
-            website/public/benchmarks/results/history.json
-            website/public/benchmarks/results/playground-benchmark-sidebar.json
-            website/public/benchmarks/results/playground-benchmark-sidebar-no-jit.json
-            website/public/benchmarks/results/size-benchmarks.json
-            website/playground/public/benchmarks/results/playground-benchmark-sidebar.json
-            website/playground/public/benchmarks/results/playground-benchmark-sidebar-no-jit.json
           if-no-files-found: warn
+          retention-days: 7
 
-      # #1216: auto-commit a freshly-generated playground benchmark baseline
-      # back to main on push events.
-      #
-      # DISABLED (post #491): The main branch ruleset enforces the merge
-      # queue, so direct `git push` from this workflow fails with
-      # `GH013: Changes must be made through the merge queue`. The whole
-      # auto-commit step is commented out; the benchmark refresh still
-      # RUNS (and uploads artifacts via the upload-artifact step above),
-      # but the freshly-generated baseline is no longer auto-committed
-      # back to main. The baseline can be refreshed via a normal PR when
-      # it drifts.
-      #
-      # Original guards (retained for context):
-      #   - Only on `push: main` (not pull_request, not workflow_dispatch).
-      #     The actor check excludes the bot itself to avoid commit loops.
-      #   - Skip if the benchmark diff reported regressions — promoting
-      #     "regressed" numbers would mask real perf regressions instead
-      #     of catching them.
-      #   - Skip if the file is byte-identical to what's committed (no-op).
-      #   - `[skip ci]` in the commit message prevents this commit from
-      #     retriggering the workflow.
-      #
-      # Pattern follows `refresh-committed-baseline.yml` (test262 JSONL sync).
-      # - name: Auto-commit refreshed baseline (#1216)
-      #   if: |
-      #     github.event_name == 'push' &&
-      #     github.ref == 'refs/heads/main' &&
-      #     github.actor != 'github-actions[bot]' &&
-      #     steps.benchmark_diff.outputs.regressions != 'true'
-      #   run: |
-      #     set -euo pipefail
-      #     git config user.name "github-actions[bot]"
-      #     git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-      #     git add -f benchmarks/results/playground-benchmark-sidebar.json
-      #     git add -f benchmarks/results/playground-benchmark-sidebar-no-jit.json || true
-      #     if git diff --cached --quiet; then
-      #       echo "Baseline byte-identical to committed copy — nothing to commit."
-      #       exit 0
-      #     fi
-      #     git commit -m "chore(ci #1216): refresh playground benchmark baseline [skip ci]"
-      #     if ! git pull --rebase --autostash origin main; then
-      #       git rebase --abort 2>/dev/null || true
-      #       git fetch origin main
-      #       git reset --hard origin/main
-      #       git add -f benchmarks/results/playground-benchmark-sidebar.json
-      #       git add -f benchmarks/results/playground-benchmark-sidebar-no-jit.json || true
-      #       git diff --cached --quiet && exit 0
-      #       git commit -m "chore(ci #1216): refresh playground benchmark baseline [skip ci]"
-      #     fi
-      #     git push
+  promote-benchmarks:
+    if: |
+      needs.measure-and-gate.result == 'success' &&
+      github.event_name != 'pull_request' &&
+      github.repository == 'loopdive/js2' &&
+      github.actor != 'github-actions[bot]'
+    needs: measure-and-gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: baseline-promote
+    permissions:
+      actions: write
+      contents: write
 
-      # Note (#1216): even after auto-commit lands, the regression-detection
-      # step is still informational on PR/push events (gating only on
-      # workflow_dispatch). Re-enabling PR-event gating is a separate
-      # follow-up that requires verifying the new CI-derived baseline is
-      # stable across runner-pool changes. Until then this auto-commit
-      # at least keeps the baseline from drifting indefinitely.
+    steps:
+      - name: Checkout trusted measured main revision
+        uses: actions/checkout@v5
+        with:
+          # Validate with the exact lifecycle schema that packaged the
+          # artifact. A later main push may change that schema while this run
+          # is measuring; checking out moving main made the older, still-valid
+          # artifact fail provenance validation (#3817). The promotion step
+          # below separately verifies that main still equals SOURCE_SHA before
+          # configuring write credentials, so stale runs remain no-ops.
+          ref: ${{ needs.measure-and-gate.outputs.source_sha }}
+          path: promote
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Download measured candidate
+        uses: actions/download-artifact@v6
+        with:
+          name: benchmark-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: downloaded
+
+      # Validation executes the trusted script from main, never code from the
+      # downloaded artifact. Hashes and the full source SHA must match before
+      # write credentials are configured.
+      - name: Validate candidate provenance and integrity
+        env:
+          SOURCE_SHA: ${{ needs.measure-and-gate.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          node promote/scripts/benchmark-lifecycle.mjs validate \
+            --snapshot "$GITHUB_WORKSPACE/downloaded/candidate-snapshot" \
+            --source-sha "$SOURCE_SHA"
+
+      # (#3915) DO NOT DISCARD AN IN-FLIGHT merge_group VALIDATION. Any push to
+      # `main` — INCLUDING the `[skip ci]` one below — makes GitHub rebuild
+      # every queued merge group on the new base and THROW AWAY the validation
+      # already running under it. `[skip ci]` suppresses workflows on that
+      # commit; it does not make the push inert to the queue.
+      #
+      # This workflow is triggered BY each merge and pushes 7-12 min later,
+      # while the next PR's group forms within seconds of that merge and takes
+      # ~11-13 min. So every merge scheduled a push timed to land inside the
+      # next merge's validation window: measured 2026-07-31 17:55-23:11Z, of
+      # 20 distinct PRs 6 needed more than one merge group and **5 of those 6
+      # rebuilds were rooted at this workflow's artifact commit** (the 6th was
+      # a legitimate PR landing ahead). The two sibling bots that push `main`
+      # already defer this way since #1951 and accounted for ZERO.
+      - name: Gate the main push on the merge queue
+        id: queue_gate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          # Freshness comes from the artifact's OWN `generatedAt`, not from
+          # `git log -1 -- <path>`: this checkout is `fetch-depth: 1`, where
+          # `git log` returns EMPTY rather than erroring. Empty would parse as
+          # "unknown age", which fails open, silently disabling the staleness
+          # floor forever while the gate still reported success.
+          LAST_REFRESH="$(node -e 'try{const m=JSON.parse(require("fs").readFileSync("promote/benchmarks/results/benchmark-manifest.json","utf8"));process.stdout.write(String(m.generatedAt??""))}catch{process.stdout.write("")}')"
+          # `|| RC=$?`, not a bare call then `RC=$?`: the default step shell is
+          # `bash -e {0}`, so a bare non-zero exit aborts the step before the
+          # next line runs — the DEFER path would look like a step failure.
+          # Putting the call on the left of `||` exempts it from -e.
+          RC=0
+          node promote/scripts/main-push-queue-gate.mjs \
+            --repo "$GITHUB_REPOSITORY" \
+            --last-refresh "$LAST_REFRESH" \
+            --stale-after-hours 6 \
+            --reason "landing benchmark artifacts" || RC=$?
+          if [ "$RC" -eq 10 ]; then
+            echo "decision=defer" >> "$GITHUB_OUTPUT"
+          else
+            # 0 = proceed. Anything else is a gate malfunction, and a broken
+            # gate must never freeze the artifact — fail OPEN, loudly.
+            [ "$RC" -eq 0 ] || echo "::warning title=main-push-queue-gate::gate exited ${RC}; failing open"
+            echo "decision=proceed" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Atomically promote the complete benchmark set
+        # A deferred refresh is not a failure: the very next push to main
+        # re-measures and promotes, and the 6h staleness floor in the gate
+        # bounds how long a permanently busy queue can hold the artifact back.
+        if: steps.queue_gate.outputs.decision != 'defer'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MAIN_DEPLOY_KEY: ${{ secrets.MAIN_DEPLOY_KEY }}
+          SOURCE_SHA: ${{ needs.measure-and-gate.outputs.source_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${MAIN_DEPLOY_KEY:-}" ]; then
+            echo "::error::MAIN_DEPLOY_KEY is empty in the baseline-promote environment."
+            exit 1
+          fi
+
+          eval "$(ssh-agent -s)"
+          echo "$MAIN_DEPLOY_KEY" | ssh-add -
+          mkdir -p ~/.ssh
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+
+          cd promote
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add deploykey "git@github.com:${GITHUB_REPOSITORY}.git"
+          git fetch deploykey main
+
+          remote_sha="$(git rev-parse deploykey/main)"
+          if [ "$remote_sha" != "$SOURCE_SHA" ]; then
+            echo "Main advanced from measured ${SOURCE_SHA} to ${remote_sha}; a newer push run owns promotion."
+            exit 0
+          fi
+          git checkout -f -B _benchmark_refresh_tmp "$SOURCE_SHA"
+
+          source_results="$GITHUB_WORKSPACE/downloaded/candidate-snapshot/benchmarks/results"
+          target_results="benchmarks/results"
+          for file in \
+            latest.json latest.md history.json \
+            playground-benchmark-sidebar.json playground-benchmark-sidebar-no-jit.json \
+            size-benchmarks.json loadtime-benchmarks.json \
+            wasm-host-wasmtime-hot-runtime.json wasm-host-wasmtime-module-size-per-test.json \
+            benchmark-manifest.json
+          do
+            cp "$source_results/$file" "$target_results/$file"
+          done
+          rm -rf "$target_results/loadtime"
+          cp -a "$source_results/loadtime" "$target_results/loadtime"
+
+          git add -f -- \
+            benchmarks/results/latest.json \
+            benchmarks/results/latest.md \
+            benchmarks/results/history.json \
+            benchmarks/results/playground-benchmark-sidebar.json \
+            benchmarks/results/playground-benchmark-sidebar-no-jit.json \
+            benchmarks/results/size-benchmarks.json \
+            benchmarks/results/loadtime-benchmarks.json \
+            benchmarks/results/wasm-host-wasmtime-hot-runtime.json \
+            benchmarks/results/wasm-host-wasmtime-module-size-per-test.json \
+            benchmarks/results/benchmark-manifest.json \
+            benchmarks/results/loadtime
+
+          if git diff --cached --quiet; then
+            echo "All generated benchmark artifacts are already current."
+            exit 0
+          fi
+
+          git commit -m "chore(ci): refresh landing benchmark artifacts [skip ci]"
+          if ! git push deploykey HEAD:main; then
+            git fetch deploykey main
+            advanced_sha="$(git rev-parse deploykey/main)"
+            if [ "$advanced_sha" != "$SOURCE_SHA" ]; then
+              echo "Main advanced during promotion; the newer push run will publish its own snapshot."
+              exit 0
+            fi
+            echo "::error::Benchmark artifact promotion failed without a main-branch race."
+            exit 1
+          fi
+
+          # [skip ci] intentionally suppresses push workflows. Dispatch Pages
+          # explicitly so the one atomic artifact commit becomes visible now.
+          gh workflow run deploy-pages.yml --ref main

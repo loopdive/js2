@@ -1,8 +1,7 @@
 ---
 id: 3086
 title: "Honest vacuity re-baseline: partial-vacuity callback scorer + oracle_version bump (1→2) + forward-bump auto-rebase enabler"
-status: in-progress
-assignee: ttraenkler/dev-honest
+status: ready
 sprint: current
 priority: high
 horizon: l

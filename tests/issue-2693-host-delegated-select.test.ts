@@ -15,12 +15,11 @@
 // Here we confirm the host seam is sound with the real parsers, independent of
 // those gates.
 
-import { createRequire } from "node:module";
-import { realpathSync } from "node:fs";
-
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
+import { buildImports } from "../src/runtime.js";
+import { createRequireFromEslint, ESLINT_DEV_DEPENDENCY_SKIP, resolveEslintFile } from "./helpers/eslint.js";
 
 // Compiled Linter: host-delegates parse (espree) AND select (esquery).
 const LINTER_SRC = `
@@ -43,67 +42,96 @@ class Linter {
 export function verify(code: string): string { return new Linter().verify(code); }
 `;
 
+const ESLINT_LINTER = resolveEslintFile("lib/linter/linter.js");
+
+interface EslintHostDependencies {
+  espree: typeof import("espree");
+  esquery: any;
+}
+
+let eslintHostDependencies: EslintHostDependencies | null = null;
+
+function loadEslintHostDependencies(): EslintHostDependencies {
+  if (eslintHostDependencies !== null) return eslintHostDependencies;
+
+  const req = createRequireFromEslint();
+  const espree: typeof import("espree") = req("espree");
+  let esquery: any = req("esquery");
+  // esquery ships as a namespace or default-export bundle.
+  if (typeof esquery.matches !== "function" && esquery.default) esquery = esquery.default;
+  eslintHostDependencies = { espree, esquery };
+  return eslintHostDependencies;
+}
+
 describe("#2693 — dual host-delegation seam (host espree parse + host esquery select)", () => {
-  it("a compiled Linter calls host espree + host esquery and emits the semi diagnostic", async () => {
-    // Resolve the REAL espree + esquery from eslint's (pnpm) dep tree via the
-    // realpath'd entry, mirroring how the full integration resolves them.
-    let espree: typeof import("espree");
-    let esquery: any;
-    try {
-      const real = realpathSync("/workspace/node_modules/eslint/lib/linter/linter.js");
-      const req = createRequire(real);
-      espree = req("espree");
-      esquery = req("esquery");
-      // esquery ships as a namespace or default-export bundle.
-      if (typeof esquery.matches !== "function" && esquery.default) esquery = esquery.default;
-    } catch {
-      // eslint dep tree not present in this environment — skip (the #2693
-      // milestone test pins the architecture without the real deps).
-      return;
-    }
+  it.skipIf(ESLINT_LINTER === null)(
+    `loads real espree + esquery from ESLint's importer context ${ESLINT_DEV_DEPENDENCY_SKIP}`,
+    () => {
+      const { espree, esquery } = loadEslintHostDependencies();
+      expect(typeof espree.parse).toBe("function");
+      expect(typeof espree.tokenize).toBe("function");
+      expect(typeof esquery.parse).toBe("function");
+      expect(typeof esquery.matches).toBe("function");
+    },
+  );
 
-    const r = await compile(LINTER_SRC, { fileName: "linter.ts" });
-    expect(r.success).toBe(true);
-    if (!r.success) return;
-    expect(WebAssembly.validate(r.binary)).toBe(true);
+  it.skipIf(ESLINT_LINTER === null)(
+    `a compiled Linter calls host espree + host esquery and emits the semi diagnostic ${ESLINT_DEV_DEPENDENCY_SKIP}`,
+    async () => {
+      const { espree, esquery } = loadEslintHostDependencies();
 
-    const STMT_SELECTOR = esquery.parse("VariableDeclaration, ExpressionStatement");
-    const tokensOf = (code: string) => espree.tokenize(code, { ecmaVersion: 2022, loc: true });
+      const r = await compile(LINTER_SRC, {
+        fileName: "linter.ts",
+        target: "gc",
+        platform: "node",
+      });
+      expect(r.success, r.errors.map((error) => error.message).join("\n")).toBe(true);
+      if (!r.success) return;
+      expect(WebAssembly.validate(r.binary)).toBe(true);
 
-    const io = r.importObject as unknown as { env: Record<string, unknown>; __setExports?: (e: unknown) => void };
-    io.env.__host_is_statement = (code: string): number => {
-      try {
-        const ast = espree.parse(code, { ecmaVersion: 2022, loc: true });
-        const first = (ast as any).body?.[0];
-        return first && esquery.matches(first, STMT_SELECTOR, []) ? 1 : 0;
-      } catch {
-        return 0;
-      }
-    };
-    io.env.__host_last_is_semi = (code: string): number => {
-      const t = tokensOf(code);
-      const last = t[t.length - 1];
-      return last && last.value === ";" ? 1 : 0;
-    };
-    io.env.__host_last_line = (code: string): number => {
-      const t = tokensOf(code);
-      const last = t[t.length - 1];
-      return last?.loc?.start?.line ?? 0;
-    };
-    io.env.__host_last_col = (code: string): number => {
-      const t = tokensOf(code);
-      const last = t[t.length - 1];
-      return last ? (last.loc?.start?.column ?? 0) + 1 : 0;
-    };
+      const STMT_SELECTOR = esquery.parse("VariableDeclaration, ExpressionStatement");
+      const tokensOf = (code: string) => espree.tokenize(code, { ecmaVersion: 2022, loc: true });
 
-    const { instance } = await WebAssembly.instantiate(r.binary, io as unknown as WebAssembly.Imports);
-    io.__setExports?.(instance.exports);
-    const verify = instance.exports.verify as (c: string) => string;
+      const imports = buildImports(
+        r.imports,
+        {
+          __host_is_statement: (code: string): boolean => {
+            try {
+              const ast = espree.parse(code, { ecmaVersion: 2022, loc: true });
+              const first = (ast as any).body?.[0];
+              return !!first && esquery.matches(first, STMT_SELECTOR, []);
+            } catch {
+              return false;
+            }
+          },
+          __host_last_is_semi: (code: string): boolean => {
+            const t = tokensOf(code);
+            const last = t[t.length - 1];
+            return !!last && last.value === ";";
+          },
+          __host_last_line: (code: string): number => {
+            const t = tokensOf(code);
+            const last = t[t.length - 1];
+            return last?.loc?.start?.line ?? 0;
+          },
+          __host_last_col: (code: string): number => {
+            const t = tokensOf(code);
+            const last = t[t.length - 1];
+            return last ? (last.loc?.start?.column ?? 0) + 1 : 0;
+          },
+        },
+        r.stringPool,
+      );
+      const { instance } = await WebAssembly.instantiate(r.binary, imports as WebAssembly.Imports);
+      imports.setExports?.(instance.exports as Record<string, Function>);
+      const verify = instance.exports.verify as (c: string) => string;
 
-    // Real espree tokenization + real esquery selector matching, wasm rule logic.
-    expect(verify("var x = 1")).toBe("Missing semicolon. (1:9)");
-    expect(verify("var x = 1;")).toBe("");
-    expect(verify("foo()")).toBe("Missing semicolon. (1:5)");
-    expect(verify("foo();")).toBe("");
-  });
+      // Real espree tokenization + real esquery selector matching, wasm rule logic.
+      expect(verify("var x = 1")).toBe("Missing semicolon. (1:9)");
+      expect(verify("var x = 1;")).toBe("");
+      expect(verify("foo()")).toBe("Missing semicolon. (1:5)");
+      expect(verify("foo();")).toBe("");
+    },
+    30_000,
+  );
 });

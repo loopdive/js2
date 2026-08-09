@@ -5,14 +5,17 @@
  */
 import { ts } from "../ts-api.js";
 import { chainRootIsGrowable } from "./property-access.js";
+import { emitHostEqualityFromStack } from "./coercion-engine.js";
 import { resolveWidenedVarKey } from "./widened-var-key.js";
 import { isBooleanType, isStringType, isSymbolType } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { reportError } from "./context/errors.js";
+import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
+import { typeofFoldContradictedByFieldVerdict } from "./fnctor-ctor-param-types.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { isStrictContext } from "./expressions/assignment.js";
-import { EVAL_SOURCE_FILENAME } from "./expressions/eval-inline.js";
+import { EVAL_SOURCE_FILENAME } from "./expressions/eval-source.js";
 import {
   emitUndefined,
   ensureLateImport,
@@ -22,14 +25,19 @@ import {
 import { resolveStructName } from "./expressions/misc.js";
 import { addUnionImports, parseRegExpLiteral, resolveWasmType } from "./index.js";
 import { emitExternrefDestructureGuard } from "./destructuring-params.js";
-import { stringConstantExternrefInstrs } from "./native-strings.js";
+import { buildThrowJsErrorInstrs, type JsErrorKind } from "./js-errors.js";
 import { compileStandaloneRegExpLiteral } from "./regexp-standalone.js";
-import { addImport, addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
-import { addFuncType } from "./registry/types.js";
+import { addImport } from "./registry/imports.js";
+import { addFuncType, getArrTypeIdxFromVec } from "./registry/types.js";
 import type { InnerResult } from "./shared.js";
 import { coerceType, compileExpression, ensureAnyHelpers, isAnyValue } from "./shared.js";
 import { compileStringLiteral } from "./string-ops.js";
 import { emitDynamicWithDelete, findWithBinding, resolveWithBinding } from "./with-scope.js";
+import {
+  emitGlobalEnvironmentDelete,
+  emitRuntimeEvalGlobalRead,
+  tryEmitNonConfigurableGlobalObjectDelete,
+} from "./global-environment.js";
 
 // (#2726 group (b), partial) The only value properties of the global object with
 // `[[Configurable]]: false` (ECMA-262 §19.1). `delete <bareIdentifier>` of any of
@@ -38,24 +46,23 @@ import { emitDynamicWithDelete, findWithBinding, resolveWithBinding } from "./wi
 const NON_CONFIGURABLE_GLOBALS = new Set(["NaN", "Infinity", "undefined"]);
 
 /**
- * (#2703) Emit an unconditional `throw` of a string-valued exception, used for
- * the spec error cases of `delete` (§13.5.1.2): a super reference, a null/
- * undefined base, or a strict-mode non-configurable property. The test262
- * `assert.throws` harness catches *any* thrown value (the expected constructor
- * is stripped during the source transform), and a string carried on the
- * standard exception tag is catchable in both the JS-host and standalone lanes
- * (the same pattern `object-runtime.ts` uses for descriptor TypeErrors). After
- * the throw the rest of the enclosing expression is unreachable, so the
- * `delete` expression's nominal i32 result is supplied stack-polymorphically.
+ * (#2703, #3422) Terminal `throw` for `delete`'s spec error cases (§13.5.1.2):
+ * super reference → ReferenceError; null/undefined base or strict-mode
+ * non-configurable refusal → TypeError. Emits a REAL error instance via
+ * `buildThrowJsErrorInstrs` (host `__new_<Kind>` / standalone in-module ctor),
+ * NOT a bare string: the authentic harness (#3370)
+ * `propertyHelper.js::isConfigurable()` rethrows unless `e instanceof TypeError`,
+ * so the pre-#3422 bare-string throw broke ~313 strict reruns (the `delete`
+ * counterpart of #3471). `message` carries no "Kind:" prefix (the ctor adds it);
+ * `opts.flush` = fctx applies the late `__new_<Kind>` funcIdx shift to the
+ * already-emitted body (#1839). The throw is terminal / stack-polymorphic.
  */
-function deleteThrowInstrs(ctx: CodegenContext, message: string): Instr[] {
-  const tagIdx = ensureExnTag(ctx);
-  addStringConstantGlobal(ctx, message);
-  return [...stringConstantExternrefInstrs(ctx, message), { op: "throw", tagIdx }];
+function deleteThrowInstrs(ctx: CodegenContext, fctx: FunctionContext, kind: JsErrorKind, message: string): Instr[] {
+  return buildThrowJsErrorInstrs(ctx, kind, message, { flush: fctx });
 }
 
-function emitDeleteThrow(ctx: CodegenContext, fctx: FunctionContext, message: string): void {
-  for (const instr of deleteThrowInstrs(ctx, message)) fctx.body.push(instr);
+function emitDeleteThrow(ctx: CodegenContext, fctx: FunctionContext, kind: JsErrorKind, message: string): void {
+  fctx.body.push(...deleteThrowInstrs(ctx, fctx, kind, message));
 }
 
 /**
@@ -83,7 +90,7 @@ function maybeEmitNonConfigurableAccessorDelete(
   if (recvType) fctx.body.push({ op: "drop" });
   // Strict mode: a refused non-configurable delete is a TypeError.
   if (isStrictContext(expr)) {
-    emitDeleteThrow(ctx, fctx, "TypeError: Cannot delete non-configurable property in strict mode");
+    emitDeleteThrow(ctx, fctx, "TypeError", "Cannot delete non-configurable property in strict mode");
   }
   // Sloppy mode: the delete expression evaluates to `false`.
   fctx.body.push({ op: "i32.const", value: 0 });
@@ -106,7 +113,7 @@ function emitStrictDeleteCheck(ctx: CodegenContext, fctx: FunctionContext, expr:
   fctx.body.push({
     op: "if",
     blockType: { kind: "empty" },
-    then: deleteThrowInstrs(ctx, "TypeError: Cannot delete non-configurable property in strict mode"),
+    then: deleteThrowInstrs(ctx, fctx, "TypeError", "Cannot delete non-configurable property in strict mode"),
     else: [],
   });
   fctx.body.push({ op: "local.get", index: resLocal });
@@ -180,6 +187,48 @@ function deleteSentinelInstr(fieldType: ValType): Instr {
 }
 
 /**
+ * (#3621) Guard the field-clearing `struct.set` with a runtime `ref.test` when
+ * the receiver's STATIC type does not prove it is that struct.
+ *
+ * The delete lowering resolves `structTypeIdx` from
+ * `resolveStructName` over the checker's type at the receiver — the receiver's
+ * *declared* shape. For `delete this.x` inside an object-literal accessor that
+ * is later invoked REFLECTIVELY (`__call_accessor_get` ← `__extern_get`, e.g.
+ * through a `with` scope), `this` is bound to whatever the accessor was called
+ * on, which is frequently a different representation than the literal's
+ * shape-inferred struct. `clearField` then pushes an externref where
+ * `struct.set` wants `(ref null $Shape)`, the coercion emits
+ * `any.convert_extern ; ref.cast null (ref null $Shape)`, and the cast traps
+ * `illegal cast` — uncatchably, aborting the module.
+ *
+ * Same invariant as #3610 / #3620: **a `ref.cast` is a claim that the value's
+ * runtime representation is known, and a static type is not that evidence.**
+ * Unlike #3610 this one is NOT compile-time decidable (whether `this` is the
+ * struct depends on the call), so the remedy is the runtime arm: `ref.test`,
+ * and skip the field poke on a miss. Nothing is lost on the miss path — the
+ * `__delete_property` sidecar call has already performed the semantically
+ * meaningful part of the delete; `clearField` only resets a shape-struct field
+ * that this receiver does not have.
+ */
+function guardClearField(
+  fctx: FunctionContext,
+  recvLocal: number,
+  recvType: ValType,
+  structTypeIdx: number,
+  clearField: Instr[],
+): Instr[] {
+  // Statically the exact struct (or its nullable form) ⇒ the cast cannot fail;
+  // emit byte-identical code to pre-#3621.
+  if ((recvType.kind === "ref" || recvType.kind === "ref_null") && recvType.typeIdx === structTypeIdx) {
+    return clearField;
+  }
+  const probe: Instr[] = [{ op: "local.get", index: recvLocal }];
+  if (recvType.kind === "externref") probe.push({ op: "any.convert_extern" });
+  probe.push({ op: "ref.test", typeIdx: structTypeIdx });
+  return [...probe, { op: "if", blockType: { kind: "empty" }, then: clearField, else: [] }];
+}
+
+/**
  * (#2703) Emit the tail of a struct-field `delete` once `__delete_property`'s
  * i32 result is stored in `resLocal`: clear the struct field to its undefined
  * sentinel **only when the delete succeeded** (so a refused non-configurable
@@ -202,11 +251,98 @@ function emitStructDeleteOutcome(
     fctx.body.push({
       op: "if",
       blockType: { kind: "empty" },
-      then: deleteThrowInstrs(ctx, "TypeError: Cannot delete non-configurable property in strict mode"),
+      then: deleteThrowInstrs(ctx, fctx, "TypeError", "Cannot delete non-configurable property in strict mode"),
       else: [],
     });
   }
   fctx.body.push({ op: "local.get", index: resLocal });
+}
+
+/**
+ * A strict or non-simple-parameter function has an *unmapped* `arguments`
+ * object, so it intentionally has no `mappedArgsInfo`. Its backing value is
+ * still the same externref vec used by mapped arguments. The generic
+ * `__delete_property` path records the successful deletion (and honors any
+ * descriptor-sidecar refusal), but it cannot clear the opaque vec slot; a
+ * subsequent compiled `arguments[i]` read therefore still sees the old value.
+ *
+ * Consume the generic delete result and, on success, clear a statically-known
+ * in-bounds vec slot to the canonical `undefined` value. Leave the result on
+ * the stack for the caller's normal strict-delete check.
+ */
+function emitPropertyDeleteWithUnmappedArgumentsWriteback(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  inner: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+  delIdx: number,
+): void {
+  fctx.body.push({ op: "call", funcIdx: delIdx });
+  if (
+    fctx.mappedArgsInfo ||
+    !ts.isElementAccessExpression(inner) ||
+    !ts.isIdentifier(inner.expression) ||
+    inner.expression.text !== "arguments"
+  ) {
+    return;
+  }
+
+  const idxArg = inner.argumentExpression;
+  const idxText = ts.isNumericLiteral(idxArg) ? idxArg.text : ts.isStringLiteral(idxArg) ? idxArg.text : undefined;
+  const argIndex = idxText !== undefined ? Number(idxText) : NaN;
+  if (!Number.isInteger(argIndex) || argIndex < 0) return;
+
+  const argsLocalIdx = fctx.localMap.get("arguments");
+  if (argsLocalIdx === undefined) return;
+  const argsType =
+    argsLocalIdx < fctx.params.length
+      ? fctx.params[argsLocalIdx]?.type
+      : fctx.locals[argsLocalIdx - fctx.params.length]?.type;
+  if (!argsType || (argsType.kind !== "ref" && argsType.kind !== "ref_null")) return;
+
+  const vecTypeIdx = argsType.typeIdx;
+  const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+  if (arrTypeIdx < 0) return;
+
+  const resultLocal = allocLocal(fctx, `__del_args_res_${fctx.locals.length}`, { kind: "i32" });
+  fctx.body.push({ op: "local.set", index: resultLocal });
+  emitUndefined(ctx, fctx);
+  const undefLocal = allocLocal(fctx, `__del_args_undef_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: undefLocal });
+
+  const clearIfInBounds: Instr[] = [
+    { op: "local.get", index: argsLocalIdx },
+    { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
+    { op: "i32.const", value: argIndex },
+    { op: "i32.gt_u" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: argsLocalIdx },
+        { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 },
+        { op: "i32.const", value: argIndex },
+        { op: "local.get", index: undefLocal },
+        { op: "array.set", typeIdx: arrTypeIdx },
+      ],
+      else: [],
+    },
+  ];
+
+  fctx.body.push({ op: "local.get", index: resultLocal });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then:
+      argsType.kind === "ref_null"
+        ? [
+            { op: "local.get", index: argsLocalIdx },
+            { op: "ref.is_null" },
+            { op: "if", blockType: { kind: "empty" }, then: [], else: clearIfInBounds },
+          ]
+        : clearIfInBounds,
+    else: [],
+  });
+  fctx.body.push({ op: "local.get", index: resultLocal });
 }
 
 /**
@@ -253,10 +389,9 @@ export function compileDeleteExpression(
     (ts.isPropertyAccessExpression(inner) || ts.isElementAccessExpression(inner)) &&
     inner.expression.kind === ts.SyntaxKind.SuperKeyword
   ) {
-    emitDeleteThrow(ctx, fctx, "ReferenceError: 'super' property cannot be deleted");
+    emitDeleteThrow(ctx, fctx, "ReferenceError", "'super' property cannot be deleted");
     return { kind: "i32" };
   }
-
   if (ts.isIdentifier(inner)) {
     // (#2663 Slice 3) `delete name` inside a dynamic `with`: if the with-object
     // has the binding ⇒ delete the object property (configurability-aware
@@ -284,7 +419,10 @@ export function compileDeleteExpression(
     };
     if (resolveWithBinding(fctx, ident.text)?.kind === "dynamic") {
       emitOuterDelete();
-      return { kind: "i32" };
+      // (#4231 RC-B) §13.5.1.2 evaluates to a BOOLEAN. Returning a bare
+      // `{kind:"i32"}` made an externref consumer box the result as a NUMBER, so
+      // `del = delete p3` inside a `with` yielded `1` and `del === true` failed.
+      return { kind: "i32", boolean: true };
     }
     // (#2726 group (a)) §13.5.1.2 step 4: `delete IdentifierReference` whose
     // reference is UNRESOLVABLE (the name resolves to NO binding anywhere — not
@@ -314,7 +452,7 @@ export function compileDeleteExpression(
     const identSym = ctx.checker.getSymbolAtLocation(ident);
     const notEvalBody = ident.getSourceFile().fileName !== EVAL_SOURCE_FILENAME;
     if (identSym === undefined && notEvalBody) {
-      fctx.body.push({ op: "i32.const", value: 1 });
+      emitGlobalEnvironmentDelete(ctx, fctx, ident.text);
       return { kind: "i32" };
     }
     // (#2726 group (b), partial) §13.5.1.2 step 5: a `delete IdentifierReference`
@@ -344,7 +482,8 @@ export function compileDeleteExpression(
     fctx.body.push({ op: "i32.const", value: 0 });
     return { kind: "i32" };
   }
-
+  const globalObjectDelete = tryEmitNonConfigurableGlobalObjectDelete(ctx, fctx, expr);
+  if (globalObjectDelete) return globalObjectDelete;
   // (#1511) `delete arguments[i]` on a mapped index severs the param↔arguments
   // mapping for that slot (ECMA-262 §10.4.4.5 step 5.b): after a successful
   // delete the property no longer mirrors the named parameter. Record the
@@ -483,11 +622,13 @@ export function compileDeleteExpression(
           fctx.body.push({ op: "local.set", index: recvLocal });
 
           // Instrs that reset the field to undefined (run only on success).
-          const clearField: Instr[] = [
+          // (#3621) `ref.test`-guarded when the static type does not prove the
+          // receiver IS this struct — see `guardClearField`.
+          const clearField: Instr[] = guardClearField(fctx, recvLocal, recvType, structTypeIdx, [
             { op: "local.get", index: recvLocal },
             deleteSentinelInstr(fieldType),
             { op: "struct.set", typeIdx: structTypeIdx, fieldIdx },
-          ];
+          ]);
 
           if (recvType.kind !== "ref" && recvType.kind !== "ref_null" && recvType.kind !== "externref") {
             // Non-struct numeric/bool receiver (defensive) — no sidecar applies;
@@ -574,11 +715,12 @@ export function compileDeleteExpression(
           const recvLocal = allocLocal(fctx, `__del_recv_${fctx.locals.length}`, recvType);
           fctx.body.push({ op: "local.set", index: recvLocal });
 
-          const clearField: Instr[] = [
+          // (#3621) `ref.test`-guarded — see `guardClearField`.
+          const clearField: Instr[] = guardClearField(fctx, recvLocal, recvType, structTypeIdx, [
             { op: "local.get", index: recvLocal },
             deleteSentinelInstr(fieldType),
             { op: "struct.set", typeIdx: structTypeIdx, fieldIdx },
-          ];
+          ]);
 
           if (recvType.kind !== "ref" && recvType.kind !== "ref_null" && recvType.kind !== "externref") {
             for (const instr of clearField) fctx.body.push(instr);
@@ -728,7 +870,7 @@ export function compileDeleteExpression(
     }
     fctx.body.push({ op: "local.get", index: recvLocal });
     fctx.body.push({ op: "local.get", index: keyLocal });
-    fctx.body.push({ op: "call", funcIdx: delIdx });
+    emitPropertyDeleteWithUnmappedArgumentsWriteback(ctx, fctx, inner, delIdx);
     // (#2703) Strict mode: a failed delete (result 0 — a non-configurable own
     // property) is a TypeError instead of a `false` result (§13.5.1.2 step 6.b).
     emitStrictDeleteCheck(ctx, fctx, expr);
@@ -1265,6 +1407,67 @@ function sourceHasIdentifierAssignment(sf: ts.SourceFile, name: string): boolean
  * For statically known types, emits the string constant directly.
  * For externref/union types, calls the __typeof host helper.
  */
+/**
+ * (#4182) `typeof f` where `f` is a module-scope Annex B B.3.3.2 live binding:
+ * read the backing externref global and dispatch `__typeof` at runtime (null
+ * extern → "undefined" before the declaration evaluates, closure → "function"
+ * after). Gated on the normally-empty `annexBModuleBindings` set and on the
+ * name not being locally shadowed, so every other typeof path is byte-identical.
+ */
+function emitAnnexBModuleTypeofRead(ctx: CodegenContext, fctx: FunctionContext, name: string): ValType | null {
+  if (ctx.annexBModuleBindings?.has(name) !== true) return null;
+  if (fctx.localMap.get(name) !== undefined) return null;
+  const globalIdx = ctx.moduleGlobals.get(name);
+  if (globalIdx === undefined) return null;
+  addUnionImports(ctx);
+  const typeofIdx = ctx.funcMap.get("__typeof");
+  if (typeofIdx === undefined) return null;
+  // Materialise the "undefined" constant into the MAIN stream first (any lazy
+  // NativeString setup must not land inside an if-arm — mirrors
+  // emitAnnexBTypeofFlagBranch), then branch on ref.is_null: a null-extern
+  // binding is the HOST-lane pre-evaluation state, and the host `__typeof`
+  // would answer `typeof null` = "object" for it. Standalone seeds the
+  // `$undefined` singleton, whose tag `__typeof` reports as "undefined", so
+  // the null arm is simply never taken there.
+  const strType = compileStringLiteral(ctx, fctx, "undefined") ?? { kind: "externref" };
+  const undefStrLocal = allocLocal(fctx, `__typeof_undef_${fctx.locals.length}`, strType);
+  fctx.body.push({ op: "local.set", index: undefStrLocal });
+  const valLocal = allocLocal(fctx, `__typeof_val_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "global.get", index: globalIdx });
+  fctx.body.push({ op: "local.tee", index: valLocal });
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "externref" } },
+    then: [
+      { op: "local.get", index: undefStrLocal },
+      ...(strType.kind === "externref" ? [] : [{ op: "extern.convert_any" } as const]),
+    ],
+    else: [
+      { op: "local.get", index: valLocal },
+      { op: "call", funcIdx: typeofIdx },
+    ],
+  });
+  return { kind: "externref" };
+}
+
+function runtimeEvalMayRebindIdentifier(ctx: CodegenContext, expression: ts.Expression): boolean {
+  if (!(ctx.standalone || ctx.wasi) || !ctx.runtimeEvalGlobalFunctionBindings) return false;
+  let bare = expression;
+  while (
+    ts.isParenthesizedExpression(bare) ||
+    ts.isAsExpression(bare) ||
+    ts.isTypeAssertionExpression(bare) ||
+    ts.isNonNullExpression(bare)
+  ) {
+    bare = bare.expression;
+  }
+  if (!ts.isIdentifier(bare) || !ctx.moduleGlobals.has(bare.text)) return false;
+  return (
+    (ctx.globalObjectVarBindings?.has(bare.text) ?? false) || (ctx.liveFuncBindingGlobals?.has(bare.text) ?? false)
+  );
+}
+
 export function compileTypeofExpression(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1335,9 +1538,18 @@ export function compileTypeofExpression(
       // other typeof path is byte-identical.
       const annexB = emitAnnexBTypeofFlagBranch(ctx, fctx, ident.text);
       if (annexB) return annexB;
+      // (#4182) Module-scope Annex B live binding: `typeof f` must observe the
+      // live global (`undefined` before the declaration evaluates, "function"
+      // after), never a static fold. Must run before BOTH the `!hasValueDecl`
+      // fold below (for a Block-nested decl the checker reports no
+      // valueDeclaration at an outer read → wrongly "undefined" forever) and
+      // the static type fold (for `if`-nested decls the checker resolves the
+      // hoisted symbol → wrongly "function" before the block runs).
+      const annexBModule = emitAnnexBModuleTypeofRead(ctx, fctx, ident.text);
+      if (annexBModule) return annexBModule;
       const withBinding = findWithBinding(fctx, ident.text);
       if (withBinding) {
-        return compileStringLiteral(ctx, fctx, staticTypeofForWasmType(withBinding.field.type));
+        return compileStringLiteral(ctx, fctx, staticTypeofForWasmType(ctx, withBinding.field.type));
       }
       const sym = ctx.checker.getSymbolAtLocation(ident);
       const hasValueDecl = !!sym?.valueDeclaration;
@@ -1361,6 +1573,15 @@ export function compileTypeofExpression(
         return compileStringLiteral(ctx, fctx, "undefined");
       }
       if (!hasValueDecl) {
+        if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalGlobalFunctionBindings) {
+          addUnionImports(ctx);
+          const typeofIdx = ctx.funcMap.get("__typeof");
+          const valueType = emitRuntimeEvalGlobalRead(ctx, fctx, ident.text, true);
+          if (typeofIdx !== undefined && valueType !== null) {
+            fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__typeof") ?? typeofIdx });
+            return { kind: "externref" };
+          }
+        }
         return compileStringLiteral(ctx, fctx, "undefined");
       }
     }
@@ -1389,6 +1610,9 @@ export function compileTypeofExpression(
       // `typeof F` case; this covers any path where the operand resolved past it).
       const annexB = emitAnnexBTypeofFlagBranch(ctx, fctx, bare.text);
       if (annexB) return annexB;
+      // (#4182) Same late fallback for a module-scope Annex B live binding.
+      const annexBModule = emitAnnexBModuleTypeofRead(ctx, fctx, bare.text);
+      if (annexBModule) return annexBModule;
     }
   }
 
@@ -1413,6 +1637,18 @@ export function compileTypeofExpression(
       bareTdz = (bareTdz as ts.ParenthesizedExpression | ts.AsExpression).expression;
     }
     if (ts.isIdentifier(bareTdz) && fctx.boxedTdzFlags?.has(bareTdz.text)) {
+      forceRuntimeTypeof = true;
+    }
+    // A script global synchronized around runtime eval is mutable in the JS
+    // sense, irrespective of the checker's flow type at this source position.
+    // Eval may have replaced `var initial` (statically `undefined`) with an
+    // interpreted function, so folding `typeof initial` is unsound.
+    if (runtimeEvalMayRebindIdentifier(ctx, bareTdz)) {
+      forceRuntimeTypeof = true;
+    }
+    // (#4204) Slot is externref, checker still says primitive — folding
+    // `typeof x` would report the initializer's type forever.
+    if (ts.isIdentifier(bareTdz) && moduleGlobalIsDynamicButStaticallyPrimitive(ctx, bareTdz)) {
       forceRuntimeTypeof = true;
     }
     // (#2623 P-7) `typeof x` where x's FLOW-narrowed type is null/undefined but
@@ -1444,7 +1680,10 @@ export function compileTypeofExpression(
   // Try static resolution first via the shared helper
   if (!forceRuntimeTypeof) {
     const staticResult = staticTypeofForType(ctx, tsType);
-    if (staticResult !== null) {
+    // (#4250) Unsound-fold guard: the checker types a fnctor field from the
+    // constructor's write, so the fold ignores every OTHER write reaching the
+    // field. Killed on a PROVEN write-kind contradiction only.
+    if (staticResult !== null && !typeofFoldContradictedByFieldVerdict(ctx, operand, staticResult)) {
       return compileStringLiteral(ctx, fctx, staticResult);
     }
   }
@@ -1489,7 +1728,7 @@ export function compileTypeofExpression(
     const boxIdx = ctx.funcMap.get("__box_number");
     if (boxIdx !== undefined) fctx.body.push({ op: "call", funcIdx: boxIdx });
   } else if (operandType.kind === "i32") {
-    const boxIdx = ctx.funcMap.get("__box_boolean");
+    const boxIdx = ctx.funcMap.get(operandType.symbol === true ? "__box_symbol" : "__box_boolean");
     if (boxIdx !== undefined) fctx.body.push({ op: "call", funcIdx: boxIdx });
   } else if (operandType.kind === "ref" || operandType.kind === "ref_null") {
     fctx.body.push({ op: "extern.convert_any" });
@@ -1499,10 +1738,21 @@ export function compileTypeofExpression(
   return { kind: "externref" };
 }
 
-function staticTypeofForWasmType(type: ValType): string {
-  if (type.kind === "i32") return "boolean";
+function staticTypeofForWasmType(ctx: CodegenContext, type: ValType): string {
+  if (type.kind === "i32") return type.symbol === true ? "symbol" : "boolean";
   if (type.kind === "f32" || type.kind === "f64" || type.kind === "i64") return "number";
+  // (#4231 RC-D) A `with`-bound STRING field is a ref to one of the native
+  // string types, not an object. Without this it fell into the `"object"`
+  // catch-all below and `with ({s:'a'}) { typeof s }` answered "object".
+  if ((type.kind === "ref" || type.kind === "ref_null") && isNativeStringTypeIdx(ctx, type.typeIdx)) {
+    return "string";
+  }
   return "object";
+}
+
+/** True for the WasmGC type indices that carry a JS string value. */
+function isNativeStringTypeIdx(ctx: CodegenContext, typeIdx: number): boolean {
+  return typeIdx === ctx.anyStrTypeIdx || typeIdx === ctx.nativeStrTypeIdx;
 }
 
 /**
@@ -1551,7 +1801,7 @@ export function compileTypeofComparison(
     if (ts.isIdentifier(ident)) {
       const withBinding = findWithBinding(fctx, ident.text);
       if (withBinding) {
-        const actual = staticTypeofForWasmType(withBinding.field.type);
+        const actual = staticTypeofForWasmType(ctx, withBinding.field.type);
         const matches = actual === stringLiteral;
         const result = isEq ? (matches ? 1 : 0) : matches ? 0 : 1;
         fctx.body.push({ op: "i32.const", value: result });
@@ -1559,6 +1809,32 @@ export function compileTypeofComparison(
       }
       const sym = ctx.checker.getSymbolAtLocation(ident);
       if (!sym?.valueDeclaration) {
+        const annexB = emitAnnexBTypeofFlagBranch(ctx, fctx, ident.text);
+        if (annexB) {
+          const actual = annexB;
+          if (actual.kind !== "externref") return null;
+          const literalType = compileStringLiteral(ctx, fctx, stringLiteral);
+          if (!literalType) return null;
+          return emitHostEqualityFromStack(ctx, fctx, actual, literalType, true, isNeq);
+        }
+        if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalGlobalFunctionBindings) {
+          addUnionImports(ctx);
+          let helperName: string | null = null;
+          if (stringLiteral === "number") helperName = "__typeof_number";
+          else if (stringLiteral === "string") helperName = "__typeof_string";
+          else if (stringLiteral === "boolean") helperName = "__typeof_boolean";
+          else if (stringLiteral === "bigint") helperName = "__typeof_bigint";
+          else if (stringLiteral === "undefined") helperName = "__typeof_undefined";
+          else if (stringLiteral === "object") helperName = "__typeof_object";
+          else if (stringLiteral === "function") helperName = "__typeof_function";
+          const helperIdx = helperName === null ? undefined : ctx.funcMap.get(helperName);
+          const valueType = emitRuntimeEvalGlobalRead(ctx, fctx, ident.text, true);
+          if (helperIdx !== undefined && valueType !== null) {
+            fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(helperName!) ?? helperIdx });
+            if (isNeq) fctx.body.push({ op: "i32.eqz" });
+            return { kind: "i32" };
+          }
+        }
         const matches = "undefined" === stringLiteral;
         const result = isEq ? (matches ? 1 : 0) : matches ? 0 : 1;
         fctx.body.push({ op: "i32.const", value: result });
@@ -1598,6 +1874,13 @@ export function compileTypeofComparison(
   } else {
     staticTypeof = staticTypeofForType(ctx, tsType);
   }
+  if (staticTypeof !== null && runtimeEvalMayRebindIdentifier(ctx, operand)) {
+    staticTypeof = null;
+  }
+  // (#4204) Same unsound-fold guard as compileTypeofExpression.
+  if (staticTypeof !== null && ts.isIdentifier(operand) && moduleGlobalIsDynamicButStaticallyPrimitive(ctx, operand)) {
+    staticTypeof = null;
+  }
   // (#2623 P-7) Same unsound-fold guard as compileTypeofExpression: a
   // null/undefined FLOW narrowing over a binding assigned elsewhere (closure-
   // crossing writes the checker can't apply) must not const-fold the
@@ -1623,6 +1906,12 @@ export function compileTypeofComparison(
     (ts.isPropertyAccessExpression(operand) || ts.isElementAccessExpression(operand)) &&
     chainRootIsGrowable(ctx, operand.expression)
   ) {
+    staticTypeof = null;
+  }
+  // (#4250) Same unsound-fold guard as compileTypeofExpression: a fnctor field
+  // read whose write-kind verdict PROVES a write of a different kind reaches
+  // the field must not const-fold the comparison.
+  if (staticTypeof !== null && typeofFoldContradictedByFieldVerdict(ctx, operand, staticTypeof)) {
     staticTypeof = null;
   }
   if (staticTypeof !== null) {

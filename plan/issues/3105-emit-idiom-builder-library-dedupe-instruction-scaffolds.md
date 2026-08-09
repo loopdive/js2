@@ -2,10 +2,10 @@
 id: 3105
 title: "Emit-idiom builder library: dedupe repeated Wasm instruction scaffolds (throw-guard x17, counter-loop x21, proxy-guard x12, hash-probe x10)"
 status: in-progress
-assignee: ttraenkler/sendev-3105
+assignee: ttraenkler/dev-opus-1
 sprint: current
 created: 2026-07-09
-updated: 2026-07-14
+updated: 2026-07-24
 priority: high
 horizon: m
 feasibility: medium
@@ -157,3 +157,87 @@ touched here.
 **Remaining slices (issue stays `in-progress`):** hash-probe *initial* modulo
 `idx = hash % cap` ×10 (same file, next obvious slice), throw-guard×17
 (`expressions/calls.ts`), counter-loop×21, proxy-guard×12, param-object×24.
+
+### Slice 2 — hash-probe init `idx = hash % cap` ×10 (linear backend) — DONE (2026-07-24, dev-opus-1)
+
+**Idiom chosen:** the open-addressing probe **init** `idx = hash % cap` — the
+head of every linear probe loop, computing the first slot from the key hash
+before the loop begins. It is the companion to slice 1's advance (loop tail);
+the "next obvious slice" the slice-1 log named.
+
+**What landed:**
+
+- New builder `hashProbeInitInstrs(hashLocal, capLocal, idxLocal): Instr[]` in
+  `src/codegen-linear/emit-idioms.ts`, returning the exact four instructions
+  `local.get hash · local.get cap · i32.rem_u · local.set idx`. Per-backend by
+  design (#1527); these are linear-memory locals with no WasmGC analogue.
+- All **10** hand-rolled init copies in `src/codegen-linear/runtime.ts` migrated
+  to `...hashProbeInitInstrs(hashLocal, capLocal, idxLocal)` — across the string
+  Map (`__map_set`/`get`/`has`/delete) & Set, and the numeric Map & Set runtimes.
+  Every copy was byte-identical (same op sequence, same `hashLocal`/`capLocal`/
+  `idxLocal` operands), **zero diverged copies** to exclude. **runtime.ts: 40
+  inline lines → 10 call sites (−30 net;** 1 import extended, 0 new import line).
+  After this slice, `codegen-linear/runtime.ts` has **zero** inline `i32.rem_u`
+  (both probe idioms — head + tail — now flow through the builders).
+
+**Byte-identity proof:** `scripts/prove-emit-identity.mjs` baseline (56
+`(file,target)` records, 14 files × 4 targets) captured pre-migration, then
+`check` after migration → **IDENTICAL — all 56 match** (incl.
+`collections.ts::linear`, sha `743dc21e7eea` unchanged). `tsc --noEmit` clean;
+`tests/issue-3105.test.ts` extended with the init-builder shape guards (5 tests
+green; the Map/Set linear compile/run test exercises the init path at each loop
+head, keeping the proof non-vacuous).
+
+**Running total (slices 1+2): 20 of the ≥40 target idiom copies replaced.**
+
+### Slice 3 — counter-loop ×6 (WasmGC, json-runtime.ts) — DONE (2026-07-24, dev-opus-1)
+
+**Idiom chosen:** the counted-forward loop `for (; i < bound; i += step) { body }`
+— a `block { loop { i>=bound → br_if 1; …body…; i+=step; br 0 } }` nest. First
+WasmGC-backend slice, so it creates **`src/codegen/emit-idioms.ts`** with
+`counterLoopInstrs({ i, bound, body, step? })`, returning the byte-identical
+scaffold (guard `i32.ge_s`, `br_if 1`; increment `i32.const step`/`i32.add`;
+`br 0`). The `body`'s own branch depths are preserved because the builder wraps
+it in the identical two-level nest — several sites carry their own `br_if 1`
+early-exits (digit-range / non-ws checks) that keep meaning unchanged.
+
+**Re-audit finding (the documented remaining idioms are STALE vs current main).**
+The 2026-07-09 audit's proxy-guard×12 (`object-runtime.ts`) and throw-guard×17
+(`expressions/calls.ts`) have since been **consolidated** — main now has **1**
+`ref.test $proxy` site and **1** `throw` op in calls.ts respectively, not ×12/×17.
+The one still-real duplicated idiom outside the linear runtime was the
+**counter-loop in `json-runtime.ts`**: **8** loops, of which **6 share the exact
+`i32.ge_s` counted-forward scaffold** and 2 are `i32.eqz` while-loops (excluded).
+
+**What landed:**
+
+- New `src/codegen/emit-idioms.ts` → `counterLoopInstrs`. Per-backend (#1527).
+- All **6** clean counter-loops in `src/codegen/json-runtime.ts` migrated —
+  the JSON string writer (`emitJsonQuoteString`: char-scan length loop +
+  escape-write loop) and the number parser (`emitJsonParsePrimitive`: skip-ws,
+  integer-digit, fraction-digit, exponent-digit loops). The 2 `i32.eqz`
+  while-loops are left as-is (different guard shape — not this idiom).
+- New emit-identity corpus **`scripts/emit-identity-corpus/json.ts`**
+  (JSON.stringify of an escapable string + JSON.parse of int/frac/exp) so the
+  counter-loop proof is **non-vacuous** — the native JSON runtime is emitted
+  only under standalone/wasi (the `gc`/host lane uses the V8 `JSON` import), and
+  the corpus forces those loops into the standalone/wasi binaries.
+
+**Byte-identity proof:** `prove-emit-identity` baseline (60 records) → migrate →
+`check` **IDENTICAL — all 60 match** (`json.ts::standalone` sha `cfc2888e0759`,
+`::wasi` `0772fc0a7e7f` unchanged). **Non-vacuousness verified** by a
+perturbation: temporarily flipping the builder's guard `i32.ge_s → i32.gt_s`
+drifted **exactly** `json.ts::standalone` (and wasi) and nothing else, confirming
+the corpus exercises the migrated loops and only the native lanes use them; the
+guard was reverted and `check` re-confirmed IDENTICAL. `tsc`/prettier/biome
+clean; `tests/issue-3105.test.ts` +3 (builder shape, custom-step/body-depth
+guard, standalone JSON compile+run == 14357.5) → 6 green. Functional spot-check
+(standalone): `JSON.parse` of `12345`/`-67`/`3.5`/`2e3` → `12345`/`-67`/`3.5`/
+`2000` (sign + fraction + exponent loops correct).
+
+**Running total (slices 1+2+3): 26 of the ≥40 target idiom copies replaced.**
+Remaining real duplication: the counter-loop in `array-methods.ts` (~15 loops,
+hot file — later slice) and the `param-object×24` array-method signature
+(a type refactor, not an instruction scaffold). The audit's proxy-guard/
+throw-guard idioms are already consolidated (no longer ×12/×17). Issue stays
+`in-progress`.

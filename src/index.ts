@@ -55,7 +55,9 @@ export type ImportIntent =
   | { type: "typeof_check"; targetType: string }
   | { type: "box"; targetType: string }
   | { type: "unbox"; targetType: string }
-  | { type: "extern_get" }
+  | { type: "any_to_index" }
+  | { type: "extern_get"; rawCallable?: boolean }
+  | { type: "extern_call_raw_callable"; arity: number }
   | { type: "extern_set" }
   | { type: "extern_set_strict" } // (#2017) strict-mode [[Set]] — throws on getter-only / non-writable
   | { type: "truthy_check" }
@@ -66,6 +68,7 @@ export type ImportIntent =
   | { type: "host_eq" }
   | { type: "host_loose_eq" }
   | { type: "host_add" }
+  | { type: "host_bigint_binop" }
   | { type: "host_compare" }
   | { type: "same_value_zero" }
   | { type: "dynamic_import" }
@@ -102,10 +105,34 @@ export interface ImportDescriptor {
   kind: "func" | "global";
   /** The host capability this import provides (see {@link ImportIntent}). */
   intent: ImportIntent;
+  /**
+   * (#4150) Declared parameter count of a `func` import, read off the wasm
+   * function type. Undefined for globals.
+   *
+   * Wasm import call sites are fixed-arity, so this is the exact number of
+   * arguments the host wrapper will ever receive — which lets `buildImports`
+   * build a fixed-signature wrapper instead of one with a rest parameter that
+   * allocates an args array on every crossing. The host function's own
+   * `.length` cannot substitute: it excludes rest and defaulted parameters, so
+   * a variadic callee under-reports and a wrapper sized from it would silently
+   * drop arguments.
+   */
+  paramCount?: number;
 }
 
 export type { ExportSignature, TypedArrayKind } from "./ir/types.js";
+export type {
+  IrInvariantCode,
+  IrObservedOutcome,
+  IrOutcomePolicy,
+  IrOutcomePolicyVerdict,
+  IrUnsupportedCode,
+} from "./ir/outcomes.js";
+// Outcome rows expose these opaque IDs; inventory/ABI construction remains an
+// internal IR seam until later R1 commits wire it into compiler ownership.
+export type { IrSourceId, IrUnitId } from "./ir/identity.js";
 import type { ExportSignature } from "./ir/types.js";
+import type { IrObservedOutcome } from "./ir/outcomes.js";
 
 /**
  * The output of a `compile*` call: the compiled Wasm binary plus the artifacts
@@ -147,7 +174,7 @@ export interface CompileResult {
    *
    * Only present (and even then, possibly an empty object) when at least
    * one exported function has a TypedArray param or return. Forward the
-   * value to `wrapExports(exports, { signatures: result.exportSignatures })`.
+   * value to `wrapExports(instance, { signatures: result.exportSignatures })`.
    */
   exportSignatures?: Record<string, ExportSignature>;
   /**
@@ -161,6 +188,7 @@ export interface CompileResult {
    * ```js
    * const r = await compile(src);
    * const { instance } = await WebAssembly.instantiate(r.binary, r.importObject);
+   * r.importObject.__setInstance?.(instance);
    * ```
    *
    * Standalone / `wasi` mode is the zero-import portable default and needs no
@@ -211,6 +239,12 @@ export interface CompileResult {
    * cost for this field.
    */
   irFirstSkipped?: readonly string[];
+  /**
+   * #3519 — typed terminal outcome for every attempted source IR unit.
+   * Present only when `trackIrOutcomes` is enabled, including on failed
+   * results once codegen has begun.
+   */
+  irOutcomes?: readonly IrObservedOutcome[];
 }
 
 /** A single compile diagnostic (error or warning) with its source position. */
@@ -259,10 +293,22 @@ export interface ImportPolicy {
 export interface CompileOptions {
   /** Emit WAT debug output (default: true) */
   emitWat?: boolean;
+  /**
+   * Debug-only: when set, WAT emission only formats functions whose Wasm
+   * name is in this set (plus types/imports/globals for context), skipping
+   * the rest. Full-module `emitWat` can throw "Invalid string length" on
+   * very large graphs (multi-thousand-function compileProject outputs);
+   * this lets a caller recover just the function(s) it actually needs to
+   * inspect (e.g. the one named in a WebAssembly.Module() validation
+   * error) without paying for or risking the full-module string build.
+   */
+  emitWatOnlyFunctions?: string[];
   /** Module name (for debugging) */
   moduleName?: string;
   /** Generate source map (default: false) */
   sourceMap?: boolean;
+  /** Preserve the Wasm name section through optimization for profiling. */
+  preserveDebugNames?: boolean;
   /** Source map URL to embed in the wasm binary (default: "module.wasm.map") */
   sourceMapUrl?: string;
   /** Compilation target: "gc" (WasmGC, default), "linear" (linear memory),
@@ -271,6 +317,46 @@ export interface CompileOptions {
    *  `nativeStrings: true` and refuses to emit any `wasm:js-string` or
    *  `env` JS-host string imports. */
   target?: "gc" | "linear" | "wasi" | "standalone";
+  /**
+   * (#743) Declaration source text for the entry module's shipped sibling
+   * `.d.ts` (e.g. acorn's `dist/acorn.d.ts` when compiling `dist/acorn.mjs`).
+   * Only consulted while `JS2WASM_DTS_ENTRYPOINT_SEEDS` is enabled (**ON by
+   * default since 2026-08-08**; `=0` disables): exported functions
+   * with implicit-`any` parameters take their declared `string`/`number`
+   * parameter types as inference SEEDS (claims joined against internal
+   * call-site evidence, guarded at the export boundary — see
+   * `src/checker/dts-entrypoint-seeds.ts`). When unset, an on-disk sibling of
+   * `fileName` is probed instead. Flag off → byte-identical output.
+   */
+  entryDeclarations?: string;
+  /**
+   * (#4035) Host-bridge export policy — whether the module exposes the
+   * inspection/interop surface a **JavaScript** host uses to reach inside
+   * WasmGC values: `__vec_*`, `__sget_*`/`__sset_*`, `__call_fn*`,
+   * `__is_*`, `__struct_field_names`, `__exn_render_*`, `__stdout_*`, and
+   * the `js2_*_host_bridge` marker table/global.
+   *
+   * These are two different things wearing one name:
+   *
+   * - **js-host mode — a calling convention, not debug info.**
+   *   `src/runtime.ts` materializes arrays through `__vec_len`/`__vec_get`,
+   *   serves `.push` via `__vec_push`, and reads compiled-struct fields via
+   *   `__sget_<key>` (a plain `result[field]` on a WasmGC struct yields
+   *   `undefined`). Removing them breaks interop, so the default stays on.
+   * - **standalone/WASI — inspection.** The target is a JS-free host; a
+   *   deployed module needs its own exports plus `_start`. The real
+   *   consumers are harness-side: `__exn_render_*` (#2962) so test262 can
+   *   render a natively-thrown GC payload, `__stdout_*` (#3469) for the
+   *   host-free completion marker. Every production binary was paying for
+   *   them — and because exports are GC roots, `-O3` could strip none of it.
+   *
+   * `"auto"` (default) therefore resolves per target: `"always"` for js-host,
+   * `"off"` for standalone/WASI. A JS-side caller that DOES inspect a
+   * standalone module (the test262 runner, any tooling) must ask for
+   * `"always"` explicitly. Every consumer already guards each access with a
+   * `typeof exports.__x === "function"` check, so absence is safe.
+   */
+  hostBridge?: "auto" | "always" | "off";
   /**
    * (#86) NOT a real option — declared `never` so `compile(src, { standalone:
    * true })` is a TypeScript excess-property error. The standalone codegen
@@ -357,6 +443,20 @@ export interface CompileOptions {
    */
   tag5ValueEqClassifier?: boolean;
   /**
+   * (#4173) Fast tag-pair dispatch in the standalone dynamic-eq helpers.
+   * When true, `__extern_strict_eq`'s identity-miss path classifies both
+   * operands by ref.test (number/i31, string, boolean, bigint, `$AnyValue`)
+   * and answers directly — `f64.eq` / `__str_equals` / normalized bool eq /
+   * `i64.eq`, or fast-false for identity-only pairs — instead of allocating
+   * two `$AnyValue` boxes via `__any_from_extern` and calling
+   * `__any_strict_eq`. `$AnyValue`-carrying operands keep the full legacy
+   * path (cross-representation identity, #2175). Also dedupes the second
+   * `any.convert_extern` in `__is_truthy`. Standalone/WASI only; host lane
+   * byte-identical. Default TRUE (A/B-validated, #4173 Results). Set
+   * `JS2WASM_FAST_STRICT_EQ=0` (or pass `false`) to force the legacy bodies.
+   */
+  fastStrictEq?: boolean;
+  /**
    * (#2106 S1) Standalone `$undefined` tag-1 singleton regime. When true (and
    * targeting standalone/nativeStrings), `undefined` is represented by the
    * S1.0 immutable tag-1 `$AnyValue` global (extern-wrapped at the externref
@@ -394,6 +494,19 @@ export interface CompileOptions {
   allowedExternMembers?: Record<string, string[]>;
   /** Allow JavaScript source files as input (auto-detected for .js fileName) */
   allowJs?: boolean;
+  /**
+   * Treat every JavaScript root in a multi-file compile as syntax-test input:
+   * retain all-root diagnostics and stop on TypeScript grammar errors. By
+   * default, `allowJs` keeps its package-oriented diagnostic leniency. Opt-in
+   * so ordinary JavaScript product compiles stay unchanged.
+   */
+  strictJsSyntax?: boolean;
+  /**
+   * Run the compiler's ECMAScript early-error pass even when `allowJs` is set.
+   * Intended for callers that own the complete JavaScript input graph; package
+   * dependency compiles retain the historical early-error skip by default.
+   */
+  enforceJsEarlyErrors?: boolean;
   /** Virtual file name for the source (controls language: use ".js" for JS input) */
   fileName?: string;
   /** Module resolution options for npm packages */
@@ -433,6 +546,11 @@ export interface CompileOptions {
    */
   experimentalIR?: boolean;
   /**
+   * #3519 — collect the typed per-unit IR terminal ledger. This does not
+   * change hybrid routing or enable IR-only compilation.
+   */
+  trackIrOutcomes?: boolean;
+  /**
    * (#2973) Opt this compile out of the `JS2WASM_IR_FIRST` compile-once
    * inversion, regardless of the ambient env flag. Semantics-critical
    * in-process sub-compiles — the `eval` / `new Function` host shims — MUST
@@ -455,10 +573,44 @@ export interface CompileOptions {
    *  Default: false (calls to fs.readFileSync / fs.writeFileSync raise a compile error). */
   allowFs?: boolean;
   /**
+   * (#4238 slice 1) INTERNAL provider-build option. When true, a `declare
+   * function` extern's parameter and return types are resolved through the
+   * native-type annotations (`type i32 = number`, `nativeTypeFromTypeNode`)
+   * BEFORE falling back to the default `mapTsTypeToWasm` mapping — so
+   * `declare function qjs_eval(ctx: i32, src: i32, len: i32): i32` emits a real
+   * `(i32,i32,i32) -> i32` import that binds DIRECTLY to a peer wasm module's
+   * export with no JS wrapper closure in between.
+   *
+   * Default off, and deliberately not a CLI flag: user externs must keep the
+   * historical f64 mapping (`number` → f64) or every existing host binding
+   * would change signature. Only `QUICKJS_ADAPTER_COMPILE_OPTIONS` in
+   * `scripts/quickjs-eval-provider.mjs` sets it.
+   */
+  externNativeTypes?: boolean;
+  /**
+   * (#4238 slice 1) INTERNAL provider-build option. Import module for
+   * `declare function` externs, instead of the default `"env"` JS-host module.
+   * Used by the QuickJS eval adapter so its `qjs_*` externs are declared in the
+   * `js2wasm:qjs` namespace (a wasm-to-wasm provider namespace, satisfied by
+   * `libquickjs.wasm`'s exports — not a JS host surface). Default `undefined`
+   * → `"env"`, byte-identical.
+   */
+  externImportModule?: string;
+  /**
+   * (#4238 slice 1) INTERNAL provider-build option. Import the module's linear
+   * memory from `{ module }.memory` instead of defining one, mirroring the
+   * proven `--link node:fs` topology (`src/codegen/wasi.ts`): the PEER module
+   * owns and exports the memory, this module imports it at memory index 0, so
+   * the `wasm:memory` accessors (`store8`/`load8`/`store32`/`load32`) address
+   * the peer's heap directly. A memory import does not perturb the function
+   * index space. Default `undefined` → unchanged.
+   */
+  importMemory?: { module: string; min?: number };
+  /**
    * (#2796) Differential-test-harness fidelity flag. In the default JS-host
    * (WasmGC) target, top-level module code runs via the wasm `start` section —
    * i.e. DURING `WebAssembly.instantiate`, BEFORE the host can call
-   * `setExports(instance.exports)`. Top-level code that introspects WasmGC
+   * `setInstance(instance)`. Top-level code that introspects WasmGC
    * structs (`for…in` / `Object.keys` over a runtime-shaped object) needs the
    * `__struct_field_names` / `__sget_*` exports, which only exist once the
    * instance is constructed — so during the start section they resolve to
@@ -468,7 +620,7 @@ export interface CompileOptions {
    *
    * When `true`, emit the top-level `__module_init` as an EXPORT and do NOT run
    * it via the wasm `start` section, so the host can invoke
-   * `instance.exports.__module_init()` AFTER wiring `setExports` — symmetric
+   * `instance.exports.__module_init()` AFTER wiring `setInstance` — symmetric
    * with the standalone `_start` model. The differential-test harness
    * (`scripts/diff-test.ts`) sets this so the HOST lane runs top-level code with
    * the same fully-wired runtime the standalone lane uses, rather than tripping
@@ -558,10 +710,13 @@ export interface CompileOptions {
    * deliberately no pluggable GC abstraction.
    *
    * - `"bump"` (default): the plain allocate-and-exit arena, smallest binary.
-   * - `"arena-reset"`: same allocator, but also exports `__arena_reset()`
-   *   (O(1) rewind of the whole arena) and `__arena_used()` (bytes
-   *   allocated). Use this when an embedder reuses one instance across many
-   *   short-lived tasks and wants to reclaim between them.
+   * - `"arena-reset"`: same allocator, plus safe between-call reclamation and
+   *   the `__arena_reset()` / `__arena_used()` management exports. When every
+   *   exported parameter/result and module global is primitive, the compiler
+   *   inserts a host-boundary wrapper that rewinds immediately before the next
+   *   call. Aggregate boundaries or heap-backed globals conservatively keep
+   *   the monotonic arena so returned/escaped pointers remain live; the host
+   *   may still use the explicit reset once it knows those lifetimes ended.
    * - `"analysis-stack"`: for single-source functions accepted by the optional
    *   IR path, promote fixed-size owned/non-escaping allocations into a
    *   function-scoped stack region. Direct-backend, multi-module, unsupported,
@@ -574,7 +729,7 @@ export interface CompileOptions {
 }
 
 import * as path from "path";
-import { IncrementalLanguageService } from "./checker/index.js";
+import { IncrementalLanguageService, IncrementalProjectLanguageService } from "./checker/index.js";
 import { compileFilesSource, compileMultiSource, compileSource, compileToObjectSource } from "./compiler.js";
 import { ModuleResolver, resolveAllImports } from "./resolve.js";
 import { buildImports as buildImportsRuntime } from "./runtime.js";
@@ -619,9 +774,19 @@ function withImportObject(result: CompileResult): CompileResult {
     configurable: true,
     get() {
       if (cached) return cached;
-      // Failed compile or zero-import (standalone / wasi) output needs no host
-      // runtime — return an empty, harmless import object.
-      if (!result.success || result.imports.length === 0) {
+      // Failed compile or genuinely import-free (standalone / wasi) output needs
+      // no host runtime — return an empty, harmless import object.
+      //
+      // (#4029) `result.imports` counts FUNCTION imports only. A module with no
+      // host function imports can still declare imported string-constant
+      // GLOBALS, built from `result.stringPool` — a two-file graph whose whole
+      // content is `add(a, b)` has 0 imports and 4 string constants. Taking the
+      // short-circuit there handed back `{}` for a module that declares the
+      // `string_constants` namespace, so instantiating through this convenience
+      // path died with "Import #0 module=\"string_constants\": module is not an
+      // object or function". That is why tests/multi-file.test.ts was 9 failed /
+      // 1 passed on a clean checkout. Require BOTH to be empty.
+      if (!result.success || (result.imports.length === 0 && result.stringPool.length === 0)) {
         cached = {};
         return cached;
       }
@@ -638,12 +803,31 @@ function withImportObject(result: CompileResult): CompileResult {
       // __sget_* struct reads, __is_closure gating). Callers wire it after
       // instantiation:
       //   const { instance } = await WebAssembly.instantiate(r.binary, r.importObject);
-      //   (r.importObject as any).__setExports?.(instance.exports);
+      //   (r.importObject as any).__setInstance?.(instance);
       // Non-enumerable so WebAssembly.instantiate's import resolution (which
       // only reads the module-declared namespaces) never sees it.
       if (built.setExports) {
         Object.defineProperty(cached, "__setExports", {
           value: built.setExports,
+          enumerable: false,
+          configurable: true,
+        });
+      }
+      if (built.setInstance) {
+        Object.defineProperty(cached, "__setInstance", {
+          value: built.setInstance,
+          enumerable: false,
+          configurable: true,
+        });
+      }
+      if (built.startImportCounting && built.takeImportCounts) {
+        Object.defineProperty(cached, "__startImportCounting", {
+          value: built.startImportCounting,
+          enumerable: false,
+          configurable: true,
+        });
+        Object.defineProperty(cached, "__takeImportCounts", {
+          value: built.takeImportCounts,
           enumerable: false,
           configurable: true,
         });
@@ -711,39 +895,75 @@ export function compileToObject(source: string, options?: CompileOptions) {
  * @param options - Compile options including resolve and externals settings
  */
 export async function compileProject(entryFile: string, options?: CompileOptions): Promise<CompileResult> {
-  const resolvedEntry = path.resolve(entryFile);
-  const rootDir = path.dirname(resolvedEntry);
+  const logicalEntry = path.resolve(entryFile);
+  const logicalRootDir = path.dirname(logicalEntry);
 
   // Auto-enable allowJs when entry file is .js/.mjs (#1107)
-  const isJs = /\.[cm]?js$/.test(resolvedEntry);
+  const isJs = /\.[cm]?js$/.test(logicalEntry);
   const effectiveOptions = isJs && !options?.allowJs ? { ...options, allowJs: true } : options;
 
   // Create resolver
-  const resolver = new ModuleResolver(rootDir, effectiveOptions);
+  const resolver = new ModuleResolver(logicalRootDir, effectiveOptions);
+  const resolvedEntry = resolver.canonicalize(logicalEntry);
+  const rootDir = path.dirname(resolvedEntry);
 
   // Resolve all imports recursively
   const allFiles = resolveAllImports(resolvedEntry, resolver);
+  const resolutionDiagnostics = resolver.getDiagnostics();
+  if (resolutionDiagnostics.length > 0) {
+    return withImportObject({
+      binary: new Uint8Array(0),
+      wat: "",
+      dts: "",
+      importsHelper: "",
+      success: false,
+      errors: resolutionDiagnostics.map((diagnostic) => ({ ...diagnostic })),
+      stringPool: [],
+      imports: [],
+      hasMain: false,
+      hasTopLevelStatements: false,
+    });
+  }
 
   // Convert to the Record<string, string> format expected by compileMulti
   const files: Record<string, string> = {};
+  const fileKeys = new Map<string, string>();
   for (const [filePath, content] of allFiles) {
     // Use relative paths from root dir as keys
     const relPath = path.relative(rootDir, filePath);
     // Ensure paths start with ./ for the multi-file compiler
     const key = relPath.startsWith(".") ? relPath : `./${relPath}`;
     files[key] = content;
+    fileKeys.set(resolver.canonicalize(filePath), key);
   }
 
-  // Entry file key
-  const entryKey = `./${path.relative(rootDir, resolvedEntry)}`;
+  const entryKey = fileKeys.get(resolvedEntry) ?? `./${path.relative(rootDir, resolvedEntry)}`;
 
-  return withImportObject(await compileMultiSource(files, entryKey, effectiveOptions));
+  // Preserve the exact importer→specifier→target edges discovered against the
+  // physical filesystem. The virtual checker cannot reconstruct pnpm's private
+  // dependency tree from flattened in-memory file names (#3654).
+  const projectResolutions: Record<string, Record<string, string>> = {};
+  for (const filePath of allFiles.keys()) {
+    const importerKey = fileKeys.get(resolver.canonicalize(filePath));
+    if (!importerKey) continue;
+    const resolutions: Record<string, string> = {};
+    for (const [specifier, targetPath] of resolver.getResolvedImports(filePath)) {
+      const targetKey = fileKeys.get(resolver.canonicalize(targetPath));
+      if (targetKey) resolutions[specifier] = targetKey;
+    }
+    if (Object.keys(resolutions).length > 0) {
+      projectResolutions[importerKey] = resolutions;
+    }
+  }
+
+  return withImportObject(await compileMultiSource(files, entryKey, effectiveOptions, undefined, projectResolutions));
 }
 
 /**
- * Create an incremental compiler that reuses a persistent TypeScript Language Service.
- * Lib files are parsed once on first compilation and cached for all subsequent compilations,
- * eliminating ~50ms of program creation overhead per compilation.
+ * Create an incremental compiler that reuses a persistent, versioned TypeScript Language Service.
+ * Unchanged sources retain their Program, checker, and diagnostic caches; edited sources use
+ * incremental snapshots so TypeScript reparses and rechecks only invalidated state. Lib files
+ * are parsed once and retained across compilations.
  *
  * Ideal for worker pools or batch compilation scenarios where many source files
  * are compiled sequentially in the same process.
@@ -751,22 +971,39 @@ export async function compileProject(entryFile: string, options?: CompileOptions
  * @example
  * ```ts
  * const compiler = createIncrementalCompiler();
- * const result1 = compiler.compile("export function a(): number { return 1; }");
- * const result2 = compiler.compile("export function b(): number { return 2; }"); // faster
+ * const result1 = await compiler.compile("export function a(): number { return 1; }");
+ * const result2 = await compiler.compile("export function b(): number { return 2; }"); // faster
+ * const project = await compiler.compileMulti(
+ *   { "dep.ts": "export const n = 2", "main.ts": "import { n } from './dep'; export const value = n" },
+ *   "main.ts",
+ * );
  * compiler.dispose(); // free resources when done
  * ```
  */
 export function createIncrementalCompiler(defaultOptions?: CompileOptions): {
   compile: (source: string, options?: CompileOptions) => Promise<CompileResult>;
+  compileMulti: (files: Record<string, string>, entryFile: string, options?: CompileOptions) => Promise<CompileResult>;
   dispose: () => void;
 } {
   const service = new IncrementalLanguageService();
+  let projectService: IncrementalProjectLanguageService | undefined;
   return {
     compile(source: string, options?: CompileOptions): Promise<CompileResult> {
       return compileSource(source, { ...defaultOptions, ...options }, service);
     },
+    async compileMulti(
+      files: Record<string, string>,
+      entryFile: string,
+      options?: CompileOptions,
+    ): Promise<CompileResult> {
+      projectService ??= new IncrementalProjectLanguageService();
+      return withImportObject(
+        await compileMultiSource(files, entryFile, { ...defaultOptions, ...options }, projectService),
+      );
+    },
     dispose() {
       service.dispose();
+      projectService?.dispose();
     },
   };
 }

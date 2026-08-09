@@ -4,8 +4,10 @@
  * that return a ValType/Map and mutate nothing on ctx. Extracted verbatim from
  * codegen/declarations.ts (#3268).
  */
+import type { DtsSeedAtom } from "../../checker/dts-entrypoint-seeds.js";
 import { isVoidType, unwrapPromiseType } from "../../checker/type-mapper.js";
 import { isSyntacticallyBooleanExpr } from "../../checker/oracle.js";
+import { fnctorCtorParamTypesFlagEnabled } from "../../derivation-flags.js";
 import { forEachChild, ts } from "../../ts-api.js";
 import { isStandalonePromiseActive } from "../async-scheduler.js";
 import { hasAsyncModifier, resolveWasmType } from "../index.js";
@@ -56,6 +58,92 @@ export function resolveGenericCallSiteTypes(
   return found;
 }
 
+// ---------------------------------------------------------------------------
+// (#743) `.d.ts` entrypoint seeds — legacy-lane consumers.
+//
+// The seed map on `ctx.dtsEntrypointSeeds` is the SAME object the IR fixpoint
+// seeds from (`applyDtsEntrypointSeeds` in src/ir/propagate.ts); consuming it
+// here keeps the two lanes' seed facts identical, which is what prevents
+// "function typeIdx parity mismatch" demotions. Two consumers:
+//
+//  1. The seeded entrypoint's OWN param (`inferImplicitAnyParamType`,
+//     `sawCallSite === false` arm only, #3471): the claim applies exactly when
+//     there is no internal evidence at all.
+//  2. ONE-HOP forwarding (`dtsSeedValTypeForArgIdentifier`): a call/new ARG
+//     that is literally a seeded entrypoint's parameter identifier types as
+//     the seed — mirroring the fixpoint's first propagation hop. Without this
+//     the fixpoint types a downstream callee's param while this single-hop
+//     scan cannot, and the IR claim demotes on ABI parity. Gated on the same
+//     condition under which the entrypoint's own signature takes the seed
+//     (no internal call sites — evidence always beats the claim).
+// ---------------------------------------------------------------------------
+
+const internalCallSiteMemo = new WeakMap<ts.SourceFile, Map<string, boolean>>();
+
+/** Does ANY internal `f(…)` / `new f(…)` identifier site exist? (name walk only — no typing, no recursion) */
+function hasInternalCallSites(funcName: string, sourceFile: ts.SourceFile): boolean {
+  let memo = internalCallSiteMemo.get(sourceFile);
+  if (!memo) {
+    memo = new Map();
+    internalCallSiteMemo.set(sourceFile, memo);
+  }
+  const cached = memo.get(funcName);
+  if (cached !== undefined) return cached;
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (
+      (ts.isCallExpression(node) || ts.isNewExpression(node)) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === funcName
+    ) {
+      found = true;
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(sourceFile, visit);
+  memo.set(funcName, found);
+  return found;
+}
+
+/**
+ * Lower a seed atom to this compile's ABI. `string` narrows only in
+ * native-string lanes where the ref-typed export boundary traps a violating
+ * external call; in externref-string lanes it is a deliberate no-op (the param
+ * stays externref — identical to unseeded), so the claim can never be read
+ * blindly. `f64` is guarded by the JS API's ToNumber boundary coercion.
+ */
+function dtsSeedAtomToValType(ctx: CodegenContext, atom: DtsSeedAtom): ValType | null {
+  if (atom === "f64") return { kind: "f64" };
+  if (atom === "string" && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+    return { kind: "ref", typeIdx: ctx.anyStrTypeIdx };
+  }
+  return null;
+}
+
+/** Seed atom for a parameter of `decl` when it is a seeded top-level entrypoint. */
+function dtsSeedForParam(ctx: CodegenContext, decl: ts.Node | undefined, paramIndex: number): DtsSeedAtom | null {
+  const seeds = ctx.dtsEntrypointSeeds;
+  if (!seeds || !decl || !ts.isFunctionDeclaration(decl) || !decl.name || !ts.isSourceFile(decl.parent)) return null;
+  return seeds.get(decl.name.text)?.[paramIndex] ?? null;
+}
+
+/** One-hop seed forwarding for a call-site arg identifier (see block comment above). */
+function dtsSeedValTypeForArgIdentifier(ctx: CodegenContext, arg: ts.Identifier): ValType | null {
+  if (!ctx.dtsEntrypointSeeds) return null;
+  const decl = ctx.oracle.valueDeclarationOf(arg);
+  if (!decl || !ts.isParameter(decl) || decl.dotDotDotToken || decl.initializer) return null;
+  const fn = decl.parent;
+  if (!ts.isFunctionDeclaration(fn) || !fn.name || !ts.isSourceFile(fn.parent)) return null;
+  const atom = dtsSeedForParam(ctx, fn, fn.parameters.indexOf(decl));
+  if (atom === null) return null;
+  // The seed governs the entrypoint's param ONLY when the entrypoint has zero
+  // internal call sites (otherwise evidence decides its type, not the claim).
+  if (hasInternalCallSites(fn.name.text, fn.getSourceFile())) return null;
+  return dtsSeedAtomToValType(ctx, atom);
+}
+
 /**
  * Result of scanning a function's call sites for a parameter's type.
  *  - `type`: the concrete wasm type all *conclusive* call sites agree on, or
@@ -91,20 +179,109 @@ export function inferParamTypeFromCallSites(
   let agreed: ValType | null = null;
   let conflict = false;
   let sawCallSite = false;
+  let sawUnderApplied = false;
+
+  const isRecursiveCall = (call: ts.CallExpression | ts.NewExpression): boolean => {
+    const target = ctx.oracle.valueDeclarationOf(call.expression);
+    for (let owner: ts.Node | undefined = call.parent; owner; owner = owner.parent) {
+      if (!ts.isFunctionLike(owner)) continue;
+      return (
+        owner === target || (target !== undefined && ts.isVariableDeclaration(target) && target.initializer === owner)
+      );
+    }
+    return false;
+  };
 
   function visit(node: ts.Node) {
-    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === funcName) {
+    // (#743) `new F(…)` is a call site for F's PARAMETERS exactly as `F(…)` is —
+    // same arity rules, same argument-to-parameter mapping, same under-application
+    // semantics. Until now only `isCallExpression` matched, so every
+    // function-style constructor's parameters were invisible to this inference:
+    // acorn's `new Parser(options, input, startPos)` contributed nothing, and its
+    // ctor params stayed `any`, which is what seeds 43 of its 96 fnctor field
+    // slots as `externref` (#4155 census). Widening the node test is the whole
+    // change — the agreement, conflict, under-application (#3548) and recursion
+    // (#3961) soundness rules below are shared verbatim.
+    //
+    // Gated with the field half (`fnctor-ctor-param-types.ts`) on the SAME
+    // variable. That module imports this one, so the predicate cannot come from
+    // it without a cycle; it comes from the leaf `src/derivation-flags.ts`,
+    // which is exactly why that module exists (three readers, one spelling).
+    // The two halves must not be separable: narrowing the parameter while the
+    // slot stays `externref` re-boxes on every store and measured strictly
+    // WORSE than doing nothing (+27 bytes on a one-field fixture).
+    // **ON by default since 2026-08-08** — see that module for the acorn numbers.
+    const ctorSitesEnabled = fnctorCtorParamTypesFlagEnabled();
+    if (
+      (ts.isCallExpression(node) || (ctorSitesEnabled && ts.isNewExpression(node))) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === funcName
+    ) {
       // A matching call exists regardless of arg types — the function IS invoked
       // internally, so its params are determined by runtime call args, not the
       // body-usage fallback. Record this before any conflict short-circuit.
       sawCallSite = true;
+      // (#3548) An UNDER-APPLIED call site (`d('m'); d();`) passes `undefined`
+      // for this param — record it so a non-nullable ref inference is widened
+      // to nullable below. Skipping absent args entirely made the inference
+      // UNSOUND: the agreed type became a non-nullable `(ref N)` that the
+      // zero-arg call site's pad could only satisfy with `ref.null` +
+      // `ref.as_non_null` — an unconditional runtime trap on the (usually
+      // passing) zero-arg path.
+      // `new F` with no parens has NO argument list at all (`arguments` is
+      // undefined, not empty) — that is an under-applied site for every
+      // parameter, so treat a missing list as length 0 rather than skipping it.
+      const callArgs = node.arguments;
+      if ((callArgs?.length ?? 0) <= paramIndex) sawUnderApplied = true;
       if (!conflict) {
-        const arg = node.arguments[paramIndex];
+        const arg = callArgs?.[paramIndex];
         if (arg) {
           const argType = ctx.checker.getTypeAtLocation(arg);
           // Skip if the argument itself is also `any` — no useful info
           if (argType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) {
-            // Don't count this call site — it doesn't help
+            // (#3780) The checker still reports an untyped JavaScript LOCAL as
+            // `any` after the standalone numeric-flow analysis has proved that
+            // every definition is numeric and codegen has selected an f64
+            // slot. Reuse that stronger, symbol-scoped verdict here so passing
+            // such a local to another untyped helper does not immediately box
+            // it and lose the proof at the callee ABI.
+            //
+            // This is not body-use guessing: UsageInference only answers
+            // "number" after the grounded definition fixpoint (or its older,
+            // all-uses-apply-ToNumber proof), and the oracle's declaration
+            // lookup keeps shadowed same-name locals distinct. Parameters and
+            // other `any` expressions remain inconclusive exactly as before.
+            if (ts.isIdentifier(arg)) {
+              const declaration = ctx.oracle.variableDeclarationOf(arg);
+              // (#743) One-hop `.d.ts` seed forwarding — a seeded entrypoint's
+              // own parameter passed straight through participates with the
+              // seed's type, mirroring the IR fixpoint's first hop. Null for
+              // every arg outside that exact shape.
+              const seededArg = dtsSeedValTypeForArgIdentifier(ctx, arg);
+              if (declaration && ctx.usageInference.scalarForDecl(declaration) === "number") {
+                const wasmType: ValType = { kind: "f64" };
+                if (agreed === null) agreed = wasmType;
+                else if (agreed.kind !== wasmType.kind) conflict = true;
+              } else if (seededArg !== null) {
+                if (agreed === null) agreed = seededArg;
+                else if (
+                  agreed.kind !== seededArg.kind ||
+                  (agreed.kind === "ref" &&
+                    seededArg.kind === "ref" &&
+                    (agreed as { typeIdx: number }).typeIdx !== (seededArg as { typeIdx: number }).typeIdx)
+                ) {
+                  conflict = true;
+                }
+              } else if (isRecursiveCall(node)) {
+                // (#3961) A dynamic value forwarded recursively is part of the
+                // callee's runtime domain. React's `mapIntoArray(children, …)`
+                // also has a proven-array call; ignoring the recursive value
+                // narrows `children` to a vec and destroys element arguments.
+                conflict = true;
+              }
+            } else if (isRecursiveCall(node)) {
+              conflict = true;
+            }
           } else {
             const wasmType = resolveWasmType(ctx, argType);
             if (agreed === null) {
@@ -126,7 +303,20 @@ export function inferParamTypeFromCallSites(
   }
 
   forEachChild(sourceFile, visit);
-  return { type: conflict ? null : agreed, sawCallSite };
+  // (TS control-flow can't see the closure mutation of `agreed` — assert its
+  // declared type so the property narrowing below typechecks.)
+  let type: ValType | null = conflict ? null : (agreed as ValType | null);
+  // (#3548) Soundness: if ANY call site under-applies this param, the value can
+  // be `undefined` at runtime, so a NON-NULLABLE ref inference has no valid
+  // filler — widen to the nullable ref of the same type (NOT all the way to
+  // externref: keeps the precise type and the fast paths; approved direction,
+  // see plan/issues/3548). The zero-arg pad then emits a plain `ref.null`,
+  // which the callee (whose body compiles against this same nullable
+  // signature) handles as the absent/undefined case.
+  if (type !== null && type.kind === "ref" && sawUnderApplied) {
+    type = { kind: "ref_null", typeIdx: type.typeIdx };
+  }
+  return { type, sawCallSite };
 }
 
 /**
@@ -267,6 +457,16 @@ export function inferImplicitAnyParamType(
   const callSites = inferParamTypeFromCallSites(ctx, funcName, paramIndex, sourceFile);
   if (callSites.type) return callSites.type;
   if (callSites.sawCallSite) return null;
+  // (#743) Truly-uncalled exported entrypoint: the shipped `.d.ts` claim is the
+  // only signal and its export boundary is guarded (ToNumber for f64; a typed
+  // ref that traps a violating external call for native strings). Declared
+  // types outrank the body-usage heuristic; body inference stays the fallback
+  // for unseeded positions.
+  const seedAtom = dtsSeedForParam(ctx, decl, paramIndex);
+  if (seedAtom !== null) {
+    const seeded = dtsSeedAtomToValType(ctx, seedAtom);
+    if (seeded !== null) return seeded;
+  }
   return inferParamTypeFromBody(ctx, decl, paramIndex);
 }
 

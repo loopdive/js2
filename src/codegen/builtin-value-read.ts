@@ -60,6 +60,7 @@ import {
 } from "./array-object-proto.js";
 import { emitLazyNativeProtoGet, getBuiltinBrand, getNativeProtoBuiltinGlue } from "./native-proto.js";
 import { resolveStandaloneProtoMemberValueClosure } from "./native-proto-value-read.js";
+import { emitBuiltinProtoConstructorValue } from "./builtin-proto-constructor.js";
 import {
   BUILTIN_STATIC_METHOD_ARITY,
   ensureBuiltinFnMetaType,
@@ -158,6 +159,11 @@ const WELL_KNOWN_SYMBOLS: Record<string, number> = {
   asyncIterator: 12,
   dispose: 13,
   asyncDispose: 14,
+  // (#3573) `matchAll` drifted out of this mirror of the literals.ts table
+  // (id 15 there) — its absence made `hasNativeBuiltinConstantHandler` refuse
+  // `Symbol.matchAll` value reads under --target standalone even though the
+  // downstream constant emitter supports it. Keep in sync with literals.ts.
+  matchAll: 15,
 };
 
 function getWellKnownSymbolId(name: string): number | undefined {
@@ -773,6 +779,20 @@ function tryCompileStandaloneBuiltinProtoMemberRead(
   if (brand === undefined) return undefined;
 
   const member = expr.name.text;
+  // (#4200) `constructor` is an OWN data property of every builtin prototype,
+  // but it is not a METHOD, so it is absent from the per-brand method CSVs and
+  // fell to the unknown-member arm below → `undefined`. It cannot join those
+  // CSVs (the shared consumer would mint a method closure for it); it resolves
+  // instead to the identity-stable constructor carrier the bare `<Builtin>`
+  // identifier reads, so `Error.prototype.constructor === Error` is genuinely
+  // true. Same module backs the gOPD synthesis, so the descriptor's `.value`
+  // and this read cannot drift. Declines (falls through) for builtins with no
+  // carrier — see builtin-proto-constructor.ts.
+  if (member === "constructor") {
+    const ctorType = emitBuiltinProtoConstructorValue(ctx, fctx, builtinName);
+    if (ctorType !== null) return ctorType;
+    return undefined;
+  }
   // (#2984 Phase 2) Own-CSV gate + Object.prototype inheritance + un-wired-
   // member refusal fallback — policy lives in native-proto-value-read.ts.
   const resolved = resolveStandaloneProtoMemberValueClosure(ctx, brand, builtinName, member);
@@ -819,6 +839,31 @@ function tryCompileStandaloneBuiltinProtoMemberRead(
   return closure.type;
 }
 
+/**
+ * The result ValType of a builtin static that returns a JS **boolean**
+ * (`Array.isArray`, `Object.is`, `Object.hasOwn`, `Reflect.has`, `Reflect.set`,
+ * `Number.isNaN` & friends).
+ *
+ * The `boolean: true` brand is not decoration. An `i32` slot backs `number`,
+ * `boolean` and symbol handles alike (#2785/#2795), and every place that lowers
+ * a closure result across the externref ABI picks `__box_boolean` vs
+ * `__box_number` from this brand — so an unbranded predicate reifies `false` as
+ * the NUMBER `0`, and `Object.is(a, b) === false` is then false.
+ *
+ * It is also **load-bearing for other functions**, which is how the missing
+ * brand stayed invisible: the funcref-wrapper registry keys one shared wrapper
+ * per wasm signature (it must — WasmGC type identity is structural, so two
+ * "different" `(externref, externref) -> i32` types are the SAME type at run
+ * time and a `ref.test` ladder cannot tell them apart). Whoever registers that
+ * signature FIRST fixes the brand for every closure that shares it. When
+ * #4223's wrapper-constructor carriers began minting `Object.is`/`Object.hasOwn`
+ * from inside `ensureObjectRuntime`, these unbranded statics started winning
+ * that race — and every user boolean predicate reached through the inline
+ * dynamic-call ladder began boxing as a number (test262's `isConfigurable()`
+ * answering `0`, 105 standalone descriptor tests).
+ */
+const BOOLEAN_PREDICATE_RESULT: ValType = { kind: "i32", boolean: true };
+
 export function ensureStandaloneBuiltinStaticMethodClosure(
   ctx: CodegenContext,
   builtinName: string,
@@ -835,7 +880,7 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
   switch (key) {
     case "Array.isArray":
       paramTypes = [{ kind: "externref" }];
-      returnType = { kind: "i32" };
+      returnType = BOOLEAN_PREDICATE_RESULT;
       break;
     case "Object.keys":
       paramTypes = [{ kind: "externref" }];
@@ -844,9 +889,17 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       // __extern_get_idx. Preserve that contract for method values.
       returnType = { kind: "externref" };
       break;
+    case "Object.getOwnPropertyNames":
+      paramTypes = [{ kind: "externref" }];
+      returnType = { kind: "externref" };
+      break;
     case "Object.getOwnPropertyDescriptor":
       paramTypes = [{ kind: "externref" }, { kind: "externref" }];
       returnType = { kind: "externref" };
+      break;
+    case "Object.hasOwn":
+      paramTypes = [{ kind: "externref" }, { kind: "externref" }];
+      returnType = BOOLEAN_PREDICATE_RESULT;
       break;
     // (#2933) Namespace static-method VALUE reads for the fixed-arity `Reflect.*`
     // methods that the standalone CALL path already backs with a simple
@@ -864,11 +917,11 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       break;
     case "Reflect.has":
       paramTypes = [{ kind: "externref" }, { kind: "externref" }];
-      returnType = { kind: "i32" };
+      returnType = BOOLEAN_PREDICATE_RESULT;
       break;
     case "Reflect.set":
       paramTypes = [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }];
-      returnType = { kind: "i32" };
+      returnType = BOOLEAN_PREDICATE_RESULT;
       break;
     case "Reflect.ownKeys":
       paramTypes = [{ kind: "externref" }];
@@ -949,7 +1002,7 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
         break;
       }
       paramTypes = [{ kind: "externref" }];
-      returnType = { kind: "i32" };
+      returnType = BOOLEAN_PREDICATE_RESULT;
       break;
     }
     // (#2963 Tier 2b) `Object.is(x, y)` as a first-class VALUE — SameValue
@@ -978,7 +1031,7 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
         break;
       }
       paramTypes = [{ kind: "externref" }, { kind: "externref" }];
-      returnType = { kind: "i32" };
+      returnType = BOOLEAN_PREDICATE_RESULT;
       break;
     }
     default: {
@@ -1012,7 +1065,7 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
   const funcName = `__builtin_static_${builtinName}_${propName}`;
   let funcIdx = ctx.funcMap.get(funcName);
   if (funcIdx === undefined) {
-    const selfType: ValType = { kind: "ref", typeIdx: wrapperTypes.structTypeIdx };
+    const selfType: ValType = { kind: "ref", typeIdx: wrapperTypes.liftedSelfTypeIdx };
     const closureFctx = makeBuiltinClosureFctx(funcName, selfType, paramTypes, returnType);
 
     if (key === "Array.isArray") {
@@ -1026,6 +1079,11 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       if (returnType && !valTypesMatch({ kind: "externref" }, returnType)) {
         coerceType(ctx, closureFctx, { kind: "externref" }, returnType);
       }
+    } else if (key === "Object.getOwnPropertyNames") {
+      const namesIdx = ensureLateImport(ctx, "__getOwnPropertyNames", [{ kind: "externref" }], [{ kind: "externref" }]);
+      if (namesIdx === undefined) return null;
+      closureFctx.body.push({ op: "local.get", index: 1 });
+      closureFctx.body.push({ op: "call", funcIdx: namesIdx });
     } else if (key === "Object.getOwnPropertyDescriptor") {
       const gopdIdx = ensureLateImport(
         ctx,
@@ -1037,6 +1095,17 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       closureFctx.body.push({ op: "local.get", index: 1 });
       closureFctx.body.push({ op: "local.get", index: 2 });
       closureFctx.body.push({ op: "call", funcIdx: gopdIdx });
+    } else if (key === "Object.hasOwn") {
+      const hasOwnIdx = ensureLateImport(
+        ctx,
+        "__object_hasOwn",
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "i32" }],
+      );
+      if (hasOwnIdx === undefined) return null;
+      closureFctx.body.push({ op: "local.get", index: 1 });
+      closureFctx.body.push({ op: "local.get", index: 2 });
+      closureFctx.body.push({ op: "call", funcIdx: hasOwnIdx });
     } else if (key === "Reflect.get") {
       // (#2933) Same native the 2-arg standalone `Reflect.get(target, key)` call
       // path uses (calls.ts). The value closure is fixed 2-arg — the optional

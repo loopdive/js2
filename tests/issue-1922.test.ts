@@ -41,6 +41,9 @@ import {
 import { deadCode } from "../src/ir/passes/dead-code.js";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
+import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
+
+const irIdentities = createTestIrFunctionIdentityFactory("issue-1922");
 
 const I32: IrType = irVal({ kind: "i32" });
 
@@ -74,7 +77,7 @@ describe("#1922 DCE keeps loop-buffer-only SSA values live", () => {
     const v_cond = 5;
     const v_inext = 6;
     const fn: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [{ value: asValueId(v_n), type: I32, name: "n" }],
       resultTypes: [I32],
       exported: true,
@@ -132,7 +135,7 @@ describe("#1922 DCE keeps loop-buffer-only SSA values live", () => {
     const v_snew = 8;
     const v_inext = 9;
     const fn: IrFunction = {
-      name: "g",
+      ...irIdentities.next("g"),
       params: [{ value: asValueId(v_n), type: I32, name: "n" }],
       resultTypes: [I32],
       exported: true,

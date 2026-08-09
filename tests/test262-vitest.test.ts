@@ -13,10 +13,11 @@ import { Worker } from "worker_threads";
 // Prevent unhandled Promise rejections from crashing the vitest fork.
 process.on("unhandledRejection", () => {});
 import { createHash } from "crypto";
-import { join, relative, dirname, basename } from "path";
+import { join, relative, basename } from "path";
 import { buildImports } from "../src/runtime.js";
 import { findNthAssert } from "./test262-assert-locator.js";
 import { negativeCompileErrorMatches, negativeCompileSucceededVerdict } from "../scripts/negative-verdict.mjs";
+import { discoverFixtureGraph } from "../scripts/test262-fixture-graph.mjs";
 // Lazy-load compileMulti only when needed (FIXTURE tests) to avoid
 // loading the full compiler into the fork alongside the pool worker.
 let _compileMulti: typeof import("../src/index.js").compileMulti | null = null;
@@ -39,20 +40,8 @@ import {
   type Test262Scope,
 } from "./test262-runner.js";
 
-/**
- * Extract _FIXTURE.js file references from static import/export statements.
- * Returns resolved absolute paths of fixture files.
- */
-function resolveFixtures(source: string, testFilePath: string): string[] {
-  const fixtures: string[] = [];
-  const dir = dirname(testFilePath);
-  const importRe = /(?:import|export)\s+.*?from\s+['"]([^'"]*_FIXTURE\.js)['"]/g;
-  let m;
-  while ((m = importRe.exec(source)) !== null) {
-    const resolved = join(dir, m[1]!);
-    if (existsSync(resolved)) fixtures.push(resolved);
-  }
-  return [...new Set(fixtures)];
+function resolveFixtureGraph(source: string, testFilePath: string) {
+  return discoverFixtureGraph(relative(join(PROJECT_ROOT, "test262", "test"), testFilePath), source);
 }
 
 const PROJECT_ROOT = join(import.meta.dirname ?? ".", "..");
@@ -538,7 +527,7 @@ for (const category of TEST_CATEGORIES) {
               meta.negative.phase === "resolution");
 
           // Multi-file compilation for FIXTURE imports (can't be precompiled)
-          const fixtures = resolveFixtures(source, filePath);
+          const fixtureGraph = resolveFixtureGraph(source, filePath);
           let compileResult:
             | { ok: true; binary: Uint8Array; result: any; cachePath?: string }
             | { ok: false; error: string; errorCodes?: number[]; timeout?: boolean };
@@ -548,19 +537,22 @@ for (const category of TEST_CATEGORIES) {
           // compile_error / compile_timeout, where no binary was produced.
           let wasmSha: string | null = null;
 
-          if (fixtures.length > 0) {
+          if (Object.keys(fixtureGraph.fixtureFiles).length > 0) {
             // FIXTURE tests: compile inline (rare, can't be precompiled)
             try {
-              const vfiles: Record<string, string> = { "./test.ts": wrapped };
-              for (const fixPath of fixtures) {
-                vfiles["./" + relative(dirname(filePath), fixPath)] = readFileSync(fixPath, "utf-8");
-              }
+              const vfiles: Record<string, string> = {
+                ...fixtureGraph.fixtureFiles,
+                [fixtureGraph.entryFile]: wrapped,
+              };
               const multiCompile = await getCompileMulti();
               // (#2932) allowJs: `.js` _FIXTURE root files are otherwise
               // excluded from the TS program and their imports resolve to null.
               // Negative tests excluded — they assert compile-time failure,
               // which allowJs's diagnostic suppression would mask.
-              const result = multiCompile(vfiles, "./test.ts", { skipSemanticDiagnostics: true, allowJs: !isNegative });
+              const result = multiCompile(vfiles, fixtureGraph.entryFile, {
+                skipSemanticDiagnostics: true,
+                allowJs: !isNegative,
+              });
               if (result.success && result.binary.length > 0) {
                 compileResult = {
                   ok: true,

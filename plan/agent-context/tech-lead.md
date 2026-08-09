@@ -67,3 +67,29 @@ No context summaries were written by agents. State captured here instead:
 - Baseline refresh: use `refresh-baseline.yml` with `force_baseline_refresh=true` + `confirm_force=YES`
 - The "refresh-benchmarks" CI job fails on all PRs (missing playground baseline) — this is infra noise, not a test failure. Ignore `conclusion: failure` and look at net/ratio/snapshot_delta instead.
 - Weekly token budget resets: check `rate_limits.seven_day.resets_at` in statusline JSON input — current reset was Apr 30, 10am Europe/Berlin
+
+## 2026-07-21 — Sprint 74 pause / v0.65.0 release boundary
+
+### Delivered
+
+- #3529 and #3519 complete the IR retirement R0 boundary: typed terminal
+  outcomes, complete unit accounting, and the honest `check:ir-only` policy
+  gate are delivered.
+- Full equivalence is back to zero new failures without baseline expansion.
+  One baseline-known case now passes and was intentionally left unratcheted.
+- The bounded hybrid lane is green at 31 / 37 IR-emitted units, with six typed
+  Unsupported units, zero Invariants, and no unaccounted units. Strict is
+  intentionally red on the same six typed blockers and all 37 legacy-emitted
+  bodies.
+- v0.64.1 is the verified starting release. After this sprint-close change
+  lands, cut v0.65.0 from fresh `origin/main`; do not publish its tag until the
+  release commit is itself on `main`.
+
+### Resume point
+
+- Execution is paused at the clean R0/release boundary. #3518 remains open.
+- #3520 is ready and is the only next IR-retirement slice: source-qualified
+  `IrUnitId` plus the whole-program `ProgramAbiMap`.
+- Keep R2–R8 blocked until #3520 and their declared dependency chain land. Do
+  not interpret the hybrid-green gate as permission to flip the default or
+  weaken the six strict typed blockers.

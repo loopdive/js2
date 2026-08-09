@@ -7,7 +7,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { Encoder } from "../../src/interp/encoder.js";
 import { Op, OP_COUNT, OP_INFO } from "../../src/interp/opcodes.js";
-import { compileScript, disassemble } from "../../src/interp/index.js";
+import { compileScript, createDynamicFunction, disassemble, executeIndirectEval } from "../../src/interp/index.js";
 import { loadAcorn, parse, runInterp } from "./harness.js";
 
 beforeAll(async () => {
@@ -20,6 +20,51 @@ function expectValue(body: string, expected: unknown): void {
   expect(r.ok, `body threw: ${r.errName} — ${body}`).toBe(true);
   expect(r.value).toEqual(expected);
 }
+
+describe("#2928 dynamic Function factory", () => {
+  it("constructs a global-scope interpreted function through an injected parser", () => {
+    const globalObject: Record<string, unknown> = {};
+    const fn = createDynamicFunction((source) => parse(source), "a,b", "return a + b", globalObject) as (
+      a: number,
+      b: number,
+    ) => number;
+
+    expect(fn(1, 2)).toBe(3);
+    expect(fn.name).toBe("anonymous");
+    expect(fn.length).toBe(2);
+  });
+
+  it("substitutes the function realm global object for a bare-call this", () => {
+    const globalObject: Record<string, unknown> = {};
+    const fn = createDynamicFunction((source) => parse(source), "", "return this", globalObject) as () => unknown;
+    expect(fn()).toBe(globalObject);
+  });
+
+  it("preserves undefined bare-call this for a strict dynamic function", () => {
+    const globalObject: Record<string, unknown> = {};
+    const fn = createDynamicFunction(
+      (source) => parse(source),
+      "",
+      '"use strict"; return this',
+      globalObject,
+    ) as () => unknown;
+    expect(fn()).toBeUndefined();
+  });
+
+  it("installs one callable realm Function identity for aliases and constructed functions", () => {
+    const globalObject: Record<string, unknown> = {};
+    const result = executeIndirectEval(
+      (source) => parse(source),
+      "var F = Function; var fn = F('a', 'return a + 1'); " +
+        "(typeof F === 'function' ? 1 : 0) + (fn(2) === 3 ? 2 : 0) + " +
+        "(fn.constructor === Function ? 4 : 0)",
+      globalObject,
+    );
+
+    expect(result).toBe(7);
+    expect(globalObject.Function).toBeDefined();
+  });
+});
 
 describe("#3101 encoder — packing + operand fields", () => {
   it("packs op/a/b into one word and the opcode survives the WIDE mask", () => {
@@ -52,7 +97,7 @@ describe("#3101 encoder — packing + operand fields", () => {
     const slot = enc.emitJump(Op.Jump);
     enc.emit0(Op.LdaUndef);
     const target = enc.here();
-    enc.patch(slot);
+    enc.patch(slot, enc.here());
     expect(enc.code[slot]).toBe(target);
   });
 });
@@ -89,7 +134,24 @@ describe("#3101 arithmetic + coercion (delegated to generic runtime ops)", () =>
   it("does string concatenation via +", () => expectValue("'foo' + 'bar'", "foobar"));
   it("mixes number/string coercion like JS +", () => expectValue("1 + '2'", "12"));
   it("computes modulo", () => expectValue("17 % 5", 2));
+  it("applies signed left/right shifts with JS coercion", () => {
+    expectValue("2 << 3", 16);
+    expectValue("16 >> 3", 2);
+    expectValue("-8 >> 2", -2);
+    expectValue("'2' << 3", 16);
+  });
   it("negates and ToNumber-coerces unary +", () => expectValue("-(3) + +'4'", 1));
+  it("calls unshadowed Number through CallBuiltin", () => expectValue("Number('4') + Number()", 4));
+  it("preserves a shadowed global-coercion binding", () =>
+    expectValue("function Number(x){ return x + 1; } Number(4)", 5));
+  it("calls the host-free Math CallBuiltin surface", () =>
+    expectValue("Math.max(3,7,2) + Math.min(3,7,2) + Math.abs(-5) + Math.floor(2.9) + Math.ceil(2.1)", 19));
+  it("preserves Math max/min NaN and signed-zero behavior", () => {
+    expectValue("Math.max()", -Infinity);
+    expectValue("Math.min()", Infinity);
+    expectValue("1 / Math.max(-0, +0)", Infinity);
+    expectValue("1 / Math.min(+0, -0)", -Infinity);
+  });
 });
 
 describe("#3101 comparison desugarings (>, >=, !=, !== via the minimal ISA)", () => {
@@ -122,6 +184,11 @@ describe("#3101 comparison desugarings (>, >=, !=, !== via the minimal ISA)", ()
 });
 
 describe("#3101 control flow + completion values", () => {
+  it("predeclares strict script var, function, lexical, and class bindings", () =>
+    expectValue(
+      '"use strict"; var a=1; let b=2; const c=3; function f(){return 4;} class C { static value(){return 5;} } a+b+c+f()+C.value()',
+      15,
+    ));
   it("if/else takes the right branch", () => expectValue("if (2 > 1) 'yes'; else 'no'", "yes"));
   it("if with false test and no else completes undefined", () => expectValue("1; if (false) 2;", undefined));
   it("while accumulates", () => expectValue("var n=5, f=1; while(n>1){f*=n;n--;} f", 120));
@@ -153,8 +220,14 @@ describe("#3101 calls, closures, recursion, this-binding", () => {
   it("invokes a function expression immediately", () => expectValue("(function(x){return x*x;})(6)", 36));
   it("invokes an arrow", () => expectValue("((a,b)=>a*b)(6,7)", 42));
   it("binds this via a method call", () => expectValue("var o={n:5}; function g(){return this.n;} g.call(o)", 5));
+  it("binds bare interpreted calls to the script global object", () =>
+    expectValue("function g(){return this === globalThis ? 1 : 2;} g()", 1));
   it("nested function sees a global var (global resolution, not capture)", () =>
     expectValue("var g=0; function inc(){ g=g+1; return g; } inc(); inc(); inc()", 3));
+  it("constructs a non-interpreted callable through the fixed-arity runtime seam", () =>
+    expectValue("new Array(1, 2, 3).length", 3));
+  it("keeps construction beyond the Phase-1 arity ceiling catchable", () =>
+    expectValue("var r; try { new Array(1,2,3,4,5,6,7,8,9); } catch (e) { r=e.name; } r", "RangeError"));
 });
 
 describe("#3101 exceptions (side-table, cross-call unwind)", () => {
@@ -169,6 +242,10 @@ describe("#3101 exceptions (side-table, cross-call unwind)", () => {
     expectValue("function boom(){ throw 'x'; } var r='no'; try { boom(); } catch(e){ r=e; } r", "x"));
   it("host TypeError on a non-callable is catchable", () =>
     expectValue("var r = 'no'; try { var n = 5; n(); } catch(e) { r = e.name; } r", "TypeError"));
+  it("constructs an unshadowed native Error through CallBuiltin", () =>
+    expectValue("var r; try { throw new Error('x'); } catch(e) { r=e.name + ':' + e.message; } r", "Error:x"));
+  it("does not replace a shadowed Error binding with the intrinsic", () =>
+    expectValue("function Error(x){ this.value=x; } (new Error(7)).value", 7));
   it("typeof of an undeclared name does not throw", () => expectValue("typeof someUndeclaredThing", "undefined"));
 });
 

@@ -141,6 +141,16 @@ function runVitest() {
   const report = JSON.parse(readFileSync(outFile, "utf8"));
   const failing = new Set();
   const passing = new Set();
+  // (#3340) An `it.fails` test whose body UNEXPECTEDLY PASSES is reported by
+  // vitest with status "failed" + a "Expect test to fail" message. Left in
+  // `failing`, such an inverted sentinel is silently absorbed into the baseline
+  // (knownFailures) as accepted rot — main stays green while the test demands
+  // obsolete bad behavior, masking the real improvement that made it pass. Split
+  // these into a distinct `unexpectedPasses` set: NEVER seeded into the baseline,
+  // and a hard gate failure (the test must be promoted, i.e. its `.fails`
+  // removed / its assertion corrected — not absorbed).
+  const unexpectedPasses = new Set();
+  const isUnexpectedPass = (a) => (a.failureMessages || []).some((m) => /Expect test to fail/i.test(m));
   for (const file of report.testResults || []) {
     const rel = relName(file.name);
     const asserts = file.assertionResults || [];
@@ -152,37 +162,67 @@ function runVitest() {
     }
     for (const a of asserts) {
       const id = testId(rel, a.fullName || a.title);
-      if (a.status === "failed") failing.add(id);
-      else if (a.status === "passed") passing.add(id);
+      if (a.status === "failed") {
+        if (isUnexpectedPass(a)) unexpectedPasses.add(id);
+        else failing.add(id);
+      } else if (a.status === "passed") passing.add(id);
     }
   }
-  return { failing, passing };
+  return { failing, passing, unexpectedPasses };
 }
 
 function mergePartials(dir) {
   const failing = new Set();
   const passing = new Set();
+  const unexpectedPasses = new Set();
   for (const f of readdirSync(dir)) {
     if (!f.endsWith(".json")) continue;
     const p = JSON.parse(readFileSync(join(dir, f), "utf8"));
     for (const id of p.failing || []) failing.add(id);
     for (const id of p.passing || []) passing.add(id);
+    // (#3340) Preserve the inverted-sentinel classification across shard merge.
+    for (const id of p.unexpectedPasses || []) unexpectedPasses.add(id);
   }
-  return { failing, passing };
+  return { failing, passing, unexpectedPasses };
 }
 
-const { failing, passing } = MERGE_DIR ? mergePartials(MERGE_DIR) : runVitest();
+const { failing, passing, unexpectedPasses } = MERGE_DIR ? mergePartials(MERGE_DIR) : runVitest();
 
 // Shard mode: emit a partial artifact and exit 0 — the merge job gates.
 if (SHARD && !MERGE_DIR && !UPDATE && !RATCHET) {
   const partialPath = process.env.PARTIAL_OUT || join(REPO_ROOT, `issue-tests-partial-${SHARD.replace("/", "-")}.json`);
-  writeFileSync(partialPath, JSON.stringify({ failing: [...failing], passing: [...passing] }, null, 2));
-  console.log(`issue-tests-gate: wrote partial ${partialPath} (${failing.size} fail / ${passing.size} pass)`);
+  writeFileSync(
+    partialPath,
+    JSON.stringify({ failing: [...failing], passing: [...passing], unexpectedPasses: [...unexpectedPasses] }, null, 2),
+  );
+  console.log(
+    `issue-tests-gate: wrote partial ${partialPath} (${failing.size} fail / ${passing.size} pass / ${unexpectedPasses.size} unexpected-pass)`,
+  );
   process.exit(0);
 }
 
 function writeBaseline(knownFailures) {
   writeFileSync(BASELINE_PATH, JSON.stringify({ knownFailures: [...knownFailures].sort() }, null, 2) + "\n");
+}
+
+// (#3340) Inverted-sentinel gate — runs in EVERY non-shard mode (normal gate,
+// --update, bootstrap) BEFORE any baseline write. An `it.fails` test whose body
+// unexpectedly passes is a stale sentinel demanding obsolete bad behavior; it
+// must be PROMOTED (remove `.fails` / correct the assertion), never absorbed.
+// `unexpectedPasses` is disjoint from `failing`, so it can never be seeded into
+// knownFailures; exiting here additionally refuses to (re)bank a baseline while
+// an inverted sentinel is unaddressed, forcing the promotion.
+if (unexpectedPasses.size) {
+  console.error(
+    `\n✗ ${unexpectedPasses.size} UNEXPECTED PASS (stale inverted sentinel — an it.fails test now passes):`,
+  );
+  for (const id of [...unexpectedPasses].sort()) console.error(`    UNEXPECTED PASS: ${id}`);
+  console.error(
+    "\nA real improvement made a `.fails` test pass. PROMOTE it — remove `.fails` and assert the now-correct" +
+      " behavior (or re-characterize the remaining gap under its own issue). Do NOT let the baseline absorb it as" +
+      " accepted rot (#3340).",
+  );
+  process.exit(1);
 }
 
 if (UPDATE) {

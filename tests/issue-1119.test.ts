@@ -3,17 +3,15 @@
  * produces ~400 false CEs.
  *
  * The fork worker (`scripts/compiler-fork-worker.mjs`) uses
- * `createIncrementalCompiler()`, which previously passed `oldProgram` into
- * `ts.createProgram` to reuse structure across compilations. In practice
- * this leaked TypeScript checker state: a specific user source could poison
- * the reused program (scope-chain / type-resolution cycles) so that every
- * subsequent compile inside the same incremental compiler threw
- * "Maximum call stack size exceeded" in ~0 ms until RECREATE_INTERVAL
- * kicked in.
+ * `createIncrementalCompiler()`. Raw `oldProgram` hand-off previously leaked
+ * TypeScript checker state: a specific user source could poison the reused
+ * program (scope-chain / type-resolution cycles) so that every subsequent
+ * compile inside the same incremental compiler threw "Maximum call stack size
+ * exceeded" in ~0 ms until RECREATE_INTERVAL kicked in.
  *
- * Fix: drop `oldProgram` reuse in `IncrementalLanguageService.analyze()`.
- * Lib SourceFiles remain cached (main perf win) but each compilation gets
- * a fresh `ts.Program` with a fresh checker.
+ * Program reuse now goes through TypeScript's Language Service with versioned
+ * source snapshots and project/compiler-option invalidation. These tests are
+ * the safety gate that permits the performance win without restoring the leak.
  */
 import { describe, expect, it } from "vitest";
 import { compile, createIncrementalCompiler } from "../src/index.ts";
@@ -64,7 +62,7 @@ describe("Issue #1119 — no cross-compilation leak in incremental compiler", ()
     for (let i = 0; i < sources.length; i++) {
       const src = sources[i]!;
       const standalone = await compile(src, opts);
-      const incremental = incr.compile(src);
+      const incremental = await incr.compile(src);
 
       if (standalone.success !== incremental.success) {
         successMismatches++;
@@ -78,10 +76,16 @@ describe("Issue #1119 — no cross-compilation leak in incremental compiler", ()
         }
         continue;
       }
-      if (standalone.success && standalone.binary.length !== incremental.binary.length) {
+      if (
+        standalone.success &&
+        (standalone.binary.length !== incremental.binary.length ||
+          !Buffer.from(standalone.binary).equals(Buffer.from(incremental.binary)))
+      ) {
         binaryMismatches++;
         if (firstMismatches.length < 3) {
-          firstMismatches.push(`#${i} binary len: std=${standalone.binary.length} inc=${incremental.binary.length}`);
+          firstMismatches.push(
+            `#${i} binary mismatch: std=${standalone.binary.length} bytes inc=${incremental.binary.length} bytes`,
+          );
         }
       }
     }
@@ -95,7 +99,7 @@ describe("Issue #1119 — no cross-compilation leak in incremental compiler", ()
     expect(binaryMismatches).toBe(0);
   });
 
-  it("after a heavy-type compile, all subsequent compiles succeed (no poisoning)", () => {
+  it("after a heavy-type compile, all subsequent compiles succeed (no poisoning)", async () => {
     // A source with many lib types and declaration-merging flavors that is
     // the kind of input observed to "poison" the reused program.
     const heavy = `
@@ -119,12 +123,12 @@ describe("Issue #1119 — no cross-compilation leak in incremental compiler", ()
 
     const incr = createIncrementalCompiler(opts);
 
-    const r0 = incr.compile(heavy);
+    const r0 = await incr.compile(heavy);
     // Regardless of whether the heavy source compiles, the next ones must succeed.
     expect(typeof r0.success).toBe("boolean");
 
     for (let i = 0; i < 20; i++) {
-      const r = incr.compile(light);
+      const r = await incr.compile(light);
       expect(r.success).toBe(true);
       expect(r.binary.length).toBeGreaterThan(0);
       // Must not produce a stack-overflow CE — if it does, that's the leak.

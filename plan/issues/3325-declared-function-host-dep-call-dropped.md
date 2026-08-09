@@ -2,24 +2,31 @@
 id: 3325
 title: "declare function host-dep call is silently dropped (env import bound but never called)"
 status: done
+created: 2026-07-16
+updated: 2026-07-26
+completed: 2026-07-17
+priority: medium
+feasibility: medium
+task_type: bugfix
+language_feature: host-interop
+goal: npm-library-support
 sprint: 72
 assignee: ttraenkler/opus-b
-goal: npm-library-support
-feasibility: medium
-depends_on: []
-priority: medium
 es_edition: ES2015
-language_feature: host-interop
-task_type: bug
 horizon: s
-created: 2026-07-16
-updated: 2026-07-19
-completed: 2026-07-17
+related: [2693, 3657]
 loc-budget-allow:
   - src/runtime.ts
 ---
-
 # #3325 — `declare function` host-dep call silently dropped
+
+## 2026-07-26 IR follow-up boundary
+
+The runtime dependency-wiring fix below remains the correct owner once an
+ambient call reaches the import manifest. #3657 is a separate, earlier-stage
+IR failure: a class method calling an ambient function with a boolean result is
+rejected as `unknown function` before Wasm/import resolution. Do not reopen
+#3325 or change runtime fallback semantics to address that compiler rejection.
 
 ## Problem
 

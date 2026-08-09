@@ -1,0 +1,158 @@
+name: Landing four-lane backend evidence
+
+# Pull requests prove correctness, support reporting, and sanitizer authority.
+# The canonical Ubuntu evidence job is manual and artifact-only. Neither job
+# applies a performance threshold or runs in merge_group.
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/landing-four-lane-backend.yml"
+      - "benchmarks/porffor-direct-ab-harness.c"
+      - "benchmarks/wasmtime-cold-host/**"
+      - "docs/benchmarks/landing-four-lane-backend.md"
+      - "package.json"
+      - "scripts/benchmark-landing-four-lane.mts"
+      - "scripts/benchmark-landing-four-lane-worker.mts"
+      - "scripts/generate-wasmtime-hot-runtime.mjs"
+      - "scripts/lib/landing-benchmark-corpus.mjs"
+      - "scripts/lib/landing-four-lane-benchmark.mts"
+      - "scripts/lib/landing-runtime-timing.mjs"
+      - "scripts/lib/landing-wasmtime-runtime.mjs"
+      - "scripts/lib/porffor-direct-ab.mts"
+      - "scripts/lib/porffor-direct-source-adapter.mts"
+      - "scripts/wasmtime-bench-child-js.mjs"
+      - "src/ir/**"
+      - "tests/issue-3498*.test.ts"
+      - "vendor/Porffor"
+      - "website/public/benchmarks/competitive/programs/*.js"
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  RUST_TOOLCHAIN_VERSION: "1.94.1"
+  WASMTIME_VERSION: "46.0.1"
+
+jobs:
+  correctness-support-sanitizers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Initialize and verify only the pinned Porffor gitlink
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -c submodule.porffor.update=checkout submodule update --init --checkout vendor/Porffor
+          gitlink="$(git rev-parse HEAD:vendor/Porffor)"
+          checkout="$(git -C vendor/Porffor rev-parse HEAD)"
+          fingerprint="$(sed -n 's/^export const PORFFOR_IR_COMMIT = "\([0-9a-f]\{40\}\)";$/\1/p' src/ir/backend/porffor/compat.ts)"
+          test -n "$fingerprint"
+          test "$checkout" = "$gitlink"
+          test "$checkout" = "$fingerprint"
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "25.7.0"
+
+      - name: Install pinned Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN_VERSION" --profile minimal --no-self-update
+          echo "RUSTUP_TOOLCHAIN=$RUST_TOOLCHAIN_VERSION" >> "$GITHUB_ENV"
+
+      - name: Setup pnpm via Corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.30.2 --activate
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Install pinned Wasmtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -L "https://github.com/bytecodealliance/wasmtime/releases/download/v${WASMTIME_VERSION}/wasmtime-v${WASMTIME_VERSION}-x86_64-linux.tar.xz" | tar xJ
+          echo "$PWD/wasmtime-v${WASMTIME_VERSION}-x86_64-linux" >> "$GITHUB_PATH"
+
+      - name: Probe all 16 support cells and separate sanitizers
+        env:
+          CC: clang
+          JS2WASM_PORFFOR_ROOT: vendor/Porffor
+          LANDING_FOUR_LANE_REQUIRED: "1"
+          LANDING_FOUR_LANE_TEST_OUTPUT: .tmp/landing-four-lane-pr
+        run: pnpm run test:landing-four-lane
+
+      - name: Upload PR support and sanitizer evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: landing-four-lane-pr-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .tmp/landing-four-lane-pr
+          if-no-files-found: warn
+          retention-days: 14
+
+  canonical-ubuntu-evidence:
+    if: github.event_name == 'workflow_dispatch'
+    needs: correctness-support-sanitizers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Initialize pinned Porffor
+        run: git -c submodule.porffor.update=checkout submodule update --init --checkout vendor/Porffor
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "25.7.0"
+
+      - name: Install pinned Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN_VERSION" --profile minimal --no-self-update
+          echo "RUSTUP_TOOLCHAIN=$RUST_TOOLCHAIN_VERSION" >> "$GITHUB_ENV"
+
+      - name: Setup pnpm via Corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.30.2 --activate
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Install pinned Wasmtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -L "https://github.com/bytecodealliance/wasmtime/releases/download/v${WASMTIME_VERSION}/wasmtime-v${WASMTIME_VERSION}-x86_64-linux.tar.xz" | tar xJ
+          echo "$PWD/wasmtime-v${WASMTIME_VERSION}-x86_64-linux" >> "$GITHUB_PATH"
+
+      - name: Capture canonical Ubuntu benchmark evidence
+        env:
+          CC: clang
+          JS2WASM_PORFFOR_ROOT: vendor/Porffor
+        run: pnpm run benchmark:landing-four-lane --benchmark --canonical-ubuntu --output .tmp/landing-four-lane-canonical
+
+      - name: Validate the machine-readable matrix
+        run: pnpm run benchmark:landing-four-lane --validate-result .tmp/landing-four-lane-canonical/latest.json
+
+      - name: Upload canonical evidence without thresholds
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: landing-four-lane-canonical-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .tmp/landing-four-lane-canonical
+          if-no-files-found: error
+          retention-days: 30

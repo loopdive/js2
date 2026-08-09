@@ -1,0 +1,138 @@
+name: Optional direct Porffor / JS2 A/B
+
+# Advisory only: pull requests run semantic and sanitizer validation. Performance
+# capture is workflow_dispatch-only, publishes artifacts, and enforces no numeric
+# threshold. This workflow intentionally does not run in merge_group.
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - "benchmarks/porffor-direct-ab-harness.c"
+      - "benchmarks/results/porffor-direct-ab/**"
+      - "scripts/benchmark-porffor-direct-ab.mts"
+      - "scripts/benchmark-porffor-direct-ab-worker.mts"
+      - "scripts/lib/porffor-direct-ab.mts"
+      - "scripts/lib/porffor-direct-source-adapter.mts"
+      - "scripts/porffor-direct-ab-node-oracle.mjs"
+      - "src/ir/**"
+      - "tests/fixtures/porffor-source-to-native-canary.ts"
+      - "tests/issue-3482-direct-porffor-js2-ir-ab.test.ts"
+      - "vendor/Porffor"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/porffor-direct-ab.yml"
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  semantic-sanitizers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Initialize and verify only the pinned Porffor gitlink
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -c submodule.porffor.update=checkout submodule update --init --checkout vendor/Porffor
+          gitlink="$(git rev-parse HEAD:vendor/Porffor)"
+          checkout="$(git -C vendor/Porffor rev-parse HEAD)"
+          fingerprint="$(sed -n 's/^export const PORFFOR_IR_COMMIT = "\([0-9a-f]\{40\}\)";$/\1/p' src/ir/backend/porffor/compat.ts)"
+          test -n "$fingerprint"
+          test "$checkout" = "$gitlink"
+          test "$checkout" = "$fingerprint"
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Setup pnpm via Corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.30.2 --activate
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Record expected plain-Porffor UBSan failures and require clean JS2 rows
+        env:
+          CC: clang
+          JS2WASM_PORFFOR_ROOT: vendor/Porffor
+          PORFFOR_DIRECT_AB_REQUIRED: "1"
+          PORFFOR_DIRECT_AB_TEST_OUTPUT: .tmp/porffor-direct-ab-sanitizers
+        run: pnpm run test:porffor-direct-ab
+
+      - name: Upload sanitizer evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: porffor-direct-ab-sanitizers-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .tmp/porffor-direct-ab-sanitizers
+          if-no-files-found: warn
+          retention-days: 14
+
+  canonical-performance:
+    if: github.event_name == 'workflow_dispatch'
+    needs: semantic-sanitizers
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Initialize and verify only the pinned Porffor gitlink
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -c submodule.porffor.update=checkout submodule update --init --checkout vendor/Porffor
+          gitlink="$(git rev-parse HEAD:vendor/Porffor)"
+          checkout="$(git -C vendor/Porffor rev-parse HEAD)"
+          fingerprint="$(sed -n 's/^export const PORFFOR_IR_COMMIT = "\([0-9a-f]\{40\}\)";$/\1/p' src/ir/backend/porffor/compat.ts)"
+          test -n "$fingerprint"
+          test "$checkout" = "$gitlink"
+          test "$checkout" = "$fingerprint"
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Setup pnpm via Corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.30.2 --activate
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Capture canonical Ubuntu four-row performance evidence
+        env:
+          CC: clang
+          JS2WASM_PORFFOR_ROOT: vendor/Porffor
+        run: pnpm run benchmark:porffor-direct-ab -- --canonical-ubuntu --output .tmp/porffor-direct-ab-canonical
+
+      - name: Validate result schema and invariants
+        run: pnpm run benchmark:porffor-direct-ab -- --validate-result .tmp/porffor-direct-ab-canonical/latest.json
+
+      - name: Upload canonical capture without applying performance thresholds
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: porffor-direct-ab-canonical-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .tmp/porffor-direct-ab-canonical/latest.json
+            .tmp/porffor-direct-ab-canonical/latest.md
+            .tmp/porffor-direct-ab-canonical/commands.json
+            .tmp/porffor-direct-ab-canonical/environment.json
+            .tmp/porffor-direct-ab-canonical/representative
+            .tmp/porffor-direct-ab-canonical/logs
+          if-no-files-found: warn
+          retention-days: 30

@@ -1,6 +1,11 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts, forEachChild } from "./ts-api.js";
-import { PositionMap, type SourceEdit } from "./position-map.js";
+import {
+  PositionMap,
+  type CompilerSourceOriginSpan,
+  type CompilerSourceProducer,
+  type SourceEdit,
+} from "./position-map.js";
 
 interface ClassUsageInfo {
   constructorArgCounts: number[];
@@ -155,7 +160,7 @@ const NODE_BUILTIN_CLASS_TYPED_STUBS: Record<string, Record<string, string>> = {
 };
 
 /** (#1794) Lookup: is `name` a known node-builtin class export of `moduleName`? */
-function nodeBuiltinClassStub(moduleName: string, name: string): string | null {
+export function nodeBuiltinClassStub(moduleName: string, name: string): string | null {
   const members = NODE_BUILTIN_CLASS_TYPED_STUBS[moduleName]?.[name];
   if (!members) return null;
   return (
@@ -244,6 +249,27 @@ const PATH_SHIM_METHODS = [
   "isAbsolute",
   "relative",
 ] as const;
+const PATH_PRELUDE_FUNCTION_ROLES: Readonly<Record<string, string>> = {
+  __js2wasm_path_normStr: "normalize-segments",
+  __js2wasm_path_normalize: "normalize",
+  __js2wasm_path_isAbsolute: "is-absolute",
+  __js2wasm_path_join: "join",
+  __js2wasm_path_resolve: "resolve",
+  __js2wasm_path_dirname: "dirname",
+  __js2wasm_path_basename: "basename",
+  __js2wasm_path_extname: "extname",
+  __js2wasm_path_relative: "relative",
+};
+const PATH_BINDING_FUNCTION_ROLES: Readonly<Record<string, string>> = {
+  join: "named-join",
+  resolve: "named-resolve",
+  normalize: "named-normalize",
+  dirname: "named-dirname",
+  basename: "named-basename",
+  extname: "named-extname",
+  isAbsolute: "named-is-absolute",
+  relative: "named-relative",
+};
 /** Recognised data properties on the `path` module object (posix). */
 const PATH_SHIM_PROPS: Record<string, string> = { sep: '"/"', delimiter: '":"' };
 
@@ -622,6 +648,13 @@ export interface NodeBuiltinImport {
 export interface PreprocessResult {
   /** The transformed source code with import stubs. */
   source: string;
+  /**
+   * Whether preprocessing injected TypeScript-only declarations or
+   * annotations into a JavaScript input. Callers must preserve JavaScript
+   * checking semantics while selecting the TypeScript grammar for the
+   * transformed source.
+   */
+  requiresTsGrammar: boolean;
   /** Node builtin modules detected during preprocessing. */
   nodeBuiltins: NodeBuiltinImport[];
   /** JSX runtime import (if any) detected during preprocessing (#1540). */
@@ -641,16 +674,114 @@ export interface PreprocessResult {
  * `replacements` are expressed in INPUT coordinates as `[start, end) → text`;
  * a prepended `timerShim` is an edit at offset 0 with an empty original span.
  */
+interface PreprocessReplacement {
+  readonly start: number;
+  readonly end: number;
+  readonly text: string;
+  readonly compilerOrigins?: readonly CompilerSourceOriginSpan[];
+}
+
+function generatedFunctionOrigins(
+  text: string,
+  producer: CompilerSourceProducer,
+  roles: Readonly<Record<string, string>>,
+): CompilerSourceOriginSpan[] {
+  const sf = ts.createSourceFile(`__${producer}_origins__.ts`, text, ts.ScriptTarget.Latest, true);
+  const origins: CompilerSourceOriginSpan[] = [];
+  for (const statement of sf.statements) {
+    if (!ts.isFunctionDeclaration(statement) || !statement.body || !statement.name) continue;
+    const role = roles[statement.name.text];
+    if (!role) throw new Error(`missing compiler provenance role for ${producer} helper ${statement.name.text}`);
+    origins.push({
+      start: statement.getStart(sf),
+      end: statement.end,
+      origin: { producer, role },
+    });
+  }
+  return origins;
+}
+
+function generatedClassOrigins(
+  text: string,
+  producer: CompilerSourceProducer,
+  roles: Readonly<Record<string, string>>,
+): CompilerSourceOriginSpan[] {
+  const sf = ts.createSourceFile(`__${producer}_class_origins__.ts`, text, ts.ScriptTarget.Latest, true);
+  const origins: CompilerSourceOriginSpan[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isClassDeclaration(node) && node.name) {
+      const role = roles[node.name.text];
+      if (!role) throw new Error(`missing compiler provenance role for ${producer} class ${node.name.text}`);
+      origins.push({
+        start: node.getStart(sf),
+        end: node.end,
+        origin: { producer, role },
+      });
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(sf, visit);
+  return origins;
+}
+
+function pathBindingOrigins(
+  text: string,
+  functionRoles: Readonly<Record<string, string>> = PATH_BINDING_FUNCTION_ROLES,
+): CompilerSourceOriginSpan[] {
+  const sf = ts.createSourceFile("__node_path_binding_origins__.ts", text, ts.ScriptTarget.Latest, true);
+  const origins = generatedFunctionOrigins(text, "node-path-binding", functionRoles);
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isMethodDeclaration(node) &&
+      ts.isObjectLiteralExpression(node.parent) &&
+      node.name &&
+      ts.isIdentifier(node.name)
+    ) {
+      const methodRole = PATH_BINDING_FUNCTION_ROLES[node.name.text];
+      if (!methodRole) throw new Error(`missing compiler provenance role for node:path method ${node.name.text}`);
+      origins.push({
+        start: node.getStart(sf),
+        end: node.end,
+        origin: { producer: "node-path-binding", role: `default-${methodRole.replace(/^named-/, "")}` },
+      });
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(sf, visit);
+  return origins;
+}
+
 function buildPreprocessPositionMap(
-  replacements: { start: number; end: number; text: string }[],
-  timerShimLen: number,
+  replacements: readonly PreprocessReplacement[],
+  pathShim: string,
+  timerShim: string,
 ): PositionMap {
   const edits: SourceEdit[] = [];
-  if (timerShimLen > 0) {
-    edits.push({ origStart: 0, origEnd: 0, newLength: timerShimLen });
+  if (pathShim.length > 0) {
+    edits.push({
+      origStart: 0,
+      origEnd: 0,
+      newLength: pathShim.length,
+      compilerOrigins: generatedFunctionOrigins(pathShim, "node-path-prelude", PATH_PRELUDE_FUNCTION_ROLES),
+    });
+  }
+  if (timerShim.length > 0) {
+    edits.push({
+      origStart: 0,
+      origEnd: 0,
+      newLength: timerShim.length,
+      compilerOrigins: generatedFunctionOrigins(timerShim, "timer-shim", TIMER_FUNCTION_ROLES),
+    });
   }
   for (const r of replacements) {
-    edits.push({ origStart: r.start, origEnd: r.end, newLength: r.text.length });
+    edits.push({
+      origStart: r.start,
+      origEnd: r.end,
+      newLength: r.text.length,
+      ...(r.compilerOrigins ? { compilerOrigins: r.compilerOrigins } : {}),
+    });
   }
   return new PositionMap(edits);
 }
@@ -723,15 +854,22 @@ function buildTimerShim(used: Set<string>, definedNames: Set<string>): string {
     const hostName = hostFor[name]!;
     if (name === "clearTimeout" || name === "clearInterval") {
       lines.push(`declare function ${hostName}(h: any): void;`);
-      lines.push(`function ${name}(h: any): void { ${hostName}(h); }`);
+      lines.push(`function ${name}(h: number): void { ${hostName}(h); }`);
     } else {
       lines.push(`declare function ${hostName}(cb: any, ms: any): any;`);
-      lines.push(`function ${name}(cb: any, ms: any): any { return ${hostName}(cb, ms); }`);
+      lines.push(`function ${name}(cb: () => void, ms: number): number { return ${hostName}(cb, ms); }`);
     }
   }
   if (lines.length === 0) return "";
   return `// #1501 timer host-import shim (auto-injected)\n${lines.join("\n")}\n`;
 }
+
+const TIMER_FUNCTION_ROLES: Readonly<Record<string, string>> = {
+  setTimeout: "set-timeout",
+  setInterval: "set-interval",
+  clearTimeout: "clear-timeout",
+  clearInterval: "clear-interval",
+};
 
 export function preprocessImports(source: string, opts?: { wasi?: boolean }): PreprocessResult {
   const sf = ts.createSourceFile("__preprocess__.ts", source, ts.ScriptTarget.Latest, true);
@@ -776,9 +914,9 @@ export function preprocessImports(source: string, opts?: { wasi?: boolean }): Pr
     if (!ts.isImportDeclaration(stmt)) continue;
 
     // Import attributes (TS 5.3+ / TS7) — `import x from "m" with { type: "json" }`.
-    // We don't yet resolve JSON imports at compile time (tracked as a
-    // follow-up to #1288 — JSON imports COULD be inlined statically by reading
-    // the JSON file at compile time, but that's out of scope for the shim).
+    // ESM JSON imports with attributes are not resolved here. #3655 handles
+    // only compileProject's static CommonJS `require("./relative.json")`
+    // during filesystem graph expansion; import attributes remain #1288.
     // Per #1288: emit a one-line note and continue; do NOT throw. The TS7
     // native-preview parser surfaces this shape unconditionally, and TS5 has
     // supported the syntax since 5.3.
@@ -915,10 +1053,11 @@ export function preprocessImports(source: string, opts?: { wasi?: boolean }): Pr
   if (nsImports.size === 0 && otherImports.length === 0 && jsxRuntimeImportRanges.length === 0) {
     return {
       source: timerShim ? timerShim + source : source,
+      requiresTsGrammar: timerShim.length > 0,
       nodeBuiltins,
       jsxRuntime,
       // #1928 — no imports here; only the (optional) timer-shim prepend shifts positions.
-      positionMap: buildPreprocessPositionMap([], timerShim.length),
+      positionMap: buildPreprocessPositionMap([], "", timerShim),
     };
   }
 
@@ -1072,10 +1211,10 @@ export function preprocessImports(source: string, opts?: { wasi?: boolean }): Pr
   visit(sf);
 
   // Step 3: Generate replacements
-  const replacements: { start: number; end: number; text: string }[] = [];
+  const replacements: PreprocessReplacement[] = [];
 
   // Namespace imports → declare namespace
-  for (const [nsName, { start, end }] of nsImports) {
+  for (const [nsName, { start, end, moduleSpec }] of nsImports) {
     const classes = namespaces.get(nsName)!;
     const nested = nestedNs.get(nsName)!;
 
@@ -1131,7 +1270,18 @@ export function preprocessImports(source: string, opts?: { wasi?: boolean }): Pr
     }
 
     declare += `}`;
-    replacements.push({ start, end, text: declare });
+    const moduleRole = isNodeBuiltin(moduleSpec) ? `node:${normalizeNodeBuiltin(moduleSpec)}` : moduleSpec;
+    const classRoles = Object.fromEntries(
+      [...classes.keys()].map((className) => [className, `namespace-class:${moduleRole}:${className}`]),
+    );
+    replacements.push({
+      start,
+      end,
+      text: declare,
+      ...(Object.keys(classRoles).length > 0
+        ? { compilerOrigins: generatedClassOrigins(declare, "import-wrapper", classRoles) }
+        : {}),
+    });
   }
 
   // Default and named imports → declare stubs
@@ -1160,10 +1310,12 @@ export function preprocessImports(source: string, opts?: { wasi?: boolean }): Pr
           }
         }
       }
+      const replacementText = lines.length > 0 ? lines.join("\n") : `/* node:path shim import removed */`;
       replacements.push({
         start: imp.start,
         end: imp.end,
-        text: lines.length > 0 ? lines.join("\n") : `/* node:path shim import removed */`,
+        text: replacementText,
+        compilerOrigins: pathBindingOrigins(replacementText),
       });
       continue;
     }
@@ -1178,6 +1330,8 @@ export function preprocessImports(source: string, opts?: { wasi?: boolean }): Pr
     // `globalThis.crypto` fallback).
     const isBuiltin = isNodeBuiltin(imp.moduleSpec);
     const moduleName = isBuiltin ? normalizeNodeBuiltin(imp.moduleSpec) : "";
+    const wrapperRoles: Record<string, string> = {};
+    const classRoles: Record<string, string> = {};
     const nodeBuiltinFnTypedStub = (name: string): string | null => {
       if (!isBuiltin) return null;
       const stub = NODE_BUILTIN_FN_TYPED_STUBS[moduleName]?.[name];
@@ -1188,6 +1342,7 @@ export function preprocessImports(source: string, opts?: { wasi?: boolean }): Pr
       // appears in a Node module/fn name); the import-manifest classifier
       // decodes `$` → `/` so the runtime resolves `require("fs/promises")`.
       const hostName = `__nodefn__${moduleName.replace(/\//g, "$")}__${name}`;
+      wrapperRoles[name] = `node-builtin:${moduleName}:${name}`;
       return (
         `declare function ${hostName}(${stub.params}): ${stub.returns};\n` +
         `function ${name}(${stub.params}): ${stub.returns} { return ${hostName}(${stub.passthrough}); }`
@@ -1218,6 +1373,7 @@ export function preprocessImports(source: string, opts?: { wasi?: boolean }): Pr
           const classStub = nodeBuiltinClassStub(moduleName, name);
           if (classStub) {
             lines.push(classStub);
+            classRoles[name] = `node-builtin-class:${moduleName}:${name}`;
             continue;
           }
         }
@@ -1237,10 +1393,20 @@ export function preprocessImports(source: string, opts?: { wasi?: boolean }): Pr
       }
     }
 
+    const replacementText = lines.length > 0 ? lines.join("\n") : `/* side-effect import removed */`;
+    const compilerOrigins = [
+      ...(Object.keys(wrapperRoles).length > 0
+        ? generatedFunctionOrigins(replacementText, "import-wrapper", wrapperRoles)
+        : []),
+      ...(Object.keys(classRoles).length > 0
+        ? generatedClassOrigins(replacementText, "import-wrapper", classRoles)
+        : []),
+    ];
     replacements.push({
       start: imp.start,
       end: imp.end,
-      text: lines.length > 0 ? lines.join("\n") : `/* side-effect import removed */`,
+      text: replacementText,
+      ...(compilerOrigins.length > 0 ? { compilerOrigins } : {}),
     });
   }
 
@@ -1288,7 +1454,7 @@ export function preprocessImports(source: string, opts?: { wasi?: boolean }): Pr
   // #1928 — capture the import-stub edits (in INPUT coordinates) for the
   // position map BEFORE the reverse-order apply mutates `result`. The map
   // constructor re-sorts ascending, so the apply order here is irrelevant to it.
-  const positionMap = buildPreprocessPositionMap(replacements, prelude.length);
+  const positionMap = buildPreprocessPositionMap(replacements, pathShim, timerShim);
 
   // Apply replacements in reverse order to preserve positions
   let result = source;
@@ -1297,5 +1463,14 @@ export function preprocessImports(source: string, opts?: { wasi?: boolean }): Pr
     result = result.substring(0, r.start) + r.text + result.substring(r.end);
   }
 
-  return { source: prelude ? prelude + result : result, nodeBuiltins, jsxRuntime, positionMap };
+  return {
+    source: prelude ? prelude + result : result,
+    // Import replacement emits `declare` stubs (and the optional path/timer
+    // preludes carry annotations), all of which require TS grammar even when
+    // the original source is a `.js` file.
+    requiresTsGrammar: true,
+    nodeBuiltins,
+    jsxRuntime,
+    positionMap,
+  };
 }

@@ -51,7 +51,9 @@ import {
 } from "../src/ir/index.js";
 import { createEmptyModule } from "../src/ir/types.js";
 import type { FuncTypeDef } from "../src/ir/types.js";
+import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
 
+const identities = createTestIrFunctionIdentityFactory("issue-2949-s5-1-truthiness");
 const F64: IrType = irVal({ kind: "f64" });
 const I32: IrType = irVal({ kind: "i32" });
 const DYN: IrType = irDynamic();
@@ -164,7 +166,7 @@ function hostEnvFor(ctx: CodegenContext): Record<string, unknown> {
 
 describe("#2949 S5.1 — emitDynTruthy emits a verifier-clean i32 dyn.truthy node", () => {
   it("appends a dyn.truthy node with i32 result and registers typeOf", () => {
-    const b = new IrFunctionBuilder("truthy1", [I32], true);
+    const b = new IrFunctionBuilder(identities.next("truthy1"), [I32], true);
     const x = b.addParam("x", DYN);
     b.openBlock();
     const t = b.emitDynTruthy(x);
@@ -177,7 +179,7 @@ describe("#2949 S5.1 — emitDynTruthy emits a verifier-clean i32 dyn.truthy nod
   });
 
   it("rejects a non-dynamic operand at construction (general truthiness is carrier-only)", () => {
-    const b = new IrFunctionBuilder("truthyBad", [I32], true);
+    const b = new IrFunctionBuilder(identities.next("truthyBad"), [I32], true);
     const c = b.addParam("c", F64);
     b.openBlock();
     expect(() => b.emitDynTruthy(c)).toThrow(/not dynamic/);
@@ -186,7 +188,7 @@ describe("#2949 S5.1 — emitDynTruthy emits a verifier-clean i32 dyn.truthy nod
   it("a dyn.truthy fed a concrete operand fails the verifier (defense in depth)", () => {
     // Hand-craft a malformed node bypassing the builder guard to prove the
     // verifier is the hard backstop, not just the constructor.
-    const b = new IrFunctionBuilder("truthyVerify", [I32], true);
+    const b = new IrFunctionBuilder(identities.next("truthyVerify"), [I32], true);
     const c = b.addParam("c", I32);
     b.openBlock();
     b.terminate({ kind: "return", values: [c] });
@@ -242,7 +244,7 @@ describe("#2949 S5.1 — IrDynamicLowering.emitToBoolean routes to the canonical
  * both strategies (gc `__any_unbox_bool` / host `__box_number`+`__is_truthy`).
  */
 function truthyF64(name: string): IrFunction {
-  const b = new IrFunctionBuilder(name, [F64], true);
+  const b = new IrFunctionBuilder(identities.next(name), [F64], true);
   const x = b.addParam("x", F64);
   b.openBlock();
   const d = b.emitBox(x, DYN);
@@ -259,7 +261,7 @@ function truthyF64(name: string): IrFunction {
  * Exercises the tag-4 boolean partition through the SAME truthiness path.
  */
 function truthyBool(name: string): IrFunction {
-  const b = new IrFunctionBuilder(name, [F64], true);
+  const b = new IrFunctionBuilder(identities.next(name), [F64], true);
   const x = b.addParam("x", I32);
   b.openBlock();
   const d = b.emitBox(x, irDynamic(JsTag.Boolean));
@@ -278,7 +280,7 @@ function truthyBool(name: string): IrFunction {
  * value, so this drives the FULL JS-truthiness spectrum.
  */
 function truthyDyn(name: string): IrFunction {
-  const b = new IrFunctionBuilder(name, [I32], true);
+  const b = new IrFunctionBuilder(identities.next(name), [I32], true);
   const x = b.addParam("x", DYN);
   b.openBlock();
   const t = b.emitDynTruthy(x);

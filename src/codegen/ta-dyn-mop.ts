@@ -53,7 +53,7 @@ import { undefinedExternInstrs } from "./any-helpers.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 // (#3177 slice 3) per-kind `<View>.prototype` identity — the SAME $NativeProto
 // glue singleton a static `<View>.prototype` value read yields.
-import { ensureTypedArrayViewNativeProtoGlue } from "./array-object-proto.js";
+import { ensureDataViewNativeProtoGlue, ensureTypedArrayViewNativeProtoGlue } from "./array-object-proto.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
 
 /** Fresh synthetic FunctionContext for a native helper (the #2872 pattern). */
@@ -833,9 +833,11 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
     const base = 1 + getProtoFn.locals.length;
     const pAny = base;
     const pKind = base + 1;
+    const pConstructProto = base + 2;
     getProtoFn.locals.push(
       { name: "__tap_any", type: { kind: "anyref" } },
       { name: "__tap_kind", type: { kind: "i32" } },
+      { name: "__tap_construct_proto", type: { kind: "externref" } },
     );
     const inner: Instr[] = [];
     const fctxLike = {
@@ -844,6 +846,18 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
       params: [{ name: "p", type: { kind: "externref" } }],
       localMap: new Map(),
     } as unknown as FunctionContext;
+    // A non-null override was selected from NewTarget.prototype by #3371.
+    inner.push({ op: "local.get", index: pAny });
+    inner.push({ op: "ref.cast", typeIdx: dynIdx });
+    inner.push({ op: "struct.get", typeIdx: dynIdx, fieldIdx: 5 });
+    inner.push({ op: "local.tee", index: pConstructProto });
+    inner.push({ op: "ref.is_null" });
+    inner.push({ op: "i32.eqz" });
+    inner.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "local.get", index: pConstructProto }, { op: "return" }],
+    });
     inner.push({ op: "local.get", index: pAny });
     inner.push({ op: "ref.cast", typeIdx: dynIdx });
     inner.push({ op: "struct.get", typeIdx: dynIdx, fieldIdx: 3 });
@@ -1287,5 +1301,88 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
         { op: "if", blockType: { kind: "empty" }, then: inner },
       );
     }
+  }
+}
+
+/** #3371 finalize arm for DataView's Reflect.construct prototype override. */
+export function fillDataViewConstructProtoArm(ctx: CodegenContext): void {
+  if (!ctx.standalone || ctx.dvWindowTypeIdx < 0) return;
+  const getProtoIdx = ctx.funcMap.get("__getPrototypeOf");
+  const getProtoFn = getProtoIdx === undefined ? undefined : definedFuncAt(ctx, getProtoIdx);
+  if (!getProtoFn) return;
+  const dvIdx = ctx.dvWindowTypeIdx;
+  const base = 1 + getProtoFn.locals.length;
+  const dAny = base;
+  const dProto = base + 1;
+  getProtoFn.locals.push(
+    { name: "__dvp_any", type: { kind: "anyref" } },
+    { name: "__dvp_construct_proto", type: { kind: "externref" } },
+  );
+  const inner: Instr[] = [
+    { op: "local.get", index: dAny },
+    { op: "ref.cast", typeIdx: dvIdx },
+    { op: "struct.get", typeIdx: dvIdx, fieldIdx: 3 },
+    { op: "local.tee", index: dProto },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "local.get", index: dProto }, { op: "return" }],
+    },
+  ];
+  const fctxLike = {
+    body: inner,
+    locals: getProtoFn.locals,
+    params: [{ name: "p", type: { kind: "externref" } }],
+    localMap: new Map(),
+  } as unknown as FunctionContext;
+  const dvBrand = ensureDataViewNativeProtoGlue(ctx);
+  if (dvBrand !== undefined && emitLazyNativeProtoGet(ctx, fctxLike, dvBrand)) inner.push({ op: "return" });
+  getProtoFn.body.unshift(
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "local.tee", index: dAny },
+    { op: "ref.test", typeIdx: dvIdx },
+    { op: "if", blockType: { kind: "empty" }, then: inner },
+  );
+
+  // Dynamic property reads on the DataView carrier must walk the selected
+  // ordinary prototype too (`sample.constructor` in the official test).
+  const externGetIdx = ctx.funcMap.get("__extern_get");
+  const externGetFn = externGetIdx === undefined ? undefined : definedFuncAt(ctx, externGetIdx);
+  if (externGetFn && externGetIdx !== undefined) {
+    const getBase = 2 + externGetFn.locals.length;
+    const gAny = getBase;
+    const gProto = getBase + 1;
+    externGetFn.locals.push(
+      { name: "__dvg_any", type: { kind: "anyref" } },
+      { name: "__dvg_construct_proto", type: { kind: "externref" } },
+    );
+    const getInner: Instr[] = [
+      { op: "local.get", index: gAny },
+      { op: "ref.cast", typeIdx: dvIdx },
+      { op: "struct.get", typeIdx: dvIdx, fieldIdx: 3 },
+      { op: "local.tee", index: gProto },
+      { op: "ref.is_null" },
+      { op: "i32.eqz" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: gProto },
+          { op: "local.get", index: 1 },
+          { op: "call", funcIdx: externGetIdx },
+          { op: "return" },
+        ],
+      },
+    ];
+    externGetFn.body.unshift(
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "local.tee", index: gAny },
+      { op: "ref.test", typeIdx: dvIdx },
+      { op: "if", blockType: { kind: "empty" }, then: getInner },
+    );
   }
 }

@@ -1,7 +1,7 @@
 ---
 id: 2039
 title: "UMBRELLA: standalone invalid-Wasm residual bucket — 203 live rows split into children #3394-#3398 (bigint box, extern boxing, closure/struct type, scalar unbox, tail-call long tail)"
-status: in-progress
+status: ready
 sprint: current
 created: 2026-06-10
 updated: 2026-07-18

@@ -15,14 +15,13 @@
       "--no-wasm-tier-up",
       "--liftoff"
     ],
-    "wasmUs": 2269.178977272728,
-    "jsUs": 40213.1375,
-    "wasmStdUs": 3.672326361968849,
-    "jsStdUs": 226.85319707254516,
-    "ratioStd": 0.10776836831155966,
+    "wasmUs": 3639.824752941176,
+    "jsUs": 59065.622299999995,
+    "wasmStdUs": 3.7368218944924156,
+    "jsStdUs": 90.26412919050097,
+    "ratioStd": 0.021587570870887314,
     "warmupRounds": 2,
-    "measuredRounds": 9,
-    "coldJsUs": 40213.1375
+    "measuredRounds": 9
   },
   {
     "path": "examples/benchmarks/loop.ts",
@@ -40,14 +39,13 @@
       "--no-wasm-tier-up",
       "--liftoff"
     ],
-    "wasmUs": 256.5523341924399,
-    "jsUs": 7813.4687499999945,
-    "wasmStdUs": 2.594609838350956,
-    "jsStdUs": 363.7978332672849,
-    "ratioStd": 1.3560861914627103,
+    "wasmUs": 162.08484039087955,
+    "jsUs": 11238.278962962964,
+    "wasmStdUs": 4.267478821549363,
+    "jsStdUs": 70.95270407922433,
+    "ratioStd": 1.8267353871034346,
     "warmupRounds": 2,
-    "measuredRounds": 9,
-    "coldJsUs": 7813.4687499999945
+    "measuredRounds": 9
   },
   {
     "path": "examples/benchmarks/string.ts",
@@ -65,14 +63,13 @@
       "--no-wasm-tier-up",
       "--liftoff"
     ],
-    "wasmUs": 2.207497375328083,
-    "jsUs": 8.899546028738355,
-    "wasmStdUs": 0.15541724391429565,
-    "jsStdUs": 0.19220807061020426,
-    "ratioStd": 0.27539445541295593,
+    "wasmUs": 0.08469201406043969,
+    "jsUs": 15.968727016985138,
+    "wasmStdUs": 0.0008974593768827428,
+    "jsStdUs": 0.32714230456349425,
+    "ratioStd": 4.109664180399017,
     "warmupRounds": 2,
-    "measuredRounds": 9,
-    "coldJsUs": 8.899546028738355
+    "measuredRounds": 9
   },
   {
     "path": "examples/benchmarks/array.ts",
@@ -90,13 +87,12 @@
       "--no-wasm-tier-up",
       "--liftoff"
     ],
-    "wasmUs": 13.454687612093238,
-    "jsUs": 239.79663204508856,
-    "wasmStdUs": 0.2633450704764015,
-    "jsStdUs": 2.4477634689926058,
-    "ratioStd": 0.39809623604547817,
+    "wasmUs": 15.255618305542566,
+    "jsUs": 391.7130515873018,
+    "wasmStdUs": 0.024351754103041662,
+    "jsStdUs": 6.967812534786168,
+    "ratioStd": 0.47904997251884274,
     "warmupRounds": 2,
-    "measuredRounds": 9,
-    "coldJsUs": 239.79663204508856
+    "measuredRounds": 9
   }
 ]

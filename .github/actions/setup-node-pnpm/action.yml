@@ -1,0 +1,24 @@
+name: Setup Node and pnpm
+description: Install the repository-pinned pnpm and restore its content-addressable store.
+
+inputs:
+  node-version:
+    description: Node.js version used by the job.
+    required: false
+    default: "25"
+
+runs:
+  using: composite
+  steps:
+    # action-setup reads the exact pnpm version from package.json's
+    # packageManager field. This avoids a network-dependent `corepack prepare`
+    # in every matrix cell and keeps the workflow pin in one place.
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v4
+
+    - name: Setup Node with pnpm store cache
+      uses: actions/setup-node@v6
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: pnpm
+        cache-dependency-path: pnpm-lock.yaml

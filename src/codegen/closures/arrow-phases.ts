@@ -25,7 +25,13 @@ import {
   resolveWasmType,
 } from "../index.js";
 import { addFunctionOwnLocals } from "../binding-info.js";
-import { getOrCreateFuncRefWrapperTypes } from "./funcref-wrapper-types.js";
+import {
+  closureArityField,
+  closureBagField,
+  closureBagInitInstr,
+  getOrCreateConstructibleFuncRefWrapperTypes,
+  getOrCreateFuncRefWrapperTypes,
+} from "./funcref-wrapper-types.js";
 import { allocLocal } from "../context/locals.js";
 import { emitBoundsCheckedArrayGet } from "../shared.js";
 import { spliceNullGuarded } from "./param-emit-helpers.js";
@@ -54,6 +60,19 @@ export type ArrowClosureCapture = {
   hasTdzFlag: boolean;
 };
 
+/** A closure created directly while an enclosing function's parameter
+ * environment is being initialized cannot see declarations from that
+ * function's body VariableEnvironment yet. A same-named live local therefore
+ * wins over an eagerly registered body-function entry in `funcMap`. */
+function isDirectParameterInitializerClosure(node: ts.ArrowFunction | ts.FunctionExpression): boolean {
+  let child: ts.Node = node;
+  for (let parent = node.parent; parent; child = parent, parent = parent.parent) {
+    if (ts.isParameter(parent)) return parent.initializer === child;
+    if (ts.isFunctionLike(parent)) return false;
+  }
+  return false;
+}
+
 /**
  * Phase 1 of compileArrowAsClosure: capture analysis. Scans the arrow /
  * function-expression body (and its parameter default initializers) for free
@@ -71,12 +90,14 @@ export function planClosureCaptures(
   fctx: FunctionContext,
   arrow: ts.ArrowFunction | ts.FunctionExpression,
   body: ts.ConciseBody,
+  additionalCaptureNames?: Iterable<string>,
 ): { captures: ArrowClosureCapture[]; selfBindingName: string | undefined } {
   // 2. Analyze captured variables. Use scope-aware collection so that nested
   //    `var` declarations and parameter bindings inside the closure body shadow
   //    outer references — otherwise a closure with its own `var i;` would be
   //    treated as capturing the outer `i` (#995/#996).
   const ownLocals = arrowOwnLocals(arrow);
+  const createdInParameterEnvironment = isDirectParameterInitializerClosure(arrow);
 
   // (#2118) Self-recursive const/let arrow: `const f = (n) => ... f(n-1)`.
   // The closure references its own binding `f`. Without special handling the
@@ -132,6 +153,14 @@ export function planClosureCaptures(
   // captures.
   for (const p of arrow.parameters) {
     collectReferencedIdentifiers(p, referencedNames, ownLocals);
+  }
+  // Direct-eval source is opaque to the static identifier scan. Its lexical
+  // ancestors have already promoted all eval-visible bindings to cells; make
+  // those cells explicit captures so this closure can forward the live scope.
+  if (additionalCaptureNames) {
+    for (const name of additionalCaptureNames) {
+      if (!ownLocals.has(name)) referencedNames.add(name);
+    }
   }
 
   // Transitively add captures needed by called nested functions.
@@ -302,7 +331,13 @@ export function planClosureCaptures(
     // (concat/length/equals/substring/charCodeAt), which lives in funcMap yet
     // must not block capture of a same-named outer local (e.g. the test262
     // `let length = "outer"` dstr template). Discriminate by index.
-    if (ctx.funcMap.has(name) && ctx.funcMap.get(name) !== ctx.jsStringImports.get(name)) continue;
+    if (
+      !createdInParameterEnvironment &&
+      ctx.funcMap.has(name) &&
+      ctx.funcMap.get(name) !== ctx.jsStringImports.get(name)
+    ) {
+      continue;
+    }
     // Skip if the name is the arrow's own parameter (including destructuring bindings)
     if (isOwnParamName(arrow, name)) continue;
     // Skip if the name is a named function expression's own name (self-reference)
@@ -373,33 +408,45 @@ export function mintClosureStructTypes(
     closureResults: ValType[];
     closureName: string;
     isNamedFuncExpr: boolean;
+    constructible: boolean;
   },
-): { structTypeIdx: number; liftedFuncTypeIdx: number; liftedParams: ValType[] } {
-  const { captures, arrowParams, closureResults, closureName, isNamedFuncExpr } = opts;
+): { structTypeIdx: number; liftedFuncTypeIdx: number; liftedSelfTypeIdx: number; liftedParams: ValType[] } {
+  const { captures, arrowParams, closureResults, closureName, isNamedFuncExpr, constructible } = opts;
   let structTypeIdx: number;
   let liftedFuncTypeIdx: number;
+  let liftedSelfTypeIdx: number;
   let liftedParams: ValType[];
   if (captures.length === 0 && !isNamedFuncExpr) {
-    const wrapperTypes = getOrCreateFuncRefWrapperTypes(ctx, arrowParams, closureResults);
+    const wrapperTypes = constructible
+      ? getOrCreateConstructibleFuncRefWrapperTypes(ctx, arrowParams, closureResults)
+      : getOrCreateFuncRefWrapperTypes(ctx, arrowParams, closureResults);
     if (wrapperTypes) {
       structTypeIdx = wrapperTypes.structTypeIdx;
       liftedFuncTypeIdx = wrapperTypes.liftedFuncTypeIdx;
-      liftedParams = [{ kind: "ref", typeIdx: structTypeIdx }, ...arrowParams];
+      liftedSelfTypeIdx = wrapperTypes.liftedSelfTypeIdx;
+      liftedParams = [{ kind: "ref", typeIdx: liftedSelfTypeIdx }, ...arrowParams];
     } else {
       // Fallback: create a unique struct type
-      const structFields = [{ name: "func", type: { kind: "funcref" as const }, mutable: false }];
+      const structFields = [
+        { name: "func", type: { kind: "funcref" as const }, mutable: false },
+        closureArityField(),
+        closureBagField(),
+      ];
       structTypeIdx = ctx.mod.types.length;
       ctx.mod.types.push({
         kind: "struct",
         name: `${closureName}_struct`,
         fields: structFields,
       });
-      liftedParams = [{ kind: "ref", typeIdx: structTypeIdx }, ...arrowParams];
+      liftedSelfTypeIdx = structTypeIdx;
+      liftedParams = [{ kind: "ref", typeIdx: liftedSelfTypeIdx }, ...arrowParams];
       liftedFuncTypeIdx = addFuncType(ctx, liftedParams, closureResults, `${closureName}_type`);
     }
   } else {
     const structFields = [
       { name: "func", type: { kind: "funcref" as const }, mutable: false },
+      closureArityField(),
+      closureBagField(),
       ...captures.map((c) => buildCaptureFieldDef(ctx, c)),
     ];
 
@@ -418,15 +465,37 @@ export function mintClosureStructTypes(
         });
       }
     }
+    if (constructible) {
+      structFields.push({ name: "__constructible", type: { kind: "i32" as const }, mutable: false });
+    }
 
-    // For closures with captures (but not named func exprs), make the struct
-    // a subtype of the shared wrapper struct so ref.cast at call sites succeeds.
-    // Named func exprs need ref_null __self (for var hoisting), so they can't
-    // share the wrapper's lifted func type which uses non-null ref.
-    const wrapperTypes = !isNamedFuncExpr ? getOrCreateFuncRefWrapperTypes(ctx, arrowParams, closureResults) : null;
+    // For closures with captures, make the struct a subtype of the shared
+    // wrapper struct so ref.cast at call sites succeeds. Named func exprs need
+    // ref_null __self (for var hoisting), so they can't share the wrapper's
+    // lifted func type which uses non-null ref — but (#3673) they still
+    // SUBTYPE the wrapper and take the nullable canonical ROOT as their self
+    // param: their lifted func types then dedupe BY USER SIGNATURE across all
+    // named function expressions (previously each minted a private
+    // `(ref_null $ownStruct, …)` func type, and acorn's hundreds of
+    // `pp$X.method = function …` closures exploded the `__apply_closure` /
+    // `__call_fn_method_N` ref.test chains to ~90 arms). Bodies downcast the
+    // root self to the private struct for capture access — the same
+    // `usesWrapperFuncType` machinery shared-wrapper captured closures use.
+    const wrapperTypes = getOrCreateFuncRefWrapperTypes(ctx, arrowParams, closureResults);
 
     structTypeIdx = ctx.mod.types.length;
-    if (wrapperTypes) {
+    if (wrapperTypes && isNamedFuncExpr) {
+      ctx.mod.types.push({
+        kind: "struct",
+        name: `${closureName}_struct`,
+        fields: structFields,
+        superTypeIdx: wrapperTypes.structTypeIdx,
+      });
+      if (constructible) ctx.constructibleClosureTypeIdxs.add(structTypeIdx);
+      liftedSelfTypeIdx = wrapperTypes.liftedSelfTypeIdx;
+      liftedParams = [{ kind: "ref_null", typeIdx: liftedSelfTypeIdx }, ...arrowParams];
+      liftedFuncTypeIdx = addFuncType(ctx, liftedParams, closureResults, `${closureName}_type`);
+    } else if (wrapperTypes) {
       // Subtype of the wrapper struct — inherits field 0 (funcref), adds captures
       ctx.mod.types.push({
         kind: "struct",
@@ -434,25 +503,29 @@ export function mintClosureStructTypes(
         fields: structFields,
         superTypeIdx: wrapperTypes.structTypeIdx,
       });
+      if (constructible) ctx.constructibleClosureTypeIdxs.add(structTypeIdx);
       // Share the wrapper's lifted func type so call_ref dispatches correctly.
-      // The __self param is (ref $wrapperStruct), and the lifted body will
-      // ref.cast to the specific subtype to access captures.
+      // The __self param is the canonical wrapper ROOT, and the lifted body
+      // ref.casts to the specific subtype to access captures.
       liftedFuncTypeIdx = wrapperTypes.liftedFuncTypeIdx;
-      liftedParams = [{ kind: "ref_null", typeIdx: structTypeIdx }, ...arrowParams];
+      liftedSelfTypeIdx = wrapperTypes.liftedSelfTypeIdx;
+      liftedParams = [{ kind: "ref", typeIdx: liftedSelfTypeIdx }, ...arrowParams];
     } else {
       ctx.mod.types.push({
         kind: "struct",
         name: `${closureName}_struct`,
         fields: structFields,
       });
+      if (constructible) ctx.constructibleClosureTypeIdxs.add(structTypeIdx);
       // 4. Create the lifted function type: (ref_null $closure_struct, ...arrowParams) → results
       // Use ref_null for __self so that var-hoisted variables shadowing the function name
       // (e.g. `var g` inside `function g()`) can be default-initialized to null.
-      liftedParams = [{ kind: "ref_null", typeIdx: structTypeIdx }, ...arrowParams];
+      liftedSelfTypeIdx = structTypeIdx;
+      liftedParams = [{ kind: "ref_null", typeIdx: liftedSelfTypeIdx }, ...arrowParams];
       liftedFuncTypeIdx = addFuncType(ctx, liftedParams, closureResults, `${closureName}_type`);
     }
   }
-  return { structTypeIdx, liftedFuncTypeIdx, liftedParams };
+  return { structTypeIdx, liftedFuncTypeIdx, liftedSelfTypeIdx, liftedParams };
 }
 
 /**
@@ -711,9 +784,13 @@ export function emitClosureConstruction(
   captures: ArrowClosureCapture[],
   liftedFuncIdx: number,
   structTypeIdx: number,
+  arity: number,
 ): void {
-  // 7. At the creation site, emit struct.new with funcref + captured values
+  // 7. At the creation site, emit struct.new with funcref + (#3673) declared
+  // arity + captured values
   fctx.body.push({ op: "ref.func", funcIdx: liftedFuncIdx });
+  fctx.body.push({ op: "i32.const", value: arity });
+  fctx.body.push(closureBagInitInstr()); // (#4241) $bag — no expandos at birth
   for (const cap of captures) {
     if (cap.mutable) {
       // Check if the outer scope already has this variable boxed (nested closure case)
@@ -774,6 +851,10 @@ export function emitClosureConstruction(
     }
   }
 
+  if (ctx.constructibleClosureTypeIdxs.has(structTypeIdx)) {
+    fctx.body.push({ op: "i32.const", value: 1 });
+  }
+
   fctx.body.push({ op: "struct.new", typeIdx: structTypeIdx });
 }
 
@@ -790,13 +871,23 @@ export function registerClosureBindingInfo(
   liftedFuncTypeIdx: number,
   closureReturnType: ValType | null,
   arrowParams: ValType[],
+  inlineBody?: Instr[],
 ): void {
+  const params = runtimeParameters(arrow);
+  const usesOwnArguments =
+    ts.isFunctionExpression(arrow) && ts.isBlock(arrow.body) && closureBodyUsesOwnArguments(arrow.body);
   // 8. Register closure info so call sites can emit call_ref
+  const structDef = ctx.mod.types[structTypeIdx];
   const closureInfo: ClosureInfo = {
     structTypeIdx,
     funcTypeIdx: liftedFuncTypeIdx,
     returnType: closureReturnType,
     paramTypes: arrowParams,
+    hasCaptures: structDef?.kind === "struct" && structDef.fields.length > 1,
+    hasRestParam: params.some((p) => p.dotDotDotToken !== undefined),
+    needsCallSiteArity:
+      usesOwnArguments || params.some((p) => p.dotDotDotToken !== undefined || p.initializer !== undefined),
+    inlineBody,
   };
 
   // Always register by struct type index (for valueOf coercion and anonymous closures)
@@ -827,4 +918,12 @@ export function registerClosureBindingInfo(
     // Object literal: { fn: function() { ... } }
     // Don't register in closureMap (property, not variable)
   }
+}
+
+/** Whether a function expression's own `arguments` binding is observable. */
+function closureBodyUsesOwnArguments(node: ts.Node): boolean {
+  if (ts.isIdentifier(node) && node.text === "arguments") return true;
+  if (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node)) return false;
+  // Nested arrows inherit the function expression's `arguments` binding.
+  return forEachChild(node, closureBodyUsesOwnArguments) ?? false;
 }

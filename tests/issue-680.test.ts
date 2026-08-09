@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
+import { buildImports } from "../src/runtime.js";
 
 function envImportNames(result: { imports: { module: string; name: string }[] }): string[] {
   return result.imports.filter((i) => i.module === "env").map((i) => i.name);
@@ -96,7 +97,15 @@ describe("#680 Wasm-native generator state machines", () => {
     expect(exports.run()).toBe(1212);
   });
 
-  it("registers helper imports for standalone generator fallback bodies", async () => {
+  it("standalone class generator method compiles host-free (native state machine, no __gen_* imports)", async () => {
+    // (#680 refresh, #3561/#3562 audit) Standalone generators lower to the native
+    // `__GenState` state machine — `addGeneratorImports` (registry/imports.ts)
+    // early-returns under `--target standalone`, so the host eager-buffer imports
+    // (`__gen_create_buffer` / `__create_generator`) are NEVER registered there.
+    // A class generator method therefore leaks ZERO generator host imports and
+    // produces valid Wasm. (The ORIGINAL assertion — that these imports ARE
+    // present — silently rotted when generators went native; it was invisible
+    // outside required checks, #3008. See #680 regression, bisected to #3341.)
     const result = await compileStandalone(`
       class C {
         *method(): Generator<number> {}
@@ -107,12 +116,16 @@ describe("#680 Wasm-native generator state machines", () => {
       }
     `);
 
-    expect(envImportNames(result)).toContain("__gen_create_buffer");
-    expect(envImportNames(result)).toContain("__create_generator");
+    expect(envImportNames(result).filter((n) => n.startsWith("__gen_") || n === "__create_generator")).toEqual([]);
     expect(() => new WebAssembly.Module(result.binary)).not.toThrow();
   });
 
-  it("keeps the JS host eager-buffer fallback outside standalone targets", async () => {
+  it("default-target generators are Wasm-native too — no host __create_generator eager buffer", async () => {
+    // (#680 refresh) The native generator state machine now serves the default
+    // gc/host target as well; the host eager-buffer `__create_generator` import
+    // is retired there too (only value-boxing helpers like `__box_boolean`
+    // remain). Guard the OBSERVABLE, not just the import shape: the generator
+    // runs and yields correctly.
     const result = await compile(`
       function* gen(): Generator<number> {
         yield 1;
@@ -123,6 +136,10 @@ describe("#680 Wasm-native generator state machines", () => {
     `);
 
     expect(result.success).toBe(true);
-    expect(envImportNames(result)).toContain("__create_generator");
+    expect(envImportNames(result)).not.toContain("__create_generator");
+    const imports = buildImports(result.imports, undefined, result.stringPool);
+    const { instance } = await WebAssembly.instantiate(result.binary, imports as unknown as WebAssembly.Imports);
+    imports.setExports?.(instance.exports as Record<string, Function>);
+    expect((instance.exports as { run(): number }).run()).toBe(1);
   });
 });

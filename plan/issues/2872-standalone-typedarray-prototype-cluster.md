@@ -1,19 +1,20 @@
 ---
 id: 2872
 title: "Standalone: TypedArray.prototype.* cluster (294 host-pass/standalone-fail, de-masked from #2862)"
-status: in-progress
-assignee: ttraenkler/fable-dev-5
+status: ready
 created: 2026-06-30
-updated: 2026-07-18
+updated: 2026-08-09
 priority: high
 task_type: bug
 feasibility: hard
 model: fable
 area: codegen
+es_edition: 2015
+language_feature: typedarray-prototype-methods
 goal: standalone
 sprint: current
 horizon: l
-related: [2860, 2870, 2862, 2651, 2885, 2876, 2893, 3054, 3057, 3058]
+related: [2860, 2870, 2862, 2651, 2885, 2876, 2893, 3054, 3057, 3058, 2375]
 umbrella: 2860
 loc-budget-allow:
   - src/codegen/index.ts
@@ -23,6 +24,22 @@ loc-budget-allow:
   - src/codegen/expressions/new-super.ts
   - src/codegen/expressions/calls-closures.ts
 ---
+
+## 2026-08-09 ownership boundary — shared IR proto-member value reads
+
+A fresh exact-ES2015 census identifies **125 standalone non-pass files** that
+expose the shared `$NativeProto` value-read gap now recorded in #2375. The
+safest first cohort is 48 host-pass/standalone-fail invalid-receiver files
+(`this-is-not-object.js` plus `this-is-not-typedarray-instance.js` across 24
+method directories). Their dynamic `%TypedArray%.prototype.<method>` read
+lowers through IR `dyn.member_get`, whose `__dyn_member_get → __extern_get`
+route does not recognize `$NativeProto`.
+
+#2375 owns that shared IR/runtime producer. This issue continues to own the
+method bodies and method-specific TypedArray semantics after lookup succeeds:
+brand validation, detached/out-of-bounds checks, callback-time mutation,
+result construction, and reflective accessor/descriptor layers. The 125 is an
+exposure count, not a promised 125-pass slice.
 
 ## Slice 5 implementation plan (fable-dev-5, 2026-07-18, branch `issue-2872-scalar-hof-any-decline`, stacked on PR #3338)
 

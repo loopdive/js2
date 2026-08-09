@@ -1133,6 +1133,19 @@ export function compileArrayPrototypeCall(
 
   // Check if the method is a known array method
   if (!ARRAY_METHODS.has(methodName)) return undefined;
+  // The mutating generic receiver contract for push is not native yet. The
+  // typed synthetic-call route can compile this spelling but then traps when
+  // the borrowed receiver is dynamically represented. Keep the direct
+  // `array.push(...)` path untouched and refuse only the borrowed form.
+  if ((ctx.standalone || ctx.wasi) && methodName === "push") {
+    reportError(
+      ctx,
+      callExpr,
+      "Codegen error: Array.prototype.push.call(...) is not yet supported in --target standalone " +
+        "(#1888 Slice 3/4) — the Array brand arm rides on #2177 ($Vec element retrieval).",
+    );
+    return VOID_RESULT;
+  }
   // (#2863 Phase 2) `toLocaleString` is array-native only under standalone/wasi;
   // host keeps the `__extern_toLocaleString` path.
   if (methodName === "toLocaleString" && !ctx.standalone && !ctx.wasi) return undefined;

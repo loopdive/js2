@@ -1,7 +1,8 @@
 ---
 id: 3462
 title: "test262: two-baseline + fast-oracle-lane plumbing (oracle_lane stamp, diff-test262 guard, fast baseline fetch)"
-status: ready
+status: done
+completed: 2026-07-23
 sprint: Backlog
 priority: high
 horizon: m

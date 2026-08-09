@@ -10,7 +10,8 @@
  * change (prove-emit-identity IDENTICAL across gc/standalone/wasi).
  */
 import { ts } from "../ts-api.js";
-import type { ValType } from "../ir/types.js";
+import type { Instr, ValType } from "../ir/types.js";
+import { popBody, pushBody } from "./context/bodies.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import {
@@ -20,9 +21,27 @@ import {
 } from "./expressions/helpers.js";
 import { ensureLateImport } from "./expressions/late-imports.js";
 import { resolveWasmType } from "./index.js";
+// (#3920) Own-presence is a per-instance bit, never a shape property — the `in`
+// answer must come from the same presence machinery the value read uses.
+import { emitInPresence } from "./closed-struct-presence.js";
 import type { InnerResult } from "./shared.js";
 import { coerceType, compileExpression, flushLateImportShifts } from "./shared.js";
 import { inRhsIsExclusivelyPrimitive } from "./binary-ops.js";
+import { overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4222) overlay-aware index presence
+
+/**
+ * (#3714) `emitThrowTypeError` pushes directly onto `fctx.body`; to nest its
+ * throw sequence inside an `if` branch's `then:` instruction array, redirect
+ * `fctx.body` to a scratch array via `pushBody`/`popBody`, capture what it
+ * emitted, and hand that back as a plain `Instr[]`.
+ */
+function buildThrowTypeErrorBranch(ctx: CodegenContext, fctx: FunctionContext, message: string): Instr[] {
+  const saved = pushBody(fctx);
+  emitThrowTypeError(ctx, fctx, message);
+  const throwInstrs = fctx.body;
+  popBody(fctx, saved);
+  return throwInstrs;
+}
 
 /**
  * Compile a `key in obj` binary expression (op === InKeyword). Reads only the
@@ -31,9 +50,11 @@ import { inRhsIsExclusivelyPrimitive } from "./binary-ops.js";
 export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, expr: ts.BinaryExpression): InnerResult {
   // #1365 — `#x in obj` is a RUNTIME brand check, not a compile-time
   // property-name lookup. Per ES2022 §12.10.3 (RelationalExpression :
-  // PrivateIdentifier `in` ShiftExpression), the result is `true` iff
+  // PrivateIdentifier `in` ShiftExpression) step 5, the result is `true` iff
   // `obj` carries the brand of the class that lexically declared `#x`,
-  // and `false` otherwise (no throw, even when obj isn't an object).
+  // `false` when `obj` is a DIFFERENT object, and a **TypeError** when `obj`
+  // is not an Object at all (verified against real V8/Node: `null`,
+  // `undefined`, and every primitive throw, not just `null` — #3714).
   //
   // Today the generic `in` path returns a compile-time `i32.const` based
   // on whether the receiver type's struct happens to have `__priv_<name>`
@@ -51,12 +72,68 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
       // the brand predicate can combine structural ref.test with class-tag
       // ancestry.
       const objResult = compileExpression(ctx, fctx, expr.right);
-      if (objResult?.kind === "externref") {
+      const receiverIsExternref = objResult?.kind === "externref";
+      // (#3714) When the receiver's static type is externref (the common
+      // case for an untyped/`any` parameter), a WasmGC `ref.test` alone
+      // cannot distinguish "a real object of the wrong class" (should stay
+      // `false`) from "not an object at all" (should throw). Stash a raw
+      // copy of the externref BEFORE `any.convert_extern` so the JS-host
+      // fast-path check below can ask the host directly — Wasm has no
+      // visibility into what an opaque externref wraps. A statically-typed
+      // receiver (already known to be a struct/array/etc.) skips this
+      // entirely: it's always an Object, no runtime ambiguity to resolve.
+      let externCopy: number | undefined;
+      if (receiverIsExternref && !ctx.standalone && !ctx.wasi) {
+        externCopy = allocTempLocal(fctx, { kind: "externref" });
+        fctx.body.push({ op: "local.tee", index: externCopy });
+      }
+      if (receiverIsExternref) {
         fctx.body.push({ op: "any.convert_extern" });
       }
       const tmpAny = allocTempLocal(fctx, { kind: "anyref" });
       fctx.body.push({ op: "local.set", index: tmpAny });
       emitPrivateBrandPredicate(ctx, fctx, tmpAny, declared.className, declared.structTypeIdx);
+      const isObjectIdx =
+        externCopy !== undefined
+          ? ensureLateImport(ctx, "__extern_is_object", [{ kind: "externref" }], [{ kind: "i32" }])
+          : undefined;
+      if (externCopy !== undefined && isObjectIdx !== undefined) {
+        const externCopyLocal: number = externCopy;
+        const brandLocal = allocTempLocal(fctx, { kind: "i32" });
+        fctx.body.push({ op: "local.set", index: brandLocal });
+        fctx.body.push({ op: "local.get", index: brandLocal });
+        fctx.body.push({ op: "i32.eqz" }); // brand check came back false
+        fctx.body.push({
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: externCopyLocal },
+            { op: "call", funcIdx: isObjectIdx },
+            { op: "i32.eqz" }, // and the receiver is not an Object at all
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: buildThrowTypeErrorBranch(
+                ctx,
+                fctx,
+                "Cannot use 'in' operator to search for private field in a non-object",
+              ),
+              else: [],
+            },
+          ],
+          else: [],
+        });
+        fctx.body.push({ op: "local.get", index: brandLocal });
+        releaseTempLocal(fctx, brandLocal);
+        releaseTempLocal(fctx, externCopyLocal);
+      } else if (externCopy !== undefined) {
+        // Defensive: `ensureLateImport` failed (should not happen for a
+        // brand-new import name). The brand predicate's i32 is already on
+        // the stack from `emitPrivateBrandPredicate` above — just release
+        // the unused externref copy and fall back to the pre-existing
+        // false-no-throw behavior rather than failing the compile.
+        releaseTempLocal(fctx, externCopy);
+      }
       releaseTempLocal(fctx, tmpAny);
       return { kind: "i32" };
     }
@@ -115,6 +192,7 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
   let structFieldNames: string[] | null = null;
   let isVecType = false;
   let vecTypeIdx = -1;
+  let structWasm: ValType | undefined; // (#3920) receiver's closed-struct type
   if (rightWasm.kind === "ref" || rightWasm.kind === "ref_null") {
     const typeIdx = (rightWasm as { typeIdx: number }).typeIdx;
     const structDef = ctx.mod.types[typeIdx];
@@ -124,6 +202,7 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
         vecTypeIdx = typeIdx;
       } else {
         structFieldNames = structDef.fields.map((f) => f.name).filter((n): n is string => n !== undefined);
+        structWasm = rightWasm;
       }
     }
   }
@@ -211,6 +290,34 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
       if (leftResult) {
         fctx.body.push({ op: "drop" });
       }
+      // (#4222) Under the overlay route the dense `numIdx < length` compare is
+      // NOT the HasProperty answer: `delete arr[numIdx]` leaves `length`
+      // untouched and records the absence as a `FLAG_DELETED_INDEX` companion
+      // entry, and an accessor index may sit beyond the physical backing. Defer
+      // to `__extern_has_idx`, the chokepoint whose overlay presence prologue
+      // knows about both — the same typed→dynamic hand-off #4159 made for
+      // element reads/writes. Route-inactive modules keep the inline compare
+      // byte-for-byte.
+      if (overlayRouteActive(ctx)) {
+        const hasIdxFn = ensureLateImport(
+          ctx,
+          "__extern_has_idx",
+          [{ kind: "externref" }, { kind: "f64" }],
+          [{ kind: "i32" }],
+        );
+        flushLateImportShifts(ctx, fctx);
+        if (hasIdxFn !== undefined) {
+          const recvResult = compileExpression(ctx, fctx, expr.right);
+          if (recvResult) {
+            fctx.body.push({ op: "extern.convert_any" });
+            fctx.body.push({ op: "f64.const", value: numIdx });
+            fctx.body.push({ op: "call", funcIdx: hasIdxFn });
+          } else {
+            fctx.body.push({ op: "i32.const", value: 0 });
+          }
+          return { kind: "i32" };
+        }
+      }
       // Compile the array expression to get the vec struct
       const rightResult = compileExpression(ctx, fctx, expr.right);
       if (rightResult) {
@@ -237,6 +344,12 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
       fctx.body.push({ op: "i32.const", value: 1 });
       return { kind: "i32" };
     }
+  }
+
+  // (#3920) BEFORE the fold below: a conditionally-assigned field is a
+  // per-instance bit, not a shape property — see `closed-struct-presence.ts`.
+  if (staticKey !== null && emitInPresence(ctx, fctx, structWasm, staticKey, expr.left, expr.right)) {
+    return { kind: "i32" };
   }
 
   // Static resolution: key is known at compile time

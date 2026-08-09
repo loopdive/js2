@@ -101,12 +101,19 @@ function classifyImport(name: string, mod: WasmModule): ImportIntent {
   if (name === "__typeof_object") return { type: "typeof_check", targetType: "object" };
   if (name === "__typeof_function") return { type: "typeof_check", targetType: "function" };
   if (name === "__unbox_number") return { type: "unbox", targetType: "number" };
+  if (name === "__unbox_symbol") return { type: "unbox", targetType: "symbol" };
+  // Symbol-safe array-index probe (#3511): like __unbox_number (ToNumber) but
+  // NEVER throws — a Symbol/BigInt key (or any ToNumber-throwing value) returns
+  // NaN so the element-access caller falls to the string/symbol-keyed property
+  // path instead of throwing "Cannot convert a Symbol value to a number".
+  if (name === "__any_to_index") return { type: "any_to_index" };
   if (name === "__unbox_boolean") return { type: "unbox", targetType: "boolean" };
   if (name === "__box_number") return { type: "box", targetType: "number" };
   if (name === "__box_boolean") return { type: "box", targetType: "boolean" };
   if (name === "__box_bigint") return { type: "box", targetType: "bigint" };
   if (name === "__to_bigint") return { type: "unbox", targetType: "bigint" };
   if (name === "__bigint_ctor") return { type: "builtin", name: "__bigint_ctor" };
+  if (name === "__bigint_ctor_ref") return { type: "builtin", name: "__bigint_ctor_ref" };
   if (name === "__is_truthy") return { type: "truthy_check" };
   if (name === "__typeof") return { type: "builtin", name: "__typeof" };
 
@@ -118,6 +125,11 @@ function classifyImport(name: string, mod: WasmModule): ImportIntent {
 
   // Extern get/set
   if (name === "__extern_get") return { type: "extern_get" };
+  if (name === "__extern_get_raw_callable") return { type: "extern_get", rawCallable: true };
+  if (name.startsWith("__extern_call_raw_callable_")) {
+    const arity = Number.parseInt(name.slice("__extern_call_raw_callable_".length), 10);
+    return { type: "extern_call_raw_callable", arity };
+  }
   if (name === "__extern_set") return { type: "extern_set" };
   if (name === "__extern_set_strict") return { type: "extern_set_strict" }; // (#2017) strict [[Set]]
 
@@ -134,6 +146,14 @@ function classifyImport(name: string, mod: WasmModule): ImportIntent {
   // rather than coerce to f64 (`1 + "2"` → `"12"`, not `3`). ToPrimitive + the
   // string-if-either-is-string rule come free from JS `+`. (#2058)
   if (name === "__host_add") return { type: "host_add" };
+
+  // Host BigInt-mixed binary operator for a BigInt combined with a
+  // dynamically-object/any operand whose ToNumeric may reduce to a BigInt
+  // (`Object(2n) * 2n`, `{valueOf(){return 2n}} - 2n`). The i32 opcode selects
+  // the operator; struct operands are ToPrimitive-reduced via the in-module
+  // dispatcher, then JS applies ToNumeric + the mix-TypeError check + BigInt
+  // arithmetic. (#3481)
+  if (name === "__host_bigint_binop") return { type: "host_bigint_binop" };
 
   // Host relational compare for two externref operands (§7.2.13 IsLessThan).
   // Returns a 4-way result -1/0/1/2 (2 = NaN/undefined-incomparable) so the
@@ -239,11 +259,19 @@ function buildImportManifest(mod: WasmModule): ImportDescriptor[] {
   const manifest: ImportDescriptor[] = [];
   for (const imp of mod.imports) {
     if (imp.module !== "env") continue;
+    // (#4150) Carry the declared parameter count for func imports so the host
+    // side can build fixed-arity wrappers (see ImportDescriptor.paramCount).
+    let paramCount: number | undefined;
+    if (imp.desc.kind === "func") {
+      const t = mod.types[imp.desc.typeIdx];
+      if (t && t.kind === "func") paramCount = t.params.length;
+    }
     manifest.push({
       module: "env",
       name: imp.name,
       kind: imp.desc.kind === "func" ? "func" : "global",
       intent: classifyImport(imp.name, mod),
+      paramCount,
     });
   }
   return manifest;

@@ -1,0 +1,170 @@
+[
+  {
+    "name": "hono",
+    "version": "4.12.16",
+    "tarball": "fixtures/hono-4.12.16.tgz",
+    "registryTarball": "https://registry.npmjs.org/hono/-/hono-4.12.16.tgz",
+    "shasum": "90fcc63caa713199703bda08d8518f654e98b516",
+    "integrity": "sha512-jN0ZewiNAWSe5khM3EyCmBb250+b40wWbwNILNfEvq84VREWwOIkuUsFONk/3i3nqkz7Oe1PcpM2mwQEK2L9Kg==",
+    "entryModule": "package/dist/index.js",
+    "shape": "esm-project",
+    "issue": 1244
+  },
+  {
+    "name": "lodash",
+    "version": "4.18.1",
+    "tarball": "fixtures/lodash-4.18.1.tgz",
+    "registryTarball": "https://registry.npmjs.org/lodash/-/lodash-4.18.1.tgz",
+    "shasum": "ff2b66c1f6326d59513de2407bf881439812771c",
+    "integrity": "sha512-dMInicTPVE8d1e5otfwmmjlxkZoUpiVLwyeTdUsi/Caj/gfzzblBcCE5sRHV/AsjuCmxWrte2TNGSYuCeCq+0Q==",
+    "entryModule": "package/lodash.js",
+    "shape": "cjs-project",
+    "issue": 1031
+  },
+  {
+    "name": "axios",
+    "version": "1.16.1",
+    "tarball": "fixtures/axios-1.16.1.tgz",
+    "registryTarball": "https://registry.npmjs.org/axios/-/axios-1.16.1.tgz",
+    "shasum": "517e29291d19d6e8cf919ff264f4fe157261ba12",
+    "integrity": "sha512-caYkukvroVPO8KrzuJEb50Hm07KwfBZPEC3VeFHTsqWHvKTsy54hjJz9BS/cdaypROE2rH6xvm9mHX4fgWkr3A==",
+    "entryModule": "package/index.js",
+    "shape": "esm-project",
+    "issue": 1032
+  },
+  {
+    "name": "react-dom",
+    "version": "19.2.6",
+    "tarball": "fixtures/react-dom-19.2.6.tgz",
+    "registryTarball": "https://registry.npmjs.org/react-dom/-/react-dom-19.2.6.tgz",
+    "shasum": "44a81b0bcca22da814c00847d09d01c8615529b7",
+    "integrity": "sha512-0prMI+hvBbPjsWnxDLxlCGyM8PN6UuWjEUCYmZhO67xIV9Xasa/r/vDnq+Xyq4Lo27g8QSbO5YzARu0D1Sps3g==",
+    "entryModule": "package/index.js",
+    "shape": "cjs-project",
+    "issue": 1033
+  },
+  {
+    "name": "jsdom",
+    "version": "30.0.1",
+    "tarball": "fixtures/jsdom-30.0.1.tgz",
+    "registryTarball": "https://registry.npmjs.org/jsdom/-/jsdom-30.0.1.tgz",
+    "shasum": "1b0751cbd0abce86762c48697583b5e91433f6e4",
+    "integrity": "sha512-52v7mUVUfNQVYYqE1lcdaymWL0njO7lTLUog6ZvW2U5KsbiLk/GnZlVJ+qx0xfNJZ6Gn+KSpPNE52vurbxZwrA==",
+    "entryModule": "package/lib/api.js",
+    "shape": "cjs-project",
+    "timeoutMs": 180000
+  },
+  {
+    "name": "webpack",
+    "version": "5.109.2",
+    "tarball": "fixtures/webpack-5.109.2.tgz",
+    "registryTarball": "https://registry.npmjs.org/webpack/-/webpack-5.109.2.tgz",
+    "shasum": "b58dc289561c3282db35c210a99379a836a4c28d",
+    "integrity": "sha512-U9/cvLzxObKNEZ9+TtdqrHM5/9z3lgl2c+c4BzbqGxFQvQvBAq87yql5A8pQ+rrMbS496MZJeF5enVBndIy2hw==",
+    "entryModule": "package/lib/index.js",
+    "shape": "cjs-project"
+  },
+  {
+    "name": "uuid",
+    "version": "14.0.1",
+    "tarball": "fixtures/uuid-14.0.1.tgz",
+    "registryTarball": "https://registry.npmjs.org/uuid/-/uuid-14.0.1.tgz",
+    "shasum": "8a5975b3e038902bfd169a10b5202f5ec0cf3faf",
+    "integrity": "sha512-6ZxzVpzDXDa3bJWaHilVayA+BH/1zmxCJoVgvmqJnid/gPoKHxUrS/aC/T6LGQtNHT+XHG9fXPJB4d+IrU30Ew==",
+    "entryModule": "package/dist/index.js",
+    "shape": "esm-project"
+  },
+  {
+    "name": "typescript",
+    "version": "5.9.3",
+    "tarball": "fixtures/typescript-5.9.3.tgz",
+    "registryTarball": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
+    "shasum": "5b4f59e15310ab17a216f5d6cf53ee476ede670f",
+    "integrity": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
+    "entryModule": "package/lib/typescript.js",
+    "shape": "cjs-project",
+    "issue": 3994,
+    "timeoutMs": 600000
+  },
+  {
+    "name": "redux",
+    "version": "5.0.1",
+    "tarball": "fixtures/redux-5.0.1.tgz",
+    "registryTarball": "https://registry.npmjs.org/redux/-/redux-5.0.1.tgz",
+    "shasum": "97fa26881ce5746500125585d5642c77b6e9447b",
+    "integrity": "sha512-M9/ELqF6fy8FwmkpnF0S3YKOqMyoWJ4+CS5Efg2ct3oY9daQvd/Pc71FpGZsVsbl3Cpb+IIcjBDUnnyBdQbq4w==",
+    "entryModule": "package/dist/redux.mjs",
+    "shape": "esm-project"
+  },
+  {
+    "name": "jest",
+    "version": "30.4.2",
+    "tarball": "fixtures/jest-30.4.2.tgz",
+    "registryTarball": "https://registry.npmjs.org/jest/-/jest-30.4.2.tgz",
+    "shasum": "e9bdb00f4bf1126d781b0d98e23130db096bbd9a",
+    "integrity": "sha512-Yi1jqNC/Oq0N4hBgNH/YvBpP1P57QqundgytzYqy3yqAa7NZPNjSoi4SGbRAXDMdBzNE6xBCi5U7RgfrvMEUVQ==",
+    "entryModule": "package/build/index.mjs",
+    "shape": "esm-project"
+  },
+  {
+    "name": "styled-components",
+    "version": "6.4.4",
+    "tarball": "fixtures/styled-components-6.4.4.tgz",
+    "registryTarball": "https://registry.npmjs.org/styled-components/-/styled-components-6.4.4.tgz",
+    "shasum": "403eb7046b9f59a170d13967d9e7d21d82e677bd",
+    "integrity": "sha512-tJk5CmKUPMDoTsZQ8m0hHInBk9HFKUPSusqmbBuefDX+yUbMBWea2Ob/wdXFyHW8XZqXkprJscysAdKeGWNqlA==",
+    "entryModule": "package/dist/styled-components.esm.js",
+    "shape": "esm-project"
+  },
+  {
+    "name": "moment",
+    "version": "2.30.1",
+    "tarball": "fixtures/moment-2.30.1.tgz",
+    "registryTarball": "https://registry.npmjs.org/moment/-/moment-2.30.1.tgz",
+    "shasum": "f8c91c07b7a786e30c59926df530b4eac96974ae",
+    "integrity": "sha512-uEmtNhbDOrWPFS+hdjFCBfy9f2YoyzRpwcl+DqpC6taX21FzsTLQVbMV/W7PzNSX6x/bhC1zA3c2UQ5NzH6how==",
+    "entryModule": "package/moment.js",
+    "shape": "cjs-project"
+  },
+  {
+    "name": "stylelint",
+    "version": "17.14.1",
+    "tarball": "fixtures/stylelint-17.14.1.tgz",
+    "registryTarball": "https://registry.npmjs.org/stylelint/-/stylelint-17.14.1.tgz",
+    "shasum": "a3a2e6e2e9feab2202463fcf15df74de00140b1c",
+    "integrity": "sha512-xVQwyiuxALUBNB2fBe0tmNemg9KqLtdj3T64mioFDar79B2cU8LIyz+3KL6LdiHs9NkeNfwxpKSaIVOY8f112g==",
+    "entryModule": "package/lib/index.mjs",
+    "shape": "esm-project"
+  },
+  {
+    "name": "three",
+    "version": "0.185.1",
+    "tarball": "fixtures/three-0.185.1.tgz",
+    "registryTarball": "https://registry.npmjs.org/three/-/three-0.185.1.tgz",
+    "shasum": "63e9e241a17b101e211965121a017b4b4d8054ae",
+    "integrity": "sha512-5aojFCXKwnjBRZvUnt3WFfEcvUJgkN5LlijRFN95hMy8WVkG4I0QNcJE+OuWvuJ0bOdStrbfXn0pkd6/QyiAlg==",
+    "entryModule": "package/build/three.module.js",
+    "shape": "esm-direct",
+    "timeoutMs": 180000
+  },
+  {
+    "name": "lit",
+    "version": "3.3.3",
+    "tarball": "fixtures/lit-3.3.3.tgz",
+    "registryTarball": "https://registry.npmjs.org/lit/-/lit-3.3.3.tgz",
+    "shasum": "93579885e51a20a772c68482a34706fe1636e8f0",
+    "integrity": "sha512-fycuvZg/hkpozL00lm1pEJH5nN/lr9ZXd6mJI2HSN4+Bzc+LDNdEApJ6HFbPkdFNHLvOplIIuJvxkS4XUxqirw==",
+    "entryModule": "package/index.js",
+    "shape": "esm-project"
+  },
+  {
+    "name": "tailwindcss",
+    "version": "4.3.3",
+    "tarball": "fixtures/tailwindcss-4.3.3.tgz",
+    "registryTarball": "https://registry.npmjs.org/tailwindcss/-/tailwindcss-4.3.3.tgz",
+    "shasum": "c006861611c213c1877893ab5b23daa16be2bb55",
+    "integrity": "sha512-gOhV3P7ufE62QDGg1zVaTgCR+EtPv92k2nIhVcVKcLmxT1sUBsQGhnZj175j+MqRt4zLF7ic+sCYjfhxMxj7YQ==",
+    "entryModule": "package/dist/lib.mjs",
+    "shape": "esm-project"
+  }
+]

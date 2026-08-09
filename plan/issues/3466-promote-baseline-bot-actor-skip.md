@@ -1,10 +1,11 @@
 ---
 id: 3466
 title: "promote-baseline job skips on ALL merge-queue merges (github.actor == github-actions[bot]) → baseline never auto-refreshes"
-status: ready
+status: wont-fix
+completed: 2026-07-24
 sprint: current
 created: 2026-07-19
-updated: 2026-07-19
+updated: 2026-07-24
 priority: high
 horizon: m
 feasibility: medium
@@ -16,6 +17,18 @@ origin: "2026-07-19 tech-lead diagnosis while triaging recurring ratio-drift par
 ---
 
 # #3466 — baseline auto-promote skips on every merge-queue merge
+
+> **SUPERSEDED → wont-fix (2026-07-24, status reconcile).** The motivating
+> symptom — a stale auto-promoted main baseline causing the regression-ratio
+> gate to false-park net-positive PRs — is handled by **#3467/#3468**: the
+> regression gate now diffs against the **real per-SHA merge-base cache**
+> (`fix(ci): compare test262 gate against real merge-base per-SHA cache
+> (#3467)`, merged), not the auto-promoted `main` baseline, so the actor-guard
+> promote-skip no longer drives ratio-drift parks. #3468 closed with the honest
+> floor rebaselined. The actor-guard cleanup in this issue is therefore no
+> longer load-bearing for the queue; closing as superseded rather than doing a
+> now-redundant workflow edit. (If landing-page/other-consumer staleness needs a
+> dedicated promote-on-queue-merge fix later, file a fresh scoped issue.)
 
 ## Problem
 

@@ -10,7 +10,7 @@ task_type: bug
 area: async, codegen
 language_feature: async
 goal: async-model
-sprint: current
+sprint: Backlog
 parent: 1042
 depends_on: 1373b
 assignee: ttraenkler/async-2612-2613

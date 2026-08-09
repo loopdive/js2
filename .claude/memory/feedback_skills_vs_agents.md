@@ -4,7 +4,7 @@ description: Prefer skills for short tasks, spawn agents for sustained/concurren
 type: feedback
 ---
 
-**Skills** (`.claude/skills/*.md`): on-demand protocols any agent reads and follows. No new process, no RAM cost.
+**Skills** (`.claude/skills/*/SKILL.md`): on-demand protocols any agent reads and follows. No new process, no RAM cost.
 **Agents**: dedicated teammates with their own context and memory. ~800MB-1.5GB each.
 
 Use **skills** when:

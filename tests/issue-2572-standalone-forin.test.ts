@@ -77,6 +77,25 @@ describe("#2572 — standalone for-in over a dynamic object (no host-import leak
     expect(ret).toBe(3);
   });
 
+  it("keeps a reused hoisted var as a dynamic property key", async () => {
+    const { ret, leaked } = await runStandalone(`
+      function cloneLike(config: any): number {
+        let copied = 0;
+        for (propName in config) {
+          if (propName === "className" && config[propName] === "new") copied = 1;
+        }
+        var propName = arguments.length - 2;
+        return copied * 10 + propName;
+      }
+
+      export function run(): number {
+        return cloneLike({ key: "after", className: "new" } as any);
+      }
+    `);
+    expect(leaked).toEqual([]);
+    expect(ret).toBe(9);
+  });
+
   it("a closed-shape (interface) receiver enumerates its fields via the static path", async () => {
     const { ret, leaked, valid } = await runStandalone(
       `interface P { a: number; b: number; } export function run(): number { const o: P = { a: 1, b: 2 }; let n = 0; for (const k in o) n++; return n; }`,

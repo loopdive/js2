@@ -33,22 +33,79 @@
 //   node scripts/budget-status.mjs --pick      # also print the best-fit claimable task(s)
 //   node scripts/budget-status.mjs --json       # machine-readable
 //   node scripts/budget-status.mjs --quiet      # one line (for statuslines/hooks)
+//
+// CLAIMABILITY (#3965) ---------------------------------------------------------
+// `--pick` used to rank on `priority` + `horizon` ALONE. It never asked whether
+// a candidate was already claimed, nor whether the agent reading the list was
+// even allowed to take it — so it recommended work `scripts/pre-dispatch-gate.mjs`
+// then refused. Measured 2026-08-01: 5 of 5 XL suggestions unusable for an
+// Opus-lane developer (one CLAIMED live, four `model: fable`), and 5 of 5 at the
+// live L setting too. Because `--pick` is the documented FIRST step of the dev
+// claim loop, that is a duplicate-dispatch amplifier: the agent burns context
+// orienting on the issue and only the pre-dispatch gate catches it.
+//
+// So `--pick` now also filters on:
+//   • the LIVE claim ref (`refs/heads/issue-assignments`), read at the moment of
+//     the call via `claim-issue.mjs --list --json` — never from a cached fetch,
+//     because a stale read is precisely the bug being fixed here;
+//   • role scope (title role-tags + `task_type:`) and lane (`model:`).
+//
+// Every exclusion is PRINTED with its reason, and the funnel counts are printed
+// too. A picker that quietly returns fewer rows is indistinguishable from one
+// that found nothing — the silent-empty family. Zero returned must be
+// distinguishable from zero considered, and "no claims" from "claims unreadable".
+//
+// Identity flags (all optional; each one absent is announced, never silently
+// treated as "no filter needed"):
+//   --as <ttraenkler/name>   requesting agent — its OWN claim is not a blocker
+//   --role <role>            developer (default) | senior-developer | architect |
+//                            product-owner | tech-lead | any
+//   --model <name>           opus | fable | sonnet | … — skips issues pinned to a
+//                            different lane. Absent ⇒ model filter NOT applied.
+//   --limit <n>              rows to print (default 5); truncation is disclosed
+//   --no-claim-check         skip the claim-ref read (offline); every row is then
+//                            stamped UNVERIFIED
 
 import { readdirSync, readFileSync, existsSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+import { join, dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 
 const args = process.argv.slice(2);
 const PICK = args.includes("--pick");
 const JSON_OUT = args.includes("--json");
 const QUIET = args.includes("--quiet");
+const NO_CLAIM_CHECK = args.includes("--no-claim-check");
+function argValue(name, fallback = "") {
+  const i = args.indexOf(name);
+  return i >= 0 && args[i + 1] && !args[i + 1].startsWith("--") ? args[i + 1] : fallback;
+}
+const AS = argValue("--as", process.env.JS2WASM_AGENT || "");
+// `--role` has a default, so unlike --model its absence is not self-announcing:
+// an architect passing only `--as` would get developer scope applied silently,
+// with exclusions printed against a role it never claimed. Track WHERE the value
+// came from so the report can say "assumed" rather than implying it was asked for.
+const ROLE_RAW = argValue("--role", process.env.JS2WASM_ROLE || "");
+const ROLE_DEFAULTED = !ROLE_RAW;
+const ROLE = (ROLE_RAW || "developer").toLowerCase();
+const MODEL_RAW = argValue("--model", process.env.JS2WASM_MODEL || "");
+const LIMIT = Math.max(1, Number(argValue("--limit", "5")) || 5);
 
 const CLAUDE_HOME = process.env.CLAUDE_HOME || join(homedir(), ".claude");
 const TASKS_ROOT = join(CLAUDE_HOME, "tasks");
 const TEAM = process.env.JS2WASM_TEAM || "js2wasm";
 const TEAM_DIR = join(TASKS_ROOT, TEAM);
-const REPO = process.env.REPO_ROOT || process.cwd();
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
+const SCRIPT_REPO = resolve(SCRIPT_DIR, "..");
+// A cwd without `plan/issues` would silently yield ZERO candidates, which reads
+// exactly like "the queue is empty". Fall back to the script's own repo root and
+// say so, rather than reporting an empty queue that isn't.
+const REPO_REQUESTED = process.env.REPO_ROOT || process.cwd();
+const REPO = existsSync(join(REPO_REQUESTED, "plan", "issues")) ? REPO_REQUESTED : SCRIPT_REPO;
+const REPO_FELL_BACK = REPO !== REPO_REQUESTED;
 const ISSUES_DIR = join(REPO, "plan", "issues");
+const CLAIM_SCRIPT = join(SCRIPT_REPO, "scripts", "claim-issue.mjs");
 
 // Horizon cost as a FRACTION OF A FULL BUDGET WINDOW. Tunable via env; the
 // relative ordering is what matters more than the absolute numbers.
@@ -183,11 +240,100 @@ function normHorizon(v) {
   if (["s", "small", "tiny", "trivial"].includes(s)) return "s";
   return "m";
 }
-function claimableIssues() {
-  if (!existsSync(ISSUES_DIR)) return [];
+// Lane pin (#3965). `model:` is written on 306 issues today and, before this,
+// was read by NOTHING — so its consumer semantics are defined here and mirrored
+// into plan/issues/SCHEMA.md: EXACT-MATCH-OR-UNSET. An issue with no `model:`
+// is claimable by any lane; an issue pinned to a lane is skipped for every other
+// one. `Opus 5` / `opus-5` / `opus` all normalise to `opus`, so an agent may pass
+// the model name it knows itself by; `gpt-5.6-sol` keeps its non-numeric tail.
+function normModel(v) {
+  return (v || "")
+    .toString()
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, "-")
+    .replace(/-?\d+(\.\d+)*$/, "");
+}
+const MODEL = normModel(MODEL_RAW);
+
+// Role scope. Mirrors the pre-claim gate documented in .claude/agents/developer.md
+// and CLAUDE.md ("Owner pins + scope are how the auto-dispatcher is steered").
+//
+// DENY-lists, not allow-lists, and the asymmetry is deliberate — the same one
+// scripts/lib/claim-record.mjs argues for heldness. `task_type:` has 57 distinct
+// values in the wild against SCHEMA.md's 10, so an allow-list would silently drop
+// every unrecognised type (a real task made invisible, and invisibly so). A
+// deny-list sends the unknown down the safe path: it stays visible, and the agent
+// still has the pre-dispatch gate behind it.
+const tag = (label, re) => ({ label, re });
+const PARKED = [tag("[PARKED]", /\[PARKED/i), tag("[PAUSE]", /\[PAUSE\]/i)];
+const ROLE_RULES = {
+  developer: {
+    denyTitle: [
+      ...PARKED,
+      tag("[SENIOR-DEV ONLY]", /\[SENIOR-DEV ONLY\]/i),
+      tag("[ARCH]", /\[ARCH\]/i),
+      tag("arch(...)", /\barch\(/i),
+      tag("[EPIC]", /\[EPIC\]/i),
+      tag("[CONFLICT]", /\[CONFLICT\]/i),
+      tag("[PO]", /\[PO\]/i),
+      tag("po:", /^po:/i),
+    ],
+    denyTaskType: [
+      "architecture",
+      "architectural",
+      "architect-spec",
+      "epic",
+      "umbrella",
+      "planning",
+      "meta",
+      "decision",
+      "process",
+      "review",
+    ],
+  },
+  "senior-developer": {
+    denyTitle: [
+      ...PARKED,
+      tag("[ARCH]", /\[ARCH\]/i),
+      tag("arch(...)", /\barch\(/i),
+      tag("[PO]", /\[PO\]/i),
+      tag("po:", /^po:/i),
+    ],
+    denyTaskType: ["architect-spec", "planning", "meta", "decision", "process", "review"],
+  },
+  architect: {
+    denyTitle: [
+      ...PARKED,
+      tag("[SENIOR-DEV ONLY]", /\[SENIOR-DEV ONLY\]/i),
+      tag("[CONFLICT]", /\[CONFLICT\]/i),
+      tag("[PO]", /\[PO\]/i),
+      tag("po:", /^po:/i),
+    ],
+    denyTaskType: [],
+  },
+  "product-owner": {
+    denyTitle: [
+      ...PARKED,
+      tag("[SENIOR-DEV ONLY]", /\[SENIOR-DEV ONLY\]/i),
+      tag("[ARCH]", /\[ARCH\]/i),
+      tag("[CONFLICT]", /\[CONFLICT\]/i),
+    ],
+    denyTaskType: [],
+  },
+  "tech-lead": { denyTitle: [...PARKED], denyTaskType: [] },
+  any: { denyTitle: [...PARKED], denyTaskType: [] },
+};
+const ROLE_KNOWN = Object.prototype.hasOwnProperty.call(ROLE_RULES, ROLE);
+const RULES = ROLE_KNOWN ? ROLE_RULES[ROLE] : ROLE_RULES.any;
+
+function scanIssues() {
+  const scanned = { files: 0, current_ready: 0 };
+  if (!existsSync(ISSUES_DIR)) return { issues: [], scanned };
   const out = [];
   for (const f of readdirSync(ISSUES_DIR)) {
     if (!/^\d+[a-z]?-.+\.md$/i.test(f)) continue;
+    scanned.files++;
     let text;
     try {
       text = readFileSync(join(ISSUES_DIR, f), "utf8");
@@ -197,14 +343,70 @@ function claimableIssues() {
     const fm = parseFM(text);
     if ((fm.sprint || "").toLowerCase() !== "current") continue;
     if ((fm.status || "").toLowerCase() !== "ready") continue; // claimable = ready & unowned
+    scanned.current_ready++;
     out.push({
       id: (fm.id || f.match(/^(\d+[a-z]?)-/i)?.[1] || "").toLowerCase(),
       title: fm.title || "",
       priority: (fm.priority || "medium").toLowerCase(),
       horizon: normHorizon(fm.horizon || fm.cost),
+      task_type: (fm.task_type || "").toLowerCase(),
+      model: normModel(fm.model),
+      goal: (fm.goal || "").toLowerCase(),
+      file: f,
     });
   }
-  return out;
+  return { issues: out, scanned };
+}
+
+// --- LIVE claim-ref read (#3965) ---------------------------------------------
+// Delegated to `claim-issue.mjs --list --json` on purpose:
+//   • it is the only read path with the tri-state hardening (an unreadable ref
+//     exits 6 instead of falling through to "unassigned" — #3880);
+//   • it uses the warm cache repo, so a FRESH read costs ~1.4 s where a direct
+//     fetch of the ref into a full working repo measured 1 m 45 s. Cheapness is
+//     what makes reading it at the moment of the call practical at all;
+//   • it shares ONE `isHeldRecord`, so this filter cannot drift away from the
+//     pre-dispatch gate's answer the way two hand-rolled predicates already did.
+//
+// The failure mode this function exists to NOT have: `catch { return [] }`.
+// Zero claims and an unreadable ref would then be the same value, every
+// candidate would pass the filter, and `--pick` would print a confident,
+// unfiltered list — the defect, relocated one layer up. So the read is
+// tri-state: ok | skipped | unreadable, and the caller must handle unreadable.
+function readLiveClaims() {
+  if (NO_CLAIM_CHECK) return { state: "skipped", byId: new Map(), reason: "--no-claim-check" };
+  if (!existsSync(CLAIM_SCRIPT)) {
+    return { state: "unreadable", byId: new Map(), error: `claim-issue.mjs not found at ${CLAIM_SCRIPT}` };
+  }
+  const r = spawnSync(process.execPath, [CLAIM_SCRIPT, "--list", "--json"], {
+    cwd: REPO,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: Number(process.env.JS2WASM_CLAIM_READ_TIMEOUT_MS) || 180000,
+  });
+  if (r.status !== 0) {
+    const tail = (r.stderr || r.stdout || "").trim().split("\n").slice(-2).join(" ");
+    return { state: "unreadable", byId: new Map(), error: `claim-issue.mjs --list --json exited ${r.status}: ${tail}` };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(r.stdout);
+  } catch (e) {
+    return { state: "unreadable", byId: new Map(), error: `unparseable claim JSON: ${e.message}` };
+  }
+  if (!parsed || !Array.isArray(parsed.held)) {
+    return { state: "unreadable", byId: new Map(), error: "claim JSON has no `held` array" };
+  }
+  // Index by base id. A SLICE claim (`<id>-<slice>.json`) still counts: part of
+  // the issue is being worked, so recommending the whole thing to a second agent
+  // is the collision this filter exists to stop.
+  const byId = new Map();
+  for (const h of parsed.held) {
+    const key = String(h.id).toLowerCase();
+    if (!byId.has(key)) byId.set(key, []);
+    byId.get(key).push(h);
+  }
+  return { state: "ok", byId, tip: parsed.tip || "", total: parsed.total_records || 0, held: parsed.held_count || 0 };
 }
 
 // --- compute ------------------------------------------------------------------
@@ -216,9 +418,79 @@ const fitsCost = HORIZON_COSTS[maxHz];
 const fresh = maxHz === "xl" || maxHz === "l"; // window has runway for big rocks
 const allowed = CLASSES_BIG_FIRST.filter((c) => HORIZON_COSTS[c] <= HORIZON_COSTS[maxHz]); // <= maxHz cost
 
-function pickTasks() {
-  let cands = claimableIssues().filter((i) => allowed.includes(i.horizon));
-  cands.sort((a, b) => {
+// Four-stage funnel, every stage counted and every drop explained (#3965).
+//   scanned → considered (sprint:current + ready) → horizon-fit
+//           → after claim filter → after scope filter → returned
+// Skip REASONS are recorded only from the horizon-fit stage onward: an issue
+// dropped for horizon is already explained by the two counts, whereas an issue
+// dropped for being claimed or out-of-lane is exactly what the caller cannot
+// otherwise see.
+function pickTasks(claims) {
+  const { issues, scanned } = scanIssues();
+  const skipped = [];
+  const funnel = {
+    scanned_issue_files: scanned.files,
+    considered: issues.length,
+    horizon_fit: 0,
+    after_claim_filter: 0,
+    after_scope_filter: 0,
+    returned: 0,
+    truncated: 0,
+  };
+
+  const fit = issues.filter((i) => allowed.includes(i.horizon));
+  funnel.horizon_fit = fit.length;
+
+  // Stage: live claim. `unreadable` deliberately does NOT drop anything — an
+  // unverified list is announced as unverified, never silently presented as
+  // filtered. Refusing to answer at all is handled by the caller's exit code.
+  const afterClaim = [];
+  for (const i of fit) {
+    const held = claims.state === "ok" ? claims.byId.get(i.id) || [] : [];
+    const byOthers = AS ? held.filter((h) => h.assignee !== AS) : held;
+    if (byOthers.length) {
+      const h = byOthers[0];
+      skipped.push({
+        id: i.id,
+        stage: "claim",
+        reason: `claimed by ${h.assignee}${h.slice ? ` (slice ${h.slice})` : ""} since ${h.claimed_at || "?"}${h.branch ? ` on ${h.branch}` : ""}`,
+      });
+      continue;
+    }
+    if (held.length && AS) i.note = `your own claim (${AS}) — resuming`;
+    afterClaim.push(i);
+  }
+  funnel.after_claim_filter = afterClaim.length;
+
+  // Stage: role scope + lane.
+  const afterScope = [];
+  for (const i of afterClaim) {
+    const badTitle = RULES.denyTitle.find((t) => t.re.test(i.title));
+    if (badTitle) {
+      skipped.push({
+        id: i.id,
+        stage: "scope",
+        reason: `title carries ${badTitle.label} — out of scope for role ${ROLE}`,
+      });
+      continue;
+    }
+    if (i.task_type && RULES.denyTaskType.includes(i.task_type)) {
+      skipped.push({ id: i.id, stage: "scope", reason: `task_type: ${i.task_type} — not claimable by role ${ROLE}` });
+      continue;
+    }
+    if (MODEL && i.model && i.model !== MODEL) {
+      skipped.push({
+        id: i.id,
+        stage: "lane",
+        reason: `model: ${i.model} — pinned to another lane (you are ${MODEL})`,
+      });
+      continue;
+    }
+    afterScope.push(i);
+  }
+  funnel.after_scope_filter = afterScope.length;
+
+  afterScope.sort((a, b) => {
     if (fresh) {
       // big rocks first, then priority
       const hc = HORIZON_COSTS[b.horizon] - HORIZON_COSTS[a.horizon];
@@ -230,10 +502,25 @@ function pickTasks() {
     if (pr) return pr;
     return HORIZON_COSTS[a.horizon] - HORIZON_COSTS[b.horizon];
   });
-  return cands;
+
+  const returned = afterScope.slice(0, LIMIT);
+  funnel.returned = returned.length;
+  funnel.truncated = Math.max(0, afterScope.length - returned.length);
+  // Sorted for a stable, readable report; the id order is not a ranking.
+  skipped.sort((a, b) => Number(a.id) - Number(b.id));
+  return { picks: returned, skipped, funnel, all: afterScope };
 }
 
-const picks = PICK || JSON_OUT ? pickTasks() : [];
+const wantPicks = PICK || JSON_OUT;
+const claims = wantPicks ? readLiveClaims() : { state: "not-requested", byId: new Map() };
+const result = wantPicks ? pickTasks(claims) : { picks: [], skipped: [], funnel: null, all: [] };
+const picks = result.picks;
+// UNKNOWN must never fall on the reassuring side: when the claim ref could not
+// be read, the recommendation is UNVERIFIED and the process exits non-zero so a
+// scripted caller cannot mistake it for a filtered list. `--no-claim-check` is
+// the explicit, recorded opt-out.
+const claimUnverified = wantPicks && claims.state !== "ok";
+const EXIT_CODE = wantPicks && claims.state === "unreadable" ? 6 : 0;
 
 // --- output -------------------------------------------------------------------
 const pctRem = Math.round(R * 100);
@@ -245,6 +532,25 @@ const src = budgetKnown
     ? " (source: statusline weekly cache)"
     : ""
   : " (no budget source — assuming fresh window; statusline writes ~/.claude/js2wasm-budget.json, or set JS2WASM_BUDGET_REMAINING_PCT)";
+
+// Provenance travels WITH the picks, in both output shapes. A consumer that
+// reads `picks` without knowing whether the claim filter actually ran is back to
+// trusting a possibly-unverified list, so `claim_ref` and `filters_applied` are
+// fields, not just human-readable banners.
+const claimRefReport = {
+  state: claims.state,
+  ...(claims.state === "ok" ? { tip: claims.tip, total_records: claims.total, held_count: claims.held } : {}),
+  ...(claims.state === "unreadable" ? { error: claims.error } : {}),
+  ...(claims.state === "skipped" ? { reason: claims.reason } : {}),
+};
+const filtersApplied = {
+  claim: claims.state === "ok",
+  scope: wantPicks,
+  role: ROLE_KNOWN ? ROLE : `${ROLE} (unknown role — fell back to "any", scope filter effectively OFF)`,
+  role_defaulted: ROLE_DEFAULTED,
+  model: MODEL ? MODEL : false,
+  identity: AS || false,
+};
 
 if (JSON_OUT) {
   console.log(
@@ -259,9 +565,21 @@ if (JSON_OUT) {
         recommended_max_horizon_cost: fitsCost,
         allowed_horizons: allowed,
         phase: fresh ? "fresh-big-rocks-first" : "draining-small-first",
-        picks: picks
-          .slice(0, 5)
-          .map((p) => ({ id: p.id, horizon: p.horizon, priority: p.priority, title: p.title.slice(0, 70) })),
+        issues_dir: ISSUES_DIR,
+        issues_dir_fell_back: REPO_FELL_BACK,
+        claim_ref: claimRefReport,
+        filters_applied: filtersApplied,
+        picks_unverified: claimUnverified,
+        funnel: result.funnel,
+        skipped: result.skipped,
+        picks: picks.map((p) => ({
+          id: p.id,
+          horizon: p.horizon,
+          priority: p.priority,
+          title: p.title.slice(0, 70),
+          ...(p.note ? { note: p.note } : {}),
+          ...(claimUnverified ? { unverified: true } : {}),
+        })),
       },
       null,
       2,
@@ -283,14 +601,90 @@ if (JSON_OUT) {
   if (maxHz === "s" && share + SLACK < HORIZON_COSTS.s) {
     console.log(`  ⚠ budget nearly exhausted — only S tail-filler advisable; defer larger work to the next window.`);
   }
+  if (REPO_FELL_BACK) {
+    console.log(`  note             : no plan/issues under ${REPO_REQUESTED} — reading ${ISSUES_DIR} instead`);
+  }
   if (PICK) {
-    console.log(`\n  best-fit claimable tasks (sprint: current, ready, horizon ≤ ${maxHz.toUpperCase()}):`);
-    if (!picks.length) console.log(`    (none — queue may be empty or all remaining tasks exceed the budget share)`);
-    for (const p of picks.slice(0, 5)) {
-      console.log(`    #${p.id}  [${p.priority}] [${p.horizon.toUpperCase()}]  ${p.title.slice(0, 66)}`);
+    const f = result.funnel;
+    console.log(`\n  claim ref        : ${describeClaimRef()}`);
+    console.log(`  filters          : ${describeFilters()}`);
+    console.log(
+      `  funnel           : scanned ${f.scanned_issue_files} issue files → considered ${f.considered} (sprint: current + ready) ` +
+        `→ horizon-fit ${f.horizon_fit} → after claim ${f.after_claim_filter} → after scope ${f.after_scope_filter} → returned ${f.returned}` +
+        (f.truncated ? ` (+${f.truncated} more not shown; --limit ${LIMIT})` : ""),
+    );
+
+    if (result.skipped.length) {
+      console.log(`\n  skipped (${result.skipped.length}) — every drop, with its reason:`);
+      for (const s of result.skipped) console.log(`    skipped #${s.id}: ${s.reason}`);
+    } else {
+      console.log(`\n  skipped (0) — nothing was dropped by the claim or scope filters.`);
+    }
+
+    console.log(
+      `\n  best-fit claimable tasks (sprint: current, ready, horizon ≤ ${maxHz.toUpperCase()}, role ${ROLE}${MODEL ? `, model ${MODEL}` : ""}):`,
+    );
+    if (!picks.length) {
+      // Zero returned must never be mistaken for zero considered.
+      console.log(
+        `    (none returned — considered ${f.considered}, horizon-fit ${f.horizon_fit}, ` +
+          `${f.horizon_fit - f.after_claim_filter} dropped as claimed, ` +
+          `${f.after_claim_filter - f.after_scope_filter} dropped as out-of-scope. ` +
+          `${f.considered === 0 ? "The queue itself is EMPTY." : "The queue is NOT empty — the fitting work is taken or out of your lane."})`,
+      );
+    }
+    for (const p of picks) {
+      console.log(
+        `    #${p.id}  [${p.priority}] [${p.horizon.toUpperCase()}]  ${p.title.slice(0, 66)}` +
+          (p.note ? `  ← ${p.note}` : "") +
+          (claimUnverified ? `  [UNVERIFIED]` : ""),
+      );
     }
   }
   console.log("");
 }
 
-process.exit(0);
+// Last line is a verdict (the #3880 convention): callers pipe this, and a pipe
+// reports the LAST stage's exit status, so the exit code alone is not legible.
+function describeClaimRef() {
+  if (claims.state === "ok") {
+    return `READ LIVE just now — ${claims.held} live claim(s) of ${claims.total} record(s) @ ${String(claims.tip).slice(0, 12)}`;
+  }
+  if (claims.state === "skipped") return `NOT READ (--no-claim-check) — claim filter NOT applied, picks are UNVERIFIED`;
+  if (claims.state === "unreadable") return `UNREADABLE — ${claims.error}`;
+  return "not requested (run with --pick)";
+}
+function describeFilters() {
+  const parts = [];
+  parts.push(claims.state === "ok" ? "claim=on (live)" : "claim=OFF");
+  parts.push(
+    ROLE_KNOWN
+      ? `role=${ROLE}${ROLE_DEFAULTED ? " (DEFAULT — no --role/$JS2WASM_ROLE given; scope filtered as a developer)" : ""}`
+      : `role=${ROLE} UNKNOWN → scope filter effectively OFF`,
+  );
+  parts.push(MODEL ? `model=${MODEL}` : "model=OFF (no --model/$JS2WASM_MODEL given — task lane NOT filtered)");
+  parts.push(AS ? `as=${AS}` : "as=OFF (own claims cannot be distinguished from others')");
+  return parts.join(", ");
+}
+
+if (wantPicks && !QUIET) {
+  if (claims.state === "unreadable") {
+    console.error(
+      `budget-status: FAILED — the claim ref could not be read (${claims.error}). ` +
+        `The ${picks.length} recommendation(s) above are UNFILTERED and may already be claimed. ` +
+        `An unreadable ref is NOT an empty one — re-run, or pass --no-claim-check to accept unverified picks deliberately. (exit 6)`,
+    );
+  } else if (claims.state === "skipped") {
+    console.error(
+      `budget-status: OK (UNVERIFIED) — ${picks.length} pick(s) of ${result.funnel.after_scope_filter} claimable; ` +
+        `claim filter deliberately skipped via --no-claim-check (exit 0)`,
+    );
+  } else {
+    console.error(
+      `budget-status: OK — ${picks.length} pick(s) returned of ${result.funnel.after_scope_filter} claimable, ` +
+        `${result.funnel.considered} considered, ${result.skipped.length} skipped with reasons (exit 0)`,
+    );
+  }
+}
+
+process.exit(EXIT_CODE);

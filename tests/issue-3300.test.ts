@@ -16,6 +16,7 @@ import {
 import { compile } from "../src/index.js";
 import { AllocSiteRegistry } from "../src/ir/alloc-registry.js";
 import { IrFunctionBuilder } from "../src/ir/builder.js";
+import { irSupportGlobalRef } from "../src/ir/abi-bindings.js";
 import {
   ANALYSIS_STACK_ARENA_POLICY,
   DEFAULT_ARENA_POLICY,
@@ -29,7 +30,9 @@ import { lowerIrModuleToPorffor } from "../src/ir/backend/porffor/integration.js
 import { loadOptionalPorffor } from "../src/ir/backend/porffor/loader.js";
 import { verifyIrBackendLegality } from "../src/ir/backend/legality.js";
 import { verifyIrFunction } from "../src/ir/verify.js";
+import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
 
+const identities = createTestIrFunctionIdentityFactory("issue-3300");
 const here = dirname(fileURLToPath(import.meta.url));
 const porfforRoot = process.env.JS2WASM_PORFFOR_ROOT ?? join(here, "../vendor/Porffor");
 const hasOptionalPorffor = existsSync(join(porfforRoot, "compiler/ir.js"));
@@ -66,6 +69,13 @@ function nodeName(node: PorfforNode): string {
 }
 
 describe("#3300 shared allocation-policy proof", () => {
+  it("keeps benchmark artifact identities stable across repeated builds", () => {
+    const first = buildAllocationPolicyProof().module.functions;
+    const second = buildAllocationPolicyProof().module.functions;
+
+    expect(second.map((fn) => fn.unitId)).toEqual(first.map((fn) => fn.unitId));
+  });
+
   it("changes decisions without changing allocation facts, layouts, pointer maps, or ABI provenance", () => {
     const fixture = buildAllocationPolicyProof();
     for (const func of fixture.module.functions) {
@@ -109,7 +119,7 @@ describe("#3300 shared allocation-policy proof", () => {
     const registry = new AllocSiteRegistry();
     const objectType = { kind: "object" as const, shape: ALLOCATION_POLICY_SHAPE };
 
-    const selected = new IrFunctionBuilder("returnedSelect", [objectType], true, registry);
+    const selected = new IrFunctionBuilder(identities.next("returnedSelect"), [objectType], true, registry);
     selected.openBlock();
     const one = selected.emitConst({ kind: "f64", value: 1 }, ALLOCATION_POLICY_F64);
     const two = selected.emitConst({ kind: "f64", value: 2 }, ALLOCATION_POLICY_F64);
@@ -119,7 +129,7 @@ describe("#3300 shared allocation-policy proof", () => {
     const alias = selected.emitSelect(truth, first, second, objectType);
     selected.terminate({ kind: "return", values: [alias] });
 
-    const conditional = new IrFunctionBuilder("returnedIf", [objectType], true, registry);
+    const conditional = new IrFunctionBuilder(identities.next("returnedIf"), [objectType], true, registry);
     conditional.openBlock();
     const condition = conditional.emitConst({ kind: "bool", value: true }, ALLOCATION_POLICY_I32);
     let thenValue!: ReturnType<IrFunctionBuilder["emitObjectNew"]>;
@@ -142,11 +152,11 @@ describe("#3300 shared allocation-policy proof", () => {
     });
     conditional.terminate({ kind: "return", values: [conditionalAlias] });
 
-    const stored = new IrFunctionBuilder("storedGlobal", [], true, registry);
+    const stored = new IrFunctionBuilder(identities.next("storedGlobal"), [], true, registry);
     stored.openBlock();
     const storedValue = stored.emitConst({ kind: "f64", value: 5 }, ALLOCATION_POLICY_F64);
     const object = stored.emitObjectNew(ALLOCATION_POLICY_SHAPE, [storedValue, storedValue]);
-    stored.emitGlobalSet({ kind: "global", name: "saved" }, object);
+    stored.emitGlobalSet(irSupportGlobalRef(identities.unit(100), "stored-object", "saved"), object);
     stored.terminate({ kind: "return", values: [] });
 
     const plan = planLinearMemory(

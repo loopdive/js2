@@ -1,16 +1,16 @@
 ---
 id: 2933
 title: "Standalone: Math/JSON/Reflect/Atomics namespace static VALUE reads refuse — fold constants / native static-method closures"
-status: ready
+status: done
+completed: 2026-07-24
 created: 2026-07-02
-updated: 2026-07-16
-assignee: ttraenkler/fable-eqfix
+updated: 2026-07-24
 priority: medium
 feasibility: medium
 task_type: feature
 area: codegen
 goal: standalone
-sprint: current
+sprint: 76
 horizon: m
 related: [2860, 2861, 1907, 1888]
 umbrella: 2860
@@ -79,6 +79,25 @@ Still refusing / wrong (this issue):
       2026-07-02, see Progress.
 - [x] No host-mode regression (`ctx.standalone`-gated). — the reflective fold is
       observationally identical in host mode.
+
+## Closed done (2026-07-24, dev-std-3) — verify-first reconcile
+
+All acceptance criteria PASS host-free on current main (measured 2026-07-24 via
+standalone compile + `imports === []` + run). The 2026-07-16 "JSON.stringify
+object-arg regressed" caveat on criterion 1 is **STALE** — re-measured and it
+now passes:
+
+- `const f: any = JSON.stringify; f({a:1}) === '{"a":1}'` → pass, host-free
+- `const f: any = JSON.stringify; f(5) === '5'` → pass, host-free
+- `const g: any = Math.max; g(1,2,3) === 3` → pass, host-free
+- `const o: any = {a:1,b:2}; Reflect.ownKeys(o).length === 2` → pass, host-free
+- `const f: any = Reflect.get; f({a:7},"a") === 7` → pass, host-free
+- `const k: any = "PI"; (Math as any)[k]` reads π → pass, host-free
+
+Nothing left to implement; this was a false-`ready` (acceptance met but status
+never flipped). Marked `done`. Any deeper namespace edges (`toExponential`/
+`toPrecision` no-arg delegation, `globalThis.Math.PI` trap) are tracked with the
+Number/namespace work (#3175/#3081), not here.
 
 ## Progress (2026-07-02, opus-12c) — reflective namespace-constant read landed
 

@@ -78,21 +78,32 @@ import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecBaseType } from "./registry/types.js";
-import { nextModuleGlobalIdx } from "./registry/imports.js";
+import { ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
+import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { reserveAccessorGetDriver } from "./accessor-driver.js";
 import { ensureVecElemSet } from "./vec-elem-set.js";
+import {
+  buildBagGopdOrMiss,
+  buildBagValueSeed,
+  buildRealElementSeed,
+  buildVecDeletePrologue,
+  fillVecHasOwnHelpers,
+} from "./vec-bag-seed.js";
+import { buildVecHasIdxPresencePrologue } from "./vec-overlay-presence.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
+import { nonExtensibleFreshIndexGuard, nonWritableLengthIndexGuard } from "./vec-define-rejections.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 
 /**
  * `$PropEntry.$flags` bit claimed by the overlay (see the flag table in
  * object-runtime.ts — 0x01/0x02/0x04 = W/E/C, 0x08 = ACCESSOR, 0x10 =
- * INTERNAL, 0x80 = TOMBSTONE; 0x40 remains free): set on a companion DATA
+ * INTERNAL, 0x40 = DELETED_INDEX, 0x80 = TOMBSTONE): set on a companion DATA
  * entry whose [[Value]] could NOT be written back into the vec element
  * (kind-incompatible with the carrier), so dynamic readers must answer from
  * the companion instead of the vec.
  */
 export const FLAG_COMPANION_VALUE = 0x20;
+const FLAG_DELETED_INDEX = 0x40;
 
 // Mirrors of the (unexported) object-runtime flag ABI — stable since #1888.
 const FLAG_WRITABLE = 0x01;
@@ -125,6 +136,8 @@ const DP_ACCESSOR_NAME = "__vec_dp_accessor";
 const GOPD_NAME = "__vec_gopd";
 const LOOKUP_NAME = "__vec_overlay_lookup";
 const ENSURE_NAME = "__vec_overlay_ensure";
+const ENSURE_FRESH_NAME = "__vec_overlay_ensure_fresh"; // (#3673 round 15)
+const PRIME_NAME = "__vec_overlay_prime"; // (#3673 round 15)
 
 /** Reserved helper funcIdxs handed to the descriptor-native builders. */
 export interface VecOverlayReserved {
@@ -189,13 +202,13 @@ interface OverlayCarrier {
 function allowedCarriers(ctx: CodegenContext): OverlayCarrier[] {
   const seen = new Set<number>();
   const out: OverlayCarrier[] = [];
-  for (const vecTypeIdx of ctx.vecTypeMap.values()) {
-    if (seen.has(vecTypeIdx)) continue;
+  const addCarrier = (vecTypeIdx: number): void => {
+    if (seen.has(vecTypeIdx)) return;
     seen.add(vecTypeIdx);
     const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
-    if (arrTypeIdx < 0) continue;
+    if (arrTypeIdx < 0) return;
     const arrDef = ctx.mod.types[arrTypeIdx];
-    if (!arrDef || arrDef.kind !== "array") continue;
+    if (!arrDef || arrDef.kind !== "array") return;
     const elemType = arrDef.element as ValType;
     if (elemType.kind === "f64") {
       out.push({ vecTypeIdx, arrTypeIdx, elemType, kind: "f64" });
@@ -207,6 +220,23 @@ function allowedCarriers(ctx: CodegenContext): OverlayCarrier[] {
         out.push({ vecTypeIdx, arrTypeIdx, elemType, kind: "anystr" });
       }
     }
+  };
+  for (const vecTypeIdx of ctx.vecTypeMap.values()) {
+    addCarrier(vecTypeIdx);
+  }
+  // `$ObjVec` is the growable externref-array carrier used by Object
+  // enumeration and RegExp `d`-flag indices. It deliberately lives outside
+  // `vecTypeMap`, but is still a genuine Array and therefore participates in
+  // the same dense-index and named-property descriptor overlay.
+  const objVec = ctx.objectRuntimeTypes;
+  if (objVec) addCarrier(objVec.objVecTypeIdx);
+  // RegExp exec results are an extended native-string vec subtype rather than
+  // a direct `vecTypeMap` entry. Include that exact exotic so its spec own
+  // properties (`index`, `input`, `groups`, `indices`) can be materialised in
+  // the overlay without broadening the carrier whitelist to arbitrary structs.
+  const regexpMatchVecTypeIdx = ctx.structMap.get("__regexp_match_vec");
+  if (regexpMatchVecTypeIdx !== undefined) {
+    addCarrier(regexpMatchVecTypeIdx);
   }
   out.sort((a, b) => a.vecTypeIdx - b.vecTypeIdx);
   return out;
@@ -216,6 +246,15 @@ function allowedCarriers(ctx: CodegenContext): OverlayCarrier[] {
 interface OverlayCore {
   stateTypeIdx: number;
   stateGlobalIdx: number;
+  /**
+   * (#3673) i32 flag global: 1 once ANY companion define used a NUMERIC
+   * (array-index) key. The `__extern_get_idx` prologue gates on THIS instead
+   * of the state global: string-key-only companions (the standalone RegExp
+   * result arrays define `index`/`input`/`groups`/`indices` per exec, growing
+   * the scan table unboundedly) then cost indexed reads nothing. The
+   * `__extern_get` string lane keeps gating on the state global.
+   */
+  numericFlagGlobalIdx: number;
   lookupIdx: number;
   ensureIdx: number;
 }
@@ -232,6 +271,7 @@ function ensureOverlayCore(ctx: CodegenContext, objectTypeIdx: number, newPlainO
     return {
       stateTypeIdx: ctx.vecOverlayStateTypeIdx!,
       stateGlobalIdx: ctx.vecOverlayStateGlobalIdx,
+      numericFlagGlobalIdx: ctx.vecOverlayNumericGlobalIdx!,
       lookupIdx: existingLookup,
       ensureIdx: ctx.funcMap.get(ENSURE_NAME)!,
     };
@@ -276,6 +316,16 @@ function ensureOverlayCore(ctx: CodegenContext, objectTypeIdx: number, newPlainO
   ctx.vecOverlayStateGlobalIdx = stateGlobalIdx;
   ctx.vecOverlayStateTypeIdx = stateTypeIdx;
 
+  // (#3673) numeric-key-companion flag — see OverlayCore.numericFlagGlobalIdx.
+  const numericFlagGlobalIdx = nextModuleGlobalIdx(ctx);
+  ctx.mod.globals.push({
+    name: "__vec_overlay_numeric",
+    type: { kind: "i32" },
+    mutable: true,
+    init: [{ op: "i32.const", value: 0 }],
+  });
+  ctx.vecOverlayNumericGlobalIdx = numericFlagGlobalIdx;
+
   const objRefNull: ValType = { kind: "ref_null", typeIdx: objectTypeIdx };
 
   // ── __vec_overlay_lookup(anyref vec) -> (ref null $Object) ──────────────
@@ -301,7 +351,18 @@ function ensureOverlayCore(ctx: CodegenContext, objectTypeIdx: number, newPlainO
       { op: "ref.as_non_null" },
       { op: "struct.get", typeIdx: stateTypeIdx, fieldIdx: 0 },
       { op: "local.set", index: 4 },
-      { op: "i32.const", value: 0 },
+      // (#3673 round 14) Scan NEWEST-FIRST (count-1 → 0). `__vec_overlay_ensure`
+      // appends at tab[count], and the hot probes — the standalone regex-exec
+      // path defining/reading `index`/`input` on a FRESH match array — always
+      // target the most recently ensured pair, which the old forward scan
+      // reached only after walking every older (usually dead) entry. The table
+      // is append-only (identity pairs, no eviction), so as it grows across a
+      // run the forward scan degraded superlinearly; newest-first makes the
+      // common hit O(1) regardless of table size. Identities are unique, so
+      // scan order cannot change which pair matches.
+      { op: "local.get", index: 4 },
+      { op: "i32.const", value: 1 },
+      { op: "i32.sub" },
       { op: "local.set", index: 3 },
       {
         op: "block",
@@ -312,8 +373,8 @@ function ensureOverlayCore(ctx: CodegenContext, objectTypeIdx: number, newPlainO
             blockType: { kind: "empty" },
             body: [
               { op: "local.get", index: 3 },
-              { op: "local.get", index: 4 },
-              { op: "i32.ge_s" },
+              { op: "i32.const", value: 0 },
+              { op: "i32.lt_s" },
               { op: "br_if", depth: 1 },
               // pair = tab[i] ; if (pair.vec ref.eq vec) → pair.companion
               { op: "local.get", index: 2 },
@@ -340,7 +401,7 @@ function ensureOverlayCore(ctx: CodegenContext, objectTypeIdx: number, newPlainO
               },
               { op: "local.get", index: 3 },
               { op: "i32.const", value: 1 },
-              { op: "i32.add" },
+              { op: "i32.sub" },
               { op: "local.set", index: 3 },
               { op: "br", depth: 0 },
             ],
@@ -366,6 +427,104 @@ function ensureOverlayCore(ctx: CodegenContext, objectTypeIdx: number, newPlainO
   }
   const lookupIdx = ctx.funcMap.get(LOOKUP_NAME)!;
 
+  // Shared append tail for `__vec_overlay_ensure` (post-lookup-miss) and
+  // (#3673 round 15) `__vec_overlay_ensure_fresh` (no lookup — the caller
+  // GUARANTEES the vec is brand-new, e.g. a regex match result right after
+  // construction, so a table scan would only ever miss). Built per call so
+  // the two natives never share Instr object identities.
+  const buildEnsureAppendBody = (): Instr[] => [
+    // st = state ; if null → state = {count: 0, tab: new [4]}
+    { op: "global.get", index: stateGlobalIdx },
+    { op: "local.tee", index: 2 },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "i32.const", value: 0 },
+        { op: "i32.const", value: 4 },
+        { op: "array.new_default", typeIdx: tabTypeIdx },
+        { op: "struct.new", typeIdx: stateTypeIdx },
+        { op: "local.tee", index: 2 },
+        { op: "global.set", index: stateGlobalIdx },
+      ],
+    },
+    // count / tab / cap
+    { op: "local.get", index: 2 },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx: stateTypeIdx, fieldIdx: 0 },
+    { op: "local.set", index: 4 },
+    { op: "local.get", index: 2 },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx: stateTypeIdx, fieldIdx: 1 },
+    { op: "local.set", index: 3 },
+    { op: "local.get", index: 3 },
+    { op: "ref.as_non_null" },
+    { op: "array.len" },
+    { op: "local.set", index: 5 },
+    // grow when count == cap
+    { op: "local.get", index: 4 },
+    { op: "local.get", index: 5 },
+    { op: "i32.ge_s" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 5 },
+        { op: "i32.const", value: 2 },
+        { op: "i32.mul" },
+        { op: "array.new_default", typeIdx: tabTypeIdx },
+        { op: "local.set", index: 6 },
+        { op: "local.get", index: 6 },
+        { op: "ref.as_non_null" },
+        { op: "i32.const", value: 0 },
+        { op: "local.get", index: 3 },
+        { op: "ref.as_non_null" },
+        { op: "i32.const", value: 0 },
+        { op: "local.get", index: 4 },
+        { op: "array.copy", dstTypeIdx: tabTypeIdx, srcTypeIdx: tabTypeIdx },
+        { op: "local.get", index: 2 },
+        { op: "ref.as_non_null" },
+        { op: "local.get", index: 6 },
+        { op: "ref.as_non_null" },
+        { op: "struct.set", typeIdx: stateTypeIdx, fieldIdx: 1 },
+        { op: "local.get", index: 6 },
+        { op: "local.set", index: 3 },
+      ],
+    },
+    // compNN = fresh $Object (via the plain-object native, cast back down)
+    { op: "call", funcIdx: newPlainObjectIdx },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: objectTypeIdx },
+    { op: "local.set", index: 7 },
+    // tab[count] = {vec, compNN} ; state.count = count + 1
+    { op: "local.get", index: 3 },
+    { op: "ref.as_non_null" },
+    { op: "local.get", index: 4 },
+    { op: "local.get", index: 0 },
+    { op: "local.get", index: 7 },
+    { op: "ref.as_non_null" },
+    { op: "struct.new", typeIdx: pairTypeIdx },
+    { op: "array.set", typeIdx: tabTypeIdx },
+    { op: "local.get", index: 2 },
+    { op: "ref.as_non_null" },
+    { op: "local.get", index: 4 },
+    { op: "i32.const", value: 1 },
+    { op: "i32.add" },
+    { op: "struct.set", typeIdx: stateTypeIdx, fieldIdx: 0 },
+    { op: "local.get", index: 7 },
+    { op: "ref.as_non_null" },
+  ];
+  const ensureLocals = (): { name: string; type: ValType }[] => [
+    { name: "comp", type: objRefNull },
+    { name: "st", type: { kind: "ref_null", typeIdx: stateTypeIdx } },
+    { name: "tab", type: { kind: "ref_null", typeIdx: tabTypeIdx } },
+    { name: "count", type: { kind: "i32" } },
+    { name: "cap", type: { kind: "i32" } },
+    { name: "newTab", type: { kind: "ref_null", typeIdx: tabTypeIdx } },
+    { name: "compNN", type: objRefNull },
+  ];
+
   // ── __vec_overlay_ensure(anyref vec) -> (ref $Object) ────────────────────
   // params: 0=vec; locals: 1=comp 2=st 3=tab 4=count 5=cap 6=newTab 7=compNN
   {
@@ -388,107 +547,83 @@ function ensureOverlayCore(ctx: CodegenContext, objectTypeIdx: number, newPlainO
         blockType: { kind: "empty" },
         then: [{ op: "local.get", index: 1 }, { op: "ref.as_non_null" }, { op: "return" }],
       },
-      // st = state ; if null → state = {count: 0, tab: new [4]}
-      { op: "global.get", index: stateGlobalIdx },
-      { op: "local.tee", index: 2 },
-      { op: "ref.is_null" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          { op: "i32.const", value: 0 },
-          { op: "i32.const", value: 4 },
-          { op: "array.new_default", typeIdx: tabTypeIdx },
-          { op: "struct.new", typeIdx: stateTypeIdx },
-          { op: "local.tee", index: 2 },
-          { op: "global.set", index: stateGlobalIdx },
-        ],
-      },
-      // count / tab / cap
-      { op: "local.get", index: 2 },
-      { op: "ref.as_non_null" },
-      { op: "struct.get", typeIdx: stateTypeIdx, fieldIdx: 0 },
-      { op: "local.set", index: 4 },
-      { op: "local.get", index: 2 },
-      { op: "ref.as_non_null" },
-      { op: "struct.get", typeIdx: stateTypeIdx, fieldIdx: 1 },
-      { op: "local.set", index: 3 },
-      { op: "local.get", index: 3 },
-      { op: "ref.as_non_null" },
-      { op: "array.len" },
-      { op: "local.set", index: 5 },
-      // grow when count == cap
-      { op: "local.get", index: 4 },
-      { op: "local.get", index: 5 },
-      { op: "i32.ge_s" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          { op: "local.get", index: 5 },
-          { op: "i32.const", value: 2 },
-          { op: "i32.mul" },
-          { op: "array.new_default", typeIdx: tabTypeIdx },
-          { op: "local.set", index: 6 },
-          { op: "local.get", index: 6 },
-          { op: "ref.as_non_null" },
-          { op: "i32.const", value: 0 },
-          { op: "local.get", index: 3 },
-          { op: "ref.as_non_null" },
-          { op: "i32.const", value: 0 },
-          { op: "local.get", index: 4 },
-          { op: "array.copy", dstTypeIdx: tabTypeIdx, srcTypeIdx: tabTypeIdx },
-          { op: "local.get", index: 2 },
-          { op: "ref.as_non_null" },
-          { op: "local.get", index: 6 },
-          { op: "ref.as_non_null" },
-          { op: "struct.set", typeIdx: stateTypeIdx, fieldIdx: 1 },
-          { op: "local.get", index: 6 },
-          { op: "local.set", index: 3 },
-        ],
-      },
-      // compNN = fresh $Object (via the plain-object native, cast back down)
-      { op: "call", funcIdx: newPlainObjectIdx },
-      { op: "any.convert_extern" },
-      { op: "ref.cast", typeIdx: objectTypeIdx },
-      { op: "local.set", index: 7 },
-      // tab[count] = {vec, compNN} ; state.count = count + 1
-      { op: "local.get", index: 3 },
-      { op: "ref.as_non_null" },
-      { op: "local.get", index: 4 },
-      { op: "local.get", index: 0 },
-      { op: "local.get", index: 7 },
-      { op: "ref.as_non_null" },
-      { op: "struct.new", typeIdx: pairTypeIdx },
-      { op: "array.set", typeIdx: tabTypeIdx },
-      { op: "local.get", index: 2 },
-      { op: "ref.as_non_null" },
-      { op: "local.get", index: 4 },
-      { op: "i32.const", value: 1 },
-      { op: "i32.add" },
-      { op: "struct.set", typeIdx: stateTypeIdx, fieldIdx: 0 },
-      { op: "local.get", index: 7 },
-      { op: "ref.as_non_null" },
+      ...buildEnsureAppendBody(),
     ];
     pushDefinedFunc(ctx, funcIdx, {
       name: ENSURE_NAME,
       typeIdx: sigIdx,
-      locals: [
-        { name: "comp", type: objRefNull },
-        { name: "st", type: { kind: "ref_null", typeIdx: stateTypeIdx } },
-        { name: "tab", type: { kind: "ref_null", typeIdx: tabTypeIdx } },
-        { name: "count", type: { kind: "i32" } },
-        { name: "cap", type: { kind: "i32" } },
-        { name: "newTab", type: { kind: "ref_null", typeIdx: tabTypeIdx } },
-        { name: "compNN", type: objRefNull },
-      ],
+      locals: ensureLocals(),
       body,
       exported: false,
     });
     ctx.funcMap.set(ENSURE_NAME, funcIdx);
   }
 
-  return { stateTypeIdx, stateGlobalIdx, lookupIdx, ensureIdx: ctx.funcMap.get(ENSURE_NAME)! };
+  // ── (#3673 round 15) __vec_overlay_ensure_fresh(anyref vec) -> (ref $Object)
+  // The append tail WITHOUT the lookup. Sound only when the vec provably has
+  // no existing companion — the regex match-result builder calls it via the
+  // reserved `__vec_overlay_prime` immediately after constructing the result,
+  // so the subsequent per-match `index`/`input`/`groups` defines hit the
+  // freshly appended pair at tab[count-1] on the newest-first scan (O(1))
+  // instead of each paying a full-table miss scan.
+  {
+    const sigIdx = addFuncType(
+      ctx,
+      [{ kind: "anyref" }],
+      [{ kind: "ref", typeIdx: objectTypeIdx }],
+      `$${ENSURE_FRESH_NAME}_type`,
+    );
+    const funcIdx = mintDefinedFunc(ctx);
+    pushDefinedFunc(ctx, funcIdx, {
+      name: ENSURE_FRESH_NAME,
+      typeIdx: sigIdx,
+      locals: ensureLocals(),
+      body: buildEnsureAppendBody(),
+      exported: false,
+    });
+    ctx.funcMap.set(ENSURE_FRESH_NAME, funcIdx);
+  }
+
+  // Fill the reserved `__vec_overlay_prime` placeholder (reserved at regex
+  // match-result compile time; no-op body until the core exists).
+  {
+    const primeFn = ctx.mod.functions.find((f) => f.name === PRIME_NAME);
+    const freshIdx = ctx.funcMap.get(ENSURE_FRESH_NAME);
+    if (primeFn && freshIdx !== undefined) {
+      primeFn.body = [
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "call", funcIdx: freshIdx },
+        { op: "drop" },
+      ];
+    }
+  }
+
+  return { stateTypeIdx, stateGlobalIdx, numericFlagGlobalIdx, lookupIdx, ensureIdx: ctx.funcMap.get(ENSURE_NAME)! };
+}
+
+/**
+ * (#3673 round 15) Reserve the `__vec_overlay_prime(externref) -> ()` no-op
+ * placeholder at a match-result construction site. Filled by
+ * `ensureOverlayCore` at finalize to call `__vec_overlay_ensure_fresh` —
+ * pre-appending the fresh vec's companion so the immediately following
+ * descriptor defines skip the full-table miss scan. When the overlay core is
+ * never built (no descriptor ops anywhere), the placeholder stays a no-op.
+ */
+export function reserveVecOverlayPrime(ctx: CodegenContext): number | undefined {
+  const existing = ctx.funcMap.get(PRIME_NAME);
+  if (existing !== undefined) return existing;
+  const sigIdx = addFuncType(ctx, [{ kind: "externref" }], [], `$${PRIME_NAME}_type`);
+  const funcIdx = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: PRIME_NAME,
+    typeIdx: sigIdx,
+    locals: [],
+    body: [],
+    exported: false,
+  });
+  ctx.funcMap.set(PRIME_NAME, funcIdx);
+  return funcIdx;
 }
 
 /**
@@ -505,19 +640,24 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
   const { objectTypeIdx, propEntryTypeIdx } = types;
   const anyStrTypeIdx = ctx.anyStrTypeIdx;
   if (anyStrTypeIdx < 0) return;
-
   // Required deps — resolved by NAME so late-import shifts can never desync.
   const objFindIdx = ctx.funcMap.get("__obj_find");
   const dpValueIdx = ctx.funcMap.get("__defineProperty_value");
   const dpAccessorIdx = ctx.funcMap.get("__defineProperty_accessor");
   const gopdObjectIdx = ctx.funcMap.get("__getOwnPropertyDescriptor");
+  const deletePropertyIdx = ctx.funcMap.get("__delete_property");
+  const externGetIdx = ctx.funcMap.get("__extern_get");
+  const externIsUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
   const externGetIdxIdx = ctx.funcMap.get("__extern_get_idx");
   const externSetIdx = ctx.funcMap.get("__extern_set");
   const newPlainObjectIdx = ctx.funcMap.get("__new_plain_object");
   const boxBoolIdx = ctx.funcMap.get("__box_boolean");
+  const unboxBoolIdx = ctx.funcMap.get("__unbox_boolean");
+  const toPropertyKeyIdx = ctx.funcMap.get("__to_property_key");
   const objIndexOfKeyIdx = ctx.funcMap.get("__obj_index_of_key");
   const numToStringIdx = ctx.funcMap.get("number_toString");
   const callAccessorGetIdx = ctx.funcMap.get("__call_accessor_get");
+  const callAccessorSetIdx = ctx.funcMap.get("__call_accessor_set");
   const strFlattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
   const strEqualsIdx = ctx.nativeStrHelpers.get("__str_equals");
   if (
@@ -525,13 +665,19 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
     dpValueIdx === undefined ||
     dpAccessorIdx === undefined ||
     gopdObjectIdx === undefined ||
+    deletePropertyIdx === undefined ||
+    externGetIdx === undefined ||
+    externIsUndefinedIdx === undefined ||
     externGetIdxIdx === undefined ||
     externSetIdx === undefined ||
     newPlainObjectIdx === undefined ||
     boxBoolIdx === undefined ||
+    unboxBoolIdx === undefined ||
+    toPropertyKeyIdx === undefined ||
     objIndexOfKeyIdx === undefined ||
     numToStringIdx === undefined ||
     callAccessorGetIdx === undefined ||
+    callAccessorSetIdx === undefined ||
     strFlattenIdx === undefined ||
     strEqualsIdx === undefined
   ) {
@@ -576,6 +722,27 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
     { op: "if", blockType: { kind: "empty" }, then: bail },
   ];
 
+  /** Push the `"length"` property key as an externref `$AnyString`. */
+  const lengthLitExtern = (): Instr[] => [...nativeStringLiteralInstrs(ctx, "length"), { op: "extern.convert_any" }];
+
+  /**
+   * (#3251 S3) Run `inner` only when the (non-null, $AnyString) key at
+   * `keyLocal` is NOT `"length"` — the overlay read prologues must never
+   * answer `"length"` from a companion entry (the live vec length field is
+   * authoritative; a companion copy goes stale on push/pop/plain writes).
+   * Inverse of `lengthKeyGuard`.
+   */
+  const notLengthWrap = (keyLocal: number, inner: Instr[]): Instr[] => [
+    { op: "local.get", index: keyLocal },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: anyStrTypeIdx },
+    { op: "call", funcIdx: strFlattenIdx },
+    ...nativeStringLiteralInstrs(ctx, "length"),
+    { op: "call", funcIdx: strEqualsIdx },
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: inner },
+  ];
+
   /** `idxLocal = __obj_index_of_key(cast key)` — canonical array index or -1. */
   const parseIndex = (keyLocal: number, idxLocal: number): Instr[] => [
     { op: "local.get", index: keyLocal },
@@ -593,47 +760,40 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
     { op: "local.set", index: lenLocal },
   ];
 
-  /**
-   * Seed an in-bounds real element into the companion when it has no entry:
-   * `__defineProperty_value(compExt, key, __extern_get_idx(vec, f64(i)), 0xBF)`.
-   * Locals: comp (ref null $Object), compExt/key/vec externref, i/len i32.
-   */
-  const seedIfRealElement = (l: {
+  const clearDeletedIndexMarker = (l: {
     comp: number;
     compExt: number;
     key: number;
-    vec: number;
-    i: number;
-    len: number;
+    entry: number;
+    wasDeleted: number;
   }): Instr[] => [
-    { op: "local.get", index: l.i },
     { op: "i32.const", value: 0 },
-    { op: "i32.ge_s" },
-    { op: "local.get", index: l.i },
-    { op: "local.get", index: l.len },
-    { op: "i32.lt_s" },
-    { op: "i32.and" },
+    { op: "local.set", index: l.wasDeleted },
+    { op: "local.get", index: l.comp },
+    { op: "ref.as_non_null" },
+    { op: "local.get", index: l.key },
+    { op: "call", funcIdx: objFindIdx },
+    { op: "local.tee", index: l.entry },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
     {
       op: "if",
       blockType: { kind: "empty" },
       then: [
-        { op: "local.get", index: l.comp },
+        { op: "local.get", index: l.entry },
         { op: "ref.as_non_null" },
-        { op: "local.get", index: l.key },
-        { op: "call", funcIdx: objFindIdx },
-        { op: "ref.is_null" },
+        { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
+        { op: "i32.const", value: FLAG_DELETED_INDEX },
+        { op: "i32.and" },
         {
           op: "if",
           blockType: { kind: "empty" },
           then: [
+            { op: "i32.const", value: 1 },
+            { op: "local.set", index: l.wasDeleted },
             { op: "local.get", index: l.compExt },
             { op: "local.get", index: l.key },
-            { op: "local.get", index: l.vec },
-            { op: "local.get", index: l.i },
-            { op: "f64.convert_i32_s" },
-            { op: "call", funcIdx: externGetIdxIdx },
-            { op: "f64.const", value: SEED_FLAGS },
-            { op: "call", funcIdx: dpValueIdx },
+            { op: "call", funcIdx: deletePropertyIdx },
             { op: "drop" },
           ],
         },
@@ -684,9 +844,99 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
     return arms;
   };
 
+  // ── (#3251 S3) ArraySetLength (§10.4.2.1) support ────────────────────────
+  // The companion holds a reserved `"length"` entry carrying the length's
+  // WRITABLE bit (enumerable/configurable are spec-fixed false); §10.1.6.3
+  // transition legality is delegated to the $Object define natives against a
+  // SEEDED current descriptor `{value: len, writable: true, e: false,
+  // c: false}` (host flag word 0xB9 — W value bit + W/E/C specified +
+  // hasValue). Shrink walks indices down, stopping at (and throwing on) a
+  // non-configurable companion entry per step 15; growth reuses the
+  // per-carrier grow-with-default arms. Length values ≥ 2^31 keep the legacy
+  // no-op (the i32 vec length field cannot represent them — documented
+  // boundary).
+  const s3UnboxNumIdx = ctx.funcMap.get("__unbox_number");
+  const s3BoxNumIdx = ctx.funcMap.get("__box_number");
+  const s3DeleteIdx = ctx.funcMap.get("__delete_property");
+  let s3: {
+    throwRange: () => Instr[];
+    throwType: () => Instr[];
+    throwTypeMsg: (message: string) => Instr[];
+    boxNumIdx: number;
+    unboxNumIdx: number;
+    deleteIdx: number;
+  } | null = null;
+  if (s3UnboxNumIdx !== undefined && s3BoxNumIdx !== undefined && s3DeleteIdx !== undefined) {
+    emitWasiErrorConstructor(ctx, "RangeError", 1);
+    emitWasiErrorConstructor(ctx, "TypeError", 1);
+    const rangeCtorIdx = ctx.funcMap.get("__new_RangeError");
+    const typeCtorIdx = ctx.funcMap.get("__new_TypeError");
+    if (rangeCtorIdx !== undefined && typeCtorIdx !== undefined) {
+      const tagIdx = ensureExnTag(ctx);
+      const throwTypeMsg = (message: string): Instr[] => [
+        ...nativeStringLiteralInstrs(ctx, message),
+        { op: "extern.convert_any" },
+        { op: "call", funcIdx: typeCtorIdx },
+        { op: "throw", tagIdx },
+      ];
+      s3 = {
+        throwRange: () => [
+          ...nativeStringLiteralInstrs(ctx, "RangeError: Invalid array length"),
+          { op: "extern.convert_any" },
+          { op: "call", funcIdx: rangeCtorIdx },
+          { op: "throw", tagIdx },
+        ],
+        throwType: () => throwTypeMsg("TypeError: Cannot redefine property: length"),
+        throwTypeMsg,
+        boxNumIdx: s3BoxNumIdx,
+        unboxNumIdx: s3UnboxNumIdx,
+        deleteIdx: s3DeleteIdx,
+      };
+    }
+  }
+  const LENGTH_SEED_FLAGS = 0xb9; // {writable:true} value bit + W/E/C specified + hasValue
+
+  /** Seed the companion `"length"` entry when absent. `any`/`comp`/`compExt`
+   *  locals per caller; the seeded value is the CURRENT vec length. */
+  const seedLengthEntry = (l: { any: number; comp: number; compExt: number }): Instr[] =>
+    s3 === null
+      ? []
+      : [
+          { op: "local.get", index: l.comp },
+          { op: "ref.as_non_null" },
+          ...lengthLitExtern(),
+          { op: "call", funcIdx: objFindIdx },
+          { op: "ref.is_null" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: l.compExt },
+              ...lengthLitExtern(),
+              { op: "local.get", index: l.any },
+              { op: "ref.cast", typeIdx: vecBaseIdx },
+              { op: "struct.get", typeIdx: vecBaseIdx, fieldIdx: 0 },
+              { op: "f64.convert_i32_s" },
+              { op: "call", funcIdx: s3.boxNumIdx },
+              { op: "f64.const", value: LENGTH_SEED_FLAGS },
+              { op: "call", funcIdx: dpValueIdx },
+              { op: "drop" },
+            ],
+          },
+        ];
+
+  /** Shared deps for the #4227 rejection guards (see vec-define-rejections.ts). */
+  const rejectionDeps = {
+    lengthLitExtern,
+    objFindIdx,
+    propEntryTypeIdx,
+    throwTypeMsg: s3 === null ? null : s3.throwTypeMsg,
+  };
+
   // ── __vec_dp_value ────────────────────────────────────────────────────────
   // params: 0=vec 1=key 2=value 3=flags(f64)
-  // locals: 4=any 5=comp 6=compExt 7=i(i32) 8=len 9=e 10=hf 11=wrote 12=valAny
+  // locals: 4=any 5=comp 6=compExt 7=i 8=len 9=e 10=hf 11=wrote
+  // 12=valAny 13=wasDeleted 14=nLen(f64) 15=uLen(f64) 16=newLenI 17=k — #3251 S3
   {
     const fn = findFn(DP_VALUE_NAME);
     if (fn) {
@@ -700,8 +950,249 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         { name: "hf", type: { kind: "i32" } },
         { name: "wrote", type: { kind: "i32" } },
         { name: "valAny", type: { kind: "anyref" } },
+        { name: "wasDeleted", type: { kind: "i32" } },
+        { name: "nLen", type: { kind: "f64" } }, // #3251 S3
+        { name: "uLen", type: { kind: "f64" } },
+        { name: "newLenI", type: { kind: "i32" } },
+        { name: "k", type: { kind: "i32" } },
+        { name: "lenPrim", type: { kind: "externref" } },
       ];
+      // (#3251 S3) Full §7.1.4 ToNumber for the length value — ArraySetLength
+      // must accept `{value: "2"}` and `{value: {toString(){return "2"}}}`
+      // (the 15.2.3.6-4-142..151 family): ToPrimitive(number hint) first, then
+      // StringToNumber for a string primitive, `__unbox_number` otherwise.
+      // Any helper missing → plain unbox (numbers-only under-fix, no throw).
+      const s3ToPrimIdx = ctx.funcMap.get("__to_primitive");
+      const s3TypeofStringIdx = ctx.funcMap.get("__typeof_string");
+      const s3StrToNumIdx = ctx.funcMap.get("__str_to_number");
+      const lengthToNumber: Instr[] =
+        s3 === null
+          ? []
+          : s3ToPrimIdx !== undefined && s3TypeofStringIdx !== undefined && s3StrToNumIdx !== undefined
+            ? [
+                { op: "local.get", index: 2 },
+                { op: "ref.null.extern" }, // hint: number/default
+                { op: "call", funcIdx: s3ToPrimIdx },
+                { op: "local.tee", index: 18 },
+                { op: "call", funcIdx: s3TypeofStringIdx },
+                {
+                  op: "if",
+                  blockType: { kind: "val", type: { kind: "f64" } },
+                  then: [
+                    { op: "local.get", index: 18 },
+                    { op: "call", funcIdx: s3StrToNumIdx },
+                  ],
+                  else: [
+                    { op: "local.get", index: 18 },
+                    { op: "call", funcIdx: s3.unboxNumIdx },
+                  ],
+                },
+              ]
+            : [
+                { op: "local.get", index: 2 },
+                { op: "call", funcIdx: s3.unboxNumIdx },
+              ];
       const bailReturnVec: Instr[] = [{ op: "local.get", index: 0 }, { op: "return" }];
+
+      // (#3251 S3) The `"length"` define body — ArraySetLength §10.4.2.1.
+      // Runs INSTEAD of the index path when key == "length"; always returns.
+      const lengthDefineBody: Instr[] =
+        s3 === null
+          ? bailReturnVec.map((i) => ({ ...i }))
+          : [
+              // comp / compExt + seed the length descriptor
+              { op: "local.get", index: 4 },
+              { op: "call", funcIdx: core.ensureIdx },
+              { op: "local.set", index: 5 },
+              { op: "local.get", index: 5 },
+              { op: "extern.convert_any" },
+              { op: "local.set", index: 6 },
+              ...seedLengthEntry({ any: 4, comp: 5, compExt: 6 }),
+              // hf = trunc(flags)
+              { op: "local.get", index: 3 },
+              { op: "i32.trunc_f64_s" },
+              { op: "local.set", index: 10 },
+              { op: "local.get", index: 10 },
+              { op: "i32.const", value: HOST_HAS_VALUE },
+              { op: "i32.and" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  // n = ToNumber(value) ; u = ToUint32(n) as f64 ; mismatch → RangeError (step 5)
+                  ...lengthToNumber,
+                  { op: "local.tee", index: 14 },
+                  { op: "i64.trunc_sat_f64_s" },
+                  { op: "i64.const", value: 0xffffffffn },
+                  { op: "i64.and" },
+                  { op: "f64.convert_i64_u" },
+                  { op: "local.tee", index: 15 },
+                  { op: "local.get", index: 14 },
+                  { op: "f64.ne" },
+                  { op: "if", blockType: { kind: "empty" }, then: s3.throwRange() },
+                  // u ≥ 2^31 → legacy no-op (i32 vec length cannot represent it)
+                  { op: "local.get", index: 15 },
+                  { op: "f64.const", value: 2147483647 },
+                  { op: "f64.gt" },
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: bailReturnVec.map((i) => ({ ...i })),
+                  },
+                  // Delegate {value: u, ...attrs} — §10.1.6.3 legality against
+                  // the seeded current (non-writable value change → TypeError,
+                  // configurable/enumerable flips → TypeError). Throws propagate.
+                  { op: "local.get", index: 6 },
+                  ...lengthLitExtern(),
+                  { op: "local.get", index: 15 },
+                  { op: "call", funcIdx: s3.boxNumIdx },
+                  { op: "local.get", index: 3 },
+                  { op: "call", funcIdx: dpValueIdx },
+                  { op: "drop" },
+                  // Apply to the vec: shrink (stop at non-configurable) or grow.
+                  { op: "local.get", index: 15 },
+                  { op: "i32.trunc_sat_f64_s" },
+                  { op: "local.set", index: 16 },
+                  ...vecLen(4, 8),
+                  { op: "local.get", index: 16 },
+                  { op: "local.get", index: 8 },
+                  { op: "i32.lt_s" },
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: [
+                      // k = oldLen - 1 ; while (k >= newLen) …
+                      { op: "local.get", index: 8 },
+                      { op: "i32.const", value: 1 },
+                      { op: "i32.sub" },
+                      { op: "local.set", index: 17 },
+                      {
+                        op: "block",
+                        blockType: { kind: "empty" },
+                        body: [
+                          {
+                            op: "loop",
+                            blockType: { kind: "empty" },
+                            body: [
+                              { op: "local.get", index: 17 },
+                              { op: "local.get", index: 16 },
+                              { op: "i32.lt_s" },
+                              { op: "br_if", depth: 1 },
+                              // e = __obj_find(comp, ToString(k))
+                              { op: "local.get", index: 5 },
+                              { op: "ref.as_non_null" },
+                              { op: "local.get", index: 17 },
+                              { op: "f64.convert_i32_s" },
+                              { op: "call", funcIdx: numToStringIdx },
+                              { op: "call", funcIdx: objFindIdx },
+                              { op: "local.tee", index: 9 },
+                              { op: "ref.is_null" },
+                              { op: "i32.eqz" },
+                              {
+                                op: "if",
+                                blockType: { kind: "empty" },
+                                then: [
+                                  { op: "local.get", index: 9 },
+                                  { op: "ref.as_non_null" },
+                                  { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
+                                  { op: "i32.const", value: FLAG_CONFIGURABLE },
+                                  { op: "i32.and" },
+                                  { op: "i32.eqz" },
+                                  {
+                                    op: "if",
+                                    blockType: { kind: "empty" },
+                                    then: [
+                                      // step 15.b–d: stop — length = k+1, sync the
+                                      // companion "length" value, throw TypeError.
+                                      { op: "local.get", index: 4 },
+                                      { op: "ref.cast", typeIdx: vecBaseIdx },
+                                      { op: "local.get", index: 17 },
+                                      { op: "i32.const", value: 1 },
+                                      { op: "i32.add" },
+                                      { op: "struct.set", typeIdx: vecBaseIdx, fieldIdx: 0 },
+                                      { op: "local.get", index: 5 },
+                                      { op: "ref.as_non_null" },
+                                      ...lengthLitExtern(),
+                                      { op: "call", funcIdx: objFindIdx },
+                                      { op: "local.tee", index: 9 },
+                                      { op: "ref.is_null" },
+                                      { op: "i32.eqz" },
+                                      {
+                                        op: "if",
+                                        blockType: { kind: "empty" },
+                                        then: [
+                                          { op: "local.get", index: 9 },
+                                          { op: "ref.as_non_null" },
+                                          { op: "local.get", index: 17 },
+                                          { op: "i32.const", value: 1 },
+                                          { op: "i32.add" },
+                                          { op: "f64.convert_i32_s" },
+                                          { op: "call", funcIdx: s3.boxNumIdx },
+                                          { op: "any.convert_extern" },
+                                          { op: "struct.set", typeIdx: propEntryTypeIdx, fieldIdx: 1 },
+                                        ],
+                                      },
+                                      ...s3.throwType(),
+                                    ],
+                                  },
+                                  // configurable entry → remove it from the companion
+                                  { op: "local.get", index: 6 },
+                                  { op: "local.get", index: 17 },
+                                  { op: "f64.convert_i32_s" },
+                                  { op: "call", funcIdx: numToStringIdx },
+                                  { op: "call", funcIdx: s3.deleteIdx },
+                                  { op: "drop" },
+                                ],
+                              },
+                              { op: "local.get", index: 17 },
+                              { op: "i32.const", value: 1 },
+                              { op: "i32.sub" },
+                              { op: "local.set", index: 17 },
+                              { op: "br", depth: 0 },
+                            ],
+                          },
+                        ],
+                      },
+                      // vec.length = newLen
+                      { op: "local.get", index: 4 },
+                      { op: "ref.cast", typeIdx: vecBaseIdx },
+                      { op: "local.get", index: 16 },
+                      { op: "struct.set", typeIdx: vecBaseIdx, fieldIdx: 0 },
+                    ],
+                    else: [
+                      // growth: extend capacity + length via the per-carrier
+                      // grow-with-default arms (k = newLen - 1).
+                      { op: "local.get", index: 16 },
+                      { op: "local.get", index: 8 },
+                      { op: "i32.gt_s" },
+                      {
+                        op: "if",
+                        blockType: { kind: "empty" },
+                        then: [
+                          { op: "local.get", index: 16 },
+                          { op: "i32.const", value: 1 },
+                          { op: "i32.sub" },
+                          { op: "local.set", index: 17 },
+                          ...growDefaultArms(4, 17),
+                        ],
+                      },
+                    ],
+                  },
+                ],
+                else: [
+                  // flags-only define ({writable:false} etc.) — merge via the
+                  // $Object native; no length change.
+                  { op: "local.get", index: 6 },
+                  ...lengthLitExtern(),
+                  { op: "local.get", index: 2 },
+                  { op: "local.get", index: 3 },
+                  { op: "call", funcIdx: dpValueIdx },
+                  { op: "drop" },
+                ],
+              },
+              { op: "local.get", index: 0 },
+              { op: "return" },
+            ];
 
       // Per-carrier value write-back arms. Value must match the carrier's
       // element kind STRICTLY (defineProperty must not ToNumber-coerce);
@@ -742,6 +1233,22 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
                   { op: "local.get", index: 12 },
                   { op: "ref.cast", typeIdx: boxNumTypeIdx },
                   { op: "struct.get", typeIdx: boxNumTypeIdx, fieldIdx: 0 },
+                  { op: "call", funcIdx: elemSetIdx },
+                  ...wrote.map((i) => ({ ...i })),
+                ],
+              },
+              // (#3673) i31-boxed small int is a strict number too.
+              { op: "local.get", index: 12 },
+              { op: "ref.test", typeIdx: -20 },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  ...castVecAndIdx.map((i) => ({ ...i })),
+                  { op: "local.get", index: 12 },
+                  { op: "ref.cast", typeIdx: -20 },
+                  { op: "i31.get_s" },
+                  { op: "f64.convert_i32_s" },
                   { op: "call", funcIdx: elemSetIdx },
                   ...wrote.map((i) => ({ ...i })),
                 ],
@@ -832,10 +1339,8 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
           1,
           bailReturnVec.map((i) => ({ ...i })),
         ),
-        ...lengthKeyGuard(
-          1,
-          bailReturnVec.map((i) => ({ ...i })),
-        ),
+        // (#3251 S3) "length" → ArraySetLength (always returns inside).
+        ...lengthKeyGuard(1, lengthDefineBody),
         { op: "local.get", index: 4 },
         { op: "call", funcIdx: core.ensureIdx },
         { op: "local.set", index: 5 },
@@ -844,15 +1349,46 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         { op: "local.set", index: 6 },
         ...parseIndex(1, 7),
         ...vecLen(4, 8),
-        // if (i >= 0) seed-if-real-element
+        // (#4227) §10.4.2.2 step 3 — frozen `length` blocks an index at/after it.
+        ...nonWritableLengthIndexGuard(rejectionDeps, { comp: 5, i: 7, len: 8, entry: 9 }),
+        // (#4227) §10.1.6.3 step 2 — a non-extensible array takes no new index.
+        ...nonExtensibleFreshIndexGuard(ctx, rejectionDeps, { recvLocalIdx: 0, i: 7, len: 8 }),
+        // if (i >= 0) mark numeric-companion presence (#3673) + seed-if-real-element
         { op: "local.get", index: 7 },
         { op: "i32.const", value: 0 },
         { op: "i32.ge_s" },
         {
           op: "if",
           blockType: { kind: "empty" },
-          then: seedIfRealElement({ comp: 5, compExt: 6, key: 1, vec: 0, i: 7, len: 8 }),
+          then: [
+            { op: "i32.const", value: 1 },
+            { op: "global.set", index: core.numericFlagGlobalIdx },
+            ...clearDeletedIndexMarker({
+              comp: 5,
+              compExt: 6,
+              key: 1,
+              entry: 9,
+              wasDeleted: 13,
+            }),
+            { op: "local.get", index: 13 },
+            { op: "i32.eqz" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: buildRealElementSeed(
+                { comp: 5, compExt: 6, key: 1, vec: 0, i: 7, len: 8 },
+                objFindIdx,
+                dpValueIdx,
+                externGetIdxIdx,
+                SEED_FLAGS,
+              ),
+            },
+          ],
         },
+        // (#4010 S1′) Named-key twin of the index seed above — see `vec-bag-seed.ts`.
+        // Deliberately NOT applied on the accessor path: converting a data
+        // property to an accessor does not preserve [[Value]] (§10.1.6.3).
+        ...buildBagValueSeed(ctx, { comp: 5, compExt: 6, key: 1, vec: 0, i: 7 }, objFindIdx, dpValueIdx, SEED_FLAGS),
         // Delegate the define to the $Object native (validation throws propagate).
         { op: "local.get", index: 6 },
         { op: "local.get", index: 1 },
@@ -944,7 +1480,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
 
   // ── __vec_dp_accessor ────────────────────────────────────────────────────
   // params: 0=vec 1=key 2=get 3=set 4=flags(f64)
-  // locals: 5=any 6=comp 7=compExt 8=i(i32) 9=len
+  // locals: 5=any 6=comp 7=compExt 8=i 9=len 10=e 11=wasDeleted
   {
     const fn = findFn(DP_ACCESSOR_NAME);
     if (fn) {
@@ -954,6 +1490,8 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         { name: "compExt", type: { kind: "externref" } },
         { name: "i", type: { kind: "i32" } },
         { name: "len", type: { kind: "i32" } },
+        { name: "e", type: { kind: "ref_null", typeIdx: propEntryTypeIdx } },
+        { name: "wasDeleted", type: { kind: "i32" } },
       ];
       const bailReturnVec = (): Instr[] => [{ op: "local.get", index: 0 }, { op: "return" }];
       fn.body = [
@@ -962,7 +1500,32 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         { op: "local.set", index: 5 },
         ...carrierWhitelistGuard(5, bailReturnVec()),
         ...stringKeyGuard(1, bailReturnVec()),
-        ...lengthKeyGuard(1, bailReturnVec()),
+        // (#3251 S3) accessor define on "length": §10.4.2.1 step 2 — always a
+        // TypeError. Seed the length descriptor and delegate; the $Object S4
+        // accessor preflight rejects the data→accessor conversion on the
+        // seeded non-configurable current. (s3 unavailable → legacy no-op.)
+        ...lengthKeyGuard(
+          1,
+          s3 === null
+            ? bailReturnVec()
+            : [
+                { op: "local.get", index: 5 },
+                { op: "call", funcIdx: core.ensureIdx },
+                { op: "local.set", index: 6 },
+                { op: "local.get", index: 6 },
+                { op: "extern.convert_any" },
+                { op: "local.set", index: 7 },
+                ...seedLengthEntry({ any: 5, comp: 6, compExt: 7 }),
+                { op: "local.get", index: 7 },
+                ...lengthLitExtern(),
+                { op: "local.get", index: 2 },
+                { op: "local.get", index: 3 },
+                { op: "local.get", index: 4 },
+                { op: "call", funcIdx: dpAccessorIdx },
+                { op: "drop" },
+                ...bailReturnVec(),
+              ],
+        ),
         { op: "local.get", index: 5 },
         { op: "call", funcIdx: core.ensureIdx },
         { op: "local.set", index: 6 },
@@ -977,7 +1540,31 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         {
           op: "if",
           blockType: { kind: "empty" },
-          then: seedIfRealElement({ comp: 6, compExt: 7, key: 1, vec: 0, i: 8, len: 9 }),
+          then: [
+            // (#3673) numeric-companion presence — see OverlayCore.numericFlagGlobalIdx.
+            { op: "i32.const", value: 1 },
+            { op: "global.set", index: core.numericFlagGlobalIdx },
+            ...clearDeletedIndexMarker({
+              comp: 6,
+              compExt: 7,
+              key: 1,
+              entry: 10,
+              wasDeleted: 11,
+            }),
+            { op: "local.get", index: 11 },
+            { op: "i32.eqz" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: buildRealElementSeed(
+                { comp: 6, compExt: 7, key: 1, vec: 0, i: 8, len: 9 },
+                objFindIdx,
+                dpValueIdx,
+                externGetIdxIdx,
+                SEED_FLAGS,
+              ),
+            },
+          ],
         },
         // Delegate the accessor define (validation + merge live in the native).
         { op: "local.get", index: 7 },
@@ -1011,7 +1598,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
 
   // ── __vec_gopd ───────────────────────────────────────────────────────────
   // params: 0=vec 1=key
-  // locals: 2=any 3=comp 4=i(i32) 5=len 6=d(externref)
+  // locals: 2=any 3=comp 4=i 5=len 6=d 7=e
   {
     const fn = findFn(GOPD_NAME);
     if (fn) {
@@ -1021,6 +1608,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         { name: "i", type: { kind: "i32" } },
         { name: "len", type: { kind: "i32" } },
         { name: "d", type: { kind: "externref" } },
+        { name: "e", type: { kind: "ref_null", typeIdx: propEntryTypeIdx } },
       ];
       const bailMiss = (): Instr[] => [...missExtern(), { op: "return" }];
       const setKey = (key: string, valueInstrs: Instr[]): Instr[] => [
@@ -1030,13 +1618,89 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         ...valueInstrs,
         { op: "call", funcIdx: externSetIdx },
       ];
+      // (#3251 S3) gOPD("length") — synthesize the array-length descriptor
+      // {value: <LIVE vec length>, writable: <companion bit, default true>,
+      // enumerable: false, configurable: false}. The VALUE always comes from
+      // the live length field, never the companion (a companion copy goes
+      // stale on push/pop/plain writes). (s3 unavailable → legacy miss.)
+      const lengthGopdBody: Instr[] =
+        s3 === null
+          ? bailMiss()
+          : [
+              // wbit (reuse local 4): default 1, else the companion entry's bit
+              { op: "i32.const", value: 1 },
+              { op: "local.set", index: 4 },
+              { op: "local.get", index: 2 },
+              { op: "call", funcIdx: core.lookupIdx },
+              { op: "local.tee", index: 3 },
+              { op: "ref.is_null" },
+              { op: "i32.eqz" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "local.get", index: 3 },
+                  { op: "ref.as_non_null" },
+                  ...lengthLitExtern(),
+                  { op: "call", funcIdx: objFindIdx },
+                  { op: "local.tee", index: 7 },
+                  { op: "ref.is_null" },
+                  { op: "i32.eqz" },
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: [
+                      { op: "local.get", index: 7 },
+                      { op: "ref.as_non_null" },
+                      { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
+                      { op: "i32.const", value: FLAG_WRITABLE },
+                      { op: "i32.and" },
+                      { op: "i32.const", value: 0 },
+                      { op: "i32.ne" },
+                      { op: "local.set", index: 4 },
+                    ],
+                  },
+                ],
+              },
+              { op: "call", funcIdx: newPlainObjectIdx },
+              { op: "local.set", index: 6 },
+              ...setKey("value", [
+                { op: "local.get", index: 2 },
+                { op: "ref.cast", typeIdx: vecBaseIdx },
+                { op: "struct.get", typeIdx: vecBaseIdx, fieldIdx: 0 },
+                { op: "f64.convert_i32_s" },
+                { op: "call", funcIdx: s3.boxNumIdx },
+              ]),
+              ...setKey("writable", [
+                { op: "local.get", index: 4 },
+                { op: "call", funcIdx: boxBoolIdx },
+              ]),
+              ...setKey("enumerable", [
+                { op: "i32.const", value: 0 },
+                { op: "call", funcIdx: boxBoolIdx },
+              ]),
+              ...setKey("configurable", [
+                { op: "i32.const", value: 0 },
+                { op: "call", funcIdx: boxBoolIdx },
+              ]),
+              { op: "local.get", index: 6 },
+              { op: "return" },
+            ];
       fn.body = [
+        // Public reflection helpers receive the original key. Normalize it
+        // once before the vec overlay's string/index classifiers so numeric
+        // property keys such as 0 observe the same "0" element as ordinary
+        // object reflection.
+        { op: "local.get", index: 1 },
+        { op: "call", funcIdx: toPropertyKeyIdx },
+        { op: "local.set", index: 1 },
         { op: "local.get", index: 0 },
         { op: "any.convert_extern" },
         { op: "local.set", index: 2 },
         ...carrierWhitelistGuard(2, bailMiss()),
         ...stringKeyGuard(1, bailMiss()),
-        ...lengthKeyGuard(1, bailMiss()),
+        // (#3251 S3) "length" → synthesized length descriptor (always returns).
+        ...lengthKeyGuard(1, lengthGopdBody),
         // Companion entry → delegate to the $Object descriptor builder.
         { op: "local.get", index: 2 },
         { op: "call", funcIdx: core.lookupIdx },
@@ -1051,12 +1715,19 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
             { op: "ref.as_non_null" },
             { op: "local.get", index: 1 },
             { op: "call", funcIdx: objFindIdx },
+            { op: "local.tee", index: 7 },
             { op: "ref.is_null" },
             { op: "i32.eqz" },
             {
               op: "if",
               blockType: { kind: "empty" },
               then: [
+                { op: "local.get", index: 7 },
+                { op: "ref.as_non_null" },
+                { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
+                { op: "i32.const", value: FLAG_DELETED_INDEX },
+                { op: "i32.and" },
+                { op: "if", blockType: { kind: "empty" }, then: bailMiss() },
                 { op: "local.get", index: 3 },
                 { op: "extern.convert_any" },
                 { op: "local.get", index: 1 },
@@ -1105,10 +1776,194 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
             { op: "return" },
           ],
         },
-        ...missExtern(),
+        ...buildBagGopdOrMiss(ctx, 6, missExtern()), // (#4010 S3) the #3537 bag, then the miss
       ];
     }
   }
+
+  {
+    const fn = findFn("__extern_set");
+    const vecDpValueIdx = ctx.funcMap.get(DP_VALUE_NAME);
+    if (fn && vecDpValueIdx !== undefined) {
+      const base = 3 + fn.locals.length;
+      const anyLocal = base;
+      const keyLocal = base + 1;
+      const compLocal = base + 2;
+      const entryLocal = base + 3;
+      const indexLocal = base + 4;
+      const setterLocal = base + 5;
+      fn.locals.push(
+        { name: "__ov_set_any", type: { kind: "anyref" } },
+        { name: "__ov_set_key", type: { kind: "externref" } },
+        { name: "__ov_set_comp", type: { kind: "ref_null", typeIdx: objectTypeIdx } },
+        { name: "__ov_set_entry", type: { kind: "ref_null", typeIdx: propEntryTypeIdx } },
+        { name: "__ov_set_index", type: { kind: "i32" } },
+        { name: "__ov_set_setter", type: { kind: "externref" } },
+      );
+      fn.body.unshift(
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "local.tee", index: anyLocal },
+        { op: "ref.test", typeIdx: vecBaseIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: 1 },
+            { op: "call", funcIdx: toPropertyKeyIdx },
+            { op: "local.set", index: keyLocal },
+            { op: "local.get", index: anyLocal },
+            { op: "call", funcIdx: core.lookupIdx },
+            { op: "local.tee", index: compLocal },
+            { op: "ref.is_null" },
+            { op: "i32.eqz" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: compLocal },
+                { op: "ref.as_non_null" },
+                { op: "local.get", index: keyLocal },
+                { op: "call", funcIdx: objFindIdx },
+                { op: "local.tee", index: entryLocal },
+                { op: "ref.is_null" },
+                { op: "i32.eqz" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "local.get", index: entryLocal },
+                    { op: "ref.as_non_null" },
+                    { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
+                    { op: "i32.const", value: FLAG_DELETED_INDEX },
+                    { op: "i32.and" },
+                    {
+                      op: "if",
+                      blockType: { kind: "empty" },
+                      then: [
+                        // Ordinary assignment recreates a deleted array index
+                        // as a fresh writable/enumerable/configurable data
+                        // property. __vec_dp_value clears the tombstone first,
+                        // deliberately avoiding a seed from the stale carrier.
+                        { op: "local.get", index: 0 },
+                        { op: "local.get", index: keyLocal },
+                        { op: "local.get", index: 2 },
+                        { op: "f64.const", value: SEED_FLAGS },
+                        { op: "call", funcIdx: vecDpValueIdx },
+                        { op: "drop" },
+                        { op: "return" },
+                      ],
+                    },
+                    { op: "local.get", index: entryLocal },
+                    { op: "ref.as_non_null" },
+                    { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
+                    { op: "i32.const", value: FLAG_ACCESSOR },
+                    { op: "i32.and" },
+                    {
+                      op: "if",
+                      blockType: { kind: "empty" },
+                      // (#3251 S2) accessor entry → invoke `e.set` with the
+                      // ORIGINAL vec receiver as `this`; a null setter is a
+                      // sloppy no-op (strict-throw is a documented boundary,
+                      // same discipline as the frozen-gate).
+                      then: [
+                        { op: "local.get", index: entryLocal },
+                        { op: "ref.as_non_null" },
+                        { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 5 },
+                        { op: "extern.convert_any" },
+                        { op: "local.tee", index: setterLocal },
+                        { op: "ref.is_null" },
+                        { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }] },
+                        { op: "local.get", index: 0 },
+                        { op: "local.get", index: setterLocal },
+                        { op: "local.get", index: 2 },
+                        { op: "call", funcIdx: callAccessorSetIdx },
+                        { op: "return" },
+                      ],
+                    },
+                    { op: "local.get", index: entryLocal },
+                    { op: "ref.as_non_null" },
+                    { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
+                    { op: "i32.const", value: FLAG_WRITABLE },
+                    { op: "i32.and" },
+                    {
+                      op: "if",
+                      blockType: { kind: "empty" },
+                      then: [
+                        { op: "local.get", index: 0 },
+                        { op: "local.get", index: keyLocal },
+                        { op: "local.get", index: 2 },
+                        { op: "f64.const", value: HOST_HAS_VALUE },
+                        { op: "call", funcIdx: vecDpValueIdx },
+                        { op: "drop" },
+                        { op: "return" },
+                      ],
+                      else: [{ op: "return" }],
+                    },
+                  ],
+                },
+              ],
+            },
+            { op: "local.get", index: keyLocal },
+            { op: "any.convert_extern" },
+            { op: "ref.test", typeIdx: anyStrTypeIdx },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                ...parseIndex(keyLocal, indexLocal),
+                { op: "local.get", index: indexLocal },
+                { op: "i32.const", value: 0 },
+                { op: "i32.ge_s" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "local.get", index: 0 },
+                    { op: "local.get", index: keyLocal },
+                    { op: "local.get", index: 2 },
+                    { op: "f64.const", value: HOST_HAS_VALUE },
+                    { op: "call", funcIdx: vecDpValueIdx },
+                    { op: "drop" },
+                    { op: "return" },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      );
+    }
+  }
+
+  // (#4010 S1′/S2) The vec arm of `__delete_property` lives in vec-bag-seed.ts —
+  // ONE owner for both directions of the overlay↔bag seam (seed a value in,
+  // delete a property out). See that module for the S2 bag consult + shadow.
+  {
+    const fn = findFn("__delete_property");
+    const vecGopdIdx = ctx.funcMap.get(GOPD_NAME);
+    if (fn && vecGopdIdx !== undefined) {
+      buildVecDeletePrologue(ctx, fn, {
+        objectTypeIdx,
+        propEntryTypeIdx,
+        vecBaseIdx,
+        vecGopdIdx,
+        toPropertyKeyIdx,
+        externIsUndefinedIdx,
+        externGetIdx,
+        unboxBoolIdx,
+        deletePropertyIdx,
+        dpValueIdx,
+        objFindIdx,
+        ensureIdx: core.ensureIdx,
+        numericFlagGlobalIdx: core.numericFlagGlobalIdx,
+        deletedIndexFlags: FLAG_DELETED_INDEX | FLAG_COMPANION_VALUE,
+        missExtern,
+        parseIndex,
+      });
+    }
+  }
+  fillVecHasOwnHelpers(ctx, vecBaseIdx);
 
   // ── Overlay read prologue: __extern_get_idx ──────────────────────────────
   // Splice-front, append-locals (#2190/#3183 fill discipline). Gated on the
@@ -1128,9 +1983,12 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         { name: "__ov_getter", type: { kind: "externref" } },
       );
       const prologue: Instr[] = [
-        { op: "global.get", index: core.stateGlobalIdx },
-        { op: "ref.is_null" },
-        { op: "i32.eqz" },
+        // (#3673) Gate on the numeric-companion flag, NOT the state global: a
+        // table holding only string-key companions (standalone RegExp result
+        // arrays — one per exec) is irrelevant to an INDEXED read, and the
+        // per-read linear table scan was 29% of a standalone compiled-acorn
+        // parse. Flag set ⇒ state global is non-null.
+        { op: "global.get", index: core.numericFlagGlobalIdx },
         {
           op: "if",
           blockType: { kind: "empty" },
@@ -1263,7 +2121,11 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
             {
               op: "if",
               blockType: { kind: "empty" },
-              then: [
+              // (#3251 S3) "length" is EXCLUDED from the companion consult —
+              // the live vec length field is authoritative (a companion copy
+              // goes stale on push/plain writes); the pre-existing length arm
+              // below answers it.
+              then: notLengthWrap(1, [
                 { op: "local.get", index: gAny },
                 { op: "call", funcIdx: core.lookupIdx },
                 { op: "local.tee", index: gComp },
@@ -1353,12 +2215,32 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
                     },
                   ],
                 },
-              ],
+              ]),
             },
           ],
         },
       ];
       fn.body.splice(0, 0, ...prologue);
+    }
+  }
+
+  // ── (#4222) Overlay PRESENCE prologue: __extern_has_idx ───────────────────
+  // The read prologues above make Get see a deleted index as `undefined`; this
+  // makes HasProperty agree. Body lives in `vec-overlay-presence.ts` (the same
+  // split as the delete prologue in `vec-bag-seed.ts`).
+  {
+    const fn = findFn("__extern_has_idx");
+    if (fn) {
+      buildVecHasIdxPresencePrologue(fn, {
+        objectTypeIdx,
+        propEntryTypeIdx,
+        vecBaseIdx,
+        lookupIdx: core.lookupIdx,
+        numericFlagGlobalIdx: core.numericFlagGlobalIdx,
+        numToStringIdx,
+        objFindIdx,
+        deletedIndexFlag: FLAG_DELETED_INDEX,
+      });
     }
   }
 }

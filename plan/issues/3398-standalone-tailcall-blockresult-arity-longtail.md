@@ -1,8 +1,7 @@
 ---
 id: 3398
 title: "standalone: tail-call ABI mismatch / block-result fallthru / call arity / ref.test-cast long tail — invalid Wasm (~13 tests)"
-status: in-progress
-assignee: ttraenkler/fable-dev-5
+status: ready
 sprint: current
 created: 2026-07-18
 updated: 2026-07-18

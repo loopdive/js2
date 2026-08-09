@@ -176,3 +176,21 @@ Residual 42 split by bucket:
 - **Bucket 7** (`-9-5`/`-8-5`, harness/vacuity-artifact rows, not a real
   indexOf gap) — flagged to whoever owns the #3086 honest-vacuity oracle;
   not this issue's or #3317's concern.
+
+## Residual still live — re-confirmed 2026-08-03 (from #4119)
+
+Buckets 1 + 2 above are **still open and still correctly attributed here.**
+#4119 (the `array-object-proto.ts` refusal ladder) found 24 rows —
+`indexOf` 11, `lastIndexOf` 12, `includes` 1 — carrying the same
+`… is not yet callable as a value in --target standalone` string, and asked
+whether this issue's fix was partial or a second site had been missed.
+
+Verified from the test files themselves (standalone baseline
+`2026-08-03 19:17`): **neither.** Every one of the 24 is a primitive or exotic
+receiver — `applied to boolean primitive`, `to number primitive`,
+`to string primitive`, `to Function object`, `call-with-boolean.js` — i.e.
+exactly buckets 2 and 1 as written above. They were left deliberately, needing
+`ToObject(primitive)` / host-object dynamic length+index reads, and #4119 has
+**dropped** them from its scope rather than double-fixing.
+
+No action here; recorded so the next reader does not re-derive it.

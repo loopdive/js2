@@ -1,74 +1,68 @@
 ---
 id: 2950
-title: "IR-first default flip: JS2WASM_IR_FIRST default-ON, then delete the flag + compile-twice path"
-status: backlog
-sprint: current
+title: "IR-first default flip (historical milestone; retirement moved to #3518)"
+status: done
+sprint: 71
 created: 2026-07-02
-updated: 2026-07-02
+updated: 2026-07-21
+completed: 2026-07-13
 priority: high
 horizon: l
+complexity: L
 feasibility: hard
 reasoning_effort: max
 model: fable
-task_type: architecture
+task_type: refactor
 area: codegen, ir
 language_feature: compiler-internals
+es_edition: n/a
 goal: ir-full-coverage
 depends_on: [2138, 2135, 2951, 2945]
-related: [2855, 2947, 1916]
-origin: "2026-07-02 July Fable audit §1 (Wave-3 sequencing anchor; no issue existed for the default flip)"
+related: [2855, 2947, 1916, 3090, 3143, 3518]
+superseded_by: 3518
+origin: "2026-07-02 July Fable audit §1; default flip delivered by #3143"
 ---
 
-# #2950 — make compile-once the default, then the only, behavior
+# #2950 — IR-first default flip (historical milestone)
 
-## Problem
+## Reconciled disposition (2026-07-21)
 
-#2138 landed the inversion behind `JS2WASM_IR_FIRST=1`: legacy body
-compilation is skipped for fully-claimed closures, and a post-claim IR
-failure on a skipped slot is a hard error (`src/codegen/index.ts:1753-1789`).
-Flag-off (the default) still compiles every claimed function **twice** —
-and the always-available legacy body is the mechanism that keeps silent
-fallback free (#2855's root enabler). "Retire the legacy front-end" has no
-endgame until the flag flips and then disappears.
+The default-on portion of this issue shipped through **#3143** on 2026-07-13.
+The compiler now enables the IR overlay by default and computes a conservative
+compile-once allowlist unless `JS2WASM_IR_FIRST=0` disables it.
 
-## Scope (three slices, each its own PR)
+The original title also promised deletion of the flag and compile-twice path.
+That work did **not** ship and cannot be treated as a small follow-up to the
+flip:
 
-1. **Default-ON** (`JS2WASM_IR_FIRST` unset ⇒ on; explicit `=0` opts out):
-   gated on (a) a clean #2138 Slice-3 full test262 measurement via the
-   #2947 `ir_first` dispatch lane (all divergences filed + fixed or
-   defer-listed in capability.ts), (b) #2135 statement/call/access
-   capability families landed (selector↔builder drift is hard-error-class
-   once slots are skipped), (c) #2951 (generators + class members in the
-   skip set) or an explicit carve-out note keeping them compile-twice.
-2. **Delete the flag + the compile-twice path**: `compileDeclarations`
-   always receives the skip set; the IR overlay fills exactly the skipped
-   slots; post-claim demotion on any claimed function becomes a hard
-   compile error (the demote-to-warning channel loses its safety-net
-   rationale for claimed code — coordinates with #2855 AC 4).
-3. **Ratchet the win**: record compile-time delta (the original #2138
-   motivation) on an idle box/CI; assert index-layout invariance test stays.
+- the latest measured compile-once ceiling is 441/1,568 functions (28.1%);
+- class members and module init remain compile-twice;
+- multi-source/M0 and linear do not have whole-program IR-only ownership;
+- runtime/builtin emission still needs IR-owned semantic entry points;
+- a selector/body corpus reading zero does not make fallback globally
+  unreachable.
 
-## Acceptance criteria
+The undelivered retirement scope is superseded by **#3518 R1–R10**. Do not
+re-open or dispatch #2950 as “remove the flag”: #3518 first establishes typed
+outcomes, program ABI/preparation, classes/module/multi/runtime/linear
+ownership, then removes escape hatches in R9 and deletes the direct front-end
+in R10.
 
-- Full merge_group test262 net-zero (±flake) with default-ON before slice 2.
-- After slice 2: no `JS2WASM_IR_FIRST` reads remain; a post-claim IR
-  failure on a claimed function fails the compile loudly.
-- Compile-time delta recorded.
+## Delivered outcome
 
-## Risk
+- [x] IR-first is the default compilation mode under `experimentalIR`.
+- [x] A positive lowerability allowlist prevents skipped-slot hard-error
+      regressions; non-allowlisted units retain compile-twice behavior.
+- [x] The equivalence-inline corpus and merge-group gates validated the flip.
+- [x] Gate G1 was cleared for the allowlisted population.
 
-High blast radius (changes which front-end emits every claimed body for
-every user). Validate on the full merge_group run, never a scoped sweep
-(`project_broad_impact_validate_full_ci`). Slice 2 only after slice 1 has
-soaked through at least one budget window on main.
+## Explicitly not delivered here
 
-## Audit note 2026-07-17 (IR audit 01)
+- [ ] Whole-program prepare-before-emit compilation.
+- [ ] Class member, module-init, multi-source, and linear compile-once ownership.
+- [ ] Removal of `experimentalIR`, `JS2WASM_IR_FIRST`, `disableIrFirst`, or the
+      demote-to-legacy channel.
+- [ ] Direct front-end reachability deletion.
 
-STALE/SUPERSEDED IN PART: the default-ON flip this issue titles was
-delivered by #3143 (done, sprint 71) — `experimentalIR` defaults true and
-IR-first runs unless `JS2WASM_IR_FIRST=0` (one-release escape hatch,
-`src/codegen/index.ts:2327-2338`). The undelivered remainder (delete the
-compile-twice machinery + phase out the demote channel) overlaps #2855
-AC4. This issue should be re-scoped to exactly that remainder or closed
-in favor of #2855/#3143 — do not dispatch it as an independent "flip"
-task. See `plan/log/analysis-2026-07/01-ir-audit-2026-07-17.md` §6.
+Those unchecked outcomes are acceptance criteria of #3518, not open work under
+this completed historical milestone.

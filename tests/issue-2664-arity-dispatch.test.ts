@@ -33,6 +33,70 @@ async function run(src: string): Promise<any> {
 }
 
 describe("#2664 — under-applied dynamic method dispatch (arity mismatch)", () => {
+  it("does not inherit argc from a getter when a known-arity setter runs next", async () => {
+    // Test262 propertyHelper.js invokes a zero-argument accessor getter before
+    // assigning through its one-argument setter. Both callbacks use the
+    // known-arity host bridge. The setter must seed argc=1 for its own call,
+    // rather than inheriting the getter's stale argc=0 and receiving undefined.
+    const exp = await run(`
+      // @ts-nocheck
+      export function probe() {
+        var obj = {};
+        obj.value = "before";
+        var getValue = function() { return obj.value; };
+        var setValue = function(next) { obj.value = next; };
+        Object.defineProperty(obj, "field", {
+          get: getValue,
+          set: setValue,
+          enumerable: true,
+          configurable: true
+        });
+        if (obj.field !== "before") return 0;
+        obj.field = "after";
+        return obj.value === "after" && obj.field === "after" ? 1 : 0;
+      }
+    `);
+    expect(exp.probe()).toBe(1);
+  });
+
+  it("dispatches a 3-formal CommonJS export called with 2 args and preserves arguments.length", async () => {
+    // React's production bundle assigns createElement to an open CommonJS
+    // exports object. That object crosses the host mirror, whose old local
+    // closureBridge only knew arities 0..2. Calling the 3-formal function with
+    // two args therefore selected __call_fn_method_2, matched no closure, and
+    // returned null. The widened transport must still report the source argc.
+    const exp = await run(`
+      // @ts-nocheck
+      var exports = {};
+      exports.create = function(type, config, children) {
+        return { type: type, argc: arguments.length };
+      };
+      export function probe() {
+        var result = exports.create("div", null);
+        return result.type === "div" && result.argc === 2 ? 1 : 0;
+      }
+    `);
+    expect(exp.probe()).toBe(1);
+  });
+
+  it("calls an immediately bound object-field closure through its host callable", async () => {
+    // In JS-host mode `fn.bind(...)` returns a real host bound-function
+    // externref. A chained invocation must not ref.test that value as a Wasm
+    // closure struct and dereference the resulting null.
+    const exp = await run(`
+      // @ts-nocheck
+      function F() {
+        this.af = _ => this;
+      }
+      export function probe() {
+        var f = new F();
+        f.af.bind({})();
+        return 1;
+      }
+    `);
+    expect(exp.probe()).toBe(1);
+  });
+
   it("a 2-param method invoked via this.m() with 0 args RUNS (not null)", async () => {
     // The acorn shape: `this.parseExpression()` — a 2-param method called with 0
     // args through a dynamic (any-receiver) dispatch. Before the fix the bridge

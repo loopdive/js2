@@ -1,10 +1,23 @@
 ---
 id: 3460
 title: "Uncatchable null_deref trap when a typed callable var (no matched closure sig) read off a host object is direct-called"
-status: ready
-sprint: current
+status: done
+assignee: ttraenkler/dev-opus-arrayhof
+completed: 2026-07-24
+loc-budget-allow:
+  # +8 lines: the fix broadens one guard condition in this god-file's
+  # closure-recast-skip block and documents WHY (matched vs no-match externref
+  # slot, #1941 dual-mode gating). The god-file was already at its ratchet
+  # limit, so the necessary explanatory comment needs an explicit allowance.
+  - src/codegen/statements/variables.ts
+func-budget-allow:
+  # Same +8 explanatory-comment lines land inside compileVariableStatement,
+  # which was already at its per-function ceiling (#3400 / R-FUNC). The guard
+  # broadening itself is net-zero; only the comment grows the function.
+  - src/codegen/statements/variables.ts::compileVariableStatement
+sprint: 76
 created: 2026-07-19
-updated: 2026-07-19
+updated: 2026-07-24
 priority: medium
 horizon: m
 feasibility: medium
@@ -71,3 +84,24 @@ direct-called. Expect a catchable `TypeError`; currently traps uncatchably.
 Medium priority — it's a correctness/robustness gap (uncatchable trap where a
 catchable error is required), but pre-existing and narrow. Extends the #3432
 (#3370) fix. See CI-FIX #16 for the matched-sig sibling that is already fixed.
+
+## Resolution (2026-07-24, dev-opus-arrayhof)
+
+Fixed in `src/codegen/statements/variables.ts`: the #3432
+`skippedClosureRecastDecls` recording fired only for the **matched-sig +
+externref-slot** case. Broadened it to also record the **no-match** case — both
+leave a raw externref in the slot that can hold a foreign / bridge-wrapped /
+null callable, so both need `calleeMayBeHostCallable` to emit the #1712
+`__call_function` host arm at direct-call sites. Without it the closure-struct
+dispatch nulled the guarded root cast and `struct.get`-trapped "dereferencing a
+null pointer" (uncatchable) where the spec wants a catchable TypeError.
+
+- Repro (`const obj:any={}; const f:(x:number)=>number=obj.missingFn; f(10)`)
+  now throws a **catchable** TypeError (was: uncatchable null-deref trap).
+- #1941 dual-mode verified: pure-closure programs pull byte-identical host
+  imports to clean main (the arm emission is `!standalone && !wasi`-gated, and
+  pure local closures produce a closure STRUCT, not an externref, so they never
+  enter this block). Zero new host imports.
+- Scoped test: `tests/issue-3460.test.ts` (null-deref→TypeError flip + valid
+  method/alias/bound-fn/pure-closure guards). Regression tests
+  issue-3432/1712/2028/3488/2934 all pass.

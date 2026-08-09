@@ -3,10 +3,10 @@ id: 1907
 title: "standalone: built-in static method value reads without __get_builtin (#1888 S6-b)"
 status: done
 pr: 1292
-sprint: 61
+sprint: 75
 created: 2026-06-07
-updated: 2026-06-10
-completed: 2026-06-10
+updated: 2026-07-21
+completed: 2026-07-21
 priority: critical
 feasibility: hard
 reasoning_effort: high
@@ -18,8 +18,11 @@ parent: 1888
 related: [1888, 1902, 1472]
 test262_bucket: standalone-dynamic-object-property
 test262_count: 8163
-claimed_by: codex-developer
+assignee: ttraenkler/senior-dev
+claimed_by: ttraenkler/senior-dev
 claimed_at: 2026-06-07T10:38:30.028Z
+loc-budget-allow:
+  - src/codegen/array-object-proto.ts
 ---
 
 # #1907 — Built-in static method value reads without `__get_builtin`
@@ -213,3 +216,74 @@ Runtime-side coercion counterpart: the ToPrimitive bucket under #1917.
 > wiring (D2) + dynamic-`new` brand-dispatch (D3) + `%TypedArray%` intrinsic
 > identity (D4, coordinates #2580 M3). This is the constructor-tier extension of
 > this issue's case-(c). See `plan/issues/2651-builtin-constructor-prototype-as-value-substrate.md`.
+
+## Reopened 2026-07-20 (stale false-done review)
+
+Marked `done` but live test262 shows: BigUint64Array built-in static property value read still unsupported (standalone). Reopened as `ready`. See #3474 (done-status integrity).
+
+## Fix 2026-07-21 (reopen closed — senior-dev)
+
+**Verify-first (per-process WAT probe, `main` `3e53969618`):** the residual was
+narrow and exactly the reopen reason. Of the 11 TypedArray views, all 9
+non-bigint `<View>.prototype` VALUE reads already resolved host-free; only
+`BigInt64Array.prototype` and `BigUint64Array.prototype` still hard-refused with
+`#1907 / #1888 S6-b` (their `.BYTES_PER_ELEMENT` / `.name` / `.length` folds
+already worked via #838 / #2861). Root cause: #838 landed the bigint views as
+typed arrays but the `<View>.prototype` native-proto glue whitelist
+(`WIRED_TYPED_ARRAY_VIEWS` in `array-object-proto.ts`) still excluded them.
+
+**Fix (surgical, bounded):** added a separate `TYPED_ARRAY_VIEW_PROTO_NAMES` set
+(the 9 non-bigint views + `BigInt64Array` / `BigUint64Array`) consulted only by
+`ensureTypedArrayViewNativeProtoGlue`. The bigint views inherit the same
+`%TypedArray%.prototype` member set per §23.2, and the `.prototype` read is a
+**pure value object** (member CSV only — `emitLazyNativeProtoGet` never emits a
+member body), so no i64-specific codegen is needed. Kept the two bigint views
+**out** of `WIRED_TYPED_ARRAY_VIEWS` / `isWiredTypedArrayViewName` so the 5 other
+consumers (the `%TypedArray%` intrinsic-ctor identity, `Object.getPrototypeOf`
+recognition, dynamic-`new` brand dispatch) are untouched — those, plus the
+reflective i64 accessor-getter bodies (`typedArrayViewBrandCandidates` registers
+only i8/i16/i32 vec storage), remain a separate unlanded slice **tracked under
+#2175** (the umbrella-#1888 standalone builtin-prototype object-representation +
+native-method-closure dispatch generalization), NOT this issue.
+
+**Residual ownership (so the next false-done sweep does not re-reopen #1907):**
+the reopen fired because the `#1907 / #1888 S6-b` refusal *signature* is shared
+across many still-unmapped `Builtin.prop` pairs. The bigint `<View>.prototype`
+value-read residual — the specific #1907 scope — is now CLOSED. Any remaining
+S6-b signatures (`%TypedArray%`/bigint intrinsic-ctor identity, i64 getter
+bodies, dynamic-`new` on a bigint ctor value, the long tail of other builtins)
+belong to #2175 / umbrella #1888, not #1907.
+
+**Downstream check:** the reflective i64 getter-closure path
+(`BigUint64Array.prototype.byteLength` read-as-value then called) is newly
+*reachable* but would throw a catchable TypeError (no i64 vec candidate to
+brand-recover) — that path refused entirely before, so it is not a regression.
+
+**Measured (local, verify-first):** both bigint `.prototype` reads now compile,
+validate, run, and materialize a truthy proto object with **no** `__get_builtin`
+/ `env.global_*` leak — full parity with the `Int8Array.prototype` control
+(`.prototype.map.length` folds to `1` for both). These rows are a subset of the
+harvest's `Int8Array.prototype`-family standalone-refusal bucket
+(`built-ins/TypedArray/prototype/*` BigInt64/BigUint64 corpus).
+
+**Flip-direction pre-check (predicts positive, parallel to #2651):** the
+descriptor-metadata reads that test262's `propertyHelper.js verifyProperty` uses
+— `BigInt64Array.prototype.at.length` → `1`, `BigInt64Array.prototype.map`
+truthy — now work for bigint. #2651 flipped the bulk of the ctor-iteration
+harness rows for the 9 non-bigint views on value-read + foldable descriptor
+metadata alone (the real i64 getter *bodies* only landed later, #2893), so the
+getter-wall likely does NOT gate these rows. The exact CI standalone flip delta
+(`net_per_test`) is the sanctioned measurement, reported at self-merge. **If CI
+returns net≈0, that is the i64-getter-body wall → a #2175 follow-up, not a fix
+for this branch.**
+
+**Collateral (fix-on-touch, #3008):** `tests/issue-1907.test.ts` carried a stale
+assertion that `Math.max` value read *fails loud at compile time*. That premise
+died with #2933 (Math.max value read implemented) and #2984/#3320 (unsupported
+statics now reify as **runtime-refusal closures** — they compile host-free and
+throw a catchable error only when *called*). Reframed that case to the current
+#2984 contract using `Object.seal` (reifies host-free, throws on call). Verified
+independent of this change against pristine `origin/main`.
+
+Files: `src/codegen/array-object-proto.ts` (the whitelist split + comments),
+`tests/issue-1907.test.ts` (2 bigint `.parametrized` cases + the #2984 reframe).

@@ -58,7 +58,6 @@ promise infrastructure.
 | **780** | - TypeError (null/undefined access) in built-in method dispatch (~9,128 tests) | 0 | done | critical |
 | **789** | - TypeError null/undefined guard over-triggering (15,630 tests) | 25 | done | critical |
 | **793** | - Infinite compilation loop on private-methods class expressions (5 tests) | 25 | done | medium |
-| **808** | Extract string/import infrastructure from index.ts → imports.ts | Backlog | ready | medium |
 | **820** | Nullish TypeError / null-pointer / illegal-cast umbrella (6,993 FAIL) | 64 | in-progress | critical |
 | **820h** | DisposableStack / AsyncDisposableStack brand-check and protocol stubs (~74 fails) | 56 | done | medium |
 | **820j** | (Async)GeneratorPrototype brand check + receiver TypeError (~36 fails) | 56 | done | medium |
@@ -84,7 +83,7 @@ promise infrastructure.
 | **972** | Landing page: JavaScript feature support tables (implemented + not yet implemented) | 38 | done | medium |
 | **973** | Incremental compiler state leak — CompilerPool fork produces ~400 false CEs | 0 | done | high |
 | **983** | WasmGC objects leak to JS host as opaque values (re-baselined: 0 literal-opaque FAIL) | 56 | done | high |
-| **983d** | Live-mirror write-back: host mutations to a WasmGC struct's proxy sidecar never reach the struct field (~11 Array.prototype.*.call fails) | 64 | ready | medium |
+| **983d** | Live-mirror write-back: host mutations to a WasmGC struct's proxy sidecar never reach the struct field (~11 Array.prototype.*.call fails) | Backlog | ready | medium |
 | **984** | Regression: compileExpression receives undefined AST nodes in class/private generator paths (154 CE) | 40 | done | medium |
 | **986** | Internal compiler crash: BigInt serialization in statement/object emit paths (37 CE) | 40 | done | medium |
 | **1012** | Add source-anchored line numbers to all runtime error patterns | 40 | done | high |
@@ -94,8 +93,8 @@ promise infrastructure.
 | **1027** | Missing __make_getter_callback late-import in PR #43 accessor paths | 40 | done | high |
 | **1034** | Compile prettier to Wasm — parser + AST + printer stress test; self-format smoke test | 41 | done | high |
 | **1035** | WASI hello-world: compile console.log + node:fs write to a standalone native executable | 45 | done | high |
-| **1042** | async/await state-machine lowering (AwaitExpression is currently a no-op) | 67 | backlog | high |
-| **1044** | Node builtin modules as host imports (NODE_HOST_IMPORT_MODULES, node: prefix normalization) | Backlog | ready | high |
+| **1042** | async/await state-machine lowering (AwaitExpression is currently a no-op) | 69 | done | high |
+| **1044** | Node builtin modules as host imports (NODE_HOST_IMPORT_MODULES, node: prefix normalization) | 72 | done | high |
 | **1089** | codegen: support dynamic import() expressions — 429 test262 tests skipped | Backlog | ready | medium |
 | **1093** | Systematic ECMAScript spec conformance audit — review compiled semantics against tc39.es/ecma262 | Backlog | ready | high |
 | **1116** | Promise resolution and async error handling (210 tests) | 55 | done | critical |
@@ -119,10 +118,15 @@ promise infrastructure.
 | **1227** | fix(runner): compiler-pool timeout starts at enqueue time, not dispatch time — causes 156 false compile_timeouts | 47 | done | high |
 | **1259** | async-gen yield-star sync-fallback leaks unboxed ref-cell into iter capture | 47 | done | high |
 | **2612** | async fn consumed as thenable via variable/expression binding not wrapped in Promise (~18 fails) | 65 | done | high |
-| **2613** | await on a thenable/non-Promise: assimilate via host (PromiseResolve) instead of returning the raw object (~15 fails) | 67 | blocked | high |
-| **2614** | Promise.{all,allSettled,any,race}: read constructor's own `resolve` + callable resolve/reject element functions (~45 fails) | 67 | blocked | medium |
-| **2623** | Promise capability-cluster: multi-hop host→wasm resolve-element callback cast + ctx-ctor species/prototype identity through the bridge | Backlog | in-progress | medium |
+| **2613** | await on a thenable/non-Promise: assimilate via host (PromiseResolve) instead of returning the raw object (~15 fails) | Backlog | blocked | high |
+| **2614** | Promise.{all,allSettled,any,race}: read constructor's own `resolve` + callable resolve/reject element functions (~45 fails) | Backlog | blocked | medium |
+| **2623** | Promise capability-cluster: multi-hop host→wasm resolve-element callback cast + ctx-ctor species/prototype identity through the bridge — ANCHOR for the unified Promise semantics spec (§P) | current | ready | medium |
 | **2637** | Promise capability executor-body protocol: __promise_subclass_ctor ↔ <Sub>_new ↔ NewPromiseCapability re-architecture | 66 | done | medium |
+| **2957** | Async activation for arrows / methods / function expressions (both CPS + drive hooks are declaration-only) | current | ready | medium |
+| **2967** | Async engine convergence: retire emitAsyncStateMachine/splitBodyAtAwait onto the #2906 host-drive engine; widen planLinearAwaits gaps once for both lanes | 71 | done | medium |
+| **3134** | Promise<T>-typed value slots unwrap to T (f64) on the JS-host lane — a real promise externref gets __unbox_number'd to NaN at the declaration |  | done | medium |
+| **3205** | Property/element callable dispatch: order-independent wrapper-root cast + covariant funcref dispatch (retire the #2967 slice-2a latent hazard) |  | done | medium |
+| **3587** | Host lane: async shapes the host-drive engine declines (try/catch across await, non-linear bodies) silently SWALLOW awaited rejections — execution continues past the await | current | done | critical |
 
 <!-- AUTOGENERATED:GOAL-ISSUES-END -->
 

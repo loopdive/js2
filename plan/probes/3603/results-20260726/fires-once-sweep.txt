@@ -1,0 +1,59 @@
+# pre-flight OK: harness is a symlink and propertyHelper.js is un-instrumented
+# 3 positive controls + 48 sampled
+--MARK-- CONTROL test/language/expressions/class/elements/same-line-gen-computed-names.js
+[3603FIRE] vecLen=0 mirrorLen=0->1 keep=0 ["obj['m'] descriptor should not be enumerable"]
+--MARK-- CONTROL test/language/expressions/class/elements/same-line-method-rs-private-setter.js
+[3603FIRE] vecLen=0 mirrorLen=0->1 keep=0 ["obj['m'] descriptor should not be enumerable"]
+--MARK-- CONTROL test/language/expressions/class/elements/syntax/valid/grammar-special-prototype-async-gen-meth-valid.js
+[3603FIRE] vecLen=0 mirrorLen=0->1 keep=0 ["obj['prototype'] descriptor should not be enumerable"]
+--MARK-- SAMPLE test/built-ins/Array/prototype/forEach/15.4.4.18-4-15.js
+--MARK-- SAMPLE test/built-ins/Array/prototype/filter/15.4.4.20-3-1.js
+--MARK-- SAMPLE test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-8-b-ii-7.js
+--MARK-- SAMPLE test/built-ins/Array/prototype/forEach/15.4.4.18-1-1.js
+--MARK-- SAMPLE test/built-ins/Array/prototype/indexOf/15.4.4.14-2-14.js
+--MARK-- SAMPLE test/built-ins/Array/prototype/filter/15.4.4.20-3-22.js
+--MARK-- SAMPLE test/built-ins/Array/prototype/filter/15.4.4.20-1-15.js
+--MARK-- SAMPLE test/built-ins/Array/prototype/filter/create-non-array.js
+--MARK-- SAMPLE test/built-ins/Object/defineProperty/15.2.3.6-4-114.js
+--MARK-- SAMPLE test/built-ins/Object/defineProperty/15.2.3.6-4-333-10.js
+--MARK-- SAMPLE test/built-ins/Object/defineProperty/15.2.3.6-4-457.js
+--MARK-- SAMPLE test/built-ins/Object/defineProperty/15.2.3.6-4-481.js
+--MARK-- SAMPLE test/built-ins/Object/defineProperty/15.2.3.6-4-34.js
+--MARK-- SAMPLE test/built-ins/Object/defineProperty/property-description-must-be-an-object-not-undefined.js
+--MARK-- SAMPLE test/built-ins/Object/defineProperty/15.2.3.6-4-105.js
+--MARK-- SAMPLE test/built-ins/Object/defineProperty/15.2.3.6-4-477.js
+--MARK-- SAMPLE test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-60.js
+--MARK-- SAMPLE test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-3-5.js
+--MARK-- SAMPLE test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-224.js
+--MARK-- SAMPLE test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-33.js
+--MARK-- SAMPLE test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-3-2.js
+--MARK-- SAMPLE test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-103.js
+--MARK-- SAMPLE test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-2-39.js
+--MARK-- SAMPLE test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-10.js
+--MARK-- SAMPLE test/language/statements/class/elements/after-same-line-static-gen-rs-static-generator-method-privatename-identifier.js
+--MARK-- SAMPLE test/language/statements/class/elements/async-gen-private-method/yield-star-getiter-async-get-abrupt.js
+--MARK-- SAMPLE test/language/statements/class/elements/new-no-sc-line-method-literal-names.js
+[3603FIRE] vecLen=0 mirrorLen=0->1 keep=0 ["obj['m'] descriptor should not be enumerable"]
+--MARK-- SAMPLE test/language/statements/class/elements/nested-private-derived-cls-direct-eval-err-contains-supercall-2.js
+--MARK-- SAMPLE test/language/statements/class/elements/private-getter-brand-check-super-class.js
+--MARK-- SAMPLE test/language/statements/class/elements/new-sc-line-gen-rs-static-async-method-privatename-identifier.js
+[3603FIRE] vecLen=0 mirrorLen=0->1 keep=0 ["obj['m'] descriptor should not be enumerable"]
+--MARK-- SAMPLE test/language/statements/class/elements/syntax/early-errors/grammar-privatename-whitespace-error-static-gen-meth.js
+--MARK-- SAMPLE test/language/statements/class/elements/multiple-definitions-literal-names.js
+[3603FIRE] vecLen=0 mirrorLen=0->1 keep=0 ["obj['m'] descriptor should not be enumerable"]
+--MARK-- SAMPLE test/built-ins/RegExp/prototype/Symbol.match/y-init-lastindex.js
+--MARK-- SAMPLE test/built-ins/RegExp/prototype/test/S15.10.6.3_A2_T5.js
+--MARK-- SAMPLE test/built-ins/RegExp/prototype/Symbol.match/g-match-empty-advance-lastindex.js
+--MARK-- SAMPLE test/built-ins/RegExp/prototype/flags/name.js
+--MARK-- SAMPLE test/built-ins/RegExp/prototype/global/length.js
+--MARK-- SAMPLE test/built-ins/RegExp/prototype/Symbol.replace/y-fail-lastindex-no-write.js
+--MARK-- SAMPLE test/built-ins/RegExp/prototype/test/S15.10.6.3_A2_T2.js
+--MARK-- SAMPLE test/built-ins/RegExp/prototype/Symbol.match/builtin-failure-g-set-lastindex.js
+--MARK-- SAMPLE test/built-ins/String/prototype/valueOf/non-generic-realm.js
+--MARK-- SAMPLE test/built-ins/String/prototype/concat/S15.5.4.6_A4_T1.js
+--MARK-- SAMPLE test/built-ins/String/prototype/search/S15.5.4.12_A7.js
+--MARK-- SAMPLE test/built-ins/String/prototype/split/call-split-void-0-instance-is-thisundefinedisundefinedaundefinedstringundefinedobject.js
+--MARK-- SAMPLE test/built-ins/String/prototype/toLowerCase/S15.5.4.16_A1_T4.js
+--MARK-- SAMPLE test/built-ins/String/prototype/search/S15.5.4.12_A1_T2.js
+--MARK-- SAMPLE test/built-ins/String/prototype/toLocaleLowerCase/S15.5.4.17_A10.js
+--MARK-- SAMPLE test/built-ins/String/prototype/split/cstm-split-invocation.js

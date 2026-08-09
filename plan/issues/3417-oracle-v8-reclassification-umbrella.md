@@ -3,6 +3,7 @@ id: 3417
 title: "UMBRELLA: oracle-v8 (original-harness) reclassification triage — the honest v7→v8 gap"
 status: ready
 created: 2026-07-18
+updated: 2026-07-23
 priority: high
 task_type: umbrella
 area: test262-conformance
@@ -10,7 +11,7 @@ goal: test262-conformance
 model: fable
 sprint: current
 horizon: s
-related: [3370, 3393, 2860, 3178, 3188, 3287, 3418, 3419, 3420, 3421, 3422, 3423]
+related: [3370, 3393, 2860, 3178, 3188, 3287, 3418, 3419, 3420, 3421, 3422, 3423, 3428, 3469]
 ---
 
 # #3417 — oracle-v8 reclassification umbrella
@@ -123,7 +124,7 @@ tests host fails, so set-difference ≫ net.) Gap composition:
 | bucket | count | cited # |
 | --- | ---: | --- |
 | wasm exception during module init | 2,348 | #1781 |
-| async completion marker not observed | 2,027 | #3428 |
+| async completion marker not observed | 2,027 | #3428 — **resolved by F2/#3469, measured below (2026-07-23)** |
 | generator / async-gen lowering | 1,867 | #2961/#680 |
 | null-deref (standalone codegen) | 789 | #3442 (new) / #2865 async subset |
 | RegExp (host-refused) | 617 | #1474 |
@@ -174,3 +175,68 @@ class). It **reconciled quiet-vs-quiet** after a quiet-pool forced refresh
 promoted `03ca4729` — the cluster vanished. Tracked here as a real nondeterminism
 signal for the harvest; the 72-file list is in run `29644582810`'s
 "check for test262 regressions" job log.
+
+## F2 landed & measured (2026-07-23, fable-3417) — standalone async completion channel (#3469)
+
+F2 of the lane-parity program ("host-free async completion has no channel:
+`console.log` is a no-op, no `__drain_microtasks()` → async tests never
+scored") is **DONE — it landed as #3469 (PR #3416, merged 2026-07-19)**, which
+built the compiler-side channel (native `$AnyString` stdout sink,
+`__stdout_prepare`/`__stdout_char` readout exports) AND the runner-side drive
+in both lanes (`scripts/test262-worker.mjs` ~1264, `tests/test262-runner.ts`
+~4245, `tests/test262-shared.ts` ~812: drain microtasks, then read the sink
+into `harnessOutput`). This section records the measured corpus outcome —
+the honest newly-scored split, per the observability-unblocker rule: **a drop
+or shift in apparent rate here is not a regression; it is the truth becoming
+visible.** No new build work was needed — verified before coding (the fix was
+already wired end-to-end and working at corpus scale).
+
+**Cohort:** the **3,258** standalone official-scope tests stuck at
+`async completion marker not observed` in the last pre-#3469 baseline
+(baselines@`b43f4de2fd`, 2026-07-19T07:38Z, oracle v8). Tracked into the
+FIRST post-#3469 promote (baselines@`47224a2681`, 2026-07-19T18:27Z, main
+`f48e67e01`) for clean attribution, and re-checked on the current 2026-07-21
+baseline (oracle v9):
+
+| cohort status                     | first post-#3469 promote | current 2026-07-21 |
+| --------------------------------- | -----------------------: | -----------------: |
+| **pass (newly scored)**           |       **2,284 (70.1 %)** |              2,271 |
+| honest FAIL (real signature)      |                      971 |                985 |
+| compile_timeout / CE              |                        3 |                  2 |
+| still `marker not observed`       |                        8 |                  8 |
+
+Standalone official lane at the same promotes: **24,883 → 27,378** (+2,495;
+the cohort contributed +2,284 of it — F2 was the dominant driver of that
+promote) → **28,138/43,106 (65.3 %)** on 2026-07-21. The marker bucket
+collapsed **3,258 → 8**; `asyncTest called without async flag` = **0**.
+
+**Newly-passing families** (first post-promote): for-await-of 674, async class
+members 451+451 (expr/stmt), async-generator 226+113, object-literal async
+methods 128, Promise 85, async-function 40+32+21, eval-code/direct 40, TLA 15.
+
+**Honest-FAIL signature routing** (971 — all to EXISTING trackers, no new issues):
+
+| signature                                                        | n | tracker |
+| ---------------------------------------------------------------- | ---: | --- |
+| `TypeError: value is not iterable` (async-gen/for-await iter step) | 280 | #3178 family (#3387/#3388) |
+| `null_deref: async continuation threw before completion`          | 159 | #3442 / #2865 |
+| `TypeError: Cannot destructure/access/convert …`                  | 111 | async-dstr lane (#2602-adjacent) |
+| `wasm exception during module init`                               |  88 | #1781 |
+| `obj should have an own property …`                               |  69 | #3468 (F1) |
+| `illegal_cast [in __then…]`                                       |  33 | #3443 |
+| `promise_error` semantics                                         | ~27 | #2903 / #3390 lane |
+
+**Residual 8 — channel NOT at fault (verified never-settle semantics):** 6×
+`built-ins/Promise/{all,allSettled,race}/invoke-then(-get)-error-reject` (spec
+requires the combinator to `Invoke(nextPromise, "then")` — an own-property
+`then` override via `Object.defineProperty` on a native Promise instance must
+be called and its abrupt completion must reject the result promise; the native
+combinators call the internal then, so the result promise never settles →
+marker legitimately absent), 1× `Promise/race/resolve-self` (monkeypatched
+`Promise.resolve` + thenable self-resolution TypeError never delivered), 1×
+`module-code/top-level-await/await-expr-new-expr-reject`. All are deep
+Promise/combinator semantics belonging to the #3390/#2903 lane under #3178's
+decomposition — do NOT chase them through the channel.
+
+F2 was the prerequisite for #3178 sequencing (retiring the host-async
+machinery): the standalone async corpus now scores honestly, host-free.

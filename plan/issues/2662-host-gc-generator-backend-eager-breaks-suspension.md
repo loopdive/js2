@@ -1,12 +1,12 @@
 ---
 id: 2662
 title: "host (gc) generator backend is EAGER-buffered — breaks lazy/suspension semantics on the default path (architecture)"
-status: ready
-updated: 2026-07-17
+status: blocked
+updated: 2026-07-21
 model: fable
 fable_role: implement
 assignee: ttraenkler/fable-dev-1
-sprint: current
+sprint: Backlog
 created: 2026-06-25
 priority: high
 feasibility: hard
@@ -28,6 +28,51 @@ loc-budget-allow:
 > JS-boundary wrapper) is the remaining epic scope, and #1344 S-B/S-C are still
 > gated on measuring the GeneratorPrototype buckets after the wrapper lands. See
 > the `## Implementation Plan` section below.
+
+> **RE-SCOPE — measured current-main state (senior-dev verify-first, 2026-07-21;
+> status → `blocked` needs-architect).** The SLICE-1 note above is now STALE: the
+> "TOP-LEVEL generator lever" it describes as remaining was substantially
+> delivered by **#3032 W6** (`feat(#3032): W6 — host-lane generator declarations
+route native (lazy §27.5 + next(v) two-way)`, landed 2026-07-19, AFTER this
+> issue was last updated 2026-07-17). Verify-first probe on `main` HEAD
+> (`3e53969`), gc/host lane, measuring the side-effect var at generator
+> **creation** vs after the first `.next()`:
+>
+> | Shape                                              | at creation              | Behavior on main today                                                 |
+> | -------------------------------------------------- | ------------------------ | ---------------------------------------------------------------------- |
+> | Top-level free `function* g(){ se=1; yield 1; … }` | `se===0`                 | **LAZY** ✅ (was `3` eager — the issue's headline proof case is FIXED) |
+> | Exported `export function* g`                      | `se===2`                 | **EAGER** — crosses the wasm↔JS boundary raw                           |
+> | Generator expression (`const g = function*(){}`)   | `se===0`, drains eagerly | slice-1 lazy-thunk (lazy create, eager drain) — #3032-tracked          |
+> | `yield*` delegation                                | `se===2`                 | EAGER (host-arm bail; native machine still miscompiles `yield*`)       |
+> | Method generator (`class C { *g(){} }`)            | `se===2`                 | EAGER — #3032 W4 territory                                             |
+>
+> **What this means:**
+>
+> - This issue's stated **acceptance** ("a capturing nested generator runs
+>   LAZILY … re-measure the GeneratorPrototype buckets") is **essentially met** by
+>   slice-1 (#3335) + #3032 W6. The **#1344 S-B/S-C dashboard gate this issue
+>   existed to lift is LIFTED** — the wrapped-test262 capturing-nested shape is on
+>   the native lazy path (evidence: committed, passing
+>   `tests/issue-2662-gc-lazy-nested-generators.test.ts`).
+> - The TRUE residual is **narrower** than the original framing: only
+>   **escaping / exported** generators remain eager. That is the Option-(ii)
+>   **JS-boundary wrapper** (escape analysis + an externref JS-callable wrapper
+>   object forwarding into the in-module native dispatch) — rated
+>   **High / architectural / multi-session epic** in the ARCHITECTURE WRITEUP
+>   below. It does not fit a bounded dev slice → `blocked` needs-architect; the
+>   lead should decide whether it is spun as its own prioritized issue or stays
+>   deferred.
+> - The incremental in-module shapes still eager on the host lane
+>   (generator EXPRESSIONS full laziness, METHODS, `retVal`/`return(v)`
+>   marshalling, buffer retirement) are the remaining **#3032 W-waves** —
+>   **#3032 is `in-progress`, owner-pinned `ttraenkler/sendev-3032-w6`**.
+>
+> **⚠️ DO NOT double-assign.** The residual work overlaps #3032's owner-pinned
+> files — `src/codegen/generators-native.ts` and
+> `src/codegen/statements/nested-declarations.ts` (both in this issue's
+> `loc-budget-allow`), plus `src/codegen/property-access-dispatch.ts`. Coordinate
+> with `sendev-3032-w6` before any source work here; do not open a parallel
+> implementation against those files.
 
 # #2662 — host (gc) generator backend is eager-buffered (architectural correctness gap)
 
@@ -58,8 +103,14 @@ observable that depends on when the body runs:
 
 ```ts
 let se = 0;
-function* g() { se = 1; yield 1; se = 2; yield 2; se = 3; }
-g();            // create, NO .next() yet
+function* g() {
+  se = 1;
+  yield 1;
+  se = 2;
+  yield 2;
+  se = 3;
+}
+g(); // create, NO .next() yet
 // gc/host:    se === 3   (whole body ran eagerly — WRONG)
 // standalone: se === 0   (correctly lazy)
 ```
@@ -200,14 +251,14 @@ eager → all 4 regressions resolved, zero new regressions.
   the "top-level stays eager / escaping gen stays a JS Generator object"
   guard-rails, all on the gc/host lane.
 - Regression gate: the ~146-file generator blast radius (`grep -Fl 'function*'
-  tests`). A/B vs main must show ZERO new failing tests. Pre-existing failures
+tests`). A/B vs main must show ZERO new failing tests. Pre-existing failures
   (issue-680 lowers/persists/registers, issue-1516 prototype-identity,
   generator-yield-contexts fn-expr) are unrelated to this change.
 
 ### Remaining-steps checklist
 
 - [x] Narrow candidate gate to capturing-nested + try-region; add payload/
-      yield*/return helpers; alias-escape bail. Typecheck green.
+      yield\*/return helpers; alias-escape bail. Typecheck green.
 - [x] Restrict widened payload to NUMERIC-only (string needs nativeStrings the
       host gc lane lacks → NaN; object/bool/bodiless also unsafe on the carrier).
 - [x] Probe battery: acceptance (lazy nested, interleave, test262-shape,
@@ -247,7 +298,7 @@ how they reshape the design:
    non-capturing top-level generator in gc mode became lazy
    (`function* g(){ se=1; yield 1; … }; g()` → `se===0`, was `3` eager) and
    emitted the native resume function (`__gen_resume_`). So the gate is the only
-   thing standing between gc and the native path *for the simple shape*.
+   thing standing between gc and the native path _for the simple shape_.
 
 2. **Capturing generators still bail** (`generatorCapturesOuterScope`,
    `generators-native.ts:~901`) → eager host. The wrapped test262 shape (a
@@ -258,7 +309,7 @@ how they reshape the design:
 3. **THE BLOCKER — routing gc→native breaks the JS-HOST BOUNDARY.** The native
    path returns an **opaque Wasm state struct**, not a JS-callable generator
    object. Existing gc generator unit tests fail with **`gen.next is not a
-   function`** (5 failures across `generators`/`generator-methods`/
+function`** (5 failures across `generators`/`generator-methods`/
    `generator-nested`/`for-of-generator`) the moment a native generator is handed
    **back to JS** (`const gen = exports.count(); gen.next()`). The native `.next`/
    `.return`/`.throw` are reached only via **in-module dispatch** (the
@@ -267,7 +318,7 @@ how they reshape the design:
 ### The decisive distinction (drives the whole design)
 
 - **In-module generator use** (the wrapped test262 `test()` calls `it.next()`
-  *inside* Wasm; standalone programs) → native lazy backend is CORRECT and is what
+  _inside_ Wasm; standalone programs) → native lazy backend is CORRECT and is what
   we want everywhere.
 - **JS-escaping generator use** (a gc program returns a generator to a JS caller,
   or host-side `for…of` drives it) → needs a **JS-callable object**, which today
@@ -294,11 +345,11 @@ Wasm↔JS boundary.
 
 ## 3-lever cost model (build order for the epic)
 
-| Lever | What | Cost | Notes / prerequisite |
-| --- | --- | --- | --- |
-| **JS-boundary wrapper** (PREREQUISITE) | Wrap the native state struct in a JS-callable object exposing `.next/.return/.throw/[Symbol.iterator]` that forward into the in-module native dispatch helpers; emit it at the Wasm↔JS boundary when a native generator value escapes to JS (return value, export, host `for…of`). Equivalently/additionally: an **in-module-only native selection** gate so a generator that never escapes JS takes native, while an escaping one either gets the wrapper or stays host. | **High (architectural)** | The genuinely new design piece. Decides escape analysis (which generators escape to JS) + the externref wrapper object shape. Reuses `tryCompileNativeGeneratorMethodCall` dispatch as the wrapper's forwarding target. Without it, gc→native breaks escaping generators (PoC finding 3). |
-| **Lever A — capture-materialization** | Make `generatorCapturesOuterScope` NOT bail; materialize captured bindings as **ref-cell fields** (`struct (field $value (mut T))`) in the native state struct, shared with the enclosing scope's locals (the existing closure-capture pattern). Thread the ref-cells into the generator factory call; read/write through them in the resume function. | **High (multi-day)** | Bounded by the existing closure-capture machinery, but touches the state-struct layout (`registerNativeGenerator` ~:1094-1135), the factory call, and the resume emitter. Required because the wrapped test262 generators all capture. Needs the boundary wrapper first (a captured generator can still escape). |
-| **Lever B — runner-side hoist** | In `tests/test262-runner.ts` `wrapTest`, hoist a test's top-level `function* g` + the `var`s it references to **module scope** (outside `export function test()`), so it is not captured → with gc→native it goes native. | **Low** | CHEAPER but: (a) still needs the gc→native routing + boundary-wrapper decision; (b) changes WHAT is measured — must preserve test semantics (hoist order, TDZ); (c) only helps the conformance lane, not real gc-mode generator correctness. A measurement convenience, NOT a substitute for Levers A + wrapper. Use only to *accelerate dashboard signal* once the core lands. |
+| Lever                                  | What                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Cost                     | Notes / prerequisite                                                                                                                                                                                                                                                                                                                                                            |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **JS-boundary wrapper** (PREREQUISITE) | Wrap the native state struct in a JS-callable object exposing `.next/.return/.throw/[Symbol.iterator]` that forward into the in-module native dispatch helpers; emit it at the Wasm↔JS boundary when a native generator value escapes to JS (return value, export, host `for…of`). Equivalently/additionally: an **in-module-only native selection** gate so a generator that never escapes JS takes native, while an escaping one either gets the wrapper or stays host. | **High (architectural)** | The genuinely new design piece. Decides escape analysis (which generators escape to JS) + the externref wrapper object shape. Reuses `tryCompileNativeGeneratorMethodCall` dispatch as the wrapper's forwarding target. Without it, gc→native breaks escaping generators (PoC finding 3).                                                                                       |
+| **Lever A — capture-materialization**  | Make `generatorCapturesOuterScope` NOT bail; materialize captured bindings as **ref-cell fields** (`struct (field $value (mut T))`) in the native state struct, shared with the enclosing scope's locals (the existing closure-capture pattern). Thread the ref-cells into the generator factory call; read/write through them in the resume function.                                                                                                                    | **High (multi-day)**     | Bounded by the existing closure-capture machinery, but touches the state-struct layout (`registerNativeGenerator` ~:1094-1135), the factory call, and the resume emitter. Required because the wrapped test262 generators all capture. Needs the boundary wrapper first (a captured generator can still escape).                                                                |
+| **Lever B — runner-side hoist**        | In `tests/test262-runner.ts` `wrapTest`, hoist a test's top-level `function* g` + the `var`s it references to **module scope** (outside `export function test()`), so it is not captured → with gc→native it goes native.                                                                                                                                                                                                                                                 | **Low**                  | CHEAPER but: (a) still needs the gc→native routing + boundary-wrapper decision; (b) changes WHAT is measured — must preserve test semantics (hoist order, TDZ); (c) only helps the conformance lane, not real gc-mode generator correctness. A measurement convenience, NOT a substitute for Levers A + wrapper. Use only to _accelerate dashboard signal_ once the core lands. |
 
 **Build order:** JS-boundary wrapper (+ in-module-only selection) → Lever A
 (captures) → re-measure GeneratorPrototype buckets → unblock #1344 S-B/S-C
@@ -329,3 +380,41 @@ to speed the conformance signal, with semantics-preservation review.
 Design settled (Option ii). Build DEFERRED — multi-session epic, to be prioritized
 against s66 work with this spec in hand. **#1344 stays parked behind this epic**
 (`#1344 depends_on [1665, 2662]`).
+
+## Review (Fable, 2026-07-24)
+
+Empirical confirmation of the ESCAPING-generator residual as a **silent wrong
+VALUE** (not just wrong side-effect timing), on main `7652f0337`, default gc
+lane — and a lane-divergence data point: **standalone gets this right, host
+gets it wrong**.
+
+```ts
+function mk(): Generator<number, number, number> {
+  function* g(): Generator<number, number, number> {
+    let s = 0;
+    for (let i = 0; i < 3; i++) {
+      const t: number = yield i;
+      s = s + t;
+    }
+    return s;
+  }
+  return g(); // ← escapes the factory
+}
+export function test(): number {
+  const it = mk();
+  it.next();
+  it.next(10);
+  it.next(20);
+  return it.next(30).value; // node: 60
+}
+// node: 60 · standalone: 60 ✓ · gc host: 0 ✗ (silent)
+```
+
+The eager buffer runs the whole body up-front, so every `next(v)` SENT value
+is lost (reads as 0) — the yielded values still look right (0,1,2), only the
+accumulated return value is wrong, which makes this maximally silent. The
+same generator NOT escaping (created + driven inline in `test()`) is correct
+on both lanes (post-#3032-W6 native routing). See the review doc
+`plan/agent-context/fable-substrate-async-review-2026-07-24.md` (probes
+a4n/a4k/a4l) and the new narrow shape-gate issue #3586 (`s += yield` knocks
+even a NON-escaping generator onto the eager buffer).

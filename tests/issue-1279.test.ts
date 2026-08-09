@@ -53,9 +53,13 @@ describe("issue-1279: CJS require() static module graph", () => {
       expect(rewriteCjsRequire(src)).toBe(src);
     });
 
-    it("preserves multi-declaration `const a = require('a'), b = require('b')`", () => {
-      // Conservative: skip multi-decl forms to avoid statement-splitting complexity.
+    it("rewrites an all-static multi-declaration into ordered imports", () => {
       const src = `const a = require("a"), b = require("b");`;
+      expect(rewriteCjsRequire(src)).toBe(`import a from "a";\nimport b from "b";`);
+    });
+
+    it("preserves a mixed multi-declaration atomically", () => {
+      const src = `const a = require("a"), b = makeB();`;
       expect(rewriteCjsRequire(src)).toBe(src);
     });
 

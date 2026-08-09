@@ -226,7 +226,7 @@ async function runPerfSuite(): Promise<PerfBenchResult[]> {
 
       const imports = buildImports(compileResult.imports, {}, compileResult.stringPool);
       const { instance } = await instantiateWasm(compileResult.binary, imports.env, imports.string_constants);
-      if (imports.setExports) imports.setExports(instance.exports as Record<string, Function>);
+      imports.setInstance?.(instance);
 
       const wasmRun = (instance.exports as Record<string, Function>).run as () => number;
       if (!wasmRun) {

@@ -1,27 +1,118 @@
 ---
 id: 3178
-title: "UMBRELLA: retire the generator/async/Promise HOST machinery in standalone — the 4,467-leaky-pass (10.3 pt) family, measured slice map + shared-substrate design"
+title: "UMBRELLA: retire the generator/async/Promise HOST machinery in standalone — the 4,456-leaky-pass family, measured slice map + shared-substrate design"
 status: ready
 # decomposition delivered 2026-07-17 (fable-3178, children #3386-#3391);
 # umbrella stays open as tracking — #3391 owns the acceptance closeout.
 sprint: current
 created: 2026-07-12
-updated: 2026-07-17
+updated: 2026-08-09
 priority: high
 horizon: xl
 feasibility: hard
 model: fable
 reasoning_effort: max
-task_type: architecture
+task_type: planning
 area: codegen, standalone
+es_edition: multi
 language_feature: generators, async-generators, promises, async-functions
 goal: standalone-mode
-related: [1781, 2860, 3164, 3132, 3032, 2903, 2906, 2865, 2895, 1326, 2959, 2040, 3386, 3387, 3388, 3389, 3390, 3391]
-children: [3386, 3387, 3388, 3389, 3390, 3391]
+related:
+  [
+    1781,
+    2860,
+    3164,
+    3132,
+    3032,
+    2903,
+    2906,
+    2865,
+    2895,
+    1326,
+    2959,
+    2040,
+    3386,
+    3387,
+    3388,
+    3389,
+    3390,
+    3391,
+    3538,
+    3542,
+    3443,
+  ]
+children: [3386, 3387, 3388, 3389, 3390, 3391, 3443, 3538, 3542]
 origin: "2026-07-12 architect (arch-standalone-family-plans): plan/log/standalone-gap-map.md finding — 4,456 leaky passes ride host-import shims, ~90% the generator/async-gen/Promise host machinery. This umbrella is the substrate spec + measured slice ranking the family builds on."
 ---
 
 # #3178 — UMBRELLA: standalone host async-machinery retirement
+
+## 2026-08-09 exact ES2015 residual — Promise reaction callback ABI
+
+A fresh exact-edition census replaces the earlier ~30-test stride-sample
+estimate for the Promise-reaction residual with **40 standalone-only
+failures**: 20 under `built-ins/Promise/all` and 20 under
+`built-ins/Promise/race`. It does not replace the umbrella's 4,456-family
+measurement. All 40 pass in the host lane and fail standalone with
+`illegal cast [in __then_fulfill_*() ← __drain_microtasks]`. Four nearby
+`iter-{next-val,step}-err-reject.js` files also show a then-reaction cast but
+fail in both lanes, so they are controls rather than part of this attribution.
+
+The shared root cause is a pre-ABI escape fact, not one Promise combinator.
+Test262 calls `$DONE` directly with a native string on some paths, which narrows
+its ordinary parameter inference to `$AnyString`; the same function also
+escapes as a Promise reaction, whose protocol ABI may deliver any JavaScript
+value. The frozen reaction wrapper then casts values such as `undefined`, null,
+booleans, numbers, strings, and symbols to `$AnyString` before the callback can
+run.
+
+The repair must mark reaction-visible parameters before Program-ABI
+publication, widen both the prepared-IR and transitional direct views to the
+same dynamic JavaScript carrier, and keep wrapper and callee signatures equal.
+A `$DONE` name check, one guarded cast, or a wrapper-only signature override is
+not sound. #3443 records the exact 40-file acceptance cohort; this umbrella
+owns the shared Promise reaction escape/ABI substrate.
+
+## 2026-07-23 (fable-3417) — post-F2 honest-FAIL head fixed: #3538
+
+With the F2 async-completion channel landed (#3469) the standalone async
+corpus scores honestly; the single biggest newly-scored FAIL bucket was the
+**280-test** `yield-star-{getiter,next}-*` error-semantics template family
+(one error string, 35 templates × 8 contexts). Measure-first collapsed it to
+THREE coupled root causes — uncaught-throw did not complete the generator
+frame; no leads-free completion target existed (also a latent #3389 bug);
+`{done, value}` destructure off a native IteratorResult read
+undefined/undefined — fixed in child **#3538** (done): synthetic COMPLETED
+dispatch arm + catch/driver retarget + done/value destructure routed through
+the #2674 `__get_member_<name>` dispatcher + canonical-undefined done-result
+value. Probed 70/70 PASS on a stride-4 cohort sample. Residuals noted in
+#3538: untyped member reads `r.done` still leak legacy `__gen_result_*` host
+imports (separate pre-existing cohort), sync-gen STATIC typed reads surface
+0/1 / NaN.
+
+Second head, same day: the ~130-row `Cannot destructure/access/convert`
+cluster (98 for-await-dstr) was a DECOY message — the real defect is that
+every synchronously-unwinding standalone async-fn throw rejected with a
+**NULL reason** (`wrapAsyncCallInTryCatch`'s standalone arm never wired the
+#1326 Phase-1C catch-payload; the handler's own destructure-of-null
+manufactured the corpus message). Fixed in child **#3542** (done): a
+`catch $exn` arm uses the tag payload as the rejection reason. Probed 30/33
+PASS on a stride-4 cluster sample; 3 residuals =
+`language/arguments-object/*async-gen*` (`Cannot access property on null or
+undefined`) — distinct root cause, still open here.
+
+Fourth slice, same day: the ~193-row `async continuation threw` null-deref
+cluster collapsed to an ARITY-FILL soundness bug (nothing async about it —
+the canonical `$DONE('msg')`/`$DONE()` template shape is just where the
+corpus exercises under-applied+string-applied functions). Fixed in child
+**#3548** (done): under-applied call sites make a non-nullable ref param
+inference NULLABLE + a null-guarded `__str_truthy` ToBoolean for nullable
+strings. Measured stride-4: 0 → 19 of 49 PASS (baseline: all cluster rows
+FAIL on the 2026-07-23 promote; ≈75 of 193 extrapolated). **Residual 30
+all now fail as `illegal cast [in __then_fulfill_*]`** — the
+then-reaction-wrapper sub-family (only 9 showed it originally; 21 were
+masked behind the arity trap) — a distinct marshalling defect, the next
+open head here (also #3443).
 
 ## Decomposition 2026-07-17 (fable-3178) — child issues #3386–#3391
 
@@ -173,6 +264,42 @@ Sequencing: S1 ∥ S2 ∥ S5/S6 are independent. S3 after S1 (same
 `isNativeGeneratorCandidate` seam; S1's fn-expr registration is the pattern S3
 extends). S7 last. S1+S2 alone retire ~4,000 of 4,467 — **the family's 90%.**
 
+### Measured 2026-07-31 — the `class/dstr` bucket is PRIVATE generator methods
+
+The 768 `class/dstr` rows are `private-gen-meth-*` (`*#m()`), and the bail is
+localised by a **one-token** diff. Same tree, same commit, bare standalone
+compile, import-set probe:
+
+| arm       | env imports | arm        | env imports |
+| --------- | ----------: | ---------- | ----------: |
+| `*m()`    |       **0** | `*#m()`    |       **4** |
+| `*m([a])` |       **0** | `*#m([a])` |       **8** |
+
+`-dflt`, `-rest` and `-static` variants are all env=8 with an identical set;
+the real test262 files emit 7 of the same `__gen_*` family, so the synthetic
+arm is a faithful minimal reproduction rather than a separate phenomenon.
+
+**The discriminator is narrower than "private generator method"** — four
+negative arms bound it: `#m()` → 0, `#m([a])` → 0, `#v = 1` → 0, and
+**`async *#m()` → 0**. So it is **sync private generator methods specifically**.
+The private ASYNC generator is already host-free, which makes it the useful
+upper bound: whatever admits that path is what the sync path is missing.
+
+**Root cause — HYPOTHESIS, not verified.** The class generator-method admission
+gate is `src/codegen/class-bodies.ts:1176`
+(`noJsHost && !isAsyncMethod && isNativeGeneratorCandidate(ctx, member)`).
+Neither that site nor `generators-native.ts` filters private names at all, so
+the likely mechanism is that private methods are collected on a different path
+and never reach the gate (note the `__priv_` mangling at
+`class-bodies.ts:583`) — which would also explain the async exemption, since
+that takes the async-frame route. **Next probe: does a private generator method
+reach `:1176` at all?** Do not treat this paragraph as a diagnosis.
+
+Public class generator members are host-free in all six probed shapes (plain,
+`this`-using, array-destructuring param, default param, `async *`, class-field
+generator expression) — recorded as the _contrast_ that localises this, not as
+a separate result.
+
 ### S3 design notes (capturing generators — the opus-review part)
 
 `generatorCapturesOuterScope` (generators-native.ts:2001) bails any generator
@@ -235,6 +362,45 @@ issue is still warranted.
 
 ## Validation (applies to every slice)
 
+> **THE IMPORT SET IS NECESSARY BUT NOT SUFFICIENT — ASSERT VALUES TOO
+> (#3945, 2026-07-31).** The acceptance criterion below is correct as far as it
+> goes, and it has a blind spot that a slice in this family walked into. On the
+> rest-in-binding-pattern slice, lifting the selection bail *without* also
+> making the plan builder's `walk` descend into rest elements produced a module
+> with **zero host imports**, that **validates**, and that **instantiates with
+> no import object** — while silently reading the inert default for the rest
+> binding and every name bound under a nested rest. **The import-set gate greens
+> it.** Only a value assertion catches it.
+>
+> So every slice here needs, in addition to the import probe: run the module and
+> assert a VALUE, including at least one read **after a suspension** (which is
+> what proves the state-struct round-trip rather than just the initial load).
+> This is `reference_valid_wasm_is_not_correct_verify_by_value` landing inside
+> the import-retirement programme. The unowned objlit parameter-default cluster
+> (~102 rows, recorded on #3896) is the next slice someone will pick up under
+> exactly the criterion that misses this.
+>
+> **Do NOT validate a slice with `runTest262File` status — it can read `pass`
+> both before and after the fix.** Measured 2026-07-31 on the
+> `private-gen-meth-*` rows: a **bare** `compile(src, { target: "standalone" })`
+> of the real test262 file emits **7 `env::__gen_*` imports**
+> (`result.imports = 7`), which `standaloneHostImportError`
+> (`tests/test262-runner.ts:3622`) turns into `compile_error` by construction —
+> yet `runTest262File(file, …, "standalone")` on the **same three files**
+> reported `pass`. The two paths disagree about the same input, so the runner's
+> status is not a usable before/after signal for an import-retirement slice.
+>
+> **Acceptance is the IMPORT SET from a bare standalone compile**, per the leak
+> probe below. This is the #2916 framing ("imports are the deliverable, rows are
+> secondary") arriving for a second, independent reason — a slice can retire the
+> whole family and still show a zero row-delta locally.
+>
+> The divergence itself is **unexplained**. The strict guard rejects any
+> non-empty `result.imports`, so the harness-_assembled_ compile must emit zero
+> where the bare compile emits seven; that could not be verified directly
+> because `assembleOriginalHarness` is not exported from the runner. Recorded as
+> an open oddity, not a diagnosis — do not build on it.
+
 - Leak probe: affected construct compiles standalone with ZERO family
   `env::` imports AND `WebAssembly.instantiate(binary, {})` succeeds.
 - Construct-sampled corpus flip (leaky-pass → host-free pass), never
@@ -253,3 +419,50 @@ issue is still warranted.
 - host_free_pass ≥ 24,500 (from 20,885) — i.e. the family's ~90% banked.
 - `registerGeneratorHostImports` (the index.ts:11798 registration) is dead in
   standalone compiles of the test262 corpus (S7 assert).
+
+## 2026-08-01 harvest note — acceptance is NOT measurable from the published baseline
+
+`/harvest-errors` against `loopdive/js2wasm-baselines` run `20260801-090441`
+(gitHash `c601e89b`) turned up a **blocker for closing this umbrella**: the
+acceptance criteria above are all phrased in terms of **leaky passes**
+(`host_free_pass`, "appear in <100 official-scope leaky passes"), but the
+published `test262-standalone-current.jsonl` **cannot express that measurement**:
+
+| Lane | records | carry `imports` | **passing** records carrying `imports` |
+| --- | --- | --- | --- |
+| default (JS-host) | 47,834 | 41,276 | 26,553 |
+| **standalone** | 48,088 | 2,679 | **0** |
+
+No passing standalone record carries an `imports` field, so leaky-pass counts
+per import name are unobtainable from the artifact. Whoever closes this
+umbrella needs the standalone promotion to emit `imports` on **passing**
+records first (or a purpose-built S7 assert per the third bullet), otherwise
+the first two acceptance bullets can be neither verified nor refuted.
+
+### What the published artifact *can* show (different population — do not compare)
+
+The #2961 leak guard names the leaking imports when it **refuses**. Across
+**2,125 official failing** standalone records:
+
+| Import | Records |
+| --- | --- |
+| `env::__gen_next` | 753 |
+| `env::__gen_result_value` | 672 |
+| `env::__gen_create_buffer` | 637 |
+| `env::__get_caught_exception` | 637 |
+| `env::__gen_result_done` | 630 |
+| `env::Promise_then2` | 378 |
+| `env::__create_generator` | 371 |
+| `env::__js_array_new` | 348 |
+| `env::__js_array_push` | 320 |
+| `env::SharedArrayBuffer_new` | 313 |
+| `env::__create_async_generator` | 266 |
+| `env::__gen_return` | 257 |
+| `env::__gen_yield_star` | 205 |
+
+**These are refusals among FAILING tests, not leaky passes.** They are a
+different population from the 1,739 / 2,408 / 2,262 / 4,106 baselines above and
+must not be read as progress against them. `__make_callback` does not appear in
+the top 25 refusal names. Non-generator families also show up in the same guard
+output and belong elsewhere: `__js_array_*` / `__array_concat_any` → #3531,
+`SharedArrayBuffer_new` → #674 / #1354.

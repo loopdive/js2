@@ -44,6 +44,17 @@ import { addFuncType } from "./registry/types.js";
 import { addUnionImportsViaRegistry, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { buildVecFromExternMaterializer, coercionInstrs, getVecInfo } from "./type-coercion.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2/S3) positional-read chokepoint + stable-regime minting
+import { presenceSetInstrs } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
+import { coldFieldWriteArm, coldTailAllocatorName, findColdStructsForField } from "./fnctor-cold-tail.js"; // (#3927)
+import {
+  findFnctorLayoutStructsForField,
+  findFnctorResidStructsForField,
+  layoutFieldWriteInstrs,
+  layoutMatchTestInstrs,
+  residEnsureAllocatorName,
+  residFieldWriteInstrs,
+  residMatchTestInstrs,
+} from "./fnctor-layout-emit.js"; // (#3927) per-type layouts
 
 /**
  * Mangle a property name + fallback strictness into the reserved dispatcher name.
@@ -168,9 +179,90 @@ export function fillMemberSetDispatch(ctx: CodegenContext): void {
           ]
         : [];
 
+    // (#3927) Cold-tail arms — a write to a flow-grown field this fnctor moved
+    // off the main struct. These are the arms that make the split SOUND: with
+    // the field gone from the main struct, an unwired write would fall to
+    // `__extern_set`, which in the standalone lane has no side table for a
+    // closed-struct receiver and would drop it. The arm allocates the tail on
+    // first write via `__cold_ensure_<Struct>` (minted by
+    // `reserveColdTailAllocators`, so this fill stays funcMap-read-only).
+    const coldLocs = findColdStructsForField(ctx, propName).filter((loc) => loc.mutable);
+    const COLD_LOCAL = 3; // params 0/1, `__any` 2, `__cold` 3
+    // (#3927 per-type layouts) Layout + resid write arms — these are what make
+    // the split SOUND on the write side: with the field gone from the base
+    // struct, an unwired write would fall to `__extern_set`, which has no side
+    // table for a closed-struct receiver and would drop it. Inline layout arms
+    // first; each family's resid arm is its terminal (`ref.test $base` matches
+    // every member); resid storage is lazily allocated via
+    // `__resid_ensure_<Struct>` (minted by `reserveFnctorResidAllocators`, so
+    // this fill stays funcMap-read-only). Match tests are combined i32s so
+    // each arm embeds its `next` chain exactly once (#1302).
+    const layoutLocs = findFnctorLayoutStructsForField(ctx, propName).filter((loc) => loc.mutable);
+    const residLocs = findFnctorResidStructsForField(ctx, propName);
+    const buildResidArmChain = (idx: number): Instr[] => {
+      if (idx >= residLocs.length) return fallback;
+      const loc = residLocs[idx]!;
+      const ensureIdx = ctx.funcMap.get(residEnsureAllocatorName(loc.baseStructName));
+      if (ensureIdx === undefined) return buildResidArmChain(idx + 1);
+      return [
+        ...residMatchTestInstrs(loc, 2),
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: residFieldWriteInstrs(
+            loc,
+            2,
+            1,
+            COLD_LOCAL,
+            ensureIdx,
+            coercionInstrs(ctx, { kind: "externref" }, loc.fieldType),
+          ),
+          else: buildResidArmChain(idx + 1),
+        },
+      ];
+    };
+    const buildLayoutArmChain = (idx: number): Instr[] => {
+      if (idx >= layoutLocs.length) return buildResidArmChain(0);
+      const loc = layoutLocs[idx]!;
+      return [
+        ...layoutMatchTestInstrs(loc, 2),
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: layoutFieldWriteInstrs(loc, 2, 1, coercionInstrs(ctx, { kind: "externref" }, loc.fieldType)),
+          else: buildLayoutArmChain(idx + 1),
+        },
+      ];
+    };
+    const buildColdArmChain = (idx: number): Instr[] => {
+      if (idx >= coldLocs.length) return buildLayoutArmChain(0);
+      const loc = coldLocs[idx]!;
+      const mainStructName = ctx.typeIdxToStructName.get(loc.mainStructTypeIdx);
+      const ensureIdx =
+        mainStructName === undefined ? undefined : ctx.funcMap.get(coldTailAllocatorName(mainStructName));
+      if (ensureIdx === undefined) return buildColdArmChain(idx + 1);
+      return [
+        { op: "local.get", index: 2 }, // __any
+        { op: "ref.test", typeIdx: loc.mainStructTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: coldFieldWriteArm(
+            loc,
+            2,
+            1,
+            COLD_LOCAL,
+            ensureIdx,
+            coercionInstrs(ctx, { kind: "externref" }, loc.fieldType),
+          ),
+          else: buildColdArmChain(idx + 1),
+        },
+      ];
+    };
     const buildSetDispatch = (idx: number): Instr[] => {
-      if (idx >= candidates.length) return fallback;
+      if (idx >= candidates.length) return buildColdArmChain(0);
       const cand = candidates[idx]!;
+      const next = buildSetDispatch(idx + 1);
       // Coerce the boxed externref value into the candidate field's wasm type via
       // the SINGLE coercion engine (#1917 / #2108 — never hand-roll a fresh
       // box/unbox matrix). For an externref field (the common acorn `type`/`value`
@@ -186,19 +278,78 @@ export function fillMemberSetDispatch(ctx: CodegenContext): void {
         ...coerce,
         { op: "struct.set", typeIdx: cand.structTypeIdx, fieldIdx: cand.fieldIdx },
       ];
+      if (cand.presenceSlot !== undefined) {
+        setFieldInstrs.push(
+          ...presenceSetInstrs(cand.structTypeIdx, cand.presenceSlot, [
+            { op: "local.get", index: 2 },
+            { op: "ref.cast", typeIdx: cand.structTypeIdx },
+          ]),
+        );
+      }
+      const fieldRuntimeTypeIdx =
+        cand.fieldType.kind === "ref" || cand.fieldType.kind === "ref_null" ? cand.fieldType.typeIdx : -1;
+      const fieldNeedsRuntimeBrand = fieldRuntimeTypeIdx >= 0;
+      const guardedSetFieldInstrs: Instr[] = fieldNeedsRuntimeBrand
+        ? [
+            { op: "local.get", index: 1 },
+            { op: "any.convert_extern" },
+            { op: "ref.test", typeIdx: fieldRuntimeTypeIdx },
+            ...(cand.fieldType.kind === "ref_null"
+              ? ([{ op: "local.get", index: 1 }, { op: "ref.is_null" }, { op: "i32.or" }] as Instr[])
+              : []),
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: setFieldInstrs,
+              // A dynamic receiver can match a closed struct even though the
+              // runtime value does not match that field's earlier static
+              // shape. JS fields are representation-polymorphic; route the
+              // incompatible value to the dynamic sidecar instead of trapping
+              // on externref -> ref.cast. Dynamic reads use the same sidecar.
+              else: fallback,
+            },
+          ]
+        : setFieldInstrs;
+      // WasmGC canonicalizes structurally equivalent structs even when their
+      // JavaScript field names differ. For collision-stamped structs, ref.test
+      // alone can therefore select the wrong logical shape and write another
+      // field's slot. Mirror the exported __sset_* guards: verify the hidden
+      // per-instance shape id and continue dispatching on a mismatch.
+      const shapeGuardedSetFieldInstrs: Instr[] =
+        cand.shapeId !== undefined && cand.shapeFieldIdx !== undefined
+          ? [
+              { op: "local.get", index: 2 },
+              { op: "ref.cast", typeIdx: cand.structTypeIdx },
+              { op: "struct.get", typeIdx: cand.structTypeIdx, fieldIdx: cand.shapeFieldIdx },
+              { op: "i32.const", value: cand.shapeId },
+              { op: "i32.eq" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: guardedSetFieldInstrs,
+                else: next,
+              },
+            ]
+          : guardedSetFieldInstrs;
       return [
         { op: "local.get", index: 2 }, // __any
         { op: "ref.test", typeIdx: cand.structTypeIdx },
         {
           op: "if",
           blockType: { kind: "empty" },
-          then: setFieldInstrs,
-          else: buildSetDispatch(idx + 1),
+          then: shapeGuardedSetFieldInstrs,
+          else: next,
         },
       ];
     };
 
-    dispFn.locals = [{ name: "__any", type: { kind: "anyref" } }];
+    dispFn.locals =
+      coldLocs.length > 0 || residLocs.length > 0
+        ? [
+            { name: "__any", type: { kind: "anyref" } },
+            { name: "__cold", type: { kind: "anyref" } }, // (#3927) tail/resid scratch, local 3
+          ]
+        : [{ name: "__any", type: { kind: "anyref" } }];
     dispFn.body = [
       { op: "local.get", index: 0 }, // recv (externref)
       { op: "any.convert_extern" },

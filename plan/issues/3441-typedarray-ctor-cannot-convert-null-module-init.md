@@ -1,14 +1,16 @@
 ---
 id: 3441
 title: "TypedArray constructor cluster throws 'Cannot convert null to object' at __module_init (2,069 default-lane fails)"
-status: ready
+status: done
 created: 2026-07-19
+completed: 2026-07-20
+assignee: ttraenkler/senior-dev
 priority: high
 task_type: bug
 area: test262-conformance
 goal: test262-conformance
 model: fable
-sprint: current
+sprint: 73
 horizon: m
 related: [3417, 2375, 1623]
 ---
@@ -171,3 +173,68 @@ now #3419-vs-worker) — the two hand-maintained twins are the root problem.
 Runner-side fix only; no compiler change, no host-import surface change. The
 standalone lane's TypedArray intrinsic story stays #2375/#2651/#2901
 (`src/codegen/builtin-value-read.ts:652-671`).
+
+## Resolution (2026-07-20, senior-dev)
+
+Confirmed the architect diagnosis end-to-end before touching code:
+
+- Read both twin lists: `tests/test262-runner.ts` `SANDBOX_GLOBAL_NAMES` had
+  the #3419 TypedArray cluster; `scripts/test262-worker.mjs`
+  `ORIGINAL_HARNESS_SANDBOX_GLOBALS` stopped at `Reflect`. `Atomics` was on
+  neither.
+- `test262/harness/testTypedArray.js:64` reads
+  `var TypedArray = Object.getPrototypeOf(Int8Array);` at module-init top level;
+  the trap string originates at `src/runtime.ts:9996` (`__getPrototypeOf`).
+- Isolated before/after repro (compile once, instantiate + `__module_init`
+  twice): the 22-name worker list traps `Cannot convert undefined to object`;
+  the extended list runs clean. Sandbox is the sole difference. (Local
+  `Object.create(null)` sandbox yields the `undefined` wording; the harvest's
+  `null` wording is the same `__getPrototypeOf` site — both fixed by seeding the
+  globals.)
+- Real-sample runner probe: `use-default-proto-if-custom-proto-is-not-object.js`
+  and `internals/Set/detached-buffer.js` now progress PAST module init into the
+  test body (residual honest TypedArray-semantics fails), no module-init trap.
+
+**Fix (chosen: shared-list extraction — kills the drift class):**
+
+- New `scripts/test262-sandbox-globals.mjs` exports the single
+  `SANDBOX_GLOBAL_NAMES` (base + #3419 cluster + `Atomics`), side-effect-free.
+- `scripts/test262-worker.mjs` and `tests/test262-runner.ts` both import it; the
+  two hand-maintained twins are gone, so this parity class (#3227, #3428 B,
+  #3419-vs-worker) can't recur.
+- Regression test `tests/issue-3441.test.ts` asserts the shared list ⊇ the
+  cluster + `Atomics` and that the built sandbox exposes `Int8Array`/`Atomics`.
+
+Expected: the ~2,069 `Cannot convert null to object [in __module_init()]`
+default-lane bucket (+90 Atomics) collapses; the honest fail→pass flip is a
+fraction of that (residuals reclassify to real TypedArray-semantics fails). This
+is an intended large baseline change — not a regression.
+
+## Accepted trap-growth collateral + one-cycle #3189 override (2026-07-20)
+
+Landing this fix required a **one-cycle** widening of the #3189 uncatchable-trap
+ratchet. It is NOT a silent floor raise — the rationale and the fix-forward are
+recorded here so the override is auditable and provably transitional.
+
+**What happened.** The sandbox-parity fix lets the TypedArray harness run PAST
+`__module_init` for the first time. 28 tests that previously died there (catchable
+"Cannot convert null to object") now execute their body and hit PRE-EXISTING
+compiler trap-gaps: `null_deref` +19 (166→185), `oob` +9 (48→57). All 28
+`include: [testTypedArray.js]` and were ALREADY failing before this PR — a
+failure-MODE change (catchable → uncatchable), **zero pass-loss**. Net host delta
+is **+647** (656 improvements − 9 non-timeout regressions), measured in the #3430
+merge_group run 29711072322.
+
+**The override (both reset to 0 after #3430 lands + baseline promotes).**
+- merge_group gate (`scripts/diff-test262.ts`, per-category): `TRAP_RATCHET_TOLERANCE=25`
+  — covers null_deref +19 and oob +9.
+- promote-baseline gate (`scripts/check-baseline-trap-growth.ts`): `BASELINE_TRAP_GROWTH_ALLOW=25`.
+
+The change-scoped `trap-growth-allow:` frontmatter mechanism was NOT usable here:
+both gates read it only in rebase mode (forward oracle bump, `diff-test262.ts:1766`),
+and this is a same-oracle runner-only change, so the frontmatter is inert. The
+repo-var valves are the only effective lever.
+
+**Fix-forward:** #3488 tracks IMPLEMENTING the unmasked TypedArray trap-gaps
+(`.set` arg-coercion / bounds, `bit-precision` codecs, `*-invoked-as-func`
+reflective null-receiver guards) so the ratchet tightens back to its prior floor.

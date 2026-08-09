@@ -1,8 +1,7 @@
 ---
 id: 802
 title: "- Dynamic prototype support (Object.setPrototypeOf, Object.create with dynamic proto)"
-status: in-progress
-assignee: ttraenkler/fable-dev-2
+status: ready
 model: opus
 fable_role: spec
 created: 2026-03-26

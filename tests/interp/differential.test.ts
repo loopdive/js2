@@ -107,6 +107,34 @@ const CURATED: string[] = [
   "String(123)",
   "typeof undefinedThing",
   "typeof 42",
+  // #4137 C1 — bitwise binary ops (ToInt32/ToUint32 comes from the native op)
+  "5 | 3",
+  "12 & 10",
+  "5 ^ 3",
+  "-1 >>> 0",
+  "16 >>> 1", // operand order matters: syntactic left must land in the register
+  "'3' | 0",
+  "undefined | 0",
+  "null ^ 5",
+  "2.9 | 0",
+  "1 | 2 & 3 ^ 4",
+  // #4137 C1 — the compound forms the same opcode table drives
+  "var x = 5; x |= 3; x",
+  "var x = 12; x &= 10; x",
+  "var x = 5; x ^= 3; x",
+  "var x = -1; x >>>= 0; x",
+  "var o = { v: 5 }; o.v |= 3; o.v",
+  // #4137 C2 — regex literals (compare through primitives; a bare RegExp would
+  // structurally compare equal to anything with no own enumerable keys)
+  "/a+b/.test('aab')",
+  "/x/g.flags",
+  "/x/gi.source",
+  "String(/ab+c/gi)",
+  "/(\\d+)/.exec('a123b')[1]",
+  "'a1b2'.replace(/\\d/g, '#')",
+  "var r = /a/g; r.test('aa'); r.lastIndex",
+  "var a = []; for (var i = 0; i < 2; i++) a.push(/x/); a[0] === a[1]", // fresh object per evaluation
+  "typeof /x/",
 ];
 
 describe("#3101 differential — curated constant-string corpus", () => {

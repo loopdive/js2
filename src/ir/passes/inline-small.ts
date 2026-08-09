@@ -66,6 +66,7 @@
 
 import {
   asValueId,
+  forEachNestedBuffer,
   type IrBlock,
   type IrBranch,
   type IrFunction,
@@ -75,6 +76,7 @@ import {
   type IrValueId,
 } from "../nodes.js";
 import type { AllocSiteRegistry } from "../alloc-registry.js";
+import type { IrUnitId } from "../identity.js";
 import { forkAllocInInstr } from "./alloc-discipline.js";
 
 const MAX_CALLEE_INSTRS = 10;
@@ -85,15 +87,20 @@ const CALLER_SIZE_BUDGET_MULTIPLIER = 4;
  * Returns the same `IrModule` reference when no function changes.
  */
 export function inlineSmall(mod: IrModule, registry?: AllocSiteRegistry): IrModule {
-  const byName = new Map<string, IrFunction>();
-  for (const fn of mod.functions) byName.set(fn.name, fn);
+  const byUnitId = new Map<IrUnitId, IrFunction>();
+  for (const fn of mod.functions) {
+    if (byUnitId.has(fn.unitId)) {
+      throw new Error(`inlineSmall: duplicate IR function unit '${fn.unitId}'`);
+    }
+    byUnitId.set(fn.unitId, fn);
+  }
 
-  const recursiveSet = computeRecursiveSet(mod, byName);
+  const recursiveSet = computeRecursiveSet(mod, byUnitId);
 
   const newFunctions: IrFunction[] = [];
   let anyChanged = false;
   for (const fn of mod.functions) {
-    const inlined = inlineIntoFunction(fn, byName, recursiveSet, registry);
+    const inlined = inlineIntoFunction(fn, byUnitId, recursiveSet, registry);
     if (inlined !== fn) anyChanged = true;
     newFunctions.push(inlined);
   }
@@ -107,10 +114,30 @@ export function inlineSmall(mod: IrModule, registry?: AllocSiteRegistry): IrModu
 
 function inlineIntoFunction(
   caller: IrFunction,
-  byName: ReadonlyMap<string, IrFunction>,
-  recursiveSet: ReadonlySet<string>,
+  byUnitId: ReadonlyMap<IrUnitId, IrFunction>,
+  recursiveSet: ReadonlySet<IrUnitId>,
   registry?: AllocSiteRegistry,
 ): IrFunction {
+  // Nested instruction buffers have their own def/use walk and can retain
+  // caller values defined outside the buffer. `callerRename` is intentionally
+  // flat; applying it only to an instruction's direct operands leaves those
+  // nested uses stale, while applying it blindly inside every buffer risks
+  // rewriting a buffer-local id that happens to share a test-built namespace.
+  // Keep such callers on ordinary symbolic calls until the IR has an explicit
+  // scoped rename primitive. The shared exhaustive buffer authority makes this
+  // barrier cover for/while, if, try, and for-of together. It runs before any
+  // fresh ids or allocation forks, so a rejected caller is byte-for-byte
+  // unchanged. Body-bearing callees are already rejected by `canInline`.
+  for (const block of caller.blocks) {
+    for (const instr of block.instrs) {
+      let hasNestedBuffer = false;
+      forEachNestedBuffer(instr, () => {
+        hasNestedBuffer = true;
+      });
+      if (hasNestedBuffer) return caller;
+    }
+  }
+
   const originalSize = countInstrs(caller);
   let nextValueId = caller.valueCount;
   let currentSize = originalSize;
@@ -150,7 +177,8 @@ function inlineIntoFunction(
         continue;
       }
 
-      const callee = byName.get(rewritten.target.name);
+      const binding = rewritten.target.binding;
+      const callee = binding.kind === "unit" ? byUnitId.get(binding.unitId) : undefined;
       if (!callee || !canInline(callee, recursiveSet)) {
         newInstrs.push(rewritten);
         continue;
@@ -244,9 +272,9 @@ function inlineIntoFunction(
 // Inlinability check
 // ---------------------------------------------------------------------------
 
-function canInline(callee: IrFunction, recursiveSet: ReadonlySet<string>): boolean {
+function canInline(callee: IrFunction, recursiveSet: ReadonlySet<IrUnitId>): boolean {
   if (callee.blocks.length !== 1) return false;
-  if (recursiveSet.has(callee.name)) return false;
+  if (recursiveSet.has(callee.unitId)) return false;
   const body = callee.blocks[0]!;
   if (body.instrs.length > MAX_CALLEE_INSTRS) return false;
   const term = body.terminator;
@@ -289,6 +317,10 @@ function canInline(callee: IrFunction, recursiveSet: ReadonlySet<string>): boole
       // level anyway). Both skip conservatively.
       inst.kind === "if.stmt" ||
       inst.kind === "br.label" ||
+      // #2952 slice 4 — labeled.block / switch carry nested body buffers
+      // + callee-scoped labels; skip conservatively like if.stmt.
+      inst.kind === "labeled.block" ||
+      inst.kind === "switch" ||
       // (#2856) early.return lowers to a Wasm `return` — spliced into a
       // caller it would return from the CALLER, not simulate the callee's
       // return, so it is never inlinable.
@@ -305,33 +337,38 @@ function canInline(callee: IrFunction, recursiveSet: ReadonlySet<string>): boole
 // ---------------------------------------------------------------------------
 
 /**
- * Return the set of function names that are part of any call cycle (including
- * direct self-recursion) within the IR module. Only edges to locally-visible
- * callees count — cross-module / host imports don't appear in the graph.
+ * Return the set of function identities that are part of any call cycle
+ * (including direct self-recursion) within the IR module. Only exact unit
+ * bindings to locally-visible callees count — imports and providers do not
+ * enter the graph even when their compatibility label matches a local unit.
  */
-function computeRecursiveSet(mod: IrModule, byName: ReadonlyMap<string, IrFunction>): Set<string> {
-  const edges = new Map<string, Set<string>>();
+function computeRecursiveSet(mod: IrModule, byUnitId: ReadonlyMap<IrUnitId, IrFunction>): Set<IrUnitId> {
+  const edges = new Map<IrUnitId, Set<IrUnitId>>();
   for (const fn of mod.functions) {
-    const set = new Set<string>();
+    const set = new Set<IrUnitId>();
     for (const block of fn.blocks) {
       for (const instr of block.instrs) {
-        if (instr.kind === "call" && byName.has(instr.target.name)) {
-          set.add(instr.target.name);
+        if (
+          instr.kind === "call" &&
+          instr.target.binding.kind === "unit" &&
+          byUnitId.has(instr.target.binding.unitId)
+        ) {
+          set.add(instr.target.binding.unitId);
         }
       }
     }
-    edges.set(fn.name, set);
+    edges.set(fn.unitId, set);
   }
-  const recursive = new Set<string>();
+  const recursive = new Set<IrUnitId>();
   for (const fn of mod.functions) {
-    if (reachesSelf(fn.name, edges)) recursive.add(fn.name);
+    if (reachesSelf(fn.unitId, edges)) recursive.add(fn.unitId);
   }
   return recursive;
 }
 
-function reachesSelf(start: string, edges: ReadonlyMap<string, ReadonlySet<string>>): boolean {
-  const visited = new Set<string>();
-  const stack: string[] = [];
+function reachesSelf(start: IrUnitId, edges: ReadonlyMap<IrUnitId, ReadonlySet<IrUnitId>>): boolean {
+  const visited = new Set<IrUnitId>();
+  const stack: IrUnitId[] = [];
   const seed = edges.get(start);
   if (seed) for (const n of seed) stack.push(n);
   while (stack.length > 0) {
@@ -370,7 +407,8 @@ function renameInstrOperands(inst: IrInstr, rename: ReadonlyMap<IrValueId, IrVal
     case "global.get":
     case "raw.wasm":
       return inst;
-    case "call": {
+    case "call":
+    case "intrinsic": {
       let changed = false;
       const newArgs: IrValueId[] = [];
       for (const a of inst.args) {
@@ -453,10 +491,24 @@ function renameInstrOperands(inst: IrInstr, rename: ReadonlyMap<IrValueId, IrVal
       if (recv === inst.recv && key === inst.key) return inst;
       return { ...inst, recv, key };
     }
+    case "dyn.member_set": {
+      const recv = mapId(rename, inst.recv);
+      const key = mapId(rename, inst.key);
+      const value = mapId(rename, inst.value);
+      if (recv === inst.recv && key === inst.key && value === inst.value) return inst;
+      return { ...inst, recv, key, value };
+    }
     case "string.len": {
       const v = mapId(rename, inst.value);
       if (v === inst.value) return inst;
       return { ...inst, value: v };
+    }
+    case "string.char_at":
+    case "string.char_code_at": {
+      const value = mapId(rename, inst.value);
+      const index = mapId(rename, inst.index);
+      if (value === inst.value && index === inst.index) return inst;
+      return { ...inst, value, index };
     }
     case "object.new": {
       let changed = false;
@@ -537,9 +589,6 @@ function renameInstrOperands(inst: IrInstr, rename: ReadonlyMap<IrValueId, IrVal
       if (!changed) return inst;
       return { ...inst, args: newArgs };
     }
-    // #3000-C: class.alloc has no SSA operands — nothing to rename.
-    case "class.alloc":
-      return inst;
     case "class.get": {
       const v = mapId(rename, inst.value);
       if (v === inst.value) return inst;
@@ -629,6 +678,12 @@ function renameInstrOperands(inst: IrInstr, rename: ReadonlyMap<IrValueId, IrVal
       const newValue = mapId(rename, inst.newValue);
       if (v === inst.vec && idx === inst.index && newValue === inst.newValue) return inst;
       return { ...inst, vec: v, index: idx, newValue };
+    }
+    case "vec.set_length": {
+      const vec = mapId(rename, inst.vec);
+      const length = mapId(rename, inst.length);
+      if (vec === inst.vec && length === inst.length) return inst;
+      return { ...inst, vec, length };
     }
     case "vec.new_fixed": {
       // #1804 — rewrite each element operand (mirrors object.new).
@@ -849,6 +904,36 @@ function renameInstrOperands(inst: IrInstr, rename: ReadonlyMap<IrValueId, IrVal
       }
       if (!changed) return inst;
       return { ...inst, cond: cv, then: newThen, else: newElse };
+    }
+    // #2952 slice 4 — labeled block / switch: honest deep rename of the
+    // clause buffers (+ disc), mirroring the if.stmt pattern. (canInline
+    // skips functions containing these, so this is defensive parity.)
+    case "labeled.block": {
+      let changed = false;
+      const newBody: IrInstr[] = [];
+      for (const sub of inst.body) {
+        const renamed = renameInstrOperands(sub, rename);
+        if (renamed !== sub) changed = true;
+        newBody.push(renamed);
+      }
+      if (!changed) return inst;
+      return { ...inst, body: newBody };
+    }
+    case "switch": {
+      const dv = mapId(rename, inst.disc);
+      let changed = dv !== inst.disc;
+      const newBodies: IrInstr[][] = [];
+      for (const body of inst.bodies) {
+        const newBody: IrInstr[] = [];
+        for (const sub of body) {
+          const renamed = renameInstrOperands(sub, rename);
+          if (renamed !== sub) changed = true;
+          newBody.push(renamed);
+        }
+        newBodies.push(newBody);
+      }
+      if (!changed) return inst;
+      return { ...inst, disc: dv, bodies: newBodies };
     }
     case "for.loop": {
       const cv = mapId(rename, inst.condValue);

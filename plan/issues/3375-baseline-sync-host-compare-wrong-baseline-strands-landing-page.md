@@ -1,19 +1,26 @@
 ---
 id: 3375
 title: "baseline-summary-sync host drift-check compares the wrong baseline → landing page silently strands stale/inflated test262 number"
-status: in-progress
-sprint: current
+status: done
+completed: 2026-07-24
+sprint: 76
 created: 2026-07-17
 priority: high
 feasibility: easy
 horizon: s
-task_type: bug
+task_type: infrastructure
 area: ci, infra, pages
 goal: infrastructure
 related: [1951, 1528, 1078, 2562]
 ---
 
 # #3375 — baseline-summary-sync host drift-check uses the wrong `--baseline`, stranding the public landing-page number
+
+> **DONE (2026-07-24, status reconcile).** Fix `fix(#3375): baseline-sync host
+> drift-check must compare the public file it overwrites` merged to `main` via
+> **PR #3272** (`git log origin/main --grep="#3375"`); a `chore(#3375): mark
+> done` commit followed but the issue frontmatter stayed `ready`. Reconciled to
+> `done` here.
 
 ## Symptom
 

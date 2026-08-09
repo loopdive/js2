@@ -55,7 +55,7 @@ jobs:
           CHANGED=$(git diff --name-only "$BASE"...HEAD)
           echo "Changed files:"; echo "$CHANGED"
           # Run the heavy suites iff any compiler / test / build-config path changed.
-          if echo "$CHANGED" | grep -qE '^(src/|tests/|scripts/|package\.json$|pnpm-lock\.yaml$|tsconfig.*\.json$|vitest\.config\.ts$|\.github/workflows/ci\.yml$)'; then
+          if echo "$CHANGED" | grep -qE '^(src/|tests/|scripts/|package\.json$|pnpm-lock\.yaml$|tsconfig.*\.json$|vitest\.config\.ts$|\.github/actions/setup-node-pnpm/action\.yml$|\.github/workflows/ci\.yml$)'; then
             echo "code/test/build paths changed -> run heavy suites"
             echo "code=true" >> "$GITHUB_OUTPUT"
           else
@@ -89,28 +89,49 @@ jobs:
           # guarantee base-ancestry by construction — no extra check needed.
           echo "✓ ${{ github.event_name }} ref already includes base by construction"
 
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 25
-
-      - name: Setup pnpm via Corepack
-        run: |
-          corepack enable
-          corepack prepare pnpm@10.30.2 --activate
+      - name: Setup Node and pnpm (cached)
+        uses: ./.github/actions/setup-node-pnpm
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Lint
-        run: pnpm run lint
+      - name: Lint, format, and typecheck (parallel)
+        run: |
+          # These checks are independent and read-only. Running them as three
+          # lanes keeps the required `quality` context intact while bounding
+          # this stage by typecheck (the long pole) instead of their sum.
+          set +e
+          tmp_dir=$(mktemp -d)
 
-      - name: Format check
-        run: pnpm run format:check
+          pnpm run lint > "$tmp_dir/lint.log" 2>&1 &
+          lint_pid=$!
+          pnpm run format:check > "$tmp_dir/format.log" 2>&1 &
+          format_pid=$!
+          pnpm run typecheck > "$tmp_dir/typecheck.log" 2>&1 &
+          typecheck_pid=$!
 
-      - name: Typecheck
-        run: pnpm run typecheck
+          wait "$lint_pid"; lint_rc=$?
+          wait "$format_pid"; format_rc=$?
+          wait "$typecheck_pid"; typecheck_rc=$?
+          set -e
+
+          for lane in lint format typecheck; do
+            echo "--- $lane ---"
+            cat "$tmp_dir/$lane.log"
+          done
+
+          if [ "$lint_rc" -ne 0 ] || [ "$format_rc" -ne 0 ] || [ "$typecheck_rc" -ne 0 ]; then
+            echo "::error::quality lanes failed (lint=$lint_rc, format=$format_rc, typecheck=$typecheck_rc)"
+            exit 1
+          fi
 
       - name: IR fallback gate (#1376)
         run: pnpm run check:ir-fallbacks
+
+      - name: IR-only readiness instrumentation (#3519)
+        # Hybrid policy is the bounded migration ratchet: Unsupported rows are
+        # measured, while any invariant, missing unit, or compile failure is
+        # fatal. R9 promotes the strict IR-only policy once blockers reach zero.
+        run: pnpm run check:ir-only -- --policy=hybrid
 
       - name: Dead-export gate (#3090 Phase 2)
         # Fails when a NEW unreferenced top-level function appears in
@@ -171,6 +192,35 @@ jobs:
         run: |
           git fetch --no-tags --depth=200 origin main 2>/dev/null || true
           pnpm run check:loc-budget
+
+      - name: Per-function LOC-ceiling ratchet (#3400 / R-FUNC)
+        # Function-granularity twin of check:loc-budget (#3102 slice 2): the same
+        # change-scoped, shrink-only ratchet, but keyed on FUNCTIONS over 300 LOC
+        # (measured via the TS AST). FAILS when this change-set grows a function
+        # already over 300 at its base, newly pushes one over 300, or adds a
+        # brand-new over-300 function. Grandfathers the 185-entry baseline —
+        # demands zero refactoring to land; #3108/#3111 shrink entries and the
+        # post-merge --update-on-decrease banks each drop. Intentional growth is
+        # granted per change-set via a `func-budget-allow:` frontmatter key in
+        # this PR's own plan/issues/*.md. The committed baseline
+        # (scripts/func-budget-baseline.json) is NOT read on this path and PRs
+        # must NOT commit changes to it.
+        run: |
+          git fetch --no-tags --depth=200 origin main 2>/dev/null || true
+          pnpm run check:func-budget
+
+      - name: test262 harness compile-time budget gate (#3437)
+        # DETERMINISTIC, load-independent pre-merge budget for source-scan compile
+        # WORK: compiles a FIXED representative harness-shaped assembly and counts
+        # shared-forEachChild traversals (src/ts-api.ts). The oracle-v8 harness
+        # switch tanked CI via an O(call-sites × file-size) per-file scan (#3433,
+        # fixed by #3374) that was INVISIBLE until the merge queue crawled. Unlike
+        # the wall-clock #1942 guard (flaky, post-merge), this count is a pure
+        # function of the AST + scans, so it gates that regression class HERE,
+        # before the queue. Rebank an intentional slowdown with
+        # `pnpm run check:harness-compile-budget -- --update`. Budget:
+        # scripts/harness-compile-budget.json (set from post-#3433 main).
+        run: pnpm run check:harness-compile-budget
 
       - name: IR adoption table freshness (#2145)
         # Fails when plan/log/ir-adoption.md drifts from its generator data or
@@ -237,6 +287,29 @@ jobs:
         run: |
           git fetch --no-tags --depth=50 origin main 2>/dev/null || true
           GATE_BASE=origin/main pnpm run check:issue-ids:against-main
+      - name: Issue-ID open-PR collision gate (#3598)
+        # PR-vs-PR half of the id defence: two open PRs adding the same
+        # plan/issues/<id>-*.md are BOTH green against main (neither file is on
+        # main yet); the collision then surfaces only when the first merges —
+        # at best a late red re-check, at worst a merge_group auto-park (#2547)
+        # that strands the loser behind a `hold`. This step compares the
+        # branch's introduced issue files against every OTHER open PR's added
+        # issue files, via the SAME batched scan `claim-issue.mjs --allocate`
+        # uses (scripts/lib/open-pr-issue-files.mjs). Same filename in both PRs
+        # = a modification, NOT flagged; only same id under a different
+        # filename fails. FAIL-OPEN (warn, exit 0) when the scan can't run — a
+        # network-dependent gate must not be able to freeze every PR on a
+        # GitHub blip; the merge_group duplicate-id gate stays the hard
+        # backstop. pull_request only: in the merge_group the head already
+        # contains main and the dup gate above re-validates the merged tree.
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLAIM_PR_REPO: ${{ github.repository }}
+          GATE_PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          git fetch --no-tags --depth=50 origin main 2>/dev/null || true
+          GATE_BASE=origin/main pnpm run check:issue-ids:against-open-prs
       - name: Issue integrity vs. merged main (#2530)
         # Stale-base dup-ID gate. The check above runs on the PR's OWN tip, which
         # was cut from an older main; an id that a sibling PR has since merged is
@@ -269,6 +342,20 @@ jobs:
         run: |
           git fetch --no-tags --depth=1 origin main 2>/dev/null || true
           ISSUE_COVERAGE_BASE=origin/main pnpm run check:issue-spec-coverage
+
+      - name: Done-status integrity gate (#3474)
+        # Sibling to #2093. CHANGE-SCOPED: for each plan/issues/*.md this PR
+        # touches that is `status: done` and not `done_cited_ok: true`, counts
+        # the LIVE test262 failures citing its #NNNN across both baseline lanes
+        # (keyed on code state, not a commit-message grep, so it catches
+        # status-drift even when the fix didn't cite the issue). HARD FAILS when
+        # a done issue still has > DONE_CITE_THRESHOLD live citations — reopen it
+        # or mark it exempt. A PR touching no `done` issue does ZERO network
+        # work; a baseline-fetch failure WARNS and PASSES (safety net, never
+        # wedges the queue on a 3rd-party network blip).
+        run: |
+          git fetch --no-tags --depth=1 origin main 2>/dev/null || true
+          pnpm run check:done-status-integrity
 
       - name: Verdict-logic must bump oracle_version (#3003)
         # A test262 VERDICT-LOGIC change (how a per-test result is SCORED:
@@ -340,6 +427,10 @@ jobs:
           git submodule update --init --checkout test262-fyi/data
           pnpm run build:compiler-bundle
           pnpm exec esbuild src/runtime.ts --bundle --platform=node --format=esm --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
+          # Changed root tests that run eval-mentioning test262 files need the
+          # runtime-eval REFUSAL provider linked, or instantiate fails with
+          # 'Import "js2wasm:runtime-eval": module is not an object' (#4234).
+          node scripts/build-runtime-eval-provider.mjs --refusal-only
 
       - name: Changed root test files must pass (#3008)
         # Per-PR half of the #3008 wiring (the post-merge half is
@@ -353,33 +444,21 @@ jobs:
         if: github.event_name == 'pull_request'
         run: |
           git fetch --no-tags --depth=200 origin main 2>/dev/null || true
-          BASE=$(git merge-base origin/main HEAD 2>/dev/null || echo "")
-          if [ -z "$BASE" ]; then echo "No merge base resolvable — skipping."; exit 0; fi
-          # test262-chunk* entry points are shard-matrix constructs (they need
-          # TEST262_CHUNK_* / a chunk index+total to slice the corpus and run
-          # in the test262-sharded.yml workflow, not this per-PR root-test
-          # gate) — same "runs elsewhere" rationale as the linear-/c-abi/simd
-          # exclusions. The dynamic entry point (#3431) already self-skips
-          # without its env vars, but excluding it here keeps the gate from
-          # spending a fork on an inert skip.
-          CHANGED=$(git diff --name-only --diff-filter=AM "$BASE" HEAD -- tests/ \
-            | grep -E '^tests/[^/]+\.test\.ts$' \
-            | grep -vE '^tests/(linear-|c-abi\.|simd|test262-chunk)' || true)
-          if [ -z "$CHANGED" ]; then echo "No root test files changed."; exit 0; fi
-          N=$(echo "$CHANGED" | wc -l)
-          if [ "$N" -gt 20 ]; then
-            echo "::warning::$N root test files changed (>20, likely a mass edit) — skipping the per-PR gate; the post-merge issue-tests detector covers them."
-            exit 0
-          fi
-          echo "Running $N changed root test file(s):"
-          echo "$CHANGED"
-          # Invoke each file in a fresh Vitest process. Test262 integration
-          # files intentionally retain large compiler/worker graphs, so one
-          # shared 512 MB fork accumulates their heaps and defeats the
-          # file-level isolation used by the harness parity regressions.
-          for test_file in $CHANGED; do
-            pnpm exec vitest run "$test_file" --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
-          done
+          pnpm run test:changed-root
+
+      - name: Required guard suite (#3552)
+        # Untouched root test files do NOT run at PR time — the #3008
+        # two-layer design runs only PR-touched tests/*.test.ts per PR and
+        # defers the full ~2,100-file suite (~9 CPU-hours) to the post-merge
+        # issue-tests.yml detector, which detects but does not enforce. #3503
+        # proved the gap on 2026-07-23: it regressed tests/issue-3471.test.ts
+        # WITHOUT touching it — green PR, red main, fixed forward in #3551.
+        # This step runs the SMALL curated manifest of invariant-guard tests
+        # (tests/guard-suite.json — entry criteria in its $comment: <60s per
+        # file, no test262 harness inputs, green on main, guards a prior
+        # silent main regression) on every PR, merge group, and push. Total
+        # budget ~2 minutes; it is NOT the full-suite gate #3008 rejected.
+        run: node scripts/run-guard-suite.mjs
 
       - name: Conformance numbers in sync (#1522)
         run: pnpm run sync:conformance:check
@@ -400,12 +479,18 @@ jobs:
           # Sparse + blob-filtered clone (#3028): a plain --depth=1 clone pulls
           # every tip blob incl. the ~500 MB runs/ tree — minutes for one file.
           { git clone --depth=1 --filter=blob:none --no-checkout https://github.com/loopdive/js2wasm-baselines.git /tmp/js2wasm-baselines \
-            && git -C /tmp/js2wasm-baselines sparse-checkout set --no-cone /runs/index.json \
+            && git -C /tmp/js2wasm-baselines sparse-checkout set --no-cone /runs/index.json /runs/editions-index.json /runs/standalone-index.json \
             && git -C /tmp/js2wasm-baselines checkout main; } 2>/dev/null || true
           if [ -f /tmp/js2wasm-baselines/runs/index.json ]; then
             mkdir -p benchmarks/results/runs
             cp /tmp/js2wasm-baselines/runs/index.json benchmarks/results/runs/index.json
           fi
+          [ -f /tmp/js2wasm-baselines/runs/editions-index.json ] && \
+            mkdir -p benchmarks/results/runs && \
+            cp /tmp/js2wasm-baselines/runs/editions-index.json benchmarks/results/runs/editions-index.json
+          [ -f /tmp/js2wasm-baselines/runs/standalone-index.json ] && \
+            mkdir -p benchmarks/results/runs && \
+            cp /tmp/js2wasm-baselines/runs/standalone-index.json benchmarks/results/runs/standalone-index.json
 
       - name: Regenerate planning artifacts
         if: github.event_name == 'push'
@@ -437,6 +522,67 @@ jobs:
       #       fi
       #     fi
 
+  # Keep Test262 parallel on the green path: making it depend on `quality`
+  # would add the full quality duration to every successful merge group. On a
+  # quality failure, however, the Test262 result cannot make the group
+  # mergeable. Cancel only the exact sibling run so a failing group stops
+  # consuming the large shard matrix while later groups keep running.
+  cancel-test262-on-quality-failure:
+    name: Cancel Test262 after quality failure
+    needs: quality
+    if: ${{ always() && github.event_name == 'merge_group' && needs.quality.result == 'failure' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Cancel the exact Test262 sibling
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -uo pipefail
+
+          # One exact-SHA lookup, with no polling or retry loop. Treat API
+          # trouble as a warning: quality is already the authoritative failure,
+          # and this best-effort job must not obscure its diagnostics.
+          CANDIDATES=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs?event=merge_group&head_sha=${HEAD_SHA}&per_page=100" \
+            --jq '.workflow_runs[] | [.id, .name, .path, .head_sha, .event, .status] | @tsv' \
+            2>&1) || {
+            echo "::warning::Could not list Test262 siblings; quality has already failed."
+            printf '%s\n' "$CANDIDATES"
+            exit 0
+          }
+
+          REQUESTED=0
+          while IFS=$'\t' read -r run_id run_name run_path run_sha run_event run_status; do
+            [ -n "${run_id:-}" ] || continue
+            [ "$run_name" = "Test262 Sharded" ] || continue
+            [ "$run_path" = ".github/workflows/test262-sharded.yml" ] || continue
+            [ "$run_sha" = "$HEAD_SHA" ] || continue
+            [ "$run_event" = "merge_group" ] || continue
+            case "$run_status" in
+              queued|in_progress) ;;
+              *) continue ;;
+            esac
+
+            echo "Cancelling Test262 run ${run_id} for failed merge-group SHA ${HEAD_SHA}."
+            if gh api -X POST \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/cancel" >/dev/null 2>&1; then
+              REQUESTED=$((REQUESTED + 1))
+            else
+              echo "::warning::GitHub rejected cancellation of Test262 run ${run_id}."
+            fi
+          done <<< "$CANDIDATES"
+
+          if [ "$REQUESTED" -eq 0 ]; then
+            echo "No queued or in-progress Test262 sibling matched this merge-group SHA."
+          else
+            echo "Requested cancellation of ${REQUESTED} Test262 sibling run(s)."
+          fi
+
   # #2139 — Execute the linear-backend (linear-memory lowering), C-ABI, and
   # SIMD test suites in CI. These 20 files (tests/linear-*.test.ts,
   # tests/c-abi.test.ts, tests/simd*.test.ts) sat at tests/ root with NO CI
@@ -452,13 +598,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 25
-      - name: Setup pnpm via Corepack
-        run: |
-          corepack enable
-          corepack prepare pnpm@10.30.2 --activate
+      - name: Setup Node and pnpm (cached)
+        uses: ./.github/actions/setup-node-pnpm
       - run: pnpm install --frozen-lockfile
       - name: Run linear-backend, C-ABI, and SIMD tests
         run: |
@@ -472,10 +613,10 @@ jobs:
 
   # #1659 — Run tests/equivalence/ in CI. Previously skipped because the full
   # suite OOMed under file-parallelism. Each shard runs single-fork (peak
-  # ~1 GB RAM, ~1-2 min) and emits a partial failure list; the merge job
-  # combines partials and gates against scripts/equivalence-baseline.json —
-  # only NEW failures (not in the baseline) fail CI, so the existing failure
-  # backlog does not block every PR while still catching genuine regressions.
+  # ~1 GB RAM, ~1-3 min) and gates its own failures against
+  # scripts/equivalence-baseline.json. The final required context is only a
+  # status fan-in: regression membership is independent per test, so shipping
+  # eight partial artifacts to repeat the same set comparison adds no safety.
   equivalence-shard:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -486,47 +627,25 @@ jobs:
         shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 25
-      - name: Setup pnpm via Corepack
-        run: |
-          corepack enable
-          corepack prepare pnpm@10.30.2 --activate
+      - name: Setup Node and pnpm (cached)
+        uses: ./.github/actions/setup-node-pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Run equivalence shard ${{ matrix.shard }}/8
+      - name: Run and gate equivalence shard ${{ matrix.shard }}/8
         env:
           SHARD: ${{ matrix.shard }}/8
-          PARTIAL_OUT: equiv-partial-${{ matrix.shard }}.json
         run: node scripts/equivalence-gate.mjs
-      - name: Upload partial result
-        uses: actions/upload-artifact@v6
-        with:
-          name: equiv-partial-${{ matrix.shard }}
-          path: equiv-partial-${{ matrix.shard }}.json
-          retention-days: 3
 
   equivalence-gate:
     needs: [changes, equivalence-shard]
-    if: needs.changes.outputs.code == 'true'
+    if: always() && needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 25
-      - name: Setup pnpm via Corepack
-        run: |
-          corepack enable
-          corepack prepare pnpm@10.30.2 --activate
-      - run: pnpm install --frozen-lockfile
-      - name: Download shard partials
-        uses: actions/download-artifact@v7
-        with:
-          pattern: equiv-partial-*
-          path: equiv-partials
-          merge-multiple: true
-      - name: Gate against baseline
+      - name: Verify every equivalence shard passed its baseline gate
         env:
-          MERGE_PARTIALS_DIR: equiv-partials
-        run: node scripts/equivalence-gate.mjs
+          SHARD_RESULT: ${{ needs.equivalence-shard.result }}
+        run: |
+          if [ "$SHARD_RESULT" != "success" ]; then
+            echo "::error::one or more equivalence shards failed their local baseline gate (matrix result: $SHARD_RESULT)"
+            exit 1
+          fi
+          echo "All equivalence shards passed their local baseline gates."

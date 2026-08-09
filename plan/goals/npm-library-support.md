@@ -35,7 +35,7 @@ not.
 | **938** | Add equivalence tests for Number static methods and constants | 37 | done | low |
 | **939** | Add Math.LOG2E and Math.LOG10E constant tests to equivalence suite | 37 | done | low |
 | **941** | Add equivalence tests for global isNaN() and isFinite() functions | 37 | done | low |
-| **1032** | Compile axios to Wasm — Node builtins routed as host imports; harvest error patterns | Backlog | ready | high |
+| **1032** | Compile axios to Wasm — Node builtins routed as host imports; harvest error patterns | current | ready | high |
 | **1033** | Compile React to Wasm — UI library stress test; DOM as host imports; harvest closure/hook/Symbol patterns | Backlog | ready | high |
 | **1043** | Compile-time `process.env.NODE_ENV` substitution + dead-branch elimination | 45 | done | high |
 | **1060** | ModuleResolver prefers @types/*/.d.ts over real .js body, dropping npm implementations | 41 | done | high |
@@ -89,6 +89,7 @@ not.
 | **1313** | await is a passthrough — does not unwrap Promise from async-call expressions | 50 | done | high |
 | **1327** | Landing page: per-feature test pass counts + feature report page + playground deep-link | Backlog | ready | high |
 | **1400** | npm: compile ESLint package entry to valid Wasm | 52 | done | high |
+| **1426** | Update stale lodash-tier1 stress test — resolver fixed, clamp/add behavior changed |  | in-review | low |
 | **1531** | JSX syntax is not parsed when compiling .tsx/.jsx input | 52 | done | medium |
 | **1540** | JSX runtime: bind _jsx/_jsxs/_Fragment as host import (default) and standalone stub | 52 | done | medium |
 | **1557** | ESLint config.js direct compile: __obj_meth_tramp validate arity mismatch (need 2, got 1) | 53 | done | high |
@@ -104,10 +105,10 @@ not.
 | **1647** | ECMAScript spec compliance audit: section-by-section review, gap issues, HTML report | 50 | done | high |
 | **1693** | multi-funcref-dispatch (#1131) missing return-type coercion — emits invalid Wasm on full-module axios/utils.js (mis-presented as `&&` fallthru bug) | Backlog | done | high |
 | **1791** | node:path — typed host import + standalone TS-port fallback | Backlog | done | high |
-| **1792** | node:url — URL / URLSearchParams as host constructors | Backlog | ready | high |
-| **1793** | node:buffer + global Buffer — host class with from/concat/toString | Backlog | ready | high |
-| **1794** | node:events / EventEmitter — host class + closure-callback contract | Backlog | ready | high |
-| **1795** | node:http (+ https) — GET round-trip host import (axios unblocker) | Backlog | ready | high |
+| **1792** | node:url — URL / URLSearchParams as host constructors | 72 | done | high |
+| **1793** | node:buffer + global Buffer — host class with from/concat/toString | 72 | done | high |
+| **1794** | node:events / EventEmitter — host class + closure-callback contract | 72 | done | high |
+| **1795** | node:http (+ https) — GET round-trip host import (axios unblocker) | 72 | done | high |
 | **1810** | node:path — typed host import + standalone TS-port fallback | Backlog | wont-fix | high |
 | **1811** | node:url — URL / URLSearchParams as host constructors | Backlog | wont-fix | high |
 | **1812** | node:buffer + global Buffer — host class with from/concat/toString | Backlog | wont-fix | high |
@@ -115,11 +116,14 @@ not.
 | **1814** | node:http (+ https) — GET round-trip host import (axios unblocker) | Backlog | wont-fix | high |
 | **2688** | ESLint apply-disable-directives.js: conditional-spread produces two struct shapes for array.set element type |  | done | medium |
 | **2689** | ESLint source-code.js: SourceCode_new return_call tail-call type error |  | done | medium |
-| **2690** | ESLint rule-tester.js: cloneDeeplyExcludesParent polymorphic return widens i32 into anyref slot |  | ready | low |
-| **2691** | ESLint api.js: re-export 'ESLint' declared locally but not exported (compile error) |  | blocked | low |
+| **2690** | ESLint rule-tester.js: cloneDeeplyExcludesParent polymorphic return widens i32 into anyref slot | current | ready | low |
+| **2691** | ESLint api.js: re-export 'ESLint' declared locally but not exported (compile error) | Backlog | blocked | low |
 | **2693** | MILESTONE: ESLint-style Linter.verify runs as Wasm in Node (host-delegated parse) |  | done | high |
 | **2699** | node builtins: destructured/named function imports for url/module/os route to host (eslint host-glue) |  | done | high |
 | **2701** | node:fs/promises destructured-import host-glue — sanitise the `/` in the __nodefn__ identifier |  | done | high |
+| **3247** | FinalizationRegistry JS-host mode: lowered as host-dep extern class instead of no-op stub (regressed #1600) | Backlog | ready | low |
+| **3325** | declare function host-dep call is silently dropped (env import bound but never called) | 72 | done | medium |
+| **3339** | compiler: bound compileProject graph expansion on axios core instead of OOM | Backlog | backlog | high |
 
 <!-- AUTOGENERATED:GOAL-ISSUES-END -->
 

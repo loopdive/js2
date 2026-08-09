@@ -72,7 +72,7 @@ const VERB = {
   docs: "docs",
   test: "test",
 };
-const PRIO_TAG = { high: "[P1]", medium: "[P2]", low: "[P3]" };
+const PRIO_TAG = { critical: "[P0]", high: "[P1]", medium: "[P2]", low: "[P3]" };
 
 function log(s) {
   if (!QUIET) console.log(s);

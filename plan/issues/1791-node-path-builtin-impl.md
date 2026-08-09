@@ -2,11 +2,9 @@
 id: 1791
 title: "node:path — typed host import + standalone TS-port fallback"
 status: done
-assignee: ttraenkler/sd-2668c
-completed: 2026-06-26
-sprint: Backlog
 created: 2026-06-03
-updated: 2026-06-26
+updated: 2026-07-26
+completed: 2026-06-26
 priority: high
 feasibility: medium
 reasoning_effort: medium
@@ -14,10 +12,22 @@ task_type: feature
 area: host-interop
 language_feature: node-builtins
 goal: npm-library-support
+sprint: Backlog
 parent: 1575
-related: [1044, 1471, 1472, 1494, 1400, 1032]
+assignee: ttraenkler/sd-2668c
+es_edition: n/a
+related: [1044, 1471, 1472, 1494, 1400, 1032, 3654]
 ---
 # node:path — typed host import + standalone TS-port fallback
+
+## 2026-07-26 ESLint integration note
+
+The isolated #1791 runtime/standalone behaviour remains complete, but
+`compileProject("node_modules/eslint/lib/linter/linter.js", { allowJs: true })`
+still reports TS2307 for `require("node:path")` before codegen. The same graph
+also misses installed packages and existing relative modules, so this is
+tracked as importer-context/type-resolution issue #3654 rather than reopening
+the already-delivered `node:path` runtime implementation.
 
 ## Problem
 

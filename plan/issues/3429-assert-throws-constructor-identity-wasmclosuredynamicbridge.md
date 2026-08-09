@@ -1,10 +1,11 @@
 ---
 id: 3429
 title: "Host assert.throws: expected error constructor rendered as internal 'wasmClosureDynamicBridge' (544 records) under oracle v8"
-status: ready
-sprint: current
+status: done
+completed: 2026-07-20
+sprint: 73
 created: 2026-07-18
-updated: 2026-07-18
+updated: 2026-07-21
 priority: medium
 horizon: m
 feasibility: medium
@@ -13,8 +14,13 @@ area: test262-runner, codegen
 language_feature: error-constructors
 es_edition: multi
 goal: test262-conformance
-related: [3370, 1104]
+related: [3370, 1104, 3486]
 origin: "2026-07-18 oracle-v8 harvest (fable harvest agent): host `other` sub-bucket @ oracle 8."
+loc-budget-allow:
+  - src/runtime.ts
+  - src/codegen/expressions/call-receiver-method.ts
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/expressions/calls.ts
 ---
 
 # #3429 — assert.throws constructor identity leaks internal 'wasmClosureDynamicBridge'
@@ -148,3 +154,92 @@ statically-recognized path — the dev should confirm which gate diverts
   `wasmClosureDynamicBridge`.
 - Scoped: the 5 sample files in this issue + a compound-assignment
   `S11.13.2_A7.8_T*` pair.
+
+## Resolution (2026-07-20 — dev implementation)
+
+**The architect's "receiver shift" hypothesis above was empirically
+DISPROVEN.** Instrumented `_wrapWasmClosureUnknownArity` and
+`__extern_method_call` directly (temporary `console.error` tracing, since
+removed) and confirmed: args cross the host boundary unshifted, in the
+correct order and count. `assert.throws(TypeError, thrower)` already passed
+BEFORE any fix — native builtins (real `TypeError`/`RangeError`/...) are never
+wrapped by the closure bridge (`_isWasmStruct` is false for them), so they
+were never affected.
+
+**Real root cause**: a USER-DEFINED function/class value (the pervasive
+test262 idiom `function MyError(){}` / the harness's own `Test262Error`)
+crossing the JS-host boundary as a first-class value (e.g. the
+`expectedErrorConstructor` argument of `assert.throws(MyError, fn)`) gets
+wrapped by `_wrapWasmClosureUnknownArity` (`src/runtime.ts`) into a JS
+function literally named `wasmClosureDynamicBridge` (its own declared
+function-expression name). Reading `.name` on that bridge — exactly what
+`assert.throws`'s message construction does — returned the bridge's own
+name, not the wrapped closure's real declared name.
+
+**Fix** (`src/codegen/expressions/helpers.ts`,
+`maybeStampCompiledFunctionArgName` + `resolveCompiledFunctionArgName`): when
+an argument expression crossing a JS-host-delegated call
+(`__extern_method_call`) is statically a bare `Identifier` bound to a named,
+user-compiled `FunctionDeclaration`/`FunctionExpression`/`ClassDeclaration`
+(never an ambient `declare`d builtin), stamp its real declared name into the
+value's `_wasmStructProps` sidecar via `__extern_set(val, "name", <name>)`
+BEFORE it crosses. `_wrapWasmClosureUnknownArity` was extended to read that
+stamp (mirrors the existing `.name`/`.length` sidecar read already used by
+`_wrapCallableForHost`). Wired at the three JS-host call sites that marshal
+arguments across `__extern_method_call`: `call-receiver-method.ts` (#799 WI3
+generic any-receiver dispatch — the one hit by `assert.throws`), `calls.ts`
+(`emitFnctorSubclassDynamicMethodCall`), `new-super.ts`
+(`emitSuperExternMethodCall`). Gated to JS-host mode only (`!ctx.standalone
+&& !ctx.wasi`) — `wasmClosureDynamicBridge` is a JS-host-only construct.
+
+**Verified via `builtin-fn-meta.ts`-style WAT inspection** that two
+differently-named zero-capture closures share ONE structural closure struct
+type — ruling out a cheap `ref.test`-per-type dispatcher (would have required
+minting a per-declaration struct subtype for every named function
+declaration, a much larger change; discussed and scoped down with the tech
+lead before implementation).
+
+**Known limitation, NOT fixed here**: a separate, pre-existing bug (**#3486**,
+filed alongside this fix) means a *caught* custom-exception instance's
+`.constructor` resolves to a generic `"Array"`-named mirror instead of its
+real constructor — so `assert.throws(MyError, () => { throw new MyError() })`
+still does not fully PASS end-to-end after this fix; it fails with a
+correctly-named message instead of the `wasmClosureDynamicBridge` one. This
+is why the practical pass-flip count on the 544-record class is smaller than
+a naive reading suggests — most records reclassify (correct constructor name,
+still failing for the #3486 reason) rather than flip to pass outright. This
+matches the acceptance criteria as written ("remaining genuine no-throw
+failures reclassify to their real cause").
+
+### Test Results
+
+All 5 sample files from this issue's `## Problem` section no longer contain
+the string `wasmClosureDynamicBridge` in their verdict message (verified via
+`runTest262File`, host lane):
+
+| File | Before | After |
+| --- | --- | --- |
+| `built-ins/Array/prototype/reduceRight/15.4.4.22-4-11.js` | `Expected a wasmClosureDynamicBridge but got a TypeError` | `Expected a Test262Error but got a TypeError` |
+| `language/expressions/assignment/dstr/array-rest-lref-err.js` | (bridge name) | `Expected a Test262Error to be thrown but no exception was thrown at all` |
+| `language/expressions/division/order-of-evaluation.js` | `Expected a wasmClosureDynamicBridge but got a Array` | `Expected a MyError but got a Array` |
+| `language/expressions/compound-assignment/S11.13.2_A7.8_T1.js` | (bridge name) | `Expected a DummyError but got a Array` |
+| `language/expressions/compound-assignment/S11.13.2_A7.8_T3.js` | (bridge name) | `Expected a DummyError but got a Array` |
+
+All 5 still FAIL — none of them were the trivial "identity actually matches"
+case; each reclassifies to a real cause (mostly #3486's caught-exception
+`.constructor` bug, resolving to `"Array"`). New regression test
+`tests/issue-3429.test.ts` (4 cases) verifies: (1) the native-builtin control
+case (`assert.throws(TypeError, ...)`) stays green, (2)/(3) a user-defined
+constructor's real name substitutes in both the wrong-throw and (4) the
+no-throw message shapes, and that `wasmClosureDynamicBridge` never appears.
+Scoped local equivalence checks (`closure-push-host-callback`,
+`optional-direct-closure-call`, `super-element-access`,
+`super-property-access`, `illegal-cast-assert-throws`,
+`scope-and-error-handling`, `try-catch-throw`, `tdz-reference-error`) show no
+new regressions — pre-existing failures on `optional-direct-closure-call.test.ts`
+and `tdz-reference-error.test.ts` were confirmed present on a clean
+`origin/main` checkout (unrelated to this change) via A/B testing.
+
+Follow-up filed: **#3486** — caught custom-exception `.constructor` resolves
+to `Array`, not the real constructor (the blocker for full end-to-end pass on
+the majority of this record class).

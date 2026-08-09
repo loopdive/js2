@@ -6,7 +6,7 @@ created: 2026-03-20
 updated: 2026-04-28
 priority: low
 feasibility: medium
-goal: spec-completeness
+goal: es5
 sprint: Backlog
 test262_fail: 272
 files:

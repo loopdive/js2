@@ -31,7 +31,7 @@
  * version or a date. Two runs with the same ORACLE_VERSION are guaranteed to
  * apply identical verdict logic, so their rows are directly comparable.
  */
-export const ORACLE_VERSION = 8;
+export const ORACLE_VERSION = 13;
 
 /**
  * Append-only log of what each oracle version means. Newest last.
@@ -190,6 +190,163 @@ export const ORACLE_VERSION_HISTORY: ReadonlyArray<{ version: number; note: stri
       "Negative failures must also occur in their declared phase and match the " +
       "expected type; wrong-phase compiler/runtime failures no longer pass. This " +
       "version requires an ORACLE_REBASE baseline refresh when landed.",
+  },
+  {
+    version: 9,
+    note:
+      "#3492 fixture-graph honesty. The project runner previously recognized " +
+      "only `import ... from` fixture declarations, so bare side-effect imports " +
+      "and their transitive dependencies were silently omitted while successful " +
+      "single-source execution stamped `reached_test: true`. Both verdict lanes " +
+      "now share recursive static fixture discovery. Literal dynamic fixture " +
+      "imports are inventoried separately and fail explicitly on standalone " +
+      "until #3494 supplies an in-module loader; they are never promoted to eager " +
+      "static edges. Parse-negative dynamic imports reach syntax checking before " +
+      "that loader policy, including conventional absent targets which evaluation " +
+      "must never reach. Rows whose missing fixtures manufactured passes are " +
+      "intentionally reclassified and require an ORACLE_REBASE baseline refresh.",
+  },
+  {
+    version: 10,
+    note:
+      "#3468 F1 standalone assert-harness de-inflation (stakeholder-ruled " +
+      "2026-07-23). The standalone lane's test262 assert harness was a vacuous " +
+      "no-op: function objects could not carry own properties, so " +
+      "assert.sameValue/assert.throws resolved to undefined and every " +
+      "assertion silently passed. F1 (closure-own-property carrier widening + " +
+      "the top-level F.<name>= keep-arm) makes assertions FIRE — what a " +
+      "standalone 'pass' MEANS changes: measured on merge_group run " +
+      "30043224652, 3,637 vacuous passes become honest fails (3,545 " +
+      "assertion-time throws, 97.5%), 18 improvements, honest host-free floor " +
+      "27,557/48,088. Like v4/#3285 these flips compile INTO the wasm " +
+      "(wasm-CHANGE regressions), so the re-baseline lands via the bump + a " +
+      "#3303 regressions-allow ceiling declared in the #3468 issue file. " +
+      "ALSO in v10 (label-only, same bump — the exact v4 pattern): " +
+      "classifyError now bins `^Test262Error`-prefixed messages as " +
+      "assertion_fail BEFORE the trap regexes — newly-firing assertion text " +
+      "quoting the test's own words ('following shrink (out of bounds) " +
+      "Expected …') was matching /out of bounds/ and false-positive-tripping " +
+      "the #3189 trap ratchet (6 false NEW-oob rows on the F1 run; the same " +
+      "Temporal/Duration/…/result-out-of-range-1.js file the v4 fix caught " +
+      "for the 'returned N' shape). No pass/fail flips from the relabel; " +
+      "promote-baseline re-seeds host+standalone baselines at v10 on merge.",
+  },
+  {
+    version: 11,
+    note:
+      "#3595 — the #3189 uncatchable-trap ratchet now treats a `compile_error` " +
+      "baseline as BASELINE-UNKNOWN, alongside the `compile_timeout`, " +
+      "missing-row and identical-`wasm_sha` exclusions it already had. " +
+      "Rationale is the one already written in diff-test262.ts for " +
+      "compile_timeout: an invalid-Wasm module never instantiated, so " +
+      "`__module_init` never ran and never had the opportunity to trap — a " +
+      "later trap on that file is *unknown*, not *introduced*. Measured " +
+      "evidence (#3593): the minimized repro for " +
+      "Iterator/zip/iterables-iteration.js traps IDENTICALLY with and without " +
+      "the PR (#3563) that made the file compile, proving the trap pre-existed " +
+      "the change that merely let the module reach it. Without this, any PR " +
+      "that fixes a compile error is charged for whatever latent trap the " +
+      "now-reachable code already contained — the ratchet punishes exactly the " +
+      "CE-elimination work it should reward. This is a VERDICT-LOGIC change " +
+      "(which transitions count as trap growth), hence the bump; no " +
+      "pass/fail/classification flips, so promote-baseline simply re-seeds at " +
+      "v11 on merge. A genuine pass→trap (or fail→trap) transition still FAILS " +
+      "the ratchet — only baselines that never produced a running module are " +
+      "excluded.",
+  },
+  {
+    version: 12,
+    note:
+      "#3603 S1 HOST-lane verifyProperty de-inflation (stakeholder-ruled " +
+      "2026-07-26; same ruling shape as v10/#3468 F1 for standalone). " +
+      "test262's propertyHelper.js accumulates descriptor mismatches through " +
+      "the uncurryThis idiom `__push = Function.prototype.call.bind(" +
+      "Array.prototype.push)`. On the JS-host lane that push was a SILENT " +
+      "NO-OP, so `failures.length` stayed 0 and the terminal " +
+      "`assert(false, __join(failures, '; '))` never fired — `verifyProperty` " +
+      "returned true for ANY expectation. MECHANISM (traced through the import " +
+      "bridge, not inferred): a WasmGC vec argument crosses into a host call " +
+      "as the `__make_iterable` MIRROR, a JS array that `convertToJS` " +
+      "REFRESHES FROM the vec on every crossing (#3368, for array-identity " +
+      "stability), so the host appended to an array the Wasm side never " +
+      "consults. Plain `Array.prototype.push.call(a,x)` failed identically to " +
+      "the uncurried form, so `bind` was never implicated. The fix is " +
+      "RUNTIME-ONLY (src/runtime/vec-mirror-writeback.ts + ~14 wiring lines): " +
+      "the two host-call bridges bracket their dispatch and replay a " +
+      "length-changing mirror mutation onto the vec via __vec_pop/__vec_push. " +
+      "WHAT A HOST 'pass' MEANS CHANGES: assertions that could not be " +
+      "reported now fire, so previously-vacuous passes become honest fails. " +
+      "The flips are NOT caused by this change — they are EXPOSED by it. " +
+      "Attribution control: verifyProperty's enumerable predicate was " +
+      "evaluated directly (no harness, no __push) with the change applied and " +
+      "reverted, and is BIT-IDENTICAL — S1 alters only whether a detected " +
+      "mismatch is REPORTED, never whether it is DETECTED. The exposed " +
+      "defects are cohort-routed to #3646 (getOwnPropertyDescriptor returns " +
+      "null for a class method when the class has computed-name fields, while " +
+      "hasOwnProperty says true) and #3647 (propertyIsEnumerable returns true " +
+      "while gOPD().enumerable is false — five reflective routes agree, it " +
+      "dissents); both reproduce on stock main with S1 reverted. " +
+      "Over-application was refuted by an instrumented sweep (51 tests across " +
+      "6 areas, 3 in-run positive controls): every reconcile fires on a fresh " +
+      "`var failures = []` growing 0→1, ZERO on any other array. " +
+      "Like v4/#3285 and v10/#3468 these flips register as wasm-CHANGE " +
+      "regressions, so the re-baseline lands via this bump plus a #3303 " +
+      "regressions-allow ceiling declared in the #3603 issue file — the bump " +
+      "is what makes `rebaseMode` true and therefore the ONLY thing that " +
+      "makes that ceiling readable at all (diff-test262.ts reads it lazily " +
+      "inside `if (rebaseMode)`). NOTE the gate blind spot found here: " +
+      "check-verdict-oracle-bump.mjs watches only negative-verdict.mjs, " +
+      "test262-worker.mjs, test262-shared.ts, test262-vitest.test.ts and " +
+      "test262-runner.ts — NOT src/runtime/**, so a runtime-layer change can " +
+      "flip verdicts corpus-wide without the gate demanding a bump; this " +
+      "entry exists because that was caught by hand. NO classifyError change " +
+      "in v12 and NO trap growth: the v10 `^Test262Error` → assertion_fail " +
+      "rule already binds the newly-created assertion text before the trap " +
+      "regexes (verified against the real classifier, including adversarial " +
+      "messages embedding trap vocabulary), so the #3189 trap ratchet is NOT " +
+      "superseded by this bump and still applies in full.",
+  },
+  {
+    version: 13,
+    note:
+      "#4162 in-process-lane de-masking. Two independent harness defects in " +
+      "tests/test262-runner.ts, both of which SUBSTITUTED a verdict rather than " +
+      "measuring one — the same class as v2/#3086 and v12/#3603, and like those " +
+      "the flips are EXPOSED by this change, not caused by it. (1) The lane " +
+      "instantiated the test binary directly instead of through the shared " +
+      "import-object finaliser, so a standalone module linking " +
+      "`js2wasm:runtime-eval` died at instantiate and the LINK error OVERWROTE " +
+      "the test's real signature. Not niche: the `$262.evalScript` shim " +
+      "assembleOriginalHarness injects into EVERY assembled test contains a " +
+      "direct `eval`, so the blast radius is bounded by which tests keep that " +
+      "shim reachable after DCE, not by their `includes:` list. Measured on one " +
+      "162-file ES5 lever: 82 files masked, 18 of them ACTUALLY PASSING — so " +
+      "this arm moves rows in the fail→pass direction. (2) handleNegativeTest " +
+      "built its compile options from a bare `target` identifier NEVER BOUND in " +
+      "that scope; the ReferenceError was thrown inside the `try` whose `catch` " +
+      'reports `status: "pass"`, so every parse/early/resolution-phase ' +
+      "negative test routed through it passed VACUOUSLY without compiling " +
+      "anything (compileMs ≈ 0.05 was the tell). This arm moves rows in the " +
+      "pass→fail direction and is the reason the published number is EXPECTED " +
+      "TO DROP: those passes were never earned. Fixed by threading the caller's " +
+      "target through as a real parameter and building the options OUTSIDE the " +
+      "try, so a harness defect crashes loudly instead of laundering itself " +
+      "into a conformance pass. Guarded by tests/issue-4162.test.ts, including " +
+      "a STRUCTURAL routing assertion that no lane file calls " +
+      "WebAssembly.instantiate on a test binary itself — behavioural parity " +
+      "between lanes that already share an implementation is tautological, the " +
+      "structural check is what prevents a fourth instance of the drift class. " +
+      "NO classifyError change and no negative-expectation-matching change in " +
+      "v13: the verdict POLICY is untouched, what changes is that the policy is " +
+      "now actually reached. The bump exists because a mass reclassification is " +
+      "indistinguishable from oracle skew to diff-test262.ts, and without it " +
+      "the #1668 catastrophic guard fires on the push-to-main run, " +
+      "promote-baseline never runs and the queue wedges (#3003). NO " +
+      "regressions-allow ceiling is declared here deliberately: the true flip " +
+      "count for arm (2) has not been measured corpus-wide, and guessing a " +
+      "ceiling would widen the guard by exactly the amount nobody verified. If " +
+      "the merge_group exceeds the rebase drift tolerance, read the count it " +
+      "reports and declare THAT number in the #4162 issue file.",
   },
 ];
 

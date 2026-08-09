@@ -10,9 +10,9 @@
 //   - `const`-declared string bindings (`const s = "1 + 2"; eval(s)`),
 //   - template literals with all-constant substitutions,
 //   - TS assertion wrappers (`as` / `satisfies` / `<T>` / `!`),
-// for DIRECT eval and the `Function` constructor only. Indirect eval keeps
-// the literal-only surface (the splice runs in caller scope — wrong for
-// indirect semantics the dynamic shim implements correctly; routing rule 2).
+// for DIRECT eval and the `Function` constructor only. Indirect eval never
+// uses the caller-scope splice, including for literal input, because its realm-
+// global environment is observably distinct from the caller's lexical scope.
 //
 // Soundness: a fold must never erase a TDZ ReferenceError. Guards:
 //   1. textual precedence (kills backward refs + cycles),
@@ -23,12 +23,53 @@
 //      clause fall-ins, which share one lexical scope but skip execution).
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
+import {
+  RUNTIME_EVAL_IMPORT_MODULE,
+  RUNTIME_EVAL_PROVIDER_COMPILE_OPTIONS,
+  buildRuntimeEvalRefusalProviderSource,
+  instantiateRuntimeEvalNamespace,
+} from "../scripts/runtime-eval-provider.mjs";
 
-async function runStandalone(src: string): Promise<unknown> {
-  const r = await compile(src, { target: "standalone" });
+let refusalModulePromise: Promise<WebAssembly.Module> | undefined;
+
+function refusalModule(): Promise<WebAssembly.Module> {
+  refusalModulePromise ??= compile(buildRuntimeEvalRefusalProviderSource(), {
+    ...RUNTIME_EVAL_PROVIDER_COMPILE_OPTIONS,
+    fileName: "issue-1102-refusal-provider.ts",
+  }).then((result) => {
+    expect(result.success, JSON.stringify(result.errors)).toBe(true);
+    return new WebAssembly.Module(result.binary);
+  });
+  return refusalModulePromise;
+}
+
+async function runStandalone(src: string, inferModuleStrictArguments = true): Promise<unknown> {
+  const r = await compile(src, { target: "standalone", inferModuleStrictArguments });
   expect(r.success, JSON.stringify(r.errors)).toBe(true);
   expect(WebAssembly.validate(r.binary), "module must be valid Wasm").toBe(true);
-  const { instance } = await WebAssembly.instantiate(r.binary, {});
+  const module = new WebAssembly.Module(r.binary);
+  const needsRuntimeEval = WebAssembly.Module.imports(module).some(
+    (entry) => entry.module === RUNTIME_EVAL_IMPORT_MODULE,
+  );
+  const imports = needsRuntimeEval
+    ? { [RUNTIME_EVAL_IMPORT_MODULE]: instantiateRuntimeEvalNamespace(await refusalModule()) }
+    : {};
+  const instance = await WebAssembly.instantiate(module, imports);
+  return (instance.exports as { test(): unknown }).test();
+}
+
+async function runHost(src: string): Promise<unknown> {
+  const result = await compile(src, {
+    fileName: "issue-1102-host-eval.ts",
+    skipSemanticDiagnostics: true,
+  });
+  expect(result.success, JSON.stringify(result.errors)).toBe(true);
+  expect(
+    WebAssembly.Module.imports(new WebAssembly.Module(result.binary)).some((entry) => entry.name === "__extern_eval"),
+  ).toBe(false);
+  const imports = result.importObject as WebAssembly.Imports & { __setExports?: (exports: unknown) => void };
+  const { instance } = await WebAssembly.instantiate(result.binary, imports);
+  imports.__setExports?.(instance.exports);
   return (instance.exports as { test(): unknown }).test();
 }
 
@@ -41,7 +82,7 @@ describe("#1102 — acceptance criteria (standalone, Tier-0 AOT)", () => {
     expect(await runStandalone(`export function test(): number { eval("var x = 42"); return x; }`)).toBe(42);
   });
 
-  it("AC3: dynamic eval → compile-time warning + catchable call-time throw", async () => {
+  it("AC3: dynamic eval → linked runtime-provider boundary", async () => {
     const r = await compile(
       `export function test(s: string): number { try { return eval(s); } catch { return -1; } }`,
       {
@@ -49,11 +90,11 @@ describe("#1102 — acceptance criteria (standalone, Tier-0 AOT)", () => {
       },
     );
     expect(r.success, JSON.stringify(r.errors)).toBe(true);
-    expect(
-      (r.errors ?? []).some(
-        (e) => (e as { severity?: string }).severity === "warning" && /dynamic eval is not supported/.test(e.message),
-      ),
-    ).toBe(true);
+    expect(WebAssembly.Module.imports(new WebAssembly.Module(r.binary))).toEqual([
+      { module: RUNTIME_EVAL_IMPORT_MODULE, name: "__runtime_apply_interpreted", kind: "function" },
+      { module: RUNTIME_EVAL_IMPORT_MODULE, name: "__runtime_direct_eval", kind: "function" },
+    ]);
+    expect((r.errors ?? []).some((e) => (e as { severity?: string }).severity === "warning")).toBe(false);
   });
 
   it('AC4: new Function("a","b","return a + b") compiles with constant args', async () => {
@@ -128,6 +169,138 @@ describe("#1102 — new Function const-binding widening", () => {
 });
 
 describe("#1102 — soundness guards (folds that MUST NOT happen)", () => {
+  it("routes a literal Annex B cancellation through the runtime provider", async () => {
+    const r = await compile(
+      `export function test(): number {
+        let f: any = 3;
+        eval("{ function f() { return 2; } }");
+        return typeof f === "number" ? f : -1;
+      }`,
+      { target: "standalone", inferModuleStrictArguments: false },
+    );
+    expect(r.success, JSON.stringify(r.errors)).toBe(true);
+    expect(WebAssembly.Module.imports(new WebAssembly.Module(r.binary))).toEqual([
+      { module: RUNTIME_EVAL_IMPORT_MODULE, name: "__runtime_apply_interpreted", kind: "function" },
+      { module: RUNTIME_EVAL_IMPORT_MODULE, name: "__runtime_direct_eval", kind: "function" },
+    ]);
+  });
+
+  it("literal sloppy eval rejects a var crossing an intervening block lexical", async () => {
+    expect(
+      await runStandalone(
+        `export function test(): number {
+        try {
+          { let x = 1; { eval("var x;"); } }
+          return 0;
+        } catch (error) {
+          return error instanceof SyntaxError ? 1 : 2;
+        }
+      }`,
+        false,
+      ),
+    ).toBe(1);
+  });
+
+  it("literal eval in an ordinary default parameter rejects its arguments binding", async () => {
+    expect(
+      await runStandalone(
+        `export function test(): number {
+        function f(p: any = eval("var arguments")): void {}
+        try { f(); return 0; }
+        catch (error) { return error instanceof SyntaxError ? 1 : 2; }
+      }`,
+        false,
+      ),
+    ).toBe(1);
+  });
+
+  it("literal eval in an arrow default parameter rejects an explicit arguments parameter", async () => {
+    expect(
+      await runStandalone(
+        `export function test(): number {
+        const f = (p: any = eval("var arguments = 1"), arguments?: any): void => {};
+        try { f(); return 0; }
+        catch (error) { return error instanceof SyntaxError ? 1 : 2; }
+      }`,
+        false,
+      ),
+    ).toBe(1);
+  });
+
+  it("arrow default-parameter eval may create arguments when no binding exists", async () => {
+    expect(
+      await runStandalone(
+        `export function test(): number {
+        const f = (p: any = eval("var arguments = 7")): number => arguments as number;
+        return f();
+      }`,
+        false,
+      ),
+    ).toBe(7);
+  });
+
+  it("parameter-default closure keeps the eval-created arguments binding", async () => {
+    expect(
+      await runStandalone(
+        `const f = (p = eval("var arguments = 'param'"), q = () => arguments) => {
+        function arguments() { return "body"; }
+        return (typeof arguments === "function" ? 10 : 0) + (q() === "param" ? 1 : 0);
+      };
+      export function test(): number { return f(); }`,
+        false,
+      ),
+    ).toBe(11);
+  });
+
+  it("reads an object-literal method after direct eval reifies the receiver binding", async () => {
+    expect(
+      await runStandalone(
+        `function invoke(fn: () => void): number {
+        try { fn(); }
+        catch { return 1; }
+        return 0;
+      }
+      export function test(): number {
+        const object = { method(value = eval("var arguments")): void {} };
+        return invoke(object.method);
+      }`,
+        false,
+      ),
+    ).toBe(1);
+  });
+
+  it("keeps a generator function expression host-free when arguments is only a body binding", async () => {
+    expect(
+      await runStandalone(
+        `export function test(): number {
+        const generator = function* (value = eval("var arguments")): Generator<void> {
+          let arguments;
+        };
+        try { generator(); }
+        catch (error) { return error instanceof SyntaxError ? 1 : 2; }
+        return 0;
+      }`,
+        false,
+      ),
+    ).toBe(1);
+  });
+
+  it("keeps an async generator method host-free when arguments is only a body binding", async () => {
+    expect(
+      await runStandalone(
+        `export function test(): number {
+        const object = { async *method(value = eval("var arguments")): AsyncGenerator<void> {
+          var arguments;
+        } };
+        try { object.method(); }
+        catch (error) { return error instanceof SyntaxError ? 1 : 2; }
+        return 0;
+      }`,
+        false,
+      ),
+    ).toBe(1);
+  });
+
   it("let binding does not fold (reassignable) → dynamic path throws catchably", async () => {
     expect(
       await runStandalone(
@@ -152,8 +325,12 @@ describe("#1102 — soundness guards (folds that MUST NOT happen)", () => {
     ).toBe(-1);
   });
 
-  it("indirect eval with a LITERAL still folds (pre-#1102 surface unchanged)", async () => {
-    expect(await runStandalone(`export function test(): number { return (0, eval)("1 + 2"); }`)).toBe(3);
+  it("indirect eval with a literal does not use the caller-scope splice", async () => {
+    expect(
+      await runStandalone(
+        `export function test(): number { const local = 1; try { return (0, eval)("local + 2"); } catch { return -1; } }`,
+      ),
+    ).toBe(-1);
   });
 
   it("switch sibling-clause skip (shared scope, skipped init — TDZ) does not fold", async () => {
@@ -188,5 +365,37 @@ describe("#1102 — host mode: widened direct eval sees the caller scope", () =>
     const { instance } = await WebAssembly.instantiate(r.binary, io);
     io.__setExports?.(instance.exports);
     expect((instance.exports as { test(): number }).test()).toBe(9);
+  });
+
+  it("keeps an explicitly strict literal eval on the caller-scope splice", async () => {
+    expect(
+      await runHost(`
+        export function test(): number {
+          "use strict";
+          var y = 2;
+          var z = 3;
+          var result = 0;
+          eval("var x = y + z; result = x;");
+          return result;
+        }
+      `),
+    ).toBe(5);
+  });
+
+  it("creates a current-function var when eval shadows an outer capture", async () => {
+    expect(
+      await runHost(`
+        export function test(): number {
+          var outer = 0;
+          var observed = 0;
+          function inner(): void {
+            eval("var outer = 1");
+            observed = outer;
+          }
+          inner();
+          return observed * 10 + outer;
+        }
+      `),
+    ).toBe(10);
   });
 });

@@ -1,8 +1,7 @@
 ---
 id: 3197
 title: "default lane: drive the for-await-of / async-dstr callback chain to completion (383 vacuous fails)"
-status: in-progress
-assignee: ttraenkler/dev-number-resid
+status: ready
 blocked: scope-decision
 created: 2026-07-12
 updated: 2026-07-12

@@ -22,6 +22,7 @@
 
 import type { Instr, ValType } from "../types.js";
 import type { JsTag } from "../js-tag.js";
+import type { IrClassMemberKind, IrFuncRef } from "../nodes.js";
 import type {
   LinearAllocationSitePlan,
   LinearRecordLayoutPlan,
@@ -111,24 +112,22 @@ export interface LinearObjectLowering extends PlannedObjectLowering {
 }
 
 /**
- * Slice 3 (#1169c): WasmGC type info for a closure value. Two structs
- * are involved per closure construction site:
- *   - The SUPERTYPE struct (`structTypeIdx`): contains only the funcref
- *     field. Carried by the IrType.closure ValType so all closures
- *     sharing a signature have the same Wasm-level type.
- *   - The SUBTYPE struct (resolved via `resolveClosureSubtype`): adds
- *     the capture fields. Constructed at the closure's creation site
- *     (`struct.new <subtype>`) and `ref.cast`-ed inside the lifted
- *     body to read captures.
+ * Slice 3 / #3214 B0: WasmGC allocation/type info for a closure:
+ *   - A signature wrapper (`structTypeIdx`) contains field 0's funcref and is
+ *     shared with the legacy `__fn_wrap_*` registry. A no-capture closure
+ *     constructs it directly; it is not the cross-module carrier.
+ *   - An optional captured subtype extends that signature wrapper with capture
+ *     fields and is downcast from root `self` inside the lifted body.
  *
- * `funcTypeIdx` is the lifted function's Wasm func type
- * `(ref $base, ...sig.params) -> sig.returnType` -- used by `call_ref`
- * at the call site.
+ * `funcTypeIdx` is the exact lifted function signature
+ * `(ref $wrapperRoot, ...sig.params) -> sig.returnType`. The root self type,
+ * field-0 read, and funcref signature together are independent of per-module
+ * signature-wrapper creation order.
  */
 export interface IrClosureLowering {
   readonly structTypeIdx: number;
   readonly funcFieldIdx: number;
-  /** Field index for capture position `i` (0-based). Valid only for subtype lowerings. */
+  /** Field index for capture position `i` (0-based). Valid only for captured-subtype lowerings. */
   capFieldIdx(index: number): number;
   readonly funcTypeIdx: number;
 }
@@ -170,6 +169,8 @@ export interface LinearRefCellLowering extends IrRefCellLowering {
  *                           declared type when needed.
  */
 export interface IrVecLowering {
+  /** Backend value carrier (`ref $vec` on WasmGC, `i32` arena pointer on linear). */
+  readonly valueType?: ValType;
   readonly vecStructTypeIdx: number;
   readonly lengthFieldIdx: number;
   readonly dataFieldIdx: number;
@@ -188,28 +189,31 @@ export interface IrVecLowering {
  *                             (the legacy `__tag` prefix at field 0 is
  *                             accounted for here so the IR doesn't need to
  *                             reason about it).
- *   - `constructorFuncName`  legacy-registered name of the constructor
- *                             function (`<className>_new`); the resolver's
- *                             `resolveFunc` maps it to the funcIdx.
- *   - `methodFuncName(name)` legacy-registered name of an instance method
- *                             (`<className>_<methodName>`); the resolver's
- *                             `resolveFunc` maps it to the funcIdx.
+ *   - `constructorFunc`      binding-aware reference to the constructor
+ *                             function (`<className>_new` is only its
+ *                             compatibility label); the resolver maps the
+ *                             binding to the funcIdx.
+ *   - `memberFunc(kind,name)` binding-aware reference to a class member;
+ *                             the compatibility label is commonly
+ *                             `<className>_<methodName>` (or the corresponding
+ *                             getter/setter spelling).
  */
 export interface IrClassLowering {
   readonly structTypeIdx: number;
   fieldIdx(name: string): number;
-  readonly constructorFuncName: string;
-  methodFuncName(name: string): string;
+  readonly constructorFunc: IrFuncRef;
+  memberFunc(kind: IrClassMemberKind, name: string, target?: IrFuncRef): IrFuncRef;
   /**
-   * #3000-E: legacy-registered name of the constructor-init function
-   * (`<className>_init`) — signature `(...ctorParams, self) -> (ref $struct)`,
+   * #3000-E: binding-aware reference to the constructor-init function
+   * (`<className>_init` is its usual compatibility label) — signature
+   * `(...ctorParams, self) -> (ref $struct)`,
    * carrying field inits + the ctor body, operating on a caller-allocated
    * instance. A derived `super(...)` lowers to `call <parent>_init(args..., self)`.
-   * The resolver's `resolveFunc` maps it to the funcIdx. Present for every
+   * The resolver maps the typed reference to the funcIdx. Present for every
    * WasmGC-struct (non-externref-backed) class, which is exactly the set that
    * can appear as an IR-claimable subclass parent.
    */
-  readonly initFuncName: string;
+  readonly initFunc: IrFuncRef;
   /**
    * (#3144) The "instanceof-compatible" tag set for THIS class: its own
    * `__tag` discrimination constant plus every transitive descendant's —
@@ -219,16 +223,6 @@ export interface IrClassLowering {
    * registered (lowering then folds to constant false, legacy parity).
    */
   readonly instanceOfTags: readonly number[];
-  /**
-   * #3000-C: the raw Wasm instruction sequence that allocates a fresh,
-   * default-initialised instance of this class — the default field values
-   * (with the `__tag` slot set to the class's discrimination constant)
-   * followed by `struct.new $structTypeIdx`. Byte-identical to the alloc
-   * prefix the legacy `<className>_new` emits before it tail-calls
-   * `<className>_init` (both derive from `ctx.structFields` / `ctx.classTagMap`).
-   * Consumed by the `class.alloc` IR instr's lowering.
-   */
-  readonly allocInstrs: readonly Instr[];
 }
 
 /**
@@ -422,6 +416,14 @@ export interface IrDynamicLowering {
    * `ctx.usesDynMemberGet` latch.
    */
   emitElementGet(): readonly Instr[];
+  /**
+   * Three carriers on the stack (`recv`, `key`, then `value`) → void: strict
+   * statement-position dynamic member assignment (#3795). Both backends call
+   * the canonical `__dyn_member_set` helper, which preserves receiver/key/value
+   * evaluation order and delegates to the existing strict object-runtime
+   * setter. Assignment-as-value is intentionally not represented.
+   */
+  emitMemberSet(): readonly Instr[];
 }
 
 /**

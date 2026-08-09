@@ -46,7 +46,7 @@ and any environment without a JS runtime. This follows the pattern of
 | **594** | Mark WasmGC struct types as final for V8 devirtualization | 0 | done | medium |
 | **644** | Integrate conformance report as playground panel | Backlog | ready | critical |
 | **652** | Compile-time ARC: static lifetime analysis for linear memory mode | Backlog | ready | low |
-| **680** | Wasm-native generators (state machines) with optional JS host fallback | Backlog | done | high |
+| **680** | Wasm-native generators (state machines) with optional JS host fallback | current | ready | high |
 | **682** | RegExp standalone mode: native engine or embedded library for non-JS targets | 58 | done | high |
 | **788** | Architecture: modularize src/ into focused subfolder structure | 39 | done | medium |
 | **809** | Extract native string helpers from index.ts → native-strings.ts | 59 | done | medium |
@@ -72,7 +72,7 @@ and any environment without a JS runtime. This follows the pattern of
 | **1326** | Async standalone: implement microtask queue + CPS scheduler in Wasm for Promise/async without JS host | 62 | done | low |
 | **1326c** | Async standalone Phase 1C: microtask queue + Promise.then chained-resolution (follow-up to #1326 Phase 1B) | 62 | done | medium |
 | **1335** | Number.prototype formatting in pure Wasm: integer toString(radix), then Ryu for floats (standalone) | 58 | done | medium |
-| **1353** | JSON.stringify (objects/arrays) + JSON.parse: architect spec for Wasm shape-walking and recursive-descent parser | Backlog | ready | medium |
+| **1353** | JSON.stringify (objects/arrays) + JSON.parse: architect spec for Wasm shape-walking and recursive-descent parser | Backlog | wont-fix | medium |
 | **1662** | audit: standalone (--target wasi) host-import leaks per construct + remaining-gap map | Backlog | done | high |
 | **1663** | host-indep: pure-Wasm parseInt / parseFloat / Number(string) in standalone mode | Backlog | done | medium |
 | **1664** | host-indep: residual __extern_* / __register_* / __iterator* / __array_* leaks after #1472 | Backlog | done | medium |
@@ -97,7 +97,7 @@ and any environment without a JS runtime. This follows the pattern of
 | **1904** | standalone: native __extern_is_array predicate for Array.isArray over Wasm carriers | 61 | done | critical |
 | **1905** | standalone: native Reflect.get/set/has/deleteProperty over $Object | 61 | done | critical |
 | **1906** | standalone: native Object.defineProperties over $Object descriptors | 61 | done | critical |
-| **1907** | standalone: built-in static method value reads without __get_builtin (#1888 S6-b) | 61 | done | critical |
+| **1907** | standalone: built-in static method value reads without __get_builtin (#1888 S6-b) | 75 | done | critical |
 | **1908** | standalone: re-split and fix residual isSameValue bucket after #1776/#1807 | 61 | done | critical |
 | **1909** | standalone RegExp residual bucket after #1474/#682: split Phase 2d and native-engine gaps | 61 | done | critical |
 | **1910** | standalone ToPrimitive residual bucket after #1900/#1525b | 61 | done | critical |
@@ -113,12 +113,12 @@ and any environment without a JS runtime. This follows the pattern of
 | **1962** | nativeStrings: spreading a string ([...\"ab\"]) silently produces an empty array | 61 | done | high |
 | **1963** | nativeStrings trim/trimStart/trimEnd whitespace set incomplete (U+1680, U+2000-200A, U+2028/29, U+202F, U+205F, U+3000 not trimmed) | 61 | done | medium |
 | **1964** | nativeStrings: for-of over a string iterates code units, not code points (4 iterations for \"a😀b\") | 61 | done | medium |
-| **2029** | standalone: `Binary emit error: u32 out of range: -1` on builtin subclassing, disposal protocol, Object.create, Iterator.prototype (497 tests) | 67 | in-progress | critical |
+| **2029** | standalone: `Binary emit error: u32 out of range: -1` on builtin subclassing, disposal protocol, Object.create, Iterator.prototype (497 tests) | 71 | done | critical |
 | **2036** | standalone: Array.prototype generics over array-like receivers emit invalid Wasm / null-deref / wrong results instead of refusing loud (~500+ tests) | 64 | in-progress | high |
 | **2037** | standalone: NamedEvaluation `.name` wrong for functions/classes bound via destructuring defaults (683 tests) | 61 | done | high |
 | **2038** | standalone: `illegal cast` in __iterator_next / async destructuring & yield* paths (~470 tests) | 62 | done | high |
-| **2039** | standalone invalid-Wasm residual bucket after #1623/#1666/#1677: async-gen i64 ABI, __obj_find externref key, __str_flatten, arguments arity (~1,135 tests) | Backlog | blocked | critical |
-| **2040** | standalone: generator/destructuring runtime-semantics residual — rest-pattern iterator consumption, lazy defaults, private elements (~1,750 tests) | 64 | in-progress | critical |
+| **2039** | UMBRELLA: standalone invalid-Wasm residual bucket — 203 live rows split into children #3394-#3398 (bigint box, extern boxing, closure/struct type, scalar unbox, tail-call long tail) | current | ready | critical |
+| **2040** | standalone: generator/destructuring runtime-semantics residual — rest-pattern iterator consumption, lazy defaults, private elements (~1,750 tests) | 72 | done | critical |
 | **2041** | standalone: built-ins/Temporal — 544 host-pass tests die with opaque runtime null-deref instead of loud refusal | Backlog | ready | medium |
 | **2042** | standalone: Object.defineProperty/defineProperties residual — __obj_insert illegal cast + descriptor semantics over $Object (~340 tests) | 64 | in-progress | high |
 | **2043** | architecture: retire the late-import function-index-shift bug class (always-on emit-time index validation + stale-proof func references) | Backlog | done | high |
@@ -138,7 +138,7 @@ and any environment without a JS runtime. This follows the pattern of
 | **2158** | Standalone class/prototype/private-name/descriptor conformance residual (~1,388 tests) | 65 | done | high |
 | **2159** | Standalone TypedArray/DataView/ArrayBuffer conformance residual (~1,308 tests) | 65 | done | high |
 | **2160** | Standalone String/Number method & coercion conformance residual (~635 tests) | 65 | done | high |
-| **2161** | Standalone RegExp engine conformance residual (~579 tests) | 67 | blocked | high |
+| **2161** | Standalone RegExp engine conformance residual (~579 tests) | Backlog | blocked | high |
 | **2162** | Standalone Map/Set/WeakMap/WeakSet conformance residual (~532 tests) | 65 | done | high |
 | **2162a** | Standalone array-spread consumer of a native Set ([...set] / Set.values()/keys()) | 64 | done | medium |
 | **2162b** | Standalone array-spread of a pair-producing array iterator ([...arr.entries()]) | 64 | done | medium |
@@ -152,8 +152,8 @@ and any environment without a JS runtime. This follows the pattern of
 | **2170** | standalone: `yield*` delegation unsupported in native generator lowering (clean #680 bail) | 62 | done | medium |
 | **2171** | standalone: native generator only supports numeric yields — string/boolean/object yields bail (#680) | 63 | done | medium |
 | **2172** | standalone: nested `function*` declarations take the JS-host path (funcindex CE) — native lowering only wired for top-level generators | 62 | done | high |
-| **2173** | standalone: yield* over a general iterable (array / custom {next()}) in native generators (SF-3 slice-2 of #2157) | 67 | blocked | medium |
-| **2175** | architect spec: standalone builtin-prototype object representation + native-method-closure dispatch | 67 | in-progress | high |
+| **2173** | standalone: yield* over a general iterable (array / custom {next()}) in native generators (SF-3 slice-2 of #2157) | 71 | done | medium |
+| **2175** | architect spec: standalone builtin-prototype object representation + native-method-closure dispatch | current | ready | high |
 | **2187** | standalone: string methods on an any-typed local with a native-string ValType take the generic externref path (v.length → 0) | 64 | done | low |
 | **2188** | standalone: sibling Error subclasses share the parent $tag — instanceof can't distinguish them (per-user-class brand) | Backlog | in-progress | low |
 | **2191** | Standalone case-conversion === literal: #40 ascii→uni toUpperCase repoint missed the called fn (funcIdx shift) |  | done | high |
@@ -175,7 +175,7 @@ and any environment without a JS runtime. This follows the pattern of
 | **2500** | Wasm-native decodeURI / encodeURI / decodeURIComponent / encodeURIComponent (percent-encoding, ~133 test262) | 64 | done | medium |
 | **2503** | standalone ToPrimitive residual (successor to #1910): 2,835 `Cannot convert object to primitive value` on ==/+/array-literal/destructuring receivers | 64 | done | critical |
 | **2503b** | standalone any-vs-typed-string == mis-coerces string operand to NaN (operand-order asymmetry) | 61 | done | high |
-| **2504** | standalone: console.log(string) emits invalid Wasm — __str_to_extern body calls a stale (shifted) funcIdx (need-3-got-2) |  | ready | low |
+| **2504** | standalone: console.log(string) emits invalid Wasm — __str_to_extern body calls a stale (shifted) funcIdx (need-3-got-2) | Backlog | done | low |
 | **2505** | standalone: typed-vec array method on an externref receiver (top-level new Array(N)) emits invalid ref.cast |  | done | medium |
 | **2506** | standalone: any[]/boxed-any element join() & toString() emit invalid Wasm (local.set $AnyString type mismatch) |  | done | medium |
 | **2507** | standalone: any[].find()/findLast() emit invalid Wasm (externref element stored into f64 result slot) |  | done | medium |
@@ -214,19 +214,150 @@ and any environment without a JS runtime. This follows the pattern of
 | **2607** | Standalone Set set-algebra: GetSetRecord argument validation (TypeError on non-object / non-Set arg) | 65 | done | medium |
 | **2610** | standalone: `Symbol.<wellKnown>` read as a VALUE refuses instead of folding to its i32 sentinel | 65 | done | high |
 | **2611** | standalone: `__extern_length` invalid-Wasm (#2043 late-import index-shift orphan) in async-gen-method destructuring-param defaults | 65 | done | medium |
-| **2620** | Standalone `class X extends Set/Map` — synthetic accessor late-import index-shift (-1 global) + host-import leak | Backlog | done | medium |
+| **2620** | Standalone `class X extends Set/Map` — synthetic accessor late-import index-shift (-1 global) + host-import leak | current | ready | medium |
 | **2622** | Standalone native `class X extends Set/Map/WeakMap/WeakSet` subclass — construction + [[SetData]] algebra + iteration + instanceof | Backlog | backlog | medium |
 | **2624** | Node API emulation typing is import-scoped, not blanket | 65 | done | medium |
 | **2625** | Rename js2wasm:node-io shim to js2wasm:node-process + unify --link-node-shims flag | 65 | done | medium |
 | **2638** | Standalone __to_primitive can't reduce a CLASS-instance struct through the externref boundary | 65 | done | high |
 | **2644** | Standalone: ToIntegerOrInfinity for Array.prototype.at index arg | 65 | done | medium |
 | **2648** | Standalone: TypedArray.{indexOf,lastIndexOf,includes} packed i8/i16 element CE + signedness | 65 | done | medium |
-| **2649** | Standalone: TypedArray.prototype.subarray returns an empty view (.length === 0) | Backlog | ready | medium |
-| **2650** | Standalone: member-read on String.prototype.at result returns empty (.length/.charCodeAt) | Backlog | ready | low |
-| **2651** | standalone: builtin constructor + prototype as a first-class VALUE (TypedArray ctor-iteration substrate) | 67 | blocked | high |
+| **2649** | Standalone: TypedArray.prototype.subarray returns an empty view (.length === 0) | 72 | done | medium |
+| **2650** | Standalone: member-read on String.prototype.at result returns empty (.length/.charCodeAt) | 72 | done | low |
+| **2651** | standalone: builtin constructor + prototype as a first-class VALUE (TypedArray ctor-iteration substrate) | Backlog | blocked | high |
 | **2652** | Standalone: parseInt/parseFloat must ToString a non-string primitive arg | 66 | done | medium |
 | **2654** | Standalone: parseFloat / Number(string) decimal fraction precision (1-ULP drift) | 66 | done | medium |
 | **2723** | standalone RegExp: linear (non-backtracking) matching path — retire the step-limit band-aid + ReDoS (arXiv:2311.17620) | Backlog | ready |  |
+| **2958** | Standalone: unhandled-rejection tracking — report rejected promises with no handler at drain/event-loop exit | 72 | done | low |
+| **2959** | Standalone: native `new Promise(executor)` — retire the unconditional Promise_new host import | 69 | done | high |
+| **2961** | Extend the strictNoHostImports leak guarantee to `--target standalone` (today wasi-only) | 72 | done | high |
+| **2962** | Native error-object identity + payload stringification: retire `__get_caught_exception` (1,427 opaque standalone fails) | 69 | done | high |
+| **2963** | Reify builtins as first-class values: retire the `__get_builtin` dynamic-shape CE cluster (~400 compile errors) | current | ready | high |
+| **2964** | for-in on $Object: prototype-chain enumeration + integer-key-ascending ordering | 69 | done | low |
+| **2965** | Standalone dynamic-descriptor/defineProperty cluster (~694 host-pass→standalone-fail: defineProperty 398 + gOPD 184 + defineProperties 112) | 69 | done | high |
+| **2968** | wasi _start uncaught-exception printer: catch_all → __error_to_string → fd_write + proc_exit(1) | Backlog | done | medium |
+| **2969** | Native Error construction: ToString(message) at construction (§20.5.1.1) + numeric payload rendering without number_toString pull-in | Backlog | done | low |
+| **2980** | Standalone async widen — FINAL layers (async-fn drive −16 residual, Gap 5 for-await/async-gen −32) + the slice-1d carrier-widen DECISION MEASURE | 71 | done | high |
+| **2984** | Standalone gOPD-on-builtin descriptor MOP (~178: getOwnPropertyDescriptor on builtin objects / proto receivers) | current | done | high |
+| **2985** | Standalone: __obj_find illegal-cast on non-string computed keys (bool/bigint/opaque via __to_property_key) | 69 | done | high |
+| **2986** | Standalone defineProperty on mapped arguments object (~82, #2667 lineage) | Backlog | blocked | medium |
+| **2987** | Standalone defineProperty / gOPD on boxed-wrapper receivers (~18: new String/Number/Boolean) | Backlog | done | medium |
+| **2988** | Standalone defineProperty on the global object (~10, needs global-object own-property MOP) | 69 | done | low |
+| **2989** | Standalone defineProperty missing spec TypeErrors (~32: array length, non-extensible, non-configurable redefine) | 69 | done | medium |
+| **2992** | Standalone defineProperties MOP residual (~250: array/arguments own-prop MOP + accessor-attribute fidelity + destructive verifyProperty/tombstone survival) | Backlog | in-progress | high |
+| **2997** | Migrate legacy Wasm EH (try/catch 0x06/0x07) to try_table so binaries run under modern wasmtime/wasmer | Backlog | ready | medium |
+| **3006** | Genuine reified builtin-constructor identity: <Builtin>.prototype.constructor === <Builtin> (standalone) — supersede the #2537 null-fold | 69 | done | medium |
+| **3009** | Harden host-import degrade path: dropped stable-handle-coupled import must yield clean leak diagnostic, not absoluteFuncIndex crash | 69 | done | medium |
+| **3013** | Standalone %ArrayIteratorPrototype% shared identity + Object-subclass native construction (host-free array-iterator cluster) | 69 | done | medium |
+| **3015** | Standalone: array predicate methods route an opaque-externref (dynamic function-typed param) callback to the __call_1_f64 host bridge instead of native call_ref | Backlog | done | low |
+| **3027** | standalone: \\$Object dynamic-object-property reader residual — null/undefined property access on unmodeled shapes (~1,552 host-free fails) | 71 | done | high |
+| **3035** | Standalone .then/.catch: fall back to host path on non-native $Promise receiver (#2980 class 1) | 71 | done | high |
+| **3036** | Standalone: Promise.allSettled(...).then(cb) callback null-derefs on a late real-Promise microtask (pre-existing, discovered while landing #3035) | 71 | done | low |
+| **3037** | Object-identity canonicalization substrate for standalone dynamic reads (foundation under #3027 / V2-S3b reader-arm) | current | ready | high |
+| **3053** | Unified dynamic-reader carrier substrate — one __dyn_member_get primitive under #3037 CS3 (identity) AND #2949 S5.4 (IR claim-rate) | current | ready | high |
+| **3054** | Resizable ArrayBuffer + dynamic `new <ctorVar>(rab)` — the ~180 codegen gap under #1524 | Backlog | done | medium |
+| **3055** | Standalone `any === any` on boxed numbers returns equal-for-unequal when an object-runtime/class is present | current | ready | high |
+| **3056** | Standalone numeric assertions are vacuous — add `assert_sameValue_num` harness routing (measurement re-baseline) | Backlog | blocked | high |
+| **3057** | Dynamic `$__ta_dyn_view` element get/set — runtime-kind byte codec on the generic dynamic index path | Backlog | done | high |
+| **3058** | Resizable-TA proto-methods over a dynamic `$__ta_dyn_view` receiver — runtime-kind method dispatch (materialize-into-f64-vec + OOB ValidateTypedArray + write-back) | 71 | done | high |
+| **3075** | standalone: for-of / for-await-of destructuring throws 'illegal cast [in __iterator]' (residual after #1323) | 71 | done | high |
+| **3098** | Standalone native callback-dispatch substrate: retire `env.__make_callback` on the dynamic-receiver lane (top-3 host-import leak root) | Backlog | done | high |
+| **3099** | any-context object-literal METHOD-SHORTHAND props are compile-time-only — never materialized as runtime own properties on `$Object` (silently drops every shorthand Proxy trap, iterator `next()`, Object.keys entry) | Backlog | done | high |
+| **3100** | Standalone dynamic-iterable substrate: native GetIterator/IteratorStep dispatch for externref/any iterables (for-of over `Object.keys(any)` traps illegal_cast today) | Backlog | done | high |
+| **3117** | Standalone $Object dot-member-set drops closures: o.f = function(){} is silently uncallable (computed-key o['f']=fn works) — closed-method dispatcher had no field-stored-closure arm | 71 | done | high |
+| **3119** | Standalone plain-$Object @@iterator protocol arm in the native __iterator ladder (#3100 Design arm 3) — post-hoc x[Symbol.iterator]=fn: 810 test262 files, 0 host-free | 71 | done | medium |
+| **3120** | Standalone async-generator: plain `yield <promise>` skips the §27.6.3.8 implicit Await(operand) — yields the promise object (NaN) instead of awaiting; a rejecting operand doesn't reject | 71 | done | medium |
+| **3122** | for-of: abrupt LHS assignment (accessor setter throw) must raise and IteratorClose — never-done iterators spin (body-put-error.js) | Backlog | backlog | low |
+| **3125** | Native Promise resolve must assimilate user thenables / poisoned then / self-resolution (§27.2.1.3.2) | 71 | done | high |
+| **3126** | Typed ref-element array HOFs (find/filter/every/…): admit native closure dispatch — retires the typed string[] __make_callback leak (#3098 boundary) and fixes silent gc-lane no-ops on struct arrays | 71 | done | high |
+| **3127** | proxy-passthrough.test.ts broken on main (missing string_constants import) — masked a REAL bug: trap-absent Proxy get on a WasmGC-struct target reads undefined | 71 | done | medium |
+| **3128** | Assignment lost when the RHS contains a closure capturing the assigned var (`p2 = p1.then(() => p2)`) | 71 | done | medium |
+| **3130** | Standalone: native Error objects lack `.constructor` / `.name` — blocks resolve-settled-*-self acceptance | 71 | done | medium |
+| **3132** | Standalone native ASYNC GENERATORS — retire env::__create_async_generator leaky-passes (~2,800 files) | 72 | done | high |
+| **3133** | Standalone .constructor on plain-object/array receivers reads undefined — route to the Object/Array namespace-object identity singletons | 71 | done | medium |
+| **3135** | standalone `undefined + x` through open-any dispatch answers '[object Object]x' — tag-5 string-lie boxing of the null externref in `__any_add` (task-82 de-vacuification) | 71 | done | medium |
+| **3136** | Standalone: object read back through a boxed-capture cell loses `===` identity with the outer variable | 72 | done | medium |
+| **3145** | standalone: Atomics.* on non-shared views (the non-SAB subset — ~29 __get_builtin CEs) | 72 | done | medium |
+| **3146** | standalone: Iterator.zip / zipKeyed / concat / from (~99 __get_builtin CEs) | 71 | done | high |
+| **3147** | standalone: String.raw (22 __get_builtin CEs) | 71 | done | high |
+| **3148** | standalone: BigInt.asIntN / asUintN (20 __get_builtin CEs) | 72 | done | medium |
+| **3149** | standalone: Map.groupBy (12 __get_builtin CEs) | 71 | done | medium |
+| **3150** | standalone: Uint8Array.fromBase64 / fromHex (+ toBase64/toHex/setFrom*) (12 __get_builtin CEs) | 72 | done | medium |
+| **3151** | test262 runner: compareArray/assert_compareArray shims typed `any[]` drop dyn-view TypedArray reads — gates the whole TA-harness cluster | 71 | done | high |
+| **3154** | Array-literal lowering in an `any` context adopts a lossy NaN-f64 representation for literals containing `undefined`/mixed elements | 71 | done | medium |
+| **3155** | standalone: object spread / Object.assign / Object.keys-values order + object→primitive gaps (unmasked by the #86 vacuous-standalone audit) | 72 | done | medium |
+| **3164** | Standalone: native lowering for generator FUNCTION EXPRESSIONS (anonymous/IIFE/var-assigned) — retires ~1,700 sync __create_generator leaky passes | 71 | done | high |
+| **3165** | Standalone: arguments object stored into any[] loses indexed elements on readback (length survives, r0[0] → 0) — ~186 tests | 71 | done | high |
+| **3166** | Class fields/accessors with RUNTIME computed property names are silently dropped ([f()] = 1 → read returns 0) — ~150 cpn tests | current | ready | medium |
+| **3178** | UMBRELLA: retire the generator/async/Promise HOST machinery in standalone — the 4,467-leaky-pass (10.3 pt) family, measured slice map + shared-substrate design | current | ready | high |
+| **3222** | standalone: native closed-shape struct field enumeration — Object.keys/values/entries/spread/rest all return empty for typed objects (~989 test262 files touch the surface) | 71 | done | high |
+| **3223** | Standalone: native `__extern_rest_object` — object-rest `{a, ...rest}` leaks env host import (leaky→host-free de-leak, ~234–417 test262 files) | 71 | done | high |
+| **3228** | standalone: for-await-of with a DESTRUCTURING binding over an ARRAY source falls to the legacy host-CPS lowering (24 leaky passes) — widen the native async-iterator DRIVE admission | 71 | done | high |
+| **3232** | standalone: static private ACCESSOR setter emits invalid Wasm (C_setPrivateReference — call[0] ref-type mismatch) — 10 compile_error→pass | 71 | done | high |
+| **3238** | Standalone: native constructor for `class extends Object` (drop __new_Object host leak) | 71 | done | high |
+| **3239** | Standalone: native constructor for `class extends TypedArray\|SharedArrayBuffer` (drop __new_<Parent> host leak) | 71 | done | high |
+| **3240** | Standalone: faithful native constructors for the remaining subclass-builtins (Array/Function/Date/RegExp/ArrayBuffer/DataView/Promise) | current | ready | medium |
+| **3241** | Native object-rest CopyDataProperties for for-of/for-await loop-var rest (standalone) | 71 | done | high |
+| **3242** | Native standalone WeakRef — retire WeakRef_new / WeakRef_deref host imports | 71 | done | high |
+| **3244** | Standalone: any-boxed homogeneous reference-element array reads elements as undefined (index + destructuring) | 71 | done | high |
+| **3245** | async-gen dstr host-free-FAIL cluster: root decomposition + error-path mirage + runner warm/cold artifact | 72 | done | medium |
+| **3246** | standalone ToPropertyDescriptor rejects non-$Object descriptors (function/array/wrapper) as \"unsupported shape\" | 71 | done | high |
+| **3249** | Standalone __iterator GetIterator ladder illegal_cast on bare-{next}/get-next iterators (Iterator.from/prototype.*/concat) — ~28 host-free FAILs | Backlog | ready | medium |
+| **3250** | Standalone: gOPD on un-wired buffer-family proto getters returns undefined → `.get` traps (brand-check cluster) | 71 | done | high |
+| **3251** | standalone: array-descriptor OVERLAY substrate — $Vec receivers have no per-index/expando property-descriptor storage (blocks array-exotic defineProperty + Array generic-method-over-accessor-index) | current | ready | high |
+| **3252** | standalone: expando named-property writes on array/function objects don't stick (read back NaN/undefined) | Backlog | ready | medium |
+| **3253** | standalone Object.create inline descriptor literal compiles to closed struct → value + ToBoolean flags dropped |  | done | medium |
+| **3254** | Standalone: RequireObjectCoercible + ToString for borrowed String.prototype.<m>.call receiver | 72 | done | high |
+| **3283** | standalone dstr runtime-semantics — Opus-now unblocked slices (lazy-defaults, obj-rest ToPrimitive, abrupt-step errors, gen brand-check) | 75 | wont-fix | high |
+| **3302** | standalone: native lowering for CAPTURING generators — thread enclosing-scope ref cells into the generator state struct (retire the eager-buffer host fallback for #3178 S3) [SENIOR-DEV/opus — design-heavy] | 72 | done | high |
+| **3313** | Driven async-gen consumer misdispatches when two producers' $AsyncFrame structs are structurally identical (WasmGC canonicalization) | Backlog | ready | medium |
+| **3316** | standalone: 4/18 accessor-merge tests regressed between main 026f40f771 (2026-07-11) and f01f7fbb6e (2026-07-16) — illegal cast traps, invisible to CI | 72 | done | high |
+| **3317** | standalone: Array.prototype.{indexOf,lastIndexOf,includes} — ToNumber-of-object length/fromIndex + includes abrupt-getter length reads | 72 | done | medium |
+| **3318** | 'Compiler crash: "Cannot create property ''declaredType'' on number ''1''" (prototype-delete pattern)' | 72 | done | high |
+| **3319** | standalone: gOPD miss + descriptor undefined-slots materialize as null, not the $undefined singleton (#2106-flip family — the two #3316 residuals and friends) | 72 | done | high |
+| **3320** | stale #1888 S6/S6-b guardrails: builtin value-read compile-refusal contract was retired by #2984 (runtime refusal closures) — update to the current contract | 72 | done | medium |
+| **3321** | gc/host lane: typed-receiver gOPD miss answers null extern instead of the host undefined sentinel — the host twin of #3319's miss family | 72 | done | medium |
+| **3324** | tests/issue-2949-s5-2-eq.test.ts fails standalone with a module-init cycle: 'Cannot access boolToStringEmitter before initialization' | 72 | done | medium |
+| **3326** | tests/issue-2036.test.ts: 7 'refuses loudly' expectations are stale — #3169 gave these methods a working native path, they now succeed instead of refusing | 72 | done | low |
+| **3327** | tests/issue-1917-coercion-plan.test.ts: 1 failure — unexpected ref.cast_null in a pinned coercion instruction shape | 72 | done | low |
+| **3333** | standalone: whole-pattern param default OBJECT LITERAL never binds — `function f({a,b}: any = {a:5,b:3}); f()` reads garbage/NaN | 72 | done | high |
+| **3335** | Six TypedArray/set/BigInt failures worsened catchable-error → uncatchable oob trap on main; scheduled baseline refresh baked the worse mode in | 72 | done | high |
+| **3337** | wasi: materialize process.argv through args_get instead of a silent empty vector | current | ready | high |
+| **3371** | standalone: Reflect.construct (with NewTarget) refused — ~160 tests (proto-from-ctor-realm, subclassing) on the #1472 Phase-C refusal path | 73 | done | medium |
+| **3376** | standalone strict-leak scan phase 2: ratchet WARNING→ERROR | Backlog | ready | medium |
+| **3380** | Standalone-lane test262 dashboard number appears frozen — promote-pipeline fragility + single-scalar visibility gap masks real churn (not a cache/skip bug) | current | ready | high |
+| **3384** | standalone/wasi: member access on a wrapped JSON.parse() call crashes codegen | 72 | done | medium |
+| **3386** | standalone: native sync-generator DESTRUCTURING-pattern params — methods, fn-expressions, element defaults, untyped array patterns (~1,860 host_import_leak rows) | 72 | done | high |
+| **3387** | standalone: NESTED async generators with for-await bodies leak the host buffer — close the nested-vs-module-scope drivability gap (~577 for-await-of rows) | 72 | done | high |
+| **3388** | standalone: async-gen `yield*` over non-literal sources in NESTED/method producers — runtime delegation with §27.6.3.7 GetIterator error semantics (~600 rows) | 72 | done | high |
+| **3389** | standalone: `return` completion in driven async-gen bodies (settleReturn terminator) + AsyncGeneratorPrototype.return/.throw residual (~300 rows) | current | ready | medium |
+| **3390** | standalone: Promise combinators with non-Promise receivers — `Promise.all.call(nonCtor)` TypeError + custom-constructor admission (~119 rows) | current | ready | medium |
+| **3391** | standalone: S7 mechanical — assert-zero `__gen_*`/`__get_caught_exception` registration + eager-buffer dead-path accounting (umbrella #3178 closeout) | current | ready | low |
+| **3392** | promote-baseline dies at the baselines-repo clone — runs/ cache growth pushed full-blob clone past the 10-min step timeout | 76 | done | high |
+| **3394** | standalone: bigint (i64) value reaches externref coercion via extern.convert_any instead of __box_bigint — invalid Wasm (~59 tests) | current | ready | high |
+| **3395** | standalone: object/closure GC ref not boxed (or double-boxed) at externref boundaries — any.convert_extern / extern.convert_any invalid Wasm (~34 tests) | current | ready | high |
+| **3396** | standalone: closure-env / promise-reaction / for-loop struct type A used where type B expected — struct.set/get/call-param invalid Wasm (~70 tests) | 75 | done | high |
+| **3397** | standalone: boxed value used directly in scalar op (f64.ne/i32 cmp/ref.is_null) without unbox — invalid Wasm (~27 tests) | current | ready | medium |
+| **3398** | standalone: tail-call ABI mismatch / block-result fallthru / call arity / ref.test-cast long tail — invalid Wasm (~13 tests) | current | ready | medium |
+| **3401** | standalone: URI carrier routing gap — #2500 native decode/encodeURI* landed but 48 conformance tests still leak env::decodeURI |  | done | high |
+| **3418** | Standalone: unused harness-shim host refs leak console_log/structuredClone imports — deflates standalone conformance ~18–30k | 72 | done | critical |
+| **3424** | Reified builtin-value `.name`/`.length` reflective reads mis-dispatch when statics share a wrapper signature | Backlog | backlog | medium |
+| **3439** | Classify the 186 standalone failures #3369 exposed; ratchet --max-unclassified-root-causes 300→0 | 76 | done | high |
+| **3442** | standalone: null-deref residual (789 gap tests) — general __module_init + sync destructuring-rest traps, no open tracker | current | ready | high |
+| **3443** | standalone: illegal-cast residual (92 gap tests) — general __module_init + __str_to_number/parseInt, no open tracker | current | ready | medium |
+| **3446** | long-tail low-count residual (v8 harvest): array-too-large, float-unrepresentable, runtime max-call-stack, timeouts | current | ready | low |
+| **3451** | arch(#1046/#33/#34): linked harness .wasm as the driving use case for separate compilation | Backlog | backlog | low |
+| **3507** | Standalone native RegExp values lose identity across function, object, and array carriers | 73 | done | high |
+| **3531** | standalone: retire __array_concat_any / __js_array_new / __js_array_push host-import leak (216 tests) | current | ready | high |
+| **3538** | Async-gen abrupt completion + IteratorResult dynamic reads — the 280-test yield*-error cohort (F2 harvest, #3417/#3178) | 75 | done | high |
+| **3542** | Standalone async-fn rejections lose the thrown value — reason is always NULL (unfinished #1326 Phase-1C payload wiring) | 75 | done | high |
+| **3545** | Standalone: an uncaught trap inside a microtask job silently ends __drain_microtasks — async scoring INTEGRITY defect | current | ready | high |
+| **3548** | Standalone: then-callback closure with branch-guarded module-fn calls traps null-deref — the ~193-row 'async continuation threw' Promise cluster | 76 | done | high |
+| **3603** | verifyProperty is vacuous on BOTH lanes — two distinct root causes (standalone: object literals have no runtime own-property table; host: uncurried __push is a silent no-op) | current | ready | high |
+| **3605** | Audit: are there further silent-no-op / vacuity cases beyond the three already found? | current | ready | high |
+| **3606** | Unit-test the test262 harness machinery itself — assertions must FAIL when they should | current | ready | high |
+| **3614** | Standalone: a Test262Error instance's .constructor reads undefined, so assert.throws rejects correct throws (924 tests) | current | done | high |
+| **3617** | Standalone: a plain fnctor instance's .constructor reads undefined (standalone counterpart of #3486) | current | ready | medium |
+| **3618** | Standalone closure .name via a parameter is undefined — corrupts test262 failure text and makes message-derived bucket labels mislead (standalone twin of #3429) | current | ready | high |
 
 <!-- AUTOGENERATED:GOAL-ISSUES-END -->
 

@@ -161,11 +161,34 @@ export const tsRuntime: typeof import("typescript") = isTs7 ? loadTs7Module() : 
  * `ts.forEachChild` directly so that codegen can iterate over either backend's
  * AST without per-call-site changes.
  */
+// (#3437) Opt-in compile-work meter. The oracle-v8 harness switch tanked CI via
+// an O(call-sites × file-size) per-file AST scan (#3433); that scan work flows
+// through this shared traversal helper, so counting its invocations is a
+// DETERMINISTIC, runner-load-independent proxy for source-scan compile cost.
+// Off by default (a single boolean check per call — negligible), enabled only by
+// the budget gate (scripts/check-harness-compile-budget.ts). Zero behavioural
+// effect. NOTE: ts.forEachChild is a getter-only export (not monkey-patchable),
+// and direct `ts.forEachChild` call sites are NOT counted — the meter covers the
+// shared-helper traversal class only (see the gate for scope).
+let forEachChildMeterOn = false;
+let forEachChildCalls = 0;
+export function enableForEachChildMeter(): void {
+  forEachChildMeterOn = true;
+  forEachChildCalls = 0;
+}
+export function disableForEachChildMeter(): void {
+  forEachChildMeterOn = false;
+}
+export function readForEachChildCalls(): number {
+  return forEachChildCalls;
+}
+
 export function forEachChild<T>(
   node: ts.Node,
   cbNode: (node: ts.Node) => T | undefined,
   cbNodeArray?: (nodes: ts.NodeArray<ts.Node>) => T | undefined,
 ): T | undefined {
+  if (forEachChildMeterOn) forEachChildCalls++;
   // TS7 native-preview AST nodes carry `forEachChild` as a prototype method.
   // typescript@5 nodes do NOT have this method on the prototype, so this check
   // distinguishes the two without a backend-detection round-trip.
@@ -175,4 +198,16 @@ export function forEachChild<T>(
     return inst.call(node, cbNode);
   }
   return ts.forEachChild(node, cbNode, cbNodeArray);
+}
+
+const BOUNDED_UNKNOWN_TYPE = { flags: ts.TypeFlags.Unknown } as ts.Type;
+
+/** Query a checker type without letting one recursive shape abort a compile. */
+export function getTypeAtLocationBounded(checker: ts.TypeChecker, node: ts.Node): ts.Type {
+  try {
+    return checker.getTypeAtLocation(node);
+  } catch (error) {
+    if (error instanceof RangeError && /Maximum call stack/i.test(error.message)) return BOUNDED_UNKNOWN_TYPE;
+    throw error;
+  }
 }

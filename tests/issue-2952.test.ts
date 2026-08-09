@@ -130,7 +130,7 @@ describe("#2952 slice 1 — IR claims do-while (post-test loops)", () => {
     expect(await runIr(src)).toBe(1);
   });
 
-  it("LABELED break is still NOT claimed (slice 3 boundary)", () => {
+  it("LABELED break on a do-while IS claimed (slice 3 lifted the boundary)", () => {
     const claimed = selectionFor(`
       export function test(): number {
         let n: number = 0;
@@ -143,6 +143,6 @@ describe("#2952 slice 1 — IR claims do-while (post-test loops)", () => {
         return n;
       }
     `);
-    expect(claimed.has("test")).toBe(false);
+    expect(claimed.has("test")).toBe(true);
   });
 });

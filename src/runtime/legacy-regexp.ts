@@ -48,9 +48,23 @@ export function _rerouteStringSymbolMethodPrimitive(method: string, first: unkno
   if (t !== "number" && t !== "string" && t !== "boolean" && t !== "bigint") return undefined;
   const sym = _stringMethodDispatchSymbol[method];
   if (sym === undefined) return undefined;
-  // HasProperty (no getter side effect). Object(first) boxes the primitive so
-  // the prototype chain (Number/String/Boolean/BigInt.prototype) is visible.
-  if (!(sym in (Object(first) as object))) return undefined;
+  // HasProperty (no getter side effect) against the prototype the primitive
+  // would box to. (#3903) This used to read `sym in Object(first)`, which
+  // allocated a fresh wrapper object on EVERY `split`/`replace` crossing —
+  // ~10k of them per benchmark `run()`. Checking the prototype directly is
+  // exactly equivalent for a Symbol key: a freshly boxed String wrapper's own
+  // properties are only the integer indices and `length`, and Number/Boolean/
+  // BigInt wrappers have no own properties at all, so no Symbol key can ever
+  // be an own property of `Object(first)`.
+  const proto =
+    t === "string"
+      ? String.prototype
+      : t === "number"
+        ? Number.prototype
+        : t === "boolean"
+          ? Boolean.prototype
+          : BigInt.prototype;
+  if (!(sym in proto)) return undefined;
   const str = String(first as number | string | boolean | bigint);
   switch (method) {
     case "match":

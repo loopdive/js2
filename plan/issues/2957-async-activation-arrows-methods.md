@@ -1,8 +1,7 @@
 ---
 id: 2957
 title: "Async activation for arrows / methods / function expressions (both CPS + drive hooks are declaration-only)"
-status: in-progress
-assignee: ttraenkler/opus-2957p2
+status: ready
 sprint: current
 created: 2026-07-02
 updated: 2026-07-04

@@ -1,10 +1,11 @@
 ---
 id: 3449
 title: "ci(#3431 follow-up): re-derive merge_group shard constants from post-#3374 timings"
-status: ready
-sprint: current
+status: done
+completed: 2026-07-24
+sprint: 76
 created: 2026-07-19
-updated: 2026-07-19
+updated: 2026-07-24
 priority: medium
 horizon: s
 feasibility: easy
@@ -87,3 +88,13 @@ density itself is safe; the guard interaction is the only ordering constraint.
 - Review: `plan/ci-acceleration-review.md` §3-L6, §5-C, §2.4.
 - #3431 (114→59 mg shard consolidation), #3374/#3433 (compile speedup),
   #3438 (57-way weight-map rebalance — distinct from these chunk counts).
+
+## Reconcile → DONE (false-ready, 2026-07-24, dev-std-4)
+
+Landed (uncited) in `9761b20` — "perf(ci): saturate the serial merge queue":
+re-derived the merge_group shard constants from production lane timings
+(72 host / 34 standalone shards), replacing the stale five-group contention
+assumptions with the live serial-queue capacity contract. Touched
+`.github/workflows/test262-sharded.yml`, `scripts/gen-test262-mg-matrix.mjs`,
+`tests/issue-3431-mg-matrix.test.ts` — exactly this issue's ask. The commit did
+not cite #3449, so the status stayed `ready` (false-ready). Marking `done`.

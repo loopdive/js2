@@ -1,8 +1,7 @@
 ---
 id: 2875
 title: "Standalone: String.prototype.* cluster (159 host-pass/standalone-fail, de-masked from #2862)"
-status: in-progress
-assignee: ttraenkler/fable-dev-3
+status: ready
 created: 2026-06-30
 updated: 2026-07-18
 priority: high
@@ -350,3 +349,148 @@ ToString now correct across all reflective String methods.
   — a separate, shared slice (also fixes the pre-existing `*.call(undefined)
 throws` assertions in `issue-2875*.test.ts`, which fail on main today).
 - RegExp-arg family (~114), case family (25), substring/slice/normalize.
+
+## Slice B (LANDED, dev-std-4) — undefined-receiver RequireObjectCoercible
+
+The `undefined`-receiver residual flagged above is now fixed for all four wired
+reflective String proto member-body families. Root cause confirmed by
+measurement on `origin/main`: under the #2106 `undefinedSingleton` regime
+(default-on in standalone) `undefined` is a DISTINCT non-null sentinel externref,
+so the glue's bare `ref.is_null` RequireObjectCoercible guard caught `null` but
+MISSED `undefined` — `charAt.call(undefined)` etc. silently ToString'd it to
+`"undefined"` and returned a value instead of throwing a TypeError.
+
+**Fix** (`src/codegen/array-object-proto.ts`): a shared
+`emitStringRequireObjectCoercible` helper OR-s in the canonical native
+`__extern_is_undefined` predicate alongside the `ref.is_null` test, applied to
+all four families (index-accessor `charAt`/`at`/`charCodeAt`/`codePointAt`;
+search-numeric `indexOf`/`lastIndexOf`; search-boolean
+`includes`/`startsWith`/`endsWith`; `trim`/`trimStart`/`trimEnd`). The native is
+registered up front (`ensureStringRocUndefinedNative` → `ensureObjectRuntime` +
+`flushLateImportShifts`) so its funcIdx is post-shift-correct at the guard site.
+Host-free (native predicate, no host import). Gated on `undefinedSingletonActive`
+— host lane and the non-singleton regime keep the bare `ref.is_null` (undefined
+≡ `ref.null` there), so byte-identical.
+
+**Measured impact** (standalone lane, base-vs-head diff, 0 regressions):
+
+- **+6 test262 files** flip FAIL→PASS:
+  `{charAt,charCodeAt,indexOf,lastIndexOf,trimEnd,trimStart}/this-value-not-obj-coercible.js`.
+- **+3 committed vitest tests** fixed (previously RED on main):
+  `charAt.call(undefined) throws`, `lastIndexOf.call(undefined,'a') throws`,
+  `endsWith.call(undefined,'') throws`.
+- Byte-neutral for the host lane and for standalone programs outside the
+  reflective-String-closure blast radius (5/5 sample hashes identical).
+
+Covered by `tests/issue-2875-slice-b-undefined-roc.test.ts` (20 cases: all 12
+wired members throw on undefined, null-receiver + valid-receiver regression
+guards). `tsc --noEmit` clean.
+
+**Still residual (unchanged, NOT this slice):** the `at`/`codePointAt`
+out-of-range `=== undefined` return-value comparison (a separate return-path
+undefined-singleton mismatch), the case family (`toUpperCase`/`toLowerCase`,
+un-wired), the RegExp-arg family (~114), and the #2862 ToPrimitive
+object-receiver bucket.
+
+## Slice C (LANDED, lead-es5, 2026-08-06) — borrowed `String.prototype.slice`
+
+`emitStringProtoMemberBody` wired `substring` to a real reflective body but let
+`slice` fall through to `emitProtoMemberBodyRefusal`, so
+`x.slice = String.prototype.slice; x.slice(0, 1)` threw *"String.prototype.slice
+is not yet implemented in --target standalone"*.
+
+The two methods differ only in §22.1.3.22-vs-§22.1.3.24 index resolution
+(`slice` resolves negative indices; `substring` swaps reversed bounds), and that
+difference lives entirely inside the native helper: `__str_slice` and
+`__str_substring` share the signature `(ref $NativeString, i32 start, i32 end)
+-> ref $NativeString` **and** the same `0x7fffffff` absent-end sentinel — the
+two direct paths in `string-ops.ts` already emit the same call sequence with
+only the helper name differing. So `emitStringSubstringMemberBody` is now
+parameterised on `"substring" | "slice"` and swaps the helper; nothing else
+changed.
+
+**Measured** — scoped standalone test262, `built-ins/String/prototype/slice`:
+**29/38 → 33/38, +4**, no regressions in that path. Covered by
+`tests/issue-2875-borrowed-string-slice.test.ts` (7 cases, including the two
+that prove the helper swap actually happened: negative indices resolve from the
+end, and reversed bounds give `""` rather than substring's swap; plus a
+substring-unaffected guard).
+
+Harvested from fork PR #4124's `#3978` slice, re-derived against current main.
+**Most of that PR's String work is already on main** — its census claimed +29
+across the case-conversion family, `indexOf`, `charCodeAt` and `substring`, and
+all of those now pass on main by other routes. `slice` was the only part still
+outstanding. Do not re-harvest #3978 expecting its headline number.
+
+## Next slice — primitive-number and builtin-brand receivers return `null`
+
+Found while measuring slice C; **not fixed**. Probed on main + slice C
+(literal-JS `allowJs` lane, `--target standalone`), each returning a
+discriminator rather than a boolean:
+
+| receiver shape | result |
+| --- | --- |
+| `new Object(true).toUpperCase = String.prototype.toUpperCase` | **correct** |
+| `"AB".toLowerCase()` direct | **correct** |
+| `Number.prototype.toLowerCase = String.prototype.toLowerCase; NaN.toLowerCase()` | `null` |
+| same, `(123).toLowerCase()` | `null` |
+| same, `new Number(123).toLowerCase()` | `null` |
+| `var r = new RegExp("abc"); r.toUpperCase = String.prototype.toUpperCase; r.toUpperCase()` | `null` |
+| controls `String(NaN)`, `"" + NaN` | **correct** |
+
+`null` is `emitProtoMemberBodyRefusal`'s "not wired — fall through" signal, so
+these calls are **not reaching the reflective body at all**. Since a plain
+`new Object(...)` receiver works, the gap is not "borrowed methods" generally —
+it is member-call dispatch when the borrowed method is installed on a **builtin
+prototype** (`Number.prototype`) or a **builtin-branded instance** (a RegExp
+object), and/or when the receiver is a **primitive** number. That points at the
+transferred-closure dispatch arms rather than at ToString.
+
+Worth roughly **12–17 ES5-label standalone files** in the 2026-08-06 baseline:
+the `Number.prototype.<caseMethod>` × `{NaN, Infinity, -Infinity}` matrix (~12),
+the `new RegExp(...)` receiver family (~5), and two `eval("\"bj\"")`-produced
+string cases. Verify by repro before sizing — the L6 census that produced these
+counts is signature-derived.
+
+**Out of scope for this issue** (measured 2026-08-06, `ES5` label, standalone,
+`built-ins/String/prototype` = 109 failures): `split` 11 + `replace`/`match`
+RegExp-gated ~16 belong to the standalone RegExp engine (#4016/#4065 — #4065
+already refuted the "51-file RegExp lever inside String.prototype" framing);
+`concat` (4) is variadic and needs a different closure ABI.
+
+## Re-measure + decomposition (W13, 2026-08-06)
+
+Full ES5-label sweep of `built-ins/String/prototype` on 2026-08-06 main, with
+the in-process runner patched to attach the `js2wasm:runtime-eval` provider (the
+fix that PR **#4163** lands properly, at a shared seam across all five
+instantiate sites) and `TEST262_FULL_RUNTIME_EVAL=1` (the CI-comparable
+interpreter tier): **630 files, 528 pass, 102 fail.** The `split` count above is
+**23, not 11** — the earlier figure was taken through a runner whose
+`js2wasm:runtime-eval` link error overwrote the real signatures.
+
+**67 of the 102 are ONE idiom**: `x.m = String.prototype.m; x.m(…)` — a borrowed
+`String.prototype` method on a non-String receiver. But that idiom is **three
+different defects**, and the previous "Next slice" note conflated them and
+under-sized the whole thing at 12–17:
+
+| # | sub-mechanism | probe | ES5 files | owner |
+| --- | --- | --- | ---: | --- |
+| **b1** | receiver is a **builtin prototype** (`Number.prototype.m = …`) — the write itself is a silent no-op; nothing to dispatch to | `Number.prototype.foo = f; typeof Number.prototype.foo === "undefined"` | ~23 | **#4176 / PR #4155** (not this issue) |
+| **a** | member has **no reflective glue body** → `emitProtoMemberBodyRefusal` → *"not yet implemented in --target standalone"* | `new Boolean().split = String.prototype.split; …split()` throws | ~19 (`split` 10, `concat` 3, `search` 2, `replace` 2, `match` 2) | **this issue** |
+| **b2** | glue exists but **ToString of an exotic receiver** is wrong — `__any_to_string` answers `"[object Object]"` instead of the brand's `toString` | `fn.slice(0,8)` → `"[object "` (want `"function"`); `regExp.toUpperCase()` → `"[OBJECT OBJECT]"` (want `"/ABC/"`) | ~6 | this issue (or #2862) |
+
+The remaining 35 are: RegExp-engine-gated `replace`/`match` (#4016/#4065, ~16,
+do not re-litigate), `String.hasOwnProperty('prototype')` static reflection (4),
+`delete String.prototype.toString` (3), and a long tail.
+
+**The 12-file `Number.prototype.<caseMethod>` matrix named in the previous
+"Next slice" is b1, i.e. #4176 / PR #4155 — it is NOT fixable inside the String
+glue, and it is already implemented there.** The
+`null` return that section observed is not the glue's refusal signal reaching a
+String receiver; it is the *assignment never having happened*. Confirmed by the
+brand-independent probe: `Object.prototype.qux = fn; ({}).qux()` is `null` too,
+with no String involvement anywhere.
+
+So the honest next slice for **this** issue is (a) — wire `split` and `concat`
+reflective glue bodies, ~13 ES5 files — with (b2) as a small follow-up. That is
+a genuinely ~15-file lever, not a 67-file one.

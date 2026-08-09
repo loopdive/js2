@@ -52,7 +52,7 @@ import {
 } from "./shared.js";
 import { UNDEF_F64_BITS } from "./value-tags.js";
 import { addUnionImports } from "./index.js";
-import { bodyUsesArguments } from "./helpers/body-uses-arguments.js";
+import { bodyNeedsArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { resolveSpillLocalValType } from "./statements/variables.js";
 import { resolveWasmType } from "./index.js";
 import { ensureExnTag } from "./registry/imports.js";
@@ -251,6 +251,26 @@ interface NativeGeneratorState {
 
 interface NativeGeneratorPlan {
   states: NativeGeneratorState[];
+  /**
+   * (#2864 D4) Id of the state that COMPLETES the generator — the state whose
+   * terminator is the final `done`, or the dedicated empty placeholder minted
+   * for it when the fallthrough carries trailing statements.
+   *
+   * This is **not** `states.length - 1`. Every structural lowering
+   * (`for`/`while`/`do`/`if`, and the #3050 try-region) reserves its exit/join
+   * state BEFORE lowering the nested body, so a generator body that ENDS in one
+   * of those leaves the fallthrough cursor at a LOWER id than the last reserved
+   * state — and the last reserved state is then a LIVE yield successor. The
+   * pre-D4 `states.length - 1` therefore aliased "generator completed" onto a
+   * real suspension point, which made `buildNativeGeneratorDispatch`'s
+   * `suspended = state != START && state != doneState` test report DONE for a
+   * genuinely suspended generator: `.throw(e)` / `.return(v)` took the
+   * §27.5.3.4 already-completed arm and never resumed, so an enclosing `catch`
+   * across the yield was skipped and the error escaped raw. Measured on
+   * standalone + wasi for `try { yield … } catch {}` as the whole body, the
+   * same inside `for`/`while`, and nested loops under one try.
+   */
+  doneState: number;
   spills: string[];
   /**
    * (#2864 F1b) The wasm ValType for each spilled local, keyed by name. A local
@@ -801,6 +821,29 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       // could not be routed into the region's catch/finally. Bail to the host
       // path (legacy replay-only regions keep today's behavior).
       if (unwind.some((e) => e.kind !== "replay")) return fail();
+      // (#2864 D2) A yield-star terminator SELF-SUSPENDS (its yield arm re-enters
+      // the SAME state on the next resume), so it must live in a DEDICATED state:
+      //  (a) empty prelude / no resume bindings — otherwise the prelude statements
+      //      re-ran and the `sent`-copy re-executed (clobbering the binding with
+      //      later `.next(v)` values) on EVERY mid-delegation resume;
+      //  (b) never state 0 — the `.return()`/`.throw()` dispatch reads state 0 as
+      //      NOT-STARTED (§27.5.3.4/§27.5.3.6), so a first-statement `yield*`
+      //      suspension was misclassified and completed/threw WITHOUT closing the
+      //      delegate (and without running the outer's own finalizers);
+      //  (c) always carrying an abrupt block — recomputed below from the yield*
+      //      position's replay chain (empty outside any try/finally) — so a
+      //      mid-delegation `.return()`/`.throw()` resume is handled instead of
+      //      silently ignored; the block hosts the D2 delegate-close forwarding.
+      // Split only when needed so already-dedicated states keep their ids.
+      if (curStatements.length > 0 || curResumeBindings.length > 0 || curId === 0) {
+        const starId = reserveState();
+        finishState(curId, { kind: "jump", next: starId });
+        resetCursor(starId);
+      }
+      curAbrupt = {
+        finalizers: unwind.map((e) => [...(e as { statements: readonly ts.Statement[] }).statements]).reverse(),
+      };
+      curUnwind = undefined;
       const subject = yieldExpr.expression;
       const innerName = subject ? nativeGeneratorDelegationName(subject) : undefined;
       if (subject && innerName === undefined) {
@@ -1286,11 +1329,23 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   // bail to host so the candidate gate and registration agree (no
   // undefined-funcidx module).
   //
-  // Still bailed (follow-up slices, #3386 residual):
-  //  • rest ELEMENTS (`[a, ...r]` / `{a, ...r}`) — the emit-site destructure
-  //    binds them, but the rest local's type (a fresh `__vec_externref` /
-  //    rest `$Object`) is minted inside the destructure helpers, not via
-  //    `resolveBindingElementType`, so the spill typing is not yet reconciled.
+  // (#3945) REST elements (`[a, ...r]` / `{a, ...r}`) are admitted, under a
+  // DIFFERENT typing rule than the non-rest elements below. A non-rest element's
+  // factory local is allocated by `ensureBindingLocals` from
+  // `resolveBindingElementType` and the emit site does not re-type it, so the
+  // checker rule is faithful there. A REST local is minted by the destructure
+  // lane instead and then REALLOCATED over that guess (destructuring-params.ts,
+  // the #971 realloc) — `$__vec_externref` / `$__vec_f64` / a rest `$Object`,
+  // decided by the EMIT SITE's resolved param type, which this builder cannot
+  // see (`isNativeGeneratorCandidate` calls it with no param types and must
+  // agree with `analyzeNativeGenerator`, or the emit bakes an undefined
+  // funcidx) and cannot read back afterwards (a `.next()` site can emit the
+  // resume fn before the generator's own emit site destructures). So a rest
+  // binding spills at the WASM-BOUNDARY rep, `externref`: AST-only, and
+  // reachable from every lane because `compileNativeGeneratorFunction` already
+  // coerces the factory local into the spill type. Same lesson as the #3620
+  // note on the `param_*` fields below. Full argument: plan/issues/3945-*.md.
+  //
   // Whole-param defaults (`[x] = []`) ARE admitted now: the emit site's
   // param-default machinery evaluates the initializer into the param local at
   // call time (before the destructure + factory pack), exactly as for ordinary
@@ -1305,12 +1360,20 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     const pat = param.name;
     if (!ts.isArrayBindingPattern(pat) && !ts.isObjectBindingPattern(pat)) return null;
     const elements: ts.BindingElement[] = [];
-    let hasRest = false;
+    const restNames: string[] = [];
     const walk = (p: ts.BindingPattern): void => {
       for (const el of p.elements) {
         if (ts.isOmittedExpression(el)) continue;
         if (el.dotDotDotToken) {
-          hasRest = true;
+          // (#3945) An IDENTIFIER rest takes the boundary-rep rule below. A
+          // nested pattern under it (`[...[a, b]]`, `[...{length}]`) binds its
+          // OWN names via the ordinary `ensureBindingLocals` path, so it is
+          // walked like any sub-pattern and keeps the checker rule. The pre-fix
+          // walk `continue`d here WITHOUT descending — lifting the bail alone
+          // would leave those names unspilled: host-free, valid, and silently
+          // reading the inert default.
+          if (ts.isIdentifier(el.name)) restNames.push(el.name.text);
+          else walk(el.name);
           continue;
         }
         if (ts.isIdentifier(el.name)) elements.push(el);
@@ -1318,25 +1381,56 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       }
     };
     walk(pat);
-    if (hasRest) return null;
+    for (const name of restNames) {
+      patternParamSpillTypes.set(name, { kind: "externref" });
+      addSpill(name);
+    }
     for (const el of elements) {
       const id = el.name as ts.Identifier;
-      // (#3386) FUNCTION-VALUED element defaults (`[g = function(){}]`,
-      // `[g = () => 1]`, `[g = function*(){}]`) still bail. The emit-site
-      // destructure compiles the default into a closure/native-gen-state ref
-      // whose wasm rep does not cleanly round-trip the spill field in every
-      // lane — the class-method lane in particular emits an "illegal cast" at
-      // runtime (the `#3164` host-mix fixture, `*method([gen = function*(){}]
-      // = [])`). This is the documented W3 "throwing / function-valued
-      // default" exclusion; the dominant `dflt-*` cohort uses numeric / object
-      // / call-expression defaults, which are admitted (throwing defaults are
-      // CallExpressions and lower correctly). A later slice can widen this
-      // once the closure-valued spill round-trip is proven in all lanes.
-      if (
-        el.initializer &&
+      // (#3386 → #3952) Element defaults that evaluate to a CLOSURE. #3386 bailed
+      // all three of arrow / function-expression / class-expression, and set the
+      // bar for widening: "once the closure-valued spill round-trip is proven in
+      // all lanes". #3952 ran that proof — each arm spills the closure, SUSPENDS,
+      // resumes, and CALLS it (import-freedom plus a plain value read would pass a
+      // module that stored a broken reference and never invoked it):
+      //
+      //   ARROW / plain FUNCTION-EXPRESSION  → round-trips. objlit, class and
+      //     array-pattern lanes all return the called closure's value across a
+      //     suspension, host-free, and `arrow.name` is still `"arrow"`
+      //     (NamedEvaluation, #1450/#1119/#1049). ADMITTED.
+      //   GENERATOR function expression (`[g = function*(){}]`) → objlit lane
+      //     traps at runtime. STILL BAILS.
+      //   CLASS expression (`{ K = class {…} }`) → "dereferencing a null pointer"
+      //     in BOTH the objlit and class lanes. STILL BAILS.
+      //
+      // Note #3386's cited evidence is stale: the shape it named — the #3164
+      // host-mix fixture `*method([gen = function*(){}] = [])` in the CLASS lane —
+      // now passes. The unsafe set is real but different from the recorded one,
+      // which is why this widening is driven by a fresh matrix rather than by
+      // relaxing the predicate to whatever the old comment blamed.
+      //
+      // The class lane also passes the generator-fn-expr arm today (32 rows), but
+      // admitting a shape that traps in a sibling lane on lane identity alone is
+      // how a leak gets traded for a silent wrong value — so `gen` stays bailed
+      // uniformly and is left as a measured, bounded follow-up on #3952.
+      //
+      // The generator FUNCTION-EXPRESSION host (`const g = function*({…} = {}){}`)
+      // keeps the bail for ALL closure defaults too, and the control is what
+      // justifies it: that lane already traps on an element default with a plain
+      // NUMERIC value (`{ n = 41 }`), with no closure anywhere. So its defect is
+      // pre-existing and closure-INDEPENDENT — admitting these 8 rows would swap a
+      // loud host-import leak for a runtime trap without proving anything. Tracked
+      // separately; do not fold it in here.
+      const closureDefault =
+        el.initializer !== undefined &&
         (ts.isFunctionExpression(el.initializer) ||
           ts.isArrowFunction(el.initializer) ||
-          ts.isClassExpression(el.initializer))
+          ts.isClassExpression(el.initializer));
+      if (
+        closureDefault &&
+        ((ts.isFunctionExpression(el.initializer!) && el.initializer!.asteriskToken !== undefined) ||
+          ts.isClassExpression(el.initializer!) ||
+          ts.isFunctionExpression(decl))
       ) {
         return null;
       }
@@ -1364,15 +1458,24 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
 
   // (#3050) When the final fallthrough state carries trailing statements
   // (`… yield x; trailing();`), it doubles as BOTH the last executable state
-  // and the completed-generator dispatch target (doneState = last id) — so
-  // every post-completion `.next()` re-dispatched into it and RE-RAN the
-  // trailing prelude (observable via a `unreachable += 1` after the last
-  // yield, GeneratorPrototype/throw/try-*-following-*). Mint a DEDICATED empty
-  // done state in that case; generators whose final state is already empty
-  // keep their exact state graph (byte-identical).
-  if (states[curId]!.statements.length > 0) {
-    reserveState(); // empty placeholder — its default terminator IS `done`
-  }
+  // and the completed-generator dispatch target — so every post-completion
+  // `.next()` re-dispatched into it and RE-RAN the trailing prelude
+  // (observable via a `unreachable += 1` after the last yield,
+  // GeneratorPrototype/throw/try-*-following-*). Mint a DEDICATED empty done
+  // state in that case; generators whose final state is already empty keep
+  // their exact state graph (byte-identical).
+  //
+  // (#2864 D4) `doneState` is the id of the state that COMPLETES the generator,
+  // which is the final fallthrough cursor (or the placeholder just minted for
+  // it) — NOT `states.length - 1`. Those coincide only for a straight-line
+  // body: every structural lowering (`for`/`while`/`do`/`if`/try-region)
+  // reserves its exit/join state BEFORE the nested body's states, so a body
+  // ENDING in one leaves the fallthrough at a LOWER id than the last reserved
+  // state. See the doneState note in `NativeGeneratorPlan`.
+  const doneState =
+    states[curId]!.statements.length > 0
+      ? reserveState() // empty placeholder — its default terminator IS `done`
+      : curId;
 
   // (#3050) Apply the runtime-throw route stamps now that every state object is
   // final (finishState rebuilds them, so stamping placeholders would be lost).
@@ -1455,6 +1558,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
 
   return {
     states,
+    doneState,
     spills,
     spillTypes,
     elemValType,
@@ -1504,12 +1608,12 @@ function isNativeGeneratorExpressionShape(ctx: CodegenContext, decl: ts.Function
   if (!decl.body) return false;
   for (const param of decl.parameters) {
     // (#3386) Binding-pattern params are admitted: the closure's lifted body
-    // eagerly destructures them (emitClosureParamDestructuring, running before
-    // the factory emit — call-time per §10.2.11) and the factory packs the
-    // bound values into the spill fields; pattern legality itself is decided
-    // by `buildNativeGeneratorPlan` (which `isNativeGeneratorCandidate` calls
-    // last). Whole-param defaults/optionals and rest still bail — the closure
-    // trampoline's argc/default machinery is not threaded here (#2581-adjacent).
+    // eagerly destructures them (emitClosureParamDestructuring, before the
+    // factory emit — call-time per §10.2.11) and the factory packs the bound
+    // values into spill fields; pattern legality is decided by
+    // `buildNativeGeneratorPlan`. (#3893) Whole-param defaults are admitted in
+    // the no-JS-host lane too — closures.ts emits them in the lifted body =
+    // the factory, again where §10.2.11 wants them. Optional/rest still bail.
     if (
       !ts.isIdentifier(param.name) &&
       !ts.isArrayBindingPattern(param.name) &&
@@ -1517,9 +1621,9 @@ function isNativeGeneratorExpressionShape(ctx: CodegenContext, decl: ts.Function
     ) {
       return false;
     }
-    if (param.initializer || param.questionToken || param.dotDotDotToken) return false;
+    if (param.questionToken || param.dotDotDotToken || (param.initializer && !noJsHostTarget(ctx))) return false;
   }
-  if (bodyUsesArguments(decl.body)) return false;
+  if (bodyNeedsArgumentsObject(decl.body)) return false;
   if (fnExprBodyReferencesThis(decl.body)) return false;
   if (decl.name && bodyReferencesOwnName(decl.body, decl.name.text)) return false;
   // (#3302) Outer-scope captures are ADMITTED in the standalone/wasi lane:
@@ -1952,9 +2056,9 @@ export function isNativeGeneratorCandidate(ctx: CodegenContext, decl: GeneratorD
   if (ts.isFunctionExpression(decl) && !isNativeGeneratorExpressionShape(ctx, decl)) return false;
   // (#2571) An object-literal method with a computed/string name
   // (`{ [k]*(){} }`, `{ "m"*(){} }`) is out of scope — only an identifier-named
-  // method threads cleanly through the funcMap key. A FunctionDeclaration name
-  // is always an Identifier.
-  if (ts.isMethodDeclaration(decl) && !ts.isIdentifier(decl.name)) return false;
+  // method threads cleanly through the funcMap key. (#3896) PRIVATE names are
+  // admitted: already `__priv_`-mangled, and class-only, so never this shape.
+  if (ts.isMethodDeclaration(decl) && !ts.isIdentifier(decl.name) && !ts.isPrivateIdentifier(decl.name)) return false;
   // (#2571/#2581) A method generator is native-routable only when its emit site
   // is wired to the native factory: CLASS bodies (class-bodies.ts, #2571) and
   // OBJECT-LITERAL methods (literals.ts, #2581). Both compile the method body as
@@ -1989,17 +2093,42 @@ export function isNativeGeneratorCandidate(ctx: CodegenContext, decl: GeneratorD
       return false;
     }
   }
-  // (#2581) An OBJECT-LITERAL generator method with a DEFAULT or OPTIONAL param
-  // must bail to the host path. Object-literal methods are invoked through the
-  // closure trampoline (`emitObjectMethodAsClosure`), which forwards args but
-  // does NOT set the `__argc_default` global the param-default check reads — so
-  // the native factory would read the un-defaulted sentinel and yield the wrong
-  // value (`{ *m(d=5){yield d} }.m()` → 0 instead of 5). Class methods are called
-  // directly (argc set), so they keep defaults native. The eager-buffer host path
-  // applies defaults correctly for the object-literal case, so route there.
+  // (#2581 → #3948) The OBJECT-LITERAL generator method DEFAULT/OPTIONAL bail is
+  // LIFTED. #2581's diagnosis was right about the symptom and wrong about both
+  // the mechanism and the remedy, so the correction is recorded here rather than
+  // just deleted (see issue #3948 for the instrumented trace):
+  //
+  //   * The mechanism was NOT the `emitObjectMethodAsClosure` trampoline. A plain
+  //     `o.m()` is a direct call and does reach `maybeSetArgcForKnownCall`
+  //     (call-receiver-method.ts). What it found there was an EMPTY
+  //     `ctx.funcOptionalParams` — object-literal methods were the one method
+  //     form that never registered optional-param metadata (class bodies do it in
+  //     `registerClassOptionalParams`, free functions in declarations.ts). The
+  //     gate `!funcUsesArguments.has(n) && !funcOptionalParams.has(n)` therefore
+  //     returned early and `$__argc` kept its `-1` "unknown caller" sentinel.
+  //   * The remedy was NOT sound either: routing to the eager-buffer HOST path
+  //     does not apply the default correctly — measured on the host lane,
+  //     `{ *m(a = 5) }.m().next().value` is 0 there too. The bail bought no
+  //     correctness, only a `__gen_*` host-import leak in standalone (98 rows).
+  //
+  // #3948 fixes the real gap in literals.ts (register the optional params), which
+  // makes the argc-driven default fire for object-literal methods in BOTH lanes;
+  // this gate then has nothing left to protect against. Kill-switched both ways:
+  // restoring this bail turns the leak red again, and reverting the literals.ts
+  // registration alone leaves a host-free module that silently yields the inert 0.
+  //
+  // `questionToken` STILL bails, and that half was measured rather than inherited:
+  // with the argc registration in place, `{ *m(a?: number) { yield a === undefined
+  // ? 42 : a } }.m()` still yields 0, not 42 — an `a?: number` param lowers to a
+  // bare `f64` with no `undefined` inhabitant, so there is nothing for the missing
+  // -arg branch to bind. That is a value-representation gap (#3949's family), not
+  // an admission-gate one, and the same 0 comes out of a NON-generator
+  // `{ m(a?: number) }`. Admitting it here would trade a leak for a wrong value,
+  // so it keeps the host path until the rep gap is closed. #3893 made the same
+  // call for function expressions.
   if (ts.isMethodDeclaration(decl) && ts.isObjectLiteralExpression(decl.parent)) {
     for (const param of decl.parameters) {
-      if (param.initializer || param.questionToken) return false;
+      if (param.questionToken) return false;
     }
   }
   // (#2938) A generator METHOD whose emitted name is not unique within its
@@ -2045,7 +2174,7 @@ export function isNativeGeneratorCandidate(ctx: CodegenContext, decl: GeneratorD
   if (
     ts.isMethodDeclaration(decl) &&
     decl.body &&
-    (bodyUsesArguments(decl.body) ||
+    (bodyNeedsArgumentsObject(decl.body) ||
       methodBodyUsesSuper(decl.body) ||
       // (#3032 W4) Outer-scope captures are ADMITTED for method generators in
       // the standalone/wasi lane: a class / object-literal method body never
@@ -2313,10 +2442,38 @@ export function registerNativeGenerator(
     // (#2864 F2) `gen.throw(e)` payload — externref regardless of carrier.
     { name: "error", type: { kind: "externref" }, mutable: true },
   ];
-  for (let i = 0; i < paramTypes.length; i++) {
+  // (#3620) A BINDING-PATTERN parameter's state field must be typed at the
+  // value's actual wasm-boundary representation (`externref`), NOT at the TS
+  // type the checker infers for the pattern.
+  //
+  // Why: for `*m([x] = [1])` the checker infers the parameter as the TUPLE
+  // `[number]`, so `resolveWasmType` mints a `$__tuple_N` struct and the caller
+  // passed one — until the parameter gained a DEFAULT. A defaulted parameter is
+  // widened to `externref` at the wasm boundary (the callee must be able to see
+  // "argument absent"), which removes the call site's tuple conversion, and the
+  // in-callee default materialization emits the array literal in its natural
+  // `$__vec_f64` shape. The state field still claimed `$__tuple_N`, so the
+  // factory's param→field coercion emitted an unconditional
+  // `ref.cast (ref null $__tuple_N)` over a value that is now never a tuple —
+  // an UNCATCHABLE `illegal cast` that aborted the module.
+  //
+  // This is the same defect shape as #3610: a `ref.cast` justified by a static
+  // type that no longer describes the runtime value. The fix is the same in
+  // spirit — do not assert what is not guaranteed. The resume prelude's
+  // destructuring reader already dispatches dynamically over
+  // tuple-struct / vec / generic-iterable receivers (`ref.test` cascade), so an
+  // `externref` field is exactly what it is built to consume.
+  //
+  // Keyed off the synthetic `__genarg{i}` name minted above for binding-pattern
+  // params (#2920) — the one place that already distinguishes them, so the
+  // name/type arrays cannot drift apart.
+  const stateParamTypes = paramTypes.map((t, i) =>
+    (paramNames[i] ?? "").startsWith("__genarg") ? ({ kind: "externref" } as ValType) : t,
+  );
+  for (let i = 0; i < stateParamTypes.length; i++) {
     stateFields.push({
       name: `param_${paramNames[i] ?? i}`,
-      type: paramTypes[i]!,
+      type: stateParamTypes[i]!,
       mutable: false,
     });
   }
@@ -2459,7 +2616,11 @@ export function registerNativeGenerator(
     stateTypeIdx,
     resultTypeIdx,
     paramNames,
-    paramTypes,
+    // (#3620) The STATE-FIELD types, not the caller's declared param types —
+    // the resume prelude allocates its `param_*` locals from this array and
+    // must agree with the field it `struct.get`s. Identical to `paramTypes`
+    // except for binding-pattern params (widened to `externref` above).
+    paramTypes: stateParamTypes,
     paramFieldOffset: PARAM_FIELD_OFFSET,
     sentFieldIdx: SENT_FIELD,
     modeFieldIdx: MODE_FIELD,
@@ -2474,7 +2635,10 @@ export function registerNativeGenerator(
     undefWidenedPatternBindings:
       plan.undefWidenedPatternBindings.size > 0 ? plan.undefWidenedPatternBindings : undefined,
     yieldCount,
-    doneState: plan.states.length - 1, // the final `done` state id
+    // (#2864 D4) The state that COMPLETES the generator, taken from the plan —
+    // NOT `states.length - 1`, which aliases onto a live yield successor for any
+    // body ending in a loop / if / try-region (see `NativeGeneratorPlan.doneState`).
+    doneState: plan.doneState,
     elemValType,
     delegationSlots: delegationSlots.length > 0 ? delegationSlots : undefined,
     vecDelegationSlots: vecDelegationSlots.length > 0 ? vecDelegationSlots : undefined,
@@ -2875,6 +3039,100 @@ function compileState(
     const abruptBody: Instr[] = [];
     const savedAbrupt = fctx.body;
     fctx.body = abruptBody;
+    // (#2864 D2) Delegation abrupt forwarding — iterator close through `yield*`
+    // (§27.5.3.7 steps 7.b/7.c). A `.return(v)` / `.throw(e)` on the OUTER while
+    // suspended in a native-gen yield-star state must forward the abrupt to the
+    // INNER first (drive its resume once with the SAME mode + payloads) so the
+    // inner's `finally` blocks run, then continue the outer's own abrupt path
+    // (its finalizers + completion) exactly as before. Gated on the state's
+    // terminator being a native-gen delegation AND the slot being non-null
+    // (mid-delegation) — byte-inert for non-delegating generators, and inert at
+    // runtime for an abrupt resume at the plain-yield suspension that precedes
+    // the delegation (slot still null). A mode-2 inner re-throws after its
+    // finalizers (F2), and a `finally` that itself throws surfaces a NEW error —
+    // both are caught here, stored as the outer's error, and upgrade the outer
+    // to the throw path (a return completion whose close throws becomes a throw
+    // completion, per spec).
+    if (state.terminator.kind === "yield-star" && state.terminator.delegationKind === "native-gen") {
+      const closeSlot = info.delegationSlots?.[state.terminator.siteIndex];
+      const closeInner = closeSlot ? ctx.nativeGenerators.get(closeSlot.innerName) : undefined;
+      if (closeSlot && closeInner) {
+        const closeResumeIdx = ensureNativeGeneratorResumeFunction(ctx, closeInner);
+        const closeDelegLocal = allocLocal(fctx, `__gen_close_deleg_${fctx.locals.length}`, {
+          kind: "ref",
+          typeIdx: closeInner.stateTypeIdx,
+        });
+        const closeErrLocal = allocLocal(fctx, `__gen_close_err_${fctx.locals.length}`, { kind: "externref" });
+        // The inner is f64-gated (delegation admission), so its `abrupt` field is
+        // f64: copy the outer's `.return(v)` value when the outer's carrier is
+        // also f64; a boxed-any outer's externref abrupt has no unbox seam here —
+        // deliver undefined (the value is unobservable: the inner result is
+        // discarded and the outer completes with its OWN abrupt field).
+        const closeAbruptPayload: Instr[] =
+          genCarrierFieldType(info.elemValType).kind === "f64"
+            ? [
+                { op: "local.get", index: selfLocal },
+                { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: info.abruptFieldIdx },
+              ]
+            : [{ op: "f64.const", value: NaN }];
+        const closeCatch: Instr[] = [
+          { op: "local.set", index: closeErrLocal },
+          { op: "local.get", index: selfLocal },
+          { op: "local.get", index: closeErrLocal },
+          { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: ERROR_FIELD },
+          ...setModeInstrs(info, selfLocal, MODE_THROW),
+        ];
+        abruptBody.push(
+          { op: "local.get", index: selfLocal },
+          { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: closeSlot.fieldIdx },
+          { op: "ref.is_null" },
+          { op: "i32.eqz" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: selfLocal },
+              { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: closeSlot.fieldIdx },
+              { op: "ref.as_non_null" },
+              { op: "local.set", index: closeDelegLocal },
+              // inner.mode = outer.mode; inner.abrupt = payload; inner.error = outer.error
+              { op: "local.get", index: closeDelegLocal },
+              { op: "local.get", index: selfLocal },
+              { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: info.modeFieldIdx },
+              { op: "struct.set", typeIdx: closeInner.stateTypeIdx, fieldIdx: closeInner.modeFieldIdx },
+              { op: "local.get", index: closeDelegLocal },
+              ...closeAbruptPayload,
+              { op: "struct.set", typeIdx: closeInner.stateTypeIdx, fieldIdx: closeInner.abruptFieldIdx },
+              { op: "local.get", index: closeDelegLocal },
+              { op: "local.get", index: selfLocal },
+              { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: ERROR_FIELD },
+              { op: "struct.set", typeIdx: closeInner.stateTypeIdx, fieldIdx: ERROR_FIELD },
+              // Drive the inner ONCE (result discarded); catch its mode-2
+              // re-throw / a finally-thrown replacement error. Foreign JS
+              // exceptions (host mode) recover via __get_caught_exception when
+              // the resume emitter acquired it (#3050 wrap parity).
+              {
+                op: "try",
+                blockType: { kind: "empty" },
+                body: [
+                  { op: "local.get", index: closeDelegLocal },
+                  { op: "call", funcIdx: closeResumeIdx },
+                  { op: "drop" },
+                ],
+                catches: [{ tagIdx: ensureExnTag(ctx), body: closeCatch }],
+                catchAll:
+                  getCaughtExnIdx !== undefined ? [{ op: "call", funcIdx: getCaughtExnIdx }, ...closeCatch] : undefined,
+              },
+              // Close complete — clear the slot.
+              { op: "local.get", index: selfLocal },
+              { op: "ref.null", typeIdx: closeInner.stateTypeIdx },
+              { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: closeSlot.fieldIdx },
+            ],
+            else: [],
+          },
+        );
+      }
+    }
     for (const finalizer of state.abruptResume.finalizers) {
       for (const stmt of finalizer) compileStatement(ctx, fctx, stmt);
     }

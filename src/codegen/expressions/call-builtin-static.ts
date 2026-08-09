@@ -10,8 +10,10 @@
 // chain. Moved verbatim: the emitted Wasm is byte-identical.
 import { ts } from "../../ts-api.js";
 import { isBooleanType, isNumberType, isStringType } from "../../checker/type-mapper.js";
+import { ensureIntegrityPredicate } from "../object-integrity-carrier.js"; // (#4032)
 import { integrityVarKey, widenedVarKeyFromDecl } from "../widened-var-key.js";
 import type { Instr, ValType } from "../../ir/types.js";
+import { isPristineEs5IntrinsicIsFrozenCall } from "../../ir/object-integrity.js";
 import { resolveArrayInfo } from "../array-methods.js";
 import { numberIsPredicateOps } from "../number-is-predicate-ops.js";
 import { sameValueNumberOps } from "../same-value-number-ops.js";
@@ -25,18 +27,26 @@ import {
 } from "../array-object-proto.js";
 import { undefinedExternInstrs } from "../any-helpers.js";
 import { BUILTIN_STATIC_METHOD_ARITY, pushBuiltinFnSingletonValueInstrs } from "../builtin-fn-meta.js";
-import { emitVariadicStringConcat } from "../builtin-scaffold.js";
+import {
+  allocJoinFoldLocals,
+  emitStringJoinFold,
+  emitVariadicStringConcat,
+  nativeStringRepr,
+} from "../builtin-scaffold.js";
+import { emitThrowRangeError } from "../js-errors.js";
 import {
   isSymbolSpeciesKeyExpression,
+  resolveBuiltinProtoGopdReceiver,
   resolveBuiltinReceiverName,
   tryEmitStandaloneBuiltinSpeciesGopd,
   tryEmitStandaloneBuiltinStaticGopd,
   tryEmitStandaloneStructGopdKeyDispatch,
 } from "../builtin-static-gopd.js";
+import { tryEmitBuiltinProtoConstructorDescriptor } from "../builtin-proto-constructor.js";
 import { compileArrowAsClosure } from "../closures.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
-import { allocLocal } from "../context/locals.js";
+import { allocLocal, allocTempLocal, releaseTempLocal } from "../context/locals.js";
 import { rollbackSpeculative, snapshotSpeculative } from "../context/speculative.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { emitGlobalThisGopdFold } from "../dyn-read.js";
@@ -59,6 +69,7 @@ import { compileArrayConstructorCall, compileObjectLiteralAsExternref } from "..
 import { emitCollectionIteratorVec, ensureMapGroupBy } from "../map-runtime.js";
 import {
   emitBrandCheckTypeError,
+  emitLazyNativeProtoGet,
   ensureStandaloneNativeMethodClosure,
   getNativeProtoBuiltinGlue,
 } from "../native-proto.js";
@@ -66,6 +77,7 @@ import {
   ensureNativeStringExternBridge,
   ensureNativeStringHelpers,
   ensureStrToCharVecHelper,
+  nativeStringLiteralInstrs,
   stringConstantExternrefInstrs,
 } from "../native-strings.js";
 import {
@@ -79,17 +91,20 @@ import {
   emitArrayIsArrayExternrefPredicate,
   tryEnsureNativeProtoBrand,
 } from "../property-access.js";
-import { isGlobalRegExpIdentifier } from "../regexp-standalone.js";
+import { isGlobalRegExpIdentifier, isStaticallyUndefinedExpr } from "../regexp-standalone.js";
 import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression, valTypesMatch, VOID_RESULT } from "../shared.js";
 import { compileStringLiteral } from "../string-ops.js";
 import { ensureStringRawHelper } from "../string-raw.js";
 import { defaultValueInstrs, pushDefaultValue } from "../type-coercion.js";
 import { compileMathCall } from "./builtins.js";
+import { tryCompileObjectCreateStaticPrototype } from "./call-object-builtins.js";
 import { emitLazyProtoGet } from "./extern.js";
 import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./helpers.js";
+import { mayStaticallyExpandCreateDescriptor, staticDescriptorTypeError } from "../descriptor-shape.js";
 import { emitUndefined, ensureGetUndefined, ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { resolveStructName } from "./misc.js";
+import { tryCompileEs5GetPrototypeOfEarly, tryCompileEs5GetPrototypeOfValue } from "./object-get-prototype-of.js";
 import {
   BUILTIN_CLASS_NAMES,
   compileCallExpression,
@@ -101,6 +116,55 @@ import {
   staticToBoolean,
   tracesToTypedArrayIntrinsicProto,
 } from "./calls.js";
+
+/**
+ * Reified builtin method closures are ordinary function objects whose
+ * [[Prototype]] is %Function.prototype%. Preserve their exact metadata subtype
+ * long enough to route around the generic `$Object`-only prototype helper.
+ */
+function tryEmitBuiltinFunctionPrototype(ctx: CodegenContext, fctx: FunctionContext, argType: ValType): boolean {
+  if (
+    (!ctx.standalone && !ctx.wasi) ||
+    (argType.kind !== "ref" && argType.kind !== "ref_null") ||
+    !ctx.builtinFnMetaByTypeIdx?.has(argType.typeIdx)
+  ) {
+    return false;
+  }
+
+  fctx.body.push({ op: "drop" });
+  const functionBrand = tryEnsureNativeProtoBrand(ctx, "Function");
+  if (functionBrand !== undefined && emitLazyNativeProtoGet(ctx, fctx, functionBrand)) {
+    return true;
+  }
+  fctx.body.push({ op: "ref.null.extern" });
+  return true;
+}
+
+function emitBuiltinGetPrototypeOfFallback(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  arg: ts.Expression,
+): InnerResult {
+  const argType = compileExpression(ctx, fctx, arg);
+  if (!argType) {
+    fctx.body.push({ op: "ref.null.extern" });
+    return { kind: "externref" };
+  }
+  if (tryEmitBuiltinFunctionPrototype(ctx, fctx, argType)) {
+    return { kind: "externref" };
+  }
+  if (argType.kind !== "externref") {
+    coerceType(ctx, fctx, argType, { kind: "externref" });
+  }
+  const getPrototypeIdx = ensureLateImport(ctx, "__getPrototypeOf", [{ kind: "externref" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+  if (getPrototypeIdx !== undefined) {
+    fctx.body.push({ op: "call", funcIdx: getPrototypeIdx });
+  } else {
+    fctx.body.push({ op: "drop" }, { op: "ref.null.extern" });
+  }
+  return { kind: "externref" };
+}
 
 /**
  * (#742 slice 2) Built-in static-method call dispatch — extracted verbatim from
@@ -115,6 +179,85 @@ import {
  * Reflect, Promise, JSON, Date, then receiver-type method dispatch). Moved
  * unchanged so the emitted Wasm is byte-identical.
  */
+/**
+ * (#4047) `Object.create(proto, undefined)` — §20.1.2.2 step 3 is CONDITIONAL:
+ * "If properties is **not undefined**, return ? ObjectDefineProperties(obj,
+ * properties)". So it defines nothing and is NOT a ToObject error. The generic
+ * two-argument arm handed `undefined` straight to `__defineProperties`, whose
+ * own §20.1.2.3.1 step 1 `ToObject(undefined)` correctly throws a TypeError.
+ * Two different spec steps, one of which does not apply here.
+ *
+ * Only the STATIC spelling is folded away (`undefined` / `void 0`). A
+ * runtime-valued `properties` that happens to hold `undefined` still reaches
+ * the helper and throws; folding that needs an is-undefined test at the
+ * externref boundary and is left to the receiver work in #4010.
+ *
+ * The created object is already on the stack. The properties argument is still
+ * compiled and dropped — `void sideEffect()` is a legal spelling of a
+ * statically-undefined expression.
+ */
+function emitObjectCreateWithUndefinedProperties(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propertiesArg: ts.Expression,
+): void {
+  const objLocal = allocLocal(fctx, `__ocreate_obj_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: objLocal });
+  const propsType = compileExpression(ctx, fctx, propertiesArg);
+  if (propsType) fctx.body.push({ op: "drop" });
+  fctx.body.push({ op: "local.get", index: objLocal });
+}
+
+/**
+ * `Object.create(proto, properties)` where `properties` is not an object
+ * literal — delegate to `__defineProperties` (a defined native under
+ * standalone, the host import otherwise). The created object is on the stack.
+ *
+ * (#4047) Dispatches the statically-undefined spelling away first; see
+ * {@link emitObjectCreateWithUndefinedProperties} for why that is a different
+ * spec step and not merely an optimisation.
+ */
+function emitObjectCreateDynamicProperties(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propertiesArg: ts.Expression,
+): void {
+  if (isStaticallyUndefinedExpr(propertiesArg)) {
+    emitObjectCreateWithUndefinedProperties(ctx, fctx, propertiesArg);
+    return;
+  }
+  const objLocal = allocLocal(fctx, `__ocreate_obj_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: objLocal });
+
+  const dpIdx = ensureLateImport(
+    ctx,
+    "__defineProperties",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  flushLateImportShifts(ctx, fctx);
+
+  if (dpIdx === undefined) {
+    // No host import available — just return obj without descriptors.
+    fctx.body.push({ op: "local.get", index: objLocal });
+    return;
+  }
+  fctx.body.push({ op: "local.get", index: objLocal });
+  const descType = compileExpression(ctx, fctx, propertiesArg);
+  if (!descType) {
+    fctx.body.push({ op: "ref.null.extern" });
+  } else if (descType.kind !== "externref") {
+    // (#3394) Use coerceType, not a bare extern.convert_any: a PRIMITIVE
+    // descriptors arg (e.g. `Object.create(o, 5n)` — a bigint, which is a
+    // TypeError at runtime but must still COMPILE to valid Wasm) is i64/i32/f64
+    // on the stack, and extern.convert_any is illegal on a non-ref value
+    // ("extern.convert_any expected anyref, found i64"). coerceType routes
+    // i64-bigint → __box_bigint, i32/f64 → __box_*, ref → extern.convert_any.
+    coerceType(ctx, fctx, descType, { kind: "externref" });
+  }
+  fctx.body.push({ op: "call", funcIdx: dpIdx });
+}
+
 export function compileBuiltinStaticCall(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1431,6 +1574,17 @@ export function compileBuiltinStaticCall(
     const method = propAccess.name.text;
     const arg0 = expr.arguments[0]!;
 
+    // Test262's original top-level harness is not yet IR-claimed. Keep this
+    // compatibility adapter thin: the semantic classification remains owned
+    // by ir/object-integrity and is shared with selector + AST→IR lowering.
+    if (
+      method === "isFrozen" &&
+      isPristineEs5IntrinsicIsFrozenCall(expr, (node) => isGlobalBuiltinIdentifier(ctx, fctx, node))
+    ) {
+      fctx.body.push({ op: "i32.const", value: 0 });
+      return { kind: "i32" };
+    }
+
     // (#2744) The host-mode static fold (`ctx.frozenVars`/`ctx.sealedVars`
     // keyed on the identifier) was execution-order-blind — `Object.freeze(o)`
     // populates those sets during codegen, so an *earlier* `Object.isFrozen(o)`
@@ -1448,8 +1602,7 @@ export function compileBuiltinStaticCall(
       // fresh JS array and lose the WeakSet/descriptor identity) and delegate to
       // the runtime TestIntegrityLevel query.
       if (argType.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
-      const importName = method === "isFrozen" ? "__object_isFrozen" : "__object_isSealed";
-      const hostIdx = ensureLateImport(ctx, importName, [{ kind: "externref" }], [{ kind: "i32" }]);
+      const hostIdx = ensureIntegrityPredicate(ctx, arg0, method);
       flushLateImportShifts(ctx, fctx);
       if (hostIdx !== undefined) {
         fctx.body.push({ op: "call", funcIdx: hostIdx });
@@ -1492,7 +1645,7 @@ export function compileBuiltinStaticCall(
       // vec into a fresh JS array and lose identity) and delegate to the runtime
       // query.
       if (argType.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
-      const hostIdx = ensureLateImport(ctx, "__object_isExtensible", [{ kind: "externref" }], [{ kind: "i32" }]);
+      const hostIdx = ensureIntegrityPredicate(ctx, arg0, "isExtensible");
       flushLateImportShifts(ctx, fctx);
       if (hostIdx !== undefined) {
         fctx.body.push({ op: "call", funcIdx: hostIdx });
@@ -1598,27 +1751,20 @@ export function compileBuiltinStaticCall(
     return { kind: "externref" };
   }
 
-  // Handle Object.getPrototypeOf(obj) — return prototype as externref
-  // For class instances, creates a struct representing the prototype and returns
-  // it as externref via extern.convert_any. For plain objects, returns null.
   if (
     ts.isIdentifier(propAccess.expression) &&
     propAccess.expression.text === "Object" &&
-    propAccess.name.text === "getPrototypeOf" &&
-    expr.arguments.length >= 1
+    isGlobalBuiltinIdentifier(ctx, fctx, propAccess.expression) &&
+    propAccess.name.text === "getPrototypeOf"
   ) {
+    const es5Early = tryCompileEs5GetPrototypeOfEarly(ctx, fctx, expr);
+    if (es5Early) return es5Early;
     const arg0 = expr.arguments[0]!;
 
     // (#2743 a) `Object.getPrototypeOf(arguments)` is %Object.prototype%
     // (§10.4.4), NOT the array prototype the vec representation would yield.
-    // The arguments object is an ordinary Object, so its `[[Prototype]]` must
-    // be the SAME `Object.prototype` value the compiler materializes for any
-    // plain object — `Object.getPrototypeOf({}) === Object.getPrototypeOf(
-    // arguments)`. Emit the compiler's own `Object.prototype` value-read
-    // (reusing the real `Object` identifier node `propAccess.expression`), so
-    // both sides reference one identity. Host-mode only; standalone keeps the
-    // bare vec. (`arguments` is a side-effect-free identifier, so dropping it
-    // is unnecessary.)
+    // Emit the compiler's own `Object.prototype` value so ordinary objects and
+    // arguments share one identity. Host-mode only; standalone keeps the vec.
     if (!noJsHost(ctx) && ts.isIdentifier(arg0) && arg0.text === "arguments" && fctx.localMap.has("arguments")) {
       const objProtoExpr = ts.factory.createPropertyAccessExpression(
         propAccess.expression,
@@ -1735,6 +1881,9 @@ export function compileBuiltinStaticCall(
     }
 
     const argTsType = ctx.checker.getTypeAtLocation(arg0);
+
+    const es5Value = tryCompileEs5GetPrototypeOfValue(ctx, fctx, expr);
+    if (es5Value) return es5Value;
 
     // (#3013) `Object.getPrototypeOf(<array iterator>)` → the shared native
     // `%ArrayIteratorPrototype%` singleton (standalone/WASI). Every array
@@ -1857,24 +2006,8 @@ export function compileBuiltinStaticCall(
       }
     }
 
-    // Fallback: use host import for externref/dynamic objects (e.g. Object.create results)
-    const argTypeF = compileExpression(ctx, fctx, arg0, { kind: "externref" });
-    if (!argTypeF) {
-      fctx.body.push({ op: "ref.null.extern" });
-      return { kind: "externref" };
-    }
-    if (argTypeF.kind !== "externref") {
-      coerceType(ctx, fctx, argTypeF, { kind: "externref" });
-    }
-    const gptFuncIdx = ensureLateImport(ctx, "__getPrototypeOf", [{ kind: "externref" }], [{ kind: "externref" }]);
-    flushLateImportShifts(ctx, fctx);
-    if (gptFuncIdx !== undefined) {
-      fctx.body.push({ op: "call", funcIdx: gptFuncIdx });
-    } else {
-      fctx.body.push({ op: "drop" });
-      fctx.body.push({ op: "ref.null.extern" });
-    }
-    return { kind: "externref" };
+    // Fallback: use host import for externref/dynamic objects (e.g. Object.create results).
+    return emitBuiltinGetPrototypeOfFallback(ctx, fctx, arg0);
   }
 
   // Handle Object.create(proto) — create instances for known prototypes
@@ -1886,22 +2019,8 @@ export function compileBuiltinStaticCall(
   ) {
     const arg0 = expr.arguments[0]!;
 
-    // Object.create(Foo.prototype) → struct.new with default fields (Wasm-native fast path)
-    if (ts.isPropertyAccessExpression(arg0) && ts.isIdentifier(arg0.expression) && arg0.name.text === "prototype") {
-      const protoClassName = arg0.expression.text;
-      if (ctx.classSet.has(protoClassName)) {
-        const structTypeIdx = ctx.structMap.get(protoClassName);
-        const fields = ctx.structFields.get(protoClassName);
-        if (structTypeIdx !== undefined && fields) {
-          // Push default values for all fields, then struct.new
-          for (const field of fields) {
-            pushDefaultValue(fctx, field.type, ctx);
-          }
-          fctx.body.push({ op: "struct.new", typeIdx: structTypeIdx });
-          return { kind: "ref", typeIdx: structTypeIdx };
-        }
-      }
-    }
+    const staticPrototype = tryCompileObjectCreateStaticPrototype(ctx, fctx, arg0);
+    if (staticPrototype !== undefined) return staticPrototype;
 
     // Host import path: Object.create(null) and Object.create(proto[, descriptors])
     // Object.create(null) → empty object with null prototype
@@ -1936,29 +2055,16 @@ export function compileBuiltinStaticCall(
       }
       fctx.body.push({ op: "call", funcIdx: hostIdx });
 
-      // If there's a second argument (property descriptors), expand at compile time.
-      // Only use static expansion when every descriptor value is an object literal AND
-      // every writable/enumerable/configurable flag inside each descriptor is
-      // statically ToBoolean-resolvable (per §6.2.6). Non-resolvable flags
-      // (`configurable: someVar`) need runtime ToBoolean — fall through to the
-      // non-fast-path so the runtime honors §7.1.2 instead of silently degrading
-      // to `false`.
+      // Second argument (property descriptors): expand at compile time, but only
+      // for descriptors this expansion can FULLY model. The admission test and
+      // its reasoning are `mayStaticallyExpandCreateDescriptor` (#4061) —
+      // accessors (silently dropped here), §6.2.5.6 violations, unresolvable flags.
       if (
         expr.arguments.length >= 2 &&
         ts.isObjectLiteralExpression(expr.arguments[1]!) &&
-        (expr.arguments[1] as ts.ObjectLiteralExpression).properties.every((p) => {
-          if (!ts.isPropertyAssignment(p)) return true;
-          const init = (p as ts.PropertyAssignment).initializer;
-          if (!ts.isObjectLiteralExpression(init)) return false;
-          for (const dp of init.properties) {
-            if (!ts.isPropertyAssignment(dp) || !ts.isIdentifier(dp.name)) continue;
-            const n = dp.name.text;
-            if (n === "writable" || n === "enumerable" || n === "configurable") {
-              if (staticToBoolean(dp.initializer) === undefined) return false;
-            }
-          }
-          return true;
-        })
+        (expr.arguments[1] as ts.ObjectLiteralExpression).properties.every(
+          (p) => !ts.isPropertyAssignment(p) || mayStaticallyExpandCreateDescriptor(p.initializer, staticToBoolean),
+        )
       ) {
         const descsLiteral = expr.arguments[1] as ts.ObjectLiteralExpression;
         // Save created object to local for repeated use
@@ -2100,6 +2206,18 @@ export function compileBuiltinStaticCall(
                 : undefined;
           if (propName === undefined) continue;
 
+          // (#4061) The two ToPropertyDescriptor TypeErrors the dynamic applier
+          // structurally cannot report — see `staticDescriptorTypeError`. Emitted
+          // where THIS key applies, after its side effects, so earlier keys land first.
+          const descTypeError = staticDescriptorTypeError(prop.initializer);
+          if (descTypeError !== undefined) {
+            const sideEffectType = compileExpression(ctx, fctx, prop.initializer);
+            if (sideEffectType) fctx.body.push({ op: "drop" });
+            emitThrowTypeError(ctx, fctx, descTypeError);
+            fctx.body.push({ op: "unreachable" });
+            return { kind: "externref" };
+          }
+
           if (dpDescIdx !== undefined) {
             fctx.body.push({ op: "local.get", index: objLocal });
             // (#51) Dual-mode key materialization — nativeStrings stores a `-1`
@@ -2137,38 +2255,7 @@ export function compileBuiltinStaticCall(
         }
         fctx.body.push({ op: "local.get", index: objLocal });
       } else if (expr.arguments.length >= 2) {
-        // Non-literal second arg: use __defineProperties host import
-        const objLocal = allocLocal(fctx, `__ocreate_obj_${fctx.locals.length}`, { kind: "externref" });
-        fctx.body.push({ op: "local.set", index: objLocal });
-
-        const dpIdx = ensureLateImport(
-          ctx,
-          "__defineProperties",
-          [{ kind: "externref" }, { kind: "externref" }],
-          [{ kind: "externref" }],
-        );
-        flushLateImportShifts(ctx, fctx);
-
-        if (dpIdx !== undefined) {
-          fctx.body.push({ op: "local.get", index: objLocal });
-          const descType = compileExpression(ctx, fctx, expr.arguments[1]!);
-          if (!descType) {
-            fctx.body.push({ op: "ref.null.extern" });
-          } else if (descType.kind !== "externref") {
-            // (#3394) Use coerceType, not a bare extern.convert_any: a PRIMITIVE
-            // descriptors arg (e.g. `Object.create(o, 5n)` — a bigint, which is
-            // a TypeError at runtime but must still COMPILE to valid Wasm) is
-            // i64/i32/f64 on the stack, and extern.convert_any is illegal on a
-            // non-ref value ("extern.convert_any expected anyref, found i64").
-            // coerceType routes i64-bigint → __box_bigint, i32/f64 → __box_*,
-            // ref → extern.convert_any (mirrors the 1st-arg path above).
-            coerceType(ctx, fctx, descType, { kind: "externref" });
-          }
-          fctx.body.push({ op: "call", funcIdx: dpIdx });
-        } else {
-          // No host import available — just return obj without descriptors
-          fctx.body.push({ op: "local.get", index: objLocal });
-        }
+        emitObjectCreateDynamicProperties(ctx, fctx, expr.arguments[1]!);
       }
       return { kind: "externref" };
     }
@@ -2508,20 +2595,15 @@ export function compileBuiltinStaticCall(
     // (#2901) Resolve the proto's builtin name from EITHER the syntactic
     // `<Ctor>.prototype` form OR the harness's dynamic %TypedArray%.prototype
     // receiver traced through intermediate vars.
-    let gopdProtoBuiltin: string | undefined;
-    if (ctx.standalone && propLiteral !== undefined) {
-      if (
-        ts.isPropertyAccessExpression(arg0) &&
-        !ts.isPrivateIdentifier(arg0.name) &&
-        arg0.name.text === "prototype" &&
-        ts.isIdentifier(arg0.expression) &&
-        BUILTIN_CTOR_NAMES.has(arg0.expression.text) &&
-        !(fctx.localMap.has(arg0.expression.text) || (fctx.boxedCaptures?.has(arg0.expression.text) ?? false))
-      ) {
-        gopdProtoBuiltin = arg0.expression.text;
-      } else if (tracesToTypedArrayIntrinsicProto(ctx, arg0)) {
-        gopdProtoBuiltin = "%TypedArray%";
-      }
+    const gopdProtoBuiltin = resolveBuiltinProtoGopdReceiver(ctx, fctx, arg0, propLiteral, BUILTIN_CTOR_NAMES, (e) =>
+      tracesToTypedArrayIntrinsicProto(ctx, e),
+    );
+    // (#4200) `constructor` is OWN on every builtin prototype but is NOT a
+    // method, so it misses the member-CSV gate below and answered `undefined`.
+    // Synthesized from the same carrier module as the VALUE read, before that
+    // gate — see builtin-proto-constructor.ts.
+    if (tryEmitBuiltinProtoConstructorDescriptor(ctx, fctx, gopdProtoBuiltin, propLiteral)) {
+      return { kind: "externref" };
     }
     if (gopdProtoBuiltin !== undefined && propLiteral !== undefined) {
       const protoBuiltin = gopdProtoBuiltin;
@@ -2714,6 +2796,21 @@ export function compileBuiltinStaticCall(
     expr.arguments.length >= 1
   ) {
     const arg = expr.arguments[0]!;
+    // (#4227) §20.1.2.10 step 1 is `ToObject(O)`, so `null`/`undefined` throws.
+    // Host delegates to the real builtin and already did; the standalone
+    // `__getOwnPropertyNames` native has no nullish arm and answered an empty
+    // name list (15.2.3.4-1-2/-1-3). SYNTACTIC on purpose: `Object.keys`' twin
+    // guard (#2746) reads the argument's TS type, which the #1930 oracle ratchet
+    // forbids in new codegen — and a primitive receiver must NOT be caught here,
+    // since ES2015+ ToObject wraps it rather than throwing.
+    const isSyntacticNullish =
+      arg.kind === ts.SyntaxKind.NullKeyword ||
+      (ts.isIdentifier(arg) && arg.text === "undefined" && !fctx.localMap.has("undefined"));
+    if (isSyntacticNullish) {
+      emitThrowTypeError(ctx, fctx, "TypeError: Cannot convert undefined or null to object");
+      fctx.body.push({ op: "unreachable" });
+      return { kind: "externref" };
+    }
     const argResult = compileExpression(ctx, fctx, arg, { kind: "externref" });
     if (!argResult) {
       fctx.body.push({ op: "ref.null.extern" });
@@ -3210,4 +3307,389 @@ export function compileBuiltinStaticCall(
     return { kind: "externref" };
   }
   return undefined;
+}
+
+/**
+ * (#3541) `String.fromCharCode` / `String.fromCodePoint` invoked REFLECTIVELY —
+ * `.call(thisArg, …codes)` or `.apply(thisArg, codesArray)` — on the native
+ * string lanes (`ctx.nativeStrings`, standalone/WASI).
+ *
+ * Why this exists: the generic reflective path wraps the builtin static in a
+ * closure and routes through the runtime apply machinery, which cannot spread
+ * a native `$vec` argv into the builtin's variadic lowering — the result is a
+ * null string and the first consumer null-derefs in `__str_concat`. That is
+ * the SOLE remaining gate on the 311 `built-ins/RegExp/property-escapes`
+ * baseline rows (every one runs `regExpUtils.js`'s `buildString`, whose two
+ * `String.fromCodePoint.apply(null, <array>)` calls die here). See
+ * plan/issues/3541-standalone-fromcodepoint-apply-vec-null.md.
+ *
+ * Lowering:
+ *   - `.call(thisArg, a, b)`  → direct `String.fromX(a, b)` (§22.1.2.* never
+ *     reads `this`); thisArg is evaluated first for argument order.
+ *   - `.apply(thisArg)`       → `""` (empty code-unit list).
+ *   - `.apply(thisArg, arr)`  → runtime fold over the native vec: per element
+ *     load → ToUint16 (`fromCharCode`) or the §22.1.2.2 integral/[0,0x10FFFF]
+ *     RangeError guard (`fromCodePoint`) → the 1-char native helper → shared
+ *     `emitStringJoinFold` concat (sep "", `""` for the empty/null array).
+ *
+ * Precision gates (fall through to the legacy path, `undefined`):
+ *   - host lane (js-string) — untouched, it has a working host `.apply`;
+ *   - thisArg / argsArray not re-eval-safe (identifier, literal, null, …) —
+ *     bailing after compilation would double side effects on the legacy
+ *     recompile;
+ *   - argsArray does not compile to a native `$vec` of f64/i32/i8/i16/externref
+ *     elements (the compiled value is dropped; the gate above makes that safe).
+ */
+export function tryCompileFromCharCodeFamilyReflective(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  innerExpr: ts.Expression,
+  isCall: boolean,
+): InnerResult | undefined {
+  if (!ctx.nativeStrings || ctx.nativeStrTypeIdx < 0) return undefined;
+  let target: ts.Expression = innerExpr;
+  while (ts.isParenthesizedExpression(target) || ts.isAsExpression(target) || ts.isNonNullExpression(target)) {
+    target = target.expression;
+  }
+  if (!ts.isPropertyAccessExpression(target)) return undefined;
+  if (!ts.isIdentifier(target.expression) || target.expression.text !== "String") return undefined;
+  const mName = target.name.text;
+  if (mName !== "fromCharCode" && mName !== "fromCodePoint") return undefined;
+  const isFromCodePoint = mName === "fromCodePoint";
+  ensureNativeStringHelpers(ctx);
+  const repr = nativeStringRepr(ctx);
+  const helperIdx = ctx.nativeStrHelpers.get(isFromCodePoint ? "__str_fromCodePoint" : "__str_fromCharCode");
+  if (repr === undefined || helperIdx === undefined) return undefined;
+
+  const dropCompiled = (t: ValType | null): void => {
+    if (t !== null) fctx.body.push({ op: "drop" });
+  };
+
+  // `.call(thisArg, …codes)` → direct family call (reuses the #2088 fold and
+  // the #2601/#2875 per-argument coercion + guards wholesale).
+  if (isCall) {
+    if (expr.arguments.length > 0) dropCompiled(compileExpression(ctx, fctx, expr.arguments[0]!));
+    const synthetic = ts.factory.createCallExpression(
+      target as ts.LeftHandSideExpression,
+      undefined,
+      expr.arguments.slice(1),
+    );
+    ts.setTextRange(synthetic, expr);
+    (synthetic as { parent?: ts.Node }).parent = expr.parent;
+    return compileExpression(ctx, fctx, synthetic);
+  }
+
+  // `.apply()` / `.apply(thisArg)` — §: argArray absent → empty list → "".
+  if (expr.arguments.length < 2) {
+    if (expr.arguments.length === 1) dropCompiled(compileExpression(ctx, fctx, expr.arguments[0]!));
+    fctx.body.push(...repr.literal(""));
+    return repr.resultType;
+  }
+
+  const thisArg = expr.arguments[0]!;
+  let argsVal: ts.Expression = expr.arguments[1]!;
+  while (ts.isParenthesizedExpression(argsVal) || ts.isAsExpression(argsVal) || ts.isNonNullExpression(argsVal)) {
+    argsVal = argsVal.expression;
+  }
+  const reEvalSafe = (e: ts.Expression): boolean =>
+    ts.isIdentifier(e) ||
+    e.kind === ts.SyntaxKind.NullKeyword ||
+    e.kind === ts.SyntaxKind.TrueKeyword ||
+    e.kind === ts.SyntaxKind.FalseKeyword ||
+    ts.isNumericLiteral(e) ||
+    ts.isStringLiteralLike(e);
+  // The argsArray additionally admits `obj.prop` (single member access on an
+  // identifier — the `buildString(args){ …apply(null, args.pts) }` shape) and
+  // array literals. The bail-after-compile path only re-evaluates when the
+  // compiled type is NOT a supported vec; a getter-bearing read of that shape
+  // is already broken on the legacy path today, so the residual double-eval
+  // exposure is strictly smaller than the bug this replaces.
+  const argsReEvalSafe =
+    reEvalSafe(argsVal) ||
+    ts.isArrayLiteralExpression(argsVal) ||
+    (ts.isPropertyAccessExpression(argsVal) && ts.isIdentifier(argsVal.expression));
+  if (!reEvalSafe(thisArg) || !argsReEvalSafe) {
+    return undefined;
+  }
+
+  dropCompiled(compileExpression(ctx, fctx, thisArg));
+
+  const argType = compileExpression(ctx, fctx, argsVal);
+  if (argType === null) return null;
+
+  const vecElemSupported = (k: string): boolean =>
+    k === "f64" || k === "i32" || k === "i8" || k === "i16" || k === "externref";
+
+  /**
+   * Emit the destructure + join fold for ONE concrete vec type. Precondition:
+   * a `(ref null vecTypeIdx)` value is on the stack. Leaves one
+   * `repr.resultType` value. A null argArray spreads as the empty list
+   * (len stays 0 → "").
+   */
+  const emitVecSpreadFold = (vecTypeIdx: number, arrTypeIdx: number, elemType: ValType): void => {
+    const vecTmp = allocLocal(fctx, `__fccapply_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
+    const dataTmp = allocLocal(fctx, `__fccapply_data_${fctx.locals.length}`, {
+      kind: "ref_null",
+      typeIdx: arrTypeIdx,
+    });
+    const foldLocals = allocJoinFoldLocals(fctx, repr, "fccapply");
+    fctx.body.push({ op: "local.set", index: vecTmp });
+    fctx.body.push({ op: "local.get", index: vecTmp });
+    fctx.body.push({ op: "ref.is_null" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "i32.const", value: 0 },
+        { op: "local.set", index: foldLocals.lenTmp },
+      ],
+      else: [
+        { op: "local.get", index: vecTmp },
+        { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
+        { op: "local.set", index: foldLocals.lenTmp },
+        { op: "local.get", index: vecTmp },
+        { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 },
+        { op: "local.set", index: dataTmp },
+      ],
+    });
+    fctx.body.push(...repr.literal(""));
+    fctx.body.push({ op: "local.set", index: foldLocals.resultTmp });
+    fctx.body.push(...repr.literal(""));
+    fctx.body.push({ op: "local.set", index: foldLocals.sepTmp });
+    fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "local.set", index: foldLocals.iTmp });
+
+    // elem → 1-char string. Built via a body swap so emitThrowRangeError (a
+    // late-import-bearing emitter) targets the buffer; registered with
+    // ctx.liveBodies so a later late-import shift still fixes baked indices
+    // (the #2088 family pattern), and de-registered after the splice.
+    const elemBuf: Instr[] = [];
+    ctx.liveBodies.add(elemBuf);
+    const savedBody = fctx.body;
+    fctx.body = elemBuf;
+    try {
+      const getOp = elemType.kind === "i8" ? "array.get_u" : elemType.kind === "i16" ? "array.get_s" : "array.get";
+      elemBuf.push({ op: "local.get", index: dataTmp });
+      elemBuf.push({ op: "local.get", index: foldLocals.iTmp });
+      elemBuf.push({ op: getOp, typeIdx: arrTypeIdx } as Instr);
+      if (elemType.kind === "externref") {
+        // Boxed-any element → numeric code via the shared coercion engine
+        // (unboxes `__box_number` payloads; undefined → NaN).
+        coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" });
+      }
+      const elemIsF64 = elemType.kind === "f64" || elemType.kind === "externref";
+      if (isFromCodePoint) {
+        if (elemIsF64) {
+          // §22.1.2.2 2b/2c — non-integral (incl. NaN) or out-of-[0,0x10FFFF]
+          // code points throw RangeError (mirrors the direct-call family arm).
+          const cpTmp = allocTempLocal(fctx, { kind: "f64" });
+          elemBuf.push({ op: "local.tee", index: cpTmp });
+          elemBuf.push({ op: "local.get", index: cpTmp });
+          elemBuf.push({ op: "f64.trunc" });
+          elemBuf.push({ op: "f64.ne" });
+          elemBuf.push({ op: "local.get", index: cpTmp });
+          elemBuf.push({ op: "f64.const", value: 0 });
+          elemBuf.push({ op: "f64.lt" });
+          elemBuf.push({ op: "local.get", index: cpTmp });
+          elemBuf.push({ op: "f64.const", value: 0x10ffff });
+          elemBuf.push({ op: "f64.gt" });
+          elemBuf.push({ op: "i32.or" });
+          elemBuf.push({ op: "i32.or" });
+          const throwBuf: Instr[] = [];
+          fctx.body = throwBuf;
+          emitThrowRangeError(ctx, fctx, "RangeError: Invalid code point");
+          fctx.body = elemBuf;
+          elemBuf.push({ op: "if", blockType: { kind: "empty" }, then: throwBuf });
+          elemBuf.push({ op: "local.get", index: cpTmp });
+          elemBuf.push({ op: "i32.trunc_sat_f64_s" });
+          releaseTempLocal(fctx, cpTmp);
+        } else {
+          // Integral by construction; range-check in the i32 domain.
+          const cpTmp = allocTempLocal(fctx, { kind: "i32" });
+          elemBuf.push({ op: "local.tee", index: cpTmp });
+          elemBuf.push({ op: "i32.const", value: 0 });
+          elemBuf.push({ op: "i32.lt_s" });
+          elemBuf.push({ op: "local.get", index: cpTmp });
+          elemBuf.push({ op: "i32.const", value: 0x10ffff });
+          elemBuf.push({ op: "i32.gt_s" });
+          elemBuf.push({ op: "i32.or" });
+          const throwBuf: Instr[] = [];
+          fctx.body = throwBuf;
+          emitThrowRangeError(ctx, fctx, "RangeError: Invalid code point");
+          fctx.body = elemBuf;
+          elemBuf.push({ op: "if", blockType: { kind: "empty" }, then: throwBuf });
+          elemBuf.push({ op: "local.get", index: cpTmp });
+          releaseTempLocal(fctx, cpTmp);
+        }
+      } else if (elemIsF64) {
+        // fromCharCode: §7.1.8 ToUint16 in the f64 domain BEFORE the i32
+        // conversion (the #2875 slice-5 pattern — NaN/±Inf → 0, |x| ≥ 2^31
+        // keeps its true modulo; a bare trunc_sat saturates first and gets
+        // both wrong).
+        const u16Tmp = allocTempLocal(fctx, { kind: "f64" });
+        elemBuf.push({ op: "f64.trunc" });
+        elemBuf.push({ op: "local.tee", index: u16Tmp });
+        elemBuf.push({ op: "local.get", index: u16Tmp });
+        elemBuf.push({ op: "f64.const", value: 65536 });
+        elemBuf.push({ op: "f64.div" });
+        elemBuf.push({ op: "f64.floor" });
+        elemBuf.push({ op: "f64.const", value: 65536 });
+        elemBuf.push({ op: "f64.mul" });
+        elemBuf.push({ op: "f64.sub" });
+        elemBuf.push({ op: "i32.trunc_sat_f64_s" });
+        releaseTempLocal(fctx, u16Tmp);
+      }
+      // i32/i8/i16 fromCharCode: the helper's low-16 mask IS ToUint16.
+      elemBuf.push({ op: "call", funcIdx: helperIdx });
+    } finally {
+      fctx.body = savedBody;
+    }
+
+    // (#3224-style) Bounds-check against the physical backing: a grown/sparse
+    // array's logical length can exceed it; an absent index spreads as
+    // `undefined` — RangeError for fromCodePoint (NaN is not integral),
+    // code 0 for fromCharCode.
+    const oobBuf: Instr[] = [];
+    if (isFromCodePoint) {
+      ctx.liveBodies.add(oobBuf);
+      fctx.body = oobBuf;
+      try {
+        emitThrowRangeError(ctx, fctx, "RangeError: Invalid code point");
+      } finally {
+        fctx.body = savedBody;
+      }
+      oobBuf.push(...repr.literal(""));
+    } else {
+      oobBuf.push({ op: "i32.const", value: 0 });
+      oobBuf.push({ op: "call", funcIdx: helperIdx });
+    }
+    const boundsCheckedElem: Instr[] = [
+      { op: "local.get", index: dataTmp },
+      { op: "ref.is_null" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: repr.resultType },
+        then: [...oobBuf],
+        else: [
+          { op: "local.get", index: foldLocals.iTmp },
+          { op: "local.get", index: dataTmp },
+          { op: "array.len" },
+          { op: "i32.lt_s" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: repr.resultType },
+            then: elemBuf,
+            else: [...oobBuf],
+          },
+        ],
+      },
+    ];
+
+    emitStringJoinFold(ctx, fctx, repr, foldLocals, boundsCheckedElem);
+    ctx.liveBodies.delete(elemBuf);
+    ctx.liveBodies.delete(oobBuf);
+    fctx.body.push({ op: "local.get", index: foldLocals.resultTmp });
+  };
+
+  // Statically-typed native vec argument: fold it directly.
+  if (argType.kind === "ref" || argType.kind === "ref_null") {
+    const vecTypeIdx = argType.typeIdx;
+    const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+    if (arrTypeIdx < 0) {
+      fctx.body.push({ op: "drop" });
+      return undefined;
+    }
+    const elemType = (ctx.mod.types[arrTypeIdx] as { kind: "array"; element: ValType }).element;
+    if (!vecElemSupported(elemType.kind)) {
+      fctx.body.push({ op: "drop" });
+      return undefined;
+    }
+    emitVecSpreadFold(vecTypeIdx, arrTypeIdx, elemType);
+    return repr.resultType;
+  }
+
+  // EXTERNREF argument — the shape inside a struct-narrowed callee (#3536):
+  // `const lone = args.loneCodePoints` reads through the dynamic member path,
+  // so the local carries the vec WRAPPED as externref. Unwrap and dispatch on
+  // the two vec representations a JS `number[]` can take here ($vec_f64 for
+  // typed literals, $vec_externref for boxed/grown arrays); anything else is
+  // not array-like spreadable — §Function.prototype.apply step 4 TypeError.
+  if (argType.kind === "externref") {
+    const vecF64Idx = getOrRegisterVecType(ctx, "f64", { kind: "f64" });
+    const arrF64Idx = getArrTypeIdxFromVec(ctx, vecF64Idx);
+    const vecExtIdx = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
+    const arrExtIdx = getArrTypeIdxFromVec(ctx, vecExtIdx);
+    if (arrF64Idx < 0 || arrExtIdx < 0) {
+      fctx.body.push({ op: "drop" });
+      return undefined;
+    }
+    const anyTmp = allocLocal(fctx, `__fccapply_any_${fctx.locals.length}`, { kind: "anyref" });
+    fctx.body.push({ op: "any.convert_extern" });
+    fctx.body.push({ op: "local.set", index: anyTmp });
+
+    const savedBody = fctx.body;
+    const buildArm = (vecIdx: number, arrIdx: number, elemType: ValType): Instr[] => {
+      const buf: Instr[] = [];
+      ctx.liveBodies.add(buf);
+      fctx.body = buf;
+      try {
+        buf.push({ op: "local.get", index: anyTmp });
+        buf.push({ op: "ref.cast_null", typeIdx: vecIdx });
+        emitVecSpreadFold(vecIdx, arrIdx, elemType);
+      } finally {
+        fctx.body = savedBody;
+      }
+      ctx.liveBodies.delete(buf);
+      return buf;
+    };
+    const f64Arm = buildArm(vecF64Idx, arrF64Idx, { kind: "f64" });
+    const extArm = buildArm(vecExtIdx, arrExtIdx, { kind: "externref" });
+    const throwArm: Instr[] = [];
+    ctx.liveBodies.add(throwArm);
+    fctx.body = throwArm;
+    try {
+      // Also covers null/undefined argArray: §Function.prototype.apply treats
+      // those as the empty list — test nullish BEFORE the TypeError.
+      throwArm.push({ op: "local.get", index: anyTmp });
+      throwArm.push({ op: "ref.is_null" });
+      const emptyArm: Instr[] = [...repr.literal("")];
+      const teBuf: Instr[] = [];
+      fctx.body = teBuf;
+      emitThrowTypeError(ctx, fctx, "TypeError: CreateListFromArrayLike called on non-object");
+      fctx.body = throwArm;
+      teBuf.push(...repr.literal("")); // unreachable filler after throw; keeps the arm typed
+      throwArm.push({
+        op: "if",
+        blockType: { kind: "val", type: repr.resultType },
+        then: emptyArm,
+        else: teBuf,
+      });
+    } finally {
+      fctx.body = savedBody;
+    }
+    ctx.liveBodies.delete(throwArm);
+
+    fctx.body.push({ op: "local.get", index: anyTmp });
+    fctx.body.push({ op: "ref.test", typeIdx: vecF64Idx });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: repr.resultType },
+      then: f64Arm,
+      else: [
+        { op: "local.get", index: anyTmp },
+        { op: "ref.test", typeIdx: vecExtIdx },
+        {
+          op: "if",
+          blockType: { kind: "val", type: repr.resultType },
+          then: extArm,
+          else: throwArm,
+        },
+      ],
+    });
+    return repr.resultType;
+  }
+
+  fctx.body.push({ op: "drop" });
+  return undefined; // re-eval-safe by the gate above
 }

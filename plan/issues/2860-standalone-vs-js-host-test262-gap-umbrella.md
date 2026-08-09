@@ -1,9 +1,9 @@
 ---
 id: 2860
 title: "Umbrella: close the standalone-vs-js-host test262 gap (~20,500 host-free, honest metric #2879/#2360)"
-status: ready
+status: in-progress
 created: 2026-06-30
-updated: 2026-07-17
+updated: 2026-07-23
 priority: high
 feasibility: hard
 model: fable
@@ -13,7 +13,37 @@ area: codegen
 goal: standalone
 sprint: current
 horizon: xl
-related: [2861, 2862, 2863, 2864, 2865, 2866, 2867, 2868, 2872, 2873, 2874, 2875, 2876, 2877, 2878, 2879, 3027, 3169, 3170, 3171, 3172, 3173, 3174, 3175, 3176, 3177]
+assignee: ttraenkler/fable-2860
+related:
+  [
+    2861,
+    2862,
+    2863,
+    2864,
+    2865,
+    2866,
+    2867,
+    2868,
+    2872,
+    2873,
+    2874,
+    2875,
+    2876,
+    2877,
+    2878,
+    2879,
+    3027,
+    3169,
+    3170,
+    3171,
+    3172,
+    3173,
+    3174,
+    3175,
+    3176,
+    3177,
+    3535,
+  ]
 ---
 
 # Umbrella: close the standalone-vs-js-host test262 gap
@@ -67,16 +97,16 @@ can leak a host import AND fail at ToPrimitive); the "pure" column is the count
 where that cluster is the sole blocker (no host-import leak), i.e. the count a
 single fix flips directly.
 
-| # | Cluster | total | pure | tractability | issue |
-| - | ------- | ----- | ---- | ------------ | ----- |
-| 1 | built-in static/proto value read refused (CE) | 882 | 882 | mechanical (glue pattern) | **2861 — done** |
-| 2 | ToPrimitive over built-in exotics + inherited valueOf/toString | 2,039 | 728 | medium (extend `__to_primitive`) | **2862 — wont-fix (superseded)** |
-| 3 | dynamic-shape object/property codegen (`__get_builtin`, `__extern_toLocaleString`) CE | 365 | 365 | medium codegen | **2863 — done** |
-| 4 | sync generators — no standalone carrier (`__gen_*`/`__create_generator`) | 697 | — | hard (new carrier) | **2864 — in-progress** |
-| 5 | async generators — no standalone carrier (`__create_async_generator`) | 986 | — | hard (dep #2864) | **2865 — in-progress** |
-| 6 | Symbol — standalone carrier (`__box_symbol`) | 418 | — | medium-hard | **2866 — in-progress** |
-| 7 | Promise / async microtask — standalone carrier (`Promise_*`, `__make_callback`) | 375 | — | hard | **2867 — in-progress** |
-| 8 | invalid Wasm binary emitted in standalone (correctness) | 523 | 118 | triage-then-fix | **2868 — done** |
+| #   | Cluster                                                                               | total | pure | tractability                     | issue                            |
+| --- | ------------------------------------------------------------------------------------- | ----- | ---- | -------------------------------- | -------------------------------- |
+| 1   | built-in static/proto value read refused (CE)                                         | 882   | 882  | mechanical (glue pattern)        | **2861 — done**                  |
+| 2   | ToPrimitive over built-in exotics + inherited valueOf/toString                        | 2,039 | 728  | medium (extend `__to_primitive`) | **2862 — wont-fix (superseded)** |
+| 3   | dynamic-shape object/property codegen (`__get_builtin`, `__extern_toLocaleString`) CE | 365   | 365  | medium codegen                   | **2863 — done**                  |
+| 4   | sync generators — no standalone carrier (`__gen_*`/`__create_generator`)              | 697   | —    | hard (new carrier)               | **2864 — in-progress**           |
+| 5   | async generators — no standalone carrier (`__create_async_generator`)                 | 986   | —    | hard (dep #2864)                 | **2865 — in-progress**           |
+| 6   | Symbol — standalone carrier (`__box_symbol`)                                          | 418   | —    | medium-hard                      | **2866 — in-progress**           |
+| 7   | Promise / async microtask — standalone carrier (`Promise_*`, `__make_callback`)       | 375   | —    | hard                             | **2867 — in-progress**           |
+| 8   | invalid Wasm binary emitted in standalone (correctness)                               | 523   | 118  | triage-then-fix                  | **2868 — done**                  |
 
 ### Not-yet-issued follow-ons (tracked here)
 
@@ -177,26 +207,27 @@ match) is **12,801** rows. After mapping every existing sub-front, nine
 genuinely-uncovered method-family clusters were sliced (all `sprint: current`,
 `priority: high`, `umbrella: 2860`):
 
-| issue | cluster | measured gap | horizon |
-| ----- | ------- | -----------: | ------- |
-| **3169** | Array.prototype callback HOFs over array-like receivers | 519 | l |
-| **3170** | Array.prototype indexOf/lastIndexOf/includes as-value + array-likes | 125 | m |
-| **3171** | Map/Set/WeakMap/WeakSet receiver brand-check protocol | ~142 (+ share of 113 residual) | m |
-| **3172** | Set-algebra set-like protocol + getOrInsert(Computed) | 120 | m |
-| **3173** | DataView.prototype get\*/set\* spec semantics | 230 | l |
-| **3174** | Date brand checks + ToPrimitive coercion order | 107 | m |
-| **3175** | Number.prototype toString(radix)/toFixed/valueOf | 74 | m |
-| **3176** | JSON.parse/stringify residual (reviver array walk, strictness) | 67 | m |
-| **3177** | TypedArrayConstructors internals + ctor protocols (the #3027 "~350" slice) | 356 | l |
+| issue    | cluster                                                                    |                   measured gap | horizon |
+| -------- | -------------------------------------------------------------------------- | -----------------------------: | ------- |
+| **3169** | Array.prototype callback HOFs over array-like receivers                    |                            519 | l       |
+| **3170** | Array.prototype indexOf/lastIndexOf/includes as-value + array-likes        |                            125 | m       |
+| **3171** | Map/Set/WeakMap/WeakSet receiver brand-check protocol                      | ~142 (+ share of 113 residual) | m       |
+| **3172** | Set-algebra set-like protocol + getOrInsert(Computed)                      |                            120 | m       |
+| **3173** | DataView.prototype get\*/set\* spec semantics                              |                            230 | l       |
+| **3174** | Date brand checks + ToPrimitive coercion order                             |                            107 | m       |
+| **3175** | Number.prototype toString(radix)/toFixed/valueOf                           |                             74 | m       |
+| **3176** | JSON.parse/stringify residual (reviver array walk, strictness)             |                             67 | m       |
+| **3177** | TypedArrayConstructors internals + ctor protocols (the #3027 "~350" slice) |                            356 | l       |
 
 Deliberately NOT sliced (covered or in-flight): `Object/defineProperty(-ies)`
-+ `Object/create` (492 — routes through the in-progress #2992 defineProperties
-MOP + #2984 lane), `Object` statics order/spread (#3155 ready),
-`Function.prototype.bind` residual (63 — fnctor lane #3138/#3139),
-`Array/fromAsync` (#2967 blocked on #3134), Atomics (#3145),
-`Iterator.*` (#3146/#3049), DisposableStack (needs the #2866 Symbol carrier),
-`language/*` (carriers #2864/#2865/#2867 + #2873), annexB residual (~180,
-follow-on candidate after #3069's pattern).
+
+- `Object/create` (492 — routes through the in-progress #2992 defineProperties
+  MOP + #2984 lane), `Object` statics order/spread (#3155 ready),
+  `Function.prototype.bind` residual (63 — fnctor lane #3138/#3139),
+  `Array/fromAsync` (#2967 blocked on #3134), Atomics (#3145),
+  `Iterator.*` (#3146/#3049), DisposableStack (needs the #2866 Symbol carrier),
+  `language/*` (carriers #2864/#2865/#2867 + #2873), annexB residual (~180,
+  follow-on candidate after #3069's pattern).
 
 ## Definition of done (umbrella)
 
@@ -212,10 +243,10 @@ Fresh honest re-measure from tonight's promoted lane baselines
 (`test262-standalone-current.jsonl` @ 2026-07-18 01:08Z vs `test262-current.jsonl`,
 official scope, matched by `file|strict`):
 
-| metric | 2026-06-30 | 2026-07-12 | **2026-07-18** |
-| ------ | ---------: | ---------: | -------------: |
-| host-free standalone official pass | 12,883 | ~13.0k | **24,726** |
-| honest gap (host pass ∧ standalone not-pass) | ~20,500 | 12,801 | **8,228** |
+| metric                                       | 2026-06-30 | 2026-07-12 | **2026-07-18** |
+| -------------------------------------------- | ---------: | ---------: | -------------: |
+| host-free standalone official pass           |     12,883 |     ~13.0k |     **24,726** |
+| honest gap (host pass ∧ standalone not-pass) |    ~20,500 |     12,801 |      **8,228** |
 
 The carrier + method-family work (#3132/#3164/#3302/#3386, #3169–#3177, #3173/#3181,
 #2861/#2863/#2868, …) landed a **~12k-row swing**. The gap is now **8,228**.
@@ -224,22 +255,22 @@ The carrier + method-family work (#3132/#3164/#3302/#3386, #3169–#3177, #3173/
 
 Break the 8,228 gap by `error_category` (from the standalone JSONL rows):
 
-| error_category | rows | note |
-| -------------- | ---: | ---- |
-| **assertion_fail** | **4,079** | host-free binary, WRONG runtime value — the new frontier |
-| host_import_leak | 2,991 | of which `iterator_protocol` = 2,309 → **#3178** sub-umbrella (#3386–#3391) |
-| type_error | 677 | standalone throws / mis-throws TypeError |
-| other | 180 | |
-| illegal_cast | 112 | ref.test-before-cast misses (fold into #2863/#2868 triage) |
-| null_deref | 66 | mostly `__str_flatten`/RegExp (#2935) |
-| wasm_compile | 58 | invalid binary residual (#2878/#3024) |
-| runtime_error / oob / syntax / range / promise | 65 | long tail |
+| error_category                                 |      rows | note                                                                        |
+| ---------------------------------------------- | --------: | --------------------------------------------------------------------------- |
+| **assertion_fail**                             | **4,079** | host-free binary, WRONG runtime value — the new frontier                    |
+| host_import_leak                               |     2,991 | of which `iterator_protocol` = 2,309 → **#3178** sub-umbrella (#3386–#3391) |
+| type_error                                     |       677 | standalone throws / mis-throws TypeError                                    |
+| other                                          |       180 |                                                                             |
+| illegal_cast                                   |       112 | ref.test-before-cast misses (fold into #2863/#2868 triage)                  |
+| null_deref                                     |        66 | mostly `__str_flatten`/RegExp (#2935)                                       |
+| wasm_compile                                   |        58 | invalid binary residual (#2878/#3024)                                       |
+| runtime_error / oob / syntax / range / promise |        65 | long tail                                                                   |
 
 **Read this:** the carriers largely WORKED — `host_import_leak` (2,991, and
 2,309 of it is the already-carved #3178 generator/iterator territory) is no
 longer the dominant blocker. The new #1 lever is **`assertion_fail` (4,079):
 tests that compile host-free in standalone but compute the WRONG VALUE at
-runtime** — standalone-lane runtime *semantic fidelity*, not carrier existence.
+runtime** — standalone-lane runtime _semantic fidelity_, not carrier existence.
 
 ### assertion_fail (4,079) cluster → owning-issue map (coverage is ~complete)
 
@@ -248,18 +279,18 @@ counts are LARGER than each issue's original estimate (scope grew as the metric
 de-masked runtime failures), so this is a **re-scope + re-prioritise** signal,
 not a new-issue signal:
 
-| cluster (assertion_fail rows) | owner | status | orig. est → now |
-| ----------------------------- | ----- | ------ | --------------- |
-| Object/defineProperty+defineProperties (389) | #3022 (default, done) · #2984/#2992 (standalone MOP) | in-progress | 728 → 389 std |
-| TypedArray/prototype (532) | **#2872** | in-progress | 294 → **532** |
-| Array/prototype (418) | #3180 (std HOF) · #3185 (default generics) | ready | ~300 → 418 |
-| String/prototype (282) | **#2875** | in-progress | 159 → **282** |
-| language/expressions+statements (580) | #2873 + carriers | mixed | — |
-| RegExp (223) | #2876 · #2935 (null-deref) | — | 125 → 223 |
-| Iterator/prototype (182) | #3049/#3146 **done** — see NEW-1 below | — | helper *residual* |
-| TypedArrayConstructors (111) | **#3177** | in-progress | 356 → refresh |
-| Promise (110) | #2867 · #3198 (blocked) | in-progress | — |
-| Function (94) · Proxy (63, mostly deferred) · Number (52) · Date (51) · JSON (44) · DataView (36→#3173 done) · Reflect (28) | assorted (see 07-12 groom) | — | — |
+| cluster (assertion_fail rows)                                                                                               | owner                                                | status      | orig. est → now   |
+| --------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- | ----------- | ----------------- |
+| Object/defineProperty+defineProperties (389)                                                                                | #3022 (default, done) · #2984/#2992 (standalone MOP) | in-progress | 728 → 389 std     |
+| TypedArray/prototype (532)                                                                                                  | **#2872**                                            | in-progress | 294 → **532**     |
+| Array/prototype (418)                                                                                                       | #3180 (std HOF) · #3185 (default generics)           | ready       | ~300 → 418        |
+| String/prototype (282)                                                                                                      | **#2875**                                            | in-progress | 159 → **282**     |
+| language/expressions+statements (580)                                                                                       | #2873 + carriers                                     | mixed       | —                 |
+| RegExp (223)                                                                                                                | #2876 · #2935 (null-deref)                           | —           | 125 → 223         |
+| Iterator/prototype (182)                                                                                                    | #3049/#3146 **done** — see NEW-1 below               | —           | helper _residual_ |
+| TypedArrayConstructors (111)                                                                                                | **#3177**                                            | in-progress | 356 → refresh     |
+| Promise (110)                                                                                                               | #2867 · #3198 (blocked)                              | in-progress | —                 |
+| Function (94) · Proxy (63, mostly deferred) · Number (52) · Date (51) · JSON (44) · DataView (36→#3173 done) · Reflect (28) | assorted (see 07-12 groom)                           | —           | —                 |
 
 **Action for tech-lead/PO:** bump the fresh counts into #2872 (→532), #2875
 (→282), #3177, #2984/#2992; #2872 + #2875 are now the two single largest
@@ -286,11 +317,11 @@ defineProperties (27 → #2992), String/proto (20 → #2875), String.raw (12 →
 - **NEW-1 — Iterator.prototype helper OBSERVABLE-SEMANTICS residual (~223).**
   #3049 (map/filter/take/drop/flatMap) and #3146 (zip/concat/from) both landed
   as `done`, yet `built-ins/Iterator/prototype` still shows 182 `assertion_fail`
-  + 41 `type_error` in the gap — the helpers EXIST but diverge on spec
-  observables (abrupt-completion IteratorClose ordering, `this`/brand
-  TypeErrors, counter/limit edge values). A spec-fidelity follow-on, distinct
-  from helper existence. Recommend a `#31xx` child once #2872/#2875 land (Symbol
-  `@@iterator`/`@@toStringTag` fidelity may share root cause with #2866).
+  - 41 `type_error` in the gap — the helpers EXIST but diverge on spec
+    observables (abrupt-completion IteratorClose ordering, `this`/brand
+    TypeErrors, counter/limit edge values). A spec-fidelity follow-on, distinct
+    from helper existence. Recommend a `#31xx` child once #2872/#2875 land (Symbol
+    `@@iterator`/`@@toStringTag` fidelity may share root cause with #2866).
 - **NEW-2 — URI carrier ROUTING regression → filed as #3401.** #2500 (native
   `decodeURI`/`encodeURI`/`decodeURIComponent`/`encodeURIComponent`) is `done`,
   yet **48 official `built-ins/{decode,encode}URI*` conformance tests still leak
@@ -307,6 +338,7 @@ levers (#2872/#2875/#3177/#2984-2992), and carved exactly one genuinely-new
 slice (#3401). No duplicate children were minted (verified each cluster's
 pointer against an existing owner first — the `avoid-code-bloat-deduplicate`
 memory applied to issues).
+
 ## Implementation Plan (Fable, 2026-07-18) — fresh census @ main 9d216ada + the priority ladder
 
 > Measured from the 2026-07-18 baselines-repo refresh (commit `5c6d3092`,
@@ -320,14 +352,14 @@ memory applied to issues).
 
 ### The gap, by mechanism (2026-07-18)
 
-| Rows | Mechanism | Owner(s) |
-| ---: | --- | --- |
-| 2,991 | `compile_error: host_import_leak` | the carrier track (below) |
-| 4,079 | `fail: assertion_fail` | behavioral clusters (below) |
-| 677 | `fail: type_error` | behavioral clusters |
-| 112 / 66 | `illegal_cast` / `null_deref` | mostly inside carrier machinery + #2935 |
-| 261 | `compile_error: other/wasm/runtime` | #2878-class triage residual |
-| 45 | timeout/syntax/oob/misc | long tail |
+|     Rows | Mechanism                           | Owner(s)                                |
+| -------: | ----------------------------------- | --------------------------------------- |
+|    2,991 | `compile_error: host_import_leak`   | the carrier track (below)               |
+|    4,079 | `fail: assertion_fail`              | behavioral clusters (below)             |
+|      677 | `fail: type_error`                  | behavioral clusters                     |
+| 112 / 66 | `illegal_cast` / `null_deref`       | mostly inside carrier machinery + #2935 |
+|      261 | `compile_error: other/wasm/runtime` | #2878-class triage residual             |
+|       45 | timeout/syntax/oob/misc             | long tail                               |
 
 **Leak half (2,991), by leaked import:** generator family
 (`__create_generator` 1,672 + `__gen_next` 106 + `__create_async_generator`
@@ -340,18 +372,18 @@ Slice B — spec'd 2026-07-18), `Set_constructor` 17, misc ≤17 each.
 
 **Behavioral half, by cluster (assertion_fail + type_error combined):**
 
-| Rows | Cluster | Owner |
-| ---: | --- | --- |
-| ~960 | TypedArray (`TypedArray/prototype` 532+63, `TypedArrayConstructors` 68+38+30, DataView 33+, ArrayBuffer 40) | #3177 / #3173 / #2872 |
-| ~550 | property model (`Object/defineProperty` 247 + `defineProperties` 142+27 + `create` 55+14 + `Object/prototype` 62) | #3251 S2/S3 (PR #3327 in flight) + #739 + #2992/#2984 |
-| ~512 | `Array/prototype` behavioral (418+94) | #3169 / #3170 + #3251 read-side |
-| ~350 | String (`String/prototype` 282+20 + annexB/String 46) | #2875 |
-| ~223 | `Iterator/prototype` (182+41) | #3146 / #3049 |
-| ~212 | class semantics (`language/*/class` 106+106) | #2873 + the #2963/#3037 method-identity residue |
-| ~169 | `RegExp/prototype` | #2876 / #2935 |
-| ~136 | annexB eval-code type_errors (123) + direct eval (13) | eval Tier-0 sound-bail residue (#1102-adjacent; see the ladder doc §2 bail list) |
-| ~76 | `Function/prototype` (61+15) | #3138 / #3139 bind residual |
-| ~109 | `assert.sameValue(rest.a, undefined)`-signature family (44+31+33 shapes) | the value-rep trio — #2106 numeric-carrier leg + #745 (see their 2026-07-18 plans) |
+| Rows | Cluster                                                                                                           | Owner                                                                              |
+| ---: | ----------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| ~960 | TypedArray (`TypedArray/prototype` 532+63, `TypedArrayConstructors` 68+38+30, DataView 33+, ArrayBuffer 40)       | #3177 / #3173 / #2872                                                              |
+| ~550 | property model (`Object/defineProperty` 247 + `defineProperties` 142+27 + `create` 55+14 + `Object/prototype` 62) | #3251 S2/S3 (PR #3327 in flight) + #739 + #2992/#2984                              |
+| ~512 | `Array/prototype` behavioral (418+94)                                                                             | #3169 / #3170 + #3251 read-side                                                    |
+| ~350 | String (`String/prototype` 282+20 + annexB/String 46)                                                             | #2875                                                                              |
+| ~223 | `Iterator/prototype` (182+41)                                                                                     | #3146 / #3049                                                                      |
+| ~212 | class semantics (`language/*/class` 106+106)                                                                      | #2873 + the #2963/#3037 method-identity residue                                    |
+| ~169 | `RegExp/prototype`                                                                                                | #2876 / #2935                                                                      |
+| ~136 | annexB eval-code type_errors (123) + direct eval (13)                                                             | eval Tier-0 sound-bail residue (#1102-adjacent; see the ladder doc §2 bail list)   |
+|  ~76 | `Function/prototype` (61+15)                                                                                      | #3138 / #3139 bind residual                                                        |
+| ~109 | `assert.sameValue(rest.a, undefined)`-signature family (44+31+33 shapes)                                          | the value-rep trio — #2106 numeric-carrier leg + #745 (see their 2026-07-18 plans) |
 
 ### Priority ladder (order of expected yield per unit work)
 
@@ -361,7 +393,7 @@ Slice B — spec'd 2026-07-18), `Set_constructor` 17, misc ≤17 each.
 2. **TypedArray family** (#3177 → #3173 → #2872) — ~960 rows; #3177's 356
    estimate from 07-12 has GROWN in share as other clusters closed.
 3. **Property model** — ~550 rows riding the in-flight #3251 (S2 write-side
-   + S3 ArraySetLength are the spec'd next slices) + #739.
+   - S3 ArraySetLength are the spec'd next slices) + #739.
 4. **Array behavioral** (#3169/#3170) — ~512; partially overlaps 3 (many
    defineProperty-on-array rows count in both — de-dup at claim time).
 5. **String** (#2875) ~350, **Iterator** (#3146/#3049) ~223, **class**
@@ -393,3 +425,74 @@ a pinned commit), filter `scope_official`, key `file|strict`, and group as
 above. Re-run at each window boundary; the ladder re-orders on measured
 counts, never on stale estimates (this census corrected three of the 07-12
 weights).
+
+## 2026-07-23 — F3 observability unblocker landed (#3535, fable-2860)
+
+The 2026-07-19 lane-parity investigation (Cluster B, `.tmp/parity-findings.md`)
+found the single biggest triage blocker was not a feature gap but MASKING:
+under the standalone lane's `(start)`-init model every top-level throw — i.e.
+every runtime failure in original-harness mode — surfaced from
+`WebAssembly.instantiate` with `instance === null`, making the #2962 native
+exception render unreachable and collapsing **8,610 baseline rows** onto the
+opaque `wasm exception during module init` label.
+
+**#3535 (done)** makes the standalone lane join the host lane's
+`deferTopLevelInit` rule (worker + both local-runner arms). Measured
+(verify-first, main @ aa203fdc): 152-row stratified masked sample → 0 verdict
+flips, 152/152 un-masked; all 7 runtime-negative masked rows probed
+exhaustively → 6 honest fail→pass; 101-row stratified pass sample → 0
+pass→fail (floor-safe). Un-masked signatures now route the residual to real
+owners — top revealed clusters: Temporal deferred-feature refs (~15%),
+`Test262Error: obj should have an own property …` (the #3468 function-object
+own-property residual, ~11%), `TypeError: Cannot convert undefined or null to
+object`, positional null-deref TypeErrors, eval-shim #2928 refusals.
+
+**Next for this umbrella**: after the next baseline promote re-labels the
+8,610 rows, re-run the error-signature census on the standalone lane and
+re-weight the priority ladder — the de-masked buckets land in the EXISTING
+children (no new slices expected beyond what the ladder already tracks).
+
+## 2026-07-23 — routed de-masked census (fable-2860; lead-steered weighting)
+
+1,077-row stride-8 census of the 8,610 masked rows, run locally against the
+fixed compile path, **weighted by addressable fail→PASS potential** (lead
+steer: fail→skip is landing-%-NEUTRAL, so skip-features are an explicit
+zero-value bucket; #3468 own-property rows route to the fable-exposed
+clustering effort; async rows route to fable-3417's ladder — never sum the
+two ladders):
+
+| bucket (sampled → extrapolated)                                                                    |         rows | routing                                                                                                                     |
+| -------------------------------------------------------------------------------------------------- | -----------: | --------------------------------------------------------------------------------------------------------------------------- |
+| addressable                                                                                        | 516 → ~4,125 | the ladder below                                                                                                            |
+| zero-value skip-feature (Temporal, eval #2928, `with`/annexB eval-code, SAB, ShadowRealm, $262.\*) | 299 → ~2,390 | none (%-neutral)                                                                                                            |
+| #3468 own-property family                                                                          | 199 → ~1,591 | HANDED to fable-exposed (`.tmp/handover-3468-ownprop.txt`)                                                                  |
+| async-flagged                                                                                      |    60 → ~480 | fable-3417's async cohort (do NOT double-count vs their 88-row module-init-trap bucket — different measures of one surface) |
+| already-pass drift                                                                                 |      3 → ~24 | clears on promote                                                                                                           |
+
+**Addressable, by family (the re-weighted ladder):** Array/prototype ~664
+(#3169/#3170/#3180/#3185) · TypedArray/prototype ~520 (#2872/#3177) ·
+RegExp/property-escapes ~311 exact (#3536 → #3541) · TypedArrayCtors/internals
+~168 (#3177) · defineProperty ~160 + defineProperties ~144 + create ~64
+(#3251/#2984/#2992) · String/prototype ~104 (#2875) · Iterator/prototype ~80
+(NEW-1 residual) · class ~128 (#2873). The "Cannot convert undefined or null
+to object" (~368) cluster is PARKED: its majority shape (prop-desc/name/length
+method-as-value reads) converts, if fixed alone, into the #3468 own-property
+signature — fail→fail, %-neutral — so it waits on the fable-exposed outcome.
+
+## 2026-07-23 — #3536 landed, #3541 carved (the property-escapes chain)
+
+**#3536 (done)** fixed the biggest single addressable signature's cleanest
+sub-family at its root: standalone call boundaries for declared functions
+with object-literal arguments (silent-null param via the dynamic-$Object /
+narrowed-struct mismatch, plus the IR overlay's post-hoc ABI replacement
+emitting invalid wasm — the patch-time typeIdx parity guard now covers
+top-level functions). Measured: 8/8 repro shapes fixed, 0 regressions across
+the full battery, but only **2/198 direct census flips** — the naive
+~1,190-row extrapolation for the signature was ~600× optimistic (the lead's
+measure-don't-extrapolate steer, vindicated). The 311-row property-escapes
+family now blocks on exactly ONE pre-existing defect — **#3541**
+(`String.fromCodePoint.apply(null, vec)` → null → `__str_concat` null-deref,
+plus an illegal-cast sibling in the same `buildString` harness function).
+All 311 rows run that one function, so #3541 is the measured gate on the
+family; the remaining 138 re-measured null-deref rows distribute over
+TypedArray-internals-class defects (#2872/#3177 territory).

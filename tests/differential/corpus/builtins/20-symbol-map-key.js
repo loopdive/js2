@@ -1,0 +1,10 @@
+const s1 = Symbol("a");
+const s2 = Symbol("a");
+const m = new Map();
+m.set(s1, "first");
+m.set(s2, "second");
+console.log(m.get(s1));
+console.log(m.get(s2));
+console.log(m.size);
+console.log(s1 === s2);
+console.log(Symbol.for("shared") === Symbol.for("shared"));

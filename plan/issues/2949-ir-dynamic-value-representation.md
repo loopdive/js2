@@ -1,11 +1,10 @@
 ---
 id: 2949
 title: "IR dynamic value representation: JsTag-carrying `dynamic` kind in IrType (make untyped JS claimable)"
-status: in-progress
-assignee: ttraenkler/fable-11th
+status: ready
 sprint: current
 created: 2026-07-02
-updated: 2026-07-10
+updated: 2026-07-29
 priority: high
 horizon: xl
 feasibility: hard
@@ -19,6 +18,13 @@ related: [1852, 1926, 2138, 2135, 2855]
 origin: "2026-07-02 July Fable audit (plan/log/analysis-2026-07/00-ir-async-standalone-audit.md §1)"
 loc-budget-allow:
   - src/ir/from-ast.ts
+  - src/ir/select.ts
+  - src/ir/integration.ts
+  - src/codegen/index.ts
+  - src/codegen/any-helpers.ts
+func-budget-allow:
+  - src/codegen/index.ts::planIrOverlay
+branch: codex/2949-acorn-module-var-scalars
 ---
 
 # #2949 — the IR's type system is Wasm types, not JS types
@@ -1858,3 +1864,225 @@ element-access + `idx-1` arithmetic all exist). Build the scan flip ONLY for a
 measured non-empty flip set, with the slice-2-style claim-sweep table + full
 CI as the acceptance evidence, and lift gate 6 only after an `ir_first`-lane
 run shows zero dynamic-claim demotions.
+
+## Implementation Notes — S5.P Acorn dynamic operators (2026-07-29)
+
+The claim flip is non-empty on the exact runtime-dynamic Acorn 8.16.0 driver
+from draft PR #3796:
+
+- baseline at `fa8bfd5462192e`: **0 emitted / 43 terminal functions**;
+- this slice: **14 emitted / 43 terminal functions**;
+- post-claim ABI or lowering withdrawals: **0**;
+- remaining: 19 body shapes, 3 logical-value shapes, 2 RegExp constructor
+  shapes, 2 parameter shapes, 2 call-graph closures, and 1 constructor
+  resolution shape.
+
+The selector now admits the already-landed dynamic equality, numeric
+relational, numeric arithmetic, unary coercion, and condition producers. It
+still rejects dynamic `+`, dynamic-vs-dynamic relational comparison, and
+non-literal concrete equality operands because their complete runtime
+dispatch is not yet modeled.
+
+Planning consumes the same implicit-parameter scalar inference as direct
+declaration lowering. The projected type is also used by the IR override map,
+so a claimed helper cannot widen to `dynamic` and later fail callable ABI
+parity. This preserved the direct backend's numeric-call-site optimization and
+removed the three measured Acorn parity withdrawals. Projection is restricted
+to parameters feeding the admitted scalar operators, avoiding a whole-source
+call-site scan for unrelated harness parameters.
+
+That projection deliberately excludes functions containing the #1210
+string-builder loop shape. Making an untyped builder function claimable would
+move it off the legacy cached-buffer and loop-local integer optimizations before
+#3745 has migrated the latter. The existing IR owned-append path remains
+available to already-typed functions; newly inferred builder functions stay on
+their current optimized path until the remaining optimization is present in IR.
+
+Non-fast standalone needed two runtime corrections exposed only after the
+claim became live:
+
+- dynamic ToNumber now uses the canonical standalone
+  ToPrimitive(`"number"`) + unbox route with late-import shift tracking;
+- dynamic strict/loose equality uses native externref equality helpers instead
+  of JS-host imports.
+- direct calls box concrete numeric arguments at explicit-`any` parameter
+  boundaries, including the `Math.pow(...)` equivalence shape.
+
+Dynamic member reads used directly by equality remain pre-claim fallbacks.
+Array callbacks pass their `obj` argument in a direct array carrier, while the
+current dynamic member helper expects boxed-any input; claiming that seam made
+`obj.length === n` return the wrong result.
+
+## Implementation Notes — direct-only dynamic member equality (2026-07-29)
+
+The callback-carrier restriction is now narrowed to the functions that need it.
+When a dynamic-member equality candidate is actually encountered, the selector
+performs one cached source-wide reference scan: only declaration names and
+direct identifier calls are accepted. Any value use, including passing a named
+function to an array HOF, keeps dynamic member equality on the direct path.
+Sources without such a candidate pay no scan cost.
+
+Functions used only through their declared ABI can reuse the existing
+`dyn.member_get` plus dynamic equality lowering. This admits the exact
+runtime-dynamic Acorn `checkKeyName` helper without changing the member reader,
+boxing model, or any direct-backend file owned by draft PR #3796. The focused
+runtime test covers both Acorn key shapes and pins the named-callback refusal.
+
+The exact unchanged #3796 compile/outcome driver moves from 15 to **16 emitted
+functions out of 43**, with zero ABI/lowering withdrawals. The final parity
+step projects the direct declaration pass's inferred native-string parameter
+into both selector and IR override types; scalar projected parameters are
+accepted as boxable dynamic-equality operands. Without that shared projection,
+selection succeeded but `checkKeyName` withdrew on a string-vs-dynamic
+`typeIdx` mismatch.
+
+Validation for this slice:
+
+- exact #3796 driver: 16/43 emitted, zero post-claim withdrawals;
+- focused dynamic-member/operator/callback suites: 30/30 pass;
+- equivalence matrix: 8/8 shards, zero new regressions;
+- typecheck, fallback/adoption/oracle, LOC, function-budget, and linear-IR
+  gates pass.
+
+The first PR run caught an eager-scan compile-work increase in the #3437
+harness gate. Moving the proof behind the candidate arm removes that cost:
+current `origin/main` and this branch both measure 111,517 shared
+`forEachChild` calls on the deterministic harness fixture. The existing budget
+is unchanged.
+
+The required #3471 guard then exposed a second parity edge: lattice propagation
+could classify an untyped polymorphic comparator parameter as string even
+though its direct declaration ABI correctly stayed dynamic after inconclusive
+call sites. Candidate parameter projection now reports that dynamic result
+explicitly and takes precedence over nonnumeric lattice kinds in both selection
+and the IR override. Grounded Acorn string parameters still project as string,
+while `isSameValue(a, b)` retains its boxed dynamic ABI. The established
+numeric speculative view remains intact so #3551 still exercises patch-time
+parity withdrawal and caller-cascade safety.
+
+Focused whole-compiler tests execute these paths in standalone and assert real
+IR emission plus zero post-claim failures. The exact #3796 driver remains the
+per-slice measurement input. Its synthesized module uses a 32,768-element
+`array.new_fixed`; V8 rejects fixed arrays above 10,000 elements, so that
+driver is a compile/outcome probe rather than the focused runtime fixture.
+
+## Implementation Notes — implicit indexed-parameter ABI (2026-07-29)
+
+Acorn's untyped `isInAstralSet(code, set)` now emits through IR. Direct
+declaration lowering already infers `set` as the exact
+`ref null __vec_f64` carrier from its call sites. Planning now reuses that
+exact `IrType` instead of reducing the decision to a scalar-only label.
+Projection remains restricted to `__vec_*` / `__arr_*` carriers; incidental
+anonymous object shapes are not admitted.
+
+Two selector seams were required by the exact source:
+
+- the dynamic `code` parameter is compared with the proven numeric local
+  `pos` inside a `for` loop, so the existing dynamic-to-number relational
+  lowering is admitted for proven f64 counterparts and the dynamic-use scan
+  now descends through ordinary `for` statements;
+- `isIdentifierStart` and `isIdentifierChar` remain on the direct path because
+  of their RegExp constructors. Standalone caller closure is relaxed only when
+  every untyped parameter has a production-certified projection and at least
+  one is an indexed carrier. Their already-emitted calls therefore keep the
+  exact direct callable ABI while the leaf body moves to IR.
+
+The unchanged #3796 runtime-dynamic compile/outcome driver moves from 16 to
+**17 emitted functions out of 43**, with `isInAstralSet` added and zero
+post-claim withdrawals. Remaining terminal blockers are:
+
+- 15 body-shape rejections;
+- 3 parameter-type rejections;
+- 3 logical-value rejections;
+- 2 RegExp-constructor rejections;
+- 2 call-graph closures;
+- 1 constructor-resolution rejection.
+
+The slice does not touch the direct-backend files owned by draft PR #3796.
+
+Validation for this slice:
+
+- exact #3796 driver: 17/43 emitted, zero post-claim withdrawals;
+- focused implicit-parameter and IR guard suites: 26/26 pass;
+- broader curated guard matrix: 182 pass, 4 skipped;
+- equivalence matrix: 8/8 shards, zero new regressions;
+- typecheck, lint, fallback/adoption/oracle, LOC, function-budget, harness
+  compile-budget, and linear-IR gates pass.
+
+## Implementation Notes — unique module `var` scalars (2026-07-30)
+
+Acorn's `functionFlags(async, generator)` now emits through IR. Its scope-bit
+constants are unique top-level `var` declarations rather than lexical
+bindings. The module-binding resolver now admits exactly numeric and boolean
+`var` declarations in ES modules when the checker resolves one non-merged,
+non-repeated declaration. Reads and writes reuse the existing allocator-owned
+legacy module global; scripts, repeated declarations, and non-scalar values
+remain outside this capability.
+
+The helper's implicit boolean parameters are used only as ternary conditions.
+That use is now eligible for the same direct-declaration inference projection
+used by the callable ABI. Standalone caller closure is relaxed for an
+all-boolean projected parameter set, while the existing indexed-carrier
+exemption remains unchanged. The patch-time ABI guard still owns final parity.
+
+The unchanged #3796 runtime-dynamic compile/outcome driver moves from 17 to
+**18 emitted functions out of 43**, with `functionFlags` added and zero
+post-claim withdrawals. The terminal blocker census becomes:
+
+- 14 body-shape rejections;
+- 3 parameter-type rejections;
+- 3 logical-value rejections;
+- 2 RegExp-constructor rejections;
+- 2 call-graph closures;
+- 1 constructor-resolution rejection.
+
+The slice does not touch the direct-backend files owned by draft PR #3796.
+
+Validation for this slice:
+
+- exact #3796 driver: 18/43 emitted, zero post-claim withdrawals;
+- focused module-var and prior #2949/ABI guards: 29/29 pass;
+- module-binding matrix: 53 pass, with the same 2 stale assertions reproduced
+  on current main;
+- equivalence matrix: 8/8 shards, zero new regressions;
+- typecheck, fallback/adoption/oracle, linear-IR, LOC, function-budget, and
+  harness compile-budget gates pass.
+
+## Implementation Notes — recursive boolean results with a dynamic ABI (2026-07-30)
+
+Acorn's `isLocalVariableAccess` and `isPrivateFieldAccess` now emit through IR.
+Both are unannotated recursive predicates: their declared callable ABI remains
+dynamic, but every return expression is a boolean composition of comparisons
+and direct self-recursion.
+
+The selector proves that closed return family without changing the signature.
+The dynamic-use scan then admits only boolean `&&` / `||` operands, including a
+dynamic self-call result. AST-to-IR lowers those operands through `dyn.truthy`,
+keeps short-circuit control flow, and boxes the concrete i32 result with the
+Boolean tag at the dynamic return boundary. A mixed-value logical expression
+such as `value || 42` remains `logical-value-unsupported`.
+
+The unchanged #3796 runtime-dynamic compile/outcome driver moves from 18 to
+**20 emitted functions out of 43**, adding `isLocalVariableAccess` and
+`isPrivateFieldAccess` with zero post-claim withdrawals. The terminal blocker
+census becomes:
+
+- 14 body-shape rejections;
+- 4 parameter-type rejections;
+- 1 logical-value rejection;
+- 2 RegExp-constructor rejections;
+- 1 call-graph closure;
+- 1 constructor-resolution rejection.
+
+Draft PR #3808 independently adds grounded implicit-any numeric-local inference
+to AST-to-IR. Its `from-ast.ts` changes are line-disjoint from this slice; the
+first branch to rebase must retain both. Its closed fixed outer token-table
+representation and specialized proven `Parser.options` open-object reads are
+also IR parity requirements for retiring the direct path.
+
+Validation for this slice:
+
+- exact #3796 driver: 20/43 emitted, zero post-claim withdrawals;
+- focused recursive-boolean and prior #2949 claim-flip suites pass;
+- mixed-value logical fallback is pinned;
+- typecheck and the standard IR gates pass.

@@ -53,9 +53,10 @@ Options:
                     wasm:js-string or env JS-host imports.
   --allocator <a>   Linear backend allocator (#1856): bump (default,
                     allocate-and-exit arena, smallest binary) or arena-reset
-                    (same arena + __arena_reset/__arena_used exports for hosts
-                    reusing one instance across short-lived tasks). Linear
-                    target only.
+                    (safe primitive-only exported calls reclaim between calls;
+                    aggregate/global escapes fall back, with explicit
+                    __arena_reset/__arena_used exports retained). Linear target
+                    only.
   --allow-fs        Allow node:fs JS-host imports (readFileSync, writeFileSync)
                     for non-WASI targets (#1491). Off by default to prevent
                     accidental capability leakage.
@@ -64,6 +65,14 @@ Options:
                     Utf8String for a cheaper Component Model boundary. Implies
                     nativeStrings on the WasmGC backend. Off by default
                     (byte-identical output when off).
+  --host-bridge <m> JS-host inspection/interop export surface (#4035):
+                    "auto" (default) publishes it for js-host targets and omits
+                    it for standalone/wasi; "always" forces it on (what a JS
+                    harness that inspects the module needs); "off" forces it
+                    off. These exports (__vec_*, __sget_*, __call_fn*,
+                    __exn_render_*, __stdout_*, ...) are the calling convention
+                    a JS host uses to read WasmGC values — and they are GC
+                    roots, so wasm-opt cannot strip what they pin.
   --wat             Emit only WAT (no binary)
   --no-wat          Skip WAT output
   --no-dts          Skip .d.ts output
@@ -134,6 +143,8 @@ let watOnly = false;
 // "host import not on the dual-mode allowlist" warnings into a one-line summary.
 // --verbose restores the full per-import listing.
 let verbose = false;
+// (#4035) Host-bridge export policy; "auto" resolves per target in codegen.
+let hostBridge: "auto" | "always" | "off" = "auto";
 // #1950 — default-on optimization for the CLI. Binaryen wasm-opt does
 // materially valuable, safe work the in-compiler passes don't (small-function
 // inlining, array.len-into-local, post-inline null-check cleanup, dead
@@ -268,6 +279,16 @@ for (let i = 0; i < args.length; i++) {
     strictNoHostImports = true;
   } else if (arg === "--allow-host-imports") {
     strictNoHostImports = false;
+  } else if (arg === "--host-bridge" || arg.startsWith("--host-bridge=")) {
+    // (#4035) Refuse an unknown mode loudly: silently falling back to "auto"
+    // would let `--host-bridge=none` (a plausible typo for "off") ship the
+    // full bridge while the caller believed it had opted out.
+    const value = arg.includes("=") ? arg.slice(arg.indexOf("=") + 1) : args[++i];
+    if (value !== "auto" && value !== "always" && value !== "off") {
+      console.error(`Error: --host-bridge expects auto | always | off (got ${value ?? "nothing"})`);
+      process.exit(1);
+    }
+    hostBridge = value;
   } else if (arg === "--verbose" || arg === "-v") {
     verbose = true;
   } else if (arg === "-O" || arg === "--optimize") {
@@ -364,6 +385,9 @@ const compileOptions = {
   ...(emitWit ? { wit: witPackageName ? { packageName: witPackageName } : true } : {}),
   ...(allowFs ? { allowFs: true } : {}),
   ...(utf8Storage ? { utf8Storage: true } : {}),
+  // (#4035) Only forward a non-default policy so `--host-bridge auto` stays
+  // byte-identical to not passing the flag at all.
+  ...(hostBridge !== "auto" ? { hostBridge } : {}),
   ...(linkedNamespaces.size ? { link: [...linkedNamespaces] } : {}),
   ...(emulateNode ? { emulateNode: true } : {}),
   ...(platform ? { platform } : {}),

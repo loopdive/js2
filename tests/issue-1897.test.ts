@@ -42,7 +42,13 @@ describe("#1897 standalone test262 merge gate", () => {
   it("diffs the merged standalone JSONL against the standalone baseline with no extra shard run", () => {
     const guard = standaloneGuardBlock();
 
-    expect(guard).toContain("if: env.SHARDS_RAN == 'true'");
+    // Gated on the STANDALONE lane specifically, not on "any shard ran": a
+    // merge_group whose queued change cannot move standalone schedules no
+    // standalone shards, and this guard would then fail the required check on
+    // a missing merged JSONL. STANDALONE_RAN is only 'true' when standalone
+    // shards actually ran, so the guard still fires on every run that has a
+    // standalone report to gate.
+    expect(guard).toContain("if: env.STANDALONE_RAN == 'true'");
     expect(guard).toContain('STANDALONE_REGRESSION_TOLERANCE: "15"');
     expect(guard).toContain("/tmp/cat-baselines/test262-standalone-current.jsonl");
     expect(guard).toContain("merged-reports/test262-standalone-results-merged.jsonl");
@@ -70,7 +76,11 @@ describe("#1897 standalone test262 merge gate", () => {
 
     expect(policy).toContain("Standalone regression guard (#1897)");
     expect(policy).toContain("no branch-protection change is needed");
-    expect(branchProtection).toContain("NO new entry here and NO branch-protection re-apply");
+    // Pre-existing prose drift: the script's #1897 note now reads "needed NO
+    // separate entry here and NO ruleset re-apply". Assert the CLAIM (no extra
+    // required-check entry, no re-apply) rather than one exact sentence, so a
+    // reworded comment doesn't fail a test about branch-protection semantics.
+    expect(branchProtection).toMatch(/NO (new|separate) entry here and NO (branch-protection|ruleset) re-apply/);
     expect(branchProtection).toContain('"merge shard reports"');
     expect(branchProtection).not.toContain('"standalone regression guard"');
   });

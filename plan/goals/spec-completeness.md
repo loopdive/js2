@@ -59,7 +59,6 @@ pass rate goes from "good" to "excellent."
 | **661** | Temporal API via compiled polyfill or minimal implementation | 61 | done | medium |
 | **669** | eval() and new Function() support | 0 | done | high |
 | **670** | Proxy trap execution (beyond pass-through) | 14 | done | critical |
-| **671** | with statement support | Backlog | backlog | low |
 | **672** | WeakMap, WeakSet, WeakRef support | 15 | done | medium |
 | **674** | SharedArrayBuffer and Atomics | Backlog | ready | low |
 | **690** | Streaming test results with incremental report updates and zero-copy worker IPC | 0 | done | high |
@@ -67,7 +66,7 @@ pass rate goes from "good" to "excellent."
 | **706** | Residual illegal cast: 248 runtime failures | 26 | done | high |
 | **727** | - Sub-classify assertion failures (11,480 tests return wrong values) | 0 | done | high |
 | **764** | - 'immutable global' assignment error (240 CE) | 18 | done | low |
-| **779** | Assert failures: tests compile and run but produce wrong values (8,674 tests) | Backlog | ready | critical |
+| **779** | Assert failures: tests compile and run but produce wrong values (8,674 tests) | current | ready | critical |
 | **785** | - Null pointer traps in compiled Wasm code (~1,604 tests) | 0 | done | high |
 | **791** | - SyntaxError detection gaps: code compiles when it should not | 0 | done | high |
 | **820l** | arguments object: extra positional args beyond declared formals not retained (~61 fails) | Backlog | done | medium |
@@ -75,7 +74,7 @@ pass rate goes from "good" to "excellent."
 | **825** | Null dereference failures (2,295 runtime failures) | 44 | done | high |
 | **826** | Illegal cast failures (1,276 runtime failures) | 43 | done | high |
 | **832** | Upgrade to TypeScript 6.x to support Unicode 16.0.0 identifiers | Backlog | ready | medium |
-| **838** | BigInt64Array / BigUint64Array typed arrays | Backlog | ready | low |
+| **838** | BigInt64Array / BigUint64Array typed arrays | 72 | done | low |
 | **858** | Worker/timeout exits and eval-code null deref (182 tests) | 35 | done | medium |
 | **874** | Benchmark: compare all JS-to-Wasm engines on standard performance benchmarks | Backlog | ready | medium |
 | **879** | Dashboard: process health metrics — checklist compliance, merge protocol, hook blocks | Backlog | ready | medium |
@@ -97,7 +96,7 @@ pass rate goes from "good" to "excellent."
 | **1094** | Shrink runtime.ts host boundary — compile-away JS semantics currently in sidecar runtime | 42 | done | high |
 | **1100** | Wasm-native Proxy: meta-object protocol without JS host | 63 | done | top |
 | **1101** | Wasm-native WeakRef and FinalizationRegistry via WasmGC weak references | Backlog | ready | low |
-| **1102** | Wasm-native eval: ahead-of-time compilation strategy for eval() and Function() | Backlog | ready | medium |
+| **1102** | Wasm-native eval: ahead-of-time compilation strategy for eval() and Function() | 72 | done | high |
 | **1116b** | Promise subclass: Wasm-compiled class extends Promise must be a valid JS constructor (Wasm-class-as-JS-ctor bridge) | 55 | done | high |
 | **1118** | Worker/timeout exits and eval-code null deref (182 tests) | 47 | done | medium |
 | **1123** | Verify landing page claims and code examples against current compiler behavior | 42 | done | high |
@@ -119,7 +118,7 @@ pass rate goes from "good" to "excellent."
 | **1242** | WeakMap / WeakSet backed by strong references (lodash memoize / cloneDeep) | 47 | done | high |
 | **1283** | WeakMap host-import dispatch: type-mismatch on set/get/has/delete (carved off from #1242) | 47 | done | high |
 | **1314** | Wasm codegen: __closure_N stack underflow — call emits wrong argument count | 50 | done | high |
-| **1315** | import.defer / import.source missing early error detection — 157 negative tests false-pass | Backlog | ready | high |
+| **1315** | import.defer / import.source missing early error detection — 157 negative tests false-pass | 72 | done | high |
 | **1316** | illegal cast error: add expected type and actual value context (142 opaque runtime failures) | 50 | done | medium |
 | **1317** | null dereference error: add expression / variable context (573 opaque runtime failures) | 50 | done | medium |
 | **1318** | test harness: 'returned N' bare exit code — capture last assertion detail (~8,900 vague failures) | 50 | done | high |
@@ -131,7 +130,7 @@ pass rate goes from "good" to "excellent."
 | **1332** | RegExp host-mode: prototype method edge cases (exec, test, flag accessors, RegExpStringIterator) | 50 | done | low |
 | **1333** | RegExp host-mode: Pre-ES6 (S15.10) tests + annexB legacy accessors | 50 | done | low |
 | **1334** | spec gap: Object.defineProperty — descriptor attribute fidelity (664 test262 fails, biggest single bucket) | 50 | done | high |
-| **1336** | spec gap: Object.assign drops getters / Symbol keys (27 of 38 test262 fails) | Backlog | ready | medium |
+| **1336** | spec gap: Object.assign drops getters / Symbol keys (27 of 38 test262 fails) | 69 | done | medium |
 | **1337** | spec gap: Function.prototype.bind/toString + Function/internals (175 + 7 test262 fails) | 50 | done | medium |
 | **1338** | spec gap: Array.from / Array.of constructor semantics (39 test262 fails, wasm_compile dominant) | 50 | done | medium |
 | **1339** | spec gap: AggregateError + SuppressedError errors-iterable + cause coercion (37 test262 fails) | 50 | done | medium |
@@ -164,7 +163,7 @@ pass rate goes from "good" to "excellent."
 | **1368** | spec gap: Promise.{all,allSettled,any,race} — resolver-element semantics, ctor type-check (~109 fails) | 51 | done | medium |
 | **1369** | spec gap: String.prototype.{split,replace,replaceAll,match,matchAll} — limit, @@split/@@replace/@@match protocol (~150 fails) | 51 | done | medium |
 | **1377** | spec gap: Array.prototype.{push,pop,shift,unshift,fill,copyWithin,reverse} — mutation on array-like + length writes (~80 fails) | 51 | done | medium |
-| **1378** | spec gap: try/catch/finally — error type fidelity, finally completion override, dstr-binding (~85 fails) | Backlog | ready | medium |
+| **1378** | spec gap: try/catch/finally — RESCOPED to error-type fidelity only (Error-subclass own-field/prototype substrate) | Backlog | ready | medium |
 | **1379** | spec gap: prefix/postfix ++/-- on null/undefined/string operands — ToNumeric coercion (~40 fails) | 51 | done | medium |
 | **1380** | spec gap: equality (==, !=, ===, !==) — Symbol/BigInt coercion + ReferenceError propagation (~55 fails) | 51 | done | medium |
 | **1381** | spec gap: String.prototype.{substring,slice,indexOf,search,charAt,charCodeAt,codePointAt,at,includes,startsWith,endsWith,trim,concat} edge cases (~128 fails) | 51 | done | medium |
@@ -180,6 +179,7 @@ pass rate goes from "good" to "excellent."
 | **1395** | class static method descriptors: class identifier resolves to string_constant, not constructor object | 51 | done | medium |
 | **1396** | fix: for-of/dstr default initializers don't fire on OOB extern-array reads — null vs undefined sentinel | 51 | done | high |
 | **1397** | codegen: static method dispatch ignores runtime property reassignment on typed receivers | 52 | done | medium |
+| **1430** | for-of/dstr: obj-ptrn-id-init undefined-key + array-elem-trlg iterator close | Backlog | ready | medium |
 | **1431** | spec gap: assignment operators — destructuring completion, defaults, and compound side effects | 52 | done | medium |
 | **1432** | spec gap: parameter lists — rest/destructuring iterator semantics and default initializers | 52 | done | medium |
 | **1433** | spec gap: DisposableStack and AsyncDisposableStack lifecycle semantics | 52 | done | medium |
@@ -237,7 +237,6 @@ pass rate goes from "good" to "excellent."
 | **1564** | ToNumeric: Symbol argument must throw TypeError (§7.1.3 step 3) | Backlog | done | medium |
 | **1565** | ToBoolean BigInt: must use i64.eqz, not f64.convert_i64_s (§7.1.2) | 55 | done | medium |
 | **1566** | ToNumber: Symbol argument must throw TypeError (§7.1.4) | 55 | done | medium |
-| **1584** | Wasm-GC-native bytecode interpreter with Acorn for eval and dynamic fallback | Backlog | ready | medium |
 | **1591** | class/elements: WasmGC-struct ↔ host own-property/identity reconciliation gaps (~294 fails) | 61 | done | high |
 | **1592** | Array pattern elision holes and rest-array in destructuring consume wrong iterator step (~305 fails) | 56 | done | high |
 | **1593** | Destructuring default initializer triggers on null — spec requires undefined-only check (~165 fails) | 56 | done | high |
@@ -246,7 +245,7 @@ pass rate goes from "good" to "excellent."
 | **1596** | Function.prototype.apply / .call not accessible on compiled Wasm functions (~46 fails) | 56 | done | high |
 | **1622** | for-of/dstr + assignment/dstr default initializers don't fire on OOB extenref-array reads | 52 | done | high |
 | **1626** | spec backlog: §29 Memory Model implementation (multi-thread Wasm) | Backlog | backlog | low |
-| **1627** | spec gap: Set methods (union/intersection/etc.) accept any set-like argument (101 test262 fails) | Backlog | ready | medium |
+| **1627** | spec gap: Set methods (union/intersection/etc.) accept any set-like argument (101 test262 fails) | 69 | done | medium |
 | **1629** | spec gap: Object.defineProperty — descriptor attribute fidelity (664 test262 fails, biggest single bucket) | 61 | done | high |
 | **1629a** | Object.defineProperty dynamic (non-literal) descriptor materialization | Backlog | done | high |
 | **1630** | spec gap: Object.assign drops getters / Symbol keys (27 of 38 test262 fails) | 56 | done | medium |
@@ -279,7 +278,7 @@ pass rate goes from "good" to "excellent."
 | **1686** | built-ins/Set residual fails — 63 non-passing after set-like fix (split from #1646) | Backlog | done | low |
 | **1687** | spec gap: eager generator model can't thread .next(arg) / .throw() / .return() into yield (44/63 yield fails) | Backlog | blocked | high |
 | **1688** | Symbol→string implicit coercion must throw TypeError (value-representation gap, split from #1637) | 56 | wont-fix | medium |
-| **1691** | yield* does not delegate throw()/return() to the inner iterator (eager-generator model gap) |  | blocked | medium |
+| **1691** | yield* does not delegate throw()/return() to the inner iterator (eager-generator model gap) | Backlog | blocked | medium |
 | **1694** | Promise.any/all/allSettled/race: non-Promise capability `this` + extends-Promise codegen (~50 fails) | 63 | done | medium |
 | **1695** | DisposableStack/AsyncDisposableStack prototype methods — deferred-callback writeback fires too early (23 fails) | Backlog | done | medium |
 | **1697** | static method `this.X = v` write not routed to staticProps global — public + private (asymmetric with read path) | Backlog | done | medium |
@@ -292,35 +291,98 @@ pass rate goes from "good" to "excellent."
 | **1796** | Migrate synchronous-async contract to CPS Promise model (flip ASYNC_CPS_ENABLED) | 63 | done | top |
 | **2180** | Host-mode Proxy: close remaining test262 failures toward 100% (invariant checks, Wasm-typed targets, revocation lifecycle) | 62 | done | top |
 | **2183** | test262 runner: inject proxyTrapsHelper.js (allowProxyTraps) so Proxy trap tests construct a real handler | 62 | done | high |
-| **2200** | Annex B B.3.3 block-level function declaration hoisting — outer binding created/initialized incorrectly (~186 test262 fails) | 64 | in-progress | high |
 | **2201** | Logical-assignment NamedEvaluation — `x ??=/\|\|=/&&= fn` must set fn.name to \"x\" (~9 test262 fails) | 64 | done | medium |
 | **2202** | arguments.length wrong for trailing-comma + spread call args in generator / class-method bodies (~30 test262 fails) | 64 | done | medium |
 | **2203** | Array destructuring with elisions + defaults binds wrong elements (host) / emits invalid funcidx (standalone) (~54 standalone CE + host fails) | 64 | done | high |
 | **2501** | Object.prototype.toString [object X] builtin tag — Array/Function/Date missing (host) + standalone CE (~151 test262) | 64 | done | medium |
-| **2552** | Annex B B.3.3 Phase 2 rework — TDZ-var outer-binding allocation perturbs hot-path codegen (-1180 test262 regression) | 64 | in-progress | medium |
-| **2566** | Eager-buffer generator over-consumes in array destructuring (capturing generators yield wrong side-effect counts; trailing elision steps too far) | 67 | blocked | medium |
+| **2566** | Eager-buffer generator over-consumes in array destructuring (capturing generators yield wrong side-effect counts; trailing elision steps too far) | Backlog | blocked | medium |
 | **2615** | Proxy (host): a `new Proxy` result typed as its target's struct causes every read through the proxy to trap (~32+ fails) | 65 | done | top |
 | **2616** | Proxy (host): present-but-non-callable trap is silently dropped instead of throwing TypeError (~19 fails) | 65 | done | high |
 | **2617** | Proxy (host): trap-thrown exceptions and §10.5 invariant TypeErrors are swallowed by the boundary try/catch (~40 fails) | 65 | done | high |
-| **2618** | Proxy (host): calling / constructing a Proxy whose target is callable traps (illegal cast) or ignores the construct trap result (~15 fails) | 67 | blocked | medium |
-| **2661** | AsyncIteratorPrototype[Symbol.asyncDispose] — explicit-resource-management disposal protocol (7 test262 fails) |  | ready | low |
-| **2662** | host (gc) generator backend is EAGER-buffered — breaks lazy/suspension semantics on the default path (architecture) |  | ready | high |
+| **2618** | Proxy (host): calling / constructing a Proxy whose target is callable traps (illegal cast) or ignores the construct trap result (~15 fails) | Backlog | blocked | medium |
+| **2661** | AsyncIteratorPrototype[Symbol.asyncDispose] — explicit-resource-management disposal protocol (7 test262 fails) | Backlog | ready | low |
+| **2662** | host (gc) generator backend is EAGER-buffered — breaks lazy/suspension semantics on the default path (architecture) | Backlog | blocked | high |
 | **2663** | feat: `with` statement Tier 2 — dynamic-scope fallback (de-skip the 294 test262 WithStatement tests; landing page shows unsupported) | 67 | in-progress | medium |
 | **2665** | dashboard: landing-page feature-support labels are hardcoded HTML, not auto-derived from test262 pass-rates (with/SAB/top-level-await/__proto__ etc. shown permanently 'not supported') | 66 | done | medium |
-| **2666** | ≤ES3: member-reference base[prop] evaluation order in compound-assignment and prefix/postfix ++/-- (ToPropertyKey once, left-before-right) | 67 | in-progress | high |
 | **2667** | ≤ES3: mapped arguments object — non-configurable/non-writable property + [[Delete]] semantics (residual of #1511) | 66 | done | high |
-| **2668** | ES5: Object.defineProperty/defineProperties descriptor fidelity residual (~788 fails — largest ES5 cluster) | 67 | in-progress | high |
-| **2669** | ES2015: destructuring correctness residual umbrella (~696 fails — iterator-close, defaults, holes, rest across for-of/assignment/binding/params) | 67 | ready | high |
+| **2669** | ES2015: destructuring correctness residual umbrella (~696 fails — iterator-close, defaults, holes, rest across for-of/assignment/binding/params) | current | ready | low |
 | **2670** | ES2015: Array.prototype iteration-method semantics residual (~1017 fails — generic array-like receiver, callback/thisArg, holes, length coercion) | 67 | in-progress | high |
-| **2671** | ES2015 builtin/feature spec residuals: Date, RegExp, Promise, JSON, super (~400 fails — tracking, slice per area) | 67 | ready | medium |
+| **2671** | ES2015 builtin/feature spec residuals: Date, RegExp, Promise, JSON, super (~400 fails — tracking, slice per area) | current | ready | medium |
 | **2675** | ++/-- on a computed object key (obj[keyExpr]++) is broken: NaN/no-update + double ToPropertyKey — #2659-family struct-slot vs sidecar | 66 | done | medium |
-| **2676** | ≤ES3: mapped arguments — strict-mode aliased `delete args[i]` must throw TypeError on a non-configurable index (residual of #2667) | Backlog | ready | medium |
+| **2676** | ≤ES3: mapped arguments — strict-mode aliased `delete args[i]` must throw TypeError on a non-configurable index (residual of #2667) | 69 | done | high |
 | **2678** | Date.parse / new Date(str) are NaN stubs in HOST mode — native parser is standalone/WASI-only (needs js-string externref support) | 66 | done | medium |
 | **2679** | ToNumber/ToPrimitive invokes valueOf with the WRONG `this` (receiver identity lost) — breaks arg-*-to-number tests across builtins | 66 | done | high |
-| **2680** | Runtime ToPropertyDescriptor reads a WasmGC-struct descriptor's attributes own-level only (drops prototype-inherited get/set/value/enumerable/configurable) | 67 | ready | high |
+| **2680** | Runtime ToPropertyDescriptor reads a WasmGC-struct descriptor's attributes own-level only (drops prototype-inherited get/set/value/enumerable/configurable) | 67 | done | high |
 | **2682** | perf(strings): string read-loop fast path — hoist charCodeAt flatten/descriptor + i32 hash accumulator (the #1762 NO-GO redirect) |  | done | high |
 | **2709** | SuperCall remaining sub-cases: spread-getter side-effects, uninitialized-this PutValue, GetSuperBase ordering, nested-super this-init, top-level super-arg global visibility | Backlog | done | medium |
-| **2714** | Object spread copies values but the copied keys are not enumerable (Object.keys / spread-then-data drop) | Backlog | ready | medium |
+| **2714** | Object spread copies values but the copied keys are not enumerable (Object.keys / spread-then-data drop) | 69 | done | medium |
+| **2744** | ES5: object [[Extensible]] internal slot — preventExtensions/seal/freeze set it; isExtensible/isSealed/isFrozen read it | 67 | done | high |
+| **2746** | Object.keys / Object.getOwnPropertyNames: own-enumerable key listing, array-exotic index keys, and non-object receiver handling | 67 | done | medium |
+| **2756** | Array-pattern element with an object-literal / class-expression default value null-derefs (the fn-name-class dstr cluster) | 69 | done | high |
+| **2757** | Assignment-destructuring (expressions/assignment): rest element + undefined/hole binds wrong value / 'array too large' trap | 69 | done | high |
+| **2758** | Object/array-pattern default-init side-effect runs when element is present (init-skipped) — call default eagerly evaluated / closure-box in skipped arm | 69 | done | medium |
+| **2761** | Set set-algebra set-like-arg residual: class-instance set-likes (substrate-gated), set-like-array, iterator-return (27 test262 fails) | Backlog | done | medium |
+| **2767** | nominal value assigned into an uninitialized/untyped var loses its type → method dispatch goes dynamic and fails (var d; d = new Date(0); d.toISOString()) | 69 | done | high |
+| **2768** | bare-var receiver recovery: per-type externref→ref recovery hardening + safelist expansion (follow-on of #2767's Date-only gate) | 75 | wont-fix | medium |
+| **2769** | [ARCH] for-of typed in-bounds undefined/hole default-init — representation-level carve (split from #2669) | 69 | done | medium |
+| **2770** | dynamic builtin boolean-method on a bare-var/dynamic receiver boxes the i32 result as a NUMBER not a boolean (set.has/map.has/re.test → 1 not true) | 69 | done | high |
+| **2777** | process.stdin reactor prelude builds each 'data' chunk byte-by-byte (O(n^2)) — SIGKILLs nm_node_process at multi-MiB | Backlog | done | medium |
+| **2808** | for-of OBJECT-binding head drops nested sub-patterns (no bind, no RequireObjectCoercible throw) | 69 | done | high |
+| **2811** | Destructuring closure-capture residual: captured builtin-named var (length/concat/…) + dstr-param closure TDZ-flag offset (split from #2669) | 69 | done | high |
+| **2818** | Bug C (class-method half): block-scoped let captured by a class method reads null (captured-globals promotion ordering) | 69 | done | high |
+| **2820** | Bug C: block-scoped let captured by hoisted FunctionDeclaration reads null (duplicate-local desync) | 69 | done | high |
+| **2825** | Bug C (class-method half, spec'd): block-nested class compiled eagerly, so captured-globals promotion never fires for an outer block-let | Backlog | blocked | high |
+| **2826** | Bug C (CPS-capture half): block-scoped let immutably captured by a hoisted async/generator declaration reads the stale pre-hoisted slot | Backlog | blocked | high |
+| **2844** |  | 69 | done | medium |
+| **2845** | Assignment-expression destructuring default initializers don't fire on absent element/property (`[a=d]=src`, `{k:x=d}=src`) | 69 | done | high |
+| **2869** | Destructuring with a member-expression assignment target ([x.y]=vals, {k:x.y}=src) — funcIdx-repoint of detached body buffer (~53 fails) | 69 | done | high |
+| **2897** | ≤ES3: `arguments` as assignment target crashes (null-deref) | 69 | done | high |
+| **2898** | ≤ES3: `yield` as assignment target should be an early SyntaxError (currently compiles) | 69 | done | high |
+| **2899** | ≤ES3: Function `.caller` poison-pill must throw TypeError on set (`bound.caller = {}`) | 69 | done | high |
+| **2900** | ≤ES3 (edition bucket): module indirect default-export binding update returns wrong value | 69 | done | high |
+| **2930** | codegen: import binding whose local name differs from the target declaration name resolves to null | 69 | done | high |
+| **2931** | codegen: reassigned function declaration is not a live binding (fn = 2 is lost) | 69 | done | high |
+| **2932** | codegen: .js module dependencies are not compiled in multi-file mode (imports resolve to null) | 69 | done | high |
+| **2970** | codegen: import.meta is not a distinct per-module object (identity shared/absent across modules) | 72 | done | medium |
+| **2971** | codegen: async (TLA) module must not block evaluation of sibling modules in the graph | Backlog | ready | medium |
+| **2976** | Capture-carrying nested function declaration materializes a FRESH closure per reference — F === F is false; statics/sidecar writes land on dead instances |  | done | high |
+| **3007** | any-context computed-index read desyncs __vec_get funcIdx → invalid Wasm (f64.convert_i32_s on externref) | 69 | done | medium |
+| **3021** | spec gap: class elements — static/private field & method placement residual (~1,522 default-lane fails) | current | ready | high |
+| **3022** | UMBRELLA: Object.defineProperty(ies) descriptor fidelity + non-object-receiver tail (~728 default-lane fails) | 72 | done | high |
+| **3023** | iterator protocol: synthesized-iterator .next callability + for-of/for-await abrupt-completion residual (~508 default-lane fails) | 71 | done | high |
+| **3025** | with statement: closed object-literal shape residual (~167 default-lane fails, CE leaks into unrelated with-adjacent tests) | 71 | done | medium |
+| **3026** | negative_test_fail: residual early-error / static-semantics gaps (~79 default-lane, 64 unenforced SyntaxErrors) | 71 | done | medium |
+| **3031** | architect spec: dynamic MOP extensions — Proxy trap dispatch, mutable [[Prototype]] chains, `with` scope objects (umbrella over the #2175 substrate) | Backlog | ready | high |
+| **3038** | for-await/async-gen iterator-close side-effect invisible: two closure-capture bugs (NOT async-CPS versioning) |  | done | high |
+| **3039** | object/class methods & accessors can't read/write a BOXED transitively-captured outer variable (emit garbage) | 71 | done | high |
+| **3040** | array-destructured parameter with a CAPTURED custom-iterable default throws 'Cannot destructure null' (blocks #2664 un-hold) | 71 | done | high |
+| **3041** | get-accessor via an any-typed receiver on a class declared inside a function returns NaN/undefined (dynamic accessor dispatch gap) | 72 | done | medium |
+| **3042** | Object.defineProperty: attribute round-trip fidelity (writable/enumerable/configurable not faithfully stored + reported) | 71 | done | high |
+| **3043** | Object.defineProperty: ValidateAndApplyPropertyDescriptor illegal-transition rules not enforced (should-throw + SameValue + false-positive Cannot-redefine) | 71 | done | high |
+| **3045** | class private-element brand check emits Reflect.has on a non-object receiver (private methods/generators/static-private) | 71 | done | medium |
+| **3046** | JSON.parse reviver: `this` is not bound to the holder object (Object.defineProperty(this,…) in a reviver throws called-on-non-object) | 71 | done | medium |
+| **3047** | false CE — `var x; function x(){}` same-name coexistence inside a block wrongly rejected as 'Cannot redeclare block-scoped variable' (#1389 residual) | 71 | done | high |
+| **3048** | codegen: 'Missing __make_getter_callback import' CE on object-literal getters / computed-property methods (#1027 resurgence, ~22 files) | 71 | done | high |
+| **3049** | Iterator.prototype helper methods (map/filter/take/drop/flatMap/…): 'X is not a function' + this-plain-iterator / return-forwarding residual (~27 fails) | 71 | done | medium |
+| **3050** | GeneratorPrototype.throw() resumption through try/finally / try/catch hits `unreachable` (6 fails) | 71 | done | medium |
+| **3051** | RegExp.prototype[@@replace] / [@@split] coercion protocol: ToString/ToInteger/ToLength on result-array + lastIndex/limit/flags args (~48 fails) | 71 | done | medium |
+| **3059** | codegen: concrete-vec any-receiver — dynamic property-write and dynamic method-call box the receiver with different host identities (sidecar prop lost); breaks aliased-function-property idiom (~19+ slice/toString test262) | Backlog | ready | medium |
+| **3060** | Object.hasOwn(structLiteral, key) returns false in host mode — __object_hasOwn host import skips wasm-struct marshalling (~24 default-lane fails) | 71 | done | medium |
+| **3061** | codegen: ArrayBuffer.byteLength / byteOffset return NaN in JS-host mode (native accessor gated to standalone only) | 71 | done | medium |
+| **3062** | codegen: DataView.byteLength / byteOffset return NaN in JS-host mode (native accessor gated to standalone only) | 71 | done | medium |
+| **3063** | codegen: implement legacy global escape() / unescape() (§B.2.1/.2) — JS-host lowering | 71 | done | medium |
+| **3064** | codegen: pure-Wasm escape() / unescape() (§B.2.1.1/.2) — standalone/WASI lowering | 71 | done | medium |
+| **3068** | codegen: pure-Wasm String.prototype.isWellFormed / toWellFormed (§22.1.3) — standalone/WASI lowering | 71 | done | medium |
+| **3069** | codegen: pure-Wasm Annex B §B.2.2 HTML string-wrapper methods — standalone/WASI lowering | 71 | done | medium |
+| **3080** | private-method value identity: `this.#m === (()=>this)().#m` is false for class declarations (method-value-identity substrate) | 71 | done | low |
+| **3095** | String.prototype.{match,search,replace,replaceAll,split} must not access Symbol.<method> on primitive search values | 71 | done | medium |
+| **3096** | Free variables referenced only in a parameter-default initializer are not captured by arrow/function-expression closures | 71 | done | medium |
+| **3116** | Array exotic [[DefineOwnProperty]]: defineProperty(ies) element/length writes invisible to vec reads (§10.4.2 unimplemented on the runtime lanes) | 71 | done | high |
+| **3123** | class C extends F (plain fnctor with runtime-assigned .prototype): instance member lookup does not reach F.prototype — Iterator-helper exhaustion/return-forwarding cluster | 71 | done | medium |
+| **3152** | array-pattern destructuring DRAINS the source iterator (materialize-then-index) instead of per-element IteratorStep — observable side-effect over-stepping | current | ready | medium |
+| **3331** | AUDIT: #2106 $undefined-singleton null-guard bug class — systematic sweep + Map get-miss fix (4th instance) | 72 | done | high |
+| **3334** | 'standalone JSON.stringify serialises every object as "null" through any/closure paths — toJSON miss-guard vs $undefined singleton' | 72 | done | high |
+| **3586** | `s += yield` (yield in compound-assignment RHS) not claimed by the native generator machine: host lane silently returns 0, standalone emits env imports | current | ready | high |
 
 <!-- AUTOGENERATED:GOAL-ISSUES-END -->
 

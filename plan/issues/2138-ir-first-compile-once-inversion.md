@@ -8,7 +8,7 @@ pipeline_unblocked: 1927
 spec: ready
 sprint: 69
 created: 2026-06-12
-updated: 2026-07-03
+updated: 2026-07-21
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -17,7 +17,9 @@ task_type: architecture
 area: compiler
 language_feature: compiler-internals
 goal: maintainability
-related: [1530, 1916, 1927, 2135, 2945, 2947, 2972, 2973]
+related: [1530, 1916, 1927, 2135, 2856, 2945, 2947, 2972, 2973]
+loc-budget-allow:
+  - src/codegen/index.ts
 origin: "2026-06-12 sprint-62 architecture analysis (pipeline workstream N2)"
 ---
 
@@ -636,3 +638,52 @@ gate 4 is latent, so results are comparable). Raw JSON:
   load-bearing) — rerun the sweep; the skip set should stay trap-free while
   the claim rate rises. The suite-scale per-run stat still needs the small
   runner extension (`irFirstSkipped` into the JSONL rows) if wanted.
+
+## Slice 4 M0 — bounded multi-module overlay (2026-07-21)
+
+`generateMultiModule` now runs the WasmGC IR overlay after **all** source
+files have emitted their legacy bodies and after `finalizeMethodTrampolines`.
+This is deliberately compile-twice only: M0 never supplies a body-skip set,
+never patches the graph's shared `__module_init`, and keeps class members on
+legacy. Each source is planned without `resolveModuleBinding`, so imported
+calls remain selector-external until the cross-module call capability lands.
+
+The flat-name safety boundary is explicit. Cross-file top-level function-name
+collisions and their selected local call components stay legacy-owned. The M0
+copy of the selection also excludes functions that reference import bindings,
+nested/generic bodies whose synthesized names are not graph-unique, and the
+remaining cross-file caller ABI hazards, including checker-resolved global
+script references with no import syntax (all cross-file targets in
+standalone/WASI, callable-parameter or callable-result targets in host mode).
+The IR integration report is consumed through the same diagnostic path as
+single-source codegen;
+`irCompiledFuncs` aggregates genuine emission across source files and every
+post-claim failure still reaches `irPostClaimErrors` plus the established
+fallback diagnostic.
+
+Measured by `tests/issue-2138-multi-module-ir-overlay.test.ts`:
+
+- `compileMulti` genuinely IR-emits one pure numeric function in the dependency
+  (`depPure`) and one in the entry (`entryPure`), while a renamed imported
+  caller, module-binding reader, module-init callee, and `<module-init>` remain
+  absent from `irCompiledFuncs`.
+- IR-on and `experimentalIR: false` both produce runtime values
+  `[9, 15, 42]`; the `42` is initialized by the preserved legacy module-init
+  body. `irFirstSkipped` remains absent on both multi paths.
+- A two-module flat-name collision keeps both colliding declarations and their
+  local callers on legacy while unrelated leaves in both files still IR-emit.
+- Standalone keeps the cross-file imported target on legacy (caller-side ABI
+  closure) while an independent entry function still genuinely IR-emits; the
+  same `[9, 15, 42]` runtime values hold.
+- Checker-resolved global-script calls follow the same closure: host targets
+  with callable parameters/results stay legacy and preserve runtime parity,
+  while a scalar target may IR-emit only in host mode; standalone keeps every
+  cross-file target on legacy.
+- A top-level function that constructs and reads a local class can IR-emit with
+  runtime parity while the constructor and method slots remain legacy-owned.
+- The same anti-vacuity/import-boundary assertions pass through `compileFiles`
+  and `compileProject`.
+- All focused probes report **zero post-claim demotions**. Rebasing M0 after
+  the builtins component preserves its banked floor: the repository fallback
+  ratchet reports exact zero delta (`body-shape-rejected` 12→12,
+  module-level 2→2, post-claim none) via `pnpm run check:ir-fallbacks`.

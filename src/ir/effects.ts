@@ -113,6 +113,7 @@ export function effectsOf(instr: IrInstr, cache: Map<IrInstr, IrEffects> = new M
     // string content ops. Re-ordering these is unobservable.
     case "const":
     case "string.const":
+    case "intrinsic":
     case "binary":
     case "unary":
     case "select":
@@ -126,11 +127,12 @@ export function effectsOf(instr: IrInstr, cache: Map<IrInstr, IrEffects> = new M
     case "string.concat":
     case "string.eq":
     case "string.len":
+    case "string.char_at":
+    case "string.char_code_at":
     case "object.new":
     case "vec.new_fixed": // #1804 — fresh vec allocation, pure (like object.new)
     case "refcell.new":
     case "closure.new":
-    case "class.alloc": // #3000-C — fresh default-initialised struct, pure (like object.new; runs no user ctor code)
     case "extern.regex": // NOTE: DCE-kept (may throw) — see KNOWN DIVERGENCE above.
       break;
     // Reads of mutable heap state.
@@ -150,6 +152,7 @@ export function effectsOf(instr: IrInstr, cache: Map<IrInstr, IrEffects> = new M
     case "class.set":
     case "refcell.set":
     case "vec.set":
+    case "vec.set_length":
       fx.writesHeap = true;
       break;
     // Call-like: may read AND write arbitrary heap state. `extern.prop` can
@@ -169,6 +172,9 @@ export function effectsOf(instr: IrInstr, cache: Map<IrInstr, IrEffects> = new M
     // (`__extern_get` runs accessors), so a dynamic member read is call-like:
     // it may read AND write arbitrary heap state. Conservative like extern.prop.
     case "dyn.member_get":
+    // #3795 — strict dynamic [[Set]] may invoke accessors/proxy-like runtime
+    // hooks and always mutates observable heap state.
+    case "dyn.member_set":
     case "iter.new":
     case "iter.next":
     case "iter.done":
@@ -259,6 +265,14 @@ export function effectsOf(instr: IrInstr, cache: Map<IrInstr, IrEffects> = new M
     case "if.stmt":
       mergeBuffer(instr.then);
       mergeBuffer(instr.else);
+      break;
+    // #2952 slice 4 — labeled block / switch: union of clause buffers
+    // (disc is a plain SSA use, surfaced via directUses).
+    case "labeled.block":
+      mergeBuffer(instr.body);
+      break;
+    case "switch":
+      for (const body of instr.bodies) mergeBuffer(body);
       break;
     // (#2856) Early return is a control effect (like throw): never
     // reordered, CSE'd, or dropped — treat as a full barrier.
@@ -467,6 +481,10 @@ export function isSideEffecting(i: IrInstr): boolean {
     // slot.read is pure (load a Wasm local) but always-keep to avoid
     // breaking the for-of body's load/use pattern.
     i.kind === "slot.write" ||
+    // #3795: strict dynamic [[Set]] is void-result but its three carrier
+    // operands must seed DCE liveness. The generic null-result keep rule
+    // preserves only the instruction itself, not the definitions it uses.
+    i.kind === "dyn.member_set" ||
     i.kind === "forof.vec" ||
     // Slice 6 part 3 (#1182): host-iterator protocol ops mutate iterator
     // state (advance pointer, dispose). DCE must not eliminate them
@@ -523,6 +541,10 @@ export function isSideEffecting(i: IrInstr): boolean {
     // rationale as while.loop / for.loop above).
     i.kind === "br.label" ||
     i.kind === "if.stmt" ||
+    // #2952 slice 4 — labeled.block / switch are statement-level control
+    // flow whose clause buffers must be use-walked (same as if.stmt).
+    i.kind === "labeled.block" ||
+    i.kind === "switch" ||
     // Slice 10 (#1169i): extern class ops invoke host imports with
     // arbitrary side effects. Conservatively keep all five live so DCE
     // never strips a `RegExp_new` or `Uint8Array_set` whose result is

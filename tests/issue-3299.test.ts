@@ -41,7 +41,9 @@ import type {
   LinearMemoryPlan,
   LinearRuntimeOperation,
 } from "../src/ir/analysis/linear-memory-plan.js";
+import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
 
+const identities = createTestIrFunctionIdentityFactory("issue-3299");
 const here = dirname(fileURLToPath(import.meta.url));
 const porfforRoot = process.env.JS2WASM_PORFFOR_ROOT ?? join(here, "../vendor/Porffor");
 const hasOptionalPorffor = existsSync(join(porfforRoot, "compiler/ir.js"));
@@ -58,7 +60,7 @@ const SHAPE: IrObjectShape = {
 function proofFixture(): { module: IrModule; plan: LinearMemoryPlan } {
   const allocations = new AllocSiteRegistry();
 
-  const object = new IrFunctionBuilder("objectProof", [F64], true, allocations);
+  const object = new IrFunctionBuilder(identities.next("objectProof"), [F64], true, allocations);
   object.openBlock();
   const four = object.emitConst({ kind: "f64", value: 4 }, F64);
   const five = object.emitConst({ kind: "f64", value: 5 }, F64);
@@ -81,7 +83,7 @@ function proofFixture(): { module: IrModule; plan: LinearMemoryPlan } {
   const objectResult = object.emitBinary("f64.add", mutationScore, identityScore, F64);
   object.terminate({ kind: "return", values: [objectResult] });
 
-  const vector = new IrFunctionBuilder("vectorProof", [F64], true, allocations);
+  const vector = new IrFunctionBuilder(identities.next("vectorProof"), [F64], true, allocations);
   const index = vector.addParam("index", I32);
   vector.openBlock();
   const values = [4, 5, 6].map((value) => vector.emitConst({ kind: "f64", value }, F64));
@@ -197,15 +199,20 @@ describe("#3299 shared heap/layout plan", () => {
 
     const allocs = nodes.filter((node) => nodeName(node) === "Alloc");
     expect(allocs).toHaveLength(plan.allocations.length);
-    for (const alloc of allocs) {
-      const [siteId, raw] = alloc[5] as readonly [number, boolean];
-      const planned = plan.allocation(siteId as AllocSiteId)!;
+    const allocatedBytes = allocs.map((alloc) => {
       const bytesNode = alloc[3] as PorfforNode;
       expect(nodeName(bytesNode)).toBe("Const");
-      expect(bytesNode[3]).toBe(planned.size.kind === "constant" ? planned.size.bytes : undefined);
       expect(alloc[4]).toBe(0);
-      expect(raw).toBe(false);
-    }
+      expect(alloc[5]).toBe(0);
+      return bytesNode[3] as number;
+    });
+    const plannedBytes = plan.allocations.map((allocation) => {
+      expect(allocation.size.kind).toBe("constant");
+      return allocation.size.kind === "constant" ? allocation.size.bytes : Number.NaN;
+    });
+    expect(allocatedBytes.sort((left, right) => left - right)).toEqual(
+      plannedBytes.sort((left, right) => left - right),
+    );
     expect(plan.policy).toBe("arena-v1");
     expect(
       plan.allocations.every(

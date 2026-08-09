@@ -4,7 +4,7 @@ title: "encode flake-classification rules in diff-test262: ct_flake/ct_suspect s
 status: done
 sprint: 63
 created: 2026-06-11
-updated: 2026-06-16
+updated: 2026-07-21
 completed: 2026-06-16
 assignee: ttraenkler/dev-b
 priority: low
@@ -69,3 +69,34 @@ Documented in `.claude/skills/regression-triage.md` (new Step 2b). Tests:
 `tests/issue-2098.test.ts` (3 cases — ct split with flake/suspect/unknown,
 signature stable across reorder+wasm_sha, signature changes when cluster
 differs). All pass. Stacked on the #2096 branch (shares diff-test262.ts).
+
+## Follow-up resolution (2026-07-21 — absent trap baseline rows)
+
+The predecessor merge-group artifact from run `29801056655` omitted two host
+rows. Candidate run `29801877164` compiled and retried those tests and reported
+`oob`, so the trap ratchet's former `!base` branch classified both as newly
+trapping. That conclusion was unsupported: an absent JSONL row records no
+baseline runtime outcome.
+
+Direct `runTest262File` controls confirmed the failure mode independently. Both
+tests were run three times on predecessor `1aef2ea8` and B0 `01ef0f6`; every run
+produced the identical OOB message. The predecessor Wasm hashes were
+`eb448e75ca22` / `8b9477e75bf1`, while B0 produced `c01964041b67` /
+`c70a3d758a1a`. The standalone lane also passed both tests on both commits. The
+host traps therefore pre-existed B0; only the predecessor CI row omission
+manufactured apparent growth.
+
+The CLI's same-corpus artifact comparison now explicitly asks
+`evaluateTrapCategoryGrowth` to apply the same evidence rule to missing rows as
+it already applies to an explicit baseline `compile_timeout`. The helper's
+default remains strict for direct callers modeling a genuinely new candidate
+test:
+
+- candidate traps with no baseline row are excluded from category growth;
+- the paths remain visible under `Trap baseline unknowns`, annotated with
+  `baseline absent` or `baseline compile_timeout`;
+- a baseline row with any observed non-trap runtime outcome changing to a trap
+  still increments the category and hard-fails the ratchet.
+
+Focused coverage in `tests/issue-2098.test.ts` pins both halves: absent→trap is
+diagnostic-only, while observed `assertion_fail`→`oob` remains a gate failure.

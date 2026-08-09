@@ -1,0 +1,600 @@
+fail	language/expressions/class/elements/same-line-method-rs-static-privatename-identifier.js	Test262Error: obj should have an own property m | at L89: assert.sameValue(c.m(), 42);
+fail	language/statements/class/elements/multiple-stacked-definitions-rs-static-async-generator-method-privatename-identifier-alt.js	Test262Error: obj should have an own property foo | at L106: assert.sameValue(c.foo, "foobar");
+fail	annexB/language/eval-code/indirect/global-if-decl-else-stmt-eval-global-existing-global-init.js	TypeError: Object method called on null or undefined | at L36: assert.sameValue(f, "x", "binding is not reinitialized");\
+fail	language/expressions/object/dstr/async-gen-meth-obj-ptrn-rest-val-obj.js	Test262:AsyncTestFailure:Test262Error: Test262Error: obj should have an own property x
+fail	built-ins/Object/prototype/__defineSetter__/define-existing.js	Test262Error: descriptor `set` method Expected SameValue(«[object Object]», «[object Object]») to be true | at L39: assert.sameValue(desc.get, originalGet, 'descriptor `get` method');
+pass	built-ins/Math/asinh/name.js	
+fail	language/expressions/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier-initializer.js	Test262Error: obj should have an own property foo | at L85: assert.sameValue(c.foo, "foobar");
+fail	intl402/Locale/prototype/getWeekInfo/name.js	TypeError: Cannot access property on null or undefined at 611:16
+pass	built-ins/String/prototype/padStart/function-length.js	
+pass	built-ins/Object/defineProperty/15.2.3.6-4-82-17.js	
+fail	built-ins/Symbol/replace/prop-desc.js	TypeError: Cannot convert undefined or null to object | at L14: assert.sameValue(typeof Symbol.replace, 'symbol');
+fail	language/expressions/class/elements/after-same-line-static-async-gen-rs-static-method-privatename-identifier-alt.js	Test262Error: obj should have an own property m | at L101: assert(
+fail	built-ins/Set/prototype/entries/entries.js	TypeError: Cannot convert undefined or null to object | at L13: assert.sameValue(
+pass	built-ins/Error/prototype/toString/name.js	
+fail	built-ins/Date/prototype/getUTCMinutes/prop-desc.js	TypeError: Cannot convert undefined or null to object
+fail	language/statements/class/elements/multiple-definitions-rs-static-privatename-identifier-initializer-alt-by-classname.js	Test262Error: obj should have an own property m | at L87: assert.sameValue(c.m(), 42);
+skip	built-ins/Temporal/ZonedDateTime/prototype/toString/length.js	
+pass	built-ins/Object/defineProperties/15.2.3.7-5-b-149.js	
+fail	language/statements/class/elements/same-line-gen-rs-private-setter.js	Test262Error: obj should have an own property m | at L107: assert.sameValue(c.m().next().value, 42);
+pass	built-ins/Object/create/15.2.3.5-4-309.js	
+pass	built-ins/Date/prototype/getMinutes/name.js	
+fail	intl402/Locale/length.js	TypeError: Cannot access property on null or undefined at 613:16
+skip	built-ins/Temporal/Instant/prototype/valueOf/length.js	
+pass	built-ins/Promise/resolve/name.js	
+fail	built-ins/Map/prototype/entries/entries.js	TypeError: Cannot convert undefined or null to object | at L14: assert.sameValue(
+fail	intl402/NumberFormat/prototype/formatRange/prop-desc.js	TypeError: Cannot access property on null or undefined at 612:16 | at L10: assert.sameValue(
+fail	language/expressions/class/elements/after-same-line-method-rs-static-generator-method-privatename-identifier-alt.js	Test262Error: obj should have an own property m | at L104: assert.sameValue(c.m(), 42);
+fail	built-ins/TypedArray/prototype/lastIndexOf/prop-desc.js	Test262Error: obj should have an own property lastIndexOf
+fail	language/statements/class/elements/after-same-line-static-gen-computed-names.js	Test262Error: obj should have an own property m | at L33: assert.sameValue(C.m().next().value, 42);
+fail	intl402/RelativeTimeFormat/constructor/supportedLocalesOf/name.js	TypeError: Cannot access property on null or undefined at 612:16
+pass	built-ins/Symbol/for/name.js	
+fail	annexB/built-ins/escape/prop-desc.js	Test262Error: obj should have an own property escape | at L12: assert.sameValue(typeof this.escape, "function");
+fail	built-ins/Promise/reject-function-name.js	Test262Error: obj should have an own property name
+fail	built-ins/Object/defineProperty/15.2.3.6-4-230.js	Test262Error: Expected obj[0] to equal 10, actually null
+fail	built-ins/Math/sin/prop-desc.js	Test262Error: obj should have an own property sin
+fail	language/statements/class/elements/same-line-method-private-method-usage.js	Test262Error: obj should have an own property m | at L34: assert.sameValue(c.m(), 42);
+skip	built-ins/Temporal/PlainYearMonth/compare/name.js	
+fail	annexB/built-ins/String/prototype/link/name.js	TypeError: Cannot convert undefined or null to object
+fail	annexB/built-ins/String/prototype/link/prop-desc.js	Test262Error: obj should have an own property link
+fail	language/statements/class/elements/after-same-line-static-async-method-private-field-usage.js	Test262Error: obj should have an own property m | at L34: assert(
+fail	built-ins/Set/prototype/symmetricDifference/symmetricDifference.js	TypeError: Cannot convert undefined or null to object | at L10: assert.sameValue(
+fail	built-ins/Object/defineProperties/15.2.3.7-6-a-12.js	Test262Error: Expected TypeError, got Test262Error: Expected an exception. | at L27: throw new Test262Error("Expected an exception.");
+fail	language/expressions/class/elements/new-sc-line-gen-rs-field-identifier-initializer.js	Test262Error: obj should have an own property m | at L68: assert.sameValue(c.m().next().value, 42);
+fail	language/statements/class/elements/after-same-line-method-private-field-usage.js	Test262Error: obj should have an own property m | at L34: assert.sameValue(c.m(), 42);
+fail	built-ins/TypedArray/prototype/subarray/length.js	TypeError: Cannot convert undefined or null to object
+fail	language/expressions/class/elements/after-same-line-static-async-method-static-private-methods.js	Test262Error: obj should have an own property m | at L45: assert(
+pass	built-ins/Promise/prototype/finally/name.js	
+fail	built-ins/Math/log2/prop-desc.js	Test262Error: obj should have an own property log2
+pass	language/statements/for/dstr/const-obj-ptrn-rest-skip-non-enumerable.js	
+fail	language/expressions/class/elements/new-no-sc-line-method-computed-symbol-names.js	Test262Error: obj should have an own property m | at L35: assert.sameValue(c.m(), 42);
+skip	built-ins/Temporal/PlainDateTime/prototype/withCalendar/prop-desc.js	
+fail	built-ins/Object/defineProperties/15.2.3.7-6-a-296.js	Test262Error: obj should have an own property 0 | at L36: throw new Test262Error("Expected an exception.");
+skip	built-ins/Temporal/PlainTime/prototype/equals/name.js	
+fail	language/statements/class/elements/after-same-line-static-async-gen-rs-static-async-method-privatename-identifier.js	Test262Error: obj should have an own property m | at L104: assert(
+pass	language/statements/class/dstr/private-meth-static-obj-ptrn-rest-getter.js	
+fail	built-ins/AsyncGeneratorPrototype/next/length.js	TypeError: Cannot convert undefined or null to object
+fail	built-ins/Object/defineProperty/15.2.3.6-4-244.js	Test262Error: obj should have an own property 1 | at L28: throw new Test262Error("Expected an exception.");
+pass	built-ins/Array/prototype/reduce/name.js	
+fail	language/statements/class/elements/after-same-line-method-rs-field-identifier-initializer.js	Test262Error: obj should have an own property m | at L67: assert.sameValue(c.m(), 42);
+fail	language/statements/class/elements/same-line-gen-static-private-methods.js	Test262Error: obj should have an own property m | at L45: assert.sameValue(c.m().next().value, 42);
+pass	built-ins/Math/atan2/name.js	
+fail	built-ins/TypedArray/prototype/at/name.js	Test262Error: The value of `typeof TypedArray.prototype.at` is "function" Expected SameValue(«"undefined"», «"function"») to be true | at L15: assert.sameValue(
+fail	built-ins/Object/defineProperty/15.2.3.6-4-241.js	Test262Error: obj should have an own property 1 | at L26: throw new Test262Error("Expected an exception.");
+fail	built-ins/ShadowRealm/prototype/Symbol.toStringTag.js	ReferenceError: ShadowRealm is not defined
+fail	built-ins/Object/defineProperty/15.2.3.6-4-299-1.js	Test262Error: obj should have an own property 0 | at L29: throw new Test262Error("Expected an exception.");
+pass	built-ins/NativeErrors/URIError/name.js	
+fail	language/statements/class/elements/after-same-line-static-gen-rs-static-privatename-identifier-initializer-alt.js	Test262Error: obj should have an own property m | at L83: assert.sameValue(C.m().next().value, 42);
+fail	language/statements/class/elements/multiple-definitions-static-private-fields.js	Test262Error: obj should have an own property m | at L45: assert.sameValue(c.m(), 42);
+fail	built-ins/Date/prop-desc.js	Test262Error: obj should have an own property Date
+pass	language/statements/class/dstr/gen-meth-static-dflt-obj-ptrn-rest-getter.js	
+fail	built-ins/RegExp/prototype/source/prop-desc.js	Test262Error: obj should have an own property source | at L14: assert.sameValue(typeof d.get, 'function', 'typeof d.get');
+fail	built-ins/TypedArrayConstructors/BigUint64Array/prototype/constructor.js	Test262Error: obj should have an own property constructor
+pass	built-ins/Promise/any/length.js	
+fail	built-ins/NativeErrors/SyntaxError/prototype.js	Test262Error: Expected SameValue(«[object Object]», «null») to be true | at L15: assert.sameValue(SyntaxError.prototype, Object.getPrototypeOf(new SyntaxError));
+pass	built-ins/Date/prototype/getMilliseconds/name.js	
+fail	language/statements/class/elements/multiple-stacked-definitions-rs-static-method-privatename-identifier.js	Test262Error: obj should have an own property foo | at L103: assert.sameValue(c.foo, "foobar");
+skip	built-ins/Temporal/PlainMonthDay/prototype/equals/name.js	
+fail	built-ins/Object/defineProperty/15.2.3.6-4-263.js	Test262Error: obj should have an own property 0
+pass	intl402/Number/prototype/toLocaleString/length.js	
+compile_error	language/statements/generators/dstr/dflt-obj-ptrn-rest-skip-non-enumerable.js	Codegen error: native generator lowering currently supports only sequential numeric yields in standalone/WASI targets (#680). Recompile with a JS host target for complex generator shapes.
+pass	built-ins/Date/prototype/setDate/name.js	
+fail	language/statements/class/elements/same-line-method-rs-private-getter-alt.js	Test262Error: obj should have an own property m | at L108: assert.sameValue(c.m(), 42);
+fail	built-ins/TypedArrayConstructors/Float64Array/prototype.js	Test262Error: Expected SameValue(«[object Object]», «null») to be true | at L16: assert.sameValue(Float64Array.prototype, Object.getPrototypeOf(new Float64Array(0)));
+fail	built-ins/Object/defineProperties/15.2.3.7-6-a-231.js	Test262Error: Expected obj[1] to be writable, but was not.
+pass	built-ins/GeneratorPrototype/return/length.js	
+fail	annexB/language/global-code/if-decl-no-else-global-existing-non-enumerable-global-init.js	TypeError: Object method called on null or undefined | at L35: assert.sameValue(f, 'x');
+skip	built-ins/Temporal/Now/instant/length.js	
+fail	built-ins/Object/prototype/__proto__/get-fn-name.js	TypeError: Cannot convert undefined or null to object
+fail	language/expressions/class/elements/after-same-line-static-async-gen-private-method-getter-usage.js	Test262Error: obj should have an own property m | at L34: assert(
+fail	language/expressions/class/elements/after-same-line-static-async-gen-rs-static-privatename-identifier-by-classname.js	Test262Error: obj should have an own property m | at L89: assert(
+fail	language/expressions/class/setter-length-dflt.js	TypeError: Cannot convert undefined or null to object
+fail	language/expressions/class/elements/same-line-async-gen-rs-privatename-identifier-initializer.js	Test262Error: obj should have an own property m | at L82: assert(
+pass	built-ins/RegExp/prototype/exec/name.js	
+fail	built-ins/Array/prototype/constructor.js	Test262Error: obj should have an own property constructor | at L21: assert.sameValue(Array.prototype.constructor, Array);
+fail	language/statements/class/dstr/async-gen-meth-dflt-obj-ptrn-rest-val-obj.js	Test262:AsyncTestFailure:Test262Error: Test262Error: obj should have an own property x
+fail	language/expressions/class/elements/multiple-stacked-definitions-literal-names.js	Test262Error: obj should have an own property foo | at L36: assert.sameValue(c.foo, "foobar");
+fail	language/statements/class/elements/multiple-stacked-definitions-static-private-methods-with-fields.js	Test262Error: obj should have an own property foo | at L49: assert.sameValue(c.foo, "foobar");
+fail	built-ins/Object/defineProperties/15.2.3.7-6-a-278.js	Test262Error: obj should have an own property 0
+fail	built-ins/Object/defineProperty/symbol-data-property-default-strict.js	Test262Error: The result of `sym in obj` is `true` Expected SameValue(«false», «true») to be true | at L19: assert.sameValue(sym in obj, true, "The result of `sym in obj` is `true`");
+fail	built-ins/Map/map.js	Test262Error: obj should have an own property Map
+skip	built-ins/Temporal/Instant/prototype/toStringTag/prop-desc.js	
+fail	language/expressions/class/elements/after-same-line-gen-rs-field-identifier.js	Test262Error: obj should have an own property m | at L67: assert.sameValue(c.m().next().value, 42);
+fail	intl402/NumberFormat/supportedLocalesOf/length.js	TypeError: Cannot access property on null or undefined at 623:16
+compile_error	built-ins/Math/sumPrecise/length.js	Codegen error: Math.sumPrecise built-in static property value read is not supported in --target standalone (#1907 / #1888 S6-b). Add a native built-in method closure for this pair.
+skip	built-ins/Temporal/PlainDateTime/prototype/until/name.js	
+fail	language/statements/class/elements/after-same-line-method-private-names.js	Test262Error: obj should have an own property m | at L41: assert.sameValue(c.m(), 42);
+fail	language/expressions/class/dstr/gen-meth-static-obj-ptrn-rest-skip-non-enumerable.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L70: assert.sameValue(rest.x, undefined);
+fail	built-ins/Object/defineProperty/15.2.3.6-4-242.js	Test262Error: Expected obj[0] to be writable, but was not.
+fail	built-ins/AsyncGeneratorPrototype/next/name.js	TypeError: Cannot convert undefined or null to object
+fail	built-ins/Date/prototype/setUTCMilliseconds/prop-desc.js	TypeError: Cannot convert undefined or null to object
+fail	language/statements/class/elements/after-same-line-static-async-gen-rs-private-method.js	Test262Error: obj should have an own property m | at L107: assert(
+fail	language/statements/class/elements/multiple-definitions-rs-static-method-privatename-identifier-alt.js	Test262Error: obj should have an own property m | at L105: assert.sameValue(c.m(), 42);
+pass	built-ins/Array/prototype/toReversed/name.js	
+pass	built-ins/Array/prototype/forEach/length.js	
+pass	built-ins/Object/defineProperty/15.2.3.6-4-85.js	
+pass	built-ins/Object/create/15.2.3.5-4-130.js	
+fail	built-ins/TypedArray/prototype/toReversed/length.js	TypeError: Cannot convert undefined or null to object
+skip	built-ins/Temporal/PlainYearMonth/prototype/equals/name.js	
+fail	language/expressions/async-generator/dstr/named-dflt-obj-ptrn-rest-val-obj.js	Test262:AsyncTestFailure:Test262Error: Test262Error: Expected SameValue(«NaN», «undefined») to be true
+pass	built-ins/Object/create/15.2.3.5-4-111.js	
+pass	built-ins/WeakSet/length.js	
+fail	language/expressions/class/elements/same-line-async-gen-literal-names-asi.js	Test262Error: obj should have an own property m | at L32: assert(
+skip	built-ins/Temporal/Now/zonedDateTimeISO/length.js	
+skip	built-ins/Temporal/PlainDate/prototype/since/prop-desc.js	
+pass	built-ins/Object/defineProperties/15.2.3.7-6-a-97.js	
+skip	built-ins/Temporal/Duration/prototype/subtract/name.js	
+fail	intl402/NumberFormat/prototype/formatRangeToParts/prop-desc.js	TypeError: Cannot access property on null or undefined at 612:16 | at L10: assert.sameValue(
+fail	intl402/Locale/prototype/baseName/name.js	TypeError: Cannot access property on null or undefined at 612:48
+pass	built-ins/Date/prototype/toLocaleTimeString/name.js	
+fail	language/statements/class/elements/multiple-stacked-definitions-private-method-usage.js	Test262Error: obj should have an own property foo | at L36: assert.sameValue(c.foo, "foobar");
+fail	built-ins/Object/defineProperties/15.2.3.7-6-a-282.js	Test262Error: obj should have an own property 0 | at L35: throw new Test262Error("Expected an exception.");
+fail	built-ins/Promise/promise.js	Test262Error: obj should have an own property Promise
+pass	built-ins/Number/prototype/valueOf/length.js	
+fail	built-ins/Object/defineProperty/15.2.3.6-4-547-4.js	Test262Error: Expected obj[0] to be writable, but was not. | at L38: throw new Test262Error("Expected an exception.");
+fail	language/statements/class/elements/syntax/valid/grammar-special-prototype-accessor-meth-valid.js	Test262Error: obj should have an own property prototype | at L49: assert(C.hasOwnProperty('prototype'));
+pass	language/statements/for/dstr/let-obj-ptrn-rest-getter.js	
+pass	built-ins/WeakSet/prototype/add/length.js	
+fail	language/statements/class/elements/same-line-async-method-rs-static-privatename-identifier-alt.js	Test262Error: obj should have an own property m | at L89: assert(
+fail	intl402/DateTimeFormat/prototype/formatToParts/formatToParts.js	TypeError: Cannot access property on null or undefined at 611:16 | at L9: assert.sameValue(
+skip	built-ins/Temporal/Duration/prototype/toJSON/name.js	
+fail	built-ins/Object/defineProperty/15.2.3.6-4-301-1.js	Test262Error: obj should have an own property 0 | at L24: throw new Test262Error("Expected a === 0, actually " + a);
+pass	built-ins/TypedArray/prototype/length/name.js	
+fail	language/statements/class/elements/new-sc-line-gen-rs-static-method-privatename-identifier-alt.js	Test262Error: obj should have an own property m | at L102: assert.sameValue(c.m().next().value, 42);
+pass	built-ins/Math/max/name.js	
+fail	intl402/DisplayNames/length.js	TypeError: Cannot access property on null or undefined at 622:16
+fail	language/eval-code/indirect/var-env-func-init-global-update-configurable.js	Test262Error: Expected SameValue(«"object"», «"function"») to be true | at L46: assert.sameValue(typeof initial, 'function');
+fail	language/expressions/class/elements/after-same-line-static-async-method-literal-names-asi.js	Test262Error: obj should have an own property m | at L32: assert(
+pass	built-ins/Math/sin/length.js	
+pass	built-ins/Object/defineProperties/15.2.3.7-5-b-141.js	
+fail	annexB/built-ins/Date/prototype/setYear/name.js	TypeError: Cannot convert undefined or null to object
+fail	language/statements/try/dstr/obj-ptrn-rest-val-obj.js	Test262Error: Expected SameValue(«NaN», «undefined») to be true | at L24: assert.sameValue(rest.a, undefined);
+fail	built-ins/Object/freeze/15.2.3.9-2-c-3.js	RuntimeError: array element access out of bounds in verifyProperty() at source L41 (via __module_init@L50) | at L48: throw new Test262Error('Expected obj["foo2"] set() to be called, but was not.');
+pass	built-ins/GeneratorPrototype/next/property-descriptor.js	
+fail	language/statements/class/elements/after-same-line-static-async-method-rs-privatename-identifier-alt.js	Test262Error: obj should have an own property m | at L88: assert(
+pass	built-ins/DisposableStack/prototype/use/name.js	
+pass	language/expressions/class/dstr/async-gen-meth-obj-ptrn-rest-getter.js	
+fail	built-ins/Object/defineProperty/15.2.3.6-4-292-1.js	Test262Error: Expected a === 20, actually 0 | at L25: throw new Test262Error('Expected a === 20, actually ' + a);
+skip	built-ins/Temporal/PlainDateTime/compare/prop-desc.js	
+fail	built-ins/FinalizationRegistry/prototype/constructor.js	Test262Error: obj should have an own property constructor
+skip	built-ins/Temporal/PlainDate/prop-desc.js	
+fail	language/statements/class/elements/same-line-method-static-private-fields.js	Test262Error: obj should have an own property m | at L41: assert.sameValue(c.m(), 42);
+pass	built-ins/Object/seal/object-seal-p-is-own-accessor-property.js	
+pass	built-ins/NativeErrors/TypeError/name.js	
+fail	built-ins/RegExp/prototype/test/S15.10.6.3_A10.js	CompileError: WebAssembly.instantiate(): Compiling function #309:"__module_init" failed: call[2] expected type externref, found ref.null of type (ref null 6) @+138515 in __module_init() | at L10: asse
+fail	intl402/DateTimeFormat/prototype/resolvedOptions/name.js	TypeError: Cannot access property on null or undefined at 618:16
+skip	built-ins/Temporal/Duration/prototype/toJSON/length.js	
+pass	built-ins/Object/defineProperties/15.2.3.7-5-b-163.js	
+fail	language/expressions/object/dstr/meth-obj-ptrn-rest-skip-non-enumerable.js	Test262Error: obj should have an own property a | at L49: assert.sameValue(rest.x, undefined);
+pass	language/expressions/new/spread-obj-override-immutable.js	
+fail	language/statements/class/dstr/gen-meth-dflt-obj-ptrn-rest-val-obj.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L66: assert.sameValue(rest.a, undefined);
+fail	language/statements/class/elements/same-line-async-gen-private-method-getter-usage.js	Test262Error: obj should have an own property m | at L34: assert(
+fail	built-ins/AggregateError/prototype/prop-desc.js	Test262Error: obj should have an own property prototype | at L18: assert.sameValue(typeof AggregateError.prototype, 'object');
+fail	language/statements/class/elements/same-line-async-gen-computed-symbol-names.js	Test262Error: obj should have an own property m | at L34: assert(
+fail	language/expressions/class/elements/after-same-line-static-async-method-rs-private-setter.js	Test262Error: obj should have an own property m | at L107: assert(
+fail	annexB/language/eval-code/indirect/global-if-decl-else-decl-a-eval-global-existing-non-enumerable-global-init.js	TypeError: Object method called on null or undefined | at L36: assert.sameValue(f, "x", "binding is not reinitialized");\
+fail	built-ins/TypedArray/prototype/map/name.js	TypeError: Cannot convert undefined or null to object
+skip	built-ins/Temporal/Instant/prototype/constructor.js	
+fail	built-ins/Symbol/prototype/Symbol.toStringTag.js	Test262Error: Expected SameValue(«undefined», «"Symbol"») to be true | at L17: assert.sameValue(Symbol.prototype[Symbol.toStringTag], 'Symbol');
+fail	language/statements/class/elements/wrapped-in-sc-computed-names.js	Test262Error: obj should have an own property b | at L35: assert(
+fail	built-ins/encodeURIComponent/name.js	TypeError: Cannot convert undefined or null to object
+fail	language/statements/class/elements/multiple-definitions-rs-static-generator-method-privatename-identifier-alt.js	Test262Error: obj should have an own property m | at L108: assert.sameValue(c.m(), 42);
+fail	language/statements/class/elements/same-line-async-method-rs-private-method.js	Test262Error: obj should have an own property m | at L107: assert(
+skip	built-ins/Temporal/PlainTime/prototype/toString/length.js	
+fail	language/statements/class/elements/new-sc-line-method-private-names.js	Test262Error: obj should have an own property m | at L42: assert.sameValue(c.m(), 42);
+fail	built-ins/Object/defineProperty/15.2.3.6-4-254.js	Test262Error: Expected true but got false | at L21: assert(arrObj.hasOwnProperty("1"));
+skip	built-ins/Temporal/PlainTime/prototype/prop-desc.js	
+fail	language/expressions/class/dstr/async-gen-meth-obj-ptrn-rest-skip-non-enumerable.js	Test262:AsyncTestFailure:Test262Error: Test262Error: obj should have an own property a
+skip	built-ins/Temporal/PlainYearMonth/prototype/subtract/name.js	
+fail	built-ins/Array/prototype/toSorted/property-descriptor.js	Test262Error: obj should have an own property toSorted | at L18: assert.sameValue(typeof Array.prototype.toSorted, "function", "typeof");
+fail	built-ins/Reflect/get/get.js	Test262Error: obj should have an own property get
+pass	built-ins/Date/prototype/getUTCHours/name.js	
+fail	language/expressions/class/elements/same-line-async-gen-rs-private-setter-alt.js	Test262Error: obj should have an own property m | at L107: assert(
+pass	built-ins/Object/defineProperty/15.2.3.6-4-361.js	
+pass	built-ins/Map/prototype/get/length.js	
+compile_error	annexB/built-ins/RegExp/legacy-accessors/leftContext/prop-desc.js	Codegen error: '__get_builtin' (dynamic-shape object/property operation) is not yet supported in --target standalone (#1472 Phase B). Use a typed object literal or class instance for fast-path codegen
+fail	intl402/DateTimeFormat/prototype/formatRange/prop-desc.js	TypeError: Cannot access property on null or undefined at 613:16 | at L11: assert.sameValue(
+fail	built-ins/Object/defineProperty/15.2.3.6-4-194.js	Test262Error: Expected obj[0] to equal 11, actually null | at L28: throw new Test262Error("Expected an exception.");
+fail	built-ins/RegExp/match-indices/indices-array-non-unicode-match.js	RuntimeError: dereferencing a null pointer in toString() at source L466 (via __fn_tramp_toString_24@L467 ← __call_fn_method_0@L78 ← __call_accessor_get@L1001) | at L34: assert.deepEqual([[1, 2], [1, 2
+fail	language/expressions/class/elements/new-sc-line-method-static-private-methods-with-fields.js	Test262Error: obj should have an own property m | at L48: assert.sameValue(c.m(), 42);
+skip	built-ins/Temporal/PlainTime/prototype/until/prop-desc.js	
+fail	built-ins/Object/defineProperty/15.2.3.6-4-296-1.js	Test262Error: Expected "a === 10", actually 0 | at L35: throw new Test262Error('Expected "a === 10", actually ' + a);
+pass	built-ins/Array/prototype/forEach/name.js	
+fail	language/eval-code/direct/var-env-func-init-global-update-non-configurable.js	Test262Error: Expected SameValue(«"undefined"», «"function"») to be true | at L47: assert.sameValue(typeof initial, 'function');
+fail	built-ins/NativeErrors/EvalError/prop-desc.js	Test262Error: obj should have an own property EvalError
+fail	language/expressions/class/elements/same-line-gen-computed-names.js	Test262Error: obj should have an own property m | at L33: assert.sameValue(c.m().next().value, 42);
+pass	built-ins/Date/prototype/setMonth/length.js	
+fail	language/expressions/class/elements/after-same-line-static-method-rs-private-setter-alt.js	Test262Error: obj should have an own property m | at L107: assert.sameValue(C.m(), 42);
+fail	language/statements/for-of/dstr/obj-rest-non-string-computed-property-1dot0.js	TypeError: Cannot convert undefined or null to object | at L34: assert.sameValue(b, 1);
+fail	language/statements/class/elements/after-same-line-static-gen-rs-static-generator-method-privatename-identifier-alt.js	Test262Error: obj should have an own property m | at L104: assert.sameValue(C.m().next().value, 42);
+fail	language/expressions/class/elements/after-same-line-static-async-method-rs-private-method-alt.js	Test262Error: obj should have an own property m | at L107: assert(
+skip	built-ins/Temporal/ZonedDateTime/prototype/withPlainTime/name.js	
+pass	built-ins/Array/prototype/pop/length.js	
+pass	built-ins/Array/prototype/values/length.js	
+fail	built-ins/Array/prototype/copyWithin/prop-desc.js	Test262Error: obj should have an own property copyWithin | at L13: assert.sameValue(
+fail	language/statements/class/elements/same-line-async-gen-rs-static-privatename-identifier-alt-by-classname.js	Test262Error: obj should have an own property m | at L89: assert(
+skip	built-ins/Temporal/PlainMonthDay/prototype/toString/length.js	
+fail	language/expressions/class/elements/multiple-stacked-definitions-private-names.js	Test262Error: obj should have an own property foo | at L43: assert.sameValue(c.foo, "foobar");
+fail	built-ins/Object/defineProperties/15.2.3.7-6-a-271.js	Test262Error: obj should have an own property property | at L27: throw new Test262Error("Expected an exception.");
+fail	intl402/DisplayNames/prototype/resolvedOptions/option-languagedisplay.js	Test262Error: obj should have an own property languageDisplay
+pass	built-ins/Date/prototype/toTimeString/name.js	
+fail	language/statements/class/elements/after-same-line-method-rs-private-method.js	Test262Error: obj should have an own property m | at L107: assert.sameValue(c.m(), 42);
+skip	built-ins/Temporal/Instant/fromEpochMilliseconds/length.js	
+pass	language/expressions/class/dstr/meth-static-obj-ptrn-rest-getter.js	
+pass	built-ins/Function/prototype/toString/name.js	
+fail	language/expressions/class/elements/after-same-line-static-gen-rs-private-setter.js	Test262Error: obj should have an own property m | at L107: assert.sameValue(C.m().next().value, 42);
+fail	built-ins/Object/create/15.2.3.5-4-315.js	Test262Error: Expected obj[foo2] to equal 10, actually null
+fail	language/statements/class/elements/regular-definitions-computed-names.js	Test262Error: obj should have an own property b | at L33: assert(
+pass	built-ins/Object/create/15.2.3.5-4-209.js	
+fail	language/expressions/class/elements/after-same-line-static-gen-rs-static-method-privatename-identifier.js	Test262Error: obj should have an own property m | at L101: assert.sameValue(C.m().next().value, 42);
+fail	built-ins/Math/sign/prop-desc.js	Test262Error: obj should have an own property sign
+skip	built-ins/Temporal/PlainYearMonth/prototype/until/name.js	
+fail	language/expressions/class/elements/same-line-async-method-rs-private-method-alt.js	Test262Error: obj should have an own property m | at L107: assert(
+pass	built-ins/Map/prototype/entries/name.js	
+pass	built-ins/Object/defineProperties/15.2.3.7-6-a-46.js	
+fail	language/expressions/class/elements/after-same-line-static-async-method-rs-privatename-identifier-initializer.js	Test262Error: obj should have an own property m | at L82: assert(
+fail	built-ins/Reflect/isExtensible/isExtensible.js	Test262Error: obj should have an own property isExtensible
+fail	language/expressions/class/elements/same-line-method-rs-static-privatename-identifier-by-classname.js	Test262Error: obj should have an own property m | at L89: assert.sameValue(c.m(), 42);
+pass	built-ins/Array/prototype/reduceRight/name.js	
+fail	language/statements/class/elements/same-line-gen-rs-privatename-identifier.js	Test262Error: obj should have an own property m | at L88: assert.sameValue(c.m().next().value, 42);
+fail	built-ins/TypedArray/prototype/sort/name.js	TypeError: Cannot convert undefined or null to object
+pass	built-ins/Math/log10/name.js	
+fail	language/expressions/class/elements/same-line-async-method-rs-private-setter.js	Test262Error: obj should have an own property m | at L107: assert(
+fail	language/arguments-object/mapped/nonwritable-nonenumerable-nonconfigurable-descriptors-set-by-arguments.js	Test262Error: obj should have an own property 0
+pass	built-ins/Array/prototype/concat/length.js	
+fail	language/statements/class/elements/after-same-line-static-async-gen-rs-privatename-identifier-initializer.js	Test262Error: obj should have an own property m | at L82: assert(
+fail	built-ins/Array/prototype/find/prop-desc.js	Test262Error: obj should have an own property find | at L11: assert.sameValue(
+pass	built-ins/Object/defineProperty/15.2.3.6-4-52.js	
+pass	built-ins/String/prototype/trimEnd/length.js	
+fail	language/statements/for-await-of/async-func-decl-dstr-obj-prop-elem-init-fn-name-arrow.js	Test262:AsyncTestFailure:Test262Error: TypeError: Cannot convert undefined or null to object
+pass	built-ins/Atomics/exchange/name.js	
+fail	built-ins/Object/defineProperty/15.2.3.6-4-270.js	Test262Error: Expected obj[0] to be writable, but was not.
+fail	language/statements/for-of/dstr/let-obj-ptrn-rest-val-obj.js	Test262Error: Expected SameValue(«NaN», «undefined») to be true | at L43: assert.sameValue(rest.a, undefined);
+fail	language/expressions/class/elements/new-sc-line-gen-rs-privatename-identifier-initializer.js	Test262Error: obj should have an own property m | at L83: assert.sameValue(c.m().next().value, 42);
+fail	annexB/built-ins/String/prototype/strike/prop-desc.js	Test262Error: obj should have an own property strike
+pass	built-ins/Object/defineProperty/15.2.3.6-3-84.js	
+fail	language/expressions/object/dstr/async-gen-meth-dflt-obj-ptrn-rest-val-obj.js	Test262:AsyncTestFailure:Test262Error: Test262Error: obj should have an own property x
+fail	built-ins/Reflect/ownKeys/ownKeys.js	Test262Error: obj should have an own property ownKeys
+fail	built-ins/Symbol/asyncIterator/prop-desc.js	TypeError: Cannot convert undefined or null to object | at L15: assert.sameValue(typeof Symbol.asyncIterator, 'symbol');
+skip	built-ins/Temporal/PlainDate/prototype/with/name.js	
+fail	language/expressions/object/fn-name-fn.js	Test262Error: obj should have an own property name | at L28: assert(o.xId.name !== 'xId');
+pass	built-ins/Promise/race/length.js	
+fail	built-ins/NativeErrors/RangeError/prototype/message.js	RuntimeError: illegal cast in __module_init() at source L18 | at L19: assert.sameValue(RangeError.prototype.message, "");
+pass	built-ins/Symbol/prototype/toString/name.js	
+pass	built-ins/Number/prototype/toExponential/name.js	
+fail	language/expressions/class/elements/multiple-stacked-definitions-rs-field-identifier.js	Test262Error: obj should have an own property foo | at L69: assert.sameValue(c.foo, "foobar");
+fail	language/expressions/class/elements/after-same-line-method-rs-private-method-alt.js	Test262Error: obj should have an own property m | at L107: assert.sameValue(c.m(), 42);
+pass	built-ins/Object/defineProperty/15.2.3.6-4-470.js	
+pass	language/expressions/super/call-spread-sngl-obj-ident.js	
+fail	built-ins/Object/defineProperty/15.2.3.6-4-227.js	Test262Error: obj should have an own property 0 | at L33: throw new Test262Error("Expected an exception.");
+fail	language/statements/class/elements/same-line-async-gen-literal-names-asi.js	Test262Error: obj should have an own property m | at L32: assert(
+fail	built-ins/Object/defineProperty/15.2.3.6-4-321-1.js	Test262Error: Expected obj[genericProperty] to be writable, but was not. | at L34: throw new Test262Error("Expected an exception.");
+fail	language/statements/class/elements/new-no-sc-line-method-private-field-usage.js	Test262Error: obj should have an own property m | at L35: assert.sameValue(c.m(), 42);
+fail	language/expressions/class/elements/after-same-line-static-method-private-field-usage.js	Test262Error: obj should have an own property m | at L34: assert.sameValue(C.m(), 42);
+pass	built-ins/DataView/prototype/getBigInt64/name.js	
+pass	built-ins/Object/defineProperty/15.2.3.6-4-531-10.js	
+fail	language/expressions/class/elements/new-sc-line-gen-rs-private-setter-alt.js	Test262Error: obj should have an own property m | at L108: assert.sameValue(c.m().next().value, 42);
+fail	language/statements/class/elements/same-line-async-method-rs-privatename-identifier-alt.js	Test262Error: obj should have an own property m | at L88: assert(
+pass	built-ins/Object/defineProperties/15.2.3.7-6-a-74.js	
+skip	built-ins/Temporal/ZonedDateTime/prototype/add/prop-desc.js	
+fail	intl402/PluralRules/prototype/selectRange/prop-desc.js	TypeError: Cannot access property on null or undefined at 608:10 | at L11: assert.sameValue(
+pass	built-ins/Array/fromAsync/length.js	
+fail	language/statements/class/elements/after-same-line-static-gen-rs-privatename-identifier-initializer-alt.js	Test262Error: obj should have an own property m | at L82: assert.sameValue(C.m().next().value, 42);
+fail	language/statements/class/elements/after-same-line-static-method-grammar-privatename-identifier-semantics-stringvalue.js	Test262Error: obj should have an own property m | at L91: assert.sameValue(C.m(), 42);
+fail	language/statements/class/elements/after-same-line-method-rs-private-getter.js	Test262Error: obj should have an own property m | at L108: assert.sameValue(c.m(), 42);
+fail	intl402/Collator/prototype/resolvedOptions/prop-desc.js	TypeError: Cannot access property on null or undefined at 623:16
+fail	language/expressions/class/elements/multiple-definitions-literal-names-asi.js	Test262Error: obj should have an own property m | at L36: assert.sameValue(c.m(), 42);
+fail	language/expressions/class/elements/multiple-definitions-rs-private-setter.js	Test262Error: obj should have an own property m | at L111: assert.sameValue(c.m(), 42);
+fail	intl402/DurationFormat/prototype/format/length.js	TypeError: Cannot access property on null or undefined at 624:16
+fail	language/statements/class/elements/after-same-line-static-method-private-method-usage.js	Test262Error: obj should have an own property m | at L34: assert.sameValue(C.m(), 42);
+fail	language/expressions/assignment/dstr/obj-id-init-fn-name-gen.js	Test262Error: obj should have an own property name | at L35: assert.notSameValue(xGen.name, 'xGen');
+pass	built-ins/Promise/all/name.js	
+fail	language/expressions/class/elements/same-line-method-rs-privatename-identifier.js	Test262Error: obj should have an own property m | at L88: assert.sameValue(c.m(), 42);
+pass	built-ins/ArrayBuffer/prototype/transfer/length.js	
+skip	built-ins/Temporal/PlainMonthDay/prototype/toPlainDate/length.js	
+pass	built-ins/Object/prototype/propertyIsEnumerable/S15.2.4.7_A2_T2.js	
+fail	language/expressions/class/elements/multiple-definitions-rs-static-generator-method-privatename-identifier.js	Test262Error: obj should have an own property m | at L108: assert.sameValue(c.m(), 42);
+fail	built-ins/TypedArrayConstructors/BigUint64Array/prototype.js	Test262Error: obj should have an own property prototype
+fail	language/statements/variable/fn-name-class.js	Test262Error: obj should have an own property name | at L24: assert.notSameValue(xCls.name, 'xCls');
+fail	built-ins/NativeErrors/SyntaxError/prototype/name.js	Test262Error: obj should have an own property name
+fail	language/statements/class/elements/after-same-line-gen-rs-static-privatename-identifier-alt.js	Test262Error: obj should have an own property m | at L89: assert.sameValue(c.m().next().value, 42);
+pass	harness/verifyProperty-arguments.js	
+fail	built-ins/Object/defineProperty/15.2.3.6-4-200.js	Test262Error: obj should have an own property 0
+fail	language/expressions/class/elements/same-line-method-rs-privatename-identifier-initializer-alt.js	Test262Error: obj should have an own property m | at L82: assert.sameValue(c.m(), 42);
+pass	built-ins/Iterator/prototype/filter/length.js	
+fail	language/expressions/class/elements/after-same-line-static-gen-rs-privatename-identifier-initializer.js	Test262Error: obj should have an own property m | at L82: assert.sameValue(C.m().next().value, 42);
+fail	built-ins/Promise/executor-function-length.js	Test262Error: obj should have an own property length
+pass	built-ins/JSON/stringify/length.js	
+skip	built-ins/Temporal/PlainTime/from/prop-desc.js	
+fail	built-ins/decodeURI/prop-desc.js	Test262Error: obj should have an own property decodeURI
+pass	built-ins/Number/isFinite/length.js	
+pass	built-ins/Math/asin/name.js	
+fail	built-ins/Array/prototype/splice/target-array-with-non-writable-property.js	Test262Error: obj should have an own property 0
+fail	built-ins/ShadowRealm/prototype/importValue/name.js	ReferenceError: ShadowRealm is not defined
+fail	language/statements/class/elements/new-sc-line-gen-rs-private-method-alt.js	Test262Error: obj should have an own property m | at L108: assert.sameValue(c.m().next().value, 42);
+fail	language/expressions/class/elements/new-sc-line-gen-string-literal-names.js	Test262Error: obj should have an own property m | at L33: assert.sameValue(c.m().next().value, 42);
+fail	language/statements/class/elements/same-line-method-rs-privatename-identifier.js	Test262Error: obj should have an own property m | at L88: assert.sameValue(c.m(), 42);
+fail	language/expressions/class/elements/after-same-line-static-gen-rs-field-identifier.js	Test262Error: obj should have an own property m | at L67: assert.sameValue(C.m().next().value, 42);
+pass	built-ins/Date/prototype/getUTCDate/name.js	
+fail	built-ins/RegExp/prototype/hasIndices/prop-desc.js	Test262Error: obj should have an own property hasIndices | at L23: assert.sameValue(desc.set, undefined);
+fail	language/expressions/class/elements/same-line-gen-static-private-methods-with-fields.js	Test262Error: obj should have an own property m | at L47: assert.sameValue(c.m().next().value, 42);
+fail	language/expressions/class/elements/after-same-line-static-async-gen-rs-static-async-generator-method-privatename-identifier.js	Test262Error: obj should have an own property m | at L104: assert(
+pass	built-ins/Object/groupBy/length.js	
+skip	built-ins/Temporal/Instant/compare/length.js	
+pass	built-ins/Array/of/name.js	
+fail	built-ins/Object/defineProperties/15.2.3.7-6-a-277.js	Test262Error: Expected obj[property] to be writable, but was not. | at L31: throw new Test262Error("Expected an exception.");
+skip	built-ins/Temporal/PlainDate/prototype/toPlainDateTime/name.js	
+fail	built-ins/Uint8Array/fromHex/descriptor.js	Test262Error: obj should have an own property fromHex
+fail	built-ins/TypedArray/prototype/find/length.js	TypeError: Cannot convert undefined or null to object
+fail	built-ins/TypedArray/prototype/indexOf/name.js	TypeError: Cannot convert undefined or null to object
+pass	built-ins/Object/defineProperty/15.2.3.6-4-82-15.js	
+fail	language/expressions/class/elements/new-sc-line-method-private-field-usage.js	Test262Error: obj should have an own property m | at L35: assert.sameValue(c.m(), 42);
+fail	language/statements/class/elements/multiple-stacked-definitions-rs-private-setter-alt.js	Test262Error: obj should have an own property foo | at L109: assert.sameValue(c.foo, "foobar");
+fail	built-ins/Symbol/prototype/Symbol.toPrimitive/prop-desc.js	Test262Error: obj should have an own property [object Object]
+fail	built-ins/Error/prototype/toString/prop-desc.js	Test262Error: obj should have an own property toString
+fail	built-ins/Array/prototype/findLast/prop-desc.js	Test262Error: obj should have an own property findLast | at L12: assert.sameValue(
+fail	built-ins/AsyncDisposableStack/prototype/disposeAsync/prop-desc.js	Test262Error: obj should have an own property disposeAsync | at L18: assert.sameValue(typeof AsyncDisposableStack.prototype.disposeAsync, 'function');
+fail	built-ins/Date/prototype/setUTCMinutes/prop-desc.js	TypeError: Cannot convert undefined or null to object
+fail	language/statements/class/dstr/gen-meth-obj-ptrn-rest-val-obj.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L66: assert.sameValue(rest.a, undefined);
+fail	language/statements/class/elements/new-sc-line-method-rs-static-privatename-identifier-initializer-alt.js	Test262Error: obj should have an own property m | at L84: assert.sameValue(c.m(), 42);
+fail	built-ins/Array/prototype/flat/prop-desc.js	Test262Error: obj should have an own property flat | at L12: assert.sameValue(
+skip	built-ins/Temporal/PlainDate/prototype/valueOf/name.js	
+fail	intl402/NumberFormat/prototype/formatRange/name.js	TypeError: Cannot access property on null or undefined at 605:16
+fail	language/statements/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier-initializer-alt-by-classname.js	Test262Error: obj should have an own property foo | at L85: assert.sameValue(c.foo, "foobar");
+fail	built-ins/NativeErrors/EvalError/prototype.js	Test262Error: Expected SameValue(«[object Object]», «null») to be true | at L15: assert.sameValue(EvalError.prototype, Object.getPrototypeOf(new EvalError));
+fail	annexB/language/global-code/switch-case-global-existing-global-init.js	TypeError: Object method called on null or undefined | at L26: assert.sameValue(f, 'x');
+pass	built-ins/Object/create/15.2.3.5-4-210.js	
+fail	language/statements/with/set-mutable-binding-binding-deleted-in-get-unscopables.js	Test262Error: get [Symbol.unscopables] called once Expected SameValue(«0», «1») to be true | at L37: assert.sameValue(unscopablesCalled, 1, "get [Symbol.unscopables] called once");
+skip	built-ins/Temporal/PlainDate/prototype/toPlainMonthDay/length.js	
+fail	built-ins/Reflect/defineProperty/defineProperty.js	Test262Error: obj should have an own property defineProperty
+fail	language/statements/class/elements/after-same-line-static-method-rs-private-getter-alt.js	Test262Error: obj should have an own property m | at L108: assert.sameValue(C.m(), 42);
+fail	intl402/NumberFormat/prop-desc.js	TypeError: Cannot convert undefined or null to object
+pass	annexB/built-ins/RegExp/prototype/compile/name.js	
+fail	language/expressions/class/elements/after-same-line-gen-rs-field-identifier-initializer.js	Test262Error: obj should have an own property m | at L67: assert.sameValue(c.m().next().value, 42);
+fail	language/statements/class/elements/new-sc-line-method-rs-static-privatename-identifier-initializer.js	Test262Error: obj should have an own property m | at L84: assert.sameValue(c.m(), 42);
+fail	built-ins/Math/log10/prop-desc.js	Test262Error: obj should have an own property log10
+fail	language/expressions/class/elements/new-no-sc-line-method-rs-privatename-identifier-initializer.js	Test262Error: obj should have an own property m | at L83: assert.sameValue(c.m(), 42);
+fail	built-ins/Object/defineProperties/15.2.3.7-6-a-115.js	Test262Error: obj should have an own property length | at L24: assert.sameValue(arr.length, 0);
+pass	language/expressions/array/spread-sngl-obj-ident.js	
+fail	language/statements/class/subclass/builtin-objects/Function/instance-length.js	TypeError: Cannot convert object to primitive value in Fn_new() (via __module_init@L20)
+fail	built-ins/Date/prototype/setMinutes/prop-desc.js	TypeError: Cannot convert undefined or null to object
+pass	built-ins/Object/fromEntries/name.js	
+fail	language/statements/for-await-of/async-func-decl-dstr-obj-rest-skip-non-enumerable.js	Test262:AsyncTestFailure:Test262Error: TypeError: Cannot convert undefined or null to object
+pass	built-ins/SharedArrayBuffer/prototype/byteLength/length.js	
+fail	built-ins/WeakMap/prototype/constructor.js	TypeError: Cannot convert undefined or null to object | at L16: assert.sameValue(WeakMap.prototype.constructor, WeakMap);
+pass	annexB/built-ins/String/prototype/substr/length.js	
+skip	built-ins/Temporal/Instant/compare/prop-desc.js	
+skip	built-ins/Temporal/Duration/prototype/abs/length.js	
+pass	built-ins/Object/defineProperty/15.2.3.6-4-103.js	
+pass	built-ins/Object/defineProperty/15.2.3.6-4-75.js	
+fail	language/statements/for-await-of/async-gen-decl-dstr-obj-rest-valid-object.js	Test262:AsyncTestFailure:Test262Error: Test262Error: Expected SameValue(«NaN», «undefined») to be true
+pass	built-ins/Date/prototype/getUTCDay/length.js	
+pass	built-ins/Math/hypot/length.js	
+pass	built-ins/Map/prototype/keys/length.js	
+fail	built-ins/SuppressedError/prop-desc.js	Test262Error: obj should have an own property SuppressedError | at L20: assert.sameValue(typeof SuppressedError, 'function');
+skip	built-ins/Temporal/ZonedDateTime/prototype/toPlainDateTime/name.js	
+fail	built-ins/BigInt/asIntN/asIntN.js	TypeError: Cannot convert undefined or null to object | at L15: assert.sameValue(typeof BigInt.asIntN, 'function');
+fail	built-ins/ArrayBuffer/prototype/resizable/prop-desc.js	Test262Error: obj should have an own property resizable | at L19: assert.sameValue(desc.set, undefined);
+fail	language/expressions/class/dstr/private-meth-dflt-obj-ptrn-rest-val-obj.js	Test262Error: obj should have an own property x | at L65: assert.sameValue(rest.a, undefined);
+fail	language/statements/class/elements/after-same-line-static-async-method-rs-static-privatename-identifier.js	Test262Error: obj should have an own property m | at L89: assert(
+pass	language/expressions/class/dstr/async-gen-meth-static-dflt-obj-ptrn-rest-getter.js	
+fail	language/statements/class/elements/multiple-definitions-rs-static-method-privatename-identifier.js	Test262Error: obj should have an own property m | at L105: assert.sameValue(c.m(), 42);
+pass	built-ins/DataView/prototype/getInt32/length.js	
+fail	language/expressions/class/elements/after-same-line-gen-rs-private-method.js	Test262Error: obj should have an own property m | at L107: assert.sameValue(c.m().next().value, 42);
+skip	built-ins/Temporal/ZonedDateTime/prototype/withTimeZone/prop-desc.js	
+pass	built-ins/Iterator/prototype/reduce/length.js	
+fail	language/statements/class/subclass/builtin-objects/RegExp/lastIndex.js	SyntaxError: Invalid flags supplied to RegExp constructor '[object Object]' in RE_new() (via __module_init@L17)
+skip	built-ins/Temporal/PlainDateTime/prototype/subtract/prop-desc.js	
+fail	built-ins/String/prop-desc.js	Test262Error: obj should have an own property String
+fail	language/statements/class/elements/multiple-definitions-private-field-usage.js	Test262Error: obj should have an own property m | at L38: assert.sameValue(c.m(), 42);
+fail	language/expressions/class/elements/after-same-line-static-async-method-rs-privatename-identifier-initializer-alt.js	Test262Error: obj should have an own property m | at L82: assert(
+pass	intl402/String/prototype/localeCompare/length.js	
+fail	built-ins/DisposableStack/prototype/defer/prop-desc.js	Test262Error: obj should have an own property defer | at L18: assert.sameValue(typeof DisposableStack.prototype.defer, 'function');
+fail	built-ins/ShadowRealm/descriptor.js	Test262Error: obj should have an own property ShadowRealm
+fail	language/statements/class/elements/after-same-line-static-async-gen-rs-field-identifier-initializer.js	Test262Error: obj should have an own property m | at L67: assert(
+pass	built-ins/DisposableStack/prototype/move/length.js	
+fail	intl402/Locale/prototype/firstDayOfWeek/name.js	TypeError: Cannot access property on null or undefined at 612:48
+pass	built-ins/Math/hypot/name.js	
+fail	built-ins/Object/defineProperty/15.2.3.6-4-293.js	Test262Error: obj should have an own property 0 | at L26: throw new Test262Error("Expected an exception.");
+fail	annexB/built-ins/String/prototype/trimLeft/length.js	TypeError: Cannot convert undefined or null to object
+fail	built-ins/Object/defineProperties/15.2.3.7-6-a-225.js	Test262Error: obj should have an own property 0
+pass	language/statements/class/dstr/async-private-gen-meth-static-obj-ptrn-rest-getter.js	
+fail	language/statements/class/dstr/async-gen-meth-static-dflt-obj-ptrn-rest-val-obj.js	Test262:AsyncTestFailure:Test262Error: Test262Error: obj should have an own property x
+fail	language/statements/class/elements/same-line-method-rs-static-method-privatename-identifier.js	Test262Error: obj should have an own property m | at L101: assert.sameValue(c.m(), 42);
+fail	language/eval-code/direct/var-env-func-init-global-new.js	Test262Error: obj should have an own property f | at L41: assert.sameValue(typeof initial, 'function');
+pass	built-ins/Array/prototype/sort/name.js	
+pass	built-ins/TypedArray/prototype/length/length.js	
+fail	intl402/PluralRules/prototype/resolvedOptions/prop-desc.js	TypeError: Cannot access property on null or undefined at 623:16
+fail	language/arguments-object/mapped/Symbol.iterator.js	Test262Error: obj should have an own property [object Object]
+fail	intl402/ListFormat/prototype/prop-desc.js	TypeError: Cannot access property on null or undefined at 614:16
+fail	built-ins/Object/defineProperties/15.2.3.7-6-a-197.js	Test262Error: obj should have an own property 0
+fail	built-ins/TypedArray/prototype/find/prop-desc.js	Test262Error: obj should have an own property find
+pass	built-ins/Atomics/add/length.js	
+pass	built-ins/Object/defineProperty/15.2.3.6-3-179.js	
+fail	built-ins/Symbol/keyFor/prop-desc.js	TypeError: Cannot convert undefined or null to object | at L14: assert.sameValue(typeof Symbol.keyFor, 'function');
+fail	annexB/language/eval-code/direct/global-if-decl-else-stmt-eval-global-existing-non-enumerable-global-init.js	TypeError: Object method called on null or undefined | at L36: assert.sameValue(f, "x", "binding is not reinitialized");\
+fail	language/expressions/class/elements/after-same-line-static-gen-rs-private-method-alt.js	Test262Error: obj should have an own property m | at L107: assert.sameValue(C.m().next().value, 42);
+pass	built-ins/DataView/prototype/setFloat16/length.js	
+fail	built-ins/TypedArray/prototype/filter/name.js	TypeError: Cannot convert undefined or null to object
+fail	built-ins/Object/defineProperties/15.2.3.7-6-a-274.js	Test262Error: Expected obj[property] to equal 37, actually undefined | at L36: throw new Test262Error("Expected an exception.");
+pass	built-ins/Object/defineProperties/15.2.3.7-6-a-60.js	
+skip	built-ins/Temporal/PlainTime/length.js	
+fail	language/expressions/object/dstr/meth-dflt-obj-ptrn-rest-skip-non-enumerable.js	Test262Error: obj should have an own property a | at L49: assert.sameValue(rest.x, undefined);
+pass	built-ins/Date/prototype/toJSON/name.js	
+fail	language/expressions/object/prop-def-id-valid.js	TypeError: Cannot convert undefined or null to object
+fail	intl402/NumberFormat/prototype/resolvedOptions/prop-desc.js	TypeError: Cannot access property on null or undefined at 623:16
+fail	language/expressions/call/spread-mult-obj-ident.js	Test262Error: Expected SameValue(«0», «4») to be true | at L40: assert.sameValue(Object.keys(obj).length, 4);
+pass	built-ins/Object/defineProperties/15.2.3.7-5-b-138.js	
+pass	intl402/Date/prototype/toLocaleDateString/length.js	
+fail	language/statements/class/elements/new-sc-line-method-rs-static-async-generator-method-privatename-identifier.js	Test262Error: obj should have an own property m | at L105: assert.sameValue(c.m(), 42);
+fail	intl402/DurationFormat/prototype/format/prop-desc.js	TypeError: Cannot access property on null or undefined at 608:10 | at L11: assert.sameValue(
+pass	built-ins/Date/prototype/getDay/name.js	
+fail	language/expressions/class/elements/multiple-definitions-rs-private-setter-alt.js	Test262Error: obj should have an own property m | at L111: assert.sameValue(c.m(), 42);
+fail	language/statements/class/elements/multiple-definitions-rs-static-privatename-identifier-initializer.js	Test262Error: obj should have an own property m | at L87: assert.sameValue(c.m(), 42);
+fail	language/expressions/class/elements/new-no-sc-line-method-rs-private-getter.js	Test262Error: obj should have an own property m | at L109: assert.sameValue(c.m(), 42);
+pass	built-ins/Object/seal/object-seal-p-is-own-data-property.js	
+fail	built-ins/TypedArrayConstructors/Int32Array/length.js	Test262Error: obj should have an own property length
+pass	built-ins/BigInt/asUintN/length.js	
+fail	built-ins/AsyncGeneratorPrototype/throw/length.js	TypeError: Cannot convert undefined or null to object
+fail	intl402/DisplayNames/prototype/resolvedOptions/name.js	TypeError: Cannot access property on null or undefined at 618:16
+skip	built-ins/Temporal/Instant/prototype/add/length.js	
+fail	built-ins/Object/defineProperty/15.2.3.6-4-295.js	Test262Error: obj should have an own property 0 | at L25: throw new Test262Error("Expected an exception.");
+fail	built-ins/SuppressedError/prototype/message.js	Test262Error: obj should have an own property message
+fail	language/statements/class/elements/multiple-stacked-definitions-rs-static-generator-method-privatename-identifier-alt.js	Test262Error: obj should have an own property foo | at L106: assert.sameValue(c.foo, "foobar");
+pass	built-ins/Object/defineProperties/15.2.3.7-5-b-92.js	
+pass	built-ins/Object/create/15.2.3.5-4-189.js	
+fail	language/expressions/class/elements/same-line-async-gen-rs-field-identifier.js	Test262Error: obj should have an own property m | at L67: assert(
+fail	built-ins/Function/prototype/S15.3.3.1_A3.js	TypeError: Cannot convert undefined or null to object | at L14: assert.sameValue(delete Function.prototype, false);
+fail	built-ins/NativeErrors/EvalError/prototype/message.js	RuntimeError: illegal cast in __module_init() at source L18 | at L19: assert.sameValue(EvalError.prototype.message, "");
+fail	language/expressions/class/static-method-length-dflt.js	TypeError: Cannot convert undefined or null to object
+pass	built-ins/Object/defineProperty/15.2.3.6-4-65.js	
+pass	built-ins/Object/defineProperties/15.2.3.7-6-a-62.js	
+pass	built-ins/Object/defineProperty/15.2.3.6-4-69.js	
+fail	language/expressions/class/elements/after-same-line-static-gen-private-method-getter-usage.js	Test262Error: obj should have an own property m | at L34: assert.sameValue(C.m().next().value, 42);
+skip	built-ins/Temporal/ZonedDateTime/prototype/with/prop-desc.js	
+fail	language/expressions/class/elements/same-line-async-gen-rs-static-async-method-privatename-identifier-alt.js	Test262Error: obj should have an own property m | at L104: assert(
+fail	language/expressions/class/elements/same-line-method-private-method-usage.js	Test262Error: obj should have an own property m | at L34: assert.sameValue(c.m(), 42);
+pass	built-ins/Object/prototype/toLocaleString/S15.2.4.3_A8.js	
+skip	built-ins/Temporal/PlainMonthDay/prototype/toString/prop-desc.js	
+fail	intl402/DateTimeFormat/prototype/toStringTag/toStringTag.js	TypeError: Cannot access property on null or undefined at 614:16
+pass	built-ins/Object/defineProperty/15.2.3.6-4-82-12.js	
+fail	built-ins/String/prototype/repeat/repeat.js	Test262Error: obj should have an own property repeat | at L14: assert.sameValue(
+fail	built-ins/Object/defineProperty/15.2.3.6-4-306.js	Test262Error: obj should have an own property 0 | at L26: throw new Test262Error("Expected an exception.");
+fail	built-ins/BigInt/prototype/toString/prop-desc.js	Test262Error: obj should have an own property toString
+fail	language/statements/class/elements/after-same-line-static-method-rs-static-method-privatename-identifier.js	Test262Error: obj should have an own property m | at L101: assert.sameValue(C.m(), 42);
+pass	built-ins/RegExp/prototype/sticky/length.js	
+fail	built-ins/Object/entries/function-property-descriptor.js	Test262Error: obj should have an own property entries
+fail	built-ins/Object/defineProperties/15.2.3.7-6-a-110.js	TypeError: Object.defineProperties unsupported descriptor shape in standalone mode (#1906)
+fail	built-ins/AsyncIteratorPrototype/Symbol.asyncIterator/prop-desc.js	TypeError: Cannot access property on null or undefined at 615:25 | at L19: assert.sameValue(typeof AsyncIteratorPrototype[Symbol.asyncIterator], 'function');
+fail	language/expressions/class/elements/after-same-line-gen-private-names.js	Test262Error: obj should have an own property m | at L41: assert.sameValue(c.m().next().value, 42);
+skip	built-ins/Temporal/PlainDate/prototype/withCalendar/length.js	
+fail	built-ins/WeakMap/weakmap.js	Test262Error: obj should have an own property WeakMap
+fail	language/statements/variable/fn-name-gen.js	Test262Error: obj should have an own property name | at L23: assert(xGen.name !== 'xGen');
+fail	language/expressions/class/elements/after-same-line-static-async-gen-computed-symbol-names.js	Test262Error: obj should have an own property m | at L34: assert(
+fail	built-ins/AggregateError/prototype/constructor.js	TypeError: Cannot convert undefined or null to object
+fail	language/statements/for-await-of/async-gen-decl-dstr-obj-rest-to-property.js	Test262:AsyncTestFailure:Test262Error: Test262Error: Expected SameValue(«NaN», «1») to be true
+fail	built-ins/RegExp/prototype/hasIndices/length.js	Test262Error: Expected SameValue(«3», «0») to be true | at L28: assert.sameValue(desc.get.length, 0);
+fail	language/statements/class/elements/same-line-gen-private-names.js	Test262Error: obj should have an own property m | at L41: assert.sameValue(c.m().next().value, 42);
+fail	built-ins/String/prototype/trimEnd/prop-desc.js	Test262Error: obj should have an own property trimEnd
+fail	built-ins/Atomics/and/descriptor.js	TypeError: Cannot convert undefined or null to object
+fail	language/statements/class/subclass/builtin-objects/NativeError/SyntaxError-message.js	Test262Error: obj should have an own property message | at L35: assert.sameValue(err2.hasOwnProperty('message'), false);
+fail	built-ins/Map/prototype/forEach/forEach.js	TypeError: Cannot convert undefined or null to object | at L14: assert.sameValue(
+skip	built-ins/Temporal/Instant/from/prop-desc.js	
+fail	language/statements/class/elements/after-same-line-static-method-rs-static-generator-method-privatename-identifier-alt.js	Test262Error: obj should have an own property m | at L104: assert.sameValue(C.m(), 42);
+fail	language/statements/class/elements/after-same-line-gen-rs-field-identifier.js	Test262Error: obj should have an own property m | at L67: assert.sameValue(c.m().next().value, 42);
+fail	built-ins/ArrayBuffer/length.js	TypeError: Cannot convert undefined or null to object
+fail	annexB/language/eval-code/direct/global-switch-dflt-eval-global-init.js	TypeError: dynamic eval is not supported in standalone mode (#2928) | at L21: assert.sameValue(f, undefined, "binding is initialized to `undefined`");\
+skip	built-ins/Temporal/PlainDateTime/prototype/since/prop-desc.js	
+pass	built-ins/DisposableStack/prototype/adopt/length.js	
+fail	language/statements/class/elements/regular-definitions-string-literal-names.js	Test262Error: obj should have an own property a | at L32: assert(
+fail	intl402/PluralRules/prototype/resolvedOptions/pluralCategories.js	Test262Error: Should have different arrays Expected SameValue(«undefined», «undefined») to be false | at L19: assert.notSameValue(options1.pluralCategories, options2.pluralCategories, "Should have dif
+pass	built-ins/WeakRef/prototype/constructor.js	
+fail	built-ins/Array/prototype/toLocaleString/prop-desc.js	Test262Error: obj should have an own property toLocaleString | at L17: assert.sameValue(typeof Array.prototype.toLocaleString, 'function', 'typeof');
+fail	built-ins/Object/defineProperty/15.2.3.6-4-316-1.js	Test262Error: obj should have an own property genericProperty
+fail	built-ins/Object/prototype/toLocaleString/S15.2.4.3_A10.js	CompileError: WebAssembly.instantiate(): Compiling function #306:"__module_init" failed: call[2] expected type externref, found ref.null of type (ref null 6) @+136264 in __module_init() | at L14: asse
+pass	built-ins/Object/defineProperty/15.2.3.6-4-82-19.js	
+fail	language/expressions/class/elements/new-sc-line-method-rs-private-getter-alt.js	Test262Error: obj should have an own property m | at L109: assert.sameValue(c.m(), 42);
+fail	language/statements/class/elements/new-no-sc-line-method-rs-static-privatename-identifier-initializer-alt.js	Test262Error: obj should have an own property m | at L84: assert.sameValue(c.m(), 42);
+fail	built-ins/Iterator/prototype/take/prop-desc.js	Test262Error: obj should have an own property take
+fail	language/expressions/class/elements/multiple-stacked-definitions-rs-static-async-generator-method-privatename-identifier-alt.js	Test262Error: obj should have an own property foo | at L106: assert.sameValue(c.foo, "foobar");
+compile_error	language/statements/generators/dstr/obj-ptrn-rest-skip-non-enumerable.js	Codegen error: native generator lowering currently supports only sequential numeric yields in standalone/WASI targets (#680). Recompile with a JS host target for complex generator shapes.
+fail	built-ins/Error/message_property.js	Test262Error: obj should have an own property message
+pass	built-ins/Object/prototype/hasOwnProperty/length.js	
+fail	language/expressions/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier-alt-by-classname.js	Test262Error: obj should have an own property foo | at L91: assert.sameValue(c.foo, "foobar");
+fail	language/statements/for-await-of/async-func-decl-dstr-obj-id-init-fn-name-class.js	Test262:AsyncTestFailure:Test262Error: TypeError: Cannot convert undefined or null to object
+fail	language/expressions/class/dstr/async-private-gen-meth-obj-ptrn-rest-val-obj.js	Test262:AsyncTestFailure:Test262Error: Test262Error: obj should have an own property x
+fail	language/statements/class/elements/same-line-method-literal-names-asi.js	Test262Error: obj should have an own property m | at L32: assert.sameValue(c.m(), 42);
+skip	built-ins/Temporal/ZonedDateTime/prototype/round/name.js	
+fail	language/expressions/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier-alt.js	Test262Error: obj should have an own property foo | at L91: assert.sameValue(c.foo, "foobar");
+fail	language/expressions/class/elements/init-value-incremental.js	Test262Error: obj should have an own property 1
+fail	intl402/Locale/prop-desc.js	TypeError: Cannot access property on null or undefined at 625:10
+pass	built-ins/Object/isSealed/name.js	
+fail	built-ins/Math/hypot/prop-desc.js	Test262Error: obj should have an own property hypot
+fail	harness/verifyProperty-symbol-prop.js	RuntimeError: dereferencing a null pointer in verifyProperty() at source L112 (via checkDesc@L20 ← __module_init@L45) | at L21: assert(verifyProperty(obj, prop, desc));
+fail	built-ins/RegExp/prototype/Symbol.search/prop-desc.js	Test262Error: obj should have an own property [object Object]
+pass	built-ins/Object/defineProperties/15.2.3.7-5-b-88.js	
+fail	language/expressions/class/elements/after-same-line-method-rs-privatename-identifier-alt.js	Test262Error: obj should have an own property m | at L88: assert.sameValue(c.m(), 42);
+pass	built-ins/Promise/Symbol.species/length.js	
+pass	built-ins/Object/defineProperties/15.2.3.7-6-a-80.js	
+pass	built-ins/WeakMap/prototype/delete/name.js	
+fail	intl402/RelativeTimeFormat/prototype/formatToParts/result-type.js	Test262Error: parts: prototype Expected SameValue(«null», «[object Object]») to be true | at L30: assert.sameValue(Object.getPrototypeOf(parts), Array.prototype, "parts: prototype");
+skip	built-ins/Temporal/PlainYearMonth/length.js	
+pass	built-ins/GeneratorPrototype/throw/property-descriptor.js	
+fail	annexB/built-ins/unescape/name.js	TypeError: Cannot convert undefined or null to object
+fail	language/expressions/class/elements/same-line-gen-rs-static-generator-method-privatename-identifier-alt.js	Test262Error: obj should have an own property m | at L104: assert.sameValue(c.m().next().value, 42);
+pass	built-ins/ArrayBuffer/isView/name.js	
+pass	built-ins/Array/prototype/toString/name.js	
+fail	language/expressions/class/elements/after-same-line-static-async-gen-rs-static-generator-method-privatename-identifier.js	Test262Error: obj should have an own property m | at L104: assert(
+pass	built-ins/Set/Symbol.species/length.js	
+fail	built-ins/Object/defineProperty/15.2.3.6-4-223.js	Test262Error: obj should have an own property 0 | at L26: throw new Test262Error("Expected an exception.");
+fail	language/global-code/decl-var.js	Test262Error: obj should have an own property brandNew
+fail	language/expressions/class/elements/multiple-definitions-rs-static-async-method-privatename-identifier-alt.js	Test262Error: obj should have an own property m | at L108: assert.sameValue(c.m(), 42);
+fail	language/expressions/class/elements/new-no-sc-line-method-rs-privatename-identifier-initializer-alt.js	Test262Error: obj should have an own property m | at L83: assert.sameValue(c.m(), 42);
+fail	built-ins/Object/defineProperty/15.2.3.6-4-247.js	Test262Error: obj should have an own property 1 | at L28: throw new Test262Error("Expected an exception.");
+pass	built-ins/WeakMap/prototype/prototype-attributes.js	
+fail	language/statements/class/elements/after-same-line-static-gen-rs-private-getter.js	Test262Error: obj should have an own property m | at L108: assert.sameValue(C.m().next().value, 42);
+pass	language/statements/for-await-of/async-gen-dstr-const-obj-ptrn-rest-skip-non-enumerable.js	
+fail	built-ins/Atomics/pause/descriptor.js	TypeError: Cannot convert undefined or null to object
+skip	built-ins/Temporal/PlainMonthDay/prototype/with/prop-desc.js	
+fail	language/expressions/class/elements/after-same-line-static-async-method-computed-names.js	Test262Error: obj should have an own property m | at L33: assert(
+fail	annexB/built-ins/String/prototype/sub/name.js	TypeError: Cannot convert undefined or null to object
+fail	language/expressions/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier-initializer-alt.js	Test262Error: obj should have an own property foo | at L85: assert.sameValue(c.foo, "foobar");
+fail	intl402/Segmenter/prototype/Symbol.toStringTag.js	TypeError: Cannot access property on null or undefined at 611:16
+fail	intl402/Intl/getCanonicalLocales/getCanonicalLocales.js	TypeError: Cannot convert undefined or null to object | at L14: assert.sameValue(
+pass	built-ins/DataView/prototype/getUint32/length.js	
+fail	language/expressions/class/elements/multiple-stacked-definitions-static-private-methods-with-fields.js	Test262Error: obj should have an own property foo | at L49: assert.sameValue(c.foo, "foobar");
+pass	built-ins/Map/prototype/getOrInsert/length.js	
+skip	built-ins/Temporal/PlainMonthDay/prototype/toStringTag/prop-desc.js	
+fail	built-ins/Date/prototype/getUTCFullYear/prop-desc.js	TypeError: Cannot convert undefined or null to object
+pass	built-ins/Map/prototype/size/name.js	
+fail	built-ins/Function/length/S15.3.5.1_A4_T1.js	Test262Error: f.hasOwnProperty('length') must return true | at L14: assert(f.hasOwnProperty('length'), 'f.hasOwnProperty(\'length\') must return true');
+fail	language/statements/class/elements/after-same-line-static-gen-string-literal-names.js	Test262Error: obj should have an own property m | at L32: assert.sameValue(C.m().next().value, 42);
+fail	built-ins/JSON/parse/reviver-context-source-array-literal.js	Test262Error: Actual argument [null] shouldn't be primitive. | at L14: assert.compareArray(Object.getOwnPropertyNames(object), props, `${message}: object should have no other properties than expected`
+pass	built-ins/Object/defineProperties/15.2.3.7-6-a-66.js	
+pass	built-ins/Object/defineProperties/15.2.3.7-6-a-51.js	
+fail	annexB/language/eval-code/indirect/global-if-decl-else-decl-a-eval-global-init.js	TypeError: dynamic eval is not supported in standalone mode (#2928) | at L30: assert.sameValue(f, undefined, "binding is initialized to `undefined`");\
+fail	intl402/ListFormat/prototype/formatToParts/name.js	TypeError: Cannot access property on null or undefined at 612:16
+pass	built-ins/Array/isArray/name.js	
+fail	built-ins/Object/defineProperty/15.2.3.6-4-233.js	Test262Error: Expected obj[0] to be writable, but was not.
+skip	built-ins/Temporal/ZonedDateTime/from/length.js	
+fail	intl402/ListFormat/constructor/supportedLocalesOf/length.js	TypeError: Cannot access property on null or undefined at 613:16
+fail	intl402/RelativeTimeFormat/prototype/resolvedOptions/prop-desc.js	TypeError: Cannot access property on null or undefined at 614:10 | at L17: assert.sameValue(
+fail	intl402/Intl/getCanonicalLocales/descriptor.js	TypeError: Cannot convert undefined or null to object
+pass	built-ins/JSON/rawJSON/length.js	
+fail	built-ins/TypedArrayConstructors/Float64Array/name.js	Test262Error: obj should have an own property name
+fail	built-ins/Object/defineProperty/15.2.3.6-4-547-1.js	Test262Error: Expected obj[0] to equal data, actually null | at L37: throw new Test262Error("Expected an exception.");
+pass	built-ins/Math/random/name.js	
+skip	built-ins/Temporal/PlainDate/prototype/prop-desc.js	
+skip	built-ins/Temporal/Duration/prototype/subtract/length.js	
+pass	built-ins/DisposableStack/prototype/defer/name.js	
+pass	built-ins/Object/defineProperty/15.2.3.6-4-93.js	
+fail	built-ins/Number/POSITIVE_INFINITY/S15.7.3.6_A2.js	TypeError: Cannot convert undefined or null to object | at L14: assert(
+fail	language/expressions/class/elements/after-same-line-static-async-gen-static-private-fields.js	Test262Error: obj should have an own property m | at L41: assert(
+fail	built-ins/TypedArray/prototype/reduce/prop-desc.js	Test262Error: obj should have an own property reduce
+fail	built-ins/Object/defineProperties/15.2.3.7-6-a-226.js	Test262Error: obj should have an own property 0
+fail	language/expressions/class/gen-method-length-dflt.js	Test262Error: obj should have an own property length
+fail	intl402/DisplayNames/prototype/resolvedOptions/length.js	TypeError: Cannot access property on null or undefined at 622:16
+fail	language/statements/class/elements/same-line-async-method-rs-field-identifier.js	Test262Error: obj should have an own property m | at L67: assert(
+pass	built-ins/String/prototype/replaceAll/length.js	
+pass	built-ins/RegExp/prototype/source/name.js	
+pass	built-ins/Object/defineProperty/15.2.3.6-3-164.js	
+fail	built-ins/Reflect/setPrototypeOf/setPrototypeOf.js	Test262Error: obj should have an own property setPrototypeOf
+pass	built-ins/Array/prototype/lastIndexOf/length.js	
+pass	language/expressions/class/dstr/meth-obj-ptrn-rest-getter.js	
+fail	language/statements/variable/fn-name-arrow.js	Test262Error: obj should have an own property name
+fail	built-ins/Function/length/S15.3.5.1_A2_T3.js	Test262Error: f.hasOwnProperty('length') must return true | at L14: assert(f.hasOwnProperty('length'), 'f.hasOwnProperty(\'length\') must return true');
+pass	built-ins/FinalizationRegistry/prototype/unregister/length.js	
+fail	built-ins/Number/prototype/toExponential/prop-desc.js	Test262Error: obj should have an own property toExponential
+fail	built-ins/TypedArray/prototype/findIndex/prop-desc.js	Test262Error: obj should have an own property findIndex
+fail	built-ins/String/prototype/codePointAt/codePointAt.js	Test262Error: obj should have an own property codePointAt | at L14: assert.sameValue(
+fail	language/expressions/class/elements/after-same-line-gen-rs-static-async-method-privatename-identifier.js	Test262Error: obj should have an own property m | at L104: assert.sameValue(c.m().next().value, 42);
+pass	built-ins/Function/prototype/apply/length.js	
+fail	built-ins/Object/defineProperties/15.2.3.7-6-a-252.js	Test262Error: obj should have an own property 0
+fail	language/statements/class/elements/after-same-line-static-gen-static-private-fields.js	Test262Error: obj should have an own property m | at L41: assert.sameValue(C.m().next().value, 42);
+pass	built-ins/BigInt/asIntN/length.js	
+fail	language/expressions/async-generator/dstr/obj-ptrn-rest-skip-non-enumerable.js	Test262:AsyncTestFailure:Test262Error: Test262Error: obj should have an own property a
+fail	language/statements/for-await-of/async-func-dstr-let-obj-ptrn-rest-getter.js	Test262:AsyncTestFailure:Test262Error: TypeError: Cannot destructure 'null' or 'undefined'
+fail	language/expressions/class/elements/after-same-line-static-async-method-rs-private-method.js	Test262Error: obj should have an own property m | at L107: assert(
+fail	language/statements/class/elements/after-same-line-gen-rs-field-identifier-initializer.js	Test262Error: obj should have an own property m | at L67: assert.sameValue(c.m().next().value, 42);
+fail	built-ins/Set/prototype/delete/delete.js	TypeError: Cannot convert undefined or null to object | at L13: assert.sameValue(
+fail	built-ins/Symbol/length.js	TypeError: Cannot convert undefined or null to object

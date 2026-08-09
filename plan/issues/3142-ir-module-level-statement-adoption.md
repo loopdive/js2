@@ -1,22 +1,24 @@
 ---
 id: 3142
-title: "IR module-level (top-level statement) adoption — clears gate G3 of the legacy-frontend retirement"
+title: "IR module-init overlay adoption (claimability milestone; compile-once remains)"
 status: done
 completed: 2026-07-16
 assignee: ttraenkler/fable-b
 sprint: 72
 created: 2026-07-11
-updated: 2026-07-19
+updated: 2026-07-21
 note: "Slice 1 (selector + telemetry) landed via PR #3160; Slice 2 (claim-feeding lowering + __module_init patch, f64/i32 module bindings) lands in this PR."
 priority: high
 horizon: l
+complexity: L
 feasibility: hard
 reasoning_effort: high
 task_type: feature
 area: ir, codegen
 language_feature: compiler-internals
+es_edition: n/a
 goal: ir-full-coverage
-related: [3090, 2855, 2856]
+related: [3090, 2855, 2856, 3518]
 origin: "plan/bloat-reduction-battle-plan.md slice 6; gate G3 in plan/log/3090-phase0-legacy-delete-list.md"
 # Slice 1 adds the module-init claim assessment to the selector; it must live
 # in select.ts because it reads the module-level isPhase1* walk state
@@ -32,15 +34,23 @@ loc-budget-allow:
   - src/codegen/index.ts
 ---
 
-# #3142 — IR adoption for module-level statements (gate G3)
+# #3142 — IR module-init overlay adoption
+
+> **Retirement clarification (2026-07-21):** this completed issue made a
+> synthetic module-init unit selectable, lowerable, and patchable. It did **not**
+> make module init compile-once and therefore did not clear deletion gate G3.
+> The pipeline still emits the legacy `__module_init` body first and patches
+> that shared slot after IR integration succeeds. #3518 R4 owns the
+> prepare-before-emit module-init replacement; a zero module rejection
+> histogram proves claimability only.
 
 ## Problem
 
-The IR claim unit is the `FunctionDeclaration` (+ class members). **Top-level
-statements are never claimable**, so `compileStatement` and every legacy statement
-handler stay reachable for module-level code even when all function bodies are
-IR-owned — gate **G3** in `plan/log/3090-phase0-legacy-delete-list.md`. No legacy
-statement handler can be deleted until the IR can own module-level lowering.
+At filing time the IR claim unit was the `FunctionDeclaration` (+ class
+members), so top-level statements were never claimable. This issue added the
+first module-init overlay ownership step. Legacy statement handlers nevertheless
+stay reachable until #3518 R4 moves module preparation ahead of legacy body
+emission and R9 removes hybrid fallback.
 
 ## Implementation Plan (architect)
 
@@ -53,15 +63,20 @@ statement handler can be deleted until the IR can own module-level lowering.
    "stays" bucket) — reuse, don't fork.
 3. **Ratchet**: add a `module-level` telemetry bucket to `check:ir-fallbacks` so
    adoption is measurable on the corpus like every other bucket.
-4. Sequencing: independent of the IR-first default flip (#3143); both must land
-   before #3090 Phase 3 handler deletions.
+4. Sequencing: independent of the IR-first default flip (#3143). Together they
+   establish measurable overlay coverage, but #3518 R4/R9 are still required
+   before #3090 handler deletion.
 
 ## Acceptance criteria
 
-- Modules whose top-level statements are all IR-supported kinds compile their
-  module-init through the IR (verifiable via `trackFallbacks`).
+- Modules whose top-level statements are all IR-supported kinds patch their
+  module-init through the IR overlay (verifiable via genuine-emission
+  telemetry).
 - ir-fallback gate has a `module-level` bucket with a corpus baseline.
 - Equivalence suite + merge_group net ≥ 0.
+
+These acceptance criteria close the overlay-adoption slice only. They are not
+IR-only or direct-handler-deletion criteria.
 
 ## Slice plan (fable-alpha, 2026-07-16)
 

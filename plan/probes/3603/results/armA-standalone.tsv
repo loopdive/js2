@@ -1,0 +1,600 @@
+fail	language/expressions/class/elements/same-line-method-rs-static-privatename-identifier.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L89: assert.sameValue(c.m(), 42);
+fail	language/statements/class/elements/multiple-stacked-definitions-rs-static-async-generator-method-privatename-identifier-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L106: assert.sameValue(c.foo, "foobar");
+fail	annexB/language/eval-code/indirect/global-if-decl-else-stmt-eval-global-existing-global-init.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L36: assert.sameValue(f, "x", "binding is not reinitialized");\
+fail	language/expressions/object/dstr/async-gen-meth-obj-ptrn-rest-val-obj.js	Test262:AsyncTestFailure:Test262Error: Test262Error: obj should have an own property x
+fail	built-ins/Object/prototype/__defineSetter__/define-existing.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L39: assert.sameValue(desc.get, originalGet, 'descriptor `get` method');
+pass	built-ins/Math/asinh/name.js	
+fail	language/expressions/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier-initializer.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L85: assert.sameValue(c.foo, "foobar");
+fail	intl402/Locale/prototype/getWeekInfo/name.js	uncaught Wasm-GC exception (non-stringifiable payload)
+pass	built-ins/String/prototype/padStart/function-length.js	
+pass	built-ins/Object/defineProperty/15.2.3.6-4-82-17.js	
+fail	built-ins/Symbol/replace/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L14: assert.sameValue(typeof Symbol.replace, 'symbol');
+fail	language/expressions/class/elements/after-same-line-static-async-gen-rs-static-method-privatename-identifier-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L101: assert(
+fail	built-ins/Set/prototype/entries/entries.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L13: assert.sameValue(
+pass	built-ins/Error/prototype/toString/name.js	
+fail	built-ins/Date/prototype/getUTCMinutes/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/statements/class/elements/multiple-definitions-rs-static-privatename-identifier-initializer-alt-by-classname.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L87: assert.sameValue(c.m(), 42);
+skip	built-ins/Temporal/ZonedDateTime/prototype/toString/length.js	
+pass	built-ins/Object/defineProperties/15.2.3.7-5-b-149.js	
+fail	language/statements/class/elements/same-line-gen-rs-private-setter.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L107: assert.sameValue(c.m().next().value, 42);
+pass	built-ins/Object/create/15.2.3.5-4-309.js	
+pass	built-ins/Date/prototype/getMinutes/name.js	
+fail	intl402/Locale/length.js	uncaught Wasm-GC exception (non-stringifiable payload)
+skip	built-ins/Temporal/Instant/prototype/valueOf/length.js	
+pass	built-ins/Promise/resolve/name.js	
+fail	built-ins/Map/prototype/entries/entries.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L14: assert.sameValue(
+fail	intl402/NumberFormat/prototype/formatRange/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L10: assert.sameValue(
+fail	language/expressions/class/elements/after-same-line-method-rs-static-generator-method-privatename-identifier-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L104: assert.sameValue(c.m(), 42);
+fail	built-ins/TypedArray/prototype/lastIndexOf/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/statements/class/elements/after-same-line-static-gen-computed-names.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L33: assert.sameValue(C.m().next().value, 42);
+fail	intl402/RelativeTimeFormat/constructor/supportedLocalesOf/name.js	uncaught Wasm-GC exception (non-stringifiable payload)
+pass	built-ins/Symbol/for/name.js	
+fail	annexB/built-ins/escape/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L12: assert.sameValue(typeof this.escape, "function");
+fail	built-ins/Promise/reject-function-name.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	built-ins/Object/defineProperty/15.2.3.6-4-230.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	built-ins/Math/sin/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/statements/class/elements/same-line-method-private-method-usage.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L34: assert.sameValue(c.m(), 42);
+skip	built-ins/Temporal/PlainYearMonth/compare/name.js	
+fail	annexB/built-ins/String/prototype/link/name.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	annexB/built-ins/String/prototype/link/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/statements/class/elements/after-same-line-static-async-method-private-field-usage.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L34: assert(
+fail	built-ins/Set/prototype/symmetricDifference/symmetricDifference.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L10: assert.sameValue(
+fail	built-ins/Object/defineProperties/15.2.3.7-6-a-12.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L27: throw new Test262Error("Expected an exception.");
+fail	language/expressions/class/elements/new-sc-line-gen-rs-field-identifier-initializer.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L68: assert.sameValue(c.m().next().value, 42);
+fail	language/statements/class/elements/after-same-line-method-private-field-usage.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L34: assert.sameValue(c.m(), 42);
+fail	built-ins/TypedArray/prototype/subarray/length.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/expressions/class/elements/after-same-line-static-async-method-static-private-methods.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L45: assert(
+pass	built-ins/Promise/prototype/finally/name.js	
+fail	built-ins/Math/log2/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload)
+pass	language/statements/for/dstr/const-obj-ptrn-rest-skip-non-enumerable.js	
+fail	language/expressions/class/elements/new-no-sc-line-method-computed-symbol-names.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L35: assert.sameValue(c.m(), 42);
+skip	built-ins/Temporal/PlainDateTime/prototype/withCalendar/prop-desc.js	
+fail	built-ins/Object/defineProperties/15.2.3.7-6-a-296.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L36: throw new Test262Error("Expected an exception.");
+skip	built-ins/Temporal/PlainTime/prototype/equals/name.js	
+fail	language/statements/class/elements/after-same-line-static-async-gen-rs-static-async-method-privatename-identifier.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L104: assert(
+pass	language/statements/class/dstr/private-meth-static-obj-ptrn-rest-getter.js	
+fail	built-ins/AsyncGeneratorPrototype/next/length.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	built-ins/Object/defineProperty/15.2.3.6-4-244.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L28: throw new Test262Error("Expected an exception.");
+pass	built-ins/Array/prototype/reduce/name.js	
+fail	language/statements/class/elements/after-same-line-method-rs-field-identifier-initializer.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L67: assert.sameValue(c.m(), 42);
+fail	language/statements/class/elements/same-line-gen-static-private-methods.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L45: assert.sameValue(c.m().next().value, 42);
+pass	built-ins/Math/atan2/name.js	
+fail	built-ins/TypedArray/prototype/at/name.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L15: assert.sameValue(
+fail	built-ins/Object/defineProperty/15.2.3.6-4-241.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L26: throw new Test262Error("Expected an exception.");
+fail	built-ins/ShadowRealm/prototype/Symbol.toStringTag.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	built-ins/Object/defineProperty/15.2.3.6-4-299-1.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L29: throw new Test262Error("Expected an exception.");
+pass	built-ins/NativeErrors/URIError/name.js	
+fail	language/statements/class/elements/after-same-line-static-gen-rs-static-privatename-identifier-initializer-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L83: assert.sameValue(C.m().next().value, 42);
+fail	language/statements/class/elements/multiple-definitions-static-private-fields.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L45: assert.sameValue(c.m(), 42);
+fail	built-ins/Date/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload)
+pass	language/statements/class/dstr/gen-meth-static-dflt-obj-ptrn-rest-getter.js	
+fail	built-ins/RegExp/prototype/source/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L14: assert.sameValue(typeof d.get, 'function', 'typeof d.get');
+fail	built-ins/TypedArrayConstructors/BigUint64Array/prototype/constructor.js	uncaught Wasm-GC exception (non-stringifiable payload)
+pass	built-ins/Promise/any/length.js	
+pass	built-ins/NativeErrors/SyntaxError/prototype.js	
+pass	built-ins/Date/prototype/getMilliseconds/name.js	
+fail	language/statements/class/elements/multiple-stacked-definitions-rs-static-method-privatename-identifier.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L103: assert.sameValue(c.foo, "foobar");
+skip	built-ins/Temporal/PlainMonthDay/prototype/equals/name.js	
+fail	built-ins/Object/defineProperty/15.2.3.6-4-263.js	uncaught Wasm-GC exception (non-stringifiable payload)
+pass	intl402/Number/prototype/toLocaleString/length.js	
+compile_error	language/statements/generators/dstr/dflt-obj-ptrn-rest-skip-non-enumerable.js	Codegen error: native generator lowering currently supports only sequential numeric yields in standalone/WASI targets (#680). Recompile with a JS host target for complex generator shapes.
+pass	built-ins/Date/prototype/setDate/name.js	
+fail	language/statements/class/elements/same-line-method-rs-private-getter-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L108: assert.sameValue(c.m(), 42);
+fail	built-ins/TypedArrayConstructors/Float64Array/prototype.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L16: assert.sameValue(Float64Array.prototype, Object.getPrototypeOf(new Float64Array(0)));
+fail	built-ins/Object/defineProperties/15.2.3.7-6-a-231.js	uncaught Wasm-GC exception (non-stringifiable payload)
+pass	built-ins/GeneratorPrototype/return/length.js	
+fail	annexB/language/global-code/if-decl-no-else-global-existing-non-enumerable-global-init.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L35: assert.sameValue(f, 'x');
+skip	built-ins/Temporal/Now/instant/length.js	
+fail	built-ins/Object/prototype/__proto__/get-fn-name.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/expressions/class/elements/after-same-line-static-async-gen-private-method-getter-usage.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L34: assert(
+fail	language/expressions/class/elements/after-same-line-static-async-gen-rs-static-privatename-identifier-by-classname.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L89: assert(
+fail	language/expressions/class/setter-length-dflt.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/expressions/class/elements/same-line-async-gen-rs-privatename-identifier-initializer.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L82: assert(
+pass	built-ins/RegExp/prototype/exec/name.js	
+fail	built-ins/Array/prototype/constructor.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L21: assert.sameValue(Array.prototype.constructor, Array);
+fail	language/statements/class/dstr/async-gen-meth-dflt-obj-ptrn-rest-val-obj.js	Test262:AsyncTestFailure:Test262Error: Test262Error: obj should have an own property x
+fail	language/expressions/class/elements/multiple-stacked-definitions-literal-names.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L36: assert.sameValue(c.foo, "foobar");
+fail	language/statements/class/elements/multiple-stacked-definitions-static-private-methods-with-fields.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L49: assert.sameValue(c.foo, "foobar");
+fail	built-ins/Object/defineProperties/15.2.3.7-6-a-278.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	built-ins/Object/defineProperty/symbol-data-property-default-strict.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L19: assert.sameValue(sym in obj, true, "The result of `sym in obj` is `true`");
+fail	built-ins/Map/map.js	uncaught Wasm-GC exception (non-stringifiable payload)
+skip	built-ins/Temporal/Instant/prototype/toStringTag/prop-desc.js	
+fail	language/expressions/class/elements/after-same-line-gen-rs-field-identifier.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L67: assert.sameValue(c.m().next().value, 42);
+fail	intl402/NumberFormat/supportedLocalesOf/length.js	uncaught Wasm-GC exception (non-stringifiable payload)
+compile_error	built-ins/Math/sumPrecise/length.js	Codegen error: Math.sumPrecise built-in static property value read is not supported in --target standalone (#1907 / #1888 S6-b). Add a native built-in method closure for this pair.
+skip	built-ins/Temporal/PlainDateTime/prototype/until/name.js	
+fail	language/statements/class/elements/after-same-line-method-private-names.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L41: assert.sameValue(c.m(), 42);
+fail	language/expressions/class/dstr/gen-meth-static-obj-ptrn-rest-skip-non-enumerable.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L70: assert.sameValue(rest.x, undefined);
+fail	built-ins/Object/defineProperty/15.2.3.6-4-242.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	built-ins/AsyncGeneratorPrototype/next/name.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	built-ins/Date/prototype/setUTCMilliseconds/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/statements/class/elements/after-same-line-static-async-gen-rs-private-method.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L107: assert(
+fail	language/statements/class/elements/multiple-definitions-rs-static-method-privatename-identifier-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L105: assert.sameValue(c.m(), 42);
+pass	built-ins/Array/prototype/toReversed/name.js	
+pass	built-ins/Array/prototype/forEach/length.js	
+pass	built-ins/Object/defineProperty/15.2.3.6-4-85.js	
+pass	built-ins/Object/create/15.2.3.5-4-130.js	
+fail	built-ins/TypedArray/prototype/toReversed/length.js	uncaught Wasm-GC exception (non-stringifiable payload)
+skip	built-ins/Temporal/PlainYearMonth/prototype/equals/name.js	
+pass	language/expressions/async-generator/dstr/named-dflt-obj-ptrn-rest-val-obj.js	
+pass	built-ins/Object/create/15.2.3.5-4-111.js	
+pass	built-ins/WeakSet/length.js	
+fail	language/expressions/class/elements/same-line-async-gen-literal-names-asi.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L32: assert(
+skip	built-ins/Temporal/Now/zonedDateTimeISO/length.js	
+skip	built-ins/Temporal/PlainDate/prototype/since/prop-desc.js	
+pass	built-ins/Object/defineProperties/15.2.3.7-6-a-97.js	
+skip	built-ins/Temporal/Duration/prototype/subtract/name.js	
+fail	intl402/NumberFormat/prototype/formatRangeToParts/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L10: assert.sameValue(
+fail	intl402/Locale/prototype/baseName/name.js	uncaught Wasm-GC exception (non-stringifiable payload)
+pass	built-ins/Date/prototype/toLocaleTimeString/name.js	
+fail	language/statements/class/elements/multiple-stacked-definitions-private-method-usage.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L36: assert.sameValue(c.foo, "foobar");
+fail	built-ins/Object/defineProperties/15.2.3.7-6-a-282.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L35: throw new Test262Error("Expected an exception.");
+fail	built-ins/Promise/promise.js	uncaught Wasm-GC exception (non-stringifiable payload)
+pass	built-ins/Number/prototype/valueOf/length.js	
+fail	built-ins/Object/defineProperty/15.2.3.6-4-547-4.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L38: throw new Test262Error("Expected an exception.");
+fail	language/statements/class/elements/syntax/valid/grammar-special-prototype-accessor-meth-valid.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L49: assert(C.hasOwnProperty('prototype'));
+pass	language/statements/for/dstr/let-obj-ptrn-rest-getter.js	
+pass	built-ins/WeakSet/prototype/add/length.js	
+fail	language/statements/class/elements/same-line-async-method-rs-static-privatename-identifier-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L89: assert(
+fail	intl402/DateTimeFormat/prototype/formatToParts/formatToParts.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L9: assert.sameValue(
+skip	built-ins/Temporal/Duration/prototype/toJSON/name.js	
+fail	built-ins/Object/defineProperty/15.2.3.6-4-301-1.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L24: throw new Test262Error("Expected a === 0, actually " + a);
+pass	built-ins/TypedArray/prototype/length/name.js	
+fail	language/statements/class/elements/new-sc-line-gen-rs-static-method-privatename-identifier-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L102: assert.sameValue(c.m().next().value, 42);
+pass	built-ins/Math/max/name.js	
+fail	intl402/DisplayNames/length.js	uncaught Wasm-GC exception (non-stringifiable payload)
+pass	language/eval-code/indirect/var-env-func-init-global-update-configurable.js	
+fail	language/expressions/class/elements/after-same-line-static-async-method-literal-names-asi.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L32: assert(
+pass	built-ins/Math/sin/length.js	
+pass	built-ins/Object/defineProperties/15.2.3.7-5-b-141.js	
+fail	annexB/built-ins/Date/prototype/setYear/name.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/statements/try/dstr/obj-ptrn-rest-val-obj.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L24: assert.sameValue(rest.a, undefined);
+fail	built-ins/Object/freeze/15.2.3.9-2-c-3.js	RuntimeError: array element access out of bounds in verifyProperty() at source L41 (via __module_init@L50) | at L48: throw new Test262Error('Expected obj["foo2"] set() to be called, but was not.');
+pass	built-ins/GeneratorPrototype/next/property-descriptor.js	
+fail	language/statements/class/elements/after-same-line-static-async-method-rs-privatename-identifier-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L88: assert(
+pass	built-ins/DisposableStack/prototype/use/name.js	
+pass	language/expressions/class/dstr/async-gen-meth-obj-ptrn-rest-getter.js	
+fail	built-ins/Object/defineProperty/15.2.3.6-4-292-1.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L25: throw new Test262Error('Expected a === 20, actually ' + a);
+skip	built-ins/Temporal/PlainDateTime/compare/prop-desc.js	
+fail	built-ins/FinalizationRegistry/prototype/constructor.js	uncaught Wasm-GC exception (non-stringifiable payload)
+skip	built-ins/Temporal/PlainDate/prop-desc.js	
+fail	language/statements/class/elements/same-line-method-static-private-fields.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L41: assert.sameValue(c.m(), 42);
+pass	built-ins/Object/seal/object-seal-p-is-own-accessor-property.js	
+pass	built-ins/NativeErrors/TypeError/name.js	
+fail	built-ins/RegExp/prototype/test/S15.10.6.3_A10.js	CompileError: WebAssembly.instantiate(): Compiling function #309:"__module_init" failed: call[2] expected type externref, found ref.null of type (ref null 6) @+138115 in __module_init() | at L10: asse
+fail	intl402/DateTimeFormat/prototype/resolvedOptions/name.js	uncaught Wasm-GC exception (non-stringifiable payload)
+skip	built-ins/Temporal/Duration/prototype/toJSON/length.js	
+pass	built-ins/Object/defineProperties/15.2.3.7-5-b-163.js	
+fail	language/expressions/object/dstr/meth-obj-ptrn-rest-skip-non-enumerable.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L49: assert.sameValue(rest.x, undefined);
+pass	language/expressions/new/spread-obj-override-immutable.js	
+fail	language/statements/class/dstr/gen-meth-dflt-obj-ptrn-rest-val-obj.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L66: assert.sameValue(rest.a, undefined);
+fail	language/statements/class/elements/same-line-async-gen-private-method-getter-usage.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L34: assert(
+fail	built-ins/AggregateError/prototype/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L18: assert.sameValue(typeof AggregateError.prototype, 'object');
+fail	language/statements/class/elements/same-line-async-gen-computed-symbol-names.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L34: assert(
+fail	language/expressions/class/elements/after-same-line-static-async-method-rs-private-setter.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L107: assert(
+fail	annexB/language/eval-code/indirect/global-if-decl-else-decl-a-eval-global-existing-non-enumerable-global-init.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L36: assert.sameValue(f, "x", "binding is not reinitialized");\
+fail	built-ins/TypedArray/prototype/map/name.js	uncaught Wasm-GC exception (non-stringifiable payload)
+skip	built-ins/Temporal/Instant/prototype/constructor.js	
+fail	built-ins/Symbol/prototype/Symbol.toStringTag.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L17: assert.sameValue(Symbol.prototype[Symbol.toStringTag], 'Symbol');
+fail	language/statements/class/elements/wrapped-in-sc-computed-names.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L35: assert(
+fail	built-ins/encodeURIComponent/name.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/statements/class/elements/multiple-definitions-rs-static-generator-method-privatename-identifier-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L108: assert.sameValue(c.m(), 42);
+fail	language/statements/class/elements/same-line-async-method-rs-private-method.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L107: assert(
+skip	built-ins/Temporal/PlainTime/prototype/toString/length.js	
+fail	language/statements/class/elements/new-sc-line-method-private-names.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L42: assert.sameValue(c.m(), 42);
+fail	built-ins/Object/defineProperty/15.2.3.6-4-254.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L21: assert(arrObj.hasOwnProperty("1"));
+skip	built-ins/Temporal/PlainTime/prototype/prop-desc.js	
+fail	language/expressions/class/dstr/async-gen-meth-obj-ptrn-rest-skip-non-enumerable.js	Test262:AsyncTestFailure:Test262Error: Test262Error: obj should have an own property a
+skip	built-ins/Temporal/PlainYearMonth/prototype/subtract/name.js	
+fail	built-ins/Array/prototype/toSorted/property-descriptor.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L18: assert.sameValue(typeof Array.prototype.toSorted, "function", "typeof");
+fail	built-ins/Reflect/get/get.js	uncaught Wasm-GC exception (non-stringifiable payload)
+pass	built-ins/Date/prototype/getUTCHours/name.js	
+fail	language/expressions/class/elements/same-line-async-gen-rs-private-setter-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L107: assert(
+pass	built-ins/Object/defineProperty/15.2.3.6-4-361.js	
+pass	built-ins/Map/prototype/get/length.js	
+compile_error	annexB/built-ins/RegExp/legacy-accessors/leftContext/prop-desc.js	Codegen error: '__get_builtin' (dynamic-shape object/property operation) is not yet supported in --target standalone (#1472 Phase B). Use a typed object literal or class instance for fast-path codegen
+fail	intl402/DateTimeFormat/prototype/formatRange/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L11: assert.sameValue(
+fail	built-ins/Object/defineProperty/15.2.3.6-4-194.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L28: throw new Test262Error("Expected an exception.");
+fail	built-ins/RegExp/match-indices/indices-array-non-unicode-match.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L34: assert.deepEqual([[1, 2], [1, 2]], "bab".match(/(a)/d).indices);
+fail	language/expressions/class/elements/new-sc-line-method-static-private-methods-with-fields.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L48: assert.sameValue(c.m(), 42);
+skip	built-ins/Temporal/PlainTime/prototype/until/prop-desc.js	
+fail	built-ins/Object/defineProperty/15.2.3.6-4-296-1.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L28: throw new Test262Error("Expected an exception.");
+pass	built-ins/Array/prototype/forEach/name.js	
+pass	language/eval-code/direct/var-env-func-init-global-update-non-configurable.js	
+fail	built-ins/NativeErrors/EvalError/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/expressions/class/elements/same-line-gen-computed-names.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L33: assert.sameValue(c.m().next().value, 42);
+pass	built-ins/Date/prototype/setMonth/length.js	
+fail	language/expressions/class/elements/after-same-line-static-method-rs-private-setter-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L107: assert.sameValue(C.m(), 42);
+fail	language/statements/for-of/dstr/obj-rest-non-string-computed-property-1dot0.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L34: assert.sameValue(b, 1);
+fail	language/statements/class/elements/after-same-line-static-gen-rs-static-generator-method-privatename-identifier-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L104: assert.sameValue(C.m().next().value, 42);
+fail	language/expressions/class/elements/after-same-line-static-async-method-rs-private-method-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L107: assert(
+skip	built-ins/Temporal/ZonedDateTime/prototype/withPlainTime/name.js	
+pass	built-ins/Array/prototype/pop/length.js	
+pass	built-ins/Array/prototype/values/length.js	
+fail	built-ins/Array/prototype/copyWithin/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L13: assert.sameValue(
+fail	language/statements/class/elements/same-line-async-gen-rs-static-privatename-identifier-alt-by-classname.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L89: assert(
+skip	built-ins/Temporal/PlainMonthDay/prototype/toString/length.js	
+fail	language/expressions/class/elements/multiple-stacked-definitions-private-names.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L43: assert.sameValue(c.foo, "foobar");
+fail	built-ins/Object/defineProperties/15.2.3.7-6-a-271.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L27: throw new Test262Error("Expected an exception.");
+fail	intl402/DisplayNames/prototype/resolvedOptions/option-languagedisplay.js	uncaught Wasm-GC exception (non-stringifiable payload)
+pass	built-ins/Date/prototype/toTimeString/name.js	
+fail	language/statements/class/elements/after-same-line-method-rs-private-method.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L107: assert.sameValue(c.m(), 42);
+skip	built-ins/Temporal/Instant/fromEpochMilliseconds/length.js	
+pass	language/expressions/class/dstr/meth-static-obj-ptrn-rest-getter.js	
+pass	built-ins/Function/prototype/toString/name.js	
+fail	language/expressions/class/elements/after-same-line-static-gen-rs-private-setter.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L107: assert.sameValue(C.m().next().value, 42);
+fail	built-ins/Object/create/15.2.3.5-4-315.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/statements/class/elements/regular-definitions-computed-names.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L33: assert(
+pass	built-ins/Object/create/15.2.3.5-4-209.js	
+fail	language/expressions/class/elements/after-same-line-static-gen-rs-static-method-privatename-identifier.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L101: assert.sameValue(C.m().next().value, 42);
+fail	built-ins/Math/sign/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload)
+skip	built-ins/Temporal/PlainYearMonth/prototype/until/name.js	
+fail	language/expressions/class/elements/same-line-async-method-rs-private-method-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L107: assert(
+pass	built-ins/Map/prototype/entries/name.js	
+pass	built-ins/Object/defineProperties/15.2.3.7-6-a-46.js	
+fail	language/expressions/class/elements/after-same-line-static-async-method-rs-privatename-identifier-initializer.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L82: assert(
+fail	built-ins/Reflect/isExtensible/isExtensible.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/expressions/class/elements/same-line-method-rs-static-privatename-identifier-by-classname.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L89: assert.sameValue(c.m(), 42);
+pass	built-ins/Array/prototype/reduceRight/name.js	
+fail	language/statements/class/elements/same-line-gen-rs-privatename-identifier.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L88: assert.sameValue(c.m().next().value, 42);
+fail	built-ins/TypedArray/prototype/sort/name.js	uncaught Wasm-GC exception (non-stringifiable payload)
+pass	built-ins/Math/log10/name.js	
+fail	language/expressions/class/elements/same-line-async-method-rs-private-setter.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L107: assert(
+fail	language/arguments-object/mapped/nonwritable-nonenumerable-nonconfigurable-descriptors-set-by-arguments.js	uncaught Wasm-GC exception (non-stringifiable payload)
+pass	built-ins/Array/prototype/concat/length.js	
+fail	language/statements/class/elements/after-same-line-static-async-gen-rs-privatename-identifier-initializer.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L82: assert(
+fail	built-ins/Array/prototype/find/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L11: assert.sameValue(
+pass	built-ins/Object/defineProperty/15.2.3.6-4-52.js	
+pass	built-ins/String/prototype/trimEnd/length.js	
+fail	language/statements/for-await-of/async-func-decl-dstr-obj-prop-elem-init-fn-name-arrow.js	Test262:AsyncTestFailure:Test262Error: TypeError: Cannot convert undefined or null to object
+pass	built-ins/Atomics/exchange/name.js	
+fail	built-ins/Object/defineProperty/15.2.3.6-4-270.js	uncaught Wasm-GC exception (non-stringifiable payload)
+pass	language/statements/for-of/dstr/let-obj-ptrn-rest-val-obj.js	
+fail	language/expressions/class/elements/new-sc-line-gen-rs-privatename-identifier-initializer.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L83: assert.sameValue(c.m().next().value, 42);
+fail	annexB/built-ins/String/prototype/strike/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload)
+pass	built-ins/Object/defineProperty/15.2.3.6-3-84.js	
+fail	language/expressions/object/dstr/async-gen-meth-dflt-obj-ptrn-rest-val-obj.js	Test262:AsyncTestFailure:Test262Error: Test262Error: obj should have an own property x
+fail	built-ins/Reflect/ownKeys/ownKeys.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	built-ins/Symbol/asyncIterator/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L15: assert.sameValue(typeof Symbol.asyncIterator, 'symbol');
+skip	built-ins/Temporal/PlainDate/prototype/with/name.js	
+fail	language/expressions/object/fn-name-fn.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L28: assert(o.xId.name !== 'xId');
+pass	built-ins/Promise/race/length.js	
+fail	built-ins/NativeErrors/RangeError/prototype/message.js	RuntimeError: illegal cast in __module_init() at source L18 | at L19: assert.sameValue(RangeError.prototype.message, "");
+pass	built-ins/Symbol/prototype/toString/name.js	
+pass	built-ins/Number/prototype/toExponential/name.js	
+fail	language/expressions/class/elements/multiple-stacked-definitions-rs-field-identifier.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L69: assert.sameValue(c.foo, "foobar");
+fail	language/expressions/class/elements/after-same-line-method-rs-private-method-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L107: assert.sameValue(c.m(), 42);
+pass	built-ins/Object/defineProperty/15.2.3.6-4-470.js	
+pass	language/expressions/super/call-spread-sngl-obj-ident.js	
+fail	built-ins/Object/defineProperty/15.2.3.6-4-227.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L33: throw new Test262Error("Expected an exception.");
+fail	language/statements/class/elements/same-line-async-gen-literal-names-asi.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L32: assert(
+fail	built-ins/Object/defineProperty/15.2.3.6-4-321-1.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L34: throw new Test262Error("Expected an exception.");
+fail	language/statements/class/elements/new-no-sc-line-method-private-field-usage.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L35: assert.sameValue(c.m(), 42);
+fail	language/expressions/class/elements/after-same-line-static-method-private-field-usage.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L34: assert.sameValue(C.m(), 42);
+pass	built-ins/DataView/prototype/getBigInt64/name.js	
+pass	built-ins/Object/defineProperty/15.2.3.6-4-531-10.js	
+fail	language/expressions/class/elements/new-sc-line-gen-rs-private-setter-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L108: assert.sameValue(c.m().next().value, 42);
+fail	language/statements/class/elements/same-line-async-method-rs-privatename-identifier-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L88: assert(
+pass	built-ins/Object/defineProperties/15.2.3.7-6-a-74.js	
+skip	built-ins/Temporal/ZonedDateTime/prototype/add/prop-desc.js	
+fail	intl402/PluralRules/prototype/selectRange/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L11: assert.sameValue(
+pass	built-ins/Array/fromAsync/length.js	
+fail	language/statements/class/elements/after-same-line-static-gen-rs-privatename-identifier-initializer-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L82: assert.sameValue(C.m().next().value, 42);
+fail	language/statements/class/elements/after-same-line-static-method-grammar-privatename-identifier-semantics-stringvalue.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L91: assert.sameValue(C.m(), 42);
+fail	language/statements/class/elements/after-same-line-method-rs-private-getter.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L108: assert.sameValue(c.m(), 42);
+fail	intl402/Collator/prototype/resolvedOptions/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/expressions/class/elements/multiple-definitions-literal-names-asi.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L36: assert.sameValue(c.m(), 42);
+fail	language/expressions/class/elements/multiple-definitions-rs-private-setter.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L111: assert.sameValue(c.m(), 42);
+fail	intl402/DurationFormat/prototype/format/length.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/statements/class/elements/after-same-line-static-method-private-method-usage.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L34: assert.sameValue(C.m(), 42);
+fail	language/expressions/assignment/dstr/obj-id-init-fn-name-gen.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L35: assert.notSameValue(xGen.name, 'xGen');
+pass	built-ins/Promise/all/name.js	
+fail	language/expressions/class/elements/same-line-method-rs-privatename-identifier.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L88: assert.sameValue(c.m(), 42);
+pass	built-ins/ArrayBuffer/prototype/transfer/length.js	
+skip	built-ins/Temporal/PlainMonthDay/prototype/toPlainDate/length.js	
+pass	built-ins/Object/prototype/propertyIsEnumerable/S15.2.4.7_A2_T2.js	
+fail	language/expressions/class/elements/multiple-definitions-rs-static-generator-method-privatename-identifier.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L108: assert.sameValue(c.m(), 42);
+fail	built-ins/TypedArrayConstructors/BigUint64Array/prototype.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/statements/variable/fn-name-class.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L24: assert.notSameValue(xCls.name, 'xCls');
+fail	built-ins/NativeErrors/SyntaxError/prototype/name.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/statements/class/elements/after-same-line-gen-rs-static-privatename-identifier-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L89: assert.sameValue(c.m().next().value, 42);
+fail	harness/verifyProperty-arguments.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L9: assert.throws(Test262Error, () => {
+fail	built-ins/Object/defineProperty/15.2.3.6-4-200.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/expressions/class/elements/same-line-method-rs-privatename-identifier-initializer-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L82: assert.sameValue(c.m(), 42);
+pass	built-ins/Iterator/prototype/filter/length.js	
+fail	language/expressions/class/elements/after-same-line-static-gen-rs-privatename-identifier-initializer.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L82: assert.sameValue(C.m().next().value, 42);
+fail	built-ins/Promise/executor-function-length.js	uncaught Wasm-GC exception (non-stringifiable payload)
+pass	built-ins/JSON/stringify/length.js	
+skip	built-ins/Temporal/PlainTime/from/prop-desc.js	
+fail	built-ins/decodeURI/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload)
+pass	built-ins/Number/isFinite/length.js	
+pass	built-ins/Math/asin/name.js	
+fail	built-ins/Array/prototype/splice/target-array-with-non-writable-property.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	built-ins/ShadowRealm/prototype/importValue/name.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/statements/class/elements/new-sc-line-gen-rs-private-method-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L108: assert.sameValue(c.m().next().value, 42);
+fail	language/expressions/class/elements/new-sc-line-gen-string-literal-names.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L33: assert.sameValue(c.m().next().value, 42);
+fail	language/statements/class/elements/same-line-method-rs-privatename-identifier.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L88: assert.sameValue(c.m(), 42);
+fail	language/expressions/class/elements/after-same-line-static-gen-rs-field-identifier.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L67: assert.sameValue(C.m().next().value, 42);
+pass	built-ins/Date/prototype/getUTCDate/name.js	
+fail	built-ins/RegExp/prototype/hasIndices/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L23: assert.sameValue(desc.set, undefined);
+fail	language/expressions/class/elements/same-line-gen-static-private-methods-with-fields.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L47: assert.sameValue(c.m().next().value, 42);
+fail	language/expressions/class/elements/after-same-line-static-async-gen-rs-static-async-generator-method-privatename-identifier.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L104: assert(
+pass	built-ins/Object/groupBy/length.js	
+skip	built-ins/Temporal/Instant/compare/length.js	
+pass	built-ins/Array/of/name.js	
+fail	built-ins/Object/defineProperties/15.2.3.7-6-a-277.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L31: throw new Test262Error("Expected an exception.");
+skip	built-ins/Temporal/PlainDate/prototype/toPlainDateTime/name.js	
+fail	built-ins/Uint8Array/fromHex/descriptor.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	built-ins/TypedArray/prototype/find/length.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	built-ins/TypedArray/prototype/indexOf/name.js	uncaught Wasm-GC exception (non-stringifiable payload)
+pass	built-ins/Object/defineProperty/15.2.3.6-4-82-15.js	
+fail	language/expressions/class/elements/new-sc-line-method-private-field-usage.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L35: assert.sameValue(c.m(), 42);
+fail	language/statements/class/elements/multiple-stacked-definitions-rs-private-setter-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L109: assert.sameValue(c.foo, "foobar");
+fail	built-ins/Symbol/prototype/Symbol.toPrimitive/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	built-ins/Error/prototype/toString/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	built-ins/Array/prototype/findLast/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L12: assert.sameValue(
+fail	built-ins/AsyncDisposableStack/prototype/disposeAsync/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L18: assert.sameValue(typeof AsyncDisposableStack.prototype.disposeAsync, 'function');
+fail	built-ins/Date/prototype/setUTCMinutes/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/statements/class/dstr/gen-meth-obj-ptrn-rest-val-obj.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L66: assert.sameValue(rest.a, undefined);
+fail	language/statements/class/elements/new-sc-line-method-rs-static-privatename-identifier-initializer-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L84: assert.sameValue(c.m(), 42);
+fail	built-ins/Array/prototype/flat/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L12: assert.sameValue(
+skip	built-ins/Temporal/PlainDate/prototype/valueOf/name.js	
+fail	intl402/NumberFormat/prototype/formatRange/name.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/statements/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier-initializer-alt-by-classname.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L85: assert.sameValue(c.foo, "foobar");
+pass	built-ins/NativeErrors/EvalError/prototype.js	
+fail	annexB/language/global-code/switch-case-global-existing-global-init.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L26: assert.sameValue(f, 'x');
+pass	built-ins/Object/create/15.2.3.5-4-210.js	
+fail	language/statements/with/set-mutable-binding-binding-deleted-in-get-unscopables.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L37: assert.sameValue(unscopablesCalled, 1, "get [Symbol.unscopables] called once");
+skip	built-ins/Temporal/PlainDate/prototype/toPlainMonthDay/length.js	
+fail	built-ins/Reflect/defineProperty/defineProperty.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/statements/class/elements/after-same-line-static-method-rs-private-getter-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L108: assert.sameValue(C.m(), 42);
+fail	intl402/NumberFormat/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload)
+compile_error	annexB/built-ins/RegExp/prototype/compile/name.js	compilation timeout (31693.85ms)
+fail	language/expressions/class/elements/after-same-line-gen-rs-field-identifier-initializer.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L67: assert.sameValue(c.m().next().value, 42);
+fail	language/statements/class/elements/new-sc-line-method-rs-static-privatename-identifier-initializer.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L84: assert.sameValue(c.m(), 42);
+fail	built-ins/Math/log10/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/expressions/class/elements/new-no-sc-line-method-rs-privatename-identifier-initializer.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L83: assert.sameValue(c.m(), 42);
+fail	built-ins/Object/defineProperties/15.2.3.7-6-a-115.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L24: assert.sameValue(arr.length, 0);
+pass	language/expressions/array/spread-sngl-obj-ident.js	
+fail	language/statements/class/subclass/builtin-objects/Function/instance-length.js	TypeError: Cannot convert object to primitive value in Fn_new() (via __module_init@L20)
+fail	built-ins/Date/prototype/setMinutes/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload)
+pass	built-ins/Object/fromEntries/name.js	
+fail	language/statements/for-await-of/async-func-decl-dstr-obj-rest-skip-non-enumerable.js	Test262:AsyncTestFailure:Test262Error: TypeError: Cannot convert undefined or null to object
+pass	built-ins/SharedArrayBuffer/prototype/byteLength/length.js	
+fail	built-ins/WeakMap/prototype/constructor.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L16: assert.sameValue(WeakMap.prototype.constructor, WeakMap);
+pass	annexB/built-ins/String/prototype/substr/length.js	
+skip	built-ins/Temporal/Instant/compare/prop-desc.js	
+skip	built-ins/Temporal/Duration/prototype/abs/length.js	
+pass	built-ins/Object/defineProperty/15.2.3.6-4-103.js	
+pass	built-ins/Object/defineProperty/15.2.3.6-4-75.js	
+fail	language/statements/for-await-of/async-gen-decl-dstr-obj-rest-valid-object.js	Test262:AsyncTestFailure:Test262Error: TypeError: Cannot convert undefined or null to object
+pass	built-ins/Date/prototype/getUTCDay/length.js	
+pass	built-ins/Math/hypot/length.js	
+pass	built-ins/Map/prototype/keys/length.js	
+fail	built-ins/SuppressedError/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L20: assert.sameValue(typeof SuppressedError, 'function');
+skip	built-ins/Temporal/ZonedDateTime/prototype/toPlainDateTime/name.js	
+fail	built-ins/BigInt/asIntN/asIntN.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L15: assert.sameValue(typeof BigInt.asIntN, 'function');
+fail	built-ins/ArrayBuffer/prototype/resizable/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L19: assert.sameValue(desc.set, undefined);
+fail	language/expressions/class/dstr/private-meth-dflt-obj-ptrn-rest-val-obj.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L65: assert.sameValue(rest.a, undefined);
+fail	language/statements/class/elements/after-same-line-static-async-method-rs-static-privatename-identifier.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L89: assert(
+pass	language/expressions/class/dstr/async-gen-meth-static-dflt-obj-ptrn-rest-getter.js	
+fail	language/statements/class/elements/multiple-definitions-rs-static-method-privatename-identifier.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L105: assert.sameValue(c.m(), 42);
+pass	built-ins/DataView/prototype/getInt32/length.js	
+fail	language/expressions/class/elements/after-same-line-gen-rs-private-method.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L107: assert.sameValue(c.m().next().value, 42);
+skip	built-ins/Temporal/ZonedDateTime/prototype/withTimeZone/prop-desc.js	
+pass	built-ins/Iterator/prototype/reduce/length.js	
+fail	language/statements/class/subclass/builtin-objects/RegExp/lastIndex.js	SyntaxError: Invalid flags supplied to RegExp constructor '[object Object]' in RE_new() (via __module_init@L17)
+skip	built-ins/Temporal/PlainDateTime/prototype/subtract/prop-desc.js	
+fail	built-ins/String/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/statements/class/elements/multiple-definitions-private-field-usage.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L38: assert.sameValue(c.m(), 42);
+fail	language/expressions/class/elements/after-same-line-static-async-method-rs-privatename-identifier-initializer-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L82: assert(
+pass	intl402/String/prototype/localeCompare/length.js	
+fail	built-ins/DisposableStack/prototype/defer/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L18: assert.sameValue(typeof DisposableStack.prototype.defer, 'function');
+fail	built-ins/ShadowRealm/descriptor.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/statements/class/elements/after-same-line-static-async-gen-rs-field-identifier-initializer.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L67: assert(
+pass	built-ins/DisposableStack/prototype/move/length.js	
+fail	intl402/Locale/prototype/firstDayOfWeek/name.js	uncaught Wasm-GC exception (non-stringifiable payload)
+pass	built-ins/Math/hypot/name.js	
+fail	built-ins/Object/defineProperty/15.2.3.6-4-293.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L26: throw new Test262Error("Expected an exception.");
+fail	annexB/built-ins/String/prototype/trimLeft/length.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	built-ins/Object/defineProperties/15.2.3.7-6-a-225.js	uncaught Wasm-GC exception (non-stringifiable payload)
+pass	language/statements/class/dstr/async-private-gen-meth-static-obj-ptrn-rest-getter.js	
+fail	language/statements/class/dstr/async-gen-meth-static-dflt-obj-ptrn-rest-val-obj.js	Test262:AsyncTestFailure:Test262Error: Test262Error: obj should have an own property x
+fail	language/statements/class/elements/same-line-method-rs-static-method-privatename-identifier.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L101: assert.sameValue(c.m(), 42);
+fail	language/eval-code/direct/var-env-func-init-global-new.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L41: assert.sameValue(typeof initial, 'function');
+pass	built-ins/Array/prototype/sort/name.js	
+pass	built-ins/TypedArray/prototype/length/length.js	
+fail	intl402/PluralRules/prototype/resolvedOptions/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/arguments-object/mapped/Symbol.iterator.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	intl402/ListFormat/prototype/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	built-ins/Object/defineProperties/15.2.3.7-6-a-197.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	built-ins/TypedArray/prototype/find/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload)
+pass	built-ins/Atomics/add/length.js	
+pass	built-ins/Object/defineProperty/15.2.3.6-3-179.js	
+fail	built-ins/Symbol/keyFor/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L14: assert.sameValue(typeof Symbol.keyFor, 'function');
+fail	annexB/language/eval-code/direct/global-if-decl-else-stmt-eval-global-existing-non-enumerable-global-init.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L36: assert.sameValue(f, "x", "binding is not reinitialized");\
+fail	language/expressions/class/elements/after-same-line-static-gen-rs-private-method-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L107: assert.sameValue(C.m().next().value, 42);
+pass	built-ins/DataView/prototype/setFloat16/length.js	
+fail	built-ins/TypedArray/prototype/filter/name.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	built-ins/Object/defineProperties/15.2.3.7-6-a-274.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L36: throw new Test262Error("Expected an exception.");
+pass	built-ins/Object/defineProperties/15.2.3.7-6-a-60.js	
+skip	built-ins/Temporal/PlainTime/length.js	
+fail	language/expressions/object/dstr/meth-dflt-obj-ptrn-rest-skip-non-enumerable.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L49: assert.sameValue(rest.x, undefined);
+pass	built-ins/Date/prototype/toJSON/name.js	
+fail	language/expressions/object/prop-def-id-valid.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	intl402/NumberFormat/prototype/resolvedOptions/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/expressions/call/spread-mult-obj-ident.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L40: assert.sameValue(Object.keys(obj).length, 4);
+pass	built-ins/Object/defineProperties/15.2.3.7-5-b-138.js	
+pass	intl402/Date/prototype/toLocaleDateString/length.js	
+fail	language/statements/class/elements/new-sc-line-method-rs-static-async-generator-method-privatename-identifier.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L105: assert.sameValue(c.m(), 42);
+fail	intl402/DurationFormat/prototype/format/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L11: assert.sameValue(
+pass	built-ins/Date/prototype/getDay/name.js	
+fail	language/expressions/class/elements/multiple-definitions-rs-private-setter-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L111: assert.sameValue(c.m(), 42);
+fail	language/statements/class/elements/multiple-definitions-rs-static-privatename-identifier-initializer.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L87: assert.sameValue(c.m(), 42);
+fail	language/expressions/class/elements/new-no-sc-line-method-rs-private-getter.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L109: assert.sameValue(c.m(), 42);
+pass	built-ins/Object/seal/object-seal-p-is-own-data-property.js	
+fail	built-ins/TypedArrayConstructors/Int32Array/length.js	uncaught Wasm-GC exception (non-stringifiable payload)
+pass	built-ins/BigInt/asUintN/length.js	
+fail	built-ins/AsyncGeneratorPrototype/throw/length.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	intl402/DisplayNames/prototype/resolvedOptions/name.js	uncaught Wasm-GC exception (non-stringifiable payload)
+skip	built-ins/Temporal/Instant/prototype/add/length.js	
+fail	built-ins/Object/defineProperty/15.2.3.6-4-295.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L25: throw new Test262Error("Expected an exception.");
+fail	built-ins/SuppressedError/prototype/message.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/statements/class/elements/multiple-stacked-definitions-rs-static-generator-method-privatename-identifier-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L106: assert.sameValue(c.foo, "foobar");
+pass	built-ins/Object/defineProperties/15.2.3.7-5-b-92.js	
+pass	built-ins/Object/create/15.2.3.5-4-189.js	
+fail	language/expressions/class/elements/same-line-async-gen-rs-field-identifier.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L67: assert(
+fail	built-ins/Function/prototype/S15.3.3.1_A3.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L14: assert.sameValue(delete Function.prototype, false);
+fail	built-ins/NativeErrors/EvalError/prototype/message.js	RuntimeError: illegal cast in __module_init() at source L18 | at L19: assert.sameValue(EvalError.prototype.message, "");
+fail	language/expressions/class/static-method-length-dflt.js	uncaught Wasm-GC exception (non-stringifiable payload)
+pass	built-ins/Object/defineProperty/15.2.3.6-4-65.js	
+pass	built-ins/Object/defineProperties/15.2.3.7-6-a-62.js	
+pass	built-ins/Object/defineProperty/15.2.3.6-4-69.js	
+fail	language/expressions/class/elements/after-same-line-static-gen-private-method-getter-usage.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L34: assert.sameValue(C.m().next().value, 42);
+skip	built-ins/Temporal/ZonedDateTime/prototype/with/prop-desc.js	
+fail	language/expressions/class/elements/same-line-async-gen-rs-static-async-method-privatename-identifier-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L104: assert(
+fail	language/expressions/class/elements/same-line-method-private-method-usage.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L34: assert.sameValue(c.m(), 42);
+pass	built-ins/Object/prototype/toLocaleString/S15.2.4.3_A8.js	
+skip	built-ins/Temporal/PlainMonthDay/prototype/toString/prop-desc.js	
+fail	intl402/DateTimeFormat/prototype/toStringTag/toStringTag.js	uncaught Wasm-GC exception (non-stringifiable payload)
+pass	built-ins/Object/defineProperty/15.2.3.6-4-82-12.js	
+fail	built-ins/String/prototype/repeat/repeat.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L14: assert.sameValue(
+fail	built-ins/Object/defineProperty/15.2.3.6-4-306.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L26: throw new Test262Error("Expected an exception.");
+fail	built-ins/BigInt/prototype/toString/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/statements/class/elements/after-same-line-static-method-rs-static-method-privatename-identifier.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L101: assert.sameValue(C.m(), 42);
+pass	built-ins/RegExp/prototype/sticky/length.js	
+fail	built-ins/Object/entries/function-property-descriptor.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	built-ins/Object/defineProperties/15.2.3.7-6-a-110.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	built-ins/AsyncIteratorPrototype/Symbol.asyncIterator/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L19: assert.sameValue(typeof AsyncIteratorPrototype[Symbol.asyncIterator], 'function');
+fail	language/expressions/class/elements/after-same-line-gen-private-names.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L41: assert.sameValue(c.m().next().value, 42);
+skip	built-ins/Temporal/PlainDate/prototype/withCalendar/length.js	
+fail	built-ins/WeakMap/weakmap.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/statements/variable/fn-name-gen.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L23: assert(xGen.name !== 'xGen');
+fail	language/expressions/class/elements/after-same-line-static-async-gen-computed-symbol-names.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L34: assert(
+fail	built-ins/AggregateError/prototype/constructor.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/statements/for-await-of/async-gen-decl-dstr-obj-rest-to-property.js	Test262:AsyncTestFailure:Test262Error: Test262Error: obj should have an own property y
+pass	built-ins/RegExp/prototype/hasIndices/length.js	
+fail	language/statements/class/elements/same-line-gen-private-names.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L41: assert.sameValue(c.m().next().value, 42);
+fail	built-ins/String/prototype/trimEnd/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	built-ins/Atomics/and/descriptor.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/statements/class/subclass/builtin-objects/NativeError/SyntaxError-message.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L35: assert.sameValue(err2.hasOwnProperty('message'), false);
+fail	built-ins/Map/prototype/forEach/forEach.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L14: assert.sameValue(
+skip	built-ins/Temporal/Instant/from/prop-desc.js	
+fail	language/statements/class/elements/after-same-line-static-method-rs-static-generator-method-privatename-identifier-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L104: assert.sameValue(C.m(), 42);
+fail	language/statements/class/elements/after-same-line-gen-rs-field-identifier.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L67: assert.sameValue(c.m().next().value, 42);
+fail	built-ins/ArrayBuffer/length.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	annexB/language/eval-code/direct/global-switch-dflt-eval-global-init.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L21: assert.sameValue(f, undefined, "binding is initialized to `undefined`");\
+skip	built-ins/Temporal/PlainDateTime/prototype/since/prop-desc.js	
+pass	built-ins/DisposableStack/prototype/adopt/length.js	
+fail	language/statements/class/elements/regular-definitions-string-literal-names.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L32: assert(
+fail	intl402/PluralRules/prototype/resolvedOptions/pluralCategories.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L19: assert.notSameValue(options1.pluralCategories, options2.pluralCategories, "Should have different arrays");
+pass	built-ins/WeakRef/prototype/constructor.js	
+fail	built-ins/Array/prototype/toLocaleString/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L17: assert.sameValue(typeof Array.prototype.toLocaleString, 'function', 'typeof');
+fail	built-ins/Object/defineProperty/15.2.3.6-4-316-1.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	built-ins/Object/prototype/toLocaleString/S15.2.4.3_A10.js	CompileError: WebAssembly.instantiate(): Compiling function #306:"__module_init" failed: call[2] expected type externref, found ref.null of type (ref null 6) @+135864 in __module_init() | at L14: asse
+pass	built-ins/Object/defineProperty/15.2.3.6-4-82-19.js	
+fail	language/expressions/class/elements/new-sc-line-method-rs-private-getter-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L109: assert.sameValue(c.m(), 42);
+fail	language/statements/class/elements/new-no-sc-line-method-rs-static-privatename-identifier-initializer-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L84: assert.sameValue(c.m(), 42);
+fail	built-ins/Iterator/prototype/take/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/expressions/class/elements/multiple-stacked-definitions-rs-static-async-generator-method-privatename-identifier-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L106: assert.sameValue(c.foo, "foobar");
+compile_error	language/statements/generators/dstr/obj-ptrn-rest-skip-non-enumerable.js	Codegen error: native generator lowering currently supports only sequential numeric yields in standalone/WASI targets (#680). Recompile with a JS host target for complex generator shapes.
+fail	built-ins/Error/message_property.js	uncaught Wasm-GC exception (non-stringifiable payload)
+pass	built-ins/Object/prototype/hasOwnProperty/length.js	
+fail	language/expressions/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier-alt-by-classname.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L91: assert.sameValue(c.foo, "foobar");
+fail	language/statements/for-await-of/async-func-decl-dstr-obj-id-init-fn-name-class.js	Test262:AsyncTestFailure:Test262Error: TypeError: Cannot convert undefined or null to object
+fail	language/expressions/class/dstr/async-private-gen-meth-obj-ptrn-rest-val-obj.js	Test262:AsyncTestFailure:Test262Error: Test262Error: obj should have an own property x
+fail	language/statements/class/elements/same-line-method-literal-names-asi.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L32: assert.sameValue(c.m(), 42);
+skip	built-ins/Temporal/ZonedDateTime/prototype/round/name.js	
+fail	language/expressions/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L91: assert.sameValue(c.foo, "foobar");
+fail	language/expressions/class/elements/init-value-incremental.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	intl402/Locale/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload)
+pass	built-ins/Object/isSealed/name.js	
+fail	built-ins/Math/hypot/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	harness/verifyProperty-symbol-prop.js	RuntimeError: dereferencing a null pointer in verifyProperty() at source L112 (via checkDesc@L20 ← __module_init@L45) | at L21: assert(verifyProperty(obj, prop, desc));
+fail	built-ins/RegExp/prototype/Symbol.search/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload)
+pass	built-ins/Object/defineProperties/15.2.3.7-5-b-88.js	
+fail	language/expressions/class/elements/after-same-line-method-rs-privatename-identifier-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L88: assert.sameValue(c.m(), 42);
+pass	built-ins/Promise/Symbol.species/length.js	
+pass	built-ins/Object/defineProperties/15.2.3.7-6-a-80.js	
+pass	built-ins/WeakMap/prototype/delete/name.js	
+fail	intl402/RelativeTimeFormat/prototype/formatToParts/result-type.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L26: assert.sameValue(typeof rtf.formatToParts, "function", "formatToParts should be supported");
+skip	built-ins/Temporal/PlainYearMonth/length.js	
+pass	built-ins/GeneratorPrototype/throw/property-descriptor.js	
+fail	annexB/built-ins/unescape/name.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/expressions/class/elements/same-line-gen-rs-static-generator-method-privatename-identifier-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L104: assert.sameValue(c.m().next().value, 42);
+pass	built-ins/ArrayBuffer/isView/name.js	
+pass	built-ins/Array/prototype/toString/name.js	
+fail	language/expressions/class/elements/after-same-line-static-async-gen-rs-static-generator-method-privatename-identifier.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L104: assert(
+pass	built-ins/Set/Symbol.species/length.js	
+fail	built-ins/Object/defineProperty/15.2.3.6-4-223.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L26: throw new Test262Error("Expected an exception.");
+fail	language/global-code/decl-var.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/expressions/class/elements/multiple-definitions-rs-static-async-method-privatename-identifier-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L108: assert.sameValue(c.m(), 42);
+fail	language/expressions/class/elements/new-no-sc-line-method-rs-privatename-identifier-initializer-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L83: assert.sameValue(c.m(), 42);
+fail	built-ins/Object/defineProperty/15.2.3.6-4-247.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L28: throw new Test262Error("Expected an exception.");
+pass	built-ins/WeakMap/prototype/prototype-attributes.js	
+fail	language/statements/class/elements/after-same-line-static-gen-rs-private-getter.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L108: assert.sameValue(C.m().next().value, 42);
+pass	language/statements/for-await-of/async-gen-dstr-const-obj-ptrn-rest-skip-non-enumerable.js	
+fail	built-ins/Atomics/pause/descriptor.js	uncaught Wasm-GC exception (non-stringifiable payload)
+skip	built-ins/Temporal/PlainMonthDay/prototype/with/prop-desc.js	
+fail	language/expressions/class/elements/after-same-line-static-async-method-computed-names.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L33: assert(
+fail	annexB/built-ins/String/prototype/sub/name.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/expressions/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier-initializer-alt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L85: assert.sameValue(c.foo, "foobar");
+fail	intl402/Segmenter/prototype/Symbol.toStringTag.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	intl402/Intl/getCanonicalLocales/getCanonicalLocales.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L14: assert.sameValue(
+pass	built-ins/DataView/prototype/getUint32/length.js	
+fail	language/expressions/class/elements/multiple-stacked-definitions-static-private-methods-with-fields.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L49: assert.sameValue(c.foo, "foobar");
+pass	built-ins/Map/prototype/getOrInsert/length.js	
+skip	built-ins/Temporal/PlainMonthDay/prototype/toStringTag/prop-desc.js	
+fail	built-ins/Date/prototype/getUTCFullYear/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload)
+pass	built-ins/Map/prototype/size/name.js	
+fail	built-ins/Function/length/S15.3.5.1_A4_T1.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L14: assert(f.hasOwnProperty('length'), 'f.hasOwnProperty(\'length\') must return true');
+fail	language/statements/class/elements/after-same-line-static-gen-string-literal-names.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L32: assert.sameValue(C.m().next().value, 42);
+fail	built-ins/JSON/parse/reviver-context-source-array-literal.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L14: assert.compareArray(Object.getOwnPropertyNames(object), props, `${message}: object should have no other properties than expected`);
+pass	built-ins/Object/defineProperties/15.2.3.7-6-a-66.js	
+pass	built-ins/Object/defineProperties/15.2.3.7-6-a-51.js	
+fail	annexB/language/eval-code/indirect/global-if-decl-else-decl-a-eval-global-init.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L30: assert.sameValue(f, undefined, "binding is initialized to `undefined`");\
+fail	intl402/ListFormat/prototype/formatToParts/name.js	uncaught Wasm-GC exception (non-stringifiable payload)
+pass	built-ins/Array/isArray/name.js	
+fail	built-ins/Object/defineProperty/15.2.3.6-4-233.js	uncaught Wasm-GC exception (non-stringifiable payload)
+skip	built-ins/Temporal/ZonedDateTime/from/length.js	
+fail	intl402/ListFormat/constructor/supportedLocalesOf/length.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	intl402/RelativeTimeFormat/prototype/resolvedOptions/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L17: assert.sameValue(
+fail	intl402/Intl/getCanonicalLocales/descriptor.js	uncaught Wasm-GC exception (non-stringifiable payload)
+pass	built-ins/JSON/rawJSON/length.js	
+fail	built-ins/TypedArrayConstructors/Float64Array/name.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	built-ins/Object/defineProperty/15.2.3.6-4-547-1.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L37: throw new Test262Error("Expected an exception.");
+pass	built-ins/Math/random/name.js	
+skip	built-ins/Temporal/PlainDate/prototype/prop-desc.js	
+skip	built-ins/Temporal/Duration/prototype/subtract/length.js	
+pass	built-ins/DisposableStack/prototype/defer/name.js	
+pass	built-ins/Object/defineProperty/15.2.3.6-4-93.js	
+fail	built-ins/Number/POSITIVE_INFINITY/S15.7.3.6_A2.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L14: assert(
+fail	language/expressions/class/elements/after-same-line-static-async-gen-static-private-fields.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L41: assert(
+fail	built-ins/TypedArray/prototype/reduce/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	built-ins/Object/defineProperties/15.2.3.7-6-a-226.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/expressions/class/gen-method-length-dflt.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	intl402/DisplayNames/prototype/resolvedOptions/length.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/statements/class/elements/same-line-async-method-rs-field-identifier.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L67: assert(
+pass	built-ins/String/prototype/replaceAll/length.js	
+pass	built-ins/RegExp/prototype/source/name.js	
+pass	built-ins/Object/defineProperty/15.2.3.6-3-164.js	
+fail	built-ins/Reflect/setPrototypeOf/setPrototypeOf.js	uncaught Wasm-GC exception (non-stringifiable payload)
+pass	built-ins/Array/prototype/lastIndexOf/length.js	
+pass	language/expressions/class/dstr/meth-obj-ptrn-rest-getter.js	
+fail	language/statements/variable/fn-name-arrow.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	built-ins/Function/length/S15.3.5.1_A2_T3.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L14: assert(f.hasOwnProperty('length'), 'f.hasOwnProperty(\'length\') must return true');
+pass	built-ins/FinalizationRegistry/prototype/unregister/length.js	
+fail	built-ins/Number/prototype/toExponential/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	built-ins/TypedArray/prototype/findIndex/prop-desc.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	built-ins/String/prototype/codePointAt/codePointAt.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L14: assert.sameValue(
+fail	language/expressions/class/elements/after-same-line-gen-rs-static-async-method-privatename-identifier.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L104: assert.sameValue(c.m().next().value, 42);
+pass	built-ins/Function/prototype/apply/length.js	
+fail	built-ins/Object/defineProperties/15.2.3.7-6-a-252.js	uncaught Wasm-GC exception (non-stringifiable payload)
+fail	language/statements/class/elements/after-same-line-static-gen-static-private-fields.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L41: assert.sameValue(C.m().next().value, 42);
+pass	built-ins/BigInt/asIntN/length.js	
+fail	language/expressions/async-generator/dstr/obj-ptrn-rest-skip-non-enumerable.js	Test262:AsyncTestFailure:Test262Error: Test262Error: obj should have an own property a
+fail	language/statements/for-await-of/async-func-dstr-let-obj-ptrn-rest-getter.js	Test262:AsyncTestFailure:Test262Error: TypeError: Cannot destructure 'null' or 'undefined'
+fail	language/expressions/class/elements/after-same-line-static-async-method-rs-private-method.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L107: assert(
+fail	language/statements/class/elements/after-same-line-gen-rs-field-identifier-initializer.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L67: assert.sameValue(c.m().next().value, 42);
+fail	built-ins/Set/prototype/delete/delete.js	uncaught Wasm-GC exception (non-stringifiable payload) | at L13: assert.sameValue(
+fail	built-ins/Symbol/length.js	uncaught Wasm-GC exception (non-stringifiable payload)

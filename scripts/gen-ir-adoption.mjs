@@ -35,7 +35,12 @@ const SECTIONS = [
   {
     title: "Statements",
     rows: [
-      ["`VariableStatement`", "mixed", "Single-binding `let/const/var` works. Destructuring init throws.", "#1372"],
+      [
+        "`VariableStatement`",
+        "mixed",
+        "Initialized `let`/`const` plus function-local `var` proven free of hoisting, redeclaration, capture, and scope escape (#3783). Destructuring and module-global `var` remain partial.",
+        "#3783",
+      ],
       ["`ExpressionStatement`", "mixed", "Calls / assignments / pre-post `++ --` work. Other shapes throw.", "#1131"],
       [
         "`IfStatement`",
@@ -57,34 +62,44 @@ const SECTIONS = [
       ["`Block`", "ir-owned", "Plain statement lists; scope handling via LowerCtx.", "—"],
       [
         "`SwitchStatement`",
-        "direct-only",
-        "No IR handler. Needs `br_table` + block-per-case (Design A, #2952 spec).",
+        "mixed",
+        "Numeric-literal case tests claimed via the `switch` IR instr (block-per-case ladder; eq-chain dispatch, `br_table` for dense-int i32 discs; fallthrough + mid-position `default` + break/continue interplay — #2952 slice 4). Non-literal / string tests stay legacy.",
         "#2952",
       ],
       [
         "`BreakStatement`",
         "mixed",
-        "Unlabeled `break` claimed in all IR loop kinds via `br.label` + lowering-time depth resolver (#2952 slice 2); labeled break is slice 3.",
+        "Unlabeled `break` binds the nearest loop OR switch (`breakTargetLabel`, #2952 slice 4); labeled break targets labeled loops (slice 3), labeled switches and labeled non-loop blocks (`labeled.block`, slice 4) — all via `br.label` + the lowering-time depth resolver. Wider for-in forms stay direct.",
         "#2952",
       ],
       [
         "`ContinueStatement`",
         "mixed",
-        "Unlabeled `continue` claimed (dedicated continue-target frame per loop shape); labeled continue is slice 3.",
+        "Unlabeled `continue` claimed (dedicated continue-target frame per loop shape) and keeps binding the nearest LOOP even through switch frames (§14.8 vs §14.9 split, #2952 slice 4); labeled continue via the label→loopLabel resolution (slice 3).",
         "#2952",
       ],
       [
         "`DoStatement`",
         "mixed",
-        "Post-test loop claimed (reuses `while.loop` + `postCond`); unlabeled break/continue bodies claimed since slice 2.",
+        "Post-test loop claimed (reuses `while.loop` + `postCond`); unlabeled break/continue bodies claimed since slice 2; labeled since slice 3.",
         "#2952",
       ],
-      ["`LabeledStatement`", "direct-only", "Needs labeled break/continue CFG support.", "#2952"],
-      ["`ForInStatement`", "direct-only", "Object iteration host-import based today.", "#2952"],
+      [
+        "`LabeledStatement`",
+        "mixed",
+        "Labeled LOOPS claimed via the loop's own `loopLabel` (+ IteratorClose on crossing branches, #2952 slice 3); labeled switches alias the switch's `breakLabel`; other labeled statements claim via the break-only `labeled.block` frame (slice 4). Labeled for-in stays direct.",
+        "#2952",
+      ],
+      [
+        "`ForInStatement`",
+        "mixed",
+        "Non-fast dynamic `for (var id in receiver)` with an unused head value claims via existing `for.loop` plus #2964 snapshot/liveness helpers (#2952 slice 5). Fast `$AnyValue`, typed receivers, wider heads, head-value uses, and labeled for-in stay direct.",
+        "#2952",
+      ],
       [
         "`ClassDeclaration`",
         "mixed",
-        "Methods adopted incrementally via #1370 (Phase B). Constructor in Phase C.",
+        "Supported top-level constructors/methods/accessors prepare once; wider nested/class-expression families remain incremental (#3522).",
         "#1370",
       ],
       ["`ImportDeclaration`", "deferred", "Module-level concern, not function-body.", "—"],
@@ -125,7 +140,12 @@ const SECTIONS = [
         "Direct calls to claimed funcs work. Externals require whitelist. Optional `?.()` throws.",
         "#1371",
       ],
-      ["`NewExpression`", "mixed", "Class constructors via #1370 Phase C; arbitrary `new` host-bound.", "#1370"],
+      [
+        "`NewExpression`",
+        "mixed",
+        "Supported local WasmGC class construction calls an AST-free `_new` wrapper whose source-owned `_init` body is IR-lowered; arbitrary `new` remains host-bound.",
+        "#3522",
+      ],
       [
         "`PropertyAccessExpression`",
         "mixed",
@@ -176,8 +196,8 @@ const SECTIONS = [
       [
         "`ConstructorDeclaration`",
         "mixed",
-        "#3000-C ctor emission (`class.alloc`); #3000-E `super(...)` chain.",
-        "#3000",
+        "Source bodies lower into self-last `_init`; AST-free `_new` owns allocation and exact `super(...)` chains parent `_init`. Unsafe/externref/forward-ABI forms remain direct.",
+        "#3522",
       ],
       [
         "`GetAccessorDeclaration`",
@@ -196,9 +216,80 @@ const SECTIONS = [
 // reason -> [category, "what promotes a row"]. The set of keys MUST equal the
 // IrFallbackReason union in src/ir/select.ts (enforced below).
 const BUCKETS = {
-  "body-shape-rejected": ["unintended", "from-ast.ts handles every statement in the body"],
+  "body-shape-rejected": [
+    "unintended",
+    "Corpus bucket **0** (#2856); not strict while unsupported real-world shapes still legitimately use the direct front-end",
+  ],
+  "string-method-unsupported": [
+    "unintended",
+    "All checker-identified String method surfaces and arities have typed IR lowering (#3518)",
+  ],
+  "array-method-unsupported": [
+    "unintended",
+    "All checker-identified Array method surfaces and arities have typed IR lowering (#3518)",
+  ],
+  "primitive-method-unsupported": [
+    "unintended",
+    "All checker-identified primitive method surfaces and arities have typed IR lowering (#3518)",
+  ],
+  "function-invocation-method-unsupported": [
+    "unintended",
+    "`Function.call` / `Function.apply` receiver and argument semantics are represented in typed IR (#3518)",
+  ],
+  "logical-value-unsupported": [
+    "unintended",
+    "Logical value/result families and JavaScript short-circuit coercions are represented in typed IR (#3518)",
+  ],
+  "template-substitution-unsupported": [
+    "unintended",
+    "Template substitutions support the remaining typed coercion families (#3518)",
+  ],
+  "error-constructor-unsupported": [
+    "unintended",
+    "Error-family constructor identity, arity, and runtime intent are represented in typed IR (#3518)",
+  ],
+  "typed-array-constructor-unsupported": [
+    "unintended",
+    "TypedArray constructor identity, arity, and backend capability are represented in typed IR (#3518)",
+  ],
+  "date-constructor-unsupported": [
+    "unintended",
+    "Date constructor identity, arity, and backend capability are represented in typed IR (#3518)",
+  ],
+  "regexp-constructor-unsupported": [
+    "unintended",
+    "RegExp constructor identity, arity, and backend capability are represented in typed IR (#3529)",
+  ],
+  "call-resolution-unsupported": [
+    "unintended",
+    "Every supported call target resolves through the source-qualified whole-program ABI map (#3520)",
+  ],
+  "call-arity-unsupported": [
+    "unintended",
+    "Typed IR models the supported JavaScript call-arity/default/rest semantics (#3518)",
+  ],
+  "constructor-resolution-unsupported": [
+    "unintended",
+    "Every supported constructor target resolves through the source-qualified whole-program ABI map (#3520)",
+  ],
+  "constructor-arity-unsupported": [
+    "unintended",
+    "Typed IR models the supported JavaScript constructor-arity/default/rest semantics (#3518)",
+  ],
+  "class-projection-unsupported": [
+    "unintended",
+    "Class projection identity and storage are represented in the prepared class-unit model (#3522)",
+  ],
+  "class-member-unsupported": [
+    "unintended",
+    "All supported instance/static class members are represented in the prepared class-unit model (#3522)",
+  ],
   "external-call": ["unintended", "Math.\\* / parseInt / Console wired through IR (#1371)"],
   "call-graph-closure": ["unintended", "Callees of claimed funcs all claimable themselves"],
+  "recursive-type-evidence": [
+    "unintended",
+    "Recursive SCC has one checker-backed scalar ABI across parameters, returns, and call edges (#3500)",
+  ],
   "param-shape-rejected": ["unintended", "Destructuring params supported (#1372)"],
   "param-type-not-resolvable": ["unintended", "TypeMap propagation reaches the param"],
   "return-type-not-resolvable": ["unintended", "TypeMap propagation reaches the return"],
@@ -208,6 +299,10 @@ const BUCKETS = {
     "#1370/#3000 B-C-E — corpus bucket **0** (#3000-E); NOT yet strict (still covers computed/generator/abstract names, static super, subclass-of-builtin)",
   ],
   "destructuring-param-complex": ["unintended", "Complex destructuring params lowered (subset of param-shape)"],
+  "string-builder-candidate": [
+    "deferred",
+    "Kill-switch only (`JS2WASM_IR_STRING_BUILDER=0`): builder loops are IR-claimed by default via the owned-append fast path (#3740/#3744)",
+  ],
   "async-function": ["deferred", "Async bodies — CPS lowering tracked separately (#1373/#1796)"],
   "async-generator": ["deferred", "Out of scope long-term"],
   "deferred-feature": ["deferred", "`eval` / `Proxy` / `with` — wont-fix"],
@@ -273,7 +368,9 @@ section of \`scripts/ir-fallback-baseline.json\` counts one entry per corpus
 MODULE whose module-init unit is not claimable (gated must-not-increase by
 \`check:ir-fallbacks\`). Slice 2 wires the actual lowering + the
 \`__module_init\` slot patch; only then do legacy statement handlers become
-per-file deletable (gate G3 in \`plan/log/3090-phase0-legacy-delete-list.md\`).`;
+per-file deletable (gate G3 in \`plan/log/3090-phase0-legacy-delete-list.md\`).
+The current corpus floor is **0** (#3517): Calendar's nine-statement initializer
+and Algorithms' top-level generic Map initializer are both IR-owned.`;
 
 const FOOTER = `## How to update this table
 

@@ -2,7 +2,7 @@
 id: 3282
 title: "Decompose the second-level god-functions created by the Wave-B/C extractions (+ ensureAnyHelpers, + deferred object-runtime core)"
 status: in-progress
-assignee: ttraenkler/opus-1
+assignee: ttraenkler/dev-opus-4
 sprint: current
 created: 2026-07-14
 priority: high
@@ -15,6 +15,13 @@ area: codegen
 goal: maintainability
 subtask_of: 3182
 related: [3112, 3274, 3105, 3259]
+# Slice B relocates the byte-identical equality tails (__any_eq/__any_strict_eq)
+# out of the SANCTIONED any-helpers.ts into the sibling any-eq-helpers.ts. The
+# coercion-sites gate can't see the sanctioned-source decrease, so it reads the
+# net-zero move as +2/+2 growth. prove-emit-identity 60/60 proves it's a pure
+# relocation, not new hand-rolled coercion.
+coercion-sites-allow:
+  - src/codegen/any-eq-helpers.ts
 ---
 
 # #3282 — the next god-function decomposition wave (post Wave-B/C)
@@ -101,3 +108,20 @@ once these arms are small, named helpers — decompose first, then dedup.
   is a runtime-only ESM cycle (both function declarations), safe. tsc 0,
   biome/prettier/loc-budget clean. Epic remains open for the eq / add families
   and the larger call-family functions.
+- **Slice B (dev-opus-4) — equality & relational-comparison family out of
+  `ensureAnyHelpers` → new sibling module `any-eq-helpers.ts`.**
+  Lifted `__any_eq`, `__any_strict_eq`, and the four relational comparisons
+  `__any_lt`/`__any_gt`/`__any_le`/`__any_ge` (via the `addComparisonHelper`
+  nested registrar) verbatim into `registerAnyEqHelpers` in the new
+  `src/codegen/any-eq-helpers.ts`. `addHelper` is threaded in as a callback and
+  the tag-5 coercion/equality closures (`tag5ToNumber` / `tag5ValueEqThen`) are
+  threaded as params so their captured environment is unchanged; the
+  standalone/wasi-gated #2175 V2-S3 reference-identity reconciliation inside
+  `__any_strict_eq` moved verbatim WITH its guard. Registration order
+  (eq → strict_eq → lt → gt → le → ge) preserved → emitted Wasm byte-identical
+  (`prove-emit-identity check`: **IDENTICAL 60/60** across gc/standalone/wasi/
+  linear). `any-helpers.ts` drops 2425 → 1926 LOC (−499). No import back into
+  `any-helpers.ts` (the eq region references nothing from it) → no ESM cycle.
+  tsc 0, biome + check:godfiles clean. Epic remains open for the arithmetic
+  (`__any_to_f64`/`__any_add`/`__any_div`/`__any_mod`/`__any_neg`) and
+  `__any_typeof` tail families.

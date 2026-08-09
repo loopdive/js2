@@ -19,16 +19,24 @@
 // tests/issue-3141.test.ts once a family lands on it.
 import { describe, it, expect } from "vitest";
 import { buildSelfHostedIr, type SelfHostedFuncDef } from "../src/codegen/stdlib-selfhost.js";
+import type { IrUnitId } from "../src/ir/identity.js";
 import { irVal, type IrType } from "../src/ir/nodes.js";
 import { lowerIrFunctionToWasm, type IrLowerResolver } from "../src/ir/lower.js";
+import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
 
 const EXT: IrType = irVal({ kind: "externref" });
 const F64: IrType = irVal({ kind: "f64" });
 const I32: IrType = irVal({ kind: "i32" });
+const irIdentities = createTestIrFunctionIdentityFactory("issue-3161");
+const FROM_ENTRIES_ID = irIdentities.unit(0);
+const COUNT_LESS_ID = irIdentities.unit(1);
+const BAD_OVERRIDE_ID = irIdentities.unit(2);
+const ARITY_MISMATCH_ID = irIdentities.unit(3);
+const SCOPE_GUARD_ID = irIdentities.unit(4);
 
 /** Lower `ir` with a mock resolver; return the func + the callees it resolved. */
-function lowerWithMockResolver(def: SelfHostedFuncDef) {
-  const ir = buildSelfHostedIr(def);
+function lowerWithMockResolver(def: SelfHostedFuncDef, unitId: IrUnitId) {
+  const ir = buildSelfHostedIr(def, unitId);
   const resolved = new Map<string, number>();
   let nextFunc = 500;
   let nextType = 100;
@@ -85,7 +93,7 @@ export function __probe_from_entries(entries: unknown): unknown {
         ["__extern_set", { params: [EXT, EXT, EXT], returnType: null }],
       ]),
     };
-    const { func, resolved } = lowerWithMockResolver(def);
+    const { func, resolved } = lowerWithMockResolver(def, FROM_ENTRIES_ID);
     expect(func.body.length).toBeGreaterThan(0);
     expect([...resolved.keys()].sort()).toEqual([
       "__extern_get_idx",
@@ -121,7 +129,7 @@ export function __probe_count_less(data: unknown, lo: number, hi: number): void 
         ["__mark", { params: [DATA, F64], returnType: null }],
       ]),
     };
-    const { func, resolved } = lowerWithMockResolver(def);
+    const { func, resolved } = lowerWithMockResolver(def, COUNT_LESS_ID);
     expect(func.body.length).toBeGreaterThan(0);
     expect([...resolved.keys()].sort()).toEqual(["__elem_i32", "__mark"]);
   });
@@ -138,7 +146,7 @@ export function __probe_bad(x: number): number {
       returnType: F64,
       calleeTypes: new Map(),
     };
-    expect(() => buildSelfHostedIr(def)).toThrow(/disagrees with annotation/);
+    expect(() => buildSelfHostedIr(def, BAD_OVERRIDE_ID)).toThrow(/disagrees with annotation/);
   });
 
   it("rejects a paramTypes/declared-params arity mismatch", () => {
@@ -153,7 +161,7 @@ export function __probe_arity(x: number, y: number): number {
       returnType: F64,
       calleeTypes: new Map(),
     };
-    expect(() => buildSelfHostedIr(def)).toThrow(/paramTypes has 1/);
+    expect(() => buildSelfHostedIr(def, ARITY_MISMATCH_ID)).toThrow(/paramTypes has 1/);
   });
 
   it("scope guard: named-type references still throw at lowering", () => {
@@ -173,7 +181,7 @@ export function __probe_guard(x: number): number {
       returnType: F64,
       calleeTypes: new Map(),
     };
-    const { func, resolved } = lowerWithMockResolver(def);
+    const { func, resolved } = lowerWithMockResolver(def, SCOPE_GUARD_ID);
     expect(func.body.length).toBeGreaterThan(0);
     expect(resolved.size).toBe(0);
   });

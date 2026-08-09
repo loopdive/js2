@@ -134,9 +134,25 @@ export class Encoder {
     this.code.push(target);
   }
 
-  /** Back-patch a forward jump's target word to `target` (defaults to here()). */
-  patch(slot: JumpSlot, target?: number): void {
-    this.code[slot] = target === undefined ? this.code.length : target;
+  /** Emit a jump whose trailing target word is a temporary unique marker. */
+  emitJumpMarker(op: number, marker: number): void {
+    this.code.push(packWord(op | WIDE_FLAG, 0, 0));
+    this.code.push(marker);
+  }
+
+  /** Back-patch a forward jump's target word to an explicit target. Requiring
+   * the operand avoids the self-compiler's unstable optional-argument path. */
+  patch(slot: JumpSlot, target: number): void {
+    this.code[slot] = target;
+  }
+
+  /** Replace every deferred sentinel jump marker with one final target. This
+   * avoids retaining growable jump-slot vectors through self-compiled object
+   * fields, whose later growth is not a stable carrier operation. */
+  patchTargetMarker(marker: number, target: number): void {
+    for (let i = 0; i < this.code.length; i += 1) {
+      if (this.code[i] === marker) this.code[i] = target;
+    }
   }
 
   // ── exception table ──────────────────────────────────────────────────────────

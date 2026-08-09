@@ -2,7 +2,7 @@
 id: 1032
 title: "Compile axios to Wasm — Node builtins routed as host imports; harvest error patterns"
 horizon: l
-status: in-progress
+status: ready
 created: 2026-04-11
 updated: 2026-07-17
 priority: high

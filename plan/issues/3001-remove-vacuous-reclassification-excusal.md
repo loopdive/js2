@@ -2,7 +2,7 @@
 id: 3001
 title: "Remove (or ratchet) the TEMPORARY #2940 vacuous-reclassification gate excusal once the standalone baseline promotes to new-policy"
 status: blocked
-sprint: current
+sprint: Backlog
 priority: high
 feasibility: easy
 task_type: chore

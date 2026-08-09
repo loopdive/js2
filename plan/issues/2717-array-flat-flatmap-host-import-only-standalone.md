@@ -2,10 +2,11 @@
 id: 2717
 title: "Array flat/flatMap are host-import-only — no standalone native arm, no ctx.standalone guard"
 status: done
-sprint: 67
+sprint: 75
+assignee: ttraenkler/dev-serve
 created: 2026-06-26
-updated: 2026-06-26
-completed: 2026-06-26
+updated: 2026-07-22
+completed: 2026-07-22
 priority: high
 feasibility: medium
 reasoning_effort: medium
@@ -14,6 +15,8 @@ area: codegen
 language_feature: standalone
 goal: standalone-everything
 parent: 2711
+loc-budget-allow:
+  - src/codegen/array-methods.ts
 ---
 # #2717 — Array.prototype.flat / flatMap have no standalone arm
 
@@ -78,3 +81,66 @@ host `flat()` → 4, `flatMap()` → 6 unchanged. Existing `flatmap-closure` /
 
 **Follow-up (not in scope):** a Wasm-native flat/flatMap arm (and the linear
 backend lowering) to turn the compile-error into compile+run in standalone.
+
+## Reopened 2026-07-20 (stale false-done review)
+
+Marked `done` but live test262 shows: Array.prototype.flatMap() still 'not yet supported in --target standalone'. Reopened as `ready`. See #3474 (done-status integrity).
+
+## Resolution 2026-07-22 — native standalone flatMap arm (dev-serve)
+
+**PR:** `issue-2717-flatmap-standalone-native`. Adds the Wasm-native standalone
+`Array.prototype.flatMap` arm, closing the reopened gap. (`flat()`'s native
+depth-1 arm already landed as #3363.)
+
+### Approach — `flatMap(cb)` ≡ `map(cb).flat(1)`, reusing existing native code
+
+`compileArrayFlatMap` (`src/codegen/array-methods.ts`), in the
+`ctx.standalone || ctx.wasi` arm, now tries `tryCompileFlatMapNative` before the
+loud refusal. That helper compiles the native `map` (arg layout — arg0 = cb,
+arg1 = thisArg — matches flatMap's) directly, then dispatches on the RESULT vec's
+element type (ground truth for what the callback returned):
+
+- element is a nested vec (callback returned arrays) → the #3363 depth-1 flatten,
+  refactored into a reusable `emitFlattenDepth1FromVec` + `canFlattenVecElem`
+  (byte-inert extraction — `tryCompileArrayFlatNativeDepth1` and all 11 #3363
+  tests unchanged);
+- element is a concrete scalar / non-array ref (scalar or plain-object callback)
+  → `flatMap` ≡ `map` (a depth-1 flatten of non-arrays is the identity), so the
+  map result is the answer;
+- element is `externref`/`anyref` (dynamic) → drop + refuse loudly.
+
+### A-priori empty-`[]` guard (the one correctness edge)
+
+An inline callback whose body contains a bare empty array literal `[]` compiles —
+under flatMap's `U | readonly U[]` contextual type — to a closure whose empty `[]`
+resolves to a different vec type than a sibling non-empty array (a Wasm fallthru
+type error). The static return type does NOT discriminate this, and the invalid
+closure is a global module side effect the native `map` cannot roll back — so
+`inlineCallbackHasEmptyArrayLiteral` catches it BEFORE compiling map and refuses
+loudly. Over-conservative but never invalid Wasm; the underlying conditional-`[]`
+vec-type bug is tracked as **#3532**.
+
+### Proofs
+
+- Standalone `flatMap` runtime-correct for array callbacks
+  (`[1,2,3].flatMap(x=>[x,x*2])` → 6, sum 18), string arrays (→4), scalar
+  callback (`x=>x` → 3, ≡ map); zero `__array_flatMap` imports.
+- **Zero invalid-Wasm** across the full boundary corpus (array/scalar/variable
+  conditionals run-correct; every bare-`[]` shape and explicit-depth `flat(1)`
+  fail loud, never trap).
+- **test262 standalone lane: 0 → 9 passes** across
+  `built-ins/Array/prototype/flatMap` (all 24 previously fail-louded, so no
+  regression possible; `depth-always-one.js` passes → correct depth-1 semantics).
+- **Host/gc mode byte-unchanged** (native arm gated on standalone||wasi;
+  `issue-2717` host section + `issue-1718-flatmap` pass).
+- `issue-3363` (11), `issue-3098`/`issue-3162` HOF, `array-methods`,
+  `functional-array-methods`, `flatmap-closure` suites pass (the single
+  `issue-2001-s2` reduce-standalone failure is PRE-EXISTING on origin/main,
+  verified by control run). `tsc`/`biome`/`prettier` clean.
+
+### Still open (follow-ups, NOT this PR)
+
+- **#3532** — conditional bare-`[]` under a union contextual type mistypes the
+  closure (removes the a-priori guard once fixed).
+- Variable-depth recursive `flat(depth)` / `flatMap` with dynamic
+  scalar-or-array (heterogeneous) returns — needs a runtime-IsArray flatten.

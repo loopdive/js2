@@ -241,3 +241,135 @@ describe("#2542 — standalone dynamic property read/write by runtime string key
     expect(v).toBe(12);
   });
 });
+
+/**
+ * (#2542 follow-up, 2026-08-01) — the SAME defect on `--target wasi`.
+ *
+ * #2542's three routing gates were written `ctx.standalone`-only, on the stated
+ * assumption that "gc/host/wasi keep their existing struct/externref mapping
+ * byte-identical". That holds for gc/host, where a JS host services `o[k]`
+ * through the `__extern_get` host import. It does NOT hold for **wasi**, which
+ * is equally host-free: it had neither the host import nor the routing, so an
+ * index-signature object silently answered the DEFAULT.
+ *
+ * Measured before the fix, identical source, only the target differing:
+ *
+ *     --target standalone   o[k] -> 7   (correct)
+ *     --target wasi         o[k] -> -1  (default; no diagnostic, no trap)
+ *
+ * That is the same silent-wrong-answer class as #2620's dropped collection
+ * calls: valid Wasm, zero diagnostics, wrong number.
+ *
+ * The gates now admit both host-free targets. The #1901 any/unknown/`object`
+ * divert deliberately stays standalone-only — widening it would change the
+ * lowering of every any-typed object literal under wasi, far beyond this defect.
+ *
+ * Both targets already emit the open-object runtime as defined Wasm with zero
+ * non-wasi imports, so the routing cannot leak a host import — asserted below.
+ */
+async function runWasi(source: string): Promise<number> {
+  const r = await compile(source, { target: "wasi" });
+  expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
+  assertNoHostObjectImports(r.imports);
+  expect(WebAssembly.validate(r.binary), "module must be valid Wasm").toBe(true);
+  const nonWasi = r.imports.filter((i) => i.module !== "wasi_snapshot_preview1");
+  expect(
+    nonWasi.map((i) => `${i.module}::${i.name}`),
+    "wasi build must not gain host imports",
+  ).toEqual([]);
+  const { instance } = await WebAssembly.instantiate(r.binary, {});
+  return (instance.exports as NumExports).run();
+}
+
+describe("#2542 (wasi arm) — dynamic property read/write by runtime string key", () => {
+  it("headline: index-signature object read by runtime key reads the real value", async () => {
+    expect(
+      await runWasi(
+        `export function run(): number {
+           const o: { [s: string]: number } = { a: 5, b: 7 };
+           let k = "b";
+           return o[k];
+         }`,
+      ),
+      "wasi read the default instead of the stored value — the host-free routing gate regressed",
+    ).toBe(7);
+  });
+
+  it("write by runtime key persists", async () => {
+    expect(
+      await runWasi(
+        `export function run(): number {
+           const o: { [s: string]: number } = { a: 1 };
+           const k = "a";
+           o[k] = 42;
+           return o[k];
+         }`,
+      ),
+    ).toBe(42);
+  });
+
+  it("brand-new key absent at compile time can be written and read", async () => {
+    expect(
+      await runWasi(
+        `export function run(): number {
+           const o: { [s: string]: number } = { a: 1 };
+           const k = "fresh";
+           o[k] = 9;
+           return o[k];
+         }`,
+      ),
+    ).toBe(9);
+  });
+
+  it("Record<string, number> behaves the same as the inline index signature", async () => {
+    expect(
+      await runWasi(
+        `export function run(): number {
+           const o: Record<string, number> = { a: 5, b: 7 };
+           const k = "b";
+           return o[k];
+         }`,
+      ),
+    ).toBe(7);
+  });
+
+  it("empty index-signature literal accepts dynamic writes", async () => {
+    expect(
+      await runWasi(
+        `export function run(): number {
+           const o: { [s: string]: number } = {};
+           const k = "x";
+           o[k] = 11;
+           return o[k];
+         }`,
+      ),
+    ).toBe(11);
+  });
+
+  it("keys read in a loop all resolve (the shape that first surfaced this)", async () => {
+    expect(
+      await runWasi(
+        `export function run(): number {
+           const o: { [s: string]: number } = { p0: 0, p1: 1, p2: 2, p3: 3 };
+           const KEYS: string[] = ["p0", "p1", "p2", "p3"];
+           let s = 0;
+           for (let i = 0; i < 4; i++) s = s + o[KEYS[i]!];
+           return s;
+         }`,
+      ),
+    ).toBe(6);
+  });
+
+  it("regression guard: a plain inferred struct still uses the fast struct path on wasi", async () => {
+    // No index-signature annotation -> must KEEP the closed struct lowering.
+    // If this ever routes to $Object, the widened gate has over-reached.
+    expect(
+      await runWasi(
+        `export function run(): number {
+           const o = { a: 5, b: 7 };
+           return o.a + o.b;
+         }`,
+      ),
+    ).toBe(12);
+  });
+});

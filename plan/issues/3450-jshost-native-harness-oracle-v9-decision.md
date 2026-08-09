@@ -2,7 +2,7 @@
 id: 3450
 title: "decision(test262): JS-host lane native-JS harness — oracle v9 policy proposal [DECISION — needs sign-off]"
 status: blocked
-sprint: current
+sprint: Backlog
 created: 2026-07-19
 updated: 2026-07-19
 priority: medium

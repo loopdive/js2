@@ -18,21 +18,25 @@ import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "../context/locals.js";
 import { addUnionImports, getArrTypeIdxFromVec, getOrRegisterVecType, typedArrayVecStorage } from "../index.js";
 import { coercionPlan } from "../coercion-plan.js";
+import { emitToString } from "../coercion-engine.js";
 import { emitTaViewConstruct, emitTaViewConstructWindowed } from "../dataview-native.js";
 import { emitNativeDateParse } from "../date-parse-native.js";
 import { compileObjectLiteralAsExternref } from "../literals.js";
 import { ensureAnyToStringHelper } from "../native-strings.js";
 import { emitNativeNumberFormat } from "../number-format-native.js";
 import { ensureObjectRuntime } from "../object-runtime.js";
+import { undefinedSingletonActive } from "../any-helpers.js";
 import { emitStandalonePromiseFromExecutor, emitStandalonePromiseFromExecutorValue } from "../promise-executor.js";
 import { emitStandaloneTest262Error, emitWasiErrorConstructor, isWasiErrorName } from "../registry/error-types.js";
 import { coerceType, compileExpression } from "../shared.js";
+import type { InnerResult } from "../shared.js";
 import { compileStringLiteral } from "../string-ops.js";
 import { coerceType as coerceTypeImpl } from "../type-coercion.js";
 import { ensureDateDaysFromCivilHelper, ensureDateStruct } from "./builtins.js";
 import { emitObjectCoercion } from "./calls-guards.js";
 import {
   emitDynamicNewFunctionHostEval,
+  emitStandaloneDynamicFunctionRuntime,
   emitStandaloneDynamicFunctionStub,
   isGlobalFunctionIdentifier,
   tryStaticNewFunction,
@@ -48,6 +52,138 @@ import {
 
 /** Sentinel: the `new` target is not one of the built-in global constructors. */
 export const NEW_GLOBAL_FALLTHROUGH = Symbol("new-builtin-global-fallthrough");
+
+/**
+ * (#4100) "Is the Error message null-or-undefined?" — leaves an i32 on the stack.
+ *
+ * `ref.is_null` alone misses a RUNTIME-undefined message: under the #2106
+ * singleton regime `undefined` in the externref plane is a tag-1 `$AnyValue` box
+ * (`global.get $undefined; extern.convert_any`), which is NOT null. So
+ * `let m; new Error(m)` stored ToString(undefined) and rendered
+ * "Error: undefined" where §20.5.1.1 step 3 requires the name alone.
+ *
+ * #4035 fixed only the STATIC literal because the obvious runtime test —
+ * `__extern_is_undefined` — requires `ensureObjectRuntime`, measured at **+3KB**
+ * on every standalone Error-constructing module. This is that predicate INLINED:
+ * a `ref.test` plus one `struct.get` of the tag field. No helper, no import, no
+ * object runtime. **Measured cost: +28 bytes** on a module that constructs an
+ * Error, and **+0** on one that does not.
+ *
+ * It stays free because of the gate: emitted ONLY when the module ALREADY has
+ * the `$AnyValue` machinery. `ensureAnyValueType` is deliberately NOT called —
+ * if the regime is inactive there is no undefined singleton in this module to
+ * miss, so the bare `ref.is_null` is already the complete and correct test.
+ *
+ * KNOWN RESIDUAL, pre-existing and NOT introduced here: `new Error(null)`
+ * renders "Error" where the spec wants "Error: null" (step 3 exempts only
+ * `undefined`). The original `ref.is_null` guard conflated the two; this keeps
+ * that behaviour rather than silently widening scope. Verified present on the
+ * base commit too.
+ */
+function emitNullOrUndefinedMessageTest(ctx: CodegenContext, msgTmp: number): Instr[] {
+  const anyIdx = ctx.anyValueTypeIdx;
+  if (!(undefinedSingletonActive(ctx) && anyIdx >= 0)) {
+    return [{ op: "local.get", index: msgTmp }, { op: "ref.is_null" }];
+  }
+  return [
+    { op: "local.get", index: msgTmp },
+    { op: "ref.is_null" },
+    // Re-convert rather than tee into a scratch anyref local: two extra instrs,
+    // but no added local slot in every Error-constructing function.
+    { op: "local.get", index: msgTmp },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: anyIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [
+        { op: "local.get", index: msgTmp },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: anyIdx },
+        // field 0 = tag; tag 1 = Undefined (see `ensureAnyValueType`).
+        { op: "struct.get", typeIdx: anyIdx, fieldIdx: 0 },
+        { op: "i32.const", value: 1 },
+        { op: "i32.eq" },
+      ],
+      else: [{ op: "i32.const", value: 0 }],
+    },
+    { op: "i32.or" },
+  ];
+}
+
+/**
+ * (#4035) True when `expr` is STATICALLY the `undefined` value — the bare
+ * `undefined` identifier or the `undefined` keyword, through any number of
+ * parens / `as T` / `satisfies T` / `!` wrappers (the failing shape was
+ * `new Error(undefined as any)`). A local named `undefined` shadows the global,
+ * so the identifier form defers to `fctx.localMap` exactly as the `map-runtime`
+ * / `array-methods` callers of this same idiom do. Conservative by
+ * construction: anything it cannot prove returns false and keeps the existing
+ * runtime path.
+ *
+ * Why static: §20.5.1.1 step 3 is "if message is not undefined", so an
+ * explicitly-undefined message must behave exactly like NO message. The
+ * `ref.is_null` guard in the ToString block cannot see that by itself —
+ * under the #2106 undefinedSingleton regime (standalone/native-strings)
+ * `undefined` is a DISTINCT non-null sentinel externref, so
+ * `new Error(undefined)` stored ToString(undefined) and rendered
+ * "Error: undefined". Recognising the literal here routes it to the
+ * argument-less path at ZERO code size. The alternative — always emitting a
+ * runtime undefined-test — has to `ensureObjectRuntime` for
+ * `__extern_is_undefined`, measured at +3KB (19.0 → 22.9KB) on every
+ * standalone module that constructs any Error, which would defeat the
+ * binary-size goal this very PR exists to serve (it broke that very test).
+ *
+ * KNOWN RESIDUAL, deliberately not fixed here: a message that is undefined
+ * only at RUNTIME (`let m; new Error(m)`) still renders "Error: undefined".
+ * Closing that needs the cheap undefined-sentinel comparison this site cannot
+ * afford today, not a wider guard.
+ */
+function isStaticUndefinedExpr(expr: ts.Expression, fctx: FunctionContext): boolean {
+  let node: ts.Expression = expr;
+  for (;;) {
+    if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isNonNullExpression(node)) {
+      node = node.expression;
+      continue;
+    }
+    if (ts.isSatisfiesExpression(node)) {
+      node = node.expression;
+      continue;
+    }
+    break;
+  }
+  if (node.kind === ts.SyntaxKind.UndefinedKeyword) return true;
+  return ts.isIdentifier(node) && node.text === "undefined" && !fctx.localMap.has("undefined");
+}
+
+/**
+ * Emit the argument stored in a String wrapper's [[StringData]] slot.
+ * Returns true when a statically-known Symbol emitted a terminal TypeError.
+ */
+function emitStringWrapperValue(ctx: CodegenContext, fctx: FunctionContext, value: ts.Expression): boolean {
+  if (ctx.oracle.staticJsTypeOf(value) === "symbol") {
+    const valueType = compileExpression(ctx, fctx, value);
+    if (valueType !== null) fctx.body.push({ op: "drop" });
+    emitThrowTypeError(ctx, fctx, "Cannot convert a Symbol value to a string");
+    return true;
+  }
+  const valueTsType = ctx.oracle.typeFactOf(value);
+  const valueType = compileExpression(ctx, fctx, value);
+  // A host-mode externref may be a dynamic object whose conversion methods
+  // live in the host sidecar (including properties assigned after the literal
+  // was created). Preserve that object for `__new_String`, whose real JS
+  // constructor performs the complete ToString walk. Pre-stringifying it via
+  // `__extern_toString` during module start cannot invoke callback-backed
+  // methods yet and regresses the inherited/dynamically-assigned valueOf path.
+  //
+  // Statically-known WasmGC refs still take the in-Wasm ToString path below:
+  // those are precisely the module-start shapes whose closure methods the host
+  // cannot reach and which #3766 resolves directly.
+  if (!noJsHost(ctx) && valueType?.kind === "externref") return false;
+  const stringType = emitToString(ctx, fctx, valueType, valueTsType, "string");
+  if (stringType.kind !== "externref") coerceType(ctx, fctx, stringType, { kind: "externref" });
+  return false;
+}
 
 export function tryCompileBuiltinGlobalNew(
   ctx: CodegenContext,
@@ -160,7 +296,7 @@ export function tryCompileBuiltinGlobalNew(
         // new String(x) → create real JS String wrapper object via __new_String host import
         // (typeof new String("") === "object", not "string")
         if (args.length >= 1) {
-          compileExpression(ctx, fctx, args[0]!, { kind: "externref" });
+          if (emitStringWrapperValue(ctx, fctx, args[0]!)) return { kind: "externref" };
         } else {
           const emptyStrResult = compileStringLiteral(ctx, fctx, "");
           if (!emptyStrResult) {
@@ -216,7 +352,7 @@ export function tryCompileBuiltinGlobalNew(
       ctorName === "Test262Error"
     ) {
       const args = expr.arguments ?? [];
-      if (args.length >= 1) {
+      if (args.length >= 1 && !isStaticUndefinedExpr(args[0]!, fctx)) {
         // Compile the message argument to externref
         const resultType = compileExpression(ctx, fctx, args[0]!, {
           kind: "externref",
@@ -241,7 +377,7 @@ export function tryCompileBuiltinGlobalNew(
       // #3032). Host mode's `__new_<Name>` import does ToString in JS, so only
       // the native path needs this. Applies to both the WASI-error and
       // Test262Error branches below (both native, both standalone/WASI).
-      if ((ctx.wasi || ctx.standalone) && args.length >= 1) {
+      if ((ctx.wasi || ctx.standalone) && args.length >= 1 && !isStaticUndefinedExpr(args[0]!, fctx)) {
         // Force `number_toString` before `__any_to_string` bakes so its number
         // arm renders a raw numeric message ("42") instead of degrading to
         // "[object Object]" (a module that only constructs `new Error(n)` never
@@ -252,25 +388,20 @@ export function tryCompileBuiltinGlobalNew(
         const anyToStrIdx = ensureAnyToStringHelper(ctx);
         if (anyToStrIdx >= 0) {
           const msgTmp = allocTempLocal(fctx, { kind: "externref" });
-          fctx.body.push(
-            { op: "local.set", index: msgTmp },
-            { op: "local.get", index: msgTmp },
-            { op: "ref.is_null" },
-            {
-              op: "if",
-              blockType: { kind: "val", type: { kind: "externref" } },
-              // undefined / null argument → keep null (renders name alone).
-              then: [{ op: "ref.null.extern" }],
-              // ToString(message): externref → anyref → __any_to_string
-              // (ref $AnyString) → externref for the ctor's $message field.
-              else: [
-                { op: "local.get", index: msgTmp },
-                { op: "any.convert_extern" },
-                { op: "call", funcIdx: anyToStrIdx },
-                { op: "extern.convert_any" },
-              ],
-            },
-          );
+          fctx.body.push({ op: "local.set", index: msgTmp }, ...emitNullOrUndefinedMessageTest(ctx, msgTmp), {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "externref" } },
+            // undefined / null argument → keep null (renders name alone).
+            then: [{ op: "ref.null.extern" }],
+            // ToString(message): externref → anyref → __any_to_string
+            // (ref $AnyString) → externref for the ctor's $message field.
+            else: [
+              { op: "local.get", index: msgTmp },
+              { op: "any.convert_extern" },
+              { op: "call", funcIdx: anyToStrIdx },
+              { op: "extern.convert_any" },
+            ],
+          });
           releaseTempLocal(fctx, msgTmp);
         }
       }
@@ -571,6 +702,8 @@ export function tryCompileBuiltinGlobalNew(
       const hostEval = emitDynamicNewFunctionHostEval(ctx, fctx, args);
       if (hostEval !== undefined) return hostEval;
       if (noJsHost(ctx)) {
+        const runtimeEval = emitStandaloneDynamicFunctionRuntime(ctx, fctx, args);
+        if (runtimeEval !== undefined) return runtimeEval;
         return emitStandaloneDynamicFunctionStub(ctx, fctx, expr, args) as ValType;
       }
     }
@@ -1189,4 +1322,61 @@ export function tryCompileBuiltinGlobalNew(
     }
   }
   return NEW_GLOBAL_FALLTHROUGH;
+}
+
+/**
+ * The Error-family constructors, all of which §20.5.1.1 / §20.5.6.1.1 define to
+ * behave identically whether invoked with `new` or as a plain function: "When
+ * `Error` is called as a function rather than as a constructor, it creates and
+ * initializes a new Error object" — the [[Construct]] and [[Call]] behaviours
+ * are the same clause.
+ */
+const CALLABLE_ERROR_CTORS = new Set([
+  "Error",
+  "TypeError",
+  "RangeError",
+  "SyntaxError",
+  "URIError",
+  "EvalError",
+  "ReferenceError",
+  "AggregateError",
+  "SuppressedError",
+  "Test262Error",
+]);
+
+/**
+ * `Error(msg)` / `TypeError(msg)` / … called WITHOUT `new`.
+ *
+ * The `new` form is handled by {@link tryCompileBuiltinGlobalNew}; the bare-call
+ * form previously matched no arm at all and fell through to the generic builtin
+ * path, which yields `ref.null.extern`. The result was a silent, diagnostic-free
+ * `null` where an Error object belonged, so the very next `.message` read
+ * null-trapped. Real code hits this constantly: React's production bundle raises
+ * every one of its errors as `Error(formatProdErrorMessage(...))`, so a compiled
+ * React threw an opaque wasm exception instead of the real error for
+ * `Children.only`, `cloneElement(null)` and friends.
+ *
+ * Because the spec defines [[Call]] and [[Construct]] identically here, this
+ * delegates to the exact same emitter rather than duplicating it — a
+ * CallExpression and a NewExpression expose the same `.expression`/`.arguments`
+ * shape that emitter reads. A shadowed binding (`class Error {}`, a local, an
+ * import) is left alone: those are not the ambient global.
+ *
+ * Returns the emitter's result when it handles the call; `undefined` otherwise
+ * (caller continues its dispatch ladder).
+ */
+export function tryCompileErrorCtorCallWithoutNew(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+): InnerResult | undefined {
+  if (expr.questionDotToken) return undefined;
+  const callee = expr.expression;
+  if (!ts.isIdentifier(callee)) return undefined;
+  if (!CALLABLE_ERROR_CTORS.has(callee.text)) return undefined;
+  if (ctx.classSet.has(callee.text)) return undefined;
+  if (!resolvesToAmbientGlobal(ctx, callee)) return undefined;
+
+  const result = tryCompileBuiltinGlobalNew(ctx, fctx, expr as unknown as ts.NewExpression);
+  return result === NEW_GLOBAL_FALLTHROUGH ? undefined : result;
 }

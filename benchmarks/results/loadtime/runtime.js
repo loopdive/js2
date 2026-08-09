@@ -6,11 +6,61 @@ const jsString = {
   charCodeAt: (s, i) => s.charCodeAt(i),
 };
 
+const reflectApply = Reflect.apply;
+const instanceExportsGetter = Object.getOwnPropertyDescriptor(WebAssembly.Instance.prototype, "exports")?.get;
+const dataStructHostBridgeToken = String.fromCharCode(0) + "js2_data_struct_host_bridge_token";
+
+function brandedInstanceExports(value) {
+  if (!instanceExportsGetter) return undefined;
+  try {
+    return reflectApply(instanceExportsGetter, value, []);
+  } catch {
+    return undefined;
+  }
+}
+
+function hasLoneSurrogate(s) {
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c >= 0xd800 && c <= 0xdbff) {
+      const next = i + 1 < s.length ? s.charCodeAt(i + 1) : 0;
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        i++;
+        continue;
+      }
+      return true;
+    }
+    if (c >= 0xdc00 && c <= 0xdfff) return true;
+  }
+  return false;
+}
+
+function hexCodeUnits(s) {
+  let out = "";
+  for (let i = 0; i < s.length; i++) {
+    out += s.charCodeAt(i).toString(16).padStart(4, "0");
+  }
+  return out;
+}
+
 export function buildStringConstants(stringPool = []) {
-  const constants = {};
+  const constants = Object.create(null);
   for (const s of stringPool) {
+    if (hasLoneSurrogate(s)) continue;
     if (!(s in constants)) {
       constants[s] = new WebAssembly.Global({ value: "externref", mutable: false }, s);
+    }
+  }
+  return constants;
+}
+
+export function buildStringConstants16(stringPool = []) {
+  const constants = Object.create(null);
+  for (const s of stringPool) {
+    if (!hasLoneSurrogate(s)) continue;
+    const key = hexCodeUnits(s);
+    if (!(key in constants)) {
+      constants[key] = new WebAssembly.Global({ value: "externref", mutable: false }, s);
     }
   }
   return constants;
@@ -71,19 +121,32 @@ export function buildImports(manifest, deps = {}, stringPool = []) {
     env,
     "wasm:js-string": jsString,
     string_constants: buildStringConstants(stringPool),
+    string_constants16: buildStringConstants16(stringPool),
     setExports(exports) {
+      wasmExports = exports;
+    },
+    setInstance(instance) {
+      const exports = brandedInstanceExports(instance);
+      if (exports === undefined) {
+        throw new TypeError("setInstance: expected a genuine WebAssembly.Instance");
+      }
       wasmExports = exports;
     },
   };
 }
 
-export async function instantiateWasm(binary, env, stringConstants = {}) {
-  if (typeof WebAssembly.instantiate === "function") {
+export async function instantiateWasm(binary, env, stringConstants = {}, stringConstants16 = {}) {
+  const preserveDataStructAssociation = stringConstants[dataStructHostBridgeToken] !== undefined;
+  if (typeof WebAssembly.instantiate === "function" && !preserveDataStructAssociation) {
     try {
-      const { instance } = await WebAssembly.instantiate(binary, { env, string_constants: stringConstants }, {
-        builtins: ["js-string"],
-        importedStringConstants: "string_constants",
-      });
+      const { instance } = await WebAssembly.instantiate(
+        binary,
+        { env, string_constants: stringConstants, string_constants16: stringConstants16 },
+        {
+          builtins: ["js-string"],
+          importedStringConstants: "string_constants",
+        },
+      );
       return { instance, nativeBuiltins: true };
     } catch {
       // Fall through.
@@ -93,19 +156,21 @@ export async function instantiateWasm(binary, env, stringConstants = {}) {
     env,
     "wasm:js-string": jsString,
     string_constants: stringConstants,
+    string_constants16: stringConstants16,
   });
   return { instance, nativeBuiltins: false };
 }
 
-export async function instantiateWasmStreaming(source, env, stringConstants = {}) {
+export async function instantiateWasmStreaming(source, env, stringConstants = {}, stringConstants16 = {}) {
   const response =
     source instanceof Response ? source : source instanceof Promise ? await source : await fetch(source);
   const fallback = response.clone();
-  if (typeof WebAssembly.instantiateStreaming === "function") {
+  const preserveDataStructAssociation = stringConstants[dataStructHostBridgeToken] !== undefined;
+  if (typeof WebAssembly.instantiateStreaming === "function" && !preserveDataStructAssociation) {
     try {
       const { instance } = await WebAssembly.instantiateStreaming(
         response,
-        { env, string_constants: stringConstants },
+        { env, string_constants: stringConstants, string_constants16: stringConstants16 },
         { builtins: ["js-string"], importedStringConstants: "string_constants" },
       );
       return { instance, nativeBuiltins: true };
@@ -113,7 +178,7 @@ export async function instantiateWasmStreaming(source, env, stringConstants = {}
       // Fall through.
     }
   }
-  return instantiateWasm(new Uint8Array(await fallback.arrayBuffer()), env, stringConstants);
+  return instantiateWasm(new Uint8Array(await fallback.arrayBuffer()), env, stringConstants, stringConstants16);
 }
 
 let binaryenModulePromise = null;

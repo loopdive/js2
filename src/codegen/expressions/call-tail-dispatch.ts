@@ -13,22 +13,26 @@ import { forEachChild, ts } from "../../ts-api.js";
 import { isNumberType, isStringType, isVoidType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { compileArrayMethodCall, resolveArrayInfo } from "../array-methods.js";
-import { compileArrowAsClosure, compileArrowFunction, getOrCreateFuncRefWrapperTypes } from "../closures.js";
+import {
+  compileArrowAsClosure,
+  compileArrowFunction,
+  getClosureFuncSelfTypeIdx,
+  getOrCreateFuncRefWrapperTypes,
+} from "../closures.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal } from "../context/locals.js";
 import { rollbackSpeculative } from "../context/speculative.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
+import { collectDirectEvalBindingNames, functionMayReachDirectEval } from "../direct-eval-environment.js";
 import {
-  addStringConstantGlobal,
-  ensureExnTag,
   getArrTypeIdxFromVec,
   getOrRegisterVecType,
   hoistLetConstWithTdz,
+  hoistVarDeclarations,
   resolveWasmType,
 } from "../index.js";
 import { objectLiteralTakesStandaloneAnyObjectPath, resolveComputedKeyExpression } from "../literals.js";
-import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { emitNullCheckThrow, typeErrorThrowInstrs } from "../property-access.js";
 import { tryCompileStandaloneRegExpSymbolCall } from "../regexp-standalone.js";
 import type { InnerResult } from "../shared.js";
@@ -44,17 +48,30 @@ import {
   pushParamSentinel,
 } from "../type-coercion.js";
 import { compileCallableElementAccessCall, compileClosureCall } from "./calls-closures.js";
-import { getFuncParamTypes, getWasmFuncReturnType, isEffectivelyVoidReturn, wasmFuncReturnsVoid } from "./helpers.js";
+import {
+  buildThrowJsErrorInstrs,
+  getFuncParamTypes,
+  getWasmFuncReturnType,
+  isEffectivelyVoidReturn,
+  noJsHost,
+  wasmFuncReturnsVoid,
+} from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { resolveStructName } from "./misc.js";
+import { tryReshapeBindToNamedThisCall } from "../named-this-call.js"; // (#4203)
 import { compileSuperElementMethodCall } from "./new-super.js";
+import { compileCallDispatchTail } from "./stored-member-closure-call.js";
+import { emitPlainObjectDynamicCallWithReceiver } from "./plain-object-dynamic-receiver-call.js";
 import {
   classInstanceHasField,
   coerceNumberMethodArgToF64,
   compileCallExpression,
   compileConditionalCallee,
+  compileFunctionBind,
   compileIIFE,
+  elemAccessReceiverIsPlainObject,
   elemAccessReceiverIsUserClass,
+  emitBoundFunctionCall,
   emitClosureCallArgcExtras,
   emitResetArgcExtras,
   emitSetArgc,
@@ -62,6 +79,154 @@ import {
   tryEmitInlineDynamicCall,
   usesArguments,
 } from "./calls.js";
+
+function cloneNameMap<T>(map: Map<string, T> | undefined): Map<string, T> | undefined {
+  return map ? new Map(map) : undefined;
+}
+
+function cloneNameSet(set: Set<string> | undefined): Set<string> | undefined {
+  return set ? new Set(set) : undefined;
+}
+
+function restoreNameMap<T>(
+  current: Map<string, T> | undefined,
+  saved: Map<string, T> | undefined,
+  names: ReadonlySet<string>,
+): Map<string, T> | undefined {
+  let restored = current;
+  for (const name of names) {
+    if (saved?.has(name)) {
+      restored ??= new Map();
+      restored.set(name, saved.get(name)!);
+    } else {
+      restored?.delete(name);
+    }
+  }
+  return restored;
+}
+
+function restoreNameSet(
+  current: Set<string> | undefined,
+  saved: Set<string> | undefined,
+  names: ReadonlySet<string>,
+): Set<string> | undefined {
+  let restored = current;
+  for (const name of names) {
+    if (saved?.has(name)) {
+      restored ??= new Set();
+      restored.add(name);
+    } else {
+      restored?.delete(name);
+    }
+  }
+  return restored;
+}
+
+/**
+ * The inline-IIFE fast path shares a Wasm FunctionContext with its caller, but
+ * it must not share the caller's source-level binding namespace. Snapshot and
+ * temporarily hide only names declared by the IIFE. Changes to every other
+ * name remain live, which is load-bearing for closures that box a genuinely
+ * captured outer binding while the IIFE body is compiled (#3128).
+ */
+function enterInlineIifeBindingScope(fctx: FunctionContext, names: ReadonlySet<string>) {
+  const snapshot = {
+    localMap: new Map(fctx.localMap),
+    boxedCaptures: cloneNameMap(fctx.boxedCaptures),
+    boxedTdzFlags: cloneNameMap(fctx.boxedTdzFlags),
+    tdzFlagLocals: cloneNameMap(fctx.tdzFlagLocals),
+    directEvalBindingNames: cloneNameSet(fctx.directEvalBindingNames),
+    directEvalActivationBindingNames: cloneNameSet(fctx.directEvalActivationBindingNames),
+    directEvalOuterBindingNames: cloneNameSet(fctx.directEvalOuterBindingNames),
+    directEvalActivationBindings: cloneNameMap(fctx.directEvalActivationBindings),
+    forInIdentifierVars: cloneNameSet(fctx.forInIdentifierVars),
+    promotedCaptureNames: cloneNameSet(fctx.promotedCaptureNames),
+    nestedFnClosureMemos: cloneNameMap(fctx.nestedFnClosureMemos),
+    readOnlyBindings: cloneNameSet(fctx.readOnlyBindings),
+    constBindings: cloneNameSet(fctx.constBindings),
+    hoistedFuncs: cloneNameSet(fctx.hoistedFuncs),
+    narrowedNonNull: cloneNameSet(fctx.narrowedNonNull),
+    undefWidenedLocals: cloneNameSet(fctx.undefWidenedLocals),
+    nullGuardAliases: cloneNameMap(fctx.nullGuardAliases),
+    aliasedNullGuardNonNull: cloneNameSet(fctx.aliasedNullGuardNonNull),
+    fnctorWidenedLocals: cloneNameSet(fctx.fnctorWidenedLocals),
+    annexBCancelled: fctx.annexBCancelled
+      ? new Map(Array.from(fctx.annexBCancelled, ([name, ranges]) => [name, ranges.map((range) => ({ ...range }))]))
+      : undefined,
+    annexBOuterBindings: cloneNameSet(fctx.annexBOuterBindings),
+    moduleBindingShadowLocals: cloneNameMap(fctx.moduleBindingShadowLocals),
+  };
+
+  for (const name of names) {
+    fctx.localMap.delete(name);
+    fctx.boxedCaptures?.delete(name);
+    fctx.boxedTdzFlags?.delete(name);
+    fctx.tdzFlagLocals?.delete(name);
+    fctx.directEvalBindingNames?.delete(name);
+    fctx.directEvalActivationBindingNames?.delete(name);
+    fctx.directEvalOuterBindingNames?.delete(name);
+    fctx.directEvalActivationBindings?.delete(name);
+    fctx.forInIdentifierVars?.delete(name);
+    fctx.promotedCaptureNames?.delete(name);
+    fctx.nestedFnClosureMemos?.delete(name);
+    fctx.readOnlyBindings?.delete(name);
+    fctx.constBindings?.delete(name);
+    fctx.hoistedFuncs?.delete(name);
+    fctx.narrowedNonNull?.delete(name);
+    fctx.undefWidenedLocals?.delete(name);
+    fctx.nullGuardAliases?.delete(name);
+    fctx.aliasedNullGuardNonNull?.delete(name);
+    fctx.fnctorWidenedLocals?.delete(name);
+    fctx.annexBCancelled?.delete(name);
+    fctx.annexBOuterBindings?.delete(name);
+    fctx.moduleBindingShadowLocals?.delete(name);
+  }
+
+  return () => {
+    fctx.localMap = restoreNameMap(fctx.localMap, snapshot.localMap, names)!;
+    fctx.boxedCaptures = restoreNameMap(fctx.boxedCaptures, snapshot.boxedCaptures, names);
+    fctx.boxedTdzFlags = restoreNameMap(fctx.boxedTdzFlags, snapshot.boxedTdzFlags, names);
+    fctx.tdzFlagLocals = restoreNameMap(fctx.tdzFlagLocals, snapshot.tdzFlagLocals, names);
+    fctx.directEvalBindingNames = restoreNameSet(fctx.directEvalBindingNames, snapshot.directEvalBindingNames, names);
+    fctx.directEvalActivationBindingNames = restoreNameSet(
+      fctx.directEvalActivationBindingNames,
+      snapshot.directEvalActivationBindingNames,
+      names,
+    );
+    fctx.directEvalOuterBindingNames = restoreNameSet(
+      fctx.directEvalOuterBindingNames,
+      snapshot.directEvalOuterBindingNames,
+      names,
+    );
+    fctx.directEvalActivationBindings = restoreNameMap(
+      fctx.directEvalActivationBindings,
+      snapshot.directEvalActivationBindings,
+      names,
+    );
+    fctx.forInIdentifierVars = restoreNameSet(fctx.forInIdentifierVars, snapshot.forInIdentifierVars, names);
+    fctx.promotedCaptureNames = restoreNameSet(fctx.promotedCaptureNames, snapshot.promotedCaptureNames, names);
+    fctx.nestedFnClosureMemos = restoreNameMap(fctx.nestedFnClosureMemos, snapshot.nestedFnClosureMemos, names);
+    fctx.readOnlyBindings = restoreNameSet(fctx.readOnlyBindings, snapshot.readOnlyBindings, names);
+    fctx.constBindings = restoreNameSet(fctx.constBindings, snapshot.constBindings, names);
+    fctx.hoistedFuncs = restoreNameSet(fctx.hoistedFuncs, snapshot.hoistedFuncs, names);
+    fctx.narrowedNonNull = restoreNameSet(fctx.narrowedNonNull, snapshot.narrowedNonNull, names);
+    fctx.undefWidenedLocals = restoreNameSet(fctx.undefWidenedLocals, snapshot.undefWidenedLocals, names);
+    fctx.nullGuardAliases = restoreNameMap(fctx.nullGuardAliases, snapshot.nullGuardAliases, names);
+    fctx.aliasedNullGuardNonNull = restoreNameSet(
+      fctx.aliasedNullGuardNonNull,
+      snapshot.aliasedNullGuardNonNull,
+      names,
+    );
+    fctx.fnctorWidenedLocals = restoreNameSet(fctx.fnctorWidenedLocals, snapshot.fnctorWidenedLocals, names);
+    fctx.annexBCancelled = restoreNameMap(fctx.annexBCancelled, snapshot.annexBCancelled, names);
+    fctx.annexBOuterBindings = restoreNameSet(fctx.annexBOuterBindings, snapshot.annexBOuterBindings, names);
+    fctx.moduleBindingShadowLocals = restoreNameMap(
+      fctx.moduleBindingShadowLocals,
+      snapshot.moduleBindingShadowLocals,
+      names,
+    );
+  };
+}
 
 /**
  * (#742 slice 5) Tail dispatch of compileCallExpression — extracted verbatim.
@@ -107,7 +272,12 @@ export function compileTailDispatch(
       // be mis-inlined.
       const isRecursiveNamedFnExprIIFE =
         ts.isFunctionExpression(callee) && callee.name !== undefined && functionExprBodyReferencesOwnName(callee);
-      if (isGeneratorIIFE || isRecursiveNamedFnExprIIFE) {
+      // A direct eval needs a genuine per-call function environment. The
+      // inliner deliberately has no separate activation, so compiling this
+      // shape inline would either expose caller bindings or omit IIFE-owned
+      // bindings from the eval environment. Use the normal closure path.
+      const reachesDirectEval = functionMayReachDirectEval(callee, ctx.oracle);
+      if (isGeneratorIIFE || isRecursiveNamedFnExprIIFE || reachesDirectEval) {
         // Cannot inline: a generator IIFE needs a generator context for `yield`,
         // and a recursive named-fn-expr IIFE needs a real callable to bind its
         // own name to. Compile as closure, store in temp local, invoke via
@@ -138,310 +308,351 @@ export function compileTailDispatch(
         const iifeNeedsArguments = ts.isFunctionExpression(callee) && callee.body && usesArguments(callee.body);
         // Support IIFEs with matching parameter/argument counts
         if (params.length <= args.length) {
-          // (#3128) Record that this function node is being INLINED into the
-          // current fctx: its AST function boundary does not exist in the
-          // emitted Wasm. The closure capture-mutability analysis
-          // (compileArrowAsClosure `writtenInOuter`) reads this to walk PAST
-          // the IIFE when locating the real enclosing scope — otherwise a
-          // closure inside the IIFE body that captures an outer var written
-          // outside the IIFE (`p2 = (function(){ return () => p2; })()`)
-          // misses the write and captures a stale by-value copy.
-          (fctx.inlinedIifeNodes ??= new Set()).add(callee);
-          // Allocate locals for parameters and compile arguments
-          const paramLocals: number[] = [];
-          const allArgLocals: { idx: number; type: ValType }[] = [];
-          for (let i = 0; i < params.length; i++) {
-            const param = params[i]!;
-            const paramName = ts.isIdentifier(param.name) ? param.name.text : `__iife_p${i}`;
-            const argType = compileExpression(ctx, fctx, args[i]!);
-            const localType = argType ?? { kind: "f64" as const };
-            const idx = allocLocal(fctx, paramName, localType);
-            fctx.body.push({ op: "local.set", index: idx });
-            paramLocals.push(idx);
-            if (iifeNeedsArguments) {
-              allArgLocals.push({ idx, type: localType });
-            }
-          }
-          // Extra arguments beyond declared params
-          if (iifeNeedsArguments) {
-            // Store extra args in locals for the arguments object
-            for (let i = params.length; i < args.length; i++) {
-              const t = compileExpression(ctx, fctx, args[i]!);
-              const localType = t ?? { kind: "f64" as const };
-              if (t === null) {
-                // No value produced — push a default
-                fctx.body.push({ op: "f64.const", value: 0 });
-              }
-              const idx = allocLocal(fctx, `__iife_extra_${i}`, localType as ValType);
+          const iifeBindingNames = collectDirectEvalBindingNames(callee);
+          if (ts.isFunctionExpression(callee) && callee.name) iifeBindingNames.add(callee.name.text);
+          const leaveIifeBindingScope = enterInlineIifeBindingScope(fctx, iifeBindingNames);
+          try {
+            // (#3128) Record that this function node is being INLINED into the
+            // current fctx: its AST function boundary does not exist in the
+            // emitted Wasm. The closure capture-mutability analysis
+            // (compileArrowAsClosure `writtenInOuter`) reads this to walk PAST
+            // the IIFE when locating the real enclosing scope — otherwise a
+            // closure inside the IIFE body that captures an outer var written
+            // outside the IIFE (`p2 = (function(){ return () => p2; })()`)
+            // misses the write and captures a stale by-value copy.
+            (fctx.inlinedIifeNodes ??= new Set()).add(callee);
+            // Allocate locals for parameters and compile arguments
+            const paramLocals: number[] = [];
+            const allArgLocals: { idx: number; type: ValType }[] = [];
+            for (let i = 0; i < params.length; i++) {
+              const param = params[i]!;
+              const paramName = ts.isIdentifier(param.name) ? param.name.text : `__iife_p${i}`;
+              const argType = compileExpression(ctx, fctx, args[i]!);
+              const localType = argType ?? { kind: "f64" as const };
+              const idx = allocLocal(fctx, paramName, localType);
               fctx.body.push({ op: "local.set", index: idx });
-              allArgLocals.push({ idx, type: localType as ValType });
-            }
-          } else {
-            // Drop extra arguments (evaluate for side effects)
-            for (let i = params.length; i < args.length; i++) {
-              const t = compileExpression(ctx, fctx, args[i]!);
-              if (t) {
-                fctx.body.push({ op: "drop" });
+              paramLocals.push(idx);
+              if (iifeNeedsArguments) {
+                allArgLocals.push({ idx, type: localType });
               }
             }
-          }
-
-          // Set up `arguments` vec for the IIFE if needed
-          if (iifeNeedsArguments && allArgLocals.length > 0) {
-            // Ensure __box_number is available for boxing numeric args
-            const hasNumeric = allArgLocals.some((a) => a.type.kind === "f64" || a.type.kind === "i32");
-            if (hasNumeric) {
-              ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
-              flushLateImportShifts(ctx, fctx);
-            }
-
-            const vti = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
-            const ati = getArrTypeIdxFromVec(ctx, vti);
-            const vecRef: ValType = { kind: "ref", typeIdx: vti };
-            const argsLocal = allocLocal(fctx, "arguments", vecRef);
-            const arrTmp = allocLocal(fctx, "__iife_args_arr", { kind: "ref", typeIdx: ati });
-
-            for (const { idx, type } of allArgLocals) {
-              fctx.body.push({ op: "local.get", index: idx });
-              if (type.kind === "f64") {
-                const boxIdx = ctx.funcMap.get("__box_number");
-                if (boxIdx !== undefined) {
-                  fctx.body.push({ op: "call", funcIdx: boxIdx });
-                } else {
+            // Extra arguments beyond declared params
+            if (iifeNeedsArguments) {
+              // Store extra args in locals for the arguments object
+              for (let i = params.length; i < args.length; i++) {
+                const t = compileExpression(ctx, fctx, args[i]!);
+                const localType = t ?? { kind: "f64" as const };
+                if (t === null) {
+                  // No value produced — push a default
+                  fctx.body.push({ op: "f64.const", value: 0 });
+                }
+                const idx = allocLocal(fctx, `__iife_extra_${i}`, localType as ValType);
+                fctx.body.push({ op: "local.set", index: idx });
+                allArgLocals.push({ idx, type: localType as ValType });
+              }
+            } else {
+              // Drop extra arguments (evaluate for side effects)
+              for (let i = params.length; i < args.length; i++) {
+                const t = compileExpression(ctx, fctx, args[i]!);
+                if (t) {
                   fctx.body.push({ op: "drop" });
-                  fctx.body.push({ op: "ref.null.extern" });
-                }
-              } else if (type.kind === "i32") {
-                fctx.body.push({ op: "f64.convert_i32_s" });
-                const boxIdx = ctx.funcMap.get("__box_number");
-                if (boxIdx !== undefined) {
-                  fctx.body.push({ op: "call", funcIdx: boxIdx });
-                } else {
-                  fctx.body.push({ op: "drop" });
-                  fctx.body.push({ op: "ref.null.extern" });
-                }
-              } else if (type.kind === "ref" || type.kind === "ref_null") {
-                fctx.body.push({ op: "extern.convert_any" });
-              }
-              // externref: already correct
-            }
-            fctx.body.push({ op: "array.new_fixed", typeIdx: ati, length: allArgLocals.length });
-            fctx.body.push({ op: "local.set", index: arrTmp });
-            fctx.body.push({ op: "i32.const", value: allArgLocals.length });
-            fctx.body.push({ op: "local.get", index: arrTmp });
-            fctx.body.push({ op: "struct.new", typeIdx: vti });
-            fctx.body.push({ op: "local.set", index: argsLocal });
-          } else if (iifeNeedsArguments) {
-            // No arguments at all — create empty arguments vec
-            const vti = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
-            const ati = getArrTypeIdxFromVec(ctx, vti);
-            const vecRef: ValType = { kind: "ref", typeIdx: vti };
-            const argsLocal = allocLocal(fctx, "arguments", vecRef);
-            const arrTmp = allocLocal(fctx, "__iife_args_arr", { kind: "ref", typeIdx: ati });
-            fctx.body.push({ op: "array.new_fixed", typeIdx: ati, length: 0 });
-            fctx.body.push({ op: "local.set", index: arrTmp });
-            fctx.body.push({ op: "i32.const", value: 0 });
-            fctx.body.push({ op: "local.get", index: arrTmp });
-            fctx.body.push({ op: "struct.new", typeIdx: vti });
-            fctx.body.push({ op: "local.set", index: argsLocal });
-          }
-
-          // Compile body
-          if (ts.isArrowFunction(callee) && !ts.isBlock(callee.body)) {
-            // Concise body: expression — no return issue
-            return compileExpression(ctx, fctx, callee.body);
-          }
-
-          // Block body (arrow or function expression) — need to handle return
-          const bodyStmts = ts.isArrowFunction(callee) ? (callee.body as ts.Block).statements : callee.body.statements;
-          if (bodyStmts.length === 0) {
-            return VOID_RESULT;
-          }
-
-          // Determine return type from TS
-          const iifeRetType = ctx.checker.getTypeAtLocation(expr);
-          let iifeWasmRetType = isVoidType(iifeRetType) ? null : resolveWasmType(ctx, iifeRetType);
-          // (#3128) The ret-local type must agree with what the returned
-          // expression will ACTUALLY lower to. Under standalone, an object
-          // literal in any/unknown/dictionary context diverts to the open
-          // `$Object` path and produces an **externref**
-          // (`objectLiteralTakesStandaloneAnyObjectPath`, the #1901/#2542
-          // gate) — but `resolveWasmType` types the ret local from the TS
-          // struct type. The return-site coercion externref→(ref null $struct)
-          // then goes through a `ref.test` arm that silently yields NULL
-          // (measured: `p2 = (function(){ return { a: (function(){ return
-          // p2; }) }; })()` — p2 read back null; the #3128-A cell write itself
-          // was correct, it faithfully wrote the nulled ret value). Mirror the
-          // literal's own divert decision here and widen the ret local to
-          // externref; struct-typed sibling returns coerce ref→externref
-          // losslessly (`extern.convert_any`). Scan only the IIFE's OWN
-          // returns — nested function boundaries keep their own return type.
-          if (iifeWasmRetType && (iifeWasmRetType.kind === "ref" || iifeWasmRetType.kind === "ref_null")) {
-            let divertedObjlitReturn = false;
-            const scanReturns = (node: ts.Node): void => {
-              if (divertedObjlitReturn) return;
-              if (ts.isFunctionLike(node) && node !== callee) return;
-              if (ts.isReturnStatement(node) && node.expression) {
-                let retExpr: ts.Expression = node.expression;
-                while (ts.isParenthesizedExpression(retExpr)) retExpr = retExpr.expression;
-                if (ts.isObjectLiteralExpression(retExpr) && objectLiteralTakesStandaloneAnyObjectPath(ctx, retExpr)) {
-                  divertedObjlitReturn = true;
-                  return;
                 }
               }
-              forEachChild(node, scanReturns);
-            };
-            for (const stmt of bodyStmts) scanReturns(stmt);
-            if (divertedObjlitReturn) {
-              iifeWasmRetType = { kind: "externref" };
             }
-          }
 
-          if (iifeWasmRetType) {
-            // Returning IIFE: allocate a result local, compile body into a block,
-            // and replace `return` with `local.set + br` to exit the block
-            const retLocal = allocLocal(fctx, `__iife_ret_${fctx.locals.length}`, iifeWasmRetType);
-            const savedBody = fctx.body;
-            fctx.savedBodies.push(savedBody);
-            const blockBody: Instr[] = [];
-            fctx.body = blockBody;
+            // Set up `arguments` vec for the IIFE if needed
+            if (iifeNeedsArguments && allArgLocals.length > 0) {
+              // Ensure __box_number is available for boxing numeric args
+              const hasNumeric = allArgLocals.some((a) => a.type.kind === "f64" || a.type.kind === "i32");
+              if (hasNumeric) {
+                ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
+                flushLateImportShifts(ctx, fctx);
+              }
 
-            // Save and override returnType so that return statements inside the
-            // IIFE coerce to the IIFE's own return type, not the outer function's.
-            // Without this, a boolean-returning IIFE inside an f64-returning
-            // function would coerce i32→f64 before local.set into an i32 local.
-            const savedReturnType = fctx.returnType;
-            fctx.returnType = iifeWasmRetType;
+              const vti = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
+              const ati = getArrTypeIdxFromVec(ctx, vti);
+              const vecRef: ValType = { kind: "ref", typeIdx: vti };
+              const argsLocal = allocLocal(fctx, "arguments", vecRef);
+              const arrTmp = allocLocal(fctx, "__iife_args_arr", { kind: "ref", typeIdx: ati });
 
-            // Hoist let/const with TDZ flags so accesses before init throw (#790)
-            hoistLetConstWithTdz(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
-            // Hoist function declarations so they're available before textual position
-            hoistFunctionDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
-
-            // Increase block depth so return→br targets the right level
-            fctx.blockDepth++;
-            for (const stmt of bodyStmts) {
-              compileStatement(ctx, fctx, stmt);
+              for (const { idx, type } of allArgLocals) {
+                fctx.body.push({ op: "local.get", index: idx });
+                if (type.kind === "f64") {
+                  const boxIdx = ctx.funcMap.get("__box_number");
+                  if (boxIdx !== undefined) {
+                    fctx.body.push({ op: "call", funcIdx: boxIdx });
+                  } else {
+                    fctx.body.push({ op: "drop" });
+                    fctx.body.push({ op: "ref.null.extern" });
+                  }
+                } else if (type.kind === "i32") {
+                  fctx.body.push({ op: "f64.convert_i32_s" });
+                  const boxIdx = ctx.funcMap.get("__box_number");
+                  if (boxIdx !== undefined) {
+                    fctx.body.push({ op: "call", funcIdx: boxIdx });
+                  } else {
+                    fctx.body.push({ op: "drop" });
+                    fctx.body.push({ op: "ref.null.extern" });
+                  }
+                } else if (type.kind === "ref" || type.kind === "ref_null") {
+                  fctx.body.push({ op: "extern.convert_any" });
+                }
+                // externref: already correct
+              }
+              fctx.body.push({ op: "array.new_fixed", typeIdx: ati, length: allArgLocals.length });
+              fctx.body.push({ op: "local.set", index: arrTmp });
+              fctx.body.push({ op: "i32.const", value: allArgLocals.length });
+              fctx.body.push({ op: "local.get", index: arrTmp });
+              fctx.body.push({ op: "struct.new", typeIdx: vti });
+              fctx.body.push({ op: "local.set", index: argsLocal });
+            } else if (iifeNeedsArguments) {
+              // No arguments at all — create empty arguments vec
+              const vti = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
+              const ati = getArrTypeIdxFromVec(ctx, vti);
+              const vecRef: ValType = { kind: "ref", typeIdx: vti };
+              const argsLocal = allocLocal(fctx, "arguments", vecRef);
+              const arrTmp = allocLocal(fctx, "__iife_args_arr", { kind: "ref", typeIdx: ati });
+              fctx.body.push({ op: "array.new_fixed", typeIdx: ati, length: 0 });
+              fctx.body.push({ op: "local.set", index: arrTmp });
+              fctx.body.push({ op: "i32.const", value: 0 });
+              fctx.body.push({ op: "local.get", index: arrTmp });
+              fctx.body.push({ op: "struct.new", typeIdx: vti });
+              fctx.body.push({ op: "local.set", index: argsLocal });
             }
-            fctx.blockDepth--;
 
-            // Restore outer function's return type
-            fctx.returnType = savedReturnType;
-            fctx.savedBodies.pop();
-            fctx.body = savedBody;
+            // Compile body
+            if (ts.isArrowFunction(callee) && !ts.isBlock(callee.body)) {
+              // Concise body: expression — no return issue
+              const savedDeferredDynamicImportTrap = fctx.deferredDynamicImportTrap;
+              fctx.deferredDynamicImportTrap = !callee.modifiers?.some(
+                (modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword,
+              );
+              const result = compileExpression(ctx, fctx, callee.body);
+              fctx.deferredDynamicImportTrap = savedDeferredDynamicImportTrap;
+              return result;
+            }
 
-            // Post-process: replace `return` / `return_call` / `return_call_ref` ops
-            // with `local.set retLocal + br <depth>`.  Tail-call optimization in
-            // compileReturnStatement may have merged call+return into return_call;
-            // inside an IIFE we must undo that since we need local.set + br instead.
-            function patchReturns(instrs: Instr[], depth: number): void {
-              for (let i = 0; i < instrs.length; i++) {
-                const op = instrs[i]!.op;
-                if (op === "return") {
-                  // The instruction before `return` is the return value expression.
-                  // Replace `return` with `local.set + br`
-                  instrs[i] = { op: "local.set", index: retLocal };
-                  instrs.splice(i + 1, 0, { op: "br", depth });
-                  i++; // skip the inserted br
-                } else if (op === "return_call" || op === "return_call_ref") {
-                  // Undo tail-call: return_call funcIdx → call funcIdx + local.set + br
+            // Block body (arrow or function expression) — need to handle return
+            const bodyStmts = ts.isArrowFunction(callee)
+              ? (callee.body as ts.Block).statements
+              : callee.body.statements;
+            if (bodyStmts.length === 0) {
+              return VOID_RESULT;
+            }
+
+            // #3509 — ordinary IIFEs use the same host-free call-site trap as
+            // invoking a previously-created ordinary closure. The inline path
+            // has no lifted FunctionContext of its own, so carry the marker only
+            // while compiling this function body. Async IIFEs stay on #3494's
+            // explicit unsupported path (a synchronous throw is not a Promise
+            // rejection and would be a semantic lie).
+            const savedDeferredDynamicImportTrap = fctx.deferredDynamicImportTrap;
+            fctx.deferredDynamicImportTrap = !callee.modifiers?.some(
+              (modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword,
+            );
+
+            // Determine return type from TS
+            const iifeRetType = ctx.checker.getTypeAtLocation(expr);
+            let iifeWasmRetType = isVoidType(iifeRetType) ? null : resolveWasmType(ctx, iifeRetType);
+            // (#3128) The ret-local type must agree with what the returned
+            // expression will ACTUALLY lower to. Under standalone, an object
+            // literal in any/unknown/dictionary context diverts to the open
+            // `$Object` path and produces an **externref**
+            // (`objectLiteralTakesStandaloneAnyObjectPath`, the #1901/#2542
+            // gate) — but `resolveWasmType` types the ret local from the TS
+            // struct type. The return-site coercion externref→(ref null $struct)
+            // then goes through a `ref.test` arm that silently yields NULL
+            // (measured: `p2 = (function(){ return { a: (function(){ return
+            // p2; }) }; })()` — p2 read back null; the #3128-A cell write itself
+            // was correct, it faithfully wrote the nulled ret value). Mirror the
+            // literal's own divert decision here and widen the ret local to
+            // externref; struct-typed sibling returns coerce ref→externref
+            // losslessly (`extern.convert_any`). Scan only the IIFE's OWN
+            // returns — nested function boundaries keep their own return type.
+            if (iifeWasmRetType && (iifeWasmRetType.kind === "ref" || iifeWasmRetType.kind === "ref_null")) {
+              let divertedObjlitReturn = false;
+              const scanReturns = (node: ts.Node): void => {
+                if (divertedObjlitReturn) return;
+                if (ts.isFunctionLike(node) && node !== callee) return;
+                if (ts.isReturnStatement(node) && node.expression) {
+                  let retExpr: ts.Expression = node.expression;
+                  while (ts.isParenthesizedExpression(retExpr)) retExpr = retExpr.expression;
+                  if (
+                    ts.isObjectLiteralExpression(retExpr) &&
+                    objectLiteralTakesStandaloneAnyObjectPath(ctx, retExpr)
+                  ) {
+                    divertedObjlitReturn = true;
+                    return;
+                  }
+                }
+                forEachChild(node, scanReturns);
+              };
+              for (const stmt of bodyStmts) scanReturns(stmt);
+              if (divertedObjlitReturn) {
+                iifeWasmRetType = { kind: "externref" };
+              }
+            }
+
+            if (iifeWasmRetType) {
+              // Returning IIFE: allocate a result local, compile body into a block,
+              // and replace `return` with `local.set + br` to exit the block
+              const retLocal = allocLocal(fctx, `__iife_ret_${fctx.locals.length}`, iifeWasmRetType);
+              const savedBody = fctx.body;
+              fctx.savedBodies.push(savedBody);
+              const blockBody: Instr[] = [];
+              fctx.body = blockBody;
+
+              // Save and override returnType so that return statements inside the
+              // IIFE coerce to the IIFE's own return type, not the outer function's.
+              // Without this, a boolean-returning IIFE inside an f64-returning
+              // function would coerce i32→f64 before local.set into an i32 local.
+              const savedReturnType = fctx.returnType;
+              fctx.returnType = iifeWasmRetType;
+
+              // A real function instantiation creates all var bindings before
+              // body evaluation. Besides read-before-declaration semantics, this
+              // pre-allocation makes an IIFE-local var shadow a same-named module
+              // global while the body is compiled.
+              hoistVarDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
+              // Hoist let/const with TDZ flags so accesses before init throw (#790)
+              hoistLetConstWithTdz(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
+              // Hoist function declarations so they're available before textual position
+              hoistFunctionDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
+
+              // Increase block depth so return→br targets the right level
+              fctx.blockDepth++;
+              for (const stmt of bodyStmts) {
+                compileStatement(ctx, fctx, stmt);
+              }
+              fctx.blockDepth--;
+
+              fctx.deferredDynamicImportTrap = savedDeferredDynamicImportTrap;
+
+              // Restore outer function's return type
+              fctx.returnType = savedReturnType;
+              fctx.savedBodies.pop();
+              fctx.body = savedBody;
+
+              // Post-process: replace `return` / `return_call` / `return_call_ref` ops
+              // with `local.set retLocal + br <depth>`.  Tail-call optimization in
+              // compileReturnStatement may have merged call+return into return_call;
+              // inside an IIFE we must undo that since we need local.set + br instead.
+              function patchReturns(instrs: Instr[], depth: number): void {
+                for (let i = 0; i < instrs.length; i++) {
+                  const op = instrs[i]!.op;
+                  if (op === "return") {
+                    // The instruction before `return` is the return value expression.
+                    // Replace `return` with `local.set + br`
+                    instrs[i] = { op: "local.set", index: retLocal };
+                    instrs.splice(i + 1, 0, { op: "br", depth });
+                    i++; // skip the inserted br
+                  } else if (op === "return_call" || op === "return_call_ref") {
+                    // Undo tail-call: return_call funcIdx → call funcIdx + local.set + br
+                    const instr = instrs[i] as any;
+                    instr.op = op === "return_call" ? "call" : "call_ref";
+                    instrs.splice(i + 1, 0, { op: "local.set", index: retLocal }, { op: "br", depth });
+                    i += 2; // skip inserted instructions
+                  }
+                  // Recurse into sub-blocks (if/then/else/block/loop)
                   const instr = instrs[i] as any;
-                  instr.op = op === "return_call" ? "call" : "call_ref";
-                  instrs.splice(i + 1, 0, { op: "local.set", index: retLocal }, { op: "br", depth });
-                  i += 2; // skip inserted instructions
+                  if (instr.then) patchReturns(instr.then, depth + 1);
+                  if (instr.else) patchReturns(instr.else, depth + 1);
+                  if (instr.body && Array.isArray(instr.body)) patchReturns(instr.body, depth + 1);
                 }
-                // Recurse into sub-blocks (if/then/else/block/loop)
-                const instr = instrs[i] as any;
-                if (instr.then) patchReturns(instr.then, depth + 1);
-                if (instr.else) patchReturns(instr.else, depth + 1);
-                if (instr.body && Array.isArray(instr.body)) patchReturns(instr.body, depth + 1);
               }
-            }
-            patchReturns(blockBody, 0);
+              patchReturns(blockBody, 0);
 
-            // Emit: block { <body> } local.get retLocal
-            fctx.body.push({
-              op: "block",
-              blockType: { kind: "empty" },
-              body: blockBody,
-            });
-            fctx.body.push({ op: "local.get", index: retLocal });
-            return iifeWasmRetType;
-          } else {
-            // Void IIFE — wrap the body in a block so that `return` inside
-            // the IIFE exits ONLY the IIFE rather than the enclosing function
-            // (#1348). Without this wrapper, e.g.
-            //   (function () { for (var x of it) { return; } }());
-            // would emit a Wasm `return` from the outer function, dropping
-            // any `for-of`-followups (post-IIFE asserts) and breaking the
-            // §14.7.5 IteratorClose-on-return semantics expected by callers.
-            const savedBody = fctx.body;
-            fctx.savedBodies.push(savedBody);
-            const blockBody: Instr[] = [];
-            fctx.body = blockBody;
+              // Emit: block { <body> } local.get retLocal
+              fctx.body.push({
+                op: "block",
+                blockType: { kind: "empty" },
+                body: blockBody,
+              });
+              fctx.body.push({ op: "local.get", index: retLocal });
+              return iifeWasmRetType;
+            } else {
+              // Void IIFE — wrap the body in a block so that `return` inside
+              // the IIFE exits ONLY the IIFE rather than the enclosing function
+              // (#1348). Without this wrapper, e.g.
+              //   (function () { for (var x of it) { return; } }());
+              // would emit a Wasm `return` from the outer function, dropping
+              // any `for-of`-followups (post-IIFE asserts) and breaking the
+              // §14.7.5 IteratorClose-on-return semantics expected by callers.
+              const savedBody = fctx.body;
+              fctx.savedBodies.push(savedBody);
+              const blockBody: Instr[] = [];
+              fctx.body = blockBody;
 
-            // Save and override returnType: void IIFE has no return value,
-            // so any `return <expr>;` inside the body should drop the value
-            // (we model this by setting returnType=null which causes
-            // compileReturnStatement to drop the expression value).
-            const savedReturnType = fctx.returnType;
-            fctx.returnType = null;
+              // Save and override returnType: void IIFE has no return value,
+              // so any `return <expr>;` inside the body should drop the value
+              // (we model this by setting returnType=null which causes
+              // compileReturnStatement to drop the expression value).
+              const savedReturnType = fctx.returnType;
+              fctx.returnType = null;
 
-            // Hoist let/const with TDZ flags so accesses before init throw (#790)
-            hoistLetConstWithTdz(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
-            // Hoist function declarations so they're available before textual position
-            hoistFunctionDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
+              // See the returning arm above: function-scoped vars must exist
+              // before the first statement and must shadow outer/global names.
+              hoistVarDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
+              // Hoist let/const with TDZ flags so accesses before init throw (#790)
+              hoistLetConstWithTdz(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
+              // Hoist function declarations so they're available before textual position
+              hoistFunctionDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
 
-            // Increase block depth so return→br targets the right level
-            fctx.blockDepth++;
-            for (const stmt of bodyStmts) {
-              compileStatement(ctx, fctx, stmt);
-            }
-            fctx.blockDepth--;
+              // Increase block depth so return→br targets the right level
+              fctx.blockDepth++;
+              for (const stmt of bodyStmts) {
+                compileStatement(ctx, fctx, stmt);
+              }
+              fctx.blockDepth--;
 
-            // Restore outer function's return type
-            fctx.returnType = savedReturnType;
-            fctx.savedBodies.pop();
-            fctx.body = savedBody;
+              fctx.deferredDynamicImportTrap = savedDeferredDynamicImportTrap;
 
-            // Post-process: replace `return` / `return_call` / `return_call_ref`
-            // with `br <depth>`. Tail-call optimization in compileReturnStatement
-            // may have merged call+return into return_call; inside an IIFE we
-            // must undo that and lower it back to a plain call.
-            function patchVoidReturns(instrs: Instr[], depth: number): void {
-              for (let i = 0; i < instrs.length; i++) {
-                const op = instrs[i]!.op;
-                if (op === "return") {
-                  // void IIFE: no value to capture — replace with br
-                  instrs[i] = { op: "br", depth };
-                } else if (op === "return_call" || op === "return_call_ref") {
-                  // Undo tail-call: rewrite as plain call + br
+              // Restore outer function's return type
+              fctx.returnType = savedReturnType;
+              fctx.savedBodies.pop();
+              fctx.body = savedBody;
+
+              // Post-process: replace `return` / `return_call` / `return_call_ref`
+              // with `br <depth>`. Tail-call optimization in compileReturnStatement
+              // may have merged call+return into return_call; inside an IIFE we
+              // must undo that and lower it back to a plain call.
+              function patchVoidReturns(instrs: Instr[], depth: number): void {
+                for (let i = 0; i < instrs.length; i++) {
+                  const op = instrs[i]!.op;
+                  if (op === "return") {
+                    // void IIFE: no value to capture — replace with br
+                    instrs[i] = { op: "br", depth };
+                  } else if (op === "return_call" || op === "return_call_ref") {
+                    // Undo tail-call: rewrite as plain call + br
+                    const instr = instrs[i] as any;
+                    instr.op = op === "return_call" ? "call" : "call_ref";
+                    instrs.splice(i + 1, 0, { op: "br", depth });
+                    i++; // skip inserted br
+                  }
                   const instr = instrs[i] as any;
-                  instr.op = op === "return_call" ? "call" : "call_ref";
-                  instrs.splice(i + 1, 0, { op: "br", depth });
-                  i++; // skip inserted br
-                }
-                const instr = instrs[i] as any;
-                if (instr.then) patchVoidReturns(instr.then, depth + 1);
-                if (instr.else) patchVoidReturns(instr.else, depth + 1);
-                if (instr.body && Array.isArray(instr.body)) patchVoidReturns(instr.body, depth + 1);
-                if (instr.catchAll && Array.isArray(instr.catchAll)) patchVoidReturns(instr.catchAll, depth + 1);
-                if (Array.isArray(instr.catches)) {
-                  for (const c of instr.catches) {
-                    if (Array.isArray(c.body)) patchVoidReturns(c.body, depth + 1);
+                  if (instr.then) patchVoidReturns(instr.then, depth + 1);
+                  if (instr.else) patchVoidReturns(instr.else, depth + 1);
+                  if (instr.body && Array.isArray(instr.body)) patchVoidReturns(instr.body, depth + 1);
+                  if (instr.catchAll && Array.isArray(instr.catchAll)) patchVoidReturns(instr.catchAll, depth + 1);
+                  if (Array.isArray(instr.catches)) {
+                    for (const c of instr.catches) {
+                      if (Array.isArray(c.body)) patchVoidReturns(c.body, depth + 1);
+                    }
                   }
                 }
               }
-            }
-            patchVoidReturns(blockBody, 0);
+              patchVoidReturns(blockBody, 0);
 
-            // Emit: block { <body> }
-            fctx.body.push({
-              op: "block",
-              blockType: { kind: "empty" },
-              body: blockBody,
-            });
-            return VOID_RESULT;
+              // Emit: block { <body> }
+              fctx.body.push({
+                op: "block",
+                blockType: { kind: "empty" },
+                body: blockBody,
+              });
+              return VOID_RESULT;
+            }
+          } finally {
+            leaveIifeBindingScope();
           }
         }
       } // end else (non-generator IIFE)
@@ -643,6 +854,20 @@ export function compileTailDispatch(
           const recvIsUserClass = !!resolvedClassName && ctx.classSet.has(resolvedClassName);
           const recvIsUnresolved = (receiverType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
           if ((isRegExpRecv || recvIsUnresolved) && !recvIsUserClass) {
+            // #3567 — WASI shares the fail-loud function-replacer contract
+            // without opting its supported symbol-method forms into the
+            // standalone native engine. A string replacer returns undefined
+            // here and preserves the existing WASI dispatch.
+            if (ctx.wasi && methodName === "@@replace" && expr.arguments.length === 2) {
+              const wasiReplaceRefusal = tryCompileStandaloneRegExpSymbolCall(
+                ctx,
+                fctx,
+                expr,
+                elemAccess.expression,
+                methodName,
+              );
+              if (wasiReplaceRefusal !== undefined) return wasiReplaceRefusal;
+            }
             if (ctx.standalone) {
               // (#2161) Route the well-known-symbol protocol READ forms
               // (`re[Symbol.match/matchAll/search](str)`) to the native engine
@@ -1047,17 +1272,16 @@ export function compileTailDispatch(
           fctx.body.push({ op: "i32.or" });
           {
             const rangeErrMsg = "RangeError: toString() radix must be between 2 and 36";
-            // (#2029 family C) Dual-mode message push — the raw
-            // `global.get stringGlobalMap.get(msg)!` baked the -1 sentinel
-            // under standalone/nativeStrings (`5["toString"](2)` emit-crashed
-            // with "global index out of range — -1"); the dot-access twin of
-            // this site already uses the helper. Host mode is byte-identical.
-            addStringConstantGlobal(ctx, rangeErrMsg);
-            const tagIdx = ensureExnTag(ctx);
+            // (#3477) Throw a real RangeError INSTANCE via buildThrowJsErrorInstrs
+            // so the authentic-harness `assert.throws(RangeError, …)` /
+            // `e instanceof RangeError` guard passes — matches the dot-access twin
+            // (call-receiver-method.ts). Formerly a bare-string throw (only
+            // `e === "RangeError: …"`). buildThrowJsErrorInstrs handles the dual
+            // -mode message push + tag internally (the #2029 sentinel concern).
             fctx.body.push({
               op: "if",
               blockType: { kind: "empty" },
-              then: [...stringConstantExternrefInstrs(ctx, rangeErrMsg), { op: "throw", tagIdx }],
+              then: buildThrowJsErrorInstrs(ctx, "RangeError", rangeErrMsg, { flush: fctx }),
               else: [],
             });
           }
@@ -1082,15 +1306,13 @@ export function compileTailDispatch(
           fctx.body.push({ op: "i32.or" });
           {
             const rangeErrMsg = "RangeError: toFixed() digits argument must be between 0 and 100";
-            // (#2029 family C) Dual-mode message push — see the toString()
-            // radix twin above (`1["toFixed"](5)` was the standalone
-            // emit-crash repro for property-accessors/S11.2.1_A3_T2).
-            addStringConstantGlobal(ctx, rangeErrMsg);
-            const tagIdx = ensureExnTag(ctx);
+            // (#3477) Real RangeError INSTANCE via buildThrowJsErrorInstrs — see
+            // the toString() radix twin above; matches the dot-access twin so
+            // `assert.throws(RangeError, …)` passes.
             fctx.body.push({
               op: "if",
               blockType: { kind: "empty" },
-              then: [...stringConstantExternrefInstrs(ctx, rangeErrMsg), { op: "throw", tagIdx }],
+              then: buildThrowJsErrorInstrs(ctx, "RangeError", rangeErrMsg, { flush: fctx }),
               else: [],
             });
           }
@@ -1185,6 +1407,25 @@ export function compileTailDispatch(
         if (dyn !== null) return dyn;
       }
 
+      // (#4252) Runtime-key call on a PLAIN OBJECT receiver: `o[k]()` where `k`
+      // is a variable that const-folds to a key for which no builtin/class
+      // method matched. The element READ is already correct (`var g = o[k]; g()`
+      // invokes; `typeof o[k] === 'function'` answers true) — only the
+      // INVOCATION was dropped by the fallback below, silently, yielding
+      // `undefined` with the callee never entered. Route the same
+      // ref.test-guarded dynamic closure dispatch the user-class arm above uses;
+      // its default arm reproduces the historical `ref.null.extern`, so a
+      // non-callable read value keeps today's behaviour.
+      if (elemAccessReceiverIsPlainObject(ctx, elemAccess)) {
+        // (#4269) …and give that dispatch a receiver. #4252 made the callee RUN;
+        // it still ran with `this` unbound, which is the same silent wrong
+        // answer one layer down. See object-literal-method-receiver.ts for why
+        // the gate is asked of the receiver's literal here and why an argument
+        // that reads `this` refuses the bind outright.
+        const dyn = emitPlainObjectDynamicCallWithReceiver(ctx, fctx, expr, elemAccess);
+        if (dyn !== null) return dyn;
+      }
+
       // Fallback for resolved element access calls that didn't match any known method:
       // compile receiver, discard; compile each argument for side effects; return externref.
       {
@@ -1220,6 +1461,19 @@ export function compileTailDispatch(
     // historical behaviour. A non-closure read value hits the safe default arm.
     if (elemAccessReceiverIsUserClass(ctx, elemAccess)) {
       const dyn = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
+      if (dyn !== null) return dyn;
+    }
+    // (#4252) The unresolved-key twin of the plain-object arm above:
+    // `traps[trap]()` where `trap` is a parameter, so no static key exists. This
+    // is the shape the test262 harness self-tests `proxytrapshelper-{default,
+    // overrides}.js` exercise — `allowProxyTraps` hands back an object literal
+    // of 14 functions and the test calls `traps[trap]()` for each. The dynamic
+    // element read canonicalises the key at runtime and finds the right slot;
+    // only the call was dropped, which turned a throwing trap into a silent
+    // no-op and reported the file as a (vacuous) pass.
+    if (elemAccessReceiverIsPlainObject(ctx, elemAccess)) {
+      // (#4269) With a receiver — see the resolved-key twin above.
+      const dyn = emitPlainObjectDynamicCallWithReceiver(ctx, fctx, expr, elemAccess);
       if (dyn !== null) return dyn;
     }
 
@@ -1281,6 +1535,14 @@ export function compileTailDispatch(
         const funcName = bindTarget.text;
         const closureInfo = ctx.closureMap.get(funcName);
         const funcIdx = ctx.funcMap.get(funcName);
+
+        // (#4203) Route `f.bind(t, …)(…)` onto the receiver-correct `.call`
+        // trampoline instead of the drop-thisArg lowering below (see
+        // named-this-call.ts) — the reshape #3983 did for `.apply`.
+        if (!closureInfo && funcIdx !== undefined) {
+          const asCall = tryReshapeBindToNamedThisCall(ctx, fctx, expr, bindCall, bindTarget, funcIdx);
+          if (asCall !== undefined) return compileCallExpression(ctx, fctx, asCall);
+        }
 
         if (closureInfo || funcIdx !== undefined) {
           // Evaluate and drop thisArg (first bind argument) for side effects
@@ -1420,6 +1682,20 @@ export function compileTailDispatch(
           }
         }
       }
+
+      // A callable stored in an object field (for example `f.af`) has no
+      // statically registered `Class_method` body for the direct optimization
+      // above. In JS-host mode `.bind()` therefore produces a real host bound
+      // function, not a Wasm closure struct. Invoke that externref through the
+      // host callable seam instead of letting the generic call-of-call path
+      // ref.test it as a closure and dereference the resulting null.
+      if (!ctx.standalone && !noJsHost(ctx) && ts.isPropertyAccessExpression(bindCall.expression)) {
+        const boundType = compileFunctionBind(ctx, fctx, bindCall, bindCall.expression);
+        if (boundType !== undefined) {
+          const called = emitBoundFunctionCall(ctx, fctx, expr, true);
+          if (called !== null) return called;
+        }
+      }
     }
   }
 
@@ -1478,31 +1754,28 @@ export function compileTailDispatch(
       if (matchedClosureInfo && matchedStructTypeIdx !== undefined) {
         // Compile the inner call expression to get the closure on the stack
         const innerResultType = compileExpression(ctx, fctx, expr.expression);
+        const selfTypeIdx = getClosureFuncSelfTypeIdx(ctx, matchedClosureInfo.funcTypeIdx) ?? matchedStructTypeIdx;
+        const closureRefType: ValType = { kind: "ref_null", typeIdx: selfTypeIdx };
 
-        // Save closure ref to a local so we can extract both args and funcref
-        let closureLocal: number;
+        // Save closure ref to a local so we can extract both args and funcref.
+        // Erased shared closures normalize to the canonical root; private/named
+        // funcs retain the concrete self encoded in their func type.
+        const closureLocal = allocLocal(fctx, `__call_ret_${fctx.locals.length}`, closureRefType);
         if (innerResultType?.kind === "externref") {
-          // Need to convert externref back to the closure struct ref (guarded)
-          const closureRefType: ValType = {
-            kind: "ref_null",
-            typeIdx: matchedStructTypeIdx,
-          };
-          closureLocal = allocLocal(fctx, `__call_ret_${fctx.locals.length}`, closureRefType);
           fctx.body.push({ op: "any.convert_extern" });
-          emitGuardedRefCast(fctx, matchedStructTypeIdx);
-          fctx.body.push({ op: "local.set", index: closureLocal });
-        } else {
-          const closureRefType: ValType = innerResultType ?? {
-            kind: "ref",
-            typeIdx: matchedStructTypeIdx,
-          };
-          closureLocal = allocLocal(fctx, `__call_ret_${fctx.locals.length}`, closureRefType);
-          fctx.body.push({ op: "local.set", index: closureLocal });
+          emitGuardedRefCast(fctx, selfTypeIdx);
+        } else if (
+          innerResultType &&
+          (innerResultType.kind === "ref" || innerResultType.kind === "ref_null") &&
+          innerResultType.typeIdx !== selfTypeIdx
+        ) {
+          emitGuardedRefCast(fctx, selfTypeIdx);
         }
+        fctx.body.push({ op: "local.set", index: closureLocal });
 
         // Push closure ref as first arg (self param) — null-check → TypeError (#728)
         fctx.body.push({ op: "local.get", index: closureLocal });
-        emitNullCheckThrow(ctx, fctx, { kind: "ref_null", typeIdx: matchedStructTypeIdx });
+        emitNullCheckThrow(ctx, fctx, closureRefType);
 
         // Push call arguments (only up to declared param count)
         const crParamCnt = matchedClosureInfo.paramTypes.length;
@@ -1527,10 +1800,10 @@ export function compileTailDispatch(
 
         // Push the funcref from the closure struct (field 0) — null-check → TypeError (#728)
         fctx.body.push({ op: "local.get", index: closureLocal });
-        emitNullCheckThrow(ctx, fctx, { kind: "ref_null", typeIdx: matchedStructTypeIdx });
+        emitNullCheckThrow(ctx, fctx, closureRefType);
         fctx.body.push({
           op: "struct.get",
-          typeIdx: matchedStructTypeIdx,
+          typeIdx: selfTypeIdx,
           fieldIdx: 0,
         });
         // Guard funcref cast to avoid illegal cast (#778)
@@ -1660,6 +1933,7 @@ export function compileTailDispatch(
         const closureInfo = wrapperTypes.closureInfo;
         const structTypeIdx = wrapperTypes.structTypeIdx;
         const funcTypeIdx = closureInfo.funcTypeIdx;
+        const selfTypeIdx = getClosureFuncSelfTypeIdx(ctx, funcTypeIdx) ?? structTypeIdx;
 
         // 1. Compile the callee once. It must be a ref-shaped value (we can't
         //    `ref.test` an i32 / f64). For non-ref callees, drop value + args
@@ -1751,7 +2025,7 @@ export function compileTailDispatch(
         if (innerResultType.kind === "externref") {
           fctx.body.push({ op: "any.convert_extern" });
         }
-        fctx.body.push({ op: "ref.test", typeIdx: structTypeIdx });
+        fctx.body.push({ op: "ref.test", typeIdx: selfTypeIdx });
 
         // 5. then branch — ref.test passed, do the dispatch.
         // (#1395 fix) Use pushBody/popBody so the saved body is tracked in
@@ -1777,10 +2051,10 @@ export function compileTailDispatch(
         if (innerResultType.kind === "externref") {
           fctx.body.push({ op: "any.convert_extern" });
         }
-        fctx.body.push({ op: "ref.cast", typeIdx: structTypeIdx });
+        fctx.body.push({ op: "ref.cast", typeIdx: selfTypeIdx });
         const closureLocal = allocLocal(fctx, `__cb_closure_${fctx.locals.length}`, {
           kind: "ref",
-          typeIdx: structTypeIdx,
+          typeIdx: selfTypeIdx,
         });
         fctx.body.push({ op: "local.set", index: closureLocal });
 
@@ -1814,7 +2088,7 @@ export function compileTailDispatch(
 
         // Push funcref from closure struct, guarded cast + null-check, call_ref.
         fctx.body.push({ op: "local.get", index: closureLocal });
-        fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: 0 });
+        fctx.body.push({ op: "struct.get", typeIdx: selfTypeIdx, fieldIdx: 0 });
         emitGuardedFuncRefCast(fctx, funcTypeIdx);
         emitNullCheckThrow(ctx, fctx, { kind: "ref_null", typeIdx: funcTypeIdx });
         fctx.body.push({ op: "call_ref", typeIdx: funcTypeIdx });
@@ -1852,21 +2126,8 @@ export function compileTailDispatch(
     }
   }
 
-  // Graceful fallback: compile the callee expression and all arguments for side effects,
-  // then push ref.null.extern. This avoids hard compile errors for unrecognized call patterns
-  // (e.g. chained calls, dynamic dispatch, uncommon AST shapes).
-  {
-    const calleeType = compileExpression(ctx, fctx, expr.expression);
-    if (calleeType) {
-      fctx.body.push({ op: "drop" });
-    }
-    for (const arg of expr.arguments) {
-      const argType = compileExpression(ctx, fctx, arg);
-      if (argType) {
-        fctx.body.push({ op: "drop" });
-      }
-    }
-    fctx.body.push({ op: "ref.null.extern" });
-    return { kind: "externref" };
-  }
+  // (#4096) The last two steps — the stored-member-closure arm and the graceful
+  // `ref.null.extern` fallback it guards — live in `stored-member-closure-call.ts`,
+  // where the rationale sits next to the lowering. See that module's header.
+  return compileCallDispatchTail(ctx, fctx, expr);
 }

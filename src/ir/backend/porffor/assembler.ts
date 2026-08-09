@@ -1,7 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { ModuleLayout } from "../../../emit/resolve-layout.js";
+import { irGlobalBindingKey } from "../../abi-bindings.js";
 import {
+  LINEAR_ARRAY_FORWARDING,
   LINEAR_STACK_ARENA_BYTES,
   type LinearAllocationClass,
   type LinearAllocationSitePlan,
@@ -10,15 +12,23 @@ import {
   type LinearStorageKind,
 } from "../../analysis/linear-memory-plan.js";
 import {
+  bindLinearStringRuntime as bindSharedLinearStringRuntime,
+  type LinearStringRuntimeBinding,
+  type LinearStringRuntimeRequest,
+} from "../../analysis/linear-string-runtime.js";
+import {
   irVal,
   type AllocSiteId,
   type IrFunction,
   type IrFuncRef,
+  type IrGlobalBinding,
   type IrGlobalRef,
   type IrObjectShape,
   type IrTypeRef,
 } from "../../nodes.js";
 import type { IrLoweredBody, IrLowerResolver } from "../../lower.js";
+import { compareIrIdentity, type IrUnitId } from "../../identity.js";
+import { IR_VEC_ELEM_SET_PREFIX, parseIrVectorRuntimeElement } from "../../vector-runtime.js";
 import type { FuncHandle, FuncTypeDef, GlobalHandle, TypeHandle, ValType } from "../../types.js";
 import type { ModuleAssembler } from "../contract.js";
 import type { IrVecLowering, LinearMemoryFieldLowering, LinearVecLowering, PlannedObjectLowering } from "../handles.js";
@@ -59,15 +69,22 @@ export interface PorfforTypeDefinition {
 
 interface FunctionEntry {
   readonly handle: FuncHandle;
+  /** Diagnostic/public label only. */
   readonly name: string;
+  /** Structural identity for source/synthetic IR units. Runtime providers omit it. */
+  readonly unitId?: IrUnitId;
+  /** Collision-free renderer symbol, assigned deterministically at finalize. */
+  physicalName?: string;
   signature?: PorfforFunctionSymbol;
   definition?: PorfforFunctionDefinition;
   stackRuntime?: "mark" | "allocate" | "restore";
+  linearArrayRuntime?: "resolve" | "grow" | "set" | "get" | "len";
 }
 
 interface GlobalEntry {
   readonly handle: GlobalHandle;
   readonly name: string;
+  readonly binding?: IrGlobalBinding;
   definition?: PorfforGlobalDefinition;
 }
 
@@ -86,11 +103,14 @@ type ControlFrame = { readonly kind: "block" | "loop" | "if"; readonly label: st
 
 const TYPE_ORDINAL = new Map<string, number>(PORFFOR_TYPE_ENTRIES);
 const EFFECT_ORDINAL = new Map<string, number>(PORFFOR_EFFECT_ENTRIES);
+/** Linear lowering deliberately exposes its sole supported f64 vec as type 0. */
+const PORFFOR_LINEAR_F64_VEC_TYPE_INDEX = 0;
 
 /**
  * Porffor module/index authority. Handles are registration-order identities;
- * final Porffor function/global array positions are assigned once, by stable
- * symbolic name order, in `finalize()`.
+ * final Porffor function/global array positions are assigned once. IR
+ * functions use canonical unit order; provider functions and globals use
+ * their stable physical labels.
  */
 export class PorfforModuleAssembler
   implements
@@ -101,9 +121,13 @@ export class PorfforModuleAssembler
   readonly backend = "porffor" as const;
   private readonly typeConverter = new PorfforTypeConverter();
   private readonly funcsByHandle = new Map<FuncHandle, FunctionEntry>();
+  /** Runtime/provider compatibility namespace; IR display labels never enter it. */
   private readonly funcsByName = new Map<string, FunctionEntry>();
+  private readonly funcsByUnitId = new Map<IrUnitId, FunctionEntry>();
+  private readonly irFuncsByDisplayName = new Map<string, FunctionEntry[]>();
   private readonly globalsByHandle = new Map<GlobalHandle, GlobalEntry>();
   private readonly globalsByName = new Map<string, GlobalEntry>();
+  private readonly globalsByBindingKey = new Map<string, GlobalEntry>();
   private readonly typesByHandle = new Map<TypeHandle, TypeEntry>();
   private readonly typesByKey = new Map<string, TypeEntry>();
   private readonly typesByName = new Map<string, TypeEntry>();
@@ -128,6 +152,11 @@ export class PorfforModuleAssembler
     if (plan.allocations.some((allocation) => this.hasStackFrameOperations(allocation))) {
       this.ensureStackRuntime();
     }
+  }
+
+  bindLinearStringRuntime(request: LinearStringRuntimeRequest): LinearStringRuntimeBinding {
+    if (!this.memoryPlan) throw new Error("porffor assembler: string lowering requires a shared LinearMemoryPlan");
+    return bindSharedLinearStringRuntime(this.memoryPlan, request);
   }
 
   private plannedAllocationClass(allocation: LinearAllocationSitePlan): LinearAllocationClass {
@@ -171,8 +200,20 @@ export class PorfforModuleAssembler
 
   /** Declare an IR function and freeze its scalar signature before bodies lower. */
   declareIrFunction(func: IrFunction): FuncHandle {
-    const handle = this.declareFunc(func.name);
-    const entry = this.requireFunc(handle);
+    this.assertMutable("declare IR function");
+    if (this.funcsByUnitId.has(func.unitId)) {
+      throw new Error(`porffor assembler: duplicate IR function unit '${func.unitId}'`);
+    }
+    const entry: FunctionEntry = {
+      handle: this.nextFuncHandle++,
+      name: func.name,
+      unitId: func.unitId,
+    };
+    this.funcsByHandle.set(entry.handle, entry);
+    this.funcsByUnitId.set(func.unitId, entry);
+    const sameLabel = this.irFuncsByDisplayName.get(func.name);
+    if (sameLabel) sameLabel.push(entry);
+    else this.irFuncsByDisplayName.set(func.name, [entry]);
     entry.signature = {
       name: func.name,
       params: func.params.map((param) => this.oneSlot(param.type, `param ${param.name} of ${func.name}`)),
@@ -181,6 +222,20 @@ export class PorfforModuleAssembler
     if (entry.signature.results.length > 1) {
       throw new Error(`porffor backend does not support multi-value function '${func.name}'`);
     }
+    return entry.handle;
+  }
+
+  declareIrGlobal(ref: IrGlobalRef, type: PorfforValueSlot): GlobalHandle {
+    this.assertMutable("declare structural global");
+    const key = irGlobalBindingKey(ref.binding);
+    if (this.globalsByBindingKey.has(key)) {
+      throw new Error(`porffor assembler: duplicate global binding '${ref.binding.bindingId}'`);
+    }
+    const handle = this.nextGlobalHandle++;
+    const entry: GlobalEntry = { handle, name: ref.name, binding: ref.binding };
+    this.globalsByHandle.set(handle, entry);
+    this.globalsByBindingKey.set(key, entry);
+    this.defineGlobal(handle, { type });
     return handle;
   }
 
@@ -217,6 +272,22 @@ export class PorfforModuleAssembler
 
   lookupFunc(name: string): FuncHandle | undefined {
     return this.funcsByName.get(name)?.handle;
+  }
+
+  lookupIrFunction(unitId: IrUnitId): FuncHandle | undefined {
+    return this.funcsByUnitId.get(unitId)?.handle;
+  }
+
+  /**
+   * Public-label compatibility lookup for renderer entry selection.
+   * Ambiguity is rejected; semantic call resolution always uses unit IDs.
+   */
+  lookupUniqueIrFunctionByDisplayName(name: string): FuncHandle | undefined {
+    const entries = this.irFuncsByDisplayName.get(name) ?? [];
+    if (entries.length > 1) {
+      throw new Error(`porffor assembler: entry label '${name}' matches ${entries.length} IR function units`);
+    }
+    return entries[0]?.handle;
   }
 
   declareGlobal(name: string): GlobalHandle {
@@ -308,12 +379,13 @@ export class PorfforModuleAssembler
     this.assertMutable("finalize");
     this.frozen = true;
 
-    const functions = [...this.funcsByHandle.values()].sort(byName);
+    this.assignPhysicalFunctionNames();
+    const functions = [...this.funcsByHandle.values()].sort(compareFunctionEntry);
     const globals = [...this.globalsByHandle.values()].sort(byName);
     const types = [...this.typesByHandle.values()].sort((left, right) => compareText(left.key, right.key));
     for (const entry of functions) {
       if (!entry.signature) throw new Error(`porffor assembler: function '${entry.name}' has no registered signature`);
-      if (!entry.definition && !entry.stackRuntime)
+      if (!entry.definition && !entry.stackRuntime && !entry.linearArrayRuntime)
         throw new Error(`porffor assembler: function '${entry.name}' was declared but never defined`);
     }
     for (const entry of globals) {
@@ -334,7 +406,7 @@ export class PorfforModuleAssembler
       funcs: functionRecords,
       data: [],
       globals: globalRecords,
-      entry: this.start === null ? null : this.requireFunc(this.start).name,
+      entry: this.start === null ? null : this.functionPhysicalName(this.requireFunc(this.start)),
       prefs: this.preferences,
       usedTypes: new Set<number>(),
     };
@@ -352,21 +424,48 @@ export class PorfforModuleAssembler
   }
 
   resolveFunc(ref: IrFuncRef): number {
-    const handle = this.lookupFunc(ref.name);
-    if (handle === undefined) throw new Error(`porffor assembler: unresolved function '${ref.name}'`);
-    return handle;
+    switch (ref.binding.kind) {
+      case "unit": {
+        const entry = this.funcsByUnitId.get(ref.binding.unitId);
+        if (!entry) {
+          throw new Error(`porffor assembler: unresolved function unit '${ref.binding.unitId}' (${ref.name})`);
+        }
+        return entry.handle;
+      }
+      case "runtime":
+      case "intrinsic": {
+        const symbol = ref.binding.symbol;
+        const arrayRuntime = linearArrayRuntimeKind(symbol);
+        if (arrayRuntime) return this.ensureLinearArrayRuntime(symbol, arrayRuntime);
+        const entry = this.funcsByName.get(symbol);
+        if (!entry?.stackRuntime && !entry?.linearArrayRuntime) {
+          throw new Error(`porffor assembler: unresolved ${ref.binding.kind} '${symbol}'`);
+        }
+        return entry.handle;
+      }
+      case "import":
+        throw new Error(
+          `porffor assembler: imported function '${ref.binding.module}.${ref.binding.field}' is unsupported`,
+        );
+      case "support":
+        throw new Error(`porffor assembler: unresolved support binding '${ref.binding.bindingId}'`);
+    }
   }
 
   resolveGlobal(ref: IrGlobalRef): number {
-    const handle = this.lookupGlobal(ref.name);
-    if (handle === undefined) throw new Error(`porffor assembler: unresolved global '${ref.name}'`);
-    return handle;
+    const entry = this.globalsByBindingKey.get(irGlobalBindingKey(ref.binding));
+    if (!entry) {
+      throw new Error(`porffor assembler: unresolved global binding '${ref.binding.bindingId}' (${ref.name})`);
+    }
+    return entry.handle;
   }
 
   resolveType(ref: IrTypeRef): number {
-    const handle = this.lookupType(ref.name);
-    if (handle === undefined) throw new Error(`porffor assembler: unresolved type '${ref.name}'`);
-    return handle;
+    throw new Error(`porffor assembler: symbolic type binding '${ref.binding.bindingId}' is unsupported`);
+  }
+
+  resolveString(): ValType {
+    return { kind: "i32" };
   }
 
   internFuncType(_type: FuncTypeDef): number {
@@ -431,7 +530,7 @@ export class PorfforModuleAssembler
   functionSymbol(handle: number): PorfforFunctionSymbol {
     const entry = this.requireFunc(handle);
     if (!entry.signature) throw new Error(`porffor assembler: function '${entry.name}' has no registered signature`);
-    return entry.signature;
+    return { ...entry.signature, name: entry.physicalName ?? entry.signature.name };
   }
 
   globalSymbol(handle: number): PorfforGlobalSymbol {
@@ -442,6 +541,9 @@ export class PorfforModuleAssembler
 
   private assembleFunction(entry: FunctionEntry, index: number): PorfforFunctionRecord {
     if (entry.stackRuntime) return this.assembleStackRuntimeFunction(entry, index, entry.stackRuntime);
+    if (entry.linearArrayRuntime) {
+      return this.assembleLinearArrayRuntimeFunction(entry, index, entry.linearArrayRuntime);
+    }
     const lowered = entry.definition!.lowered;
     const params: LocalBinding[] = lowered.params.map((value, paramIndex) => ({
       name: `#js2_param_${paramIndex}_${value.name}`,
@@ -480,7 +582,7 @@ export class PorfforModuleAssembler
       body = this.instrumentPorfforStackFrame(body, stackMarkName, resultType ? stackResultName : null, resultType);
     }
     return {
-      name: entry.name,
+      name: this.functionPhysicalName(entry),
       index,
       params: params.map((param) => ({ name: param.name, type: typeOrdinal(param.type) })),
       retType:
@@ -524,10 +626,7 @@ export class PorfforModuleAssembler
     if (operation === "mark") {
       retType = "ptr";
       const initialize = [
-        assign(
-          global(globals.base),
-          node("Alloc", "ptr", PORFFOR_FX.call, constant(LINEAR_STACK_ARENA_BYTES), 0, [-1, false]),
-        ),
+        assign(global(globals.base), allocNode(constant(LINEAR_STACK_ARENA_BYTES))),
         assign(global(globals.pointer), global(globals.base)),
       ];
       const condition = binary("==", "i32", global(globals.pointer), constant(0, "ptr"), true);
@@ -551,7 +650,7 @@ export class PorfforModuleAssembler
       );
       const limit = binary("+", "ptr", global(globals.base), constant(LINEAR_STACK_ARENA_BYTES));
       const overflow = binary(">", "i32", local(nextName, "ptr"), limit, true);
-      const fallback = node("Alloc", "ptr", PORFFOR_FX.call, local(bytesName, "u32"), 0, [-2, false]);
+      const fallback = allocNode(local(bytesName, "u32"));
       body = [
         assign(local(retName, "ptr"), global(globals.pointer)),
         assign(local(nextName, "ptr"), aligned),
@@ -568,13 +667,352 @@ export class PorfforModuleAssembler
       ];
     }
     return {
-      name: entry.name,
+      name: this.functionPhysicalName(entry),
       index,
       params,
       retType: typeOrdinal(retType),
       locals,
       body,
     };
+  }
+
+  private ensureLinearArrayRuntime(
+    name: string,
+    operation: NonNullable<FunctionEntry["linearArrayRuntime"]>,
+  ): FuncHandle {
+    const existing = this.funcsByName.get(name);
+    if (existing) {
+      if (existing.linearArrayRuntime !== operation) {
+        throw new Error(`porffor assembler: function '${name}' conflicts with the linear-array runtime`);
+      }
+      return existing.handle;
+    }
+
+    const handle = this.declareFunc(name);
+    const entry = this.requireFunc(handle);
+    const signatures = {
+      resolve: { params: ["ptr"], results: ["ptr"] },
+      grow: { params: ["ptr", "i32"], results: ["ptr"] },
+      set: { params: ["ptr", "i32", "f64"], results: [] },
+      get: { params: ["ptr", "i32"], results: ["f64"] },
+      len: { params: ["ptr"], results: ["i32"] },
+    } as const;
+    entry.signature = { name, ...signatures[operation] };
+    entry.linearArrayRuntime = operation;
+
+    if (operation === "set") {
+      this.ensureLinearArrayRuntime("#js2_vec_resolve", "resolve");
+      this.ensureLinearArrayRuntime("#js2_vec_grow", "grow");
+    } else if (operation === "get" || operation === "len") {
+      this.ensureLinearArrayRuntime("#js2_vec_resolve", "resolve");
+    }
+    return handle;
+  }
+
+  private assembleLinearArrayRuntimeFunction(
+    entry: FunctionEntry,
+    index: number,
+    operation: NonNullable<FunctionEntry["linearArrayRuntime"]>,
+  ): PorfforFunctionRecord {
+    const { allocation, layout } = this.requireLinearArrayRuntimeContract();
+
+    const ptrName = "#js2_arr_ptr";
+    const indexName = "#js2_arr_index";
+    const valueName = "#js2_arr_value";
+    const minCapacityName = "#js2_arr_min_capacity";
+    const lenName = "#js2_arr_len";
+    const capacityName = "#js2_arr_capacity";
+    const nextName = "#js2_arr_next";
+    const cursorName = "#js2_arr_cursor";
+    const params: { name: string; type: number }[] = [];
+    const locals: Record<string, { type: number }> = {};
+    const addParam = (name: string, type: PorfforValueSlot): void => {
+      params.push({ name, type: typeOrdinal(type) });
+    };
+    const addLocal = (name: string, type: PorfforValueSlot): void => {
+      locals[name] = { type: typeOrdinal(type) };
+    };
+    const local = (name: string, type: PorfforValueSlot): PorfforNode =>
+      node("Local", type, PORFFOR_FX.none, name, 0, 0);
+    const constant = (value: number, type: PorfforValueSlot = "i32"): PorfforNode =>
+      node("Const", type, PORFFOR_FX.none, value, 0, 0);
+    const binary = (
+      op: string,
+      type: PorfforValueSlot,
+      left: PorfforNode,
+      right: PorfforNode,
+      comparison = false,
+    ): PorfforNode => node("Bin", comparison ? "i32" : type, left[2] | right[2], op, left, right);
+    const assign = (target: PorfforNode, value: PorfforNode): PorfforNode =>
+      node("Assign", "none", PORFFOR_FX.writeLocal | value[2], target, value, 0);
+    const load = (ctype: string, type: PorfforValueSlot, pointer: PorfforNode, offset: number): PorfforNode =>
+      node("Load", type, pointer[2] | PORFFOR_FX.readMem, ctype, pointer, [offset, false]);
+    const store = (ctype: string, pointer: PorfforNode, offset: number, value: PorfforNode): PorfforNode =>
+      node("Store", "none", pointer[2] | value[2] | PORFFOR_FX.writeMem, ctype, pointer, [offset, false, value]);
+    const call = (name: string, type: PorfforValueSlot | "none", args: PorfforNode[]): PorfforNode =>
+      node(
+        "Call",
+        type,
+        args.reduce<number>((effects, argument) => effects | argument[2], PORFFOR_FX.call),
+        name,
+        args,
+        0,
+      );
+    const returnNode = (value: PorfforNode | null = null): PorfforNode =>
+      node("Return", "none", value?.[2] ?? PORFFOR_FX.none, value, 0, 0);
+    const ifNode = (condition: PorfforNode, then: PorfforNode[], otherwise: PorfforNode[] | null = null): PorfforNode =>
+      node("If", "none", condition[2], condition, then, otherwise);
+    const loop = (label: string, body: PorfforNode[]): PorfforNode =>
+      node("Loop", "none", PORFFOR_FX.none, null, null, [body, label]);
+    const breakNode = (label: string): PorfforNode => node("Break", "none", PORFFOR_FX.none, label, 0, 0);
+
+    addParam(ptrName, "ptr");
+    let retType: PorfforValueSlot | "none" = "none";
+    let body: PorfforNode[];
+
+    if (operation === "resolve") {
+      retType = "ptr";
+      const label = "#js2_arr_resolve_loop";
+      const forwarded = binary(
+        "==",
+        "i32",
+        load("u8", "u32", local(ptrName, "ptr"), LINEAR_ARRAY_FORWARDING.tagOffset),
+        constant(LINEAR_ARRAY_FORWARDING.tag, "u32"),
+        true,
+      );
+      body = [
+        loop(label, [
+          ifNode(binary("==", "i32", forwarded, constant(0), true), [breakNode(label)]),
+          assign(
+            local(ptrName, "ptr"),
+            load("u32", "ptr", local(ptrName, "ptr"), LINEAR_ARRAY_FORWARDING.pointerOffset),
+          ),
+        ]),
+        returnNode(local(ptrName, "ptr")),
+      ];
+    } else if (operation === "grow") {
+      addParam(minCapacityName, "i32");
+      addLocal(lenName, "u32");
+      addLocal(capacityName, "u32");
+      addLocal(nextName, "ptr");
+      addLocal(cursorName, "u32");
+      retType = "ptr";
+      const copyLabel = "#js2_arr_copy_loop";
+      const bytes = binary(
+        "+",
+        "u32",
+        constant(layout.elementsOffset, "u32"),
+        binary("*", "u32", local(capacityName, "u32"), constant(layout.elementStride, "u32")),
+      );
+      const allocationNode = allocNode(bytes);
+      body = [
+        assign(local(lenName, "u32"), load("u32", "u32", local(ptrName, "ptr"), layout.lengthOffset)),
+        assign(
+          local(capacityName, "u32"),
+          binary("*", "u32", load("u32", "u32", local(ptrName, "ptr"), layout.capacityOffset), constant(2, "u32")),
+        ),
+        ifNode(binary("<", "i32", local(capacityName, "u32"), local(minCapacityName, "i32"), true), [
+          assign(local(capacityName, "u32"), local(minCapacityName, "i32")),
+        ]),
+        ifNode(binary("<", "i32", local(capacityName, "u32"), constant(layout.minimumCapacity, "u32"), true), [
+          assign(local(capacityName, "u32"), constant(layout.minimumCapacity, "u32")),
+        ]),
+        assign(local(nextName, "ptr"), allocationNode),
+        store("u32", local(nextName, "ptr"), layout.lengthOffset, local(lenName, "u32")),
+        store("u32", local(nextName, "ptr"), layout.capacityOffset, local(capacityName, "u32")),
+        assign(local(cursorName, "u32"), constant(0, "u32")),
+        loop(copyLabel, [
+          ifNode(binary(">=", "i32", local(cursorName, "u32"), local(lenName, "u32"), true), [breakNode(copyLabel)]),
+          store(
+            "f64",
+            binary(
+              "+",
+              "ptr",
+              local(nextName, "ptr"),
+              binary("*", "u32", local(cursorName, "u32"), constant(layout.elementStride, "u32")),
+            ),
+            layout.elementsOffset,
+            load(
+              "f64",
+              "f64",
+              binary(
+                "+",
+                "ptr",
+                local(ptrName, "ptr"),
+                binary("*", "u32", local(cursorName, "u32"), constant(layout.elementStride, "u32")),
+              ),
+              layout.elementsOffset,
+            ),
+          ),
+          assign(local(cursorName, "u32"), binary("+", "u32", local(cursorName, "u32"), constant(1, "u32"))),
+        ]),
+        store(
+          "u8",
+          local(ptrName, "ptr"),
+          LINEAR_ARRAY_FORWARDING.tagOffset,
+          constant(LINEAR_ARRAY_FORWARDING.tag, "u32"),
+        ),
+        store("u32", local(ptrName, "ptr"), LINEAR_ARRAY_FORWARDING.pointerOffset, local(nextName, "ptr")),
+        returnNode(local(nextName, "ptr")),
+      ];
+    } else if (operation === "set") {
+      addParam(indexName, "i32");
+      addParam(valueName, "f64");
+      addLocal(cursorName, "u32");
+      const fillLabel = "#js2_arr_fill_loop";
+      body = [
+        ifNode(binary("<", "i32", local(indexName, "i32"), constant(0), true), [returnNode()]),
+        assign(local(ptrName, "ptr"), call("#js2_vec_resolve", "ptr", [local(ptrName, "ptr")])),
+        ifNode(
+          binary(
+            ">=",
+            "i32",
+            local(indexName, "i32"),
+            load("u32", "u32", local(ptrName, "ptr"), layout.capacityOffset),
+            true,
+          ),
+          [
+            assign(
+              local(ptrName, "ptr"),
+              call("#js2_vec_grow", "ptr", [
+                local(ptrName, "ptr"),
+                binary("+", "i32", local(indexName, "i32"), constant(1)),
+              ]),
+            ),
+          ],
+        ),
+        assign(local(cursorName, "u32"), load("u32", "u32", local(ptrName, "ptr"), layout.lengthOffset)),
+        loop(fillLabel, [
+          ifNode(binary(">=", "i32", local(cursorName, "u32"), local(indexName, "i32"), true), [breakNode(fillLabel)]),
+          store(
+            "f64",
+            binary(
+              "+",
+              "ptr",
+              local(ptrName, "ptr"),
+              binary("*", "u32", local(cursorName, "u32"), constant(layout.elementStride, "u32")),
+            ),
+            layout.elementsOffset,
+            constant(0, "f64"),
+          ),
+          assign(local(cursorName, "u32"), binary("+", "u32", local(cursorName, "u32"), constant(1, "u32"))),
+        ]),
+        ifNode(
+          binary(
+            ">=",
+            "i32",
+            local(indexName, "i32"),
+            load("u32", "u32", local(ptrName, "ptr"), layout.lengthOffset),
+            true,
+          ),
+          [
+            store(
+              "u32",
+              local(ptrName, "ptr"),
+              layout.lengthOffset,
+              binary("+", "i32", local(indexName, "i32"), constant(1)),
+            ),
+          ],
+        ),
+        store(
+          "f64",
+          binary(
+            "+",
+            "ptr",
+            local(ptrName, "ptr"),
+            binary("*", "u32", local(indexName, "i32"), constant(layout.elementStride, "u32")),
+          ),
+          layout.elementsOffset,
+          local(valueName, "f64"),
+        ),
+        returnNode(),
+      ];
+    } else if (operation === "get") {
+      addParam(indexName, "i32");
+      retType = "f64";
+      body = [
+        assign(local(ptrName, "ptr"), call("#js2_vec_resolve", "ptr", [local(ptrName, "ptr")])),
+        ifNode(binary("<", "i32", local(indexName, "i32"), constant(0), true), [
+          returnNode(constant(Number.NaN, "f64")),
+        ]),
+        ifNode(
+          binary(
+            ">=",
+            "i32",
+            local(indexName, "i32"),
+            load("u32", "u32", local(ptrName, "ptr"), layout.lengthOffset),
+            true,
+          ),
+          [returnNode(constant(Number.NaN, "f64"))],
+        ),
+        returnNode(
+          load(
+            "f64",
+            "f64",
+            binary(
+              "+",
+              "ptr",
+              local(ptrName, "ptr"),
+              binary("*", "u32", local(indexName, "i32"), constant(layout.elementStride, "u32")),
+            ),
+            layout.elementsOffset,
+          ),
+        ),
+      ];
+    } else {
+      retType = "i32";
+      body = [
+        assign(local(ptrName, "ptr"), call("#js2_vec_resolve", "ptr", [local(ptrName, "ptr")])),
+        returnNode(load("i32", "i32", local(ptrName, "ptr"), layout.lengthOffset)),
+      ];
+    }
+
+    return { name: this.functionPhysicalName(entry), index, params, retType: typeOrdinal(retType), locals, body };
+  }
+
+  /**
+   * Runtime calls do not carry an allocation-site operand. Until shared IR
+   * does, a Porffor growth helper can bind safely only when the plan has one
+   * exact f64 vector site. Reject ambiguity instead of choosing the first site
+   * with the same layout and silently attributing growth to the wrong owner.
+   */
+  private requireLinearArrayRuntimeContract() {
+    const plan = this.requireMemoryPlan();
+    const layout = plan.layoutForVector(irVal({ kind: "f64" }));
+    if (!layout || layout.elementStorage !== "f64") {
+      throw new Error("porffor assembler: f64 vector layout is absent for the array runtime");
+    }
+    const allocations = plan.allocationsForLayout(layout.id);
+    if (allocations.length !== 1) {
+      throw new Error(
+        `porffor assembler: array runtime requires one exact allocation for '${layout.id}', found ${allocations.length}`,
+      );
+    }
+    const allocation = allocations[0]!;
+    if (allocation.allocationClass !== "arena" || allocation.allocationKind !== "array") {
+      throw new Error(`porffor assembler: array runtime requires one arena array allocation for '${layout.id}'`);
+    }
+    plannedOperation(
+      allocation.operations,
+      (candidate) =>
+        candidate.family === "vector" &&
+        candidate.operation === "grow" &&
+        candidate.allocationClass === allocation.allocationClass &&
+        candidate.elementStorage === layout.elementStorage,
+      `exact vector grow operation for allocation ${allocation.id as number}`,
+    );
+    const forwarding = LINEAR_ARRAY_FORWARDING;
+    if (
+      forwarding.tagOffset < 0 ||
+      forwarding.pointerOffset < 0 ||
+      forwarding.pointerBytes <= 0 ||
+      forwarding.pointerOffset % forwarding.pointerBytes !== 0 ||
+      forwarding.tagOffset >= layout.lengthOffset ||
+      forwarding.pointerOffset + forwarding.pointerBytes > layout.lengthOffset
+    ) {
+      throw new Error(`porffor assembler: array forwarding contract overlaps '${layout.id}' vector fields`);
+    }
+    return { allocation, layout };
   }
 
   private instrumentPorfforStackFrame(
@@ -700,6 +1138,22 @@ export class PorfforModuleAssembler
           );
           break;
         }
+        case "mem-copy": {
+          const destination = this.assembleExpr(statement.destination, locals);
+          const source = this.assembleExpr(statement.source, locals);
+          const bytes = this.assembleExpr(statement.bytes, locals);
+          out.push(
+            node(
+              "MemCopy",
+              "none",
+              destination[2] | source[2] | bytes[2] | PORFFOR_FX.readMem | PORFFOR_FX.writeMem,
+              destination,
+              source,
+              [bytes, statement.mayOverlap],
+            ),
+          );
+          break;
+        }
         case "gc-barrier": {
           const pointer = this.assembleExpr(statement.pointer, locals);
           const typeId = this.assembleExpr(statement.typeId, locals);
@@ -777,7 +1231,7 @@ export class PorfforModuleAssembler
           if (!this.stackGlobals) throw new Error("porffor assembler: stack allocation has no runtime");
           return node("Call", "ptr", bytes[2] | PORFFOR_FX.call, "#js2_stack_allocate", [bytes], 0);
         }
-        return node("Alloc", "ptr", bytes[2] | PORFFOR_FX.call, bytes, expression.typeId, [expression.siteId, false]);
+        return allocNode(bytes, expression.typeId);
       }
       case "load": {
         const pointer = this.assembleExpr(expression.pointer, locals);
@@ -850,13 +1304,63 @@ export class PorfforModuleAssembler
       `vector element initialization for '${layout.id}'`,
     );
     return {
-      vecStructTypeIdx: 0,
+      valueType: { kind: "i32" },
+      vecStructTypeIdx: PORFFOR_LINEAR_F64_VEC_TYPE_INDEX,
       lengthFieldIdx: 0,
       dataFieldIdx: 0,
       arrayTypeIdx: 0,
       elementValType: { kind: "f64" },
       linearMemory: { allocation, layout, allocate, initializeElement },
     };
+  }
+
+  private assignPhysicalFunctionNames(): void {
+    const entries = [...this.funcsByHandle.values()];
+    const reserved = new Set(entries.map((entry) => entry.name));
+    const used = new Set<string>();
+    const byDisplayName = new Map<string, FunctionEntry[]>();
+    for (const entry of entries) {
+      const sameLabel = byDisplayName.get(entry.name);
+      if (sameLabel) sameLabel.push(entry);
+      else byDisplayName.set(entry.name, [entry]);
+    }
+
+    for (const displayName of [...byDisplayName.keys()].sort(compareText)) {
+      const sameLabel = byDisplayName.get(displayName)!.sort(compareFunctionEntry);
+      if (sameLabel.length === 1) {
+        sameLabel[0]!.physicalName = displayName;
+        used.add(displayName);
+        continue;
+      }
+
+      const provider = sameLabel.find((entry) => entry.unitId === undefined);
+      if (provider) {
+        provider.physicalName = displayName;
+        used.add(displayName);
+      }
+      for (const entry of sameLabel) {
+        if (entry === provider) continue;
+        const unitId = entry.unitId;
+        if (unitId === undefined) {
+          throw new Error(`porffor assembler: duplicate provider function label '${displayName}'`);
+        }
+        const encoded = encodeURIComponent(unitId);
+        let candidate = `${displayName}__ir_${encoded}`;
+        let discriminator = 0;
+        while (reserved.has(candidate) || used.has(candidate)) {
+          candidate = `__ir_identity_${encoded}_${discriminator++}`;
+        }
+        entry.physicalName = candidate;
+        used.add(candidate);
+      }
+    }
+  }
+
+  private functionPhysicalName(entry: FunctionEntry): string {
+    if (!entry.physicalName) {
+      throw new Error(`porffor assembler: function '${entry.name}' has no finalized physical name`);
+    }
+    return entry.physicalName;
   }
 
   private bindTypeName(name: string, entry: TypeEntry): void {
@@ -889,6 +1393,29 @@ function isAllocationBindingOperation(operation: LinearRuntimeOperation): boolea
     (operation.family === "string" && operation.operation === "materialize-data") ||
     (operation.family === "managed" && operation.operation === "allocate")
   );
+}
+
+function linearArrayRuntimeKind(name: string): FunctionEntry["linearArrayRuntime"] {
+  if (name.startsWith(IR_VEC_ELEM_SET_PREFIX)) {
+    const element = parseIrVectorRuntimeElement(name, IR_VEC_ELEM_SET_PREFIX);
+    if (element?.kind !== "f64") {
+      throw new Error(`porffor assembler: unsupported logical vector helper '${name}'`);
+    }
+    return "set";
+  }
+  const set = /^__vec_elem_set_(\d+)$/.exec(name);
+  if (set) {
+    const vectorTypeIndex = Number(set[1]);
+    if (vectorTypeIndex !== PORFFOR_LINEAR_F64_VEC_TYPE_INDEX) {
+      throw new Error(
+        `porffor assembler: unsupported non-f64 vector helper '${name}' (expected type index ${PORFFOR_LINEAR_F64_VEC_TYPE_INDEX})`,
+      );
+    }
+    return "set";
+  }
+  if (name === "__arr_get") return "get";
+  if (name === "__arr_len") return "len";
+  return undefined;
 }
 
 function oneLoweredSlot(slots: readonly PorfforValueSlot[], where: string): PorfforValueSlot {
@@ -937,6 +1464,17 @@ function node(
   return [kindOrdinal, typeOrdinal(type), effects, a, b, c];
 }
 
+/**
+ * Assemble the exact upstream Alloc node shape.
+ *
+ * Allocation-site provenance and class selection remain in LinearMemoryPlan
+ * and are consumed before this boundary; pre-alpha 9 no longer carries JS2's
+ * former [siteId, raw] adapter metadata in slot C.
+ */
+function allocNode(bytes: PorfforNode, typeId = 0): PorfforNode {
+  return node("Alloc", "ptr", bytes[2] | PORFFOR_FX.call, bytes, typeId, 0);
+}
+
 function typeOrdinal(type: PorfforValueSlot | "none"): number {
   const ordinal = TYPE_ORDINAL.get(type);
   if (ordinal === undefined) throw new Error(`porffor assembler: unknown value type '${type}'`);
@@ -954,6 +1492,17 @@ function requirePosition<Handle extends number>(
 }
 
 function byName(left: { readonly name: string }, right: { readonly name: string }): number {
+  return compareText(left.name, right.name);
+}
+
+function compareFunctionEntry(left: FunctionEntry, right: FunctionEntry): number {
+  const nameOrder = compareText(left.name, right.name);
+  if (nameOrder !== 0) return nameOrder;
+  if (left.unitId !== undefined && right.unitId !== undefined) {
+    return compareIrIdentity(left.unitId, right.unitId);
+  }
+  if (left.unitId !== undefined) return 1;
+  if (right.unitId !== undefined) return -1;
   return compareText(left.name, right.name);
 }
 

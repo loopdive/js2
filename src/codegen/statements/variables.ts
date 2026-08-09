@@ -11,6 +11,7 @@ import type { CodegenContext, FunctionContext, NullGuardFact, NullishExclusion }
 import { emitCoercedLocalSet, noJsHost } from "../expressions/helpers.js";
 import { emitUndefined } from "../expressions/late-imports.js";
 import { needsTdzFlag, resolveWasmType, varBindingNeedsExternrefForUndefined } from "../index.js";
+import { nativeTypeOfDeclaration } from "../native-type-annotations.js";
 import { widenedVarKeyFromDecl } from "../widened-var-key.js";
 import {
   objectLiteralIsStandaloneAnyObjectCarrier,
@@ -26,16 +27,620 @@ import {
   getOrRegisterVecType,
 } from "../registry/types.js";
 import { coerceType, compileExpression, valTypesMatch } from "../shared.js";
+import { resolveFnctorTypedBindingType } from "../fnctor-typed-bindings.js";
 import { emitGuardedRefCast } from "../type-coercion.js";
 import { emitLazyClassObjectGet } from "../expressions/extern.js";
 import { compileArrayDestructuring, compileObjectDestructuring } from "./destructuring.js";
-import { compileNestedClassDeclaration } from "./nested-declarations.js";
+import { compileNestedClassDeclaration, emitPreparedAccessorComputedNameEffects } from "./nested-declarations.js";
 import { emitLocalTdzInit, emitTdzInit } from "./tdz.js";
-import { ensureNativeStringHelpers } from "../native-strings.js";
+import { ensureNativeStringHelpers, flatStringType } from "../native-strings.js";
 import { compileStringBuilderInit } from "../string-builder.js";
 import { tryEmitLinearU8New } from "../linear-uint8-codegen.js";
+import { tryCompileWithScopedVarDeclaration } from "../with-var-decl.js";
+import { bindingHasMixedAssignmentCarrier } from "../analysis/mixed-assignment-carrier.js";
+import { staticConstStringValues } from "../analysis/static-string-values.js";
+import { staticIntegerRange } from "../analysis/static-numeric-range.js";
+import { tryEmitStaticI32Expression } from "../i32-static-range-expr.js";
+import { tryCompileDerivedAsciiCaseBinding as tryAsciiCase } from "../derived-ascii-case.js";
 
-function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclaration): ValType | null {
+function symbolIsReadOnlyThroughLength(
+  ctx: CodegenContext,
+  symbol: ts.Symbol,
+  declaration: ts.VariableDeclaration,
+): boolean {
+  let safe = true;
+  let scope: ts.Node = declaration;
+  while (scope.parent && !ts.isFunctionLike(scope.parent) && !ts.isSourceFile(scope.parent)) scope = scope.parent;
+  scope = scope.parent ?? scope;
+  const visit = (node: ts.Node): void => {
+    if (!safe) return;
+    if (ts.isIdentifier(node) && ctx.checker.getSymbolAtLocation(node) === symbol) {
+      if (node === declaration.name) return;
+      const property = node.parent;
+      if (!ts.isPropertyAccessExpression(property) || property.expression !== node || property.name.text !== "length") {
+        safe = false;
+        return;
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(scope);
+  return safe;
+}
+
+function isCanonicalSplitElementIndex(
+  ctx: CodegenContext,
+  element: ts.ElementAccessExpression,
+  arraySymbol: ts.Symbol,
+): boolean {
+  const index = element.argumentExpression;
+  if (!index || !ts.isIdentifier(index)) return false;
+  const indexSymbol = ctx.checker.getSymbolAtLocation(index);
+  const declaration = indexSymbol?.valueDeclaration;
+  if (!indexSymbol || !declaration || !ts.isVariableDeclaration(declaration) || !declaration.initializer) return false;
+  const list = declaration.parent;
+  const loop = ts.isVariableDeclarationList(list) && ts.isForStatement(list.parent) ? list.parent : undefined;
+  if (!loop || loop.initializer !== list || !loop.condition || !loop.incrementor) return false;
+  const start = staticIntegerRange(ctx, declaration.initializer);
+  if (!start || start.min !== start.max || start.min < 0) return false;
+  if (
+    !ts.isBinaryExpression(loop.condition) ||
+    loop.condition.operatorToken.kind !== ts.SyntaxKind.LessThanToken ||
+    !ts.isIdentifier(loop.condition.left) ||
+    ctx.checker.getSymbolAtLocation(loop.condition.left) !== indexSymbol ||
+    !ts.isPropertyAccessExpression(loop.condition.right) ||
+    loop.condition.right.name.text !== "length" ||
+    !ts.isIdentifier(loop.condition.right.expression) ||
+    ctx.checker.getSymbolAtLocation(loop.condition.right.expression) !== arraySymbol
+  ) {
+    return false;
+  }
+  const increment = loop.incrementor;
+  if (
+    (ts.isPrefixUnaryExpression(increment) || ts.isPostfixUnaryExpression(increment)) &&
+    increment.operator === ts.SyntaxKind.PlusPlusToken &&
+    ts.isIdentifier(increment.operand) &&
+    ctx.checker.getSymbolAtLocation(increment.operand) === indexSymbol
+  ) {
+    return true;
+  }
+  if (!ts.isBinaryExpression(increment) || !ts.isIdentifier(increment.left)) return false;
+  if (ctx.checker.getSymbolAtLocation(increment.left) !== indexSymbol) return false;
+  if (increment.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken) {
+    const step = staticIntegerRange(ctx, increment.right);
+    return step?.min === 1 && step.max === 1;
+  }
+  if (increment.operatorToken.kind !== ts.SyntaxKind.EqualsToken || !ts.isBinaryExpression(increment.right)) {
+    return false;
+  }
+  const rhs = increment.right;
+  return (
+    rhs.operatorToken.kind === ts.SyntaxKind.PlusToken &&
+    ts.isIdentifier(rhs.left) &&
+    ctx.checker.getSymbolAtLocation(rhs.left) === indexSymbol &&
+    staticIntegerRange(ctx, rhs.right)?.min === 1 &&
+    staticIntegerRange(ctx, rhs.right)?.max === 1
+  );
+}
+
+function isNestedLengthOnlySplitElement(
+  ctx: CodegenContext,
+  element: ts.ElementAccessExpression,
+  arraySymbol: ts.Symbol,
+): boolean {
+  if (!isCanonicalSplitElementIndex(ctx, element, arraySymbol)) return false;
+  const property = element.parent;
+  if (!ts.isPropertyAccessExpression(property) || property.expression !== element || property.name.text !== "split") {
+    return false;
+  }
+  const call = property.parent;
+  if (
+    !ts.isCallExpression(call) ||
+    call.expression !== property ||
+    call.arguments.length !== 1 ||
+    !ts.isStringLiteralLike(call.arguments[0]!)
+  ) {
+    return false;
+  }
+  const values = staticConstStringValues(ctx, element);
+  if (!values) return false;
+  const separator = call.arguments[0]!.text;
+  if (new Set(values.map((value) => value.split(separator).length)).size !== 1) return false;
+  const declaration = call.parent;
+  if (
+    !ts.isVariableDeclaration(declaration) ||
+    declaration.initializer !== call ||
+    !ts.isIdentifier(declaration.name) ||
+    !ts.isVariableDeclarationList(declaration.parent) ||
+    !(declaration.parent.flags & ts.NodeFlags.Const)
+  ) {
+    return false;
+  }
+  const symbol = ctx.checker.getSymbolAtLocation(declaration.name);
+  return symbol !== undefined && symbolIsReadOnlyThroughLength(ctx, symbol, declaration);
+}
+
+function tryCompileUniformSplitLengthBinding(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.VariableStatement,
+  decl: ts.VariableDeclaration,
+): boolean {
+  if (!(stmt.declarationList.flags & ts.NodeFlags.Const)) return false;
+  if (!ts.isIdentifier(decl.name) || !decl.initializer || !ts.isCallExpression(decl.initializer)) return false;
+  const call = decl.initializer;
+  if (!ts.isPropertyAccessExpression(call.expression) || call.expression.name.text !== "split") return false;
+  if (call.arguments.length !== 1 || !ts.isStringLiteralLike(call.arguments[0]!)) return false;
+
+  const symbol = ctx.checker.getSymbolAtLocation(decl.name);
+  if (!symbol) return false;
+  let scalarReadsOnly = true;
+  let hasNestedElementReads = false;
+  const scope = (() => {
+    let node: ts.Node = decl;
+    while (node.parent && !ts.isFunctionLike(node.parent) && !ts.isSourceFile(node.parent)) node = node.parent;
+    return node.parent ?? node;
+  })();
+  const visit = (node: ts.Node): void => {
+    if (!scalarReadsOnly) return;
+    if (ts.isIdentifier(node) && ctx.checker.getSymbolAtLocation(node) === symbol) {
+      if (node === decl.name) return;
+      const parent = node.parent;
+      if (ts.isPropertyAccessExpression(parent) && parent.expression === node && parent.name.text === "length") {
+        // accepted
+      } else if (ts.isElementAccessExpression(parent) && parent.expression === node) {
+        if (!isNestedLengthOnlySplitElement(ctx, parent, symbol)) {
+          scalarReadsOnly = false;
+          return;
+        }
+        hasNestedElementReads = true;
+      } else {
+        scalarReadsOnly = false;
+        return;
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(scope);
+  if (!scalarReadsOnly) return false;
+
+  const receiver = call.expression.expression;
+  const values = staticConstStringValues(ctx, receiver);
+  if (!values) return false;
+  const separator = call.arguments[0]!.text;
+  const lengths = new Set(values.map((value) => value.split(separator).length));
+  if (lengths.size !== 1) return false;
+  const length = lengths.values().next().value;
+  if (length === undefined) return false;
+
+  // A nested CSV-shaped descriptor retains the outer split call so the source
+  // still performs one real string operation per document. Only its unobserved
+  // result array and the inner length-only splits are scalar-replaced. A plain
+  // length-only binding needs only the receiver evaluation and its null/OOB
+  // trap; the literal separator itself has no side effects.
+  const derivedElement =
+    ts.isElementAccessExpression(receiver) && ts.isIdentifier(receiver.expression)
+      ? (() => {
+          const arraySymbol = ctx.checker.getSymbolAtLocation(receiver.expression);
+          return arraySymbol && fctx.derivedStaticSplitArrays?.has(arraySymbol)
+            ? { arraySymbol, safe: isCanonicalSplitElementIndex(ctx, receiver, arraySymbol) }
+            : undefined;
+        })()
+      : undefined;
+  if (derivedElement && !derivedElement.safe) return false;
+  if (hasNestedElementReads) {
+    const splitType = compileExpression(ctx, fctx, call);
+    if (splitType) fctx.body.push({ op: "drop" });
+  } else if (!derivedElement) {
+    const receiverType = compileExpression(ctx, fctx, receiver);
+    if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+      if (receiverType?.kind === "externref") {
+        coerceType(ctx, fctx, receiverType, { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx });
+      }
+      fctx.body.push({ op: "struct.get", typeIdx: ctx.anyStrTypeIdx, fieldIdx: 0 });
+      fctx.body.push({ op: "drop" });
+    } else if (receiverType) {
+      fctx.body.push({ op: "drop" });
+    }
+  }
+  fctx.body.push({ op: "i32.const", value: length });
+  const localIdx = allocLocal(fctx, `__split_length_${decl.name.text}_${fctx.locals.length}`, { kind: "i32" });
+  fctx.body.push({ op: "local.set", index: localIdx });
+  (fctx.derivedStringArrayLengthLocals ??= new Map()).set(symbol, localIdx);
+  if (hasNestedElementReads) {
+    (fctx.derivedStaticSplitArrays ??= new Map()).set(symbol, { length });
+  }
+  emitTdzInit(ctx, fctx, decl.name.text);
+  return true;
+}
+
+function tryCompileSingleUnitSplitLengthBinding(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.VariableStatement,
+  decl: ts.VariableDeclaration,
+): boolean {
+  if (
+    !ctx.nativeStrings ||
+    ctx.anyStrTypeIdx < 0 ||
+    ctx.nativeStrTypeIdx < 0 ||
+    ctx.nativeStrDataTypeIdx < 0 ||
+    !(stmt.declarationList.flags & ts.NodeFlags.Const)
+  ) {
+    return false;
+  }
+  if (!ts.isIdentifier(decl.name) || !decl.initializer || !ts.isCallExpression(decl.initializer)) return false;
+  const call = decl.initializer;
+  if (!ts.isPropertyAccessExpression(call.expression) || call.expression.name.text !== "split") return false;
+  if (
+    call.arguments.length !== 1 ||
+    !ts.isStringLiteralLike(call.arguments[0]!) ||
+    call.arguments[0]!.text.length !== 1
+  ) {
+    return false;
+  }
+  const symbol = ctx.checker.getSymbolAtLocation(decl.name);
+  if (!symbol) return false;
+  let onlyLengthReads = true;
+  let scope: ts.Node = decl;
+  while (scope.parent && !ts.isFunctionLike(scope.parent) && !ts.isSourceFile(scope.parent)) scope = scope.parent;
+  scope = scope.parent ?? scope;
+  const visit = (node: ts.Node): void => {
+    if (!onlyLengthReads) return;
+    if (ts.isIdentifier(node) && ctx.checker.getSymbolAtLocation(node) === symbol) {
+      if (node === decl.name) return;
+      const property = node.parent;
+      if (!ts.isPropertyAccessExpression(property) || property.expression !== node || property.name.text !== "length") {
+        onlyLengthReads = false;
+        return;
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(scope);
+  if (!onlyLengthReads) return false;
+
+  ensureNativeStringHelpers(ctx);
+  const flatLocal = allocLocal(fctx, `__split_count_flat_${fctx.locals.length}`, flatStringType(ctx));
+  const receiverType = compileExpression(ctx, fctx, call.expression.expression);
+  if (receiverType?.kind === "externref") {
+    coerceType(ctx, fctx, receiverType, { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx });
+  }
+  fctx.body.push({ op: "call", funcIdx: ctx.nativeStrHelpers.get("__str_flatten")! });
+  fctx.body.push({ op: "local.set", index: flatLocal });
+  const dataLocal = allocLocal(fctx, `__split_count_data_${fctx.locals.length}`, {
+    kind: "ref",
+    typeIdx: ctx.nativeStrDataTypeIdx,
+  });
+  const offLocal = allocLocal(fctx, `__split_count_off_${fctx.locals.length}`, { kind: "i32" });
+  const lenLocal = allocLocal(fctx, `__split_count_len_${fctx.locals.length}`, { kind: "i32" });
+  const indexLocal = allocLocal(fctx, `__split_count_i_${fctx.locals.length}`, { kind: "i32" });
+  const countLocal = allocLocal(fctx, `__split_count_${decl.name.text}_${fctx.locals.length}`, { kind: "i32" });
+  fctx.body.push({ op: "local.get", index: flatLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: ctx.nativeStrTypeIdx, fieldIdx: 2 });
+  fctx.body.push({ op: "local.set", index: dataLocal });
+  fctx.body.push({ op: "local.get", index: flatLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: ctx.nativeStrTypeIdx, fieldIdx: 1 });
+  fctx.body.push({ op: "local.set", index: offLocal });
+  fctx.body.push({ op: "local.get", index: flatLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: ctx.nativeStrTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "local.set", index: lenLocal });
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "local.set", index: indexLocal });
+  fctx.body.push({ op: "i32.const", value: 1 });
+  fctx.body.push({ op: "local.set", index: countLocal });
+  fctx.body.push({
+    op: "block",
+    blockType: { kind: "empty" },
+    body: [
+      {
+        op: "loop",
+        blockType: { kind: "empty" },
+        body: [
+          { op: "local.get", index: indexLocal },
+          { op: "local.get", index: lenLocal },
+          { op: "i32.ge_s" },
+          { op: "br_if", depth: 1 },
+          { op: "local.get", index: dataLocal },
+          { op: "local.get", index: offLocal },
+          { op: "local.get", index: indexLocal },
+          { op: "i32.add" },
+          { op: "array.get_u", typeIdx: ctx.nativeStrDataTypeIdx },
+          { op: "i32.const", value: call.arguments[0]!.text.charCodeAt(0) },
+          { op: "i32.eq" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: countLocal },
+              { op: "i32.const", value: 1 },
+              { op: "i32.add" },
+              { op: "local.set", index: countLocal },
+            ],
+          },
+          { op: "local.get", index: indexLocal },
+          { op: "i32.const", value: 1 },
+          { op: "i32.add" },
+          { op: "local.set", index: indexLocal },
+          { op: "br", depth: 0 },
+        ],
+      },
+    ],
+  });
+  (fctx.derivedStringArrayLengthLocals ??= new Map()).set(symbol, countLocal);
+  emitTdzInit(ctx, fctx, decl.name.text);
+  return true;
+}
+
+function tryCompileDerivedSubstringBinding(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.VariableStatement,
+  decl: ts.VariableDeclaration,
+): boolean {
+  if (!(stmt.declarationList.flags & ts.NodeFlags.Const)) {
+    return false;
+  }
+  if (ctx.nativeStrings && (ctx.nativeStrTypeIdx < 0 || ctx.nativeStrDataTypeIdx < 0)) return false;
+  if (!ts.isIdentifier(decl.name) || !decl.initializer || !ts.isCallExpression(decl.initializer)) return false;
+  const call = decl.initializer;
+  if (!ts.isPropertyAccessExpression(call.expression) || call.expression.name.text !== "substring") return false;
+  if (call.arguments.length !== 2) return false;
+
+  let descriptorOnly = true;
+  const scope = (() => {
+    let node: ts.Node = decl;
+    while (node.parent && !ts.isFunctionLike(node.parent) && !ts.isSourceFile(node.parent)) node = node.parent;
+    return node.parent ?? node;
+  })();
+  const visit = (node: ts.Node): void => {
+    if (!descriptorOnly) return;
+    if (ts.isIdentifier(node) && ctx.oracle.valueDeclarationOf(node) === decl) {
+      if (node === decl.name) return;
+      const property = node.parent;
+      if (!ts.isPropertyAccessExpression(property) || property.expression !== node) {
+        descriptorOnly = false;
+        return;
+      }
+      if (property.name.text === "length") {
+        // accepted
+      } else if (
+        property.name.text !== "charCodeAt" ||
+        !ts.isCallExpression(property.parent) ||
+        property.parent.expression !== property
+      ) {
+        descriptorOnly = false;
+        return;
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(scope);
+  if (!descriptorOnly) return false;
+
+  const receiver = call.expression.expression;
+  const receiverValues = staticConstStringValues(ctx, receiver);
+  const startRange = staticIntegerRange(ctx, call.arguments[0]!);
+  const endRange = staticIntegerRange(ctx, call.arguments[1]!);
+  const shortestReceiver = receiverValues ? Math.min(...receiverValues.map((value) => value.length)) : -1;
+  const orderedInBounds =
+    startRange !== undefined &&
+    endRange !== undefined &&
+    shortestReceiver >= 0 &&
+    startRange.min >= 0 &&
+    endRange.min >= 0 &&
+    startRange.max <= endRange.min &&
+    endRange.max <= shortestReceiver;
+
+  const compileIndex = (arg: ts.Expression, local: number): void => {
+    if (!tryEmitStaticI32Expression(ctx, fctx, arg)) {
+      const type = compileExpression(ctx, fctx, arg, { kind: "i32" });
+      if (type && type.kind !== "i32") coerceType(ctx, fctx, type, { kind: "i32" });
+    }
+    fctx.body.push({ op: "local.set", index: local });
+  };
+  const startLocal = allocLocal(fctx, `__substring_start_${fctx.locals.length}`, { kind: "i32" });
+  const endLocal = allocLocal(fctx, `__substring_end_${fctx.locals.length}`, { kind: "i32" });
+
+  if (!ctx.nativeStrings) {
+    // A host string is opaque to Wasm, but a non-escaping, range-proven
+    // substring can still be represented as (receiver, offset, length). Its
+    // charCodeAt consumers use the wasm:js-string builtin against the original
+    // receiver at offset+index, avoiding substring allocation and length calls.
+    if (!orderedInBounds) return false;
+    const receiverLocal = allocLocal(fctx, `__substring_host_recv_${fctx.locals.length}`, { kind: "externref" });
+    const receiverType = compileExpression(ctx, fctx, receiver, { kind: "externref" });
+    if (receiverType && receiverType.kind !== "externref" && receiverType.kind !== "ref_extern") {
+      coerceType(ctx, fctx, receiverType, { kind: "externref" });
+    }
+    fctx.body.push({ op: "local.set", index: receiverLocal });
+    compileIndex(call.arguments[0]!, startLocal);
+    compileIndex(call.arguments[1]!, endLocal);
+    const lenLocal = allocLocal(fctx, `__substring_len_${fctx.locals.length}`, { kind: "i32" });
+    fctx.body.push({ op: "local.get", index: endLocal });
+    fctx.body.push({ op: "local.get", index: startLocal });
+    fctx.body.push({ op: "i32.sub" });
+    fctx.body.push({ op: "local.set", index: lenLocal });
+    (fctx.derivedSubstringReads ??= new Map()).set(decl, {
+      kind: "host",
+      receiverLocal,
+      offLocal: startLocal,
+      lenLocal,
+      minLen: endRange!.min - startRange!.max,
+    });
+    emitTdzInit(ctx, fctx, decl.name.text);
+    return true;
+  }
+
+  ensureNativeStringHelpers(ctx);
+  const flatLocal = allocLocal(fctx, `__substring_flat_${fctx.locals.length}`, flatStringType(ctx));
+  const receiverType = compileExpression(ctx, fctx, receiver);
+  if (receiverType?.kind === "externref") {
+    coerceType(ctx, fctx, receiverType, { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx });
+  }
+  if (receiverValues) {
+    fctx.body.push({ op: "ref.cast", typeIdx: ctx.nativeStrTypeIdx });
+  } else {
+    fctx.body.push({ op: "call", funcIdx: ctx.nativeStrHelpers.get("__str_flatten")! });
+  }
+  fctx.body.push({ op: "local.set", index: flatLocal });
+
+  const sourceLenLocal = orderedInBounds
+    ? undefined
+    : allocLocal(fctx, `__substring_source_len_${fctx.locals.length}`, { kind: "i32" });
+  if (sourceLenLocal !== undefined) {
+    fctx.body.push({ op: "local.get", index: flatLocal });
+    fctx.body.push({ op: "struct.get", typeIdx: ctx.nativeStrTypeIdx, fieldIdx: 0 });
+    fctx.body.push({ op: "local.set", index: sourceLenLocal });
+  }
+
+  compileIndex(call.arguments[0]!, startLocal);
+  compileIndex(call.arguments[1]!, endLocal);
+
+  const clamp = (local: number): void => {
+    const sourceLength = sourceLenLocal!;
+    fctx.body.push({ op: "local.get", index: local });
+    fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "i32.lt_s" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "i32.const", value: 0 },
+        { op: "local.set", index: local },
+      ],
+    });
+    fctx.body.push({ op: "local.get", index: local });
+    fctx.body.push({ op: "local.get", index: sourceLength });
+    fctx.body.push({ op: "i32.gt_s" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: sourceLength },
+        { op: "local.set", index: local },
+      ],
+    });
+  };
+  if (!orderedInBounds) {
+    clamp(startLocal);
+    clamp(endLocal);
+    const swapLocal = allocLocal(fctx, `__substring_swap_${fctx.locals.length}`, { kind: "i32" });
+    fctx.body.push({ op: "local.get", index: startLocal });
+    fctx.body.push({ op: "local.get", index: endLocal });
+    fctx.body.push({ op: "i32.gt_s" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: startLocal },
+        { op: "local.set", index: swapLocal },
+        { op: "local.get", index: endLocal },
+        { op: "local.set", index: startLocal },
+        { op: "local.get", index: swapLocal },
+        { op: "local.set", index: endLocal },
+      ],
+    });
+  }
+
+  const dataLocal = allocLocal(fctx, `__substring_data_${fctx.locals.length}`, {
+    kind: "ref",
+    typeIdx: ctx.nativeStrDataTypeIdx,
+  });
+  const offLocal = allocLocal(fctx, `__substring_off_${fctx.locals.length}`, { kind: "i32" });
+  const lenLocal = allocLocal(fctx, `__substring_len_${fctx.locals.length}`, { kind: "i32" });
+  fctx.body.push({ op: "local.get", index: flatLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: ctx.nativeStrTypeIdx, fieldIdx: 2 });
+  fctx.body.push({ op: "local.set", index: dataLocal });
+  fctx.body.push({ op: "local.get", index: flatLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: ctx.nativeStrTypeIdx, fieldIdx: 1 });
+  fctx.body.push({ op: "local.get", index: startLocal });
+  fctx.body.push({ op: "i32.add" });
+  fctx.body.push({ op: "local.set", index: offLocal });
+  fctx.body.push({ op: "local.get", index: endLocal });
+  fctx.body.push({ op: "local.get", index: startLocal });
+  fctx.body.push({ op: "i32.sub" });
+  fctx.body.push({ op: "local.set", index: lenLocal });
+  const minLen = orderedInBounds ? endRange!.min - startRange!.max : 0;
+  (fctx.derivedSubstringReads ??= new Map()).set(decl, {
+    kind: "native",
+    dataLocal,
+    offLocal,
+    lenLocal,
+    minLen,
+  });
+  emitTdzInit(ctx, fctx, decl.name.text);
+  return true;
+}
+
+function tryCompileUniformIndexPresenceBinding(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.VariableStatement,
+  decl: ts.VariableDeclaration,
+): boolean {
+  if (!(stmt.declarationList.flags & ts.NodeFlags.Const)) return false;
+  if (!ts.isIdentifier(decl.name) || !decl.initializer || !ts.isCallExpression(decl.initializer)) return false;
+  const call = decl.initializer;
+  if (!ts.isPropertyAccessExpression(call.expression) || call.expression.name.text !== "indexOf") return false;
+  if (call.arguments.length !== 1) return false;
+  const receivers = staticConstStringValues(ctx, call.expression.expression);
+  const searches = staticConstStringValues(ctx, call.arguments[0]!);
+  if (!receivers || !searches || new Set(searches).size !== 1) return false;
+  const search = searches[0]!;
+  const presence = new Set(receivers.map((receiver) => receiver.indexOf(search) >= 0));
+  if (presence.size !== 1) return false;
+
+  const symbol = ctx.checker.getSymbolAtLocation(decl.name);
+  if (!symbol) return false;
+  let signOnly = true;
+  let scope: ts.Node = decl;
+  while (scope.parent && !ts.isFunctionLike(scope.parent) && !ts.isSourceFile(scope.parent)) scope = scope.parent;
+  scope = scope.parent ?? scope;
+  const visit = (node: ts.Node): void => {
+    if (!signOnly) return;
+    if (ts.isIdentifier(node) && ctx.checker.getSymbolAtLocation(node) === symbol) {
+      if (node === decl.name) return;
+      const comparison = node.parent;
+      if (
+        !ts.isBinaryExpression(comparison) ||
+        comparison.left !== node ||
+        comparison.operatorToken.kind !== ts.SyntaxKind.GreaterThanEqualsToken ||
+        !ts.isNumericLiteral(comparison.right) ||
+        Number(comparison.right.text) !== 0
+      ) {
+        signOnly = false;
+        return;
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(scope);
+  if (!signOnly) return false;
+
+  const receiverType = compileExpression(ctx, fctx, call.expression.expression);
+  if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+    if (receiverType?.kind === "externref") {
+      coerceType(ctx, fctx, receiverType, { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx });
+    }
+    fctx.body.push({ op: "struct.get", typeIdx: ctx.anyStrTypeIdx, fieldIdx: 0 });
+    fctx.body.push({ op: "drop" });
+  } else if (receiverType) {
+    fctx.body.push({ op: "drop" });
+  }
+  const existing = fctx.localMap.get(decl.name.text);
+  const localIdx = existing ?? allocLocal(fctx, decl.name.text, { kind: "f64" });
+  const localType = getLocalType(fctx, localIdx) ?? { kind: "f64" as const };
+  fctx.body.push({
+    op: localType.kind === "i32" ? "i32.const" : "f64.const",
+    value: presence.values().next().value ? 0 : -1,
+  });
+  fctx.body.push({ op: "local.set", index: localIdx });
+  emitTdzInit(ctx, fctx, decl.name.text);
+  return true;
+}
+
+export function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclaration): ValType | null {
   if (!ts.isIdentifier(decl.name)) return null;
   const varName = decl.name.text;
 
@@ -54,6 +659,9 @@ function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclaration): V
   if (!scope) return null;
 
   let inferredElemType: ts.Type | null = null;
+  let inferredElemWasm: ValType | null = null;
+  let mixedElementCarrier = false;
+  let sawDynamicElementWrite = false;
 
   // (#2806) A write whose value type is purely `undefined` / `void` / `null`
   // must NOT pin the array's element kind to a numeric (i32) vec. The canonical
@@ -69,9 +677,27 @@ function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclaration): V
     (t.flags & (ts.TypeFlags.Any | ts.TypeFlags.Undefined | ts.TypeFlags.Void | ts.TypeFlags.Null)) !== 0 &&
     (t.flags & ~(ts.TypeFlags.Any | ts.TypeFlags.Undefined | ts.TypeFlags.Void | ts.TypeFlags.Null)) === 0;
 
-  function visit(node: ts.Node) {
-    if (inferredElemType) return;
+  const recordWriteType = (value: ts.Expression): void => {
+    const valueType = ctx.checker.getTypeAtLocation(value);
+    if (isUnpinnableWriteType(valueType)) {
+      sawDynamicElementWrite = true;
+      return;
+    }
+    const wasmType = resolveWasmType(ctx, valueType);
+    if (!inferredElemType || !inferredElemWasm) {
+      inferredElemType = valueType;
+      inferredElemWasm = wasmType;
+      return;
+    }
+    const sameType =
+      inferredElemWasm.kind === wasmType.kind &&
+      (wasmType.kind !== "ref" && wasmType.kind !== "ref_null"
+        ? true
+        : (inferredElemWasm as { typeIdx: number }).typeIdx === wasmType.typeIdx);
+    if (!sameType) mixedElementCarrier = true;
+  };
 
+  function visit(node: ts.Node) {
     // arr[i] = value
     if (
       ts.isBinaryExpression(node) &&
@@ -80,11 +706,8 @@ function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclaration): V
       ts.isIdentifier(node.left.expression) &&
       node.left.expression.text === varName
     ) {
-      const valType = ctx.checker.getTypeAtLocation(node.right);
-      if (!isUnpinnableWriteType(valType)) {
-        inferredElemType = valType;
-        return;
-      }
+      const writeDecl = ctx.oracle.variableDeclarationOf(node.left.expression);
+      if (writeDecl === decl) recordWriteType(node.right);
     }
 
     // arr.push(value)
@@ -94,23 +717,23 @@ function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclaration): V
       node.expression.name.text === "push" &&
       ts.isIdentifier(node.expression.expression) &&
       node.expression.expression.text === varName &&
+      ctx.oracle.variableDeclarationOf(node.expression.expression) === decl &&
       node.arguments.length >= 1
     ) {
-      const valType = ctx.checker.getTypeAtLocation(node.arguments[0]!);
-      if (!isUnpinnableWriteType(valType)) {
-        inferredElemType = valType;
-        return;
-      }
+      for (const argument of node.arguments) recordWriteType(argument);
     }
 
     forEachChild(node, visit);
   }
 
   visit(scope);
-  if (!inferredElemType) return null;
+  if (!inferredElemType && !sawDynamicElementWrite) return null;
 
-  // Resolve the inferred element type to a wasm type, then register the vec
-  const elemWasm = resolveWasmType(ctx, inferredElemType);
+  // Heterogeneous queue/scratch arrays must preserve every JS value. ReactDOM's
+  // concurrentQueues stores [fiber, queue, update, lane] in one initially-empty
+  // array; committing to the first ref shape coerced the update/lane writes and
+  // later made `update.next = update` operate on boolean false.
+  const elemWasm: ValType = mixedElementCarrier || sawDynamicElementWrite ? { kind: "externref" } : inferredElemWasm!;
   const elemKey =
     elemWasm.kind === "ref" || elemWasm.kind === "ref_null"
       ? `ref_${(elemWasm as { typeIdx: number }).typeIdx}`
@@ -140,6 +763,12 @@ export function usageInferredLocalType(ctx: CodegenContext, decl: ts.VariableDec
 }
 
 function localTypeForDeclaration(ctx: CodegenContext, type: ts.Type, decl?: ts.VariableDeclaration): ValType {
+  // (#3673) Explicit native type annotation — `let x: i32` where
+  // `type i32 = number`; the annotation node is the only surviving evidence.
+  // It is a user assertion and outranks every inference below it.
+  const nativeLocal = nativeTypeOfDeclaration(ctx.checker, decl);
+  if (nativeLocal) return nativeLocal;
+  if (decl && bindingHasMixedAssignmentCarrier(ctx, decl)) return { kind: "externref" };
   if (isNullablePrimitiveType(type)) return { kind: "externref" };
   // (#2806) A `var x = (void 0)` binding needs an externref slot (the same one
   // `= undefined` gets), so a later reference assignment isn't coerced to numeric
@@ -700,6 +1329,16 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
 
     const name = decl.name.text;
 
+    // (#4231 RC-A) Inside a `with` body a `var` does NOT shadow the object
+    // environment record: the declaration hoists to the function environment but
+    // its initializer is an ordinary assignment resolved through the scope
+    // chain, where §14.11.2's object environment is consulted first. When the
+    // `with` target owns this name the store belongs to the OBJECT and the
+    // hoisted local must stay `undefined`, so this hook takes the declaration
+    // entirely. No-op outside a `with` (and for lexical declarations, which do
+    // shadow).
+    if (tryCompileWithScopedVarDeclaration(ctx, fctx, stmt, decl)) continue;
+
     // #1690b: a `var`/`let`/`const` declaration inside a function body always
     // introduces a function-local binding (ECMA-262 §10.2.10 for `var`;
     // block scoping for let/const), which shadows any module-level global of
@@ -710,6 +1349,15 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // (The module-init body compiles with an empty `localMap`, so this stays
     // false there and the module-global store path is preserved.)
     const hasLocalShadow = fctx.localMap.has(name);
+    // A lexical declaration nested in a top-level block is still local to that
+    // block. `moduleGlobals` is keyed only by name, so an outer Script-level
+    // binding with the same name must not make this declaration take the
+    // module-global fast path. `var` remains function/Script scoped.
+    const declarationIsLexical =
+      (stmt.declarationList.flags &
+        (ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing)) !==
+      0;
+    const bindsModuleGlobal = !declarationIsLexical || (stmt.parent !== undefined && ts.isSourceFile(stmt.parent));
 
     // Track const bindings for runtime enforcement (assignment throws TypeError)
     if (stmt.declarationList.flags & ts.NodeFlags.Const) {
@@ -723,6 +1371,10 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         }
       }
     }
+    if (tryCompileUniformSplitLengthBinding(ctx, fctx, stmt, decl)) continue;
+    if (tryCompileSingleUnitSplitLengthBinding(ctx, fctx, stmt, decl)) continue;
+    if (tryAsciiCase(ctx, fctx, stmt, decl) || tryCompileDerivedSubstringBinding(ctx, fctx, stmt, decl)) continue;
+    if (tryCompileUniformIndexPresenceBinding(ctx, fctx, stmt, decl)) continue;
 
     // #1210: string-builder rewrite for `let s = "";` followed by an
     // accumulating loop. Detected pre-pass populates `pendingStringBuilders`;
@@ -809,6 +1461,12 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         const deferredSynth = ctx.anonClassExprNames.get(decl.initializer);
         if (deferredSynth !== undefined && ctx.deferredClassBodies.has(deferredSynth)) {
           compileNestedClassDeclaration(ctx, fctx, decl.initializer, deferredSynth);
+        } else {
+          // Module-init class expressions were compiled eagerly, but their
+          // computed names still execute here, at runtime, immediately before
+          // the binding value is materialized. Deferred expressions already
+          // emit through compileNestedClassDeclaration above.
+          emitPreparedAccessorComputedNameEffects(ctx, fctx, decl.initializer);
         }
       }
       // (#3045 identity) Materialize a class-expression BINDING as the class's
@@ -844,28 +1502,115 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       // so other functions can access the closure via global.get.
       // #1690b: skip the module-global path when a function-local shadow
       // exists — the inner declaration must bind to the local, not the global.
-      const modGlobalIdx = hasLocalShadow ? undefined : ctx.moduleGlobals.get(name);
+      // (#3546) Additionally: only a genuinely TOP-LEVEL declaration binds the
+      // module global. A `let`/`const` inside a top-level BLOCK is a
+      // block-scoped SHADOW — `saveBlockScopedShadows` removed the outer
+      // binding's localMap entry on block entry, so `hasLocalShadow` is false
+      // here and the pre-fix code stored the block's closure into the OUTER
+      // module binding (`{ let f = () => 7; }` clobbered module `f`). `var`
+      // keeps the module store from any top-level block (§10.2.10 var
+      // scoping); function bodies are unaffected (their hoister pre-allocates
+      // the local, so `hasLocalShadow` gates them already).
+      const modGlobalIdx = hasLocalShadow || !bindsModuleGlobal ? undefined : ctx.moduleGlobals.get(name);
       if (modGlobalIdx !== undefined) {
-        // Update the global's type to match the actual closure ref type
+        // (#3534 step 2, option a) NEVER retro-narrow the pre-declared
+        // `$__mod_<name>` global. It is declared `externref` before the closure
+        // type is known; narrowing it here to the precise `(ref null N)`
+        // retroactively invalidated every ALREADY-EMITTED `global.get` whose
+        // consumer took the externref at face value (the #3533 class-field
+        // `struct.set expected externref, found (ref null N)` invalid-Wasm
+        // family). Keep the binding `externref` for its whole lifetime and BOX
+        // ON STORE instead (`extern.convert_any`); readers get a stable
+        // externref (identifiers.ts C1) and calls take `compileClosureCall`'s
+        // existing externref arm (guarded cast to the lifted self carrier).
+        // The LOCAL keeps the precise closure type — its reads use the
+        // precise-ref call arm (no unbox round-trip inside this function).
         const globalDef = ctx.mod.globals[localGlobalIdx(ctx, modGlobalIdx)];
-        if (globalDef) {
+        const globalIsExternref = globalDef?.type.kind === "externref";
+        if (globalDef && !globalIsExternref) {
+          // Pre-declared as something other than externref (not the closure
+          // pre-decl convention) — keep the legacy retype so init and type
+          // agree. Closure globals never take this arm.
           const nullableType: ValType =
             closureType.kind === "ref"
               ? { kind: "ref_null", typeIdx: (closureType as { typeIdx: number }).typeIdx }
               : closureType;
           globalDef.type = nullableType;
-          // Also fix the init expression to match the new type
           if (nullableType.kind === "ref_null") {
             globalDef.init = [{ op: "ref.null", typeIdx: (nullableType as { typeIdx: number }).typeIdx }];
           }
         }
-        // Duplicate value on stack: one for the global, one for the local
-        const localIdx = allocLocal(fctx, name, closureType);
-        fctx.body.push({ op: "local.tee", index: localIdx });
-        fctx.body.push({ op: "global.set", index: modGlobalIdx });
+        if (globalIsExternref) {
+          // (#3546) The `__module_init` shadow local is EXTERNREF — the same
+          // uniform representation as the global (#3534 option a): convert
+          // ONCE, tee the boxed value into the local, store the same value to
+          // the global. Top-level reads return externref (consumers coerce);
+          // top-level calls take `compileClosureCall`'s guarded externref arm
+          // (cold — module init runs once). Keeping the local PRECISE while
+          // the binding is reassignable forced assignment.ts to RETYPE the
+          // local on reassignment — the exact #3534 retro-invalidation
+          // mechanism, one slot over. Record the shadow so a later top-level
+          // reassignment (which resolves to this local via localMap) re-syncs
+          // the module global (#3546 — pre-fix it updated only the shadow and
+          // every cross-function call kept the FIRST closure).
+          const localIdx = allocLocal(fctx, name, { kind: "externref" });
+          if (closureType.kind === "ref" || closureType.kind === "ref_null") {
+            // Box on store: precise closure struct → externref (A2).
+            fctx.body.push({ op: "extern.convert_any" });
+          }
+          fctx.body.push({ op: "local.tee", index: localIdx });
+          fctx.body.push({ op: "global.set", index: modGlobalIdx });
+          (fctx.moduleBindingShadowLocals ??= new Map()).set(name, localIdx);
+        } else {
+          // Legacy non-externref pre-decl arm (closure globals never take
+          // this): duplicate value on stack — one for the global, one for the
+          // (precise) local.
+          const localIdx = allocLocal(fctx, name, closureType);
+          fctx.body.push({ op: "local.tee", index: localIdx });
+          fctx.body.push({ op: "global.set", index: modGlobalIdx });
+        }
         // Set TDZ flag to 1 (initialized)
         emitTdzInit(ctx, fctx, name);
       } else {
+        // (#3534 construct site) Boxed-before-declared: an EARLIER
+        // (forward-referencing) closure construction boxed this binding into a
+        // ref cell and re-aimed `localMap[name]` at the `__boxed_<name>` CELL
+        // local. Reusing that slot as the value slot below would (a) RETYPE
+        // the cell local to the closure struct — retroactively invalidating
+        // the already-emitted `struct.new <cell>; local.tee` (stack-balance
+        // then "repairs" the tee with a statically-impossible `ref.cast_null`
+        // → guaranteed `illegal cast` at runtime: the nativeFunctionMatcher
+        // mutually-recursive `eat`/`test` trap) and (b) alias the raw value
+        // over the cell, so captures never observe the initialization. Write
+        // the closure value THROUGH the cell instead (the #3396/#1177
+        // `boxedForInitStore` convention) and leave the slot's ref-cell type
+        // untouched.
+        const boxedClosureCell = fctx.boxedCaptures?.get(name);
+        const boxedCellLocalIdx = boxedClosureCell !== undefined ? fctx.localMap.get(name) : undefined;
+        if (boxedClosureCell !== undefined && boxedCellLocalIdx !== undefined) {
+          if (!valTypesMatch(closureType, boxedClosureCell.valType)) {
+            // Precise closure struct → externref cell field: extern.convert_any.
+            coerceType(ctx, fctx, closureType, boxedClosureCell.valType);
+          }
+          const tmpVal = allocLocal(fctx, `__box_init_tmp_${fctx.locals.length}`, boxedClosureCell.valType);
+          fctx.body.push({ op: "local.set", index: tmpVal });
+          fctx.body.push({ op: "local.get", index: boxedCellLocalIdx });
+          fctx.body.push({ op: "ref.is_null" });
+          fctx.body.push({
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [],
+            else: [
+              { op: "local.get", index: boxedCellLocalIdx },
+              { op: "local.get", index: tmpVal },
+              { op: "struct.set", typeIdx: boxedClosureCell.refCellTypeIdx, fieldIdx: 0 },
+            ],
+          });
+          // The binding is initialized now — flip the (possibly boxed) local
+          // TDZ flag so captured forward references pass their checks.
+          emitLocalTdzInit(fctx, name);
+          continue;
+        }
         // Reuse pre-hoisted slot if it exists.
         // Do NOT narrow externref → ref: the hoisting pass already emitted
         // __get_undefined() targeting externref; mutating the type causes
@@ -878,6 +1623,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
           if (slot && slot.type.kind !== "externref") slot.type = closureType;
         }
         emitCoercedLocalSet(ctx, fctx, localIdx, closureType);
+        emitLocalTdzInit(fctx, name);
       }
       continue;
     }
@@ -908,7 +1654,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
           const objType = actualType ?? { kind: "externref" as const };
           // Store to module global if available, otherwise local.
           // #1690b: a function-local shadow takes precedence over the global.
-          const modGlobal = hasLocalShadow ? undefined : ctx.moduleGlobals.get(name);
+          const modGlobal = hasLocalShadow || !bindsModuleGlobal ? undefined : ctx.moduleGlobals.get(name);
           if (modGlobal !== undefined) {
             fctx.body.push({ op: "global.set", index: modGlobal });
             emitTdzInit(ctx, fctx, name);
@@ -933,7 +1679,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // Check if this is a module-level global (already registered).
     // #1690b: a function-local shadow (inner `var`/`let`/`const` of the same
     // name) must bind to the local, so suppress the module-global store here.
-    const moduleGlobalIdx = hasLocalShadow ? undefined : ctx.moduleGlobals.get(name);
+    const moduleGlobalIdx = hasLocalShadow || !bindsModuleGlobal ? undefined : ctx.moduleGlobals.get(name);
     if (moduleGlobalIdx !== undefined) {
       // Shape-inferred array-like: compile {} as empty vec struct
       const shapeInfo = ctx.shapeMap.get(name);
@@ -984,7 +1730,11 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       const sym = (varType as ts.TypeReference).symbol ?? (varType as ts.Type).symbol;
       if (sym?.name === "Array") {
         const typeArgs = ctx.checker.getTypeArguments(varType as ts.TypeReference);
-        if (typeArgs?.[0] && typeArgs[0].flags & ts.TypeFlags.Any) {
+        const isInitiallyEmptyArray =
+          decl.initializer !== undefined &&
+          ts.isArrayLiteralExpression(decl.initializer) &&
+          decl.initializer.elements.length === 0;
+        if (isInitiallyEmptyArray || (typeArgs?.[0] && typeArgs[0].flags & ts.TypeFlags.Any)) {
           inferredVecType = inferArrayVecType(ctx, decl);
         }
       }
@@ -1114,49 +1864,76 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       !initIsProtoReceiverLiteral &&
       objectLiteralIsStandaloneAnyObjectCarrier(ctx, decl.initializer);
     const anyObjectCarrierTypeIdx = initIsAnyObjectCarrier ? ensureObjectRuntime(ctx).objectTypeIdx : -1;
-    const wasmType: ValType =
+    // A binding that crosses representation domains must keep the same boxed
+    // carrier chosen by the var hoister. In particular, numeric-use analysis
+    // may mark a bitmask initializer as i32 even when the binding is later
+    // reused for an object payload. Letting that specialization outrank the
+    // mixed-assignment proof re-narrows the already-hoisted externref slot at
+    // the declaration site and destroys the later object value.
+    const mixedAssignmentCarrier = bindingHasMixedAssignmentCarrier(ctx, decl);
+    if (mixedAssignmentCarrier) {
+      (fctx.mixedAssignmentCarrierVars ??= new Set()).add(name);
+    }
+    const wasmTypeBase: ValType =
       // (#3123) A widened fnctor-subclass binding (pre-hoist recorded it in
       // `fnctorWidenedLocals` — reassigned with a foreign/host value) must
       // keep its externref slot even when the block-scoped shadow machinery
       // re-allocates here (the pre-hoisted slot reuse below is gated on
       // plain-fn capture and does not fire for uncaptured bindings).
-      fctx.fnctorWidenedLocals?.has(name)
+      mixedAssignmentCarrier
         ? { kind: "externref" as const }
-        : initIsAccessorLiteral || initIsHostSpreadLiteral || initIsGrowableObjectLiteral || initIsProtoReceiverLiteral
+        : fctx.forInIdentifierVars?.has(name)
           ? { kind: "externref" as const }
-          : initIsAnyObjectCarrier && anyObjectCarrierTypeIdx >= 0
-            ? { kind: "ref_null" as const, typeIdx: anyObjectCarrierTypeIdx }
-            : isI32CoercedLocal
-              ? { kind: "i32" }
-              : isI32SpecializedArray
-                ? { kind: "ref_null" as const, typeIdx: getOrRegisterVecType(ctx, "i32", { kind: "i32" }) }
-                : widenedTypeIdx !== undefined
-                  ? { kind: "ref_null" as const, typeIdx: widenedTypeIdx }
-                  : (taViewType ??
-                    subarraySubviewType ??
-                    inferredVecType ??
-                    standaloneRegExpMatchArrayType ??
-                    (decl.initializer && isStringMethodReturningHostArray(ctx, decl.initializer)
-                      ? { kind: "externref" as const }
-                      : decl.initializer && isPromiseHostCall(ctx, decl.initializer)
-                        ? { kind: "externref" as const }
-                        : // (#2615) `new Proxy(target, handler)` returns a host/native
-                          // Proxy externref. The checker types it as the TARGET's
-                          // struct (ProxyConstructor returns T), so the default slot
-                          // would `ref.test` the Proxy against that struct, fail, null
-                          // it, and trap every read via a direct `struct.get`. Force an
-                          // externref local so reads route through `__extern_get` (the
-                          // only path that runs the Proxy MOP / trap). Both modes emit
-                          // a Proxy externref, so this is mode-agnostic.
-                          initIsProxy
+          : fctx.fnctorWidenedLocals?.has(name)
+            ? { kind: "externref" as const }
+            : initIsAccessorLiteral ||
+                initIsHostSpreadLiteral ||
+                initIsGrowableObjectLiteral ||
+                initIsProtoReceiverLiteral
+              ? { kind: "externref" as const }
+              : initIsAnyObjectCarrier && anyObjectCarrierTypeIdx >= 0
+                ? { kind: "ref_null" as const, typeIdx: anyObjectCarrierTypeIdx }
+                : isI32CoercedLocal
+                  ? { kind: "i32" }
+                  : isI32SpecializedArray
+                    ? { kind: "ref_null" as const, typeIdx: getOrRegisterVecType(ctx, "i32", { kind: "i32" }) }
+                    : widenedTypeIdx !== undefined
+                      ? { kind: "ref_null" as const, typeIdx: widenedTypeIdx }
+                      : (taViewType ??
+                        subarraySubviewType ??
+                        inferredVecType ??
+                        standaloneRegExpMatchArrayType ??
+                        (decl.initializer && isStringMethodReturningHostArray(ctx, decl.initializer)
                           ? { kind: "externref" as const }
-                          : // (#1337) `fn.bind(...)` / `Function.prototype.bind.call(...)`
-                            // returns a host bound-function externref in JS-host mode;
-                            // force an externref local so the value isn't ref.cast to
-                            // the target's closure struct (which traps → null binding).
-                            decl.initializer && !ctx.standalone && !noJsHost(ctx) && isBindHostCall(decl.initializer)
+                          : decl.initializer && isPromiseHostCall(ctx, decl.initializer)
                             ? { kind: "externref" as const }
-                            : localTypeForDeclaration(ctx, varType, decl)));
+                            : // (#2615) `new Proxy(target, handler)` returns a host/native
+                              // Proxy externref. The checker types it as the TARGET's
+                              // struct (ProxyConstructor returns T), so the default slot
+                              // would `ref.test` the Proxy against that struct, fail, null
+                              // it, and trap every read via a direct `struct.get`. Force an
+                              // externref local so reads route through `__extern_get` (the
+                              // only path that runs the Proxy MOP / trap). Both modes emit
+                              // a Proxy externref, so this is mode-agnostic.
+                              initIsProxy
+                              ? { kind: "externref" as const }
+                              : // (#1337) `fn.bind(...)` / `Function.prototype.bind.call(...)`
+                                // returns a host bound-function externref in JS-host mode;
+                                // force an externref local so the value isn't ref.cast to
+                                // the target's closure struct (which traps → null binding).
+                                decl.initializer &&
+                                  !ctx.standalone &&
+                                  !noJsHost(ctx) &&
+                                  isBindHostCall(decl.initializer)
+                                ? { kind: "externref" as const }
+                                : localTypeForDeclaration(ctx, varType, decl)));
+    // (#2660 S3b) A provably-monomorphic `new F(...)` binding of an approved
+    // fnctor gets the reserved struct slot instead of externref. Same (cached)
+    // verdict as the var hoister / let-const pre-hoister, so a reused
+    // pre-hoisted slot and this cascade always agree. Applied only when the
+    // cascade itself settled on externref — never overrides another inference.
+    const wasmType: ValType =
+      wasmTypeBase.kind === "externref" ? (resolveFnctorTypedBindingType(ctx, decl) ?? wasmTypeBase) : wasmTypeBase;
 
     // (#2814) Bug C: re-align a block-scoped let/const with its OWN pre-hoisted
     // slot. `saveBlockScopedShadows` removed this name's localMap (and TDZ-flag)
@@ -1455,8 +2232,8 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
           // stay) externref — the #962 guard already refuses to narrow it — the
           // sequence was `any.convert_extern` + guarded cast to ONE
           // signature-matched closure struct + widen back to externref: a pure
-          // round-trip whose else-arm NULLS the value. Closure wrapper structs
-          // are sibling `sub final` types with creation-ORDER-dependent RTTs
+          // round-trip whose else-arm NULLS the value. Signature wrapper structs
+          // are distinct root-child siblings with creation-ORDER-dependent RTTs
           // (see reference #2873), and `closureInfoByTypeIdx` iteration picks an
           // arbitrary first match, so a perfectly good closure of a SIBLING
           // wrapper type read out of an array (`var f = factories[k]`) was
@@ -1483,7 +2260,15 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
             localIdx < fctx.params.length
               ? fctx.params[localIdx]?.type
               : fctx.locals[localIdx - fctx.params.length]?.type;
-          if (matchedClosureInfo && slotTypeForCast?.kind === "externref") {
+          if (slotTypeForCast?.kind === "externref") {
+            // Slot stays a raw externref here whether a signature MATCHED but
+            // the #962 guard kept it externref (#3432) OR nothing matched
+            // (#3460, the else-arm below) — either way the value can be a
+            // foreign/bridge/null callable (`var f = obj.missingFn`). Record the
+            // decl so `calleeMayBeHostCallable` emits the #1712 __call_function
+            // arm; without it the closure-struct dispatch nulls the guarded cast
+            // and `struct.get`-traps (uncatchable) where spec wants a catchable
+            // TypeError. Arm emission is !standalone&&!wasi-gated → #1941 holds.
             (ctx.skippedClosureRecastDecls ??= new Set()).add(decl);
           }
           if (matchedClosureInfo && slotTypeForCast?.kind !== "externref") {

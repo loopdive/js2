@@ -34,6 +34,30 @@ export interface SourceEdit {
   readonly origStart: number;
   readonly origEnd: number;
   readonly newLength: number;
+  /** Compiler producer metadata for generated declarations in replacement text. */
+  readonly compilerOrigins?: readonly CompilerSourceOriginSpan[];
+}
+
+export type CompilerSourceProducer =
+  | "timer-shim"
+  | "node-path-prelude"
+  | "node-path-binding"
+  | "import-wrapper"
+  | "eval-super-rewrite"
+  | "process-stdin-prelude"
+  | "iterator-statics-prelude";
+
+export interface CompilerSourceOrigin {
+  readonly producer: CompilerSourceProducer;
+  /** Producer-owned semantic role, independent of a parsed display name. */
+  readonly role: string;
+}
+
+/** Half-open span relative to one edit's generated output text. */
+export interface CompilerSourceOriginSpan {
+  readonly start: number;
+  readonly end: number;
+  readonly origin: CompilerSourceOrigin;
 }
 
 export class PositionMap {
@@ -86,6 +110,36 @@ export class PositionMap {
   toInputOffset(outOffset: number): number {
     const direct = this.toDirectInputOffset(outOffset);
     return this.inner ? this.inner.toInputOffset(direct) : direct;
+  }
+
+  /**
+   * Return compiler-owned provenance for an OUTPUT offset, if any.
+   *
+   * Tagged replacement text wins at the stage that generated it. Untagged
+   * later replacements recurse through their original anchor, so provenance
+   * from an earlier compiler insertion survives composition. Pure insertion
+   * gaps intentionally have no input provenance.
+   */
+  compilerOriginAtOutputOffset(outOffset: number): CompilerSourceOrigin | undefined {
+    if (!Number.isSafeInteger(outOffset) || outOffset < 0) return undefined;
+    let delta = 0;
+    for (const edit of this.edits) {
+      const outEditStart = edit.origStart + delta;
+      const outEditEnd = outEditStart + edit.newLength;
+      if (outOffset < outEditStart) break;
+      if (outOffset < outEditEnd) {
+        const relative = outOffset - outEditStart;
+        const tagged = edit.compilerOrigins
+          ?.filter((span) => relative >= span.start && relative < span.end)
+          .sort((a, b) => a.end - a.start - (b.end - b.start))[0];
+        if (tagged) return tagged.origin;
+        if (edit.origStart === edit.origEnd) return undefined;
+        return this.inner?.compilerOriginAtOutputOffset(edit.origStart);
+      }
+      delta += edit.newLength - (edit.origEnd - edit.origStart);
+    }
+    const direct = this.toDirectInputOffset(outOffset);
+    return this.inner?.compilerOriginAtOutputOffset(direct);
   }
 
   /**

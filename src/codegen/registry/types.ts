@@ -7,6 +7,7 @@
  */
 import type { ArrayTypeDef, FieldDef, FuncTypeDef, StructTypeDef, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
+import { closureBagField } from "../closures/funcref-wrapper-types.js"; // (#4241)
 
 /**
  * (#3268) Register a WasmGC struct type: append it to `ctx.mod.types` and wire
@@ -135,6 +136,25 @@ export function getOrRegisterVecBaseType(ctx: CodegenContext): number {
   ctx.typeIdxToStructName.set(idx, "__vec_base");
   ctx.structFields.set("__vec_base", [{ name: "length", type: { kind: "i32" as const }, mutable: true }]);
   return idx;
+}
+
+/**
+ * (#4034) Run `fn` with `usesVecValue` pinned to its current value, so vec
+ * types registered by COMPILER-INTERNAL emission (runtime preludes, reflective
+ * accessors, type-index-stability stubs) do not read as user array usage.
+ *
+ * Type registration still happens — only the usage flag is suppressed — so the
+ * emitted types and every index derived from them are unchanged. Restores the
+ * previous value rather than clearing, so nesting is safe.
+ */
+export function withSuppressedVecUsage<T>(ctx: CodegenContext, fn: () => T): T {
+  const wasSuppressed = ctx.suppressVecUsageFlag;
+  ctx.suppressVecUsageFlag = true;
+  try {
+    return fn();
+  } finally {
+    ctx.suppressVecUsageFlag = wasSuppressed;
+  }
 }
 
 /**
@@ -334,8 +354,27 @@ export function getTaViewName(ctx: CodegenContext, typeIdx: number): string | un
  * (#3054 D) Canonical ordered list of TypedArray element kinds a first-class
  * `$__ta_ctor` value can name. The array INDEX is the runtime `kind` stored in the
  * struct; every dynamic-construct / `BYTES_PER_ELEMENT` dispatch iterates this list
- * so the ordering is the single source of truth. BigInt64/Float16 views are omitted
+ * so the ordering is the single source of truth. Float16 views are omitted
  * (unsupported elsewhere in the standalone lane).
+ *
+ * (#3613) The two BigInt views are APPENDED at kinds 9/10 — never inserted — so
+ * every already-emitted `kind` constant (baked into the `$__ta_ctor` singleton
+ * globals and into the `if`-chain arms of the decode/encode/BYTES dispatches)
+ * keeps its value. Before this they were absent, so a bare `BigInt64Array` /
+ * `BigUint64Array` in VALUE position fell through `emitTaCtorValue` to the
+ * `ref.null.extern` unimplemented-global default in identifiers.ts — i.e.
+ * `[BigInt64Array, BigUint64Array]` was `[null, null]` and the test262
+ * `testWithBigIntTypedArrayConstructors` harness's `new TA(...)` produced null
+ * for every BigInt row. The host/gc lane had already been fixed (#3087 routes
+ * the same two names through `__extern_get(globalThis, name)`); only the
+ * host-free lane was left behind.
+ *
+ * Element VALUES in a dynamically-constructed BigInt view are still the f64
+ * carrier the rest of the dyn-view substrate uses, NOT i64-branded BigInts —
+ * that representation split is #1349/#2401(b) and deliberately out of scope
+ * here. This entry buys the STRUCTURE (non-null identity-stable ctor, correct
+ * 8-byte element width, working length/byteLength/MOP), which is what the
+ * harness rows actually gate on.
  */
 export const TA_CTOR_KINDS: readonly string[] = [
   "Int8Array",
@@ -347,10 +386,12 @@ export const TA_CTOR_KINDS: readonly string[] = [
   "Uint32Array",
   "Float32Array",
   "Float64Array",
+  "BigInt64Array",
+  "BigUint64Array",
 ];
 
 /** (#3054 D) Element byte width per `TA_CTOR_KINDS` entry (BYTES_PER_ELEMENT). */
-export const TA_CTOR_BYTES: readonly number[] = [1, 1, 1, 2, 2, 4, 4, 4, 8];
+export const TA_CTOR_BYTES: readonly number[] = [1, 1, 1, 2, 2, 4, 4, 4, 8, 8, 8];
 
 /** (#3054 D) The `kind` index for a TS TypedArray name, or -1 if not a first-class TA ctor. */
 export function taCtorKindOf(name: string): number {
@@ -411,6 +452,9 @@ export function getOrRegisterTaDynViewType(ctx: CodegenContext): number {
     // cast on use). APPEND-ONLY: existing field indices and the `$__vec_base`
     // supertype prefix stay valid.
     { name: "expando", type: { kind: "externref" as const }, mutable: true },
+    // #3371: Reflect.construct's distinct NewTarget may select a custom
+    // ordinary-object prototype. Null means "use the intrinsic per-kind proto".
+    { name: "constructProto", type: { kind: "externref" as const }, mutable: true },
   ];
   ctx.mod.types.push({ kind: "struct", name, superTypeIdx: vecBaseIdx, fields });
   ctx.taDynViewTypeIdx = idx;
@@ -441,6 +485,11 @@ export function getOrRegisterBoundFnType(ctx: CodegenContext): number {
     { name: "target", type: { kind: "externref" as const }, mutable: false },
     { name: "thisArg", type: { kind: "externref" as const }, mutable: false },
     { name: "boundArgs", type: { kind: "externref" as const }, mutable: false },
+    // (#4241) Carrier-intrinsic expando bag — a bound function is a callable
+    // carrier for `__closure_bag_lookup`, so it gets the O(1) slot instead of
+    // a `$ClosurePropEntry` registry entry. Appended LAST: this struct is
+    // final and super-less, so no field index shifts.
+    closureBagField(),
   ];
   ctx.mod.types.push({ kind: "struct", name, fields });
   ctx.boundFnTypeIdx = idx;
@@ -707,10 +756,61 @@ export function registerNativeStringTypes(ctx: CodegenContext): void {
     name: "ConsString",
     fields: [
       { name: "len", type: { kind: "i32" }, mutable: false },
-      { name: "left", type: { kind: "ref", typeIdx: ctx.anyStrTypeIdx }, mutable: false },
-      { name: "right", type: { kind: "ref", typeIdx: ctx.anyStrTypeIdx }, mutable: false },
+      // (#3673) left/right are mutable so `__str_flatten` can memoize: after
+      // flattening a rope it rewrites the cons in place to (left=flat result,
+      // right=""), turning every later flatten of the same rope into a two-
+      // field fast path instead of an O(len) re-copy. `len` stays immutable —
+      // the rewrite preserves the total length.
+      { name: "left", type: { kind: "ref", typeIdx: ctx.anyStrTypeIdx }, mutable: true },
+      { name: "right", type: { kind: "ref", typeIdx: ctx.anyStrTypeIdx }, mutable: true },
     ],
     superTypeIdx: ctx.anyStrTypeIdx,
+  });
+
+  // (#3673 round 9) `$HashedString <: $NativeString` — a flat string that
+  // CACHES its FNV-1a hash. `__obj_hash` re-hashed the probe key per $Object
+  // lookup (O(len) loop) even though most keys are compile-time constants.
+  // Only two producers allocate this subtype: interned literal globals (hash
+  // BAKED at compile time by `nativeStringLiteralHash`) and `__str_flatten`'s
+  // memoized flat copies (hash 0 = uncomputed, filled lazily by `__obj_hash`
+  // via `struct.set`). Field encoding: 0 = uncomputed; else
+  // `(fnv & 0x7fffffff) | 0x80000000` (the sign bit marks "computed", so a
+  // genuine hash of 0 stays distinguishable). Every existing
+  // `(ref $NativeString)` consumer accepts it via subtyping — no other
+  // allocation or read site changes.
+  // Fields 4-6 (#3673 round 9b): a per-KEY prototype-lookup inline cache used
+  // by `__extern_get` for fnctor-receiver method resolution (acorn's
+  // `this.readToken()` class of call). When a proto-walk starting at a fnctor
+  // prototype finds a DATA entry on the FIRST prototype object and the key is
+  // an interned `$HashedString`, the (owner-proto, entry) pair is memoized ON
+  // THE KEY STRING with the current table generation. A later lookup with the
+  // same interned key + same proto short-circuits the whole `__extern_get`
+  // ladder to one entry-value read. Validity: `cacheGen == __obj_table_gen`
+  // (bumped ONLY by `__obj_grow` — rehash re-mints entry structs), owner
+  // `ref.eq`, and the entry's flags carry neither TOMBSTONE (delete) nor
+  // ACCESSOR (defineProperty morph) — value updates mutate the entry in place
+  // and stay visible through the cache. Fields are `anyref` (not typed refs)
+  // because `$Object`/`$PropEntry` are registered later by the object runtime.
+  ctx.hashedStrTypeIdx = ctx.mod.types.length;
+  ctx.mod.types.push({
+    kind: "struct",
+    name: "HashedString",
+    fields: [
+      { name: "len", type: { kind: "i32" }, mutable: false },
+      { name: "off", type: { kind: "i32" }, mutable: false },
+      { name: "data", type: { kind: "ref", typeIdx: ctx.nativeStrDataTypeIdx }, mutable: false },
+      { name: "hash", type: { kind: "i32" }, mutable: true },
+      { name: "cacheGen", type: { kind: "i32" }, mutable: true },
+      { name: "cacheOwner", type: { kind: "anyref" }, mutable: true },
+      { name: "cacheEntry", type: { kind: "anyref" }, mutable: true },
+      // (#3673 round 21) the owner's props ARRAY at population time — a grow
+      // replaces the array, so `ref.eq` on it is a per-object staleness check
+      // (replaces the global `__obj_table_gen`, whose bump on ANY object's
+      // grow cold-started every cache twice per parse via acorn's options
+      // build). Field 4 degrades to a populated flag (0/1).
+      { name: "cacheProps", type: { kind: "anyref" }, mutable: true },
+    ],
+    superTypeIdx: ctx.nativeStrTypeIdx,
   });
 
   // #1588 PR-B: dual i8/i16 storage. Only register the UTF-8 backing array +

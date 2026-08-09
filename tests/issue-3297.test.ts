@@ -13,7 +13,9 @@ import { analyzeSource } from "../src/checker/index.js";
 import { compile } from "../src/index.js";
 import {
   IrFunctionBuilder,
+  irSupportGlobalRef,
   irVal,
+  irUnitFuncRef,
   lowerFunctionAstToIr,
   verifyIrBackendLegality,
   type IrFunction,
@@ -23,7 +25,9 @@ import {
 import { PORFFOR_KIND_NAMES, porfforRendererOutputText, type PorfforNode } from "../src/ir/backend/porffor/compat.js";
 import { lowerIrModuleToPorffor } from "../src/ir/backend/porffor/integration.js";
 import { loadOptionalPorffor } from "../src/ir/backend/porffor/loader.js";
+import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
 
+const identities = createTestIrFunctionIdentityFactory("issue-3297");
 const here = dirname(fileURLToPath(import.meta.url));
 const porfforRoot = process.env.JS2WASM_PORFFOR_ROOT ?? join(here, "../vendor/Porffor");
 const hasOptionalPorffor = existsSync(join(porfforRoot, "compiler/ir.js"));
@@ -62,16 +66,18 @@ const DIFF_SOURCE = `
 `;
 
 function effectFunctions(): IrFunction[] {
-  const global = { kind: "global" as const, name: "trace" };
+  const global = irSupportGlobalRef(identities.unit(100), "effect-trace", "trace");
 
-  const left = new IrFunctionBuilder("left", [F64]);
+  const leftIdentity = identities.next("left");
+  const left = new IrFunctionBuilder(leftIdentity, [F64]);
   left.openBlock();
   const one = left.emitConst({ kind: "f64", value: 1 }, F64);
   left.emitGlobalSet(global, one);
   const ten = left.emitConst({ kind: "f64", value: 10 }, F64);
   left.terminate({ kind: "return", values: [ten] });
 
-  const right = new IrFunctionBuilder("right", [F64]);
+  const rightIdentity = identities.next("right");
+  const right = new IrFunctionBuilder(rightIdentity, [F64]);
   right.openBlock();
   const oldTrace = right.emitGlobalGet(global, F64);
   const scale = right.emitConst({ kind: "f64", value: 10 }, F64);
@@ -82,12 +88,12 @@ function effectFunctions(): IrFunction[] {
   const three = right.emitConst({ kind: "f64", value: 3 }, F64);
   right.terminate({ kind: "return", values: [three] });
 
-  const ordered = new IrFunctionBuilder("ordered", [F64], true);
+  const ordered = new IrFunctionBuilder(identities.next("ordered"), [F64], true);
   ordered.openBlock();
   const zero = ordered.emitConst({ kind: "f64", value: 0 }, F64);
   ordered.emitGlobalSet(global, zero);
-  const leftResult = ordered.emitCall({ kind: "func", name: "left" }, [], F64)!;
-  const rightResult = ordered.emitCall({ kind: "func", name: "right" }, [], F64)!;
+  const leftResult = ordered.emitCall(irUnitFuncRef(leftIdentity), [], F64)!;
+  const rightResult = ordered.emitCall(irUnitFuncRef(rightIdentity), [], F64)!;
   const sum = ordered.emitBinary("f64.add", leftResult, rightResult, F64);
   const hundred = ordered.emitConst({ kind: "f64", value: 100 }, F64);
   const weighted = ordered.emitBinary("f64.mul", sum, hundred, F64);
@@ -95,19 +101,20 @@ function effectFunctions(): IrFunction[] {
   const result = ordered.emitBinary("f64.add", weighted, finalTrace, F64);
   ordered.terminate({ kind: "return", values: [result] });
 
-  const twice = new IrFunctionBuilder("twice", [F64]);
+  const twiceIdentity = identities.next("twice");
+  const twice = new IrFunctionBuilder(twiceIdentity, [F64]);
   const input = twice.addParam("x", F64);
   twice.openBlock();
   const multiplier = twice.emitConst({ kind: "f64", value: 2 }, F64);
   const doubled = twice.emitBinary("f64.mul", input, multiplier, F64);
   twice.terminate({ kind: "return", values: [doubled] });
 
-  const directArgs = new IrFunctionBuilder("directArgs", [F64], true);
+  const directArgs = new IrFunctionBuilder(identities.next("directArgs"), [F64], true);
   directArgs.openBlock();
   const six = directArgs.emitConst({ kind: "f64", value: 6 }, F64);
   const seven = directArgs.emitConst({ kind: "f64", value: 7 }, F64);
-  const twelve = directArgs.emitCall({ kind: "func", name: "twice" }, [six], F64)!;
-  const fourteen = directArgs.emitCall({ kind: "func", name: "twice" }, [seven], F64)!;
+  const twelve = directArgs.emitCall(irUnitFuncRef(twiceIdentity), [six], F64)!;
+  const fourteen = directArgs.emitCall(irUnitFuncRef(twiceIdentity), [seven], F64)!;
   const twentySix = directArgs.emitBinary("f64.add", twelve, fourteen, F64);
   directArgs.terminate({ kind: "return", values: [twentySix] });
 
@@ -121,11 +128,14 @@ function frontendFunction(source: string, name: string): IrFunction {
       ts.isFunctionDeclaration(statement) && statement.name?.text === name,
   );
   if (!declaration) throw new Error(`missing function ${name}`);
-  return lowerFunctionAstToIr(declaration, { exported: true }).main;
+  return lowerFunctionAstToIr(declaration, {
+    exported: true,
+    ownerUnitId: identities.next(name).unitId,
+  }).main;
 }
 
 function selectAndConvertFunction(): IrFunction {
-  const builder = new IrFunctionBuilder("selectConvert", [F64], true);
+  const builder = new IrFunctionBuilder(identities.next("selectConvert"), [F64], true);
   const condition = builder.addParam("condition", I32);
   const value = builder.addParam("value", I32);
   builder.openBlock();
@@ -137,7 +147,7 @@ function selectAndConvertFunction(): IrFunction {
 }
 
 function unreachableFunction(): IrFunction {
-  const builder = new IrFunctionBuilder("never", []);
+  const builder = new IrFunctionBuilder(identities.next("never"), []);
   builder.openBlock();
   builder.terminate({ kind: "unreachable" });
   return builder.finish();
@@ -157,16 +167,18 @@ function proofModule(order: "normal" | "shuffled" = "normal"): IrModule {
   return { functions };
 }
 function lowerProof(order: "normal" | "shuffled" = "normal") {
+  const trace = irSupportGlobalRef(identities.unit(100), "effect-trace", "trace");
+  const spare = irSupportGlobalRef(identities.unit(101), "effect-spare", "spare");
   return lowerIrModuleToPorffor(proofModule(order), {
     globals:
       order === "normal"
         ? [
-            { name: "trace", type: F64 },
-            { name: "spare", type: I32 },
+            { ref: trace, type: F64 },
+            { ref: spare, type: I32 },
           ]
         : [
-            { name: "spare", type: I32 },
-            { name: "trace", type: F64 },
+            { ref: spare, type: I32 },
+            { ref: trace, type: F64 },
           ],
     prefs: { gc: false },
   });
@@ -223,7 +235,7 @@ describe("#3297 Porffor scalar/control-flow sink", () => {
     expect(calls.every((call) => (call[2] & 4) !== 0)).toBe(true);
   });
 
-  it("assigns final function positions by stable name, independent of registration order", () => {
+  it("preserves stable label order and uses identity only to break label collisions", () => {
     expect(lowerProof("shuffled")).toStrictEqual(lowerProof("normal"));
     expect(lowerProof().funcs.map((func) => func?.name)).toEqual([
       "classify",
@@ -242,7 +254,7 @@ describe("#3297 Porffor scalar/control-flow sink", () => {
 
   it("requires the shared memory plan before heap emission", () => {
     const shape: IrObjectShape = { fields: [{ name: "value", type: F64 }] };
-    const builder = new IrFunctionBuilder("heapRejected", [{ kind: "object", shape }]);
+    const builder = new IrFunctionBuilder(identities.next("heapRejected"), [{ kind: "object", shape }]);
     builder.openBlock();
     const value = builder.emitConst({ kind: "f64", value: 1 }, F64);
     const object = builder.emitObjectNew(shape, [value]);

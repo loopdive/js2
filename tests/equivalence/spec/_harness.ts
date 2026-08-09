@@ -115,15 +115,15 @@ async function runLane(src: string, lane: Lane): Promise<number> {
   }
   // Host lane — full host-import fidelity (iterator protocol, struct getters).
   const imports = buildImports(r);
-  let setExportsFn: ((exports: Record<string, Function>) => void) | undefined;
+  let setInstanceFn: ((instance: WebAssembly.Instance) => void) | undefined;
   if (r.imports && r.imports.length > 0) {
     const rt = buildRuntimeImports(r.imports, undefined, r.stringPool);
-    setExportsFn = rt.setExports;
+    setInstanceFn = rt.setInstance;
     imports.env = { ...(imports.env as Record<string, Function>), ...rt.env };
     if (rt.string_constants) imports.string_constants = rt.string_constants;
   }
   const { instance } = await WebAssembly.instantiate(r.binary, imports);
-  if (setExportsFn) setExportsFn(instance.exports as Record<string, Function>);
+  setInstanceFn?.(instance);
   return (instance.exports as Record<string, () => number>).run();
 }
 

@@ -42,6 +42,7 @@ import {
   getOrRegisterRefCellType,
   getOrRegisterVecBaseType,
 } from "../registry/types.js";
+import { overlayRouteActive } from "../typed-lane-overlay-route.js"; // (#4222) overlay-aware index presence
 import { coerceType, compileExpression, compileStatement, valTypesMatch } from "../shared.js";
 import {
   compileArrayDestructuring,
@@ -75,7 +76,7 @@ import {
 import { collectPatternBindingNames } from "./tdz.js";
 import { tryCompileCountedStringAppend } from "./counted-string-append.js";
 import { emitHoleToUndefined } from "../array-holes.js"; // (#2001 S1)
-import { definedFuncAt } from "../func-space.js"; // (#1916 S2) positional-read chokepoint
+import { definedFuncAt, nativeStrHelperHandle } from "../func-space.js"; // (#1916 S2) positional-read chokepoint
 
 /**
  * Compile a loop body, saving/restoring block-scoped shadows (#817) so that
@@ -92,6 +93,42 @@ function compileLoopBodyWithShadows(ctx: CodegenContext, fctx: FunctionContext, 
   } else {
     compileStatement(ctx, fctx, body);
   }
+}
+
+/** Emit the unobserved step of an already-promoted i32 induction variable. */
+function emitPromotedI32Increment(fctx: FunctionContext, stmt: ts.ForStatement): boolean {
+  const loop = detectI32LoopVar(stmt);
+  const incrementor = stmt.incrementor;
+  if (!loop || !incrementor) return false;
+  const localIdx = fctx.localMap.get(loop.name);
+  if (localIdx === undefined || getLocalType(fctx, localIdx)?.kind !== "i32") return false;
+
+  let step: number | undefined;
+  if (ts.isPostfixUnaryExpression(incrementor) || ts.isPrefixUnaryExpression(incrementor)) {
+    step = incrementor.operator === ts.SyntaxKind.PlusPlusToken ? 1 : -1;
+  } else if (ts.isBinaryExpression(incrementor) && ts.isNumericLiteral(incrementor.right)) {
+    const magnitude = Number(incrementor.right.text.replace(/_/g, ""));
+    if (incrementor.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken) step = magnitude;
+    if (incrementor.operatorToken.kind === ts.SyntaxKind.MinusEqualsToken) step = -magnitude;
+  } else if (
+    ts.isBinaryExpression(incrementor) &&
+    incrementor.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    ts.isBinaryExpression(incrementor.right) &&
+    ts.isNumericLiteral(incrementor.right.right)
+  ) {
+    const magnitude = Number(incrementor.right.right.text.replace(/_/g, ""));
+    step = incrementor.right.operatorToken.kind === ts.SyntaxKind.PlusToken ? magnitude : -magnitude;
+  }
+  if (step === undefined || !Number.isInteger(step)) return false;
+
+  // The incrementor's value is discarded by ForBodyEvaluation, so update the
+  // proven i32 slot directly instead of round-tripping it through f64 JS-number
+  // addition and truncation on every iteration.
+  fctx.body.push({ op: "local.get", index: localIdx });
+  fctx.body.push({ op: "i32.const", value: step });
+  fctx.body.push({ op: "i32.add" });
+  fctx.body.push({ op: "local.set", index: localIdx });
+  return true;
 }
 
 export function compileWhileStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.WhileStatement): void {
@@ -701,8 +738,10 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
   ctx.liveBodies.add(incrInstrs);
   fctx.body = incrInstrs;
   if (stmt.incrementor) {
-    const resultType = compileExpression(ctx, fctx, stmt.incrementor);
-    if (resultType !== null) fctx.body.push({ op: "drop" });
+    if (!emitPromotedI32Increment(fctx, stmt)) {
+      const resultType = compileExpression(ctx, fctx, stmt.incrementor);
+      if (resultType !== null) fctx.body.push({ op: "drop" });
+    }
   }
 
   fctx.breakStack.pop();
@@ -1245,15 +1284,12 @@ function compileForOfString(ctx: CodegenContext, fctx: FunctionContext, stmt: ts
   //
   // The IR path (#1183) sidesteps this by walking
   // `ctx.mod.functions[i].name` at lowering time. Mirroring that here
-  // for the legacy path:
-  let flattenIdx: number | undefined;
-  let substringIdx: number | undefined;
-  for (let i = 0; i < ctx.mod.functions.length; i++) {
-    const name = ctx.mod.functions[i]!.name;
-    if (name === "__str_flatten") flattenIdx = ctx.numImportFuncs + i;
-    else if (name === "__str_substring") substringIdx = ctx.numImportFuncs + i;
-    if (flattenIdx !== undefined && substringIdx !== undefined) break;
-  }
+  // for the legacy path.
+  //
+  // (#3909) That scan is now the SECOND choice — `nativeStrHelpers` holds
+  // unshiftable stable handles since #1916 S3. See `nativeStrHelperHandle`.
+  const flattenIdx = nativeStrHelperHandle(ctx, "__str_flatten");
+  const substringIdx = nativeStrHelperHandle(ctx, "__str_substring");
   if (flattenIdx === undefined || substringIdx === undefined) {
     reportError(ctx, stmt, "for-of on string: __str_flatten/__str_substring helpers not available");
     return;
@@ -3193,8 +3229,35 @@ function emitArrayForIn(
   }
   loopBody.push({ op: "local.set", index: keyLocal });
 
-  // block $continue { userBody }
-  loopBody.push({ op: "block", blockType: { kind: "empty" }, body: userBody });
+  // block $continue { [presence gate] userBody }
+  //
+  // (#4222) `0..vecLen-1` is the own-key list only while every in-bounds index
+  // is PRESENT. `delete arr[i]` leaves `length` untouched and records the
+  // absence as a `FLAG_DELETED_INDEX` entry in the #3251 overlay companion, so
+  // under the overlay route each iteration first asks `__extern_has_idx` — the
+  // same chokepoint `in`, `Object.keys` and the HOF presence gates consult — and
+  // `br_if 0` (continue) on an absent index. The gate sits INSIDE `$continue` as
+  // an early branch rather than wrapping the block in an `if`, so the user
+  // body's break/continue depths are untouched. Route-inactive modules and the
+  // host key path emit the bare block, byte-for-byte as before.
+  const forInHasIdx = !hostKeys && overlayRouteActive(ctx) ? ctx.funcMap.get("__extern_has_idx") : undefined;
+  loopBody.push({
+    op: "block",
+    blockType: { kind: "empty" },
+    body:
+      forInHasIdx === undefined
+        ? userBody
+        : [
+            { op: "local.get", index: vecLocal },
+            { op: "extern.convert_any" },
+            { op: "local.get", index: iLocal },
+            { op: "f64.convert_i32_s" },
+            { op: "call", funcIdx: forInHasIdx },
+            { op: "i32.eqz" },
+            { op: "br_if", depth: 0 },
+            ...userBody,
+          ],
+  });
 
   // increment + restart
   loopBody.push({ op: "local.get", index: iLocal });
@@ -3435,7 +3498,15 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
     // Fallback: static unrolling. Used in standalone for a closed-shape receiver
     // (WasmGC struct) — the static key set is exact — and as the historical
     // fallback when no enumeration primitive is available.
-    const exprType = ctx.checker.getTypeAtLocation(stmt.expression);
+    // (#4138) Strip null/undefined before reading the static shape: a receiver
+    // that flowed through `Array.pop()` / an optional access types as
+    // `T | undefined`, and a UNION's getProperties() is the COMMON property
+    // set — empty here — so the loop silently enumerated nothing (the runtime
+    // null case is already handled by the guards the loop emits). This is the
+    // narrow slice of #4138; a receiver that is genuinely POLYMORPHIC at
+    // runtime still unrolls one static shape, and closed structs remain
+    // non-enumerable through the dynamic runtime — both stay open in #4138.
+    const exprType = ctx.checker.getTypeAtLocation(stmt.expression).getNonNullableType();
     const props = exprType.getProperties();
     if (props.length === 0) return;
     for (const prop of props) {

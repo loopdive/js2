@@ -233,3 +233,155 @@ describe("#1325 instanceof BuiltIn — static elimination", () => {
     ).toBe(0);
   });
 });
+
+// ── Standalone (host-free) instanceof for native Date / RegExp structs ──
+//
+// (#1325 residual slice) `new Date()` and a RegExp literal / `new RegExp(...)`
+// lower to distinct WasmGC structs ($__Date / $__StandaloneRegExp) in
+// `--target standalone`. Before this slice, `nativeBuiltinInstanceOfTypeIdxs`
+// returned undefined for Date/RegExp so a dynamic (`any`-typed / function-param)
+// LHS answered a conservative `0` even for a genuine instance. Now it returns
+// the struct type idx and `emitNativeInstanceOfMembership` answers via a native
+// `ref.test` — no `__instanceof` host import. Statically-typed LHS was already
+// handled by `tryStaticInstanceOf`; these tests pin the dynamic/opaque forms.
+describe("#1325 instanceof Date/RegExp — standalone native (host-free)", () => {
+  async function runStandalone(src: string): Promise<number> {
+    const r = await compile(src, { target: "standalone" });
+    expect(r.success, JSON.stringify(r.errors)).toBe(true);
+    // No host import may leak under standalone (host-free pass).
+    expect(r.imports ?? []).toEqual([]);
+    expect(WebAssembly.validate(r.binary), "module must be valid Wasm").toBe(true);
+    const { instance } = await WebAssembly.instantiate(r.binary, {});
+    return (instance.exports as { test(): number }).test();
+  }
+
+  it("`any`-typed Date instance instanceof Date → true", async () => {
+    expect(
+      await runStandalone(
+        `export function test(): number { const d: any = new Date(); return (d instanceof Date) ? 1 : 0; }`,
+      ),
+    ).toBe(1);
+  });
+
+  it("opaque function-param Date instanceof Date → true (runtime ref.test, cross-function)", async () => {
+    expect(
+      await runStandalone(
+        `function f(d: any): number { return (d instanceof Date) ? 1 : 0; } export function test(): number { return f(new Date()); }`,
+      ),
+    ).toBe(1);
+  });
+
+  it("`any`-typed RegExp literal instanceof RegExp → true", async () => {
+    expect(
+      await runStandalone(
+        `export function test(): number { const r: any = /a/; return (r instanceof RegExp) ? 1 : 0; }`,
+      ),
+    ).toBe(1);
+  });
+
+  it("`any`-typed new RegExp(...) instanceof RegExp → true", async () => {
+    expect(
+      await runStandalone(
+        `export function test(): number { const r: any = new RegExp("a"); return (r instanceof RegExp) ? 1 : 0; }`,
+      ),
+    ).toBe(1);
+  });
+
+  it("opaque function-param RegExp instanceof RegExp → true", async () => {
+    expect(
+      await runStandalone(
+        `function f(r: any): number { return (r instanceof RegExp) ? 1 : 0; } export function test(): number { return f(/a/); }`,
+      ),
+    ).toBe(1);
+  });
+
+  // ── Negatives / no false positives ──
+  it("{} instanceof Date → false", async () => {
+    expect(
+      await runStandalone(`export function test(): number { const o: any = {}; return (o instanceof Date) ? 1 : 0; }`),
+    ).toBe(0);
+  });
+
+  it("[] instanceof Date → false", async () => {
+    expect(
+      await runStandalone(`export function test(): number { const a: any = []; return (a instanceof Date) ? 1 : 0; }`),
+    ).toBe(0);
+  });
+
+  it("123 instanceof Date → false (numeric primitive)", async () => {
+    expect(
+      await runStandalone(`export function test(): number { const n: any = 123; return (n instanceof Date) ? 1 : 0; }`),
+    ).toBe(0);
+  });
+
+  it("Date instance instanceof RegExp → false (distinct structs, no cross-match)", async () => {
+    expect(
+      await runStandalone(
+        `export function test(): number { const d: any = new Date(); return (d instanceof RegExp) ? 1 : 0; }`,
+      ),
+    ).toBe(0);
+  });
+
+  it("RegExp instance instanceof Date → false", async () => {
+    expect(
+      await runStandalone(`export function test(): number { const r: any = /a/; return (r instanceof Date) ? 1 : 0; }`),
+    ).toBe(0);
+  });
+
+  it("{} instanceof RegExp → false", async () => {
+    expect(
+      await runStandalone(
+        `export function test(): number { const o: any = {}; return (o instanceof RegExp) ? 1 : 0; }`,
+      ),
+    ).toBe(0);
+  });
+
+  // ── Promise (distinct $Promise struct — same mechanism as Date/RegExp) ──
+  it("`any`-typed Promise.resolve instanceof Promise → true", async () => {
+    expect(
+      await runStandalone(
+        `export function test(): number { const p: any = Promise.resolve(1); return (p instanceof Promise) ? 1 : 0; }`,
+      ),
+    ).toBe(1);
+  });
+
+  it("`any`-typed new Promise instanceof Promise → true", async () => {
+    expect(
+      await runStandalone(
+        `export function test(): number { const p: any = new Promise((res: any) => { res(1); }); return (p instanceof Promise) ? 1 : 0; }`,
+      ),
+    ).toBe(1);
+  });
+
+  it("opaque function-param Promise instanceof Promise → true", async () => {
+    expect(
+      await runStandalone(
+        `function f(p: any): number { return (p instanceof Promise) ? 1 : 0; } export function test(): number { return f(Promise.resolve(1)); }`,
+      ),
+    ).toBe(1);
+  });
+
+  it("{} instanceof Promise → false", async () => {
+    expect(
+      await runStandalone(
+        `export function test(): number { const o: any = {}; return (o instanceof Promise) ? 1 : 0; }`,
+      ),
+    ).toBe(0);
+  });
+
+  it("Date instance instanceof Promise → false (distinct structs)", async () => {
+    expect(
+      await runStandalone(
+        `export function test(): number { const d: any = new Date(); return (d instanceof Promise) ? 1 : 0; }`,
+      ),
+    ).toBe(0);
+  });
+
+  it("Promise instance instanceof Date → false", async () => {
+    expect(
+      await runStandalone(
+        `export function test(): number { const p: any = Promise.resolve(1); return (p instanceof Date) ? 1 : 0; }`,
+      ),
+    ).toBe(0);
+  });
+});

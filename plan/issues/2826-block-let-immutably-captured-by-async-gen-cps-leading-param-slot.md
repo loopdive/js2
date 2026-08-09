@@ -13,7 +13,7 @@ area: codegen
 es_edition: 2017
 language_feature: closures
 goal: spec-completeness
-sprint: current
+sprint: Backlog
 horizon: m
 architect_spec: needs-revision
 blocked_reason: "THREE approaches now fail: Design 1A re-point (impl2826) AND write-through-to-A (cps2826) BOTH perturb the CPS continuation state — identical async-generator-interleaved null-deref + array-elem-iter-nrml-close nextCount=2 signatures. PROVEN un-gateable: the regressing names (nextCount/iterations) are indistinguishable from the required-fix name (length) at the let-init site (same mutability / captured-global / capturer set). Needs the transitive-capture/continuation-snapshot graph analysis (recommendation #1) — genuinely architect-owned. See ## Implementation attempt 2."

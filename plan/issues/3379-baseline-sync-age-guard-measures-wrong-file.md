@@ -1,19 +1,25 @@
 ---
 id: 3379
 title: "baseline-summary-sync staleness guard measures the in-repo file, not public/ → busy queue skips the sync forever"
-status: in-progress
-sprint: current
+status: done
+completed: 2026-07-24
+sprint: 76
 created: 2026-07-17
 priority: high
 feasibility: easy
 horizon: s
-task_type: bug
+task_type: infrastructure
 area: ci, infra, pages
 goal: infrastructure
 related: [3375, 1951, 2562]
 ---
 
 # #3379 — baseline-summary-sync age guard measures the wrong file (follow-up to #3375)
+
+> **DONE (2026-07-24, status reconcile).** Fix `fix(#3379): baseline-sync
+> staleness guard must measure public/, not the in-repo copy` merged to `main`
+> via **PR #3298** (`git log origin/main --grep="#3379"`). The issue was left at
+> `status: ready` after the merge; reconciled to `done` here.
 
 ## Context
 

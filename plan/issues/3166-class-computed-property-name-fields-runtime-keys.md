@@ -1,11 +1,10 @@
 ---
 id: 3166
 title: "Class fields/accessors with RUNTIME computed property names are silently dropped ([f()] = 1 → read returns 0) — ~150 cpn tests"
-status: in-progress
+status: ready
 sprint: current
 created: 2026-07-12
 updated: 2026-07-12
-assignee: ttraenkler/agent-a52eb84a
 priority: medium
 horizon: m
 feasibility: medium

@@ -3,7 +3,7 @@ id: 1282
 title: "ESLint Tier 1 stress test — minimal Linter.verify() compilation"
 status: done
 created: 2026-05-02
-updated: 2026-05-03
+updated: 2026-07-26
 completed: 2026-05-03
 priority: medium
 feasibility: hard
@@ -14,8 +14,10 @@ language_feature: classes, Map, WeakMap, CJS, instanceof
 goal: npm-library-support
 sprint: 48
 depends_on: [1277, 1279]
-related: [1244, 1274, 1287, 1289]
+es_edition: n/a
+related: [1244, 1274, 1287, 1289, 1400, 3653, 3654, 3672]
 ---
+
 # #1282 — ESLint Tier 1 stress test
 
 ## Context
@@ -32,13 +34,14 @@ Compile the minimal ESLint entry point that can verify a trivial program against
 no-op config:
 
 ```ts
-import { Linter } from 'eslint';
+import { Linter } from "eslint";
 const linter = new Linter();
-const messages = linter.verify('const x = 1;', {});
+const messages = linter.verify("const x = 1;", {});
 // messages should be empty []
 ```
 
 This requires traversing through:
+
 - `eslint/lib/linter/linter.js` (CJS class)
 - `eslint-scope` (scope analysis)
 - `acorn` or `espree` (parser, used as an extern/import)
@@ -46,6 +49,7 @@ This requires traversing through:
 ## Known blockers
 
 Roughly in dependency order:
+
 1. **CJS require()** (#1279) — ESLint uses `require()` everywhere
 2. **CJS module.exports** (#1277) — every ESLint file uses `module.exports`
 3. **WeakMap as class-private storage** — `const slots = new WeakMap()` — already extern
@@ -57,6 +61,7 @@ Roughly in dependency order:
 ## Deliverable
 
 `tests/stress/eslint-tier1.test.ts` that:
+
 1. Attempts to compile the minimal Linter usage above via `compileProject`
 2. Documents each compile error or Wasm validation failure with a skip marker + issue ref
 3. If compilation succeeds: instantiates and verifies that `linter.verify('const x = 1;', {})` → `[]`
@@ -73,13 +78,13 @@ Roughly in dependency order:
 `tests/stress/eslint-tier1.test.ts` lands with 5 `it` blocks
 mirroring the Hono / lodash Tier 1 pattern:
 
-| Tier | Assertion | Status |
-|------|-----------|--------|
-| 1a | `compileProject` accepts `import { Linter } from "eslint"` entry | **passes** (1 KB shim binary) |
-| 1b | Tier 1a binary instantiates without Wasm validation errors | skipped → #1287 |
-| 1c | `eslint/lib/linter/linter.js` direct compile succeeds | **passes** (255 KB binary) |
-| 1d | `linter.js` binary instantiates without Wasm validation errors | skipped → #1289 |
-| 1e | `linter.verify("const x = 1;", {})` returns `[]` end-to-end | skipped → #1287, #1289, #1273, #1271, #1275 |
+| Tier | Assertion                                                        | Status                                      |
+| ---- | ---------------------------------------------------------------- | ------------------------------------------- |
+| 1a   | `compileProject` accepts `import { Linter } from "eslint"` entry | **passes** (1 KB shim binary)               |
+| 1b   | Tier 1a binary instantiates without Wasm validation errors       | skipped → #1287                             |
+| 1c   | `eslint/lib/linter/linter.js` direct compile succeeds            | **passes** (255 KB binary)                  |
+| 1d   | `linter.js` binary instantiates without Wasm validation errors   | skipped → #1289                             |
+| 1e   | `linter.verify("const x = 1;", {})` returns `[]` end-to-end      | skipped → #1287, #1289, #1273, #1271, #1275 |
 
 Two new follow-up issues filed during this work:
 
@@ -90,7 +95,7 @@ Two new follow-up issues filed during this work:
 - **#1289** — direct `linter.js` compile produces a 255 KB binary
   that fails Wasm validation in `FileReport_addRuleMessage`
   (`array.set[2] expected type (ref null 80), found array.get of
-  type (ref null 64)`) — likely shape-inference width mismatch on
+type (ref null 64)`) — likely shape-inference width mismatch on
   message-array element type.
 
 The 1c-passing binary (255 KB across the 32-file linter.js graph)
@@ -102,3 +107,29 @@ on the constructed Wasm types, not module resolution.
 Tier 1a + 1c stay green as a regression sentinel for the
 compile-time fast path. Tier 1b/1d/1e progressively unskip as their
 referenced issues land.
+
+## 2026-07-26 audit — harness retained, sentinels no longer green
+
+The historical deliverable (a five-rung stress-test ladder) remains complete,
+but its comments and paths no longer describe the current frontier:
+
+- Tier 1a (`import { Linter } from "eslint"`) now returns
+  `success: false`; the first diagnostic is
+  `Module '"eslint"' has no exported member 'Linter'`.
+- Direct `linter.js` also returns `success: false`, so the pipeline does not
+  reach Wasm validation.
+- Tier 1c/1d use `/workspace/...`; on non-container hosts they measure path
+  portability rather than compiler capability.
+- Other ESLint tests use the same absolute-path pattern, and the #2693
+  dual-delegation test can return early and appear green without executing.
+
+Path and skip semantics are tracked by #3653. The real package compilation
+frontier is reopened under #1400, with module-graph resolution in #3654.
+Do not use the old Tier 1a/1c status table as evidence that current ESLint
+compiles.
+
+After #3654 restores the 149-file resolved graph, the direct compile exceeds
+the Tier 1 child-process budget instead of returning the former resolver
+diagnostics. Tier 1a is explicitly skipped on #3672 until the child emits a
+structured result; a timeout or abnormal exit is not an expected compiler
+diagnostic.

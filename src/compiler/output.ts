@@ -193,14 +193,14 @@ function generateImportsHelper(mod: WasmModule): string {
     "export async function instantiateBytes(wasmBytes, deps, options) {",
     "  const imports = createImports(deps, options);",
     "  const result = await instantiateWasm(wasmBytes, imports.env, imports.string_constants, imports.string_constants16);",
-    "  if (imports.setExports) imports.setExports(result.instance.exports);",
+    "  if (imports.setInstance) imports.setInstance(result.instance);",
     "  return { ...result, imports };",
     "}",
     "",
     "export async function instantiateFromResponse(response, deps, options) {",
     "  const imports = createImports(deps, options);",
     "  const result = await instantiateWasmStreaming(response, imports.env, imports.string_constants, imports.string_constants16);",
-    "  if (imports.setExports) imports.setExports(result.instance.exports);",
+    "  if (imports.setInstance) imports.setInstance(result.instance);",
     "  return { ...result, imports };",
     "}",
     "",
@@ -254,6 +254,7 @@ export function compileToObjectSource(source: string, options: CompileOptions = 
   const ast = analyzeSource(processedSource, effectiveFileName, {
     allowJs: options.allowJs,
     emulateNode: options.emulateNode,
+    forceTsGrammar: preprocessed.requiresTsGrammar,
   });
 
   for (const diag of ast.diagnostics) {

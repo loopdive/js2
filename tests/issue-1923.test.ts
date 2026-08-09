@@ -3,12 +3,10 @@
 // #1923 — meter IR post-claim demotions in the fallback ratchet.
 //
 // The IR selector can CLAIM a function that then fails during build/verify/
-// lower and demotes to legacy through the warning channel — counted by no
-// selector-level metric. Such a regression (the #1922 while-loop defect was a
-// live example) was invisible to CI. The compiler now surfaces these on
-// `CompileResult.irPostClaimErrors`, and `scripts/check-ir-fallbacks.ts`
-// baselines + gates them. This test exercises the metering end to end via a
-// test-only build-throw injection seam.
+// lower. `CompileResult.irPostClaimErrors` meters the compatibility channel;
+// #3519 additionally makes any untyped throw an invariant, so it cannot demote
+// to legacy even when a legacy body exists. These tests exercise both channels
+// through the test-only build-throw injection seam.
 
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
@@ -34,34 +32,48 @@ describe("#1923 — IR post-claim demotion metering", () => {
     expect(result.irPostClaimErrors ?? []).toEqual([]);
   });
 
-  it("an injected post-claim build failure is metered on irPostClaimErrors (not silently dropped)", async () => {
+  it("types an injected unclassified post-claim throw as a fatal invariant", async () => {
     // The injection seam forces the per-function IR build to throw for every
-    // CLAIMED function, simulating a regression that demotes a claimed shape to
-    // legacy. The compile still SUCCEEDS (legacy fallback), but the demotion is
-    // now metered on `irPostClaimErrors` instead of vanishing. Run in a
-    // subprocess so the env var doesn't leak into other in-process tests.
+    // CLAIMED function, simulating a compiler regression rather than a known
+    // source capability gap. #3519 requires that untyped throw to fail hybrid
+    // with `unexpected-internal-throw`, while retaining the old compatibility
+    // meter. Run in a subprocess so the env var cannot leak.
     const dir = mkdtempSync(join(tmpdir(), "issue-1923-"));
     const probe = join(dir, "probe.mts");
     writeFileSync(
       probe,
       `import { compile } from ${JSON.stringify(join(REPO_ROOT, "src/index.ts"))};\n` +
-        `const r = await compile(${JSON.stringify(CLAIMED_FN)}, { fileName: "fib.ts", experimentalIR: true });\n` +
-        `process.stdout.write(JSON.stringify({ success: r.success, postClaim: r.irPostClaimErrors ?? [] }));\n`,
+        `const r = await compile(${JSON.stringify(CLAIMED_FN)}, { fileName: "fib.ts", experimentalIR: true, trackIrOutcomes: true });\n` +
+        `process.stdout.write(JSON.stringify({ success: r.success, postClaim: r.irPostClaimErrors ?? [], outcomes: r.irOutcomes ?? [], errors: r.errors }));\n`,
     );
     const out = execFileSync("npx", ["tsx", probe], {
       cwd: REPO_ROOT,
       env: { ...process.env, JS2WASM_TEST_INJECT_IR_BUILD_THROW: "1" },
     }).toString();
-    const parsed = JSON.parse(out) as { success: boolean; postClaim: { kind: string; func: string }[] };
-    expect(parsed.success).toBe(true); // demoted to legacy, not a hard error
+    const parsed = JSON.parse(out) as {
+      success: boolean;
+      postClaim: { kind: string; func: string }[];
+      outcomes: { kind: string; code?: string; stage: string; displayName: string }[];
+      errors: { message: string; severity: string }[];
+    };
+    expect(parsed.success).toBe(false);
     expect(parsed.postClaim.length).toBeGreaterThan(0);
     expect(parsed.postClaim.some((e) => e.kind === "build" && e.func === "fib")).toBe(true);
+    expect(parsed.outcomes).toContainEqual(
+      expect.objectContaining({
+        displayName: "fib",
+        kind: "invariant",
+        code: "unexpected-internal-throw",
+        stage: "build",
+      }),
+    );
+    expect(parsed.errors).toContainEqual(expect.objectContaining({ severity: "error" }));
   });
 
-  it("the ratchet gate FAILS when post-claim demotions grow above the committed baseline", () => {
+  it("the legacy fallback gate fails loudly on the injected invariant", () => {
     // Run the real gate against the committed corpus + baseline, with the
-    // build-throw injection on: every claimed corpus function demotes, so the
-    // post-claim bucket grows above the baseline (0) and the gate must exit 1.
+    // build-throw injection on: every claimed corpus function violates the IR
+    // contract, so the gate must exit non-zero before accepting fallback.
     let failed = false;
     let output = "";
     try {
@@ -76,8 +88,7 @@ describe("#1923 — IR post-claim demotion metering", () => {
       output = `${err.stdout?.toString() ?? ""}${err.stderr?.toString() ?? ""}`;
     }
     expect(failed).toBe(true);
-    expect(output).toMatch(/post-claim demotions grew/i);
-    expect(output).toMatch(/build:/);
+    expect(output).toMatch(/gate invariant|unexpected-internal-throw|Codegen error/i);
   });
 
   it("the ratchet gate PASSES on the clean corpus (no post-claim growth)", () => {

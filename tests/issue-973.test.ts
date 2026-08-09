@@ -21,7 +21,7 @@ export function test(): number {
     const opts = { fileName: "test.ts", emitWat: false, skipSemanticDiagnostics: true };
     const standalone = await compile(source, opts);
     const incr = createIncrementalCompiler(opts);
-    const incremental = incr.compile(source);
+    const incremental = await incr.compile(source);
     incr.dispose();
 
     expect(standalone.success).toBe(true);
@@ -62,8 +62,8 @@ export function test(): number {
 
     // Incremental: heavy → simple
     const incr = createIncrementalCompiler(opts);
-    incr.compile(heavySource); // compile heavy first
-    const incrSimple = incr.compile(simpleSource); // then simple
+    await incr.compile(heavySource); // compile heavy first
+    const incrSimple = await incr.compile(simpleSource); // then simple
     incr.dispose();
 
     expect(standaloneSimple.success).toBe(true);
@@ -113,8 +113,8 @@ export function test(): number {
     const standaloneNum = await compile(numSource, opts);
 
     const incr = createIncrementalCompiler(opts);
-    incr.compile(classSource);
-    const incrNum = incr.compile(numSource);
+    await incr.compile(classSource);
+    const incrNum = await incr.compile(numSource);
     incr.dispose();
 
     expect(standaloneNum.success).toBe(true);
@@ -142,13 +142,31 @@ export function test(): number {
 
     for (let i = 0; i < sources.length; i++) {
       const standalone = await compile(sources[i]!, opts);
-      const incremental = incr.compile(sources[i]!);
+      const incremental = await incr.compile(sources[i]!);
 
       expect(standalone.success).toBe(incremental.success);
       if (standalone.success && incremental.success) {
         expect(incremental.binary.length).toBe(standalone.binary.length);
         expect(Buffer.from(incremental.binary)).toEqual(Buffer.from(standalone.binary));
       }
+    }
+
+    incr.dispose();
+  });
+
+  it("JavaScript-mode edits stay byte-identical to standalone compilation", async () => {
+    const sources = [
+      `export function test(n) { let sum = 0; for (let i = 0; i < n; i++) sum += i; return sum | 0; }`,
+      `export function test(n) { let product = 1; for (let i = 1; i <= n; i++) product *= i; return product | 0; }`,
+    ];
+    const opts = { fileName: "test.js", allowJs: true, emitWat: false, skipSemanticDiagnostics: true };
+    const incr = createIncrementalCompiler(opts);
+
+    for (const source of sources) {
+      const standalone = await compile(source, opts);
+      const incremental = await incr.compile(source);
+      expect(incremental.success).toBe(standalone.success);
+      expect(Buffer.from(incremental.binary)).toEqual(Buffer.from(standalone.binary));
     }
 
     incr.dispose();

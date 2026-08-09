@@ -1,6 +1,15 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts } from "../ts-api.js";
+import {
+  buildBareSpecifierLookup,
+  buildProjectModuleResolutionLookup,
+  multiFileScriptKind,
+  normalizeMultiFileName,
+  resolveMultiFileModule,
+  type ProjectModuleResolutions,
+} from "./multi-file-paths.js";
 import { getDefaultEnvironment } from "../env.js";
+import { DTS_ENTRY_DECLS_NAME } from "./dts-entrypoint-seeds.js";
 import { buildModuleDecls } from "./node-capability-map.js";
 
 // All Node builtin access goes through the environment adapter (#1096).
@@ -355,6 +364,18 @@ export interface AnalyzeOptions {
    * + the `emulateNode ||= platform ∈ {node,deno}` composition in #2645/#2736.
    */
   platform?: "web" | "node" | "deno";
+  /**
+   * (#743) Source text of the entry's sibling `.d.ts` declaration file, added
+   * to the Program as an extra root under the synthetic name
+   * `DTS_ENTRY_DECLS_NAME` so exported-entrypoint parameter seeds can be
+   * collected from checker-owned declarations. The extra root contributes NO
+   * user-visible diagnostics (its own diagnostics are filtered — a shipped
+   * declaration file must never block compiling the package). Only supplied
+   * when `JS2WASM_DTS_ENTRYPOINT_SEEDS` (ON by default since 2026-08-08) has
+   * resolved a declaration source;
+   * absent → byte-identical behavior.
+   */
+  entryDeclarationsText?: string;
   /**
    * Force TypeScript GRAMMAR for the parse even when the input file is named
    * `.js`/`.mjs`/`.cjs` (#2752). When the compiler prepends an injected source
@@ -805,7 +826,7 @@ function isRecognizedDenoStdioNotFound(diag: ts.Diagnostic): boolean {
  * inject the ambient `Deno` d.ts. Path-agnostic and precisely scoped via
  * `isRecognizedDenoStdioNotFound`; leaves every other diagnostic untouched.
  */
-function filterRecognizedDenoStdioDiagnostics(diagnostics: ts.Diagnostic[]): ts.Diagnostic[] {
+export function filterRecognizedDenoStdioDiagnostics(diagnostics: ts.Diagnostic[]): ts.Diagnostic[] {
   if (!diagnostics.some(isRecognizedDenoStdioNotFound)) return diagnostics;
   return diagnostics.filter((d) => !isRecognizedDenoStdioNotFound(d));
 }
@@ -885,6 +906,10 @@ export function analyzeSource(source: string, fileName = "input.ts", analyzeOpti
   // drops the DOM ambient surface.
   const defaultLibName = defaultLibNameForPlatform(analyzeOptions);
 
+  // (#743) Optional extra root: the entry's shipped sibling `.d.ts` (flag-gated
+  // upstream — undefined means byte-identical behavior). See AnalyzeOptions.
+  const entryDeclsText = analyzeOptions?.entryDeclarationsText;
+
   const compilerHost: ts.CompilerHost = {
     getSourceFile(name, languageVersion) {
       if (name === fileName) {
@@ -892,6 +917,9 @@ export function analyzeSource(source: string, fileName = "input.ts", analyzeOpti
       }
       if (injectNodeEnv && name === NODE_ENV_DTS_NAME) {
         return ts.createSourceFile(name, nodeEnvDtsCombined, languageVersion, true, ts.ScriptKind.TS);
+      }
+      if (entryDeclsText !== undefined && name === DTS_ENTRY_DECLS_NAME) {
+        return ts.createSourceFile(name, entryDeclsText, languageVersion, true, ts.ScriptKind.TS);
       }
       const libSf = getLibSourceFile(name, languageVersion);
       if (libSf) return libSf;
@@ -903,7 +931,11 @@ export function analyzeSource(source: string, fileName = "input.ts", analyzeOpti
     getCanonicalFileName: (f) => f,
     useCaseSensitiveFileNames: () => true,
     getNewLine: () => "\n",
-    fileExists: (name) => name === fileName || (injectNodeEnv && name === NODE_ENV_DTS_NAME) || isKnownLibName(name),
+    fileExists: (name) =>
+      name === fileName ||
+      (injectNodeEnv && name === NODE_ENV_DTS_NAME) ||
+      (entryDeclsText !== undefined && name === DTS_ENTRY_DECLS_NAME) ||
+      isKnownLibName(name),
     readFile: () => undefined,
     getDirectories: () => [],
     directoryExists: () => true,
@@ -921,11 +953,16 @@ export function analyzeSource(source: string, fileName = "input.ts", analyzeOpti
   // rebuild without it, so we never turn a benign warning into a hard error.
   function buildProgram(withNodeEnv: boolean) {
     const rootNames = withNodeEnv ? [fileName, NODE_ENV_DTS_NAME] : [fileName];
+    if (entryDeclsText !== undefined) rootNames.push(DTS_ENTRY_DECLS_NAME);
     const prog = ts.createProgram(rootNames, compilerOptions, compilerHost);
-    const syn = prog.getSyntacticDiagnostics();
+    // (#743) The shipped declaration root's own diagnostics never surface: it
+    // exists purely as a seed source and must not block compiling the package.
+    const dropEntryDecls = (diags: readonly ts.Diagnostic[]): readonly ts.Diagnostic[] =>
+      entryDeclsText === undefined ? diags : diags.filter((d) => d.file?.fileName !== DTS_ENTRY_DECLS_NAME);
+    const syn = dropEntryDecls(prog.getSyntacticDiagnostics());
     const sem = analyzeOptions?.skipSemanticDiagnostics
       ? ([] as readonly ts.Diagnostic[])
-      : prog.getSemanticDiagnostics();
+      : dropEntryDecls(prog.getSemanticDiagnostics());
     return { prog, syn, sem };
   }
 
@@ -961,95 +998,6 @@ export interface MultiTypedAST {
   syntacticDiagnostics: readonly ts.Diagnostic[];
 }
 
-/** Script-file extensions we recognize in the multi-source pipeline. */
-const KNOWN_SCRIPT_EXTS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"] as const;
-
-function stripKnownExt(name: string): string {
-  for (const ext of KNOWN_SCRIPT_EXTS) {
-    if (name.endsWith(ext)) return name.slice(0, -ext.length);
-  }
-  return name;
-}
-
-function hasKnownExt(name: string): boolean {
-  return KNOWN_SCRIPT_EXTS.some((ext) => name.endsWith(ext));
-}
-
-function scriptKindFor(name: string): ts.ScriptKind {
-  if (name.endsWith(".tsx")) return ts.ScriptKind.TSX;
-  if (name.endsWith(".jsx")) return ts.ScriptKind.JSX;
-  if (name.endsWith(".js") || name.endsWith(".mjs") || name.endsWith(".cjs")) return ts.ScriptKind.JS;
-  return ts.ScriptKind.TS;
-}
-
-function tsExtensionFor(name: string): ts.Extension {
-  if (name.endsWith(".tsx")) return ts.Extension.Tsx;
-  if (name.endsWith(".jsx")) return ts.Extension.Jsx;
-  if (name.endsWith(".js")) return ts.Extension.Js;
-  if (name.endsWith(".mjs")) return ts.Extension.Mjs;
-  if (name.endsWith(".cjs")) return ts.Extension.Cjs;
-  return ts.Extension.Ts;
-}
-
-/**
- * Normalize a file path to a canonical form used as key in our in-memory file map.
- * Strips leading "./", resolves ".." segments, preserves any known script extension,
- * and defaults to ".ts" when no extension is present.
- */
-function normalizeFileName(name: string): string {
-  let normalized = name.startsWith("./") ? name.slice(2) : name;
-  if (normalized.startsWith("/")) {
-    normalized = normalized.slice(1);
-  }
-  // Resolve ".." path segments (e.g., "link/../emit/foo" → "emit/foo")
-  const parts = normalized.split("/");
-  const resolved: string[] = [];
-  for (const part of parts) {
-    if (part === "..") {
-      resolved.pop();
-    } else if (part !== ".") {
-      resolved.push(part);
-    }
-  }
-  normalized = resolved.join("/");
-  // Preserve explicit script extensions (.js/.mjs/.cjs/.jsx/.tsx/.ts); otherwise default to .ts
-  if (!hasKnownExt(normalized)) {
-    normalized = `${normalized}.ts`;
-  }
-  return normalized;
-}
-
-/**
- * Locate a file in the normalizedFiles map, probing for alternate extensions.
- * Accepts e.g. "a" (user wrote `import "./a"`) and finds "a.js" / "a.ts" / "a/index.js".
- */
-function probeFileKey(resolved: string, files: Map<string, string>): string | undefined {
-  if (files.has(resolved)) return resolved;
-  // Swap the trailing extension (e.g. normalized "a.ts" but file is "a.js")
-  if (hasKnownExt(resolved)) {
-    const stem = stripKnownExt(resolved);
-    for (const ext of KNOWN_SCRIPT_EXTS) {
-      const cand = stem + ext;
-      if (cand !== resolved && files.has(cand)) return cand;
-    }
-    // Also try <stem>/index.<ext>
-    for (const ext of KNOWN_SCRIPT_EXTS) {
-      const cand = `${stem}/index${ext}`;
-      if (files.has(cand)) return cand;
-    }
-  } else {
-    for (const ext of KNOWN_SCRIPT_EXTS) {
-      const cand = resolved + ext;
-      if (files.has(cand)) return cand;
-    }
-    for (const ext of KNOWN_SCRIPT_EXTS) {
-      const cand = `${resolved}/index${ext}`;
-      if (files.has(cand)) return cand;
-    }
-  }
-  return undefined;
-}
-
 /**
  * Parse and type-check multiple TS source files.
  * In-memory CompilerHost — no filesystem needed.
@@ -1062,50 +1010,37 @@ export function analyzeMultiSource(
   specifierMap?: Record<string, string>,
   /** Compiler options (allowJs, skipSemanticDiagnostics, ...) */
   analyzeOptions?: AnalyzeOptions,
+  /** Exact per-importer edges captured by compileProject's filesystem resolver. */
+  projectResolutions?: ProjectModuleResolutions,
 ): MultiTypedAST {
   const normalizedFiles = new Map<string, string>();
   for (const [name, content] of Object.entries(files)) {
-    normalizedFiles.set(normalizeFileName(name), content);
+    normalizedFiles.set(normalizeMultiFileName(name), content);
   }
-  const normalizedEntry = normalizeFileName(entryFile);
+
+  // Multi-file package graphs retain their real Node import declarations.
+  // Give the checker the same import-scoped ambient module surface as the
+  // single-file path while codegen passes those modules through to the Node
+  // host. Building once from the joined graph avoids duplicate ambient
+  // declarations when many dependencies import the same builtin (#3654).
+  if (resolveEmulateNode(analyzeOptions)) {
+    const nodeEnvDts = buildNodeEnvDtsForSource(Array.from(normalizedFiles.values()).join("\n"), ts.ScriptKind.JS);
+    if (nodeEnvDts !== undefined) {
+      normalizedFiles.set(NODE_ENV_DTS_NAME, nodeEnvDts);
+    }
+  }
+
+  const normalizedEntry = normalizeMultiFileName(entryFile);
   const rootNames = Array.from(normalizedFiles.keys());
 
-  // Build a bare-specifier-to-normalized-file lookup.
-  // Explicit specifierMap entries take priority, then we auto-derive
-  // mappings from file keys (e.g. "utils.ts" -> bare specifier "utils").
-  const bareSpecifierLookup = new Map<string, string>();
-  for (const normalized of normalizedFiles.keys()) {
-    // "foo/bar.ts" -> bare specifiers "foo/bar" and "bar"
-    const withoutExt = stripKnownExt(normalized);
-    bareSpecifierLookup.set(withoutExt, normalized);
-    // Also register the exact extension form so `import "foo/bar.js"` works.
-    if (!bareSpecifierLookup.has(normalized)) {
-      bareSpecifierLookup.set(normalized, normalized);
-    }
-    const basename = withoutExt.split("/").pop()!;
-    if (basename && !bareSpecifierLookup.has(basename)) {
-      bareSpecifierLookup.set(basename, normalized);
-    }
-    // Also support "foo/index.ts" -> bare specifier "foo"
-    if (basename === "index") {
-      const dir = withoutExt.replace(/\/index$/, "");
-      if (dir && !bareSpecifierLookup.has(dir)) {
-        bareSpecifierLookup.set(dir, normalized);
-      }
-    }
-  }
-  // Explicit specifierMap overrides auto-derived entries
-  if (specifierMap) {
-    for (const [specifier, fileKey] of Object.entries(specifierMap)) {
-      bareSpecifierLookup.set(specifier, normalizeFileName(fileKey));
-    }
-  }
+  const bareSpecifierLookup = buildBareSpecifierLookup(normalizedFiles, specifierMap);
+  const projectResolutionLookup = buildProjectModuleResolutionLookup(projectResolutions);
 
   const compilerHost: ts.CompilerHost = {
     getSourceFile(name, languageVersion) {
       const userContent = normalizedFiles.get(name);
       if (userContent !== undefined) {
-        return ts.createSourceFile(name, userContent, languageVersion, true, scriptKindFor(name));
+        return ts.createSourceFile(name, userContent, languageVersion, true, multiFileScriptKind(name));
       }
       const libSf = getLibSourceFile(name, languageVersion);
       if (libSf) return libSf;
@@ -1123,29 +1058,15 @@ export function analyzeMultiSource(
     getDirectories: () => [],
     directoryExists: () => true,
     resolveModuleNameLiterals(moduleLiterals, containingFile) {
-      return moduleLiterals.map((literal) => {
-        const moduleName = literal.text;
-        // Resolve relative paths against the containing file's directory
-        let resolved: string;
-        if (moduleName.startsWith("./") || moduleName.startsWith("../")) {
-          const containingDir = containingFile.replace(/[^/]*$/, "");
-          resolved = normalizeFileName(containingDir + moduleName);
-        } else {
-          // Bare specifier: check the lookup map first, then fall back to normalizeFileName
-          resolved = bareSpecifierLookup.get(moduleName) ?? normalizeFileName(moduleName);
-        }
-        const key = probeFileKey(resolved, normalizedFiles) ?? resolved;
-        if (normalizedFiles.has(key)) {
-          return {
-            resolvedModule: {
-              resolvedFileName: key,
-              isExternalLibraryImport: false,
-              extension: tsExtensionFor(key),
-            },
-          };
-        }
-        return { resolvedModule: undefined };
-      });
+      return moduleLiterals.map((literal) => ({
+        resolvedModule: resolveMultiFileModule(
+          literal.text,
+          containingFile,
+          normalizedFiles,
+          bareSpecifierLookup,
+          projectResolutionLookup,
+        ),
+      }));
     },
   };
 
@@ -1200,13 +1121,18 @@ export function analyzeMultiSource(
             : undefined;
         if (!spec) continue;
         // Re-use the same resolver the program used so cycles are treated identically.
-        const resolved = ts.resolveModuleName(spec, name, compilerOptions, compilerHost).resolvedModule
-          ?.resolvedFileName;
+        const resolved = resolveMultiFileModule(
+          spec,
+          name,
+          normalizedFiles,
+          bareSpecifierLookup,
+          projectResolutionLookup,
+        )?.resolvedFileName;
         if (resolved && resolved !== name) visit(resolved);
       }
       visited.add(name);
       onStack.delete(name);
-      if (sf !== entrySourceFile) userSourceFiles.push(sf);
+      if (sf !== entrySourceFile && name !== NODE_ENV_DTS_NAME) userSourceFiles.push(sf);
     };
     // Entry-anchored DFS; only files reachable from entry are emitted.
     visit(normalizedEntry);
@@ -1215,6 +1141,7 @@ export function analyzeMultiSource(
     // (the previous behaviour was to emit every rootName, so we keep that for safety).
     for (const name of rootNames) {
       if (visited.has(name) || name === normalizedEntry) continue;
+      if (name === NODE_ENV_DTS_NAME) continue;
       const sf = program.getSourceFile(name);
       if (sf && sf !== entrySourceFile && !userSourceFiles.includes(sf)) {
         userSourceFiles.splice(userSourceFiles.length - 1, 0, sf);
@@ -1298,4 +1225,5 @@ export function analyzeFiles(entryPath: string, analyzeOptions?: AnalyzeOptions)
   };
 }
 
-export { IncrementalLanguageService } from "./language-service.js";
+export { IncrementalLanguageService, IncrementalProjectLanguageService } from "./language-service.js";
+export type { ProjectModuleResolutions } from "./multi-file-paths.js";

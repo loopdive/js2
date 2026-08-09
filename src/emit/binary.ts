@@ -460,13 +460,22 @@ function emitBinaryWithSourceMapUnguarded(mod: WasmModule): EmitResult {
       s.u32(totalSegments);
       // Active element segments (table initializers)
       for (const elem of mod.elements) {
-        s.byte(0x00); // active, table 0, funcref
+        const explicitTable = elem.tableIdx !== 0;
+        s.byte(explicitTable ? 0x02 : 0x00); // active funcref segment, implicit or explicit table
+        if (explicitTable) {
+          if (valCtx) {
+            valCtx.where = "element-segment table";
+            vIdx("table", elem.tableIdx, valCtx.numTables);
+          }
+          s.u32(elem.tableIdx);
+        }
         if (valCtx) {
           valCtx.where = "element-segment offset";
           valCtx.maxLocals = -1; // const-expr context: no locals exist
         }
         for (const instr of elem.offset) encodeInstr(instr, s);
         s.byte(OP.end);
+        if (explicitTable) s.byte(0x00); // elemkind = funcref
         s.u32(elem.funcIndices.length);
         if (valCtx) valCtx.where = "element-segment function list";
         for (const h of elem.funcIndices) {
@@ -505,9 +514,56 @@ function emitBinaryWithSourceMapUnguarded(mod: WasmModule): EmitResult {
     const funcRelativeEntries: { bodyOffset: number; instrOffset: number; sourcePos: SourcePos }[] = [];
 
     codeSectionBody.u32(mod.functions.length); // vector count
-    for (const f of mod.functions) {
+    // (#4133) How many defined functions share each name. A local-index breach
+    // is usually a body installed against another function's frame, and a
+    // duplicated name is the strongest single hint that that is what happened —
+    // so report it AT the failure instead of leaving the reader to guess from
+    // the "#2043 late-import shift" boilerplate, which is a different cause.
+    const definedNameCounts = new Map<string, number>();
+    for (const f of mod.functions) definedNameCounts.set(f.name, (definedNameCounts.get(f.name) ?? 0) + 1);
+
+    // (#4134) `JS2WASM_EMIT_DUMP=1` writes one line per defined function
+    // (position, name, param+local frame size) to stderr before encoding. A
+    // local-index breach is a mismatch between a body and its frame, so the
+    // actionable question is "which function has a frame that index WOULD fit"
+    // — answerable only against the whole table. Inert unless set.
+    // (#4134) Do two defined functions SHARE one body array? Bodies are assigned
+    // by reference from a FunctionContext, and a shared array is a documented
+    // hazard in this codebase ("`body: []` in FunctionContext (NOT
+    // `body: func.body`) — shared references break savedBody/swap"). A body that
+    // is still being appended to by another context is one way a function ends
+    // up referencing locals its own frame never declared.
+    if (typeof process !== "undefined" && process.env?.JS2WASM_EMIT_DUMP) {
+      const bodyOwners = new Map<Instr[], number[]>();
+      for (const [position, f] of mod.functions.entries()) {
+        bodyOwners.set(f.body, [...(bodyOwners.get(f.body) ?? []), position]);
+      }
+      for (const [, positions] of bodyOwners) {
+        if (positions.length < 2) continue;
+        const named = positions.map((p) => `${p}:${mod.functions[p]!.name}`).join(", ");
+        process.stderr.write(`[js2:emit] SHARED BODY ARRAY across ${positions.length} functions: ${named}\n`);
+      }
+    }
+    if (typeof process !== "undefined" && process.env?.JS2WASM_EMIT_DUMP) {
+      const lines = mod.functions.map((f, position) => {
+        const params = resolveParamCount(f.typeIdx);
+        return `[js2:emit] ${position}\t${params >= 0 ? params + f.locals.length : "?"}\t${f.name}`;
+      });
+      process.stderr.write(`${lines.join("\n")}\n`);
+    }
+
+    for (const [functionPosition, f] of mod.functions.entries()) {
       if (valCtx) {
-        valCtx.where = `function '${f.name || "?"}'`;
+        // (#4030/#4133) Include the position and frame size. A bare name is not
+        // enough to act on: the name can be synthesized or shared by several
+        // declarations, and the whole point of a local-index breach is that the
+        // body does not match the frame it was installed against.
+        const sharing = definedNameCounts.get(f.name) ?? 1;
+        valCtx.where =
+          `function '${f.name || "?"}' (position ${functionPosition}, ` +
+          `${f.locals.length} declared local${f.locals.length === 1 ? "" : "s"}` +
+          (sharing > 1 ? `, NAME SHARED BY ${sharing} DEFINED FUNCTIONS` : "") +
+          `)`;
         const params = resolveParamCount(f.typeIdx);
         valCtx.maxLocals = params >= 0 ? params + f.locals.length : -1;
       }
@@ -1004,17 +1060,20 @@ export function encodeInstr(instr: Instr, enc: WasmEncoder): void {
       enc.byte(OP.select);
       break;
     case "local.get":
-      if (valCtx && valCtx.maxLocals >= 0) vIdx("local", instr.index, valCtx.maxLocals);
+      // (#4134) name the opcode: a local breach needs the SITE, not just the frame.
+      if (valCtx && valCtx.maxLocals >= 0) vIdx(`local (${instr.op})`, instr.index, valCtx.maxLocals);
       enc.byte(OP.local_get);
       enc.u32(instr.index);
       break;
     case "local.set":
-      if (valCtx && valCtx.maxLocals >= 0) vIdx("local", instr.index, valCtx.maxLocals);
+      // (#4134) name the opcode: a local breach needs the SITE, not just the frame.
+      if (valCtx && valCtx.maxLocals >= 0) vIdx(`local (${instr.op})`, instr.index, valCtx.maxLocals);
       enc.byte(OP.local_set);
       enc.u32(instr.index);
       break;
     case "local.tee":
-      if (valCtx && valCtx.maxLocals >= 0) vIdx("local", instr.index, valCtx.maxLocals);
+      // (#4134) name the opcode: a local breach needs the SITE, not just the frame.
+      if (valCtx && valCtx.maxLocals >= 0) vIdx(`local (${instr.op})`, instr.index, valCtx.maxLocals);
       enc.byte(OP.local_tee);
       enc.u32(instr.index);
       break;
@@ -1331,6 +1390,14 @@ export function encodeInstr(instr: Instr, enc: WasmEncoder): void {
     case "any.convert_extern":
       enc.byte(GC.prefix);
       enc.byte(GC.any_convert_extern);
+      break;
+    case "ref.i31":
+      enc.byte(GC.prefix);
+      enc.byte(GC.ref_i31);
+      break;
+    case "i31.get_s":
+      enc.byte(GC.prefix);
+      enc.byte(GC.i31_get_s);
       break;
     case "extern.convert_any":
       enc.byte(GC.prefix);
@@ -1958,16 +2025,13 @@ export function encodeInstr(instr: Instr, enc: WasmEncoder): void {
       enc.byte(OP.end);
       break;
     case "br_table":
-      // #1939 — `br_table` is declared in the Instr union as `{ op: "br_table" }`
-      // with NO payload (target label vector + default), so there is no correct
-      // encoding for it: emitting opcode 0x0e without its operands would corrupt
-      // every following instruction. No codegen path produces it today. Fail
-      // loud rather than emit a malformed branch; wiring it needs the union to
-      // carry `targets: number[]` + `default: number` first.
-      throw new Error(
-        "encodeInstr: 'br_table' has no payload in the Instr union (needs targets[] + default) — " +
-          "cannot be encoded; no codegen path should emit it yet (#1939)",
-      );
+      // #2952 slice 4 — 0x0e, vec(labelidx) targets + default labelidx.
+      // (Was a payload-less stub that failed loud, #1939.)
+      enc.byte(OP.br_table);
+      enc.u32(instr.targets.length);
+      for (const t of instr.targets) enc.u32(t);
+      enc.u32(instr.defaultDepth);
+      break;
     // #1939 — fail loud on an op with no encoding case. The `never` binding is
     // a compile-time exhaustiveness check over the real Instr union, so a new
     // union variant without a matching encoding case is a type error here rather

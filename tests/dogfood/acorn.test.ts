@@ -18,6 +18,8 @@ import { fileURLToPath } from "node:url";
 import { diffAst } from "./ast-diff.mjs";
 // @ts-expect-error — .mjs harness, no .d.ts (pure tooling)
 import { setupAcorn } from "./setup-acorn.mjs";
+// @ts-expect-error — .mjs harness, no .d.ts (pure tooling)
+import { buildTestVariants, parseTest262Flags } from "./acorn-test262.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -81,5 +83,25 @@ describe("acorn dogfood harness (#1710)", () => {
     expect(diff.equal).toBe(false);
     expect(diff.divergences[0].path).toBe("$.operator");
     expect(diff.divergences[0].reason).toBe("primitive-mismatch");
+  });
+
+  it("builds Test262 parser variants from inline and block metadata flags", () => {
+    const moduleSource = "/*---\nflags: [module, async]\n---*/\nexport default 1;";
+    expect(parseTest262Flags(moduleSource)).toEqual(["module", "async"]);
+    expect(buildTestVariants(moduleSource, parseTest262Flags(moduleSource))).toMatchObject([
+      { mode: "module", options: { ecmaVersion: 2025, sourceType: "module" } },
+    ]);
+
+    const defaultSource = "/*---\nflags:\n  - generated\n---*/\nlet x = 1;";
+    expect(parseTest262Flags(defaultSource)).toEqual(["generated"]);
+    expect(buildTestVariants(defaultSource, parseTest262Flags(defaultSource)).map((variant) => variant.mode)).toEqual([
+      "sloppy",
+      "strict",
+    ]);
+
+    const noStrictSource = "/*---\nflags: [noStrict]\n---*/\nwith ({}) {}";
+    expect(buildTestVariants(noStrictSource, parseTest262Flags(noStrictSource)).map((variant) => variant.mode)).toEqual(
+      ["sloppy"],
+    );
   });
 });

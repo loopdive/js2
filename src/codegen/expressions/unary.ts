@@ -142,7 +142,16 @@ function compilePrefixUnary(
       const operandType = compileExpression(ctx, fctx, expr.operand);
       ensureI32Condition(fctx, operandType, ctx);
       fctx.body.push({ op: "i32.eqz" });
-      return { kind: "i32" };
+      // (#3557) `!x` (and `!!x`) is ALWAYS a JS boolean — brand the i32 result so
+      // downstream boxing at the host boundary reifies a JS `true`/`false`
+      // (`__box_boolean`) rather than the number `1`/`0` (`__box_number`), and
+      // `typeof (!x) === "boolean"` holds. This is the missing prefix-unary
+      // member of the boolean-producing operator family that
+      // `brandBooleanBinaryResult` already brands for `===`/`<`/`in`/… (#2712).
+      // Lane-agnostic: `coerceType(i32→externref)` honours `boolean:true` in both
+      // gc/host and standalone. Structurally inert — still matches every
+      // `.kind === "i32"` check.
+      return { kind: "i32", boolean: true };
     }
     case ts.SyntaxKind.TildeToken: {
       // Bitwise ~ applies ToNumber (§7.1.4) → ToInt32; Symbol must throw TypeError.

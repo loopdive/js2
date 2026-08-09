@@ -1,8 +1,7 @@
 ---
 id: 3341
 title: "STRICT_IR_REASONS hardening — per-reason (NOT a corpus-zero flip); doc-correction shipped, real per-reason work remains"
-status: in-progress
-assignee: ttraenkler/dev-h
+status: ready
 sprint: current
 created: 2026-07-17
 priority: medium
@@ -222,6 +221,7 @@ disjoint worlds inside that one `null`:
 **Changes:**
 
 **File: `src/ir/select.ts`**
+
 - Add `| "param-type-internal-desync"` to the `IrFallbackReason` union
   (`:70–105`).
 - At each `param-type-not-resolvable` param site (`:961`, `:965`, `:979`,
@@ -238,6 +238,7 @@ disjoint worlds inside that one `null`:
   to bound the blast radius.
 
 **File: `src/codegen/index.ts`**
+
 - Add `"param-type-internal-desync"` to `STRICT_IR_REASONS` (`:1511`) and
   document why (annotation-present-but-null-resolve is a resolver bug, not an
   unlowerable construct — the exact "genuinely unreachable" bar the `:1512`
@@ -250,6 +251,7 @@ violation, must be zero"). The generator cross-checks the union in
 `select.ts`, so this edit is REQUIRED or the `quality` gate fails.
 
 **Guardrails / edge cases:**
+
 - The new reason must NOT appear in `scripts/ir-fallback-baseline.json` (it is
   strict, not budgeted). If `check:ir-fallbacks` reports it on the 13-file
   corpus, that is a REAL resolver bug surfaced by the split — fix the resolver,
@@ -273,6 +275,7 @@ said "I can lower this," then `compileIrPathFunctions` threw) — which is
 needs no split.
 
 **File: `src/codegen/index.ts`**
+
 - Pick ONE build-error class that is known-permanently-fixed and add its
   message substring to `STRICT_IR_BUILD_ERRORS` (`:1534`). Candidate strings
   are already sketched in the comment (`:1537–1539`), e.g.
@@ -280,7 +283,7 @@ needs no split.
   `compileIrPathFunctions` (and the IR builder in `src/ir/`) for a throw whose
   message is stable and whose underlying cause is closed, then confirm the
   corpus never trips it (`JS2WASM_LOG_IR_FALLBACKS=1 pnpm run check:ir-fallbacks
-  -- --verbose` shows the build-error channel).
+-- --verbose` shows the build-error channel).
 - `isStrictIrBuildError` + `formatIrPathFallbackDiagnostic` already do the
   promotion; no wiring change needed — this slice is purely "add one vetted
   substring + a test."
@@ -344,3 +347,22 @@ per-reason promotion (Slice A) lands.
 All three are ≤M and independently claimable. Recommended order: B (lowest
 risk, proves the promotion lifecycle end-to-end) → A (the headline per-reason
 split) → C alongside.
+
+## Review (Fable, 2026-07-24)
+
+Status check on main @ `7652f0337`: `STRICT_IR_REASONS`
+(`src/codegen/index.ts:1492`) is still an **empty set** — no selector-
+rejection reason has ever been promoted, and the in-code comment now
+documents this issue's necessary-but-not-sufficient rule. The re-scope is
+validated by history, not just argument: the Slice-B strictness that DID
+land (branch `issue-3341-strict-ir-buildorerrors`, merged in GitHub PR
+#3249, 2026-07-17 — `STRICT_IR_BUILD_ERRORS` for the name-repoint
+invariant) over-promoted and had to be narrowed twice: `8b7547a1d`
+(fix(#680): restore standalone generators — "narrow #3341/#3519 STRICT-IR
+over-promotion") and `b6d1da941`/`4f703c939` (fix(#3565): restore 3+1
+designed demote-to-legacy contracts). Any future per-reason promotion must
+carry standalone/generator-lane regression evidence, not corpus-zero.
+Recommend keeping this parked until after R2 (#3521), when
+prepare-before-emit makes per-reason unreachability provable. Note for
+auditors: bare `#3341` in merge subjects matches an unrelated GitHub PR
+number — use branch names / `fix(#3341):` scopes.

@@ -1,8 +1,7 @@
 ---
 id: 2873
 title: "Standalone: language/expressions cluster (276 host-pass/standalone-fail, de-masked from #2862)"
-status: in-progress
-assignee: ttraenkler/dev-2873
+status: ready
 created: 2026-06-30
 updated: 2026-07-02
 priority: high

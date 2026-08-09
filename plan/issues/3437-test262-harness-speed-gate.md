@@ -1,8 +1,10 @@
 ---
 id: 3437
 title: "CI speed gate: enforce test262 harness compile-time budget so a harness switch can never silently tank CI"
-status: ready
-sprint: current
+status: done
+completed: 2026-07-24
+task_type: ci
+sprint: 76
 priority: high
 horizon: m
 related: [3433, 1942, 3267, 3370]
@@ -49,6 +51,46 @@ crawling queue.
   ratchets) when a slowdown is intentional and justified.
 - Validates that #3433 (PR #3374) brought the harness back under budget; the
   committed baseline is set from post-#3433 main.
+
+## Resolution (2026-07-24)
+
+Shipped a deterministic, load-independent, PRE-MERGE budget gate.
+
+**The proxy (load-independent).** Rather than wall-clock (the flaky, post-merge
+#1942 guard), the gate measures a DETERMINISTIC proxy for source-scan compile
+WORK: the number of shared-`forEachChild` traversal-helper invocations
+(`src/ts-api.ts`) while compiling a FIXED, self-contained representative
+harness-shaped assembly. That count is a pure function of the AST + the scans
+performed — no wall-clock, no runner load, no parallelism — so it is
+reproducible bit-for-bit and safe to gate in the pre-merge `quality` job. An
+opt-in meter (`enableForEachChildMeter`/`readForEachChildCalls`) keeps it zero
+behavioural effect and near-zero cost off the gate path.
+
+**Coverage of the #3433 class.** The `symbolBindsAsyncFunction` async-assign
+scan (the exact O(call-sites × file-size) walk #3433 memoized) used
+`ts.forEachChild` directly; it was migrated to the shared helper so the gate
+counts it. Verified: temporarily de-memoizing that scan explodes the fixture
+count **98,089 → 1,120,948** (11.4×), far past the +15% ceiling, and the gate
+FAILS — proving it catches the regression class. The per-file source-scan
+predicates (`src/codegen/source-scan-predicates.ts`) already flow through the
+shared helper.
+
+**Deliverables.**
+- `scripts/check-harness-compile-budget.ts` — gate; `--update` reseeds (like the
+  LOC/IR ratchets); `--json`; a vacuity floor fails if the meter/fixture breaks.
+- `scripts/harness-compile-budget.json` — budget set from post-#3433 main
+  (`forEachChildCalls: 98089`, `marginPct: 15`).
+- `src/ts-api.ts` — opt-in traversal meter.
+- `src/codegen/expressions.ts` — async-assign scan migrated to the shared helper.
+- `.github/workflows/ci.yml` — wired as a required `quality` step.
+- `package.json` — `check:harness-compile-budget`.
+- `tests/issue-3437-harness-compile-budget.test.ts` — pure verdict + fixture
+  determinism + end-to-end "current main is within budget" (acceptance #4).
+
+**Scope caveat (follow-up).** `ts.forEachChild` is a getter-only export (not
+monkey-patchable), so DIRECT `ts.forEachChild` call sites are not counted — the
+meter covers the shared-helper traversal class. New per-file scans should use the
+shared helper; broadening coverage to the remaining direct sites is a follow-up.
 
 ## Notes
 

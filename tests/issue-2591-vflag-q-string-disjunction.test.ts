@@ -107,40 +107,23 @@ describe("#2591 standalone RegExp v-flag \\q{…} string disjunction — dual-ru
     });
   }
 
-  // A `\q{…}` string disjunction inside a top-level v-mode set operation
-  // (`&&`/`--`) is a narrowed refusal for this slice — it must be a clean
-  // compile-time refusal, NOT a wrong match. (The single-code-point enumerator
-  // throws RegexUnsupportedError → reportError, so r.success is false.)
-  it("refuses \\q{…} inside a set operation cleanly (no wrong match)", async () => {
+  // #3665 completes the former narrowed residual with first-class finite set
+  // algebra. Keep this predecessor test as a dual-run regression.
+  it("matches \\q{…} inside a set operation", async () => {
     const src = `export function run(): boolean { return /[\\q{ab}&&[a-z]]/v.test("ab"); }`;
     const r = await compile(src, { fileName: "test.ts", target: "standalone" });
-    // It must not silently compile to a WRONG result. Either a clean refusal
-    // (success=false) or, if it does compile, it must throw at runtime rather
-    // than return a bogus boolean — but never claim a match it shouldn't.
-    if (r.success) {
-      // If the engine ever learns this case, the result must equal the host.
-      const expected = /[\q{ab}&&[a-z]]/v.test("ab");
-      const { instance } = await WebAssembly.instantiate(r.binary, {});
-      let got: boolean | null = null;
-      try {
-        got = (instance.exports as { run(): number }).run() !== 0;
-      } catch {
-        got = null; // a trap is an acceptable refusal surface for this carve-out
-      }
-      if (got !== null) expect(got).toBe(expected);
-    } else {
-      expect(r.success).toBe(false);
-    }
+    expect(r.success, r.errors?.[0]?.message).toBe(true);
+    const expected = /[\q{ab}&&[a-z]]/v.test("ab");
+    const { instance } = await WebAssembly.instantiate(r.binary, {});
+    const got = (instance.exports as { run(): number }).run() !== 0;
+    expect(got).toBe(expected);
   });
 
-  // A `\q{…}` unioned with a property-of-STRINGS (`\p{Basic_Emoji}` etc.) must
-  // be a LOUD parse-level refusal — never silently drop the property's
-  // multi-code-point members (which gave a wrong answer before #2591). A
-  // property over code points (`\p{ASCII}`) is unaffected and still parses.
-  it("refuses \\q{…} mixed with a property-of-strings, keeps code-point \\p{…}", () => {
-    expect(() => parsePattern("^[\\p{Emoji_Keycap_Sequence}\\q{0|2|4|9\\uFE0F\\u20E3}]+$", RE_FLAG_V)).toThrow();
-    expect(() => parsePattern("[\\p{RGI_Emoji}\\q{ab}]", RE_FLAG_V)).toThrow();
-    // Property of code points unioned with `\q{…}` still lowers fine.
+  // #3665 also makes properties of strings first-class operands. Code-point
+  // properties continue through the compile-time host enumerator.
+  it("parses \\q{…} with string and code-point properties", () => {
+    expect(() => parsePattern("^[\\p{Emoji_Keycap_Sequence}\\q{0|2|4|9\\uFE0F\\u20E3}]+$", RE_FLAG_V)).not.toThrow();
+    expect(() => parsePattern("[\\p{RGI_Emoji}\\q{ab}]", RE_FLAG_V)).not.toThrow();
     expect(() => parsePattern("[\\p{ASCII}\\q{ab}]", RE_FLAG_V)).not.toThrow();
   });
 });

@@ -1,10 +1,9 @@
 ---
 id: 2175
 title: "architect spec: standalone builtin-prototype object representation + native-method-closure dispatch"
-status: in-progress
+status: ready
 model: fable
 fable_role: spec
-assignee: ttraenkler/opus-2175s3
 sprint: current
 created: 2026-06-16
 updated: 2026-07-17

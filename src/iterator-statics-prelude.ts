@@ -43,13 +43,42 @@
  * otherwise. The prelude is inserted AFTER any leading directive prologue so
  * a test's `"use strict"` stays a directive.
  */
-import { PositionMap } from "./position-map.js";
+import { PositionMap, type CompilerSourceOriginSpan } from "./position-map.js";
 import { ts } from "./ts-api.js";
 
 const { forEachChild } = ts;
 
 /** The four rewritten helpers: `Iterator.zip` → `__js2wasm_Iterator_zip`, … */
 const HELPERS = ["zip", "zipKeyed", "concat", "from"] as const;
+
+const ITERATOR_PRELUDE_FUNCTION_ROLES: Readonly<Record<string, string>> = {
+  __j2wIterWrap: "wrapped-source",
+  __j2wIterCloseRev: "reverse-close",
+  __j2wIterCloseAll: "close-all",
+  __j2wIterReadMode: "read-mode",
+  __j2wIterRequireObject: "require-object",
+  __j2wIterZipCore: "zip-core",
+  __js2wasm_Iterator_zip: "zip",
+  __js2wasm_Iterator_zipKeyed: "zip-keyed",
+  __js2wasm_Iterator_concat: "concat",
+  __js2wasm_Iterator_from: "from",
+};
+
+function iteratorPreludeOrigins(prelude: string): CompilerSourceOriginSpan[] {
+  const sf = ts.createSourceFile("__iterator_prelude_origins__.ts", prelude, ts.ScriptTarget.Latest, true);
+  const origins: CompilerSourceOriginSpan[] = [];
+  for (const statement of sf.statements) {
+    if (!ts.isFunctionDeclaration(statement) || !statement.body || !statement.name) continue;
+    const role = ITERATOR_PRELUDE_FUNCTION_ROLES[statement.name.text];
+    if (!role) throw new Error(`missing compiler provenance role for iterator helper ${statement.name.text}`);
+    origins.push({
+      start: statement.getStart(sf),
+      end: statement.end,
+      origin: { producer: "iterator-statics-prelude", role },
+    });
+  }
+  return origins;
+}
 
 export interface IteratorStaticsPreludeResult {
   /** Transformed source (prelude inserted + accesses rewritten), or the input unchanged. */
@@ -158,7 +187,12 @@ export function injectIteratorStaticsPrelude(source: string): IteratorStaticsPre
   // Edits in INPUT coordinates: the prelude insertion plus each
   // `Iterator.<helper>` → `__js2wasm_Iterator_<helper>` replacement.
   const edits = [
-    { origStart: insertAt, origEnd: insertAt, newLength: prelude.length },
+    {
+      origStart: insertAt,
+      origEnd: insertAt,
+      newLength: prelude.length,
+      compilerOrigins: iteratorPreludeOrigins(prelude),
+    },
     ...accesses.map((a) => ({
       origStart: a.start,
       origEnd: a.end,

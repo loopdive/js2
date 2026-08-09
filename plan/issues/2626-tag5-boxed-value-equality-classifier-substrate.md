@@ -3,7 +3,7 @@ id: 2626
 title: "tag-5 boxed-VALUE equality classifier (numeric #2040 f64.eq + object #2585 ref.eq) — value-rep substrate (deferred from #1888)"
 status: backlog
 assignee: ""
-sprint: current
+sprint: Backlog
 created: 2026-06-22
 priority: medium
 feasibility: hard

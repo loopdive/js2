@@ -29,28 +29,104 @@ The string in the left column is the **exact** GitHub check name that must
 appear in the branch-protection "Required status checks" list. Names are
 case-sensitive and whitespace-sensitive.
 
-| Check name | Workflow file | What it gates |
-|---|---|---|
-| `cheap gate (main-ancestor + lint)` | `.github/workflows/test262-sharded.yml` | fast pre-flight: lint + typecheck on the PR branch (cheap reject before running the test262 matrix) |
-| `merge shard reports` | `.github/workflows/test262-sharded.yml` | aggregates the 57 test262 shards into a single pass/fail signal — the authoritative aggregate conformance gate. Hosts the HARD inline guards: the host catastrophic-regression guard (#1668), the **standalone net-regression guard (#1897)**, and the stale-baseline guard (#1668) — see §3 |
-| `quality` | `.github/workflows/ci.yml` | lint, format check, typecheck, IR fallback budget (#1376), planning-artifact regen, issue integrity (#1616) **incl. the stale-base dup-ID gate against a simulated merge with `main` (#2530)** |
-| `equivalence-gate` | `.github/workflows/ci.yml` | merges the equivalence shards and fails if the shard baseline regresses |
-| `linear-tests` | `.github/workflows/ci.yml` | runs the linear-backend (`tests/linear-*.test.ts`), C-ABI (`tests/c-abi.test.ts`), and SIMD (`tests/simd*.test.ts`) suites — the 20 files that previously had no CI job, so every linear-memory lowering change landed ungated (#2139) |
-| `check for test262 regressions` | `.github/workflows/test262-sharded.yml` | full rolling-baseline test262 diff; required so pass→fail regressions cannot merge just because the aggregate hard guards stayed below threshold |
-| `cla-check` | `.github/workflows/cla-check.yml` | self-hosted CLA-acceptance gate (#1660): internal authors and bots are exempt; external humans must have affirmative CLA acceptance recorded |
+**Re-verify this table against the live ruleset rather than trusting the date
+on it** — it drifted once already (`linear-tests` was listed here as required
+for months while the ruleset had six contexts without it, #3934):
+
+```sh
+gh api repos/loopdive/js2/rules/branches/main \
+  --jq '[.[]|select(.type=="required_status_checks")|.parameters.required_status_checks[].context]'
+```
+
+Enforcement lives in a repo **ruleset**, not classic branch protection — the
+classic endpoint (`gh api repos/loopdive/js2/branches/main/protection`) answers
+`404 Branch not protected`, which is not the same as "unprotected". Verified
+2026-08-01; the ruleset returned exactly the six rows below.
+
+| Check name                          | Workflow file                           | What it gates                                                                                                                                                                                                                                                                                |
+| ----------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cheap gate (main-ancestor + lint)` | `.github/workflows/test262-sharded.yml` | fast pre-flight: lint + typecheck on the PR branch (cheap reject before running the test262 matrix)                                                                                                                                                                                          |
+| `merge shard reports`               | `.github/workflows/test262-sharded.yml` | aggregates the 57 test262 shards into a single pass/fail signal — the authoritative aggregate conformance gate. Hosts the HARD inline guards: the host catastrophic-regression guard (#1668), the **standalone net-regression guard (#1897)**, and the stale-baseline guard (#1668) — see §3 |
+| `quality`                           | `.github/workflows/ci.yml`              | lint, format check, typecheck, IR fallback budget (#1376), planning-artifact regen, issue integrity (#1616) **incl. the stale-base dup-ID gate against a simulated merge with `main` (#2530)**                                                                                               |
+| `equivalence-gate`                  | `.github/workflows/ci.yml`              | merges the equivalence shards and fails if the shard baseline regresses                                                                                                                                                                                                                      |
+| `check for test262 regressions`     | `.github/workflows/test262-sharded.yml` | full rolling-baseline test262 diff; required so pass→fail regressions cannot merge just because the aggregate hard guards stayed below threshold                                                                                                                                             |
+| `cla-check`                         | `.github/workflows/cla-check.yml`       | self-hosted CLA-acceptance gate (#1660): internal authors and bots are exempt; external humans must have affirmative CLA acceptance recorded                                                                                                                                                 |
 
 ### Optional / informational checks (NOT required to merge)
 
 These run on PRs for visibility but are not in the required-checks list.
 A failure here surfaces in the PR Checks tab but does not block merge.
 
-| Check name | Workflow file | Why it isn't required |
-|---|---|---|
-| `test262 js-host/standalone shard 1..57` (114 matrix jobs) | `.github/workflows/test262-sharded.yml` | Individual shard results feed into `merge shard reports`, which is the required check. Individual shard failures are visible for diagnosis but the aggregated signal is what gates. |
-| `differential gate (branch vs main)` | `.github/workflows/test262-differential.yml` | Branch-vs-main HEAD comparison with src-tree-hash caching (#1246). Useful diagnostic signal, but the sharded `merge shard reports` is the authoritative gate. Kept running for visibility into per-PR deltas. |
-| `refresh-benchmarks` | `.github/workflows/benchmark-refresh.yml` | Playground benchmark regression gate. Currently informational at the branch-protection level, but the workflow itself fails on regression for PRs (#1525, §6 below). Promote to required once a longer signal window confirms stability. |
-| `Test262 Canary` | `.github/workflows/test262-canary.yml` | Smoke check on a small slice of test262 — fast feedback, not authoritative. |
-| `cross-backend-parity` | `.github/workflows/cross-backend-parity.yml` | #2711 — runs the #1854 cross-backend differential harness (WasmGC/host vs linear/standalone) over the builtin corpus; red on a host↔standalone divergence. Advisory: deliberately NOT in the required list and deliberately does NOT run in `merge_group`, so it cannot block or wedge the queue. **Do not promote to required while it skips `merge_group`** — a required check that never runs in the queue blocks it permanently (see §below on test262-sharded skip). Per-method gaps it documents: child issues #2715–#2721. |
+| Check name                                                 | Workflow file                                 | Why it isn't required                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ---------------------------------------------------------- | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `linear-tests`                                             | `.github/workflows/ci.yml`                    | Runs the linear-backend (`tests/linear-*.test.ts`), C-ABI (`tests/c-abi.test.ts`) and SIMD (`tests/simd*.test.ts`) suites — the 20 files that had no CI job before #2139. **Documented as required until 2026-08-01 while never being in the ruleset (#3934).** `ci.yml`'s own `changes` job already treats it as optional (it skips it on docs-only PRs). If it should gate, promote it deliberately — ruleset and this document together.                                                                                          |
+| `test262 PR stub — detect relevance`                       | `.github/workflows/test262-pr-stub.yml`       | Decides which workflow owns the three test262-sharded context names on this PR. Not required — but note a non-green NON-required check still blocks merge indirectly by making the PR `UNSTABLE`; see §1's "Reading a PR's check state".                                                                                                                                                                                                                                                                                          |
+| `test262 js-host/standalone shard 1..57` (114 matrix jobs) | `.github/workflows/test262-sharded.yml`       | Individual shard results feed into `merge shard reports`, which is the required check. Individual shard failures are visible for diagnosis but the aggregated signal is what gates.                                                                                                                                                                                                                                                                                                                                               |
+| `differential gate (branch vs main)`                       | `.github/workflows/test262-differential.yml`  | Branch-vs-main HEAD comparison with src-tree-hash caching (#1246). Useful diagnostic signal, but the sharded `merge shard reports` is the authoritative gate. Kept running for visibility into per-PR deltas.                                                                                                                                                                                                                                                                                                                     |
+| `measure-and-gate`                                         | `.github/workflows/benchmark-refresh.yml`     | Same-run benchmark regression gate. Currently informational at the branch-protection level, but the workflow itself fails on substantial PR regressions (§6 below). Promote to required once the expanded suite has a longer stable signal window.                                                                                                                                                                                                                                                                                |
+| `Test262 Canary`                                           | `.github/workflows/test262-canary.yml`        | Smoke check on a small slice of test262 — fast feedback, not authoritative.                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `cross-backend-parity`                                     | `.github/workflows/cross-backend-parity.yml`  | #2711 — runs the #1854 cross-backend differential harness (WasmGC/host vs linear/standalone) over the builtin corpus; red on a host↔standalone divergence. Advisory: deliberately NOT in the required list and deliberately does NOT run in `merge_group`, so it cannot block or wedge the queue. **Do not promote to required while it skips `merge_group`** — a required check that never runs in the queue blocks it permanently (see §below on test262-sharded skip). Per-method gaps it documents: child issues #2715–#2721. |
+| `porffor-source-native-canary`                             | `.github/workflows/porffor-source-canary.yml` | #3478 — explicitly initializes only the pinned optional Porffor gitlink, then compares real-source JavaScript, production linear-Wasm, and sanitizer-instrumented Porffor-C under both allocator policies. Advisory and absent from `merge_group`, so the optional submodule cannot become a required queue dependency.                                                                                                                                                                                                           |
+| `semantic-sanitizers`                                      | `.github/workflows/porffor-direct-ab.yml`     | #3482 — relevant PRs must execute all four native rows: both plain direct-Porffor rows must reproduce their pinned UBSan misalignment finding, while both JS2 rows must remain sanitizer-clean with exact output. Expected direct safety failures are evidence, not skips. Advisory and absent from `merge_group`; its separate optimized job runs only by `workflow_dispatch`, uploads complete evidence without a performance threshold, and never auto-updates results.                                                        |
+
+### Reading a PR's check state — three facts that have each caused a wrong call
+
+**1. A SKIPPED required check SATISFIES the requirement.** A job skipped by its
+own `if:` still publishes a check run, with conclusion `skipped`, and branch
+protection accepts it. On a docs-only PR `equivalence-gate` skips via `ci.yml`'s
+`changes` path filter and the PR still reports `CLEAN`. So **do not verify
+readiness by counting six `SUCCESS` conclusions in `statusCheckRollup`** — you
+will not find them, and you will wrongly conclude the PR is not ready. Read
+`mergeStateStatus`, which already accounts for this.
+
+The distinction that matters: a **workflow-level** skip (a `paths:` filter that
+stops the run from existing) produces **no check run at all**, so the context
+stays "Expected" forever and the PR is genuinely BLOCKED — that is what
+`.github/workflows/test262-pr-stub.yml` exists to prevent. A **job-level** `if:`
+skip inside a run that did start is satisfied, not missing.
+
+**2. A non-green NON-required check is not harmless.** It drives
+`mergeStateStatus` to `UNSTABLE`, and `scripts/enqueue-green-prs.mjs` enqueues
+only `{CLEAN, HAS_HOOKS}` — `UNSTABLE` is deliberately excluded. A PR can
+therefore have every required check green and never be enqueued, indefinitely,
+with nothing naming the cause (#3878, #3904, #3919/#3934). Re-run the failed job
+(`gh run rerun <run-id> -R loopdive/js2 --failed`) to get back to `CLEAN`.
+
+**3. `auto-refresh-prs` SKIPS DRAFTS.** `.github/workflows/auto-refresh-prs.yml`
+filters to `BEHIND`, non-draft, non-`hold` PRs, so a **draft PR is never
+rebased** and silently rots against a moving `main` — PR #3919 was 177 commits
+behind. Marking a PR draft is not a pause button; it opts the PR out of branch
+maintenance. Take a PR out of draft before expecting any automation to touch it.
+
+### Watching a PR's checks: `pending == 0` is NOT "settled" (#3965)
+
+An empty pending list means "nothing pending **that exists**", which is
+indistinguishable from "nothing pending". Right after a push GitHub has created
+only a couple of check runs, so a watcher that polls `statusCheckRollup` and
+stops when no check is `IN_PROGRESS` will settle **immediately**, on a rollup
+that contains none of the required jobs, and report green. Observed for real
+while watching PR #3950: the first poll returned four checks (`retarget`,
+`cla-check`, `release-pending`) with zero pending, and the watcher declared CI
+settled roughly a minute after the push.
+
+Two floors make a watcher honest — apply **both**:
+
+1. **Floor the check count.** Require every required check to be **present by
+   name** (the list above) before interpreting pass/fail at all. Absence of a
+   job is not a pass. Note this is a **presence** test, not a `SUCCESS` count —
+   per fact 1 above, a `skipped` conclusion satisfies the requirement, so
+   counting `SUCCESS` would reject a legitimately-ready PR.
+2. **Pin the head sha.** The API lags a push, so the rollup can still describe
+   the **previous** head, whose checks may be complete and passing. Compare
+   `.headRefOid` against the sha you actually pushed and refuse to settle until
+   they match; settling on a stale head reports a green that says nothing about
+   the code under review.
+
+Related: a dropped `synchronize` webhook can leave the PR head behind the fork
+ref indefinitely (20 minutes observed on #3950, both shas read full-length, so
+not the truncated-sha trap of the `head_sha=` query). The remedy is a **new
+commit** — `main` and published branches are append-only, so never force-push to
+"resync".
 
 ---
 
@@ -98,20 +174,31 @@ Two test262 workflows currently run on PRs:
   check is `merge shard reports`, fed by the 57-shard host and standalone
   matrix.
   - Queue model (#109 → #1956, see `plan/method/pr-drift-protocol.md`):
-    every PR is validated on its own merge_group ref. Historically this was
-    pinned to a `batch=1` serial queue because the regression gate diffed
-    each group against the *main baseline*, where the cumulative diff of a
+    every PR is validated on its own `merge_group` ref. Historically this
+    was pinned to a `batch=1` serial queue because the regression gate diffed
+    each group against the **main baseline**, where the cumulative diff of a
     multi-entry queue window lets one PR's improvement mask another's
     regression (ALLGREEN hiding). #1956 retires that constraint: each
     merge_group run publishes its merged JSONLs keyed by the group head SHA,
     and the next group's regression-gate diffs against its **exact
     predecessor group** (the group head's first parent), isolating each PR's
-    own delta. With per-PR attribution restored, the queue runs with
-    `max_entries_to_build: 5` / `max_entries_to_merge: 5`
-    (`min_entries_to_merge` stays 1 — single multi-PR groups would collapse
-    per-PR runs and reintroduce intra-group masking). Fallback order when a
-    predecessor artifact is unavailable: #1081 runs/<merge-base> cache, then
-    latest-main baseline — i.e. exactly the pre-#1956 behavior.
+    own delta. Fallback order when a predecessor artifact is unavailable:
+    #1081 runs/<merge-base> cache, then latest-main baseline — i.e. exactly
+    the pre-#1956 behavior.
+  - **Live queue configuration: `max_entries_to_build: 1` (SERIAL),
+    `max_entries_to_merge: 5`, `min_entries_to_merge: 1`.** #1956 restored
+    per-PR attribution and this doc previously recorded the resulting
+    `max_entries_to_build: 5`, but that setting was reverted during the
+    2026-06-20 merge-queue wedge (#2519 / #2522) and the ruleset has been
+    serial ever since. The shard matrix is now sized _for_ a serial queue —
+    `scripts/gen-test262-mg-matrix.mjs` assigns 102 of the 120 runners to a
+    single merge group — so raising `max_entries_to_build` again without
+    first shrinking the matrix would put 200+ jobs on a 120-runner pool and
+    reproduce the oversubscription that caused the wedge. **Do not re-enable
+    speculative batching**; the arithmetic, the four historical failure
+    modes, and the alternative (`min_entries_to_merge > 1`, which amortises
+    fixed overhead instead of competing for runners) are written up in
+    `plan/issues/3914-ci-throughput-merge-queue-batching.md`.
   - Path filter restricts the matrix to PRs that touch source / test /
     config files. Docs-only PRs skip the full matrix.
   - The `cheap gate (main-ancestor + lint)` job in the same workflow is
@@ -137,6 +224,27 @@ Two test262 workflows currently run on PRs:
     back. If GH013 recurs, first confirm the ruleset still lists the
     `DeployKey: always` bypass actor
     (`gh api /repos/loopdive/js2/rulesets/16700772 --jq .bypass_actors`).
+  - ⚠️ **`refresh-baseline.yml` is `state=disabled_manually` and CANNOT be
+    dispatched** (verified 2026-07-25 and again 2026-08-01:
+    `gh api repos/loopdive/js2/actions/workflows/265204741 --jq .state`; a
+    `workflow_dispatch` returns **HTTP 422 "Cannot trigger a
+    'workflow_dispatch' on a disabled workflow"** — it fails before doing
+    anything). It is the only non-active workflow in the repo. Any runbook
+    step that says "dispatch `refresh-baseline.yml` in EMERGENCY mode" —
+    historically the documented lever for a queue wedged on #1897 — **will
+    not execute today**. Treat that lever as unavailable until #3611 settles
+    its disposition, and do NOT re-enable it mid-incident: that restarts an
+    8-hourly cron and runs an unconditional, guard-ignoring promote, which is
+    the most dangerous available version of that action.
+    **Note `gh workflow list` simply OMITS disabled workflows**, so absence
+    there is not evidence of non-existence — query the API by id or path.
+  - **Before relying on ANY documented lever, check it is enabled**, not just
+    that it exists:
+    `gh api repos/loopdive/js2/actions/workflows --jq '.workflows[]|"\(.state) \(.path)"' | grep -v '^active'`.
+    Disabling a workflow silently invalidates every runbook line naming it and
+    nothing links the two, so an untested recovery path is indistinguishable
+    from a working one until the moment it is needed. When disabling a
+    workflow, grep the docs for its name **in the same change**.
   - The `check for test262 regressions` job is also required. It compares
     the merged PR report against the baseline and catches full pass→fail
     regressions even when the inline hard guards inside `merge shard reports`
@@ -166,8 +274,186 @@ Two test262 workflows currently run on PRs:
   authoritative validation on the merge_group ref regardless (#1657), so
   nothing lands without the real gate's verdict on the merged-with-main tree.
 
+- **Per-lane gating inside a merge_group run.** The two test262 lanes —
+  js-host (`gc`, 66 shards) and standalone (36 shards) — have separate
+  baselines, separate regression gates and separate shard-weight maps, so
+  `scripts/test262-paths-match.sh` also answers the question per lane
+  (`--target host|standalone`). The `changes` job publishes `run_host` /
+  `run_standalone` alongside `run_shards` (which stays exactly their OR, so
+  every existing consumer is unaffected), and a lane the queued diff provably
+  cannot move is dropped from the merge_group shard matrix entirely.
+  Constraints that make this safe, all pinned by
+  `tests/test262-per-lane-gating.test.ts`:
+  - A path is narrowed to one lane **only** when the runner demonstrably does
+    not read it on the other. Today that is exactly the two shard-weight maps
+    (`tests/test262-slow-tests.json` / `-standalone.json`). **All of `src/**`
+    stays both-lane** — `target: "standalone"` is a flag through the same
+    compiler, not a separate source tree, so there is no sound src-level split.
+  - Every uncertain path (missing `base_sha`, failed or empty diff, unexpected
+    matcher output, any non-`merge_group` event) emits **both** lanes, and
+    consumers read the outputs as `!= 'false'` so a missing output means "run".
+  - The surviving lane keeps its **full** shard count, so its corpus partition
+    is byte-identical to a two-lane run and stays comparable to the baseline.
+  - `push` / `workflow_dispatch` always run both lanes: `promote-baseline`
+    publishes both baselines from those runs. A single-lane merge_group also
+    does **not** publish the `test262-group-<sha>` artifact, so the #3448
+    push:main probe MISSES and the full two-lane matrix runs before promoting.
+
 For one-off sharded runs outside the normal PR/merge_group path,
 `workflow_dispatch` is the supported entry point.
+
+### Pushing to `main` from a workflow — the rebuild tax (#3915)
+
+Two facts about the merge queue that are non-obvious, and each of which sent
+triage down a wrong path before being written down.
+
+**1. `[skip ci]` does NOT make a push inert to the merge queue.** It suppresses
+_workflows on that commit_. It does **not** stop GitHub rebuilding every queued
+merge group on the new base, and a rebuild **discards the `merge_group`
+validation already running** — including one that has already gone fully green.
+The marker reads as "this push is harmless", and that reading is wrong. There
+is no failure, no park and no label when this happens: a green run simply
+vanishes and a new one starts. What a human reports is "the queue is stuck."
+
+**2. The SHA in `gh-readonly-queue/main/pr-<N>-<sha>` is the BASE commit, not
+the group head.** Two distinct groups for the same PR therefore look like one
+run set unless you compare the embedded SHA. Grouping `merge_group` runs by
+`head_branch` alone produces an "all green" report on a group that was
+superseded. To attribute a rebuild, look up the commit the _superseding_ group
+was based on — do not match against a hardcoded list of known bot SHAs.
+
+Because a `push: main`-triggered bot lands its commit _after_ the merge that
+triggered it, the tax **scales with merge throughput**: the busier the queue,
+the more validation is thrown away. Measured 2026-07-31 17:55–23:11Z over 20
+distinct PRs, 6 needed more than one merge group and **5 of those 6 rebuilds
+were rooted at the one un-gated bot pusher**; the sixth was a legitimate PR
+landing ahead, the only kind a serial queue must pay for.
+
+**So: every workflow that pushes to `main` must gate that push on the merge
+queue.** Use the shared `scripts/main-push-queue-gate.mjs`
+(`test262-sharded.yml` and `baseline-summary-sync.yml` carry an equivalent
+inline gate from #1951). Its rule is:
+
+> **defer** ⟸ the queue is _positively_ busy **and** the artifact is
+> _positively_ fresh. Everything else proceeds.
+
+Two design points that are easy to get wrong:
+
+- **Fail-open is correct here, and it is not a violation of "a detector must be
+  able to say I don't know".** That rule exists because a _verifier_ which
+  cannot see must not fall onto the reassuring side. This is a _deferral_, and
+  the cost asymmetry is reversed: unknown ⇒ push costs at most one discarded
+  validation, once, whereas unknown ⇒ defer can freeze the artifact
+  indefinitely on a flaky API — silently, because a skipped push looks exactly
+  like a no-op one. The gate still _reports_ that it could not see, via a
+  `::warning::` and an explicit `queue=UNKNOWN` in the verdict line.
+- **Read freshness from the artifact, never from `git log`.** Every promote job
+  here is `fetch-depth: 1`, where `git log -1 --format=%ct -- <path>` returns
+  **empty rather than erroring**. Empty parses as "unknown age", which fails
+  open — silently disabling the staleness floor forever while the gate keeps
+  reporting success. Pass a timestamp carried _inside_ the artifact
+  (`benchmark-manifest.json` → `generatedAt`).
+
+A **staleness floor** (`--stale-after-hours`, 6h) keeps a never-draining queue
+from freezing the artifact: past the floor the push proceeds anyway, trading at
+most one rebuild per floor-period against an unbounded freeze. A pusher whose
+file set is re-landed by _another already-gated_ path may declare that with
+`--fallback` instead of carrying its own floor.
+
+Note also that the step shell is `bash -e {0}`: capture the gate's exit code
+with `... || RC=$?`, never with a bare call followed by `RC=$?`, or the DEFER
+path aborts the step and surfaces as a red run instead of a skipped push.
+
+### Merge-queue wedge recovery — manual, one-shot only (#3456)
+
+GitHub's merge queue has a rare silent-wedge failure mode: the head entry
+sits in `AWAITING_CHECKS`, the synthetic
+`gh-readonly-queue/main/pr-<N>-<sha>` branch exists, but the `merge_group`
+workflow runs are never created (webhooks silently don't fire). Nothing
+self-heals for ~3h (entry timeout), and the next head often wedges the same
+way.
+
+**There is no automated unsticker.** The old `queue-unstick.yml` /
+`scripts/unstick-merge-queue.mjs` cron re-enqueued a "wedged" head
+automatically, but **a dequeue + re-enqueue of the HEAD rebuilds its merge group
+and CANCELS the in-flight `merge_group` run** (memory
+`project_merge_queue_requeue_cancels_run`; that is the entry the unsticker
+poked, which is why it was so destructive — appending a PR behind the head is
+harmless by comparison). Even with its gates (12-min
+stall + de-alias + a zero-`merge_group`-runs guard) the loop still produced
+sustained cancellation churn during the 2026-07-18/19 recovery-PR drain — a
+false-wedge detection cancels a live run, the head re-wedges, and it fires
+again. It was removed in #3456. `auto-enqueue.yml` (grace 0) is the
+responsive enqueuer; the shepherd/cron sweep is the backstop.
+
+**Recovery for a genuinely dangling head** (confirmed `AWAITING_CHECKS`
+with **zero** `merge_group` runs for its SHA for >12 min) is a **single,
+manual, human/shepherd-initiated kick — never a loop**:
+
+```bash
+# Confirm the head is dangling first: AWAITING_CHECKS + zero merge_group runs.
+gh api graphql -f query='{repository(owner:"loopdive",name:"js2wasm"){
+  mergeQueue(branch:"main"){entries(first:5){nodes{
+    pullRequest{number id} state position enqueuedAt}}}}}'
+gh api 'repos/loopdive/js2wasm/actions/runs?event=merge_group&per_page=20' \
+  -q '.workflow_runs[].head_branch'   # look for /pr-<N>-
+
+# If dangling, dequeue + re-enqueue ONCE (App/user token, not GITHUB_TOKEN —
+# a bot-token re-enqueue does not fire merge_group runs). Never repeat this
+# in a loop; a push to main also rebuilds groups if this does not take.
+PRID=<node-id-from-above>
+gh api graphql -f query="mutation{dequeuePullRequest(input:{id:\"$PRID\"}){clientMutationId}}"
+sleep 8
+gh api graphql -f query="mutation{enqueuePullRequest(input:{pullRequestId:\"$PRID\"}){clientMutationId}}"
+```
+
+If a single kick does not re-fire the runs, the historical last resort is
+admin-merging a few green low-risk PRs (repeated pushes to `main` rebuild
+all groups on fresh bases) — **not** a ruleset disable/re-enable, which can
+deepen the wedge. See the `project_dev_session_infra_gotchas` fix ladder.
+
+### `needs-manual-enqueue` — a PR that will never auto-enqueue (#3584)
+
+`mergeStateStatus` is computed **relative to the querying token**. `BLOCKED`
+does not mean "this PR is not ready"; it means "*you* cannot merge this PR
+right now." For most causes that state clears on its own. For at least one it
+never does — and because the ~30-min cron backstop uses the *same* app token,
+it re-derives the identical `BLOCKED` and cannot recover the PR either. The PR
+stays green, unlabelled, comment-free, with no failing check, and simply sits.
+
+`scripts/enqueue-green-prs.mjs` now separates the two. A PR that is `BLOCKED`
+with **zero failing and zero pending checks for ≥ 15 minutes** is logged as
+
+```
+- #N skip (BLOCKED — SUSPECTED PERMANENT (green-405m-still-blocked); …)
+```
+
+under a `::warning::` summary block, and gets the **`needs-manual-enqueue`**
+label. Ordinary in-flight PRs log `BLOCKED — transient (...)` and stay quiet.
+
+**Shepherd/lead action on that label — read it every sweep:**
+
+```bash
+gh pr list -R loopdive/js2 --state open --label needs-manual-enqueue
+```
+
+Each such PR needs **one** deliberate enqueue with a user PAT (the GraphQL
+`enqueuePullRequest` mutation) — **check the queue first, and never loop**.
+Checking first is the load-bearing part: adding a PR that is *not* yet queued
+appends it behind the head and does not disturb the in-flight group, but
+re-adding one that is **already in** that group rebuilds it and cancels its run
+(re-verified 2026-08-02, `project_merge_queue_requeue_cancels_run`). The label
+auto-clears if the PR later enqueues on its own.
+
+`needs-manual-enqueue` is **not** in `HOLD_LABELS` and must never be added to
+it: a hold would make `auto-enqueue` skip the PR permanently, turning the
+warning into the stall it was reporting.
+
+**Known failing population (observed, 2026-07-31):** PRs that are *both*
+fork-head *and* touch `.github/workflows/**` — 4/4 needed a human enqueue.
+Fork-head alone and workflow-touching alone both auto-enqueue fine. The
+underlying cause is **not** established; do not act on a mechanism story.
+See #3584 and the follow-up experiment in #3906.
 
 ### Both lanes are gated — host AND standalone (#1897)
 
@@ -180,16 +466,16 @@ fails the required check, all three guards gate the merge queue **without
 any additional required-check name** — no branch-protection change is needed
 to enforce them.
 
-| Inline guard | Lane | Fails when | Tolerance |
-|---|---|---|---|
-| Catastrophic regression guard (#1668) | host | `Regressions with wasm-hash change` > 200 vs `test262-current.jsonl` | high (200) — only a codegen/harness catastrophe trips it |
-| **Standalone regression guard (#1897)** | **standalone** | net (`improvements − wasm-change regressions`) < −15 vs `test262-standalone-current.jsonl` | tight (15) — holds the current standalone floor |
-| Stale-baseline guard (#1668) | both | baselines JSONL > 50 commits behind main HEAD (promotion pipeline broken) | n/a |
+| Inline guard                            | Lane           | Fails when                                                                                 | Tolerance                                                |
+| --------------------------------------- | -------------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
+| Catastrophic regression guard (#1668)   | host           | `Regressions with wasm-hash change` > 200 vs `test262-current.jsonl`                       | high (200) — only a codegen/harness catastrophe trips it |
+| **Standalone regression guard (#1897)** | **standalone** | net (`improvements − wasm-change regressions`) < −15 vs `test262-standalone-current.jsonl` | tight (15) — holds the current standalone floor          |
+| Stale-baseline guard (#1668)            | both           | baselines JSONL > 50 commits behind main HEAD (promotion pipeline broken)                  | n/a                                                      |
 
 **Why the standalone guard is separate and tighter.** Before #1897 the merge
 queue gated only the host lane. The standalone lane runs in the same matrix
 and its merged report is built, but nothing failed the merge when standalone
-regressed — it was only measured *post-merge* by the non-gating
+regressed — it was only measured _post-merge_ by the non-gating
 `promote-baseline` job. A #1196 merge regressed standalone ~1,800 passes
 (+5,582 `compile_error`) and slipped straight through, because the host
 catastrophic guard's 200-test threshold never sees the standalone JSONL.
@@ -306,7 +592,7 @@ break, not a routine operation:
 - The admin temporarily disables the ruleset, performs the push, re-enables,
   and the disable/re-enable is logged in the repo audit log.
 
-**Non-exception (this is fine).** Resetting a *local* throwaway checkout to
+**Non-exception (this is fine).** Resetting a _local_ throwaway checkout to
 match the remote (`git reset --hard origin/main`) is always allowed — that
 moves a local branch pointer and pushes nothing. It is not a remote history
 rewrite and is unrelated to this rule.
@@ -324,46 +610,93 @@ rewrite and is unrelated to this rule.
 
 ---
 
-## 6. Benchmark regression gate (PRs)
+## 6. Benchmark measurement, regression gate, and promotion
 
-The playground benchmark workflow (`benchmark-refresh.yml`) historically
-emitted regression diffs but did not fail PRs — the rationale in #1214 was
-that CI-runner noise made the wasm/js ratio drift in a way that didn't
-reflect a real compiler regression.
+`benchmark-refresh.yml` measures the PR base and synthetic merge candidate
+sequentially in one `ubuntu-24.04` job. Both checkouts use the same physical
+runner and the same pinned Node 25.7.0, pnpm 10.30.2, Rust 1.94.1, Wasmtime
+46.0.1 toolchain. This same-run A/B is the regression baseline; committed
+timings from a different runner are not used for the PR verdict.
 
-With #1216 the baseline auto-commits on push-to-main from the same CI
-runner pool, so the baseline now reflects CI characteristics rather than
-a local dev machine. The remaining noise is small enough to gate against.
+The refreshed set includes the representative internal strategy suite
+(`latest.json`), playground warm and no-JIT charts, size and loadtime
+artifacts (including the complete `loadtime/` asset directory), and the
+freshly measured js2 Wasmtime/V8 hot-runtime rows and per-program AOT sizes.
+Runtime regressions fail only when both the
+JS-relative ratio and the absolute Wasm/strategy time cross the configured
+substantial-regression thresholds. Deterministic sizes use a percentage
+threshold plus an absolute-byte floor. End-to-end loadtime uses a wider 40%
+joint runtime/JS-reference gate; individual compile-only microtimings remain
+informational. A missing baseline row is a regression.
 
-**Policy (effective with #1525):**
+Javy and StarlingMonkey are post-merge, change-scoped comparison controls, not
+compiler-regression gates. Pull requests always carry their last accepted
+values forward and never rebuild or measure those lanes. After a push to
+`main`, the workflow remeasures their cold/warm runtimes and module sizes only
+when their benchmark corpus, auxiliary generator or host setup, componentizer
+dependency, or pinned workflow versions changed in that push. Unrelated
+`main` pushes and manual runs on unrelated revisions also carry the accepted
+values forward unchanged, with the source commit recorded in every runtime
+row. When measured, the job uses pinned Javy 8.1.1; Javy's single-entry dynamic
+module uses dedicated warm wrappers that batch several calls inside one
+exported `run()`, while the pinned Rust host uses a fresh instance for each
+outer sample and normalizes the batch wall time per call.
 
-- On `pull_request`: regression detection **fails the workflow** (gate is
-  hard, not informational). Threshold values stay at the existing
-  `--max-relative-regression 0.50` and `--max-wasm-slowdown 0.40` until
-  we have a longer signal window to tighten them.
-- On `push: main`: regression detection is logged but does **not** fail
-  the workflow — the auto-commit step skips the baseline refresh in this
-  case (already implemented), which is the right outcome.
-- On `workflow_dispatch`: behaviour unchanged
-  (`allow_performance_regressions=false` enforces; `true` permits).
+Before either checkout is measured, the workflow copies any deliberately
+carried auxiliary controls into an isolated runner-temporary baseline, then
+removes every current-run output and the compiled `loadtime/` directory while
+preserving `history.json`. Generators must recreate the complete set; only the
+explicitly change-scoped auxiliary fields may be inherited, and missing or
+invalid carry provenance fails packaging.
 
-The PR-fail mode is gated by a `--strict` env var (`BENCHMARK_STRICT=1`)
-in `scripts/diff-playground-benchmarks.mjs`-equivalent shell logic, so the
-behaviour can be flipped without touching the JS script.
+One limitation remains: the legacy, non-displayed
+`wasm-host-wasmtime-module-size.json` summary has no generator and is not
+represented as a freshly measured or promoted artifact.
+
+Every packaged snapshot includes a manifest with `generatedAt`, the full
+source SHA, exact tool versions, and the byte length and SHA-256 of every
+artifact. Pull-request code runs with read-only repository permissions and
+never enters the `baseline-promote` environment. The base branch's lifecycle
+script packages, validates, and compares both PR snapshots, so a PR cannot
+weaken its own verdict by editing the gate.
+
+For the one introduction PR where the base branch does not yet contain the
+lifecycle script, the workflow uses the base branch's existing playground
+sidebar diff as its trusted gate and uses candidate code only to package and
+validate the read-only candidate artifact. The full base-controlled lifecycle
+gate activates after that change lands; candidate lifecycle code is never used
+to decide a full comparison while a base lifecycle exists.
+
+After an accepted push to `main` (or a manual refresh), a separate trusted job
+downloads and validates the complete snapshot, verifies that `main` still
+equals the measured source SHA, and promotes all files in one `[skip ci]`
+commit through `MAIN_DEPLOY_KEY`. Promotion is unconditional after successful
+main generation: the PR gate already made the regression decision, and
+comparing main against an older committed snapshot would freeze an accepted
+change. The job then explicitly dispatches `deploy-pages.yml`, because
+`[skip ci]` suppresses push-triggered deployment.
 
 ---
 
 ## 7. Mapping: required check → workflow → why
 
-| Required check | Workflow | What it protects against |
-|---|---|---|
-| `cheap gate (main-ancestor + lint)` | `test262-sharded.yml` | fast pre-flight reject: lint + typecheck on the PR branch before any test262 shard runs. Catches obvious failures cheaply and stops the queue from spending compute on a doomed PR. |
-| `merge shard reports` | `test262-sharded.yml` | semantic conformance, **both lanes**: aggregates the 57 sharded test262 runs (host + standalone) into a single pass/fail. Authoritative gate via the merge queue (build/merge up to 5 concurrently since #1956; predecessor-group diffing preserves per-PR attribution, so no ALLGREEN hiding) — each PR validated on its own merge_group ref. Hosts the host catastrophic guard (#1668), the standalone net-regression guard (#1897), and the stale-baseline guard (#1668) — see §3. |
-| `quality` | `ci.yml` | source quality regressions: lint, formatting, typecheck failures, IR fallback budget exceeded (#1376), planning-artifact regeneration. Also runs the "origin/main is merged into branch" pre-check that catches stale PR branches. |
-| `equivalence-gate` | `ci.yml` | semantic equivalence regressions across the sharded equivalence suite after the shard partials are merged. |
-| `linear-tests` | `ci.yml` | linear-memory backend regressions: the 20 `tests/linear-*.test.ts` / `tests/c-abi.test.ts` / `tests/simd*.test.ts` files that no CI job executed before #2139, which is why the #1974–#1977 linear-backend bug class shipped silently. |
-| `check for test262 regressions` | `test262-sharded.yml` | full rolling-baseline test262 diff, including pass→fail changes that stay below the inline catastrophic thresholds. |
-| `cla-check` | `cla-check.yml` | CLA acceptance for external contributors while preserving internal and bot exemptions. |
+**Six contexts, verified against the live ruleset on 2026-08-01. Re-run this
+rather than trusting the date** (this table said seven — it carried
+`linear-tests`, which the ruleset has never contained, #3934):
+
+```sh
+gh api repos/loopdive/js2/rules/branches/main \
+  --jq '[.[]|select(.type=="required_status_checks")|.parameters.required_status_checks[].context]'
+```
+
+| Required check                      | Workflow              | What it protects against                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ----------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cheap gate (main-ancestor + lint)` | `test262-sharded.yml` | fast pre-flight reject: lint + typecheck on the PR branch before any test262 shard runs. Catches obvious failures cheaply and stops the queue from spending compute on a doomed PR.                                                                                                                                                                                                                                                                                                   |
+| `merge shard reports`               | `test262-sharded.yml` | semantic conformance, **both lanes**: aggregates the 57 sharded test262 runs (host + standalone) into a single pass/fail. Authoritative gate via the merge queue (build/merge up to 5 concurrently since #1956; predecessor-group diffing preserves per-PR attribution, so no ALLGREEN hiding) — each PR validated on its own merge_group ref. Hosts the host catastrophic guard (#1668), the standalone net-regression guard (#1897), and the stale-baseline guard (#1668) — see §3. |
+| `quality`                           | `ci.yml`              | source quality regressions: lint, formatting, typecheck failures, IR fallback budget exceeded (#1376), planning-artifact regeneration. Also runs the "origin/main is merged into branch" pre-check that catches stale PR branches.                                                                                                                                                                                                                                                    |
+| `equivalence-gate`                  | `ci.yml`              | semantic equivalence regressions across the sharded equivalence suite after the shard partials are merged.                                                                                                                                                                                                                                                                                                                                                                            |
+| `check for test262 regressions`     | `test262-sharded.yml` | full rolling-baseline test262 diff, including pass→fail changes that stay below the inline catastrophic thresholds.                                                                                                                                                                                                                                                                                                                                                                   |
+| `cla-check`                         | `cla-check.yml`       | CLA acceptance for external contributors while preserving internal and bot exemptions.                                                                                                                                                                                                                                                                                                                                                                                                |
 
 The CODEOWNERS file gates **who** can approve. The required checks gate
 **what** must pass. Both must clear for a PR to merge.
@@ -376,9 +709,11 @@ checks list but its `pull_request` event path is a hard fail on regression
 
 ## 8. How an admin applies this policy
 
-The script `scripts/enable-branch-protection.sh` PATCHes the GitHub branch
-protection API with the JSON payload corresponding to the rules above.
-Usage:
+The script `scripts/enable-branch-protection.sh` PUTs the repo **ruleset**
+(`/repos/loopdive/js2/rulesets/16700772`) with the JSON payload corresponding to
+the rules above. It reads the live ruleset first and replaces only the
+required-check list, preserving merge-queue parameters, conditions, enforcement
+and bypass actors. Usage:
 
 ```sh
 # Dry run — print the payload and curl command, no changes.
@@ -392,11 +727,33 @@ The script is idempotent: re-running it re-applies the canonical state.
 Drift between repo settings and this file should be reconciled by running
 the script, not by editing settings manually.
 
+**Reconciled 2026-08-08.** This section previously said the script targeted the
+**classic** branch-protection API and was therefore not what enforces `main`.
+That was wrong on the first count: the script has targeted the ruleset endpoint
+(`RULESET_ID=16700772`, the live one) since it was rewritten, so running it does
+apply real enforcement. The classic endpoint does answer `404 Branch not
+protected` for `main` — that is a fact about the classic API, not about this
+script, and the two got conflated.
+
+The second half of the old caveat was correct and has now been acted on: the
+script's array listed `linear-tests`, which the live ruleset has never
+contained (#3934). Left in place it was a loaded gun — a "reconcile the drift"
+run would have silently promoted a seventh gate nobody decided to require. It
+has been removed, so the array now states the six contexts actually in force.
+
+Verification is still the rule over trust, since the ruleset can be edited in
+the GitHub UI without touching this repo:
+
+```sh
+gh api repos/loopdive/js2/rules/branches/main \
+  --jq '[.[]|select(.type=="required_status_checks")|.parameters.required_status_checks[].context]'
+```
+
 ---
 
 ## 9. Relationship to the `dev-self-merge` skill
 
-`.claude/skills/dev-self-merge.md` defines a hook-based gate that reads
+`.claude/skills/dev-self-merge/SKILL.md` defines a hook-based gate that reads
 `.claude/ci-status/pr-<N>.json` and decides whether an agent invokes
 `gh pr merge <N> --admin --merge`.
 

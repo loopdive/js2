@@ -46,6 +46,7 @@ import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js"; // (#1916 S
 import type { Instr, ValType } from "../../ir/types.js";
 
 import { BUILTIN_TYPE_TAGS } from "../builtin-tags.js";
+import { userErrorCtorCarrierGlobal } from "../error-ctor-carrier.js"; // (#4262) carrier precedence
 import { addFuncType, getOrRegisterErrorStructType } from "./types.js";
 import { addStringConstantGlobal } from "./imports.js";
 import { nativeStringLiteralInstrs, stringConstantExternrefInstrs } from "../native-strings.js";
@@ -74,6 +75,19 @@ const WASI_ERROR_NAMES = [
 ] as const;
 
 export type WasiErrorName = (typeof WASI_ERROR_NAMES)[number];
+
+/**
+ * (#3614) User-declared constructors that this compiler lowers to an
+ * `$Error_struct` (rather than to a plain fnctor instance), and whose
+ * `.constructor` back-pointer must therefore be answered by the
+ * `$Error_struct` reader in `fillExternGetErrorProps`.
+ *
+ * Today this is exactly `Test262Error` — `emitStandaloneTest262Error` (#2902)
+ * is the only non-builtin `__new_<Name>` an `$Error_struct` is minted for. It
+ * is a list rather than a literal so a future `$Error_struct`-lowered user
+ * constructor only has to be added here.
+ */
+const USER_ERROR_CTOR_IDENTITY_NAMES = ["Test262Error"] as const;
 
 /** Returns true if `name` is one of the 8 Error constructors handled by Phase 1. */
 export function isWasiErrorName(name: string): name is WasiErrorName {
@@ -355,6 +369,90 @@ export function fillExternGetErrorProps(ctx: CodegenContext): void {
     },
   ];
 
+  // (#3614) `<user-fnctor error instance>.constructor` → the SAME cached
+  // closure singleton the bare identifier resolves to.
+  //
+  // `emitStandaloneTest262Error` (#2902) lowers `new Test262Error(msg)` to an
+  // `$Error_struct` carrying `$name = "Test262Error"`. Reading `.constructor`
+  // off that struct fell through every arm below (the `Error`-tag arm is
+  // explicitly guarded to answer only a genuine `new Error(...)`) and returned
+  // `undefined`. The upstream harness's `assert.throws` compares
+  // `thrown.constructor !== expectedErrorConstructor` for EVERY caught value,
+  // so `undefined !== <closure>` made the comparison fail even when the test
+  // threw exactly the expected error — 854 standalone tests whose only defect
+  // was this missing back-pointer (measured against the post-#3592
+  // de-vacuification merged standalone report).
+  //
+  // The answer must be IDENTITY-equal to what a bare `Test262Error` mention
+  // produces, which is `ctx.funcClosureGlobals`' per-name cached closure
+  // singleton (`__fn_closure_<Name>`, method-trampolines.ts) — the same global
+  // the `expectedErrorConstructor` argument was read from, so `===` holds by
+  // `ref.eq`. We deliberately only READ that global (never lazily materialize
+  // it here): materializing would require a `ref.func` trampoline minted at
+  // FINALIZE, which is exactly the late-funcidx-shift hazard this file's
+  // `ensureErrorCtorCarrierGlobal` note calls out. A null read means the
+  // identifier was never evaluated as a value anywhere in the module, in which
+  // case nothing can hold the other side of an identity comparison either —
+  // so falling through to today's miss loses nothing.
+  //
+  // Keyed on the immutable `$name` field (not the tag, which Test262Error
+  // SHARES with `Error`), so a genuine `new Error()` is unaffected. Scoped to
+  // user constructors that this module actually lowered to an `$Error_struct`
+  // (`__new_<Name>` present AND a closure singleton exists), which excludes
+  // every builtin error name (they have no user function declaration and thus
+  // no `funcClosureGlobals` entry).
+  //
+  // (#4262) The carrier is resolved by `userErrorCtorCarrierGlobal`, NOT by
+  // `ctx.funcClosureGlobals` directly. `funcClosureGlobals` is the LOWER-
+  // precedence of the two carriers a function value can live in: the bare
+  // identifier read takes `ctx.moduleGlobals` first whenever the declaration is
+  // closure-backed or reassigned, which the literal upstream harness always is
+  // (`assert.js` closes over `Test262Error`). Answering the fn-closure
+  // singleton there returned a function that was `!==` the name AND had no
+  // property bag, so `err.constructor.name` read `undefined` — the
+  // `Expected a Test262Error, but a "undefined" was thrown.` self-test
+  // signature. See src/codegen/error-substrate.ts for the measured evidence.
+  const userCtorArms: Instr[] = [];
+  for (const name of USER_ERROR_CTOR_IDENTITY_NAMES) {
+    if (!ctx.funcMap.has(`__new_${name}`)) continue;
+    const closureGlobalIdx = userErrorCtorCarrierGlobal(ctx, name);
+    if (closureGlobalIdx === undefined) continue;
+    userCtorArms.push(
+      ...errRef(),
+      { op: "struct.get", typeIdx: errTypeIdx, fieldIdx: 2 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } as ValType },
+        then: [
+          ...errRef(),
+          { op: "struct.get", typeIdx: errTypeIdx, fieldIdx: 2 },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+          { op: "call", funcIdx: strFlattenIdx },
+          ...nativeStringLiteralInstrs(ctx, name),
+          { op: "call", funcIdx: strEqualsIdx },
+        ],
+        else: [{ op: "i32.const", value: 0 }],
+      },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "global.get", index: closureGlobalIdx },
+          { op: "ref.is_null" },
+          { op: "i32.eqz" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [{ op: "global.get", index: closureGlobalIdx }, { op: "return" }],
+          },
+        ],
+      },
+    );
+  }
+
   // One `constructor` arm per builtin error ctor EMITTED in this module. The
   // carrier global is get-or-created HERE (append-only; see
   // ensureErrorCtorCarrierGlobal for why finalize-time creation is safe) —
@@ -486,7 +584,7 @@ export function fillExternGetErrorProps(ctx: CodegenContext): void {
                 { op: "struct.get", typeIdx: errTypeIdx, fieldIdx: 4 },
                 { op: "i32.const", value: -1 },
                 { op: "i32.eq" },
-                { op: "if", blockType: { kind: "empty" }, then: ctorArms },
+                { op: "if", blockType: { kind: "empty" }, then: [...userCtorArms, ...ctorArms] },
               ],
             },
           ],

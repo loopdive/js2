@@ -21,11 +21,10 @@
 // path ends up boxing every recursive call through `__box_number` /
 // `__unbox_number`.
 //
-// This module runs a context-insensitive forward-propagation pass over the
-// module's call graph to refine those types before the selector decides
-// which functions to route through the IR. The result is a `TypeMap`
-// keyed by function name, carrying each function's inferred parameter
-// types and return type on a small four-point lattice.
+// This module runs a context-insensitive forward-propagation pass over one
+// indexed source population before the selector decides which functions to
+// route through the IR. The structural result is an `IrUnitTypeMap`; a
+// one-to-one `TypeMap` name projection remains only for legacy consumers.
 //
 // Lattice
 // =======
@@ -75,18 +74,24 @@
 // What this file does NOT do
 // ==========================
 //
-// - It does not rewrite the IR. Rewriting happens in `from-ast.ts` /
-//   `select.ts` based on the TypeMap returned here.
-// - It does not attempt to infer types that cross module boundaries. Any
-//   call to a non-local identifier (imports, properties, globals) falls
-//   straight to `dynamic`.
-// - It does not track locals declared by `let`/`const`. Phase 1's
-//   selector allows those only when they're directly derivable from
-//   params, and Phase 2 keeps the scope-tracking in propagation limited
-//   to parameter identifiers for simplicity. Locals used inside Phase-1
-//   functions are already constrained by the selector's shape check.
+// - It does not rewrite the IR. `select.ts` consumes the result.
+// - It resolves identifier calls only to exact checker declarations in the
+//   supplied source population. Imports outside that population, properties,
+//   and globals fall to `dynamic`; checker-free calls require a unique label.
+// - Local flow is limited to parameters and simple `let`/`const` initializers;
+//   it is not a full CFG analysis.
 
+import type { DtsEntrypointSeeds } from "../checker/dts-entrypoint-seeds.js";
+import { fnctorCtorParamTypesFlagEnabled } from "../derivation-flags.js";
 import { ts, forEachChild } from "../ts-api.js";
+import { buildIrUnitInventory, type IrUnitId } from "./identity.js";
+import {
+  buildIrLegacyUnitProjection,
+  buildIrPlanningIdentityContext,
+  type IrLegacyUnitProjection,
+  IrPlanningIdentityInvariantError,
+  type IrPlanningIdentityContext,
+} from "./planning-identity.js";
 
 // ---------------------------------------------------------------------------
 // Public shapes
@@ -194,6 +199,14 @@ export interface TypeMapEntry {
   readonly returnType: LatticeType;
 }
 
+/** Structural propagation result keyed only by canonical source-unit identity. */
+export type IrUnitTypeMap = ReadonlyMap<IrUnitId, TypeMapEntry>;
+
+/**
+ * Temporary Commit-2 compatibility projection for still-name-keyed selector
+ * and from-AST APIs. Semantic propagation is performed by
+ * `buildIrUnitTypeMap`; this map is only a validated one-to-one view.
+ */
 export type TypeMap = ReadonlyMap<string, TypeMapEntry>;
 
 const UNKNOWN: LatticeType = { kind: "unknown" };
@@ -208,44 +221,62 @@ const DYNAMIC: LatticeType = { kind: "dynamic" };
 // Entry point
 // ---------------------------------------------------------------------------
 
+interface PropagationFunction {
+  readonly unitId: IrUnitId;
+  readonly displayName: string;
+  readonly declaration: ts.FunctionDeclaration;
+}
+
+type CallTargetResolver = (identifier: ts.Identifier) => IrUnitId | undefined;
+
 /**
- * Build a TypeMap over every named top-level function declaration in the
- * source file. Unresolvable types stay at `unknown`. Functions that the
- * selector wouldn't claim anyway (missing body, duplicate names, etc.) are
- * omitted.
+ * Build propagation facts for the requested source files using the exact AST
+ * declarations captured by `identityContext.inventory`.
  *
- * The TypeMap is only consulted by the selector and the AST→IR lowerer;
- * nothing else depends on it, so the cost is paid once per compilation.
+ * Source-array order is deliberately ignored. Declarations are visited in the
+ * inventory's canonical source/declaration order, and checker symbols resolve
+ * only when they identify one exact indexed executable declaration. When no
+ * checker is supplied, textual calls are accepted only when the display name
+ * is unique in this propagation population.
  */
-export function buildTypeMap(sourceFile: ts.SourceFile, checker: ts.TypeChecker): TypeMap {
-  // Collect function declarations keyed by name. We only track top-level
-  // named declarations — nested functions / expressions are out of scope.
-  const decls = collectFunctionDeclarations(sourceFile);
+export function buildIrUnitTypeMap(
+  sourceFiles: readonly ts.SourceFile[],
+  checker: ts.TypeChecker | undefined,
+  identityContext: IrPlanningIdentityContext,
+  entrypointSeeds?: DtsEntrypointSeeds,
+): IrUnitTypeMap {
+  const functions = collectIndexedFunctionDeclarations(sourceFiles, identityContext);
+  const decls = new Map(functions.map((info) => [info.unitId, info.declaration] as const));
   if (decls.size === 0) return new Map();
 
+  const resolveCallTarget = makeCallTargetResolver(functions, checker, identityContext);
+
   // Seed: explicit TS annotations + checker-derived signatures.
-  const entries = new Map<string, { params: LatticeType[]; returnType: LatticeType }>();
-  const seeds = new Map<string, { params: LatticeType[]; returnType: LatticeType }>();
-  for (const [name, fn] of decls) {
+  const entries = new Map<IrUnitId, { params: LatticeType[]; returnType: LatticeType }>();
+  const seeds = new Map<IrUnitId, { params: LatticeType[]; returnType: LatticeType }>();
+  for (const [unitId, fn] of decls) {
     const seed = seedFromDeclaration(fn, checker);
-    seeds.set(name, seed);
-    entries.set(name, {
+    applyDtsEntrypointSeeds(seed, fn, entrypointSeeds);
+    seeds.set(unitId, seed);
+    entries.set(unitId, {
       params: [...seed.params],
       returnType: seed.returnType,
     });
   }
 
-  // Build the call graph: callerName → list of (calleeName, argExprs).
-  // Only CallExpressions whose callee is an Identifier naming a function
-  // in our `decls` map count — everything else is out of reach.
-  const callGraph = buildCallGraph(decls);
+  // Build the call graph: caller ID → list of (callee ID, argExprs).
+  const callGraph = buildCallGraph(decls, resolveCallTarget);
 
   // Pre-compute the reverse graph for caller-scoped arg propagation.
-  // For each callee, remember every (callerName, argExprs) pair calling it.
-  type Inbound = { callerName: string; callerParamNames: readonly string[]; argExprs: readonly ts.Expression[] };
-  const inbound = new Map<string, Inbound[]>();
-  for (const [callerName, sites] of callGraph) {
-    const fn = decls.get(callerName)!;
+  // For each callee, remember every (caller ID, argExprs) pair calling it.
+  type Inbound = {
+    callerUnitId: IrUnitId;
+    callerParamNames: readonly string[];
+    argExprs: readonly ts.Expression[];
+  };
+  const inbound = new Map<IrUnitId, Inbound[]>();
+  for (const [callerUnitId, sites] of callGraph) {
+    const fn = decls.get(callerUnitId)!;
     const callerParamNames = fn.parameters.map((p) => (ts.isIdentifier(p.name) ? p.name.text : ""));
     for (const site of sites) {
       if (!decls.has(site.callee)) continue;
@@ -254,7 +285,7 @@ export function buildTypeMap(sourceFile: ts.SourceFile, checker: ts.TypeChecker)
         arr = [];
         inbound.set(site.callee, arr);
       }
-      arr.push({ callerName, callerParamNames, argExprs: site.argExprs });
+      arr.push({ callerUnitId, callerParamNames, argExprs: site.argExprs });
     }
   }
 
@@ -264,18 +295,18 @@ export function buildTypeMap(sourceFile: ts.SourceFile, checker: ts.TypeChecker)
   const MAX_ITERS = 50;
   for (let iter = 0; iter < MAX_ITERS; iter++) {
     let changed = false;
-    for (const [name, fn] of decls) {
-      const cur = entries.get(name)!;
-      const seed = seeds.get(name)!;
+    for (const [unitId, fn] of decls) {
+      const cur = entries.get(unitId)!;
+      const seed = seeds.get(unitId)!;
 
       // --- param types ------------------------------------------------
       // Start from seed (TS annotation / checker). For each caller call
       // site, infer each arg expression's type using the CALLER's
       // current param-scope and join it into our param.
       const newParams: LatticeType[] = seed.params.map((t) => t);
-      const inboundSites = inbound.get(name) ?? [];
+      const inboundSites = inbound.get(unitId) ?? [];
       for (const site of inboundSites) {
-        const callerEntry = entries.get(site.callerName);
+        const callerEntry = entries.get(site.callerUnitId);
         if (!callerEntry) continue;
         const callerScope = new Map<string, LatticeType>();
         for (let i = 0; i < site.callerParamNames.length; i++) {
@@ -284,7 +315,7 @@ export function buildTypeMap(sourceFile: ts.SourceFile, checker: ts.TypeChecker)
           }
         }
         for (let i = 0; i < newParams.length && i < site.argExprs.length; i++) {
-          const argType = inferExpr(site.argExprs[i]!, callerScope, entries);
+          const argType = inferExpr(site.argExprs[i]!, callerScope, entries, resolveCallTarget);
           newParams[i] = join(newParams[i]!, argType);
         }
       }
@@ -327,7 +358,7 @@ export function buildTypeMap(sourceFile: ts.SourceFile, checker: ts.TypeChecker)
           seed.returnType.kind === "bool" ||
           seed.returnType.kind === "string" ||
           seed.returnType.kind === "object";
-        walkBodyForReturns(fn.body, ownScope, entries, (t) => {
+        walkBodyForReturns(fn.body, ownScope, entries, resolveCallTarget, (t) => {
           if (seedConcrete && t.kind === "dynamic") return; // keep seed authority
           newReturn = join(newReturn, t);
         });
@@ -335,7 +366,7 @@ export function buildTypeMap(sourceFile: ts.SourceFile, checker: ts.TypeChecker)
 
       // --- detect change ---------------------------------------------
       if (!paramsEqual(cur.params, newParams) || !typesEqual(cur.returnType, newReturn)) {
-        entries.set(name, { params: newParams, returnType: newReturn });
+        entries.set(unitId, { params: newParams, returnType: newReturn });
         changed = true;
       }
     }
@@ -343,11 +374,120 @@ export function buildTypeMap(sourceFile: ts.SourceFile, checker: ts.TypeChecker)
   }
 
   // Freeze into the readonly public shape.
-  const out = new Map<string, TypeMapEntry>();
-  for (const [name, e] of entries) {
-    out.set(name, { params: e.params, returnType: e.returnType });
+  const out = new Map<IrUnitId, TypeMapEntry>();
+  for (const [unitId, e] of entries) {
+    out.set(unitId, { params: e.params, returnType: e.returnType });
   }
   return out;
+}
+
+/**
+ * Explicit compatibility adapter for the current name-keyed selector seam.
+ * Colliding labels are omitted rather than selecting a first/last entry.
+ */
+export function buildLegacyProjectedTypeMap(
+  sourceFile: ts.SourceFile,
+  checker: ts.TypeChecker | undefined,
+  identityContext: IrPlanningIdentityContext,
+): TypeMap {
+  const sourceFiles = [sourceFile];
+  return projectIrUnitTypeMapToLegacy(
+    sourceFiles,
+    buildIrUnitTypeMap(sourceFiles, checker, identityContext),
+    identityContext,
+  );
+}
+
+/**
+ * @deprecated Local single-source compatibility overload. Production
+ * multi-source planning must pass its authoritative context or call
+ * `buildIrUnitTypeMap` directly.
+ */
+export function buildTypeMap(sourceFile: ts.SourceFile, checker?: ts.TypeChecker): TypeMap;
+export function buildTypeMap(
+  sourceFile: ts.SourceFile,
+  checker: ts.TypeChecker | undefined,
+  identityContext: IrPlanningIdentityContext,
+): TypeMap;
+export function buildTypeMap(
+  sourceFile: ts.SourceFile,
+  checker?: ts.TypeChecker,
+  identityContext?: IrPlanningIdentityContext,
+): TypeMap {
+  return buildLegacyProjectedTypeMap(
+    sourceFile,
+    checker,
+    identityContext ?? buildLocalIrPlanningIdentityContext(sourceFile, checker),
+  );
+}
+
+function buildLocalIrPlanningIdentityContext(
+  sourceFile: ts.SourceFile,
+  checker: ts.TypeChecker | undefined,
+): IrPlanningIdentityContext {
+  const inventory = buildIrUnitInventory(
+    [sourceFile],
+    checker ? { entrySource: sourceFile, checker } : { entrySource: sourceFile },
+  );
+  return buildIrPlanningIdentityContext(inventory);
+}
+
+export function projectIrUnitTypeMapToLegacy(
+  sourceFiles: readonly ts.SourceFile[],
+  structural: IrUnitTypeMap,
+  identityContext: IrPlanningIdentityContext,
+): TypeMap {
+  const functions = collectIndexedFunctionDeclarations(sourceFiles, identityContext);
+  const projection = buildPropagationLegacyProjection(functions);
+
+  const projected = new Map<string, TypeMapEntry>();
+  for (const info of functions) {
+    const pair = projection.getByUnitId(info.unitId);
+    if (!pair) continue;
+    const entry = structural.get(info.unitId);
+    if (entry) projected.set(pair.legacyName, entry);
+  }
+  return projected;
+}
+
+/**
+ * Conservative partial inverse for the legacy evidence seam. Unknown names
+ * and labels omitted by duplicate-name demotion do not create structural rows.
+ */
+export function projectLegacyTypeMapToIrUnitsConservatively(
+  sourceFiles: readonly ts.SourceFile[],
+  projected: TypeMap,
+  identityContext: IrPlanningIdentityContext,
+): IrUnitTypeMap {
+  const functions = collectIndexedFunctionDeclarations(sourceFiles, identityContext);
+  const projection = buildPropagationLegacyProjection(functions);
+
+  const structural = new Map<IrUnitId, TypeMapEntry>();
+  for (const info of functions) {
+    const pair = projection.getByUnitId(info.unitId);
+    if (!pair) continue;
+    const entry = projected.get(pair.legacyName);
+    if (entry) structural.set(info.unitId, entry);
+  }
+  return structural;
+}
+
+function buildPropagationLegacyProjection(functions: readonly PropagationFunction[]): IrLegacyUnitProjection {
+  const counts = new Map<string, number>();
+  for (const info of functions) counts.set(info.displayName, (counts.get(info.displayName) ?? 0) + 1);
+  return buildIrLegacyUnitProjection(
+    functions
+      .filter((info) => counts.get(info.displayName) === 1)
+      .map((info) => ({ unitId: info.unitId, legacyName: info.displayName })),
+  );
+}
+
+/** Build the unique-label subset that the temporary name-keyed seam can represent. */
+export function buildConservativePropagationLegacyProjection(
+  sourceFiles: readonly ts.SourceFile[],
+  identityContext: IrPlanningIdentityContext,
+): IrLegacyUnitProjection {
+  return buildPropagationLegacyProjection(collectIndexedFunctionDeclarations(sourceFiles, identityContext));
 }
 
 // ---------------------------------------------------------------------------
@@ -356,7 +496,7 @@ export function buildTypeMap(sourceFile: ts.SourceFile, checker: ts.TypeChecker)
 
 function seedFromDeclaration(
   fn: ts.FunctionDeclaration,
-  checker: ts.TypeChecker,
+  checker: ts.TypeChecker | undefined,
 ): { params: LatticeType[]; returnType: LatticeType } {
   const params: LatticeType[] = [];
   for (const p of fn.parameters) {
@@ -366,7 +506,35 @@ function seedFromDeclaration(
   return { params, returnType };
 }
 
-function seedParamType(param: ts.ParameterDeclaration, checker: ts.TypeChecker): LatticeType {
+// (#743) `.d.ts` entrypoint seeding — SEED, do not force. An exported
+// entrypoint has no internal call sites, so its implicit-`any` params start
+// (and end) at `unknown`; the shipped declaration's `string`/`number` claim is
+// exactly the missing seed. Only `unknown` positions are replaced (an explicit
+// TS annotation or checker fact keeps its authority), and the seed is a
+// fixpoint STARTING point: inbound call-site evidence still joins on top, so a
+// conflicting internal caller widens per the lattice — the claim never beats
+// evidence. The map is pre-restricted (src/checker/dts-entrypoint-seeds.ts)
+// to exported top-level functions of the entry file and to the two atoms whose
+// export boundary is already guarded (f64 ToNumber-coerces; native-string refs
+// trap on a violating external call). The legacy lane consults the SAME map in
+// `inferImplicitAnyParamType`, keeping IR/legacy seed facts identical.
+function applyDtsEntrypointSeeds(
+  seed: { params: LatticeType[] },
+  fn: ts.FunctionDeclaration,
+  entrypointSeeds: DtsEntrypointSeeds | undefined,
+): void {
+  if (!entrypointSeeds || !fn.name) return;
+  const atoms = entrypointSeeds.get(fn.name.text);
+  if (!atoms) return;
+  for (let i = 0; i < seed.params.length && i < atoms.length; i++) {
+    const atom = atoms[i];
+    if (atom !== null && atom !== undefined && seed.params[i]!.kind === "unknown") {
+      seed.params[i] = atom === "f64" ? F64 : STRING;
+    }
+  }
+}
+
+function seedParamType(param: ts.ParameterDeclaration, checker: ts.TypeChecker | undefined): LatticeType {
   // Rest / destructured / optional / initializer-holding params are
   // out of Phase-2 scope. They'll fall to `dynamic` here so the
   // selector rejects them cleanly.
@@ -382,16 +550,21 @@ function seedParamType(param: ts.ParameterDeclaration, checker: ts.TypeChecker):
 
   // No annotation: ask the checker. This covers JSDoc-typed .js files
   // as well as `implicit-any` locals.
+  if (!checker) return UNKNOWN;
   const ty = checker.getTypeAtLocation(param);
   return tsTypeToLattice(ty, checker);
 }
 
-function seedReturnType(fn: ts.FunctionDeclaration, checker: ts.TypeChecker): LatticeType {
+function seedReturnType(
+  fn: ts.FunctionDeclaration | ts.FunctionExpression,
+  checker: ts.TypeChecker | undefined,
+): LatticeType {
   if (fn.type) {
     const t = typeNodeToLattice(fn.type);
     if (t !== null) return t;
     return DYNAMIC;
   }
+  if (!checker) return UNKNOWN;
   const sig = checker.getSignatureFromDeclaration(fn);
   if (!sig) return UNKNOWN;
   const ty = sig.getReturnType();
@@ -440,15 +613,18 @@ function tsTypeToLattice(ty: ts.Type, _checker: ts.TypeChecker): LatticeType {
 // ---------------------------------------------------------------------------
 
 interface CallSite {
-  readonly callee: string;
+  readonly callee: IrUnitId;
   readonly argExprs: readonly ts.Expression[];
 }
 
-function buildCallGraph(decls: ReadonlyMap<string, ts.FunctionDeclaration>): Map<string, CallSite[]> {
-  const graph = new Map<string, CallSite[]>();
-  for (const [name, fn] of decls) {
+function buildCallGraph(
+  decls: ReadonlyMap<IrUnitId, ts.FunctionDeclaration>,
+  resolveCallTarget: CallTargetResolver,
+): Map<IrUnitId, CallSite[]> {
+  const graph = new Map<IrUnitId, CallSite[]>();
+  for (const [unitId, fn] of decls) {
     if (!fn.body) {
-      graph.set(name, []);
+      graph.set(unitId, []);
       continue;
     }
     const sites: CallSite[] = [];
@@ -471,15 +647,30 @@ function buildCallGraph(decls: ReadonlyMap<string, ts.FunctionDeclaration>): Map
         if (node !== fn) return;
       }
       if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
-        const callee = node.expression.text;
-        if (decls.has(callee)) {
+        const callee = resolveCallTarget(node.expression);
+        if (callee && decls.has(callee)) {
           sites.push({ callee, argExprs: node.arguments.slice() });
+        }
+      }
+      // (#743) `new F(…)` feeds F's params exactly as `F(…)` does, and via
+      // this graph the fixpoint makes that TRANSITIVE — the thing the
+      // single-hop legacy scan (#4117: 2 acorn slots) structurally cannot do.
+      // Graph only: `inferExpr` keeps typing the `new` expression `dynamic`.
+      // SAME flag as the legacy halves, or IR/legacy would infer different
+      // signatures and demote through the typeIdx-parity IR fallback.
+      // `new F` without parens has NO argument list → empty argExprs
+      // (all-params-under-applied). Full rationale + transitive proof:
+      // tests/issue-743-ctor-sites-in-fixpoint.test.ts.
+      if (fnctorCtorParamTypesFlagEnabled() && ts.isNewExpression(node) && ts.isIdentifier(node.expression)) {
+        const callee = resolveCallTarget(node.expression);
+        if (callee && decls.has(callee)) {
+          sites.push({ callee, argExprs: node.arguments === undefined ? [] : node.arguments.slice() });
         }
       }
       forEachChild(node, visit);
     };
     forEachChild(fn.body, visit);
-    graph.set(name, sites);
+    graph.set(unitId, sites);
   }
   return graph;
 }
@@ -487,6 +678,31 @@ function buildCallGraph(decls: ReadonlyMap<string, ts.FunctionDeclaration>): Map
 // ---------------------------------------------------------------------------
 // Expression inference
 // ---------------------------------------------------------------------------
+
+/**
+ * (#743) Optional precision extension for a SATELLITE evaluation.
+ *
+ * The shared lattice core is ONE implementation — a forked evaluator would have
+ * to re-derive every operator's semantics and would drift. Instead a satellite
+ * hands `inferExpr` a `tryInfer` that gets first refusal on each node: returning
+ * a `LatticeType` overrides the shared dispatch for that node, `undefined` (the
+ * only thing a satellite says for nodes it has no rule for) falls through
+ * unchanged.
+ *
+ * The always-on `buildIrUnitTypeMap` path passes NOTHING, so `ext === undefined`
+ * on every main-map call and the main `IrUnitTypeMap` is byte-identical by
+ * construction (#1712 parity) rather than by measurement. The measurement is
+ * still taken — see the issue's Results sections — but it confirms an invariant
+ * the type signature already guarantees.
+ *
+ * `ext` MUST be threaded through every internal recursion site. A site that
+ * drops it does not crash; it silently answers the pre-extension type for that
+ * subtree, which is a wrong-but-plausible fact. See the nesting-depth fixtures
+ * in `tests/issue-743-i32-producers.test.ts`.
+ */
+export interface InferExtension {
+  tryInfer(expr: ts.Expression, scope: ReadonlyMap<string, LatticeType>): LatticeType | undefined;
+}
 
 /**
  * Structural type of an expression, using the given param/local scope and
@@ -497,10 +713,16 @@ function buildCallGraph(decls: ReadonlyMap<string, ts.FunctionDeclaration>): Map
 function inferExpr(
   expr: ts.Expression,
   scope: ReadonlyMap<string, LatticeType>,
-  entries: ReadonlyMap<string, { params: LatticeType[]; returnType: LatticeType }>,
+  entries: ReadonlyMap<IrUnitId, { params: LatticeType[]; returnType: LatticeType }>,
+  resolveCallTarget: CallTargetResolver,
+  ext?: InferExtension,
 ): LatticeType {
   if (ts.isParenthesizedExpression(expr)) {
-    return inferExpr(expr.expression, scope, entries);
+    return inferExpr(expr.expression, scope, entries, resolveCallTarget, ext);
+  }
+  if (ext !== undefined) {
+    const extended = ext.tryInfer(expr, scope);
+    if (extended !== undefined) return extended;
   }
   if (ts.isNumericLiteral(expr)) {
     // #1126 Stage 2 — integer-literal classification. JavaScript numeric
@@ -538,7 +760,7 @@ function inferExpr(
     return scope.get(expr.text) ?? DYNAMIC;
   }
   if (ts.isPrefixUnaryExpression(expr)) {
-    const rand = inferExpr(expr.operand, scope, entries);
+    const rand = inferExpr(expr.operand, scope, entries, resolveCallTarget, ext);
     switch (expr.operator) {
       case ts.SyntaxKind.MinusToken:
       case ts.SyntaxKind.PlusToken:
@@ -561,8 +783,8 @@ function inferExpr(
     }
   }
   if (ts.isBinaryExpression(expr)) {
-    const l = inferExpr(expr.left, scope, entries);
-    const r = inferExpr(expr.right, scope, entries);
+    const l = inferExpr(expr.left, scope, entries, resolveCallTarget, ext);
+    const r = inferExpr(expr.right, scope, entries, resolveCallTarget, ext);
     switch (expr.operatorToken.kind) {
       // ─── Arithmetic ────────────────────────────────────────────────
       // #1126 Stage 2 — `+ - * / %` always widens to F64 even when both
@@ -643,9 +865,12 @@ function inferExpr(
     }
   }
   if (ts.isConditionalExpression(expr)) {
-    const cond = inferExpr(expr.condition, scope, entries);
+    const cond = inferExpr(expr.condition, scope, entries, resolveCallTarget, ext);
     if (!boolCompatible(cond)) return DYNAMIC;
-    return join(inferExpr(expr.whenTrue, scope, entries), inferExpr(expr.whenFalse, scope, entries));
+    return join(
+      inferExpr(expr.whenTrue, scope, entries, resolveCallTarget, ext),
+      inferExpr(expr.whenFalse, scope, entries, resolveCallTarget, ext),
+    );
   }
   if (ts.isCallExpression(expr)) {
     // #1126 Stage 2 — recognise `Math.imul` / `Math.clz32` as integer
@@ -669,8 +894,8 @@ function inferExpr(
       // Fall through for other Math methods — they remain DYNAMIC.
     }
     if (!ts.isIdentifier(expr.expression)) return DYNAMIC;
-    const name = expr.expression.text;
-    const entry = entries.get(name);
+    const target = resolveCallTarget(expr.expression);
+    const entry = target ? entries.get(target) : undefined;
     if (!entry) return DYNAMIC;
     return entry.returnType;
   }
@@ -681,18 +906,27 @@ function inferExpr(
   // computed keys / duplicate keys also widen — those force the
   // function back to the legacy boxed path.
   if (ts.isObjectLiteralExpression(expr) && objectShapesEnabled()) {
-    return inferObjectLiteralAtom(expr, scope, entries);
+    return inferObjectLiteralAtom(expr, scope, entries, resolveCallTarget, ext);
   }
   // #1231 Phase 1 — property / element access on a known object atom:
   // look up the field in the receiver's shape and return its atom.
   // When the receiver is a union or dynamic we can't pick a unique
   // field, so widen to dynamic.
   if (ts.isPropertyAccessExpression(expr)) {
-    return inferPropertyAccessAtom(expr, scope, entries);
+    return inferPropertyAccessAtom(expr, scope, entries, resolveCallTarget, ext);
   }
   if (ts.isElementAccessExpression(expr)) {
-    return inferElementAccessAtom(expr, scope, entries);
+    return inferElementAccessAtom(expr, scope, entries, resolveCallTarget, ext);
   }
+  // (#743) `this` resolves to whatever the CALLER bound under the reserved key
+  // `"<this>"`. Provably inert for the main fixpoint: `"<this>"` is not a legal
+  // identifier, and `buildScope`/`seedParamType` only ever key this map by
+  // `p.name.text`, so nothing here can bind it. (A key of `"this"` would NOT be
+  // inert — a TS `this` parameter declares a real parameter with that text.)
+  // The fnctor-graph satellite binds it to a per-owner instance atom so nested
+  // reads (`this.pos - this.lineStart`) and bare-`this` arguments
+  // (`new Token(this)`) carry field facts; see src/ir/fnctor-method-edges.ts.
+  if (expr.kind === ts.SyntaxKind.ThisKeyword) return scope.get("<this>") ?? DYNAMIC;
   return DYNAMIC;
 }
 
@@ -707,7 +941,9 @@ function inferExpr(
 function inferObjectLiteralAtom(
   expr: ts.ObjectLiteralExpression,
   scope: ReadonlyMap<string, LatticeType>,
-  entries: ReadonlyMap<string, { params: LatticeType[]; returnType: LatticeType }>,
+  entries: ReadonlyMap<IrUnitId, { params: LatticeType[]; returnType: LatticeType }>,
+  resolveCallTarget: CallTargetResolver,
+  ext?: InferExtension,
 ): LatticeType {
   if (expr.properties.length === 0) return DYNAMIC;
   const fields: { name: string; type: LatticeAtom }[] = [];
@@ -728,7 +964,7 @@ function inferObjectLiteralAtom(
     }
     if (seen.has(name)) return DYNAMIC; // duplicate keys not in Phase 1
     seen.add(name);
-    const fieldType = inferExpr(valExpr, scope, entries);
+    const fieldType = inferExpr(valExpr, scope, entries, resolveCallTarget, ext);
     if (!isAtomLattice(fieldType)) return DYNAMIC;
     fields.push({ name, type: fieldType });
   }
@@ -753,11 +989,13 @@ function inferObjectLiteralAtom(
 function inferPropertyAccessAtom(
   expr: ts.PropertyAccessExpression,
   scope: ReadonlyMap<string, LatticeType>,
-  entries: ReadonlyMap<string, { params: LatticeType[]; returnType: LatticeType }>,
+  entries: ReadonlyMap<IrUnitId, { params: LatticeType[]; returnType: LatticeType }>,
+  resolveCallTarget: CallTargetResolver,
+  ext?: InferExtension,
 ): LatticeType {
   if (!ts.isIdentifier(expr.name)) return DYNAMIC;
   if (expr.questionDotToken) return DYNAMIC;
-  const recvType = inferExpr(expr.expression, scope, entries);
+  const recvType = inferExpr(expr.expression, scope, entries, resolveCallTarget, ext);
   if (recvType.kind !== "object") return DYNAMIC;
   const propName = expr.name.text;
   const field = recvType.fields.find((f) => f.name === propName);
@@ -772,14 +1010,16 @@ function inferPropertyAccessAtom(
 function inferElementAccessAtom(
   expr: ts.ElementAccessExpression,
   scope: ReadonlyMap<string, LatticeType>,
-  entries: ReadonlyMap<string, { params: LatticeType[]; returnType: LatticeType }>,
+  entries: ReadonlyMap<IrUnitId, { params: LatticeType[]; returnType: LatticeType }>,
+  resolveCallTarget: CallTargetResolver,
+  ext?: InferExtension,
 ): LatticeType {
   if (expr.questionDotToken) return DYNAMIC;
   const arg = expr.argumentExpression;
   if (!(ts.isStringLiteral(arg) || arg.kind === ts.SyntaxKind.NoSubstitutionTemplateLiteral)) {
     return DYNAMIC;
   }
-  const recvType = inferExpr(expr.expression, scope, entries);
+  const recvType = inferExpr(expr.expression, scope, entries, resolveCallTarget, ext);
   if (recvType.kind !== "object") return DYNAMIC;
   const propName = (arg as ts.StringLiteral | ts.NoSubstitutionTemplateLiteral).text;
   const field = recvType.fields.find((f) => f.name === propName);
@@ -1046,16 +1286,101 @@ function paramsEqual(a: readonly LatticeType[], b: readonly LatticeType[]): bool
 // Helpers
 // ---------------------------------------------------------------------------
 
-function collectFunctionDeclarations(sourceFile: ts.SourceFile): Map<string, ts.FunctionDeclaration> {
-  const out = new Map<string, ts.FunctionDeclaration>();
-  for (const stmt of sourceFile.statements) {
-    if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.body) {
-      // Duplicate names are not our problem — the legacy path already
-      // errors on them. We simply prefer the first.
-      if (!out.has(stmt.name.text)) out.set(stmt.name.text, stmt);
+function collectIndexedFunctionDeclarations(
+  sourceFiles: readonly ts.SourceFile[],
+  identityContext: IrPlanningIdentityContext,
+): readonly PropagationFunction[] {
+  const selectedSources = new Set<ts.SourceFile>();
+  for (const sourceFile of sourceFiles) {
+    if (!identityContext.sourceIdBySourceFile.has(sourceFile)) {
+      throw new IrPlanningIdentityInvariantError(
+        "source-record-mismatch",
+        `IR propagation source ${sourceFile.fileName} is not part of the supplied planning identity context`,
+      );
     }
+    selectedSources.add(sourceFile);
   }
-  return out;
+
+  const functions: PropagationFunction[] = [];
+  for (const unit of identityContext.inventory.allUnits) {
+    const declaration = identityContext.declarationByUnitId.get(unit.id);
+    if (
+      !declaration ||
+      !ts.isFunctionDeclaration(declaration) ||
+      !declaration.name ||
+      !declaration.body ||
+      !ts.isSourceFile(declaration.parent) ||
+      !selectedSources.has(declaration.parent)
+    ) {
+      continue;
+    }
+    functions.push({ unitId: unit.id, displayName: declaration.name.text, declaration });
+  }
+  return functions;
+}
+
+function makeCallTargetResolver(
+  functions: readonly PropagationFunction[],
+  checker: ts.TypeChecker | undefined,
+  identityContext: IrPlanningIdentityContext,
+): CallTargetResolver {
+  const eligible = new Set(functions.map((info) => info.unitId));
+  if (!checker) {
+    const byDisplayName = new Map<string, IrUnitId[]>();
+    for (const info of functions) {
+      const matches = byDisplayName.get(info.displayName);
+      if (matches) matches.push(info.unitId);
+      else byDisplayName.set(info.displayName, [info.unitId]);
+    }
+    return (identifier) => {
+      const matches = byDisplayName.get(identifier.text);
+      return matches?.length === 1 ? matches[0] : undefined;
+    };
+  }
+
+  const symbolCache = new Map<ts.Symbol, IrUnitId | null>();
+  const identifierCache = new Map<ts.Identifier, IrUnitId | null>();
+  const resolveSymbol = (input: ts.Symbol): IrUnitId | undefined => {
+    if (symbolCache.has(input)) return symbolCache.get(input) ?? undefined;
+    let symbol = input;
+    if ((symbol.flags & ts.SymbolFlags.Alias) !== 0) {
+      try {
+        symbol = checker.getAliasedSymbol(symbol);
+      } catch {
+        symbolCache.set(input, null);
+        return undefined;
+      }
+    }
+    if (symbolCache.has(symbol)) {
+      const resolved = symbolCache.get(symbol) ?? null;
+      symbolCache.set(input, resolved);
+      return resolved ?? undefined;
+    }
+
+    let match: IrUnitId | undefined;
+    let ambiguous = false;
+    const consider = (declaration: ts.Declaration | undefined): void => {
+      if (!declaration) return;
+      const unitId = identityContext.unitIdByDeclaration.get(declaration);
+      if (!unitId || !eligible.has(unitId)) return;
+      if (match !== undefined && match !== unitId) ambiguous = true;
+      else match = unitId;
+    };
+    for (const declaration of symbol.declarations ?? []) consider(declaration);
+    consider(symbol.valueDeclaration);
+    const resolved = ambiguous ? null : (match ?? null);
+    symbolCache.set(symbol, resolved);
+    symbolCache.set(input, resolved);
+    return resolved ?? undefined;
+  };
+
+  return (identifier) => {
+    if (identifierCache.has(identifier)) return identifierCache.get(identifier) ?? undefined;
+    const symbol = checker.getSymbolAtLocation(identifier);
+    const resolved = symbol ? (resolveSymbol(symbol) ?? null) : null;
+    identifierCache.set(identifier, resolved);
+    return resolved ?? undefined;
+  };
 }
 
 /**
@@ -1074,8 +1399,10 @@ function collectFunctionDeclarations(sourceFile: ts.SourceFile): Map<string, ts.
 function walkBodyForReturns(
   body: ts.Node,
   paramScope: ReadonlyMap<string, LatticeType>,
-  entries: ReadonlyMap<string, { params: LatticeType[]; returnType: LatticeType }>,
+  entries: ReadonlyMap<IrUnitId, { params: LatticeType[]; returnType: LatticeType }>,
+  resolveCallTarget: CallTargetResolver,
   cb: (t: LatticeType) => void,
+  ext?: InferExtension,
 ): void {
   const walk = (node: ts.Node, scope: Map<string, LatticeType>): void => {
     if (
@@ -1101,7 +1428,7 @@ function walkBodyForReturns(
       for (const d of node.declarationList.declarations) {
         if (!ts.isIdentifier(d.name)) continue;
         if (!d.initializer) continue;
-        const t = inferExpr(d.initializer, scope, entries);
+        const t = inferExpr(d.initializer, scope, entries, resolveCallTarget, ext);
         scope.set(d.name.text, t);
       }
       return;
@@ -1109,7 +1436,7 @@ function walkBodyForReturns(
 
     if (ts.isReturnStatement(node)) {
       if (!node.expression) return;
-      cb(inferExpr(node.expression, scope, entries));
+      cb(inferExpr(node.expression, scope, entries, resolveCallTarget, ext));
       return;
     }
 
@@ -1213,11 +1540,48 @@ export function lowerTypeToIrType(t: LatticeType): import("./nodes.js").IrType |
   }
 }
 
+/** Explicit name-keyed adapter retained only for the existing lattice-rule unit tests. */
+function inferLegacyExpressionForTests(
+  expr: ts.Expression,
+  scope: ReadonlyMap<string, LatticeType>,
+  entries: ReadonlyMap<string, { params: LatticeType[]; returnType: LatticeType }>,
+): LatticeType {
+  const structuralEntries = new Map<IrUnitId, { params: LatticeType[]; returnType: LatticeType }>();
+  for (const [legacyName, entry] of entries) structuralEntries.set(legacyName as IrUnitId, entry);
+  return inferExpr(expr, scope, structuralEntries, (identifier) => {
+    const legacyName = identifier.text as IrUnitId;
+    return structuralEntries.has(legacyName) ? legacyName : undefined;
+  });
+}
+
+// (#743) Shared propagation core for the flag-gated fnctor method-edge
+// satellite (src/ir/fnctor-method-edges.ts). The satellite runs a SECOND,
+// self-contained fixpoint over prototype/static methods and function-expression
+// constructors — a population this module's `collectIndexedFunctionDeclarations`
+// deliberately excludes — and reuses the exact lattice rules so the two
+// fixpoints cannot drift on operator/join semantics. Deliberately NOT widened
+// into `buildIrUnitTypeMap` itself: the main map feeds IR selection and the
+// legacy-parity seams, so any change to its entries shifts IR claims; the
+// satellite's facts feed only the fnctor field-slot consumer
+// (src/codegen/fnctor-ctor-param-types.ts) and therefore cannot cause
+// typeIdx-parity demotions. Rationale + measurements: plan/issues/743.
+export const _propagationCore = {
+  inferExpr,
+  walkBodyForReturns,
+  seedParamType,
+  seedReturnType,
+  join,
+  paramsEqual,
+  typesEqual,
+  UNKNOWN,
+  DYNAMIC,
+} as const;
+
 // Exported for tests — let them poke at the lattice without rebuilding
 // everything from scratch.
 export const _internals = {
   join,
-  inferExpr,
+  inferExpr: inferLegacyExpressionForTests,
   tsTypeToLattice,
   typeNodeToLattice,
   makeUnion,

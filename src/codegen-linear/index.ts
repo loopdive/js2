@@ -1,16 +1,22 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts, forEachChild } from "../ts-api.js";
 import type { MultiTypedAST, TypedAST } from "../checker/index.js";
+import type { BuildIrUnitInventoryOptions } from "../ir/identity.js";
 import type { FuncTypeDef, Instr, ValType, WasmModule } from "../ir/types.js";
 import { createEmptyModule } from "../ir/types.js";
 import { linearAllocatorPolicy, type LinearAllocatorPolicyId } from "../ir/analysis/linear-memory-plan.js";
-import { compileLinearIrFunctions, linearIrEnabled } from "../ir/backend/linear-integration.js";
-import { materializeLinearIrHelper } from "../ir/backend/linear-integration.js";
+import * as linearIr from "../ir/backend/linear-integration.js";
+import { compileResolvedArrayPointer, emitResolvedArrayLocal } from "./array-pointer.js";
 import type { CollectionKind, FinallyEntry, LinearContext, LinearFuncContext } from "./context.js";
 import { addLocal } from "./context.js";
 import type { ClassLayout } from "./layout.js";
 import { computeClassLayout } from "./layout.js";
+import * as linearCoercion from "./coercion-engine.js";
+import { finalizeLinearArena } from "./export-arena.js";
+import * as numberFormat from "./number-format.js";
 import { addLinearStackArenaRuntime } from "./runtime-stack-arena.js";
+import { compileLinearStringMethodCall } from "./string-methods.js";
+import { addLinearStringRepeatRuntime, sourceMayUseLinearStringRepeat } from "./string-repeat.js";
 import {
   addArrayRuntime,
   addFmodRuntime,
@@ -24,8 +30,8 @@ import {
   addStringRuntime,
   addUint8ArrayRuntime,
   FMOD_FN,
-  linearStringLiteralInstrs,
 } from "./runtime.js";
+import { linearStringLiteralInstrs } from "./string-literals.js";
 
 /** Type tag for class instances in linear memory */
 const CLASS_TYPE_TAG = 5;
@@ -42,11 +48,15 @@ function isNumberArrayOrUint8ArrayUnionText(text: string): boolean {
   return parts.length === 2 && parts.includes("number[]") && parts.some(isUint8ArrayTypeText);
 }
 
-function sourceUsesStringCharCodeAt(sourceFile: ts.SourceFile): boolean {
+function sourceMayUseLinearIrStringRuntime(sourceFile: ts.SourceFile): boolean {
   let found = false;
   const visit = (node: ts.Node): void => {
     if (found) return;
-    if (ts.isPropertyAccessExpression(node) && node.name.text === "charCodeAt") {
+    if (ts.isPropertyAccessExpression(node) && (node.name.text === "charAt" || node.name.text === "charCodeAt")) {
+      found = true;
+      return;
+    }
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken) {
       found = true;
       return;
     }
@@ -79,15 +89,16 @@ function nodeLoc(node: ts.Node): { line: number; column: number } {
  */
 export interface LinearOptions {
   /**
-   * Expose the explicit arena-management exports `__arena_reset` /
-   * `__arena_used` on the bump allocator. Useful for embedders that reuse a
-   * single instance across many short-lived tasks; off by default so the
-   * common "allocate-and-exit" program pays nothing for them.
+   * Enable conservative exported-call reclamation and expose the explicit
+   * arena-management exports `__arena_reset` / `__arena_used`. Only modules
+   * with primitive boundaries and no heap-backed globals are auto-wrapped;
+   * others retain the monotonic arena so escaped pointers stay live.
    * See {@link import("./runtime.js").ArenaOptions}.
    */
   exposeArenaReset?: boolean;
   /** Shared IR allocation policy. Direct-backend fallbacks remain arena-backed. */
   allocationPolicy?: LinearAllocatorPolicyId;
+  irInventoryOptions?: BuildIrUnitInventoryOptions;
 }
 
 /**
@@ -97,13 +108,14 @@ export interface LinearOptions {
 export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): WasmModule {
   const mod = createEmptyModule();
   const allocationPolicy = linearAllocatorPolicy(opts.allocationPolicy ?? "arena-v1");
+  const dataSegmentBase = numberFormat.addRuntime(mod, ast, opts.exposeArenaReset, DATA_SEGMENT_BASE);
 
   // Add memory and runtime functions first
-  addRuntime(mod, { exposeArenaReset: opts.exposeArenaReset });
   if (allocationPolicy.id === "analysis-stack-arena-v1") addLinearStackArenaRuntime(mod);
   addUint8ArrayRuntime(mod);
   addArrayRuntime(mod);
   addStringRuntime(mod);
+  if (sourceMayUseLinearStringRepeat(ast.sourceFile)) addLinearStringRepeatRuntime(mod);
   addMapRuntime(mod);
   addSetRuntime(mod);
   addNumericMapRuntime(mod);
@@ -112,11 +124,11 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
   // #2956 L2: construction needs one value-first indexed store helper.
   // Register it only for the overlay so the explicit `=0` escape hatch stays
   // byte-identical to the pre-IR direct backend.
-  if (linearIrEnabled()) {
+  if (linearIr.linearIrEnabled()) {
     addLinearIrVecRuntime(mod);
     // The UTF-16 decoder is sizeable and only the charCodeAt plan needs it.
     // Register before user-slot assignment when the source can request it.
-    if (sourceUsesStringCharCodeAt(ast.sourceFile)) addLinearIrStringRuntime(mod);
+    if (sourceMayUseLinearIrStringRuntime(ast.sourceFile)) addLinearIrStringRuntime(mod);
   }
 
   // Add __closure_env global (mutable i32, init 0) for closure support
@@ -137,7 +149,7 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
     errors: [],
     classLayouts: new Map(),
     stringLiterals: new Map(),
-    dataSegmentOffset: DATA_SEGMENT_BASE,
+    dataSegmentOffset: dataSegmentBase,
     lambdaCounter: 0,
     tableEntries: [],
     closureEnvGlobalIdx,
@@ -166,8 +178,8 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
     const className = classDecl.name!.text;
     const layout = ctx.classLayouts.get(className)!;
 
-    // Constructor
-    allFuncEntries.push({ kind: "ctor", node: classDecl, name: layout.ctorFuncName, className });
+    const ctorDecl = classDecl.members.find(ts.isConstructorDeclaration);
+    allFuncEntries.push({ kind: "ctor", node: ctorDecl ?? classDecl, name: layout.ctorFuncName, className });
 
     // Methods
     for (const member of classDecl.members) {
@@ -196,12 +208,15 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
     }
   }
 
-  // Assign function indices for all entries
   const runtimeFuncCount = ctx.mod.functions.length;
+  const linearIrLegacySlots = [];
+  const isIrTerminal = linearIr.terminalPredicate(ast.sourceFile, ast.checker, opts.irInventoryOptions);
   for (let i = 0; i < allFuncEntries.length; i++) {
     const entry = allFuncEntries[i];
     const funcIdx = ctx.numImportFuncs + runtimeFuncCount + i;
     ctx.funcMap.set(entry.name, funcIdx);
+    if (isIrTerminal(entry.node))
+      linearIrLegacySlots.push({ declaration: entry.node, legacyName: entry.name, funcIdx });
   }
 
   // ── Collect module-level variable declarations as wasm globals ──
@@ -213,19 +228,18 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
   }
 
   // ── #2956: IR overlay for selector-claimed top-level functions ──
-  // Default-on since L4; JS2WASM_LINEAR_IR=0 restores the byte-identical
-  // direct path. Runs
-  // AFTER slot pre-assignment + module-global collection so the linear IR
-  // resolver's name-based lookups (funcMap / moduleGlobals) are complete,
-  // and BEFORE the funcDecls loop so an IR-lowered body lands at exactly
-  // its pre-assigned slot position. Anything the gate demotes compiles via
-  // the direct path below, unchanged.
-  const linearIr = linearIrEnabled() ? compileLinearIrFunctions(ctx, ast.sourceFile, allocationPolicy) : undefined;
+  // Default-on since L4. Run after exact slot registration and module-global
+  // collection, but before top-level body insertion. Demotions retain the
+  // direct path and JS2WASM_LINEAR_IR=0 remains the escape hatch.
+  const linearIrResult = linearIr.linearIrEnabled()
+    ? linearIr.compileLinearIr(ctx, ast.sourceFile, allocationPolicy, linearIrLegacySlots, opts.irInventoryOptions)
+    : undefined;
 
   // ── Compile top-level function declarations ──
   for (const decl of funcDecls) {
-    const irFunc = linearIr?.funcs.get(decl.name!.text);
-    if (irFunc) {
+    const irArtifact = linearIrResult?.compiledArtifactFor(decl);
+    if (irArtifact) {
+      const { func: irFunc, legacySlot } = irArtifact;
       // Insert the IR-lowered body at this decl's slot position (push order
       // must match the forward-registered funcMap indices). Mirror
       // compileFunction's export record.
@@ -233,7 +247,7 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
       if (irFunc.exported) {
         ctx.mod.exports.push({
           name: irFunc.name,
-          desc: { kind: "func", index: ctx.funcMap.get(irFunc.name)! },
+          desc: { kind: "func", index: legacySlot.funcIdx },
         });
       }
       continue;
@@ -243,25 +257,19 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
 
   // Aggregate/ref-cell helpers follow every user slot, keeping funcMap stable
   // while IR lowering discovers object shapes lazily.
-  for (const helper of linearIr?.helpers ?? []) {
+  for (const helper of linearIrResult?.helpers ?? []) {
     const actualFuncIdx = ctx.numImportFuncs + ctx.mod.functions.length;
     if (actualFuncIdx !== helper.funcIdx) {
       throw new Error(
         `linear-ir: deferred helper slot mismatch for '${helper.name}' (expected ${helper.funcIdx}, got ${actualFuncIdx})`,
       );
     }
-    ctx.mod.functions.push(materializeLinearIrHelper(ctx, helper));
+    ctx.mod.functions.push(linearIr.materializeLinearIrHelper(ctx, helper));
   }
 
   // ── Emit data segments for string literals ──
-  if (ctx.stringLiterals.size > 0) {
-    const totalSize = ctx.dataSegmentOffset - DATA_SEGMENT_BASE;
-    const bytes = new Uint8Array(totalSize);
-    for (const literal of ctx.stringLiterals.values()) {
-      bytes.set(literal.bytes, literal.offset - DATA_SEGMENT_BASE);
-    }
-    mod.dataSegments.push({ offset: DATA_SEGMENT_BASE, bytes });
-  }
+  numberFormat.emitLinearStringData(ctx, dataSegmentBase);
+  finalizeLinearArena(mod, ast, opts.exposeArenaReset);
 
   emitClosureTable(ctx);
 
@@ -283,6 +291,7 @@ export function generateLinearMultiModule(multiAst: MultiTypedAST, opts: LinearO
   addUint8ArrayRuntime(mod);
   addArrayRuntime(mod);
   addStringRuntime(mod);
+  if (multiAst.sourceFiles.some(sourceMayUseLinearStringRepeat)) addLinearStringRepeatRuntime(mod);
   addMapRuntime(mod);
   addSetRuntime(mod);
   addNumericMapRuntime(mod);
@@ -423,6 +432,7 @@ export function generateLinearMultiModule(multiAst: MultiTypedAST, opts: LinearO
     }
     mod.dataSegments.push({ offset: DATA_SEGMENT_BASE, bytes });
   }
+  finalizeLinearArena(mod, multiAst, opts.exposeArenaReset);
 
   emitClosureTable(ctx);
 
@@ -3132,8 +3142,8 @@ function compilePropertyAccess(ctx: LinearContext, fctx: LinearFuncContext, expr
   const objKind = getExprCollectionKind(ctx, fctx, expr.expression);
 
   if (propName === "length" && (objKind === "Array" || objKind === "Uint8Array" || objKind === "ArrayOrUint8Array")) {
-    // arr.length or u8.length → call __arr_len / __u8arr_len
-    compileExpression(ctx, fctx, expr.expression);
+    if (objKind === "Array") compileResolvedArrayPointer(ctx, fctx, expr.expression, compileExpression);
+    else compileExpression(ctx, fctx, expr.expression);
     if (objKind === "ArrayOrUint8Array") {
       // Runtime dispatch via tag byte
       const arrLenIdx = ctx.funcMap.get("__arr_len")!;
@@ -3275,7 +3285,7 @@ function compileElementAccess(ctx: LinearContext, fctx: LinearFuncContext, expr:
   if (objKind === "Array") {
     // arr[i] → __arr_get(arr, i) → f64 slot (#1938)
     const getIdx = ctx.funcMap.get("__arr_get")!;
-    compileExpression(ctx, fctx, expr.expression); // arr ptr (i32)
+    compileResolvedArrayPointer(ctx, fctx, expr.expression, compileExpression); // arr ptr (i32)
     compileExprToI32(ctx, fctx, expr.argumentExpression); // index → i32
     fctx.body.push({ op: "call", funcIdx: getIdx });
     // The slot is an f64 bit pattern. For a number/boolean element the slot IS
@@ -3379,7 +3389,7 @@ function compileElementAccessAssignment(
     const valLocal = addScratch({ kind: rightIsNumeric ? "f64" : "i32" });
     compileExpression(ctx, fctx, right); // value — evaluated once
     fctx.body.push({ op: "local.set", index: valLocal });
-    compileExpression(ctx, fctx, left.expression); // arr ptr (i32)
+    compileResolvedArrayPointer(ctx, fctx, left.expression, compileExpression); // arr ptr (i32)
     compileExprToI32(ctx, fctx, left.argumentExpression); // index → i32
     fctx.body.push({ op: "local.get", index: valLocal });
     if (!rightIsNumeric) {
@@ -3462,61 +3472,22 @@ function compileMethodCall(ctx: LinearContext, fctx: LinearFuncContext, expr: ts
     compileMapMethodCall(ctx, fctx, expr, propAccess, methodName);
   } else if (objKind === "Set") {
     compileSetMethodCall(ctx, fctx, expr, propAccess, methodName);
-  } else if (methodName === "split" && isStringExpr(ctx, fctx, propAccess.expression)) {
-    // string.split(sep) → __str_split(str, sep) → i32 (array pointer)
-    const splitIdx = ctx.funcMap.get("__str_split")!;
-    compileExpression(ctx, fctx, propAccess.expression); // str
-    if (expr.arguments.length > 0) {
-      compileExpression(ctx, fctx, expr.arguments[0]); // sep
-    } else {
-      compileStringLiteral(ctx, fctx, "");
-    }
-    fctx.body.push({ op: "call", funcIdx: splitIdx });
-    return;
-  } else if (methodName === "slice" && isStringExpr(ctx, fctx, propAccess.expression)) {
-    // string.slice(start, end) → __str_slice(str, start, end)
-    const sliceIdx = ctx.funcMap.get("__str_slice")!;
-    compileExpression(ctx, fctx, propAccess.expression); // str
-    compileExprToI32(ctx, fctx, expr.arguments[0]); // start → i32
-    if (expr.arguments.length > 1) {
-      compileExprToI32(ctx, fctx, expr.arguments[1]); // end → i32
-    } else {
-      // end = str.length
-      compileExpression(ctx, fctx, propAccess.expression);
-      const strLenIdx = ctx.funcMap.get("__str_len")!;
-      fctx.body.push({ op: "call", funcIdx: strLenIdx });
-    }
-    fctx.body.push({ op: "call", funcIdx: sliceIdx });
-    return;
-  } else if (methodName === "indexOf" && isStringExpr(ctx, fctx, propAccess.expression)) {
-    // string.indexOf(search) → __str_index_of(str, search, 0) → i32, convert to f64
-    const indexOfIdx = ctx.funcMap.get("__str_index_of")!;
-    compileExpression(ctx, fctx, propAccess.expression); // str
-    compileExpression(ctx, fctx, expr.arguments[0]); // search
-    if (expr.arguments.length > 1) {
-      compileExprToI32(ctx, fctx, expr.arguments[1]); // fromIdx
-    } else {
-      fctx.body.push({ op: "i32.const", value: 0 });
-    }
-    fctx.body.push({ op: "call", funcIdx: indexOfIdx });
-    fctx.body.push({ op: "f64.convert_i32_s" });
-    return;
-  } else if (methodName === "startsWith" && isStringExpr(ctx, fctx, propAccess.expression)) {
-    // string.startsWith(prefix) → __str_starts_with(str, prefix)
-    const startsWithIdx = ctx.funcMap.get("__str_starts_with")!;
-    compileExpression(ctx, fctx, propAccess.expression); // str
-    if (expr.arguments.length > 0) {
-      compileExpression(ctx, fctx, expr.arguments[0]); // prefix
-    } else {
-      compileStringLiteral(ctx, fctx, "");
-    }
-    fctx.body.push({ op: "call", funcIdx: startsWithIdx });
-    // Convert i32 result to f64
-    fctx.body.push({ op: "f64.convert_i32_s" });
+  } else if (
+    compileLinearStringMethodCall(ctx, fctx, expr, propAccess, methodName, {
+      compileExpression,
+      compileExprToI32,
+      compileExprToF64,
+      compileStringLiteral,
+      isStringExpr,
+    })
+  ) {
     return;
   } else if (methodName === "toString") {
-    // x.toString(...) — for numbers, just compile x (it's already a value)
+    // Exact no-radix Number::toString uses the host-free Ryū runtime.
     compileExpression(ctx, fctx, propAccess.expression);
+    if (expr.arguments.length === 0 && inferExprType(ctx, fctx, propAccess.expression).kind === "f64") {
+      linearCoercion.emitNumberToStringCall(ctx, fctx);
+    }
     return;
   } else {
     // Check if it's a class method call
@@ -3567,10 +3538,10 @@ function compileArrayMethodCall(
     const pushIdx = ctx.funcMap.get("__arr_push")!;
     const lenIdx = ctx.funcMap.get("__arr_len")!;
     const arrLocal = addLocal(fctx, `__push_arr_${fctx.locals.length}`, { kind: "i32" });
-    compileExpression(ctx, fctx, propAccess.expression); // arr ptr (i32)
+    compileResolvedArrayPointer(ctx, fctx, propAccess.expression, compileExpression); // arr ptr (i32)
     fctx.body.push({ op: "local.set", index: arrLocal });
     for (const arg of expr.arguments) {
-      fctx.body.push({ op: "local.get", index: arrLocal }); // arr ptr (i32)
+      emitResolvedArrayLocal(ctx, fctx, arrLocal);
       if (inferExprType(ctx, fctx, arg).kind === "f64") {
         compileExprToF64(ctx, fctx, arg); // numeric/boolean → f64 slot
       } else {
@@ -3656,17 +3627,14 @@ function compileArrayHOF(
   const elemLocal = addLocal(fctx, paramName, elemType);
   const indexLocal = indexParamName ? addLocal(fctx, indexParamName, { kind: "f64" }) : undefined;
 
-  let resultLocal: number | undefined;
-  if (method === "filter" || method === "map" || method === "flatMap") {
-    resultLocal = addLocal(fctx, `__hof_result_${fctx.locals.length}`, { kind: "i32" });
-  } else if (method === "some") {
-    resultLocal = addLocal(fctx, `__hof_result_${fctx.locals.length}`, { kind: "f64" });
-  } else if (method === "find") {
-    resultLocal = addLocal(fctx, `__hof_result_${fctx.locals.length}`, { kind: "i32" });
-  }
+  // filter/map/flatMap accumulate a new array (i32 pointer), `some` a boolean
+  // (f64). #3908: `find` accumulates an ELEMENT, so its slot must carry
+  // `elemType` — a hard-coded i32 made a `number[]` fail validation at both
+  // ends: "local.set[0] expected type i32, found local.get of type f64".
+  const resultType: ValType = method === "find" ? elemType : method === "some" ? { kind: "f64" } : { kind: "i32" };
+  const resultLocal = addLocal(fctx, `__hof_result_${fctx.locals.length}`, resultType);
 
-  // Initialize: arrLocal = source array
-  compileExpression(ctx, fctx, propAccess.expression);
+  compileResolvedArrayPointer(ctx, fctx, propAccess.expression, compileExpression);
   fctx.body.push({ op: "local.set", index: arrLocal });
 
   // lenLocal = __arr_len(arrLocal)
@@ -3688,8 +3656,9 @@ function compileArrayHOF(
     fctx.body.push({ op: "f64.const", value: 0 });
     fctx.body.push({ op: "local.set", index: resultLocal! });
   } else if (method === "find") {
-    // resultLocal = 0 (null pointer)
-    fctx.body.push({ op: "i32.const", value: 0 });
+    // resultLocal = the "not found" sentinel; #3908: must match elemType. A
+    // null pointer for ref elements, 0.0 for f64 ones (`undefined` in a slot).
+    fctx.body.push(elemIsI32 ? { op: "i32.const", value: 0 } : { op: "f64.const", value: 0 });
     fctx.body.push({ op: "local.set", index: resultLocal! });
   }
 
@@ -4432,8 +4401,40 @@ function inferExprType(ctx: LinearContext, fctx: LinearFuncContext, expr: ts.Exp
   return { kind: "f64" };
 }
 
-/** Resolve a TS type annotation to a ValType */
-function resolveType(_ctx: LinearContext, typeNode: ts.TypeNode | undefined): ValType | null {
+/**
+ * Is this type (after stripping null/undefined) one the linear backend keeps
+ * in an f64 value slot rather than an i32 pointer slot? (#3686 bug 2)
+ *
+ * The linear lane represents every JS number — and booleans, and its
+ * best-effort bigints — as f64. Objects, arrays and strings are i32 pointers.
+ * This asks the checker instead of matching source text, so a *type alias* to
+ * a numeric type answers the same as the type it aliases.
+ */
+function isLinearScalarType(ctx: LinearContext, typeNode: ts.TypeNode): boolean {
+  try {
+    const resolved = ctx.checker.getNonNullableType(ctx.checker.getTypeFromTypeNode(typeNode));
+    const scalar = ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike | ts.TypeFlags.BigIntLike;
+    if ((resolved.flags & scalar) !== 0) return true;
+    // A union of numeric members (e.g. `type Bit = 0 | 1`) is still a number.
+    if (resolved.isUnion()) return resolved.types.every((member) => (member.flags & scalar) !== 0);
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolve a TS type annotation to a ValType.
+ *
+ * The `switch` on source text is the fast path for the spelled-out primitives.
+ * Anything else used to fall straight into the `i32` (pointer) default — which
+ * silently mis-typed **every type alias of a numeric type**, `type i32 = number`
+ * and `type Meters = number` alike (#3686 bug 2). The signature slot came out
+ * `i32` while the body compiled the arithmetic as `f64`, so the module failed
+ * validation ("f64.add[0] expected type f64, found local.get of type i32").
+ * The default now asks the checker before assuming "pointer".
+ */
+function resolveType(ctx: LinearContext, typeNode: ts.TypeNode | undefined): ValType | null {
   if (!typeNode) return null;
   // Strip "| undefined" and "| null" for optional types
   const text = typeNode
@@ -4452,7 +4453,8 @@ function resolveType(_ctx: LinearContext, typeNode: ts.TypeNode | undefined): Va
     case "string":
       return { kind: "i32" }; // strings are pointers
     default:
-      return { kind: "i32" }; // pointers for objects
+      // Aliases (`type i32 = number`, `type Meters = number`) resolve here.
+      return isLinearScalarType(ctx, typeNode) ? { kind: "f64" } : { kind: "i32" };
   }
 }
 
@@ -4490,7 +4492,7 @@ function scanClassDeclaration(ctx: LinearContext, classDecl: ts.ClassDeclaration
   for (const member of classDecl.members) {
     if (ts.isPropertyDeclaration(member) && member.name && ts.isIdentifier(member.name)) {
       const fieldName = member.name.text;
-      const fieldType = resolveFieldType(member.type);
+      const fieldType = resolveFieldType(ctx, member.type);
       fieldDefs.push({ name: fieldName, type: fieldType });
       seenFields.add(fieldName);
       // Detect collection kind from type annotation
@@ -4550,7 +4552,7 @@ function scanClassDeclaration(ctx: LinearContext, classDecl: ts.ClassDeclaration
 }
 
 /** Resolve a field type annotation to "i32" or "f64" */
-function resolveFieldType(typeNode: ts.TypeNode | undefined): "i32" | "f64" {
+function resolveFieldType(ctx: LinearContext, typeNode: ts.TypeNode | undefined): "i32" | "f64" {
   if (!typeNode) return "f64";
   const text = typeNode.getText();
   switch (text) {
@@ -4559,7 +4561,9 @@ function resolveFieldType(typeNode: ts.TypeNode | undefined): "i32" | "f64" {
     case "boolean":
       return "f64";
     default:
-      return "i32";
+      // Same alias hazard as resolveType: `v: i32` on a field used to land in
+      // the i32/pointer slot while its reads/writes stayed f64 (#3686 bug 2).
+      return isLinearScalarType(ctx, typeNode) ? "f64" : "i32";
   }
 }
 
@@ -5004,12 +5008,10 @@ function compileTemplateExpression(ctx: LinearContext, fctx: LinearFuncContext, 
       // Already a string pointer (i32), just compile
       compileExpression(ctx, fctx, span.expression);
     } else {
-      // It's an f64 number — need to convert to string
-      // For now, use __str_from_i32 if available, otherwise just truncate and convert
-      const strFromI32Idx = ctx.funcMap.get("__str_from_i32");
-      if (strFromI32Idx !== undefined) {
-        compileExprToI32(ctx, fctx, span.expression);
-        fctx.body.push({ op: "call", funcIdx: strFromI32Idx });
+      // It's an f64 number — use the exact host-free Ryū formatter.
+      if (linearCoercion.hasNumberToString(ctx)) {
+        compileExpression(ctx, fctx, span.expression);
+        linearCoercion.emitNumberToStringCall(ctx, fctx);
       } else {
         // Fallback: compile as empty string (shouldn't normally happen)
         compileStringLiteral(ctx, fctx, "");

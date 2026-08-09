@@ -136,6 +136,10 @@ provision_one() {
   wt="$1"
   link_dep "$wt" node_modules
   link_dep "$wt" test262
+  hook_installer="$wt/scripts/configure-git-hooks.sh"
+  if [ -f "$hook_installer" ]; then
+    sh "$hook_installer" "$wt" || say "failed to configure hooks in $wt"
+  fi
 }
 
 if [ "$#" -gt 0 ]; then

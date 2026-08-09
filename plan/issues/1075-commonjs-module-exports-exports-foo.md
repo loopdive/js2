@@ -158,3 +158,35 @@ Node resolver's behavior: the default import of a CJS module is
   identifying CJS files statically is reliable.
 - Follow-up candidates once #1075 lands: `.cjs` extension handling,
   `package.json` `"type"` field respecting, `exports` field map resolution.
+
+## Carry-over from the closed PR #3687 (2026-07-31)
+
+PR #3687 (branch `codex/1400-eslint-e2e` @
+`561c933af16651e49f50556b8128967892ce529e`, closed unmerged) grew
+`src/cjs-rewrite.ts` from 157 to ~500 lines. Part of that is a **source-level**
+CommonJS export surface, which is this issue's territory and a different
+mechanism from `main`'s codegen-level pattern matching in
+`src/codegen/declarations.ts`:
+
+- `module.exports = …` anywhere in the file is rewritten to a mutable
+  `__cjs_default_export` binding, prefixed with
+  `let __cjs_default_export = Object.create(Object.prototype); const exports = __cjs_default_export;`
+  and suffixed with `export default __cjs_default_export;`
+- a file that mutates a **free `exports`** object without `module` (the
+  esrecurse UMD shape) gets `const exports = {};` plus a synthesized export
+  footer
+- the cheap pre-check widens from `source.includes("require(")` to also match
+  `/\bexports\b/`, so export-only CJS files are no longer skipped unparsed
+
+`main` already handles `module.exports = <fn>` / `module.exports = { … }` /
+`exports.foo = <fn>` through `declarations.ts` (proved by
+`tests/issue-3654.test.ts`'s `lib/helper.js` compiling and running through
+`compileProject`). So the value here is the shapes that pattern matching does
+**not** reach — free `exports` mutated inside an IIFE, and `module.exports =
+factory()` — not a wholesale replacement. **Measure which shapes actually fail
+on `main` before adopting the rewrite**; swapping mechanisms is a much larger
+change than closing the residual shapes.
+
+The *graph-linking* half of that same file (nested/residual `require()`
+selection) is tracked separately as **#3930** — coordinate, since both edit
+`cjs-rewrite.ts`.

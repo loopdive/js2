@@ -1,0 +1,62 @@
+name: Optional Porffor source canary
+
+# Advisory only: this workflow deliberately does not run on merge_group and is
+# not a branch-protection context. Ordinary CI remains submodule-free.
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/ir/**"
+      - "src/codegen-linear/**"
+      - "src/compiler.ts"
+      - "src/index.ts"
+      - "tests/fixtures/porffor-source-to-native-canary.ts"
+      - "tests/issue-3478-porffor-source-to-native-canary.test.ts"
+      - "vendor/Porffor"
+      - ".github/workflows/porffor-source-canary.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  porffor-source-native-canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: false
+
+      - name: Initialize and verify only the pinned Porffor gitlink
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -c submodule.porffor.update=checkout submodule update --init --checkout vendor/Porffor
+          gitlink="$(git rev-parse HEAD:vendor/Porffor)"
+          checkout="$(git -C vendor/Porffor rev-parse HEAD)"
+          fingerprint="$(sed -n 's/^export const PORFFOR_IR_COMMIT = "\([0-9a-f]\{40\}\)";$/\1/p' src/ir/backend/porffor/compat.ts)"
+          test -n "$fingerprint"
+          test "$checkout" = "$gitlink"
+          test "$checkout" = "$fingerprint"
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Setup pnpm via Corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.30.2 --activate
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Execute pinned Porffor-C canary with ASan and UBSan
+        env:
+          CC: clang
+          JS2WASM_PORFFOR_ROOT: vendor/Porffor
+          PORFFOR_NATIVE_REQUIRED: "1"
+          PORFFOR_NATIVE_SANITIZERS: "1"
+        run: |
+          pnpm exec vitest run tests/issue-3478-porffor-source-to-native-canary.test.ts \
+            --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism --reporter=dot

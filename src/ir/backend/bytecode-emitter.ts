@@ -56,7 +56,12 @@
 import type { IrBinop, IrInstr, IrType, IrUnop } from "../nodes.js";
 import type { BlockType, Instr } from "../types.js";
 import type { TypeConverter } from "./contract.js";
-import type { BackendEmitter } from "./emitter.js";
+import type {
+  BackendEmitter,
+  BackendI32BitwiseOp,
+  BackendNumericConversionOp,
+  BackendScalarConstType,
+} from "./emitter.js";
 import type { IrClassLowering, IrObjectStructLowering } from "./handles.js";
 
 /** The proof VM carries every legal IR value in one JavaScript number slot. */
@@ -405,6 +410,25 @@ export class BytecodeEmitter implements BackendEmitter<BytecodeSink> {
     );
   }
 
+  emitStringConst(): void {
+    throw new Error("BytecodeEmitter: string primitives are not in the #1584 numeric subset.");
+  }
+  emitStringConcat(): void {
+    throw new Error("BytecodeEmitter: string primitives are not in the #1584 numeric subset.");
+  }
+  emitStringEquals(): void {
+    throw new Error("BytecodeEmitter: string primitives are not in the #1584 numeric subset.");
+  }
+  emitStringLength(): void {
+    throw new Error("BytecodeEmitter: string primitives are not in the #1584 numeric subset.");
+  }
+  emitStringCharAt(): void {
+    throw new Error("BytecodeEmitter: string primitives are not in the #1584 numeric subset.");
+  }
+  emitStringCharCodeAt(): void {
+    throw new Error("BytecodeEmitter: string primitives are not in the #1584 numeric subset.");
+  }
+
   emitConst(instr: Extract<IrInstr, { kind: "const" }>, funcName: string, out: BytecodeSink): void {
     const v = instr.value;
     switch (v.kind) {
@@ -429,6 +453,18 @@ export class BytecodeEmitter implements BackendEmitter<BytecodeSink> {
 
   emitUnary(op: IrUnop, out: BytecodeSink): void {
     out.emit(unopToOpcode(op));
+  }
+
+  emitScalarConst(_type: BackendScalarConstType, value: number, out: BytecodeSink): void {
+    out.emit(OP.CONST, out.internConst(value));
+  }
+
+  emitNumericConversion(op: BackendNumericConversionOp, _out: BytecodeSink): void {
+    throw new Error(`BytecodeEmitter: numeric conversion '${op}' not in the #1584 production subset`);
+  }
+
+  emitI32Bitwise(op: BackendI32BitwiseOp, _out: BytecodeSink): void {
+    throw new Error(`BytecodeEmitter: i32 bitwise op '${op}' not in the #1584 production subset`);
   }
 
   emitLocalGet(index: number, out: BytecodeSink): void {
@@ -680,6 +716,9 @@ export class BytecodeEmitter implements BackendEmitter<BytecodeSink> {
     throw new Error("BytecodeEmitter: vec primitives not in the #1584 numeric subset — see §2a struct/object family.");
   }
   emitElemSet(): void {
+    throw new Error("BytecodeEmitter: vec primitives not in the #1584 numeric subset — see §2a struct/object family.");
+  }
+  emitVecSetLength(): void {
     throw new Error("BytecodeEmitter: vec primitives not in the #1584 numeric subset — see §2a struct/object family.");
   }
   emitVecNewFixed(): void {

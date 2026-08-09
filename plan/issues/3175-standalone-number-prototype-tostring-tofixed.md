@@ -1,8 +1,7 @@
 ---
 id: 3175
 title: "standalone: Number.prototype.toString(radix)/toFixed/valueOf spec semantics + prototype surface (74 gap tests)"
-status: in-progress
-assignee: ttraenkler/dev-number
+status: ready
 created: 2026-07-12
 updated: 2026-07-12
 priority: high
@@ -130,3 +129,16 @@ Tests: `tests/issue-3175.test.ts`.
   valueOf scope.
 - **Symbol/BigInt arg ToNumber-throws** (~2). `toFixed`/`toExponential` Symbol/
   BigInt args must throw TypeError as a real instance.
+
+## Stale-verify (2026-07-24, dev-std-4) — SUBSTANTIALLY SHRUNK, keep ready
+
+The dominant `toString(radix)` bucket (34 rows claimed 2026-07-12) has largely
+landed. MEASURED on current `main` (`--target standalone`):
+`built-ins/Number/prototype/toString` = **83 pass / 7 non-pass (of 90)** — the
+7 residual are radix-argument coercion edges (`S15.7.4.2_A4_T04/T05`, etc.), NOT
+the ~34-row headline. Headline repros pass host-free: `(255).toString(16)`→"ff",
+`(10).toString(2)`→"1010", `(1.5).toFixed(2)`→"1.50". Consistent with
+dev-std-2's finding that the residual is small and substrate-walled. Keep
+`ready` but RE-SCOPE: a full `built-ins/Number/prototype/**` + `built-ins/Number/**`
+re-measure is needed to size the true residual (the "74 gap tests" figure is
+stale — most have landed).

@@ -267,7 +267,12 @@ describe("Gradual typing: boxed any (fast mode)", () => {
     `);
     expect(exports.negAny(5)).toBe(-5);
     expect(exports.negAny(-3)).toBe(3);
-    expect(exports.negAny(0)).toBe(0);
+    // (#3907) `-(0)` is `-0` per §6.1.6.1.1, and `toBe` is `Object.is`, so the
+    // old `toBe(0)` was asserting the i32 collapse of -0 that fast mode's
+    // unconditional `number → i32` narrowing produced. Fast mode now carries
+    // f64, so the sign of zero survives.
+    expect(exports.negAny(0)).toBe(-0);
+    expect(Object.is(exports.negAny(0), -0)).toBe(true);
   });
 
   it("any in conditional (if statement)", async () => {

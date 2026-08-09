@@ -9,6 +9,9 @@ import { type IrFunction, type IrLowerResolver, asBlockId, asValueId, irVal } fr
 // BytecodeEmitter for the #1715 three functions — the (a0) acceptance criterion.
 import { lowerIrFunctionBody } from "../src/ir/lower.js";
 import { buildImports } from "../src/runtime.js";
+import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
+
+const irIdentities = createTestIrFunctionIdentityFactory("ir-bytecode-proof");
 
 // #1715 → #1584 — bytecode-emitter triple-equivalence (backend-agnostic IR).
 //
@@ -205,7 +208,7 @@ describe("#1584 (a0-tail) — REAL lower.ts drives the bytecode sink (triple equ
     const js = (a: number, b: number): number => a + b;
     // IR: %2 = binary f64.add %0 %1 ; return %2
     const fn: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [
         { value: asValueId(0), type: F64, name: "a" },
         { value: asValueId(1), type: F64, name: "b" },
@@ -250,7 +253,7 @@ describe("#1584 (a0-tail) — REAL lower.ts drives the bytecode sink (triple equ
     const js = (a: number): number => a * 2;
     // IR: %1 = const f64 2 ; %2 = binary f64.mul %0 %1 ; return %2
     const fn: IrFunction = {
-      name: "g",
+      ...irIdentities.next("g"),
       params: [{ value: asValueId(0), type: F64, name: "a" }],
       resultTypes: [F64],
       blocks: [
@@ -299,7 +302,7 @@ describe("#1584 (a0-tail) — REAL lower.ts drives the bytecode sink (triple equ
     //              else { %5 = f64.sub %0 %1 } value %5
     //     return %6
     const fn: IrFunction = {
-      name: "h",
+      ...irIdentities.next("h"),
       params: [
         { value: asValueId(0), type: F64, name: "a" },
         { value: asValueId(1), type: F64, name: "b" },
@@ -406,7 +409,7 @@ describe("#1584 (a1) — real lower.ts drives OP.CALL through the BytecodeEmitte
     //   %2 = call add(%0, %1)
     //   return %2
     const main: IrFunction = {
-      name: "main",
+      ...irIdentities.next("main"),
       params: [
         { value: asValueId(0), type: F64, name: "a" },
         { value: asValueId(1), type: F64, name: "b" },

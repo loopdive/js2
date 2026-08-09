@@ -3,7 +3,7 @@
  * Uses child_process.fork for full memory isolation.
  *
  * Protocol:
- *   Parent sends: { id, source, execute, isNegative, isRuntimeNegative, target?, wasmPath?, metaPath? }
+ *   Parent sends: { id, source, execute, isNegative, isRuntimeNegative, negativePhase?, target?, fixtureFiles?, dynamicFixtureFiles?, entryFile? }
  *   Worker sends: { id, status, error?, ret?, compileMs?, execMs?, errorCodes?, ... }
  *
  * When execute=false: compile only, write to disk (for cache warming).
@@ -14,10 +14,22 @@ import { createHash } from "node:crypto";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createContext, runInContext } from "node:vm";
-import { compile, createIncrementalCompiler } from "./compiler-bundle.mjs";
+import { compile, compileMulti, createIncrementalCompiler } from "./compiler-bundle.mjs";
 import { buildImports } from "./runtime-bundle.mjs";
 import { poisonRecycleReason } from "./test262-poison-error.mjs";
 import { negativeCompileErrorMatches, negativeCompileSucceededVerdict } from "./negative-verdict.mjs";
+// (#3613) ONE renderer, shared with tests/test262-runner.ts. The worker's
+// behaviour is unchanged — these bodies moved here verbatim; it is the LOCAL
+// runner that was missing the tryNativeExnRender step.
+import { safeStringifyThrown, tryNativeExnRender } from "./lib/wasm-exn-render.mjs";
+import { SANDBOX_GLOBAL_NAMES } from "./test262-sandbox-globals.mjs";
+// (#4162) ONE import-object finaliser, shared with tests/test262-runner.ts and
+// tests/test262-shared.ts. It owns the #2928 E6 standalone runtime-eval
+// provider attachment (cached-binary loading + a fresh per-test namespace for
+// `js2wasm:runtime-eval` imports). This worker used to own that logic alone;
+// the in-process lanes did not have it, so their standalone runs died at
+// instantiate and MASKED the tests' real error signatures.
+import { instantiateTest262Module } from "./test262-import-object.mjs";
 
 // ── Bundle hash (#1521) ────────────────────────────────────────────────
 // Each cache entry written below carries a `bundle_hash` field. When the
@@ -28,46 +40,41 @@ import { negativeCompileErrorMatches, negativeCompileSucceededVerdict } from "./
 //
 // Hash inputs (in priority order):
 //   1. TEST262_BUNDLE_HASH env var (set by CI from `hashFiles(...)` digest)
-//   2. sha256 of `scripts/compiler-bundle.mjs` (computed locally as fallback)
+//   2. sha256 of the source-runner compiler bundle or packaged compiler entry
 //
 // Computed once per worker startup — cheap (a few MB read + sha256).
 const _workerDir = dirname(fileURLToPath(import.meta.url));
 function computeBundleHash() {
   const fromEnv = process.env.TEST262_BUNDLE_HASH;
   if (fromEnv && fromEnv.length > 0) return fromEnv;
-  try {
-    const buf = readFileSync(join(_workerDir, "compiler-bundle.mjs"));
-    return createHash("sha256").update(buf).digest("hex").slice(0, 16);
-  } catch {
-    return "no-bundle";
+  for (const file of ["compiler-bundle.mjs", "index.js"]) {
+    try {
+      const buf = readFileSync(join(_workerDir, file));
+      return createHash("sha256").update(buf).digest("hex").slice(0, 16);
+    } catch {}
   }
+  return "no-bundle";
 }
 const BUNDLE_HASH = computeBundleHash();
 
-const ORIGINAL_HARNESS_SANDBOX_GLOBALS = [
-  "Array",
-  "Object",
-  "Function",
-  "String",
-  "Number",
-  "Boolean",
-  "Symbol",
-  "Promise",
-  "Map",
-  "Set",
-  "WeakMap",
-  "WeakSet",
-  "Date",
-  "RegExp",
-  "Error",
-  "TypeError",
-  "RangeError",
-  "SyntaxError",
-  "ReferenceError",
-  "Math",
-  "JSON",
-  "Reflect",
-];
+// ── Standalone runtime-eval provider (#2928 E6/E7, now shared — #4162) ──
+// A standalone module whose ONLY dynamic-code dependency is the core-Wasm
+// `js2wasm:runtime-eval` namespace links against a separately compiled
+// Acorn+interpreter provider (or, on a miss, the REFUSAL provider). Tier
+// selection, the per-test fresh instance, and the stderr provenance line all
+// live in scripts/test262-import-object.mjs now, so the in-process lanes cannot
+// diverge from this worker again. `TEST262_DISABLE_RUNTIME_EVAL_PROVIDER=1`
+// remains the measurement kill-switch.
+// This worker's provenance prefix is passed at the call site below.
+const RUNTIME_EVAL_PROVIDER_LABEL = "test262-worker";
+
+// (#3441) The sandbox-globals list is now the single shared source in
+// scripts/test262-sandbox-globals.mjs — imported by BOTH this worker and
+// tests/test262-runner.ts so the two lanes can never drift again. It formerly
+// stopped at "Reflect" here (missing the #3419 TypedArray cluster + Atomics),
+// stranding ~2,069 default-lane TypedArray-ctor tests at "Cannot convert null
+// to object [in __module_init()]".
+const ORIGINAL_HARNESS_SANDBOX_GLOBALS = SANDBOX_GLOBAL_NAMES;
 
 function buildOriginalHarnessSandbox(consoleProxy) {
   const sandbox = Object.create(null);
@@ -100,14 +107,13 @@ function buildOriginalHarnessSandbox(consoleProxy) {
 
 let compileCount = 0;
 const GC_INTERVAL = 25;
-const RECREATE_INTERVAL = 100;
 const WORKER_RECYCLE_INTERVAL = Math.max(0, parseInt(process.env.TEST262_WORKER_RECYCLE_INTERVAL || "0", 10) || 0);
+let runtimeIntrinsicCanarySnapshot = null;
 
 let incrementalCompiler = null;
 function createFreshCompiler() {
   try {
     incrementalCompiler = createIncrementalCompiler({
-      fileName: "test.ts",
       sourceMap: true,
       sourceMapUrl: "test.wasm.map",
       emitWat: false,
@@ -118,6 +124,28 @@ function createFreshCompiler() {
   }
 }
 createFreshCompiler();
+
+// (#4035) Everything this worker compiles is INSPECTED from JS afterwards: the
+// exec path renders native exception payloads through `__exn_render_*` (#2962)
+// and drains the host-free print sink through `__stdout_*` (#3469), and the
+// host lane reaches into WasmGC values through the `__vec_*`/`__sget_*` bridge.
+// Standalone/WASI now default to `hostBridge: "off"` so a DEPLOYED pure-Wasm
+// module ships only its own exports; the harness is the opt-in case. Injecting
+// it in both wrappers covers every compile site at once — and a caller may
+// still override by passing its own `hostBridge`.
+const HARNESS_HOST_BRIDGE = { hostBridge: "always" };
+
+function compileSingleSource(source, options) {
+  const opts = { ...HARNESS_HOST_BRIDGE, ...options };
+  return incrementalCompiler ? incrementalCompiler.compile(source, opts) : compile(source, opts);
+}
+
+function compileMultipleSources(files, entryFile, options) {
+  const opts = { ...HARNESS_HOST_BRIDGE, ...options };
+  return incrementalCompiler?.compileMulti
+    ? incrementalCompiler.compileMulti(files, entryFile, opts)
+    : compileMulti(files, entryFile, opts);
+}
 
 // Suppress unhandled Promise rejections from async tests
 process.on("unhandledRejection", () => {});
@@ -1045,7 +1073,34 @@ function makeWorkerRecycleError(reason) {
   return err;
 }
 
-async function doCompile(source, sourceMapUrl, target, inferModuleStrictArguments, originalHarness) {
+function hasFixtureGraph(fixtureFiles) {
+  return (
+    fixtureFiles &&
+    typeof fixtureFiles === "object" &&
+    !Array.isArray(fixtureFiles) &&
+    Object.keys(fixtureFiles).length > 0
+  );
+}
+
+// #3506 — the 5 resolution-phase paths in this slice import Test262's
+// `ensure-linking-error_FIXTURE.js`, whose deliberate self-import of an
+// unexported binding is reported by TypeScript as TS2459. Requiring that
+// graph-resolution evidence prevents an unrelated entry grammar/type
+// diagnostic from satisfying the requested resolution SyntaxError. Keep this
+// narrow: other resolution populations remain on their existing policy until
+// their own compiler support is verified (the #3491 TS2308 control).
+const FYI_NEGATIVE_FIXTURE_RESOLUTION_CODES = new Set([2459]);
+async function doCompile(
+  source,
+  sourceMapUrl,
+  target,
+  inferModuleStrictArguments,
+  originalHarness,
+  fixtureFiles,
+  entryFile,
+  isNegative,
+  negativePhase,
+) {
   // Defence-in-depth: restore any poisoned builtins BEFORE each compile.
   // postCompileCleanup runs after the previous test, but under rare worker
   // interruption scenarios it may not have completed. Doing a cheap pre-
@@ -1061,22 +1116,79 @@ async function doCompile(source, sourceMapUrl, target, inferModuleStrictArgument
   if (preCleanup.recycle) {
     throw makeWorkerRecycleError(`worker built-ins poisoned before compile: ${preCleanup.reason}`);
   }
-  const compileFn = incrementalCompiler ? incrementalCompiler.compile : compile;
   // (#3049 C1 / #3123) Host lane (no target) defers top-level init:
   // `__module_init` is exported instead of wired to the wasm `(start)`
-  // section, and the exec path below calls it right after `setExports` so
+  // section, and the exec path below calls it right after `setInstance` so
   // top-level code runs against a fully-wired runtime. Aligned with
   // compiler-fork-worker.mjs + tests/test262-runner.ts (#1251 both-paths
-  // rule). Standalone/wasi/linear targets keep their own `_start` init model.
-  // MODULE-GOAL tests (`inferModuleStrictArguments` is exactly the
-  // module-goal flag) are EXCLUDED: the multi-module FIXTURE link already
-  // synthesizes per-module init plumbing, and the flag added a SECOND
-  // `__module_init` export in one binary — V8's "Duplicate export name"
-  // CompileError, the 6-file `language/module-code/*` regression that parked
-  // the stack PR #2835/#2839.
-  const deferOpt = target || (!originalHarness && inferModuleStrictArguments) ? {} : { deferTopLevelInit: true };
+  // rule). Wasi/linear targets keep their own `_start` init model.
+  // compileMulti fixture graphs follow the same host rule after #3505: its
+  // progressively accumulated dependency-order initializers retain only the
+  // final `__module_init` export, so the graph can be wired before that one
+  // initializer runs without producing duplicate Wasm exports.
+  //
+  // (#2860 F3) The STANDALONE lane joins the defer rule. Under the `(start)`
+  // model a top-level throw — which in originalHarness mode is EVERY runtime
+  // failure, since all test code is top-level — surfaces out of
+  // `WebAssembly.instantiate` with `instance === null`, so the #2962 native
+  // exception-render path (`__exn_render_prepare`/`__exn_render_char`, which
+  // needs a live instance) is unreachable and ~8,600 heterogeneous standalone
+  // failures collapse onto the one opaque "wasm exception during module init"
+  // label. Deferring init makes the throw happen at the explicit
+  // `__module_init()` call below, with a live instance, so the real failure
+  // signature (Test262Error message, TypeError, …) is rendered. Verdicts are
+  // unchanged (same scoring rule, richer error text); the only measured flips
+  // are ≤7 corpus-wide runtime-negative tests whose thrown error TYPE becomes
+  // observable via the tag and now correctly scores pass.
+  // oracle-version-exempt: same re-hosting exemption as the #3123 host-lane
+  // arm below — the EXISTING instantiate-throw classification moves to the
+  // explicit __module_init call site; the scoring rule is byte-identical, so
+  // rows are re-LABELLED (error text), not re-scored by policy.
+  const deferOpt =
+    (target && target !== "standalone") || (!originalHarness && inferModuleStrictArguments)
+      ? {}
+      : { deferTopLevelInit: true };
+  if (hasFixtureGraph(fixtureFiles)) {
+    if (!originalHarness || typeof entryFile !== "string" || entryFile.length === 0) {
+      throw new Error("fixture graph requires an original-harness entryFile");
+    }
+    if (Object.prototype.hasOwnProperty.call(fixtureFiles, entryFile)) {
+      throw new Error(`fixture graph collides with entry file: ${entryFile}`);
+    }
+
+    // Preserve the literal FYI entry as its own Module and link the pinned
+    // fixture sources beside it. Like the project runner's #2932 path, the
+    // graph deliberately omits deferTopLevelInit: compileMulti synthesizes
+    // one init schedule for the entire graph, including circular exports.
+    return compileMultipleSources({ ...fixtureFiles, [entryFile]: source }, entryFile, {
+      // #3506 — every virtual root is a real pinned `.js` file. With
+      // `allowJs:false`, TypeScript excludes the graph before syntax checking
+      // and codegen crashes at `undefined.kind`. Retain the literal JavaScript
+      // roots for both verdicts. Parse/early graphs opt back into grammar + ES
+      // early-error rejection; resolution graphs retain full linked-program
+      // diagnostics. No path or source is rewritten.
+      allowJs: true,
+      strictJsSyntax: isNegative,
+      enforceJsEarlyErrors: isNegative && negativePhase !== "resolution",
+      sourceMap: true,
+      sourceMapUrl: sourceMapUrl || "test.wasm.map",
+      emitWat: false,
+      // Resolution negatives need TypeScript's linked-program diagnostics
+      // (e.g. a fixture's missing export). Parse/early tests deliberately stop
+      // before semantic analysis.
+      skipSemanticDiagnostics: negativePhase !== "resolution",
+      target,
+      inferModuleStrictArguments,
+      ...deferOpt,
+    });
+  }
   if (originalHarness) {
-    return compile(source, {
+    // The authoritative sharded-CI and test262.fyi lanes both compile literal
+    // JavaScript harness assemblies. Keep those single-file builds on the same
+    // persistent Language Service as the synthetic TypeScript lane; passing the
+    // JS filename and allowJs mode here preserves ScriptKind while successive
+    // harness/body edits can reuse TypeScript's Program and checker state.
+    return compileSingleSource(source, {
       allowJs: true,
       fileName: "test.js",
       sourceMap: true,
@@ -1088,18 +1200,16 @@ async function doCompile(source, sourceMapUrl, target, inferModuleStrictArgument
       ...deferOpt,
     });
   }
-  return incrementalCompiler
-    ? compileFn(source, { sourceMapUrl: sourceMapUrl || "test.wasm.map", target, inferModuleStrictArguments, ...deferOpt })
-    : (await compile(source, {
-              fileName: "test.ts",
-              sourceMap: true,
-              sourceMapUrl: sourceMapUrl || "test.wasm.map",
-              emitWat: false,
-              skipSemanticDiagnostics: true,
-              target,
-              inferModuleStrictArguments,
-              ...deferOpt,
-            }));
+  return compileSingleSource(source, {
+    fileName: "test.ts",
+    sourceMap: true,
+    sourceMapUrl: sourceMapUrl || "test.wasm.map",
+    emitWat: false,
+    skipSemanticDiagnostics: true,
+    target,
+    inferModuleStrictArguments,
+    ...deferOpt,
+  });
 }
 
 /**
@@ -1119,16 +1229,11 @@ async function doCompile(source, sourceMapUrl, target, inferModuleStrictArgument
  * the test's failure — masking the REAL signature behind a phantom TypeError and
  * collapsing ~2,014 heterogeneous standalone failures onto one string (#2862).
  */
-function safeStringifyThrown(v) {
-  try {
-    return String(v);
-  } catch {
-    const t = typeof v;
-    return t === "object" || t === "function"
-      ? "uncaught Wasm-GC exception (non-stringifiable payload)"
-      : `uncaught Wasm exception (${t})`;
-  }
-}
+// (#3613) Behaviour-identical: this body moved verbatim into the SHARED
+// renderer so the local runner cannot drift from it again. The doc comment
+// above is retained for the #2870/#2862 history.
+// oracle-version-exempt: pure de-duplication — the worker's policy is
+// unchanged (it IS the shared policy), so no baseline row can reclassify.
 
 /**
  * (#2962) Render a natively-thrown Wasm-GC payload through the module's own
@@ -1138,23 +1243,10 @@ function safeStringifyThrown(v) {
  * `$Error_struct` renders "TypeError: boom" per §20.5.3.4 and a Test262Error
  * yields its real assertion message. Returns `null` when the exports are
  * absent (JS-host binaries), the payload renders empty, or anything throws —
- * the caller then falls back to the #2870 opaque label. Kept in sync with
- * `tryNativeExnRender` in tests/test262-runner.ts.
+ * the caller then falls back to the #2870 opaque label. (#3613) NO LONGER
+ * "kept in sync with tests/test262-runner.ts" by discipline — both lanes now
+ * import the one implementation in scripts/lib/wasm-exn-render.mjs.
  */
-function tryNativeExnRender(instance, payload) {
-  try {
-    const prep = instance?.exports?.__exn_render_prepare;
-    const chr = instance?.exports?.__exn_render_char;
-    if (typeof prep !== "function" || typeof chr !== "function") return null;
-    const len = prep(payload);
-    if (typeof len !== "number" || len <= 0 || len > 65536) return null;
-    let out = "";
-    for (let i = 0; i < len; i++) out += String.fromCharCode(chr(i));
-    return out;
-  } catch {
-    return null;
-  }
-}
 
 function extractWasmExceptionMessage(err, instance) {
   if (err instanceof WebAssembly.Exception) {
@@ -1365,7 +1457,14 @@ async function buildInvalidBinaryError(source, sourceMapUrl, result, target) {
   let detailErr;
   try {
     const imports = buildImports(result.imports, undefined, result.stringPool);
-    await WebAssembly.instantiate(result.binary, imports);
+    // (#4162) Same shared seam. This path exists to name WHY a binary is
+    // invalid; without the provider a standalone module would report the
+    // unresolved `js2wasm:runtime-eval` import as the reason and bury the
+    // actual validation error.
+    await instantiateTest262Module(result.binary, imports, {
+      target,
+      providerLabel: RUNTIME_EVAL_PROVIDER_LABEL,
+    });
   } catch (err) {
     detailErr = err;
   }
@@ -1398,6 +1497,7 @@ async function buildInvalidBinaryError(source, sourceMapUrl, result, target) {
 }
 
 process.on("message", async (msg) => {
+  runtimeIntrinsicCanarySnapshot = null;
   const { id, source, execute, isNegative, isRuntimeNegative, expectedErrorType, originalHarness, asyncTest } = msg;
   // (#3461) Fast native-harness oracle (host lane). When set, `source` is the
   // body-only `bindingShim + body` unit (the harness was NOT concatenated into
@@ -1408,14 +1508,38 @@ process.on("message", async (msg) => {
   const nativeHarness = originalHarness && msg.nativeHarness === true && typeof msg.harnessPrefix === "string";
   const harnessPrefix = nativeHarness ? msg.harnessPrefix : "";
   const target = compileTargetFromMessage(msg.target);
+  const fixtureGraph = hasFixtureGraph(msg.fixtureFiles);
   const compileStart = performance.now();
+
+  // #3492/#3509 — Dynamic fixture discovery is transport metadata, not proof
+  // that a loader is needed during this test. Let the compiler distinguish an
+  // eager import (fatal #3494) from an ordinary deferred closure (host-free
+  // runtime trap, #3509). A blanket graph guard false-failed syntax-valid tests
+  // whose arrow was never invoked. No dynamic fixture is promoted to a static
+  // compileMulti edge here.
 
   let result;
   try {
-    result = await doCompile(source, msg.sourceMapUrl, target, msg.inferModuleStrictArguments, originalHarness);
+    result = await doCompile(
+      source,
+      msg.sourceMapUrl,
+      target,
+      msg.inferModuleStrictArguments,
+      originalHarness,
+      msg.fixtureFiles,
+      msg.entryFile,
+      isNegative,
+      msg.negativePhase,
+    );
   } catch (err) {
     // Thrown exception may have poisoned the incremental compiler's internal
     // state.  Recreate immediately so subsequent compilations don't cascade-fail.
+    try {
+      incrementalCompiler?.dispose?.();
+    } catch (_disposeError) {
+      // A poisoned service may also reject disposal; replacement still gives
+      // the next test a clean Language Service.
+    }
     incrementalCompiler = null;
     createFreshCompiler();
     if (err instanceof WebAssembly.Exception) {
@@ -1435,7 +1559,11 @@ process.on("message", async (msg) => {
       return;
     }
     const errMsg = err?.message ?? String(err);
-    if (execute && isNegative && negativeCompileErrorMatches(expectedErrorType, [], errMsg)) {
+    // A thrown compiler exception while linking a supplied fixture graph is an
+    // infrastructure/compiler failure, never proof of Test262's requested
+    // SyntaxError. In particular, do not turn an absent/malformed dependency
+    // graph into a false resolution-negative pass.
+    if (execute && isNegative && !fixtureGraph && negativeCompileErrorMatches(expectedErrorType, [], errMsg)) {
       sendResult({
         id,
         status: "pass",
@@ -1507,7 +1635,21 @@ process.on("message", async (msg) => {
     // rejection is a static/syntax rejection => pass; a future wrong-type
     // negative rejected with an unrelated diagnostic now fails.
     if (execute && isNegative) {
-      const matched = negativeCompileErrorMatches(expectedErrorType, errorCodes, errMsg);
+      const missingFixtureDiagnostic =
+        fixtureGraph &&
+        (errorCodes.includes(2307) || errorCodes.includes(2792) || /cannot find module|module not found/i.test(errMsg));
+      const expectedFixtureResolutionDiagnostic =
+        !fixtureGraph ||
+        msg.negativePhase !== "resolution" ||
+        errorCodes.some((code) => FYI_NEGATIVE_FIXTURE_RESOLUTION_CODES.has(code));
+      // oracle-version-exempt: only the external FYI executor supplies
+      // negativePhase; published project-runner baseline messages and verdicts
+      // are unchanged, so this fixes FYI assembly exposure with zero baseline
+      // row reclassification.
+      const matched =
+        !missingFixtureDiagnostic &&
+        expectedFixtureResolutionDiagnostic &&
+        negativeCompileErrorMatches(expectedErrorType, errorCodes, errMsg);
       if (matched) {
         sendResult({ id, status: "pass", compileMs, errorCodes, ...compileMetadata });
       } else {
@@ -1659,10 +1801,20 @@ process.on("message", async (msg) => {
       result.stringPool,
       originalHarness ? { globalSandbox: harnessSandbox } : undefined,
     );
+    if (REALM_CANARY_MODE) {
+      runtimeIntrinsicCanarySnapshot = snapshotRuntimeIntrinsicSurface(importObj);
+    }
 
     try {
-      const wasmResult = await WebAssembly.instantiate(result.binary, importObj);
-      instance = wasmResult.instance;
+      // (#4162) The ONE shared instantiate seam. Standalone goes module-first
+      // (import list inspectable → #2928 E6 provider attachment); the host lane
+      // keeps the binary-form instantiate. A synchronous CompileError from the
+      // module-first path lands in the same catch arm as the old binary-form
+      // instantiate — classification is unchanged.
+      instance = await instantiateTest262Module(result.binary, importObj, {
+        target,
+        providerLabel: RUNTIME_EVAL_PROVIDER_LABEL,
+      });
     } catch (err) {
       const execMs = performance.now() - execStart;
       // Real Wasm compile/link failures stay as compile_error. A throw from
@@ -1699,13 +1851,11 @@ process.on("message", async (msg) => {
       return;
     }
 
-    // Wire up setExports for callback support
-    if (typeof importObj.setExports === "function") {
-      importObj.setExports(instance.exports);
-    }
+    // Wire the branded instance for callback and host-bridge support.
+    importObj.setInstance?.(instance);
 
     // (#3049 C1) Deferred top-level init (host lane): run the exported
-    // `__module_init` now that `setExports` has wired the runtime. A throw
+    // `__module_init` now that `setInstance` has wired the runtime. A throw
     // here keeps the classification the same code had when it surfaced from
     // the `(start)` section during instantiate: runtime-negative → pass,
     // anything else → an honest runtime fail (never malformed-wasm
@@ -2025,18 +2175,14 @@ function postCompileCleanup() {
     return cleanup;
   }
 
-  if (compileCount % RECREATE_INTERVAL === 0) {
-    try {
-      incrementalCompiler?.dispose?.();
-    } catch (_e) {
-      // dispose() may fail if the service is already in a bad state
-    }
-    incrementalCompiler = null;
-    const heapMB = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
-    console.error(`[unified-worker] RECREATE at compile ${compileCount}, heap=${heapMB}MB`);
-    if (typeof globalThis.gc === "function") globalThis.gc();
-    createFreshCompiler();
-  } else if (compileCount % GC_INTERVAL === 0 && typeof globalThis.gc === "function") {
+  // #700 — no fixed compiler recreation interval. The versioned Language
+  // Services retain only the current single-file snapshot/project graph, and
+  // TypeScript releases removed documents from the shared registry as the
+  // Program changes. Recreating every 100 tests forced a cold frontend build
+  // without repairing process-wide prototype/codegen state. Thrown compiler
+  // failures still replace the service immediately in the doCompile catch
+  // above; contamination and optional memory policies recycle the whole worker.
+  if (compileCount % GC_INTERVAL === 0 && typeof globalThis.gc === "function") {
     globalThis.gc();
   }
 
@@ -2152,6 +2298,11 @@ function collectIntrinsicSurface() {
   add("Atomics", globalThis.Atomics);
   add("Intl", globalThis.Intl);
   add("Temporal", globalThis.Temporal);
+  // propertyHelper tests mutate the properties of this nested namespace
+  // object without replacing Array.prototype's @@unscopables descriptor.
+  // Treat it as its own intrinsic surface so a strict rerun never inherits
+  // deletions such as copyWithin/findLast/toReversed from the sloppy variant.
+  add("Array.prototype[Symbol.unscopables]", Array.prototype[Symbol.unscopables]);
   add("globalThis", globalThis);
   try {
     const arrIter = Object.getPrototypeOf([][Symbol.iterator]());
@@ -2160,14 +2311,20 @@ function collectIntrinsicSurface() {
     add("%StringIteratorPrototype%", Object.getPrototypeOf(""[Symbol.iterator]()));
     add("%MapIteratorPrototype%", Object.getPrototypeOf(new Map()[Symbol.iterator]()));
     add("%SetIteratorPrototype%", Object.getPrototypeOf(new Set()[Symbol.iterator]()));
+    add("%RegExpStringIteratorPrototype%", Object.getPrototypeOf("x".matchAll(/x/g)));
     const genFn = function* () {};
     add("%GeneratorFunctionPrototype%", Object.getPrototypeOf(genFn));
-    add("%GeneratorPrototype%", genFn.prototype ? Object.getPrototypeOf(genFn()) : undefined);
+    const generatorInstancePrototype = genFn.prototype ? Object.getPrototypeOf(genFn()) : undefined;
+    const generatorPrototype = Object.getPrototypeOf(generatorInstancePrototype);
+    add("%GeneratorInstancePrototype%", generatorInstancePrototype);
+    add("%GeneratorPrototype%", generatorPrototype);
     const asyncGenFn = async function* () {};
     add("%AsyncGeneratorFunctionPrototype%", Object.getPrototypeOf(asyncGenFn));
-    const asyncGenProto = Object.getPrototypeOf(asyncGenFn());
-    add("%AsyncGeneratorPrototype%", asyncGenProto);
-    add("%AsyncIteratorPrototype%", Object.getPrototypeOf(asyncGenProto));
+    const asyncGeneratorInstancePrototype = Object.getPrototypeOf(asyncGenFn());
+    const asyncGeneratorPrototype = Object.getPrototypeOf(asyncGeneratorInstancePrototype);
+    add("%AsyncGeneratorInstancePrototype%", asyncGeneratorInstancePrototype);
+    add("%AsyncGeneratorPrototype%", asyncGeneratorPrototype);
+    add("%AsyncIteratorPrototype%", Object.getPrototypeOf(asyncGeneratorPrototype));
     add("%TypedArrayPrototype%", Object.getPrototypeOf(Uint8Array.prototype));
   } catch {
     // best-effort — a missing exotic prototype shrinks coverage, never breaks
@@ -2241,9 +2398,9 @@ function appendFunctionMetadataDrift(drift, label, expected, current) {
   }
 }
 
-function snapshotRealmSurface() {
+function snapshotSurface(roots) {
   const snap = new Map();
-  for (const [label, obj] of collectIntrinsicSurface()) {
+  for (const [label, obj] of roots) {
     try {
       snap.set(label, {
         obj,
@@ -2256,6 +2413,47 @@ function snapshotRealmSurface() {
     }
   }
   return snap;
+}
+
+function snapshotRealmSurface() {
+  return snapshotSurface(collectIntrinsicSurface());
+}
+
+function snapshotRuntimeIntrinsicSurface(importObj) {
+  const roots = new Map();
+  const add = (label, obj) => {
+    if (obj && (typeof obj === "object" || typeof obj === "function")) roots.set(label, obj);
+  };
+  const env = importObj?.env ?? {};
+  const callGetter = (name) => {
+    try {
+      return typeof env[name] === "function" ? env[name]() : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
+  const generatorFunctionPrototype = callGetter("__get_generator_function_prototype");
+  const generatorInstancePrototype = callGetter("__get_generator_prototype");
+  const generatorPrototype =
+    generatorFunctionPrototype?.prototype ??
+    (generatorInstancePrototype ? Object.getPrototypeOf(generatorInstancePrototype) : undefined);
+  add("%RuntimeGeneratorFunctionPrototype%", generatorFunctionPrototype);
+  add("%RuntimeGeneratorInstancePrototype%", generatorInstancePrototype);
+  add("%RuntimeGeneratorPrototype%", generatorPrototype);
+
+  const asyncGeneratorFunctionPrototype = callGetter("__get_async_generator_function_prototype");
+  const asyncGeneratorInstancePrototype = callGetter("__get_async_generator_prototype");
+  const asyncGeneratorPrototype =
+    asyncGeneratorFunctionPrototype?.prototype ??
+    (asyncGeneratorInstancePrototype ? Object.getPrototypeOf(asyncGeneratorInstancePrototype) : undefined);
+  const asyncIteratorPrototype = asyncGeneratorPrototype ? Object.getPrototypeOf(asyncGeneratorPrototype) : undefined;
+  add("%RuntimeAsyncGeneratorFunctionPrototype%", asyncGeneratorFunctionPrototype);
+  add("%RuntimeAsyncGeneratorInstancePrototype%", asyncGeneratorInstancePrototype);
+  add("%RuntimeAsyncGeneratorPrototype%", asyncGeneratorPrototype);
+  add("%RuntimeAsyncIteratorPrototype%", asyncIteratorPrototype);
+
+  return snapshotSurface(roots);
 }
 
 const REALM_CANARY_MAX_DRIFT = 24;
@@ -2309,9 +2507,13 @@ let realmCanaryChecks = 0;
 let realmCanaryCheckMsTotal = 0;
 
 function realmDriftRecycleReason(payload) {
-  if (!realmCanarySnapshot) return undefined;
+  if (!realmCanarySnapshot && !runtimeIntrinsicCanarySnapshot) return undefined;
   const t0 = performance.now();
-  const drift = diffRealmSurface(realmCanarySnapshot).filter((d) => !realmCanaryIgnored(d));
+  const drift = [
+    ...(realmCanarySnapshot ? diffRealmSurface(realmCanarySnapshot) : []),
+    ...(runtimeIntrinsicCanarySnapshot ? diffRealmSurface(runtimeIntrinsicCanarySnapshot) : []),
+  ].filter((d) => !realmCanaryIgnored(d));
+  runtimeIntrinsicCanarySnapshot = null;
   realmCanaryCheckMsTotal += performance.now() - t0;
   realmCanaryChecks++;
   if (REALM_CANARY_MODE === "log" && realmCanaryChecks % 200 === 0) {

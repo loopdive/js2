@@ -1,8 +1,7 @@
 ---
 id: 3159
 title: "Self-hosted stdlib, array family slice 1: timsort kernels as TS source through our own IR pipeline"
-status: in-progress
-assignee: ttraenkler/fable-arrmeth
+status: ready
 sprint: current
 created: 2026-07-12
 updated: 2026-07-12

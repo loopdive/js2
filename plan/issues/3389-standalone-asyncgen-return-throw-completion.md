@@ -1,8 +1,7 @@
 ---
 id: 3389
 title: "standalone: `return` completion in driven async-gen bodies (settleReturn terminator) + AsyncGeneratorPrototype.return/.throw residual (~300 rows)"
-status: in-progress
-assignee: ttraenkler/fable-dev-3
+status: ready
 sprint: current
 created: 2026-07-17
 updated: 2026-07-17

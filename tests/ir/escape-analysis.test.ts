@@ -16,14 +16,16 @@ import {
   type IrType,
   type IrValueId,
 } from "../../src/ir/index.js";
+import { createTestIrFunctionIdentityFactory } from "../helpers/ir-identities.js";
 
+const identities = createTestIrFunctionIdentityFactory("ir/escape-analysis");
 const F64: IrType = irVal({ kind: "f64" });
 const OBJ_SHAPE: IrObjectShape = { fields: [{ name: "x", type: F64 }] };
 const OBJ_TYPE: IrType = { kind: "object", shape: OBJ_SHAPE };
 
 function buildFn(emit: (b: IrFunctionBuilder) => IrValueId[], opts: { resultTypes?: readonly IrType[] } = {}) {
   const reg = new AllocSiteRegistry();
-  const b = new IrFunctionBuilder("f", opts.resultTypes ?? [], false, reg);
+  const b = new IrFunctionBuilder(identities.next("f"), opts.resultTypes ?? [], false, reg);
   b.openBlock();
   const ret = emit(b);
   b.terminate({ kind: "return", values: ret });

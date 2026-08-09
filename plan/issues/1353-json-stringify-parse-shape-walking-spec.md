@@ -1,9 +1,10 @@
 ---
 id: 1353
 title: "JSON.stringify (objects/arrays) + JSON.parse: architect spec for Wasm shape-walking and recursive-descent parser"
-status: ready
+status: wont-fix
+completed: 2026-07-24
 created: 2026-05-08
-updated: 2026-06-19
+updated: 2026-07-24
 priority: medium
 feasibility: hard
 model: fable
@@ -14,8 +15,20 @@ language_feature: json
 goal: standalone-mode
 sprint: Backlog
 needs_architect_spec: true
-related: [1324, 1321]
+related: [1324, 1321, 3176]
 ---
+
+> **SUPERSEDED / wont-fix (2026-07-24, dev-std-4).** The architecture question
+> this issue asked to spec — "how to shape-walk WasmGC structs / build a
+> generic parse-output bag in pure Wasm" — has been ANSWERED BY IMPLEMENTATION:
+> the native JSON codec (`src/codegen/json-codec-native.ts`) landed. MEASURED on
+> current `main` (`--target standalone`, host-free): `JSON.stringify({a:1})` →
+> `{"a":1}`, `JSON.stringify({a:[1,2]})` → `{"a":[1,2]}`, `JSON.parse('{"a":7}').a`
+> → 7, `JSON.parse("+1")` throws SyntaxError — all pass with zero host imports.
+> Object/array stringify and the parse path are no longer JS-host-only. The
+> remaining JSON residual (spec-edge fidelity) is tracked as the concrete,
+> measured **#3176**, which supersedes this open-ended spec request. Closing.
+
 # #1353 — JSON shape-walking + parser: architect spec needed
 
 ## Why this exists

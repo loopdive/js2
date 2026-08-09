@@ -12,7 +12,7 @@ task_type: bug
 area: codegen/runtime
 es_edition: 5
 language_feature: property-descriptors, value-representation
-goal: spec-completeness
+goal: es5
 related: [2680, 2106, 2712, 2668, 1629]
 parent: 2671
 ---

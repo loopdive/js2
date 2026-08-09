@@ -53,6 +53,27 @@ class MockDocument {
 
 const mockDoc = new MockDocument();
 
+/**
+ * Host dependencies handed to `buildImports` for every DOM benchmark.
+ *
+ * `document` is the load-bearing entry (#3904). Each compiled module imports
+ * `env.global_document`, which the runtime resolves through the
+ * `declared_global` intent: `deps.document` first, then the ambient
+ * `globalThis.document`, then a `() => {}` stub. Node has no `document`, so
+ * omitting the key handed the module `undefined` as its Document handle and
+ * every host-call lane trapped on the first call with
+ * `Cannot read properties of undefined (reading 'createElement')` — which the
+ * harness swallowed, leaving all four DOM benchmarks with a JS-only bar.
+ *
+ * The classes satisfy the `extern_class` imports (`Document_createElement`,
+ * `Element_appendChild`, `Element_setAttribute`, ...).
+ */
+const domDeps = {
+  Document: MockDocument,
+  Element: MockElement,
+  document: mockDoc,
+};
+
 // ---------------------------------------------------------------------------
 // JS baselines
 // ---------------------------------------------------------------------------
@@ -77,7 +98,7 @@ function setAttributes(): void {
   }
 }
 
-function readAttributes(): void {
+function readAttributes(): number {
   const elements: MockElement[] = [];
   for (let i = 0; i < 1000; i++) {
     const el = mockDoc.createElement("div");
@@ -86,17 +107,16 @@ function readAttributes(): void {
   }
   let count = 0;
   for (const el of elements) {
-    if (el.getAttribute("data-value") !== null) count++;
+    const v = el.getAttribute("data-value");
+    if (v !== null && v.length > 0) count++;
   }
+  return count;
 }
 
 function modifyText(): void {
-  const elements: MockElement[] = [];
-  for (let i = 0; i < 1000; i++) elements.push(mockDoc.createElement("span"));
-  for (let round = 0; round < 10; round++) {
-    for (const el of elements) {
-      el.textContent = "updated content " + round;
-    }
+  for (let i = 0; i < 1000; i++) {
+    const el = mockDoc.createElement("span");
+    el.textContent = "updated content";
   }
 }
 
@@ -108,6 +128,8 @@ export const domBenchmarks: BenchmarkDef[] = [
   {
     name: "dom/create-elements",
     iterations: 100,
+    // 1000 createElement + 1000 appendChild host calls.
+    opsPerCall: 2000,
     // Uses extern class pattern for DOM
     source: `
 declare class Document {
@@ -126,19 +148,15 @@ export function run(): number {
   }
   return 0;
 }`,
-    deps: {
-      Document: MockDocument,
-      Element: MockElement,
-    },
-    extraEnv: {
-      __get_document: () => mockDoc,
-    },
+    deps: domDeps,
     js: createElements,
     skip: ["gc-native", "linear-memory"], // DOM always needs host calls
   },
   {
     name: "dom/set-attributes",
     iterations: 100,
+    // 1000 createElement + 5000 setAttribute host calls.
+    opsPerCall: 6000,
     source: `
 declare class Document {
   createElement(tag: string): Element;
@@ -159,26 +177,22 @@ export function run(): number {
   }
   return 0;
 }`,
-    deps: {
-      Document: MockDocument,
-      Element: MockElement,
-    },
-    extraEnv: {
-      __get_document: () => mockDoc,
-    },
+    deps: domDeps,
     js: setAttributes,
     skip: ["gc-native", "linear-memory"],
   },
   {
     name: "dom/read-attributes",
     iterations: 100,
+    // 1000 each of createElement / setAttribute / getAttribute.
+    opsPerCall: 3000,
     source: `
 declare class Document {
   createElement(tag: string): Element;
 }
 declare class Element {
   setAttribute(name: string, value: string): void;
-  getAttribute(name: string): string;
+  getAttribute(name: string): string | null;
 }
 declare const document: Document;
 
@@ -188,23 +202,20 @@ export function run(): number {
     const el = document.createElement("div");
     el.setAttribute("data-value", "test");
     const v = el.getAttribute("data-value");
-    if (v.length > 0) count = count + 1;
+    if (v !== null && v.length > 0) count = count + 1;
   }
   return count;
 }`,
-    deps: {
-      Document: MockDocument,
-      Element: MockElement,
-    },
-    extraEnv: {
-      __get_document: () => mockDoc,
-    },
+    deps: domDeps,
     js: readAttributes,
     skip: ["gc-native", "linear-memory"],
   },
   {
     name: "dom/modify-text",
     iterations: 100,
+    // 1000 createElement + 1000 textContent writes, matching the JS baseline
+    // above.
+    opsPerCall: 2000,
     source: `
 declare class Document {
   createElement(tag: string): Element;
@@ -221,13 +232,7 @@ export function run(): number {
   }
   return 0;
 }`,
-    deps: {
-      Document: MockDocument,
-      Element: MockElement,
-    },
-    extraEnv: {
-      __get_document: () => mockDoc,
-    },
+    deps: domDeps,
     js: modifyText,
     skip: ["gc-native", "linear-memory"],
   },

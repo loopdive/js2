@@ -1,13 +1,29 @@
 name: Test262 Sharded
 
 on:
-  # Serial-queue model: full 57-shard test262 runs at PR-time AND in merge_group.
-  # Each PR is validated alone (no ALLGREEN hiding) and developers see test262
-  # regressions on PR push (not just at queue-time). Path filter restricts to
-  # src/test/config changes — docs-only PRs skip.
+  # (#4153) The shard matrix does NOT run at PR time. `test262-shard`'s `if:`
+  # admits only `push` and `workflow_dispatch`; the merged-state matrix
+  # `test262-shard-mg` is `merge_group`-only. So on a `pull_request` the two
+  # REQUIRED contexts published from this workflow — `merge shard reports` and
+  # `check for test262 regressions` — green-SKIP with `SHARDS_RAN: false`, and
+  # `regression-gate` no-ops with `HOST_RAN=false`. A green PR-level test262
+  # check is therefore NOT conformance evidence; the real regression, trap
+  # (#3189) and standalone-floor gates run in the `merge_group` re-validation
+  # on the merged state, which is why `auto-park` (#2547) exists and why a
+  # fully-green PR can still be parked.
+  #
+  # This comment previously claimed "full 57-shard test262 runs at PR-time AND
+  # in merge_group", describing the pre-#2519 serial-queue model. It outlived
+  # the slim-down by many months. Reading it as current badly overestimates
+  # what a green PR proves — the same misreading that cost PR #4074 three
+  # parked queue attempts before the cause was found to be a baseline/candidate
+  # scope asymmetry (#4141), not a regression.
+  #
+  # Path filter restricts to src/test/config changes — docs-only PRs skip.
   pull_request:
     branches: [main]
     paths: &test262-paths
+      - ".github/actions/setup-node-pnpm/action.yml"
       - ".github/workflows/test262-sharded.yml"
       - "package.json"
       - "pnpm-lock.yaml"
@@ -59,6 +75,11 @@ on:
         type: string
       ir_first:
         description: "(#2947) Measurement lane for the #2138 IR-first inversion: export JS2WASM_IR_FIRST=1 into the shard env. NEVER promotes a baseline (promote-baseline is hard-skipped for ir_first runs) — the merged report artifact is the measurement output."
+        required: false
+        default: false
+        type: boolean
+      layout_emit:
+        description: "(#3927) Measurement lane for the per-type-layout default-ON decision: export JS2WASM_FNCTOR_LAYOUT_EMIT=1 into the shard env. Same contract as ir_first: NEVER promotes a baseline — the merged report artifact is the measurement output, diffed against the same-SHA committed baseline."
         required: false
         default: false
         type: boolean
@@ -151,14 +172,8 @@ jobs:
           # extra ancestry check needed and the previous one had TOCTOU + shallow
           # checkout false-positive issues.
           echo "✓ ${{ github.event_name }} ref already includes base by construction"
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: 25
-      - name: Setup pnpm via Corepack
-        run: |
-          corepack enable
-          corepack prepare pnpm@10.30.2 --activate
+      - name: Setup Node and pnpm (cached)
+        uses: ./.github/actions/setup-node-pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Typecheck + lint (parallel)
@@ -173,8 +188,22 @@ jobs:
           pid_tc=$!
           ( if grep -q '"lint"' package.json; then pnpm run lint > "$tmp_lint" 2>&1; fi ) &
           pid_lint=$!
-          wait $pid_tc; tc_rc=$?
-          wait $pid_lint; lint_rc=$?
+          # (#3677) This step runs under `bash -e`. A BARE `wait $pid` aborts the
+          # whole step the instant the awaited job exited non-zero, which killed
+          # this script at the wait itself — BEFORE the two `tail -50` dumps and
+          # before the explicit rc checks below. Two consequences, both real:
+          # every cheap-gate failure was diagnostic-free (the log ended at a bare
+          # "Process completed with exit code 1"), and a lint-only failure
+          # HARD-FAILED this required check, contradicting the "not blocking"
+          # warning at the end of this very script.
+          #
+          # `cmd || rc=$?` makes the wait a TESTED command, so `-e` does not fire
+          # while the real exit status is still captured. Deliberately NOT
+          # `set +e`: that would suppress errexit for the rest of the step, and a
+          # future edit that stops propagating `tc_rc` would silently turn this
+          # required gate into a decorative one. Keep the propagation explicit.
+          tc_rc=0; wait $pid_tc || tc_rc=$?
+          lint_rc=0; wait $pid_lint || lint_rc=$?
           echo "--- typecheck (last 50 lines) ---"; tail -50 "$tmp_tc"
           echo "--- lint (last 50 lines) ---"; tail -50 "$tmp_lint"
           if [ "$tc_rc" -ne 0 ]; then echo "::error::typecheck failed (rc=$tc_rc)"; exit "$tc_rc"; fi
@@ -198,6 +227,22 @@ jobs:
     # filter already gates the whole workflow, and on workflow_dispatch we
     # always want shards — so this job emits `true` for every non-merge_group
     # event and the shard `if:` keeps its existing arms for those.
+    #
+    # PER-LANE GATING: `run_shards` answers "does test262 run at all?"; the
+    # finer `run_host` / `run_standalone` answer "which LANE runs?". The two
+    # lanes have separate baselines, separate gates and separate shard-weight
+    # maps, so a change that provably cannot move one lane's results should not
+    # schedule that lane's 66 (js-host) or 36 (standalone) shard jobs. Only
+    # `scripts/test262-paths-match.sh` decides this, and it narrows a path to
+    # one lane ONLY when the runner demonstrably does not read it on the other
+    # (today: the two shard-weight maps — all of `src/**` stays both-lane).
+    # `run_shards == run_host || run_standalone`, so every existing consumer of
+    # `run_shards` keeps its exact previous meaning.
+    #
+    # This is merge_group-only in effect: every other event emits true/true/true.
+    # In particular `push`/`workflow_dispatch` ALWAYS run both lanes, because
+    # `promote-baseline` publishes both lanes' baselines from that run and a
+    # single-lane run would promote a half-empty baseline.
     name: detect test262-relevant changes
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -208,14 +253,21 @@ jobs:
       (github.event_name == 'push' && github.actor != 'github-actions[bot]')
     outputs:
       run_shards: ${{ steps.detect.outputs.run_shards }}
+      # Per-lane verdicts (see the PER-LANE GATING note above). Consumers MUST
+      # treat an empty/missing value as 'run' (`!= 'false'`), never as 'skip' —
+      # this job is skipped entirely for bot pushes, and a missing output must
+      # not be read as permission to drop a lane.
+      run_host: ${{ steps.detect.outputs.run_host }}
+      run_standalone: ${{ steps.detect.outputs.run_standalone }}
       # #1954 — opt-in PR scope directive (empty for all other events and for
       # PRs without a directive). Consumed by the shard matrix (as
       # TEST262_PATH_FILTER) and by every diff-based gate (as --path-filter)
       # so a scoped candidate JSONL is never diffed against the full baseline.
       test262_scope: ${{ steps.scope.outputs.scope }}
-      # #3431 — the merge_group-CONSOLIDATED shard matrix (fewer, bigger
-      # shards than the 57x2=114-job pull_request/push/workflow_dispatch
-      # matrix). Only computed for merge_group; empty for every other event
+      # #3431 — the merge_group capacity-sized shard matrix. The live queue is
+      # serial (`max_entries_to_build=1`), so it uses 102 of the 120 runners
+      # and reserves 18 for overlapping required workflows. Only computed for
+      # merge_group; empty for every other event
       # (those keep using the static chunk/target arrays on `test262-shard`,
       # unchanged). See scripts/gen-test262-mg-matrix.mjs for the shard-count
       # rationale and evidence.
@@ -249,21 +301,23 @@ jobs:
       # detect step exits immediately with run_shards=true, and since every
       # shard job `needs:` this job, an unconditional checkout here delayed
       # the start of the whole 114-job matrix by ~25s on every PR run.
+      # #3914 — this checkout is a SERIAL PREFIX on the critical path: every
+      # shard job `needs:` this job, so nothing in the 102-job matrix starts
+      # until it finishes. At `fetch-depth: 0` it measured 33 s of the job's
+      # 38 s total (merge_group run 30631849709) purely to enable one
+      # `git diff base head` — while a shard job's own default-depth checkout
+      # is 9-10 s. `git diff A B` is a two-dot TREE comparison and needs no
+      # merge base, so depth-1 objects for the two SHAs are sufficient; the
+      # detect step below fetches them explicitly and falls back to
+      # `--unshallow` before the fail-safe, so the worst case is the old cost,
+      # never a less conservative answer.
       - name: Checkout
         if: github.event_name == 'merge_group'
         uses: actions/checkout@v5
         with:
-          fetch-depth: 0
-      # #3431 — compute the merge_group-consolidated shard matrix. Pure
-      # node/JS, no dependencies to install; reuses the merge_group-only
-      # checkout above. Runs unconditionally on merge_group (even when
-      # run_shards will end up 'false') since it's cheap and keeps the
-      # output always well-formed; the `test262-shard-mg` job's own `if:`
-      # is what actually gates on run_shards.
-      - name: Compute merge_group shard matrix (#3431)
-        id: mg_matrix
-        if: github.event_name == 'merge_group'
-        run: node scripts/gen-test262-mg-matrix.mjs --github-output >> "$GITHUB_OUTPUT"
+          fetch-depth: 1
+      # NOTE: `detect` runs BEFORE the matrix step — the matrix is now built
+      # only for the lanes `detect` says can move (see below).
       - name: Detect test262-relevant changes
         id: detect
         env:
@@ -272,35 +326,66 @@ jobs:
           MG_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
         run: |
           set -uo pipefail
+          # Emit all three verdicts at once. EVERY fail-safe path calls
+          # `emit_all true` so an uncertain detection can never drop a lane —
+          # the only way a lane is skipped is a POSITIVE per-lane 'false' from
+          # scripts/test262-paths-match.sh on a real, non-empty diff.
+          emit_all() {
+            {
+              echo "run_shards=$1"
+              echo "run_host=$1"
+              echo "run_standalone=$1"
+            } >> "$GITHUB_OUTPUT"
+          }
+
           # Non-merge_group events keep the old behaviour: the workflow-level
           # `paths:` filter (PR/push) or unconditional intent (dispatch) already
           # decided we should run, so emit true and let the shard `if:` arms
-          # handle gating per event_name.
+          # handle gating per event_name. Both lanes always run there —
+          # promote-baseline publishes BOTH baselines from a push/dispatch run.
           if [ "$EVENT_NAME" != "merge_group" ]; then
-            echo "Non-merge_group event ($EVENT_NAME): run_shards=true (native paths filter / dispatch governs)."
-            echo "run_shards=true" >> "$GITHUB_OUTPUT"
+            echo "Non-merge_group event ($EVENT_NAME): run_shards=true, both lanes (native paths filter / dispatch governs)."
+            emit_all true
             exit 0
           fi
 
           # --- merge_group: diff base..head ourselves ---
           if [ -z "${MG_BASE_SHA:-}" ] || [ -z "${MG_HEAD_SHA:-}" ]; then
             echo "::warning::merge_group base/head sha missing (base='${MG_BASE_SHA:-}' head='${MG_HEAD_SHA:-}') — FAIL-SAFE run_shards=true."
-            echo "run_shards=true" >> "$GITHUB_OUTPUT"
+            emit_all true
             exit 0
           fi
 
-          # Make sure both commits are present (fetch-depth:0 should cover it,
-          # but the merge_group head may be a freshly-built ref).
-          git cat-file -e "${MG_BASE_SHA}^{commit}" 2>/dev/null || git fetch --no-tags origin "$MG_BASE_SHA" 2>/dev/null || true
-          git cat-file -e "${MG_HEAD_SHA}^{commit}" 2>/dev/null || git fetch --no-tags origin "$MG_HEAD_SHA" 2>/dev/null || true
+          # Make sure both commits are present. The checkout above is depth-1
+          # (#3914), so in the normal case neither SHA is in the object store
+          # yet and both of these fetches do real work — a depth-1 fetch of two
+          # named SHAs, which is what `git diff A B` (two-dot, tree-vs-tree)
+          # needs. It does NOT need a merge base, so no history is required.
+          git cat-file -e "${MG_BASE_SHA}^{commit}" 2>/dev/null || git fetch --no-tags --depth=1 origin "$MG_BASE_SHA" 2>/dev/null || true
+          git cat-file -e "${MG_HEAD_SHA}^{commit}" 2>/dev/null || git fetch --no-tags --depth=1 origin "$MG_HEAD_SHA" 2>/dev/null || true
 
           set +e
           DIFF=$(git diff --name-only "$MG_BASE_SHA" "$MG_HEAD_SHA" 2>/tmp/diff_err)
           rc=$?
           set -e
+
+          # #3914 — if the shallow path could not produce a diff, deepen to the
+          # full history and retry ONCE before falling through to the fail-safe.
+          # This keeps the shallow checkout a pure latency optimisation: the
+          # answer is identical to the fetch-depth:0 behaviour, we just only pay
+          # for full history when the cheap path actually failed.
+          if [ "$rc" -ne 0 ]; then
+            echo "::notice::shallow base..head diff failed (rc=$rc) — deepening history and retrying once."
+            git fetch --no-tags --unshallow origin 2>/dev/null || git fetch --no-tags --depth=2147483647 origin 2>/dev/null || true
+            set +e
+            DIFF=$(git diff --name-only "$MG_BASE_SHA" "$MG_HEAD_SHA" 2>/tmp/diff_err)
+            rc=$?
+            set -e
+          fi
+
           if [ "$rc" -ne 0 ]; then
             echo "::warning::git diff $MG_BASE_SHA..$MG_HEAD_SHA failed (rc=$rc): $(cat /tmp/diff_err) — FAIL-SAFE run_shards=true."
-            echo "run_shards=true" >> "$GITHUB_OUTPUT"
+            emit_all true
             exit 0
           fi
 
@@ -311,13 +396,70 @@ jobs:
           # conservative and run.
           if [ -z "$DIFF" ]; then
             echo "::warning::Empty diff for merge_group $MG_BASE_SHA..$MG_HEAD_SHA — FAIL-SAFE run_shards=true."
-            echo "run_shards=true" >> "$GITHUB_OUTPUT"
+            emit_all true
             exit 0
           fi
 
-          RESULT=$(printf '%s\n' "$DIFF" | bash scripts/test262-paths-match.sh)
-          echo "test262-paths-match → run_shards=$RESULT"
-          echo "run_shards=$RESULT" >> "$GITHUB_OUTPUT"
+          # Per-lane classification. `run_shards` stays the OR of the two lanes,
+          # so it keeps its exact previous value and meaning for every existing
+          # consumer. A non-zero exit from the matcher (bad argument, unreadable
+          # script) leaves RESULT empty → fail-safe to running everything.
+          HOST=$(printf '%s\n' "$DIFF" | bash scripts/test262-paths-match.sh --target host) || HOST=""
+          STANDALONE=$(printf '%s\n' "$DIFF" | bash scripts/test262-paths-match.sh --target standalone) || STANDALONE=""
+          if [ "$HOST" != "true" ] && [ "$HOST" != "false" ]; then
+            echo "::warning::unexpected host verdict '$HOST' from test262-paths-match.sh — FAIL-SAFE run_shards=true."
+            emit_all true
+            exit 0
+          fi
+          if [ "$STANDALONE" != "true" ] && [ "$STANDALONE" != "false" ]; then
+            echo "::warning::unexpected standalone verdict '$STANDALONE' from test262-paths-match.sh — FAIL-SAFE run_shards=true."
+            emit_all true
+            exit 0
+          fi
+
+          RESULT=false
+          if [ "$HOST" = "true" ] || [ "$STANDALONE" = "true" ]; then RESULT=true; fi
+          echo "test262-paths-match → run_shards=$RESULT (host=$HOST, standalone=$STANDALONE)"
+          if [ "$RESULT" = "true" ] && { [ "$HOST" = "false" ] || [ "$STANDALONE" = "false" ]; }; then
+            SKIPPED=host
+            [ "$STANDALONE" = "false" ] && SKIPPED=standalone
+            echo "::notice::Single-lane test262 run: the queued change cannot move the ${SKIPPED} lane, so its shards are not scheduled. The other lane runs its FULL shard count, so its partition and baseline comparison are unchanged."
+          fi
+          {
+            echo "run_shards=$RESULT"
+            echo "run_host=$HOST"
+            echo "run_standalone=$STANDALONE"
+          } >> "$GITHUB_OUTPUT"
+
+      # #3431 — compute the merge_group-consolidated shard matrix. Pure
+      # node/JS, no dependencies to install; reuses the merge_group-only
+      # checkout above. Runs unconditionally on merge_group (even when
+      # run_shards will end up 'false') since it's cheap and keeps the
+      # output always well-formed; the `test262-shard-mg` job's own `if:`
+      # is what actually gates on run_shards.
+      #
+      # `--lanes` drops a lane the `detect` step ruled out. Each surviving lane
+      # keeps its FULL chunk count (66 js-host / 36 standalone) so its corpus
+      # partition is byte-identical to a two-lane run — see
+      # scripts/gen-test262-mg-matrix.mjs. A missing/unknown verdict yields
+      # both lanes (the generator fail-safes an empty selection back to the
+      # full matrix), matching this job's conservative bias.
+      - name: Compute merge_group shard matrix (#3431)
+        id: mg_matrix
+        if: github.event_name == 'merge_group'
+        env:
+          RUN_HOST: ${{ steps.detect.outputs.run_host }}
+          RUN_STANDALONE: ${{ steps.detect.outputs.run_standalone }}
+        run: |
+          set -euo pipefail
+          # if/then, NOT `[ … ] && LANES=…`: under `set -e` a false test as a
+          # bare compound command exits the step, which would abort exactly the
+          # single-lane case this step exists to build.
+          LANES=""
+          if [ "$RUN_HOST" != "false" ]; then LANES="host"; fi
+          if [ "$RUN_STANDALONE" != "false" ]; then LANES="${LANES:+$LANES,}standalone"; fi
+          echo "Building merge_group matrix for lanes: ${LANES:-<none — fail-safe to both>}"
+          node scripts/gen-test262-mg-matrix.mjs --lanes "$LANES" --github-output >> "$GITHUB_OUTPUT"
 
   # =====================================================================
   # merge_group gating truth table (the other event_names are governed by
@@ -326,12 +468,23 @@ jobs:
   #   queued change          changes.run_shards   test262-shard-mg   merge-report
   #   ---------------------  ------------------   ----------------   -------------------
   #   src/** (or any         true                 RUNS (#3431         runs, real result
-  #     &test262-paths)                              59-job matrix)
+  #     shared &test262-path)                       102-job matrix)
   #   website/plan/doc-only  false                SKIPPED             runs, trivial PASS
   #   base_sha empty /       true (fail-safe)     RUNS (#3431         runs, real result
-  #     diff fails / empty                           59-job matrix)
+  #     diff fails / empty                          102-job matrix)
+  #   ONLY tests/test262-     true                RUNS, standalone    runs, standalone-only
+  #     slow-tests-           (run_host=false)      lane only           result; js-host
+  #     standalone.json                             (36 jobs)           steps skipped
+  #   ONLY tests/test262-     true                RUNS, js-host       runs, js-host-only
+  #     slow-tests.json       (run_standalone=       lane only          result; standalone
+  #                            false)                (66 jobs)          steps skipped
   #
-  # In ALL three rows the required check "merge shard reports" is produced.
+  # The two single-lane rows are the per-lane gating described on the `changes`
+  # job. They do NOT publish the #1956 `test262-group-<sha>` artifact (it would
+  # be a half-empty baseline), so the follow-on push:main probe MISSES and runs
+  # the full two-lane matrix before promoting. See the publish step's comment.
+  #
+  # In ALL rows the required check "merge shard reports" is produced.
   # It is green only when shards succeeded or the merge_group no-shards skip is
   # intentional. If shards fail or are skipped unexpectedly, the aggregate job
   # itself fails so no required-context stub can hide the red shard.
@@ -390,6 +543,60 @@ jobs:
             echo "MISS: ${ART_NAME} not found (direct push, expired artifact, or doc-only group) — running the full matrix (fail-safe)."
           fi
 
+  # #2928 E7 / #4013 — compile the real Acorn+interpreter provider ONCE for
+  # every authoritative standalone run, canary-verify it, and distribute the
+  # resulting zero-import Wasm module to all standalone shards. Building it in
+  # each matrix cell costs minutes and several GB; sharing one content-keyed
+  # artifact keeps the interpreter-backed lane affordable and deterministic.
+  runtime-eval-provider:
+    name: build standalone runtime-eval provider
+    needs: [changes, mg-artifact-probe]
+    if: |
+      always() &&
+      (
+        (github.event_name == 'merge_group' && needs.changes.outputs.run_shards == 'true') ||
+        ((github.event_name == 'push' && github.actor != 'github-actions[bot]') && needs.mg-artifact-probe.outputs.hit != 'true') ||
+        github.event_name == 'workflow_dispatch'
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      # A host-only merge_group still needs this job to succeed so its shard
+      # matrix is not cascade-skipped through `needs`. Every expensive step is
+      # therefore gated, while the no-op job itself reports success.
+      - name: Checkout
+        if: needs.changes.outputs.run_standalone != 'false'
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Setup Node and pnpm (cached)
+        if: needs.changes.outputs.run_standalone != 'false'
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Install dependencies
+        if: needs.changes.outputs.run_standalone != 'false'
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and verify full runtime-eval provider (#2928)
+        if: needs.changes.outputs.run_standalone != 'false'
+        env:
+          NODE_OPTIONS: --max-old-space-size=3072
+        run: |
+          pnpm run build:compiler-bundle
+          node scripts/build-runtime-eval-provider.mjs
+
+      - name: Upload full runtime-eval provider
+        if: needs.changes.outputs.run_standalone != 'false'
+        uses: actions/upload-artifact@v6
+        with:
+          name: runtime-eval-provider-${{ github.run_id }}
+          path: .test262-cache/runtime-eval-provider-*.wasm
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+
   test262-shard:
     # Heavy 57-shard test262 (#2519) fires ONLY for baseline/manual contexts
     # — NOT on every PR:
@@ -408,13 +615,13 @@ jobs:
     # (it fails there and is ejected) rather than at PR-open time.
     #
     # #3431 — merge_group NO LONGER runs this job. It has its own
-    # consolidated matrix in `test262-shard-mg` below (fewer, bigger shards
-    # sized to fit the same per-shard timeout, sized to reduce the job-count
-    # contention footprint when the merge queue builds multiple entries
-    # concurrently — see scripts/gen-test262-mg-matrix.mjs). This job keeps
+    # capacity-sized, target-balanced matrix in `test262-shard-mg` below.
+    # The serial merge queue uses most of the runner pool for its one stable
+    # entry while retaining headroom for other required checks — see
+    # scripts/gen-test262-mg-matrix.mjs. This job keeps
     # its ORIGINAL 57-shard x 2-target matrix, UNCHANGED, for push (baseline
     # update) and workflow_dispatch (manual reruns).
-    needs: [changes, mg-artifact-probe]
+    needs: [changes, mg-artifact-probe, runtime-eval-provider]
     # #3448 — the push arm is now AND-ed with a MISS on the merge_group
     # baseline-artifact probe: on a HIT the merge_group already produced the
     # merged JSONLs for this exact SHA, so this 114-job matrix is SKIPPED and
@@ -533,10 +740,18 @@ jobs:
       # workers inherit the job env, and results are never cached across runs,
       # so a flag-on dispatch measures a full fresh compile of every test.
       JS2WASM_IR_FIRST: ${{ github.event_name == 'workflow_dispatch' && inputs.ir_first && '1' || '' }}
+      # (#3927) Same pattern as JS2WASM_IR_FIRST directly above: '1' only on a
+      # workflow_dispatch that opted in via layout_emit; empty string (falsy for
+      # truthyEnv) everywhere else, so all default lanes stay byte-identical.
+      # The flag is additionally standalone-gated inside the compiler itself.
+      JS2WASM_FNCTOR_LAYOUT_EMIT: ${{ github.event_name == 'workflow_dispatch' && inputs.layout_emit && '1' || '' }}
       TEST262_INCLUDE_PROPOSALS: ${{ github.event_name != 'workflow_dispatch' && '1' || (inputs.include_proposals && '1' || '0') }}
       RUN_TIMESTAMP: ${{ github.run_id }}-${{ matrix.target.name }}-chunk${{ matrix.chunk }}
       TEST262_TARGET: ${{ matrix.target.test262_target }}
       TEST262_RESULT_PREFIX: ${{ matrix.target.result_prefix }}
+      # The shared provider artifact makes the full interpreter tier the
+      # authoritative CI standalone lane. Host cells leave the flag empty.
+      TEST262_FULL_RUNTIME_EVAL: ${{ matrix.target.test262_target == 'standalone' && '1' || '' }}
       # #1954 — empty (= run everything) unless the PR body opts into a scope.
       # Applied in runTest262Chunk BEFORE source read/compile, so out-of-scope
       # tests cost nothing. Only ever non-empty on pull_request events.
@@ -549,15 +764,8 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: 25
-
-      - name: Setup pnpm via Corepack
-        run: |
-          corepack enable
-          corepack prepare pnpm@10.30.2 --activate
+      - name: Setup Node and pnpm (cached)
+        uses: ./.github/actions/setup-node-pnpm
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -578,6 +786,21 @@ jobs:
           ./node_modules/.bin/esbuild src/runtime.ts --bundle --platform=node --format=esm \
             --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
 
+      - name: Download full runtime-eval provider (#2928)
+        if: matrix.target.test262_target == 'standalone'
+        uses: actions/download-artifact@v7
+        with:
+          name: runtime-eval-provider-${{ github.run_id }}
+          path: .test262-cache
+
+      # Build the cheap refusal fallback and fail loudly unless the downloaded
+      # full provider matches this cell's compiler-bundle content key. This
+      # prevents a missing/stale artifact from silently changing the measured
+      # capability tier or recompiling Acorn independently in every shard.
+      - name: Verify shared runtime-eval provider cache (#2928)
+        if: matrix.target.test262_target == 'standalone'
+        run: node scripts/build-runtime-eval-provider.mjs --require-full-cache
+
       - name: Run shard
         run: |
           mkdir -p vitest-blob
@@ -594,8 +817,13 @@ jobs:
           echo "vitest_exit_code=$exit_code" >> "$GITHUB_OUTPUT"
 
       - name: Upload shard artifacts
+        id: upload_shard
         uses: actions/upload-artifact@v6
         if: always()
+        # #3404 — continue on a transient upload flake so the retry below can
+        # run; only if BOTH attempts fail does the shard (and thus the promote,
+        # which `needs:` the shard job) fail.
+        continue-on-error: true
         with:
           retention-days: 1
           name: test262-${{ matrix.target.name }}-shard-${{ matrix.chunk }}
@@ -603,12 +831,26 @@ jobs:
             benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl
           if-no-files-found: warn
 
+      # #3404 — a single transient artifact-upload flake (e.g. `Failed to
+      # CreateArtifact: … ETIMEDOUT` on the upload step, NOT a test failure) on
+      # ONE of the 100+ shards otherwise aborts the whole promote. Retry the
+      # upload once; it is idempotent and `overwrite` clears any partially
+      # finalized artifact from the first attempt. This does NOT weaken the
+      # merge step's incomplete-data sanity floor: a genuinely empty shard
+      # (no files) is a `warn`, not a failure, so it never triggers this retry.
+      - name: Retry shard artifact upload on transient flake (#3404)
+        if: always() && steps.upload_shard.outcome == 'failure'
+        uses: actions/upload-artifact@v6
+        with:
+          retention-days: 1
+          name: test262-${{ matrix.target.name }}-shard-${{ matrix.chunk }}
+          overwrite: true
+          path: |
+            benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl
+          if-no-files-found: warn
+
   test262-shard-mg:
-    # #3431 — the merge_group-ONLY, CONSOLIDATED test262 shard matrix. Fewer,
-    # bigger shards than `test262-shard`'s 57x2=114-job matrix, sized to cut
-    # the job-count contention footprint when the merge queue builds
-    # multiple entries concurrently (`max_entries_to_build: 5`,
-    # docs/ci-policy.md).
+    # #3431 — the merge_group-ONLY, capacity-sized test262 shard matrix.
     #
     # Evidence (2026-07-18): an ISOLATED, uncontended 114-job merge_group run
     # (run 29631214965) finished the shard matrix in ~15-19 min total, with
@@ -622,28 +864,44 @@ jobs:
     # across up to 5 concurrently-building queue entries (5x114=570 jobs
     # contending for runner slots), is what was driving multi-hour merge
     # queue drains (~1 PR/hour) despite any single uncontended run being fast.
+    # Queue membership churn also invalidated descendant speculative groups,
+    # cancelling their expensive runs. The active ruleset now builds exactly
+    # one merge-group entry at a time (`max_entries_to_build=1`).
     #
-    # Reducing the per-entry job count from 114 to 59 (see
-    # scripts/gen-test262-mg-matrix.mjs for the exact js-host=40/
-    # standalone=19 split and the per-target scaling math) cuts the
-    # contention footprint by ~48% without changing pull_request/push/
-    # workflow_dispatch behavior at all (they keep using `test262-shard`
-    # above, completely unchanged).
+    # With the queue serialized, the matrix instead uses 102 of the 120
+    # four-core runners: js-host=66 and standalone=36, based on the 1.835:1
+    # measured work ratio from run 30631849709 (#3914 — re-derived; the
+    # previous 72/34 came from a 2.13:1 ratio measured at run 29807524490 and
+    # had drifted, leaving standalone the long pole again). The remaining 18
+    # runners cover the overlapping CI/equivalence/differential/gate jobs —
+    # raised from 14 because run 30631849709 showed 5 shard jobs starting
+    # 90-184 s late, i.e. 106 was genuinely over the ceiling. pull_request,
+    # push, and workflow_dispatch behavior remains unchanged.
     #
     # Uses the SAME dynamic entry point (tests/test262-chunk-dynamic.test.ts)
-    # for every matrix cell instead of 40/19 hand-written per-chunk files —
+    # for every matrix cell instead of hand-written per-chunk files —
     # the partition logic (assignBalancedChunk in test262-shared.ts) is a
     # pure function of (chunkIndex, totalChunks), so this is behaviorally
     # equivalent to the static tests/test262-chunkN.test.ts files, just
     # parameterized by env vars instead of baked into a filename.
-    needs: [changes]
-    if: github.event_name == 'merge_group' && needs.changes.outputs.run_shards == 'true'
+    needs: [changes, runtime-eval-provider]
+    # `runtime-eval-provider` runs under `always()` because its own
+    # `mg-artifact-probe` ancestor is intentionally skipped on merge_group.
+    # Without an explicit `always()` here, GitHub propagates that skipped
+    # ancestor through the otherwise-successful provider job and silently
+    # skips this entire matrix. Pin both direct dependencies to success so a
+    # real provider/detection failure still blocks the required aggregate.
+    if: |
+      always() &&
+      github.event_name == 'merge_group' &&
+      needs.changes.result == 'success' &&
+      needs.runtime-eval-provider.result == 'success' &&
+      needs.changes.outputs.run_shards == 'true'
     name: test262 ${{ matrix.target_name }} shard ${{ matrix.chunk_label }}/${{ matrix.chunk_total }}
     runs-on: ubuntu-latest
-    # Same 25-min timeout as `test262-shard`. The consolidated per-target
-    # counts (js-host=40, standalone=19) were picked specifically to keep
-    # estimated max shard runtime (~22.7 min host, ~21.0 min standalone)
-    # under this cap with headroom — see scripts/gen-test262-mg-matrix.mjs.
+    # Same 25-min timeout as `test262-shard`. The per-target counts
+    # (js-host=72, standalone=34) target ~6-8 minutes from the first #3470
+    # production run while leaving ample timeout headroom — see the generator.
     timeout-minutes: 25
     strategy:
       fail-fast: false
@@ -660,10 +918,12 @@ jobs:
       # baseline alongside refresh-baseline.yml.
       COMPILER_POOL_SIZE: "4"
       JS2WASM_IR_FIRST: ""
+      JS2WASM_FNCTOR_LAYOUT_EMIT: ""
       TEST262_INCLUDE_PROPOSALS: "1"
       RUN_TIMESTAMP: ${{ github.run_id }}-${{ matrix.target_name }}-mgchunk${{ matrix.chunk_label }}
       TEST262_TARGET: ${{ matrix.test262_target }}
       TEST262_RESULT_PREFIX: ${{ matrix.result_prefix }}
+      TEST262_FULL_RUNTIME_EVAL: ${{ matrix.test262_target == 'standalone' && '1' || '' }}
       TEST262_CHUNK_INDEX: ${{ matrix.chunk_index }}
       TEST262_CHUNK_TOTAL: ${{ matrix.chunk_total }}
       # #1954 — always empty on merge_group (scope directives are
@@ -677,15 +937,8 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: 25
-
-      - name: Setup pnpm via Corepack
-        run: |
-          corepack enable
-          corepack prepare pnpm@10.30.2 --activate
+      - name: Setup Node and pnpm (cached)
+        uses: ./.github/actions/setup-node-pnpm
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -698,6 +951,17 @@ jobs:
           pnpm run build:compiler-bundle
           ./node_modules/.bin/esbuild src/runtime.ts --bundle --platform=node --format=esm \
             --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
+
+      - name: Download full runtime-eval provider (#2928)
+        if: matrix.test262_target == 'standalone'
+        uses: actions/download-artifact@v7
+        with:
+          name: runtime-eval-provider-${{ github.run_id }}
+          path: .test262-cache
+
+      - name: Verify shared runtime-eval provider cache (#2928)
+        if: matrix.test262_target == 'standalone'
+        run: node scripts/build-runtime-eval-provider.mjs --require-full-cache
 
       - name: Run shard
         run: |
@@ -715,8 +979,13 @@ jobs:
           echo "vitest_exit_code=$exit_code" >> "$GITHUB_OUTPUT"
 
       - name: Upload shard artifacts
+        id: upload_shard_mg
         uses: actions/upload-artifact@v6
         if: always()
+        # #3404 — continue on a transient upload flake so the retry below can
+        # run; only if BOTH attempts fail does the shard (and thus the
+        # merge_group promote path that consumes these artifacts) fail.
+        continue-on-error: true
         with:
           retention-days: 1
           # Same naming convention as `test262-shard` (test262-<target>-shard-<N>)
@@ -724,8 +993,23 @@ jobs:
           # (test262-*-shard-*) pick these up with no changes there — only
           # one of the two shard jobs ever runs per workflow run, so there is
           # no naming collision risk even though chunk_label ranges overlap
-          # (1..40 / 1..19 here vs 1..57 in test262-shard).
+          # (1..72 / 1..34 here vs 1..57 in test262-shard).
           name: test262-${{ matrix.target_name }}-shard-${{ matrix.chunk_label }}
+          path: |
+            benchmarks/results/${{ matrix.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl
+          if-no-files-found: warn
+
+      # #3404 — retry a transient artifact-upload flake once (see the matching
+      # rationale on `test262-shard`'s upload above). Idempotent + `overwrite`;
+      # a genuinely empty shard is a `warn`, not a failure, so the incomplete-
+      # data sanity floor at the merge step is preserved.
+      - name: Retry shard artifact upload on transient flake (#3404)
+        if: always() && steps.upload_shard_mg.outcome == 'failure'
+        uses: actions/upload-artifact@v6
+        with:
+          retention-days: 1
+          name: test262-${{ matrix.target_name }}-shard-${{ matrix.chunk_label }}
+          overwrite: true
           path: |
             benchmarks/results/${{ matrix.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl
           if-no-files-found: warn
@@ -756,6 +1040,16 @@ jobs:
     #   - any pull_request                       -> trivial PASS
     #   - any other failed/skipped shard result   -> FAIL the required check
     # Steps that touch shard artifacts are guarded by `SHARDS_RAN`.
+    #
+    # PER-LANE: `SHARDS_RAN` answers "did ANY shard run?" and still guards the
+    # shared setup steps and the required-check decision above. Each LANE's own
+    # merge/report/guard steps are guarded by `HOST_RAN` / `STANDALONE_RAN`
+    # instead, because a merge_group may legitimately schedule only one lane
+    # (see the `changes` job). A skipped lane has no shard artifacts, so its
+    # steps must skip — `test -s <merged>.jsonl` on an absent lane would fail
+    # this required check for a change that provably could not affect it.
+    # Both flags are 'true' whenever a lane genuinely ran, so a full two-lane
+    # run behaves exactly as before.
     if: |
       always() &&
       (github.event_name != 'push' || github.actor != 'github-actions[bot]')
@@ -783,6 +1077,14 @@ jobs:
       # skipped and promote-baseline sources the JSONLs from that artifact, so
       # there are no shards to merge here and this required check green-skips).
       SHARD_SKIP_OK: ${{ ((github.event_name == 'merge_group' && needs.changes.outputs.run_shards == 'false') || github.event_name == 'pull_request' || (github.event_name == 'push' && needs.mg-artifact-probe.outputs.hit == 'true')) && 'true' || 'false' }}
+      # Per-lane variants of SHARDS_RAN. A merge_group whose queued change
+      # cannot move one lane schedules no shards for it, so that lane has no
+      # artifacts to merge and no report to gate — its steps must skip rather
+      # than fail on a missing JSONL. `!= 'false'` (not `== 'true'`) so a
+      # missing/empty output from `changes` still means "this lane ran",
+      # matching the conservative bias everywhere else in this workflow.
+      HOST_RAN: ${{ (needs.test262-shard.result == 'success' || needs.test262-shard-mg.result == 'success') && needs.changes.outputs.run_host != 'false' && 'true' || 'false' }}
+      STANDALONE_RAN: ${{ (needs.test262-shard.result == 'success' || needs.test262-shard-mg.result == 'success') && needs.changes.outputs.run_standalone != 'false' && 'true' || 'false' }}
 
     steps:
       - name: Fail if required test262 shards did not succeed
@@ -797,7 +1099,7 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "merge_group" ]; then
             echo "-> merge_group queued only non-test262-relevant changes"
-            echo "   (changes.run_shards=='false'); the consolidated 59-job matrix (#3431,"
+            echo "   (changes.run_shards=='false'); the capacity-sized 102-job matrix (#3431,"
             echo "   test262-shard-mg) was intentionally skipped. Reporting 'merge shard"
             echo "   reports' green."
           elif [ "${{ github.event_name }}" = "push" ]; then
@@ -808,7 +1110,7 @@ jobs:
           else
             echo "-> pull_request: heavy test262 shards are merge_group-only under the"
             echo "   #2519 slim-down, so they do not run at PR-time. The cheap gate"
-            echo "   (typecheck + lint) validated this PR; the consolidated 59-job matrix"
+            echo "   (typecheck + lint) validated this PR; the capacity-sized 106-job matrix"
             echo "   (#3431, test262-shard-mg) runs in the merge_group when the PR reaches"
             echo "   the front of the queue."
           fi
@@ -826,17 +1128,9 @@ jobs:
           # unreadable in exactly the job that gates the merge queue.
           fetch-depth: 2
 
-      - name: Setup Node
+      - name: Setup Node and pnpm (cached)
         if: env.SHARDS_RAN == 'true'
-        uses: actions/setup-node@v6
-        with:
-          node-version: 25
-
-      - name: Setup pnpm via Corepack
-        if: env.SHARDS_RAN == 'true'
-        run: |
-          corepack enable
-          corepack prepare pnpm@10.30.2 --activate
+        uses: ./.github/actions/setup-node-pnpm
 
       - name: Install dependencies
         if: env.SHARDS_RAN == 'true'
@@ -851,21 +1145,21 @@ jobs:
           merge-multiple: false
 
       - name: Merge JS-host test262 JSONL results
-        if: env.SHARDS_RAN == 'true'
+        if: env.HOST_RAN == 'true'
         run: |
           mkdir -p merged-reports
           find shard-artifacts/test262-js-host-shard-* -name 'test262-results-*.jsonl' -print0 | sort -z | xargs -0 cat > merged-reports/test262-results-merged.jsonl
           test -s merged-reports/test262-results-merged.jsonl
 
       - name: Merge standalone test262 JSONL results
-        if: env.SHARDS_RAN == 'true'
+        if: env.STANDALONE_RAN == 'true'
         run: |
           mkdir -p merged-reports
           find shard-artifacts/test262-standalone-shard-* -name 'test262-standalone-results-*.jsonl' -print0 | sort -z | xargs -0 cat > merged-reports/test262-standalone-results-merged.jsonl
           test -s merged-reports/test262-standalone-results-merged.jsonl
 
       - name: Build merged JS-host test262 report
-        if: env.SHARDS_RAN == 'true'
+        if: env.HOST_RAN == 'true'
         run: |
           node scripts/build-test262-report.mjs \
             --input merged-reports/test262-results-merged.jsonl \
@@ -875,13 +1169,13 @@ jobs:
             ${{ github.event_name != 'workflow_dispatch' && '--include-proposals' || (inputs.include_proposals && '--include-proposals' || '') }}
 
       - name: Build merged standalone test262 report
-        if: env.SHARDS_RAN == 'true'
+        if: env.STANDALONE_RAN == 'true'
         run: |
           node scripts/build-test262-report.mjs \
             --input merged-reports/test262-standalone-results-merged.jsonl \
             --output merged-reports/test262-standalone-report-merged.json \
             --target standalone \
-            --max-unclassified-root-causes 300 \
+            --max-unclassified-root-causes 0 \
             --baseline-sha "${{ github.sha }}" \
             --baseline-generated-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             ${{ github.event_name != 'workflow_dispatch' && '--include-proposals' || (inputs.include_proposals && '--include-proposals' || '') }}
@@ -895,10 +1189,30 @@ jobs:
       # which only ever ratchets UP. It lives inside the required
       # "merge shard reports" check so a breach blocks the merge queue.
       - name: Standalone pass-count high-water floor (#2097)
-        if: env.SHARDS_RAN == 'true'
+        if: env.STANDALONE_RAN == 'true'
         run: |
           node scripts/check-standalone-highwater.mjs \
             --report merged-reports/test262-standalone-report-merged.json
+
+      # (#3953) MAKE THE SILENCE LOUD. The step above is the only place in CI
+      # that holds BOTH the committed mark and a fresh measurement of reality,
+      # and it already prints the gap — as an ordinary log line, in a job with
+      # thousands of them. That is why a 475-wide gap went unremarked for 37
+      # consecutive merges: the gate reported "passed" the whole time, because
+      # a floor that is too LOW never fires. Nothing anywhere reported a mark
+      # that had stopped moving.
+      #
+      # This step turns that gap into a run-summary ANNOTATION once it outlives
+      # the grace window. It is deliberately NON-FATAL (`|| true`): `merge shard
+      # reports` is a REQUIRED check, and a lagging mark is an infrastructure
+      # fault, never the fault of the PR sitting in the queue. Failing here
+      # would wedge the queue on someone else's defect.
+      - name: Report a STALE high-water mark (#3953)
+        if: env.STANDALONE_RAN == 'true'
+        run: |
+          node scripts/check-highwater-staleness.mjs \
+            --report merged-reports/test262-standalone-report-merged.json \
+            --annotate || true
 
       # #1668 — HARD catastrophic-regression guard. Lives INSIDE the REQUIRED
       # "merge shard reports" check so it blocks the merge queue. The
@@ -927,7 +1241,7 @@ jobs:
       #             regression-gate job's business and do not fail this
       #             required check; a catastrophic-size failure does.
       - name: Catastrophic regression guard (#1668)
-        if: env.SHARDS_RAN == 'true'
+        if: env.HOST_RAN == 'true'
         env:
           CATASTROPHIC_REGRESSION_THRESHOLD: "200"
           # #1954 — on a scoped PR run the merged JSONL only covers the scope;
@@ -1026,7 +1340,7 @@ jobs:
       # this step from vetoing a deliberate re-baseline the script approved
       # (pre-#3303 it re-derived net from the raw count and disagreed).
       - name: Standalone regression guard (#1897)
-        if: env.SHARDS_RAN == 'true'
+        if: env.STANDALONE_RAN == 'true'
         env:
           STANDALONE_REGRESSION_TOLERANCE: "15"
           # #1954 — see the catastrophic guard above.
@@ -1127,14 +1441,14 @@ jobs:
       # The aggregate +20% arm (AGG_COMPILE_TIME_PCT_THRESHOLD) is UNCHANGED and
       # remains the standalone systemic-slowdown backstop.
       - name: Compile-time regression guard (#1942, #3447)
-        if: env.SHARDS_RAN == 'true'
+        if: env.HOST_RAN == 'true'
         env:
           # CT_SOFT: contention-flake floor. A CT above this is only actionable
           #   when the aggregate arm agrees (see the combined trigger). Scaled
-          #   with per-shard test density (#3431): the 114→59 merge_group shard
-          #   consolidation ~doubles tests-per-shard, so boundary compiles that
-          #   flirt with the 30s per-test timeout cross it proportionally more
-          #   often under CPU contention (25 × 114/59 ≈ 48, rounded to 50).
+          #   with per-shard test density (#3431). The current 106-job matrix is
+          #   close to the original 114-job density, but the count cannot fail
+          #   alone: the aggregate arm must corroborate it below. Keep 50 as a
+          #   deliberately sensitive warning/combined-trigger threshold.
           CT_SOFT: "50"
           # CT_HARD: unconditional-fail ceiling (~boundary-population scale). A CT
           #   this high is a real pathological slowdown regardless of the
@@ -1275,8 +1589,18 @@ jobs:
       # drift, no ALLGREEN masking once the queue batches >1). 3-day
       # retention comfortably covers queue lifetimes; an expired/missing
       # artifact just falls back to the runs-cache / latest-main baseline.
+      #
+      # BOTH LANES REQUIRED. This artifact has a second consumer: the #3448
+      # push:main `mg-artifact-probe`, which on a HIT lets `promote-baseline`
+      # publish BOTH lanes' baselines straight from it and skip the full
+      # matrix. A single-lane group would therefore promote a baseline with an
+      # empty side. Publishing only when both lanes ran makes the follow-on
+      # probe MISS instead, which is an already-documented, already-exercised
+      # fallback ("direct push, expired artifact, or doc-only group") that runs
+      # the full two-lane matrix before promoting. Predecessor diffing degrades
+      # the same way — it falls back to the runs-cache / latest-main baseline.
       - name: Publish group results for predecessor diffing (#1956)
-        if: env.SHARDS_RAN == 'true' && github.event_name == 'merge_group'
+        if: env.HOST_RAN == 'true' && env.STANDALONE_RAN == 'true' && github.event_name == 'merge_group'
         uses: actions/upload-artifact@v6
         with:
           retention-days: 3
@@ -1294,6 +1618,14 @@ jobs:
     # published even when shards were intentionally skipped. If shards failed or
     # were unexpectedly skipped, `merge shard reports` is already red; this job
     # no-ops instead of looking for artifacts that do not exist.
+    #
+    # This job is entirely JS-HOST-LANE: it merges the js-host shard JSONLs and
+    # diffs them against the js-host baseline (the standalone lane's equivalent
+    # gates — the #1897 regression guard and the #2097 high-water floor — live
+    # in `merge-report`). It is therefore gated on `HOST_RAN`, not `SHARDS_RAN`:
+    # a merge_group that scheduled only the standalone lane has no js-host
+    # JSONLs to diff, so this job green-no-ops exactly as it does for a
+    # pull_request.
     if: |
       always() &&
       (github.event_name != 'push' || github.actor != 'github-actions[bot]')
@@ -1313,18 +1645,24 @@ jobs:
       contents: read
       actions: read
     env:
-      SHARDS_RAN: ${{ (needs.test262-shard.result == 'success' || needs.test262-shard-mg.result == 'success') && 'true' || 'false' }}
+      # Host-lane variant of SHARDS_RAN: any shard job succeeded AND the
+      # queued change can move the js-host lane. `!= 'false'` so a missing
+      # output from `changes` means 'ran' (conservative), never 'skipped'.
+      HOST_RAN: ${{ (needs.test262-shard.result == 'success' || needs.test262-shard-mg.result == 'success') && needs.changes.outputs.run_host != 'false' && 'true' || 'false' }}
 
     steps:
       - name: No-op pass (no merged test262 report to diff)
-        if: env.SHARDS_RAN != 'true'
+        if: env.HOST_RAN != 'true'
         run: |
-          echo "test262 shards did not produce shard artifacts in this context."
+          echo "No js-host test262 shard artifacts to diff in this context."
           echo "test262-shard result: ${{ needs.test262-shard.result }}, test262-shard-mg result: ${{ needs.test262-shard-mg.result }}"
+          echo "changes.run_host: '${{ needs.changes.outputs.run_host }}' (an explicit 'false' means the"
+          echo "  queued change provably cannot move the js-host lane, so its shards were never scheduled;"
+          echo "  the standalone lane's own gates still ran in 'merge shard reports')."
           echo "If shards failed unexpectedly, the required 'merge shard reports' check is the blocking signal."
 
       - name: Checkout
-        if: env.SHARDS_RAN == 'true'
+        if: env.HOST_RAN == 'true'
         uses: actions/checkout@v5
         with:
           # #1081 — need full history so we can resolve the PR's merge-base
@@ -1334,25 +1672,17 @@ jobs:
           # prints a leading '-', which the version extraction strips).
           fetch-depth: 0
 
-      - name: Setup Node
-        if: env.SHARDS_RAN == 'true'
-        uses: actions/setup-node@v6
-        with:
-          node-version: 25
-
-      - name: Setup pnpm via Corepack
-        if: env.SHARDS_RAN == 'true'
-        run: |
-          corepack enable
-          corepack prepare pnpm@10.30.2 --activate
+      - name: Setup Node and pnpm (cached)
+        if: env.HOST_RAN == 'true'
+        uses: ./.github/actions/setup-node-pnpm
 
       - name: Install dependencies
-        if: env.SHARDS_RAN == 'true'
+        if: env.HOST_RAN == 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Fetch fresh baseline from baselines repo
         id: fetch_baseline
-        if: env.SHARDS_RAN == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+        if: env.HOST_RAN == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
         run: |
           # Clone the baselines repo to get the current baseline JSONL.
           # This avoids LFS bandwidth on the main repo (all jsonl files are
@@ -1403,13 +1733,13 @@ jobs:
 
       - name: Load cached baseline for merge-base (#1081, base_sha #3467)
         id: merge_base_cache
-        if: env.SHARDS_RAN == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+        if: env.HOST_RAN == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
         env:
           # #3467 — on merge_group the REAL parent commit the queue built this
-          # group on. The sequential merge queue writes runs/<sha> for every
-          # landed commit (write-run-cache-bot job), so runs/<base_sha> is the
-          # exact pre-PR state → the diff is purely this PR's effect, with none
-          # of the promoted-snapshot lag that false-parked 6 PRs on 2026-07-19.
+          # group on. Test262-running landed commits write runs/<sha> through
+          # write-run-cache-bot, so a present runs/<base_sha> is the exact
+          # pre-PR state → the diff is purely this PR's effect, with none of the
+          # promoted-snapshot lag that false-parked 6 PRs on 2026-07-19.
           MG_BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: |
           # #1081/#3467 — prefer the hash-indexed run cache for the PR's REAL
@@ -1442,46 +1772,27 @@ jobs:
           # runs/<base>.json when the cache hit (#49). The .json is sparse-
           # checked-out below alongside the .jsonl.
           echo "merge_base=${MERGE_BASE}" >> "$GITHUB_OUTPUT"
-          # #3467 (poll) — RACE FIX for the distance-1 settle under sustained
-          # queue velocity. On merge_group, base_sha is the tip the PREVIOUS
-          # queue merge just produced, and write-run-cache-bot is still writing
-          # runs/<base_sha> to the baselines repo when this job first cloned it
-          # → the exact base MISSES → the resolver walks to the distance-1
-          # ancestor → the ratio gate nips the 1-commit residual and PARKS a
-          # clean, net-positive PR. But base_sha is FIXED at build start, its
-          # cache lands within a few min, and this PR's own build takes ~30 min —
-          # so the base cache RELIABLY exists well before the gate compares; it
-          # was merely queried too early. Poll the EXACT base for up to ~3 min
-          # (6×30s) so back-to-back merges resolve at DISTANCE 0.
+          # #3467 — one-shot exact-base probe. The baselines repo was cloned in
+          # the immediately preceding step, after this run's shards completed,
+          # so its origin/main is already a fresh view of any cache written by a
+          # Test262-running predecessor. Query it once and never wait here.
           #
-          # Non-perturbing: we refresh origin/main and materialize the blob to
-          # the path the resolver reads WITHOUT moving HEAD (a `reset`/`checkout`
-          # here would advance the shared baselines clone and confuse the #1235/
-          # #1668 staleness steps that parse its commit subject). A genuinely
-          # uncached base (e.g. a doc-only merge that wrote no cache) simply
-          # falls through to the ancestor-walk below, where the nearest cached
-          # ancestor carries identical test262 data (drift-free at distance N).
+          # A missing entry may be permanent (for example, a doc-only predecessor
+          # that intentionally ran no shards), so polling cannot distinguish a
+          # race from an entry that will never arrive. Fall through immediately
+          # to the ancestor walk; the #1956 predecessor-group artifact step that
+          # follows can still replace it with a stronger exact baseline.
+          # Materialize blobs without moving HEAD so the #1235/#1668 staleness
+          # checks keep reading the clone commit fetched above.
           if [ "${{ github.event_name }}" = "merge_group" ] && [ -n "$MERGE_BASE" ]; then
             mkdir -p "/tmp/js2wasm-baselines/runs"
-            WAITED=0
-            for attempt in 1 2 3 4 5 6; do
-              # Refresh origin/main (depth 1 — runs/<base> persists in every later
-              # tree, so the current tip's tree contains it once written).
-              git -C /tmp/js2wasm-baselines fetch --depth=1 --filter=blob:none origin main 2>/dev/null || true
-              if git -C /tmp/js2wasm-baselines cat-file -e "origin/main:runs/${MERGE_BASE}.jsonl" 2>/dev/null; then
-                git -C /tmp/js2wasm-baselines show "origin/main:runs/${MERGE_BASE}.jsonl" > "/tmp/js2wasm-baselines/runs/${MERGE_BASE}.jsonl" 2>/dev/null || true
-                git -C /tmp/js2wasm-baselines show "origin/main:runs/${MERGE_BASE}.json"  > "/tmp/js2wasm-baselines/runs/${MERGE_BASE}.json"  2>/dev/null || true
-                echo "#3467 base cache runs/${MERGE_BASE}.jsonl present after ${WAITED}s → distance-0 diff."
-                break
-              fi
-              if [ "$attempt" -eq 6 ]; then
-                echo "::warning::#3467 base cache runs/${MERGE_BASE}.jsonl still absent after ${WAITED}s; falling through to the ancestor-walk (nearest cached ancestor — drift-free but distance>0)."
-                break
-              fi
-              echo "#3467 base cache runs/${MERGE_BASE}.jsonl not yet present (waited ${WAITED}s) — write-run-cache-bot likely still pushing; re-checking in 30s."
-              sleep 30
-              WAITED=$((WAITED + 30))
-            done
+            if git -C /tmp/js2wasm-baselines cat-file -e "origin/main:runs/${MERGE_BASE}.jsonl" 2>/dev/null; then
+              git -C /tmp/js2wasm-baselines show "origin/main:runs/${MERGE_BASE}.jsonl" > "/tmp/js2wasm-baselines/runs/${MERGE_BASE}.jsonl" 2>/dev/null || true
+              git -C /tmp/js2wasm-baselines show "origin/main:runs/${MERGE_BASE}.json"  > "/tmp/js2wasm-baselines/runs/${MERGE_BASE}.json"  2>/dev/null || true
+              echo "#3467 base cache runs/${MERGE_BASE}.jsonl present → distance-0 diff."
+            else
+              echo "::notice::#3467 base cache runs/${MERGE_BASE}.jsonl absent; continuing immediately to the ancestor-walk (nearest cached ancestor — drift-free but distance>0)."
+            fi
           fi
           # #3467 — build an ORDERED candidate list: the exact base first, then
           # its nearest-first ancestors. If the exact base's shards were skipped
@@ -1517,9 +1828,11 @@ jobs:
             echo "::warning::#1081/#3467 base resolution errored (non-fatal); keeping latest-main baseline."
 
       # #1956 — exact predecessor-group baseline for merge_group runs. The
-      # queue builds groups incrementally: this group's head is a merge
-      # commit whose FIRST PARENT is the predecessor group's head (or the
-      # main tip when this PR is the queue head). If a recent merge_group run
+      # queue builds groups incrementally, so the commit this group was built
+      # ON is the predecessor group's head (or the main tip when this PR is
+      # the queue head) — `github.event.merge_group.base_sha`, which equals
+      # HEAD^1 only for a single-entry group (see #3914 note in the step body).
+      # If a recent merge_group run
       # published `test262-group-<HEAD^1>` (see merge-report), diffing
       # against it isolates ONLY this PR's delta — no cross-PR drift and no
       # ALLGREEN masking inside multi-entry queue windows, which is the
@@ -1532,15 +1845,38 @@ jobs:
       # step never fails the build.
       - name: Resolve predecessor-group baseline (#1956)
         id: pred_group
-        if: env.SHARDS_RAN == 'true' && github.event_name == 'merge_group'
+        if: env.HOST_RAN == 'true' && github.event_name == 'merge_group'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MG_BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: |
           set -uo pipefail
-          PRED=$(git rev-parse HEAD^1 2>/dev/null || echo "")
+          # #3914 — prefer the event's own `base_sha` over `HEAD^1`.
+          #
+          # For a SINGLE-entry group these are the same commit, so this is a
+          # no-op on today's serial queue. They diverge the moment the queue
+          # batches (`min_entries_to_merge > 1`): the queue stacks one merge
+          # commit per entry, so for a 3-PR group HEAD^1 is the SECOND PR's
+          # merge commit *inside this same group* — a commit that never
+          # published a `test262-group-<sha>` artifact, because only the group
+          # HEAD publishes one. The lookup would miss every time and silently
+          # fall back to the latest-main baseline, i.e. exactly the cross-PR
+          # drift path (a)-resolution exists to avoid.
+          #
+          # `base_sha` is the predecessor GROUP's head regardless of how many
+          # entries this group holds, so it keeps the diff exact. Note this
+          # isolates the whole BATCH's delta, not one PR's — batching trades
+          # per-PR attribution for throughput by design; auto-park parks every
+          # member of a failed group so attribution happens by re-enqueueing
+          # them singly.
+          PRED="${MG_BASE_SHA:-}"
+          if [ -z "$PRED" ]; then
+            PRED=$(git rev-parse HEAD^1 2>/dev/null || echo "")
+            [ -n "$PRED" ] && echo "::notice::merge_group.base_sha unset — falling back to HEAD^1 ($PRED)."
+          fi
           if [ -z "$PRED" ]; then
             echo "pred_path=none" >> "$GITHUB_OUTPUT"
-            echo "No first parent resolvable — keeping baseline from (b)/(c)."
+            echo "No predecessor resolvable (base_sha unset, no first parent) — keeping baseline from (b)/(c)."
             exit 0
           fi
           ART_NAME="test262-group-${PRED}"
@@ -1590,7 +1926,7 @@ jobs:
         # too — the baselines-repo JSONL is frequently several merges behind main
         # HEAD there (serialization lag), and the footer is what tells a reader
         # the listed "regressions" are drift, not real PR-caused failures.
-        if: env.SHARDS_RAN == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push') && steps.fetch_baseline.outputs.baseline_ts != '0'
+        if: env.HOST_RAN == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push') && steps.fetch_baseline.outputs.baseline_ts != '0'
         run: |
           # #2562 — measure staleness by the count of TEST262-RELEVANT (src)
           # commits between the baseline's recorded main-sha and main HEAD, NOT
@@ -1610,10 +1946,17 @@ jobs:
           MAIN_HEAD_TS=$(git log -1 --format=%ct origin/main 2>/dev/null || git log -1 --format=%ct main 2>/dev/null || echo 0)
           BASELINE_TS="${{ steps.fetch_baseline.outputs.baseline_ts }}"
           BASELINE_SHA="${{ steps.fetch_baseline.outputs.baseline_sha }}"
-          DIFF_M=0
-          if [ "$MAIN_HEAD_TS" != "0" ] && [ "$BASELINE_TS" != "0" ]; then
-            DIFF_M=$(( (MAIN_HEAD_TS - BASELINE_TS) / 60 ))
-          fi
+          # #3459 — compute a NON-NEGATIVE clock age from a single documented
+          # clock source (git %ct, Unix epoch SECONDS). The baselines-repo HEAD
+          # commit is produced by promote-baseline AFTER the main commit it was
+          # generated from, and on a merge_group re-validation can reflect a
+          # NEWER main state than this speculative checkout's origin/main — so
+          # the raw (MAIN_HEAD_TS - BASELINE_TS) is frequently negative, which
+          # previously printed a nonsensical "-43m clock age". The helper clamps
+          # a fresher-than-main-HEAD baseline to age 0 (with an honest stderr
+          # note) instead of emitting a negative age. Pure logic is unit-tested
+          # in tests/issue-3459-baseline-clock-age.test.ts.
+          DIFF_M=$(node scripts/baseline-clock-age.mjs "$MAIN_HEAD_TS" "$BASELINE_TS")
           echo "stale_minutes=$DIFF_M" >> "$GITHUB_OUTPUT"
 
           # Parse the baseline's recorded main-sha from the baselines-repo commit
@@ -1679,7 +2022,7 @@ jobs:
       # merge-report's merged artifact — that artifact only exists after
       # merge-report finishes, which would serialize this job behind it.
       - name: Download shard artifacts
-        if: env.SHARDS_RAN == 'true'
+        if: env.HOST_RAN == 'true'
         uses: actions/download-artifact@v7
         with:
           path: shard-artifacts
@@ -1687,7 +2030,7 @@ jobs:
           merge-multiple: false
 
       - name: Merge JS-host test262 JSONL results
-        if: env.SHARDS_RAN == 'true'
+        if: env.HOST_RAN == 'true'
         run: |
           mkdir -p merged-reports
           find shard-artifacts/test262-js-host-shard-* -name 'test262-results-*.jsonl' -print0 | sort -z | xargs -0 cat > merged-reports/test262-results-merged.jsonl
@@ -1717,7 +2060,7 @@ jobs:
         # net gate (net < 0), the per-bucket >50 concentration check, and the
         # #3189 uncatchable-trap growth ratchet. `compile_timeout` / ct_flake is
         # already excluded from the wasm-change regression numerator.
-        if: env.SHARDS_RAN == 'true'
+        if: env.HOST_RAN == 'true'
         env:
           # #1954 — scoped PR runs: restrict the baseline to the scope or
           # every out-of-scope baseline pass reads as a pass→absent regression.
@@ -1790,7 +2133,7 @@ jobs:
 
       - name: Upload regressions report
         uses: actions/upload-artifact@v6
-        if: always() && env.SHARDS_RAN == 'true'
+        if: always() && env.HOST_RAN == 'true'
         with:
           retention-days: 1
           name: test262-regressions-report
@@ -1805,7 +2148,7 @@ jobs:
       # regression gate above already fails on the underlying pass→compile_error
       # flips; this surfaces the hard-error bucket explicitly with a pointer.
       - name: Hard-error stability gate (#1853)
-        if: env.SHARDS_RAN == 'true'
+        if: env.HOST_RAN == 'true'
         run: |
           node scripts/check-test262-hard-errors.mjs \
             --jsonl merged-reports/test262-results-merged.jsonl
@@ -1822,7 +2165,7 @@ jobs:
       # shard reports" check; this fine gate stays active for `pull_request` /
       # `merge_group`, where pre-merge gating is the point.
       - name: Fail on regressions
-        if: env.SHARDS_RAN == 'true' && steps.regression_diff.outputs.regressions == 'true' && github.event_name != 'push' && !(github.event_name == 'workflow_dispatch' && inputs.force_baseline_refresh == true && inputs.confirm_force == 'YES')
+        if: env.HOST_RAN == 'true' && steps.regression_diff.outputs.regressions == 'true' && github.event_name != 'push' && !(github.event_name == 'workflow_dispatch' && inputs.force_baseline_refresh == true && inputs.confirm_force == 'YES')
         run: |
           echo "test262 regressions detected relative to benchmarks/results/test262-current.jsonl"
           cat merged-reports/test262-regressions.txt
@@ -1878,15 +2221,48 @@ jobs:
     # promoting a flagged run's pass-set would poison the regression baseline
     # every PR gates against. The merged-report ARTIFACT is the measurement
     # deliverable; the baseline stays owned by unflagged runs.
-    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.actor != 'github-actions[bot]' && !(github.event_name == 'workflow_dispatch' && inputs.ir_first)
+    # (#3611) `!cancelled() &&` IS LOAD-BEARING — do not "simplify" it away.
+    #
+    # Measured 2026-08-01 across **30 of 30** available push:main runs: this job
+    # was SKIPPED every time, so `check-standalone-highwater.mjs --update` — the
+    # #2097 raise — had not executed on a queue merge in the whole observable
+    # window. With `refresh-baseline.yml` also `disabled_manually`, BOTH paths
+    # that can raise the mark were dead, and the failure is silent in the
+    # PERMISSIVE direction (a floor that is too low never fires), so nothing
+    # ever complained.
+    #
+    # It was NOT the actor guard and NOT `success()` over `needs` — both needs
+    # were `success` on all 30, and the sibling `promote root baseline` job,
+    # gated on `github.actor == 'github-merge-queue[bot]'`, RAN on all 30, which
+    # proves the actor value and hence that every conjunct below is true. The
+    # job was skipped in the SAME SECOND `merge-report` resolved, with 0 steps.
+    #
+    # Mechanism: on the #3448 HIT path the shard matrix is skipped, and
+    # `merge-report` survives that only because it carries its own
+    # `if: always() && …`. GitHub then propagates the skip THROUGH that job into
+    # any dependent lacking a status-check function of its own. `!cancelled()`
+    # is that function — it re-enables the job while (unlike bare `always()`)
+    # still honouring cancellation, and the explicit `needs.*.result` checks
+    # below restore the failure semantics the implicit `success()` provided.
+    if: |
+      !cancelled() &&
+      needs.merge-report.result == 'success' &&
+      needs.mg-artifact-probe.result == 'success' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      github.actor != 'github-actions[bot]' &&
+      !(github.event_name == 'workflow_dispatch' && inputs.ir_first) &&
+      !(github.event_name == 'workflow_dispatch' && inputs.layout_emit)
     name: promote merged report to main baseline
+    # (#2947) `!(… && inputs.ir_first)` above — an IR-first measurement dispatch
+    # (JS2WASM_IR_FIRST=1 in the shards) must NEVER promote its merged report:
+    # promoting a flagged run's pass-set would poison the regression baseline
+    # every PR gates against. The merged-report ARTIFACT is the measurement
+    # deliverable; the baseline stays owned by unflagged runs.
+    #
     # #3448 — mg-artifact-probe decides where the merged JSONLs come from:
     # MISS → the `test262-merged-report` artifact built by merge-report from a
     # fresh matrix (unchanged); HIT → the merge_group's own
-    # `test262-group-<sha>` artifact, skipping the 114-job rerun. Both jobs
-    # run+succeed on push and workflow_dispatch, so the implicit `success()`
-    # over `needs` holds (merge-report green-skips on the HIT path — still
-    # success).
+    # `test262-group-<sha>` artifact, skipping the 114-job rerun.
     needs: [merge-report, mg-artifact-probe]
     runs-on: ubuntu-latest
     # Gate the MAIN_DEPLOY_KEY secret behind a GitHub Environment so only this
@@ -1918,10 +2294,8 @@ jobs:
           fetch-depth: 2
           persist-credentials: true
 
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: 25
+      - name: Setup Node and pnpm (cached)
+        uses: ./.github/actions/setup-node-pnpm
 
       # #3448 — MISS path: the full matrix ran and merge-report built +
       # uploaded `test262-merged-report`. Download it exactly as before.
@@ -1986,13 +2360,27 @@ jobs:
       # Bounded cost: the poison count is small (acceptance: < 2 min).
       # Needs pnpm + deps + the test262 submodule (checkout already pulls
       # submodules recursively above).
-      - name: Setup pnpm via Corepack
-        run: |
-          corepack enable
-          corepack prepare pnpm@10.30.2 --activate
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Heal poison-classified rows (#2099)
+        # (#4141) HEAL/SHARD SCOPE PARITY — load-bearing, do not drop.
+        # `heal-poison-rows.ts` re-runs each poison row through
+        # `runTest262File`, which applies `shouldSkip` → `classifyTestScope`.
+        # Without this env the healer's process disagrees with the shard
+        # process that produced the row: `built-ins/Temporal/**` classifies as
+        # a *proposal* and the re-run returns `status: "skip"` instead of the
+        # row's true verdict. That laundered ~1,229 real Temporal traps into
+        # baseline `skip` rows (all carrying `poison_healed: true` and
+        # `error: "Proposal excluded from default scope: proposal feature:
+        # Temporal"`), while the candidate JSONL — which is never healed —
+        # kept them as traps. The trap ratchet then charged the whole delta to
+        # whatever PR happened to be in the merge group (`null_deref
+        # 156 → 1360`), parking #4074 and #4088 on a phantom regression.
+        # The expression MIRRORS the `test262-shard` job's env (~L723) exactly
+        # rather than hardcoding "1", so an `include_proposals: false` dispatch
+        # heals under the same scope its shards ran under.
+        env:
+          TEST262_INCLUDE_PROPOSALS: ${{ github.event_name != 'workflow_dispatch' && '1' || (inputs.include_proposals && '1' || '0') }}
         run: |
           npx tsx scripts/heal-poison-rows.ts \
             --in  shard-artifacts/test262-results-merged.jsonl \
@@ -2063,6 +2451,7 @@ jobs:
           # normally 0 (strict); raise via repo Actions variable for ONE
           # intentional-reclassification refresh, then reset.
           BASELINE_TRAP_GROWTH_ALLOW: ${{ vars.BASELINE_TRAP_GROWTH_ALLOW || '0' }}
+          NTFY_URL: ${{ secrets.NTFY_URL }}
         run: |
           PASS=$(node -e "console.log(JSON.parse(require('fs').readFileSync('shard-artifacts/test262-report-merged.json','utf8')).summary.pass)")
           TOTAL=$(node -e "console.log(JSON.parse(require('fs').readFileSync('shard-artifacts/test262-report-merged.json','utf8')).summary.total)")
@@ -2094,7 +2483,7 @@ jobs:
           # so `git add -A` cannot stage them as deletions, and NEW runs/<sha>
           # cache files are staged explicitly via `git add -A --sparse`.
           git clone --depth=1 --filter=blob:none --no-checkout git@github.com:loopdive/js2wasm-baselines.git /tmp/js2wasm-baselines
-          git -C /tmp/js2wasm-baselines sparse-checkout set --no-cone '/*' '!/runs/*' '/runs/index.json'
+          git -C /tmp/js2wasm-baselines sparse-checkout set --no-cone '/*' '!/runs/*' '/runs/index.json' '/runs/editions-index.json' '/runs/standalone-index.json'
           git -C /tmp/js2wasm-baselines checkout main
           cp /tmp/js2wasm-baselines/test262-current.jsonl /tmp/js2wasm-baselines/test262-current.before.jsonl 2>/dev/null || true
           cp /tmp/js2wasm-baselines/test262-standalone-current.jsonl /tmp/js2wasm-baselines/test262-standalone-current.before.jsonl 2>/dev/null || true
@@ -2177,6 +2566,16 @@ jobs:
             console.log('Skipped duplicate entry (same pass/total as last run)');
           }
           "
+
+          # Append per-ES-edition + standalone trend history (landing-page
+          # mini graphs). Both editions.json (regenerated above) and the
+          # standalone report are already fresh on disk in this job.
+          # Best-effort — never blocks the baseline promote pipeline.
+          node scripts/append-run-history.mjs \
+            --runs-dir /tmp/js2wasm-baselines/runs \
+            --editions website/public/benchmarks/results/test262-editions.json \
+            --standalone-report /tmp/js2wasm-baselines/test262-standalone-current.json \
+            --sha "${{ github.sha }}" || echo "::warning::append-run-history failed (non-fatal)"
 
           # #1081 — write the commit-hash-indexed run cache entry. This lets a
           # PR's regression-gate diff against main *at the PR's merge-base*
@@ -2335,7 +2734,7 @@ jobs:
           # #1951 — DEFER this commit while the merge queue is non-empty. Any
           # push to main (even [skip ci]) makes GitHub rebuild EVERY queued
           # merge group: each rebuild costs a full shard-matrix validation
-          # (#3431: 59 consolidated jobs, was 114) per
+          # (#3431: 106 capacity-sized jobs, was 114 static jobs) per
           # queued PR plus ~10 min of added queue latency (observed 2026-06-10:
           # PR #1283 validated 3× because baseline pushes kept landing under
           # it). The baselines-REPO push above is unaffected — it doesn't move
@@ -2344,6 +2743,19 @@ jobs:
           # via the hourly baseline-summary-sync.yml fallback (6h staleness
           # floor). Fail-open: if the queue query errors, keep the old
           # always-push behavior rather than silently freezing the summary.
+          #
+          # (#3953) ⚠️ THIS DEFERRAL ALSO DISCARDS THE #2097 HIGH-WATER RAISE.
+          # The raise runs earlier in this job and WRITES the mark file; the
+          # commit dropped here is its only carrier. Until 2026-08-02 the
+          # fallback named on the next line did not stage that file at all
+          # (`grep highwater baseline-summary-sync.yml` → 0 hits), so on a
+          # continuously-busy queue the mark could only be landed by the
+          # coincidence of an empty queue at promote time — measured: 37
+          # consecutive merges with no raise, a 475-wide gap, 525 passes of
+          # silent permissive headroom. baseline-summary-sync.yml now stages
+          # and re-raises the mark, so the sentence below is true for it too.
+          # If you ever narrow that fallback's file set, this deferral silently
+          # reopens the hole.
           OWNER="${GITHUB_REPOSITORY%/*}"; NAME="${GITHUB_REPOSITORY#*/}"
           QUEUE_LEN=$(gh api graphql \
             -f query='query($owner:String!,$name:String!){repository(owner:$owner,name:$name){mergeQueue{entries(first:1){totalCount}}}}' \
@@ -2428,6 +2840,12 @@ jobs:
           # write when only the date would change. Non-fatal.
           node scripts/check-loc-budget.mjs --update || \
             echo "WARN: loc-budget baseline update failed (non-fatal)"
+          # #3400 R-FUNC twin: bank per-function shrinkage into the func-budget
+          # baseline (shrink-only floor; the PR gate is change-scoped so this
+          # committed file only serves the --all audit + no-git fallback).
+          # Non-fatal.
+          node scripts/check-func-budget.mjs --update-on-decrease || \
+            echo "WARN: func-budget baseline update failed (non-fatal)"
           # Re-derive the landing-page feature-support badges (#2665). The
           # source of truth is now website/public/feature-examples.json (the
           # canonical per-feature aggregation written by build-data.js — it
@@ -2453,10 +2871,23 @@ jobs:
             git add -f scripts/coercion-sites-baseline.json 2>/dev/null || true
             # #3131 — LOC-budget baseline, refreshed just above (sole writer).
             git add -f scripts/loc-budget-baseline.json 2>/dev/null || true
+            git add -f scripts/func-budget-baseline.json 2>/dev/null || true
             # #2097 — the standalone high-water mark (raised just above when
             # conformance improved). Staged so the new floor lands atomically
             # with the refreshed summary.
             git add -f benchmarks/results/test262-standalone-highwater.json 2>/dev/null || true
+            # The standalone CURRENT summary — the host lane's
+            # `test262-standalone-current.json` twin. It was already WRITTEN by
+            # the "Promote merged artifacts to stable baseline" step above, but
+            # never staged, so it never reached main. Consumers that wanted a
+            # *current* standalone rate had only the HIGH-WATER file, which is a
+            # best-ever floor maintained for the #2097 gate — semantically a
+            # different number, and it read ~7 points low (56.1% vs ~63%). The
+            # landing page dodged this by fetching the JSONL fresh from the
+            # baselines repo (run-pages-build.mjs); anything reading the repo
+            # (e.g. the statusline) had no correct source until now. Same shape
+            # as the host file — official_summary.pass/.total + oracle_version.
+            git add -f benchmarks/results/test262-standalone-current.json 2>/dev/null || true
             # editions JSON is regenerated into website/public/ (the vite
             # publicDir, served by the landing page) by the earlier step. #1656
             # moved the public dir under website/; staging the old public/ path
@@ -2465,6 +2896,12 @@ jobs:
               git add -f website/public/benchmarks/results/test262-editions.json || true
             [ -f website/public/benchmarks/results/test262-category-editions.json ] && \
               git add -f website/public/benchmarks/results/test262-category-editions.json || true
+            # #2871 follow-up — per-file edition index for the non-passing tests. The
+            # report page's Error Patterns / Skipped Tests sections filter on
+            # it, so it must land in the same commit as the editions above or
+            # the slider filters against a stale test set.
+            [ -f website/public/benchmarks/results/test262-file-editions.json ] && \
+              git add -f website/public/benchmarks/results/test262-file-editions.json || true
             # #2910 — the reconciled, edition-sliced feature-row counts
             # (passCount/totalCount) that generate-editions.ts patched into
             # feature-examples.json in the "Regenerate edition buckets" step
@@ -2616,7 +3053,10 @@ jobs:
             # (also a pure source measure; main is its sole writer now).
             node scripts/check-loc-budget.mjs --update || \
               echo "WARN: loc-budget baseline recompute on re-anchored tip failed (non-fatal)"
+            node scripts/check-func-budget.mjs --update-on-decrease || \
+              echo "WARN: func-budget baseline recompute on re-anchored tip failed (non-fatal)"
             git add -f scripts/loc-budget-baseline.json 2>/dev/null || true
+            git add -f scripts/func-budget-baseline.json 2>/dev/null || true
             if git diff --cached --quiet; then
               echo "Baseline already current on main (no delta after re-anchor) — nothing to push."
               PUSHED=1
@@ -2696,8 +3136,12 @@ jobs:
   # only on merge-queue-bot pushes. The idempotency guard below (skip when
   # runs/<sha> already exists) covers any overlap.
   # =====================================================================
+  # #3468 — this job ALSO refreshes the landing-page root baseline (both lanes)
+  # on queue merges, because promote-baseline's `environment: baseline-promote`
+  # deployment gate skips it on github-merge-queue[bot] pushes (see the promote
+  # step below for the full rationale). Both are mutually exclusive by actor.
   write-run-cache-bot:
-    name: cache per-SHA baseline for queue merge (#3467)
+    name: promote root baseline + cache per-SHA for queue merge (#3467/#3468)
     if: github.event_name == 'push' && github.actor == 'github-merge-queue[bot]'
     runs-on: ubuntu-latest
     permissions:
@@ -2716,15 +3160,8 @@ jobs:
           submodules: recursive
           fetch-depth: 2
 
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: 25
-
-      - name: Setup pnpm via Corepack
-        run: |
-          corepack enable
-          corepack prepare pnpm@10.30.2 --activate
+      - name: Setup Node and pnpm (cached)
+        uses: ./.github/actions/setup-node-pnpm
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -2753,6 +3190,7 @@ jobs:
           unzip -o /tmp/mg-group.zip -d shard-artifacts >/dev/null
           if [ ! -s shard-artifacts/test262-results-merged.jsonl ]; then
             echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "sa=false" >> "$GITHUB_OUTPUT"
             echo "::warning::#3467 group artifact ${ART_NAME} missing host JSONL — skipping per-SHA cache write."
             exit 0
           fi
@@ -2762,14 +3200,42 @@ jobs:
           echo "Group artifact host rows: ${HOST_ROWS}."
           if [ "$HOST_ROWS" -lt 40000 ]; then
             echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "sa=false" >> "$GITHUB_OUTPUT"
             echo "::warning::#3467 group artifact ${ART_NAME} looks truncated (host=${HOST_ROWS}, floor=40000) — skipping per-SHA cache write."
             exit 0
           fi
           echo "found=true" >> "$GITHUB_OUTPUT"
-          echo "Caching runs/${{ github.sha }} from ${ART_NAME} (id=${ART_ID})."
+          # #3468 — the same group artifact ALSO carries the standalone merged
+          # JSONL (uploaded together by merge-report). Gate the standalone
+          # landing-page root refresh INDEPENDENTLY so a standalone anomaly can
+          # never block the #3467 host per-SHA cache write (the sequential
+          # queue's regression base). sa=true only when the standalone JSONL is
+          # present and clears the same 40k corruption floor.
+          SA_OK=false
+          if [ -s shard-artifacts/test262-standalone-results-merged.jsonl ]; then
+            SA_ROWS=$(wc -l < shard-artifacts/test262-standalone-results-merged.jsonl)
+            echo "Group artifact standalone rows: ${SA_ROWS}."
+            if [ "$SA_ROWS" -ge 40000 ]; then
+              SA_OK=true
+            else
+              echo "::warning::#3468 standalone JSONL truncated (${SA_ROWS}, floor 40000) — refreshing host root only; standalone root left unchanged."
+            fi
+          else
+            echo "::warning::#3468 group artifact ${ART_NAME} missing standalone JSONL — refreshing host root only."
+          fi
+          echo "sa=${SA_OK}" >> "$GITHUB_OUTPUT"
+          echo "Caching runs/${{ github.sha }} + refreshing landing-page root baseline from ${ART_NAME} (id=${ART_ID}); standalone=${SA_OK}."
 
       - name: Heal poison-classified rows (#2099 parity)
         if: steps.group.outputs.found == 'true'
+        # (#4141) Same heal/shard scope parity as `promote-baseline` — see the
+        # long comment there. This job is `push` + merge-queue-bot only, so it
+        # always corresponds to the shards' non-dispatch branch ("1"); it can
+        # never be an `include_proposals: false` dispatch. Without it the
+        # per-SHA cached base (the #3467 regression base every later PR diffs
+        # against) carries the same laundered Temporal `skip` rows.
+        env:
+          TEST262_INCLUDE_PROPOSALS: "1"
         run: |
           # Match promote-baseline: heal contamination-poison rows before the
           # base is persisted, so no phantom "Binary emit error" row is carried
@@ -2787,99 +3253,243 @@ jobs:
             echo "::warning::#3467 heal-poison step failed/empty — caching the raw (unhealed) base JSONL (still preferable to the stale snapshot)."
             rm -f shard-artifacts/test262-results-healed.jsonl
           fi
+          # #3468 — heal the standalone lane too (parity with promote-baseline
+          # #2099), NON-FATAL and only when the standalone JSONL cleared the
+          # floor above. A heal hiccup falls back to the raw standalone rows.
+          if [ "${{ steps.group.outputs.sa }}" = "true" ]; then
+            if npx tsx scripts/heal-poison-rows.ts \
+                --target standalone \
+                --in  shard-artifacts/test262-standalone-results-merged.jsonl \
+                --out shard-artifacts/test262-standalone-results-healed.jsonl \
+              && [ -s shard-artifacts/test262-standalone-results-healed.jsonl ]; then
+              mv shard-artifacts/test262-standalone-results-healed.jsonl shard-artifacts/test262-standalone-results-merged.jsonl
+              echo "Healed poison rows in the standalone base JSONL."
+            else
+              echo "::warning::#3468 standalone heal-poison failed/empty — using the raw standalone JSONL."
+              rm -f shard-artifacts/test262-standalone-results-healed.jsonl
+            fi
+          fi
 
-      - name: Build merged report for cache summary (#3467)
+      - name: Build merged reports for cache summary + root baseline (#3467/#3468)
         if: steps.group.outputs.found == 'true'
         run: |
           node scripts/build-test262-report.mjs \
             --input  shard-artifacts/test262-results-merged.jsonl \
             --output shard-artifacts/test262-report-merged.json \
             --baseline-sha "${{ github.sha }}"
+          # #3468 — standalone report drives the landing-page standalone summary
+          # (test262-standalone-current.json). Uses --target standalone (parity
+          # with merge-report / promote-baseline) for the standalone-specific
+          # classification + categories file.
+          if [ "${{ steps.group.outputs.sa }}" = "true" ]; then
+            node scripts/build-test262-report.mjs \
+              --input  shard-artifacts/test262-standalone-results-merged.jsonl \
+              --output shard-artifacts/test262-standalone-report-merged.json \
+              --target standalone \
+              --baseline-sha "${{ github.sha }}"
+          fi
 
-      - name: Write + push runs/<sha> to baselines repo (#3467)
+      # #3468 — promote the FULL landing-page root baseline (both lanes) AND the
+      # #3467 per-SHA host cache to the baselines repo, in ONE commit.
+      #
+      # WHY THIS LIVES HERE (not in promote-baseline): the landing page
+      # (deploy-pages.yml) reads test262-current.{json,jsonl} +
+      # test262-standalone-current.{json,jsonl} from the baselines repo.
+      # `promote-baseline` refreshes those — but it carries
+      # `environment: baseline-promote`, whose deployment gate SKIPS the job on
+      # every github-merge-queue[bot] push (empty steps; verified run 29682548248
+      # #3467). Since ~all pushes to main are queue merges, the root baseline
+      # froze (~12h / 30 PRs stale, #3468). This job already runs on exactly those
+      # queue pushes with the repo-level BASELINE_DEPLOY_KEY and already has both
+      # lanes' merged JSONLs from the group artifact, so it is the right place to
+      # do the root refresh. promote-baseline's env/MAIN_DEPLOY_KEY main-repo
+      # summary path is left intact for the non-queue push / workflow_dispatch
+      # case — the two are MUTUALLY EXCLUSIVE by actor, so no double-write.
+      - name: Promote root baseline + per-SHA cache to baselines repo (#3467/#3468)
         if: steps.group.outputs.found == 'true'
         timeout-minutes: 10
         env:
           BASELINE_DEPLOY_KEY: ${{ secrets.BASELINE_DEPLOY_KEY }}
+          # (#3335) Trap-growth tolerance — normally 0 (strict). Raise via repo
+          # Actions variable for ONE intentional-reclassification refresh cycle.
+          BASELINE_TRAP_GROWTH_ALLOW: ${{ vars.BASELINE_TRAP_GROWTH_ALLOW || '0' }}
+          NTFY_URL: ${{ secrets.NTFY_URL }}
+          SA: ${{ steps.group.outputs.sa }}
         run: |
           set -uo pipefail
+
+          # Corruption floors on the built reports (mirror promote-baseline).
+          PASS=$(node -e "console.log(JSON.parse(require('fs').readFileSync('shard-artifacts/test262-report-merged.json','utf8')).summary.pass)")
+          TOTAL=$(node -e "console.log(JSON.parse(require('fs').readFileSync('shard-artifacts/test262-report-merged.json','utf8')).summary.total)")
+          if [ "$PASS" -lt 1000 ] || [ "$TOTAL" -lt 40000 ]; then
+            echo "::warning::#3468 host report looks corrupt (pass=$PASS total=$TOTAL) — not promoting."
+            exit 0
+          fi
+          if [ "$SA" = "true" ]; then
+            STANDALONE_PASS=$(node -e "console.log(JSON.parse(require('fs').readFileSync('shard-artifacts/test262-standalone-report-merged.json','utf8')).summary.pass)")
+            STANDALONE_TOTAL=$(node -e "console.log(JSON.parse(require('fs').readFileSync('shard-artifacts/test262-standalone-report-merged.json','utf8')).summary.total)")
+            if [ "$STANDALONE_PASS" -lt 1000 ] || [ "$STANDALONE_TOTAL" -lt 40000 ]; then
+              echo "::warning::#3468 standalone report corrupt (pass=$STANDALONE_PASS total=$STANDALONE_TOTAL) — refreshing host root only."
+              SA=false
+            fi
+          fi
+
           # SSH deploy key for the baselines-repo push.
           eval "$(ssh-agent -s)"
           echo "$BASELINE_DEPLOY_KEY" | ssh-add -
           mkdir -p ~/.ssh
           ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
 
-          # Metadata-only clone, materialize only runs/index.json (skip the huge
-          # runs/ blob history — #3392). NEW runs/<sha> files are staged
-          # explicitly with `git add --sparse` below.
+          # Metadata-only clone, materialize root files + runs/index.json (skip
+          # the huge runs/ blob history — #3392). NEW runs/<sha> files are staged
+          # explicitly with `git add -A --sparse` below.
           git clone --depth=1 --filter=blob:none --no-checkout git@github.com:loopdive/js2wasm-baselines.git /tmp/js2wasm-baselines
-          git -C /tmp/js2wasm-baselines sparse-checkout set --no-cone '/*' '!/runs/*' '/runs/index.json'
+          git -C /tmp/js2wasm-baselines sparse-checkout set --no-cone '/*' '!/runs/*' '/runs/index.json' '/runs/editions-index.json' '/runs/standalone-index.json'
           git -C /tmp/js2wasm-baselines checkout main
 
-          # Idempotent: if runs/<sha> already exists (a prior run of this job, or
-          # a non-bot promote of the same commit), there is nothing to add.
-          if git -C /tmp/js2wasm-baselines cat-file -e "HEAD:runs/${{ github.sha }}.jsonl" 2>/dev/null; then
-            echo "runs/${{ github.sha }}.jsonl already present in baselines repo — nothing to do."
-            exit 0
+          # Snapshot the pre-refresh JSONLs for the #3335 trap-growth gate.
+          cp /tmp/js2wasm-baselines/test262-current.jsonl /tmp/js2wasm-baselines/test262-current.before.jsonl 2>/dev/null || true
+
+          # Copy fresh HOST root files (always).
+          cp shard-artifacts/test262-results-merged.jsonl /tmp/js2wasm-baselines/test262-current.jsonl
+          cp shard-artifacts/test262-report-merged.json   /tmp/js2wasm-baselines/test262-current.json
+          cp shard-artifacts/test262-report-merged.json   /tmp/js2wasm-baselines/test262-report.json
+          cp shard-artifacts/test262-results-merged.jsonl /tmp/js2wasm-baselines/test262-results.jsonl
+          # Copy fresh STANDALONE root files (only when the lane cleared its floor).
+          if [ "$SA" = "true" ]; then
+            cp shard-artifacts/test262-standalone-results-merged.jsonl /tmp/js2wasm-baselines/test262-standalone-current.jsonl
+            cp shard-artifacts/test262-standalone-report-merged.json   /tmp/js2wasm-baselines/test262-standalone-current.json
+            cp shard-artifacts/test262-standalone-report-merged.json   /tmp/js2wasm-baselines/test262-standalone-report.json
+            cp shard-artifacts/test262-standalone-results-merged.jsonl /tmp/js2wasm-baselines/test262-standalone-results.jsonl
           fi
 
+          # (#3335) Trap-growth gate: REFUSE to bake a main-side increase of any
+          # uncatchable-trap category into the regression floor (test262-current
+          # .jsonl is the #3189 ratchet base). A hard fail here leaves the root
+          # stale for this SHA; the next queue merge retries (a flap self-heals),
+          # a real reclassification needs BASELINE_TRAP_GROWTH_ALLOW set once.
+          if [ -f /tmp/js2wasm-baselines/test262-current.before.jsonl ]; then
+            npx tsx scripts/check-baseline-trap-growth.ts \
+              --baseline /tmp/js2wasm-baselines/test262-current.before.jsonl \
+              --candidate /tmp/js2wasm-baselines/test262-current.jsonl \
+              --allow "${BASELINE_TRAP_GROWTH_ALLOW:-0}"
+          fi
+
+          # Update runs/index.json (trend graph history) from the host report.
+          node -e "
+          const fs = require('fs');
+          const report = JSON.parse(fs.readFileSync('/tmp/js2wasm-baselines/test262-current.json', 'utf8'));
+          const indexPath = '/tmp/js2wasm-baselines/runs/index.json';
+          fs.mkdirSync('/tmp/js2wasm-baselines/runs', { recursive: true });
+          const idx = fs.existsSync(indexPath) ? JSON.parse(fs.readFileSync(indexPath, 'utf8')) : [];
+          const entry = {
+            timestamp: new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').substring(0, 15),
+            pass: report.summary.pass,
+            fail: report.summary.fail,
+            ce: report.summary.compile_error || 0,
+            skip: report.summary.skip || 0,
+            total: report.summary.total,
+            strict_pass: (report.strict_summary || {}).pass || 0,
+            strict_total: (report.strict_summary || {}).total || 0,
+            gitHash: '${{ github.sha }}'.substring(0, 8),
+          };
+          const last = idx[idx.length - 1];
+          if (!last || last.pass !== entry.pass || last.total !== entry.total) {
+            idx.push(entry);
+            fs.writeFileSync(indexPath, JSON.stringify(idx, null, 2));
+            console.log('Appended to runs/index.json:', entry.pass, '/', entry.total);
+          } else {
+            console.log('Skipped duplicate entry (same pass/total as last run)');
+          }
+          "
+
+          # Append standalone trend history (landing-page mini graphs) when this
+          # lane cleared its floor. Editions data isn't generated in this job
+          # (see promote-baseline for the editions-index.json append) — this
+          # job only ever fires on merge-queue pushes, so editions history
+          # accrues from the promote-baseline path instead. Best-effort.
+          if [ "$SA" = "true" ]; then
+            node scripts/append-run-history.mjs \
+              --runs-dir /tmp/js2wasm-baselines/runs \
+              --standalone-report /tmp/js2wasm-baselines/test262-standalone-current.json \
+              --sha "${{ github.sha }}" || echo "::warning::append-run-history failed (non-fatal)"
+          fi
+
+          # #1081/#3467 — write the commit-hash-indexed HOST run cache entry so a
+          # PR's regression-gate diffs against main at its exact merge-base
+          # (distance-0), not the moving latest-main pointer. Idempotent.
           TEST262_VERSION=$(git -C "${{ github.workspace }}" submodule status test262 2>/dev/null | awk '{print $1}' | tr -d '+-' || echo "")
           node scripts/write-run-cache.mjs \
-            --report shard-artifacts/test262-report-merged.json \
-            --jsonl  shard-artifacts/test262-results-merged.jsonl \
+            --report /tmp/js2wasm-baselines/test262-current.json \
+            --jsonl  /tmp/js2wasm-baselines/test262-current.jsonl \
             --sha    "${{ github.sha }}" \
             --runs-dir /tmp/js2wasm-baselines/runs \
             --ref    "${{ github.ref }}" \
             --run-id "${{ github.run_id }}" \
-            --test262-version "$TEST262_VERSION"
+            --test262-version "$TEST262_VERSION" || echo "::warning::#1081 run-cache write failed (non-fatal)"
 
+          # Commit + push. The git-level `diff --cached --quiet` subsumes the
+          # unchanged-skip: when the root content matches the remote AND runs/<sha>
+          # already exists, nothing stages and we exit clean.
           cd /tmp/js2wasm-baselines
-          if [ ! -f "runs/${{ github.sha }}.jsonl" ]; then
-            # write-run-cache declined (corrupt/below floor) — nothing to push.
-            echo "No runs/${{ github.sha }} written (declined as corrupt); skipping push."
-            exit 0
-          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # Stage ONLY the two new per-SHA files. This job never rewrites the
-          # generated snapshot files, so a concurrent promote/back-to-back queue
-          # merge can only ever advance the tip — never content-conflict on our
-          # brand-new filenames. A plain rebase applies cleanly, so a simple
-          # fetch+rebase+push retry loop suffices (no re-anchor needed).
-          git add --sparse "runs/${{ github.sha }}.jsonl" "runs/${{ github.sha }}.json"
+          git add -A --sparse
           if git diff --cached --quiet; then
-            echo "Nothing staged for runs/${{ github.sha }} — already up to date."
+            echo "Nothing to promote (root unchanged and runs/${{ github.sha }} already present)."
             exit 0
           fi
-          git commit -m "chore(test262): cache per-SHA baseline runs/${{ github.sha }} (#3467) [skip ci]"
+          git commit -m "chore(test262): refresh landing-page baseline + cache runs/${{ github.sha }} — ${PASS}/${TOTAL} host (#3467/#3468) [skip ci]"
+
+          # (#2942) RE-ANCHOR / latest-wins: this job now rewrites GENERATED root
+          # files, so a concurrent promote/back-to-back queue merge can
+          # content-conflict — a plain rebase would deterministically exhaust.
+          # Snapshot the files THIS run wrote, hard-reset onto the fresh remote
+          # tip, re-apply the snapshot wholesale, re-commit, push. Ordering guard:
+          # if the remote tip already promotes a main SHA that DESCENDS from ours,
+          # a newer promote landed — ours is superseded, drop it and succeed.
+          BR=$(git rev-parse --abbrev-ref HEAD)
+          OUR_COMMIT=$(git rev-parse HEAD)
+          MSG=$(git log -1 --format=%s)
+          SNAP=$(mktemp -d)
+          git diff-tree --no-commit-id --name-only -r "$OUR_COMMIT" | while IFS= read -r f; do
+            if [ -f "$f" ]; then
+              mkdir -p "$SNAP/$(dirname "$f")"
+              cp "$f" "$SNAP/$f"
+            fi
+          done
+          git -C "$GITHUB_WORKSPACE" fetch --depth=200 --filter=blob:none origin main 2>/dev/null || true
           PUSHED=0
-          for attempt in 1 2 3 4 5 6; do
-            if git push origin HEAD:main; then
-              echo "Pushed runs/${{ github.sha }} (attempt ${attempt})."
+          for attempt in 1 2 3 4 5 6 7 8; do
+            if git push origin "HEAD:$BR"; then
+              echo "Pushed baselines (attempt ${attempt})."
               PUSHED=1
               break
             fi
-            echo "baselines push race lost (attempt ${attempt}) — re-anchoring on fresh tip and retrying."
-            git fetch origin main || { sleep 5; continue; }
-            # This job only ADDS a brand-new per-SHA file, so re-anchoring is
-            # trivial and conflict-free (proven pattern; avoids sparse-tree
-            # rebase edge cases — see promote-baseline #2942). `reset --hard`
-            # leaves the untracked runs/<sha>.* files we wrote in place.
-            git reset --hard origin/main
-            if git cat-file -e "HEAD:runs/${{ github.sha }}.jsonl" 2>/dev/null; then
-              echo "runs/${{ github.sha }} already landed via another actor — done."
+            echo "baselines push race lost (attempt ${attempt}) — re-anchoring on the fresh remote tip"
+            git fetch origin "$BR" || { sleep 5; continue; }
+            REMOTE_MSHA=$(git log -1 --format=%s "origin/$BR" | grep -oE '[0-9a-f]{7,40}' | tail -1 || true)
+            if [ -n "$REMOTE_MSHA" ] \
+              && git -C "$GITHUB_WORKSPACE" cat-file -e "${REMOTE_MSHA}^{commit}" 2>/dev/null \
+              && git -C "$GITHUB_WORKSPACE" merge-base --is-ancestor "${{ github.sha }}" "$REMOTE_MSHA" 2>/dev/null; then
+              echo "Remote baseline already promotes ${REMOTE_MSHA} (descendant of ${{ github.sha }}) — superseded; dropping."
               PUSHED=1
               break
             fi
-            git add --sparse "runs/${{ github.sha }}.jsonl" "runs/${{ github.sha }}.json" 2>/dev/null || true
+            git checkout -f -B "$BR" "origin/$BR"
+            (cd "$SNAP" && find . -type f | sed 's|^\./||') | while IFS= read -r f; do
+              mkdir -p "$(dirname "$f")"
+              cp "$SNAP/$f" "$f"
+            done
+            git add -A --sparse
             if git diff --cached --quiet; then
-              echo "Nothing left to stage after re-anchor — done."
+              echo "Re-anchored tree identical to the remote tip — nothing left to promote."
               PUSHED=1
               break
             fi
-            git commit -m "chore(test262): cache per-SHA baseline runs/${{ github.sha }} (#3467) [skip ci]"
+            git commit -m "$MSG"
             SLEEP=$((attempt * 5)); [ "$SLEEP" -gt 30 ] && SLEEP=30; sleep "$SLEEP"
           done
           if [ "$PUSHED" != "1" ]; then
-            echo "::warning::#3467 failed to push runs/${{ github.sha }} after 6 attempts. The next PR's gate falls back to the nearest cached ancestor / promoted snapshot (non-fatal drift, self-heals on the following merge)."
+            echo "::warning::#3468 failed to push the root baseline after 8 re-anchor attempts. The landing page + regression floor stay at the previous SHA until the next queue merge promotes (self-heals). Re-run this push (or workflow_dispatch promote-baseline) to force it."
           fi

@@ -4,7 +4,7 @@ title: "feat: `with` statement Tier 2 — dynamic-scope fallback (de-skip the 29
 status: in-progress
 assignee: ttraenkler/dev-conformance
 created: 2026-06-25
-updated: 2026-06-25
+updated: 2026-08-04
 priority: medium
 feasibility: hard
 model: fable
@@ -16,6 +16,35 @@ goal: spec-completeness
 depends_on: [1387, 2580]
 needs_arch_spec: false
 sprint: 67
+loc-budget-allow:
+  # Slice 3 (`with` read-modify-write) needs a dispatch hook at the two places
+  # the compiler decides how an identifier LHS is updated. Both are the sole
+  # entry points for their node kind, so the hook cannot live anywhere else; all
+  # of the new LOGIC is in the new file src/codegen/with-rmw.ts (0 god-file
+  # growth). operator-assignment.ts: +8 (compound-assign dispatch + import).
+  - src/codegen/expressions/operator-assignment.ts
+  # unary-updates.ts: +17 (++/-- prefix and postfix dispatch + import).
+  - src/codegen/expressions/unary-updates.ts
+func-budget-allow:
+  # Same two dispatch hooks. Both functions are the single switch over how an
+  # identifier LHS is updated, and the `with` Object Environment Record must be
+  # consulted BEFORE the const/local/global arms they already contain — so the
+  # check has to sit inside them (+7 / +10 lines). The body it dispatches to is
+  # in src/codegen/with-rmw.ts.
+  - src/codegen/expressions/operator-assignment.ts::compileCompoundAssignment
+  - src/codegen/expressions/unary-updates.ts::compilePrefixUpdate
+# (#1917/#2108 coercion-sites gate) with-rmw.ts: 0 -> 1 (__unbox_number).
+# A read-modify-write through a `with` scope reads an externref out of the
+# Object Environment Record, applies an f64 operator, and writes it back — so
+# the unbox is intrinsic to the operation, not incidental. It DELEGATES to the
+# engine's existing helper by funcMap name (`__unbox_number`, paired with
+# `__box_number` on the way out) and hand-rolls no ToString/ToNumber/ToPrimitive
+# matrix, which is what the gate actually guards against; the gate counts the
+# reference. This follows the #4160 precedent for delegating-by-name rather
+# than the discouraged pattern. If the single coercion engine grows an entry
+# point for "unbox, apply numeric op, rebox", this is a one-call rewrite.
+coercion-sites-allow:
+  - src/codegen/with-rmw.ts
 ---
 
 # #2663 — `with` statement Tier 2: dynamic-scope fallback
@@ -565,6 +594,88 @@ call $__extern_has                 ;; -> i32  (own+proto, value-independent)
   Tier 2's own change, not a #2580 dependency.
 - **#1387** (Tier 1) — extended, not replaced.
 
+## Architectural ruling — `with` remains an IR feature (2026-07-29)
+
+The current `src/codegen/with-scope.ts` implementation is transitional. The
+selector's refusal of `WithStatement` means only that the IR cannot represent
+its dynamic environment semantics yet; it is **not** a permanent legacy-only
+boundary. Complete `with` support must ultimately be owned by the IR.
+
+The IR design must represent an Object Environment Record rather than assigning
+every identifier to a fixed local/global slot. At minimum it must preserve:
+
+- single evaluation and `ToObject` conversion of the `with` target;
+- runtime `HasBinding` lookup, including the prototype chain and
+  `@@unscopables`, before falling back to the outer lexical environment;
+- dynamic reads, writes, compound assignments, update expressions, and deletes
+  with spec evaluation order and abrupt-completion propagation;
+- nested `with` environments and interaction with captured outer bindings.
+
+Closed-shape analysis may keep a static fast path, but the proof and the
+resulting environment operations belong in the IR. Direct-codegen handling
+should become only a compatibility adapter while module/function bodies migrate.
+
+IR completion evidence must include:
+
+- representative sloppy-mode `WithStatement` bodies present in
+  `irCompiledFuncs`, with no post-claim demotions;
+- equivalent host and standalone behavior for static and dynamic targets;
+- a same-SHA local A/B measurement of the complete Test262 `with` family,
+  including pass/fail and fail-signature transitions.
+
 ## Residual (as of #2199, PO reconcile 2026-06-28)
 
 NOT done — sliced feature. Slices 1-2 (HasBinding-gated read + assignment) + Slice 4 (@@unscopables HasBinding, host-mode) landed. Slice 3 (HasBinding-gated read-then-write: compound-assign + inc/dec, e.g. unscopables-inc-dec.js) remains; the 294 WithStatement tests are only partially de-skipped. Stays in-progress.
+
+## Re-measure 2026-08-04 — standalone lane, ES5 + untagged scope
+
+Source: `plan/log/analysis-2026-08-04-es5-untagged-standalone-clusters.md`.
+Baselines fetched 2026-08-04, `oracle_version` 12, lane `honest`, baseline SHA
+`d3d7ec4c`.
+
+**307 files** in the ES5 + untagged standalone scope — the third-largest
+mechanism there, behind the descriptor family (#2668, 762) and Array traversal
+(#3185, 738). 282 `ES5`-tagged, 25 untagged.
+
+**A path filter on `language/statements/with` undercounts this badly.** Only 108
+of the 307 live under that directory. The rest are the same dynamic-scope
+mechanism reached from elsewhere:
+
+```
+ 65  annexB/language/eval-code/{direct,indirect}
+ 54  annexB/language/global-code
+ 49  annexB/language/function-code
+ 45  language/expressions/compound-assignment/S11.13.2_A5.*   ← fails INSIDE a with block
+```
+
+The compound-assignment family is the one to notice: `scope.x === 1. Actual: NaN`
+(22 files) is a `with`-scoped read-then-write, i.e. exactly the Slice 3
+(HasBinding-gated read-then-write: compound-assign + inc/dec) residual this issue
+already names. It is being counted under `language/expressions` by any
+path-based census. The 2026-08-01 tail census reached the same conclusion from
+the other direction (its refutation #4: `with` reaches 175 files by body but only
+106 by path).
+
+Top failure shapes:
+
+```
+85  Expected SameValue(…)                              annexB/language/function-code/if-decl-no-else-func-existing-fn-update.js
+24  SyntaxError: NaN                                   annexB/language/eval-code/indirect/global-if-decl-else-stmt-…
+24  binding value is updated following evaluation      annexB/language/eval-code/direct/func-if-decl-else-stmt-…
+22  scope.x === 1. Actual: NaN                         language/expressions/compound-assignment/S11.13.2_A5.2_T2.js
+15  Initialized binding created prior to evaluation    annexB/language/function-code/switch-dflt-func-no-skip-try.js
+13  p1 === "x1". Actual: p1 === 1                      language/statements/with/S12.10_A1.1_T1.js
+13  binding is initialized to `undefined`              annexB/language/global-code/if-decl-no-else-global-init.js
+```
+
+**289 of 307 (94 %) also fail on the JS-host lane** — only 18 are
+standalone-only. This is a front-end scope-model gap, not a standalone-substrate
+one, which is worth stating explicitly because the issue sits under
+`goal: spec-completeness` and could otherwise be read as standalone work.
+
+Related but distinct: **#4021** (annexB eval-code `assert is not defined`, 120
+tests) is a harness-visibility problem inside eval'd code, not the scope-chain
+mechanism — keep the two separate when slicing.
+
+**Not verified by repro** — counts from the published baselines; no compiler was
+built for this re-measure.

@@ -31,10 +31,12 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { compileProject } from "../src/index.js";
+import { ESLINT_DEV_DEPENDENCY_SKIP, requireEslintFile, resolveEslintFile } from "./helpers/eslint.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const TMP_DIR = resolve(__dirname, "../.tmp/issue-2689");
+const ESLINT_SOURCE_CODE = resolveEslintFile("lib/languages/js/source-code/source-code.js");
 
 function write(name: string, src: string): string {
   mkdirSync(TMP_DIR, { recursive: true });
@@ -81,7 +83,7 @@ module.exports = { Derived };
 `,
     );
     const r = await compileProject(entry, { allowJs: true });
-    expect(r.success).toBe(true);
+    expect(r.success, r.errors.map((error) => error.message).join("\n")).toBe(true);
     if (!r.success) return;
     // Pre-fix: `Base_new` / `Derived_new` failed with "return_call: tail call
     // type error" because the lazy iterator import shifted indices out from
@@ -114,23 +116,19 @@ module.exports = { Derived };
 `,
     );
     const r = await compileProject(entry, { allowJs: true });
-    expect(r.success).toBe(true);
+    expect(r.success, r.errors.map((error) => error.message).join("\n")).toBe(true);
     if (!r.success) return;
     expect(WebAssembly.validate(r.binary)).toBe(true);
   });
 
-  it("the real eslint source-code.js validates", async () => {
-    const p = "/workspace/node_modules/eslint/lib/languages/js/source-code/source-code.js";
-    let r: Awaited<ReturnType<typeof compileProject>>;
-    try {
-      r = await compileProject(p, { allowJs: true });
-    } catch {
-      // eslint not installed in this environment — skip (the synthetic
-      // reproducers above pin the fix without the dependency).
-      return;
-    }
-    expect(r.success).toBe(true);
-    if (!r.success) return;
-    expect(WebAssembly.validate(r.binary)).toBe(true);
-  });
+  it.skipIf(ESLINT_SOURCE_CODE === null)(
+    `the real eslint source-code.js validates ${ESLINT_DEV_DEPENDENCY_SKIP}`,
+    async () => {
+      const entry = requireEslintFile(ESLINT_SOURCE_CODE, "lib/languages/js/source-code/source-code.js");
+      const r = await compileProject(entry, { allowJs: true });
+      expect(r.success, r.errors.map((error) => error.message).join("\n")).toBe(true);
+      if (!r.success) return;
+      expect(WebAssembly.validate(r.binary)).toBe(true);
+    },
+  );
 });

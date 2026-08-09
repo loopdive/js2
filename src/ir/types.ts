@@ -168,6 +168,35 @@ export interface FieldDef {
   name: string;
   type: ValType;
   mutable: boolean;
+  /**
+   * The field's constructor initializer is a call proven to return the native
+   * open `$Object` carrier (for example acorn's `this.options = getOptions()`).
+   * This is an optimisation hint only: consumers must keep the canonical
+   * dynamic fallback because the mutable field may subsequently be replaced.
+   */
+  dynamicObjectCarrier?: true;
+  /**
+   * The physical carrier was inferred as numeric, but whole-program source
+   * analysis proved every definition/write produces a JS boolean (#2847).
+   * Kept separate from ValType so finalize-time host boxing can recover the
+   * boolean without changing the already-emitted struct storage ABI.
+   */
+  jsBoolean?: true;
+  /**
+   * This source property is only assigned on conditional/loop paths. A hidden
+   * companion slot records per-instance own-property presence so an untouched
+   * default slot is distinguishable from an explicit null/zero assignment.
+   */
+  presenceTracked?: true;
+  /**
+   * (#3780) Bit index of this field's presence flag inside the struct's packed
+   * presence words. Only set together with {@link presenceTracked}. The word
+   * holding it is the field named `$presence_<bit >>> 5>`; the mask is
+   * `1 << (bit & 31)`. Packing matters for allocation volume: acorn's `Node`
+   * carries 63 conditionally-assigned properties, which as one `i32` slot each
+   * cost 252 bytes of every AST node — roughly half the object.
+   */
+  presenceBit?: number;
 }
 
 export type ValType =
@@ -311,7 +340,11 @@ type InstrBase =
   | { op: "if"; blockType: BlockType; then: Instr[]; else?: Instr[] }
   | { op: "br"; depth: number }
   | { op: "br_if"; depth: number }
-  | { op: "br_table" }
+  // #2952 slice 4 — full payload (was a stub the encoder rejected, #1939):
+  // pops an i32 selector; branches to targets[selector], or defaultDepth
+  // when the selector is out of range. Field names match the depth-bump
+  // walker in codegen/statements/exceptions.ts (targets / defaultDepth).
+  | { op: "br_table"; targets: number[]; defaultDepth: number }
   | { op: "return" }
   | { op: "end" }
   | { op: "call"; funcIdx: FuncHandle }
@@ -354,6 +387,11 @@ type InstrBase =
   | { op: "rethrow"; depth: number }
   | { op: "any.convert_extern" }
   | { op: "extern.convert_any" }
+  // (#3673) i31 small-int boxing — ref.i31: i32 -> (ref i31); i31.get_s:
+  // (ref null i31) -> i32. Abstract-heap-type ref.test/ref.cast reuse the
+  // existing variants with typeIdx = I31_HEAP_TYPE (-20).
+  | { op: "ref.i31" }
+  | { op: "i31.get_s" }
   // Memory load/store (linear memory)
   | { op: "i32.load"; align: number; offset: number }
   | { op: "i32.load8_u"; align: number; offset: number }

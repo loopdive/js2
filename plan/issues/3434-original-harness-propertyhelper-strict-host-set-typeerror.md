@@ -10,7 +10,7 @@ reasoning_effort: high
 task_type: bugfix
 area: codegen, runtime, testing
 language_feature: strict-mode, property-descriptors, exceptions
-goal: test262-conformance
+goal: es5
 related: [1460, 2017, 3374, 3426]
 ---
 

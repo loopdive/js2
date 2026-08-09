@@ -31,16 +31,17 @@ fragile. Maintainability improvements directly reduce coordination cost.
 | **586** | Deduplicate array method callbacks (~1,500 lines) | 0 | done | medium |
 | **637** | Create walkInstructions utility (eliminates 5 duplicate walkers) | 0 | done | medium |
 | **688** | Refactor codebase into smaller modules per language feature | 18 | done | medium |
-| **741** | Split index.ts (13,282 lines) into smaller modules | Backlog | ready | medium |
-| **742** | Extract and refactor compileCallExpression (3,350 lines) | 67 | in-progress | medium |
+| **741** | Split index.ts (13,282 lines) into smaller modules | Backlog | done | medium |
+| **742** | Extract and refactor compileCallExpression (3,350 lines) | 72 | done | high |
 | **795** | - f64.add on externref — missing unbox coercion (57 CE) | 0 | done | medium |
-| **803** | Extract call dispatch from expressions.ts → calls.ts | Backlog | ready | medium |
+| **803** | Extract call dispatch from expressions.ts → calls.ts | Backlog | done | medium |
 | **804** | Extract new expressions from expressions.ts → new-expression.ts | 53 | done | medium |
 | **806** | Extract increment/decrement from expressions/unary.ts → unary-updates.ts | 53 | done | medium |
-| **810** | Extract class compilation from index.ts → class-codegen.ts | Backlog | ready | medium |
+| **808** | Extract string/import infrastructure from index.ts → imports.ts | 72 | done | high |
+| **810** | Extract class compilation from index.ts → class-codegen.ts | Backlog | done | medium |
 | **811** | Extract fixup passes from index.ts → fixups.ts | 39 | done | medium |
 | **828** | Unexpected undefined AST node in compileExpression (154 CE) | 31 | done | medium |
-| **869** | Refactor default params: caller-side insertion instead of sNaN sentinel | Backlog | ready | medium |
+| **869** | Refactor default params: caller-side insertion instead of sNaN sentinel | current | ready | high |
 | **909** | Split codegen/index.ts into context, registry, collect, and api modules | 31 | done | high |
 | **918** | Create a curated batch of contributor-friendly starter issues with exact file ownership and acceptance criteria | 36 | done | medium |
 | **968** | Block scope variable shadows broken by #954 dedup locals (25 tests) | 38 | done | high |
@@ -57,19 +58,65 @@ fragile. Maintainability improvements directly reduce coordination cost.
 | **1561** | Architect review: decompose compiler into smaller, reviewable modules | Backlog | ready | high |
 | **1562** | Architect audit: review all open issues for codebase consistency — update stale line numbers, function names, and file paths | Backlog | ready | high |
 | **1848** | Dead-code sweep: identical branches, unused locals/params, obsolete scaffolding | Backlog | backlog | low |
-| **1849** | Refactor diverged copy-paste (super dispatch, closure drainers, resolveVec, extern_has, typed-default) | Backlog | backlog | low |
+| **1849** | Refactor diverged copy-paste (super dispatch, closure drainers, resolveVec, extern_has, typed-default) | Backlog | wont-fix | low |
 | **1857** | Carry compile-time-constant facts as IR node attributes, not synthetic SSA operands | Backlog | backlog | low |
 | **1858** | Compiler correctness & production-hardening audit (fail-loud, validate, gate) | Backlog | done | high |
 | **1860** | Backend naming symmetry — rename codegen/ + codegen-linear/ to backend/gc + backend/linear (neither reads as the default) | Backlog | backlog | low |
-| **1916** | Symbolic function references in WasmGC codegen — retire the late-import index-shift machinery | 67 | blocked | high |
+| **1916** | Symbolic function references in WasmGC codegen — retire the late-import index-shift machinery | current | ready | high |
 | **1926** | Remove backend ValType/typeIdx from IrType — unions and boxing must be backend-symbolic | 65 | done | medium |
-| **1930** | TypeOracle — one type-query boundary between the TS checker and codegen (unblocks TS7, kills suppression heuristics) | 67 | blocked | high |
+| **1930** | TypeOracle — one type-query boundary between the TS checker and codegen (unblocks TS7, kills suppression heuristics) | current | ready | high |
 | **1934** | Decompose runtime.ts resolveImport — 5,000-line function, 188 name checks, into per-domain handler tables | Backlog | backlog | medium |
 | **1944** | CI cost: build the compiler bundle once per run and cache pnpm — ~120-170 wasted runner-minutes per test262 run | Backlog | backlog | medium |
 | **2137** | IrPathReport channel: stop laundering IR fallbacks through ctx.errors warnings | 63 | done | medium |
-| **2138** | IR-first compile-once inversion: selector decides before compileDeclarations (flag-gated investigation) | 67 | blocked | high |
+| **2138** | IR-first compile-once inversion: selector decides before compileDeclarations (flag-gated investigation) | 69 | done | high |
 | **2145** | Generate plan/log/ir-adoption.md adoption table + bucket counts from source | 63 | done | low |
 | **2146** | Retire the registration-indirection layer in codegen/shared.ts | 65 | done | medium |
+| **2750** | Consolidate process docs: prune memory store + slim CLAUDE.md (role-specific law → agent defs) | Backlog | ready | medium |
+| **2751** | Budget-windowed rolling sprint model: sprint:current queue + budget-triggered freeze + auto-sync to TaskList | 69 | done | high |
+| **2762** | Hybrid migration-cost audit: type-directed fast-path safety-predicate checklist (living doc) | 69 | done | high |
+| **2827** | Statusline + dashboard kanban ignore `sprint: current` (unfinished #2751 acceptance criterion) | 69 | done | medium |
+| **2947** | test262-sharded workflow_dispatch ir_first lane — repeatable off-box #2138 measurement | 69 | done | medium |
+| **3029** | Clean compiler architecture umbrella: layered module map, five-part backend contract, reviewability ratchets | current | ready | high |
+| **3102** | LOC regrowth ratchet: check:loc-budget CI gate for god-files | Backlog | done | high |
+| **3103** | Split src/runtime.ts (15,032 LOC) host runtime by concern; decompose resolveImport (6,517-line function) | current | ready | high |
+| **3104** | Re-split codegen/index.ts (16,566 LOC, regrown 2.6x) into subsystem modules; driver-only index | current | ready | high |
+| **3105** | Emit-idiom builder library: dedupe repeated Wasm instruction scaffolds (throw-guard x17, counter-loop x21, proxy-guard x12, hash-probe x10) | current | in-progress | high |
+| **3106** | Central host-import signature registry: kill 514 inline ensureLateImport signature re-declarations | Backlog | ready | medium |
+| **3107** | Cast-debt codemod: eliminate 10,678 'as Instr' + 129 'as unknown as Instr' + shrink 579 'as any' | 72 | done | high |
+| **3108** | Decompose the ensureObjectRuntime entangled property-storage core (3,494 LOC) into cohesive sibling modules | current | ready | medium |
+| **3109** | Test-helper consolidation: 132 test files re-declare compileAndRun (10+ signature variants) across 292k test LOC | 75 | done | high |
+| **3110** | Dead-code sweep: 128 exported symbols referenced nowhere else in src/tests/scripts | Backlog | done | medium |
+| **3111** | Decompose the five call-shape god functions (#742 residue) into per-family probe modules | current | ready | medium |
+| **3112** | Decompose the remaining lowering god-functions: compilePropertyAccess (3,183), compileBinaryExpression (3,015), compileNewExpression (2,930) | Backlog | ready | low |
+| **3114** | CodegenContext diet: 282 fields -> subsystem sub-contexts + one helper-memo registry for the 109 ensureXxx families | Backlog | ready | low |
+| **3115** | Refresh workflow stale-checkout guard: recompute source-derived baselines after re-anchor | current | ready | high |
+| **3131** | loc-budget/coercion-sites gates: end the per-PR baseline-bump merge-conflict churn | 71 | done | high |
+| **3182** | Code-bloat elimination EPIC: consolidate duplicated codegen scaffolding into the existing shared machinery | current | ready | high |
+| **3191** | bloat S1: unify the 4 hand-rolled JS-error-throw templates on buildThrowJsErrorInstrs | 71 | done | high |
+| **3192** | bloat S2: route DataView + RegExp brand checks through receiver-brand.ts | 72 | done | high |
+| **3193** | bloat S3: delete the 5 shape-path Array.prototype.*.call clones, route through the synthetic-call rewrite | 72 | done | medium |
+| **3194** | bloat S4: new-super.ts — extract the shared super-dispatch core (compileSuperMethodCall ≈ compileSuperElementMethodCall) | 71 | done | high |
+| **3195** | bloat S5: runtime.ts — one parameterized closure-iterable drainer (fold the 3 copies + truthyEnv dup) | 71 | done | high |
+| **3196** | bloat S6: de-inline the standalone dynamic-HOF lane in compileArrayLikePrototypeCall onto the #3098 __hof_* steppers | current | ready | medium |
+| **3273** | Oracle ratchet gate: make change-scoped (net) — stop whole-tree re-flagging sibling split modules | 72 | done | high |
+| **3274** | Decompose ensureObjectRuntime into cohesive sibling modules (WAVE-B, slices 1-3) | 72 | done | high |
+| **3279** | Coercion-site drift gate: net-per-vocabulary — stop relocation-shift failures on god-file splits | 72 | done | high |
+| **3282** | Decompose the second-level god-functions created by the Wave-B/C extractions (+ ensureAnyHelpers, + deferred object-runtime core) | current | in-progress | high |
+| **3358** | codegen: relocate TypedArray.prototype.set bounds check out of array-methods.ts (validated design, #3202 took the allowance route instead) | 72 | done | low |
+| **3399** | Architecture modularization + bloat-reduction roadmap: 2026-07-18 re-grounding + god-function enforcement axis | current | ready | high |
+| **3400** | R-FUNC: per-function LOC ceiling ratchet (check:func-budget) — enforce the 300-LOC function criterion (#3102 slice 2) | 76 | done | high |
+| **3447** | ci(test262): make the #1942 compile-timeout count guard contention-tolerant | 72 | done | high |
+| **3448** | ci(test262): promote push:main baseline from the merge_group's own artifacts (skip the 114-job rerun) | 72 | done | high |
+| **3449** | ci(#3431 follow-up): re-derive merge_group shard constants from post-#3374 timings | 76 | done | medium |
+| **3450** | decision(test262): JS-host lane native-JS harness — oracle v9 policy proposal [DECISION — needs sign-off] | Backlog | blocked | medium |
+| **3452** | ci(test262): cache pnpm store / prebuilt compiler-bundle artifact across shard jobs | current | ready | low |
+| **3457** | ci(test262): make the merge_group regression-ratio gate flap-tolerant (stop false-parking symmetric content-current churn) | 72 | done | medium |
+| **3458** | fix(website): standalone edition conformance is per-edition, not cumulative — total mismatches js-host on the landing page | 72 | done | medium |
+| **3461** | test262: productionize native-harness fast oracle (worker mode flag + harness split + binding shim) | Backlog | done | high |
+| **3462** | test262: two-baseline + fast-oracle-lane plumbing (oracle_lane stamp, diff-test262 guard, fast baseline fetch) | Backlog | done | high |
+| **3463** | ci(test262): two-oracle wiring — fast merge_group gate + daily honest cron + #3448 fast-lane rework + landing-page honest-only guard | Backlog | ready | high |
+| **3464** | ci(test262): honest-lane (daily) regression detection + revert-PR path | Backlog | ready | high |
+| **3465** | ci(test262): fast-baseline seed / migration (one-shot native-harness full-corpus rebase for the fast lane) | Backlog | ready | high |
 
 <!-- AUTOGENERATED:GOAL-ISSUES-END -->
 

@@ -686,20 +686,24 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
     expect((instance.exports as Record<string, () => number>).run()).toBe(42);
   });
 
-  it("new Proxy fails explicitly in standalone mode without leaking proxy host imports", async () => {
+  it("new Proxy runs through the standalone native proxy runtime without host imports", async () => {
     const r = await compile(
       `
-        export function wrap(target: any): any {
-          return new Proxy(target, {});
+        export function run(): number {
+          const target: any = { value: 1 };
+          const proxy: any = new Proxy(target, {
+            get: function (): number { return 42; },
+          });
+          return proxy.value;
         }
       `,
       { target: "standalone" },
     );
-    expect(r.success).toBe(false);
-    const joined = r.errors.map((e) => e.message).join("\n");
-    expect(joined).toMatch(/Proxy not supported in standalone mode/);
-    expect(joined).toMatch(/#1472 Phase C/);
+    expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     assertNoHostObjectImports(r.imports);
+    expect(WebAssembly.validate(r.binary)).toBe(true);
+    const { instance } = await WebAssembly.instantiate(r.binary, {});
+    expect((instance.exports as Record<string, () => number>).run()).toBe(42);
   });
 
   it("Proxy.revocable fails explicitly in standalone mode without leaking proxy host imports", async () => {
@@ -747,32 +751,44 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
     expect((instance.exports as Record<string, () => number>).run()).toBe(2);
   });
 
-  it("Phase C: unsupported Reflect.* methods refuse in standalone without leaking __reflect_* imports", async () => {
-    // The descriptor/prototype/integrity/apply/construct family has no native
-    // analog yet; each must fail at compile time with the Phase C message
-    // instead of leaking an env::__reflect_* import that traps at instantiation.
-    // Reflect.get/set/has/deleteProperty are covered by #1905.
-    const cases: ReadonlyArray<[string, string]> = [
-      ["defineProperty", `export function f(o: any): boolean { return Reflect.defineProperty(o, "k", {}); }`],
-      [
-        "getOwnPropertyDescriptor",
-        `export function f(o: any): any { return Reflect.getOwnPropertyDescriptor(o, "k"); }`,
-      ],
-      ["getPrototypeOf", `export function f(o: any): any { return Reflect.getPrototypeOf(o); }`],
-      ["setPrototypeOf", `export function f(o: any, p: any): boolean { return Reflect.setPrototypeOf(o, p); }`],
-      ["apply", `export function f(fn: any, t: any, a: any): any { return Reflect.apply(fn, t, a); }`],
-      ["construct", `export function f(c: any, a: any): any { return Reflect.construct(c, a); }`],
-    ];
-    for (const [method, source] of cases) {
-      const r = await compile(source, { target: "standalone" });
-      expect(r.success, `Reflect.${method} should refuse in standalone`).toBe(false);
-      const joined = r.errors.map((e) => e.message).join("\n");
-      expect(joined, `Reflect.${method} error text`).toMatch(
-        new RegExp(`Reflect\\.${method} not supported in standalone mode`),
-      );
-      expect(joined).toMatch(/#1472 Phase C/);
-      assertNoHostObjectImports(r.imports);
-    }
+  it("Phase C: Reflect descriptor and prototype methods now run natively without __reflect_* imports", async () => {
+    const r = await compile(
+      `export function run(): number {
+        const proto: any = { inherited: 3 };
+        const o: any = {};
+        const defined = Reflect.defineProperty(o, "own", {
+          value: 7,
+          writable: true,
+          enumerable: true,
+          configurable: true,
+        });
+        const descriptor: any = Reflect.getOwnPropertyDescriptor(o, "own");
+        const set = Reflect.setPrototypeOf(o, proto);
+        const got: any = Reflect.getPrototypeOf(o);
+        return defined && set && descriptor.value === 7 && got === proto ? 1 : 0;
+      }`,
+      { target: "standalone" },
+    );
+    expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
+    expect(r.imports.some((i) => i.module === "env" && i.name.startsWith("__reflect_"))).toBe(false);
+    assertNoHostObjectImports(r.imports);
+    expect(WebAssembly.validate(r.binary)).toBe(true);
+    const { instance } = await WebAssembly.instantiate(r.binary, {});
+    expect((instance.exports as Record<string, () => number>).run()).toBe(1);
+  });
+
+  it("Phase C: Reflect.apply still refuses explicitly without leaking __reflect_apply", async () => {
+    const r = await compile(
+      `export function f(fn: any, receiver: any, args: any): any {
+        return Reflect.apply(fn, receiver, args);
+      }`,
+      { target: "standalone" },
+    );
+    expect(r.success).toBe(false);
+    const joined = r.errors.map((e) => e.message).join("\n");
+    expect(joined).toMatch(/Reflect\.apply not supported in standalone mode/);
+    expect(joined).toMatch(/#1472 Phase C/);
+    assertNoHostObjectImports(r.imports);
   });
 
   it("default target (gc) still routes Reflect.* through the JS-host __reflect_* imports", async () => {
@@ -1311,7 +1327,7 @@ describe("#1888 Slice 3 — standalone Type.prototype.<m>.call borrowed dispatch
     expect((instance.exports as NumExports).run()).toBe(1);
   });
 
-  it("Array.prototype.push.call refuses-loud (rides on #2177, no silent-wrong)", async () => {
+  it("Array.prototype.push.call on a dynamic receiver refuses loudly instead of trapping", async () => {
     const r = await compile(
       `export function run(): number { const a: any = []; Array.prototype.push.call(a, 5); return 1; }`,
       STD,
@@ -1319,7 +1335,8 @@ describe("#1888 Slice 3 — standalone Type.prototype.<m>.call borrowed dispatch
     expect(r.success).toBe(false);
     const joined = r.errors.map((e) => e.message).join("\n");
     expect(joined).toMatch(/#1888 Slice 3\/4/);
-    expect(joined).toMatch(/#2177/);
+    expect(joined).toMatch(/Array brand arm rides on #2177/);
+    assertNoHostObjectImports(r.imports);
   });
 
   it("Object.prototype.isPrototypeOf.call routes native (prototype-chain helper)", async () => {

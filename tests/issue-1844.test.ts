@@ -13,6 +13,9 @@
 import { describe, expect, it } from "vitest";
 
 import { asBlockId, asValueId, irVal, verifyIrFunction, type IrFunction, type IrInstr } from "../src/ir/index.js";
+import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
+
+const irIdentities = createTestIrFunctionIdentityFactory("issue-1844");
 
 const F64 = irVal({ kind: "f64" });
 const I32 = irVal({ kind: "i32" });
@@ -47,7 +50,7 @@ describe("#1844 — IR verifier recurses into nested buffers", () => {
     const b = asValueId(3);
     const r = asValueId(4);
     const fn: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [],
       resultTypes: [F64],
       blocks: [
@@ -84,7 +87,7 @@ describe("#1844 — IR verifier recurses into nested buffers", () => {
     const elseV = asValueId(3);
     const ifRes = asValueId(4);
     const fn: IrFunction = {
-      name: "dupNested",
+      ...irIdentities.next("dupNested"),
       params: [],
       resultTypes: [F64],
       blocks: [
@@ -123,7 +126,7 @@ describe("#1844 — IR verifier recurses into nested buffers", () => {
     // body, returned null, and the gate `continue`d.
     const x = asValueId(1);
     const fn: IrFunction = {
-      name: "g",
+      ...irIdentities.next("g"),
       params: [],
       resultTypes: [F64],
       blocks: [
@@ -159,7 +162,7 @@ describe("#1844 — IR verifier recurses into nested buffers", () => {
     const elseV = asValueId(3);
     const ifRes = asValueId(4);
     const fn: IrFunction = {
-      name: "useBeforeDefNested",
+      ...irIdentities.next("useBeforeDefNested"),
       params: [],
       resultTypes: [F64],
       blocks: [

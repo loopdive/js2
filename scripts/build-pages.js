@@ -295,6 +295,35 @@ const PUBLIC_REPORT_SHORT = join(WEBSITE, "public", "benchmarks", "report.html")
 copyFileIfExists(PUBLIC_REPORT, join(PAGES_DIST, "benchmarks", "results", "report.html"));
 copyFileIfExists(PUBLIC_REPORT_SHORT, join(PAGES_DIST, "benchmarks", "report.html"));
 
+// npm package compatibility page (scripts/generate-npm-compat-report.mjs) —
+// same overwrite-Vite pattern as report.html above, since it also uses a
+// <npm-compat-chart> web component Vite doesn't process. The data JSON
+// prefers the canonical benchmarks/results/ copy, falling back to the
+// website/public/ mirror, matching history.json/latest.json below.
+copyFileIfExists(join(WEBSITE, "public", "npm-compat.html"), join(PAGES_DIST, "npm-compat.html"));
+const npmCompatSource = resolvePreferredFileOrNull(
+  join(BENCHMARKS_RESULTS_DIR, "npm-compat.json"),
+  join(PUBLIC_BENCH, "npm-compat.json"),
+);
+if (npmCompatSource) {
+  copyFile(npmCompatSource, join(PAGES_DIST, "benchmarks", "results", "npm-compat.json"));
+}
+// Sibling perf rows consumed by the shared <perf-benchmark-chart> on that page.
+const npmCompatPerfSource = resolvePreferredFileOrNull(
+  join(BENCHMARKS_RESULTS_DIR, "npm-compat-perf.json"),
+  join(PUBLIC_BENCH, "npm-compat-perf.json"),
+);
+if (npmCompatPerfSource) {
+  copyFile(npmCompatPerfSource, join(PAGES_DIST, "benchmarks", "results", "npm-compat-perf.json"));
+}
+const npmCompatHistorySource = resolvePreferredFileOrNull(
+  join(BENCHMARKS_RESULTS_DIR, "npm-compat-history.json"),
+  join(PUBLIC_BENCH, "npm-compat-history.json"),
+);
+if (npmCompatHistorySource) {
+  copyFile(npmCompatHistorySource, join(PAGES_DIST, "benchmarks", "results", "npm-compat-history.json"));
+}
+
 // Add the static dashboard route and pre-generated dashboard data when the
 // private planning artifacts are present. Public exports intentionally omit
 // them.
@@ -369,6 +398,16 @@ const test262RunsIndexSource = resolvePreferredFileOrNull(
   join(BENCHMARKS_RESULTS_DIR, "runs", "index.json"),
   join(PUBLIC_BENCH, "runs", "index.json"),
 );
+// Per-ES-edition and per-standalone-target trend history (landing-page mini
+// trend graphs). Same fallback order as test262RunsIndexSource above.
+const test262RunsEditionsIndexSource = resolvePreferredFileOrNull(
+  join(BENCHMARKS_RESULTS_DIR, "runs", "editions-index.json"),
+  join(PUBLIC_BENCH, "runs", "editions-index.json"),
+);
+const test262RunsStandaloneIndexSource = resolvePreferredFileOrNull(
+  join(BENCHMARKS_RESULTS_DIR, "runs", "standalone-index.json"),
+  join(PUBLIC_BENCH, "runs", "standalone-index.json"),
+);
 copyFile(test262ReportSource, join(PAGES_DIST, "benchmarks", "results", "test262-report.json"));
 if (test262StandaloneReportSource) {
   copyFile(test262StandaloneReportSource, join(PAGES_DIST, "benchmarks", "results", "test262-standalone-report.json"));
@@ -378,6 +417,15 @@ if (test262ResultsSource) {
 }
 if (test262RunsIndexSource) {
   copyFile(test262RunsIndexSource, join(PAGES_DIST, "benchmarks", "results", "runs", "index.json"));
+}
+if (test262RunsEditionsIndexSource) {
+  copyFile(test262RunsEditionsIndexSource, join(PAGES_DIST, "benchmarks", "results", "runs", "editions-index.json"));
+}
+if (test262RunsStandaloneIndexSource) {
+  copyFile(
+    test262RunsStandaloneIndexSource,
+    join(PAGES_DIST, "benchmarks", "results", "runs", "standalone-index.json"),
+  );
 }
 
 const equivTests = buildEquivTests();
@@ -399,6 +447,7 @@ writeJson(join(PLAYGROUND_APP_DATA_DIR, "test262-file-results.json"), test262Dat
 // public/benchmarks/results/ for any files curated there.
 const TOP_BENCH_RESULTS = join(PAGES_DIST, "benchmarks", "results");
 for (const fileName of [
+  "benchmark-manifest.json",
   "playground-benchmark-sidebar.json",
   "playground-benchmark-sidebar-no-jit.json",
   "loadtime-benchmarks.json",
@@ -412,8 +461,13 @@ for (const fileName of [
     copyFile(source, join(PLAYGROUND_BENCHMARKS_RESULTS_DIR, fileName));
   }
 }
-if (existsSync(join(PUBLIC_BENCH, "loadtime"))) {
-  copyDirectory(join(PUBLIC_BENCH, "loadtime"), join(PLAYGROUND_BENCHMARKS_RESULTS_DIR, "loadtime"));
+const loadtimeSource = resolvePreferredFileOrNull(
+  join(BENCHMARKS_RESULTS_DIR, "loadtime"),
+  join(PUBLIC_BENCH, "loadtime"),
+);
+if (loadtimeSource) {
+  copyDirectory(loadtimeSource, join(TOP_BENCH_RESULTS, "loadtime"));
+  copyDirectory(loadtimeSource, join(PLAYGROUND_BENCHMARKS_RESULTS_DIR, "loadtime"));
 }
 if (test262RunsIndexSource) {
   copyFile(test262RunsIndexSource, join(PLAYGROUND_BENCHMARKS_RESULTS_DIR, "runs", "index.json"));
@@ -434,7 +488,13 @@ writeFileSync(join(PAGES_DIST, "CNAME"), "js2.loopdive.com\n");
 
 // Copy web components to pages-dist root and dashboard
 const COMPONENTS_DIR = join(WEBSITE, "components");
-for (const file of ["site-nav.js", "t262-charts.js", "trend-chart.js", "perf-benchmark-chart.js"]) {
+for (const file of [
+  "site-nav.js",
+  "t262-charts.js",
+  "trend-chart.js",
+  "perf-benchmark-chart.js",
+  "npm-compat-chart.js",
+]) {
   copyFileIfExists(join(COMPONENTS_DIR, file), join(PAGES_DIST, "components", file));
 }
 

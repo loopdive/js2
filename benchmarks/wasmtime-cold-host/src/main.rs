@@ -38,6 +38,11 @@ struct Preload {
     path: String,
 }
 
+struct TimedSamples {
+    elapsed_ms: Vec<f64>,
+    outputs: Vec<Option<f64>>,
+}
+
 fn main() {
     if let Err(err) = run() {
         eprintln!("wasmtime-cold-host: {err}");
@@ -46,12 +51,17 @@ fn main() {
 }
 
 fn run() -> Result<(), Box<dyn Error>> {
+    if env::args().nth(1).as_deref() == Some("--version") {
+        println!("wasmtime {}", wasmtime_environ::VERSION);
+        return Ok(());
+    }
     let options = parse_args()?;
     let arg_i32: i32 = options.arg_text.parse()?;
     let arg_f64: f64 = options.arg_text.parse()?;
 
     let mut config = Config::new();
     config.wasm_component_model(true);
+    config.wasm_exceptions(true);
     config.wasm_function_references(true);
     config.wasm_gc(true);
 
@@ -98,11 +108,18 @@ fn run() -> Result<(), Box<dyn Error>> {
     };
 
     let samples_json = samples
+        .elapsed_ms
         .iter()
         .map(|sample| sample.to_string())
         .collect::<Vec<_>>()
         .join(",");
-    println!("{{\"samplesMs\":[{samples_json}]}}");
+    let outputs_json = samples
+        .outputs
+        .iter()
+        .map(|output| output.map_or_else(|| "null".to_string(), |value| value.to_string()))
+        .collect::<Vec<_>>()
+        .join(",");
+    println!("{{\"samplesMs\":[{samples_json}],\"outputs\":[{outputs_json}]}}");
     Ok(())
 }
 
@@ -267,16 +284,22 @@ fn time_core_runs_direct(
     arg_i32: i32,
     arg_f64: f64,
     runs: usize,
-) -> Result<Vec<f64>, Box<dyn Error>> {
-    let mut samples = Vec::with_capacity(runs);
+) -> Result<TimedSamples, Box<dyn Error>> {
+    let mut elapsed_ms = Vec::with_capacity(runs);
+    let mut outputs = Vec::with_capacity(runs);
     for _ in 0..runs {
         let t0 = Instant::now();
         let mut store = Store::new(engine, ());
         let instance = Instance::new(&mut store, module, &[])?;
-        call_core_run_once(signature, &mut store, &instance, arg_i32, arg_f64)?;
-        samples.push(t0.elapsed().as_secs_f64() * 1000.0);
+        outputs.push(call_core_run_once(
+            signature, &mut store, &instance, arg_i32, arg_f64,
+        )?);
+        elapsed_ms.push(t0.elapsed().as_secs_f64() * 1000.0);
     }
-    Ok(samples)
+    Ok(TimedSamples {
+        elapsed_ms,
+        outputs,
+    })
 }
 
 fn time_core_runs_linked(
@@ -287,18 +310,24 @@ fn time_core_runs_linked(
     arg_i32: i32,
     arg_f64: f64,
     runs: usize,
-) -> Result<Vec<f64>, Box<dyn Error>> {
-    let mut samples = Vec::with_capacity(runs);
+) -> Result<TimedSamples, Box<dyn Error>> {
+    let mut elapsed_ms = Vec::with_capacity(runs);
+    let mut outputs = Vec::with_capacity(runs);
     for _ in 0..runs {
         let t0 = Instant::now();
         let mut store = Store::new(engine, ());
         let mut linker = wasi_linker(engine)?;
         define_preloads(&mut linker, &mut store, preloads)?;
         let instance = linker.instantiate(&mut store, module)?;
-        call_core_run_once(signature, &mut store, &instance, arg_i32, arg_f64)?;
-        samples.push(t0.elapsed().as_secs_f64() * 1000.0);
+        outputs.push(call_core_run_once(
+            signature, &mut store, &instance, arg_i32, arg_f64,
+        )?);
+        elapsed_ms.push(t0.elapsed().as_secs_f64() * 1000.0);
     }
-    Ok(samples)
+    Ok(TimedSamples {
+        elapsed_ms,
+        outputs,
+    })
 }
 
 fn time_component_runs(
@@ -308,16 +337,22 @@ fn time_component_runs(
     arg_i32: i32,
     arg_f64: f64,
     runs: usize,
-) -> Result<Vec<f64>, Box<dyn Error>> {
-    let mut samples = Vec::with_capacity(runs);
+) -> Result<TimedSamples, Box<dyn Error>> {
+    let mut elapsed_ms = Vec::with_capacity(runs);
+    let mut outputs = Vec::with_capacity(runs);
     for _ in 0..runs {
         let t0 = Instant::now();
         let mut store = Store::new(engine, ());
         let instance = instance_pre.instantiate(&mut store)?;
-        call_component_run_once(signature, &mut store, &instance, arg_i32, arg_f64)?;
-        samples.push(t0.elapsed().as_secs_f64() * 1000.0);
+        outputs.push(call_component_run_once(
+            signature, &mut store, &instance, arg_i32, arg_f64,
+        )?);
+        elapsed_ms.push(t0.elapsed().as_secs_f64() * 1000.0);
     }
-    Ok(samples)
+    Ok(TimedSamples {
+        elapsed_ms,
+        outputs,
+    })
 }
 
 fn define_preloads(
@@ -337,30 +372,30 @@ fn call_core_run_once(
     instance: &Instance,
     arg_i32: i32,
     arg_f64: f64,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<Option<f64>, Box<dyn Error>> {
     match signature {
         RunSignature::UnitToUnit => {
             let run = instance.get_typed_func::<(), ()>(&mut *store, "run")?;
             black_box(run.call(&mut *store, ())?);
+            Ok(None)
         }
         RunSignature::I32ToI32 => {
             let run = instance.get_typed_func::<i32, i32>(&mut *store, "run")?;
-            black_box(run.call(&mut *store, arg_i32)?);
+            Ok(Some(black_box(run.call(&mut *store, arg_i32)?) as f64))
         }
         RunSignature::I32ToF64 => {
             let run = instance.get_typed_func::<i32, f64>(&mut *store, "run")?;
-            black_box(run.call(&mut *store, arg_i32)?);
+            Ok(Some(black_box(run.call(&mut *store, arg_i32)?)))
         }
         RunSignature::F64ToI32 => {
             let run = instance.get_typed_func::<f64, i32>(&mut *store, "run")?;
-            black_box(run.call(&mut *store, arg_f64)?);
+            Ok(Some(black_box(run.call(&mut *store, arg_f64)?) as f64))
         }
         RunSignature::F64ToF64 => {
             let run = instance.get_typed_func::<f64, f64>(&mut *store, "run")?;
-            black_box(run.call(&mut *store, arg_f64)?);
+            Ok(Some(black_box(run.call(&mut *store, arg_f64)?)))
         }
     }
-    Ok(())
 }
 
 fn call_component_run_once(
@@ -369,30 +404,30 @@ fn call_component_run_once(
     instance: &ComponentInstance,
     arg_i32: i32,
     arg_f64: f64,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<Option<f64>, Box<dyn Error>> {
     match signature {
         RunSignature::UnitToUnit => {
             let run = instance.get_typed_func::<(), ()>(&mut *store, "run")?;
             black_box(run.call(&mut *store, ())?);
+            Ok(None)
         }
         RunSignature::I32ToI32 => {
             let run = instance.get_typed_func::<(i32,), (i32,)>(&mut *store, "run")?;
-            black_box(run.call(&mut *store, (arg_i32,))?.0);
+            Ok(Some(black_box(run.call(&mut *store, (arg_i32,))?.0) as f64))
         }
         RunSignature::I32ToF64 => {
             let run = instance.get_typed_func::<(i32,), (f64,)>(&mut *store, "run")?;
-            black_box(run.call(&mut *store, (arg_i32,))?.0);
+            Ok(Some(black_box(run.call(&mut *store, (arg_i32,))?.0)))
         }
         RunSignature::F64ToI32 => {
             let run = instance.get_typed_func::<(f64,), (i32,)>(&mut *store, "run")?;
-            black_box(run.call(&mut *store, (arg_f64,))?.0);
+            Ok(Some(black_box(run.call(&mut *store, (arg_f64,))?.0) as f64))
         }
         RunSignature::F64ToF64 => {
             let run = instance.get_typed_func::<(f64,), (f64,)>(&mut *store, "run")?;
-            black_box(run.call(&mut *store, (arg_f64,))?.0);
+            Ok(Some(black_box(run.call(&mut *store, (arg_f64,))?.0)))
         }
     }
-    Ok(())
 }
 
 fn wasi_linker(engine: &Engine) -> Result<Linker<()>, Box<dyn Error>> {

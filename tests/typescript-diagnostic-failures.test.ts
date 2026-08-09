@@ -59,10 +59,10 @@ describe("TypeScript incompatibility diagnostics", () => {
     expect(result.errors.some((error) => error.code === 2345 && error.severity === "error")).toBe(true);
   });
 
-  it("fails incremental compilation on hard TS type mismatches", () => {
+  it("fails incremental compilation on hard TS type mismatches", async () => {
     const compiler = createIncrementalCompiler({ fileName: "test.ts" });
     try {
-      const result = compiler.compile(`
+      const result = await compiler.compile(`
         export function main(): number {
           const value: number = "hello";
           return value;

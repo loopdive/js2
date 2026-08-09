@@ -2,10 +2,9 @@
 id: 745
 title: "Tagged union representation to replace externref boxing"
 horizon: xl
-status: in-progress
+status: ready
 model: fable
 fable_role: implement
-assignee: ttraenkler/fable-gamma
 created: 2026-03-22
 updated: 2026-07-19
 priority: high

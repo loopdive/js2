@@ -42,6 +42,7 @@ import { compileArraySliceFromVecLocal } from "./array-methods.js";
 import { getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
+import { undefinedSingletonActive } from "./any-helpers.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import {
   ensureAnyToStringHelper,
@@ -51,6 +52,19 @@ import {
 } from "./native-strings.js";
 import { COLLECTION_KIND, MAP_LAYOUT, ensureMapHelpers } from "./map-runtime.js"; // (#3171) size getter
 import { emitReceiverBrandCheck } from "./receiver-brand.js"; // (#3171) shared brand preamble
+import { emitTransferredCharAtProtoMemberBody, unboxProtoArgToI32 as unboxArgToI32 } from "./char-at-transfer.js";
+// (#4119) The shared member-body tail: `Object.prototype.toString`'s real
+// §20.1.3.6 runtime classifier, and the graceful catchable-TypeError refusal for
+// every `(brand, member)` whose native body is not wired yet. Aliased to the
+// name the 14 existing call sites already use — it subsumes the local helper
+// that previously lived here, whose body it reproduces exactly for non-Object
+// brands (a reflective member closure must degrade to a catchable TypeError, not
+// a hard compile error — #2193 PR-C).
+import { emitObjectProtoOrRefusal as emitProtoMemberBodyRefusal } from "./object-proto-tostring.js";
+import { emitStringSubstringMemberBody } from "./string-proto-substring.js";
+import { emitStringSplitMemberBody } from "./string-proto-split.js"; // (#4220) reflective String.prototype.split
+import { emitStringReplaceMemberBody } from "./string-proto-replace-transfer.js"; // (#4232) reflective String.prototype.replace
+import { NO_ARG_STRING_MEMBER_HELPER, emitStringProtoToStringFlat } from "./string-proto-tostring.js"; // (#3992)
 
 /**
  * `Array.prototype`'s own enumerable+non-enumerable method names (ES2024
@@ -680,44 +694,6 @@ const ASYNCDISPOSABLESTACK_PROTO_METHOD_LENGTH: Readonly<Record<string, number>>
 };
 
 /**
- * Graceful member-body refusal: the value-read object (PR-A) does not need
- * member bodies, but if a reflective member closure is materialized for a member
- * whose native body isn't wired yet, emit a catchable TypeError instead of a
- * hard compile error. Keeps `Array.prototype` reads compilable while the
- * per-member native bodies land incrementally (#2193 PR-C).
- */
-function emitProtoMemberBodyRefusal(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  brandName: string,
-  member: string,
-): ValType | null {
-  emitThrowTypeError(ctx, fctx, `${brandName}.prototype.${member} is not yet implemented in --target standalone`);
-  return null;
-}
-
-/**
- * (#2193 PR-B) Unbox an externref closure-arg (a boxed JS number) at `paramIdx`
- * into an i32, leaving it on the stack. `default0` is used when the arg is
- * absent/non-number (the closure ABI over-pads with externref args).
- */
-function unboxArgToI32(ctx: CodegenContext, fctx: FunctionContext, paramIdx: number): number {
-  const local = allocLocal(fctx, `__pm_arg_${fctx.locals.length}`, { kind: "i32" });
-  const unboxIdx = ensureLateImport(ctx, "__unbox_number", [{ kind: "externref" }], [{ kind: "f64" }]);
-  flushLateImportShifts(ctx, fctx);
-  fctx.body.push({ op: "local.get", index: paramIdx });
-  if (unboxIdx !== undefined) {
-    fctx.body.push({ op: "call", funcIdx: unboxIdx });
-    fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-  } else {
-    fctx.body.push({ op: "drop" });
-    fctx.body.push({ op: "i32.const", value: 0 });
-  }
-  fctx.body.push({ op: "local.set", index: local });
-  return local;
-}
-
-/**
  * (#2193 PR-B) Emit the native body for an `Array.prototype.<member>` closure
  * value. `this` is closure-param 1 (externref boxed array), args at 2.. . Recovers
  * the array instance via the registered-vec `ref.test`/`ref.cast` guard, then
@@ -766,6 +742,51 @@ function emitArrayProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, me
 }
 
 /**
+ * (#2875) Register the native `__extern_is_undefined` predicate early — BEFORE a
+ * reflective String proto body's other late-import-adding ops — so the
+ * RequireObjectCoercible guard can fetch its post-shift funcIdx by name. Gated on
+ * the #2106 undefinedSingleton regime (standalone/native-strings): only there is
+ * `undefined` a DISTINCT non-null sentinel externref that a bare `ref.is_null`
+ * misses. Idempotent; `flushLateImportShifts` keeps `fctx.body` consistent if the
+ * ensure added an import batch (matters for the trim body, which has no other
+ * late-import op of its own).
+ */
+function ensureStringRocUndefinedNative(ctx: CodegenContext, fctx: FunctionContext): void {
+  if (!undefinedSingletonActive(ctx)) return;
+  ensureObjectRuntime(ctx);
+  flushLateImportShifts(ctx, fctx);
+}
+
+/**
+ * (#2875) Emit RequireObjectCoercible(this) (§22.1.3.1 step 1) for a reflective
+ * `String.prototype.<member>` closure body: throw a catchable TypeError when
+ * `this` (closure param 1, externref) is null OR undefined.
+ *
+ * In standalone under the #2106 undefinedSingleton regime, `undefined` is a
+ * DISTINCT non-null sentinel externref, so a bare `ref.is_null` catches `null`
+ * but MISSES `undefined` — `String.prototype.<m>.call(undefined)` wrongly
+ * ToString'd it to "undefined" and returned a value instead of throwing. OR-in
+ * the canonical native `__extern_is_undefined` (host-free; registered up front by
+ * `ensureStringRocUndefinedNative` so its funcIdx is post-shift-correct here).
+ * When the regime is inactive, `undefined` ≡ `ref.null.extern` and the bare
+ * `ref.is_null` already covers both.
+ */
+function emitStringRequireObjectCoercible(ctx: CodegenContext, fctx: FunctionContext, member: string): void {
+  const rocThrow: Instr[] = [];
+  emitBrandCheckTypeError(ctx, rocThrow, `String.prototype.${member} called on null or undefined`);
+  fctx.body.push({ op: "local.get", index: 1 });
+  fctx.body.push({ op: "ref.is_null" });
+  const isUndefIdx = undefinedSingletonActive(ctx) ? ctx.funcMap.get("__extern_is_undefined") : undefined;
+  if (isUndefIdx !== undefined) {
+    // `undefined` is a non-null sentinel externref here → also test it explicitly.
+    fctx.body.push({ op: "local.get", index: 1 });
+    fctx.body.push({ op: "call", funcIdx: isUndefIdx });
+    fctx.body.push({ op: "i32.or" });
+  }
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: rocThrow });
+}
+
+/**
  * (#2875 slice 1) Native body for a reflective `String.prototype.<member>`
  * closure. `this` is closure-param 1 (externref); user args at 2.. (externref-
  * boxed). Implements §22.1.3.x steps: `? RequireObjectCoercible(this)` →
@@ -774,9 +795,7 @@ function emitArrayProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, me
  * (`emitReflectiveNativeProtoClosureCall`, calls.ts) work instead of falling
  * through to the legacy `.call` that drops `thisArg` and returns 0.
  *
- * Slice 1 wires the index-accessor family (`charAt`, `at`); other members return
- * a catchable-TypeError refusal (`null` → the reflective call falls through
- * unchanged, so behaviour for un-wired members is byte-identical to today).
+ * Slice 1 wires the index-accessor family; unwired members keep their existing catchable-TypeError fallback.
  *
  * Funcidx/type-index discipline: the ONLY late-import adder here is
  * `unboxArgToI32` (its `__unbox_number`); it runs FIRST (mirroring
@@ -785,7 +804,52 @@ function emitArrayProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, me
  * `$__any_to_string` are functions (append-only, no index shift).
  */
 function emitStringProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, member: string): ValType | null {
-  const IN_SCOPE = new Set(["charAt", "at", "charCodeAt", "codePointAt"]);
+  // (#2742) SUPERSEDED-WIRING CARVE-OUT. For these five members the #2875
+  // reflective body is strictly worse than the legacy borrowed-receiver path it
+  // intercepts, so refuse here and let the caller fall through.
+  //
+  // Why this is a carve-out and NOT "remove the wiring": #2875 was written when
+  // legacy `.call` dropped `thisArg`; #3254 later fixed that with a
+  // `receiverOverride` covering `STANDALONE_STR_PROTO_METHODS`. But #2875 also
+  // carries semantics legacy never had — `emitStringRequireObjectCoercible` —
+  // so the wiring is superseded for SOME members and still load-bearing for
+  // others. Measured, blanket removal costs 13 `this-value-not-obj-coercible`
+  // and `trimStart`/`trimEnd` files; this per-member set costs zero.
+  //
+  // Test262 A/B (450 files, same box/run/list, both arms one tree; rows floored
+  // 450/450, zero timeouts): **+18 fail→pass, 0 pass→fail**, the 13 files that a
+  // blanket removal regresses all HELD, `substring`/`charAt` control unmoved,
+  // and zero off-target moves. Full ledger + the two rejected variants are in
+  // plan/issues/2742-string-prototype-generic-receiver-tostring-this-coercion.md.
+  //
+  // Deliberately EXCLUDED (their wired bodies still win — do not "simplify"
+  // this set without re-running the A/B): `charCodeAt`, `indexOf`,
+  // `lastIndexOf`, `trimStart`, `trimEnd`, `at`, `substring`, `charAt`.
+  const SUPERSEDED_BY_BORROWED_PATH = new Set(["trim", "codePointAt", "includes", "startsWith", "endsWith"]);
+  if (SUPERSEDED_BY_BORROWED_PATH.has(member)) return emitProtoMemberBodyRefusal(ctx, fctx, "String", member);
+
+  const IN_SCOPE = new Set(["at", "charCodeAt", "codePointAt"]);
+  if (member === "substring") return emitStringSubstringMemberBody(ctx, fctx);
+  // (#2875 slice C) `slice` (§22.1.3.22) shares `substring`'s closure ABI —
+  // `this`/start/end, same `0x7fffffff` absent-end sentinel — and `__str_slice`
+  // has the identical helper signature, differing only in resolving negative
+  // indices rather than swapping reversed bounds. Without this it fell through
+  // to `emitProtoMemberBodyRefusal`, so a borrowed `slice` threw
+  // "not yet implemented in --target standalone".
+  if (member === "slice") return emitStringSubstringMemberBody(ctx, fctx, "slice");
+  // (#4220) `split` (§22.1.3.23) returns an ARRAY, not a string/index/boolean,
+  // so it owns a body rather than joining a family above; a null refusal keeps
+  // the pre-#4220 behaviour via the shared refusal.
+  if (member === "split")
+    return emitStringSplitMemberBody(ctx, fctx) ?? emitProtoMemberBodyRefusal(ctx, fctx, "String", member);
+  // (#4232) `replace` (§22.1.3.19) is `split`'s sibling in every structural
+  // respect — reflective closure ABI, string-returning, ToString-everything —
+  // and was the arm #4224 named as its leftover. Same refusal fallback.
+  if (member === "replace")
+    return (
+      emitStringReplaceMemberBody(ctx, fctx, () => emitStringRequireObjectCoercible(ctx, fctx, member)) ??
+      emitProtoMemberBodyRefusal(ctx, fctx, "String", member)
+    );
   // (#2875 slice 3a) The number-returning search family — `indexOf` /
   // `lastIndexOf` — has a DIFFERENT closure ABI from the index accessors
   // (param 2 is the search STRING, not an integer position; the optional
@@ -803,11 +867,22 @@ function emitStringProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, m
   // dedicated body: `? RequireObjectCoercible(this)` → `? ToString(this)` →
   // the native `__str_trim*` helper. Routed here so it never reads the absent
   // arg-2 slot the char/search bodies unbox (these closures have arity 0).
-  const TRIM = new Set(["trim", "trimStart", "trimEnd"]);
-  if (TRIM.has(member)) return emitStringTrimMemberBody(ctx, fctx, member);
+  // (#3992) The case-conversion family (§22.1.3.{26,27,28,29}) shares that
+  // shape, so it shares this body rather than getting a fourth per-member
+  // clone — see NO_ARG_STRING_MEMBER_HELPER in string-proto-tostring.ts.
+  if (NO_ARG_STRING_MEMBER_HELPER[member] !== undefined) return emitStringTrimMemberBody(ctx, fctx, member);
+  if (member === "charAt") {
+    return emitTransferredCharAtProtoMemberBody(
+      ctx,
+      fctx,
+      () => ensureStringRocUndefinedNative(ctx, fctx),
+      () => emitStringRequireObjectCoercible(ctx, fctx, member),
+    );
+  }
   if (!IN_SCOPE.has(member)) return emitProtoMemberBodyRefusal(ctx, fctx, "String", member);
 
   ensureNativeStringHelpers(ctx);
+  ensureStringRocUndefinedNative(ctx, fctx); // (#2875) register the undefined-sentinel predicate first
   const needsNumBox = member === "charCodeAt" || member === "codePointAt";
   // Do ALL late-import-adding ops FIRST (mirrors emitArrayProtoMemberBody), so
   // every helper funcIdx fetched by NAME afterwards is post-shift-correct.
@@ -826,32 +901,17 @@ function emitStringProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, m
     return emitProtoMemberBodyRefusal(ctx, fctx, "String", member);
   }
 
-  // (1) RequireObjectCoercible(this): param 1 externref. In standalone,
-  // undefined is conflated with null as `ref.null.extern`, so a bare
-  // `ref.is_null` catches both → throw a catchable TypeError.
-  const rocThrow: Instr[] = [];
-  emitBrandCheckTypeError(ctx, rocThrow, `String.prototype.${member} called on null or undefined`);
-  fctx.body.push({ op: "local.get", index: 1 });
-  fctx.body.push({ op: "ref.is_null" });
-  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: rocThrow });
+  // (1) RequireObjectCoercible(this) [param 1]: throw a catchable TypeError when
+  // `this` is null OR undefined. Under the #2106 undefinedSingleton regime
+  // `undefined` is a DISTINCT non-null sentinel, so a bare `ref.is_null` would
+  // miss it — see emitStringRequireObjectCoercible.
+  emitStringRequireObjectCoercible(ctx, fctx, member);
 
-  // (2) S = ToString(this): externref → anyref → $__any_to_string → $AnyString →
-  // flatten. Store the flat string in a local.
-  fctx.body.push({ op: "local.get", index: 1 });
-  fctx.body.push({ op: "any.convert_extern" });
-  fctx.body.push({ op: "call", funcIdx: anyToStrIdx });
-  fctx.body.push({ op: "call", funcIdx: flattenIdx });
+  // (2) S = ? ToString(this) (ToPrimitive-first — see the helper), flattened.
+  // Store the flat string in a local.
+  emitStringProtoToStringFlat(ctx, fctx, 1, anyToStrIdx, flattenIdx);
   const flatLocal = allocLocal(fctx, `__str_pm_flat_${fctx.locals.length}`, flatStringType(ctx));
   fctx.body.push({ op: "local.set", index: flatLocal });
-
-  if (member === "charAt") {
-    // §22.1.3.1: __str_charAt(flat, pos) → 1-char string (out-of-range → "").
-    fctx.body.push({ op: "local.get", index: flatLocal });
-    fctx.body.push({ op: "local.get", index: posLocal });
-    fctx.body.push({ op: "call", funcIdx: charAtIdx });
-    fctx.body.push({ op: "extern.convert_any" }); // native string → externref
-    return { kind: "externref" };
-  }
 
   const strTy = ctx.nativeStrTypeIdx; // flat string struct: 0=len, 1=off, 2=data
   const dataTy = ctx.nativeStrDataTypeIdx;
@@ -1047,6 +1107,7 @@ function emitStringProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, m
  */
 function emitStringSearchNumericMemberBody(ctx: CodegenContext, fctx: FunctionContext, member: string): ValType | null {
   ensureNativeStringHelpers(ctx);
+  ensureStringRocUndefinedNative(ctx, fctx); // (#2875) register the undefined-sentinel predicate first
   const isLast = member === "lastIndexOf";
   const helperName = isLast ? "__str_lastIndexOf" : "__str_indexOf";
 
@@ -1066,13 +1127,11 @@ function emitStringSearchNumericMemberBody(ctx: CodegenContext, fctx: FunctionCo
     return emitProtoMemberBodyRefusal(ctx, fctx, "String", member);
   }
 
-  // (3) RequireObjectCoercible(this) [param 1]: undefined≡null≡ref.null.extern in
-  // standalone, so a bare ref.is_null throw covers both → catchable TypeError.
-  const rocThrow: Instr[] = [];
-  emitBrandCheckTypeError(ctx, rocThrow, `String.prototype.${member} called on null or undefined`);
-  fctx.body.push({ op: "local.get", index: 1 });
-  fctx.body.push({ op: "ref.is_null" });
-  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: rocThrow });
+  // (3) RequireObjectCoercible(this) [param 1]: throw a catchable TypeError when
+  // `this` is null OR undefined. Under the #2106 undefinedSingleton regime
+  // `undefined` is a DISTINCT non-null sentinel, so a bare `ref.is_null` would
+  // miss it — see emitStringRequireObjectCoercible.
+  emitStringRequireObjectCoercible(ctx, fctx, member);
 
   // (4) lastIndexOf default position: §22.1.3.9 — an absent / `undefined` position
   // is ToIntegerOrInfinity → +∞ ⇒ search from the end. In standalone both map to a
@@ -1091,12 +1150,11 @@ function emitStringSearchNumericMemberBody(ctx: CodegenContext, fctx: FunctionCo
     fctx.body.push({ op: "local.set", index: fromLocal });
   }
 
-  // (5) recv = flatten(ToString(this)); needle = flatten(ToString(searchString)).
+  // (5) recv = flatten(? ToString(this)); needle = flatten(? ToString(searchString)).
+  // §22.1.3.{6,7,8,9,23} apply ToString to BOTH, so both go through the shared
+  // ToPrimitive-first sequence (#3992).
   const flattenExtern = (paramIdx: number, label: string): number => {
-    fctx.body.push({ op: "local.get", index: paramIdx });
-    fctx.body.push({ op: "any.convert_extern" });
-    fctx.body.push({ op: "call", funcIdx: anyToStrIdx });
-    fctx.body.push({ op: "call", funcIdx: flattenIdx });
+    emitStringProtoToStringFlat(ctx, fctx, paramIdx, anyToStrIdx, flattenIdx);
     const local = allocLocal(fctx, `${label}_${fctx.locals.length}`, flatStringType(ctx));
     fctx.body.push({ op: "local.set", index: local });
     return local;
@@ -1137,6 +1195,7 @@ function emitStringSearchNumericMemberBody(ctx: CodegenContext, fctx: FunctionCo
  */
 function emitStringSearchBooleanMemberBody(ctx: CodegenContext, fctx: FunctionContext, member: string): ValType | null {
   ensureNativeStringHelpers(ctx);
+  ensureStringRocUndefinedNative(ctx, fctx); // (#2875) register the undefined-sentinel predicate first
   const helperName =
     member === "includes" ? "__str_includes" : member === "startsWith" ? "__str_startsWith" : "__str_endsWith";
 
@@ -1156,13 +1215,11 @@ function emitStringSearchBooleanMemberBody(ctx: CodegenContext, fctx: FunctionCo
     return emitProtoMemberBodyRefusal(ctx, fctx, "String", member);
   }
 
-  // (3) RequireObjectCoercible(this) [param 1]: undefined≡null≡ref.null.extern in
-  // standalone, so a bare ref.is_null throw covers both → catchable TypeError.
-  const rocThrow: Instr[] = [];
-  emitBrandCheckTypeError(ctx, rocThrow, `String.prototype.${member} called on null or undefined`);
-  fctx.body.push({ op: "local.get", index: 1 });
-  fctx.body.push({ op: "ref.is_null" });
-  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: rocThrow });
+  // (3) RequireObjectCoercible(this) [param 1]: throw a catchable TypeError when
+  // `this` is null OR undefined. Under the #2106 undefinedSingleton regime
+  // `undefined` is a DISTINCT non-null sentinel, so a bare `ref.is_null` would
+  // miss it — see emitStringRequireObjectCoercible.
+  emitStringRequireObjectCoercible(ctx, fctx, member);
 
   // (4) endsWith default endPosition: §22.1.3.6 step 6 — absent/`undefined`
   // endPosition ⇒ end = len. Mirror the DIRECT path's 0x7fffffff sentinel
@@ -1180,12 +1237,11 @@ function emitStringSearchBooleanMemberBody(ctx: CodegenContext, fctx: FunctionCo
     fctx.body.push({ op: "local.set", index: posLocal });
   }
 
-  // (5) recv = flatten(ToString(this)); needle = flatten(ToString(searchString)).
+  // (5) recv = flatten(? ToString(this)); needle = flatten(? ToString(searchString)).
+  // §22.1.3.{6,7,8,9,23} apply ToString to BOTH, so both go through the shared
+  // ToPrimitive-first sequence (#3992).
   const flattenExtern = (paramIdx: number, label: string): number => {
-    fctx.body.push({ op: "local.get", index: paramIdx });
-    fctx.body.push({ op: "any.convert_extern" });
-    fctx.body.push({ op: "call", funcIdx: anyToStrIdx });
-    fctx.body.push({ op: "call", funcIdx: flattenIdx });
+    emitStringProtoToStringFlat(ctx, fctx, paramIdx, anyToStrIdx, flattenIdx);
     const local = allocLocal(fctx, `${label}_${fctx.locals.length}`, flatStringType(ctx));
     fctx.body.push({ op: "local.set", index: local });
     return local;
@@ -1203,8 +1259,9 @@ function emitStringSearchBooleanMemberBody(ctx: CodegenContext, fctx: FunctionCo
 }
 
 /**
- * (#3217) Native body for a reflective `String.prototype.{trim,trimStart,trimEnd}`
- * closure. These §22.1.3.{32,34,33} methods take NO arguments and return a
+ * (#3217) Native body for a reflective no-argument string-returning
+ * `String.prototype` member (`trim`/`trimStart`/`trimEnd`, and since #3992 the
+ * case-conversion family). These methods take NO arguments and return a
  * STRING, so unlike the char/search bodies this one never touches an arg slot
  * beyond `this` (the closure has arity 0 — reading a param-2 slot that doesn't
  * exist emits invalid Wasm). Implements the spec preamble
@@ -1221,7 +1278,9 @@ function emitStringSearchBooleanMemberBody(ctx: CodegenContext, fctx: FunctionCo
  */
 function emitStringTrimMemberBody(ctx: CodegenContext, fctx: FunctionContext, member: string): ValType | null {
   ensureNativeStringHelpers(ctx);
-  const helperName = member === "trim" ? "__str_trim" : member === "trimStart" ? "__str_trimStart" : "__str_trimEnd";
+  ensureStringRocUndefinedNative(ctx, fctx); // (#2875) register the undefined-sentinel predicate first
+  const helperName = NO_ARG_STRING_MEMBER_HELPER[member];
+  if (helperName === undefined) return emitProtoMemberBodyRefusal(ctx, fctx, "String", member);
 
   // Fetch helper funcIdxs. `ensureAnyToStringHelper` is the last ensure that
   // could register a defined func, so fetch the trim helper's idx AFTER it
@@ -1239,19 +1298,15 @@ function emitStringTrimMemberBody(ctx: CodegenContext, fctx: FunctionContext, me
     return emitProtoMemberBodyRefusal(ctx, fctx, "String", member);
   }
 
-  // (1) RequireObjectCoercible(this) [param 1]: in standalone undefined≡null≡
-  // ref.null.extern, so a bare ref.is_null throw covers both → catchable TypeError.
-  const rocThrow: Instr[] = [];
-  emitBrandCheckTypeError(ctx, rocThrow, `String.prototype.${member} called on null or undefined`);
-  fctx.body.push({ op: "local.get", index: 1 });
-  fctx.body.push({ op: "ref.is_null" });
-  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: rocThrow });
+  // (1) RequireObjectCoercible(this) [param 1]: throw a catchable TypeError when
+  // `this` is null OR undefined. Under the #2106 undefinedSingleton regime
+  // `undefined` is a DISTINCT non-null sentinel, so a bare `ref.is_null` would
+  // miss it — see emitStringRequireObjectCoercible.
+  emitStringRequireObjectCoercible(ctx, fctx, member);
 
-  // (2) S = ToString(this); FLATTEN; __str_trim*(S) → native string; → externref.
-  fctx.body.push({ op: "local.get", index: 1 });
-  fctx.body.push({ op: "any.convert_extern" });
-  fctx.body.push({ op: "call", funcIdx: anyToStrIdx });
-  fctx.body.push({ op: "call", funcIdx: flattenIdx });
+  // (2) S = ? ToString(this) (ToPrimitive-first, #3992); FLATTEN;
+  // __str_trim*(S) → native string; → externref.
+  emitStringProtoToStringFlat(ctx, fctx, 1, anyToStrIdx, flattenIdx);
   fctx.body.push({ op: "call", funcIdx: trimIdx });
   fctx.body.push({ op: "extern.convert_any" });
   return { kind: "externref" };
@@ -1997,11 +2052,12 @@ export function ensureAsyncDisposableStackNativeProtoGlue(ctx: CodegenContext): 
 }
 
 /**
- * (#2651 M1 / D2) The concrete non-bigint TypedArray view ctor names whose
- * `<View>.prototype` value read this slice wires host-free. BigInt64Array /
- * BigUint64Array are deliberately excluded (bigint views are out of scope —
- * `TYPED_ARRAY_NAMES` in index.ts excludes them too); their `.prototype` read
- * keeps the existing refuse-loud behaviour until a bigint slice lands.
+ * (#2651 M1 / D2) The 9 non-bigint TypedArray view ctor names. Drives
+ * `isWiredTypedArrayViewName` — the `%TypedArray%` intrinsic-ctor identity,
+ * `Object.getPrototypeOf(<view>)` recognition, and dynamic-`new` brand dispatch.
+ * The bigint views stay OUT of this list (their reflective i64 getter bodies +
+ * those consumers are a separate slice); their `.prototype` value read is wired
+ * via `TYPED_ARRAY_VIEW_PROTO_NAMES` below (#1907).
  */
 const WIRED_TYPED_ARRAY_VIEWS = [
   "Int8Array",
@@ -2014,6 +2070,20 @@ const WIRED_TYPED_ARRAY_VIEWS = [
   "Float32Array",
   "Float64Array",
 ] as const;
+
+/**
+ * (#1907) Every TypedArray view whose `<View>.prototype` VALUE read resolves
+ * host-free — the 9 non-bigint views plus the 2 bigint views, which inherit the
+ * same `%TypedArray%.prototype` member set (§23.2; the proto is a pure value
+ * object, so no i64-specific body is emitted). Closes the reopened `#1907 /
+ * #1888 S6-b` `BigInt64Array.prototype` / `BigUint64Array.prototype` refusal
+ * left after #838 landed the views.
+ */
+const TYPED_ARRAY_VIEW_PROTO_NAMES: ReadonlySet<string> = new Set<string>([
+  ...WIRED_TYPED_ARRAY_VIEWS,
+  "BigInt64Array",
+  "BigUint64Array",
+]);
 
 /**
  * (#2651 M1 / D2) Register the abstract `%TypedArray%.prototype` glue (idempotent)
@@ -2033,13 +2103,14 @@ export function ensureTypedArrayIntrinsicNativeProtoGlue(ctx: CodegenContext): n
 
 /**
  * (#2651 M1 / D2) Register a concrete TypedArray view's `<View>.prototype` glue
- * (idempotent) and return its brand, or `undefined` if `viewName` is not a wired
- * non-bigint view (caller falls through to the existing refusal). Each view shares
- * the `%TypedArray%.prototype` member set (`TYPED_ARRAY_PROTO_METHODS`). The brand
- * is the per-view brand pre-reserved in `BUILTIN_BRAND_TABLE`.
+ * (idempotent) and return its brand, or `undefined` if `viewName` is not a
+ * TypedArray view (caller falls through to the existing refusal). All 11 views
+ * (incl. the two bigint views, #1907) share the `%TypedArray%.prototype` member
+ * set (`TYPED_ARRAY_PROTO_METHODS`); the proto value object is pure (member CSV
+ * only). The brand is the per-view brand pre-reserved in `BUILTIN_BRAND_TABLE`.
  */
 export function ensureTypedArrayViewNativeProtoGlue(ctx: CodegenContext, viewName: string): number | undefined {
-  if (!(WIRED_TYPED_ARRAY_VIEWS as readonly string[]).includes(viewName)) return undefined;
+  if (!TYPED_ARRAY_VIEW_PROTO_NAMES.has(viewName)) return undefined;
   const brand = getBuiltinBrand(ctx, viewName);
   if (brand === undefined) return undefined;
   if (!getNativeProtoBuiltinGlue(ctx, brand)) {

@@ -34,7 +34,7 @@ import {
 } from "./bytecode.js";
 import { parsePattern, type ParsedRegex, type ReNode } from "./parse.js";
 import { foldCharUnitsLegacy, foldClassRangesLegacy, unitsToRanges } from "./casefold.js";
-import { cpRangesToNode, dotCpRanges } from "./unicode.js";
+import { dotCpRanges } from "./unicode.js";
 
 /** Bounded repetition expansion guard — `{n,m}` with large m is rewritten to
  *  repeated atoms, so cap the expansion to keep programs small. */
@@ -137,12 +137,112 @@ class Emitter {
 
   /** Add a class to the class table, return its start offset. */
   private addClass(ranges: Array<[number, number]>): number {
+    // Binary-search membership requires sorted, disjoint ranges. Legacy
+    // source-order classes and case-fold augmentation need not arrive sorted,
+    // so canonicalise once at compile time. #3652.
+    const sorted = ranges
+      .map(([lo, hi]) => [lo, hi] as [number, number])
+      .sort((left, right) => left[0] - right[0] || left[1] - right[1]);
+    const normalized: Array<[number, number]> = [];
+    for (const [lo, hi] of sorted) {
+      const last = normalized[normalized.length - 1];
+      if (last !== undefined && lo <= last[1] + 1) last[1] = Math.max(last[1], hi);
+      else normalized.push([lo, hi]);
+    }
     const offset = this.classTable.length;
-    this.classTable.push(ranges.length);
-    for (const [lo, hi] of ranges) {
+    this.classTable.push(normalized.length);
+    for (const [lo, hi] of normalized) {
       this.classTable.push(lo, hi);
     }
     return offset;
+  }
+
+  /**
+   * (#3673 round 16) Pure-literal codes of a node, or undefined when it is
+   * anything but a `char` / concat-of-`char`s. Used by the alternation trie.
+   */
+  private literalCodes(node: ReNode): number[] | undefined {
+    if (node.kind === "char") return [node.code];
+    if (node.kind === "concat") {
+      const codes: number[] = [];
+      for (const part of node.parts) {
+        if (part.kind !== "char") return undefined;
+        codes.push(part.code);
+      }
+      return codes;
+    }
+    return undefined;
+  }
+
+  /**
+   * (#3673 round 16) Shared-prefix (first-char-grouped) emission for an
+   * alternation whose options are all NON-EMPTY pure literals — the acorn
+   * keyword-regex shape. Grouping options with DISTINCT first chars is
+   * priority-safe: their branches consume disjoint next chars, so at most one
+   * can match any subject continuation and ordered-alternation semantics are
+   * unobservable across groups; options sharing a first char keep their
+   * original relative order inside the group (recursively — prefix words
+   * become ε suffixes, which BLOCK grouping across them since ε consumes
+   * nothing and priority against later options is observable under anchor
+   * backtracking). Case-insensitive alternations bail: folded first chars can
+   * collide, breaking the disjointness argument.
+   */
+  private tryEmitLiteralAltTrie(options: readonly ReNode[]): boolean {
+    if (this.caseInsensitive) return false;
+    if (options.length < 4) return false;
+    const lits: number[][] = [];
+    for (const o of options) {
+      const codes = this.literalCodes(o);
+      if (codes === undefined || codes.length === 0) return false;
+      lits.push(codes);
+    }
+    this.emitLitAltGrouped(lits);
+    return true;
+  }
+
+  private emitLitAltGrouped(lits: number[][]): void {
+    type Branch = { eps: true } | { eps: false; c: number; suffixes: number[][] };
+    const branches: Branch[] = [];
+    const idxByChar = new Map<number, number>();
+    for (const l of lits) {
+      if (l.length === 0) {
+        branches.push({ eps: true });
+        idxByChar.clear(); // ε blocks grouping across it (priority-observable)
+        continue;
+      }
+      const c = l[0]!;
+      const gi = idxByChar.get(c);
+      if (gi !== undefined) {
+        (branches[gi] as { eps: false; c: number; suffixes: number[][] }).suffixes.push(l.slice(1));
+      } else {
+        idxByChar.set(c, branches.length);
+        branches.push({ eps: false, c, suffixes: [l.slice(1)] });
+      }
+    }
+    const jmpEnds: number[] = [];
+    for (let i = 0; i < branches.length; i++) {
+      const isLast = i === branches.length - 1;
+      let split = -1;
+      if (!isLast) {
+        split = this.emit(ReOp.SPLIT, 0, 0);
+        this.patchA(split, this.here());
+      }
+      const b = branches[i]!;
+      if (!b.eps) {
+        this.emit(ReOp.CHAR, b.c);
+        if (b.suffixes.length === 1) {
+          for (const code of b.suffixes[0]!) this.emit(ReOp.CHAR, code);
+        } else {
+          this.emitLitAltGrouped(b.suffixes);
+        }
+      }
+      if (!isLast) {
+        jmpEnds.push(this.emit(ReOp.JMP, 0));
+        this.patchB(split, this.here());
+      }
+    }
+    const end = this.here();
+    for (const j of jmpEnds) this.patchA(j, end);
   }
 
   compileNode(node: ReNode): void {
@@ -176,9 +276,9 @@ class Emitter {
         this.emit(ReOp.ANY, this.dotAll ? 1 : 0);
         return;
       case "udot":
-        // u/v-mode `.` — one CODE POINT. Desugared here (not at parse) so the
-        // modifier-scoped dotAll state applies. #1911 Slice B.
-        this.compileNode(cpRangesToNode(dotCpRanges(this.dotAll)));
+        // u/v-mode `.` — one CODE POINT. Resolve the modifier-scoped dotAll
+        // set here, then keep it compact for CPCLASS. #3652.
+        this.emit(ReOp.CPCLASS, this.addClass(dotCpRanges(this.dotAll)), 0);
         return;
       case "class": {
         // Non-Unicode `i` uses full legacy (§22.2.2.9.3) case folding; u/v mode
@@ -190,6 +290,11 @@ class Emitter {
         }
         const offset = this.addClass(ranges);
         this.emit(ReOp.CLASS, offset, node.negated ? 1 : 0);
+        return;
+      }
+      case "cpclass": {
+        const offset = this.addClass(node.ranges);
+        this.emit(ReOp.CPCLASS, offset, node.negated ? 1 : 0);
         return;
       }
       case "bol":
@@ -243,6 +348,12 @@ class Emitter {
         for (const part of node.parts) this.compileNode(part);
         return;
       case "alt": {
+        // (#3673 round 16) Literal alternations (acorn's keyword regexes —
+        // `^(?:break|case|…)$`, ~35 words) compile to a shared-prefix trie so a
+        // probe fails after ONE first-char compare per distinct group instead
+        // of pushing one backtrack frame per word. Falls through to the linear
+        // chain for anything non-literal / case-insensitive / small.
+        if (this.tryEmitLiteralAltTrie(node.options)) return;
         // For options [a,b,c]: SPLIT a,(b|c) ; a ; JMP end ; SPLIT b,c ; b ; JMP end ; c ; end:
         const jmpEnds: number[] = [];
         for (let i = 0; i < node.options.length; i++) {
@@ -422,10 +533,12 @@ export function canMatchEmpty(node: ReNode): boolean {
     case "any":
     case "udot":
     case "class":
-    case "backref":
-      // backref to an unset group matches empty, but a set group may consume;
-      // treat as consuming — the guard is only skipped when DEFINITELY non-empty.
+    case "cpclass":
       return false;
+    case "backref":
+      // An unset capture matches empty, and a participating capture may itself
+      // span zero input units. Conservatively guard quantified backreferences.
+      return true;
     case "bol":
     case "eol":
     case "wordBoundary":
@@ -481,8 +594,8 @@ export function captureSpan(node: ReNode): [number, number] | null {
       case "repeat":
         visit(n.node);
         return;
-      // lookaround: separate sub-program — do not descend. char/any/udot/class/
-      // bol/eol/wordBoundary/backref define no groups.
+      // lookaround: separate sub-program — do not descend.
+      // char/any/udot/class/cpclass/bol/eol/wordBoundary/backref define no groups.
       default:
         return;
     }
@@ -554,8 +667,9 @@ export function reverseNode(node: ReNode): ReNode {
     case "modGroup":
       return { kind: "modGroup", add: node.add, remove: node.remove, node: reverseNode(node.node) };
     default:
-      // char / any / class / bol / eol / wordBoundary / backref / lookaround —
-      // single units or position assertions; nothing to reverse internally.
+      // char / any / udot / class / cpclass / bol / eol / wordBoundary /
+      // backref / lookaround — single atoms or position assertions; nothing
+      // to reverse internally.
       return node;
   }
 }

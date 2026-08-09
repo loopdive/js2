@@ -1,7 +1,7 @@
 ---
 id: 3236
 title: "standalone: native sync generator-prototype intrinsic chain — retire env::__get_generator_function_prototype / __get_generator_prototype (13 sole leaks)"
-status: in-progress
+status: ready
 sprint: current
 priority: medium
 feasibility: hard
@@ -11,7 +11,6 @@ area: codegen
 language_feature: generators, intrinsics, prototype-chain, standalone
 goal: host-independence
 umbrella: 1781
-assignee: ttraenkler/opus-genproto2
 # (#3102/#3236 S1) Genuine native-substrate growth: the intrinsic-chain
 # singleton emitters + brand-checked method-closure install live with the
 # native-proto singletons (array-object-proto.ts); the two rewire call sites are

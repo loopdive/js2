@@ -23,22 +23,48 @@ import { ReOp } from "./bytecode.js";
 /** Matches the Wasm VM's step cap. Tunable; documented in the issue. */
 export const REGEX_STEP_CAP = 1_000_000;
 
+/**
+ * (#3549) Per-input-unit budget on top of the base cap. The cap exists to
+ * stop RUNAWAY BACKTRACKING (super-linear in the subject), but a flat cap
+ * also killed legitimate LINEAR matches over long subjects: `^\p{L}+$`(u)
+ * costs a measured ~5 steps/unit (CLASS+SPLIT over the surrogate-alternation
+ * program), so the flat 1M cap tripped at ~200k units — and the
+ * `RegExp/property-escapes` conformance tests match complement strings of
+ * ~1.1M units (304/311 failed exactly here). A length-LINEAR budget keeps
+ * the guard: catastrophic patterns are Ω(n²)/Ω(2ⁿ), so on any subject long
+ * enough to earn a raised budget they still exceed it (10k-unit subject:
+ * n² = 100M ≫ 1M + 50·10k = 1.5M). 50/unit is ~10× the measured legitimate
+ * cost. The length term saturates at 20M units so the i32 budget in the Wasm
+ * VM cannot overflow (1M + 50·20M ≈ 1.0G < 2³¹−1).
+ */
+export const REGEX_STEP_CAP_PER_UNIT = 50;
+export const REGEX_STEP_CAP_LEN_SATURATION = 20_000_000;
+
+/** The shared budget formula — used by BOTH this mirror VM and the Wasm VM. */
+export function regexStepBudget(len: number): number {
+  return REGEX_STEP_CAP + REGEX_STEP_CAP_PER_UNIT * Math.min(len, REGEX_STEP_CAP_LEN_SATURATION);
+}
+
 interface Frame {
   pc: number;
   sp: number;
   caps: Int32Array;
 }
 
-/** Does code unit `c` fall in class at `classTable[offset]`? */
+/** Does code unit/code point `c` fall in class at `classTable[offset]`? */
 function classMatch(classTable: number[], offset: number, c: number, negated: boolean): boolean {
   const rangeCount = classTable[offset]!;
   let inside = false;
-  let p = offset + 1;
-  for (let i = 0; i < rangeCount; i++) {
+  let loIndex = 0;
+  let hiIndex = rangeCount - 1;
+  while (loIndex <= hiIndex) {
+    const mid = loIndex + ((hiIndex - loIndex) >> 1);
+    const p = offset + 1 + 2 * mid;
     const lo = classTable[p]!;
     const hi = classTable[p + 1]!;
-    p += 2;
-    if (c >= lo && c <= hi) {
+    if (c < lo) hiIndex = mid - 1;
+    else if (c > hi) loIndex = mid + 1;
+    else {
       inside = true;
       break;
     }
@@ -102,12 +128,15 @@ export function runAt(
   const inBounds = (): boolean => (dir > 0 ? sp < len : sp > 0);
   const unit = (): number => input.charCodeAt(dir > 0 ? sp : sp - 1);
 
+  // (#3549) Length-scaled budget — see regexStepBudget: linear matches over
+  // long subjects stay under it; runaway backtracking still exceeds it.
+  const stepBudget = regexStepBudget(len);
   for (;;) {
     // (#2091) Cap exhaustion is a hard error, NOT a no-match: a silent `return
     // null` is indistinguishable from a genuine non-match. Throw a catchable
     // RangeError so callers (and the Wasm `__regex_run` this VM mirrors) report
     // it loudly. (A legitimate backtrack failure still returns `null` below.)
-    if (++steps > REGEX_STEP_CAP) {
+    if (++steps > stepBudget) {
       throw new RangeError("regular expression step limit exceeded");
     }
     const op = prog[pc * 3]!;
@@ -140,6 +169,56 @@ export function runAt(
       case ReOp.CLASS: {
         if (inBounds() && classMatch(classTable, a, unit(), b !== 0)) {
           sp += dir;
+          pc++;
+        } else failed = true;
+        break;
+      }
+      case ReOp.CPCLASS: {
+        if (!inBounds()) {
+          failed = true;
+          break;
+        }
+        let codePoint = unit();
+        let width = 1;
+        if (dir > 0 && codePoint >= 0xd800 && codePoint <= 0xdbff && sp + 1 < len) {
+          const trail = input.charCodeAt(sp + 1);
+          if (trail >= 0xdc00 && trail <= 0xdfff) {
+            codePoint = 0x10000 + ((codePoint - 0xd800) << 10) + (trail - 0xdc00);
+            width = 2;
+          }
+        } else if (
+          dir > 0 &&
+          codePoint >= 0xdc00 &&
+          codePoint <= 0xdfff &&
+          sp > 0 &&
+          input.charCodeAt(sp - 1) >= 0xd800 &&
+          input.charCodeAt(sp - 1) <= 0xdbff
+        ) {
+          // Search/sticky entry must not reinterpret the trail half of an
+          // existing pair as a lone surrogate.
+          failed = true;
+          break;
+        } else if (dir < 0 && codePoint >= 0xdc00 && codePoint <= 0xdfff && sp > 1) {
+          const lead = input.charCodeAt(sp - 2);
+          if (lead >= 0xd800 && lead <= 0xdbff) {
+            codePoint = 0x10000 + ((lead - 0xd800) << 10) + (codePoint - 0xdc00);
+            width = 2;
+          }
+        } else if (
+          dir < 0 &&
+          codePoint >= 0xd800 &&
+          codePoint <= 0xdbff &&
+          sp < len &&
+          input.charCodeAt(sp) >= 0xdc00 &&
+          input.charCodeAt(sp) <= 0xdfff
+        ) {
+          // Likewise, reverse lookbehind cannot enter a pair between its
+          // lead and trail halves and treat the lead as lone.
+          failed = true;
+          break;
+        }
+        if (classMatch(classTable, a, codePoint, b !== 0)) {
+          sp += dir * width;
           pc++;
         } else failed = true;
         break;

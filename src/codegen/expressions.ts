@@ -11,7 +11,7 @@
  *   3. Provides emitCoercedLocalSet and coerceType (used by statements and index)
  *   4. Registers delegates in shared.ts (registerCompileExpression, etc.)
  */
-import { ts } from "../ts-api.js";
+import { ts, forEachChild } from "../ts-api.js";
 import { isBooleanType, isPromiseType, mapTsTypeToWasm } from "../checker/type-mapper.js";
 import {
   classifyAsyncConsumer,
@@ -32,6 +32,7 @@ import {
   PROMISE_STATE_REJECTED,
 } from "./async-scheduler.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
+import { ensureExnTag } from "./registry/imports.js"; // (#3178) async-call rejection payload
 import { allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
 import { snapshotSpeculative, rollbackSpeculative } from "./context/speculative.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -57,10 +58,13 @@ import { emitUndefined, ensureLateImport, flushLateImportShifts } from "./expres
 
 import { compileHostInstanceOf, compileIdentifier, resolveInstanceOfRHS } from "./expressions/identifiers.js";
 import { emitLazyClassObjectGet } from "./expressions/extern.js";
+import { emitUnboundThis, thisBelongsToTopLevelCode } from "./helpers/sloppy-this-global.js"; // (#4190)
+import { buildCurrentThisNonNullArm } from "./explicit-null-receiver.js"; // (#4203)
 
 import { compilePostfixUnary, compilePrefixUnary } from "./expressions/unary.js";
 
 import { compileCallExpression } from "./expressions/calls.js";
+import { isForeignEvalNode } from "./expressions/eval-source.js";
 
 import { compileClassExpression, compileNewExpression } from "./expressions/new-super.js";
 import { emitNewTargetClassId } from "./new-target.js"; // (#2023)
@@ -76,6 +80,7 @@ import { compileArrayLiteral, compileObjectLiteral } from "./literals.js";
 import { compileElementAccess, compilePropertyAccess, maybeWrapAnyReadEqualityCarrier } from "./property-access.js";
 import { compileTaggedTemplateExpression, compileTemplateExpression } from "./string-ops.js";
 import { compileDeleteExpression, compileRegExpLiteral, compileTypeofExpression } from "./typeof-delete.js";
+import { describeInternalError } from "./internal-error.js";
 
 // ── Public re-exports (preserves the external API) ────────────────────
 
@@ -158,11 +163,10 @@ export { compileMemberIncDec, compilePostfixUnary, compilePrefixUnary } from "./
 
 // ── Dispatcher helpers (used only within this file) ────────────────────
 
-/**
- * Check if a call expression targets an async function/method.
- * Used to determine whether the result needs Promise.resolve() wrapping (#919).
- */
+/** Check whether a call needs Promise.resolve() wrapping (#919). */
 function isAsyncCallExpression(ctx: CodegenContext, expr: ts.CallExpression): boolean {
+  // Foreign eval calls have no checker signatures and are always synchronous.
+  if (isForeignEvalNode(expr)) return false;
   // (#2903) `.finally(...)` nodes lowered to the NATIVE §27.2.5.3 machinery
   // already return a `$Promise` — the fulfilled-wrap would double-wrap (and
   // its try/catch_all would null a rejection reason). The per-node marker is
@@ -350,7 +354,7 @@ function asyncAssignedSymbolsInFile(ctx: CodegenContext, sf: ts.SourceFile): Rea
       const assigned = ctx.checker.getSymbolAtLocation(node.left);
       if (assigned) set.add(assigned);
     }
-    ts.forEachChild(node, visit);
+    forEachChild(node, visit); // #3437: shared helper so this per-file scan is counted by the compile-work budget meter
   };
   visit(sf);
   cache.set(sf, set);
@@ -581,15 +585,27 @@ function wrapAsyncCallInTryCatch(ctx: CodegenContext, fctx: FunctionContext, sta
   // construction in the catch_all instead.
   if (isStandalonePromiseActive(ctx)) {
     const promiseTypeIdx = getOrRegisterPromiseType(ctx);
+    // (#3178) Complete the #1326 Phase-1C payload wiring this arm deferred:
+    // catch the native `__exn` tag and use its externref payload — the thrown
+    // JS value (e.g. the TypeError instance a sync-unwound async body threw) —
+    // as the rejection reason ($Promise.value). Before this, the reason was
+    // ALWAYS `ref.null.extern`, so every synchronously-unwinding async-fn
+    // throw rejected with NULL: handlers destructuring the reason
+    // (`({ constructor }) => …`, the for-await-dstr test262 template tail)
+    // then threw their OWN "Cannot destructure 'null' or 'undefined'" — the
+    // ~81-test cluster in the F2 harvest (#3417). catch_all stays as the
+    // reason-less fallback for foreign (non-`__exn`) exceptions only.
+    const tagIdx = ensureExnTag(ctx);
+    const reasonLocal = allocTempLocal(fctx, { kind: "externref" });
     const inner = fctx.body.splice(start);
-    // The thrown value is on the catch_all stack as externref (the
-    // `__exn` tag's externref payload); standalone catch_all consumes
-    // it and uses it as the rejection reason. We don't have access to
-    // the wasm exception payload op without `ensureExnTag`, so fall
-    // back to `ref.null.extern` as the reason — Phase 1B doesn't
-    // yet wire the catch-payload binding (Phase 1C will). Most async
-    // throws produce undefined-typed rejections at this stage, so
-    // null-extern is safe.
+    const catchExn: Instr[] = [
+      { op: "local.set", index: reasonLocal },
+      { op: "i32.const", value: PROMISE_STATE_REJECTED },
+      { op: "local.get", index: reasonLocal },
+      { op: "ref.null.extern" },
+      { op: "struct.new", typeIdx: promiseTypeIdx },
+      { op: "extern.convert_any" },
+    ];
     const catchAll: Instr[] = [
       { op: "i32.const", value: PROMISE_STATE_REJECTED },
       { op: "ref.null.extern" },
@@ -601,16 +617,25 @@ function wrapAsyncCallInTryCatch(ctx: CodegenContext, fctx: FunctionContext, sta
       op: "try",
       blockType: { kind: "val", type: { kind: "externref" } },
       body: inner,
-      catches: [],
+      catches: [{ tagIdx, body: catchExn }],
       catchAll,
     });
+    releaseTempLocal(fctx, reasonLocal);
     return;
   }
   const rejectIdx = ensureLateImport(ctx, "Promise_reject", [{ kind: "externref" }], [{ kind: "externref" }]);
   const getCaughtIdx = ensureLateImport(ctx, "__get_caught_exception", [], [{ kind: "externref" }]);
   flushLateImportShifts(ctx, fctx);
   if (rejectIdx === undefined || getCaughtIdx === undefined) return;
+  const tagIdx = ensureExnTag(ctx);
   const inner = fctx.body.splice(start);
+  // A compiler-native JS throw uses the module's `$exn` tag and carries the
+  // original JS value as its externref payload. Feed that payload directly to
+  // Promise.reject. `__get_caught_exception` is only populated by a throwing
+  // host import, so using catch_all for both forms leaked a stale/undefined
+  // value (or the raw WebAssembly.Exception) after direct eval began emitting
+  // native SyntaxErrors.
+  const catchExn: Instr[] = [{ op: "call", funcIdx: rejectIdx }];
   const catchAll: Instr[] = [
     { op: "call", funcIdx: getCaughtIdx },
     { op: "call", funcIdx: rejectIdx },
@@ -619,7 +644,7 @@ function wrapAsyncCallInTryCatch(ctx: CodegenContext, fctx: FunctionContext, sta
     op: "try",
     blockType: { kind: "val", type: { kind: "externref" } },
     body: inner,
-    catches: [],
+    catches: [{ tagIdx, body: catchExn }],
     catchAll,
   });
 }
@@ -848,8 +873,9 @@ function compileExpressionBody(
     result = compileExpressionInner(ctx, fctx, expr, expectedType);
   } catch (e) {
     rollbackSpeculative(ctx, fctx, snap);
-    const msg = e instanceof Error ? e.message : String(e);
-    reportErrorNoNode(ctx, `Internal error compiling expression: ${msg}`);
+    // (#4030) Name the innermost `src/` frame. An exception here is a compiler
+    // bug, and the bare message alone is not actionable — see #4038.
+    reportErrorNoNode(ctx, `Internal error compiling expression: ${describeInternalError(e)}`);
     const fallbackType = expectedType ?? { kind: "f64" as const };
     pushDefaultValue(fctx, fallbackType, ctx);
     return fallbackType;
@@ -944,6 +970,9 @@ function compileExpressionBody(
 
   // Inner compile produced no usable value — roll back its partial emission
   // (#1919: body + locals + late imports + errors) and emit a default instead.
+  // (#3725) Diagnostics marked `sticky` survive this unwind: a deliberate
+  // target refusal is not a probe miss, and substituting a default for it
+  // produced a clean compile that trapped at runtime.
   rollbackSpeculative(ctx, fctx, snap);
   let wasmType: ValType;
   if (expectedType) {
@@ -1033,6 +1062,19 @@ function compileExpressionInner(
   }
 
   if (expr.kind === ts.SyntaxKind.ThisKeyword) {
+    // A typed-this twin receives its exact runtime receiver in param/local 0.
+    // Reuse that value for bare/non-field `this` expressions too, rather than
+    // round-tripping through the ambient `__current_this` global. This makes
+    // the receiver parameter a complete representation of `this`, so direct
+    // twin-to-twin calls do not need to install a dynamic receiver frame.
+    if (
+      process.env.JS2WASM_TWIN_RECEIVER_PARAM !== "0" &&
+      fctx.typedThisLocalIdx !== undefined &&
+      fctx.typedThisStructIdx !== undefined
+    ) {
+      fctx.body.push({ op: "local.get", index: fctx.typedThisLocalIdx });
+      return { kind: "ref", typeIdx: fctx.typedThisStructIdx };
+    }
     const selfIdx = fctx.localMap.get("this");
     if (selfIdx !== undefined) {
       fctx.body.push({ op: "local.get", index: selfIdx });
@@ -1062,7 +1104,11 @@ function compileExpressionInner(
     // `this`. The old generic no-binding fallback emitted undefined for both,
     // so `var global = this; global.Infinity = 42` threw a null-access payload
     // instead of the spec TypeError from writing the global's read-only prop.
-    if (fctx.name === "__module_init" && !ctx.sourceIsModule) {
+    // (#4190) …but only for a `this` that lexically BELONGS to top-level code:
+    // a top-level IIFE is inlined into `__module_init`, so its body's `this`
+    // took this arm and became the global object even under `"use strict"`
+    // (the `10.4.3-1-*gs` family). An inlined callee falls through instead.
+    if (fctx.name === "__module_init" && !ctx.sourceIsModule && thisBelongsToTopLevelCode(expr)) {
       return compileIdentifier(ctx, fctx, ts.factory.createIdentifier("globalThis"));
     }
     // (#1636-S1) Host-dispatched-closure fallback: when no local `this`
@@ -1119,11 +1165,16 @@ function compileExpressionInner(
       fctx.body.push({ op: "global.get", index: ctx.currentThisGlobalIdx });
       fctx.body.push({ op: "local.tee", index: thisTmp });
       fctx.body.push({ op: "ref.is_null" });
-      const elseBody: Instr[] = [{ op: "local.get", index: thisTmp }];
+      // (#4203) A non-null global is normally just "the installed receiver" —
+      // except for the marker meaning "the caller passed `null`", which a
+      // strict callee must observe as `null`. See explicit-null-receiver.ts.
+      const elseBody: Instr[] = buildCurrentThisNonNullArm(ctx, fctx, expr, thisTmp);
       const savedBody = fctx.body;
       const thenBody: Instr[] = [];
       fctx.body = thenBody;
-      emitUndefined(ctx, fctx);
+      // (#4190) Null here means "direct call, no receiver installed" — ES5
+      // §10.4.3 splits that on the callee's own strictness.
+      emitUnboundThis(ctx, fctx, expr);
       fctx.body = savedBody;
       fctx.body.push({
         op: "if",
@@ -1134,7 +1185,10 @@ function compileExpressionInner(
       releaseTempLocal(fctx, thisTmp);
       return { kind: "externref" };
     }
-    emitUndefined(ctx, fctx);
+    // (#4190) Terminal fallback: no receiver binding of any kind. Sloppy code
+    // binds the global object, strict binds `undefined` — both used to get
+    // `undefined`, which is the whole `10.4.3-1-*` family.
+    emitUnboundThis(ctx, fctx, expr);
     return { kind: "externref" };
   }
 
@@ -1430,7 +1484,11 @@ function compileExpressionInner(
   }
 
   if (ts.isObjectLiteralExpression(expr)) {
-    return compileObjectLiteral(ctx, fctx, expr);
+    // (#3536) Forward the Wasm-level expected type: a literal in call-ARGUMENT
+    // position whose callee param was call-site-narrowed to this literal's own
+    // shape struct must construct THAT struct, not divert to the dynamic
+    // $Object path off its `any` TS-contextual type (see compileObjectLiteral).
+    return compileObjectLiteral(ctx, fctx, expr, expectedType);
   }
 
   if (ts.isArrayLiteralExpression(expr)) {

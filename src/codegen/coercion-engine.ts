@@ -32,16 +32,19 @@
  * top and never re-hand-rolls a box/unbox row.
  */
 import { isBooleanType, isStringType } from "../checker/type-mapper.js";
-import type { Instr, ValType } from "../ir/types.js";
+import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { TypeFact } from "../checker/oracle.js";
 import { ts } from "../ts-api.js";
 import { ensureAnyFromExternHelper, ensureExternStrictEqHelper } from "./any-helpers.js";
 import { boxToAny } from "./value-tags.js";
+import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { noJsHost } from "./expressions/helpers.js";
 import { addUnionImports, nativeStringType } from "./index.js";
-import { ensureAnyToStringHelper } from "./native-strings.js";
+import { ensureAnyToStringHelper, ensureStrTruthyHelper, stringConstantExternrefInstrs } from "./native-strings.js";
+import { addStringConstantGlobal } from "./registry/imports.js";
 import { getBoolToStringEmitter, getNativeStringRefFromExternrefEmitter } from "./string-emitter-registry.js";
+import { buildClosureRefTestArms } from "./closure-classifier.js";
 import {
   compileExpression,
   compileStringLiteral,
@@ -49,6 +52,7 @@ import {
   ensureLateImport,
   flushLateImportShifts,
   isAnyValue,
+  registerEnsureExternrefToStringProvider,
 } from "./shared.js";
 import { coerceType, tryStructToString } from "./type-coercion.js";
 
@@ -70,9 +74,45 @@ export function coercionMode(ctx: CodegenContext): CoercionMode {
   return "js-host";
 }
 
+/**
+ * Build the shared runtime ToPrimitive call for a value already on the stack.
+ * Raw runtime bodies do not have an AST expression for `emitToString`, so this
+ * is their narrow entry point into the coercion engine instead of spelling the
+ * helper lookup and hint ABI at each call site.
+ */
+export function runtimeToPrimitiveInstrs(ctx: CodegenContext, hint: "string" | "number" | "default"): Instr[] | null {
+  const funcIdx = ctx.funcMap.get("__to_primitive");
+  if (funcIdx === undefined) return null;
+  if (hint === "default") {
+    return [{ op: "ref.null.extern" }, { op: "call", funcIdx }];
+  }
+  addStringConstantGlobal(ctx, hint);
+  return [...stringConstantExternrefInstrs(ctx, hint), { op: "call", funcIdx }];
+}
+
 /** True when the active mode represents strings as a native `$AnyString` GC ref. */
 function isNativeStringMode(mode: CoercionMode): boolean {
   return mode === "standalone" || mode === "native-strings-host";
+}
+
+/**
+ * Resolve the canonical runtime provider for ToString(externref).
+ *
+ * This stays in the coercion engine so nested control-flow builders that need
+ * a raw function index do not reintroduce the sealed host-coercion vocabulary.
+ * The shared delegate exposes it to type-coercion.ts without creating the
+ * reverse static import cycle.
+ */
+function ensureExternrefToStringProviderImpl(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  hint: ToStringHint,
+): number | undefined {
+  const native = isNativeStringMode(coercionMode(ctx));
+  const importName = !native && hint === "default" ? "__extern_to_string_default" : "__extern_toString";
+  const provisionalIdx = ensureLateImport(ctx, importName, [{ kind: "externref" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+  return ctx.funcMap.get(importName) ?? provisionalIdx;
 }
 
 /**
@@ -86,9 +126,64 @@ function isNativeStringMode(mode: CoercionMode): boolean {
  */
 export type ToStringHint = "string" | "default";
 
+type ToStringStaticType = ts.Type | TypeFact;
+
+function isCheckerType(type: ToStringStaticType): type is ts.Type {
+  return typeof (type as ts.Type).flags === "number";
+}
+
+function isStaticStringType(type: ToStringStaticType): boolean {
+  if (isCheckerType(type)) return isStringType(type);
+  return type.kind === "string" || (type.kind === "builtin" && type.name === "String");
+}
+
+function isStaticBooleanType(type: ToStringStaticType): boolean {
+  return isCheckerType(type) ? isBooleanType(type) : type.kind === "boolean";
+}
+
+function isStaticNullType(type: ToStringStaticType): boolean {
+  return isCheckerType(type) ? (type.flags & ts.TypeFlags.Null) !== 0 : type.kind === "null";
+}
+
+function isStaticUndefinedType(type: ToStringStaticType): boolean {
+  return isCheckerType(type)
+    ? (type.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0
+    : type.kind === "undefined" || type.kind === "void";
+}
+
+/**
+ * #3540 — Give compiled closures the NativeFunction source facade in the
+ * standalone ToString native after closure shapes have been finalized.
+ *
+ * The runtime helper is registered before every closure wrapper exists, so its
+ * closure classifier arm must be installed during the same finalization pass
+ * that seals `typeof`. The coercion engine owns the string result and dispatch;
+ * the closure finalizer only decides when the complete classifier is available.
+ */
+export function installCompiledClosureToStringArm(ctx: CodegenContext): void {
+  const toStringFn = ctx.mod.functions.find((fn) => (fn as { name?: string }).name === "__extern_toString") as
+    | WasmFunction
+    | undefined;
+  if (!toStringFn) return;
+
+  const anyLocalIdx = 1 + toStringFn.locals.length;
+  toStringFn.locals.push({ name: "$closure_tostring_any", type: { kind: "anyref" } });
+  toStringFn.body = [
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "local.set", index: anyLocalIdx },
+    ...buildClosureRefTestArms(ctx, anyLocalIdx, [
+      ...stringConstantExternrefInstrs(ctx, "function () { [native code] }"),
+      { op: "return" },
+    ]),
+    ...toStringFn.body,
+  ];
+}
+
 /**
  * Emit `ToString(operand)` for an operand that has ALREADY been compiled to the
- * top of the value stack with ValType `valType` and static TS type `tsType`.
+ * top of the value stack with ValType `valType` and static checker/oracle type
+ * fact `staticType`.
  *
  * This is the consolidated cascade the expression-based ToString copies shared:
  *   void            → "undefined"
@@ -117,7 +212,7 @@ export function emitToString(
   ctx: CodegenContext,
   fctx: FunctionContext,
   valType: ValType | null,
-  tsType: ts.Type,
+  staticType: ToStringStaticType,
   hint: ToStringHint,
 ): ValType {
   const mode = coercionMode(ctx);
@@ -131,14 +226,14 @@ export function emitToString(
 
   // ── string-typed ref passthrough (native modes only — a native string-typed
   //    substitution is already an $AnyString/NativeString ref) ──
-  if (native && (valType.kind === "ref" || valType.kind === "ref_null") && isStringType(tsType)) {
+  if (native && (valType.kind === "ref" || valType.kind === "ref_null") && isStaticStringType(staticType)) {
     return valType;
   }
 
   // ── i32 boolean → "true"/"false" ──
   // Honour the boolean brand on the ValType (#2016/#2030: i32 predicates carry
   // `boolean: true`) as well as the static TS type.
-  if (valType.kind === "i32" && (isBooleanType(tsType) || (valType as { boolean?: true }).boolean)) {
+  if (valType.kind === "i32" && (isStaticBooleanType(staticType) || (valType as { boolean?: true }).boolean)) {
     emitBoolToString(ctx, fctx);
     return native ? nativeStringType(ctx) : { kind: "externref" };
   }
@@ -172,8 +267,8 @@ export function emitToString(
 
   // ── externref ──
   if (valType.kind === "externref") {
-    const isNull = (tsType.flags & ts.TypeFlags.Null) !== 0;
-    const isUndef = (tsType.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0;
+    const isNull = isStaticNullType(staticType);
+    const isUndef = isStaticUndefinedType(staticType);
     if (isNull) {
       fctx.body.push({ op: "drop" });
       pushStringLiteral(ctx, fctx, "null");
@@ -184,8 +279,19 @@ export function emitToString(
       pushStringLiteral(ctx, fctx, "undefined");
       return native ? nativeStringType(ctx) : { kind: "externref" };
     }
-    if (isStringType(tsType)) {
-      // A real string externref — already concat-ready.
+    if (isStaticStringType(staticType)) {
+      // A standalone dynamic call boxes its native string result as externref
+      // while crossing the generic callable bridge. Native-string consumers
+      // (notably the linked Function constructor) need the internal
+      // `$AnyString` again before concatenation or a later extern.convert_any.
+      // The value was produced in-module, so the externref wraps that native
+      // GC reference and the conversion/cast is exact. Keep the host-backed
+      // native-strings lane unchanged because its externref may be a JS string.
+      if (mode === "standalone") {
+        emitNativeStringRefFromExternref(ctx, fctx);
+        return nativeStringType(ctx);
+      }
+      // A real host string externref is already concat-ready.
       return { kind: "externref" };
     }
     // Dynamic externref (boxed string / any / $Object) → runtime ToString.
@@ -194,10 +300,7 @@ export function emitToString(
     // the dynamic-externref operand always routes through `__extern_toString`
     // (the native `+`-concat and template callers both used the string-hint
     // tail there regardless of `+` vs template), then back to a native ref.
-    const importName = !native && hint === "default" ? "__extern_to_string_default" : "__extern_toString";
-    const toStrIdx = ensureLateImport(ctx, importName, [{ kind: "externref" }], [{ kind: "externref" }]);
-    flushLateImportShifts(ctx, fctx);
-    const finalIdx = ctx.funcMap.get(importName) ?? toStrIdx;
+    const finalIdx = ensureExternrefToStringProviderImpl(ctx, fctx, hint);
     if (finalIdx !== undefined) fctx.body.push({ op: "call", funcIdx: finalIdx });
     if (native) {
       emitNativeStringRefFromExternref(ctx, fctx);
@@ -363,6 +466,22 @@ export function emitToNumber(ctx: CodegenContext, fctx: FunctionContext, valType
 }
 
 /**
+ * Reserve the canonical externref→number provider for detached/late-built
+ * instruction sequences. Callers that cannot emit ToNumber immediately use
+ * the returned stable index after this helper flushes late-import shifts.
+ */
+export function ensureExternrefToNumberProvider(ctx: CodegenContext, fctx: FunctionContext): number | undefined {
+  const unboxIdx = ensureLateImport(ctx, "__unbox_number", [{ kind: "externref" }], [{ kind: "f64" }]);
+  flushLateImportShifts(ctx, fctx);
+  return unboxIdx;
+}
+
+/** Look up the canonical ToPrimitive provider after its owning runtime is ready. */
+export function getToPrimitiveProvider(ctx: CodegenContext): number | undefined {
+  return ctx.funcMap.get("__to_primitive");
+}
+
+/**
  * Append `ToBoolean(value)` (§7.1.2 → i32, 1 = truthy) for a value of ValType
  * `valType` already on the stack into `sink`. The consolidation of the two
  * hand-rolled truthiness sites that #2085 already aligned:
@@ -399,7 +518,11 @@ export function emitToBoolean(ctx: CodegenContext, valType: ValType | null, sink
     addUnionImports(ctx);
     const isTruthyIdx = ensureLateImport(ctx, "__is_truthy", [{ kind: "externref" }], [{ kind: "i32" }]);
     if (isTruthyIdx !== undefined) {
-      sink.push({ op: "call", funcIdx: isTruthyIdx });
+      // Registering a late helper can shift every subsequent function index.
+      // Always re-read the canonical map entry before emitting the call; using
+      // the provisional index is observably wrong in large standalone graphs
+      // such as Acorn, where TokenType.keyword is an externref union.
+      sink.push({ op: "call", funcIdx: ctx.funcMap.get("__is_truthy") ?? isTruthyIdx });
       return sink;
     }
     // Fallback: non-null → true.
@@ -418,6 +541,18 @@ export function emitToBoolean(ctx: CodegenContext, valType: ValType | null, sink
     }
     // Native string ref — empty string is falsy (check len > 0 after flatten).
     if (valType.typeIdx === ctx.anyStrTypeIdx && ctx.anyStrTypeIdx >= 0) {
+      // (#3548) NULLABLE string: `__str_flatten(null)` traps — a nullable
+      // string param (an under-applied call site's `undefined`, now inferred
+      // `ref_null` by inferParamTypeFromCallSites) must be FALSY when null.
+      // Route through the null-guarded `__str_truthy` helper. The non-null
+      // `ref` arm below keeps its historical flatten path byte-identical.
+      if (kind === "ref_null") {
+        const truthyIdx = ensureStrTruthyHelper(ctx);
+        if (truthyIdx !== undefined) {
+          sink.push({ op: "call", funcIdx: truthyIdx });
+          return sink;
+        }
+      }
       const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
       if (flattenIdx !== undefined && ctx.nativeStrTypeIdx >= 0) {
         sink.push(
@@ -533,6 +668,45 @@ export function emitLooseEq(
   negate: boolean,
 ): ValType | null {
   return emitAnyEquality(ctx, fctx, expr, "__any_eq", negate);
+}
+
+/**
+ * Emit host strict/loose equality for two values already present on the stack.
+ * Typed binary dispatch reaches this seam after compiling both operands, so it
+ * cannot use emitStrictEq/emitLooseEq without evaluating them twice.
+ */
+export function emitHostEqualityFromStack(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  leftType: ValType,
+  rightType: ValType,
+  strict: boolean,
+  negate: boolean,
+): ValType {
+  if (rightType.kind !== "externref") {
+    coerceType(ctx, fctx, rightType, { kind: "externref" });
+  }
+  if (leftType.kind !== "externref") {
+    const tmpRight = allocTempLocal(fctx, { kind: "externref" });
+    fctx.body.push({ op: "local.set", index: tmpRight });
+    coerceType(ctx, fctx, leftType, { kind: "externref" });
+    fctx.body.push({ op: "local.get", index: tmpRight });
+    releaseTempLocal(fctx, tmpRight);
+  }
+
+  const hostFn = strict ? "__host_eq" : "__host_loose_eq";
+  const provisionalIdx = ensureLateImport(
+    ctx,
+    hostFn,
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "i32" }],
+  );
+  flushLateImportShifts(ctx, fctx);
+  const finalIdx = ctx.funcMap.get(hostFn) ?? provisionalIdx;
+  if (finalIdx === undefined) throw new Error(`Missing import after ensureLateImport: ${hostFn}`);
+  fctx.body.push({ op: "call", funcIdx: finalIdx });
+  if (negate) fctx.body.push({ op: "i32.eqz" });
+  return { kind: "i32" };
 }
 
 /**
@@ -698,3 +872,5 @@ function emitNativeStringRefFromExternref(ctx: CodegenContext, fctx: FunctionCon
   }
   emitter(ctx, fctx);
 }
+
+registerEnsureExternrefToStringProvider(ensureExternrefToStringProviderImpl);

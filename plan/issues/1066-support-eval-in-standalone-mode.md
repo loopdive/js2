@@ -17,6 +17,7 @@ depends_on: [1164, 1058]
 required_by: [1584]
 es_edition: multi
 ---
+
 # #1066 — Support `eval` in standalone mode via host-compiled Wasm child module
 
 Companion to **#1006** (eval via JS host import). #1006 covers the JS-host mode
@@ -145,7 +146,6 @@ differs.
 - [§19.2.1 eval(x)](https://tc39.es/ecma262/#sec-eval-x) — global eval semantics
 - [§19.2.1.1 PerformEval](https://tc39.es/ecma262/#sec-performeval) — parsing and evaluation in the caller's variable environment
 
-
 ## Acceptance criteria
 
 - [ ] WIT interface draft for `eval-host` committed under `wit/eval-host.wit`
@@ -199,12 +199,14 @@ is widely available.
 ## Implementation Plan (added 2026-05-21)
 
 ### Entry points
+
 - New `wit/eval-host.wit` — interface definition (Option A reference)
 - New `runtimes/eval-host-wasmtime/` (Rust crate) — reference standalone host
 - `src/codegen/typeof-delete.ts` — wherever `eval(...)` is currently lowered (`grep -n eval`); ensure WASI target emits the same import shape
 - `src/cli.ts` — accept `--eval-host=auto|wasm|disabled`
 
 ### Algorithm
+
 1. **Guest-side codegen** (unchanged from #1006): every `eval(s)` becomes:
    ```wasm
    local.get $s_externref
@@ -220,12 +222,15 @@ is widely available.
 3. **Cache**: source → compiled-module map, sized to e.g. 64 entries with LRU eviction.
 
 ### Wasm output (guest side)
+
 ```wasm
 (import "env" "__eval_host_eval" (func $eval (param externref i32) (result externref)))
 ```
+
 For WASI target, the import module name becomes `"eval-host"` to match the WIT mapping.
 
 ### Edge cases
+
 - **Direct eval scope capture**: standalone mode cannot reify the caller's variable environment. Per the design, treat direct eval as indirect in standalone mode (document limitation).
 - **Throws**: the host returns a "result" envelope `{ ok | throw }` via a 2-cell struct, or the import returns externref and re-throws on the guest side via a sentinel tag.
 - **Strict mode propagation**: pass a third arg `strict: i32`.
@@ -233,6 +238,7 @@ For WASI target, the import module name becomes `"eval-host"` to match the WIT m
 - **Security**: gate behind explicit `--enable-dynamic-codegen` flag in the standalone host; default OFF.
 
 ### Test plan
+
 - `tests/issue-1066-standalone-eval.test.ts`:
   - `eval("1+2")` → 3
   - `eval("throw 1")` → caught by guest's `try/catch`
@@ -240,11 +246,13 @@ For WASI target, the import module name becomes `"eval-host"` to match the WIT m
 - Cross-mode parity: same test files compiled with `--target js` and `--target wasi` produce identical results for indirect-eval cases.
 
 ### Dependencies
+
 - **Hard**: #1006 (JS-host eval) — lands first; this issue mirrors its import shape
 - **Hard**: #1058 (js2wasm self-host) — required to embed compiler as a library; until then, shell out to CLI
 - **Soft**: #1165 `func.new` proposal — eventually replaces this approach
 
 ### Files touched
+
 - new `wit/eval-host.wit`
 - new `runtimes/eval-host-wasmtime/` (Rust crate)
 - `src/codegen/typeof-delete.ts` (eval call lowering, if target-aware)
@@ -265,7 +273,7 @@ For WASI target, the import module name becomes `"eval-host"` to match the WIT m
 
 ### Where this issue now fits: "Tier 1w" — host-provided eval for pure-Wasm embedders
 
-The ladder's Tier 1 assumes a *JS* host. This issue's surviving, real use
+The ladder's Tier 1 assumes a _JS_ host. This issue's surviving, real use
 case is an embedder running wasmtime/wasmer-class runtimes who is willing to
 ship js2wasm on the host side and wants eval without paying Tier 2's
 in-module interpreter size (§16 E6 floor). That is a **host-choice rung
@@ -317,7 +325,7 @@ interface eval-host {
 
 The load-bearing delta vs the old draft is `js-env`: a WasmGC `$Object`
 cannot cross a WIT boundary, so the parent module exports the object-record
-*protocol* (get/set/has/delete over its globalThis) and the host threads it
+_protocol_ (get/set/has/delete over its globalThis) and the host threads it
 into every child module it compiles — child free-identifier misses walk this
 record and throw the §14 root-miss `ReferenceError`, and an eval'd
 `var x = 1` lands in the PARENT's globals (visible to AOT code, §4.3), not
@@ -341,7 +349,7 @@ throw with an execution — the only allowed direction.
 natural reference host is a **Node-based WASI runner embedding the compiler
 in-process** (`compileSourceSync`, LRU keyed on source hash — the same cache
 discipline as `createEvalShim`), landed under `runtimes/eval-host-node/`.
-A Rust+wasmtime host that shells out to the CLI is the *portability proof*,
+A Rust+wasmtime host that shells out to the CLI is the _portability proof_,
 second, and only if an embedder actually asks — do not gate the issue on
 writing Rust. Security: the host gates dynamic codegen behind an explicit
 opt-in, default off.
@@ -363,3 +371,37 @@ guest). Assert the §14 semantics specifically: free-var miss →
   "Long-term native path" section stands).
 - #1102 is **done** (PR #3113) — its Tier-0 leg is landed; nothing in this
   issue reopens it.
+
+---
+
+## Measured evidence — the standalone-only eval cost (2026-07-25, #3631 partition)
+
+Baselines: `test262-current.jsonl` and `test262-standalone-current.jsonl`
+(`loopdive/js2wasm-baselines`), both fetched 2026-07-25 18:21. Population =
+ES5-classified (post-#3626 classifier), `eval`-dependent, **775 tests** in both
+lanes. Standalone uses the host-free pass definition (`--host-free`: a `pass`
+carrying `host_import_leak_class` is demoted).
+
+| lane                   | pass | not passing |
+| ---------------------- | ---- | ----------- |
+| host                   | 291  | 484         |
+| standalone (host-free) | 143  | **632**     |
+
+**149 of these tests pass in the host lane and fail in standalone.** Of those,
+**110 fail with literally `TypeError: dynamic eval is not supported in
+standalone mode`** — the folded path declined the body (constant string, but a
+node kind `allNodesInlineSupported` rejects) and there is no host fallback to
+catch it. Path split of the 149: 88 `annexB/language/eval-code`, 18
+`language/statements/function`, 5 each `language/eval-code/{direct,indirect}`,
+5 `language/expressions/object`, 5 `built-ins/String/prototype`, 4
+`language/literals/regexp`, remainder in ones and twos.
+
+This is the concrete, measured statement of the asymmetry that motivates this
+issue: **in the host lane a folder bail is harmless (it routes to a working host
+eval); in the standalone lane a folder bail is a hard failure.** Any claim that
+"widening the constant folder is not worth it" is a **host-lane-only** claim —
+it does not transfer here.
+
+Sizing caveat (gates ≠ flips): 88 of the 110 are `annexB/language/eval-code`,
+which pass at only 19 % in the host lane even with a working eval. Removing the
+standalone bail unmasks them; it does not by itself flip them. See #2200.

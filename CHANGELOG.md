@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Added: reusable `FyiSourceExecutor` for external test262 integrations (#3599)
+
+- `FyiSourceExecutor` and `runTest` are now exported from the new
+  `@loopdive/js2/test262-fyi` subpath (added to `package.json`'s `exports`
+  map — this subpath was previously unreachable via `import`, even though
+  `js2-test262` shipped as a bin). `executeTestFile({ ..., executor })` now
+  accepts an optional pre-existing executor: an external caller that runs
+  many test files in one long-lived process (e.g. a persistent server) can
+  reuse a single warm executor across many calls instead of paying a fresh
+  Node start + full compiler-module load per call. Omitting `executor`
+  preserves the exact prior one-shot behavior.
+- Fixed a real bug this surfaced: `FyiSourceExecutor`'s default `workerPath`
+  resolved to a `scripts/` path that only exists in the monorepo checkout,
+  not in the published package — `new FyiSourceExecutor()` with no explicit
+  `workerPath` threw `Cannot find module '.../scripts/test262-worker.mjs'`
+  when called from outside this repo. It now resolves lazily next to its own
+  module location, matching the (already-correct) logic `js2-test262`'s CLI
+  entry point used internally.
+
 ### Added: relocatable standalone CLI bundle (#1775, GH #986 follow-up)
 
 - Added `pnpm run build:standalone-cli`, which writes

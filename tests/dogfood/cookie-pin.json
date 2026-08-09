@@ -1,0 +1,10 @@
+{
+  "name": "cookie",
+  "version": "2.0.1",
+  "tarball": "fixtures/cookie-2.0.1.tgz",
+  "registryTarball": "https://registry.npmjs.org/cookie/-/cookie-2.0.1.tgz",
+  "shasum": "1fc7e9bddf38fa9567cd4d750820087cdb5d6e98",
+  "integrity": "sha512-yuToqVvRrj6pfDXREyQAAv8SkAEk/8GS3jQRTiUMm66TVtBYmqQeoEjL2Lmq8Rpo6271vH76InTChTitEAm65w==",
+  "entryModule": "package/dist/index.js",
+  "_note": "Pinned per the same project-lead decision as acorn (#1710, 2026-05-29): acquire via a pinned npm-pack tarball, NOT a vendored source copy. The tarball is committed as a fixture so the harness reproduces from a clean checkout with NO run-time network. shasum is the canonical npm sha1 (`npm view cookie@2.0.1 dist.shasum`); integrity is the canonical npm sha512 (`dist.integrity`). To refresh: `npm pack cookie@<ver>`, update this file, re-run setup. dist/index.js is a single self-contained ESM bundle (no imports) — same shape as acorn's dist/acorn.mjs, and unlike clsx's, cookie's four exports (parseCookie/stringifyCookie/stringifySetCookie/parseSetCookie) are all fixed-arity with real declared parameters, so the harness calls them directly across the wasm export boundary (no driver-epilogue shim needed, unlike clsx-harness.mjs)."
+}

@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   planPullRequestAction,
   readPullRequest,
@@ -20,7 +21,7 @@ import {
   scopeSprintIssues,
 } from "./symphony-pr-state.mjs";
 
-const ROOT = path.resolve(path.join(path.dirname(new URL(import.meta.url).pathname), ".."));
+const ROOT = path.resolve(path.join(path.dirname(fileURLToPath(import.meta.url)), ".."));
 const DEFAULT_WORKFLOW = path.join(ROOT, "WORKFLOW.md");
 const ISSUE_FILE_RE = /^\d+[a-z]?(?:[-_].+)?\.md$/i;
 const TERMINAL_DEFAULT = ["done", "wont-fix", "closed", "cancelled", "canceled", "duplicate"];

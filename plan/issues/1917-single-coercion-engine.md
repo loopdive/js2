@@ -1,12 +1,13 @@
 ---
 id: 1917
 title: "One coercion engine — four divergent coercion matrices disagree about lossiness"
-status: in-progress
-assignee: ttraenkler/sendev-eq
+status: done
+completed: 2026-07-24
+assignee: ttraenkler/sdev-1917
 sprint: current
 model: opus
 created: 2026-06-10
-updated: 2026-06-24
+updated: 2026-07-24
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -16,6 +17,59 @@ language_feature: compiler-internals
 goal: correctness
 ---
 # #1917 — One coercion engine
+
+## Current state (2026-07-24, sdev-1917) — LANDED vs REMAINING
+
+**The bulk of this issue has already landed.** The stale narrative below (Problem,
+the original "Proposed approach", and the per-step Implementation sections) predates
+those merges — read this section first for the accurate status.
+
+### LANDED (on `origin/main`)
+
+- **Step 0 — single ValType `coercionPlan` table.** `src/codegen/coercion-plan.ts`
+  exists (pure `coercionPlan(from, to, {boxNumberIdx, unboxNumberIdx})`). All four
+  headline sites delegate to it: `callArgCoercionInstrs` (stack-balance.ts:1480),
+  `fixBranchType` (stack-balance.ts:903), `coercionInstrs` (type-coercion.ts:3529),
+  and `coerceType`'s scalar rows.
+- **The headline `externref→f64` divergence is GONE.** `fixBranchType` no longer
+  emits lossy `drop; f64.const 0`; it routes box/unbox through `coercionPlan` and
+  unboxes identically to the call-arg path (the acceptance-criterion-1 fix).
+- **Steps 1/2(partial)/3/4 — the JS-semantic engine.**
+  `src/codegen/coercion-engine.ts` exports `emitToString`/`compileAndEmitToString`,
+  `emitToNumber`, `emitToBoolean`, `emitStrictEq`/`emitLooseEq`/
+  `emitAnyEqFromExternTemps`, and `coercionMode`. The ToString, ToNumber, ToBoolean,
+  and equality dispatch sites migrated into it (see the per-step sections below for
+  the migration detail; those are accurate history now that they merged).
+- **Step 5 drift gate (#2108) is BUILT, WIRED, and GREEN.**
+  `scripts/check-coercion-sites.mjs` + `scripts/coercion-sites-baseline.json`,
+  run as `check:coercion-sites` in the `quality` CI job. It sanctions
+  `coercion-engine.ts`/`any-helpers.ts`/`native-strings.ts` and fails on per-file
+  vocabulary growth. It is NOT yet flipped to the hard per-token seal.
+
+### Acceptance criterion #2 — SUPERSEDED (not unfixed)
+
+The original spec asked that the `ref→f64` divergence (`coercionInstrs` →
+`f64.const NaN` vs the call-arg/branch unbox) also be forced to ValType identity.
+That is now understood to be a **deliberate provenance-dependent policy**, not an
+accidental divergence: a *bare* GC object-ref has ToNumber `NaN` (§7.1.4 — object
+with no numeric `valueOf`), whereas a ref *carrying a boxed number* must unbox.
+Forcing a single ValType-keyed answer would REGRESS one of the two. The
+`staticJsType`-hinted engine owns this split by provenance; ValType alone cannot.
+So criterion #2 is retired as originally worded — the `externref→f64` half (the
+real accidental bug) is fixed; the `ref→f64` half is correct-by-policy.
+
+### REMAINING (this branch, `issue-1917-stage-b-coercion`)
+
+- **(a) `guardedRefCast` dedup** — extract one helper for the `local.tee → ref.test
+  → if (cast_null / null)` idiom copy-pasted 4× in `coercionInstrs`
+  (type-coercion.ts) + ~6× in `coerceType`. Pure byte-neutral code-motion.
+- **(b) Stage B `emitToPrimitive` façade** over `coerceType`'s inline ref→f64
+  ToPrimitive dispatch — the actual remaining semantic close (Step 2 tail).
+  High-risk; gated on both-lane byte-SHA + full equivalence + a host test262 slice;
+  measured delta reported to the coordinator before landing.
+- **(c) Seal the #2108 gate** (per-token hard fail) after (b) lands.
+
+---
 
 ## Problem
 
@@ -822,3 +876,37 @@ method args (~690), RegExp, and class/destructuring coercion. That is the exact
 dropping substantially as a coarse post-unification check; the String/Number
 slice is owned by **#2160** (`depends_on: [1917]`). Drift note + breakdown in
 **#2503** (Harvest update 2026-06-24).
+
+## Stage A + Stage B outcome — criterion #2 RATIFIED, relocation → #3578 (sdev-1917, 2026-07-24)
+
+**Stage A LANDED (PR #3562):** extracted one `guardedRefCastInstrs` helper
+replacing the 11 copy-pasted `tee → ref.test → if (cast_null / null)` guarded-cast
+idioms in `type-coercion.ts` (7 in `coerceType`, 4 in `coercionInstrs`); net −106
+lines, byte-neutral (0 Wasm-SHA diffs across 62 both-lane binaries).
+
+**Criterion #2 is RATIFIED as SUPERSEDED (coordinator, 2026-07-24)** — it is NOT a
+bug and NOT in scope. The `ref→f64` split — a *bare* GC object-ref ToNumber → NaN
+(§7.1.4, `Number(object without valueOf)`) vs a ref *carrying a boxed number* →
+unbox — is spec-correct provenance-dependent behaviour, not the accidental
+divergence #1917 was filed to fix (that one — `externref→f64` in `fixBranchType`,
+lossy `drop; f64.const 0` — is already GONE via Step 0's `coercionPlan`
+delegation). Forcing ValType-level identity between the two rows would REGRESS
+correct semantics. Do NOT equalize them.
+
+**Stage B measured outcome — byte-neutral extraction PROVEN feasible; clean
+relocation deferred to #3578.** Lifting the ~440-line `ref→f64`
+ToNumber/OrdinaryToPrimitive dispatch (`coerceType` ~2333–2772) into a dedicated
+`emitRefToNumberPrimitive` is byte-neutral (0 diffs across 62 both-lane binaries +
+24 ToPrimitive exercisers identical, tsc clean). BUT a **same-file** extraction is
+structurally self-defeating: it GROWS `type-coercion.ts` by ~+34 LOC (wrapper
+overhead → trips the #3102 LOC ratchet) and leaves the #2108 count unchanged. The
+value only materialises by relocating the dispatch OUT into the #2108-sanctioned
+`coercion-engine.ts` — which is blocked by the `coercion-engine.ts ⇄
+type-coercion.ts` module-init cycle (the reverse import is the exact TDZ hazard the
+line-~2660 comment and #3324 avoid) and needs the lazy-emitter-registry pattern
+(already at `coercion-engine.ts:~691`) plus relocating 4 non-exported helpers.
+That XL/high-risk relocation + the Stage C #2108 seal is now **#3578**
+(`depends_on: [1917]`). #1917's core (single `coercionPlan` table + 4-site
+delegation + the `coercion-engine.ts` `emitTo*`/equality engine + #2108 drift
+gate) plus Stage A dedup is complete; the relocation is the last refinement,
+owned by #3578.

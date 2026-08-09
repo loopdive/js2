@@ -17,7 +17,12 @@
 // strand a good PR.
 
 import { describe, expect, it } from "vitest";
-import { prNumberFromMergeQueueBranch, shouldSkipParkingRace } from "../scripts/enqueue-green-prs.mjs";
+import {
+  baseShaFromMergeQueueBranch,
+  prNumberFromMergeQueueBranch,
+  prNumbersFromMergeGroupSubjects,
+  shouldSkipParkingRace,
+} from "../scripts/enqueue-green-prs.mjs";
 
 describe("#2975 park-race guard — merge-queue branch parsing", () => {
   it("parses the PR number from a gh-readonly-queue synthetic branch", () => {
@@ -34,6 +39,54 @@ describe("#2975 park-race guard — merge-queue branch parsing", () => {
     expect(prNumberFromMergeQueueBranch("")).toBe(null);
     // @ts-expect-error — defensive against non-string input
     expect(prNumberFromMergeQueueBranch(undefined)).toBe(null);
+  });
+});
+
+// #3914 — `pr-<N>` in the queue ref names only the LAST entry in the group. On
+// a serial queue that is the whole group, but under `min_entries_to_merge > 1`
+// the guard has to implicate every member of a failed group, or the other N-1
+// look un-failed and get re-added straight into the race this guard prevents.
+describe("#3914 park-race guard — batched merge groups", () => {
+  it("extracts the group's base sha from the queue ref", () => {
+    // Live shape, run 30631849709: the trailing sha is the BASE the group was
+    // built on, not the run's own head sha.
+    expect(baseShaFromMergeQueueBranch("gh-readonly-queue/main/pr-3892-a19c4abeaf741e9b8ee74c51e42e18af48df9d4e")).toBe(
+      "a19c4abeaf741e9b8ee74c51e42e18af48df9d4e",
+    );
+    expect(baseShaFromMergeQueueBranch("gh-readonly-queue/release/pr-12-abcdef0")).toBe("abcdef0");
+  });
+
+  it("returns null base sha for a non-queue branch", () => {
+    expect(baseShaFromMergeQueueBranch("main")).toBe(null);
+    // @ts-expect-error — defensive against non-string input
+    expect(baseShaFromMergeQueueBranch(undefined)).toBe(null);
+  });
+
+  it("names every member PR of a batched group, in queue order", () => {
+    expect(
+      prNumbersFromMergeGroupSubjects([
+        "Merge pull request #3890 from ttraenkler/docs-x\n\nbody text",
+        "Merge pull request #3891 from ttraenkler/issue-y",
+        "Merge pull request #3892 from ttraenkler/issue-z",
+      ]),
+    ).toEqual([3890, 3891, 3892]);
+  });
+
+  it("resolves a serial group to exactly one PR (today's behaviour, unchanged)", () => {
+    expect(prNumbersFromMergeGroupSubjects(["Merge pull request #3892 from ttraenkler/issue-z"])).toEqual([3892]);
+  });
+
+  it("recognises the squash-commit subject shape and dedupes", () => {
+    expect(prNumbersFromMergeGroupSubjects(["fix(#3647): non-enumerable prototype members (#3892)"])).toEqual([3892]);
+    expect(
+      prNumbersFromMergeGroupSubjects(["Merge pull request #3892 from a/b", "Merge pull request #3892 from a/b"]),
+    ).toEqual([3892]);
+  });
+
+  it("returns nothing for subjects with no PR reference (caller falls back)", () => {
+    // @ts-expect-error — defensive against non-string entries
+    expect(prNumbersFromMergeGroupSubjects(["chore: no pr reference", null, 42])).toEqual([]);
+    expect(prNumbersFromMergeGroupSubjects(undefined)).toEqual([]);
   });
 });
 

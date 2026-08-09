@@ -151,7 +151,7 @@ missing return values, incorrect type coercion, wrong control flow, broken scope
 | **794** | - BindingElement null guard over-triggering in destructuring (537 fail) | 0 | done | high |
 | **796** | - Destructuring initializer not evaluated when value is not undefined (121 fail) | 0 | done | medium |
 | **801** | - Array literal type mismatch in nested destructuring defaults (537 fail) | 0 | done | high |
-| **805** | Extract assignment/destructuring from expressions.ts → assignments.ts | Backlog | ready | medium |
+| **805** | Extract assignment/destructuring from expressions.ts → assignments.ts | Backlog | done | medium |
 | **817** | let/const in loop and try/catch bodies leak into outer scope | 25 | done | high |
 | **821** | BindingElement null guard over-triggering | 56 | done | critical |
 | **822** | Wasm type mismatch compile errors (907 CE) | 31 | done | high |
@@ -211,7 +211,7 @@ missing return values, incorrect type coercion, wrong control flow, broken scope
 | **1998** | join() traps 'illegal cast' on externref-element arrays — any[] numbers, undefined/null elements, holes, Array(n) results | 62 | done | high |
 | **1999** | string += on a closure-captured variable traps 'illegal cast' (and emits invalid wasm when an i32 index is concatenated) — breaks the accumulator-in-callback idiom | 61 | done | critical |
 | **2000** | Array(len) skips the RangeError check for non-integer lengths and materializes dense zeros instead of holes | 61 | done | low |
-| **2001** | sparse arrays: holes materialize as element-type defaults and HOFs visit them — [1,,3].forEach runs 3×, b[5]=9 join shows zeros | 64 | ready | medium |
+| **2001** | sparse arrays: holes materialize as element-type defaults and HOFs visit them — [1,,3].forEach runs 3×, b[5]=9 join shows zeros | current | ready | medium |
 | **2002** | startsWith/endsWith/includes silently drop the position/endPosition argument on the JS-host backend (import arity truncation) | 61 | done | high |
 | **2003** | charCodeAt out-of-range traps 'string offset out of bounds' instead of returning NaN | 61 | done | medium |
 | **2004** | codePointAt out-of-range returns NaN instead of undefined — ?? / === undefined guards never fire | 61 | done | medium |
@@ -236,7 +236,7 @@ missing return values, incorrect type coercion, wrong control flow, broken scope
 | **2023** | new.target compiles to constant i32 1 — identity comparisons (new.target === A) always wrong | 63 | done | medium |
 | **2024** | class accessor override with partial pair: get-only override silently drops writes (should TypeError); set-only override reads NaN (should undefined) | 63 | done | medium |
 | **2025** | calling an extracted method (const f = a.m; f()) traps uncatchably instead of throwing catchable TypeError | 63 | done | low |
-| **2026** | classes are not first-class values: new K() on a parameter throws 'No dependency provided for extern class', .constructor identity broken | 63 | done | medium |
+| **2026** | classes are not first-class values: new K() on a parameter throws 'No dependency provided for extern class', .constructor identity broken | 63 | in-progress | medium |
 | **2027** | (this as any).prop in a static field initializer yields null — static-context arm matches bare ThisKeyword only | 61 | done | low |
 | **2028** | new Promise(executor): invoking the host-provided resolve/reject from wasm traps null deref — executor pattern fully broken in JS-host mode | 63 | done | high |
 | **2030** | IteratorResult.done stringifies as 0/1 (raw i32, no boolean brand); exhausted .value becomes NaN instead of undefined | 61 | done | medium |
@@ -245,7 +245,7 @@ missing return values, incorrect type coercion, wrong control flow, broken scope
 | **2033** | custom iterables ([Symbol.iterator]): spread emits invalid wasm (CE), destructuring reads NaN — only for-of consults the protocol | 63 | done | high |
 | **2034** | Number.isNaN/isInteger/isFinite coerce their argument via f64 hint — Number.isNaN('foo') returns true (should be false, no coercion) | 61 | done | medium |
 | **2035** | generator return value leaks into iteration: spread/for-of/Array.from/yield* include it; final {value, done:true} never materializes | 63 | done | high |
-| **2044** | architect decision: BigInt value representation — i64-bigint-brand ValType vs TS-type-driven boxing (gates #1644 slices, implicated in #2039 i64 ABI bucket) | 67 | blocked | high |
+| **2044** | architect decision: BigInt value representation — i64-bigint-brand ValType vs TS-type-driven boxing (gates #1644 slices, implicated in #2039 i64 ABI bucket) | 71 | done | high |
 | **2049** | o?.m(args) never routed to optional-call codegen: args evaluated on nullish receiver, null class receiver traps | 61 | done | high |
 | **2050** | a?.[i] compiled as plain a[i]: index side effects fire and no undefined result on nullish base | 61 | done | high |
 | **2051** | short-circuited ?. produces the type's default value (0 / \"null\") instead of undefined | 63 | done | high |
@@ -276,8 +276,8 @@ missing return values, incorrect type coercion, wrong control flow, broken scope
 | **2102** | shared throwJsError(kind, msg) lowering + trap-site audit — runtime checks must throw catchable JS errors, not Wasm traps | 63 | done | high |
 | **2104** | value-rep P1: canonical JsTag module (src/codegen/value-tags.ts) + boxToAny consolidation with jsType hint | 62 | done | high |
 | **2105** | value-rep P2: boolean brand rollout — ~20 producer + ~12 consumer sites onto {kind:'i32', boolean:true} | 62 | done | high |
-| **2106** | value-rep P3: undefined observability — UNDEF_F64 sentinel, union-collapse reversal (flagged), standalone $undefined singleton | 67 | in-progress | high |
-| **2109** | BigInt mixed loose-equality uses parseFloat instead of StringToNumber (accepts trailing garbage, rejects 0x forms) | Backlog | ready | low |
+| **2106** | value-rep P3: undefined observability — UNDEF_F64 sentinel, union-collapse reversal (flagged), standalone $undefined singleton | 76 | done | high |
+| **2109** | BigInt mixed loose-equality uses parseFloat instead of StringToNumber (accepts trailing garbage, rejects 0x forms) | Backlog | done | low |
 | **2111** | module code (always strict) gets a mapped arguments object: parameter writes leak into arguments[i] | 61 | wont-fix | medium |
 | **2114** | String.fromCharCode/fromCodePoint silently drop all arguments after the first (host backend; native fromCodePoint too) | 61 | wont-fix | high |
 | **2116** | explicit undefined as optional string-index arg coerced to NaN/0 instead of per-method default (substring/slice/lastIndexOf/endsWith/repeat, both backends) | 61 | wont-fix | high |
@@ -288,7 +288,7 @@ missing return values, incorrect type coercion, wrong control flow, broken scope
 | **2152** | Array HOF callbacks ignore thisArg; callback `this` is always undefined | 62 | done | high |
 | **2154** | WASI _start wraps only __module_init, never calls a user main() — #1411/#1978 regression (native-messaging smoke red) | 62 | done | high |
 | **2174** | standalone: `arguments` captured by a nested function under async emits invalid Wasm (__closure fallthru i32 vs externref) | Backlog | done | high |
-| **2181** | defineBuiltin(name, {elementKinds, lower}) scaffold — unify per-representation element-load/ToString/null handling | 67 | ready | medium |
+| **2181** | defineBuiltin(name, {elementKinds, lower}) scaffold — unify per-representation element-load/ToString/null handling | 69 | done | medium |
 | **2184** | linear backend: &&/\|\| yield 0/1 constants instead of operand values (needs result-type unification) | 63 | done | medium |
 | **2502** | Array.prototype.sort on an externref-element array emits invalid Wasm (__isort_externref f64.gt on externref) — 28 test262 | 64 | done | medium |
 | **2544** | nested destructuring-param default object emits struct.new one operand short of the field-unified type — invalid Wasm (24 test262) | 64 | done | medium |
@@ -296,8 +296,26 @@ missing return values, incorrect type coercion, wrong control flow, broken scope
 | **2554** | IR path drops tail calls on top-level recursive functions → deep-recursion stack overflow (regression vs legacy) | 64 | done | high |
 | **2565** | nested destructuring-param default object emits struct.new one operand short of the $shape-bearing type — invalid Wasm (24 test262) | 64 | done | medium |
 | **2567** | destructuring-param default whose initializer calls a function emits C_method one operand short for the call — invalid Wasm (4 test262) | Backlog | done | low |
-| **2570** | lazy/suspending async-generator runtime — yield* execution order (eager-buffer drains before first .next()) | Backlog | ready | medium |
-| **2729** | WasmGC backend: new Uint8Array(n) element store skips ToUint8 (u[0]=257 reads 257, u[0]=NaN reads NaN) | Backlog | ready | medium |
+| **2570** | lazy/suspending async-generator runtime — yield* execution order (eager-buffer drains before first .next()) | Backlog | done | medium |
+| **2729** | WasmGC backend: new Uint8Array(n) element store skips ToUint8 (u[0]=257 reads 257, u[0]=NaN reads NaN) | 69 | done | medium |
+| **2763** | [SUBSTRATE][ARCH] instanceof value-rep residual: cross-realm Object/Function identity + .prototype access on dynamic Function values | current | ready | medium |
+| **2764** | @@hasInstance handler invoked at unknown-arity (arguments.length wrong) — dispatcher half fixed by #2213; one-line residual | 69 | done | medium |
+| **2765** | instanceof hard residuals: Function.prototype getter / WasmGC array proto-chain + undeclared-global ReferenceError | Backlog | ready | low |
+| **2883** | Hint-less object-literal [Symbol.toPrimitive]() emits invalid Wasm — __call_@@toPrimitive arity mismatch (expected externref, got (ref N)) | 69 | done | medium |
+| **3184** | default lane: for-await-of / async-dstr vacuous cluster — 489 fails (383 'callback never executed'), async paths silently no-op | current | ready | high |
+| **3186** | [SOUNDNESS] host lane: for-in string-key element read returns a silently WRONG VALUE — un-filed sibling of #3179 + family census | 71 | done | high |
+| **3188** | UMBRELLA: ES module-code semantics (~174 fails) — namespace objects, cross-module TDZ, module early errors + wrapTest export collision | current | ready | medium |
+| **3197** | default lane: drive the for-await-of / async-dstr callback chain to completion (383 vacuous fails) | current | ready | high |
+| **3198** | default lane: Promise combinator callbacks never execute — vacuous slice (218 fails) | Backlog | blocked | medium |
+| **3403** | Object-integrity tracking maps (frozenVars/sealedVars/nonExtensibleVars/definedPropertyFlags/widenedDefinePropertyKeys) keyed by BARE variable name → cross-function collision (same archetype as #3364) | 72 | done | high |
+| **3552** | CI gap: untouched guard tests run in NO required check — #3503 landed a red tests/issue-3471.test.ts on main; add a curated required guard suite to `quality` | 76 | done | high |
+| **3589** | latent null-deref in the compiled test262 `assert` harness, unmasked (not caused) by #3563 | current | wont-fix | high |
+| **3590** | padMissingArg `ref` case emits ref.null + ref.as_non_null — an unconditional trap that passes validation | current | ready | medium |
+| **3608** | default target: undeclared property write on a class-typed receiver is silently dropped (expando lost, only a TS2339 warning) | current | ready | high |
+| **3613** | Unit-test the test262 machinery: a harness truth table, a standing vacuity detector, a vacuous-verifier guard, and one shared thrown-payload renderer | current | done | high |
+| **3615** | Silent wrong answer: a property read in expression-statement position never invokes the accessor — the getter's observable effects, including its throw, are dropped | current | ready | high |
+| **3619** | 'Mechanise "the test must go red without the fix": re-run a PR''s new regression test against the merge-base compiler and require FAIL' | current | ready | high |
+| **3622** | Unbounded runtime scan: `Array.prototype.lastIndexOf` on an array-like never matches at indices > 2^32, so it walks ~9×10^15 slots (in-process harnesses hang forever) | current | ready | medium |
 
 <!-- AUTOGENERATED:GOAL-ISSUES-END -->
 

@@ -1,8 +1,7 @@
 ---
 id: 2866
 title: "Standalone: Symbol values leak __box_symbol — no Wasm-native Symbol carrier"
-status: in-progress
-assignee: ttraenkler/sendev-symbol
+status: ready
 created: 2026-06-30
 updated: 2026-06-30
 priority: high

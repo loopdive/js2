@@ -23,11 +23,11 @@ import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import type { NativeStrShared } from "./native-strings-shared.js";
 
 /**
- * Replacement methods: the `$`-pattern `__str_getSubstitution` helper plus
- * `replace` and `replaceAll`.
+ * `__str_getSubstitution` — expand `$$` / `$&` / `` $` `` / `$'` patterns in a
+ * replacement string per ECMAScript §22.1.3.19 GetSubstitution.
  */
-export function emitStrReplaceHelpers(shared: NativeStrShared): void {
-  const { ctx, strTypeIdx, anyStrTypeIdx, strRef, strDataRef, wrapBodyWithFlatten } = shared;
+export function emitStrGetSubstitutionHelper(shared: NativeStrShared): void {
+  const { ctx, strTypeIdx, strDataTypeIdx, anyStrTypeIdx, strRef, strDataRef, wrapBodyWithFlatten } = shared;
 
   // --- $__str_getSubstitution(replacement, matched, prefix, suffix) -> ref $NativeString ---
   // #1822 — expand `$` patterns in a replacement string per ECMAScript
@@ -151,14 +151,6 @@ export function emitStrReplaceHelpers(shared: NativeStrShared): void {
     };
 
     const body: Instr[] = [
-      // result = "" (empty NativeString: len=0, off=0, empty data)
-      { op: "i32.const", value: 0 },
-      { op: "i32.const", value: 0 },
-      { op: "i32.const", value: 0 },
-      { op: "array.new_default", typeIdx: ctx.nativeStrDataTypeIdx },
-      { op: "struct.new", typeIdx: strTypeIdx },
-      { op: "local.set", index: RES },
-
       // len = replacement.len ; data = replacement.data ; off = replacement.off
       { op: "local.get", index: 0 },
       { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 },
@@ -169,6 +161,62 @@ export function emitStrReplaceHelpers(shared: NativeStrShared): void {
       { op: "local.get", index: 0 },
       { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 1 },
       { op: "local.set", index: OFF },
+
+      // (#3901) `$`-free fast path. GetSubstitution is called on EVERY
+      // `String.prototype.replace`/`replaceAll`, but a replacement containing a
+      // `$` is rare. The general path below is expensive even when it expands
+      // nothing: it seeds `result` with a freshly allocated empty string
+      // (struct + 0-length backing array), then flushes the whole replacement
+      // through `__str_substring` + `__str_concat`, which for a short string
+      // allocates another backing array and another struct — 5 allocations and
+      // 2 helper calls to reproduce a string we were already handed. Scan once
+      // for `$`; when there is none the substitution is the identity, so return
+      // the replacement itself with zero allocations.
+      { op: "i32.const", value: 0 },
+      { op: "local.set", index: I },
+      {
+        op: "block",
+        blockType: { kind: "empty" },
+        body: [
+          {
+            op: "loop",
+            blockType: { kind: "empty" },
+            body: [
+              // if (i >= len) — scanned the whole replacement, no `$` found
+              { op: "local.get", index: I },
+              { op: "local.get", index: LEN },
+              { op: "i32.ge_s" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [{ op: "local.get", index: 0 }, { op: "return" }],
+              },
+              // if (data[off + i] === '$') stop scanning, take the general path
+              { op: "local.get", index: DATA },
+              { op: "local.get", index: OFF },
+              { op: "local.get", index: I },
+              { op: "i32.add" },
+              { op: "array.get_u", typeIdx: ctx.nativeStrDataTypeIdx },
+              { op: "i32.const", value: 36 },
+              { op: "i32.eq" },
+              { op: "br_if", depth: 1 },
+              { op: "local.get", index: I },
+              { op: "i32.const", value: 1 },
+              { op: "i32.add" },
+              { op: "local.set", index: I },
+              { op: "br", depth: 0 },
+            ],
+          },
+        ],
+      },
+
+      // result = "" (empty NativeString: len=0, off=0, empty data)
+      { op: "i32.const", value: 0 },
+      { op: "i32.const", value: 0 },
+      { op: "i32.const", value: 0 },
+      { op: "array.new_default", typeIdx: ctx.nativeStrDataTypeIdx },
+      { op: "struct.new", typeIdx: strTypeIdx },
+      { op: "local.set", index: RES },
 
       // i = 0 ; segStart = 0
       { op: "i32.const", value: 0 },
@@ -254,6 +302,13 @@ export function emitStrReplaceHelpers(shared: NativeStrShared): void {
       exported: false,
     });
   }
+}
+
+/**
+ * `String.prototype.replace` — replaces the FIRST occurrence.
+ */
+export function emitStrReplaceFirstHelper(shared: NativeStrShared): void {
+  const { ctx, strTypeIdx, strDataTypeIdx, anyStrTypeIdx, strRef, strDataRef, wrapBodyWithFlatten } = shared;
 
   // --- $__str_replace(s: ref $NativeString, search: ref $NativeString, replacement: ref $NativeString) -> ref $NativeString ---
   // Replaces first occurrence of search with replacement. Pure wasm using indexOf + substring + concat.
@@ -268,7 +323,19 @@ export function emitStrReplaceHelpers(shared: NativeStrShared): void {
     ctx.nativeStrHelpers.set("__str_replace", funcIdx);
 
     // params: s(0), search(1), replacement(2)
-    // locals: idx(3), searchLen(4), prefix(5-nullable), suffix(6-nullable)
+    // locals: idx(3), searchLen(4), prefix(5-nullable), suffix(6-nullable),
+    //         sLen(7), sOff(8), sData(9), rLen(10), rOff(11), rData(12),
+    //         newLen(13), out(14), dollar(15), i(16)
+    const SLEN = 7,
+      SOFF = 8,
+      SDATA = 9,
+      RLEN = 10,
+      ROFF = 11,
+      RDATA = 12,
+      NEWLEN = 13,
+      OUT = 14,
+      DOLLAR = 15,
+      I = 16;
     const body: Instr[] = [
       // idx = indexOf(s, search, 0)
       { op: "local.get", index: 0 },
@@ -290,6 +357,151 @@ export function emitStrReplaceHelpers(shared: NativeStrShared): void {
           { op: "local.get", index: 1 },
           { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 },
           { op: "local.set", index: 4 },
+
+          // (#3901) Direct-splice fast path. The general path below builds the
+          // result as concat(concat(prefix, substitution), suffix), which for a
+          // short result flattens twice: the prefix characters are copied into
+          // an intermediate buffer and then copied again into the final one, and
+          // each concat allocates a backing array plus a struct. Splicing
+          // directly costs ONE backing array + ONE struct and copies every
+          // character exactly once.
+          //
+          // Two guards keep this strictly equivalent to the general path:
+          //   * `newLen < 64` — `__str_concat`'s own flat/rope threshold. Above
+          //     it the general path builds O(1) ConsString rope nodes rather
+          //     than copying, which is the right call for large strings, so we
+          //     leave that behaviour untouched.
+          //   * the replacement contains no `$` — otherwise GetSubstitution
+          //     (§22.1.3.19) may expand `$$`/`$&`/`` $` ``/`$'` and the
+          //     replacement is not the literal text to splice in (#1822).
+          // s and replacement are already flat here (the flatten preamble runs
+          // on params 0/1/2), so their len/off/data can be read directly.
+          { op: "local.get", index: 0 },
+          { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 },
+          { op: "local.set", index: SLEN },
+          { op: "local.get", index: 2 },
+          { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 },
+          { op: "local.set", index: RLEN },
+          // newLen = sLen - searchLen + rLen
+          { op: "local.get", index: SLEN },
+          { op: "local.get", index: 4 },
+          { op: "i32.sub" },
+          { op: "local.get", index: RLEN },
+          { op: "i32.add" },
+          { op: "local.set", index: NEWLEN },
+          { op: "local.get", index: NEWLEN },
+          { op: "i32.const", value: 64 },
+          { op: "i32.lt_u" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 2 },
+              { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 1 },
+              { op: "local.set", index: ROFF },
+              { op: "local.get", index: 2 },
+              { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 2 },
+              { op: "local.set", index: RDATA },
+              // dollar = replacement contains '$'
+              { op: "i32.const", value: 0 },
+              { op: "local.set", index: DOLLAR },
+              { op: "i32.const", value: 0 },
+              { op: "local.set", index: I },
+              {
+                op: "block",
+                blockType: { kind: "empty" },
+                body: [
+                  {
+                    op: "loop",
+                    blockType: { kind: "empty" },
+                    body: [
+                      { op: "local.get", index: I },
+                      { op: "local.get", index: RLEN },
+                      { op: "i32.ge_s" },
+                      { op: "br_if", depth: 1 },
+                      { op: "local.get", index: RDATA },
+                      { op: "local.get", index: ROFF },
+                      { op: "local.get", index: I },
+                      { op: "i32.add" },
+                      { op: "array.get_u", typeIdx: ctx.nativeStrDataTypeIdx },
+                      { op: "i32.const", value: 36 },
+                      { op: "i32.eq" },
+                      {
+                        op: "if",
+                        blockType: { kind: "empty" },
+                        then: [
+                          { op: "i32.const", value: 1 },
+                          { op: "local.set", index: DOLLAR },
+                          // depths: if(0) loop(1) block(2)
+                          { op: "br", depth: 2 },
+                        ],
+                      },
+                      { op: "local.get", index: I },
+                      { op: "i32.const", value: 1 },
+                      { op: "i32.add" },
+                      { op: "local.set", index: I },
+                      { op: "br", depth: 0 },
+                    ],
+                  },
+                ],
+              },
+              { op: "local.get", index: DOLLAR },
+              { op: "i32.eqz" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "local.get", index: 0 },
+                  { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 1 },
+                  { op: "local.set", index: SOFF },
+                  { op: "local.get", index: 0 },
+                  { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 2 },
+                  { op: "local.set", index: SDATA },
+                  { op: "local.get", index: NEWLEN },
+                  { op: "array.new_default", typeIdx: strDataTypeIdx },
+                  { op: "local.set", index: OUT },
+                  // head: out[0 .. idx) = s[sOff .. sOff + idx)
+                  { op: "local.get", index: OUT },
+                  { op: "i32.const", value: 0 },
+                  { op: "local.get", index: SDATA },
+                  { op: "local.get", index: SOFF },
+                  { op: "local.get", index: 3 },
+                  { op: "array.copy", dstTypeIdx: strDataTypeIdx, srcTypeIdx: strDataTypeIdx },
+                  // middle: out[idx .. idx + rLen) = replacement
+                  { op: "local.get", index: OUT },
+                  { op: "local.get", index: 3 },
+                  { op: "local.get", index: RDATA },
+                  { op: "local.get", index: ROFF },
+                  { op: "local.get", index: RLEN },
+                  { op: "array.copy", dstTypeIdx: strDataTypeIdx, srcTypeIdx: strDataTypeIdx },
+                  // tail: out[idx + rLen ..) = s[idx + searchLen .. sLen)
+                  { op: "local.get", index: OUT },
+                  { op: "local.get", index: 3 },
+                  { op: "local.get", index: RLEN },
+                  { op: "i32.add" },
+                  { op: "local.get", index: SDATA },
+                  { op: "local.get", index: SOFF },
+                  { op: "local.get", index: 3 },
+                  { op: "i32.add" },
+                  { op: "local.get", index: 4 },
+                  { op: "i32.add" },
+                  { op: "local.get", index: SLEN },
+                  { op: "local.get", index: 3 },
+                  { op: "i32.sub" },
+                  { op: "local.get", index: 4 },
+                  { op: "i32.sub" },
+                  { op: "array.copy", dstTypeIdx: strDataTypeIdx, srcTypeIdx: strDataTypeIdx },
+                  // return struct.new $NativeString(newLen, 0, out)
+                  { op: "local.get", index: NEWLEN },
+                  { op: "i32.const", value: 0 },
+                  { op: "local.get", index: OUT },
+                  { op: "ref.as_non_null" },
+                  { op: "struct.new", typeIdx: strTypeIdx },
+                  { op: "return" },
+                ],
+              },
+            ],
+          },
 
           // prefix = s.substring(0, idx)
           { op: "local.get", index: 0 },
@@ -335,11 +547,28 @@ export function emitStrReplaceHelpers(shared: NativeStrShared): void {
         { name: "searchLen", type: { kind: "i32" } },
         { name: "prefix", type: { kind: "ref_null", typeIdx: anyStrTypeIdx } },
         { name: "suffix", type: { kind: "ref_null", typeIdx: anyStrTypeIdx } },
+        { name: "sLen", type: { kind: "i32" } },
+        { name: "sOff", type: { kind: "i32" } },
+        { name: "sData", type: { kind: "ref_null", typeIdx: strDataTypeIdx } },
+        { name: "rLen", type: { kind: "i32" } },
+        { name: "rOff", type: { kind: "i32" } },
+        { name: "rData", type: { kind: "ref_null", typeIdx: strDataTypeIdx } },
+        { name: "newLen", type: { kind: "i32" } },
+        { name: "out", type: { kind: "ref_null", typeIdx: strDataTypeIdx } },
+        { name: "dollar", type: { kind: "i32" } },
+        { name: "i", type: { kind: "i32" } },
       ],
       body: wrapBodyWithFlatten(body, [0, 1, 2]),
       exported: false,
     });
   }
+}
+
+/**
+ * `String.prototype.replaceAll` — replaces EVERY occurrence.
+ */
+export function emitStrReplaceAllHelper(shared: NativeStrShared): void {
+  const { ctx, strTypeIdx, strDataTypeIdx, anyStrTypeIdx, strRef, strDataRef, wrapBodyWithFlatten } = shared;
 
   // --- $__str_replaceAll(s: ref $NativeString, search: ref $NativeString, replacement: ref $NativeString) -> ref $NativeString ---
   // Replaces ALL occurrences of search with replacement. Pure wasm loop using indexOf + substring + concat.
@@ -549,333 +778,15 @@ export function emitStrReplaceHelpers(shared: NativeStrShared): void {
 }
 
 /**
- * `String.prototype.split` — returns a `$vec_nstr` of NativeStrings.
+ * Replacement methods: the `$`-pattern `__str_getSubstitution` helper plus
+ * `replace` and `replaceAll`. (#3901) Each is now its own builder — the
+ * combined function outgrew the `check:func-budget` ceiling. Order matters:
+ * `replace`/`replaceAll` look `__str_getSubstitution` up by name.
  */
-export function emitStrSplitHelper(shared: NativeStrShared): void {
-  const { ctx, strTypeIdx, anyStrTypeIdx, strRef, wrapBodyWithFlatten } = shared;
-
-  // --- $__str_split(s: ref $NativeString, sep: ref $NativeString, limit: i32) -> ref $vec_nstr ---
-  // Splits s by sep, returns a native array of native strings. `limit` caps the
-  // number of pieces (ECMA-262 §22.1.3.23): callers pass 0xFFFFFFFF (= -1 as i32)
-  // for "no limit"; `limit === 0` yields the empty array (#2125).
-  {
-    // Register native string array type: (array (mut (ref null $AnyString)))
-    // Use ref_null so array.new_default can initialize with null.
-    // Key must match what resolveWasmType generates for string[] (ref_N).
-    const nstrElemKey = `ref_${anyStrTypeIdx}`;
-    const nstrElemType: ValType = { kind: "ref_null", typeIdx: anyStrTypeIdx };
-    const nstrArrTypeIdx = getOrRegisterArrayType(ctx, nstrElemKey, nstrElemType);
-    const nstrVecTypeIdx = getOrRegisterVecType(ctx, nstrElemKey, nstrElemType);
-    const nstrVecRef: ValType = { kind: "ref", typeIdx: nstrVecTypeIdx };
-
-    const typeIdx = addFuncType(ctx, [strRef, strRef, { kind: "i32" }], [nstrVecRef]);
-    const funcIdx = mintDefinedFunc(ctx);
-    ctx.nativeStrHelpers.set("__str_split", funcIdx);
-
-    const indexOfIdx = ctx.nativeStrHelpers.get("__str_indexOf")!;
-    const substringIdx = ctx.nativeStrHelpers.get("__str_substring")!;
-
-    // params: s(0), sep(1), limit(2)
-    // locals: sLen(3), sepLen(4), pos(5), idx(6), part(7-nullable),
-    //         resultArr(8-nullable), resultLen(9), resultCap(10), newArr(11-nullable)
-    const S = 0,
-      SEP = 1,
-      LIMIT = 2;
-    const SLEN = 3,
-      SEPLEN = 4,
-      POS = 5,
-      IDX = 6,
-      PART = 7;
-    const RARR = 8,
-      RLEN = 9,
-      RCAP = 10,
-      NEWARR = 11;
-
-    const body: Instr[] = [
-      // #2125: limit === 0 → return empty array (ECMA-262 §22.1.3.23 step 14).
-      // The vec struct is { length: i32, data: ref $arr }, so push length 0
-      // then a 0-capacity backing array.
-      { op: "local.get", index: LIMIT },
-      { op: "i32.eqz" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          { op: "i32.const", value: 0 }, // vec length
-          { op: "i32.const", value: 0 }, // backing array size
-          { op: "array.new_default", typeIdx: nstrArrTypeIdx },
-          { op: "struct.new", typeIdx: nstrVecTypeIdx },
-          { op: "return" },
-        ],
-      },
-
-      // sLen = s.len
-      { op: "local.get", index: S },
-      { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 },
-      { op: "local.set", index: SLEN },
-
-      // sepLen = sep.len
-      { op: "local.get", index: SEP },
-      { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 },
-      { op: "local.set", index: SEPLEN },
-
-      // resultArr = array.new_default(8)
-      { op: "i32.const", value: 8 },
-      { op: "array.new_default", typeIdx: nstrArrTypeIdx },
-      { op: "local.set", index: RARR },
-      { op: "i32.const", value: 0 },
-      { op: "local.set", index: RLEN },
-      { op: "i32.const", value: 8 },
-      { op: "local.set", index: RCAP },
-
-      // pos = 0
-      { op: "i32.const", value: 0 },
-      { op: "local.set", index: POS },
-
-      // Handle empty separator: return array with single element (the whole string)
-      { op: "local.get", index: SEPLEN },
-      { op: "i32.eqz" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          // For empty sep, split each character (like JS)
-          // But for simplicity and correctness, match JS: "abc".split("") => ["a","b","c"]
-          // Realloc if needed for sLen elements
-          { op: "local.get", index: SLEN },
-          { op: "array.new_default", typeIdx: nstrArrTypeIdx },
-          { op: "local.set", index: RARR },
-          { op: "local.get", index: SLEN },
-          { op: "local.set", index: RCAP },
-
-          // Loop: for each character, create a single-char NativeString
-          { op: "i32.const", value: 0 },
-          { op: "local.set", index: POS },
-          {
-            op: "block",
-            blockType: { kind: "empty" },
-            body: [
-              {
-                op: "loop",
-                blockType: { kind: "empty" },
-                body: [
-                  // stop at sLen OR when we've emitted `limit` pieces (#2125)
-                  { op: "local.get", index: POS },
-                  { op: "local.get", index: SLEN },
-                  { op: "i32.ge_s" },
-                  { op: "local.get", index: POS },
-                  { op: "local.get", index: LIMIT },
-                  { op: "i32.ge_u" },
-                  { op: "i32.or" },
-                  { op: "br_if", depth: 1 },
-
-                  // part = substring(s, pos, pos+1)
-                  { op: "local.get", index: S },
-                  { op: "local.get", index: POS },
-                  { op: "local.get", index: POS },
-                  { op: "i32.const", value: 1 },
-                  { op: "i32.add" },
-                  { op: "call", funcIdx: substringIdx },
-                  { op: "local.set", index: PART },
-
-                  // resultArr[pos] = part
-                  { op: "local.get", index: RARR },
-                  { op: "local.get", index: POS },
-                  { op: "local.get", index: PART },
-                  { op: "array.set", typeIdx: nstrArrTypeIdx },
-
-                  { op: "local.get", index: POS },
-                  { op: "i32.const", value: 1 },
-                  { op: "i32.add" },
-                  { op: "local.set", index: POS },
-                  { op: "br", depth: 0 },
-                ],
-              },
-            ],
-          },
-
-          // return struct.new(pos, resultArr) — `pos` is the number of chars
-          // actually emitted, which equals min(sLen, limit) (#2125).
-          { op: "local.get", index: POS },
-          { op: "local.get", index: RARR },
-          { op: "ref.as_non_null" },
-          { op: "struct.new", typeIdx: nstrVecTypeIdx },
-          { op: "return" },
-        ],
-      },
-
-      // Main split loop: find sep occurrences and extract substrings
-      {
-        op: "block",
-        blockType: { kind: "empty" },
-        body: [
-          {
-            op: "loop",
-            blockType: { kind: "empty" },
-            body: [
-              // #2125: stop once `limit` pieces have been collected. From the
-              // loop body (not inside an `if`), depth 1 exits the wrapping block.
-              { op: "local.get", index: RLEN },
-              { op: "local.get", index: LIMIT },
-              { op: "i32.ge_u" },
-              { op: "br_if", depth: 1 }, // break outer block
-
-              // idx = indexOf(s, sep, pos)
-              { op: "local.get", index: S },
-              { op: "local.get", index: SEP },
-              { op: "local.get", index: POS },
-              { op: "call", funcIdx: indexOfIdx },
-              { op: "local.set", index: IDX },
-
-              // if idx == -1: add final part and break
-              { op: "local.get", index: IDX },
-              { op: "i32.const", value: -1 },
-              { op: "i32.eq" },
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: [
-                  // part = substring(s, pos, sLen)
-                  { op: "local.get", index: S },
-                  { op: "local.get", index: POS },
-                  { op: "local.get", index: SLEN },
-                  { op: "call", funcIdx: substringIdx },
-                  { op: "local.set", index: PART },
-
-                  // Grow result if needed
-                  { op: "local.get", index: RLEN },
-                  { op: "local.get", index: RCAP },
-                  { op: "i32.ge_s" },
-                  {
-                    op: "if",
-                    blockType: { kind: "empty" },
-                    then: [
-                      // newCap = cap * 2
-                      { op: "local.get", index: RCAP },
-                      { op: "i32.const", value: 2 },
-                      { op: "i32.mul" },
-                      { op: "local.set", index: RCAP },
-                      // newArr = array.new_default(newCap)
-                      { op: "local.get", index: RCAP },
-                      { op: "array.new_default", typeIdx: nstrArrTypeIdx },
-                      { op: "local.set", index: NEWARR },
-                      // array.copy(newArr, 0, resultArr, 0, resultLen)
-                      { op: "local.get", index: NEWARR },
-                      { op: "i32.const", value: 0 },
-                      { op: "local.get", index: RARR },
-                      { op: "i32.const", value: 0 },
-                      { op: "local.get", index: RLEN },
-                      {
-                        op: "array.copy",
-                        dstTypeIdx: nstrArrTypeIdx,
-                        srcTypeIdx: nstrArrTypeIdx,
-                      },
-                      { op: "local.get", index: NEWARR },
-                      { op: "local.set", index: RARR },
-                    ],
-                  },
-
-                  // resultArr[resultLen] = part
-                  { op: "local.get", index: RARR },
-                  { op: "local.get", index: RLEN },
-                  { op: "local.get", index: PART },
-                  { op: "array.set", typeIdx: nstrArrTypeIdx },
-                  { op: "local.get", index: RLEN },
-                  { op: "i32.const", value: 1 },
-                  { op: "i32.add" },
-                  { op: "local.set", index: RLEN },
-
-                  { op: "br", depth: 2 }, // break outer block
-                ],
-              },
-
-              // Found separator: part = substring(s, pos, idx)
-              { op: "local.get", index: S },
-              { op: "local.get", index: POS },
-              { op: "local.get", index: IDX },
-              { op: "call", funcIdx: substringIdx },
-              { op: "local.set", index: PART },
-
-              // Grow result if needed
-              { op: "local.get", index: RLEN },
-              { op: "local.get", index: RCAP },
-              { op: "i32.ge_s" },
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: [
-                  { op: "local.get", index: RCAP },
-                  { op: "i32.const", value: 2 },
-                  { op: "i32.mul" },
-                  { op: "local.set", index: RCAP },
-                  { op: "local.get", index: RCAP },
-                  { op: "array.new_default", typeIdx: nstrArrTypeIdx },
-                  { op: "local.set", index: NEWARR },
-                  { op: "local.get", index: NEWARR },
-                  { op: "i32.const", value: 0 },
-                  { op: "local.get", index: RARR },
-                  { op: "i32.const", value: 0 },
-                  { op: "local.get", index: RLEN },
-                  {
-                    op: "array.copy",
-                    dstTypeIdx: nstrArrTypeIdx,
-                    srcTypeIdx: nstrArrTypeIdx,
-                  },
-                  { op: "local.get", index: NEWARR },
-                  { op: "local.set", index: RARR },
-                ],
-              },
-
-              // resultArr[resultLen] = part
-              { op: "local.get", index: RARR },
-              { op: "local.get", index: RLEN },
-              { op: "local.get", index: PART },
-              { op: "array.set", typeIdx: nstrArrTypeIdx },
-              { op: "local.get", index: RLEN },
-              { op: "i32.const", value: 1 },
-              { op: "i32.add" },
-              { op: "local.set", index: RLEN },
-
-              // pos = idx + sepLen
-              { op: "local.get", index: IDX },
-              { op: "local.get", index: SEPLEN },
-              { op: "i32.add" },
-              { op: "local.set", index: POS },
-
-              { op: "br", depth: 0 }, // continue loop
-            ],
-          },
-        ],
-      },
-
-      // return struct.new(resultLen, resultArr)
-      { op: "local.get", index: RLEN },
-      { op: "local.get", index: RARR },
-      { op: "ref.as_non_null" },
-      { op: "struct.new", typeIdx: nstrVecTypeIdx },
-    ];
-
-    pushDefinedFunc(ctx, funcIdx, {
-      name: "__str_split",
-      typeIdx,
-      locals: [
-        { name: "sLen", type: { kind: "i32" } },
-        { name: "sepLen", type: { kind: "i32" } },
-        { name: "pos", type: { kind: "i32" } },
-        { name: "idx", type: { kind: "i32" } },
-        { name: "part", type: { kind: "ref_null", typeIdx: anyStrTypeIdx } },
-        {
-          name: "resultArr",
-          type: { kind: "ref_null", typeIdx: nstrArrTypeIdx },
-        },
-        { name: "resultLen", type: { kind: "i32" } },
-        { name: "resultCap", type: { kind: "i32" } },
-        { name: "newArr", type: { kind: "ref_null", typeIdx: nstrArrTypeIdx } },
-      ],
-      body: wrapBodyWithFlatten(body, [0, 1]),
-      exported: false,
-    });
-  }
+export function emitStrReplaceHelpers(shared: NativeStrShared): void {
+  emitStrGetSubstitutionHelper(shared);
+  emitStrReplaceFirstHelper(shared);
+  emitStrReplaceAllHelper(shared);
 }
 
 /**

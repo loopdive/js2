@@ -11,7 +11,7 @@ name: Approve trusted-fork runs
 #
 # TOKEN: the approve endpoint is NOT accessible to the default GITHUB_TOKEN
 # (github-actions[bot] → 403). It needs the AUTO_ENQUEUE_TOKEN PAT (repo write +
-# actions:write) that auto-enqueue.yml / queue-unstick.yml already use. If that
+# actions:write) that auto-enqueue.yml already uses. If that
 # secret is unset the job runs and logs a clear pointer, but every approve 403s.
 
 on:

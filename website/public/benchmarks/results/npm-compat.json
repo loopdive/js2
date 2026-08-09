@@ -1,0 +1,1627 @@
+{
+  "generatedAt": "2026-08-09T19:31:31.595Z",
+  "correctness": {
+    "definition": {
+      "verified": "a differential workload ran against native Node and every operation matched",
+      "divergent": "a differential workload ran and at least one operation did NOT match native Node",
+      "unverified": "no differential workload exists — compile/validation only; correctness is UNKNOWN, not confirmed"
+    },
+    "oracle": "native Node executing the same pinned package, computed at run time; never read from a committed pin",
+    "counts": {
+      "verified": 2,
+      "divergent": 4,
+      "unverified": 17
+    },
+    "verified": [
+      "cookie",
+      "react"
+    ],
+    "divergent": [
+      "acorn",
+      "clsx",
+      "lit",
+      "react-dom"
+    ],
+    "unverified": [
+      "axios",
+      "eslint",
+      "hono",
+      "jest",
+      "jsdom",
+      "lodash",
+      "marked",
+      "moment",
+      "prettier",
+      "redux",
+      "styled-components",
+      "stylelint",
+      "tailwindcss",
+      "three",
+      "typescript",
+      "uuid",
+      "webpack"
+    ]
+  },
+  "note": "Only packages with a committed, reproducible tests/dogfood harness are listed. Original upstream tests are preferred; when npm omits them, the card says so instead of substituting harness-authored tests.",
+  "popularity": {
+    "metric": "weekly npm downloads",
+    "start": "2026-07-23",
+    "end": "2026-07-29",
+    "source": "https://api.npmjs.org/downloads/point/last-week/{package}"
+  },
+  "performanceMethodology": {
+    "baseline": "same pinned package, inputs, and result observation in native Node",
+    "inputModes": {
+      "compile-time-static": "package, test driver, and fixed inputs are visible to the Wasm compiler",
+      "runtime-dynamic": "an input or input-selecting value is supplied by the JavaScript host only after Wasm compilation"
+    }
+  },
+  "packages": [
+    {
+      "name": "uuid",
+      "version": "14.0.1",
+      "issue": null,
+      "entryFile": "dist/index.js",
+      "shape": "esm-project",
+      "compile": {
+        "success": true,
+        "durationMs": 1881,
+        "timedOut": false,
+        "timeoutMs": 120000,
+        "errorCount": 0,
+        "binaryBytes": 1219,
+        "categories": {}
+      },
+      "validation": {
+        "validates": true,
+        "firstError": null
+      },
+      "tests": {
+        "kind": "upstream-suite",
+        "status": "not-integrated",
+        "reason": "not shipped in npm tarball; adapter pending"
+      },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
+      },
+      "perf": null,
+      "knownBugs": [],
+      "weeklyDownloads": 275892096
+    },
+    {
+      "name": "typescript",
+      "version": "5.9.3",
+      "issue": 3994,
+      "entryFile": "lib/typescript.js",
+      "shape": "cjs-project",
+      "compile": {
+        "success": false,
+        "durationMs": 600238,
+        "timedOut": true,
+        "timeoutMs": 600000,
+        "errorCount": 0,
+        "binaryBytes": 0,
+        "categories": {
+          "compile-budget": {
+            "count": 1,
+            "sample": "compileProject exceeded the 600000ms budget"
+          }
+        }
+      },
+      "validation": {
+        "validates": false,
+        "firstError": "compileProject exceeded the 600000ms budget"
+      },
+      "tests": {
+        "kind": "upstream-suite",
+        "status": "not-integrated",
+        "reason": "not shipped in npm tarball; adapter pending"
+      },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
+      },
+      "perf": null,
+      "knownBugs": [],
+      "weeklyDownloads": 250686863
+    },
+    {
+      "name": "acorn",
+      "version": "8.16.0",
+      "issue": 1710,
+      "entryFile": "dist/acorn.mjs",
+      "shape": "esm-direct",
+      "compile": {
+        "success": true,
+        "durationMs": 22731,
+        "errorCount": 0,
+        "binaryBytes": 619944,
+        "categories": {}
+      },
+      "validation": {
+        "validates": true,
+        "firstError": null
+      },
+      "tests": {
+        "kind": "official-suite",
+        "passed": 3508,
+        "total": 3518,
+        "passRatePct": 99.72,
+        "sourceIssue": 3729
+      },
+      "correctness": {
+        "status": "divergent",
+        "passed": 3508,
+        "total": 3518,
+        "reason": "10 of 3518 operations diverged from native node"
+      },
+      "perf": {
+        "sampleOp": "parse(own 226KB dist bundle).body.length",
+        "lanes": {
+          "jsHost": {
+            "status": "measured",
+            "placement": "js-host",
+            "inputMode": "runtime-dynamic",
+            "sampleOp": "parse(own 226KB dist bundle).body.length",
+            "wasmUs": 3343088.576000009,
+            "nodeUs": 11380.55400000303,
+            "wasmStdUs": 33182.37969821294,
+            "nodeStdUs": 3029.051050406851,
+            "ratio": 0.0034042035504843887,
+            "ratioStd": 0.0008962220767947197,
+            "iters": 1,
+            "warmupRounds": 2,
+            "measuredRounds": 9,
+            "wasmSamplesUs": [
+              3312541.8309999807,
+              3337180.488000013,
+              3280155.0589999827,
+              3323683.9730000068,
+              3362448.3940000064,
+              3361491.8400000026,
+              3343088.576000009,
+              3395627.225999982,
+              3376758.216999995
+            ],
+            "nodeSamplesUs": [
+              11045.455999992555,
+              11325.9089999774,
+              12529.467999993358,
+              14115.531999996165,
+              18487.573000020348,
+              19101.511000015307,
+              11380.55400000303,
+              11299.304000014672,
+              11260.03999999375
+            ],
+            "compileDurationMs": 32499.629860999994,
+            "wasmCompileMs": 6.062864999999874,
+            "instantiateMs": 9.163547000003746,
+            "wireMs": 0.2713179999991553,
+            "wrapMs": 0.5073499999998603,
+            "binaryBytes": 344716,
+            "moduleImportCount": 1155,
+            "functionImportCount": 83,
+            "expectedChecksum": 422,
+            "actualChecksum": 422,
+            "testCompiledToWasm": false,
+            "target": "js-host",
+            "resultObservation": "js-host-full-ast"
+          },
+          "standalone": {
+            "status": "measured",
+            "placement": "standalone",
+            "inputMode": "compile-time-static",
+            "sampleOp": "parse(own 226KB dist bundle).body.length",
+            "wasmUs": 0.24313333366687098,
+            "nodeUs": 13955.942466664905,
+            "wasmStdUs": 0.023590158512288534,
+            "nodeStdUs": 455.4007534528332,
+            "ratio": 57400.36652393634,
+            "ratioStd": 5888.749794214411,
+            "iters": 15,
+            "warmupRounds": 2,
+            "measuredRounds": 9,
+            "wasmSamplesUs": [
+              0.2918666655508181,
+              0.2244000012675921,
+              0.24313333366687098,
+              0.26046666704739135,
+              0.23179999940718213,
+              0.2511333324946463,
+              0.25046666463216144,
+              0.22106666583567858,
+              0.2077333318690459
+            ],
+            "nodeSamplesUs": [
+              14074.906733333288,
+              13946.039266667018,
+              13955.942466664905,
+              14069.942799998293,
+              13962.740466666099,
+              12544.217999997392,
+              13969.074266663907,
+              13950.838199999029,
+              13952.649599996706
+            ],
+            "compileDurationMs": 90286.23140099997,
+            "moduleCompileDurationMs": 0.501587999984622,
+            "instantiateDurationMs": 0.02586900000460446,
+            "firstBatchDurationMs": 0.08555999997770414,
+            "binaryBytes": 74,
+            "moduleImportCount": 0,
+            "functionImportCount": 0,
+            "expectedChecksum": 422,
+            "actualChecksum": 422,
+            "testCompiledToWasm": true,
+            "benchmarkUsesIr": true,
+            "irCompiledFunctions": [
+              "__npmCompatStandaloneBenchmark"
+            ],
+            "target": "standalone",
+            "staticEvaluation": {
+              "operationEvaluatedInWasm": true,
+              "operationResultType": "number",
+              "stageDurationMs": 266.93609400000423,
+              "stageBinaryBytes": 1670779,
+              "stageModuleImportCount": 0
+            }
+          },
+          "standaloneDynamic": {
+            "status": "measured",
+            "placement": "standalone",
+            "inputMode": "runtime-dynamic",
+            "sampleOp": "parse(runtime-suffixed own 226KB dist bundle).body.length",
+            "wasmUs": 102848.44933333807,
+            "nodeUs": 11802.67566665619,
+            "wasmStdUs": 1391.0814509767451,
+            "nodeStdUs": 1264.9180770941007,
+            "ratio": 0.11475793503121279,
+            "ratioStd": 0.013101246365932644,
+            "iters": 3,
+            "warmupRounds": 2,
+            "measuredRounds": 9,
+            "wasmSamplesUs": [
+              101867.17399999422,
+              101142.36333333731,
+              103664.3346666824,
+              106440.59133331757,
+              102834.6803333261,
+              102423.47533333425,
+              102848.44933333807,
+              102883.40133333502,
+              102918.54366667879
+            ],
+            "nodeSamplesUs": [
+              15812.383333337493,
+              12548.556333330149,
+              11838.863666673811,
+              11679.74633333506,
+              11700.194333330728,
+              11736.321666665996,
+              11848.250999988522,
+              11802.67566665619,
+              11775.147666650204
+            ],
+            "compileDurationMs": 88165.84761299996,
+            "moduleCompileDurationMs": 10.133520999981556,
+            "instantiateDurationMs": 6.516845000034664,
+            "moduleInitDurationMs": 17.690158000041265,
+            "firstBatchDurationMs": 271.5475039999583,
+            "binaryBytes": 1671010,
+            "moduleImportCount": 0,
+            "functionImportCount": 0,
+            "expectedChecksum": 422,
+            "actualChecksum": 422,
+            "testCompiledToWasm": true,
+            "benchmarkUsesIr": false,
+            "irCompiledFunctions": [
+              "isInAstralSet",
+              "isIdentifierStart",
+              "isIdentifierChar",
+              "isNewLine",
+              "nextLineBreak",
+              "codePointToString",
+              "functionFlags",
+              "isPrivateNameConflicted",
+              "checkKeyName",
+              "isLocalVariableAccess",
+              "isPrivateFieldAccess",
+              "hasProp",
+              "isRegularExpressionModifier",
+              "isSyntaxCharacter",
+              "isRegExpIdentifierStart",
+              "isRegExpIdentifierPart",
+              "isControlLetter",
+              "isValidUnicode",
+              "isCharacterClassEscape",
+              "isUnicodePropertyNameCharacter",
+              "isUnicodePropertyValueCharacter",
+              "isClassSetReservedDoublePunctuatorCharacter",
+              "isClassSetSyntaxCharacter",
+              "isClassSetReservedPunctuator",
+              "isDecimalDigit",
+              "isHexDigit",
+              "hexToInt",
+              "isOctalDigit",
+              "stringToNumber",
+              "parse",
+              "parseExpressionAt"
+            ],
+            "target": "standalone",
+            "runtimeArgumentSuppliedAfterCompile": true
+          }
+        },
+        "wasmUs": 3343088.576000009,
+        "nodeUs": 11380.55400000303,
+        "wasmStdUs": 33182.37969821294,
+        "nodeStdUs": 3029.051050406851,
+        "ratio": 0.0034042035504843887,
+        "ratioStd": 0.0008962220767947197,
+        "iters": 1,
+        "warmupRounds": 2,
+        "measuredRounds": 9,
+        "wasmSamplesUs": [
+          3312541.8309999807,
+          3337180.488000013,
+          3280155.0589999827,
+          3323683.9730000068,
+          3362448.3940000064,
+          3361491.8400000026,
+          3343088.576000009,
+          3395627.225999982,
+          3376758.216999995
+        ],
+        "nodeSamplesUs": [
+          11045.455999992555,
+          11325.9089999774,
+          12529.467999993358,
+          14115.531999996165,
+          18487.573000020348,
+          19101.511000015307,
+          11380.55400000303,
+          11299.304000014672,
+          11260.03999999375
+        ]
+      },
+      "knownBugs": [
+        {
+          "issue": 3780,
+          "summary": "runtime-dynamic Acorn remains slower than native Node; only the separately reported compile-time-static lane folds to IR"
+        },
+        {
+          "issue": 3782,
+          "summary": "linked Acorn initialization is lowered, but the cross-module parser driver is not yet runnable"
+        }
+      ],
+      "weeklyDownloads": 240886853
+    },
+    {
+      "name": "cookie",
+      "version": "2.0.1",
+      "issue": 3751,
+      "entryFile": "dist/index.js",
+      "shape": "esm-direct",
+      "compile": {
+        "success": true,
+        "durationMs": 360,
+        "errorCount": 9,
+        "binaryBytes": 19483,
+        "categories": {
+          "other": {
+            "count": 9,
+            "sample": "Parameter 'str' in function 'parseCookie' has implicit 'any' type. Add a JSDoc annotation: /** @param {number} str */",
+            "buckets": {
+              "Parameter 'X' in function 'X' has implicit 'X' type. Add a JSDoc annotation: /** @param {number} str */": 2,
+              "Parameter 'X' in function 'X' has implicit 'X' type. Add a JSDoc annotation: /** @param {number} options */": 4,
+              "Function 'X' has implicit 'X' return type. Add a JSDoc annotation: /** @returns {number} */": 1,
+              "Parameter 'X' in function 'X' has implicit 'X' type. Add a JSDoc annotation: /** @param {number} cookie */": 2
+            }
+          }
+        }
+      },
+      "validation": {
+        "validates": true,
+        "firstError": null
+      },
+      "tests": {
+        "kind": "differential-ops",
+        "passed": 21,
+        "total": 21,
+        "sourceIssue": 3751
+      },
+      "correctness": {
+        "status": "verified",
+        "passed": 21,
+        "total": 21
+      },
+      "perf": {
+        "sampleOp": "parseCookie(8-pair header); verify a/h",
+        "lanes": {
+          "jsHost": {
+            "status": "measured",
+            "placement": "js-host",
+            "inputMode": "runtime-dynamic",
+            "sampleOp": "parseCookie(8-pair header); verify a/h",
+            "wasmUs": 331.3835909090851,
+            "nodeUs": 0.6621914212497293,
+            "wasmStdUs": 171.8727017604444,
+            "nodeStdUs": 0.006154455830328923,
+            "ratio": 0.0019982625555874343,
+            "ratioStd": 0.0009997633202527712,
+            "iters": 6248,
+            "warmupRounds": 2,
+            "measuredRounds": 9,
+            "wasmSamplesUs": [
+              159.6895409731096,
+              200.91118693981744,
+              239.92533370679266,
+              286.3174012484038,
+              331.3835909090851,
+              407.2112197503181,
+              477.831900608193,
+              579.4699319782378,
+              703.2955653008922
+            ],
+            "nodeSamplesUs": [
+              0.6621914212497293,
+              0.6597251920587748,
+              0.6583493918074037,
+              0.6632578425103722,
+              0.652420934695955,
+              0.6667322343134556,
+              0.6516206786132634,
+              0.6720220870719227,
+              0.664171414850706
+            ],
+            "binaryBytes": 15278,
+            "moduleImportCount": 139,
+            "functionImportCount": 37,
+            "expectedChecksum": 1,
+            "actualChecksum": 1,
+            "testCompiledToWasm": false,
+            "target": "js-host"
+          },
+          "standalone": {
+            "status": "measured",
+            "placement": "standalone",
+            "inputMode": "compile-time-static",
+            "sampleOp": "parseCookie(8-pair header); verify a/h",
+            "wasmUs": 0.0009646942983861567,
+            "nodeUs": 0.6048635370166779,
+            "wasmStdUs": 0.000011443443623647647,
+            "nodeStdUs": 0.0006618444144380226,
+            "ratio": 627.0002196846795,
+            "ratioStd": 7.942977000124938,
+            "iters": 452958,
+            "warmupRounds": 2,
+            "measuredRounds": 9,
+            "wasmSamplesUs": [
+              0.000945760975665508,
+              0.0009656458214059732,
+              0.0009646942983861567,
+              0.0009445886814859873,
+              0.0009448558143990413,
+              0.000966177879633569,
+              0.0009696484000332649,
+              0.0009420476069644362,
+              0.0009692068579708674
+            ],
+            "nodeSamplesUs": [
+              0.605117549529889,
+              0.6039083800264026,
+              0.6048480565526693,
+              0.6048635370166779,
+              0.6064580579214842,
+              0.6045193108412045,
+              0.6048630954746155,
+              0.605336519059054,
+              0.6054720150653963
+            ],
+            "compileDurationMs": 413.1297309999936,
+            "moduleCompileDurationMs": 0.22629200003575534,
+            "instantiateDurationMs": 0.02439599996432662,
+            "firstBatchDurationMs": 0.04678800003603101,
+            "binaryBytes": 103,
+            "moduleImportCount": 0,
+            "functionImportCount": 0,
+            "expectedChecksum": 1,
+            "actualChecksum": 1,
+            "testCompiledToWasm": true,
+            "benchmarkUsesIr": true,
+            "irCompiledFunctions": [
+              "__npmCompatStandaloneBenchmark"
+            ],
+            "target": "standalone"
+          },
+          "standaloneDynamic": {
+            "status": "measured",
+            "placement": "standalone",
+            "inputMode": "runtime-dynamic",
+            "sampleOp": "parseCookie(8-pair runtime-generated header); verify a/h",
+            "wasmUs": 8.156982700807035,
+            "nodeUs": 0.8176450998325531,
+            "wasmStdUs": 0.04827194069409964,
+            "nodeStdUs": 0.020719223851306562,
+            "ratio": 0.10023867032985824,
+            "ratioStd": 0.002815303280384051,
+            "iters": 26244,
+            "warmupRounds": 2,
+            "measuredRounds": 9,
+            "wasmSamplesUs": [
+              8.156982700807035,
+              8.243329789665932,
+              8.09380643194632,
+              8.089343773815141,
+              8.165012841030794,
+              8.147489292789626,
+              8.147268975766162,
+              8.204851051669328,
+              8.208153177868814
+            ],
+            "nodeSamplesUs": [
+              0.8184338134449695,
+              0.8564502743473172,
+              0.855548201494925,
+              0.8661868617600355,
+              0.8166101585124251,
+              0.813967306812397,
+              0.8168938042976723,
+              0.8176450998325531,
+              0.8124173906431408
+            ],
+            "compileDurationMs": 3002.5465869999607,
+            "moduleCompileDurationMs": 0.701770999992732,
+            "instantiateDurationMs": 0.18599800002994016,
+            "moduleInitDurationMs": 0.4081420000293292,
+            "firstBatchDurationMs": 1.250757000001613,
+            "binaryBytes": 50024,
+            "moduleImportCount": 0,
+            "functionImportCount": 0,
+            "expectedChecksum": 1,
+            "actualChecksum": 1,
+            "testCompiledToWasm": true,
+            "benchmarkUsesIr": false,
+            "irCompiledFunctions": [],
+            "target": "standalone",
+            "runtimeArgumentSuppliedAfterCompile": true
+          }
+        },
+        "wasmUs": 331.3835909090851,
+        "nodeUs": 0.6621914212497293,
+        "wasmStdUs": 171.8727017604444,
+        "nodeStdUs": 0.006154455830328923,
+        "ratio": 0.0019982625555874343,
+        "ratioStd": 0.0009997633202527712,
+        "iters": 6248,
+        "warmupRounds": 2,
+        "measuredRounds": 9,
+        "wasmSamplesUs": [
+          159.6895409731096,
+          200.91118693981744,
+          239.92533370679266,
+          286.3174012484038,
+          331.3835909090851,
+          407.2112197503181,
+          477.831900608193,
+          579.4699319782378,
+          703.2955653008922
+        ],
+        "nodeSamplesUs": [
+          0.6621914212497293,
+          0.6597251920587748,
+          0.6583493918074037,
+          0.6632578425103722,
+          0.652420934695955,
+          0.6667322343134556,
+          0.6516206786132634,
+          0.6720220870719227,
+          0.664171414850706
+        ]
+      },
+      "knownBugs": [
+        {
+          "issue": 3750,
+          "summary": "a property assigned dynamically inside a loop/switch onto an object is silently dropped"
+        }
+      ],
+      "weeklyDownloads": 173435452
+    },
+    {
+      "name": "lodash",
+      "version": "4.18.1",
+      "issue": 1031,
+      "entryFile": "lodash.js",
+      "shape": "cjs-project",
+      "compile": {
+        "success": false,
+        "durationMs": 40458,
+        "timedOut": false,
+        "timeoutMs": 120000,
+        "errorCount": 1,
+        "binaryBytes": 0,
+        "categories": {
+          "compiler-diagnostic": {
+            "count": 1,
+            "sample": "Codegen error: stack-balance invariant (entry): '__closure_106' references local 152, but only 2 params + 28 locals are declared (locals: 2:__self_cast, 3:undefined, 4:methodName, 5:Array, 6:strSymbols, 7:chr, 8:trailing, 9:__tmp_7, 10:__nve_recv_8, 11:__nve_idx_9, 12:__nve_any_10, 13:__emc_recv_11, 14:__emc_arg_12, 15:__arr_join_vec_13, 16:__arr_join_data_14, 17:__arr_join_len_15, 18:__arr_join_i_16, 19:__arr_join_res_17, 20:__arr_join_sep_18, 21:__tmp_19, 22:__vec_mat_20, 23:__vec_len_21, 24:__vec_arr_22, 25:__vec_idx_23, 26:__emc_recv_24, 27:__emc_arg_25, 28:__tmp_26, 29:__tmp_27; body: [{\"op\":\"local.get\",\"index\":0},{\"op\":\"ref.cast\",\"typeIdx\":316},{\"op\":\"local.tee\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":3},{\"op\":\"local.set\",\"index\":3},{\"op\":\"local.get\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":4},{\"op\":\"local.set\",\"index\":4},{\"op\":\"local.get\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":5},{\"op\":\"local.set\",\"index\":5},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"local.set\",\"index\":6},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"local.set\",\"index\":7},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"local.set\",\"index\":8},{\"op\":\"ref.null.extern\"},{\"op\":\"local.set\",\"index\":1},{\"op\":\"local.get\",\"index\":152},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":2097189},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":152},{\"op\":\"local.get\",\"index\":150},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":2097200},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":47}],\"else\":[{\"op\":\"call\",\"funcIdx\":40}]},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":6},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1354},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":9},{\"op\":\"local.set\",\"index\":10},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"local.set\",\"index\":11},{\"op\":\"local.get\",\"index\":10},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":2},{\"op\":\"local.get\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":4},{\"op\":\"i32.or\"},{\"op\":\"local.get\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":33},{\"op\":\"i32.or\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":10},{\"op\":\"local.get\",\"index\":11},{\"op\":\"i32.trunc_sat_f64_s\"},{\"op\":\"call\",\"funcIdx\":148}],\"else\":[{\"op\":\"local.get\",\"index\":10},{\"op\":\"local.get\",\"index\":11},{\"op\":\"call\",\"funcIdx\":32},{\"op\":\"call\",\"funcIdx\":4}]}],\"else\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":13},{\"op\":\"global.get\",\"index\":1857},{\"op\":\"local.set\",\"index\":14},{\"op\":\"local.get\",\"index\":13},{\"op\":\"global.get\",\"index\":1355},{\"op\":\"local.get\",\"index\":14},{\"op\":\"call\",\"funcIdx\":41}]},{\"op\":\"local.set\",\"index\":7},{\"op\":\"local.get\",\"index\":6},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8},{\"op\":\"local.get\",\"index\":5},{\"op\":\"local.get\",\"index\":6},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":21},{\"op\":\"ref.test\",\"typeIdx\":2},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"ref_null\",\"typeIdx\":2}},\"then\":[{\"op\":\"local.get\",\"index\":21},{\"op\":\"ref.cast_null\",\"typeIdx\":2}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":49},{\"op\":\"local.tee\",\"index\":22},{\"op\":\"call\",\"funcIdx\":22},{\"op\":\"i32.trunc_sat_f64_s\"},{\"op\":\"local.tee\",\"index\":23},{\"op\":\"array.new_default\",\"typeIdx\":1},{\"op\":\"local.set\",\"index\":24},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"local.set\",\"index\":25},{\"op\":\"block\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"loop\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"local.get\",\"index\":25},{\"op\":\"local.get\",\"index\":23},{\"op\":\"i32.ge_u\"},{\"op\":\"br_if\",\"depth\":1},{\"op\":\"local.get\",\"index\":24},{\"op\":\"local.get\",\"index\":25},{\"op\":\"local.get\",\"index\":22},{\"op\":\"local.get\",\"index\":25},{\"op\":\"f64.convert_i32_s\"},{\"op\":\"call\",\"funcIdx\":32},{\"op\":\"call\",\"funcIdx\":4},{\"op\":\"array.set\",\"typeIdx\":1},{\"op\":\"local.get\",\"index\":25},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"i32.add\"},{\"op\":\"local.set\",\"index\":25},{\"op\":\"br\",\"depth\":0}]}]},{\"op\":\"local.get\",\"index\":23},{\"op\":\"local.get\",\"index\":24},{\"op\":\"struct.new\",\"typeIdx\":2}]},{\"op\":\"f64.const\",\"value\":1},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":2097457},{\"op\":\"local.tee\",\"index\":15},{\"op\":\"local.get\",\"index\":15},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1032},{\"op\":\"call\",\"funcIdx\":53},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"struct.get\",\"typeIdx\":2,\"fieldIdx\":0},{\"op\":\"local.set\",\"index\":17},{\"op\":\"local.get\",\"index\":15},{\"op\":\"struct.get\",\"typeIdx\":2,\"fieldIdx\":1},{\"op\":\"local.set\",\"index\":16},{\"op\":\"global.get\",\"index\":419},{\"op\":\"local.set\",\"index\":20},{\"op\":\"global.get\",\"index\":419},{\"op\":\"local.set\",\"index\":19},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"local.set\",\"index\":18},{\"op\":\"block\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"loop\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":17},{\"op\":\"i32.ge_s\"},{\"op\":\"br_if\",\"depth\":1},{\"op\":\"local.get\",\"index\":18},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"i32.eq\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":16},{\"op\":\"array.len\"},{\"op\":\"i32.lt_s\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":16},{\"op\":\"local.get\",\"index\":18},{\"op\":\"array.get\",\"typeIdx\":1},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.test\",\"typeIdx\":64},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":62}]}],\"else\":[{\"op\":\"global.get\",\"index\":419}]},{\"op\":\"local.set\",\"index\":19}],\"else\":[{\"op\":\"local.get\",\"index\":19},{\"op\":\"local.get\",\"index\":20},{\"op\":\"call\",\"funcIdx\":9},{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":16},{\"op\":\"array.len\"},{\"op\":\"i32.lt_s\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":16},{\"op\":\"local.get\",\"index\":18},{\"op\":\"array.get\",\"typeIdx\":1},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.test\",\"typeIdx\":64},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":62}]}],\"else\":[{\"op\":\"global.get\",\"index\":419}]},{\"op\":\"call\",\"funcIdx\":9},{\"op\":\"local.set\",\"index\":19}]},{\"op\":\"local.get\",\"index\":18},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"i32.add\"},{\"op\":\"local.set\",\"index\":18},{\"op\":\"br\",\"depth\":0}]}]},{\"op\":\"local.get\",\"index\":19},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":19}]}],\"else\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":26},{\"op\":\"global.get\",\"index\":1858},{\"op\":\"local.set\",\"index\":27},{\"op\":\"local.get\",\"index\":26},{\"op\":\"global.get\",\"index\":747},{\"op\":\"local.get\",\"index\":27},{\"op\":\"call\",\"funcIdx\":41}]},{\"op\":\"local.set\",\"index\":8},{\"op\":\"ref.null.extern\"},{\"op\":\"local.set\",\"index\":28},{\"op\":\"local.get\",\"index\":8},{\"op\":\"local.set\",\"index\":29},{\"op\":\"local.get\",\"index\":28},{\"op\":\"local.get\",\"index\":29},{\"op\":\"call\",\"funcIdx\":54},{\"op\":\"return\"}]) (at src/codegen/stack-balance.ts:274:13)"
+          }
+        },
+        "errors": [
+          {
+            "message": "Codegen error: stack-balance invariant (entry): '__closure_106' references local 152, but only 2 params + 28 locals are declared (locals: 2:__self_cast, 3:undefined, 4:methodName, 5:Array, 6:strSymbols, 7:chr, 8:trailing, 9:__tmp_7, 10:__nve_recv_8, 11:__nve_idx_9, 12:__nve_any_10, 13:__emc_recv_11, 14:__emc_arg_12, 15:__arr_join_vec_13, 16:__arr_join_data_14, 17:__arr_join_len_15, 18:__arr_join_i_16, 19:__arr_join_res_17, 20:__arr_join_sep_18, 21:__tmp_19, 22:__vec_mat_20, 23:__vec_len_21, 24:__vec_arr_22, 25:__vec_idx_23, 26:__emc_recv_24, 27:__emc_arg_25, 28:__tmp_26, 29:__tmp_27; body: [{\"op\":\"local.get\",\"index\":0},{\"op\":\"ref.cast\",\"typeIdx\":316},{\"op\":\"local.tee\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":3},{\"op\":\"local.set\",\"index\":3},{\"op\":\"local.get\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":4},{\"op\":\"local.set\",\"index\":4},{\"op\":\"local.get\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":5},{\"op\":\"local.set\",\"index\":5},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"local.set\",\"index\":6},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"local.set\",\"index\":7},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"local.set\",\"index\":8},{\"op\":\"ref.null.extern\"},{\"op\":\"local.set\",\"index\":1},{\"op\":\"local.get\",\"index\":152},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":2097189},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":152},{\"op\":\"local.get\",\"index\":150},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":2097200},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":47}],\"else\":[{\"op\":\"call\",\"funcIdx\":40}]},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":6},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1354},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":9},{\"op\":\"local.set\",\"index\":10},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"local.set\",\"index\":11},{\"op\":\"local.get\",\"index\":10},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":2},{\"op\":\"local.get\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":4},{\"op\":\"i32.or\"},{\"op\":\"local.get\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":33},{\"op\":\"i32.or\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":10},{\"op\":\"local.get\",\"index\":11},{\"op\":\"i32.trunc_sat_f64_s\"},{\"op\":\"call\",\"funcIdx\":148}],\"else\":[{\"op\":\"local.get\",\"index\":10},{\"op\":\"local.get\",\"index\":11},{\"op\":\"call\",\"funcIdx\":32},{\"op\":\"call\",\"funcIdx\":4}]}],\"else\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":13},{\"op\":\"global.get\",\"index\":1857},{\"op\":\"local.set\",\"index\":14},{\"op\":\"local.get\",\"index\":13},{\"op\":\"global.get\",\"index\":1355},{\"op\":\"local.get\",\"index\":14},{\"op\":\"call\",\"funcIdx\":41}]},{\"op\":\"local.set\",\"index\":7},{\"op\":\"local.get\",\"index\":6},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8},{\"op\":\"local.get\",\"index\":5},{\"op\":\"local.get\",\"index\":6},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":21},{\"op\":\"ref.test\",\"typeIdx\":2},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"ref_null\",\"typeIdx\":2}},\"then\":[{\"op\":\"local.get\",\"index\":21},{\"op\":\"ref.cast_null\",\"typeIdx\":2}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":49},{\"op\":\"local.tee\",\"index\":22},{\"op\":\"call\",\"funcIdx\":22},{\"op\":\"i32.trunc_sat_f64_s\"},{\"op\":\"local.tee\",\"index\":23},{\"op\":\"array.new_default\",\"typeIdx\":1},{\"op\":\"local.set\",\"index\":24},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"local.set\",\"index\":25},{\"op\":\"block\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"loop\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"local.get\",\"index\":25},{\"op\":\"local.get\",\"index\":23},{\"op\":\"i32.ge_u\"},{\"op\":\"br_if\",\"depth\":1},{\"op\":\"local.get\",\"index\":24},{\"op\":\"local.get\",\"index\":25},{\"op\":\"local.get\",\"index\":22},{\"op\":\"local.get\",\"index\":25},{\"op\":\"f64.convert_i32_s\"},{\"op\":\"call\",\"funcIdx\":32},{\"op\":\"call\",\"funcIdx\":4},{\"op\":\"array.set\",\"typeIdx\":1},{\"op\":\"local.get\",\"index\":25},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"i32.add\"},{\"op\":\"local.set\",\"index\":25},{\"op\":\"br\",\"depth\":0}]}]},{\"op\":\"local.get\",\"index\":23},{\"op\":\"local.get\",\"index\":24},{\"op\":\"struct.new\",\"typeIdx\":2}]},{\"op\":\"f64.const\",\"value\":1},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":2097457},{\"op\":\"local.tee\",\"index\":15},{\"op\":\"local.get\",\"index\":15},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1032},{\"op\":\"call\",\"funcIdx\":53},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"struct.get\",\"typeIdx\":2,\"fieldIdx\":0},{\"op\":\"local.set\",\"index\":17},{\"op\":\"local.get\",\"index\":15},{\"op\":\"struct.get\",\"typeIdx\":2,\"fieldIdx\":1},{\"op\":\"local.set\",\"index\":16},{\"op\":\"global.get\",\"index\":419},{\"op\":\"local.set\",\"index\":20},{\"op\":\"global.get\",\"index\":419},{\"op\":\"local.set\",\"index\":19},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"local.set\",\"index\":18},{\"op\":\"block\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"loop\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":17},{\"op\":\"i32.ge_s\"},{\"op\":\"br_if\",\"depth\":1},{\"op\":\"local.get\",\"index\":18},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"i32.eq\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":16},{\"op\":\"array.len\"},{\"op\":\"i32.lt_s\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":16},{\"op\":\"local.get\",\"index\":18},{\"op\":\"array.get\",\"typeIdx\":1},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.test\",\"typeIdx\":64},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":62}]}],\"else\":[{\"op\":\"global.get\",\"index\":419}]},{\"op\":\"local.set\",\"index\":19}],\"else\":[{\"op\":\"local.get\",\"index\":19},{\"op\":\"local.get\",\"index\":20},{\"op\":\"call\",\"funcIdx\":9},{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":16},{\"op\":\"array.len\"},{\"op\":\"i32.lt_s\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":16},{\"op\":\"local.get\",\"index\":18},{\"op\":\"array.get\",\"typeIdx\":1},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.test\",\"typeIdx\":64},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":62}]}],\"else\":[{\"op\":\"global.get\",\"index\":419}]},{\"op\":\"call\",\"funcIdx\":9},{\"op\":\"local.set\",\"index\":19}]},{\"op\":\"local.get\",\"index\":18},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"i32.add\"},{\"op\":\"local.set\",\"index\":18},{\"op\":\"br\",\"depth\":0}]}]},{\"op\":\"local.get\",\"index\":19},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":19}]}],\"else\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":26},{\"op\":\"global.get\",\"index\":1858},{\"op\":\"local.set\",\"index\":27},{\"op\":\"local.get\",\"index\":26},{\"op\":\"global.get\",\"index\":747},{\"op\":\"local.get\",\"index\":27},{\"op\":\"call\",\"funcIdx\":41}]},{\"op\":\"local.set\",\"index\":8},{\"op\":\"ref.null.extern\"},{\"op\":\"local.set\",\"index\":28},{\"op\":\"local.get\",\"index\":8},{\"op\":\"local.set\",\"index\":29},{\"op\":\"local.get\",\"index\":28},{\"op\":\"local.get\",\"index\":29},{\"op\":\"call\",\"funcIdx\":54},{\"op\":\"return\"}]) (at src/codegen/stack-balance.ts:274:13)"
+          }
+        ]
+      },
+      "validation": {
+        "validates": false,
+        "firstError": "Codegen error: stack-balance invariant (entry): '__closure_106' references local 152, but only 2 params + 28 locals are declared (locals: 2:__self_cast, 3:undefined, 4:methodName, 5:Array, 6:strSymbols, 7:chr, 8:trailing, 9:__tmp_7, 10:__nve_recv_8, 11:__nve_idx_9, 12:__nve_any_10, 13:__emc_recv_11, 14:__emc_arg_12, 15:__arr_join_vec_13, 16:__arr_join_data_14, 17:__arr_join_len_15, 18:__arr_join_i_16, 19:__arr_join_res_17, 20:__arr_join_sep_18, 21:__tmp_19, 22:__vec_mat_20, 23:__vec_len_21, 24:__vec_arr_22, 25:__vec_idx_23, 26:__emc_recv_24, 27:__emc_arg_25, 28:__tmp_26, 29:__tmp_27; body: [{\"op\":\"local.get\",\"index\":0},{\"op\":\"ref.cast\",\"typeIdx\":316},{\"op\":\"local.tee\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":3},{\"op\":\"local.set\",\"index\":3},{\"op\":\"local.get\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":4},{\"op\":\"local.set\",\"index\":4},{\"op\":\"local.get\",\"index\":2},{\"op\":\"struct.get\",\"typeIdx\":316,\"fieldIdx\":5},{\"op\":\"local.set\",\"index\":5},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"local.set\",\"index\":6},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"local.set\",\"index\":7},{\"op\":\"call\",\"funcIdx\":40},{\"op\":\"local.set\",\"index\":8},{\"op\":\"ref.null.extern\"},{\"op\":\"local.set\",\"index\":1},{\"op\":\"local.get\",\"index\":152},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":2097189},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":152},{\"op\":\"local.get\",\"index\":150},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":2097200},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":47}],\"else\":[{\"op\":\"call\",\"funcIdx\":40}]},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":6},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1354},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":9},{\"op\":\"local.set\",\"index\":10},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"local.set\",\"index\":11},{\"op\":\"local.get\",\"index\":10},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":2},{\"op\":\"local.get\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":4},{\"op\":\"i32.or\"},{\"op\":\"local.get\",\"index\":12},{\"op\":\"ref.test\",\"typeIdx\":33},{\"op\":\"i32.or\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":10},{\"op\":\"local.get\",\"index\":11},{\"op\":\"i32.trunc_sat_f64_s\"},{\"op\":\"call\",\"funcIdx\":148}],\"else\":[{\"op\":\"local.get\",\"index\":10},{\"op\":\"local.get\",\"index\":11},{\"op\":\"call\",\"funcIdx\":32},{\"op\":\"call\",\"funcIdx\":4}]}],\"else\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":13},{\"op\":\"global.get\",\"index\":1857},{\"op\":\"local.set\",\"index\":14},{\"op\":\"local.get\",\"index\":13},{\"op\":\"global.get\",\"index\":1355},{\"op\":\"local.get\",\"index\":14},{\"op\":\"call\",\"funcIdx\":41}]},{\"op\":\"local.set\",\"index\":7},{\"op\":\"local.get\",\"index\":6},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8},{\"op\":\"local.get\",\"index\":5},{\"op\":\"local.get\",\"index\":6},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":21},{\"op\":\"ref.test\",\"typeIdx\":2},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"ref_null\",\"typeIdx\":2}},\"then\":[{\"op\":\"local.get\",\"index\":21},{\"op\":\"ref.cast_null\",\"typeIdx\":2}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":49},{\"op\":\"local.tee\",\"index\":22},{\"op\":\"call\",\"funcIdx\":22},{\"op\":\"i32.trunc_sat_f64_s\"},{\"op\":\"local.tee\",\"index\":23},{\"op\":\"array.new_default\",\"typeIdx\":1},{\"op\":\"local.set\",\"index\":24},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"local.set\",\"index\":25},{\"op\":\"block\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"loop\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"local.get\",\"index\":25},{\"op\":\"local.get\",\"index\":23},{\"op\":\"i32.ge_u\"},{\"op\":\"br_if\",\"depth\":1},{\"op\":\"local.get\",\"index\":24},{\"op\":\"local.get\",\"index\":25},{\"op\":\"local.get\",\"index\":22},{\"op\":\"local.get\",\"index\":25},{\"op\":\"f64.convert_i32_s\"},{\"op\":\"call\",\"funcIdx\":32},{\"op\":\"call\",\"funcIdx\":4},{\"op\":\"array.set\",\"typeIdx\":1},{\"op\":\"local.get\",\"index\":25},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"i32.add\"},{\"op\":\"local.set\",\"index\":25},{\"op\":\"br\",\"depth\":0}]}]},{\"op\":\"local.get\",\"index\":23},{\"op\":\"local.get\",\"index\":24},{\"op\":\"struct.new\",\"typeIdx\":2}]},{\"op\":\"f64.const\",\"value\":1},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"call\",\"funcIdx\":2097457},{\"op\":\"local.tee\",\"index\":15},{\"op\":\"local.get\",\"index\":15},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1032},{\"op\":\"call\",\"funcIdx\":53},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"struct.get\",\"typeIdx\":2,\"fieldIdx\":0},{\"op\":\"local.set\",\"index\":17},{\"op\":\"local.get\",\"index\":15},{\"op\":\"struct.get\",\"typeIdx\":2,\"fieldIdx\":1},{\"op\":\"local.set\",\"index\":16},{\"op\":\"global.get\",\"index\":419},{\"op\":\"local.set\",\"index\":20},{\"op\":\"global.get\",\"index\":419},{\"op\":\"local.set\",\"index\":19},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"local.set\",\"index\":18},{\"op\":\"block\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"loop\",\"blockType\":{\"kind\":\"empty\"},\"body\":[{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":17},{\"op\":\"i32.ge_s\"},{\"op\":\"br_if\",\"depth\":1},{\"op\":\"local.get\",\"index\":18},{\"op\":\"i32.const\",\"value\":0},{\"op\":\"i32.eq\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":16},{\"op\":\"array.len\"},{\"op\":\"i32.lt_s\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":16},{\"op\":\"local.get\",\"index\":18},{\"op\":\"array.get\",\"typeIdx\":1},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.test\",\"typeIdx\":64},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":62}]}],\"else\":[{\"op\":\"global.get\",\"index\":419}]},{\"op\":\"local.set\",\"index\":19}],\"else\":[{\"op\":\"local.get\",\"index\":19},{\"op\":\"local.get\",\"index\":20},{\"op\":\"call\",\"funcIdx\":9},{\"op\":\"local.get\",\"index\":18},{\"op\":\"local.get\",\"index\":16},{\"op\":\"array.len\"},{\"op\":\"i32.lt_s\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":16},{\"op\":\"local.get\",\"index\":18},{\"op\":\"array.get\",\"typeIdx\":1},{\"op\":\"local.tee\",\"index\":9},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.test\",\"typeIdx\":64},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":9},{\"op\":\"call\",\"funcIdx\":62}]}],\"else\":[{\"op\":\"global.get\",\"index\":419}]},{\"op\":\"call\",\"funcIdx\":9},{\"op\":\"local.set\",\"index\":19}]},{\"op\":\"local.get\",\"index\":18},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"i32.add\"},{\"op\":\"local.set\",\"index\":18},{\"op\":\"br\",\"depth\":0}]}]},{\"op\":\"local.get\",\"index\":19},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"global.get\",\"index\":419}],\"else\":[{\"op\":\"local.get\",\"index\":19}]}],\"else\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":26},{\"op\":\"global.get\",\"index\":1858},{\"op\":\"local.set\",\"index\":27},{\"op\":\"local.get\",\"index\":26},{\"op\":\"global.get\",\"index\":747},{\"op\":\"local.get\",\"index\":27},{\"op\":\"call\",\"funcIdx\":41}]},{\"op\":\"local.set\",\"index\":8},{\"op\":\"ref.null.extern\"},{\"op\":\"local.set\",\"index\":28},{\"op\":\"local.get\",\"index\":8},{\"op\":\"local.set\",\"index\":29},{\"op\":\"local.get\",\"index\":28},{\"op\":\"local.get\",\"index\":29},{\"op\":\"call\",\"funcIdx\":54},{\"op\":\"return\"}]) (at src/codegen/stack-balance.ts:274:13)"
+      },
+      "tests": {
+        "kind": "upstream-suite",
+        "status": "not-integrated",
+        "reason": "not shipped in npm tarball; adapter pending"
+      },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
+      },
+      "perf": null,
+      "knownBugs": [],
+      "weeklyDownloads": 164859858
+    },
+    {
+      "name": "react",
+      "version": "19.2.6",
+      "issue": 3958,
+      "entryFile": "index.js",
+      "shape": "cjs-project",
+      "compile": {
+        "success": true,
+        "durationMs": 1949,
+        "timedOut": false,
+        "timeoutMs": 120000,
+        "errorCount": 0,
+        "binaryBytes": 2163,
+        "categories": {}
+      },
+      "validation": {
+        "validates": true,
+        "firstError": null
+      },
+      "tests": {
+        "kind": "upstream-suite",
+        "passed": 55,
+        "total": 55,
+        "passRatePct": 100,
+        "admitted": 272,
+        "upstreamTestsSeen": 273,
+        "harnessIncompatible": 209,
+        "sourceIssue": 3958
+      },
+      "correctness": {
+        "status": "verified",
+        "passed": 55,
+        "total": 55
+      },
+      "perf": null,
+      "knownBugs": [],
+      "weeklyDownloads": 162687688
+    },
+    {
+      "name": "eslint",
+      "version": "10.0.3",
+      "issue": 1400,
+      "entryFile": "lib/api.js",
+      "shape": "cjs-project",
+      "compile": {
+        "success": false,
+        "durationMs": 180159,
+        "timedOut": true,
+        "timeoutMs": 180000,
+        "errorCount": 0,
+        "binaryBytes": 0,
+        "categories": {
+          "compile-budget": {
+            "count": 1,
+            "sample": "compileProject exceeded the 180000ms ESLint harness budget"
+          }
+        }
+      },
+      "validation": {
+        "validates": false,
+        "firstError": "compileProject exceeded the 180000ms budget (#3672)"
+      },
+      "tests": null,
+      "correctness": {
+        "status": "unverified",
+        "reason": "package does not compile, so no workload could run"
+      },
+      "perf": null,
+      "knownBugs": [
+        {
+          "issue": 3672,
+          "summary": "the real multi-file Linter graph is still beyond the bounded mainline compile/runtime integration frontier"
+        }
+      ],
+      "weeklyDownloads": 152308132
+    },
+    {
+      "name": "react-dom",
+      "version": "19.2.6",
+      "issue": 3982,
+      "entryFile": "index.js",
+      "shape": "cjs-project",
+      "compile": {
+        "success": true,
+        "durationMs": 1917,
+        "timedOut": false,
+        "timeoutMs": 120000,
+        "errorCount": 0,
+        "binaryBytes": 3601,
+        "categories": {}
+      },
+      "validation": {
+        "validates": true,
+        "firstError": null
+      },
+      "tests": {
+        "kind": "upstream-suite",
+        "passed": 0,
+        "total": 288,
+        "passRatePct": 0,
+        "admitted": 1942,
+        "upstreamTestsSeen": 2003,
+        "harnessIncompatible": 1654,
+        "implementationInvalidTests": null,
+        "implementationError": "Codegen error: Do not know how to serialize a BigInt",
+        "sourceIssue": 3982
+      },
+      "correctness": {
+        "status": "divergent",
+        "passed": 0,
+        "total": 288,
+        "reason": "288 of 288 operations diverged from native node"
+      },
+      "perf": null,
+      "knownBugs": [],
+      "weeklyDownloads": 139740993
+    },
+    {
+      "name": "prettier",
+      "version": "3.8.1",
+      "issue": null,
+      "entryFile": "standalone.mjs",
+      "shape": "esm-project",
+      "compile": {
+        "success": false,
+        "durationMs": 3222,
+        "timedOut": false,
+        "timeoutMs": 120000,
+        "errorCount": 1,
+        "binaryBytes": 0,
+        "categories": {
+          "compiler-diagnostic": {
+            "count": 1,
+            "sample": "Codegen error: inherited class callable jt_diff has no exact canonical class unit (at src/codegen/program-abi-class-callable-planning.ts:291:13)"
+          }
+        },
+        "errors": [
+          {
+            "message": "Codegen error: inherited class callable jt_diff has no exact canonical class unit (at src/codegen/program-abi-class-callable-planning.ts:291:13)"
+          }
+        ]
+      },
+      "validation": {
+        "validates": false,
+        "firstError": "Codegen error: inherited class callable jt_diff has no exact canonical class unit (at src/codegen/program-abi-class-callable-planning.ts:291:13)"
+      },
+      "tests": null,
+      "correctness": {
+        "status": "unverified",
+        "reason": "package does not compile, so no workload could run"
+      },
+      "perf": null,
+      "knownBugs": [],
+      "weeklyDownloads": 117242232
+    },
+    {
+      "name": "tailwindcss",
+      "version": "4.3.3",
+      "issue": null,
+      "entryFile": "dist/lib.mjs",
+      "shape": "esm-project",
+      "compile": {
+        "success": false,
+        "durationMs": 120134,
+        "timedOut": true,
+        "timeoutMs": 120000,
+        "errorCount": 0,
+        "binaryBytes": 0,
+        "categories": {
+          "compile-budget": {
+            "count": 1,
+            "sample": "compileProject exceeded the 120000ms budget"
+          }
+        }
+      },
+      "validation": {
+        "validates": false,
+        "firstError": "compileProject exceeded the 120000ms budget"
+      },
+      "tests": {
+        "kind": "upstream-suite",
+        "status": "not-integrated",
+        "reason": "not shipped in npm tarball; adapter pending"
+      },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
+      },
+      "perf": null,
+      "knownBugs": [],
+      "weeklyDownloads": 117155768
+    },
+    {
+      "name": "axios",
+      "version": "1.16.1",
+      "issue": 1032,
+      "entryFile": "index.js",
+      "shape": "esm-project",
+      "compile": {
+        "success": false,
+        "durationMs": 18866,
+        "timedOut": false,
+        "timeoutMs": 120000,
+        "errorCount": 1,
+        "binaryBytes": 0,
+        "categories": {
+          "compiler-diagnostic": {
+            "count": 1,
+            "sample": "async shape not supported: this suspension point (await / for-await) sits inside a `try` whose overall body shape the async engine cannot drive yet, and the synchronous fallback would SILENTLY drop awaited rejections (execution would continue past a rejected await; catch/finally would not run). Restructure toward canonical awaits — top-level `await p` / `const x = await p` / `return await p` statements, try/catch(/finally) without awaits in loops/conditions inside the try — or hoist the await out of the try (#3587)"
+          }
+        },
+        "errors": [
+          {
+            "message": "async shape not supported: this suspension point (await / for-await) sits inside a `try` whose overall body shape the async engine cannot drive yet, and the synchronous fallback would SILENTLY drop awaited rejections (execution would continue past a rejected await; catch/finally would not run). Restructure toward canonical awaits — top-level `await p` / `const x = await p` / `return await p` statements, try/catch(/finally) without awaits in loops/conditions inside the try — or hoist the await out of the try (#3587)"
+          }
+        ]
+      },
+      "validation": {
+        "validates": false,
+        "firstError": "async shape not supported: this suspension point (await / for-await) sits inside a `try` whose overall body shape the async engine cannot drive yet, and the synchronous fallback would SILENTLY drop awaited rejections (execution would continue past a rejected await; catch/finally would not run). Restructure toward canonical awaits — top-level `await p` / `const x = await p` / `return await p` statements, try/catch(/finally) without awaits in loops/conditions inside the try — or hoist the await out of the try (#3587)"
+      },
+      "tests": {
+        "kind": "upstream-suite",
+        "status": "not-integrated",
+        "reason": "not shipped in npm tarball; adapter pending"
+      },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
+      },
+      "perf": null,
+      "knownBugs": [],
+      "weeklyDownloads": 112353408
+    },
+    {
+      "name": "clsx",
+      "version": "2.1.1",
+      "issue": 3748,
+      "entryFile": "dist/clsx.mjs",
+      "shape": "esm-driver-epilogue",
+      "compile": {
+        "success": true,
+        "durationMs": 240,
+        "errorCount": 0,
+        "binaryBytes": 8244,
+        "categories": {}
+      },
+      "validation": {
+        "validates": true,
+        "firstError": null
+      },
+      "tests": {
+        "kind": "differential-ops",
+        "passed": 17,
+        "total": 18,
+        "sourceIssue": 3748
+      },
+      "correctness": {
+        "status": "divergent",
+        "passed": 17,
+        "total": 18,
+        "reason": "1 of 18 operations diverged from native node"
+      },
+      "perf": {
+        "sampleOp": "op_two_strings.length (host-owned arguments)",
+        "lanes": {
+          "jsHost": {
+            "status": "measured",
+            "placement": "js-host",
+            "inputMode": "runtime-dynamic",
+            "sampleOp": "op_two_strings.length (host-owned arguments)",
+            "wasmUs": 0.3074838929378188,
+            "nodeUs": 0.03947668247356615,
+            "wasmStdUs": 0.0007305795050811119,
+            "nodeStdUs": 0.0005372680521276313,
+            "ratio": 0.12838618015529468,
+            "ratioStd": 0.0019752529781186727,
+            "iters": 785525,
+            "warmupRounds": 2,
+            "measuredRounds": 9,
+            "wasmSamplesUs": [
+              0.3063759383850892,
+              0.3084687540180307,
+              0.30846741860539184,
+              0.3074838929378188,
+              0.3068312758983015,
+              0.3074870182361975,
+              0.3082235078450661,
+              0.3067848241621759,
+              0.30705894911044934
+            ],
+            "nodeSamplesUs": [
+              0.04000179752396734,
+              0.03870874256070076,
+              0.039009062728791025,
+              0.039089173482754286,
+              0.039388806212459646,
+              0.03947668247356615,
+              0.03971463670792095,
+              0.040487565640843846,
+              0.04004366888393544
+            ],
+            "binaryBytes": 2093,
+            "moduleImportCount": 20,
+            "functionImportCount": 15,
+            "expectedChecksum": 7,
+            "actualChecksum": 7,
+            "testCompiledToWasm": false,
+            "target": "js-host"
+          },
+          "standalone": {
+            "status": "measured",
+            "placement": "standalone",
+            "inputMode": "compile-time-static",
+            "sampleOp": "op_two_strings.length (driver compiled to Wasm)",
+            "wasmUs": 0.0009488810495520716,
+            "nodeUs": 0.020141016581207653,
+            "wasmStdUs": 0.0000012177336486792676,
+            "nodeStdUs": 0.00006391828719604988,
+            "ratio": 21.22607105570863,
+            "ratioStd": 0.07922480838936433,
+            "iters": 4263683,
+            "warmupRounds": 2,
+            "measuredRounds": 9,
+            "wasmSamplesUs": [
+              0.0009501780502826141,
+              0.000950490690791298,
+              0.0009485777906070597,
+              0.0009485027381249882,
+              0.0009488810495520716,
+              0.0009484626319624751,
+              0.0009492173784902556,
+              0.0009482867277016473,
+              0.0009521662375033742
+            ],
+            "nodeSamplesUs": [
+              0.020125436858221307,
+              0.020135853673932468,
+              0.02030005842366907,
+              0.02009534808286991,
+              0.020221860067917964,
+              0.02015283312572719,
+              0.020078042152754966,
+              0.020176140909163698,
+              0.020141016581207653
+            ],
+            "compileDurationMs": 382.97029599995585,
+            "moduleCompileDurationMs": 0.3237649999791756,
+            "instantiateDurationMs": 0.030336999974679202,
+            "firstBatchDurationMs": 0.05633500003023073,
+            "binaryBytes": 103,
+            "moduleImportCount": 0,
+            "functionImportCount": 0,
+            "expectedChecksum": 7,
+            "actualChecksum": 7,
+            "testCompiledToWasm": true,
+            "benchmarkUsesIr": true,
+            "irCompiledFunctions": [
+              "__npmCompatStandaloneBenchmark"
+            ],
+            "target": "standalone"
+          },
+          "standaloneDynamic": {
+            "status": "measured",
+            "placement": "standalone",
+            "inputMode": "runtime-dynamic",
+            "sampleOp": "op_two_strings.length (runtime-generated arguments; driver compiled to Wasm)",
+            "wasmUs": 0.3530672715472937,
+            "nodeUs": 0.05650051484902609,
+            "wasmStdUs": 0.0008256423413388613,
+            "nodeStdUs": 0.0004120312779374194,
+            "ratio": 0.1600276191033407,
+            "ratioStd": 0.0013457949255786753,
+            "iters": 808975,
+            "warmupRounds": 2,
+            "measuredRounds": 9,
+            "wasmSamplesUs": [
+              0.35351410117742316,
+              0.35357036496803823,
+              0.3529015915201421,
+              0.3530672715472937,
+              0.3539795481936949,
+              0.35253199048181105,
+              0.3526560573565319,
+              0.3553290076949214,
+              0.352785214623394
+            ],
+            "nodeSamplesUs": [
+              0.056526597237249045,
+              0.05645709570752619,
+              0.056331677740374904,
+              0.0564514614172019,
+              0.05650051484902609,
+              0.05752246855588927,
+              0.05641768905093422,
+              0.056568866775808975,
+              0.057356789764879144
+            ],
+            "compileDurationMs": 2043.8866230000276,
+            "moduleCompileDurationMs": 0.6606040000333451,
+            "instantiateDurationMs": 0.16088000003946945,
+            "firstBatchDurationMs": 0.39667099999496713,
+            "binaryBytes": 37021,
+            "moduleImportCount": 0,
+            "functionImportCount": 0,
+            "expectedChecksum": 14,
+            "actualChecksum": 14,
+            "testCompiledToWasm": true,
+            "benchmarkUsesIr": false,
+            "irCompiledFunctions": [],
+            "target": "standalone",
+            "runtimeArgumentSuppliedAfterCompile": true
+          }
+        },
+        "wasmUs": 0.3074838929378188,
+        "nodeUs": 0.03947668247356615,
+        "wasmStdUs": 0.0007305795050811119,
+        "nodeStdUs": 0.0005372680521276313,
+        "ratio": 0.12838618015529468,
+        "ratioStd": 0.0019752529781186727,
+        "iters": 785525,
+        "warmupRounds": 2,
+        "measuredRounds": 9,
+        "wasmSamplesUs": [
+          0.3063759383850892,
+          0.3084687540180307,
+          0.30846741860539184,
+          0.3074838929378188,
+          0.3068312758983015,
+          0.3074870182361975,
+          0.3082235078450661,
+          0.3067848241621759,
+          0.30705894911044934
+        ],
+        "nodeSamplesUs": [
+          0.04000179752396734,
+          0.03870874256070076,
+          0.039009062728791025,
+          0.039089173482754286,
+          0.039388806212459646,
+          0.03947668247356615,
+          0.03971463670792095,
+          0.040487565640843846,
+          0.04004366888393544
+        ]
+      },
+      "knownBugs": [
+        {
+          "issue": 3749,
+          "summary": "for...in over an array of heterogeneously-shaped object literals derefs null"
+        }
+      ],
+      "weeklyDownloads": 104930549
+    },
+    {
+      "name": "jsdom",
+      "version": "30.0.1",
+      "issue": null,
+      "entryFile": "lib/api.js",
+      "shape": "cjs-project",
+      "compile": {
+        "success": false,
+        "durationMs": 180214,
+        "timedOut": true,
+        "timeoutMs": 180000,
+        "errorCount": 0,
+        "binaryBytes": 0,
+        "categories": {
+          "compile-budget": {
+            "count": 1,
+            "sample": "compileProject exceeded the 180000ms budget"
+          }
+        }
+      },
+      "validation": {
+        "validates": false,
+        "firstError": "compileProject exceeded the 180000ms budget"
+      },
+      "tests": {
+        "kind": "upstream-suite",
+        "status": "not-integrated",
+        "reason": "not shipped in npm tarball; adapter pending"
+      },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
+      },
+      "perf": null,
+      "knownBugs": [],
+      "weeklyDownloads": 89317829
+    },
+    {
+      "name": "marked",
+      "version": "18.0.2",
+      "issue": 3716,
+      "entryFile": "lib/marked.esm.js",
+      "shape": "esm-direct",
+      "compile": {
+        "success": false,
+        "durationMs": 838,
+        "errorCount": 64,
+        "binaryBytes": 0,
+        "categories": {
+          "other": {
+            "count": 5,
+            "sample": "'S' is possibly 'undefined'.",
+            "buckets": {
+              "'X' is possibly 'X'.": 5
+            }
+          },
+          "ts-possibly-null": {
+            "count": 1,
+            "sample": "Object is possibly 'undefined'.",
+            "buckets": {
+              "Object is possibly 'X'.": 1
+            }
+          },
+          "ts-not-assignable": {
+            "count": 12,
+            "sample": "Argument of type '{ type: string; raw: string; task: any; loose: boolean; text: string; tokens: never[]; }' is not assignable to parameter of type 'never'.",
+            "buckets": {
+              "Argument of type 'X' is not assignable to parameter of type 'X'.": 7,
+              "Argument of type 'X' is not assignable to parameter of type 'X'.\n  Type 'X' is not assignable to type 'X'.": 1,
+              "Type 'X' is not assignable to type 'X'.\n  Types of property 'X' are incompatible.\n    Type 'X' is missing the following properties from type 'X': test, source, ": 1,
+              "Type 'X' is not assignable to type 'X'.\n  The types of 'X' are incompatible between these types.\n    Type 'X' is not assignable to type 'X'.\n      Target signat": 3
+            }
+          },
+          "ts-property-noise": {
+            "count": 46,
+            "sample": "Property 'raw' does not exist on type 'never'.",
+            "buckets": {
+              "Property 'X' does not exist on type 'X'.": 46
+            }
+          }
+        }
+      },
+      "validation": {
+        "validates": false,
+        "firstError": "no binary emitted"
+      },
+      "tests": null,
+      "correctness": {
+        "status": "unverified",
+        "reason": "package does not compile, so no workload could run"
+      },
+      "perf": null,
+      "knownBugs": [
+        {
+          "issue": 3715,
+          "summary": "TS 'evolving array type' inference unimplemented — blocks compile entirely"
+        }
+      ],
+      "weeklyDownloads": 60496071
+    },
+    {
+      "name": "webpack",
+      "version": "5.109.2",
+      "issue": null,
+      "entryFile": "lib/index.js",
+      "shape": "cjs-project",
+      "compile": {
+        "success": false,
+        "durationMs": 120215,
+        "timedOut": true,
+        "timeoutMs": 120000,
+        "errorCount": 0,
+        "binaryBytes": 0,
+        "categories": {
+          "compile-budget": {
+            "count": 1,
+            "sample": "compileProject exceeded the 120000ms budget"
+          }
+        }
+      },
+      "validation": {
+        "validates": false,
+        "firstError": "compileProject exceeded the 120000ms budget"
+      },
+      "tests": {
+        "kind": "upstream-suite",
+        "status": "not-integrated",
+        "reason": "not shipped in npm tarball; adapter pending"
+      },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
+      },
+      "perf": null,
+      "knownBugs": [],
+      "weeklyDownloads": 55617769
+    },
+    {
+      "name": "hono",
+      "version": "4.12.16",
+      "issue": 1244,
+      "entryFile": "dist/index.js",
+      "shape": "esm-project",
+      "compile": {
+        "success": false,
+        "durationMs": 2429,
+        "timedOut": false,
+        "timeoutMs": 120000,
+        "errorCount": 1,
+        "binaryBytes": 0,
+        "categories": {
+          "compiler-diagnostic": {
+            "count": 1,
+            "sample": "Codegen error: inherited class callable RegExpRouterWithMatcherExport_add has no exact canonical class unit (at src/codegen/program-abi-class-callable-planning.ts:291:13)"
+          }
+        },
+        "errors": [
+          {
+            "message": "Codegen error: inherited class callable RegExpRouterWithMatcherExport_add has no exact canonical class unit (at src/codegen/program-abi-class-callable-planning.ts:291:13)"
+          }
+        ]
+      },
+      "validation": {
+        "validates": false,
+        "firstError": "Codegen error: inherited class callable RegExpRouterWithMatcherExport_add has no exact canonical class unit (at src/codegen/program-abi-class-callable-planning.ts:291:13)"
+      },
+      "tests": {
+        "kind": "upstream-suite",
+        "status": "not-integrated",
+        "reason": "not shipped in npm tarball; adapter pending"
+      },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
+      },
+      "perf": null,
+      "knownBugs": [],
+      "weeklyDownloads": 53123258
+    },
+    {
+      "name": "jest",
+      "version": "30.4.2",
+      "issue": null,
+      "entryFile": "build/index.mjs",
+      "shape": "esm-project",
+      "compile": {
+        "success": false,
+        "durationMs": 10742,
+        "timedOut": false,
+        "timeoutMs": 120000,
+        "errorCount": 15,
+        "binaryBytes": 0,
+        "categories": {
+          "compiler-diagnostic": {
+            "count": 15,
+            "sample": "async shape not supported: this suspension point (await / for-await) sits inside a `try` whose overall body shape the async engine cannot drive yet, and the synchronous fallback would SILENTLY drop awaited rejections (execution would continue past a rejected await; catch/finally would not run). Restructure toward canonical awaits — top-level `await p` / `const x = await p` / `return await p` statements, try/catch(/finally) without awaits in loops/conditions inside the try — or hoist the await out of the try (#3587)"
+          }
+        },
+        "errors": [
+          {
+            "message": "async shape not supported: this suspension point (await / for-await) sits inside a `try` whose overall body shape the async engine cannot drive yet, and the synchronous fallback would SILENTLY drop awaited rejections (execution would continue past a rejected await; catch/finally would not run). Restructure toward canonical awaits — top-level `await p` / `const x = await p` / `return await p` statements, try/catch(/finally) without awaits in loops/conditions inside the try — or hoist the await out of the try (#3587)"
+          },
+          {
+            "message": "Missing __make_getter_callback import"
+          },
+          {
+            "message": "Missing __make_getter_callback import"
+          },
+          {
+            "message": "Missing __make_getter_callback import"
+          },
+          {
+            "message": "Missing __make_getter_callback import"
+          },
+          {
+            "message": "Missing __make_getter_callback import"
+          },
+          {
+            "message": "Missing __make_getter_callback import"
+          },
+          {
+            "message": "Missing __make_getter_callback import"
+          },
+          {
+            "message": "Missing __make_getter_callback import"
+          },
+          {
+            "message": "Missing __make_getter_callback import"
+          },
+          {
+            "message": "Missing __make_getter_callback import"
+          },
+          {
+            "message": "Missing __make_getter_callback import"
+          },
+          {
+            "message": "Missing __make_getter_callback import"
+          },
+          {
+            "message": "Missing __make_getter_callback import"
+          },
+          {
+            "message": "Missing __make_getter_callback import"
+          }
+        ]
+      },
+      "validation": {
+        "validates": false,
+        "firstError": "async shape not supported: this suspension point (await / for-await) sits inside a `try` whose overall body shape the async engine cannot drive yet, and the synchronous fallback would SILENTLY drop awaited rejections (execution would continue past a rejected await; catch/finally would not run). Restructure toward canonical awaits — top-level `await p` / `const x = await p` / `return await p` statements, try/catch(/finally) without awaits in loops/conditions inside the try — or hoist the await out of the try (#3587)"
+      },
+      "tests": {
+        "kind": "upstream-suite",
+        "status": "not-integrated",
+        "reason": "not shipped in npm tarball; adapter pending"
+      },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
+      },
+      "perf": null,
+      "knownBugs": [],
+      "weeklyDownloads": 46631732
+    },
+    {
+      "name": "redux",
+      "version": "5.0.1",
+      "issue": null,
+      "entryFile": "dist/redux.mjs",
+      "shape": "esm-project",
+      "compile": {
+        "success": false,
+        "durationMs": 2484,
+        "timedOut": false,
+        "timeoutMs": 120000,
+        "errorCount": 1,
+        "binaryBytes": 0,
+        "categories": {
+          "compiler-diagnostic": {
+            "count": 1,
+            "sample": "Codegen error: stack-balance invariant (entry): 'observeState' references local 19, but only 1 params + 8 locals are declared (locals: 1:observerAsObserver, 2:__nullchk_1, 3:__emc_recv_2, 4:__boxed_isDispatching, 5:__boxed_currentState, 6:__tdz_box_isDispatching, 7:__tdz_box_currentState, 8:__emc_arg_7; body: [{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":1},{\"op\":\"local.tee\",\"index\":2},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":145},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":2},{\"op\":\"global.get\",\"index\":146},{\"op\":\"call\",\"funcIdx\":1},{\"op\":\"call\",\"funcIdx\":26},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":3},{\"op\":\"local.get\",\"index\":19},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":4},{\"op\":\"local.get\",\"index\":11},{\"op\":\"struct.new\",\"typeIdx\":34},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"call\",\"funcIdx\":2097173},{\"op\":\"local.set\",\"index\":8},{\"op\":\"local.get\",\"index\":3},{\"op\":\"global.get\",\"index\":146},{\"op\":\"local.get\",\"index\":8},{\"op\":\"call\",\"funcIdx\":54},{\"op\":\"drop\"}]}]) (at src/codegen/stack-balance.ts:274:13)"
+          }
+        },
+        "errors": [
+          {
+            "message": "Codegen error: stack-balance invariant (entry): 'observeState' references local 19, but only 1 params + 8 locals are declared (locals: 1:observerAsObserver, 2:__nullchk_1, 3:__emc_recv_2, 4:__boxed_isDispatching, 5:__boxed_currentState, 6:__tdz_box_isDispatching, 7:__tdz_box_currentState, 8:__emc_arg_7; body: [{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":1},{\"op\":\"local.tee\",\"index\":2},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":145},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":2},{\"op\":\"global.get\",\"index\":146},{\"op\":\"call\",\"funcIdx\":1},{\"op\":\"call\",\"funcIdx\":26},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":3},{\"op\":\"local.get\",\"index\":19},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":4},{\"op\":\"local.get\",\"index\":11},{\"op\":\"struct.new\",\"typeIdx\":34},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"call\",\"funcIdx\":2097173},{\"op\":\"local.set\",\"index\":8},{\"op\":\"local.get\",\"index\":3},{\"op\":\"global.get\",\"index\":146},{\"op\":\"local.get\",\"index\":8},{\"op\":\"call\",\"funcIdx\":54},{\"op\":\"drop\"}]}]) (at src/codegen/stack-balance.ts:274:13)"
+          }
+        ]
+      },
+      "validation": {
+        "validates": false,
+        "firstError": "Codegen error: stack-balance invariant (entry): 'observeState' references local 19, but only 1 params + 8 locals are declared (locals: 1:observerAsObserver, 2:__nullchk_1, 3:__emc_recv_2, 4:__boxed_isDispatching, 5:__boxed_currentState, 6:__tdz_box_isDispatching, 7:__tdz_box_currentState, 8:__emc_arg_7; body: [{\"op\":\"local.get\",\"index\":0},{\"op\":\"local.tee\",\"index\":1},{\"op\":\"local.tee\",\"index\":2},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":145},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":2},{\"op\":\"global.get\",\"index\":146},{\"op\":\"call\",\"funcIdx\":1},{\"op\":\"call\",\"funcIdx\":26},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.set\",\"index\":3},{\"op\":\"local.get\",\"index\":19},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":4},{\"op\":\"local.get\",\"index\":11},{\"op\":\"struct.new\",\"typeIdx\":34},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"i32.const\",\"value\":1},{\"op\":\"struct.new\",\"typeIdx\":35},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"call\",\"funcIdx\":2097173},{\"op\":\"local.set\",\"index\":8},{\"op\":\"local.get\",\"index\":3},{\"op\":\"global.get\",\"index\":146},{\"op\":\"local.get\",\"index\":8},{\"op\":\"call\",\"funcIdx\":54},{\"op\":\"drop\"}]}]) (at src/codegen/stack-balance.ts:274:13)"
+      },
+      "tests": {
+        "kind": "upstream-suite",
+        "status": "not-integrated",
+        "reason": "not shipped in npm tarball; adapter pending"
+      },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
+      },
+      "perf": null,
+      "knownBugs": [],
+      "weeklyDownloads": 40344956
+    },
+    {
+      "name": "moment",
+      "version": "2.30.1",
+      "issue": null,
+      "entryFile": "moment.js",
+      "shape": "cjs-project",
+      "compile": {
+        "success": false,
+        "durationMs": 11177,
+        "timedOut": false,
+        "timeoutMs": 120000,
+        "errorCount": 1,
+        "binaryBytes": 0,
+        "categories": {
+          "compiler-diagnostic": {
+            "count": 1,
+            "sample": "Codegen error: stack-balance invariant (entry): '__fnctor_Duration_new' references local 80, but only 1 params + 58 locals are declared (locals: 1:__self, 2:__fnctor_ctor_1, 3:normalizedInput, 4:years, 5:__nullchk_4, 6:__sd_any_5, 7:__sd_res_6, 8:__tmp_7, 9:quarters, 10:__nullchk_9, 11:__sd_any_10, 12:__sd_res_11, 13:months, 14:__nullchk_13, 15:__sd_any_14, 16:__sd_res_15, 17:weeks, 18:__nullchk_17, 19:__sd_any_18, 20:__sd_res_19, 21:__nullchk_20, 22:__sd_any_21, 23:__sd_res_22, 24:days, 25:__nullchk_24, 26:__sd_any_25, 27:__sd_res_26, 28:hours, 29:__nullchk_28, 30:__sd_any_29, 31:__sd_res_30, 32:minutes, 33:__nullchk_32, 34:__sd_any_33, 35:__sd_res_34, 36:seconds, 37:__nullchk_36, 38:__sd_any_37, 39:__sd_res_38, 40:milliseconds, 41:__nullchk_40, 42:__sd_any_41, 43:__sd_res_42, 44:__prop_assign_43, 45:__prop_recv_44, 46:__prop_assign_45, 47:__prop_recv_46, 48:__prop_assign_47, 49:__prop_recv_48, 50:__prop_assign_49, 51:__prop_recv_50, 52:__prop_assign_51, 53:__prop_recv_52, 54:__boxed_globalLocale, 55:__boxed_hookCallback, 56:__prop_assign_55, 57:__prop_recv_56, 58:__emc_recv_57; body: [{\"op\":\"i32.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"ref.null.extern\"},{\"op\":\"ref.null.extern\"},{\"op\":\"struct.new\",\"typeIdx\":189},{\"op\":\"local.set\",\"index\":1},{\"op\":\"global.get\",\"index\":1616},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"ref.func\",\"funcIdx\":2097514},{\"op\":\"i32.const\",\"value\":10},{\"op\":\"ref.null.extern\"},{\"op\":\"struct.new\",\"typeIdx\":191},{\"op\":\"extern.convert_any\"},{\"op\":\"global.set\",\"index\":1616}],\"else\":[]},{\"op\":\"global.get\",\"index\":1616},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.cast\",\"typeIdx\":191},{\"op\":\"extern.convert_any\"},{\"op\":\"local.set\",\"index\":2},{\"op\":\"local.get\",\"index\":1},{\"op\":\"extern.convert_any\"},{\"op\":\"local.get\",\"index\":2},{\"op\":\"call\",\"funcIdx\":82},{\"op\":\"local.get\",\"index\":17},{\"op\":\"local.get\",\"index\":0},{\"op\":\"call\",\"funcIdx\":2097240},{\"op\":\"local.tee\",\"index\":3},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1267},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":5},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097449},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":4},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":10},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1268},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":10},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":11},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097476},{\"op\":\"local.tee\",\"index\":12},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":9},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":14},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1269},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":14},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":15},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097450},{\"op\":\"local.tee\",\"index\":16},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":13},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":18},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1270},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":18},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":19},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097477},{\"op\":\"local.tee\",\"index\":20},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":21},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1271},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":21},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":22},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097478},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.tee\",\"index\":23},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":17},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":25},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1272},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":25},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":26},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097447},{\"op\":\"local.tee\",\"index\":27},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":24},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":29},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1273},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":29},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":30},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097451},{\"op\":\"local.tee\",\"index\":31},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":28},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":33},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1274},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":33},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":34},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097452},{\"op\":\"local.tee\",\"index\":35},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":32},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":37},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1275},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":37},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":38},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097453},{\"op\":\"local.tee\",\"index\":39},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":36},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":41},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1276},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":41},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":42},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097454},{\"op\":\"local.tee\",\"index\":43},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":40},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":80},{\"op\":\"local.get\",\"index\":50},{\"op\":\"local.get\",\"index\":3},{\"op\":\"call\",\"funcIdx\":2097472},{\"op\":\"local.set\",\"index\":44},{\"op\":\"local.tee\",\"index\":45},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1342},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":45},{\"op\":\"local.get\",\"index\":44},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":0}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":40},{\"op\":\"local.get\",\"index\":36},{\"op\":\"f64.const\",\"value\":1000},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":32},{\"op\":\"f64.const\",\"value\":60000},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":28},{\"op\":\"f64.const\",\"value\":1000},{\"op\":\"f64.mul\"},{\"op\":\"f64.const\",\"value\":60},{\"op\":\"f64.mul\"},{\"op\":\"f64.const\",\"value\":60},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":46},{\"op\":\"local.tee\",\"index\":47},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1343},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":47},{\"op\":\"local.get\",\"index\":46},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":1}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":24},{\"op\":\"local.get\",\"index\":17},{\"op\":\"f64.const\",\"value\":7},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":48},{\"op\":\"local.tee\",\"index\":49},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1344},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":49},{\"op\":\"local.get\",\"index\":48},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":2}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":13},{\"op\":\"local.get\",\"index\":9},{\"op\":\"f64.const\",\"value\":3},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":4},{\"op\":\"f64.const\",\"value\":12},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":50},{\"op\":\"local.tee\",\"index\":51},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1345},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":51},{\"op\":\"local.get\",\"index\":50},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":3}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":73},{\"op\":\"local.set\",\"index\":52},{\"op\":\"local.tee\",\"index\":53},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1346},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":53},{\"op\":\"local.get\",\"index\":52},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":4}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":68},{\"op\":\"struct.new\",\"typeIdx\":45},{\"op\":\"local.tee\",\"index\":54},{\"op\":\"local.get\",\"index\":66},{\"op\":\"local.get\",\"index\":65},{\"op\":\"local.get\",\"index\":67},{\"op\":\"local.get\",\"index\":5},{\"op\":\"local.get\",\"index\":121},{\"op\":\"struct.new\",\"typeIdx\":45},{\"op\":\"local.tee\",\"index\":55},{\"op\":\"call\",\"funcIdx\":41},{\"op\":\"call\",\"funcIdx\":2097394},{\"op\":\"local.set\",\"index\":56},{\"op\":\"local.tee\",\"index\":57},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1347},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":57},{\"op\":\"local.get\",\"index\":56},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":5}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"extern.convert_any\"},{\"op\":\"local.tee\",\"index\":58},{\"op\":\"global.get\",\"index\":1280},{\"op\":\"call\",\"funcIdx\":58},{\"op\":\"drop\"},{\"op\":\"local.get\",\"index\":1}]) (at src/codegen/stack-balance.ts:274:13)"
+          }
+        },
+        "errors": [
+          {
+            "message": "Codegen error: stack-balance invariant (entry): '__fnctor_Duration_new' references local 80, but only 1 params + 58 locals are declared (locals: 1:__self, 2:__fnctor_ctor_1, 3:normalizedInput, 4:years, 5:__nullchk_4, 6:__sd_any_5, 7:__sd_res_6, 8:__tmp_7, 9:quarters, 10:__nullchk_9, 11:__sd_any_10, 12:__sd_res_11, 13:months, 14:__nullchk_13, 15:__sd_any_14, 16:__sd_res_15, 17:weeks, 18:__nullchk_17, 19:__sd_any_18, 20:__sd_res_19, 21:__nullchk_20, 22:__sd_any_21, 23:__sd_res_22, 24:days, 25:__nullchk_24, 26:__sd_any_25, 27:__sd_res_26, 28:hours, 29:__nullchk_28, 30:__sd_any_29, 31:__sd_res_30, 32:minutes, 33:__nullchk_32, 34:__sd_any_33, 35:__sd_res_34, 36:seconds, 37:__nullchk_36, 38:__sd_any_37, 39:__sd_res_38, 40:milliseconds, 41:__nullchk_40, 42:__sd_any_41, 43:__sd_res_42, 44:__prop_assign_43, 45:__prop_recv_44, 46:__prop_assign_45, 47:__prop_recv_46, 48:__prop_assign_47, 49:__prop_recv_48, 50:__prop_assign_49, 51:__prop_recv_50, 52:__prop_assign_51, 53:__prop_recv_52, 54:__boxed_globalLocale, 55:__boxed_hookCallback, 56:__prop_assign_55, 57:__prop_recv_56, 58:__emc_recv_57; body: [{\"op\":\"i32.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"ref.null.extern\"},{\"op\":\"ref.null.extern\"},{\"op\":\"struct.new\",\"typeIdx\":189},{\"op\":\"local.set\",\"index\":1},{\"op\":\"global.get\",\"index\":1616},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"ref.func\",\"funcIdx\":2097514},{\"op\":\"i32.const\",\"value\":10},{\"op\":\"ref.null.extern\"},{\"op\":\"struct.new\",\"typeIdx\":191},{\"op\":\"extern.convert_any\"},{\"op\":\"global.set\",\"index\":1616}],\"else\":[]},{\"op\":\"global.get\",\"index\":1616},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.cast\",\"typeIdx\":191},{\"op\":\"extern.convert_any\"},{\"op\":\"local.set\",\"index\":2},{\"op\":\"local.get\",\"index\":1},{\"op\":\"extern.convert_any\"},{\"op\":\"local.get\",\"index\":2},{\"op\":\"call\",\"funcIdx\":82},{\"op\":\"local.get\",\"index\":17},{\"op\":\"local.get\",\"index\":0},{\"op\":\"call\",\"funcIdx\":2097240},{\"op\":\"local.tee\",\"index\":3},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1267},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":5},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097449},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":4},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":10},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1268},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":10},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":11},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097476},{\"op\":\"local.tee\",\"index\":12},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":9},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":14},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1269},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":14},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":15},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097450},{\"op\":\"local.tee\",\"index\":16},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":13},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":18},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1270},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":18},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":19},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097477},{\"op\":\"local.tee\",\"index\":20},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":21},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1271},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":21},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":22},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097478},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.tee\",\"index\":23},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":17},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":25},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1272},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":25},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":26},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097447},{\"op\":\"local.tee\",\"index\":27},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":24},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":29},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1273},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":29},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":30},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097451},{\"op\":\"local.tee\",\"index\":31},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":28},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":33},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1274},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":33},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":34},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097452},{\"op\":\"local.tee\",\"index\":35},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":32},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":37},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1275},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":37},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":38},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097453},{\"op\":\"local.tee\",\"index\":39},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":36},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":41},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1276},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":41},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":42},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097454},{\"op\":\"local.tee\",\"index\":43},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":40},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":80},{\"op\":\"local.get\",\"index\":50},{\"op\":\"local.get\",\"index\":3},{\"op\":\"call\",\"funcIdx\":2097472},{\"op\":\"local.set\",\"index\":44},{\"op\":\"local.tee\",\"index\":45},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1342},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":45},{\"op\":\"local.get\",\"index\":44},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":0}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":40},{\"op\":\"local.get\",\"index\":36},{\"op\":\"f64.const\",\"value\":1000},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":32},{\"op\":\"f64.const\",\"value\":60000},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":28},{\"op\":\"f64.const\",\"value\":1000},{\"op\":\"f64.mul\"},{\"op\":\"f64.const\",\"value\":60},{\"op\":\"f64.mul\"},{\"op\":\"f64.const\",\"value\":60},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":46},{\"op\":\"local.tee\",\"index\":47},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1343},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":47},{\"op\":\"local.get\",\"index\":46},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":1}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":24},{\"op\":\"local.get\",\"index\":17},{\"op\":\"f64.const\",\"value\":7},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":48},{\"op\":\"local.tee\",\"index\":49},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1344},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":49},{\"op\":\"local.get\",\"index\":48},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":2}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":13},{\"op\":\"local.get\",\"index\":9},{\"op\":\"f64.const\",\"value\":3},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":4},{\"op\":\"f64.const\",\"value\":12},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":50},{\"op\":\"local.tee\",\"index\":51},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1345},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":51},{\"op\":\"local.get\",\"index\":50},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":3}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":73},{\"op\":\"local.set\",\"index\":52},{\"op\":\"local.tee\",\"index\":53},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1346},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":53},{\"op\":\"local.get\",\"index\":52},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":4}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":68},{\"op\":\"struct.new\",\"typeIdx\":45},{\"op\":\"local.tee\",\"index\":54},{\"op\":\"local.get\",\"index\":66},{\"op\":\"local.get\",\"index\":65},{\"op\":\"local.get\",\"index\":67},{\"op\":\"local.get\",\"index\":5},{\"op\":\"local.get\",\"index\":121},{\"op\":\"struct.new\",\"typeIdx\":45},{\"op\":\"local.tee\",\"index\":55},{\"op\":\"call\",\"funcIdx\":41},{\"op\":\"call\",\"funcIdx\":2097394},{\"op\":\"local.set\",\"index\":56},{\"op\":\"local.tee\",\"index\":57},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1347},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":57},{\"op\":\"local.get\",\"index\":56},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":5}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"extern.convert_any\"},{\"op\":\"local.tee\",\"index\":58},{\"op\":\"global.get\",\"index\":1280},{\"op\":\"call\",\"funcIdx\":58},{\"op\":\"drop\"},{\"op\":\"local.get\",\"index\":1}]) (at src/codegen/stack-balance.ts:274:13)"
+          }
+        ]
+      },
+      "validation": {
+        "validates": false,
+        "firstError": "Codegen error: stack-balance invariant (entry): '__fnctor_Duration_new' references local 80, but only 1 params + 58 locals are declared (locals: 1:__self, 2:__fnctor_ctor_1, 3:normalizedInput, 4:years, 5:__nullchk_4, 6:__sd_any_5, 7:__sd_res_6, 8:__tmp_7, 9:quarters, 10:__nullchk_9, 11:__sd_any_10, 12:__sd_res_11, 13:months, 14:__nullchk_13, 15:__sd_any_14, 16:__sd_res_15, 17:weeks, 18:__nullchk_17, 19:__sd_any_18, 20:__sd_res_19, 21:__nullchk_20, 22:__sd_any_21, 23:__sd_res_22, 24:days, 25:__nullchk_24, 26:__sd_any_25, 27:__sd_res_26, 28:hours, 29:__nullchk_28, 30:__sd_any_29, 31:__sd_res_30, 32:minutes, 33:__nullchk_32, 34:__sd_any_33, 35:__sd_res_34, 36:seconds, 37:__nullchk_36, 38:__sd_any_37, 39:__sd_res_38, 40:milliseconds, 41:__nullchk_40, 42:__sd_any_41, 43:__sd_res_42, 44:__prop_assign_43, 45:__prop_recv_44, 46:__prop_assign_45, 47:__prop_recv_46, 48:__prop_assign_47, 49:__prop_recv_48, 50:__prop_assign_49, 51:__prop_recv_50, 52:__prop_assign_51, 53:__prop_recv_52, 54:__boxed_globalLocale, 55:__boxed_hookCallback, 56:__prop_assign_55, 57:__prop_recv_56, 58:__emc_recv_57; body: [{\"op\":\"i32.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"f64.const\",\"value\":0},{\"op\":\"ref.null.extern\"},{\"op\":\"ref.null.extern\"},{\"op\":\"struct.new\",\"typeIdx\":189},{\"op\":\"local.set\",\"index\":1},{\"op\":\"global.get\",\"index\":1616},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"ref.func\",\"funcIdx\":2097514},{\"op\":\"i32.const\",\"value\":10},{\"op\":\"ref.null.extern\"},{\"op\":\"struct.new\",\"typeIdx\":191},{\"op\":\"extern.convert_any\"},{\"op\":\"global.set\",\"index\":1616}],\"else\":[]},{\"op\":\"global.get\",\"index\":1616},{\"op\":\"any.convert_extern\"},{\"op\":\"ref.cast\",\"typeIdx\":191},{\"op\":\"extern.convert_any\"},{\"op\":\"local.set\",\"index\":2},{\"op\":\"local.get\",\"index\":1},{\"op\":\"extern.convert_any\"},{\"op\":\"local.get\",\"index\":2},{\"op\":\"call\",\"funcIdx\":82},{\"op\":\"local.get\",\"index\":17},{\"op\":\"local.get\",\"index\":0},{\"op\":\"call\",\"funcIdx\":2097240},{\"op\":\"local.tee\",\"index\":3},{\"op\":\"local.tee\",\"index\":5},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1267},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":5},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":6},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097449},{\"op\":\"local.tee\",\"index\":7},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":4},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":10},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1268},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":10},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":11},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097476},{\"op\":\"local.tee\",\"index\":12},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":9},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":14},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1269},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":14},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":15},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097450},{\"op\":\"local.tee\",\"index\":16},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":13},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":18},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1270},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":18},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":19},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097477},{\"op\":\"local.tee\",\"index\":20},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":21},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1271},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":21},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":22},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097478},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.tee\",\"index\":23},{\"op\":\"call\",\"funcIdx\":32}]},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":17},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":25},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1272},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":25},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":26},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097447},{\"op\":\"local.tee\",\"index\":27},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":24},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":29},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1273},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":29},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":30},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097451},{\"op\":\"local.tee\",\"index\":31},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":28},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":33},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1274},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":33},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":34},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097452},{\"op\":\"local.tee\",\"index\":35},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":32},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":37},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1275},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":37},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":38},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097453},{\"op\":\"local.tee\",\"index\":39},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":36},{\"op\":\"local.get\",\"index\":3},{\"op\":\"local.tee\",\"index\":41},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1276},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[]},{\"op\":\"local.get\",\"index\":41},{\"op\":\"any.convert_extern\"},{\"op\":\"local.tee\",\"index\":42},{\"op\":\"extern.convert_any\"},{\"op\":\"call\",\"funcIdx\":2097454},{\"op\":\"local.tee\",\"index\":43},{\"op\":\"local.tee\",\"index\":8},{\"op\":\"call\",\"funcIdx\":30},{\"op\":\"if\",\"blockType\":{\"kind\":\"val\",\"type\":{\"kind\":\"externref\"}},\"then\":[{\"op\":\"local.get\",\"index\":8}],\"else\":[{\"op\":\"global.get\",\"index\":1686}]},{\"op\":\"call\",\"funcIdx\":31},{\"op\":\"local.set\",\"index\":40},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":80},{\"op\":\"local.get\",\"index\":50},{\"op\":\"local.get\",\"index\":3},{\"op\":\"call\",\"funcIdx\":2097472},{\"op\":\"local.set\",\"index\":44},{\"op\":\"local.tee\",\"index\":45},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1342},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":45},{\"op\":\"local.get\",\"index\":44},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":0}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":40},{\"op\":\"local.get\",\"index\":36},{\"op\":\"f64.const\",\"value\":1000},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":32},{\"op\":\"f64.const\",\"value\":60000},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":28},{\"op\":\"f64.const\",\"value\":1000},{\"op\":\"f64.mul\"},{\"op\":\"f64.const\",\"value\":60},{\"op\":\"f64.mul\"},{\"op\":\"f64.const\",\"value\":60},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":46},{\"op\":\"local.tee\",\"index\":47},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1343},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":47},{\"op\":\"local.get\",\"index\":46},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":1}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":24},{\"op\":\"local.get\",\"index\":17},{\"op\":\"f64.const\",\"value\":7},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":48},{\"op\":\"local.tee\",\"index\":49},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1344},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":49},{\"op\":\"local.get\",\"index\":48},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":2}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":13},{\"op\":\"local.get\",\"index\":9},{\"op\":\"f64.const\",\"value\":3},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.get\",\"index\":4},{\"op\":\"f64.const\",\"value\":12},{\"op\":\"f64.mul\"},{\"op\":\"f64.add\"},{\"op\":\"local.set\",\"index\":50},{\"op\":\"local.tee\",\"index\":51},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1345},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":51},{\"op\":\"local.get\",\"index\":50},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":3}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"call\",\"funcIdx\":73},{\"op\":\"local.set\",\"index\":52},{\"op\":\"local.tee\",\"index\":53},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1346},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":53},{\"op\":\"local.get\",\"index\":52},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":4}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"local.get\",\"index\":68},{\"op\":\"struct.new\",\"typeIdx\":45},{\"op\":\"local.tee\",\"index\":54},{\"op\":\"local.get\",\"index\":66},{\"op\":\"local.get\",\"index\":65},{\"op\":\"local.get\",\"index\":67},{\"op\":\"local.get\",\"index\":5},{\"op\":\"local.get\",\"index\":121},{\"op\":\"struct.new\",\"typeIdx\":45},{\"op\":\"local.tee\",\"index\":55},{\"op\":\"call\",\"funcIdx\":41},{\"op\":\"call\",\"funcIdx\":2097394},{\"op\":\"local.set\",\"index\":56},{\"op\":\"local.tee\",\"index\":57},{\"op\":\"ref.is_null\"},{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":1347},{\"op\":\"throw\",\"tagIdx\":0}],\"else\":[{\"op\":\"local.get\",\"index\":57},{\"op\":\"local.get\",\"index\":56},{\"op\":\"struct.set\",\"typeIdx\":189,\"fieldIdx\":5}]},{\"op\":\"local.get\",\"index\":1},{\"op\":\"extern.convert_any\"},{\"op\":\"local.tee\",\"index\":58},{\"op\":\"global.get\",\"index\":1280},{\"op\":\"call\",\"funcIdx\":58},{\"op\":\"drop\"},{\"op\":\"local.get\",\"index\":1}]) (at src/codegen/stack-balance.ts:274:13)"
+      },
+      "tests": {
+        "kind": "upstream-suite",
+        "status": "not-integrated",
+        "reason": "not shipped in npm tarball; adapter pending"
+      },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
+      },
+      "perf": null,
+      "knownBugs": [],
+      "weeklyDownloads": 34294671
+    },
+    {
+      "name": "three",
+      "version": "0.185.1",
+      "issue": null,
+      "entryFile": "build/three.module.js",
+      "shape": "esm-direct",
+      "compile": {
+        "success": false,
+        "durationMs": 180149,
+        "timedOut": true,
+        "timeoutMs": 180000,
+        "errorCount": 0,
+        "binaryBytes": 0,
+        "categories": {
+          "compile-budget": {
+            "count": 1,
+            "sample": "compileProject exceeded the 180000ms budget"
+          }
+        }
+      },
+      "validation": {
+        "validates": false,
+        "firstError": "compileProject exceeded the 180000ms budget"
+      },
+      "tests": {
+        "kind": "upstream-suite",
+        "status": "not-integrated",
+        "reason": "not shipped in npm tarball; adapter pending"
+      },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
+      },
+      "perf": null,
+      "knownBugs": [],
+      "weeklyDownloads": 12487515
+    },
+    {
+      "name": "styled-components",
+      "version": "6.4.4",
+      "issue": null,
+      "entryFile": "dist/styled-components.esm.js",
+      "shape": "esm-project",
+      "compile": {
+        "success": true,
+        "durationMs": 7792,
+        "timedOut": false,
+        "timeoutMs": 120000,
+        "errorCount": 0,
+        "binaryBytes": 243668,
+        "categories": {}
+      },
+      "validation": {
+        "validates": false,
+        "firstError": "WebAssembly.Module(): Compiling function #224:\"nt\" failed: local.tee[0] expected type (ref null 229), found local.get of type i32 @+115211"
+      },
+      "tests": {
+        "kind": "upstream-suite",
+        "status": "not-integrated",
+        "reason": "not shipped in npm tarball; adapter pending"
+      },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
+      },
+      "perf": null,
+      "knownBugs": [],
+      "weeklyDownloads": 11029759
+    },
+    {
+      "name": "stylelint",
+      "version": "17.14.1",
+      "issue": null,
+      "entryFile": "lib/index.mjs",
+      "shape": "esm-project",
+      "compile": {
+        "success": false,
+        "durationMs": 8296,
+        "timedOut": false,
+        "timeoutMs": 120000,
+        "errorCount": 1,
+        "binaryBytes": 0,
+        "categories": {
+          "compiler-diagnostic": {
+            "count": 1,
+            "sample": "Codegen error: inherited class callable Hookified_once has no exact canonical class unit (at src/codegen/program-abi-class-callable-planning.ts:291:13)"
+          }
+        },
+        "errors": [
+          {
+            "message": "Codegen error: inherited class callable Hookified_once has no exact canonical class unit (at src/codegen/program-abi-class-callable-planning.ts:291:13)"
+          }
+        ]
+      },
+      "validation": {
+        "validates": false,
+        "firstError": "Codegen error: inherited class callable Hookified_once has no exact canonical class unit (at src/codegen/program-abi-class-callable-planning.ts:291:13)"
+      },
+      "tests": {
+        "kind": "upstream-suite",
+        "status": "not-integrated",
+        "reason": "not shipped in npm tarball; adapter pending"
+      },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
+      },
+      "perf": null,
+      "knownBugs": [],
+      "weeklyDownloads": 10427988
+    },
+    {
+      "name": "lit",
+      "version": "3.3.3",
+      "issue": 3977,
+      "entryFile": "index.js",
+      "shape": "esm-project",
+      "compile": {
+        "success": true,
+        "durationMs": 3362,
+        "timedOut": false,
+        "timeoutMs": 120000,
+        "errorCount": 0,
+        "binaryBytes": 82421,
+        "categories": {}
+      },
+      "validation": {
+        "validates": false,
+        "firstError": "WebAssembly.Module(): Compiling function #93:\"y_addInitializer\" failed: local.tee[0] expected type (ref null 2), found f64.const of type f64 @+25003"
+      },
+      "entryIsBarrel": true,
+      "tests": {
+        "kind": "upstream-suite",
+        "passed": 8,
+        "total": 57,
+        "passRatePct": 14.04,
+        "admitted": 583,
+        "upstreamTestsSeen": 587,
+        "harnessIncompatible": 516,
+        "implementationInvalidTests": 448,
+        "sourceIssue": 3977
+      },
+      "correctness": {
+        "status": "divergent",
+        "passed": 8,
+        "total": 57,
+        "reason": "49 of 57 operations diverged from native node"
+      },
+      "perf": null,
+      "knownBugs": [],
+      "weeklyDownloads": 6829692
+    }
+  ]
+}

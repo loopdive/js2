@@ -2,8 +2,8 @@
 /**
  * #1376 — IR fallback telemetry gate.
  *
- * Compiles a fixed corpus of `.ts` files, calls `planIrCompilation` with
- * `trackFallbacks: true`, and aggregates rejection reasons by category.
+ * Compiles a fixed corpus of `.ts` files, plans each exact program graph with
+ * source-qualified IR identity, and aggregates rejection reasons by category.
  *
  * Compares against the committed baseline at `scripts/ir-fallback-baseline.json`.
  * Fails the CI quality job when an `unintended` fallback bucket increases vs.
@@ -52,18 +52,52 @@
  * Corpus: every `.ts` file under `playground/examples/` (excluding `.d.ts`).
  */
 import { readFileSync, writeFileSync, existsSync, statSync, readdirSync } from "node:fs";
+import { createRequire } from "node:module";
 import { join, dirname, relative, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import ts from "typescript";
-import { buildTypeMap } from "../src/ir/propagate.js";
-import { planIrCompilation, type IrFallbackReason } from "../src/ir/select.js";
-import { makeIrHostGlobalResolver } from "../src/ir/host-extern.js";
-import { compile } from "../src/index.js";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { analyzeFiles } from "../src/checker/index.js";
+import { buildIrUnitInventory } from "../src/ir/identity.js";
+import { buildIrPlanningIdentityContext } from "../src/ir/planning-identity.js";
+import { buildIrUnitTypeMap } from "../src/ir/propagate.js";
+import { planIrCompilationByIdentity, projectIrSelectionToLegacy } from "../src/ir/select-identity.js";
+import type { IrFallback, IrFallbackReason, IrSelection } from "../src/ir/select.js";
+import type { IrObservedOutcome } from "../src/ir/outcomes.js";
+import { makeIrHostDateSnapshotResolver } from "../src/ir/host-date.js";
+import { makeIrHostGlobalResolver, makeIrHostVoidCallbackResolver } from "../src/ir/host-extern.js";
+import { makeIrPromiseDelayResolver } from "../src/ir/promise-delay.js";
+import {
+  makeIrArrayExpressionPredicate,
+  makeIrDeclaredPrimitiveExpressionClassifier,
+  makeIrIdentityModuleBindingResolver,
+  makeIrPrimitiveExpressionClassifier,
+} from "../src/ir/module-bindings.js";
+import {
+  makeIrIdentityImportedFunctionResolver,
+  projectIrIdentityImportedFunctionResolverToLegacy,
+} from "../src/ir/imported-functions.js";
+import { compile, compileFiles } from "../src/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+// `analyzeFiles` is also consumed from the published CJS-compatible surface
+// and currently obtains node:path through `require`. The gate executes source
+// directly as ESM, so supply the same Node require binding before compileFiles.
+(globalThis as typeof globalThis & { require?: ReturnType<typeof createRequire> }).require ??= createRequire(
+  import.meta.url,
+);
 const REPO_ROOT = resolve(__dirname, "..");
 const BASELINE_PATH = join(REPO_ROOT, "scripts/ir-fallback-baseline.json");
 const CORPUS_ROOTS = [join(REPO_ROOT, "website/playground/examples")];
+const IMPORTED_HOF_ENTRY_FILES = new Set(
+  [
+    "website/playground/examples/benchmarks.ts",
+    "website/playground/examples/benchmarks/array.ts",
+    "website/playground/examples/benchmarks/dom.ts",
+    "website/playground/examples/benchmarks/fib.ts",
+    "website/playground/examples/benchmarks/loop.ts",
+    "website/playground/examples/benchmarks/string.ts",
+    "website/playground/examples/benchmarks/style.ts",
+  ].map((file) => resolve(REPO_ROOT, file)),
+);
 
 /** Reasons that must NOT increase vs. baseline. */
 const UNINTENDED: ReadonlySet<IrFallbackReason> = new Set([
@@ -97,6 +131,7 @@ const DEFERRED: ReadonlySet<IrFallbackReason> = new Set([
   "type-parameters",
   "non-export-modifier",
   "unnamed",
+  "array-presize-legacy",
 ]);
 
 // #1923 — post-claim demotion kinds (IrIntegrationError.kind). These are
@@ -163,6 +198,102 @@ function listTsFiles(root: string): string[] {
   return out.sort();
 }
 
+type IrFallbackPlanningGraph = Pick<ReturnType<typeof analyzeFiles>, "checker" | "entryFile" | "sourceFiles">;
+
+/**
+ * Run the telemetry selector through the same source-qualified planning seam
+ * as production. A graph owns exactly one inventory/context; imported targets
+ * are resolved structurally before the selector's explicit compatibility
+ * projection, and only the final selection is projected to report labels.
+ *
+ * `undefined` preserves the gate's historical policy for propagation failure:
+ * skip that example. Identity, resolver, selection, and projection invariants
+ * remain fail-closed and escape to the caller.
+ */
+export function planIrFallbackGateEntry(graph: IrFallbackPlanningGraph): IrSelection | undefined {
+  const checker = graph.checker;
+  const sourceFile = graph.entryFile;
+  const identityContext = buildIrPlanningIdentityContext(
+    buildIrUnitInventory(graph.sourceFiles, { entrySource: sourceFile, checker }),
+  );
+  const importedFunctions = projectIrIdentityImportedFunctionResolverToLegacy(
+    makeIrIdentityImportedFunctionResolver(checker, graph.sourceFiles, identityContext),
+  );
+
+  let unitTypeMap;
+  try {
+    unitTypeMap = buildIrUnitTypeMap([sourceFile], checker, identityContext);
+  } catch {
+    return undefined;
+  }
+
+  // (#2856) Thread the SAME host-extern options the real compiler passes
+  // (`planIrOverlay` in src/codegen/index.ts) so the gate's selector
+  // verdicts match production exactly: JS-host mode (the corpus is
+  // playground/browser code) + the shared checker-backed ambient-global
+  // resolver.
+  const identitySelection = planIrCompilationByIdentity(
+    sourceFile,
+    identityContext,
+    {
+      experimentalIR: true,
+      trackFallbacks: true,
+      jsHostExterns: true,
+      resolveHostGlobal: makeIrHostGlobalResolver(checker),
+      hostVoidCallbacks: makeIrHostVoidCallbackResolver(checker),
+      hostDateSnapshots: makeIrHostDateSnapshotResolver(checker),
+      promiseDelays: makeIrPromiseDelayResolver(checker),
+      importedFunctions,
+      resolveModuleBinding: makeIrIdentityModuleBindingResolver(
+        checker,
+        {
+          numberStorage: "f64",
+          allowHostExterns: true,
+          allowBuiltinMapExtern: true,
+        },
+        identityContext,
+      ),
+      classifyPrimitiveExpression: makeIrPrimitiveExpressionClassifier(checker),
+      classifyDeclaredPrimitiveExpression: makeIrDeclaredPrimitiveExpressionClassifier(checker),
+      isArrayExpression: makeIrArrayExpressionPredicate(checker),
+      supportsSymbolicMathHelpers: true,
+      supportsLiteralStringReplace: true,
+      supportsHostStringArrayLiterals: true,
+    },
+    unitTypeMap,
+  );
+  return projectIrSelectionToLegacy(identitySelection).selection;
+}
+
+/**
+ * The bare selector records preliminary declines before prepared components
+ * are discovered. Reconcile those labels with the terminal production outcome
+ * for the same source-qualified owner so a prepared IR replacement removes its
+ * stale fallback instead of leaving the gate false-green.
+ */
+export function reconcileFallbackGateFallbacks(
+  fallbacks: readonly IrFallback[],
+  outcomes: readonly IrObservedOutcome[],
+  entryFile: string,
+): { readonly remaining: readonly IrFallback[]; readonly retired: readonly IrFallback[] } {
+  const entry = resolve(entryFile);
+  const replaced = new Set(
+    outcomes
+      .filter(
+        (outcome) =>
+          resolve(REPO_ROOT, outcome.file) === entry &&
+          outcome.kind === "emitted" &&
+          outcome.irBodyEmitted &&
+          !outcome.legacyBodyEmitted,
+      )
+      .map((outcome) => outcome.displayName),
+  );
+  const remaining: IrFallback[] = [];
+  const retired: IrFallback[] = [];
+  for (const fallback of fallbacks) (replaced.has(fallback.name) ? retired : remaining).push(fallback);
+  return { remaining, retired };
+}
+
 async function aggregate(): Promise<{
   unintended: Partial<Record<IrFallbackReason, number>>;
   deferred: Partial<Record<IrFallbackReason, number>>;
@@ -173,92 +304,79 @@ async function aggregate(): Promise<{
   moduleLevelInfo: { claimable: number; empty: number };
   modulePerFile: Array<{ file: string; status: string }>;
   perFile: Array<{ file: string; reasons: Partial<Record<IrFallbackReason, number>> }>;
+  reconciled: Array<{ file: string; reasons: Partial<Record<IrFallbackReason, number>> }>;
   // (#2856 Step-1) Per-rejection reject-arm detail for `body-shape-rejected`,
   // populated only when JS2WASM_IR_SHAPE_DIAG=1 (select.ts records it).
   shapeDetails: Array<{ file: string; name: string; detail: string }>;
 }> {
   const corpus = CORPUS_ROOTS.flatMap(listTsFiles);
 
-  // One in-memory program per file is fine for a 10-file corpus and keeps the
-  // checker scope local. Each file's TypeMap is independent.
+  // One disk-backed program per entry mirrors compileFiles: imports and barrel
+  // re-exports participate in the same checker realm and exact source set.
   const unintended: Partial<Record<IrFallbackReason, number>> = {};
   const deferred: Partial<Record<IrFallbackReason, number>> = {};
-  // #1923 — post-claim demotions, collected from a real `compile()` of each
-  // corpus file (the selector-level `planIrCompilation` below cannot see them
-  // — they happen during build/verify/lower AFTER the selector claims).
+  // #1923 — post-claim demotions, collected from a real `compileFiles()` graph
+  // for each corpus entry (the planning selector below cannot see them — they
+  // happen during build/verify/lower AFTER the selector claims).
   const postClaim = emptyPostClaim();
   const moduleLevel: Partial<Record<IrFallbackReason, number>> = {};
   const moduleLevelInfo = { claimable: 0, empty: 0 };
   const modulePerFile: Array<{ file: string; status: string }> = [];
   const perFile: Array<{ file: string; reasons: Partial<Record<IrFallbackReason, number>> }> = [];
+  const reconciled: Array<{ file: string; reasons: Partial<Record<IrFallbackReason, number>> }> = [];
   const shapeDetails: Array<{ file: string; name: string; detail: string }> = [];
 
-  const compilerOptions: ts.CompilerOptions = {
-    target: ts.ScriptTarget.ES2022,
-    module: ts.ModuleKind.ESNext,
-    strict: true,
-    moduleResolution: ts.ModuleResolutionKind.NodeNext,
-    skipLibCheck: true,
-    noEmit: true,
-    // (#2856) The host-extern selector arm resolves ambient globals
-    // (`document`, `console`) through the checker — the program needs the
-    // REAL default libs (es + dom) for those `declare var`s to exist. The
-    // previous hand-rolled host declared `lib.d.ts` but had no lib dir on
-    // its search path, so the program ran lib-less and every ambient global
-    // was unresolvable — fine before #2856 (the selector was lib-blind),
-    // WRONG after (the gate would never see host-extern claims the real
-    // compiler makes).
-    lib: ["lib.es2022.d.ts", "lib.dom.d.ts"],
-  };
-
   for (const filePath of corpus) {
-    const source = readFileSync(filePath, "utf-8");
-    const sf = ts.createSourceFile(filePath, source, ts.ScriptTarget.ES2022, true);
-
-    // Build a program over just this file so we can derive a checker for the
-    // type-propagation pass AND (#2856) ambient-global resolution. The
-    // disk-backed default host resolves the bundled typescript lib files;
-    // only `filePath` is served from the pre-parsed in-memory source.
-    const baseHost = ts.createCompilerHost(compilerOptions, /* setParentNodes */ true);
-    const host: ts.CompilerHost = {
-      ...baseHost,
-      getSourceFile: (name, languageVersion, ...rest) => {
-        if (name === filePath) return sf;
-        return baseHost.getSourceFile(name, languageVersion, ...rest);
-      },
-      writeFile: () => {},
-    };
-    const program = ts.createProgram([filePath], compilerOptions, host);
-    const checker = program.getTypeChecker();
-    const sourceFile = program.getSourceFile(filePath) ?? sf;
-
-    let typeMap;
-    try {
-      typeMap = buildTypeMap(sourceFile, checker);
-    } catch {
+    // Use the exact production disk graph and checker that compileFiles uses,
+    // including dependency order and the emitted user-source set.
+    const graph = analyzeFiles(filePath);
+    const selection = planIrFallbackGateEntry(graph);
+    if (!selection) {
       // If type propagation fails for an example file, skip it. The point of
       // the gate is to catch IR-claim-shape regressions in the compiler, not
       // to gate on TS type-checker quirks for example code.
       continue;
     }
+    let productionResult: Awaited<ReturnType<typeof compileFiles>> | undefined;
+    try {
+      productionResult = await compileFiles(filePath, { experimentalIR: true, trackIrOutcomes: true });
+      if (
+        IMPORTED_HOF_ENTRY_FILES.has(resolve(filePath)) &&
+        !(productionResult.irCompiledFuncs ?? []).includes("main")
+      ) {
+        throw new Error(`#3214 A+B1 gate invariant: ${relative(REPO_ROOT, filePath)}::main was not emitted through IR`);
+      }
+      for (const e of productionResult.irPostClaimErrors ?? []) {
+        const kind = (POST_CLAIM_KINDS as readonly string[]).includes(e.kind) ? (e.kind as PostClaimKind) : "lower";
+        const cls = normalizeMessageClass(e.message);
+        postClaim[kind][cls] = (postClaim[kind][cls] ?? 0) + 1;
+      }
+    } catch (error) {
+      if (IMPORTED_HOF_ENTRY_FILES.has(resolve(filePath))) throw error;
+      // Other example-file compile failures are not the gate's concern. Their
+      // preliminary selector fallbacks remain visible because no terminal
+      // production outcome exists to reconcile them.
+    }
 
-    // (#2856) Thread the SAME host-extern options the real compiler passes
-    // (`planIrOverlay` in src/codegen/index.ts) so the gate's selector
-    // verdicts match production exactly: JS-host mode (the corpus is
-    // playground/browser code) + the shared checker-backed ambient-global
-    // resolver.
-    const selection = planIrCompilation(
-      sourceFile,
-      {
+    // Prepared async discovery uses the same host-source lane as the bounded
+    // readiness census. `compileFiles` intentionally has a smaller ambient
+    // library and therefore cannot observe these Promise/Date/console-backed
+    // prepared components; keep it above for the multi-file post-claim meter,
+    // but reconcile its preliminary `async-function` labels with the actual
+    // production host outcome.
+    let terminalOutcomes = productionResult?.irOutcomes ?? [];
+    if ((selection.fallbacks ?? []).some((fallback) => fallback.reason === "async-function")) {
+      const hostResult = await compile(readFileSync(filePath, "utf8"), {
+        fileName: filePath,
+        target: "gc",
         experimentalIR: true,
-        trackFallbacks: true,
-        jsHostExterns: true,
-        resolveHostGlobal: makeIrHostGlobalResolver(checker),
-      },
-      typeMap,
-    );
+        trackIrOutcomes: true,
+      });
+      terminalOutcomes = hostResult.irOutcomes ?? [];
+    }
+    const effective = reconcileFallbackGateFallbacks(selection.fallbacks ?? [], terminalOutcomes, filePath);
     const fileReasons: Partial<Record<IrFallbackReason, number>> = {};
-    for (const fb of selection.fallbacks ?? []) {
+    for (const fb of effective.remaining) {
       const bucket = UNINTENDED.has(fb.reason) ? unintended : deferred;
       bucket[fb.reason] = (bucket[fb.reason] ?? 0) + 1;
       fileReasons[fb.reason] = (fileReasons[fb.reason] ?? 0) + 1;
@@ -267,6 +385,11 @@ async function aggregate(): Promise<{
       }
     }
     perFile.push({ file: relative(REPO_ROOT, filePath), reasons: fileReasons });
+    const retiredReasons: Partial<Record<IrFallbackReason, number>> = {};
+    for (const fb of effective.retired) retiredReasons[fb.reason] = (retiredReasons[fb.reason] ?? 0) + 1;
+    if (effective.retired.length > 0) {
+      reconciled.push({ file: relative(REPO_ROOT, filePath), reasons: retiredReasons });
+    }
 
     // #3142 Slice 1 — module-level claim assessment (one verdict per module).
     if (selection.moduleInit) {
@@ -282,22 +405,18 @@ async function aggregate(): Promise<{
         modulePerFile.push({ file: relative(REPO_ROOT, filePath), status: `claimable (${mi.stmtCount} stmts)` });
       }
     }
-
-    // #1923 — post-claim demotions: compile the file for real and aggregate
-    // `irPostClaimErrors` by kind + normalized message class. A compile that
-    // throws contributes nothing (same tolerance as the selector pass above).
-    try {
-      const result = await compile(source, { fileName: filePath, experimentalIR: true });
-      for (const e of result.irPostClaimErrors ?? []) {
-        const kind = (POST_CLAIM_KINDS as readonly string[]).includes(e.kind) ? (e.kind as PostClaimKind) : "lower";
-        const cls = normalizeMessageClass(e.message);
-        postClaim[kind][cls] = (postClaim[kind][cls] ?? 0) + 1;
-      }
-    } catch {
-      // ignore — example-file compile failures are not the gate's concern
-    }
   }
-  return { unintended, deferred, postClaim, moduleLevel, moduleLevelInfo, modulePerFile, perFile, shapeDetails };
+  return {
+    unintended,
+    deferred,
+    postClaim,
+    moduleLevel,
+    moduleLevelInfo,
+    modulePerFile,
+    perFile,
+    reconciled,
+    shapeDetails,
+  };
 }
 
 function loadBaseline(): Baseline | undefined {
@@ -390,8 +509,17 @@ async function main(): Promise<void> {
   const verbose = args.has("--verbose");
   const shapeDiag = args.has("--shape-diag");
 
-  const { unintended, deferred, postClaim, moduleLevel, moduleLevelInfo, modulePerFile, perFile, shapeDetails } =
-    await aggregate();
+  const {
+    unintended,
+    deferred,
+    postClaim,
+    moduleLevel,
+    moduleLevelInfo,
+    modulePerFile,
+    perFile,
+    reconciled,
+    shapeDetails,
+  } = await aggregate();
 
   // (#2856 Step-1) `--shape-diag`: print the `body-shape-rejected` reject-arm
   // histogram. Requires `JS2WASM_IR_SHAPE_DIAG=1` in the env (select.ts reads it
@@ -424,7 +552,8 @@ async function main(): Promise<void> {
 
   if (mode === "json") {
     process.stdout.write(
-      JSON.stringify({ unintended, deferred, postClaim, moduleLevel, moduleLevelInfo, perFile }, null, 2) + "\n",
+      JSON.stringify({ unintended, deferred, postClaim, moduleLevel, moduleLevelInfo, perFile, reconciled }, null, 2) +
+        "\n",
     );
     return;
   }
@@ -562,7 +691,9 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err) => {
-  process.stderr.write(`check-ir-fallbacks failed: ${err instanceof Error ? err.stack : String(err)}\n`);
-  process.exit(2);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  main().catch((err) => {
+    process.stderr.write(`check-ir-fallbacks failed: ${err instanceof Error ? err.stack : String(err)}\n`);
+    process.exit(2);
+  });
+}

@@ -30,9 +30,7 @@ async function run(src: string): Promise<{ exports: Record<string, Function>; bi
   }
   const importResult = buildImports(result.imports as any, undefined, result.stringPool);
   const inst = await WebAssembly.instantiate(result.binary, importResult as any);
-  if (typeof (importResult as any).setExports === "function") {
-    (importResult as any).setExports(inst.instance.exports as any);
-  }
+  (importResult as any).setInstance?.(inst.instance);
   return { exports: inst.instance.exports as Record<string, Function>, binary: result.binary };
 }
 

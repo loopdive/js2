@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
-async function compileAndGetExports(source: string): Promise<Record<string, Function>> {
-  const result = await compile(source, { fileName: "issue-1769.ts" });
+async function compileAndGetExports(source: string, fileName = "issue-1769.ts"): Promise<Record<string, Function>> {
+  const result = await compile(source, { fileName });
   expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
   await expect(WebAssembly.compile(result.binary)).resolves.toBeInstanceOf(WebAssembly.Module);
   const imports = buildImports(result.imports, undefined, result.stringPool);
@@ -146,6 +146,26 @@ describe("#1769 nullable primitive union lowering and narrowing", () => {
     `);
 
     expect(exports.loopUpdates()).toBe(3);
+  });
+
+  it("preserves an inferred nullable primitive sentinel across a JS function return", async () => {
+    const exports = await compileAndGetExports(
+      `
+        function readInt(ok) {
+          if (!ok) return null;
+          return 7;
+        }
+
+        export function classify(ok) {
+          var value = readInt(ok);
+          return value == null ? -1 : value;
+        }
+      `,
+      "issue-1712-nullable-return.js",
+    );
+
+    expect(exports.classify(false)).toBe(-1);
+    expect(exports.classify(true)).toBe(7);
   });
 
   it("keeps unguarded nullable primitive uses as hard diagnostics", async () => {

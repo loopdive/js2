@@ -3,7 +3,7 @@ id: 3230
 title: "Object.defineProperty: dynamic (non-literal) descriptor read-lane — struct-widening splits read/write stores (accessor read + data write-back both leak)"
 status: blocked
 assignee: ttraenkler/opus-3022
-sprint: current
+sprint: Backlog
 priority: high
 horizon: l
 feasibility: hard
@@ -13,7 +13,7 @@ created: 2026-07-13
 task_type: bugfix
 area: runtime
 language_feature: object-defineproperty, property-descriptors
-goal: spec-completeness
+goal: es5
 parent: 3022
 related: [3022, 3042, 3043, 3116, 1629, 1712, 2106]
 test262_category: built-ins/Object/defineProperty

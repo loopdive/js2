@@ -357,9 +357,7 @@ async function compileWorkload(source: string): Promise<{ run: () => number; bin
 
   const imports = buildImports(result.imports, {}, result.stringPool);
   const { instance } = await instantiateWasm(result.binary, imports.env, imports.string_constants);
-  if (imports.setExports) {
-    imports.setExports(instance.exports as Record<string, Function>);
-  }
+  imports.setInstance?.(instance);
 
   const run = (instance.exports as Record<string, Function>).run;
   if (!run) {

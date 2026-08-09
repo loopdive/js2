@@ -36,12 +36,29 @@ export const LINEAR_RECORD_HEADER_BYTES = 8;
 export const LINEAR_RECORD_FIELD_SLOT_BYTES = 8;
 export const LINEAR_RECORD_TAG_OFFSET = 0;
 export const LINEAR_RECORD_PAYLOAD_SIZE_OFFSET = 4;
+/**
+ * Shared forwarding-record representation for relocated linear arrays.
+ *
+ * A grown array rewrites its old record header to this tag plus the pointer
+ * to the replacement record. Keep this contract beside the canonical linear
+ * layout offsets so every artifact adapter and the direct linear runtime read
+ * and write the same representation.
+ */
+export const LINEAR_ARRAY_FORWARDING = Object.freeze({
+  tag: 0x06,
+  tagOffset: LINEAR_RECORD_TAG_OFFSET,
+  pointerOffset: LINEAR_RECORD_PAYLOAD_SIZE_OFFSET,
+  pointerBytes: LINEAR_POINTER_BYTES,
+});
 export const LINEAR_VECTOR_LENGTH_OFFSET = 8;
 export const LINEAR_VECTOR_CAPACITY_OFFSET = 12;
 export const LINEAR_VECTOR_ELEMENTS_OFFSET = 16;
 export const LINEAR_VECTOR_MINIMUM_CAPACITY = 16;
 export const LINEAR_STRING_LENGTH_OFFSET = 8;
 export const LINEAR_STRING_ELEMENTS_OFFSET = 12;
+export const LINEAR_STRING_PAYLOAD_SIZE_OFFSET = LINEAR_RECORD_PAYLOAD_SIZE_OFFSET;
+/** Bytes between the record header and the first string element (the length field). */
+export const LINEAR_STRING_PAYLOAD_PREFIX_BYTES = LINEAR_STRING_ELEMENTS_OFFSET - LINEAR_RECORD_HEADER_BYTES;
 
 /** Storage vocabulary independent of a machine instruction set. */
 export type LinearStorageKind = "i8" | "i16" | "i32" | "i64" | "f32" | "f64" | "bytes16" | "pointer";
@@ -108,6 +125,8 @@ export interface LinearVectorLayoutPlan extends LinearLayoutBase {
 
 export interface LinearStringLayoutPlan extends LinearLayoutBase {
   readonly kind: "string";
+  readonly payloadSizeOffset: number;
+  readonly payloadPrefixBytes: number;
   readonly lengthOffset: number;
   readonly elementsOffset: number;
   readonly elementStorage: "i8" | "i16";
@@ -308,6 +327,11 @@ export class LinearMemoryPlan {
 
   layoutForObjectShape(shape: IrObjectShape): LinearRecordLayoutPlan | undefined {
     const layout = this.layout(linearObjectLayoutId(shape));
+    return layout?.kind === "record" ? layout : undefined;
+  }
+
+  layoutForClassShape(shape: IrClassShape): LinearRecordLayoutPlan | undefined {
+    const layout = this.layout(linearClassLayoutId(shape));
     return layout?.kind === "record" ? layout : undefined;
   }
 
@@ -584,6 +608,8 @@ export function planLinearStringLayout(): LinearStringLayoutPlan {
     alignment: LINEAR_RECORD_ALIGNMENT,
     size: { kind: "elements", baseBytes: LINEAR_STRING_ELEMENTS_OFFSET, strideBytes: 1, minimumElements: 0 },
     pointerMap: { kind: "none" },
+    payloadSizeOffset: LINEAR_STRING_PAYLOAD_SIZE_OFFSET,
+    payloadPrefixBytes: LINEAR_STRING_PAYLOAD_PREFIX_BYTES,
     lengthOffset: LINEAR_STRING_LENGTH_OFFSET,
     elementsOffset: LINEAR_STRING_ELEMENTS_OFFSET,
     elementStorage: "i8",
@@ -593,6 +619,10 @@ export function planLinearStringLayout(): LinearStringLayoutPlan {
 
 export function linearObjectLayoutId(shape: IrObjectShape): string {
   return `record:object:${shape.fields.map((field) => `${JSON.stringify(field.name)}=${linearIrTypeKey(field.type)}`).join(";")}`;
+}
+
+export function linearClassLayoutId(shape: IrClassShape): string {
+  return `record:class:${JSON.stringify(shape.classId)}`;
 }
 
 export function linearRefCellLayoutId(inner: IrType): string {
@@ -708,7 +738,9 @@ function allocationSize(instr: IrInstr, layout: LinearLayoutPlan): LinearSizePla
   if (layout.kind === "vector" && instr.kind === "vec.new_fixed") {
     return {
       kind: "constant",
-      bytes: layout.elementsOffset + Math.max(instr.elements.length, layout.minimumCapacity) * layout.elementStride,
+      bytes:
+        layout.elementsOffset +
+        Math.max(instr.capacity ?? instr.elements.length, layout.minimumCapacity) * layout.elementStride,
     };
   }
   if (layout.kind === "string" && instr.kind === "string.const") {
@@ -726,7 +758,6 @@ function layoutForAllocation(
     case "object.new":
       return recordLayoutForObject(instr.shape);
     case "class.new":
-    case "class.alloc":
       return recordLayoutForClass(instr.shape);
     case "refcell.new": {
       const inner = site.type.kind === "boxed" ? site.type.inner : valueTypes.get(instr.value);
@@ -772,9 +803,7 @@ function recordLayoutForObject(shape: IrObjectShape): LinearRecordLayoutPlan {
 
 function recordLayoutForClass(shape: IrClassShape): LinearRecordLayoutPlan {
   return planLinearRecordLayout(
-    `record:class:${JSON.stringify(shape.className)}:${shape.fields
-      .map((field) => `${JSON.stringify(field.name)}=${linearIrTypeKey(field.type)}`)
-      .join(";")}`,
+    linearClassLayoutId(shape),
     shape.fields.map((field) => ({ name: field.name, storage: linearStorageForIrType(field.type) })),
   );
 }
@@ -849,9 +878,14 @@ function collectLayoutsFromType(type: IrType, layouts: Map<string, LinearLayoutP
     case "string":
       internLayout(layouts, planLinearStringLayout());
       return;
+    case "vec":
+      internLayout(layouts, planLinearVectorLayout(type.elementType));
+      collectLayoutsFromType(type.elementType, layouts);
+      return;
     case "closure":
+    case "callable":
       for (const param of type.signature.params) collectLayoutsFromType(param, layouts);
-      collectLayoutsFromType(type.signature.returnType, layouts);
+      if (type.signature.returnType !== null) collectLayoutsFromType(type.signature.returnType, layouts);
       return;
     case "union":
       for (const member of type.members) collectLayoutsFromType(member, layouts);
@@ -886,10 +920,10 @@ function collectGlobalStorage(
   let id: string | undefined;
   let type: IrType | undefined;
   if (instr.kind === "global.get" && instr.resultType) {
-    id = instr.target.name;
+    id = instr.target.binding.bindingId;
     type = instr.resultType;
   } else if (instr.kind === "global.set") {
-    id = instr.target.name;
+    id = instr.target.binding.bindingId;
     type = valueTypes.get(instr.value);
   }
   if (!id || !type) return;
@@ -917,14 +951,16 @@ function linearIrTypeKey(type: IrType): string {
       return `scalar:${linearStorageForIrType(type)}`;
     case "string":
       return "string";
+    case "vec":
+      return `vec:${linearIrTypeKey(type.elementType)}${type.nullable ? "?" : ""}`;
     case "object":
       return `object:${shapeKey(type.shape)}`;
     case "class":
-      return `class:${JSON.stringify(type.shape.className)}:${type.shape.fields
-        .map((field) => `${JSON.stringify(field.name)}=${linearIrTypeKey(field.type)}`)
-        .join(";")}`;
+      return `class:${JSON.stringify(type.shape.classId)}`;
     case "closure":
-      return `closure:(${type.signature.params.map(linearIrTypeKey).join(",")})->${linearIrTypeKey(type.signature.returnType)}`;
+      return `closure:(${type.signature.params.map(linearIrTypeKey).join(",")})->${type.signature.returnType === null ? "void" : linearIrTypeKey(type.signature.returnType)}`;
+    case "callable":
+      return `callable:(${type.signature.params.map(linearIrTypeKey).join(",")})->${type.signature.returnType === null ? "void" : linearIrTypeKey(type.signature.returnType)}`;
     case "extern":
       return `extern:${JSON.stringify(type.className)}`;
     case "union":

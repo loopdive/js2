@@ -13,7 +13,7 @@ import type { Instr, LocalDef, ValType } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
 import { inLiveShiftRange } from "../../emit/resolve-layout.js";
-import { addStringConstantGlobal } from "../registry/imports.js";
+import { addStringConstantGlobal, localGlobalIdx } from "../registry/imports.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { noJsHost } from "../expressions/helpers.js";
 import { emitWasiErrorConstructor } from "../registry/error-types.js";
@@ -25,7 +25,14 @@ import {
   ensureLateImport as ensureLateImportShared,
   flushLateImportShifts as flushLateImportShiftsShared,
 } from "../shared.js";
-import { getFuncSignature, getOrCreateFuncRefWrapperTypes } from "./funcref-wrapper-types.js";
+import {
+  closureBagInitInstr,
+  getFuncSignature,
+  getOrCreateConstructibleFuncRefWrapperTypes,
+  getOrCreateFuncRefWrapperTypes,
+} from "./funcref-wrapper-types.js";
+import { emitFuncRefAsClosure } from "./funcref-as-closure.js";
+import { observeProgramAbiFunctionValue } from "../program-abi-source-callable-planning.js";
 
 /**
  * (#2015) Build the `this`-slot prologue for an object-method trampoline.
@@ -282,8 +289,10 @@ export function emitObjectMethodAsClosure(
     methodTargetsImport: methodFuncIdx < ctx.numImportFuncs,
   });
 
-  // Emit: ref.func $trampoline, struct.new $closure_struct
+  // Emit: ref.func $trampoline, (#3673) $arity, (#4241) $bag, struct.new $closure_struct
   fctx.body.push({ op: "ref.func", funcIdx: trampolineFuncIdx });
+  fctx.body.push({ op: "i32.const", value: userParams.length });
+  fctx.body.push(closureBagInitInstr());
   fctx.body.push({ op: "struct.new", typeIdx: structTypeIdx });
 
   return { kind: "ref", typeIdx: structTypeIdx };
@@ -539,9 +548,14 @@ function emitLazyClosureCacheAccess(
   cacheGlobalIdx: number,
   trampolineFuncIdx: number,
   structTypeIdx: number,
+  arity: number,
+  constructible = false,
 ): void {
   const initBody: Instr[] = [
     { op: "ref.func", funcIdx: trampolineFuncIdx },
+    { op: "i32.const", value: arity }, // (#3673) $arity
+    closureBagInitInstr(), // (#4241) $bag
+    ...(constructible ? ([{ op: "i32.const", value: 1 }] satisfies Instr[]) : []),
     { op: "struct.new", typeIdx: structTypeIdx },
     { op: "extern.convert_any" },
     { op: "global.set", index: cacheGlobalIdx },
@@ -573,7 +587,13 @@ export function emitCachedMethodClosureAccess(
   //   ref.is_null
   //   if (then: build closure, store in $cache)
   //   global.get $cache
-  emitLazyClosureCacheAccess(fctx, cacheGlobalIdx, trampolineFuncIdx, closureStructTypeIdx);
+  emitLazyClosureCacheAccess(
+    fctx,
+    cacheGlobalIdx,
+    trampolineFuncIdx,
+    closureStructTypeIdx,
+    ctx.closureInfoByTypeIdx.get(closureStructTypeIdx)?.paramTypes.length ?? 0,
+  );
   return true;
 }
 
@@ -721,29 +741,109 @@ export function ensureMethodClosureSingleton(
  * than the externref-bridge slow path through `__call_2_f64`). Returns
  * `null` when the signature couldn't be resolved (caller falls back).
  */
-export function emitCachedFuncClosureAccess(
+export interface FuncClosureSingleton {
+  readonly cacheGlobalIdx: number;
+  readonly trampolineFuncIdx: number;
+  readonly closureStructTypeIdx: number;
+}
+
+/**
+ * Ensure the declarations behind a cached top-level function value exist,
+ * without emitting an access into a legacy FunctionContext.
+ *
+ * #3214 B1 uses this planning half before AST→IR lowering, then emits the same
+ * `__fn_closure_<name>` lazy cache protocol with symbolic IR global/function
+ * references. Keeping creation here guarantees both front-ends share the
+ * trampoline, wrapper registry, cache global, declared-ref enrollment, and
+ * late signature finalization machinery.
+ */
+export function ensureFuncClosureSingleton(
   ctx: CodegenContext,
-  fctx: FunctionContext,
   funcName: string,
   funcIdx: number,
-): ValType | null {
+  constructible = false,
+): FuncClosureSingleton | null {
   const sig = getFuncSignature(ctx, funcIdx);
   if (!sig) return null;
 
   const userParams = sig.params;
   const results = sig.results;
-
-  const wrapperTypes = getOrCreateFuncRefWrapperTypes(ctx, userParams, results);
+  const wrapperTypes = constructible
+    ? getOrCreateConstructibleFuncRefWrapperTypes(ctx, userParams, results)
+    : getOrCreateFuncRefWrapperTypes(ctx, userParams, results);
   if (!wrapperTypes) return null;
   const { structTypeIdx, liftedFuncTypeIdx } = wrapperTypes;
 
-  // Reuse the canonical trampoline if one was already registered for this
-  // function; otherwise build it once.
-  const trampolineName = `__fn_tramp_${funcName}_cached`;
+  // (#4133) The trampoline and cache were keyed by the BARE function name, so
+  // two modules declaring the same top-level name shared one singleton. The
+  // reuse path below validates the existing trampoline's SHAPE but never that it
+  // targets the same function, so the second module's closure value silently
+  // called the FIRST module's function — and, once both units became genuinely
+  // reachable, two unit-anchored ABI binding ids claimed one trampoline object
+  // and `ProgramAbiSession` rejected the second ("allocator locator … is already
+  // owned by"), which is how this surfaced on the ESLint graph (eslint-visitor-
+  // keys 3.4.3 and 5.0.1 both ship a top-level `getKeys`).
+  //
+  // Resolve a key that is unique PER TARGET: reuse the base name when it is free
+  // or already points at this exact function, otherwise take the next `$n`
+  // suffix. Assignment order is compile order, which is deterministic and
+  // identical across passes — so unlike embedding a raw function handle, this
+  // cannot drift when late imports shift indices (#2043).
+  const targetOfTrampoline = (handle: number): number | undefined => {
+    const body = definedFuncAt(ctx, handle)?.body;
+    if (!body) return undefined;
+    for (let i = body.length - 1; i >= 0; i--) {
+      const instr = body[i]!;
+      if (instr.op === "call") return instr.funcIdx;
+    }
+    return undefined;
+  };
+
+  let key = funcName;
+  let trampolineName = `__fn_tramp_${key}_cached`;
   let trampolineFuncIdx = ctx.funcMap.get(trampolineName);
-  if (trampolineFuncIdx === undefined) {
-    // Forward user params (skip self at param 0) — function declarations
-    // don't have a hidden `this` param like methods do.
+  let cacheGlobalIdx = ctx.funcClosureGlobals.get(key);
+  for (let disambiguator = 1; ; disambiguator++) {
+    // Free, or an existing pair that already targets exactly this function.
+    if (trampolineFuncIdx === undefined && cacheGlobalIdx === undefined) break;
+    if (
+      trampolineFuncIdx !== undefined &&
+      cacheGlobalIdx !== undefined &&
+      targetOfTrampoline(trampolineFuncIdx) === funcIdx
+    ) {
+      break;
+    }
+    // A half-registered pair is the pre-existing "a user declaration occupies
+    // the synthetic name" case — keep rejecting it rather than inventing a
+    // suffix around it.
+    if ((trampolineFuncIdx === undefined) !== (cacheGlobalIdx === undefined)) break;
+    key = `${funcName}$${disambiguator}`;
+    trampolineName = `__fn_tramp_${key}_cached`;
+    trampolineFuncIdx = ctx.funcMap.get(trampolineName);
+    cacheGlobalIdx = ctx.funcClosureGlobals.get(key);
+  }
+
+  // The generated trampoline and cache are one provenance pair. A source
+  // declaration may legally occupy the synthetic trampoline name before the
+  // first value read; accepting that funcMap entry and then minting only the
+  // cache would pair an arbitrary user function with our closure wrapper. The
+  // resulting module can validate yet trap when the wrapper is invoked. Only
+  // reuse an existing trampoline when this helper previously registered its
+  // companion cache, and validate both records against the requested ABI.
+  if ((trampolineFuncIdx === undefined) !== (cacheGlobalIdx === undefined)) return null;
+  if (trampolineFuncIdx !== undefined && cacheGlobalIdx !== undefined) {
+    const trampoline = definedFuncAt(ctx, trampolineFuncIdx);
+    const cache = ctx.mod.globals[localGlobalIdx(ctx, cacheGlobalIdx)];
+    if (
+      trampoline?.name !== trampolineName ||
+      trampoline.typeIdx !== liftedFuncTypeIdx ||
+      cache?.name !== `__fn_closure_${key}` ||
+      cache.type.kind !== "externref" ||
+      !cache.mutable
+    ) {
+      return null;
+    }
+  } else {
     const trampolineBody: Instr[] = [];
     for (let i = 0; i < userParams.length; i++) {
       trampolineBody.push({ op: "local.get", index: i + 1 });
@@ -760,46 +860,93 @@ export function emitCachedFuncClosureAccess(
     ctx.funcMap.set(trampolineName, trampolineFuncIdx);
     ctx.mod.declaredFuncRefs.push(trampolineFuncIdx);
 
-    // (#1669-style) Mirror the late-finalization guard used by
-    // `emitCachedMethodClosureAccess`. The function's `func.typeIdx` may
-    // still be re-resolved after this first cached access (default-param /
-    // generator funcs finalize param types during body compile). Enroll
-    // the trampoline so `finalizeMethodTrampolines` rebuilds the body
-    // against the function's final signature.
     ctx.pendingMethodTrampolines.push({
       trampolineBody,
       trampolineFuncIdx,
       methodFuncIdx: funcIdx,
-      // No `this` param for a plain function decl — `noThisParam: true`
-      // tells the finalizer to skip both the `sig.params.slice(1)` strip
-      // and the `ref.null <objStruct>` prologue. `objStructTypeIdx` is
-      // unused on this path.
       objStructTypeIdx: -1,
       userParamCount: userParams.length,
       wrapperUserParams: userParams,
       wrapperResult: results[0],
       noThisParam: true,
-      // (#1809) A name resolved through `funcMap` can point at a host import
-      // (e.g. a DOM/host global `resizeTo`/`scrollBy`, or a `declare`d function)
-      // used as a first-class value. The forwarding trampoline legitimately
-      // `call`s the import, and import indices never shift, so flag it so the
-      // finalizer does not mistake the import target for a missed shift.
       methodTargetsImport: funcIdx < ctx.numImportFuncs,
     });
-  }
 
-  // Reuse or allocate the cache global.
-  let cacheGlobalIdx = ctx.funcClosureGlobals.get(funcName);
-  if (cacheGlobalIdx === undefined) {
     cacheGlobalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
     ctx.mod.globals.push({
-      name: `__fn_closure_${funcName}`,
+      name: `__fn_closure_${key}`,
       type: { kind: "externref" },
       mutable: true,
       init: [{ op: "ref.null.extern" }],
     });
-    ctx.funcClosureGlobals.set(funcName, cacheGlobalIdx);
+    ctx.funcClosureGlobals.set(key, cacheGlobalIdx);
   }
+
+  observeProgramAbiFunctionValue(ctx, funcIdx, trampolineFuncIdx, cacheGlobalIdx);
+  return { cacheGlobalIdx, trampolineFuncIdx, closureStructTypeIdx: structTypeIdx };
+}
+
+/**
+ * (#4243) The externref-only half of {@link emitCachedFuncClosureAccess}: leave
+ * the canonical cached closure for `funcName` on the stack as an `externref`,
+ * skipping the `any.convert_extern` + `ref.cast` struct recovery.
+ *
+ * ## Why the cast is worth skipping when the caller only needs a value
+ * `ensureFuncClosureSingleton` memoizes the trampoline + cache global by NAME
+ * but recomputes `closureStructTypeIdx` from the `constructible` flag on every
+ * call, and the constructible wrapper is a SUBTYPE of the plain one
+ * (`superTypeIdx: base.structTypeIdx` in `getOrCreateConstructibleFuncRefWrapperTypes`).
+ * So two callers that disagree about the flag share one cache global and
+ * disagree about the struct — and the direction matters: a `ref.cast` to the
+ * base succeeds on a stored constructible wrapper, but a cast to the
+ * constructible type TRAPS on a stored base wrapper. That is a live hazard
+ * (`RuntimeError: illegal cast`), reproduced while adding the `arguments.callee`
+ * seed, where a module-init binding seed stored the base wrapper first.
+ *
+ * A caller that wants a first-class value — not a `call_ref` fast path — never
+ * needs the struct view, so it should not pay that cast. `arguments.callee` is
+ * exactly that caller: the value is stored into a property descriptor as an
+ * externref and is never dispatched from the seed site.
+ *
+ * Returns false when no singleton could be established, leaving `fctx.body`
+ * untouched so the caller can decline cleanly.
+ */
+export function emitCachedFuncClosureExternref(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  funcName: string,
+  funcIdx: number,
+  constructible = false,
+): boolean {
+  const singleton = ensureFuncClosureSingleton(ctx, funcName, funcIdx, constructible);
+  if (!singleton) return false;
+  const { cacheGlobalIdx, trampolineFuncIdx, closureStructTypeIdx } = singleton;
+  emitLazyClosureCacheAccess(
+    fctx,
+    cacheGlobalIdx,
+    trampolineFuncIdx,
+    closureStructTypeIdx,
+    ctx.closureInfoByTypeIdx.get(closureStructTypeIdx)?.paramTypes.length ?? 0,
+    constructible,
+  );
+  return true;
+}
+
+export function emitCachedFuncClosureAccess(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  funcName: string,
+  funcIdx: number,
+  constructible = false,
+): ValType | null {
+  const singleton = ensureFuncClosureSingleton(ctx, funcName, funcIdx, constructible);
+  // A synthetic-name collision makes the canonical pair unavailable, but
+  // legacy value-producing sites still need a closure on the stack (module
+  // live-binding seeds, Annex-B bindings, fnctor registration, and ordinary
+  // identifier reads). Preserve their historical per-site path; A+B1 planning
+  // calls `ensureFuncClosureSingleton` directly and therefore still demotes.
+  if (!singleton) return emitFuncRefAsClosure(ctx, fctx, funcName, funcIdx, constructible);
+  const { cacheGlobalIdx, trampolineFuncIdx, closureStructTypeIdx: structTypeIdx } = singleton;
 
   // Emit the lazy-init access (mirrors emitCachedMethodClosureAccess), but
   // recover the closure-struct ref on read so downstream consumers like
@@ -817,7 +964,14 @@ export function emitCachedFuncClosureAccess(
   //   global.get $cache
   //   any.convert_extern
   //   ref.cast (ref $struct)
-  emitLazyClosureCacheAccess(fctx, cacheGlobalIdx, trampolineFuncIdx, structTypeIdx);
+  emitLazyClosureCacheAccess(
+    fctx,
+    cacheGlobalIdx,
+    trampolineFuncIdx,
+    structTypeIdx,
+    ctx.closureInfoByTypeIdx.get(structTypeIdx)?.paramTypes.length ?? 0,
+    constructible,
+  );
   fctx.body.push({ op: "any.convert_extern" });
   fctx.body.push({ op: "ref.cast", typeIdx: structTypeIdx });
   return { kind: "ref", typeIdx: structTypeIdx };

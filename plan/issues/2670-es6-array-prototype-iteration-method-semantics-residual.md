@@ -1,8 +1,7 @@
 ---
 id: 2670
 title: "ES2015: Array.prototype iteration-method semantics residual (~1017 fails — generic array-like receiver, callback/thisArg, holes, length coercion)"
-status: in-progress
-assignee: sd-2670
+status: ready
 created: 2026-06-25
 updated: 2026-06-25
 priority: high
@@ -14,7 +13,7 @@ es_edition: 5
 language_feature: array-methods
 goal: spec-completeness
 related: [2177, 2151, 473, 2580]
-sprint: 67
+sprint: current
 ---
 # #2670 — ES2015 Array.prototype iteration-method semantics residual
 

@@ -2,9 +2,9 @@
 id: 2864
 title: "Standalone: no Wasm-native generator carrier — sync generators leak __create_generator/__gen_* host imports"
 status: in-progress
-assignee: ttraenkler/fable-gencarrier
+assignee: ttraenkler/dev-opus5-gen
 created: 2026-06-30
-updated: 2026-07-04
+updated: 2026-07-24
 priority: high
 feasibility: hard
 model: fable
@@ -16,6 +16,18 @@ horizon: xl
 related: [2860, 680, 2865]
 umbrella: 2860
 architect_spec: candidate
+loc-budget-allow:
+  - src/codegen/generators-native.ts
+func-budget-allow:
+  # D4 (+10 LOC): buildNativeGeneratorPlan must now compute the REAL fallthrough
+  # state instead of assuming states.length-1. That assumption only holds for a
+  # straight-line body — every structural lowering (lowerFor/lowerWhile/
+  # lowerDoWhile/lowerIf and #3050's lowerTryRegion) reserves its exit/join state
+  # BEFORE the nested body, so a loop/if/try-TAIL body leaves the fallthrough at a
+  # lower id. Deriving it correctly is inherently a few lines inside the planner;
+  # extracting it would split the state-reservation invariant across two units.
+  # Same rationale as the D2 loc-budget-allow grant (#2662 precedent).
+  - src/codegen/generators-native.ts::buildNativeGeneratorPlan
 ---
 
 # Standalone: Wasm-native generator carrier (sync)
@@ -367,27 +379,25 @@ open dispatch) all pass. What was actually missing on the sync-carrier side:
 ### Remaining protocol gaps (banked slices, exact contracts)
 
 - **D2 — delegation abrupt forwarding (iterator close through yield\*)**:
-  `.return(v)` / `.throw(e)` on the OUTER while suspended in a `yield-star`
-  state must forward to the INNER (`inner.return`/`inner.throw`, §27.5.3.7
-  steps 7.b/7.c) so the inner's `finally` blocks run, then continue the
-  outer's abrupt path. Today the outer's per-state abrupt block completes the
-  outer WITHOUT closing the inner (inner finalizers silently skipped).
-  Contract: in the yield-star state's abrupt block (mode != 0), when the
-  delegation slot is non-null, drive the inner's resume once with the SAME
-  mode + abrupt/error payload (write inner's `MODE`/`ABRUPT`/`ERROR` fields,
-  call its resume fn), discard the inner's result, null the slot, then run the
-  outer's own finalizers as today. Wasm-level: mirrors F2's mode-2 wiring, one
-  extra call in the abrupt block, gated on `delegationSlots` non-empty —
-  byte-inert for non-delegating generators. Test: M3 probe shape
-  (`inner try/finally`, outer `.return()` mid-delegation → inner `log`
-  written + outer completes with the return value).
+  **LANDED 2026-07-23** (see the D2 section below). `.return(v)` / `.throw(e)`
+  on the OUTER while suspended in a `yield-star` state forwards to the INNER
+  (§27.5.3.7 steps 7.b/7.c) so the inner's `finally` blocks run, then
+  continues the outer's abrupt path. Also fixed en route: the self-suspending
+  yield-star state is now DEDICATED (never state 0, empty prelude, no resume
+  bindings), closing three protocol bugs — first-statement `yield*`
+  suspensions misclassified as NOT-STARTED by the dispatch, prelude
+  re-execution on every mid-delegation `.next()`, and resume-binding clobber
+  by mid-delegation `.next(v)` values.
 - **D3 — general-iterable `yield*`**: lives in #2173 (vec-cursor for numeric
   arrays — slice-2a there, NOT blocked by #2106; generic `{next()}` +
   `.return()` close as slice-2b, which SHOULD reuse D2's forwarding shape).
-- **D4 — try/CATCH across yield** (F2 deferral): do NOT extend the ad-hoc
-  region modeling in `generators-native.ts` for this — see the alignment
-  decision below; catch-region routing is exactly what #2906 slice 3c builds
-  for async. Trigger point for the planner convergence.
+- **D4 — try/CATCH across yield** (F2 deferral): ~~do NOT extend the ad-hoc
+  region modeling in `generators-native.ts` for this~~ — **SUPERSEDED, see the
+  D4 section below.** #3050 landed `lowerTryRegion` in `generators-native.ts`
+  (catch across yield + yielding finally) BEFORE this note was written, so the
+  "still bails / converge at the planner" framing was already stale when D4 was
+  dispatched. The remaining D4 work was a `doneState` misroute, not a missing
+  capability.
 
 ### Alignment decision: sync generators vs the #2906 AsyncCfgPlan machine
 
@@ -428,6 +438,216 @@ trigger — do not port the sync carrier now.** Rationale:
    frames — building async gens on `generators-native.ts` instead would be a
    third machine. Rule of thumb going forward: **new control-flow capability →
    CFG planner; carrier/value-rep capability → generators-native.**
+
+## D2 — delegation abrupt forwarding + dedicated yield-star states (landed 2026-07-23)
+
+**Scope shipped:** `.return(v)` / `.throw(e)` on the OUTER generator while
+suspended mid-`yield*` now closes the INNER native generator first — driving
+its resume once with the same abrupt mode/payloads so its `finally` blocks run
+(§27.5.3.7 steps 7.b/7.c) — then continues the outer's own abrupt path
+(finalizers → complete/throw). Verify-first (M3 probe, standalone, host-free
+asserted): inner `try { yield 1; yield 2 } finally { log = 100 }`, outer
+`yield* inner()`, `.return(7)` mid-delegation → **before:** `log` stayed 0 and
+(first-statement shape) the outer completed via the NOT-STARTED dispatch arm;
+**after:** `log === 100`, result `{7, done: true}` — matches Node exactly, as
+do `.throw()` forwarding, inner+outer finally ordering (inner first), a
+finally-thrown replacement error (return→throw completion upgrade), and the
+loop-carried two-pass close.
+
+### Why these decisions (root-cause, not symptom)
+
+- **Dedicated self-suspend state (plan builder).** A yield-star terminator
+  re-enters its OWN state on every resume (`state = THIS`), which surfaced
+  three latent protocol bugs beyond the missing close: (a) a first-statement
+  `yield*` suspends in **state 0**, which the `.return()`/`.throw()` dispatch
+  reads as NOT-STARTED (§27.5.3.4/.3.6) — it completed/threw WITHOUT resuming,
+  skipping inner AND outer finalizers; (b) the state's prelude statements
+  re-ran on every mid-delegation `.next()` (side effects repeated, measured
+  `calls=3` vs Node 1); (c) a preceding `const x = yield …` resume binding
+  re-copied `sent` per re-entry, clobbering `x` with later `.next(v)` values
+  (measured 7 vs Node 5). The `emitYield` asterisk branch now splits: if the
+  current state has prelude statements, resume bindings, or IS state 0, it is
+  finished with a `jump` and the yield-star terminator gets a fresh dedicated
+  state. It also always carries an `abruptResume` (finalizers recomputed from
+  the yield\* position's replay chain, empty outside try) so a mid-delegation
+  abrupt is handled even when the yield\* was the generator's first suspend
+  point. Applies to all three delegation kinds (native-gen / vec / iterable).
+- **Forwarding lives in the generic per-state abrupt block** (`compileState`,
+  `abruptResume` branch), gated on the state's terminator being a native-gen
+  `yield-star` AND the delegation slot being non-null at runtime — so an
+  abrupt at the plain-yield suspension BEFORE delegation starts (slot null)
+  skips it, and non-delegating generators are **byte-identical** (verified:
+  8-program × 3-lane sha256 matrix unchanged; only delegating programs differ,
+  and only in standalone/wasi — the gc lane is byte-identical even for
+  delegation, the native yield\* path being standalone-gated).
+- **Inner drive is wrapped in wasm `try`/`catch $exn`.** A mode-2 inner
+  re-throws after its finalizers (F2 wiring), and an inner `finally` that
+  itself throws surfaces a NEW error; both are caught, stored into the outer's
+  `ERROR` field, and upgrade the outer's mode to THROW — so the outer's own
+  finalizers still run before the error reaches the caller, and a `.return()`
+  whose close throws becomes a throw completion (spec). Host-mode foreign JS
+  exceptions recover via the #3050 `__get_caught_exception` catch_all when the
+  resume emitter acquired it.
+- **Inner abrupt payload:** inners are f64-gated, so the inner's `abrupt`
+  field takes the outer's `.return(v)` value when the outer carrier is f64,
+  else the undefined sentinel — unobservable either way (the inner's close
+  result is discarded; the outer completes with its OWN abrupt field, which is
+  observably equivalent for every supported shape since a yield-free `finally`
+  cannot override the return value).
+
+### Residuals (pre-existing, NOT D2)
+
+- Mid-delegation `.next(v)` does not forward `v` to the inner's `sent` field
+  (two-way communication through a running delegation) — same class as the
+  buffer-model gaps tracked under #3032; the host lane has the same behavior.
+- Generic-iterable (`$__IterRec`) close (`inner.return()` protocol for
+  non-generator iterators) is #2173 slice-2b's D2-shape reuse, unchanged here
+  (the outer now completes correctly; the foreign iterator is simply not
+  notified).
+- ~~try/CATCH across yield (D4) stays on the host path — #2906 3c convergence.~~
+  **Stale** — see the D4 section below; #3050 had already landed the region
+  machinery natively.
+
+### Files (D2)
+
+- `src/codegen/generators-native.ts` — dedicated-state split + always-abrupt
+  in the `emitYield` asterisk branch; delegate-close forwarding at the top of
+  the `abruptResume` block in `compileState`.
+- `tests/issue-2864-standalone-generator-carrier.test.ts` — 10 D2 standalone
+  cases (zero-host-import asserted), covering the M3 probe, throw forwarding,
+  finally ordering, pre-delegation abrupt, finally-throw upgrade, loop-carried
+  close, done protocol, vec first-statement close, prelude-once, and
+  resume-binding survival.
+
+## D4 — try/catch across yield: `doneState` misroute (landed 2026-07-24)
+
+### Verify-first: the F2/D2 deferral note was STALE
+
+The dispatch framed D4 as "try/CATCH across a yield still bails to the host
+path (`generators-native.ts` try-statement lowering: `if (stmt.catchClause)
+fail()`) — converge onto the #2906 CFG planner." **That is not current main.**
+#3050 (`fdc11cbd`, "try-region state machine for native generators — catch
+across yield + yielding finally") landed `lowerTryRegion` in
+`generators-native.ts` well before the note was written; there is no
+`if (stmt.catchClause) fail()` anywhere in the file. No planner convergence was
+needed, and none was done.
+
+Measured on main (12-shape probe, `--target standalone`, host-free asserted,
+each compared against Node on the same source) **9/12 already passed**:
+runtime-throw-after-resume caught, `gen.throw()` routed into a catch, catch
+that re-yields, try/catch/finally across a yield, `yield` inside a catch,
+`yield` inside a finally, catch param read after a yield in the catch, nested
+try/catch across a yield, and the boxed-any carrier through a catch.
+
+The 3 that did not:
+
+| shape                                      | before                                           | now                     |
+| ------------------------------------------ | ------------------------------------------------ | ----------------------- |
+| try/catch across yield **inside a loop**   | raw wasm exception escaped (catch skipped)       | **fixed here**          |
+| `return v` inside try + yield-free finally | finally SKIPPED, silent wrong answer (15 vs 315) | spun off as **#3582**   |
+| `yield*` inside a try-region               | clean #680 CE refusal (documented bail)          | unchanged, out of scope |
+
+### Root cause (not the symptom)
+
+`registerNativeGenerator` derived `doneState: plan.states.length - 1`. That
+coincides with the final `done` state **only for a straight-line body**. Every
+structural lowering — `lowerFor` / `lowerWhile` / `lowerDoWhile` / `lowerIf`
+and the #3050 `lowerTryRegion` — reserves its exit/join state **before**
+lowering the nested body, so a body that ENDS in one of those leaves the
+fallthrough cursor at a LOWER id, and `states.length - 1` is then a **live
+yield-successor state**.
+
+Measured plans (`curId` = the state given the final `done` terminator):
+
+| body shape                         | states | fallthrough | `states.length-1` |
+| ---------------------------------- | ------ | ----------- | ----------------- |
+| straight-line (control)            | 7      | 6           | 6 ✅              |
+| `try { yield } catch {}` as body   | 5      | **3**       | 4 ❌ (yield succ) |
+| `for … { try { yield } catch {} }` | 9      | **4**       | 8 ❌ (yield succ) |
+| `if (…) { yield } else { yield }`  | 6      | **3**       | 5 ❌ (yield succ) |
+| nested `for`/`for`                 | 10     | **4**       | 9 ❌ (yield succ) |
+
+The consumer's suspension test is
+`suspended = state != START && state != doneState`
+(`generators-native-consumer.ts`). With the alias in place, a generator
+genuinely suspended at that last-reserved yield state reported **DONE**, so
+`.throw(e)` / `.return(v)` took the §27.5.3.4 _already-completed_ arm and
+**never resumed** — the enclosing `catch` across the yield never ran and the
+error escaped raw. The same alias also made the `done` terminator store a LIVE
+state id as "completed", so a post-exhaustion `.next()` re-entered live states
+(benignly idempotent for a simple loop, but it re-ran the loop's update
+expression).
+
+Why the failure looked try/catch-specific but is not: without a handler the
+already-completed arm's observable behaviour _coincides_ with the correct one
+(`.return(v)` → `{v, done:true}`, `.throw(e)` → throws `e`). Only when there is
+a finalizer/handler to run does the misroute become visible. So the bug is
+**loop/if/try-TAIL-shaped**, not try/catch-shaped, and it was latent in every
+such generator since the structural lowerings were added.
+
+### The fix
+
+`buildNativeGeneratorPlan` now returns the real `doneState` — the fallthrough
+cursor, or the dedicated empty placeholder it already minted when that state
+carries trailing statements (#3050's re-run guard) — and
+`registerNativeGenerator` consumes `plan.doneState`. Three lines of behaviour;
+the rest is the explanation above, banked at both definition sites.
+
+Safety argument, verified rather than asserted: a `yield` terminator always
+mints a FRESH successor as the new cursor, so the state that receives the final
+`done` terminator can only coincide with a suspension point when the body's
+last statement is itself a `yield` — in which case the two ids were already
+equal before this change and the pre-existing (spec-equivalent, handler-free)
+behaviour is preserved bit-for-bit.
+
+### Measured delta (8-shape × 3-lane matrix, host-free asserted)
+
+| shape                                                      | before (standalone/wasi) | after        |
+| ---------------------------------------------------------- | ------------------------ | ------------ |
+| M1 `try { yield } catch {}` as whole body, `.throw()`      | raw wasm exception       | ✅ 511       |
+| M2 `for … { try { yield } catch {} }`, `.throw()`          | raw wasm exception       | ✅ 101       |
+| M3 `while … { try { yield } catch {} }`, `.throw()`        | raw wasm exception       | ✅ 101       |
+| M8 nested `for`/`for` under one try, `.throw()`            | raw wasm exception       | ✅ 301       |
+| M4/M5/M7 `.return()` through a finally (loop/if/loop-tail) | already correct          | ✅ unchanged |
+| M6 straight-line try/catch + trailing yield (control)      | already correct          | ✅ unchanged |
+
+**4 measured shapes flip from a raw escaping exception to spec behaviour; 4
+controls unchanged.** The gc lane is untouched for every try/catch shape above
+— all still route to the eager-buffer host path (`__gen_*` present), so this is
+a standalone + wasi delta. A PLAIN loop-tail generator (no try) DOES route
+native on gc, so gc bytes change there; observable behaviour does not (see the
+handler-free coincidence above), and the byte matrix covers it.
+
+### Files (D4)
+
+- `src/codegen/generators-native.ts` — `NativeGeneratorPlan.doneState` (new,
+  with the root-cause note), computed at the final fallthrough in
+  `buildNativeGeneratorPlan`, consumed by `registerNativeGenerator`.
+- `tests/issue-2864-d4-catch-across-yield.test.ts` — standalone regression
+  suite (zero-host-import asserted).
+
+### Deferred out of D4 (each has a clean, non-silent fallback today)
+
+- **#3582** — `return v` inside a try with a yield-free finally skips the
+  finally (silent wrong answer). Root cause + the recommended fix shape are
+  recorded there.
+- **`yield*` inside a try-region** — clean #680 CE refusal
+  (`generators-native.ts`, the `unwind.some(e => e.kind !== "replay")` bail in
+  `emitYield`'s asterisk branch). Needs the delegation states to observe the
+  resume mode so an abrupt can route into the region.
+- **`return` inside a try whose finally is STATE-LOWERED** (yielding finally) —
+  clean #680 CE refusal (the `unwind.some(e => e.kind === "finally")` bail in
+  the `isReturnStatement` branch). This is the return-through-a-suspending-
+  finally path; #2906 3c-ii-b solved the analogous async case.
+
+## Slice routing after D2 (what remains where)
+
+All remaining carrier work is tracked in OTHER issues: D3 general-iterable
+`yield*` close → #2173 slice-2b; D4 try/catch-across-yield → #2906 3c planner
+convergence; IR-lane `gen.setReturn` → #2951; boxed-any resume bindings (F1c)
+→ blocked on #2151; spread/`Array.from` precision for the boxed-any carrier —
+small, unowned, listed in F1's deferred notes. This issue stays open only as
+the umbrella record for those pointers.
 
 ### Composition with #3032 lazy-first-resume thunks
 

@@ -2,7 +2,7 @@
 id: 2732
 title: "operators: unary +/-/~/>>> ToPrimitive(object) trap; strict-equals boxed-wrapper/funcref trap"
 status: blocked
-sprint: current
+sprint: Backlog
 goal: test262-conformance
 feasibility: hard
 depends_on: [2712]

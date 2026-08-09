@@ -23,7 +23,7 @@
 // the default GITHUB_TOKEN (github-actions[bot]) is NOT permitted to approve
 // fork runs (GitHub returns 403 "Resource not accessible by integration"). So
 // the workflow passes secrets.AUTO_ENQUEUE_TOKEN (the same PAT the auto-enqueue
-// / queue-unstick workflows already use). If that secret is unset the script
+// workflow already uses). If that secret is unset the script
 // still runs but every approve 403s; it prints a clear pointer to this note.
 //
 // Runs in GitHub Actions (.github/workflows/approve-fork-runs.yml) on a 10-min

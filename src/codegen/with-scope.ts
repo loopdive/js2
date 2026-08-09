@@ -55,6 +55,17 @@ function withHasBindingImport(ctx: CodegenContext): string {
   return ctx.standalone ? "__extern_has" : "__with_has_binding";
 }
 
+/**
+ * (#4231 RC-B) The result type of `delete name` resolved through a `with` scope.
+ *
+ * §13.5.1.2 evaluates to a BOOLEAN. The i32 carrying it must say so: an untagged
+ * `{kind:"i32"}` flowing into an externref consumer is boxed as a NUMBER
+ * (`f64.convert_i32_s` + `__box_number`), so `del = delete p3` inside a `with`
+ * yielded `1` and `del === true` was false. A plain `delete o.p` never hit this
+ * because its consumer is boolean-typed and no boxing happens.
+ */
+const DELETE_RESULT: ValType = { kind: "i32", boolean: true };
+
 /** A static (#1387 Tier-1) `with` scope entry. */
 export type StaticWithScope = Extract<NonNullable<FunctionContext["withScopes"]>[number], { kind: "static" }>;
 
@@ -252,11 +263,25 @@ function finalizeStaticWithScope(
     }
   }
 
-  const blockedNames = collectBodyDeclaredNames(stmt.statement);
+  // (#4231 RC-A) Only LEXICAL body declarations shadow the object environment
+  // record — the same rule the Tier-2 path has always applied
+  // (`collectBodyLexicalNames`, see its doc comment). A `var` inside `with`
+  // hoists to the FUNCTION environment, but §14.11.2's object environment is
+  // consulted FIRST, so the object wins whenever it owns the name:
+  // `with ({value:'mv'}) { var value = 'v'; }` must write the OBJECT and leave
+  // the hoisted `value` undefined. Tier-1 used the full declared set and so
+  // routed every such name to the local instead.
+  const blockedNames = collectBodyLexicalNames(stmt.statement);
   if (guardInheritedKeys) {
+    // The inherited-Object.prototype-key diagnostic keeps the BROADER declared
+    // set on purpose: it decides whether to hard-error, and widening what it
+    // considers unshadowed would turn bodies that compile today (`var toString
+    // = …`) into compile errors. Narrowing name RESOLUTION is the fix; widening
+    // a refusal is not part of it.
+    const declaredNames = collectBodyDeclaredNames(stmt.statement);
     const referencedNames = collectBodyReferencedNames(stmt.statement);
     for (const name of referencedNames) {
-      if (!blockedNames.has(name) && !requiredKeys.has(name) && OBJECT_PROTOTYPE_KEYS.has(name)) {
+      if (!declaredNames.has(name) && !requiredKeys.has(name) && OBJECT_PROTOTYPE_KEYS.has(name)) {
         reportWithStatementDiagnostic(
           ctx,
           stmt,
@@ -418,6 +443,14 @@ function compileDynamicWithStatement(ctx: CodegenContext, fctx: FunctionContext,
   if (isUndefIdx !== undefined) {
     fctx.body.push({ op: "local.get", index: localIdx });
     fctx.body.push({ op: "call", funcIdx: isUndefIdx });
+    // (#4231 RC-C) `__extern_is_undefined` recognises the host `undefined`/`null`
+    // SENTINEL, but a literal `with (null)` lowers to a genuine wasm
+    // `ref.null.extern`, which is not that sentinel and slipped through — so
+    // `with (null)` ran its body instead of throwing (12.10-2-5). OR in the
+    // structural null test; `with (undefined)` already threw via the sentinel arm.
+    fctx.body.push({ op: "local.get", index: localIdx });
+    fctx.body.push({ op: "ref.is_null" });
+    fctx.body.push({ op: "i32.or" });
     const savedGuard = pushBody(fctx);
     emitThrowTypeError(ctx, fctx, "Cannot convert undefined or null to object");
     const throwArm = fctx.body;
@@ -465,15 +498,25 @@ export function emitDynamicWithGet(
   scope: DynamicWithScope,
   name: string,
   emitFallback: () => ValType | null,
+  // (#2663 Slice 3) Optional PRE-CAPTURED HasBinding i32 local (from
+  // `emitCaptureWithHasBinding`). When supplied the gate branches on it instead
+  // of re-calling the host predicate — required for read-modify-write
+  // (`x += v`, `x++`), where §13.15.2/§13.4 resolve the Reference ONCE and both
+  // the Get and the Put must use that same resolution even if the read's own
+  // getter mutates the with-object mid-evaluation.
+  hasLocalIdx?: number,
 ): ValType {
   // HasBinding gate: __extern_has(recv, "name") -> i32 (own+proto, value-indep).
   addStringConstantGlobal(ctx, name);
-  const hasIdx = ensureLateImport(
-    ctx,
-    withHasBindingImport(ctx),
-    [{ kind: "externref" }, { kind: "externref" }],
-    [{ kind: "i32" }],
-  );
+  const hasIdx =
+    hasLocalIdx !== undefined
+      ? -1
+      : ensureLateImport(
+          ctx,
+          withHasBindingImport(ctx),
+          [{ kind: "externref" }, { kind: "externref" }],
+          [{ kind: "i32" }],
+        );
   flushLateImportShifts(ctx, fctx);
 
   // THEN arm: Get(recv, name) -> externref (via the #2580 substrate emitDynGet).
@@ -499,16 +542,112 @@ export function emitDynamicWithGet(
     return { kind: "externref" };
   }
 
-  fctx.body.push({ op: "local.get", index: scope.localIdx });
-  // Build the key externref + __extern_has call as the condition.
-  for (const instr of stringConstantExternrefInstrs(ctx, name)) fctx.body.push(instr);
-  fctx.body.push({ op: "call", funcIdx: hasIdx });
+  if (hasLocalIdx !== undefined) {
+    fctx.body.push({ op: "local.get", index: hasLocalIdx });
+  } else {
+    fctx.body.push({ op: "local.get", index: scope.localIdx });
+    // Build the key externref + __extern_has call as the condition.
+    for (const instr of stringConstantExternrefInstrs(ctx, name)) fctx.body.push(instr);
+    fctx.body.push({ op: "call", funcIdx: hasIdx });
+  }
   fctx.body.push({
     op: "if",
     blockType: { kind: "val", type: { kind: "externref" } as ValType },
     then: thenArm,
     else: elseArm,
   });
+  return { kind: "externref" };
+}
+
+/**
+ * (#2061 fix / #2663 Slice 2, moved here in Slice 3) Capture
+ * `HasBinding(scope, name)` into an i32 temp for EVERY candidate dynamic-`with`
+ * scope on the cascade chain, BEFORE the value that will be written is
+ * evaluated (§13.15.2 — the LHS Reference is resolved before the RHS). Returns
+ * a Map keyed by the dynamic scope object → its captured i32 local index, which
+ * `emitDynamicWithIdentifierWrite` / `emitDynamicWithCascadeRead` then branch on
+ * instead of recomputing HasBinding. Walks innermost-first, truncating the
+ * matched scope each step (same cascade shape as the read/write themselves).
+ *
+ * (Computing HasBinding AFTER the RHS — as the original Slice 2 did — let an RHS
+ * that adds the property to the with-object change the binding decision and
+ * mis-route the write: regressed test262 `S11.13.1_A6_T3`.)
+ */
+export function captureDynamicWithHasBindings(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  name: string,
+): Map<object, number> {
+  const out = new Map<object, number>();
+  let scopes = fctx.withScopes;
+  const saved = fctx.withScopes;
+  try {
+    // Walk the cascade: resolve, capture, truncate the matched scope, repeat.
+    while (scopes && scopes.length > 0) {
+      const res = resolveWithBinding(fctx, name);
+      if (res?.kind !== "dynamic") break; // static hit / lexical → no more gates
+      out.set(res.scope, emitCaptureWithHasBinding(ctx, fctx, res.scope, name));
+      const matchedIdx = scopes.lastIndexOf(res.scope);
+      scopes = scopes.slice(0, matchedIdx);
+      fctx.withScopes = scopes;
+    }
+  } finally {
+    fctx.withScopes = saved;
+  }
+  return out;
+}
+
+/**
+ * (#2663 Slice 3) Cascading READ of a bare identifier through the `with` scope
+ * stack, gated on PRE-CAPTURED HasBinding i32s (`captureDynamicWithHasBindings`)
+ * rather than freshly computed ones, and normalised to `externref`.
+ *
+ * This is the Get half of a read-modify-write (`x += v`, `x++`, `x--`) through a
+ * `with`: §13.15.2 / §13.4 resolve the Reference ONCE, then GetValue and
+ * PutValue both operate on THAT reference. Recomputing HasBinding at the write
+ * would let a getter that deletes the property (the shape of the whole
+ * `S11.13.2_A5.*` / `S11.4.4_A5_*` / `S11.3.1_A5_*` family) re-route the write
+ * to the outer binding.
+ *
+ * Innermost-first, exactly mirroring `emitDynamicWithIdentifierWrite`:
+ *  - dynamic scope with a captured gate ⇒ `if (has) Get(recv,name) else <outer>`
+ *  - static (Tier-1 closed-shape) scope ⇒ `struct.get`, coerced to externref
+ *  - no with scope binds the name ⇒ the plain lexical read, coerced to externref
+ */
+export function emitDynamicWithCascadeRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+  captures: Map<object, number>,
+): ValType {
+  const res = resolveWithBinding(fctx, id.text);
+  if (res?.kind === "dynamic") {
+    const scopes = fctx.withScopes!;
+    const matchedIdx = scopes.lastIndexOf(res.scope);
+    const outer = (): ValType => {
+      const saved = fctx.withScopes;
+      fctx.withScopes = scopes.slice(0, matchedIdx);
+      try {
+        return emitDynamicWithCascadeRead(ctx, fctx, id, captures);
+      } finally {
+        fctx.withScopes = saved;
+      }
+    };
+    const hasLocal = captures.get(res.scope);
+    // A missing capture means the gate could not be registered — treat the name
+    // as unbound on this object and cascade outward (same policy as the write).
+    if (hasLocal === undefined) return outer();
+    return emitDynamicWithGet(ctx, fctx, res.scope, id.text, outer, hasLocal);
+  }
+  if (res?.kind === "static") {
+    const fieldType = emitWithBindingGet(fctx, res.binding);
+    if (fieldType.kind !== "externref") coerceType(ctx, fctx, fieldType, { kind: "externref" });
+    return { kind: "externref" };
+  }
+  // No `with` scope binds the name here — the plain lexical read.
+  const lexical = compileExpression(ctx, fctx, id, { kind: "externref" });
+  if (!lexical) return { kind: "externref" };
+  if (lexical.kind !== "externref") coerceType(ctx, fctx, lexical, { kind: "externref" });
   return { kind: "externref" };
 }
 
@@ -661,7 +800,7 @@ export function emitDynamicWithDelete(
 
   if (hasIdx === undefined || delIdx === undefined) {
     fctx.body.push(...elseArm);
-    return { kind: "i32" };
+    return DELETE_RESULT;
   }
 
   // THEN arm: __delete_property(recv, name) → i32 (configurability-aware result).
@@ -681,7 +820,7 @@ export function emitDynamicWithDelete(
     then: thenArm,
     else: elseArm,
   });
-  return { kind: "i32" };
+  return DELETE_RESULT;
 }
 
 function compileClosedObjectLiteralTarget(

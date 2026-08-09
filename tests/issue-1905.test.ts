@@ -75,11 +75,10 @@ describe("#1905 standalone native Reflect object subset", () => {
     // the #2046 S5 slice. getPrototypeOf / setPrototypeOf were removed by the
     // #2046 PR-C slice (routed to __getPrototypeOf / __object_setPrototypeOf,
     // the same natives backing standalone Object.getPrototypeOf/setPrototypeOf).
-    // apply (needs CreateListFromArrayLike + a call/spread analog) and construct
-    // (#2158-gated) remain refused.
+    // apply still needs CreateListFromArrayLike + a call/spread analog.
+    // Reflect.construct moved to its dedicated #3371 lowering.
     const cases: ReadonlyArray<[string, string]> = [
       ["apply", `export function f(fn: any, t: any, a: any): any { return Reflect.apply(fn, t, a); }`],
-      ["construct", `export function f(c: any, a: any): any { return Reflect.construct(c, a); }`],
     ];
 
     for (const [method, source] of cases) {

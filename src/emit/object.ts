@@ -261,10 +261,13 @@ export function emitObject(mod: WasmModule): Uint8Array {
   if (mod.elements.length > 0) {
     enc.section(SECTION.element, (s) => {
       s.vector(mod.elements, (elem, e) => {
-        e.byte(0x00);
+        const explicitTable = elem.tableIdx !== 0;
+        e.byte(explicitTable ? 0x02 : 0x00);
+        if (explicitTable) e.u32(elem.tableIdx);
         for (const instr of elem.offset)
           encodeInstrWithReloc(instr, e, [], 0, funcIdxToSymIdx, globalIdxToSymIdx, tagIdxToSymIdx);
         e.byte(OP.end);
+        if (explicitTable) e.byte(0x00);
         e.vector(elem.funcIndices, (idx, enc2) => enc2.u32(idx));
       });
     });

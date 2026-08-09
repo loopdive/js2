@@ -7,18 +7,31 @@
  */
 import { ts } from "../../ts-api.js";
 import type { WasmModule } from "../../ir/types.js";
+import type { IrPlanningIdentityContext } from "../../ir/planning-identity.js";
 import { TsCheckerOracle } from "../../checker/oracle.js";
 import { UsageInference } from "../../checker/usage-inference.js";
 import { getOrRegisterVecType, registerNativeStringTypes } from "../registry/types.js";
 import { nativeLiteralRegExpEngineConfig } from "../regexp-standalone.js";
 import { createFallbackCounts } from "../fallback-telemetry.js";
+import type { ProgramAbiSession } from "../program-abi-session.js";
+import { ProgramAbiClassCallableRegistry } from "../program-abi-class-callable-planning.js";
+import { ProgramAbiCallableRegistry } from "../program-abi-callable-planning.js";
+import { ProgramAbiExportRegistry } from "../program-abi-export-planning.js";
+import { ProgramAbiCallableProviderRegistry } from "../program-abi-provider-planning.js";
+import { ProgramAbiGlobalRegistry } from "../program-abi-global-planning.js";
+import { ProgramAbiModuleInitCallableRegistry } from "../program-abi-module-init-planning.js";
+import { ProgramAbiSourceCallableRegistry } from "../program-abi-source-callable-planning.js";
+import { ProgramAbiTypeRegistry } from "../program-abi-type-planning.js";
 import type { CodegenContext, CodegenOptions } from "./types.js";
 
 export function createCodegenContext(
   mod: WasmModule,
   checker: ts.TypeChecker,
   options?: CodegenOptions,
+  programAbiSession?: ProgramAbiSession,
+  irPlanningIdentityContext?: IrPlanningIdentityContext,
 ): CodegenContext {
+  programAbiSession?.assertModule(mod);
   // #1524 — strict-mode default policy. WASI builds enforce the dual-mode
   // architectural principle by default (`CLAUDE.md` → "JS host optional");
   // pass `strictNoHostImports: false` to opt out (the CLI's
@@ -42,6 +55,8 @@ export function createCodegenContext(
   const linkedNamespaces: ReadonlySet<string> = new Set(options?.wasi ? (options?.link ?? []) : []);
   const ctx: CodegenContext = {
     mod,
+    programAbiSession,
+    irPlanningIdentityContext,
     checker,
     sourceIsModule: false,
     // (#1930) THE type-query boundary. New codegen code MUST prefer
@@ -56,9 +71,11 @@ export function createCodegenContext(
     usageInference: new UsageInference(checker),
     useUsageInfer: options?.useUsageInfer ?? process.env.JS2WASM_USAGE_INFER !== "0",
     funcMap: new Map(),
+    irUnitFuncMap: new Map(),
     structMap: new Map(),
     typeIdxToStructName: new Map(),
     structFields: new Map(),
+    booleanPropertyNames: new Set(),
     noBrandShapeTypes: new Set(),
     fnctorReservedTypeIdx: new Map(), // #2773 S1 — up-front fnctor struct-type slots
 
@@ -76,6 +93,8 @@ export function createCodegenContext(
     // #1923 — IR post-claim demotions; always collected (cheap), mirroring
     // fallbackCounts. Surfaced on CompileResult.irPostClaimErrors for the gate.
     irPostClaimErrors: [],
+    // #3519 — normal compiles pay no ledger allocation cost.
+    irOutcomes: options?.trackIrOutcomes ? [] : undefined,
     lastKnownNode: null,
     externClasses: new Map(),
     pseudoExternClasses: new Map(),
@@ -108,8 +127,20 @@ export function createCodegenContext(
     dynamicProtoLiteralNodes: new WeakSet(), // (#802) object-literal proto receivers (Slice A)
     dynProtoSentinelGlobalIdx: undefined, // (#802) "explicit null proto" sentinel global
     usesArrayHoles: false, // (#2001 S1) set by the scanForArrayHoles pre-scan
-    arrayProtoIndexDirty: false, // (#2001 S2) set by scanForArrayHoles: Array.prototype index write ⇒ HOF hole-skip disabled
+    protoIndexDirty: false, // (#2001 S2, widened #4160) scanForArrayHoles: Array/Object.prototype index write
+    protoNamedDirty: false, // (#4176) scanForArrayHoles: named write onto a branded builtin's .prototype
+    vecAccessorDescriptorDirty: false, // (#4159) scanForArrayHoles: a non-data descriptor may exist somewhere
+    vecIndexDeleteDirty: false, // (#4222) scanForArrayHoles: a `delete arr[i]` may tombstone an index
+    vecOwnKeysDirty: false, // (#4230 L1) scanForArrayHoles: a descriptor define / own-name read is present
+    dynamicCodeDirty: false, // (#4159/#4160) scanForArrayHoles: eval/Function present ⇒ both flags above forced
     usesVecValue: false, // (#2083) flipped by genuine getOrRegisterVecType usage
+    // (#4035) "auto" = the JS host needs the bridge as its calling convention,
+    // a JS-free host does not. Standalone/WASI callers that DO inspect the
+    // module (the test262 harness) pass hostBridge: "always".
+    emitHostBridge:
+      (options?.hostBridge ?? "auto") === "auto"
+        ? !(options?.standalone || options?.wasi)
+        : options?.hostBridge === "always",
     suppressVecUsageFlag: false, // (#2083) true only during the two prereg calls below
     holeTypeIdx: -1, // (#2001 S1) $Hole struct type; lazily registered
     holeGlobalIdx: undefined, // (#2001 S1) $__hole singleton global
@@ -123,6 +154,7 @@ export function createCodegenContext(
     dynMemberGetHelpersEmitted: false, // (#3053 U0) ensureDynMemberGet idempotence latch
     classThrowsOnEval: new Set(),
     topLevelFunctionNames: new Set(), // (#1983) for class-member funcMap key collision detection
+    topLevelFunctionDeclarations: new Map(),
     classMethodSet: new Set(),
     deferredClassBodies: new Set(),
     classAccessorSet: new Set(),
@@ -142,6 +174,9 @@ export function createCodegenContext(
     extrasArgvVecTypeIdx: -1,
     argcGlobalIdx: -1,
     currentThisGlobalIdx: -1,
+    callerStrictGlobalIdx: -1,
+    sourceFunctionStrictness: new Map(),
+    sourceFunctionStrictnessByBody: new Map(),
     valueOfClosureTypes: new Map(),
     toPrimitiveSharedClaimed: new Set(),
     toPrimitiveForkedStructs: new Set(),
@@ -153,9 +188,11 @@ export function createCodegenContext(
     nativeGeneratorResultTypeIdx: -1,
     nativeGenerators: new Map(),
     moduleGlobals: new Map(),
+    globalLexicalBindings: new Set(),
     liveFuncBindingGlobals: new Set(),
     moduleInitStatements: [],
     nestedFuncCaptures: new Map(),
+    funcMapOwnerDecl: new Map(),
     classParentMap: new Map(),
     classBuiltinParentMap: new Map(),
     classExternrefBackedSet: new Set(),
@@ -185,6 +222,8 @@ export function createCodegenContext(
     anyStrTypeIdx: -1,
     nativeStrTypeIdx: -1,
     consStrTypeIdx: -1,
+    hashedStrTypeIdx: -1,
+    nativeStrLiteralGlobals: new Map(),
     usesStandaloneConsoleSink: false,
     stdoutAccGlobalIdx: -1,
     symbolTypeIdx: -1,
@@ -206,6 +245,8 @@ export function createCodegenContext(
     weakRefTypeIdx: -1,
     mapHelpers: new Map(),
     mapHelpersEmitted: false,
+    objectLiteralAssignedPropertyNames: new Set(),
+    objectLiteralAssignedPropertyTypes: new Map(),
     refCellTypeMap: new Map(),
     anyValueTypeIdx: -1,
     anyHelpers: new Map(),
@@ -233,6 +274,7 @@ export function createCodegenContext(
     dynamicDescriptorWidenVars: new Set(),
     objectHashConsumerVars: new Set(),
     objectHashConsumerTypes: new Set(),
+    dynamicObjectReturnFunctions: new Set(),
     growableObjectLiteralVars: new Set(),
     externrefAccessorVars: new Set(),
     pendingMathMethods: new Set(),
@@ -246,6 +288,9 @@ export function createCodegenContext(
     nativeBoxBooleanTypeIdx: -1,
     nativeBigIntTypeIdx: -1,
     funcRefWrapperCache: new Map(),
+    constructibleFuncRefWrapperCache: new Map(),
+    constructibleClosureTypeIdxs: new Set(),
+    nativeConstructProtoKey: new Map(),
     pendingInitBody: null,
     inlinableFunctions: new Map(),
     symbolCounterGlobalIdx: -1,
@@ -296,6 +341,11 @@ export function createCodegenContext(
     // standalone/wasi-gated (any-helpers.ts) — host lane byte-identical.
     // Set JS2WASM_TAG5_CLASSIFIER=0 to force the legacy always-false arm.
     tag5ValueEqClassifier: options?.tag5ValueEqClassifier ?? process.env.JS2WASM_TAG5_CLASSIFIER !== "0",
+    // (#4173) Fast tag-pair dispatch in `__extern_strict_eq` + single-convert
+    // `__is_truthy` ladder — default ON (A/B-validated on the standalone acorn
+    // lane, see the issue's Results). Set JS2WASM_FAST_STRICT_EQ=0 to force
+    // the legacy always-slow-path bodies for A/B control.
+    fastStrictEq: options?.fastStrictEq ?? process.env.JS2WASM_FAST_STRICT_EQ !== "0",
     // (#2106 S1 default-flip) standalone $undefined tag-1 singleton regime —
     // default ON. The complete lockstep producer+consumer sweep landed behind
     // this flag in PR #2633; this flip makes the singleton the default
@@ -328,13 +378,19 @@ export function createCodegenContext(
     wasiEnvironGetIdx: -1,
     wasiEnvGetStrIdx: -1,
     wasiNodeFsFuncs: options?.wasiNodeFsFuncs ?? new Set(),
+    ...(options?.dtsEntrypointSeeds ? { dtsEntrypointSeeds: options.dtsEntrypointSeeds } : {}),
     wasiRawImports: options?.wasiRawImports ?? new Set(),
     wasiMemAccessors: options?.wasiMemAccessors ?? new Set(),
     allowFs: options?.allowFs ?? false,
+    // (#4238 slice 1) provider-build enablers — default off / undefined.
+    externNativeTypes: options?.externNativeTypes ?? false,
+    ...(options?.externImportModule ? { externImportModule: options.externImportModule } : {}),
+    ...(options?.importMemory ? { importMemory: options.importMemory } : {}),
     strictNoHostImports,
     tdzGlobals: new Map(),
     tdzLetConstNames: new Set(),
     definedPropertyFlags: new Map(),
+    nonWritableExternKeys: new Set(),
     sidecarDefinedPropertyKeys: new Set(),
     definePropertyReceiverKeys: new Set(),
     nonConfigurableAccessorKeys: new Set(),
@@ -349,6 +405,30 @@ export function createCodegenContext(
     nodeBuiltinGlobals: new Map(),
     jsxRuntime: options?.jsxRuntime,
   };
+  ctx.programAbiModuleInitCallables = new ProgramAbiModuleInitCallableRegistry(
+    ctx,
+    programAbiSession,
+    irPlanningIdentityContext,
+  );
+  ctx.programAbiSourceCallables = new ProgramAbiSourceCallableRegistry(
+    ctx,
+    programAbiSession,
+    irPlanningIdentityContext,
+  );
+  if (programAbiSession) {
+    ctx.programAbiCallableProviders = new ProgramAbiCallableProviderRegistry(programAbiSession, ctx);
+    ctx.programAbiCallables = new ProgramAbiCallableRegistry(programAbiSession, ctx);
+    ctx.programAbiGlobals = new ProgramAbiGlobalRegistry(programAbiSession, ctx);
+    ctx.programAbiExports = new ProgramAbiExportRegistry(programAbiSession, ctx);
+    if (irPlanningIdentityContext) {
+      ctx.programAbiClassCallables = new ProgramAbiClassCallableRegistry(
+        programAbiSession,
+        ctx,
+        irPlanningIdentityContext,
+      );
+      ctx.programAbiTypes = new ProgramAbiTypeRegistry(programAbiSession, ctx, irPlanningIdentityContext);
+    }
+  }
 
   // (#2083) Pre-register the `externref` + `f64` vec struct types up front for
   // type-index stability (every module reserves these slots regardless of

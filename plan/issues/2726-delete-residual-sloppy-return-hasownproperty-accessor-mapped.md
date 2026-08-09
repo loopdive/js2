@@ -1,19 +1,50 @@
 ---
 id: 2726
 title: "delete residual: sloppy return-value semantics, hasOwnProperty-after-delete, accessor descriptor configurability, mapped-arguments delete"
-status: ready
-sprint: current
-goal: test262-conformance
+status: done
+completed: 2026-07-26
+sprint: 77
+goal: es5
 feasibility: medium
 depends_on: []
 priority: medium
 es_edition: ES5
 language_feature: delete
 task_type: bug
+loc-budget-allow:
+  - src/codegen/context/types.ts
+  - src/codegen/expressions/identifiers.ts
+  - src/codegen/index.ts
+  - src/codegen/typeof-delete.ts
+  - src/ir/select.ts
 created: 2026-06-26
-updated: 2026-07-05
+updated: 2026-07-30
 ---
 
+> **Strict-rerun residual (2026-07-28, codex-2726).** The authoritative
+> original-harness runner exposed one remaining group (e) gap that the earlier
+> focused wrapper did not cover: `11.4.1-4.a-17` passed its sloppy execution but
+> failed the required strict rerun in both host/gc and standalone. Strict
+> functions use an _unmapped_ arguments object, so they intentionally have no
+> `mappedArgsInfo`; the generic property-delete path reported success but could
+> not clear the opaque vec-backed slot. The delete lowering now preserves that
+> generic result (including descriptor refusal), and on success clears a
+> statically indexed unmapped-arguments slot to canonical `undefined`.
+>
+> Same-SHA authoritative A/B: the 69-file delete directory moves host
+> **59→60** and standalone **51→52**, with exactly
+> `11.4.1-4.a-17` flipping in each lane and no reverse flips. Across all 26
+> Test262 files containing direct `delete arguments[...]`, host moves **7→12**
+> and standalone **5→10** (five exact fail→pass flips per lane, zero
+> pass→fail). The remaining standalone-only `11.4.1-5-a-27-s` failure is still
+> the separately owned `preventExtensions`/strict-assignment gap, not delete
+> semantics.
+>
+> **Final resolution (2026-07-26, codex-2726).** Group **(b)** is now **4/4**:
+> the two structural residuals `S11.4.1_A3.1` and
+> `S11.4.1_A3.3_T1` pass in both host/gc and standalone. The implementation
+> follows the architect specification and resolution below.
+>
 > **Partial resolution (2026-07-05, dev-2726).** Group **(a)** DONE (sloppy
 > `delete <unresolvable identifier>` → `true`; +4 test262). Groups **(c)** and
 > **(d)** DONE earlier (+6 test262). Group **(b)** is now **2/4**: the
@@ -30,8 +61,8 @@ updated: 2026-07-05
 > test262 `S8.12.7_A2_T2`, 0 delete-dir regressions — see `## Resolution — group (g)`).
 > **(f)** (`11.4.1-5-a-27-s` — strict assign to a `preventExtensions`'d object)
 > re-routes to its owning strict-mode/preventExtensions feature issue. This issue
-> stays open (`status: ready`) for the 2 structural (b) tests — route to architect
-> before further dispatch.
+> therefore stayed open at that point for the 2 structural (b) tests — route to
+> architect before further dispatch.
 
 # #2726 — delete residual (non-throw) semantics
 
@@ -41,10 +72,84 @@ Split out of #2703, which delivered the **throw** cases of `delete`
 that each need a distinct subsystem fix; they are tracked here so #2703 can close
 on its throw-semantics scope.
 
+## Architect specification — residual group (b) global environment
+
+The remaining two tests need one bounded GlobalEnvironmentRecord slice rather
+than another return-value constant:
+
+1. **Discover implicit-global candidates before body compilation.** A
+   whole-source AST scan records simple sloppy assignments whose identifier LHS
+   has no value binding according to the checker oracle. This set is computed
+   before any function or `__module_init` body is emitted, so a reader compiled
+   before its writer gets the same lowering as a reader compiled after it.
+2. **Use one target-aware global-object carrier.** Host/gc reads the current
+   sandbox through `__get_globalThis`; standalone/WASI uses the existing cached
+   native `$Object` returned by `emitNativeGlobalThisObject`. Assignment,
+   identifier read, and delete must all request this carrier through the same
+   helper.
+3. **Keep the three operations symmetric.** Sloppy unresolvable `x = value`
+   performs `__extern_set(globalObject, "x", value)` (default attributes,
+   including `configurable:true`). A later candidate read first tests own
+   presence, throws `ReferenceError` when absent, and otherwise performs
+   `__extern_get`. `delete x` performs
+   `__delete_property(globalObject, "x")`, so it removes the property rather
+   than merely returning a compile-time `true`.
+4. **Record non-configurable script declarations separately from storage.**
+   Top-level script `var` bindings remain in their existing typed Wasm globals,
+   but their names are also recorded as non-configurable global-object
+   bindings. A direct top-level `delete this.name`/`delete globalThis.name`
+   consults that record and returns `false` (or takes the existing strict
+   TypeError path). `let`/`const` names are deliberately excluded because global
+   lexical bindings are not properties of the global object.
+5. **Gate every new path.** Sources without a sloppy implicit-global assignment
+   or direct delete of a recorded script `var` retain the current local/global
+   lowering. Dynamic aliases of the global object and full reflective mirroring
+   of typed Wasm globals are follow-up GlobalEnvironmentRecord work, not needed
+   for these two ES5 assertions.
+
+The acceptance invariants are: assignment creates an own configurable property
+on both targets; a read observes it while present; delete removes it; the next
+read throws a real `ReferenceError`; and a script `var` remains non-deletable
+through direct top-level `this`.
+
+## Resolution — group (b) structural residuals (2026-07-26, codex-2726)
+
+**Root causes.**
+
+- Sloppy unresolvable assignment used the host global object only in host/gc;
+  standalone allocated a function local. Bare-identifier delete returned a
+  compile-time `true` without deleting that host property, and identifier reads
+  had no compile-order-independent record that the property could exist.
+- Script `var` values use typed Wasm globals, but no companion binding-attribute
+  record told `delete this.y` that `y` is a non-configurable global property.
+  In the full harness, the checker additionally gave top-level `this` a
+  structural global shape, so field-specialized delete lowering ran before the
+  generic property path.
+- The IR module-init selector admitted `delete this.y` even though its delete
+  lowerer only evaluates the receiver and returns constant `true`.
+
+**Fix.** A checker-oracle pre-scan records simple sloppy implicit-global
+assignment targets before any body compiles. The new shared
+`global-environment.ts` selects the host sandbox global or native standalone
+`$Object`; assignment uses `__extern_set`, reads use
+`__hasOwnProperty` + `__extern_get` (throwing a real `ReferenceError` when
+absent), and bare delete uses `__delete_property`. Script `var` names are tracked
+separately from `let`/`const` and consulted before all property-specialized
+delete paths. IR module init conservatively demotes direct top-level
+`delete this.name` until IR owns global binding attributes.
+
+**Results.** Focused regression coverage exercises both targets, property
+presence with an `undefined`-distinguishing read, real deletion, post-delete
+`ReferenceError`, non-configurable script `var`, and the IR selector boundary.
+The authoritative original-harness runner reports **pass** for both
+`S11.4.1_A3.1` and `S11.4.1_A3.3_T1` in host/gc and standalone.
+
 ## Sub-groups (14 tests, all `test/language/expressions/delete/` unless noted)
 
 ### (a) Sloppy-mode `delete <unresolvable identifier>` → `true` (3) — DONE (2026-06-29)
+
 `S11.4.1_A2.2_T1.js`, `S11.4.1_A3.3_T6.js`, `11.4.1-3-1.js`
+
 - `delete x` where `x` resolves to **no binding anywhere** returns `true` in
   sloppy mode (§13.5.1.2: unresolvable Reference ⇒ true). We previously returned
   `false` for every bare identifier (variables-not-deletable path in
@@ -61,15 +166,19 @@ on its throw-semantics scope.
   bucket. +4 test262 (the 3 targets + bonus implicit-global `S11.4.1_A3.2_T1`).
 
 ### (b) Sloppy global-object model (4)
+
 `S11.4.1_A3.1.js` (#2 `delete this.y === false`), `S11.4.1_A3.2_T1.js`
 (`x = 1; delete x === true` — implicit global), `S11.4.1_A3.3_T1.js`
 (`delete x; x` then ReferenceError), `11.4.1-4.a-8.js` (`delete JSON === true`).
+
 - Requires modelling top-level `this` as the global object and tracking
   `var`/function-declared globals as non-configurable vs implicitly-created
   globals as configurable. Structural; likely architect-spec first.
 
 ### (c) `hasOwnProperty` false after a configurable `Object.defineProperty` delete (3)
+
 `11.4.1-4.a-1.js`, `11.4.1-4.a-2.js`, `11.4.1-4-a-4-s.js`
+
 - After `delete obj.prop` of a `configurable:true` defineProperty'd property,
   `obj.hasOwnProperty("prop")` still reports `true`. The `__delete_property`
   tombstone (`_wasmStructDeletedKeys`) / `__hasOwnProperty` predicate is not
@@ -77,27 +186,35 @@ on its throw-semantics scope.
   `built-ins/Object/defineProperty/15.2.3.6-3-*.js` share this root cause.
 
 ### (d) Non-configurable accessor descriptor not consulted by delete (1+)
+
 `11.4.1-4-a-2-s.js`
+
 - `delete obj.prop` of a **non-configurable accessor** wrongly returns `true`
   (host `__delete_property` does not see the accessor's `configurable:false`
   flag). Runtime descriptor-storage fix in `src/runtime.ts`.
 
 ### (e) Mapped-arguments delete (1) — DONE (2026-07-05)
+
 `11.4.1-4.a-17.js`
+
 - `delete arguments[0]` in a mapped-arguments function: `=== true` and the slot
   reads `undefined` afterward. Routes through the `mappedArgsInfo` bookkeeping in
   `compileDeleteExpression` plus the element-delete on `arguments`.
 - **Resolved** — see `## Resolution — group (e)`.
 
 ### (f) preventExtensions interaction (1)
+
 `11.4.1-5-a-27-s.js`
+
 - Not really a delete bug: after `delete a.x; Object.preventExtensions(a)`, a
   strict-mode `a.x = 1` must throw (assign to a property of a non-extensible
   object). Belongs with strict-mode assignment / preventExtensions support.
 
 ### (g) Prototype-chain read (1)
+
 `S8.12.7_A2_T2.js`
-- Fails at the inherited-property *read* (`__palette.red`), before the delete —
+
+- Fails at the inherited-property _read_ (`__palette.red`), before the delete —
   a prototype-chain read gap, not a delete bug.
 
 ## Acceptance
@@ -131,7 +248,7 @@ wrongly flip `undefined`/`arguments`/`globalThis`.
 (`getSymbolAtLocation === undefined`), emit `i32.const 1` (true); otherwise keep
 the `false`. **Eval guard**: an identifier inside an inlined `eval("<literal>")`
 body lives in a foreign `SourceFile` (`EVAL_SOURCE_FILENAME`, exported from
-`expressions/eval-inline.ts`) the checker never bound, so its symbol is *always*
+`expressions/eval-inline.ts`) the checker never bound, so its symbol is _always_
 `undefined` even for a name resolving to an outer var. The flip is gated to skip
 eval-body nodes (`ident.getSourceFile().fileName !== EVAL_SOURCE_FILENAME`),
 preserving `var x = 1; eval('delete x') === false` (`11.4.1-4.a-7`). Precise
@@ -140,10 +257,10 @@ eval-scope delete resolution stays out of scope (eval-substrate lane).
 
 ### Test Results — group (a) (host/gc lane, authoritative `runTest262File`)
 
-| cluster | baseline → fix |
-|---|---|
-| `language/expressions/delete` | 59 → **63** pass, **0 regressions** |
-| 98 other test262 files containing a bare-identifier `delete` | no change (0 collateral) |
+| cluster                                                      | baseline → fix                      |
+| ------------------------------------------------------------ | ----------------------------------- |
+| `language/expressions/delete`                                | 59 → **63** pass, **0 regressions** |
+| 98 other test262 files containing a bare-identifier `delete` | no change (0 collateral)            |
 
 Net **+4** test262. Flipped fail→pass: `S11.4.1_A2.2_T1`, `S11.4.1_A3.3_T6`,
 `11.4.1-3-1` (group (a)) plus bonus `S11.4.1_A3.2_T1` (group (b) implicit-global
@@ -157,8 +274,8 @@ Net **+4** test262. Flipped fail→pass: `S11.4.1_A2.2_T1`, `S11.4.1_A3.3_T6`,
 (`S11.4.1_A3.1`, `S11.4.1_A3.3_T1`) remain STRUCTURAL and out of this slice
 (see the top note / Residual).
 
-**Root cause.** After group (a) flipped only the *unresolvable* bare-identifier
-`delete` to `true`, every *resolvable* bare identifier still emitted `false`
+**Root cause.** After group (a) flipped only the _unresolvable_ bare-identifier
+`delete` to `true`, every _resolvable_ bare identifier still emitted `false`
 ("variables are not deletable"). But §13.5.1.2 step 5 makes `delete` of a
 **configurable** property of the global object return `true`. Per ECMA-262 §19
 **every** built-in global (`JSON`/`Object`/`Math`/`parseInt`/…) is
@@ -170,22 +287,23 @@ non-configurable. So `delete JSON` must be `true`, not `false`.
 **symbol provenance**: a built-in's `symbol.declarations` are ALL in ambient
 `.d.ts` lib files (`decl.getSourceFile().isDeclarationFile`), whereas a user
 binding is declared in the program's own source. Two guards make it precise:
+
 - name-exclude the three non-configurable intrinsics
   `NON_CONFIGURABLE_GLOBALS = {NaN, Infinity, undefined}` (all three are
   ambient-declared, so provenance alone wouldn't separate them);
 - require `decls.length > 0`, which keeps `undefined`/`globalThis`/`arguments`
   (empty `declarations`) out of the `true` branch.
-Eval-body nodes never reach this branch (their symbol is `undefined`, already
-handled by the group-(a) arm). Front-end constant flip (`i32.const 1`), so the
-host and standalone lanes agree — **no new host import**.
-`src/codegen/typeof-delete.ts` (bare-identifier arm + `NON_CONFIGURABLE_GLOBALS`).
+  Eval-body nodes never reach this branch (their symbol is `undefined`, already
+  handled by the group-(a) arm). Front-end constant flip (`i32.const 1`), so the
+  host and standalone lanes agree — **no new host import**.
+  `src/codegen/typeof-delete.ts` (bare-identifier arm + `NON_CONFIGURABLE_GLOBALS`).
 
 ### Test Results — group (b) 11.4.1-4.a-8 (host/gc lane, authoritative `runTest262File`)
 
-| cluster | baseline → fix |
-|---|---|
-| `language/expressions/delete` (full dir, 69 files) | 63 → **64** pass, **0 regressions** |
-| collateral (`delete <builtin>` elsewhere: `built-ins/undefined`, `staging/sm`) | no change (0 collateral) |
+| cluster                                                                        | baseline → fix                      |
+| ------------------------------------------------------------------------------ | ----------------------------------- |
+| `language/expressions/delete` (full dir, 69 files)                             | 63 → **64** pass, **0 regressions** |
+| collateral (`delete <builtin>` elsewhere: `built-ins/undefined`, `staging/sm`) | no change (0 collateral)            |
 
 Net **+1** test262. Flipped fail→pass: `11.4.1-4.a-8`. Guards verified unchanged:
 `delete NaN`/`delete undefined`/`delete <user var|func>` stay `false`
@@ -219,9 +337,9 @@ untouched. Front-end only — no new host import; standalone and host lanes agre
 
 ### Test Results — group (e) (host/gc lane, authoritative `runTest262File`)
 
-| cluster | baseline → fix |
-|---|---|
-| `language/expressions/delete` (69 files) | 64 → **65** pass, **0 regressions** |
+| cluster                                       | baseline → fix                                                     |
+| --------------------------------------------- | ------------------------------------------------------------------ |
+| `language/expressions/delete` (69 files)      | 64 → **65** pass, **0 regressions**                                |
 | `language/arguments-object/mapped` (43 files) | 39 → 39 (no change; 4 pre-existing defineProperty fails unchanged) |
 
 Net **+1** test262. Flipped fail→pass: `11.4.1-4.a-17`. Remaining `delete`-dir
@@ -235,7 +353,7 @@ architect-first), `11.4.1-5-a-27-s` (f, preventExtensions), `S8.12.7_A2_T2`
 **Root cause (c).** `var o = {}` infers an empty struct type, so the receiver
 takes the WasmGC-struct lowering path (not the `any`/host path #2731 fixed).
 `o.hasOwnProperty('foo')` was **constant-folded to `i32.const 1`** against the
-static struct shape (which `Object.defineProperty` *widens* to include `foo`),
+static struct shape (which `Object.defineProperty` _widens_ to include `foo`),
 ignoring a later configurable `delete`'s `_wasmStructDeletedKeys` tombstone. The
 fold's runtime-routing guard (`needsRuntime`) only consulted
 `ctx.definedPropertyFlags`, which is populated **only for inline object-literal
@@ -269,12 +387,12 @@ issuing the runtime call (which would otherwise add a spurious tombstone).
 
 ### Test Results (host/gc lane, authoritative `runTest262File`)
 
-| cluster | baseline → fix |
-|---|---|
+| cluster                                                                         | baseline → fix                    |
+| ------------------------------------------------------------------------------- | --------------------------------- |
 | `expressions/delete` + `Object.prototype/{hasOwnProperty,propertyIsEnumerable}` | 117 → 121 pass, **0 regressions** |
-| `Object/{defineProperty,getOwnPropertyDescriptor,defineProperties}` | 207 → 207 (no change) |
-| `Object/{freeze,seal,preventExtensions,create,getOwnPropertyNames}` | 400 → 402 pass, **0 regressions** |
-| `for-in` + `Object/keys` + `expressions/object` | 363 → 363 (no change) |
+| `Object/{defineProperty,getOwnPropertyDescriptor,defineProperties}`             | 207 → 207 (no change)             |
+| `Object/{freeze,seal,preventExtensions,create,getOwnPropertyNames}`             | 400 → 402 pass, **0 regressions** |
+| `for-in` + `Object/keys` + `expressions/object`                                 | 363 → 363 (no change)             |
 
 Net **+6** test262, **0 regressions** across ~4,500 most-related tests. Targets
 flipped fail→pass: `11.4.1-4.a-1`, `11.4.1-4.a-2`, `11.4.1-4-a-4-s` (c),
@@ -303,9 +421,9 @@ architect before further dispatch.
 **Scope.** `S8.12.7_A2_T2.js` — `delete __palette.red` where `red` is inherited
 from `Palette.prototype`, then the prototype-chain read `__palette.red` must
 still see the inherited value (CHECK#3). (The issue's original "fails at the
-inherited *read* before the delete" note is stale — CHECK#1's initial inherited
+inherited _read_ before the delete" note is stale — CHECK#1's initial inherited
 read already passes on current main; the sole remaining failure is CHECK#3, the
-read *after* the delete.)
+read _after_ the delete.)
 
 **Root cause (g).** The WasmGC-struct arm of `__delete_property`
 (`src/runtime.ts`) unconditionally dropped the sidecar/descriptor entries **and
@@ -331,8 +449,8 @@ own-delete case are untouched. `src/runtime.ts` (`__delete_property` struct arm)
 
 ### Test Results — group (g) (host/gc lane, authoritative `runTest262File`)
 
-| cluster | baseline → fix |
-|---|---|
+| cluster                                            | baseline → fix                      |
+| -------------------------------------------------- | ----------------------------------- |
 | `language/expressions/delete` (full dir, 69 files) | 65 → **66** pass, **0 regressions** |
 
 Net **+1** test262. Flipped fail→pass: `S8.12.7_A2_T2`. The other 3 dir failures

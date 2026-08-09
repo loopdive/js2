@@ -1,10 +1,17 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import type { IrBinop, IrInstr, IrType, IrUnop } from "../../nodes.js";
+import type { AllocSiteId, IrBinop, IrInstr, IrType, IrUnop } from "../../nodes.js";
 import { asVal } from "../../nodes.js";
 import type { LinearAllocationSitePlan } from "../../analysis/linear-memory-plan.js";
+import type { LinearStringRuntimeBinding, LinearStringRuntimeRequest } from "../../analysis/linear-string-runtime.js";
+import type { IrStringConcatMode, IrStringEncoding } from "../../string-runtime.js";
 import type { BlockType, Instr } from "../../types.js";
-import type { BackendEmitter } from "../emitter.js";
+import type {
+  BackendEmitter,
+  BackendI32BitwiseOp,
+  BackendNumericConversionOp,
+  BackendScalarConstType,
+} from "../emitter.js";
 import type {
   IrClassLowering,
   IrClosureLowering,
@@ -35,7 +42,7 @@ export type PorfforTypeRef =
   | { readonly kind: "local"; readonly local: PorfforLocalRef }
   | { readonly kind: "global"; readonly handle: number };
 
-export type PorfforMemoryCType = "i32" | "u32" | "f64";
+export type PorfforMemoryCType = "u8" | "i32" | "u32" | "f64";
 
 interface PorfforExprBase {
   readonly type: PorfforTypeRef;
@@ -103,6 +110,13 @@ export type PorfforStatement =
       readonly offset: number;
       readonly value: PorfforExpr;
     }
+  | {
+      readonly kind: "mem-copy";
+      readonly destination: PorfforExpr;
+      readonly source: PorfforExpr;
+      readonly bytes: PorfforExpr;
+      readonly mayOverlap: boolean;
+    }
   | { readonly kind: "gc-barrier"; readonly pointer: PorfforExpr; readonly typeId: PorfforExpr }
   | { readonly kind: "return"; readonly value: PorfforExpr | null }
   | { readonly kind: "unreachable" };
@@ -122,6 +136,7 @@ export interface PorfforGlobalSymbol {
 export interface PorfforSymbolResolver {
   functionSymbol(handle: number): PorfforFunctionSymbol;
   globalSymbol(handle: number): PorfforGlobalSymbol;
+  bindLinearStringRuntime(request: LinearStringRuntimeRequest): LinearStringRuntimeBinding;
 }
 
 export interface PorfforScratchLocal {
@@ -224,6 +239,7 @@ function localExpr(local: PorfforLocalRef): PorfforExpr {
 }
 
 function irTypeSlot(type: IrType): PorfforValueSlot {
+  if (type.kind === "string" || type.kind === "vec") return "ptr";
   const val = asVal(type);
   if (!val) throw new Error(`porffor backend does not support IR type '${type.kind}'`);
   switch (val.kind) {
@@ -260,8 +276,9 @@ function memoryCType(type: { readonly kind: string }): PorfforMemoryCType {
   throw new Error(`porffor backend does not support planned memory value type '${type.kind}'`);
 }
 
-function allocateExpr(bytes: number, siteId: number): PorfforExpr {
-  const size: PorfforExpr = { kind: "const", type: "u32", effects: PORFFOR_FX.none, value: bytes };
+function allocateExpr(bytes: number | PorfforExpr, siteId: number): PorfforExpr {
+  const size: PorfforExpr =
+    typeof bytes === "number" ? { kind: "const", type: "u32", effects: PORFFOR_FX.none, value: bytes } : bytes;
   return {
     kind: "alloc",
     type: "ptr",
@@ -312,6 +329,51 @@ function addPointerOffset(pointer: PorfforExpr, offset: number): PorfforExpr {
   };
 }
 
+function scalarConst(type: PorfforValueSlot, value: number): PorfforExpr {
+  return { kind: "const", type, effects: PORFFOR_FX.none, value };
+}
+
+function binaryExpr(
+  type: PorfforValueSlot,
+  op: string,
+  left: PorfforExpr,
+  right: PorfforExpr,
+  comparison = false,
+): PorfforExpr {
+  return {
+    kind: "binary",
+    type: comparison ? "i32" : type,
+    effects: left.effects | right.effects,
+    op,
+    left,
+    right,
+    comparison,
+  };
+}
+
+function loadExpr(
+  ctype: PorfforMemoryCType,
+  type: PorfforValueSlot,
+  pointer: PorfforExpr,
+  offset: number,
+): PorfforExpr {
+  return { kind: "load", type, effects: pointer.effects | PORFFOR_FX.readMem, ctype, pointer, offset };
+}
+
+function requireStringAllocation(binding: LinearStringRuntimeBinding, family: string): LinearAllocationSitePlan {
+  const allocation = binding.allocation;
+  if (!allocation) throw new Error(`porffor backend requires a planned allocation site for ${family}`);
+  if (allocation.allocationClass !== "arena" && allocation.allocationClass !== "stack") {
+    throw new Error(
+      `porffor backend supports arena/stack allocation only; site ${allocation.id as number} is ${allocation.allocationClass}`,
+    );
+  }
+  if (allocation.root.kind !== "none" || allocation.safepoints.kind !== "none" || allocation.barrier.kind !== "none") {
+    throw new Error(`porffor string allocation site ${allocation.id as number} requires unsupported GC coordination`);
+  }
+  return allocation;
+}
+
 /** Scalar/control-flow BackendEmitter implementation for Porffor's tree IR. */
 export class PorfforEmitter implements BackendEmitter<PorfforSink> {
   readonly backend = "porffor" as const;
@@ -336,6 +398,257 @@ export class PorfforEmitter implements BackendEmitter<PorfforSink> {
     throw new Error(`porffor backend does not support raw Wasm instruction '${instr.op}'`);
   }
 
+  emitStringConst(value: string, alloc: AllocSiteId | undefined, out: PorfforSink): void {
+    const binding = this.symbols.bindLinearStringRuntime({ intrinsic: "constant", alloc });
+    const allocation = requireStringAllocation(binding, "string.const");
+    if (allocation.size.kind !== "constant") {
+      throw new Error("porffor backend requires a constant planned allocation size for string.const");
+    }
+    const bytes = [...value].map((character) => character.charCodeAt(0));
+    if (bytes.some((byte) => byte > 0x7f)) {
+      throw new Error("porffor backend received non-ASCII string.const after ASCII proof");
+    }
+    const [pointer] = out.sequence([allocateExpr(allocation.size.bytes, allocation.id as number)]);
+    out.append({
+      kind: "store",
+      ctype: "u32",
+      pointer: pointer!,
+      offset: binding.layout.payloadSizeOffset,
+      value: scalarConst("u32", binding.layout.payloadPrefixBytes + bytes.length),
+    });
+    out.append({
+      kind: "store",
+      ctype: "u32",
+      pointer: pointer!,
+      offset: binding.layout.lengthOffset,
+      value: scalarConst("u32", bytes.length),
+    });
+    bytes.forEach((byte, index) => {
+      out.append({
+        kind: "store",
+        ctype: "u8",
+        pointer: pointer!,
+        offset: binding.layout.elementsOffset + index,
+        value: scalarConst("u32", byte),
+      });
+    });
+    out.push(pointer!);
+  }
+
+  emitStringConcat(alloc: AllocSiteId | undefined, mode: IrStringConcatMode, out: PorfforSink): void {
+    const binding = this.symbols.bindLinearStringRuntime({ intrinsic: "concat", alloc });
+    const allocation = requireStringAllocation(binding, "string.concat");
+    const [left, right] = out.sequence(out.popMany(2, "string.concat"));
+    const [leftLength, rightLength] = out.sequence([
+      loadExpr("u32", "u32", left!, binding.layout.lengthOffset),
+      loadExpr("u32", "u32", right!, binding.layout.lengthOffset),
+    ]);
+    const total = binaryExpr("u32", "+", leftLength!, rightLength!);
+    if (mode === "owned-append") {
+      const [payloadSize] = out.sequence([loadExpr("u32", "u32", left!, binding.layout.payloadSizeOffset)]);
+      const capacity = binaryExpr("u32", "-", payloadSize!, scalarConst("u32", binding.layout.payloadPrefixBytes));
+      const resultLocal = this.context.scratch("ptr");
+      const result = localExpr(resultLocal);
+      const leftDestination = addPointerOffset(left!, binding.layout.elementsOffset);
+      const appendDestination = binaryExpr("ptr", "+", leftDestination, leftLength!);
+      const doubledCapacity = binaryExpr("u32", "*", capacity!, scalarConst("u32", 2));
+      const minimumCapacity: PorfforExpr = {
+        kind: "select",
+        type: "u32",
+        effects: doubledCapacity.effects,
+        condition: binaryExpr("i32", "<", doubledCapacity, scalarConst("u32", 16), true),
+        whenTrue: scalarConst("u32", 16),
+        whenFalse: doubledCapacity,
+      };
+      const nextCapacity: PorfforExpr = {
+        kind: "select",
+        type: "u32",
+        effects: minimumCapacity.effects | total.effects,
+        condition: binaryExpr("i32", "<", minimumCapacity, total, true),
+        whenTrue: total,
+        whenFalse: minimumCapacity,
+      };
+      const allocationBytes = binaryExpr("u32", "+", scalarConst("u32", binding.layout.elementsOffset), nextCapacity);
+      const grownPointer = allocateExpr(allocationBytes, allocation.id as number);
+      const grownDestination = addPointerOffset(result, binding.layout.elementsOffset);
+      out.append({
+        kind: "if",
+        controlId: this.context.controlId(),
+        condition: binaryExpr("i32", "<=", total, capacity!, true),
+        then: [
+          {
+            kind: "mem-copy",
+            destination: appendDestination,
+            source: addPointerOffset(right!, binding.layout.elementsOffset),
+            bytes: rightLength!,
+            mayOverlap: false,
+          },
+          {
+            kind: "store",
+            ctype: "u32",
+            pointer: left!,
+            offset: binding.layout.lengthOffset,
+            value: total,
+          },
+          { kind: "assign", target: { kind: "local", local: resultLocal }, value: left! },
+        ],
+        else: [
+          { kind: "assign", target: { kind: "local", local: resultLocal }, value: grownPointer },
+          {
+            kind: "store",
+            ctype: "u32",
+            pointer: result,
+            offset: binding.layout.payloadSizeOffset,
+            value: binaryExpr("u32", "+", scalarConst("u32", binding.layout.payloadPrefixBytes), nextCapacity),
+          },
+          {
+            kind: "store",
+            ctype: "u32",
+            pointer: result,
+            offset: binding.layout.lengthOffset,
+            value: total,
+          },
+          {
+            kind: "mem-copy",
+            destination: grownDestination,
+            source: addPointerOffset(left!, binding.layout.elementsOffset),
+            bytes: leftLength!,
+            mayOverlap: false,
+          },
+          {
+            kind: "mem-copy",
+            destination: binaryExpr("ptr", "+", grownDestination, leftLength!),
+            source: addPointerOffset(right!, binding.layout.elementsOffset),
+            bytes: rightLength!,
+            mayOverlap: false,
+          },
+        ],
+      });
+      out.push(result);
+      return;
+    }
+
+    const bytes = binaryExpr("u32", "+", scalarConst("u32", binding.layout.elementsOffset), total);
+    const [pointer] = out.sequence([allocateExpr(bytes, allocation.id as number)]);
+    out.append({
+      kind: "store",
+      ctype: "u32",
+      pointer: pointer!,
+      offset: binding.layout.payloadSizeOffset,
+      value: binaryExpr("u32", "+", scalarConst("u32", binding.layout.payloadPrefixBytes), total),
+    });
+    out.append({
+      kind: "store",
+      ctype: "u32",
+      pointer: pointer!,
+      offset: binding.layout.lengthOffset,
+      value: total,
+    });
+    const destination = addPointerOffset(pointer!, binding.layout.elementsOffset);
+    out.append({
+      kind: "mem-copy",
+      destination,
+      source: addPointerOffset(left!, binding.layout.elementsOffset),
+      bytes: leftLength!,
+      mayOverlap: false,
+    });
+    out.append({
+      kind: "mem-copy",
+      destination: binaryExpr("ptr", "+", destination, leftLength!),
+      source: addPointerOffset(right!, binding.layout.elementsOffset),
+      bytes: rightLength!,
+      mayOverlap: false,
+    });
+    out.push(pointer!);
+  }
+
+  emitStringEquals(_negate: boolean, _out: PorfforSink): void {
+    throw new Error("porffor backend does not yet support string.eq");
+  }
+
+  emitStringLength(inputEncoding: IrStringEncoding | undefined, out: PorfforSink): void {
+    const binding = this.symbols.bindLinearStringRuntime({ intrinsic: "length", inputEncoding });
+    const pointer = out.pop("string.length");
+    out.push(convertExpr("f64", loadExpr("u32", "u32", pointer, binding.layout.lengthOffset), 0));
+  }
+
+  emitStringCharAt(alloc: AllocSiteId | undefined, inputEncoding: IrStringEncoding, out: PorfforSink): void {
+    const binding = this.symbols.bindLinearStringRuntime({ intrinsic: "char-at", alloc, inputEncoding });
+    const allocation = requireStringAllocation(binding, "string.char_at");
+    const [pointer, index] = out.sequence(out.popMany(2, "string.char_at"));
+    const [length] = out.sequence([loadExpr("u32", "u32", pointer!, binding.layout.lengthOffset)]);
+    const nonNegative = binaryExpr("i32", ">=", index!, scalarConst("i32", 0), true);
+    const belowLength = binaryExpr("i32", "<", convertExpr("u32", index!, 0), length!, true);
+    const inBounds = binaryExpr("i32", "&&", nonNegative, belowLength);
+    const resultLength: PorfforExpr = {
+      kind: "select",
+      type: "u32",
+      effects: inBounds.effects,
+      condition: inBounds,
+      whenTrue: scalarConst("u32", 1),
+      whenFalse: scalarConst("u32", 0),
+    };
+    const [result] = out.sequence([allocateExpr(binding.layout.elementsOffset + 1, allocation.id as number)]);
+    out.append({
+      kind: "store",
+      ctype: "u32",
+      pointer: result!,
+      offset: binding.layout.payloadSizeOffset,
+      value: binaryExpr("u32", "+", scalarConst("u32", binding.layout.payloadPrefixBytes), resultLength),
+    });
+    out.append({
+      kind: "store",
+      ctype: "u32",
+      pointer: result!,
+      offset: binding.layout.lengthOffset,
+      value: resultLength,
+    });
+    const indexedPointer = binaryExpr(
+      "ptr",
+      "+",
+      addPointerOffset(pointer!, binding.layout.elementsOffset),
+      convertExpr("u32", index!, 0),
+    );
+    out.append({
+      kind: "store",
+      ctype: "u8",
+      pointer: result!,
+      offset: binding.layout.elementsOffset,
+      value: {
+        kind: "select",
+        type: "u32",
+        effects: inBounds.effects | PORFFOR_FX.readMem,
+        condition: inBounds,
+        whenTrue: loadExpr("u8", "u32", indexedPointer, 0),
+        whenFalse: scalarConst("u32", 0),
+      },
+    });
+    out.push(result!);
+  }
+
+  emitStringCharCodeAt(inputEncoding: IrStringEncoding, out: PorfforSink): void {
+    const binding = this.symbols.bindLinearStringRuntime({ intrinsic: "char-code-at", inputEncoding });
+    const [pointer, index] = out.sequence(out.popMany(2, "string.char_code_at"));
+    const [length] = out.sequence([loadExpr("u32", "u32", pointer!, binding.layout.lengthOffset)]);
+    const nonNegative = binaryExpr("i32", ">=", index!, scalarConst("i32", 0), true);
+    const belowLength = binaryExpr("i32", "<", convertExpr("u32", index!, 0), length!, true);
+    const inBounds = binaryExpr("i32", "&&", nonNegative, belowLength);
+    const indexedPointer = binaryExpr(
+      "ptr",
+      "+",
+      addPointerOffset(pointer!, binding.layout.elementsOffset),
+      convertExpr("u32", index!, 0),
+    );
+    out.push({
+      kind: "select",
+      type: "f64",
+      effects: inBounds.effects | PORFFOR_FX.readMem,
+      condition: inBounds,
+      whenTrue: convertExpr("f64", loadExpr("u8", "u32", indexedPointer, 0), 0),
+      whenFalse: scalarConst("f64", Number.NaN),
+    });
+  }
+
   emitConst(instr: Extract<IrInstr, { kind: "const" }>, _funcName: string, out: PorfforSink): void {
     const type = instr.resultType ? irTypeSlot(instr.resultType) : constSlot(instr);
     switch (instr.value.kind) {
@@ -356,6 +669,29 @@ export class PorfforEmitter implements BackendEmitter<PorfforSink> {
     let [left, right] = out.popMany(2, `binary ${op}`);
     const effects = left!.effects | right!.effects;
     if (effects !== PORFFOR_FX.none) [left, right] = out.sequence([left!, right!]);
+
+    // (#3758) Native i32 arithmetic — computed via u32 (unsigned) arithmetic
+    // and converted back to i32. Signed-integer-overflow is undefined
+    // behavior in C; unsigned arithmetic wraps modulo 2^32 by definition,
+    // and the resulting BIT PATTERN is identical to true two's-complement
+    // wrapped signed arithmetic (the same fact `emitI32Bitwise`'s shl/shr_s
+    // arms already lean on to sidestep C UB — see their comments below).
+    if (op === "i32.add" || op === "i32.sub" || op === "i32.mul") {
+      const lu = convertExpr("u32", left!, 0);
+      const ru = convertExpr("u32", right!, 0);
+      const opSymbol = op === "i32.add" ? "+" : op === "i32.sub" ? "-" : "*";
+      const sum: PorfforExpr = {
+        kind: "binary",
+        type: "u32",
+        effects: lu.effects | ru.effects,
+        op: opSymbol,
+        left: lu,
+        right: ru,
+        comparison: false,
+      };
+      out.push(convertExpr("i32", sum, 1));
+      return;
+    }
 
     const mapped = binaryOp(op);
     const operandType = mapped.operandType ?? left!.type;
@@ -380,6 +716,8 @@ export class PorfforEmitter implements BackendEmitter<PorfforSink> {
       case "f64.neg":
         out.push({ kind: "unary", type: "f64", effects: value.effects, op: "neg", value });
         return;
+      case "f64.reinterpret_i64":
+        throw new Error(`porffor backend does not support unary op '${op}'`);
       case "i32.eqz":
         out.push({ kind: "unary", type: "i32", effects: value.effects, op: "!", value });
         return;
@@ -398,6 +736,102 @@ export class PorfforEmitter implements BackendEmitter<PorfforSink> {
         return;
       case "ref.is_null":
         throw new Error(`porffor backend does not support unary op '${op}'`);
+    }
+  }
+
+  emitScalarConst(type: BackendScalarConstType, value: number, out: PorfforSink): void {
+    out.push({ kind: "const", type, effects: PORFFOR_FX.none, value });
+  }
+
+  emitNumericConversion(op: BackendNumericConversionOp, out: PorfforSink): void {
+    const value = out.pop(`numeric conversion ${op}`);
+    switch (op) {
+      case "i32.trunc_sat_f64_u":
+        // The shared ToInt32 expansion has already reduced the f64 modulo
+        // 2^32. Keep rangeKnown clear so NaN/Infinity still use Porffor's
+        // defined saturating helper and become zero rather than a raw C cast.
+        out.push(convertExpr("u32", value, 0));
+        return;
+      case "f64.convert_i32_s":
+        out.push(convertExpr("f64", convertExpr("i32", value, 1), 1));
+        return;
+      case "f64.convert_i32_u":
+        out.push(convertExpr("f64", convertExpr("u32", value, 0), 0));
+        return;
+    }
+  }
+
+  emitI32Bitwise(op: BackendI32BitwiseOp, out: PorfforSink): void {
+    let [left, right] = out.popMany(2, `i32 bitwise ${op}`);
+    if ((left!.effects | right!.effects) !== PORFFOR_FX.none) [left, right] = out.sequence([left!, right!]);
+
+    const signed = (value: PorfforExpr): PorfforExpr => convertExpr("i32", value, 1);
+    const unsigned = (value: PorfforExpr): PorfforExpr => convertExpr("u32", value, 0);
+    const binary = (type: "i32" | "u32", operator: string, lhs: PorfforExpr, rhs: PorfforExpr): PorfforExpr => ({
+      kind: "binary",
+      type,
+      effects: lhs.effects | rhs.effects,
+      op: operator,
+      left: lhs,
+      right: rhs,
+      comparison: false,
+    });
+    const maskedShift = (): PorfforExpr =>
+      binary("u32", "&", unsigned(right!), {
+        kind: "const",
+        type: "u32",
+        effects: PORFFOR_FX.none,
+        value: 31,
+      });
+    const u32Const = (value: number): PorfforExpr => ({
+      kind: "const",
+      type: "u32",
+      effects: PORFFOR_FX.none,
+      value,
+    });
+
+    switch (op) {
+      case "i32.and":
+        out.push(binary("i32", "&", signed(left!), signed(right!)));
+        return;
+      case "i32.or":
+        out.push(binary("i32", "|", signed(left!), signed(right!)));
+        return;
+      case "i32.xor":
+        out.push(binary("i32", "^", signed(left!), signed(right!)));
+        return;
+      case "i32.shl": {
+        // C signed left shift can overflow or shift a negative value. Perform
+        // the bit movement as u32, with the ECMAScript/Wasm 0x1f mask, then
+        // recover the signed i32 result.
+        const shifted = binary("u32", "<<", unsigned(left!), maskedShift());
+        out.push(convertExpr("i32", shifted, 1));
+        return;
+      }
+      case "i32.shr_s": {
+        // C leaves right-shifting a negative signed integer
+        // implementation-defined. Reconstruct Wasm/ECMAScript arithmetic
+        // shift entirely with defined u32 operations:
+        //   logical | ((signMask << ((32 - n) & 31)) & nonZeroMask)
+        // The non-zero mask suppresses sign fill when n == 0 without ever
+        // shifting by 32.
+        const value = unsigned(left!);
+        const count = maskedShift();
+        const logical = binary("u32", ">>", value, count);
+        const signBit = binary("u32", ">>", value, u32Const(31));
+        const signMask = binary("u32", "-", u32Const(0), signBit);
+        const fillCount = binary("u32", "&", binary("u32", "-", u32Const(32), count), u32Const(31));
+        const shiftedSignMask = binary("u32", "<<", signMask, fillCount);
+        const negatedCount = binary("u32", "-", u32Const(0), count);
+        const countHighBit = binary("u32", ">>", binary("u32", "|", count, negatedCount), u32Const(31));
+        const nonZeroMask = binary("u32", "-", u32Const(0), countHighBit);
+        const signFill = binary("u32", "&", shiftedSignMask, nonZeroMask);
+        out.push(convertExpr("i32", binary("u32", "|", logical, signFill), 1));
+        return;
+      }
+      case "i32.shr_u":
+        out.push(binary("u32", ">>", unsigned(left!), maskedShift()));
+        return;
     }
   }
 
@@ -598,12 +1032,23 @@ export class PorfforEmitter implements BackendEmitter<PorfforSink> {
       value: value!,
     });
   }
-  emitVecNewFixed(layout: VecLayout, count: number, _scratch: number, out: PorfforSink): void {
+  emitVecSetLength(layout: VecLayout, out: PorfforSink): void {
+    const planned = asPlannedVec(layout).linearMemory.layout;
+    const [pointer, length] = out.sequence(out.popMany(2, "vec.set_length"));
+    out.append({
+      kind: "store",
+      ctype: "u32",
+      pointer: pointer!,
+      offset: planned.lengthOffset,
+      value: length!,
+    });
+  }
+  emitVecNewFixed(layout: VecLayout, count: number, capacity: number, _scratch: number, out: PorfforSink): void {
     const linear = asPlannedVec(layout).linearMemory;
     const allocation = requireArenaAllocation(linear.allocation, "vec.new_fixed");
     const elements = out.sequence(out.popMany(count, "vec.new_fixed elements"));
     const [pointer] = out.sequence([allocateExpr(allocation.size.bytes, allocation.id as number)]);
-    const capacity = Math.max(count, linear.layout.minimumCapacity);
+    const storedCapacity = Math.max(capacity, linear.layout.minimumCapacity);
     out.append({
       kind: "store",
       ctype: "u32",
@@ -616,7 +1061,7 @@ export class PorfforEmitter implements BackendEmitter<PorfforSink> {
       ctype: "u32",
       pointer: pointer!,
       offset: linear.layout.capacityOffset,
-      value: { kind: "const", type: "u32", effects: PORFFOR_FX.none, value: capacity },
+      value: { kind: "const", type: "u32", effects: PORFFOR_FX.none, value: storedCapacity },
     });
     elements.forEach((value, index) => {
       out.append({

@@ -1,7 +1,7 @@
 ---
 id: 3113
 title: "Fix IR->codegen reverse layering: move shared vocabulary (js-tag) below IR; contain the bridge to ir/integration.ts"
-status: in-progress
+status: ready
 sprint: current
 created: 2026-07-09
 updated: 2026-07-17

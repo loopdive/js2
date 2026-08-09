@@ -99,9 +99,15 @@ export class CompilerPool {
   }
 
   private forkProcess(): ChildProcess {
+    const maxOldSpaceSize = process.env.TEST262_WORKER_MAX_OLD_SPACE_SIZE ?? "512";
     return fork(this.workerPath, [], {
       stdio: ["pipe", "pipe", "pipe", "ipc"],
-      execArgv: ["--expose-gc", "--max-old-space-size=512"],
+      execArgv: ["--expose-gc", `--max-old-space-size=${maxOldSpaceSize}`],
+      // Test262 baselines are produced on UTC CI hosts. Pin worker time-zone
+      // semantics locally as well so Date parsing/formatting verdicts do not
+      // depend on the developer machine. TEST262_TZ remains an explicit
+      // diagnostic override.
+      env: { ...process.env, TZ: process.env.TEST262_TZ ?? "UTC" },
     });
   }
 
@@ -197,6 +203,10 @@ export class CompilerPool {
       originalHarness?: boolean;
       /** Wait for the upstream doneprintHandle completion marker. */
       asyncTest?: boolean;
+      /** Static Test262 module dependencies, keyed by pinned virtual path. */
+      fixtureFiles?: Record<string, string>;
+      /** Virtual entry path used to resolve `fixtureFiles` imports. */
+      entryFile?: string;
       wasmPath?: string;
       metaPath?: string;
       label?: string;
@@ -222,6 +232,8 @@ export class CompilerPool {
         expectedErrorType: opts.expectedErrorType,
         originalHarness: opts.originalHarness || false,
         asyncTest: opts.asyncTest || false,
+        fixtureFiles: opts.fixtureFiles,
+        entryFile: opts.entryFile,
         wasmPath: opts.wasmPath,
         metaPath: opts.metaPath,
         target: opts.target,

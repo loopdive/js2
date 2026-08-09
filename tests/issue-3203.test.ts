@@ -14,7 +14,7 @@
 //      legacy order (behavior-preserving).
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
-import { collectLocalCallEdges, irFirstBodyIsProvenLowerable, type ValueDomain } from "../src/codegen/ir-first-gate.js";
+import { irFirstBodyIsProvenLowerable, type ValueDomain } from "../src/codegen/ir-first-gate.js";
 import { compile, type CompileResult } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
@@ -186,18 +186,5 @@ describe("#3203 — end-to-end bool predicates under IR-first default", () => {
       if (prev === undefined) Reflect.deleteProperty(process.env, "JS2WASM_IR_FIRST");
       else process.env.JS2WASM_IR_FIRST = prev;
     }
-  });
-
-  // Guard: collectLocalCallEdges still maps the caller graph (used by the
-  // signature-parity fixpoint that the widen leaves intact).
-  it("collectLocalCallEdges maps a caller to its callee", () => {
-    const sf = ts.createSourceFile(
-      "t.ts",
-      `function a(){ return b(); } function b(){ return 1; }`,
-      ts.ScriptTarget.Latest,
-      true,
-    );
-    const edges = collectLocalCallEdges(sf);
-    expect([...(edges.get("a") ?? [])]).toContain("b");
   });
 });

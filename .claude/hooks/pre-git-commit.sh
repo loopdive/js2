@@ -19,8 +19,8 @@ fi
 # Scoped to git state-changing ops only (its stated intent) so it doesn't
 # block unrelated commands (gh/npx/pwd/cd) run from a scratch subdir like .tmp/.
 BRANCH=$(git branch --show-current 2>/dev/null)
-if [ "$BRANCH" = "main" ] && [ "$PWD" != "/workspace" ] && echo "$FIRST_LINE" | grep -qE '^git (commit|merge|push|add)\b'; then
-  echo "BLOCKED: On main but pwd is $PWD (not /workspace). Are you in a worktree?" >&2
+if [ "$BRANCH" = "main" ] && [ "$PWD" != "${CLAUDE_PROJECT_DIR:-/workspace}" ] && echo "$FIRST_LINE" | grep -qE '^git (commit|merge|push|add)\b'; then
+  echo "BLOCKED: On main but pwd is $PWD (not the repo root). Are you in a worktree?" >&2
   exit 2
 fi
 
@@ -33,7 +33,7 @@ if echo "$CMD" | grep -q 'git commit'; then
     echo "BLOCKED: Missing checklist sign-off. End your commit message with a ✓ once you've completed plan/method/pre-commit-checklist.md." >&2
     exit 2
   fi
-  CHECKLIST=$(head -15 /workspace/plan/method/pre-commit-checklist.md 2>/dev/null)
+  CHECKLIST=$(head -15 "${CLAUDE_PROJECT_DIR:-/workspace}"/plan/method/pre-commit-checklist.md 2>/dev/null)
   if [ -n "$CHECKLIST" ]; then
     jq -n --arg ctx "VERIFY BEFORE COMMITTING: pwd=$(pwd) branch=$BRANCH. Have you checked: specific files staged? diff reviewed? no accidental deletions?" \
       '{hookSpecificOutput: {hookEventName: "PreToolUse", additionalContext: $ctx}}'

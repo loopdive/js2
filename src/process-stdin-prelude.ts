@@ -32,13 +32,76 @@
  * `.d.ts` injection in `checker/index.ts` (#2624) — codegen-level here, type-level
  * there; both inject only the surface the program actually touches.
  */
-import { PositionMap } from "./position-map.js";
+import { PositionMap, type CompilerSourceOriginSpan } from "./position-map.js";
 import { ts } from "./ts-api.js";
 
 const { forEachChild } = ts;
 
 /** The singleton accessor that `process.stdin` rewrites to. */
 const STDIN_ACCESSOR = "__js2wasm_stdin()";
+
+const STDIN_CLASS_MEMBER_ROLES: Readonly<Record<string, string>> = {
+  buf: "byte-buffer",
+  head: "buffer-head",
+  tail: "buffer-tail",
+  dataCbs: "data-listeners",
+  endCbs: "end-listeners",
+  readableCbs: "readable-listeners",
+  closeCbs: "close-listeners",
+  flowing: "flowing-state",
+  paused: "paused-state",
+  ended: "ended-state",
+  armed: "armed-state",
+  eofReadableFired: "eof-readable-state",
+  destroyed: "destroyed-state",
+  avail: "available-bytes",
+  ensure: "ensure-capacity",
+  slice: "materialize-slice",
+  drainBytes: "drain-bytes",
+  emitChunk: "emit-chunk",
+  pump: "pump",
+  arm: "arm-reader",
+  on: "register-listener",
+  read: "read",
+  setEncoding: "set-encoding",
+  pause: "pause",
+  resume: "resume",
+  destroy: "destroy",
+};
+
+function stdinPreludeOrigins(prelude: string): CompilerSourceOriginSpan[] {
+  const sf = ts.createSourceFile("__stdin_prelude_origins__.ts", prelude, ts.ScriptTarget.Latest, true);
+  const origins: CompilerSourceOriginSpan[] = [];
+  for (const statement of sf.statements) {
+    if (ts.isClassDeclaration(statement) && statement.name?.text === "__Js2wasmReadable") {
+      origins.push({
+        start: statement.getStart(sf),
+        end: statement.end,
+        origin: { producer: "process-stdin-prelude", role: "readable-class" },
+      });
+      for (const member of statement.members) {
+        const name = member.name && ts.isIdentifier(member.name) ? member.name.text : undefined;
+        const role = name ? STDIN_CLASS_MEMBER_ROLES[name] : undefined;
+        if (!role)
+          throw new Error(`missing compiler provenance role for process.stdin class member ${name ?? "<unnamed>"}`);
+        origins.push({
+          start: member.getStart(sf),
+          end: member.end,
+          origin: { producer: "process-stdin-prelude", role: `readable-${role}` },
+        });
+      }
+      continue;
+    }
+    if (ts.isFunctionDeclaration(statement) && statement.body && statement.name?.text === "__js2wasm_stdin") {
+      origins.push({
+        start: statement.getStart(sf),
+        end: statement.end,
+        origin: { producer: "process-stdin-prelude", role: "singleton-accessor" },
+      });
+    }
+  }
+  return origins;
+}
 
 export interface StdinPreludeResult {
   /** The transformed source (prelude prepended + `process.stdin` rewritten), or the input unchanged. */
@@ -131,7 +194,12 @@ export function injectProcessStdinPrelude(source: string): StdinPreludeResult {
   // each `process.stdin` → `__js2wasm_stdin()` replacement. The PositionMap takes
   // them in input coordinates; it sorts internally.
   const edits = [
-    { origStart: 0, origEnd: 0, newLength: prelude.length },
+    {
+      origStart: 0,
+      origEnd: 0,
+      newLength: prelude.length,
+      compilerOrigins: stdinPreludeOrigins(prelude),
+    },
     ...accesses.map((a) => ({ origStart: a.start, origEnd: a.end, newLength: STDIN_ACCESSOR.length })),
   ];
   const positionMap = new PositionMap(edits);

@@ -1,9 +1,11 @@
 ---
 id: 3409
 title: "Pre-push format gate hard-depends on GNU timeout and falsely blocks macOS pushes"
-status: ready
+status: done
+assignee: ttraenkler/sr-3409
+completed: 2026-07-21
 created: 2026-07-18
-updated: 2026-07-18
+updated: 2026-07-21
 priority: high
 horizon: s
 feasibility: easy
@@ -12,7 +14,7 @@ task_type: infrastructure
 area: tooling
 language_feature: n/a
 goal: developer-experience
-sprint: current
+sprint: 75
 related: [914, 1525, 1771, 3102]
 origin: "2026-07-18 codebase engineering audit publication preflight (plan/log/2026-07-18-codebase-engineering-audit.md, F8)"
 ---
@@ -76,14 +78,36 @@ pre-push safety/integrity guard.
 
 ## Acceptance criteria
 
-- [ ] A normal push on stock macOS reaches and executes `pnpm run format:check`.
-- [ ] A correctly formatted branch is not blocked when GNU `timeout` is absent.
-- [ ] A real Prettier failure still blocks and names the offending file(s).
-- [ ] A watchdog expiry emits the documented warning and defers to CI without
-      being mislabeled as a formatting defect.
-- [ ] An unexpected runner/setup failure exposes its real stderr and does not
-      print an empty `Offending files` section.
-- [ ] Linux behavior and the 90-second hang protection remain covered.
+- [x] A normal push on stock macOS reaches and executes `pnpm run format:check`.
+      (`run_format_watchdog` falls open to a direct run when no watchdog exists.)
+- [x] A correctly formatted branch is not blocked when GNU `timeout` is absent.
+      (Test: "no watchdog on PATH: success returns 0, NOT a spurious 127".)
+- [x] A real Prettier failure still blocks and names the offending file(s).
+      (Tests: watchdog-present + no-watchdog "genuine format failure blocks (rc 1)".)
+- [x] A watchdog expiry emits the documented warning and defers to CI without
+      being mislabeled as a formatting defect. (rc 124 branch unchanged; test:
+      "a hung check yields the 124 timeout code, not a format failure".)
+- [x] An unexpected runner/setup failure exposes its real stderr and does not
+      print an empty `Offending files` section. (Hook now falls back to the raw
+      `$fmt_out` when the `[warn]`/`*.ts` filter matches nothing.)
+- [x] Linux behavior and the 90-second hang protection remain covered.
+      (Watchdog-present path retained verbatim; covered by the 124/rc-0/rc-1 tests.)
+
+## Resolution (2026-07-21)
+
+Watchdog logic extracted into a sourced POSIX-sh helper
+`scripts/hooks/format-gate.sh` (`find_watchdog` + `run_format_watchdog`),
+mirroring the #3410 `push-remote-classify.sh` split. `.husky/pre-push` sources it
+and calls `run_format_watchdog 90 pnpm run format:check`; the 124/nonzero/0
+branching is unchanged. When neither `timeout` nor `gtimeout` is on PATH the
+helper runs the command directly (never synthesizes a 127) and prints a
+one-line stderr notice. The FAILED branch now prints the raw output when the
+`[warn]`/`*.ts` filter matches nothing, so setup errors are no longer blank.
+Covered by `tests/hooks/pre-push-format-timeout.test.ts` (7 cases: watchdog
+present rc 0/1/124; no-watchdog rc 0-not-127 / rc 1 / stderr notice;
+`find_watchdog` bare-PATH). Shell files are outside the `format:check` glob
+(`*.ts` only), so no formatter-scope change. Watchdog-present cases `skipIf` no
+ambient `timeout` so the suite is itself portable.
 
 ## Validation plan
 

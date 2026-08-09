@@ -17,8 +17,8 @@ describe("issue-973: incremental compiler state leak", () => {
 
     const standaloneResult = await compile(victim, { fileName: "test.ts" });
     const compiler = createIncrementalCompiler({ fileName: "test.ts" });
-    compiler.compile(contaminant);
-    const incrementalResult = compiler.compile(victim);
+    await compiler.compile(contaminant);
+    const incrementalResult = await compiler.compile(victim);
     compiler.dispose();
 
     console.log("Standalone:", {
@@ -37,7 +37,7 @@ describe("issue-973: incremental compiler state leak", () => {
     expect(incrementalResult.imports.length).toBe(standaloneResult.imports.length);
   });
 
-  it("performance: incremental compile time is reasonable", () => {
+  it("performance: incremental compile time is reasonable", async () => {
     const compiler = createIncrementalCompiler({
       fileName: "test.ts",
       skipSemanticDiagnostics: true,
@@ -46,12 +46,12 @@ describe("issue-973: incremental compiler state leak", () => {
     const source = `export function test(): number { return Math.max(1, 2); }`;
 
     // Warm up
-    compiler.compile(source);
+    await compiler.compile(source);
 
     // Time 5 compilations
     const start = performance.now();
     for (let i = 0; i < 5; i++) {
-      compiler.compile(source);
+      await compiler.compile(source);
     }
     const elapsed = performance.now() - start;
     const perTest = elapsed / 5;

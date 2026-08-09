@@ -1,1 +1,24 @@
-npx lint-staged
+npx lint-staged || exit 1
+
+# Budget ratchets are UNCONDITIONAL (2026-08-09): they were misclassified into
+# the slow tier below, but together they run in ~4.5s — and because
+# SKIP_SLOW_PRECOMMIT=1 is the sanctioned agent default, every agent commit
+# skipped them and the violations surfaced only in CI, ~20 min later (PR #4252
+# burned two CI cycles exactly this way). Seconds at commit time beat minutes
+# at CI time.
+pnpm run check:loc-budget || exit 1
+pnpm run check:func-budget || exit 1
+
+# Fast lane (#4100 post-mortem): the slow chain below takes minutes and exceeds
+# agent tool timeouts, which drove wholesale `git commit --no-verify` — losing
+# the seconds-cheap prettier/biome gate above along with the slow checks.
+# SKIP_SLOW_PRECOMMIT=1 keeps the format+budget gates unconditional and skips
+# only the slow checks (CI runs them all regardless). Never use `--no-verify`;
+# use this.
+if [ -n "$SKIP_SLOW_PRECOMMIT" ]; then
+  echo "pre-commit: fast gates passed (lint-staged + LOC/function budgets); slow checks skipped (SKIP_SLOW_PRECOMMIT=1) — CI still runs them"
+  exit 0
+fi
+
+pnpm run test:changed-root &&
+  pnpm run check:oracle-ratchet

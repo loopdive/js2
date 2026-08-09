@@ -18,7 +18,7 @@
  * Issue: #959
  */
 
-import { existsSync, readFileSync, realpathSync, writeFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 
@@ -48,7 +48,13 @@ const OUTPUT_PATH = join(ROOT, "website", "public", "benchmarks", "results", "te
 // (#2910) Landing-page feature catalog + its reconciled row counts.
 const FEATURE_EXAMPLES_PATH = join(ROOT, "website", "public", "feature-examples.json");
 const FEATURE_T262_MAP_PATH = join(ROOT, "scripts", "feature-t262-features.json");
-const CURRENT_DRAFT_EDITION = 2026;
+// The edition that is still a DRAFT — i.e. one year past the newest edition the
+// ECMA General Assembly has ratified. ES2026 (17th edition) was published in
+// June 2026, so the draft is now ES2027. Bumping this in lockstep with
+// `T262_CURRENT_DRAFT_EDITION_YEAR` in website/components/t262-charts.js is the
+// single intentional switch that promotes a draft year to a published notch on
+// the landing-page timeline (see #1777).
+const CURRENT_DRAFT_EDITION = 2027;
 
 // ---------------------------------------------------------------------------
 // Feature → Edition mapping (from issue #959 spec)
@@ -248,7 +254,6 @@ const FEATURE_EDITION: Record<string, number> = {
   ShadowRealm: 2023,
 
   // ES2024
-  "Array.fromAsync": 2024,
   "ArrayBuffer.prototype.transfer": 2024,
   "regexp-v-flag": 2024,
   "Promise.withResolvers": 2024,
@@ -262,40 +267,73 @@ const FEATURE_EDITION: Record<string, number> = {
   "promise-with-resolvers": 2024,
   "align-detached-buffer-semantics-with-web-reality": 2024,
 
-  // ES2025
+  // ES2025 — the 10 proposals published in the 16th edition (June 2025).
   "set-methods": 2025,
   "iterator-helpers": 2025,
   "regexp-duplicate-named-groups": 2025,
   Float16Array: 2025,
   "Math.f16round": 2025,
   "import-defer": 2025,
-  "explicit-resource-management": 2025,
   "source-phase-imports": 2025,
   "import-attributes": 2025,
+  "json-modules": 2025,
   "regexp-modifiers": 2025,
+  "Promise.try": 2025,
+  "promise-try": 2025,
+  "RegExp.escape": 2025,
 
-  // ES2026 draft / current-standard additions in the default test262 scope
-  "Promise.try": 2026,
-  "promise-try": 2026,
-  "RegExp.escape": 2026,
+  // ES2026 — the 7 proposals published in the 17th edition (June 2026).
+  // Source of truth for the year is the "Expected Publication Year" column of
+  // tc39/proposals `finished-proposals.md`, NOT the date test262 moved the tag
+  // from its "Proposed" to its "Standard language features" section: that move
+  // is a periodic housekeeping batch and lags ratification by a full edition
+  // (e.g. `Array.fromAsync` is ES2026 but only moved on 2026-03-10, while the
+  // 2026-07-02 batch was the ES2027 cohort).
+  "Array.fromAsync": 2026,
   "Error.isError": 2026,
-  "Math.sumPrecise": 2026,
-  "Atomics.pause": 2026,
-  "json-parse-with-source": 2026,
-  "immutable-arraybuffer": 2026,
   "iterator-sequencing": 2026,
-  "joint-iteration": 2026,
-  "await-dictionary": 2026,
-  caller: 2026,
-  "legacy-regexp": 2026,
-  IsHTMLDDA: 2026,
-  __proto__: 2026,
-  __getter__: 2026,
-  __setter__: 2026,
+  "json-parse-with-source": 2026,
+  "Math.sumPrecise": 2026,
+  "uint8array-base64": 2026,
+  upsert: 2026,
+
+  // ES2027 — stage 4, ratified after the ES2026 cut-off, so still the DRAFT
+  // edition (see CURRENT_DRAFT_EDITION). Not a published-edition claim.
+  "Atomics.pause": 2027,
+  "explicit-resource-management": 2027,
+  "joint-iteration": 2027,
+  Temporal: 2027,
+
+  // Still stage-3 proposals. Records whose runner scope is `proposal` are
+  // bucketed to -1 before edition classification ever runs; these entries only
+  // catch a tagged test that arrives without that scope, and park it in the
+  // draft tail rather than inflating a published edition.
+  "immutable-arraybuffer": 2027,
+  "await-dictionary": 2027,
+
+  // Annex B. NOT draft-edition features — these are legacy web-compat surface
+  // that has been in the spec for years. They are parked in the draft bucket
+  // only to preserve the pre-#3639 behaviour of keeping them out of a published
+  // edition's numerator; the `/annexB/` path heuristic below cannot reach them
+  // because a `features:` tag wins at priority 3. Giving Annex B its own bucket
+  // is follow-up work.
+  caller: 2027,
+  "legacy-regexp": 2027,
+  IsHTMLDDA: 2027,
+  __proto__: 2027,
+  __getter__: 2027,
+  __setter__: 2027,
 };
 
+// (#3639) Sentinels for buckets that are NOT editions. A test lands in one of
+// these because its frontmatter carries no edition evidence — not because it
+// was measured against that edition. They are deliberately named so no reader
+// (or chart) mistakes them for a conformance figure, and they are excluded
+// from the landing page's edition timeline the same way `Proposals` (-1) is.
+const UNCLASSIFIED_LEGACY = -2; // frontmatter present, no edition marker at all
+const UNCLASSIFIED_UNTAGGED = -3; // modern `esid:`, no edition-specific feature tag
+
 const EDITION_NAMES: Record<number, string> = {
-  0: "≤ ES3",
   5: "ES5",
   2015: "ES2015",
   2016: "ES2016",
@@ -309,10 +347,31 @@ const EDITION_NAMES: Record<number, string> = {
   2024: "ES2024",
   2025: "ES2025",
   2026: "ES2026",
+  2027: "ES2027",
   [-1]: "Proposals",
+  [UNCLASSIFIED_LEGACY]: "Unclassified (legacy)",
+  [UNCLASSIFIED_UNTAGGED]: "Unclassified (untagged)",
 };
 
-const EDITION_ORDER = [0, 5, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026, -1];
+const EDITION_ORDER = [
+  5,
+  2015,
+  2016,
+  2017,
+  2018,
+  2019,
+  2020,
+  2021,
+  2022,
+  2023,
+  2024,
+  2025,
+  2026,
+  2027,
+  -1,
+  UNCLASSIFIED_LEGACY,
+  UNCLASSIFIED_UNTAGGED,
+];
 
 /**
  * (#2910) Map a landing-page edition label (as used in feature-examples.json's
@@ -323,7 +382,12 @@ const EDITION_ORDER = [0, 5, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 202
  */
 export function editionStringToYear(label: string): number | undefined {
   const s = label.trim();
-  if (s === "≤ ES3" || s === "ES3 / Core" || s === "ES3") return 0;
+  // (#3639) Legacy labels kept so feature-examples rows written before the
+  // rename still resolve; they now map to the unclassified-legacy sentinel
+  // rather than to a phantom "edition 0".
+  if (s === "≤ ES3" || s === "ES3 / Core" || s === "ES3") return UNCLASSIFIED_LEGACY;
+  if (s === "Unclassified (legacy)") return UNCLASSIFIED_LEGACY;
+  if (s === "Unclassified (untagged)") return UNCLASSIFIED_UNTAGGED;
   if (s === "ES5") return 5;
   if (s === "Proposals") return -1;
   const m = /^ES(\d{4})$/.exec(s);
@@ -345,15 +409,27 @@ interface Frontmatter {
 }
 
 /**
- * Read up to 2048 bytes from a test file and parse YAML frontmatter.
+ * Read the head of a test file and parse YAML frontmatter.
  * Frontmatter is wrapped in slash-star --- ... --- star-slash markers.
+ *
+ * (#3626) The window used to be 2 KB. That silently mis-classified **4,220 of
+ * 53,273** test262 files: when the frontmatter block ends past the window, the
+ * closing-marker lookup returns -1, the file is recorded as `noFrontmatter` and
+ * `classifyEdition` takes its "legacy pre-YAML test" branch → **ES5**. The
+ * affected files are the procedurally generated ones with long `info:` blocks
+ * (class/private-method `dstr`, dynamic-import, await-using, top-level-await),
+ * so ES2015+ tests were being counted in the ES5 column — 4,144 of them.
+ * Measured largest frontmatter end offset in the whole checkout: **6,180
+ * bytes**; 64 KB is ~10x that with room for future growth. No pass/fail result
+ * changes, only which edition column a test lands in.
  */
-function parseFrontmatter(filePath: string): Frontmatter {
+const FRONTMATTER_WINDOW_BYTES = 65536;
+
+export function parseFrontmatter(filePath: string): Frontmatter {
   let content: string;
   try {
-    // Read only first 2KB — frontmatter averages ~900 bytes
     const fd = readFileSync(filePath);
-    content = fd.subarray(0, 2048).toString("utf-8");
+    content = fd.subarray(0, FRONTMATTER_WINDOW_BYTES).toString("utf-8");
   } catch {
     return {};
   }
@@ -412,7 +488,7 @@ function parseFrontmatter(filePath: string): Frontmatter {
  * Determine the ES edition year for a test file based on frontmatter.
  * Returns 5 for ES5, 2015..2025 for ES2015+, 0 for unknown.
  */
-function classifyEdition(fm: Frontmatter, filePath: string): number {
+export function classifyEdition(fm: Frontmatter, filePath: string): number {
   // Priority 1: explicit es5id → ES5
   if (fm.es5id) return 5;
 
@@ -457,15 +533,35 @@ function classifyEdition(fm: Frontmatter, filePath: string): number {
   if (norm.includes("/built-ins/WeakRef/")) return 2021;
   if (norm.includes("/built-ins/FinalizationRegistry/")) return 2021;
 
-  // If it has esid and we got here, it's likely ES2015+ (esid was introduced in ES2015)
-  if (fm.esid) return 2015;
+  // (#3639) `esid` is the MODERN frontmatter field — every new test262 file
+  // carries one regardless of which edition specified the feature. Reading it
+  // as "ES2015+" turned ES2015 into a catch-all: measured 2026-07-25, 5,436
+  // tests arrived here by this fall-through versus only 2,990 via the real
+  // `es6id` signal, i.e. ~60% of "ES2015" was sorted there by ACCIDENT. It
+  // swept in all 347 `eval` tests, among much else.
+  //
+  // A bucket assigned by absence-of-evidence is not an edition measurement, so
+  // it now reports as UNCLASSIFIED rather than borrowing ES2015's name. The
+  // landing page treats any label it does not recognise as an edition scope
+  // (see `t262IsEditionScope`) the way it already treats `Proposals` — shown,
+  // but kept off the edition timeline.
+  if (fm.esid) return UNCLASSIFIED_UNTAGGED;
 
   // Tests with no YAML frontmatter at all are old-style legacy tests (ES3/ES5 era).
   // They pre-date the YAML metadata format and live in language/ or built-ins/.
   if (fm.noFrontmatter) return 5;
 
-  // Default: unknown (e.g. features listed but none in our map, no esid)
-  return 0;
+  // Default: frontmatter present but carrying NO edition marker at all
+  // (no es5id/es6id/features/esid) and no path heuristic matched.
+  //
+  // (#3639) This was labelled "≤ ES3", which invited reading it as an ES3
+  // conformance measurement. It is not: it is a 273-test RESIDUE, and the ES3
+  // language's own features are scored elsewhere by their frontmatter vintage
+  // — `eval` (347 tests) sorts to the esid fall-through above, `with` (181)
+  // and the `Function` constructor (509) carry `es5id` and sort to ES5. Those
+  // are ES3 §15.1.2.1 / §12.10 / §15.3 and sit at ~37% combined, so "≤ ES3
+  // 84%" was never a claim about ES3 support.
+  return UNCLASSIFIED_LEGACY;
 }
 
 // ---------------------------------------------------------------------------
@@ -484,6 +580,59 @@ function normalizeStatus(s: string): StatusKey {
 // ---------------------------------------------------------------------------
 // (#2910) Landing-page feature-row reconciliation
 // ---------------------------------------------------------------------------
+
+/**
+ * (#2871 follow-up) Normalize a result record's `file` ("test/language/…/x.js") to the
+ * path form the report page keys on. The page strips the leading "test/" when
+ * it displays a file, so the per-file edition map uses the same stripped form.
+ */
+function stripTestPrefix(file: string): string {
+  return file.replace(/^test\//, "");
+}
+
+/**
+ * (#2871 follow-up) The runner's proposal-scope rules, for files the walk below
+ * adds. A record carries the runner's own verdict (`scope_official === false`);
+ * a file the lane never reported does not, so without this a Temporal or
+ * staging test would be indexed as the draft edition and appear inside the
+ * published range. Mirrors `classifyTestScope` / `PROPOSAL_FEATURES` in
+ * tests/test262-runner.ts — that module is not importable here (it pulls in the
+ * compiler), so keep the two in sync if the runner's list changes.
+ */
+const PROPOSAL_FEATURE_TAGS = new Set(["Temporal", "import-defer", "source-phase-imports"]);
+
+function isProposalScopeByPath(relPath: string, features: string[] | undefined): boolean {
+  if (relPath.startsWith("staging/")) return true;
+  if (relPath.includes("built-ins/Temporal/")) return true;
+  return (features ?? []).some((feature) => PROPOSAL_FEATURE_TAGS.has(feature));
+}
+
+/**
+ * Every test file in the checkout, as "language/…/x.js"
+ * paths. The per-file edition index is completed from this walk so it covers
+ * tests that the lane being processed never reported — the standalone lane's
+ * results are scored against the same index, and a file only IT reports would
+ * otherwise have no edition and silently drop out of an edition-scoped count
+ * (measured before this: 241 of one bucket's 4,547 failures).
+ */
+function walkTestFiles(testDir: string, prefix = ""): string[] {
+  const out: string[] = [];
+  let entries: ReturnType<typeof readdirSync>;
+  try {
+    entries = readdirSync(testDir, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const entry of entries) {
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      out.push(...walkTestFiles(join(testDir, entry.name), rel));
+    } else if (entry.name.endsWith(".js") && !entry.name.endsWith("_FIXTURE.js")) {
+      out.push(rel);
+    }
+  }
+  return out;
+}
 
 /** A test after edition classification, used to compute reconciled row counts. */
 export interface ClassifiedTest {
@@ -750,6 +899,14 @@ async function main() {
   // edition 100% ⇒ every row 100%). This is the reconciled row source for the
   // landing-page edition sections (replaces the path-glob population of #2774).
   const featureBuckets: Record<number, Record<string, { pass: number; fail: number; ce: number; skip: number }>> = {};
+  // (#2871 follow-up) Per-FILE edition classification for the non-passing tests, written
+  // to `test262-file-editions.json`. The report page's "Error Patterns" section
+  // can only filter by category otherwise, which is far too coarse: nearly
+  // every category contains at least one ES5 test, so selecting ES5 on the
+  // slider left the list essentially unfiltered. Restricted to non-`pass`
+  // records (that is all the error/skip views consume) to keep the artifact
+  // ~1 MB instead of ~3 MB.
+  const fileEditions: Record<string, string> = {};
   // Diagnostic: how many tests in each edition carry at least one `features:` tag.
   const taggedCounts: Record<number, number> = {};
   // (#2910) Every classified, tagged test — the input to computeFeatureRowCounts
@@ -773,6 +930,7 @@ async function main() {
     if (record.scope_official === false || record.scope === "proposal") {
       const proposalBucket = buckets[-1] ?? (buckets[-1] = { pass: 0, fail: 0, ce: 0, skip: 0 });
       proposalBucket[resolveStatusKey(record, hostFree)]++;
+      fileEditions[stripTestPrefix(file)] = EDITION_NAMES[-1];
       unclassified++;
       continue;
     }
@@ -788,11 +946,22 @@ async function main() {
     // so headline-only feature rows can be scored by their `testCategories`.
     pathTests.push({ file, status: key });
 
-    if (edition === 0 || edition === -1) unclassified++;
+    // (#3639) The unclassified set is now explicit: the two absence-of-evidence
+    // sentinels plus Proposals. Edition 0 no longer exists — it was the old
+    // "≤ ES3" default and is now UNCLASSIFIED_LEGACY.
+    if (edition === UNCLASSIFIED_LEGACY || edition === UNCLASSIFIED_UNTAGGED || edition === -1) unclassified++;
     else classified++;
 
     const bucket = buckets[edition] ?? (buckets[edition] = { pass: 0, fail: 0, ce: 0, skip: 0 });
     bucket[key]++;
+
+    // (#2871 follow-up) Index this file's edition so the report's error-pattern
+    // / skipped-test lists can filter per test rather than per category.
+    // EVERY test is indexed, not just the host lane's failures: the standalone
+    // root-cause map is scored against this same file (editions are a property
+    // of the test's frontmatter, not of the compile target), and a test that
+    // passes with a JS host but fails standalone must still resolve.
+    fileEditions[stripTestPrefix(file)] = EDITION_NAMES[edition] ?? `ES${edition}`;
 
     // (#2910) Slice this test into per-edition per-feature-tag buckets. Only
     // standard editions (year > 0) carry feature rows on the landing page;
@@ -948,6 +1117,44 @@ async function main() {
   if (categoriesPath !== outputPath) {
     writeFileSync(categoriesPath, JSON.stringify(categoryEditionOutput, null, 2) + "\n");
     console.log(`Wrote ${Object.keys(categoryEditionOutput).length} category × edition buckets to: ${categoriesPath}`);
+  }
+
+  // (#2871 follow-up) Per-file edition index. Shape:
+  //   { "editions": ["ES5", "ES2015", …],
+  //     "files": { "language/statements/for/x.js": 0, … } }
+  // The edition label is stored as an index into `editions` purely to keep the
+  // file small (~48k entries). Consumed by the report page's Error Patterns and
+  // Skipped Tests sections so the edition slider filters per TEST, not per
+  // category (a category-level filter is a near no-op: almost every category
+  // contains at least one ES5 test), and by build-test262-report.mjs to give
+  // each standalone root-cause bucket a per-edition count breakdown.
+  const fileEditionsPath = outputPath.replace(/test262-editions\.json$/, "test262-file-editions.json");
+  if (fileEditionsPath !== outputPath) {
+    // Complete the index from the checkout so it covers every test, not only
+    // the ones this lane reported. Records win where both exist — they carry
+    // the proposal-scope verdict, which frontmatter alone cannot express.
+    let fromWalk = 0;
+    for (const file of walkTestFiles(join(test262Root, "test"))) {
+      if (fileEditions[file] !== undefined) continue;
+      const fm = parseFrontmatter(join(test262Root, "test", file));
+      const edition = isProposalScopeByPath(file, fm.features) ? -1 : classifyEdition(fm, `test/${file}`);
+      fileEditions[file] = EDITION_NAMES[edition] ?? `ES${edition}`;
+      fromWalk++;
+    }
+    if (fromWalk > 0) console.log(`Indexed ${fromWalk} test file(s) not present in this lane's results.`);
+    const editionLabels: string[] = [];
+    const labelIndex = new Map<string, number>();
+    const filesOut: Record<string, number> = {};
+    for (const [file, label] of Object.entries(fileEditions)) {
+      let idx = labelIndex.get(label);
+      if (idx === undefined) {
+        idx = editionLabels.push(label) - 1;
+        labelIndex.set(label, idx);
+      }
+      filesOut[file] = idx;
+    }
+    writeFileSync(fileEditionsPath, JSON.stringify({ editions: editionLabels, files: filesOut }) + "\n");
+    console.log(`Wrote ${Object.keys(filesOut).length} per-file edition entries to: ${fileEditionsPath}`);
   }
 
   // (#2910) Reconcile the landing-page feature-row counts with the edition

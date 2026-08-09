@@ -34,17 +34,19 @@
 // declares many `{ validate(value) {...} }` and one `{ validate() {...} }`
 // (line 545, `createEslintrcErrorSchema`) inline schema literals.
 
-import { mkdirSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
 import { compileProject } from "../src/index.js";
+import { ESLINT_DEV_DEPENDENCY_SKIP, requireEslintFile, resolveEslintFile } from "./helpers/eslint.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const TMP_DIR = resolve(__dirname, "../.tmp/issue-1557");
+const ESLINT_CONFIG = resolveEslintFile("lib/config/config.js");
 
 function writeFile(name: string, src: string): string {
   mkdirSync(dirname(join(TMP_DIR, name)), { recursive: true });
@@ -116,7 +118,7 @@ s3.validate(42);
     );
 
     const r = await compileProject(entry, { allowJs: true });
-    expect(r.success).toBe(true);
+    expect(r.success, r.errors.map((error) => error.message).join("\n")).toBe(true);
     if (!r.success) return;
     expect(WebAssembly.validate(r.binary)).toBe(true);
   });
@@ -130,16 +132,14 @@ s3.validate(42);
    * package is not installed locally (e.g. clean CI checkout that doesn't
    * pull npm devDependencies).
    */
-  it("emits valid Wasm for compileProject(node_modules/eslint/lib/config/config.js)", async () => {
-    const eslintConfig = "/home/user/js2wasm/node_modules/eslint/lib/config/config.js";
-    if (!existsSync(eslintConfig)) {
-      // eslint not installed — skip rather than fail. The synthetic repro
-      // above is the primary regression gate.
-      return;
-    }
-    const r = await compileProject(eslintConfig, { allowJs: true });
-    expect(r.success).toBe(true);
-    if (!r.success) return;
-    expect(WebAssembly.validate(r.binary)).toBe(true);
-  });
+  it.skipIf(ESLINT_CONFIG === null)(
+    `emits valid Wasm for compileProject(node_modules/eslint/lib/config/config.js) ${ESLINT_DEV_DEPENDENCY_SKIP}`,
+    async () => {
+      const eslintConfig = requireEslintFile(ESLINT_CONFIG, "lib/config/config.js");
+      const r = await compileProject(eslintConfig, { allowJs: true });
+      expect(r.success, r.errors.map((error) => error.message).join("\n")).toBe(true);
+      if (!r.success) return;
+      expect(WebAssembly.validate(r.binary)).toBe(true);
+    },
+  );
 });

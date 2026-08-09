@@ -1,13 +1,22 @@
 ---
 id: 2846
-title: "compiled-acorn corrupts BigInt literals — parsed/marshalled as float64, losing value AND the `bigint` string"
+title: "compiled Acorn corrupts arbitrary-width BigInt literal value and bigint fields beyond signed i64"
 status: done
+assignee: ttraenkler/codex-acorn
 sprint: 69
 priority: high
 horizon: m
 feasibility: hard
 created: 2026-06-29
-completed: 2026-06-30
+updated: 2026-07-26
+reopened: 2026-07-26
+completed: 2026-07-26
+loc-budget-allow:
+  - src/codegen/expressions/call-identifier.ts
+  - src/codegen/registry/imports.ts
+func-budget-allow:
+  - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
+  - src/runtime.ts::<anonymous>#78
 task_type: bugfix
 area: codegen, runtime
 language_feature: bigint
@@ -94,3 +103,48 @@ boolean/symbol brand).
 
 Regression test: `tests/issue-2846.test.ts` (registry-level dedup-distinctness
 assertion that fails on unfixed main + BigInt round-trip e2e guards).
+
+## Reopened 2026-07-26 — arbitrary-width literals still wrap through i64
+
+The original fix correctly preserves the BigInt brand and is exact for values
+representable by the native signed-i64 carrier. The full pinned-Acorn/Test262
+differential under #1712 widened the corpus beyond that range and shows both
+ESTree fields wrapping modulo 2^64:
+
+```text
+expected value:  18446744073709551615n
+actual value:    -1n
+expected bigint: "18446744073709551615"
+actual bigint:   "-1"
+```
+
+Larger powers similarly become `0n`, and very large decimal literals retain
+only their signed low 64 bits. This is a residual of the same Acorn literal
+fidelity contract, so the completed issue is reopened rather than filing a
+duplicate. The completed four-shard baseline contains **97 affected files /
+194 sloppy+strict variants**.
+
+The new requirement is arbitrary-width preservation. At minimum, Acorn's
+source-derived `bigint` string field must remain exact even when the runtime
+cannot yet represent the `value` as a native mathematical BigInt. Prefer a
+canonical boxed arbitrary-width representation that also makes `value` exactly
+match node-acorn; do not silently preserve the current signed-i64 truncation.
+
+### Reopened acceptance
+
+- Literal values beyond `2^63 - 1`, `2^64 - 1`, and substantially beyond 64
+  bits preserve the exact decimal digits in the ESTree `bigint` field.
+- The ESTree `value` is an exact BigInt matching node-acorn, or its deferred
+  representation is explicitly blocked on a separately accepted arbitrary-
+  precision runtime design; signed-i64 truncation is not accepted.
+- The full pinned-Acorn/Test262 differential reports zero BigInt AST
+  mismatches for the recorded corpus.
+
+### Final resolution (2026-07-26)
+
+Nullable primitive return lowering now preserves the explicit-null union while
+carrying a non-null BigInt result as `externref`. Acorn's
+`stringToBigInt` path therefore keeps arbitrary-width host BigInts exact rather
+than narrowing through signed i64. The focused regression covers a 128-bit
+boundary value and the clean published-head Test262 differential reports zero
+BigInt AST mismatches across **53,259 files / 102,312 variants**.

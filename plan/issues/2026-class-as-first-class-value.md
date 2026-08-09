@@ -1,11 +1,11 @@
 ---
 id: 2026
 title: "classes are not first-class values: new K() on a parameter throws 'No dependency provided for extern class', .constructor identity broken"
-status: ready
+status: in-progress
 assignee: ttraenkler/cs-2158
 sprint: 63
 created: 2026-06-10
-updated: 2026-06-18
+updated: 2026-07-20
 completed: 2026-06-18
 priority: medium
 feasibility: hard
@@ -16,6 +16,10 @@ language_feature: classes
 goal: core-semantics
 related: [1395, 1116, 1721, 1992]
 origin: "2026-06-10 spec-conformance sweep (classes agent): verified on main"
+loc-budget-allow:
+  - src/codegen/expressions/new-super.ts
+coercion-sites-allow:
+  - src/codegen/expressions/new-super.ts
 ---
 
 # #2026 — no runtime constructor-object identity
@@ -23,9 +27,16 @@ origin: "2026-06-10 spec-conformance sweep (classes agent): verified on main"
 ## Problem
 
 ```ts
-const C = class { v = 3; m(): number { return this.v * 2; } };
-function make(K: any): any { return new K(); }
-make(C).m()
+const C = class {
+  v = 3;
+  m(): number {
+    return this.v * 2;
+  }
+};
+function make(K: any): any {
+  return new K();
+}
+make(C).m();
 // wasm: THROW: No dependency provided for extern class "K"   node: 6
 ```
 
@@ -74,7 +85,9 @@ needs `className` to land in `ctx.classSet` (line ~3201), `ctx.funcConstructorMa
 (function-style ctor, line ~2899), or `ctx.externClasses` (line ~3317). For
 
 ```ts
-function make(K: any): any { return new K(); }
+function make(K: any): any {
+  return new K();
+}
 ```
 
 `K` is a value-bound parameter. The type checker gives `new K` the type `any`,
@@ -103,7 +116,7 @@ instance.
 Add a **uniform constructor entry** for every WasmGC-struct-backed class, of a
 single shared signature, reachable by `call_ref` off a funcref keyed by the
 class-tag carried on the class-object descriptor. The static `new ClassName()`
-path is **left exactly as is** (no perf change, no boxing): only the *dynamic*
+path is **left exactly as is** (no perf change, no boxing): only the _dynamic_
 `new <value>()` fallback changes.
 
 **Uniform ctor signature** (one func type, registered once):
@@ -122,6 +135,7 @@ path is **left exactly as is** (no perf change, no boxing): only the *dynamic*
 
 **Per-class trampoline** `__ctor_uniform_<Name>`: a generated function of type
 `$UniformCtor` that
+
 1. reads each `<Class>_new` param `i` from `$argv[i]` (null-extern when
    `i >= argv.len`, matching the existing missing-arg padding), coercing the
    boxed externref to the param's ValType via the **existing** unbox helpers
@@ -158,7 +172,8 @@ follow-up:
 
 **PR-1 — uniform ctor trampolines + tag→funcref table (the core).**
 
-*File: `src/codegen/expressions/new-super.ts`*
+_File: `src/codegen/expressions/new-super.ts`_
+
 - New `emitUniformCtorTrampoline(ctx, className): number` — generates
   `__ctor_uniform_<Name>` (type `$UniformCtor`), returns its funcIdx. Call it
   once per WasmGC-struct class, right after the class ctor is registered (near
@@ -169,7 +184,8 @@ follow-up:
   `(table funcref)` (or `(array funcref)` global) once; idempotent. Populate
   slot `classTag → trampoline funcIdx` when a trampoline is emitted.
 
-*File: `src/codegen/expressions/new-super.ts`, `compileNewExpression`*
+_File: `src/codegen/expressions/new-super.ts`, `compileNewExpression`_
+
 - **New fallback arm**, inserted as the LAST resolution attempt — AFTER the
   extern-class arm (line ~3317) and the builtin-ctor arms, immediately BEFORE
   the terminal `reportError(... "Unsupported new expression ...")` at line
@@ -187,6 +203,7 @@ follow-up:
   zero boxing, zero perf regression. This is the hard acceptance criterion.
 
 **PR-2 — `.constructor` identity through the descriptor (`new A().constructor === A`).**
+
 - `src/codegen/property-access.ts:3457` already routes `.constructor` on a
   statically-typed instance to the `__class_<Name>` singleton via
   `emitLazyClassObjectGet` — that path already makes `new A().constructor === A`
@@ -201,6 +218,7 @@ follow-up:
   the externref-receiver `.constructor` as a follow-up; do not block PR-1.
 
 **PR-3 — spread / arity / derived-class args in the dynamic path.**
+
 - `new K(...args)` and arg-count mismatches: extend the `$argv` builder to
   flatten spread (reuse `flattenCallArgs`); the trampoline already null-pads
   missing params. Subclass-through-value (`new K()` where `K` is a derived
@@ -265,6 +283,7 @@ extern.convert_any                 ;; box instance
   (line ~2831); leave it — the new fallback must run only after it misses.
 
 ### Files to touch (summary)
+
 - `src/codegen/expressions/new-super.ts` — trampoline emit, ctor-table ensure,
   dynamic-new fallback arm.
 - `src/codegen/class-bodies.ts` (~line 664) — emit/slot the uniform trampoline
@@ -295,7 +314,7 @@ provided for extern class "K"` — confirmed. Traced the live path precisely:
   `$ClassName` struct** as instances (`extern.ts:317`), so the value in `K` is an
   `extern.convert_any`'d `$ClassName` struct carrying `__tag`. To read it
   generically I register one shared open base `$ClassTagBase =
-  (sub (struct (field $__tag i32) (field $__shape_brand i32)))` and set it as the
+(sub (struct (field $__tag i32) (field $__shape_brand i32)))` and set it as the
   superTypeIdx of every class-ROOT struct (`class-bodies.ts:632`); the existing
   `__shape_brand` sentinel (626) already dodges the #2009 `$AnyString`
   canonical-merge. Then `any.convert_extern` + `ref.test $ClassTagBase` +
@@ -309,35 +328,35 @@ provided for extern class "K"` — confirmed. Traced the live path precisely:
 
 - **PR-1 (core) — DONE (host mode).** Implemented as a tag-dispatch chain in
   `emitDynamicNewFallback` (`new-super.ts`), NOT the `$ClassTagBase` supertype
-  + `(table funcref)` from the original sketch. Rationale discovered during
-  implementation: `ref.test $Class` cannot distinguish structurally-identical
-  classes (WasmGC iso-recursive canonicalization merges two `{x:number}`
-  classes; a `ref.test` matches both — verified, it mis-constructed B for A).
-  So discrimination MUST be by the `__tag` value, not the struct type. The
-  shipped design avoids any struct-hierarchy change (lower regression surface
-  than a shared base supertype): read `__tag` (field 0) via a
-  `ref.test`/`ref.cast` against any shape-compatible candidate struct (valid
-  under canonicalization), then a flat `tag == classTag` if/else chain selects
-  `<Class>_new`, threading boxed args coerced to each ctor param's ValType. No
-  host import → pure-Wasm. No-match base falls through to the legacy `__new_`
-  host import (host mode) so genuine builtins (Test262Error) keep working;
-  gated off in `noJsHost` mode. Static `new C()` path UNCHANGED (the
-  `classSet` arm is never touched). Repro → 6. Tests: `tests/issue-2026-dynamic-new.test.ts`
-  (6 cases incl. shape-collision dispatch, arg threading, static regression
-  guard, builtin fallthrough). tsc + biome clean; stack-balance gate OK.
-  **Standalone (`--target wasi`) deferred:** `new K()` already failed on main
-  in standalone (the unused `__new_K` import trips the WASI allowlist at
-  module-build, independent of dispatch). Fixing it needs suppressing that
-  import registration in `collectUnknownConstructorImports` for value-bound
-  class identifiers — split out to avoid PR-1 regression risk (PR-1b).
+  - `(table funcref)` from the original sketch. Rationale discovered during
+    implementation: `ref.test $Class` cannot distinguish structurally-identical
+    classes (WasmGC iso-recursive canonicalization merges two `{x:number}`
+    classes; a `ref.test` matches both — verified, it mis-constructed B for A).
+    So discrimination MUST be by the `__tag` value, not the struct type. The
+    shipped design avoids any struct-hierarchy change (lower regression surface
+    than a shared base supertype): read `__tag` (field 0) via a
+    `ref.test`/`ref.cast` against any shape-compatible candidate struct (valid
+    under canonicalization), then a flat `tag == classTag` if/else chain selects
+    `<Class>_new`, threading boxed args coerced to each ctor param's ValType. No
+    host import → pure-Wasm. No-match base falls through to the legacy `__new_`
+    host import (host mode) so genuine builtins (Test262Error) keep working;
+    gated off in `noJsHost` mode. Static `new C()` path UNCHANGED (the
+    `classSet` arm is never touched). Repro → 6. Tests: `tests/issue-2026-dynamic-new.test.ts`
+    (6 cases incl. shape-collision dispatch, arg threading, static regression
+    guard, builtin fallthrough). tsc + biome clean; stack-balance gate OK.
+    **Standalone (`--target wasi`) deferred:** `new K()` already failed on main
+    in standalone (the unused `__new_K` import trips the WASI allowlist at
+    module-build, independent of dispatch). Fixing it needs suppressing that
+    import registration in `collectUnknownConstructorImports` for value-bound
+    class identifiers — split out to avoid PR-1 regression risk (PR-1b).
 - **PR-1b — DONE (standalone/WASI parity).** Two no-JS-host gaps, not one:
   1. **`__new_<name>` host-import registration** (`collectUnknownConstructorImports`
      finalize, `declarations.ts:1436`). For `new K()` on a value-bound class
      identifier it registered `env.__new_K`, which the strict-import allowlist
-     gate (`addImport`, #1524) rejected *at registration time* — a single
+     gate (`addImport`, #1524) rejected _at registration time_ — a single
      `new K()` failed the whole standalone compile (`Host import "env.__new_K"
-     … not on the dual-mode allowlist`). Fix: in no-JS-host mode (`ctx.wasi ||
-     ctx.standalone`), after the WASI-error-name native path, **skip the host
+… not on the dual-mode allowlist`). Fix: in no-JS-host mode (`ctx.wasi ||
+ctx.standalone`), after the WASI-error-name native path, **skip the host
      import entirely** — it is never satisfiable with no host, and the pure-Wasm
      `emitDynamicNewFallback` (PR-1) is the resolution path (it reads the
      class-object `__tag` and tag-dispatches to `<Class>_new`; its no-match base
@@ -350,7 +369,7 @@ provided for extern class "K"` — confirmed. Traced the live path precisely:
      its CSV-notify branch and `global.get`'d the static-methods-CSV **string**
      global, which under nativeStrings is **not a real module global** — baking
      a `-1` global index that crashed binary emit (`global index out of range —
-     -1`) the *instant a class flowed as a value* (`use(A)`, `const v:any=A`,
+-1`) the _instant a class flowed as a value_ (`use(A)`, `const v:any=A`,
      hence `new K()`). Reproduced on **unmodified upstream/main** under
      `--target wasi`, and did NOT under `--target standalone` (which already
      skipped the import) — so it pre-dates #2026 and is a general
@@ -368,6 +387,7 @@ provided for extern class "K"` — confirmed. Traced the live path precisely:
   `env` imports + instantiate with `{}`). PR-1 host test
   (`issue-2026-dynamic-new.test.ts`, 7) still green. Files: `declarations.ts`,
   `index.ts`. Branch `issue-2026-standalone-ctor-abi`.
+
 - **PR-2 — DONE (host + standalone), cs-2158, 2026-06-18.** `.constructor === A`
   for the externref/`any`-typed receiver. New `tryEmitConstructorViaTag`
   (`property-access.ts`), called from `compilePropertyAccess` when
@@ -394,6 +414,7 @@ provided for extern class "K"` — confirmed. Traced the live path precisely:
   **This satisfies the remaining acceptance criterion** (`.constructor === A`
   true). With PR-1 (repro → 6), PR-1b (standalone parity), and PR-2, all
   acceptance criteria are met. PR-3 (below) is residual hardening only.
+
 - **PR-3 (residual, OPTIONAL):** spread/arity/derived-class args in the dynamic
   path (reuse `flattenCallArgs`); new.target threading. **Verified already
   working on current main** (smoke-tested 2026-06-18): `new K(5)` arg threading →
@@ -403,6 +424,7 @@ provided for extern class "K"` — confirmed. Traced the live path precisely:
   follow-up if a test262 case needs it.
 
 ### Test files to verify
+
 - New `tests/issue-2026.test.ts`:
   - `function make(K:any){return new K()}; const C=class{v=3;m(){return this.v*2}}; make(C).m()` → 6
   - `new A().constructor === A` → true (PR-2)
@@ -419,3 +441,70 @@ provided for extern class "K"` — confirmed. Traced the live path precisely:
 ## Reopened 2026-07-20 (harvest cross-reference)
 
 Marked `status: done` but the test262 harvest shows **1464 live failures still citing #2026** in the error field. Premature close — reopened as `ready`. See the sprint-73 harvest note.
+
+## PR-3 runtime-spread residual — preliminary FYI standalone evidence (2026-07-20)
+
+Slice claim: `ttraenkler/fix-2026-dynamic-new-spread` (the historical issue
+assignee above is intentionally preserved).
+
+The preliminary standalone result set contains **2,754 rows** that fan out from
+eager compilation of `temporalHelpers.js`, specifically its generic helper
+shape:
+
+```js
+new construct(...constructArgs);
+```
+
+This is an include fan-out, not 2,754 distinct direct uses. The compiler eagerly
+compiles the shared helper even for tests that never call it, so one unsupported
+dynamic spread contaminates unrelated include consumers.
+
+Fresh-main revalidation at `6a2bb824aec9d4` reproduced the same #2026
+compile-error signature in both requested probes:
+
+- direct canary:
+  `built-ins/Temporal/Duration/prototype/negated/subclassing-ignored.js`
+- include-only canary:
+  `built-ins/Array/fromAsync/asyncitems-arraylike-promise.js`
+
+### Root cause and implementation rationale
+
+The existing runtime-argv path accepted only statically typed Wasm vec refs.
+An untyped JavaScript helper parameter such as `constructArgs` compiles as an
+`externref`, even when its runtime value is the compiler's boxed vec, so the
+path rejected it as non-array-like.
+
+The fix normalizes an externref spread carrier through the established
+externref-to-canonical-vec coercion, then threads the materialized values through
+the existing class-tag dispatch. Standalone/WASI uses native
+`__extern_length`/`__extern_get_idx` readers and introduces no `env` imports.
+
+Two correctness details are part of the same runtime-argv boundary:
+
+- Every positional argument and spread source is evaluated once and retained in
+  source order before copying. The previous two-pass shape evaluated all spread
+  sources before positional arguments, observably reordering side effects.
+- Runtime-argv reader dependencies are registered before callee/argument body
+  emission. Registering a host helper while visiting a later spread shifts
+  defined-function indices and can retarget an earlier positional call.
+
+The no-tag path now preserves IsConstructor behavior: host mode routes the
+materialized argv through the existing `Reflect.construct` bridge, while
+standalone/WASI throws a real catchable TypeError. Static `new C()` and the
+array-literal spread path are unchanged.
+
+### Validation
+
+- Focused Vitest: **29/29 passed** across
+  `issue-2026-dynamic-new-varspread`, `issue-2026-dynamic-new-spread`,
+  `issue-2026-dynamic-new`, and `issue-2026-standalone-dynamic-new`.
+- New controls cover host + standalone, zero `env` imports, generic `any`
+  array carriers, mixed positional/spread source order and single evaluation,
+  ctor arity/surplus arguments, and catchable non-constructor TypeError.
+- Both FYI probes now compile past #2026. Their only remaining compile error is
+  the unrelated explicit-receiver `Reflect.get` blocker #2046
+  (`L1060:24` direct; `L1194:24` include-only).
+- FYI probes were non-authoritative smokes because the local runtime is
+  Node 24 / Unicode 16 rather than the pinned Node 25 / Unicode 17 contract;
+  the before/after diagnostic signature is still useful implementation
+  evidence, but must not be compared with CI pass-rate baselines.

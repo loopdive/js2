@@ -15,17 +15,9 @@ import { ts } from "../../ts-api.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { allocLocal } from "../context/locals.js";
 import { getOrRegisterDvWindowType } from "../dataview-native.js";
-import {
-  addStringConstantGlobal,
-  ensureExnTag,
-  getArrTypeIdxFromVec,
-  getOrRegisterResizableAbType,
-  getOrRegisterVecType,
-  resolveWasmType,
-} from "../index.js";
-import { stringConstantExternrefInstrs } from "../native-strings.js";
+import { getArrTypeIdxFromVec, getOrRegisterResizableAbType, getOrRegisterVecType, resolveWasmType } from "../index.js";
 import { compileExpression } from "../shared.js";
-import { noJsHost } from "./helpers.js";
+import { buildThrowJsErrorInstrs, noJsHost } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { inferArrayElementType } from "./new-super.js";
 
@@ -91,12 +83,10 @@ export function tryCompileIndexedBuiltinNew(
       fctx.body.push({ op: "i32.or" });
       {
         const rangeErrMsg = "RangeError: Invalid array buffer length";
-        addStringConstantGlobal(ctx, rangeErrMsg);
-        const tagIdx = ensureExnTag(ctx);
         fctx.body.push({
           op: "if",
           blockType: { kind: "empty" },
-          then: [...stringConstantExternrefInstrs(ctx, rangeErrMsg), { op: "throw", tagIdx }],
+          then: buildThrowJsErrorInstrs(ctx, "RangeError", rangeErrMsg, { flush: fctx }),
           else: [],
         });
       }
@@ -133,12 +123,10 @@ export function tryCompileIndexedBuiltinNew(
       fctx.body.push({ op: "f64.lt" });
       {
         const rangeErrMsg = "RangeError: Invalid array buffer max byte length";
-        addStringConstantGlobal(ctx, rangeErrMsg);
-        const tagIdx = ensureExnTag(ctx);
         fctx.body.push({
           op: "if",
           blockType: { kind: "empty" },
-          then: [...stringConstantExternrefInstrs(ctx, rangeErrMsg), { op: "throw", tagIdx }],
+          then: buildThrowJsErrorInstrs(ctx, "RangeError", rangeErrMsg, { flush: fctx }),
           else: [],
         });
       }
@@ -153,12 +141,10 @@ export function tryCompileIndexedBuiltinNew(
       fctx.body.push({ op: "i32.gt_s" });
       {
         const rangeErrMsg = "RangeError: ArrayBuffer byteLength exceeds maxByteLength";
-        addStringConstantGlobal(ctx, rangeErrMsg);
-        const tagIdx = ensureExnTag(ctx);
         fctx.body.push({
           op: "if",
           blockType: { kind: "empty" },
-          then: [...stringConstantExternrefInstrs(ctx, rangeErrMsg), { op: "throw", tagIdx }],
+          then: buildThrowJsErrorInstrs(ctx, "RangeError", rangeErrMsg, { flush: fctx }),
           else: [],
         });
       }
@@ -197,12 +183,10 @@ export function tryCompileIndexedBuiltinNew(
       fctx.body.push({ op: "i32.or" });
       {
         const rangeErrMsg = "RangeError: Invalid array buffer length";
-        addStringConstantGlobal(ctx, rangeErrMsg);
-        const tagIdx = ensureExnTag(ctx);
         fctx.body.push({
           op: "if",
           blockType: { kind: "empty" },
-          then: [...stringConstantExternrefInstrs(ctx, rangeErrMsg), { op: "throw", tagIdx }],
+          then: buildThrowJsErrorInstrs(ctx, "RangeError", rangeErrMsg, { flush: fctx }),
           else: [],
         });
       }
@@ -300,12 +284,10 @@ export function tryCompileIndexedBuiltinNew(
 
         {
           const rangeErrMsg = "RangeError: Start offset is outside the bounds of the buffer";
-          addStringConstantGlobal(ctx, rangeErrMsg);
-          const tagIdx = ensureExnTag(ctx);
           fctx.body.push({
             op: "if",
             blockType: { kind: "empty" },
-            then: [...stringConstantExternrefInstrs(ctx, rangeErrMsg), { op: "throw", tagIdx }],
+            then: buildThrowJsErrorInstrs(ctx, "RangeError", rangeErrMsg, { flush: fctx }),
             else: [],
           });
         }
@@ -364,12 +346,10 @@ export function tryCompileIndexedBuiltinNew(
 
         {
           const rangeErrMsg = "RangeError: Invalid DataView length";
-          addStringConstantGlobal(ctx, rangeErrMsg);
-          const tagIdx = ensureExnTag(ctx);
           fctx.body.push({
             op: "if",
             blockType: { kind: "empty" },
-            then: [...stringConstantExternrefInstrs(ctx, rangeErrMsg), { op: "throw", tagIdx }],
+            then: buildThrowJsErrorInstrs(ctx, "RangeError", rangeErrMsg, { flush: fctx }),
             else: [],
           });
         }
@@ -467,6 +447,7 @@ export function tryCompileIndexedBuiltinNew(
           // bufferByteLength - offset default computed above).
           { op: "local.get", index: lenF64 },
           { op: "i32.trunc_sat_f64_s" },
+          { op: "ref.null.extern" }, // #3371 constructProto (intrinsic default)
           { op: "struct.new", typeIdx: dvWinTypeIdx },
           // DataView locals are externref (EXTERNREF_GLOBAL_NAMES) — hand back an
           // externref so the wrapper survives the variable store and is recovered
@@ -640,12 +621,10 @@ export function tryCompileIndexedBuiltinNew(
       // If any check true, throw RangeError
       {
         const rangeErrMsg = "RangeError: Invalid array length";
-        addStringConstantGlobal(ctx, rangeErrMsg);
-        const tagIdx = ensureExnTag(ctx);
         fctx.body.push({
           op: "if",
           blockType: { kind: "empty" },
-          then: [...stringConstantExternrefInstrs(ctx, rangeErrMsg), { op: "throw", tagIdx }],
+          then: buildThrowJsErrorInstrs(ctx, "RangeError", rangeErrMsg, { flush: fctx }),
           else: [],
         });
       }

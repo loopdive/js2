@@ -37,6 +37,7 @@ import type { Instr, ValType, WasmFunction } from "../ir/types.js";
  */
 import { forEachChild, ts } from "../ts-api.js";
 import type { AsyncCfgPlan, AsyncCfgState, AsyncCpsPlan, AsyncResumePoint } from "./async-cps.js";
+import { awaitIsStaticallyResolved } from "./async-static.js"; // (#3723) settled-local flow test
 import {
   ASYNC_CPS_ENABLED,
   FORAWAIT_ITER_SPILL,
@@ -57,8 +58,10 @@ import {
   planAsyncCfg,
   planAsyncGenCfg,
   planLinearAwaits,
+  tryCatchAsyncSpillInfo,
 } from "./async-cps.js";
 import { ensureNativeGeneratorResultType } from "./generators-native.js";
+import { undefinedExternInstrs } from "./any-helpers.js"; // (#3178) canonical undefined for the done-result value
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3 / #2710) stable-regime minting
 import {
   type AsyncDriveRuntime,
@@ -75,6 +78,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import {
   ERROR_FIELD,
   MODE_FIELD,
+  MODE_NEXT,
   MODE_THROW,
   PARAM_FIELD_OFFSET,
   RESULT_DONE_FIELD,
@@ -82,6 +86,8 @@ import {
   SENT_FIELD,
   STATE_FIELD,
   defaultSpillInstr,
+  initializeSpillLocals,
+  restoreSpills,
   sanitizeTypeName,
   setStateI32FromConst,
   storeSpills,
@@ -89,7 +95,7 @@ import {
 import { ensureI32Condition, resolveWasmType } from "./index.js";
 import { ensureExnTag } from "./registry/imports.js";
 import { addFuncType, getOrRegisterRefCellType } from "./registry/types.js";
-import { coerceType, compileExpression, compileStatement } from "./shared.js";
+import { coerceType, compileExpression, compileStatement, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { resolveSpillLocalValType } from "./statements/variables.js";
 
 /**
@@ -132,6 +138,14 @@ export interface HostAsyncImports {
   settleResolveIdx: number;
   /** `Promise_settle_reject(p, reason) -> externref(undefined)`. */
   settleRejectIdx: number;
+  /** Exact prepared Promise<void> fulfillment provider. */
+  undefinedIdx?: number;
+}
+
+function asyncUndefinedInstrs(hostImports: HostAsyncImports | undefined): Instr[] {
+  return hostImports?.undefinedIdx === undefined
+    ? [{ op: "ref.null.extern" }]
+    : [{ op: "call", funcIdx: hostImports.undefinedIdx }];
 }
 
 /**
@@ -216,7 +230,21 @@ export function asyncFnNeedsHostDrive(
   // field (buildAsyncFrameInfo `spillCellInfo`) — no pattern-shape decline
   // remains.
   const linear = planLinearAwaits(fn, plan);
-  if (linear === null) return false;
+  if (linear === null) {
+    // (#3587) try/catch-across-await — the #2906 3c CFG machine (catch regions
+    // as states + routed dispatcher) drives this shape on the HOST settle
+    // backend too: rejection delivery is backend-agnostic (the reject step
+    // adapter stashes ERROR + MODE_THROW, the resume prelude re-throws, the
+    // route enters the catch chain). Before this, the shape fell to the legacy
+    // synchronous pass-through, which CANNOT deliver an awaited rejection —
+    // execution continued straight past the rejected await and the catch never
+    // ran (the exact construct signalling "I care about this rejection" was
+    // what disabled rejection handling). Same widened spill-safe rule as the
+    // native lane.
+    const tc = computeTryCatchSpills(ctx, fn, plan);
+    if (tc !== null) return tc.spillTypes.every(isSpillSafeType);
+    return false;
+  }
   // Parity with asyncFnNeedsCps/asyncFnNeedsDrive: a lone `await Promise.all(...)`
   // already yields a real Promise the legacy identity path resolves correctly.
   if (linear.segments.length === 1 && awaitedExprIsPromiseCombinator(linear.segments[0]!.awaitedExpr)) return false;
@@ -242,8 +270,11 @@ export function asyncFnNeedsHostDrive(
 export interface AsyncFrameInfo {
   /** Source function name (the `__async_resume_f<name>` / struct name stem). */
   functionName: string;
-  /** The async function/method declaration this frame belongs to. */
-  decl: ts.FunctionLikeDeclaration;
+  /**
+   * The async function/method declaration this frame belongs to. Prepared IR
+   * frames omit it because their CFG and value carriers are already closed.
+   */
+  decl?: ts.FunctionLikeDeclaration;
   /** Per-frame `$AsyncFrame_<name>` state struct typeIdx. */
   stateTypeIdx: number;
   /** Field index of the i32 resume mode (`MODE_FIELD`). FrameLayout. */
@@ -326,6 +357,17 @@ export interface AsyncFrameInfo {
    * the shared resume dispatch. Set in `ensureAsyncResumeFunction`; async-gen only.
    */
   settleDoneStateId?: number;
+  /**
+   * (#3178) The synthetic COMPLETED pseudo-state id (== `cfg.states.length`,
+   * one past the dense real ids). Its dispatch arm fulfils `{value: undefined,
+   * done: true}` and RUNS NO LEADS — unlike the real `settleDone` state, which
+   * carries any trailing body statements after the last yield as leads, so
+   * re-pointing STATE at it re-executes body code (§27.6.3.x forbids: a
+   * completed generator runs no further body). The uncaught-throw catch and
+   * the `.return()`/`.throw()` drivers complete the frame by pointing STATE
+   * here. Set in `ensureAsyncResumeFunction`; async-gen only.
+   */
+  completedStateId?: number;
   /**
    * (#2865) Capture-cell metadata of a NESTED producer (lifted with captures
    * as leading params — nested-declarations.ts). The frame captures the cells
@@ -418,6 +460,9 @@ export function buildAsyncFrameInfo(
     decl,
     plan,
     derived.length === 0 ? paramNames : paramNames.concat(derived.map((d) => d.name)),
+    // (#2906 3c-ii) The native backend admits return-in-try; the spill
+    // computation must see the SAME plan the gate/producer admitted.
+    hostImports === undefined,
   );
   const derivedSpillInit = new Map<number, number>();
   for (const d of derived) {
@@ -588,6 +633,135 @@ function bindingLiveAcrossLaterAwait(name: string, k: number, plan: AsyncCpsPlan
  * inert), so the wasi single-await routing decision is unchanged by #2906 — only
  * the emitted resume machine generalizes.
  */
+/**
+ * (#3723) Can this `await` actually SUSPEND?
+ *
+ * `await v` on a non-thenable never yields control to a pending job — §27.7.5.3
+ * resumes with `v` unchanged. So an await whose operand type carries no `then`
+ * is a pass-through no matter what the syntax looks like.
+ *
+ * This exists because {@link import("./async-static.js").awaitIsStaticallyResolved}
+ * cannot answer it. That helper is deliberately a checker-free LEAF module (it
+ * imports only `ts-api`, so the IR front-end can consume it without closing the
+ * #3324 import cycle), which means it recognises literals and
+ * `Promise.resolve(<static>)` but must answer "unknown" for a bare identifier —
+ * "which may hold a pending Promise". For `let n = 8; await (n + 1)` that is
+ * needlessly pessimistic: `n` is a `number`.
+ *
+ * The cost of the pessimism was not a missed optimisation. Under WASI the drive
+ * lane returns a real `$Promise` externref, and there is no host microtask queue
+ * to drain it, so a numeric consumer coerced the externref to `f64` and read
+ * **NaN**. Declining to claim an await that provably cannot suspend puts the
+ * function back on the AG0 synchronous path, which returns the value.
+ *
+ * Conservative by construction — it must never claim "cannot suspend" for
+ * something that can:
+ *   - `any` / `unknown` may hold a thenable at runtime → assume it can suspend.
+ *   - a union is safe only if EVERY constituent is non-thenable.
+ *   - anything carrying a `then` member (a real Promise, a custom thenable) →
+ *     can suspend.
+ *
+ * Being wrong in the safe direction just keeps today's behaviour (claim it, run
+ * the frame machine); being wrong the other way would silently drop a real
+ * suspension.
+ */
+/** Strip the wrappers that do not change an awaited value's identity. */
+function unwrapAwaitOperand(expr: ts.Expression): ts.Expression {
+  let e = expr;
+  while (
+    ts.isParenthesizedExpression(e) ||
+    ts.isAsExpression(e) ||
+    ts.isTypeAssertionExpression(e) ||
+    ts.isNonNullExpression(e)
+  ) {
+    e = e.expression;
+  }
+  return e;
+}
+
+/**
+ * (#3723) `await p` where `p` is a local whose ONLY value is a statically
+ * settled one — `let p = Promise.resolve(7); … await p`.
+ *
+ * The syntactic analysis in `async-static.ts` stops at "a bare identifier may
+ * hold a pending Promise", which is true in general and wrong here: this binding
+ * is written once, from an initializer that helper itself certifies as settled.
+ * Under WASI that pessimism is not a lost optimisation — see
+ * {@link awaitProvablyCannotSuspend} — it produces NaN.
+ *
+ * Soundness rests on SYMBOL identity, not on names: the operand's symbol must
+ * have exactly one declaration, that declaration must be a variable with an
+ * initializer {@link awaitIsStaticallyResolved} accepts, and no assignment
+ * anywhere in the enclosing function may target that same symbol. Comparing
+ * symbols (rather than text) is what makes shadowing, a same-named parameter,
+ * and a same-named binding in a sibling scope all safe — each is a different
+ * symbol, so none of them can be mistaken for this one.
+ *
+ * The assignment scan walks nested functions too, so a closure that mutates the
+ * binding disqualifies it. Every uncertain answer is `false`, which just leaves
+ * today's behaviour in place.
+ */
+function awaitedLocalIsProvablySettled(ctx: CodegenContext, awaitExpr: ts.AwaitExpression): boolean {
+  const checker = ctx.checker;
+  const operand = unwrapAwaitOperand(awaitExpr.expression);
+  if (!ts.isIdentifier(operand)) return false;
+
+  const symbol = checker.getSymbolAtLocation(operand);
+  if (symbol === undefined) return false;
+  const decls = symbol.getDeclarations() ?? [];
+  if (decls.length !== 1) return false; // re-declared / ambiguous → not provable
+  const decl = decls[0]!;
+  if (!ts.isVariableDeclaration(decl) || !ts.isIdentifier(decl.name)) return false;
+  if (decl.initializer === undefined) return false; // `let p;` — value comes from elsewhere
+  if (!awaitIsStaticallyResolved(decl.initializer)) return false;
+
+  // The scope to police: the function (or file) the declaration lives in. Any
+  // write to this symbol inside it means the value at the await is not provable.
+  let scope: ts.Node = decl;
+  while (scope.parent !== undefined && !ts.isSourceFile(scope) && !ts.isFunctionLike(scope)) {
+    scope = scope.parent;
+  }
+
+  let assigned = false;
+  const targetsSymbol = (e: ts.Expression): boolean => {
+    const bare = unwrapAwaitOperand(e);
+    return ts.isIdentifier(bare) && checker.getSymbolAtLocation(bare) === symbol;
+  };
+  const scan = (node: ts.Node): void => {
+    if (assigned) return;
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+      targetsSymbol(node.left)
+    ) {
+      assigned = true;
+      return;
+    }
+    if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken) &&
+      targetsSymbol(node.operand as ts.Expression)
+    ) {
+      assigned = true;
+      return;
+    }
+    forEachChild(node, scan);
+  };
+  scan(scope);
+  return !assigned;
+}
+
+function awaitProvablyCannotSuspend(ctx: CodegenContext, awaitExpr: ts.AwaitExpression): boolean {
+  const operandType = ctx.checker.getTypeAtLocation(awaitExpr.expression);
+  const parts = operandType.isUnion() ? operandType.types : [operandType];
+  for (const part of parts) {
+    if ((part.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0) return false;
+    if (part.getProperty("then") !== undefined) return false;
+  }
+  return true;
+}
+
 export function asyncFnNeedsDrive(ctx: CodegenContext, fn: ts.FunctionLikeDeclaration, plan: AsyncCpsPlan): boolean {
   if (!ASYNC_CPS_ENABLED) return false;
   if (plan.awaitPoints.length === 0) {
@@ -604,17 +778,32 @@ export function asyncFnNeedsDrive(ctx: CodegenContext, fn: ts.FunctionLikeDeclar
     if (fa === null) return false;
     return fa.spillTypes.every(isSpillSafeType);
   }
-  const anyRealSuspension = plan.awaitPoints.some((a) => plan.awaitedStaticallyResolved.get(a) !== true);
+  // (#3723) An await is a real suspension only if it is neither statically
+  // resolved (syntactic, `async-static.ts`) nor provably non-thenable (typed,
+  // `awaitProvablyCannotSuspend`). The second test is what the checker-free leaf
+  // module cannot make.
+  const anyRealSuspension = plan.awaitPoints.some(
+    (a) =>
+      plan.awaitedStaticallyResolved.get(a) !== true &&
+      !awaitProvablyCannotSuspend(ctx, a) &&
+      !awaitedLocalIsProvablySettled(ctx, a),
+  );
   if (!anyRealSuspension) return false; // fully await-elidable → sync + resolved promise
-  const linear = planLinearAwaits(fn, plan);
+  // (#2906 3c-ii) The native gate admits return-in-try (return-through-finally
+  // via the return hook's finalizer replay); the host gate does not.
+  const linear = planLinearAwaits(fn, plan, { allowReturnInTry: true });
   if (linear === null) {
     // (#2906 slice 3a) `while`-with-await loop shape (native drive lane only).
     // Eligible when every widened loop spill local has a spill-safe type — a
     // non-spill-safe field (e.g. a non-nullable ref with no inert default) would
     // make the frame layout invalid, so those fall back to legacy.
     const loop = computeLoopSpills(ctx, fn, plan);
-    if (loop === null) return false;
-    return loop.spillTypes.every(isSpillSafeType);
+    if (loop !== null) return loop.spillTypes.every(isSpillSafeType);
+    // (#2906 3c) try/catch-around-await shape (native drive lane only) — same
+    // widened spill-safe rule as the loop machine.
+    const tc = computeTryCatchSpills(ctx, fn, plan);
+    if (tc !== null) return tc.spillTypes.every(isSpillSafeType);
+    return false;
   }
   // Parity with asyncFnNeedsCps: a lone `await Promise.all(...)`/`.race`/… already
   // yields a real Promise — keep it on the legacy identity path.
@@ -699,6 +888,57 @@ function computeForAwaitSpills(
 }
 
 /**
+ * (#2906 3c) The spill layout for the bounded try/catch-around-await shape:
+ * EVERY own body local, conservatively (the catch chain can read pre-try
+ * locals after any number of suspends, so per-await liveness buys little), a
+ * resume-binding name typed via {@link resumeBindingValType} (matching the
+ * SENT-coercion target), others via `resolveSpillLocalValType` defaulting to
+ * externref — the same widened rule the 3a loop machine uses — PLUS the catch
+ * param (externref: the exn-tag payload / rejection reason). Returns `null`
+ * when the body is not the bounded shape, or when the catch param SHADOWS an
+ * own local / fn param (the shared local slot would alias — bounded slice).
+ */
+function computeTryCatchSpills(
+  ctx: CodegenContext,
+  decl: ts.FunctionLikeDeclaration,
+  plan: AsyncCpsPlan,
+): { spillNames: string[]; spillTypes: ValType[] } | null {
+  const info = tryCatchAsyncSpillInfo(decl, plan);
+  if (info === null) return null;
+  const declByName = collectVarDeclsByName(decl);
+  // `collectVarDeclsByName` also picks up a CATCH clause's own
+  // variableDeclaration (it IS a ts.VariableDeclaration) — those entries are
+  // the catch params themselves, not shadowing body locals.
+  const isCatchClauseDecl = (node: ts.VariableDeclaration): boolean =>
+    node.parent !== undefined && ts.isCatchClause(node.parent);
+  const paramNames = new Set<string>();
+  for (const p of decl.parameters) if (ts.isIdentifier(p.name)) paramNames.add(p.name.text);
+  for (const cp of info.catchParamNames) {
+    const existing = declByName.get(cp);
+    if (existing !== undefined && !isCatchClauseDecl(existing)) return null; // shadows a body local
+    if (paramNames.has(cp)) return null; // shadows a fn param
+  }
+  const rbTypeByName = new Map<string, ValType>();
+  for (const seg of info.segments) {
+    if (seg.resumeBinding) rbTypeByName.set(seg.resumeBinding.name, resumeBindingValType(ctx, seg.resumeBinding));
+  }
+  const spillNames: string[] = [];
+  const spillTypes: ValType[] = [];
+  for (const [name, node] of declByName) {
+    if (paramNames.has(name)) continue;
+    if (isCatchClauseDecl(node)) continue; // catch-param spills are added below (externref)
+    const rbType = rbTypeByName.get(name);
+    spillNames.push(name);
+    spillTypes.push(rbType ?? resolveSpillLocalValType(ctx, node) ?? { kind: "externref" });
+  }
+  for (const cp of info.catchParamNames) {
+    spillNames.push(cp);
+    spillTypes.push({ kind: "externref" });
+  }
+  return { spillNames, spillTypes };
+}
+
+/**
  * The body locals that are live across ANY await and so must be spilled into the
  * frame (the multi-await generalization of the generator's `bodySpills`).
  *
@@ -720,6 +960,9 @@ function computeAsyncSpills(
   decl: ts.FunctionLikeDeclaration,
   plan: AsyncCpsPlan,
   paramNames: string[],
+  // (#2906 3c-ii) True on the native backend — mirrors the native gate's
+  // `allowReturnInTry` so the spill computation sees the SAME linear plan.
+  allowReturnInTry = false,
 ): { spillNames: string[]; spillTypes: ValType[] } {
   // (#2865) Async GENERATOR (`async function*` — the only asterisked shape that
   // reaches the async frame): EVERY yield is a suspend point (the resume fn
@@ -756,13 +999,16 @@ function computeAsyncSpills(
     }
     return { spillNames, spillTypes };
   }
-  const linear = planLinearAwaits(decl, plan);
+  const linear = planLinearAwaits(decl, plan, { allowReturnInTry });
   if (linear === null) {
     // (#2906 slice 3a) `while`-with-await loop: widened spill set (all loop
     // own-locals). (#2906 slice 3b) for-await drive: loop own-locals + the
-    // synthetic async-iterator carrier local. Returns empty for any other body.
+    // synthetic async-iterator carrier local. (#2906 3c) try/catch-around-await:
+    // widened own-local set + the catch param. Returns empty for any other body.
     return (
-      computeLoopSpills(ctx, decl, plan) ?? computeForAwaitSpills(ctx, decl, plan) ?? { spillNames: [], spillTypes: [] }
+      computeLoopSpills(ctx, decl, plan) ??
+      computeForAwaitSpills(ctx, decl, plan) ??
+      computeTryCatchSpills(ctx, decl, plan) ?? { spillNames: [], spillTypes: [] }
     );
   }
   const paramSet = new Set(paramNames);
@@ -975,8 +1221,28 @@ function validateAsyncCfg(cfg: AsyncCfgPlan): string | null {
   for (let i = 0; i < cfg.handlers.length; i++) {
     const h = cfg.handlers[i]!;
     if (h.id !== i + 1) return `handler ids not dense (handlers[${i}].id === ${h.id})`;
-    // Nested regions need parent-chain replay in the catch — 3c follow-up.
-    if (h.parent !== 0) return `nested handler region ${h.id} (parent ${h.parent}) not yet supported`;
+    // (#2906 3c-iii) Nested regions are admitted for FINALIZER-FREE regions
+    // only: the nesting is encoded statically in the handler tags (an inner
+    // catch chunk is tagged with the enclosing region id), so the flat
+    // id-dispatch route needs no parent-chain walk. A nested region WITH a
+    // finalizer would need innermost-first finalizer-chain replay on one
+    // abrupt — not modeled; the producer never emits it, and this gate keeps
+    // it that way.
+    if (h.parent !== 0) {
+      if (h.finalizer.length > 0) {
+        return `nested handler region ${h.id} (parent ${h.parent}) with a finalizer not supported`;
+      }
+      if (h.parent < 1 || h.parent > cfg.handlers.length) return `handler ${h.id} parent ${h.parent} out of range`;
+      if (h.parent >= h.id) return `handler ${h.id} parent ${h.parent} must be an earlier region`;
+    }
+    // (#2906 3c) A routed catch region: the route enters catchState like a goto,
+    // so it must exist and carry no resume prelude.
+    if (h.catchState !== undefined) {
+      if (!inRange(h.catchState)) return `handler ${h.id} catchState ${h.catchState} out of range`;
+      if (cfg.states[h.catchState]!.resumeFrom !== null) {
+        return `handler ${h.id} catchState ${h.catchState} has a resume prelude (route enters it like a goto)`;
+      }
+    }
   }
   return null;
 }
@@ -1017,7 +1283,38 @@ function validateAsyncCfg(cfg: AsyncCfgPlan): string | null {
  * — a stale capture would otherwise repoint every baked `call`/`ref.func`. The
  * N-segment body widens that window (more helpers) but the discipline is the same.
  */
-export function ensureAsyncResumeFunction(ctx: CodegenContext, info: AsyncFrameInfo, plan: AsyncCpsPlan): number {
+function planAsyncResumeCfg(
+  ctx: CodegenContext,
+  info: AsyncFrameInfo,
+  plan: AsyncCpsPlan | null,
+  preparedCfg: AsyncCfgPlan | undefined,
+): AsyncCfgPlan | null {
+  if (preparedCfg) return preparedCfg;
+  if (!info.decl) return null;
+  if (info.asyncGen) {
+    // #2570: keep delegate mode on the same carrier split as admission.
+    return planAsyncGenCfg(
+      info.decl,
+      isStandalonePromiseActive(ctx) ? { oracle: ctx.oracle } : null,
+      asyncGenDelegatesForPlan(ctx, info.decl, isStandalonePromiseActive(ctx) ? "carrier" : "awaitFree"),
+    );
+  }
+  if (!plan) return null;
+  // #3587: both settlement backends admit try/catch across await; host still
+  // refuses return-in-try and loops until its suspension rounds are widened.
+  return planAsyncCfg(ctx, info.decl, plan, {
+    allowLoops: !info.host,
+    allowTryCatch: true,
+    allowReturnInTry: !info.host,
+  });
+}
+
+export function ensureAsyncResumeFunction(
+  ctx: CodegenContext,
+  info: AsyncFrameInfo,
+  plan: AsyncCpsPlan | null,
+  preparedCfg?: AsyncCfgPlan,
+): number {
   if (info.resumeFuncIdx !== undefined) return info.resumeFuncIdx;
 
   // (#2906 slice 3/3a) Build the general CFG plan the emitter drives.
@@ -1035,17 +1332,11 @@ export function ensureAsyncResumeFunction(ctx: CodegenContext, info: AsyncFrameI
   // (`isAsyncGenDriveCandidate`) keyed the body's shape check on, so gate and
   // planner always see the same segment split. Type queries go through
   // `ctx.oracle` (the #1930 boundary), not the raw checker.
-  const cfg = info.asyncGen
-    ? planAsyncGenCfg(
-        info.decl,
-        isStandalonePromiseActive(ctx) ? { oracle: ctx.oracle } : null,
-        // (#2570) Emit-time delegates mode (registry-backed helper resolution)
-        // on the same lane split as the admission gate, so gate and planner
-        // always see the same segment shape.
-        asyncGenDelegatesForPlan(ctx, info.decl, isStandalonePromiseActive(ctx) ? "carrier" : "awaitFree"),
-      )
-    : planAsyncCfg(ctx, info.decl, plan, { allowLoops: !info.host });
+  const cfg = planAsyncResumeCfg(ctx, info, plan, preparedCfg);
   if (cfg === null) {
+    if (!info.decl) {
+      throw new Error("internal: prepared async-frame resume has no closed CFG");
+    }
     reportError(ctx, info.decl, "internal: async-frame resume built on an unsupported body shape (#2906 slice 1/3a)");
     info.resumeFuncIdx = -1;
     return -1;
@@ -1053,6 +1344,7 @@ export function ensureAsyncResumeFunction(ctx: CodegenContext, info: AsyncFrameI
 
   const cfgError = validateAsyncCfg(cfg);
   if (cfgError !== null) {
+    if (!info.decl) throw new Error(`internal: prepared async CFG violates the emitter contract — ${cfgError}`);
     reportError(ctx, info.decl, `internal: async CFG plan violates the emitter contract — ${cfgError} (#2906)`);
     info.resumeFuncIdx = -1;
     return -1;
@@ -1065,6 +1357,10 @@ export function ensureAsyncResumeFunction(ctx: CodegenContext, info: AsyncFrameI
   if (info.asyncGen) {
     const doneState = cfg.states.find((s) => s.terminator.kind === "settleDone");
     if (doneState !== undefined) info.settleDoneStateId = doneState.id;
+    // (#3178) Reserve the synthetic COMPLETED pseudo-state id (leads-free
+    // `{value: undefined, done: true}` arm appended past the dense real ids by
+    // `buildStateArm`'s base case). See the AsyncFrameInfo field doc.
+    info.completedStateId = cfg.states.length;
   }
 
   // Host backend never touches the native scheduler (no `$Promise` struct, no
@@ -1189,33 +1485,10 @@ export function ensureAsyncResumeFunction(ctx: CodegenContext, info: AsyncFrameI
     });
     resumeFctx.body.push({ op: "local.set", index: idx });
   }
-  // Load spills from the frame into locals (overwritten by a segment's lead on
-  // first entry into its owning state; restored from the frame on resume).
-  // (#2967 phase 3a) A force-boxed spill restores the CELL ref and registers
-  // the name in `boxedCaptures`, so declaration-inits (#1177
-  // boxedForInitStore), reads/writes, and nested-closure capture aliasing all
-  // route through the cell. Clone the (outer-shared) capture map before
-  // adding resume-local entries so the activating fctx is not polluted.
-  if (info.spillCellInfo !== undefined) {
-    resumeFctx.boxedCaptures = new Map(resumeFctx.boxedCaptures ?? []);
-  }
-  for (let i = 0; i < info.spillNames.length; i++) {
-    const idx = allocLocal(resumeFctx, info.spillNames[i]!, info.spillTypes[i]!);
-    resumeFctx.body.push({ op: "local.get", index: frameLocal });
-    resumeFctx.body.push({
-      op: "struct.get",
-      typeIdx: info.stateTypeIdx,
-      fieldIdx: info.spillFieldOffset + i,
-    });
-    resumeFctx.body.push({ op: "local.set", index: idx });
-    const cell = info.spillCellInfo?.get(i);
-    if (cell !== undefined) {
-      (resumeFctx.boxedCaptures ??= new Map()).set(info.spillNames[i]!, {
-        refCellTypeIdx: cell.refCellTypeIdx,
-        valType: cell.valType,
-      });
-    }
-  }
+  // Prepared plans restore exact live subsets at state entry. AST plans keep
+  // eager hydration; frame-core also preserves force-boxed capture aliases.
+  const selectiveSpillRestores = cfg.states.some((state) => state.restoreSpillNames !== undefined);
+  initializeSpillLocals(info, resumeFctx, frameLocal, !selectiveSpillRestores, info.spillCellInfo);
   // (#2865) A lifted-CLOSURE body (arrow / fn-expr) keeps its captures in the
   // `__self` struct — closures.ts materializes each into a NAMED local in the
   // lifted body's prologue, and every identifier/call site in the body resolves
@@ -1334,6 +1607,25 @@ export function ensureAsyncResumeFunction(ctx: CodegenContext, info: AsyncFrameI
     { op: "i32.const", value: v },
     { op: "local.set", index: inSrcTryLocal },
   ];
+  // (#2906 3c) ROUTED dispatcher: when any region carries a catchState, the
+  // per-call try/catch moves INSIDE the re-dispatch loop
+  // (`block { loop { try { chain } catch { route } } }`) so an abrupt
+  // completion can become a state transition into the region's catch chain
+  // (`br` back to the loop). Every arm's br-to-loop depth shifts by +1 (the
+  // try wraps the chain). Plans without a catchState keep the pre-3c
+  // `try { block { loop { chain } } } catch` wrap BYTE-IDENTICALLY.
+  const routedDispatch = cfg.handlers.some((h) => h.catchState !== undefined);
+  // (#3587) HOST-lane `catch_all` reason source, pre-registered BEFORE any
+  // state body / finalizer body is built: registering it later would shift
+  // defined-function indices already baked into detached instr arrays the
+  // shift walker cannot reach (the finalizer bodies ride plain local arrays
+  // until final assembly). Import indices are append-stable, so capturing the
+  // number here is safe. No-op (pure funcMap lookup) when already registered.
+  let hostGetCaughtIdx: number | undefined;
+  if (info.host && routedDispatch) {
+    hostGetCaughtIdx = ensureLateImport(ctx, "__get_caught_exception", [], [{ kind: "externref" }]);
+    flushLateImportShifts(ctx, resumeFctx);
+  }
 
   // Emit a state's resume prelude: re-throw a rejected predecessor await
   // (MODE_THROW — arming its handler region first so the finalizer runs), then
@@ -1392,9 +1684,7 @@ export function ensureAsyncResumeFunction(ctx: CodegenContext, info: AsyncFrameI
     }
   };
 
-  // One CFG state → its dispatch-arm body (#2906 slice 3). Every state emits:
-  // handler-region reset, the resume prelude (when this state is an await's
-  // `resumeState`), the handler-annotated lead statements, then its TERMINATOR.
+  // One CFG state → one dispatch arm: handler reset, resume prelude, lead, and terminator.
   // Suspend keeps the slice-1/2 emission verbatim (parameterized by
   // `resumeState`); `goto`/`condGoto` are `STATE=<target>; br <re-dispatch
   // loop>` — a target ≤ the current id is a loop back-edge, which is how
@@ -1408,12 +1698,14 @@ export function ensureAsyncResumeFunction(ctx: CodegenContext, info: AsyncFrameI
     // arm's own `if`, br1..br(st.id) = the enclosing if-chain arms, br(st.id+1)
     // = if(state==0), br(st.id+2) = the loop. Valid because state ids are dense
     // and equal to their if-chain nesting depth (validateAsyncCfg).
-    const loopDepth = st.id + 2;
+    // (#2906 3c) The routed dispatcher wraps the chain in an in-loop `try`,
+    // adding one block level — the single depth-accounting site.
+    const loopDepth = st.id + (routedDispatch ? 3 : 2);
     try {
-      // Reset the handler-region local at arm entry (a resume enters here
-      // fresh; a fast-path advance may re-dispatch from an in-region state).
+      // Reset the handler region at arm entry, including fast re-dispatch.
       let curHandler = 0;
       if (hasHandlers) out.push(...setHandler(0));
+      out.push(...restoreSpills(info, resumeFctx, frameLocal, st.restoreSpillNames ?? []));
       if (st.resumeFrom) emitDeliver(out, st.resumeFrom);
       // (#3228) Destructuring for-await head: bind the settled element carrier
       // into the head's pattern AFTER delivery, BEFORE the leads read the bound
@@ -1424,12 +1716,23 @@ export function ensureAsyncResumeFunction(ctx: CodegenContext, info: AsyncFrameI
       // in an in-region statement (or the terminator's own evaluation) runs the
       // region's finalizer; a throw outside (or in the inline finally itself)
       // does not.
+      // (#2906 3c-ii) While a lead is IN a region with a non-empty finalizer,
+      // arm the return hook's `pendingFinalizer` so a `return v` in that lead
+      // replays the finalizer before settling (return-through-finally).
       for (const { stmt, handler } of st.lead) {
         if (hasHandlers && handler !== curHandler) {
           curHandler = handler;
           out.push(...setHandler(curHandler));
         }
+        if (resumeFctx.asyncDriveReturn !== undefined) {
+          const fin = handler !== 0 ? cfg.handlers[handler - 1]?.finalizer : undefined;
+          resumeFctx.asyncDriveReturn.pendingFinalizer = fin !== undefined && fin.length > 0 ? fin : undefined;
+          resumeFctx.asyncDriveReturn.handlerLocal = hasHandlers ? inSrcTryLocal : undefined;
+        }
         compileStatement(ctx, resumeFctx, stmt);
+      }
+      if (resumeFctx.asyncDriveReturn !== undefined) {
+        resumeFctx.asyncDriveReturn.pendingFinalizer = undefined;
       }
 
       // (#2906 slice 3b) State-level injected step — the for-await planner uses
@@ -1478,7 +1781,7 @@ export function ensureAsyncResumeFunction(ctx: CodegenContext, info: AsyncFrameI
             out.push({ op: "call", funcIdx: hostImports!.promiseResolveIdx });
             out.push({ op: "local.set", index: pHostLocal });
             out.push(...setStateI32FromConst(info, frameLocal, STATE_FIELD, term.resumeState));
-            out.push(...storeSpills(info, resumeFctx, frameLocal));
+            out.push(...storeSpills(info, resumeFctx, frameLocal, term.spillNames));
             out.push({ op: "local.get", index: pHostLocal });
             out.push({ op: "i32.const", value: info.stepFulfillCbId! });
             out.push({ op: "local.get", index: frameLocal });
@@ -1604,7 +1907,7 @@ export function ensureAsyncResumeFunction(ctx: CodegenContext, info: AsyncFrameI
           // microtask resume enters it; advance → the re-dispatch enters it).
           out.push(...setStateI32FromConst(info, frameLocal, STATE_FIELD, term.resumeState));
           const suspendArm: Instr[] = [
-            ...storeSpills(info, resumeFctx, frameLocal),
+            ...storeSpills(info, resumeFctx, frameLocal, term.spillNames),
             // promise.callbacks = $PromiseCallback{stepFulfill, frame, stepReject, frame, promise.callbacks}
             { op: "local.get", index: pLocal },
             { op: "ref.func", funcIdx: info.stepFulfillFuncIdx! },
@@ -1683,6 +1986,20 @@ export function ensureAsyncResumeFunction(ctx: CodegenContext, info: AsyncFrameI
         }
         case "settleSent": {
           // `return await P` — fulfil the result promise with SENT directly.
+          // (#2906 3c-ii-b) When this settle state was entered from an IN-REGION
+          // await (`return await P` inside a try/finally), replay the region's
+          // await-free finalizer BEFORE fulfilling — the delivered value sits
+          // stably in SENT (the finalizer cannot await, so nothing overwrites
+          // it). Region local resets first: a throw inside the finally rejects
+          // WITHOUT re-entering the region (same rule as the inline finally
+          // leads and the return hook's replay). Empty finalizers (the 3c
+          // catch-only regions) emit nothing — byte-identical.
+          const settleRegion = st.resumeFrom !== null && st.resumeFrom.handler !== 0 ? st.resumeFrom.handler : 0;
+          const settleFin = settleRegion !== 0 ? cfg.handlers[settleRegion - 1]?.finalizer : undefined;
+          if (settleFin !== undefined && settleFin.length > 0) {
+            if (hasHandlers) out.push(...setHandler(0));
+            for (const f of settleFin) compileStatement(ctx, resumeFctx, f);
+          }
           out.push({ op: "local.get", index: resultPromiseLocal });
           out.push({ op: "local.get", index: frameLocal });
           out.push({
@@ -1699,7 +2016,7 @@ export function ensureAsyncResumeFunction(ctx: CodegenContext, info: AsyncFrameI
           // Fall off the body — fulfil with undefined. (`return v` inside the
           // lead already settles via the `asyncDriveReturn` hook and returns.)
           out.push({ op: "local.get", index: resultPromiseLocal });
-          out.push({ op: "ref.null.extern" });
+          out.push(...asyncUndefinedInstrs(hostImports));
           out.push({ op: "call", funcIdx: settleFulfillIdx });
           out.push({ op: "drop" });
           out.push({ op: "return" });
@@ -1785,7 +2102,12 @@ export function ensureAsyncResumeFunction(ctx: CodegenContext, info: AsyncFrameI
           // `next()`-promise with `{value: undefined, done: true}`.
           const resultTypeIdx = info.asyncGenResultTypeIdx!;
           out.push({ op: "local.get", index: resultPromiseLocal });
-          out.push({ op: "ref.null.extern" }); // value = undefined
+          // value = undefined. (#3178) Under the S1 undefined-singleton regime
+          // a null externref reads back as JS *null* — `{ value: undefined,
+          // done: true }` must carry the canonical undefined singleton or
+          // `assert.sameValue(result.value, undefined)` fails on the completed
+          // result. Legacy regime keeps the null extern (byte-identical).
+          for (const i of undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" } satisfies Instr]) out.push(i);
           out.push({ op: "i32.const", value: 1 }); // done = true
           out.push({ op: "struct.new", typeIdx: resultTypeIdx });
           out.push({ op: "extern.convert_any" });
@@ -1827,7 +2149,39 @@ export function ensureAsyncResumeFunction(ctx: CodegenContext, info: AsyncFrameI
   // generator trampoline. Recursion depth == state id (dense, validated), so
   // each arm's `br`-to-loop depth is `id + 2` inside `buildStateBody`.
   const buildStateArm = (i: number): Instr[] => {
-    if (i >= cfg.states.length) return [{ op: "unreachable" }];
+    if (i >= cfg.states.length) {
+      // (#3178) Synthetic COMPLETED arm (async gens only): fulfil `{value:
+      // undefined, done: true}` and RUN NO LEADS. The real settleDone state
+      // carries trailing body statements as leads, so completion (uncaught
+      // throw / `.return()` / `.throw()`) must NOT re-dispatch there —
+      // §27.6.3.x: a completed generator executes no further body. Terminal
+      // arm; anything else is a machine bug (unreachable).
+      if (info.asyncGen && info.completedStateId !== undefined) {
+        const completedBody = trackDetached([
+          { op: "local.get", index: resultPromiseLocal },
+          ...(undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" } satisfies Instr]),
+          { op: "i32.const", value: 1 }, // done = true
+          { op: "struct.new", typeIdx: info.asyncGenResultTypeIdx! },
+          { op: "extern.convert_any" },
+          { op: "call", funcIdx: settleFulfillIdx },
+          { op: "drop" },
+          { op: "return" },
+        ]);
+        return [
+          { op: "local.get", index: frameLocal },
+          { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: STATE_FIELD },
+          { op: "i32.const", value: info.completedStateId },
+          { op: "i32.eq" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: completedBody,
+            else: [{ op: "unreachable" }],
+          },
+        ];
+      }
+      return [{ op: "unreachable" }];
+    }
     const st = cfg.states[i]!;
     const then = trackDetached(buildStateBody(st));
     return [
@@ -1901,33 +2255,137 @@ export function ensureAsyncResumeFunction(ctx: CodegenContext, info: AsyncFrameI
   // Wrap the whole `block { loop { if-chain } }` dispatch in `try`/`catch $exn`.
   // Suspend / settle `return`s exit cleanly (a `return` in `try` skips `catch`),
   // so only a real throw reaches the handler.
-  const dispatch: Instr[] = [
-    {
+  //
+  // (#2906 3c) The shared reject tail (also the routed dispatcher's default
+  // route): replay any region's await-free finalizer, reject the result
+  // promise, and (async gens) re-point at the synthetic COMPLETED arm.
+  const rejectTail: Instr[] = [
+    // (#2906 Gap 3) run the finally before rejecting, if the throw crossed
+    // the try region (inline no-op array when the body has no finally).
+    ...catchFinallyInstrs,
+    { op: "local.get", index: resultPromiseLocal },
+    { op: "local.get", index: reasonLocal },
+    { op: "call", funcIdx: settleRejectIdx },
+    { op: "drop" },
+    // (#3178) §27.6.3.5 AsyncGeneratorStart step 4.f–g: an uncaught throw
+    // COMPLETES an async generator ([[AsyncGeneratorState]] = "completed")
+    // in addition to rejecting the current result promise. Re-point
+    // frame.STATE at the synthetic leads-free COMPLETED arm so a
+    // subsequent `.next()` fulfills `{value: undefined, done: true}`
+    // instead of re-driving the throwing step and rejecting again (the
+    // 280-test yield*-GetIterator/next error-semantics cohort surfaced
+    // by the F2 async-completion channel, #3417). NOT the settleDone
+    // state — that one carries trailing body statements as leads and
+    // would re-execute them. Plain async FUNCTIONS are untouched (no
+    // re-entry exists; gate keeps their bytes identical).
+    ...(info.asyncGen && info.completedStateId !== undefined
+      ? setStateI32FromConst(info, frameLocal, STATE_FIELD, info.completedStateId)
+      : []),
+  ];
+  if (routedDispatch) {
+    // (#2906 3c) ROUTED dispatcher: `block { loop { try { chain } catch $exn {
+    // route } } }`. The route turns an abrupt completion raised while a
+    // catch-carrying region is active into a STATE TRANSITION: bind the reason
+    // to the catch param (local now, spill for later suspends), consume the
+    // throw (MODE=NEXT — the prelude re-throw arm must not re-fire on stale
+    // MODE inside the catch chain), point STATE at the region's catch entry,
+    // and `br` the loop (depth 2 from inside the route's `if`: if=0, try=1,
+    // loop=2). No active region (or a region without a catchState) falls
+    // through to the shared reject tail, exactly the pre-3c behavior.
+    const routeCore: Instr[] = [];
+    for (const region of cfg.handlers) {
+      if (region.catchState === undefined) continue;
+      const bindInstrs: Instr[] = [];
+      if (region.catchParamName !== undefined) {
+        const paramLocal = resumeFctx.localMap.get(region.catchParamName);
+        if (paramLocal !== undefined) {
+          bindInstrs.push({ op: "local.get", index: reasonLocal }, { op: "local.set", index: paramLocal });
+        }
+        const spillIdx = info.spillNames.indexOf(region.catchParamName);
+        if (spillIdx >= 0) {
+          bindInstrs.push(
+            { op: "local.get", index: frameLocal },
+            { op: "local.get", index: reasonLocal },
+            { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: info.spillFieldOffset + spillIdx },
+          );
+        }
+      }
+      routeCore.push(
+        { op: "local.get", index: inSrcTryLocal },
+        { op: "i32.const", value: region.id },
+        { op: "i32.eq" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            ...bindInstrs,
+            ...setStateI32FromConst(info, frameLocal, MODE_FIELD, MODE_NEXT),
+            ...setStateI32FromConst(info, frameLocal, STATE_FIELD, region.catchState),
+            { op: "br", depth: 2 }, // if(0) → try(1) → loop(2): re-dispatch
+          ],
+        },
+      );
+    }
+    routeCore.push(...rejectTail);
+    // `catch $exn`: the thrown reason is on the stack.
+    const route: Instr[] = [{ op: "local.set", index: reasonLocal }, ...routeCore];
+    // (#3587) HOST lane `catch_all` parity: the legacy try/catch lowering also
+    // catches FOREIGN JS exceptions (a host import throwing, e.g. a TypeError
+    // from a property op) via `catch_all` + `__get_caught_exception`. Without
+    // this arm, claiming a try/catch shape on the host backend would let a
+    // synchronous host throw inside the try region ESCAPE the machine (result
+    // promise strands pending) where the legacy path caught it. The arm
+    // retrieves the recorded exception and runs an identical route —
+    // `structuredClone`d, never aliased (one Instr[] must not sit in two
+    // branches; DCE/late-import walkers would double-remap it). Native lane
+    // (`wasi`/`standalone`) has no JS sidecar — no catch_all, byte-identical.
+    let catchAllRoute: Instr[] | undefined;
+    if (info.host && hostGetCaughtIdx !== undefined) {
+      catchAllRoute = [
+        { op: "call", funcIdx: hostGetCaughtIdx },
+        { op: "local.set", index: reasonLocal },
+        ...(structuredClone(routeCore) as Instr[]),
+      ];
+    }
+    resumeFctx.body.push({
       op: "block",
       blockType: { kind: "empty" },
-      body: [{ op: "loop", blockType: { kind: "empty" }, body: chain }],
-    },
-  ];
-  resumeFctx.body.push({
-    op: "try",
-    blockType: { kind: "empty" },
-    body: dispatch,
-    catches: [
+      body: [
+        {
+          op: "loop",
+          blockType: { kind: "empty" },
+          body: [
+            {
+              op: "try",
+              blockType: { kind: "empty" },
+              body: chain,
+              catches: [{ tagIdx: exnTag, body: route }],
+              ...(catchAllRoute !== undefined ? { catchAll: catchAllRoute } : {}),
+            },
+          ],
+        },
+      ],
+    });
+  } else {
+    const dispatch: Instr[] = [
       {
-        tagIdx: exnTag,
-        body: [
-          { op: "local.set", index: reasonLocal },
-          // (#2906 Gap 3) run the finally before rejecting, if the throw crossed
-          // the try region (inline no-op array when the body has no finally).
-          ...catchFinallyInstrs,
-          { op: "local.get", index: resultPromiseLocal },
-          { op: "local.get", index: reasonLocal },
-          { op: "call", funcIdx: settleRejectIdx },
-          { op: "drop" },
-        ],
+        op: "block",
+        blockType: { kind: "empty" },
+        body: [{ op: "loop", blockType: { kind: "empty" }, body: chain }],
       },
-    ],
-  });
+    ];
+    resumeFctx.body.push({
+      op: "try",
+      blockType: { kind: "empty" },
+      body: dispatch,
+      catches: [
+        {
+          tagIdx: exnTag,
+          body: [{ op: "local.set", index: reasonLocal }, ...rejectTail],
+        },
+      ],
+    });
+  }
 
   resumePlaceholder.locals = resumeFctx.locals;
   resumePlaceholder.body = resumeFctx.body;
@@ -2042,9 +2500,23 @@ export function emitAsyncFrameStateMachine(
   info.boxedCaptures = fctx.boxedCaptures;
   info.readsCurrentThis = fctx.readsCurrentThis;
   info.selfCaptureLayout = fctx.selfCaptureLayout;
-  const resumeFuncIdx = ensureAsyncResumeFunction(ctx, info, plan);
+  emitAsyncFrameEntry(ctx, fctx, info, plan);
+}
+
+function emitAsyncFrameEntry(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  info: AsyncFrameInfo,
+  plan: AsyncCpsPlan | null,
+  preparedCfg?: AsyncCfgPlan,
+): void {
+  const host = info.host;
+  const hostImports = info.hostImports;
+  const promiseTypeIdx = info.promiseTypeIdx;
+  const resumeFuncIdx = ensureAsyncResumeFunction(ctx, info, plan, preparedCfg);
   if (resumeFuncIdx < 0) {
-    reportError(ctx, decl, "internal: async-frame resume function unavailable (#2895 slice 1)");
+    if (!info.decl) throw new Error("internal: prepared async-frame resume function unavailable");
+    reportError(ctx, info.decl, "internal: async-frame resume function unavailable (#2895 slice 1)");
     fctx.body.push({ op: "ref.null.extern" });
     return;
   }
@@ -2124,6 +2596,16 @@ export function emitAsyncFrameStateMachine(
   fctx.body.push({ op: "local.get", index: resultPromiseLocal });
   if (!host) fctx.body.push({ op: "extern.convert_any" });
   fctx.body.push({ op: "return" });
+}
+
+/** Emit a prepared, AST-free async CFG through the existing frame engine. */
+export function emitPreparedAsyncFrameStateMachine(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  info: AsyncFrameInfo,
+  cfg: AsyncCfgPlan,
+): void {
+  emitAsyncFrameEntry(ctx, fctx, info, null, cfg);
 }
 
 // ── async-generator PRODUCER core (#2906 slice 3d-i) ─────────────────────────
@@ -2621,7 +3103,12 @@ function emitAsyncGenReturnThrowHelpers(ctx: CodegenContext, info: AsyncFrameInf
   const resultTypeIdx = ensureNativeGeneratorResultType(ctx, { kind: "externref" });
   const frameRef: ValType = { kind: "ref", typeIdx: info.stateTypeIdx };
   const promiseRef: ValType = { kind: "ref", typeIdx: promiseTypeIdx };
-  const doneStateId = info.settleDoneStateId ?? 0;
+  // (#3178) Prefer the synthetic leads-free COMPLETED arm: the real settleDone
+  // state carries trailing body statements (after the last yield) as leads, so
+  // completing the frame by re-pointing STATE there made a subsequent `.next()`
+  // re-execute body code — §27.6.3.8/.9 require a completed generator to run
+  // no further body. settleDoneStateId kept as fallback for safety.
+  const doneStateId = info.completedStateId ?? info.settleDoneStateId ?? 0;
 
   // Shared prologue: cast the carrier, mint a fresh pending result promise, store
   // it into `frame.result_promise`. Leaves the frame ref in $f (local 2) and the

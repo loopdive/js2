@@ -13,10 +13,26 @@
 // arithmetic / control flow) and the vec group. The remaining primitives
 // are added here as their groups get wired.
 
-import { emitConstInstr } from "../lower.js";
-import { asVal, type IrBinop, type IrInstr, type IrType, type IrUnop } from "../nodes.js";
+import { emitConstInstr, type IrLowerResolver } from "../lower.js";
+import {
+  asVal,
+  type AllocSiteId,
+  type IrBinop,
+  type IrFuncRef,
+  type IrGlobalRef,
+  type IrInstr,
+  type IrStringLengthProvider,
+  type IrType,
+  type IrUnop,
+} from "../nodes.js";
+import type { IrStringConcatMode, IrStringEncoding } from "../string-runtime.js";
 import type { BlockType, Instr, ValType } from "../types.js";
-import type { BackendEmitter } from "./emitter.js";
+import type {
+  BackendEmitter,
+  BackendI32BitwiseOp,
+  BackendNumericConversionOp,
+  BackendScalarConstType,
+} from "./emitter.js";
 import type {
   IrClassLowering,
   IrClosureLowering,
@@ -29,6 +45,8 @@ import type {
 export class WasmGcEmitter implements BackendEmitter<Instr[]> {
   readonly backend = "wasmgc" as const;
 
+  constructor(private readonly stringRuntime?: IrLowerResolver) {}
+
   // #1584: sink = Instr[]. The factory returns a plain array and the raw escape
   // hatch is a direct `push` — so the emitted `Instr` stream is byte-identical
   // to the pre-#1584 inline emission (the WasmGC path is unchanged).
@@ -37,6 +55,58 @@ export class WasmGcEmitter implements BackendEmitter<Instr[]> {
   }
   pushRaw(out: Instr[], instr: Instr): void {
     out.push(instr);
+  }
+
+  emitStringConst(
+    value: string,
+    alloc: AllocSiteId | undefined,
+    out: Instr[],
+    storage?: IrGlobalRef,
+    materializer?: IrFuncRef,
+  ): void {
+    const ops = this.stringRuntime?.emitStringConst?.(value, alloc, storage, materializer);
+    if (!ops) throw new Error("WasmGcEmitter: string.const runtime is unavailable");
+    out.push(...ops);
+  }
+
+  emitStringConcat(alloc: AllocSiteId | undefined, mode: IrStringConcatMode, out: Instr[], provider?: IrFuncRef): void {
+    const ops = this.stringRuntime?.emitStringConcat?.(alloc, mode, provider);
+    if (!ops) throw new Error("WasmGcEmitter: string.concat runtime is unavailable");
+    out.push(...ops);
+  }
+
+  emitStringEquals(negate: boolean, out: Instr[], provider?: IrFuncRef): void {
+    const ops = this.stringRuntime?.emitStringEquals?.(provider);
+    if (!ops) throw new Error("WasmGcEmitter: string.eq runtime is unavailable");
+    out.push(...ops);
+    if (negate) out.push({ op: "i32.eqz" });
+  }
+
+  emitStringLength(
+    _inputEncoding: IrStringEncoding | undefined,
+    out: Instr[],
+    provider?: IrStringLengthProvider,
+  ): void {
+    const ops = this.stringRuntime?.emitStringLen?.(_inputEncoding, provider);
+    if (!ops) throw new Error("WasmGcEmitter: string.len runtime is unavailable");
+    out.push(...ops, { op: "f64.convert_i32_s" });
+  }
+
+  emitStringCharAt(
+    _alloc: AllocSiteId | undefined,
+    _inputEncoding: IrStringEncoding,
+    out: Instr[],
+    provider?: IrFuncRef,
+  ): void {
+    const ops = this.stringRuntime?.emitStringCharAt?.(_alloc, _inputEncoding, provider);
+    if (!ops) throw new Error("WasmGcEmitter: string.char_at runtime is unavailable");
+    out.push(...ops);
+  }
+
+  emitStringCharCodeAt(_inputEncoding: IrStringEncoding, out: Instr[], provider?: IrFuncRef): void {
+    const ops = this.stringRuntime?.emitStringCharCodeAt?.(_inputEncoding, provider);
+    if (!ops) throw new Error("WasmGcEmitter: string.char_code_at runtime is unavailable");
+    out.push(...ops);
   }
 
   // ---- vec (array) ----------------------------------------------------
@@ -65,6 +135,10 @@ export class WasmGcEmitter implements BackendEmitter<Instr[]> {
     out.push({ op: "array.set", typeIdx: layout.arrayTypeIdx });
   }
 
+  emitVecSetLength(layout: IrVecLowering, out: Instr[]): void {
+    out.push({ op: "struct.set", typeIdx: layout.vecStructTypeIdx, fieldIdx: layout.lengthFieldIdx });
+  }
+
   // #1804 — build a fixed-length vec from N element values already on the
   // stack (e0 deepest … eN top). Mirrors the legacy `compileArrayLiteral` fast
   // path (src/codegen/literals.ts): the vec struct is { length:i32,
@@ -72,8 +146,21 @@ export class WasmGcEmitter implements BackendEmitter<Instr[]> {
   // (field 1) for `struct.new`. `array.new_fixed` leaves the data ref on top,
   // so stash it in `dataScratchLocal`, push the length, re-load the data ref,
   // then `struct.new`.
-  emitVecNewFixed(layout: IrVecLowering, count: number, dataScratchLocal: number, out: Instr[]): void {
-    out.push({ op: "array.new_fixed", typeIdx: layout.arrayTypeIdx, length: count });
+  emitVecNewFixed(
+    layout: IrVecLowering,
+    count: number,
+    capacity: number,
+    dataScratchLocal: number,
+    out: Instr[],
+  ): void {
+    if (capacity === count) {
+      out.push({ op: "array.new_fixed", typeIdx: layout.arrayTypeIdx, length: count });
+    } else if (count === 0 && capacity > 0) {
+      out.push({ op: "i32.const", value: capacity });
+      out.push({ op: "array.new_default", typeIdx: layout.arrayTypeIdx });
+    } else {
+      throw new Error(`WasmGcEmitter: vec capacity ${capacity} unsupported for logical length ${count}`);
+    }
     out.push({ op: "local.set", index: dataScratchLocal });
     out.push({ op: "i32.const", value: count });
     out.push({ op: "local.get", index: dataScratchLocal });
@@ -107,6 +194,18 @@ export class WasmGcEmitter implements BackendEmitter<Instr[]> {
   }
 
   emitUnary(op: IrUnop, out: Instr[]): void {
+    out.push({ op });
+  }
+
+  emitScalarConst(type: BackendScalarConstType, value: number, out: Instr[]): void {
+    out.push(type === "f64" ? { op: "f64.const", value } : { op: "i32.const", value });
+  }
+
+  emitNumericConversion(op: BackendNumericConversionOp, out: Instr[]): void {
+    out.push({ op });
+  }
+
+  emitI32Bitwise(op: BackendI32BitwiseOp, out: Instr[]): void {
     out.push({ op });
   }
 
@@ -255,6 +354,16 @@ export class WasmGcEmitter implements BackendEmitter<Instr[]> {
   // ref.cast.
   emitClosureNew(layout: IrClosureLowering, _captureCount: number, out: Instr[]): void {
     out.push({ op: "struct.new", typeIdx: layout.structTypeIdx });
+  }
+
+  // (#3673) $arity operand — sits between the lifted funcref and the captures
+  // in every root-wrapper-hierarchy closure allocation. (#4241) The `$bag`
+  // expando slot follows it, so the two header operands are pushed together:
+  // the trait has ONE hook for "the header operands between the funcref and
+  // the captures", and splitting them would let a backend emit half a header.
+  emitClosureArityOperand(arity: number, out: Instr[]): void {
+    out.push({ op: "i32.const", value: arity });
+    out.push({ op: "ref.null.extern" }); // (#4241) $bag — no expandos at birth
   }
 
   emitClosureFuncGet(layout: IrClosureLowering, out: Instr[]): void {

@@ -11,7 +11,7 @@ area: codegen
 es_edition: ES2018
 language_feature: promise-combinators
 goal: core-semantics
-sprint: current
+sprint: Backlog
 horizon: m
 umbrella: 3184
 related: [3184, 3197, 2614, 2613, 2623, 2940]

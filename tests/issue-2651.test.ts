@@ -107,14 +107,30 @@ describe("#2651 M1 — TypedArray <View>.prototype value read resolves host-free
   });
 });
 
-describe("#2651 M1 — bigint views stay refuse-loud (out of scope)", () => {
+// #1907 (reopen, 2026-07-21) closed the bigint-view gap that #2651 M1 left "out
+// of scope": `BigInt64Array.prototype` / `BigUint64Array.prototype` VALUE reads
+// now resolve host-free through the same shared `%TypedArray%.prototype` glue as
+// the 9 non-bigint views (they inherit that member set per §23.2; the proto is a
+// pure value object). Kept out of `isWiredTypedArrayViewName` (intrinsic-ctor /
+// dynamic-new / reflective-i64-getter paths remain a separate slice).
+describe("#1907 — bigint TypedArray views' <View>.prototype value read resolves host-free standalone", () => {
   for (const view of ["BigInt64Array", "BigUint64Array"] as const) {
-    it(`${view}.prototype still refuses (no silent null ctor)`, async () => {
-      const r = await compile(`export function test(): any { return ${view}.prototype; }`, {
-        target: "standalone",
-        skipSemanticDiagnostics: true,
-      } as never);
-      expect(r.success).toBe(false);
+    it(`${view}.prototype is a non-null value at runtime (was the #1907 S6-b CE)`, async () => {
+      const r = await runStandalone(
+        `export function test(): number { const p: any = ${view}.prototype; return p === null ? 0 : 1; }`,
+      );
+      expect(r).toBe(1);
+    });
+
+    it(`${view}.prototype reads with zero env.global_<Name> host imports`, async () => {
+      const r = await compile(
+        `export function test(): number { const p: any = ${view}.prototype; return p === null ? 0 : 1; }`,
+        { target: "standalone", skipSemanticDiagnostics: true } as never,
+      );
+      expect(r.success).toBe(true);
+      const mod = await WebAssembly.compile(r.binary as Uint8Array);
+      const leaked = WebAssembly.Module.imports(mod).filter((i) => i.name.startsWith("global_"));
+      expect(leaked).toEqual([]);
     });
   }
 });

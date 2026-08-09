@@ -39,6 +39,14 @@ say() { echo "[sync-workspace-main] $*"; }
 
 [ -d "$WS/.git" ] || { say "no git repo at $WS — skipping"; exit 0; }
 
+# SINGLE-FLIGHT: this script is wired into SessionStart AND Stop hooks, so
+# concurrent invocations are routine (every agent stop fires one). Without a
+# lock they stack: on 2026-08-08 seven overlapping runs each spawned the full
+# pre-push verification chain and drove load to 29 on 8 cores. One sync at a
+# time; a second concurrent run has nothing new to do anyway.
+exec 9>"$WS/.git/sync-workspace-main.lock" 2>/dev/null || exit 0
+if ! flock -n 9; then say "another sync in progress — skipping"; exit 0; fi
+
 # Keep the FORK's main synced with upstream (clean fast-forward ONLY). Agents
 # branch from origin/main and the statusline reads /workspace, so when the fork
 # (origin = ttraenkler/js2) lags upstream (loopdive/js2 — where PRs actually
@@ -53,7 +61,12 @@ if git -C "$WS" remote get-url upstream >/dev/null 2>&1 \
   u=$(git -C "$WS" rev-parse upstream/main 2>/dev/null)
   if [ -n "$o" ] && [ -n "$u" ] && [ "$o" != "$u" ] \
      && git -C "$WS" merge-base --is-ancestor "$o" "$u" 2>/dev/null; then
-    if git -C "$WS" push origin "$u:refs/heads/main" --quiet 2>/dev/null; then
+    # --no-verify: this mirror push carries only upstream-merged, CI-validated
+    # commits — the local pre-push chain (typecheck+lint+tests, ~5 min) adds
+    # nothing and made every Stop-hook invocation cost a full verification run
+    # (the 2026-08-08 load-29 pileup). Sanctioned for pushes by the hook's own
+    # header and CLAUDE.md; CI runs the real gate.
+    if git -C "$WS" push origin "$u:refs/heads/main" --quiet --no-verify 2>/dev/null; then
       say "synced fork origin/main -> upstream/main ($(echo "$u" | cut -c1-9))"
     else
       say "WARNING: upstream->origin/main fast-forward push failed (perms/protection?)"

@@ -125,6 +125,43 @@ To **run** the resulting `.wasm` — the exact Wasmtime `-W` proposal flags (and
 the `all-proposals` caveat), plus `bun -b` and Deno — see the runtime matrix in
 [Standalone I/O → Running the output across runtimes](./standalone-io.md#running-the-output-across-runtimes).
 
+### `--host-bridge <auto|always|off>`
+
+Controls whether the module exports the **host bridge** — the interop surface a
+**JavaScript** host uses to reach inside WasmGC values it cannot otherwise read:
+`__vec_*` (materialize arrays), `__sget_*` / `__sset_*` (compiled-struct fields;
+a plain `obj.field` on a WasmGC struct yields `undefined`), `__call_fn*`
+(invoke closures), `__exn_render_*` (render a natively-thrown payload),
+`__stdout_*` (drain the host-free print sink).
+
+| Value | Effect |
+|-------|--------|
+| `auto` (default) | On for js-host targets, **off** for `wasi` / `standalone`. |
+| `always` | Always publish it — what a JS harness that inspects the module needs. |
+| `off` | Never publish it. |
+
+These exports are the **calling convention** in js-host mode, not debug
+information: `src/runtime.ts` cannot materialize an array or read a struct field
+without them. But a `wasi` / `standalone` binary runs under a JS-free host
+(wasmtime), where the only consumers are inspection tools — and because exports
+are GC roots, `wasm-opt` cannot strip anything they transitively pin. A
+standalone program that returned one array used to ship ~21 kB of
+float-formatting tables it never called.
+
+```bash
+# a deployable pure-Wasm binary — the default for this target
+js2wasm hello.ts --target wasi -O3
+
+# same program, but a JS harness will inspect it afterwards
+js2wasm hello.ts --target wasi -O3 --host-bridge always
+```
+
+If you instantiate a standalone module **from JavaScript** and read its values,
+pass `--host-bridge always` (or `hostBridge: "always"` to `compile()`). Every
+consumer guards each access with a `typeof exports.__x === "function"` check, so
+a missing bridge degrades rather than throws — which means the symptom is
+silently wrong output, not a crash. Ask for it explicitly.
+
 ## Permission flags
 
 ### `--allow-fs`

@@ -1,9 +1,9 @@
 ---
 id: 3359
 title: "standalone: Array.prototype.filter (and callback methods) ignore the thisArg argument — closure runs with wrong `this`"
-status: in-progress
-assignee: ttraenkler/dev-f
-sprint: current
+status: done
+completed: 2026-07-23
+sprint: 75
 created: 2026-07-17
 updated: 2026-07-17
 priority: low

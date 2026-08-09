@@ -68,6 +68,14 @@ export function collectClosureBaseWrapperTypeIdxs(ctx: CodegenContext): number[]
   if (ctx.boundFnTypeIdx >= 0 && !seenBase.has(ctx.boundFnTypeIdx)) {
     baseTypeIdxs.push(ctx.boundFnTypeIdx);
   }
+  // (#2928) Caller-owned AOT functions cross into the separately compiled
+  // runtime-eval provider through a dedicated `(code,target)` carrier. It is a
+  // callable for every shared classifier consumer; fillApplyClosure owns its
+  // receiver+argument-vector-preserving invocation guard.
+  const runtimeEvalCarrierIdx = ctx.runtimeEvalAotCallableCarrier?.structTypeIdx;
+  if (runtimeEvalCarrierIdx !== undefined && !seenBase.has(runtimeEvalCarrierIdx)) {
+    baseTypeIdxs.push(runtimeEvalCarrierIdx);
+  }
   return baseTypeIdxs;
 }
 

@@ -49,6 +49,18 @@ if printf '%s' "$MSG" | grep -qiE '(idle_notification|is idle|idleReason|waiting
   exit 0
 fi
 
+# Suppress the CONTENTLESS turn-end prompt (user request, 2026-07-25).
+# "Claude is waiting for your input" fires every time a turn ends with no
+# question pending. It carries zero information — the user cannot tell from it
+# whether anything is actually needed, so it trains them to ignore the channel.
+# Real asks still get through, because they carry their own text:
+#   - permission prompts name the tool ("needs your permission to use Bash")
+#   - anything sent via the PushNotification tool carries an explicit message
+# So gate on CONTENT, not on the fact that a turn ended.
+if printf '%s' "$MSG" | grep -qiE 'waiting for (your|user) input|is waiting for input|awaiting (your )?input'; then
+  exit 0
+fi
+
 # Suppress all agent chatter when a ci-pending sentinel exists.
 # Tech lead sets this with: touch ~/.claude/ci-pending
 # Clear it with: rm -f ~/.claude/ci-pending

@@ -1,8 +1,10 @@
 ---
 id: 3392
 title: "promote-baseline dies at the baselines-repo clone — runs/ cache growth pushed full-blob clone past the 10-min step timeout"
-status: in-progress
-sprint: current
+status: done
+completed: 2026-07-24
+task_type: infrastructure
+sprint: 76
 priority: high
 goal: standalone-mode
 feasibility: easy
@@ -10,6 +12,17 @@ horizon: s
 related: [3380, 3381, 3382, 2942, 1081]
 created: 2026-07-17
 ---
+
+> **DONE (2026-07-24, status reconcile).** Fix `fix(#3392): blob-less sparse
+> clone in baseline promote/refresh — runs/ growth broke the 10-min clone`
+> merged to `main` (commit `ed37396`); the `--filter=blob:none --no-checkout` +
+> sparse-checkout pattern is present at all clone sites in
+> `.github/workflows/test262-sharded.yml` (10 occurrences). Left at
+> `status: ready` after the merge; reconciled to `done` here. `task_type:
+> infrastructure` set (was unset) — this is a pure CI-workflow clone fix with no
+> compiler/runtime repro, matching the #2093 gate's infra exemption. The
+> unbounded-`runs/`-growth follow-up (retention policy) remains PO-owned and
+> out of scope for this issue.
 
 ## Problem
 

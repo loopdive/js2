@@ -1,9 +1,10 @@
 ---
 id: 699
 title: "Shared compiler pool for vitest test262 runner"
-status: ready
+status: done
 created: 2026-03-20
-updated: 2026-04-28
+updated: 2026-07-25
+completed: 2026-07-25
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -21,7 +22,69 @@ files:
 ---
 # #699 — Shared compiler pool for vitest test262 runner
 
-## Status: open
+## Status: DONE — delivered incrementally, closed retroactively 2026-07-25
+
+The pool is live code and has been for a long time; only this issue's status was
+stale. Verified against `main` @ `f5749c3` (2026-07-25) — all four implementation
+steps below are satisfied, **three of them by a different design than the sketch
+in this issue**. Recording the as-built shape, because the deviations are
+deliberate and one of them reverses this issue's central perf premise.
+
+### As-built vs. as-designed
+
+| step | as designed here                                     | as built                                                                                          |
+| ---- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| 1    | `scripts/compiler-worker.ts` in a **worker_thread**  | `scripts/compiler-fork-worker.mjs` (+ `compiler-worker.mjs`) in a **`child_process.fork`**         |
+| 2    | `scripts/compiler-pool.ts` pool manager + queue      | ✅ exactly that — `class CompilerPool`, `scripts/compiler-pool.ts`                                 |
+| 3    | update the vitest runner to use `pool.compile()`     | ✅ `tests/test262-shared.ts:17,188,547` — `new CompilerPool(POOL_SIZE, "unified")`                 |
+| 4    | `reuseHost` option on `compile()` in `src/compiler.ts` | `createIncrementalCompiler()` / `IncrementalLanguageService` (`src/index.ts:796`) — no such option |
+
+**Deviation 1 — forks, not worker threads (intentional).** From the header of
+`scripts/compiler-pool.ts`: *"Uses `child_process.fork` (separate OS processes)
+instead of worker threads. When a process exits, the OS reclaims ALL its memory
+(RSS, JIT code, etc.)."* Memory reclamation across a 48K-test run beat
+thread-sharing. Pool size comes from `COMPILER_POOL_SIZE` (consumed by
+`tests/test262-shared.ts`, `scripts/precompile-tests.ts`,
+`scripts/local-ci.sh`, `scripts/gen-test262-mg-matrix.mjs`).
+
+**Deviation 2 — `reuseHost` never existed.** The warm-host mechanism shipped as
+the public `createIncrementalCompiler(defaultOptions?)` API returning
+`{ compile, dispose }` over a persistent `IncrementalLanguageService`, not as a
+`compile(source, { reuseHost })` flag. Anyone grepping for `reuseHost` will find
+nothing — that is expected, not a gap.
+
+**Deviation 3 — ⚠️ `oldProgram` reuse was deliberately REMOVED, which forfeits
+part of this issue's headline saving.** #973 ("Incremental compiler state leak —
+CompilerPool fork produces ~400 false CEs", done) found that reusing the old
+`ts.Program` leaked checker state between compilations and manufactured ~400
+false compile errors. `scripts/compiler-fork-worker.mjs:15` records the
+resolution: *"With #973 fix (no oldProgram reuse), there's no type leakage
+between compilations. Recreate interval is now purely for memory management."*
+
+So the *"saved 50ms lib parsing"* line in **Expected performance** below is
+**not** what was achieved — correctness took priority over that specific
+saving. The persistent-process win (no fresh node process per compile) and the
+warm language service were kept; cross-compile program reuse was not. Treat the
+performance figures in this issue as the original estimate, not a measured
+result.
+
+Memory hygiene knobs added along the way: `GC_INTERVAL = 25`,
+`RECREATE_INTERVAL = 500`, plus immediate fork recycling on emit-layer failures
+(#1808).
+
+### Follow-up bugs in the pool (both separate issues)
+
+- **#1227** — pool timeout starts at enqueue time rather than dispatch time,
+  producing 156 false `compile_timeout`s.
+- **#1230** — post-dispatch fork starvation in the pool (73 phantom timeouts).
+
+### Not covered by this issue
+
+This issue is scoped **only** to the test262 vitest runner. Keeping the compiler
+warm for ordinary `js2` CLI invocations, or running it as a long-lived compile
+service/daemon for general use, is **not tracked anywhere** as of 2026-07-25.
+
+## Original issue text (as filed 2026-03-20)
 
 ### Problem
 Each vitest test calls `compile()` which creates a new `ts.Program` (~50ms), new `CodegenContext`, and runs full compilation (~150ms). With 48K tests, this is 48K × 200ms = 160 min single-threaded.

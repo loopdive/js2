@@ -53,10 +53,33 @@ const CASES: Array<{ p: string; f: string; inputs: string[] }> = [
   { p: "(a)(b)?", f: "d", inputs: ["ab", "a"] },
 ];
 
+/**
+ * (#3746) Same host-oracle caveat as `tests/regex-bytecode.test.ts`: `expected`
+ * comes from the HOST `RegExp`, so a pattern the host cannot parse fails on the
+ * ORACLE rather than on our lowering. Inline modifiers (ES2025
+ * regexp-modifiers) postdate Node 22 — v22.22.2 throws `Invalid group` on
+ * `(?i:a)` — which is what made these cases red on `main`. Ask the engine
+ * rather than hard-coding a version, so they go live when the runtime does.
+ */
+const HOST_SUPPORTS_INLINE_MODIFIERS = (() => {
+  try {
+    // biome-ignore lint/complexity/useRegexLiterals: a /(?i:a)/ literal is a parse-time SyntaxError on hosts without inline modifiers — the constructor defers it to runtime so try/catch can probe
+    new RegExp("(?i:a)");
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+function patternUsesInlineModifiers(pattern: string): boolean {
+  return /\(\?[dgimsuvy]*-?[dgimsuvy]*:/.test(pattern) && /\(\?[dgimsuvy]+[-:]|\(\?-[dgimsuvy]+/.test(pattern);
+}
+
 describe("#1911 standalone RegExp Phase 2d Slice A — dual-run vs native", () => {
   for (const { p, f, inputs } of CASES) {
     for (const input of inputs) {
-      it(`/${p}/${f} on ${JSON.stringify(input)}`, async () => {
+      const runIt = patternUsesInlineModifiers(p) && !HOST_SUPPORTS_INLINE_MODIFIERS ? it.skip : it;
+      runIt(`/${p}/${f} on ${JSON.stringify(input)}`, async () => {
         const expected = new RegExp(p, f).test(input);
         expect(await standaloneTest(p, f, input)).toBe(expected);
       });
@@ -136,7 +159,8 @@ describe("#1911 Slice B standalone u/v — dual-run vs native", () => {
   ];
   for (const { p, f, inputs } of CASES_B) {
     for (const input of inputs) {
-      it(`/${p}/${f} on ${JSON.stringify(input)}`, async () => {
+      const runItB = patternUsesInlineModifiers(p) && !HOST_SUPPORTS_INLINE_MODIFIERS ? it.skip : it;
+      runItB(`/${p}/${f} on ${JSON.stringify(input)}`, async () => {
         const expected = new RegExp(p, f).test(input);
         expect(await standaloneTest(p, f, input)).toBe(expected);
       });

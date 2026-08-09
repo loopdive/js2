@@ -53,6 +53,12 @@ function compileConditionalExpression(
   }
   let thenInstrs = fctx.body;
 
+  // Park the completed then branch while the else branch compiles. Late imports
+  // registered by the else branch shift every defined-function index; detached
+  // branch bodies must be visible to that shift walker as well. Large bundles
+  // such as ReactDOM otherwise left the then branch calling a neighbouring
+  // function after the else branch pulled in a helper.
+  fctx.savedBodies.push(thenInstrs);
   fctx.body = [];
   const elseResultType = compileExpression(ctx, fctx, expr.whenFalse);
   if (!elseResultType) {
@@ -60,6 +66,9 @@ function compileConditionalExpression(
   }
   let elseInstrs = fctx.body;
 
+  // Keep both completed branches parked through the common-type coercion below:
+  // coercion can itself register late imports and shift call indices.
+  fctx.savedBodies.push(elseInstrs);
   fctx.body = savedBody;
 
   const thenType: ValType = thenResultType ?? { kind: "f64" };
@@ -145,6 +154,10 @@ function compileConditionalExpression(
     };
   }
 
+  // Unpark else, then, and the original body registered by pushBody above.
+  fctx.savedBodies.pop();
+  fctx.savedBodies.pop();
+  fctx.savedBodies.pop();
   fctx.body.push({
     op: "if",
     blockType: { kind: "val", type: resultValType },
@@ -291,6 +304,56 @@ function compileYieldExpression(ctx: CodegenContext, fctx: FunctionContext, expr
   return { kind: "externref" } as ValType;
 }
 
+/**
+ * (#4178) Does this expression statically resolve to a STRING value?
+ *
+ * `tryStaticToNumber` refuses to fold `+` when an operand is a string (the
+ * operator is concatenation, not addition), but it only tested two things: the
+ * operand being a *syntactic* string literal, and the checker saying the
+ * operand's type is `string`. Neither fires for
+ *
+ *   const a: any = "1"; const b: any = 2; a + b
+ *
+ * — `a` is an identifier, and its declared type is `any`. Yet the identifier
+ * arm at the BOTTOM of `tryStaticToNumber` happily traces `a` back through its
+ * `const` initializer and answers `Number("1") === 1`, so the whole expression
+ * folded to `f64.const 3` instead of concatenating to `"12"`. The *value*
+ * resolution traced const bindings; the *string-ness* guard did not, and that
+ * asymmetry is the bug.
+ *
+ * This predicate closes it by tracing the same way, with the same `const`-only
+ * and self-reference (`#1607`) restrictions, so the guard can never be weaker
+ * than the folder it guards. Deliberately conservative — it answers `true` only
+ * for values it can prove are strings, so an unresolvable operand still folds
+ * exactly as before.
+ */
+function resolvesToStringConstant(ctx: CodegenContext, expr: ts.Expression, visited?: Set<ts.Node>): boolean {
+  if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) return true;
+  // A template with substitutions is always a string, however it evaluates.
+  if (ts.isTemplateExpression(expr)) return true;
+  if (ts.isParenthesizedExpression(expr)) return resolvesToStringConstant(ctx, expr.expression, visited);
+  if (ts.isAsExpression(expr) || ts.isTypeAssertionExpression(expr)) {
+    return resolvesToStringConstant(ctx, expr.expression, visited);
+  }
+  // `s1 + s2` is itself a string when either side is — concatenation is
+  // string-producing, so a nested concat poisons the enclosing fold too.
+  if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    return resolvesToStringConstant(ctx, expr.left, visited) || resolvesToStringConstant(ctx, expr.right, visited);
+  }
+  if (ts.isIdentifier(expr)) {
+    // `ctx.oracle.constInitializerOf` is the checker boundary for exactly this
+    // query (#1930) and enforces the `const`-only restriction itself — `let`/
+    // `var` are reassignable, so their initializer is not their value.
+    const init = ctx.oracle.constInitializerOf(expr);
+    if (!init) return false;
+    const seen = visited ?? new Set<ts.Node>();
+    if (seen.has(init)) return false; // #1607 self-referential initializer
+    seen.add(init);
+    return resolvesToStringConstant(ctx, init, seen);
+  }
+  return false;
+}
+
 /** Check if an expression is statically known to be NaN at compile time */
 /**
  * Try to statically determine the numeric value of an expression.
@@ -332,10 +395,7 @@ export function tryStaticToNumber(
     // Don't fold string + anything as numeric — JS semantics requires string concat
     if (
       expr.operatorToken.kind === ts.SyntaxKind.PlusToken &&
-      (ts.isStringLiteral(expr.left) ||
-        ts.isNoSubstitutionTemplateLiteral(expr.left) ||
-        ts.isStringLiteral(expr.right) ||
-        ts.isNoSubstitutionTemplateLiteral(expr.right))
+      (resolvesToStringConstant(ctx, expr.left) || resolvesToStringConstant(ctx, expr.right))
     ) {
       return undefined;
     }

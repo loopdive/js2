@@ -45,3 +45,29 @@ export function hashProbeAdvanceInstrs(idxLocal: number, capLocal: number): Inst
     { op: "local.set", index: idxLocal },
   ];
 }
+
+/**
+ * Open-addressing probe initialization: `idx = hash % cap`.
+ *
+ * This is the ×10 hash-probe-INIT idiom of #3105 — the head of every linear
+ * probe loop, computing the initial slot index from the key's hash before the
+ * loop begins (`__map_set`/`__map_get`/`__map_has`/delete, and the set/numeric
+ * variants). It is the companion to {@link hashProbeAdvanceInstrs} (the loop
+ * tail); all 10 copies are byte-identical across the string Map/Set and numeric
+ * Map/Set runtimes, using the same `hashLocal`/`capLocal`/`idxLocal` operands.
+ *
+ * Returns exactly four instructions, in this order:
+ *   local.get hash · local.get cap · i32.rem_u · local.set idx
+ *
+ * @param hashLocal local index holding the (non-zero) key hash
+ * @param capLocal  local index holding the table capacity
+ * @param idxLocal  local index that receives the initial probe slot index
+ */
+export function hashProbeInitInstrs(hashLocal: number, capLocal: number, idxLocal: number): Instr[] {
+  return [
+    { op: "local.get", index: hashLocal },
+    { op: "local.get", index: capLocal },
+    { op: "i32.rem_u" },
+    { op: "local.set", index: idxLocal },
+  ];
+}

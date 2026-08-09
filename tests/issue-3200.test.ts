@@ -86,3 +86,87 @@ export function test(): any {
     expect(out).toBe(2);
   });
 });
+
+// (#3200 flatMap slice) §23.1.3.11 step 3 — IsCallable(mapperFunction) is false
+// → throw TypeError BEFORE any flatten work. flatMap did not run the shared
+// `emitCallbackTypeCheck` gate (map/filter/forEach do), so a missing or
+// non-callable mapper silently fell through to the host `__array_flatMap`
+// bridge, which wrapped the value in an always-callable arrow — hiding the
+// non-callable from native flatMap's IsCallable check → no throw
+// (built-ins/Array/prototype/flatMap/non-callable-argument-throws.js). The
+// `Symbol()` arm additionally needs `ts.TypeFlags.ESSymbolLike` in
+// `isKnownNonCallable`'s NON_CALLABLE_FLAGS (a symbol is never callable).
+//
+// Uses `skipSemanticDiagnostics` to mirror the test262 runner (raw JS: a
+// non-function passed to `.flatMap` is a TS assignability error the runner
+// suppresses, then compiles + runs).
+async function compileAndRunLoose(source: string): Promise<unknown> {
+  const r = await compile(source, {
+    fileName: "test.ts",
+    allowJs: true,
+    skipSemanticDiagnostics: true,
+  });
+  expect(r.success, r.errors?.[0]?.message).toBe(true);
+  const imports = buildImports(r.imports, undefined, r.stringPool) as unknown as WebAssembly.Imports & {
+    setExports?: (e: Record<string, Function>) => void;
+  };
+  const { instance } = await WebAssembly.instantiate(r.binary!, imports);
+  imports.setExports?.(instance.exports as Record<string, Function>);
+  return (instance.exports as { test: () => unknown }).test();
+}
+
+describe("#3200 flatMap slice: non-callable mapper → TypeError (§23.1.3.11 step 3)", () => {
+  it("throws TypeError for every non-callable mapper form", async () => {
+    // Mirrors non-callable-argument-throws.js: object, number, implicit-undefined
+    // (no arg), explicit undefined, null, boolean, string, symbol.
+    const out = await compileAndRunLoose(`
+export function test(): number {
+  let thrown = 0;
+  const s = Symbol();
+  const cases: any[] = [
+    () => [].flatMap({}),
+    () => [].flatMap(0),
+    () => [].flatMap(),
+    () => [].flatMap(undefined),
+    () => [].flatMap(null),
+    () => [].flatMap(false),
+    () => [].flatMap(''),
+    () => [].flatMap(s),
+  ];
+  for (const c of cases) {
+    try { c(); } catch (e) { if (e instanceof TypeError) thrown++; }
+  }
+  return thrown;
+}`);
+    expect(out).toBe(8);
+  });
+
+  it("GUARD: a valid array-returning mapper still flattens one level", async () => {
+    const out = await compileAndRunLoose(`
+export function test(): number {
+  const r = [1, 2].flatMap((e: number) => [e, e * 2]);
+  // [1,2,2,4]
+  return r.length * 100 + r[0] * 10 + r[3];
+}`);
+    // length 4, r[0]=1, r[3]=4
+    expect(out).toBe(414);
+  });
+
+  it("ESSymbolLike: map / filter / forEach also throw TypeError for a symbol callback", async () => {
+    const out = await compileAndRunLoose(`
+export function test(): number {
+  let thrown = 0;
+  const s = Symbol();
+  const cases: any[] = [
+    () => [1].map(s),
+    () => [1].filter(s),
+    () => [1].forEach(s),
+  ];
+  for (const c of cases) {
+    try { c(); } catch (e) { if (e instanceof TypeError) thrown++; }
+  }
+  return thrown;
+}`);
+    expect(out).toBe(3);
+  });
+});

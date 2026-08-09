@@ -30,6 +30,9 @@ import {
 } from "../src/ir/index.js";
 import { constantFold } from "../src/ir/passes/constant-fold.js";
 import { deadCode } from "../src/ir/passes/dead-code.js";
+import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
+
+const irIdentities = createTestIrFunctionIdentityFactory("issue-1925");
 
 const I32: IrType = irVal({ kind: "i32" });
 const F64: IrType = irVal({ kind: "f64" });
@@ -53,7 +56,7 @@ function f64mul(id: number, lhs: number, rhs: number): IrInstr {
 /** A single-block function whose block-0 instrs are `instrs`, returning v0. */
 function fnOf(instrs: IrInstr[], valueCount: number, params: IrFunction["params"] = []): IrFunction {
   return {
-    name: "f",
+    ...irIdentities.next("f"),
     params,
     resultTypes: [I32],
     exported: true,

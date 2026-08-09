@@ -19,6 +19,7 @@ import { ts } from "../ts-api.js";
 import type { ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { addFuncType } from "./registry/types.js";
+import { reportError } from "./context/errors.js";
 import type { AsyncCpsPlan } from "./async-cps.js";
 import { ASYNC_CPS_ENABLED, analyzeAsyncBody } from "./async-cps.js";
 import {
@@ -133,9 +134,111 @@ function decideAsyncActivation(
  * in lockstep with `maybeActivateAsync` (same `allowNonDeclaration: false`
  * gating — C-1 claims FunctionDeclarations only; #2957's closure shapes stay
  * on their own activation path).
+ *
+ * (#3587) On a decline this ALSO runs the loud-refusal hazard guard: a
+ * declined-but-rejection-observing shape must not silently proceed on EITHER
+ * downstream lane (legacy sync pass-through or IR C-1 — both compile `await`
+ * as a synchronous pass-through that cannot deliver rejections). Deduped per
+ * declaration, so the later `maybeActivateAsync` call cannot double-report.
  */
 export function asyncEngineWouldActivate(ctx: CodegenContext, decl: ts.FunctionLikeDeclaration): boolean {
-  return decideAsyncActivation(ctx, decl, /*isAsync*/ true, /*allowNonDeclaration*/ false) !== null;
+  const claimed = decideAsyncActivation(ctx, decl, /*isAsync*/ true, /*allowNonDeclaration*/ false) !== null;
+  if (!claimed && ts.isFunctionDeclaration(decl)) reportDeclinedAsyncRejectionHazard(ctx, decl);
+  return claimed;
+}
+
+// ── (#3587) Loud refusal: declined shapes must not silently swallow rejections ──
+//
+// Any async body with a REAL (non-statically-resolved) suspension that the
+// engine declines falls to a synchronous pass-through — legacy or IR C-1 —
+// where an awaited REJECTION does not throw: execution continues straight past
+// the rejected await, `catch` blocks never run, and the rejection leaks as an
+// unhandledRejection. That is tolerable-by-bug-compatibility for code that
+// never observes rejections, but it is a guaranteed-silent-miscompile for a
+// body whose author wrapped a suspension in `try` — the very construct that
+// signals "I care about this rejection" was what disabled rejection delivery.
+//
+// Rule: a declined async FunctionDeclaration / arrow / function-expression
+// (the engine's claimable entry points) with a real suspension lexically
+// inside a `try` block refuses loudly with a source-located compile error
+// instead of silently mis-executing. Async METHODS are excluded for now: the
+// engine cannot claim them at any shape yet (#2957 phase-3 residue), so a
+// guard there would refuse the entire population rather than a residue —
+// tracked in the #3587 issue file as remaining surface.
+
+/** Per-context dedupe so the selector probe + activation path report once. */
+const hazardReportedByCtx = new WeakMap<CodegenContext, WeakSet<ts.Node>>();
+
+function isNestedFunctionScope(node: ts.Node): boolean {
+  return (
+    ts.isFunctionDeclaration(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isArrowFunction(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) ||
+    ts.isSetAccessorDeclaration(node) ||
+    ts.isConstructorDeclaration(node)
+  );
+}
+
+/**
+ * First suspension point (`await` or `for await`) lexically inside the TRY
+ * block of a `try` statement in `decl`'s own body (not crossing nested
+ * function scopes), or `null`. Awaits inside `catch`/`finally` blocks only
+ * count when an ENCLOSING `try` block wraps them.
+ */
+function findSuspensionInsideTry(decl: ts.FunctionLikeDeclaration): ts.Node | null {
+  const body = decl.body;
+  if (body === undefined) return null;
+  let found: ts.Node | null = null;
+  const walk = (node: ts.Node, inTry: boolean): void => {
+    if (found !== null || isNestedFunctionScope(node)) return;
+    if (inTry && (ts.isAwaitExpression(node) || (ts.isForOfStatement(node) && node.awaitModifier !== undefined))) {
+      found = node;
+      return;
+    }
+    if (ts.isTryStatement(node)) {
+      walk(node.tryBlock, true);
+      if (node.catchClause) walk(node.catchClause.block, inTry);
+      if (node.finallyBlock) walk(node.finallyBlock, inTry);
+      return;
+    }
+    ts.forEachChild(node, (c) => walk(c, inTry));
+  };
+  ts.forEachChild(body, (c) => walk(c, false));
+  return found;
+}
+
+/**
+ * (#3587) Report the loud-refusal compile error for a declined async
+ * function-like whose body genuinely suspends inside a `try`. HOST lane only:
+ * the wasi/standalone drive lanes have their own claim/decline programs
+ * (#2865/#2867/#2980) and their declined populations are tracked there.
+ * No-op when the body cannot really suspend (statically-resolved awaits
+ * cannot reject) or when no suspension sits inside a `try`.
+ */
+export function reportDeclinedAsyncRejectionHazard(ctx: CodegenContext, decl: ts.FunctionLikeDeclaration): void {
+  if (!ASYNC_CPS_ENABLED || decl.body === undefined) return;
+  if (ctx.wasi === true || ctx.standalone === true) return;
+  const seen = hazardReportedByCtx.get(ctx);
+  if (seen?.has(decl)) return;
+  const plan = analyzeAsyncBody(ctx, decl);
+  const realSuspension = plan.awaitPoints.some((a) => plan.awaitedStaticallyResolved.get(a) !== true);
+  if (!realSuspension && plan.forAwaitPoints.length === 0) return;
+  const hazard = findSuspensionInsideTry(decl);
+  if (hazard === null) return;
+  if (seen === undefined) hazardReportedByCtx.set(ctx, new WeakSet([decl]));
+  else seen.add(decl);
+  reportError(
+    ctx,
+    hazard,
+    "async shape not supported: this suspension point (await / for-await) sits inside a `try` " +
+      "whose overall body shape the async engine cannot drive yet, and the synchronous fallback " +
+      "would SILENTLY drop awaited rejections (execution would continue past a rejected await; " +
+      "catch/finally would not run). Restructure toward canonical awaits — top-level " +
+      "`await p` / `const x = await p` / `return await p` statements, try/catch(/finally) " +
+      "without awaits in loops/conditions inside the try — or hoist the await out of the try (#3587)",
+  );
 }
 
 /**
@@ -183,7 +286,12 @@ export function maybeActivateAsync(
 ): boolean {
   const isAsync = ctx.asyncFunctions.has(func.name);
   const decision = decideAsyncActivation(ctx, decl, isAsync, /*allowNonDeclaration*/ false);
-  if (!decision) return false;
+  if (!decision) {
+    // (#3587) A declined-but-rejection-observing declaration must refuse
+    // loudly rather than fall to the sync pass-through (see the guard's doc).
+    if (isAsync && ts.isFunctionDeclaration(decl)) reportDeclinedAsyncRejectionHazard(ctx, decl);
+    return false;
+  }
 
   // The async function returns a Promise object (externref), not the unwrapped
   // value. Rewrite the registered signature's result + fctx before emitting.

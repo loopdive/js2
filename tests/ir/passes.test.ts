@@ -17,10 +17,24 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../../src/index.js";
-import { asBlockId, asValueId, irVal, verifyIrFunction, type IrFunction, type IrValueId } from "../../src/ir/index.js";
+import {
+  asAllocSiteId,
+  asBlockId,
+  asValueId,
+  irVal,
+  verifyIrFunction,
+  type IrBinop,
+  type IrConst,
+  type IrFunction,
+  type IrType,
+  type IrValueId,
+} from "../../src/ir/index.js";
 import { constantFold } from "../../src/ir/passes/constant-fold.js";
 import { deadCode } from "../../src/ir/passes/dead-code.js";
 import { simplifyCFG } from "../../src/ir/passes/simplify-cfg.js";
+import { createTestIrFunctionIdentityFactory } from "../helpers/ir-identities.js";
+
+const irIdentities = createTestIrFunctionIdentityFactory("ir/passes");
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -31,7 +45,38 @@ function id(n: number): IrValueId {
 }
 
 const F64 = irVal({ kind: "f64" });
+const I32 = irVal({ kind: "i32" });
 const BOOL = irVal({ kind: "i32" });
+const STRING = { kind: "string" } as const;
+
+function numericConstType(value: IrConst): IrType {
+  if (value.kind === "f64") return F64;
+  if (value.kind === "i32") return I32;
+  throw new Error(`unsupported numeric fixture constant: ${value.kind}`);
+}
+
+function numericBinaryFunction(op: IrBinop, lhs: IrConst, rhs: IrConst, resultType: IrType): IrFunction {
+  return {
+    ...irIdentities.next("f"),
+    params: [],
+    resultTypes: [resultType],
+    blocks: [
+      {
+        id: asBlockId(0),
+        blockArgs: [],
+        blockArgTypes: [],
+        instrs: [
+          { kind: "const", value: lhs, result: id(0), resultType: numericConstType(lhs) },
+          { kind: "const", value: rhs, result: id(1), resultType: numericConstType(rhs) },
+          { kind: "binary", op, lhs: id(0), rhs: id(1), result: id(2), resultType },
+        ],
+        terminator: { kind: "return", values: [id(2)] },
+      },
+    ],
+    exported: false,
+    valueCount: 3,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // constantFold — instruction folding
@@ -40,7 +85,7 @@ const BOOL = irVal({ kind: "i32" });
 describe("#1167a — constantFold (instruction folding)", () => {
   it("folds binary add(const 1, const 2) → const 3", () => {
     const fn: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [],
       resultTypes: [F64],
       blocks: [
@@ -74,7 +119,7 @@ describe("#1167a — constantFold (instruction folding)", () => {
 
   it("folds binary lt(const 3, const 5) → const true", () => {
     const fn: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [],
       resultTypes: [BOOL],
       blocks: [
@@ -103,7 +148,7 @@ describe("#1167a — constantFold (instruction folding)", () => {
 
   it("folds unary f64.neg(const 5) → const -5", () => {
     const fn: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [],
       resultTypes: [F64],
       blocks: [
@@ -131,7 +176,7 @@ describe("#1167a — constantFold (instruction folding)", () => {
 
   it("propagates a fold chain in a single pass (1+2 then +3 → 6)", () => {
     const fn: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [],
       resultTypes: [F64],
       blocks: [
@@ -160,9 +205,192 @@ describe("#1167a — constantFold (instruction folding)", () => {
     }
   });
 
+  it("folds a string.const concat chain in one pass and preserves result metadata", () => {
+    const firstSite = { line: 12, column: 3 };
+    const secondSite = { line: 13, column: 5 };
+    const firstAlloc = asAllocSiteId(40);
+    const secondAlloc = asAllocSiteId(41);
+    const fn: IrFunction = {
+      ...irIdentities.next("f"),
+      params: [],
+      resultTypes: [STRING],
+      blocks: [
+        {
+          id: asBlockId(0),
+          blockArgs: [],
+          blockArgTypes: [],
+          instrs: [
+            { kind: "string.const", value: "IR ", result: id(0), resultType: STRING },
+            { kind: "string.const", value: "only", result: id(1), resultType: STRING },
+            {
+              kind: "string.concat",
+              lhs: id(0),
+              rhs: id(1),
+              result: id(2),
+              resultType: STRING,
+              site: firstSite,
+              alloc: firstAlloc,
+            },
+            { kind: "string.const", value: " mode", result: id(3), resultType: STRING },
+            {
+              kind: "string.concat",
+              lhs: id(2),
+              rhs: id(3),
+              result: id(4),
+              resultType: STRING,
+              site: secondSite,
+              alloc: secondAlloc,
+            },
+          ],
+          terminator: { kind: "return", values: [id(4)] },
+        },
+      ],
+      exported: false,
+      valueCount: 5,
+    };
+
+    expect(verifyIrFunction(fn)).toEqual([]);
+    const folded = constantFold(fn);
+    expect(folded.blocks[0]!.instrs[2]).toEqual({
+      kind: "string.const",
+      value: "IR only",
+      result: id(2),
+      resultType: STRING,
+      site: firstSite,
+      alloc: firstAlloc,
+    });
+    expect(folded.blocks[0]!.instrs[4]).toEqual({
+      kind: "string.const",
+      value: "IR only mode",
+      result: id(4),
+      resultType: STRING,
+      site: secondSite,
+      alloc: secondAlloc,
+    });
+    expect(verifyIrFunction(folded)).toEqual([]);
+  });
+
+  it("keeps string.concat when either operand is dynamic", () => {
+    const concat = {
+      kind: "string.concat" as const,
+      lhs: id(0),
+      rhs: id(1),
+      result: id(2),
+      resultType: STRING,
+    };
+    const fn: IrFunction = {
+      ...irIdentities.next("f"),
+      params: [{ value: id(0), type: STRING, name: "dynamic" }],
+      resultTypes: [STRING],
+      blocks: [
+        {
+          id: asBlockId(0),
+          blockArgs: [],
+          blockArgTypes: [],
+          instrs: [{ kind: "string.const", value: " suffix", result: id(1), resultType: STRING }, concat],
+          terminator: { kind: "return", values: [id(2)] },
+        },
+      ],
+      exported: false,
+      valueCount: 3,
+    };
+
+    expect(verifyIrFunction(fn)).toEqual([]);
+    const folded = constantFold(fn);
+    expect(folded).toBe(fn);
+    expect(folded.blocks[0]!.instrs[1]).toBe(concat);
+  });
+
+  it.each([
+    {
+      label: "0xff << 8 as i32",
+      op: "js.shl" as const,
+      lhs: { kind: "i32", value: 0xff } as const,
+      rhs: { kind: "i32", value: 8 } as const,
+      resultType: I32,
+      expected: { kind: "i32", value: 65_280 } as const,
+    },
+    {
+      label: "0xff << 8 as f64",
+      op: "js.shl" as const,
+      lhs: { kind: "f64", value: 0xff } as const,
+      rhs: { kind: "f64", value: 8 } as const,
+      resultType: F64,
+      expected: { kind: "f64", value: 65_280 } as const,
+    },
+    {
+      label: "-1 >>> 0 as unsigned f64",
+      op: "js.shr_u" as const,
+      lhs: { kind: "f64", value: -1 } as const,
+      rhs: { kind: "f64", value: 0 } as const,
+      resultType: F64,
+      expected: { kind: "f64", value: 4_294_967_295 } as const,
+    },
+    {
+      label: "-1 >>> 0 as wrapped i32",
+      op: "js.shr_u" as const,
+      lhs: { kind: "i32", value: -1 } as const,
+      rhs: { kind: "i32", value: 0 } as const,
+      resultType: I32,
+      expected: { kind: "i32", value: -1 } as const,
+    },
+    {
+      label: "1 << 40 masks the shift count to 8",
+      op: "js.shl" as const,
+      lhs: { kind: "f64", value: 1 } as const,
+      rhs: { kind: "f64", value: 40 } as const,
+      resultType: F64,
+      expected: { kind: "f64", value: 256 } as const,
+    },
+  ])("folds JS bitwise constants with result-type semantics: $label", ({ op, lhs, rhs, resultType, expected }) => {
+    const fn = numericBinaryFunction(op, lhs, rhs, resultType);
+    expect(verifyIrFunction(fn)).toEqual([]);
+
+    const folded = constantFold(fn);
+    expect(folded.blocks[0]!.instrs[2]).toEqual({
+      kind: "const",
+      value: expected,
+      result: id(2),
+      resultType,
+    });
+    expect(verifyIrFunction(folded)).toEqual([]);
+  });
+
+  it("keeps a JS bitwise instruction with a nonconstant operand", () => {
+    const binary = {
+      kind: "binary" as const,
+      op: "js.shl" as const,
+      lhs: id(0),
+      rhs: id(1),
+      result: id(2),
+      resultType: F64,
+    };
+    const fn: IrFunction = {
+      ...irIdentities.next("f"),
+      params: [{ value: id(0), type: F64, name: "dynamic" }],
+      resultTypes: [F64],
+      blocks: [
+        {
+          id: asBlockId(0),
+          blockArgs: [],
+          blockArgTypes: [],
+          instrs: [{ kind: "const", value: { kind: "f64", value: 8 }, result: id(1), resultType: F64 }, binary],
+          terminator: { kind: "return", values: [id(2)] },
+        },
+      ],
+      exported: false,
+      valueCount: 3,
+    };
+
+    expect(verifyIrFunction(fn)).toEqual([]);
+    const folded = constantFold(fn);
+    expect(folded).toBe(fn);
+    expect(folded.blocks[0]!.instrs[1]).toBe(binary);
+  });
+
   it("returns same reference when nothing is foldable", () => {
     const fn: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [{ value: id(0), type: F64, name: "n" }],
       resultTypes: [F64],
       blocks: [
@@ -184,7 +412,7 @@ describe("#1167a — constantFold (instruction folding)", () => {
   it("does not fold raw.wasm (opaque side effects)", () => {
     // raw.wasm is the escape hatch; CF must never rewrite it.
     const fn: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [],
       resultTypes: [F64],
       blocks: [
@@ -220,7 +448,7 @@ describe("#1167a — constantFold (instruction folding)", () => {
 describe("#1167a — constantFold (terminator folding)", () => {
   it("folds br_if(const true, A, B) → br(A)", () => {
     const fn: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [],
       resultTypes: [F64],
       blocks: [
@@ -264,7 +492,7 @@ describe("#1167a — constantFold (terminator folding)", () => {
 
   it("folds br_if(const false, A, B) → br(B)", () => {
     const fn: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [],
       resultTypes: [F64],
       blocks: [
@@ -315,7 +543,7 @@ describe("#1167a — deadCode (blocks)", () => {
   it("removes a block with no predecessors and renumbers", () => {
     // blocks: 0 (br → 1), 1 (return), 2 (orphan, return) — after DCE, 2 is gone.
     const fn: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [],
       resultTypes: [F64],
       blocks: [
@@ -356,7 +584,7 @@ describe("#1167a — deadCode (blocks)", () => {
     // Remove block 1 (orphan), keep 0 and 2. 0's br_if must be rewritten
     // so the old target 2 becomes new target 1.
     const fn: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [],
       resultTypes: [F64],
       blocks: [
@@ -413,7 +641,7 @@ describe("#1167a — deadCode (blocks)", () => {
 describe("#1167a — deadCode (instructions)", () => {
   it("removes a pure instruction whose result is never used", () => {
     const fn: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [],
       resultTypes: [F64],
       blocks: [
@@ -442,7 +670,7 @@ describe("#1167a — deadCode (instructions)", () => {
 
   it("keeps raw.wasm even when it produces no used result", () => {
     const fn: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [],
       resultTypes: [F64],
       blocks: [
@@ -473,7 +701,7 @@ describe("#1167a — deadCode (instructions)", () => {
 
   it("returns same reference when nothing is removable", () => {
     const fn: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [],
       resultTypes: [F64],
       blocks: [
@@ -500,7 +728,7 @@ describe("#1167a — deadCode (instructions)", () => {
 describe("#1167a — simplifyCFG", () => {
   it("merges A (br → B) with B (only A as pred)", () => {
     const fn: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [],
       resultTypes: [F64],
       blocks: [
@@ -534,7 +762,7 @@ describe("#1167a — simplifyCFG", () => {
     // Block 0's br_if goes to both 1 and 2; block 1's br goes to 2.
     // 2 has 2 predecessors (0 and 1) → not mergeable.
     const fn: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [],
       resultTypes: [F64],
       blocks: [
@@ -578,7 +806,7 @@ describe("#1167a — simplifyCFG", () => {
 
   it("returns same reference when nothing to simplify", () => {
     const fn: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [],
       resultTypes: [F64],
       blocks: [

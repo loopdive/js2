@@ -1,8 +1,7 @@
 ---
 id: 3227
 title: "default (JS-host) lane: async-completion harness callbacks never execute → 1,690 vacuous fails (#2940 detector), dominated by for-await-of / dynamic-import / Promise"
-status: in-progress
-assignee: ttraenkler/fable-s4
+status: ready
 loc-budget-allow:
   - src/codegen/async-cps.ts
   - src/codegen/expressions.ts

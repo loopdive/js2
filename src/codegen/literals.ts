@@ -36,21 +36,25 @@ import { ensureStrToCharVecHelper, stringConstantExternrefInstrs } from "./nativ
 import { emitStandaloneIterableMaterialize } from "./iterator-native.js"; // (#3100 S5)
 import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
+import { emptyBackingStoreInstrs } from "./empty-vec-store.js"; // (#3921) shared zero-length backing store
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
+import { isForeignEvalNode } from "./expressions/eval-source.js";
 import { emitUndefined, patchStructNewForAddedField } from "./expressions/late-imports.js";
 import { resolveStructName } from "./expressions/misc.js";
 import { arrayIteratorOverrideGlobalIdx, emitArrayProtoIteratorDrive } from "./expressions/proto-override.js";
 import { ensureObjVecBuilders } from "./object-runtime.js";
-import { bodyUsesArguments } from "./helpers/body-uses-arguments.js";
+import { bodyNeedsArgumentsObject, bodyUsesArguments } from "./helpers/body-uses-arguments.js";
 import { widenedVarKeyFromDecl } from "./widened-var-key.js";
 import { isStrictFunction, isSimpleParameterList } from "./helpers/is-strict-function.js";
+import { initializeFunctionPoisonPillContext } from "./function-poison-pill.js";
 import { collectInstrs } from "./statements/shared.js";
 import {
   cacheStringLiterals,
   destructureParamArray,
   destructureParamObject,
   ensureStructForType,
+  extractConstantDefault,
   getOrRegisterTupleType,
   getTupleElementTypes,
   isTupleType,
@@ -88,7 +92,7 @@ import {
   isDefinePropertyReceiverLiteral,
 } from "./struct-accessor-closure.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
-
+import { registerCountedPushArray } from "./array-indexof-scan.js";
 /**
  * Check if a TS expression is "undefined-like" — OmittedExpression (array hole),
  * undefined keyword, identifier `undefined`, void expression, or any of the
@@ -145,6 +149,16 @@ function _isUndefinedLike(node: ts.Node): boolean {
 function arrayLiteralIsUndefinedOrHoleOnly(arr: ts.ArrayLiteralExpression): boolean {
   if (arr.elements.length === 0) return false;
   return arr.elements.every((el) => ts.isOmittedExpression(el) || _isUndefinedLike(el));
+}
+
+/**
+ * Is an array literal produced directly into an unconstrained `any` element
+ * position? Accept bare `any` (an inner literal of `any[]`) and
+ * `Array<any>`/`ReadonlyArray<any>` (the outer literal), but not typed unions.
+ */
+function arrayLiteralHasAnyElementContext(ctx: CodegenContext, arr: ts.ArrayLiteralExpression): boolean {
+  const contextual = ctx.oracle.contextualFactOf(arr);
+  return contextual?.kind === "any" || (contextual?.kind === "array" && contextual.element.kind === "any");
 }
 
 /**
@@ -1072,7 +1086,7 @@ function _hasDisposalMethod(expr: ts.ObjectLiteralExpression): boolean {
  * fields from compile-time names only, so these literals must take the host
  * plain-object path, which evaluates the key expression at runtime.
  */
-function _hasRuntimeComputedKey(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
+export function _hasRuntimeComputedKey(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
   for (const p of expr.properties) {
     if (!ts.isPropertyAssignment(p) && !ts.isMethodDeclaration(p)) continue;
     if (!ts.isComputedPropertyName(p.name)) continue;
@@ -1200,7 +1214,10 @@ export function objectLiteralTakesStandaloneAnyObjectPath(
   expr: ts.ObjectLiteralExpression,
 ): boolean {
   if (
-    !ctx.standalone ||
+    // (#2542) `ctx.wasi` admitted so the PURE string-index arm below can fire on
+    // the other host-free target; the #1901 any-context arm stays standalone-only,
+    // enforced at the return.
+    !(ctx.standalone || ctx.wasi) ||
     expr.properties.length === 0 ||
     ts.isParameter(expr.parent) ||
     // only data props / spreads / plain-named method shorthand we can build onto
@@ -1263,13 +1280,16 @@ export function objectLiteralTakesStandaloneAnyObjectPath(
   // so diverting its literal to `$Object` would mismatch that struct local.
   const strIndex = ctxTypeNonEmpty ? ctx.checker.getIndexInfoOfType(ctxTypeNonEmpty, ts.IndexKind.String) : undefined;
   const isPureStringIndexContext = !!strIndex && !!ctxTypeNonEmpty && ctxTypeNonEmpty.getProperties().length === 0;
-  return isAnyContextNonEmpty || isPureStringIndexContext;
+  // #1901's any-context arm stays standalone-only (widening it would change every
+  // any-typed literal's lowering under wasi); #2542's index arm covers both.
+  return (ctx.standalone && isAnyContextNonEmpty) || isPureStringIndexContext;
 }
 
 export function compileObjectLiteral(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.ObjectLiteralExpression,
+  expectedType?: ValType,
 ): ValType | null {
   // (#1239) If the literal carries any get/set accessor declarations,
   // route to the JS-host plain-object path so the runtime sees real
@@ -1295,14 +1315,12 @@ export function compileObjectLiteral(
     return compileObjectLiteralWithAccessors(ctx, fctx, expr);
   }
 
-  // (#2127) Same routing when a spread SOURCE has accessor-declared
-  // properties: the struct spread copies data fields by layout and never
-  // fires the getter. The host path's __object_assign spread performs the
-  // spec CopyDataProperties [[Get]]-then-copy.
+  // (#2127) Accessor-bearing spreads need host CopyDataProperties [[Get]].
   if (expr.properties.length > 0 && _hasAccessorSpreadSource(ctx, expr)) {
     return compileObjectLiteralWithAccessors(ctx, fctx, expr);
   }
-
+  // (#3633) Foreign eval literals lack checker types and require the open representation.
+  if (isForeignEvalNode(expr)) return compileObjectLiteralAsExternref(ctx, fctx, expr);
   // (#2714) A spread-containing literal evaluated in a NON-SPECIFIC contextual
   // type (`any`/`unknown`/`object`, or no contextual type) must take the host
   // plain-object path, like the empty-`{}` any-context arm below. The struct
@@ -1382,10 +1400,11 @@ export function compileObjectLiteral(
     // mutated by runtime string key (`o[k] = v`). Build it as an open `$Object`
     // (same `__new_plain_object` as the any-context arm) so the binding — which
     // resolveWasmType lowers to externref (#2542) — is a real `$Object` the native
-    // `__extern_set`/`__extern_get` service. Standalone-only (the open-object
-    // runtime is emitted only there); gc/host/wasi keep their existing lowering.
+    // `__extern_set`/`__extern_get` service. Host-free targets (standalone AND
+    // wasi — see the #2542-follow-up note in index.ts's resolveWasmType guard);
+    // gc/host keeps its existing lowering, since a JS host services `o[k]` there.
     const isPureStringIndexEmpty =
-      ctx.standalone &&
+      (ctx.standalone || ctx.wasi) &&
       !!ctxType &&
       ctxType.getProperties().length === 0 &&
       !!ctx.checker.getIndexInfoOfType(ctxType, ts.IndexKind.String);
@@ -1431,6 +1450,53 @@ export function compileObjectLiteral(
   // failure mode the gc/host R2 fast path avoids. Gating to `ctx.standalone`
   // keeps wasi byte-identical to main (the wasi extension is a tracked
   // follow-on; see plan/issues/1901). gc/host mode is untouched (not standalone).
+  //
+  // (#3536) EXCEPT when the Wasm-level EXPECTED type is this literal's OWN
+  // shape struct. A literal in call-ARGUMENT position to a declared function
+  // whose implicit-`any` param was call-site-narrowed (inferParamTypeFromCallSites
+  // derived the param's struct FROM this literal's type) has TS-contextual type
+  // `any` — so the #1901 diversion below would build a dynamic `$Object`, and
+  // the call-boundary coercion's guarded cast (externref → shape struct) can
+  // never match → the callee's param silently arrives NULL. That is the
+  // `built-ins/RegExp/property-escapes` 311-row cluster (`buildString({...})`
+  // in regExpUtils.js) and the wider "Cannot access property on null or
+  // undefined [in <fn>]" masked family. When the literal's own struct
+  // resolution lands EXACTLY on the expected typeIdx, construct the closed
+  // struct — the same representation the var-init position already picks
+  // (`var obj = {...}; f(obj)` passes today) — so the argument matches the
+  // narrowed param by construction. Precise by design: the routing fires ONLY
+  // on typeIdx equality, so an expected `$Object` / class / vec / AnyValue
+  // type can never divert a literal that would not have lowered to that exact
+  // struct anyway.
+  if (
+    ctx.standalone &&
+    expectedType !== undefined &&
+    (expectedType.kind === "ref" || expectedType.kind === "ref_null") &&
+    expr.properties.length > 0
+  ) {
+    // oracle-ratchet-allow (#3536, granted in the issue frontmatter): this
+    // query needs the raw type IDENTITY for resolveStructName's anonTypeMap /
+    // structMap lookup — a wasm-lowering ValType question deliberately above
+    // what the oracle expresses (its header assigns struct registration to
+    // the caller).
+    let litType: ts.Type | undefined;
+    try {
+      litType = ctx.checker.getTypeAtLocation(expr);
+    } catch {
+      litType = undefined;
+    }
+    if (litType) {
+      let litStructName = resolveStructName(ctx, litType);
+      if (!litStructName) {
+        ensureStructForType(ctx, litType);
+        litStructName = resolveStructName(ctx, litType);
+      }
+      if (litStructName !== undefined && ctx.structMap.get(litStructName) === expectedType.typeIdx) {
+        ensureComputedPropertyFields(ctx, fctx, expr, litType);
+        return compileObjectLiteralForStruct(ctx, fctx, expr, litStructName);
+      }
+    }
+  }
   if (objectLiteralTakesStandaloneAnyObjectPath(ctx, expr)) {
     const objResult = compileObjectLiteralAsExternref(ctx, fctx, expr);
     if (objResult) return objResult;
@@ -2088,8 +2154,19 @@ export function compileObjectLiteralForStruct(
     for (const src of spreadSources) spreadByPropIndex.set(src.propIndex, src.srcFields);
     const insertionOrder: string[] = [];
     const seen = new Set<string>();
-    const pushName = (n: string | undefined): void => {
-      if (n === undefined || n.startsWith("$") || n.startsWith("__")) return;
+    // `written` = the key appears literally in this object literal's source, so
+    // it is unambiguously a USER property even when it starts with `$` / `__`
+    // (`{ $$typeof: … }` — React tags every element that way, and jQuery-style
+    // `$`-prefixed keys are common generally). The compiler's own hidden slots
+    // (`$shape`, `$arity`, `__tag`) never come through this path.
+    //
+    // Spread sources are different: their name list is the SOURCE STRUCT's slot
+    // names, which do mix user keys with those hidden slots. There is no way to
+    // tell them apart here, so the prefix heuristic is kept for that path —
+    // conservative, and exactly the previous behaviour.
+    const pushName = (n: string | undefined, written: boolean): void => {
+      if (n === undefined) return;
+      if (!written && (n.startsWith("$") || n.startsWith("__"))) return;
       if (seen.has(n)) return;
       seen.add(n);
       insertionOrder.push(n);
@@ -2098,14 +2175,14 @@ export function compileObjectLiteralForStruct(
       const prop = expr.properties[pi]!;
       if (ts.isSpreadAssignment(prop)) {
         const srcFields = spreadByPropIndex.get(pi);
-        if (srcFields) for (const f of srcFields) pushName(f.name);
+        if (srcFields) for (const f of srcFields) pushName(f.name, false);
         continue;
       }
       if (ts.isMethodDeclaration(prop) || ts.isGetAccessorDeclaration(prop) || ts.isSetAccessorDeclaration(prop)) {
-        if (prop.name) pushName(resolveAccessorPropName(ctx, prop.name));
+        if (prop.name) pushName(resolveAccessorPropName(ctx, prop.name), true);
         continue;
       }
-      pushName(resolvePropertyNameText(ctx, prop));
+      pushName(resolvePropertyNameText(ctx, prop), true);
     }
     if (insertionOrder.length > 0) ctx.structInsertionOrder.set(typeName, insertionOrder);
   }
@@ -2596,6 +2673,7 @@ export function compileObjectLiteralForStruct(
         labelMap: new Map(),
         savedBodies: [],
       };
+      initializeFunctionPoisonPillContext(ctx, getterFctx, prop);
       getterFctx.localMap.set("this", 0);
 
       const savedFunc = ctx.currentFunc;
@@ -2706,6 +2784,7 @@ export function compileObjectLiteralForStruct(
         labelMap: new Map(),
         savedBodies: [],
       };
+      initializeFunctionPoisonPillContext(ctx, setterFctx, prop);
       for (let i = 0; i < setterFctxParams.length; i++) {
         setterFctx.localMap.set(setterFctxParams[i]!.name, i);
       }
@@ -2860,6 +2939,36 @@ export function compileObjectLiteralForStruct(
         ctx.funcUsesArguments.add(fullName);
       }
 
+      // (#3948) Register optional/defaulted params for this object-literal
+      // method. Class bodies have always done this (class-bodies.ts
+      // `registerClassOptionalParams`), free functions too (declarations.ts);
+      // object literals were the one method form that never did — and
+      // `maybeSetArgcForKnownCall` is gated on exactly this map, so every
+      // `o.m()` call site silently skipped its `global.set $__argc`. The
+      // callee's param-default prologue then read the `-1` "unknown caller"
+      // sentinel, concluded no argument was missing, and used the raw
+      // (zero/null) incoming slot: `{ m(a = 5) }.m()` evaluated to 0 in BOTH
+      // lanes. `methodParams` leads with the receiver `this`, so the ValType
+      // for source parameter `i` is at `methodParams[i + 1]` — the same
+      // `paramTypeOffset = 1` the class path uses for instance methods.
+      const objMethodOptionalParams: OptionalParamInfo[] = [];
+      for (let pi = 0; pi < prop.parameters.length; pi++) {
+        const param = prop.parameters[pi]!;
+        if (!param.questionToken && !param.initializer) continue;
+        const paramValType = methodParams[pi + 1];
+        if (!paramValType) continue;
+        const info: OptionalParamInfo = { index: pi, type: paramValType };
+        if (param.initializer) {
+          const cd = extractConstantDefault(param.initializer, paramValType, ctx);
+          if (cd) info.constantDefault = cd;
+          else info.hasExpressionDefault = true;
+        }
+        objMethodOptionalParams.push(info);
+      }
+      if (objMethodOptionalParams.length > 0) {
+        ctx.funcOptionalParams.set(fullName, objMethodOptionalParams);
+      }
+
       const methodTypeIdx = addFuncType(ctx, methodParams, methodResults, `${fullName}_type`);
 
       // (#1557) If this method was earmarked for a per-literal funcIdx (because
@@ -2943,6 +3052,7 @@ export function compileObjectLiteralForStruct(
         savedBodies: [],
         isGenerator: isGeneratorMethod,
       };
+      initializeFunctionPoisonPillContext(ctx, methodFctx, prop);
       for (let i = 0; i < methodFctxParams.length; i++) {
         methodFctx.localMap.set(methodFctxParams[i]!.name, i);
       }
@@ -3004,7 +3114,7 @@ export function compileObjectLiteralForStruct(
         // literal sharing the method name collides on the stem and keeps the
         // legacy buffer below.
         !genBodyReferencesSuper(prop.body) &&
-        !bodyUsesArguments(prop.body) &&
+        !bodyNeedsArgumentsObject(prop.body) &&
         isAsyncGenDriveCandidate(ctx, prop)
       ) {
         emitAsyncGenerator(ctx, methodFctx, prop);
@@ -3163,84 +3273,103 @@ export function compileTupleLiteral(
  *   const arr: number[] = [];
  *   for (let i = 0; i < N; i++) arr.push(expr);
  *
- * Returns N (the trip count) if the pattern is statically provable, 0 otherwise.
- * This allows preallocating the backing WasmGC array to eliminate growth overhead.
+ * Returns the trip count and exact push call when the pattern is statically
+ * provable. This allows preallocating the backing WasmGC array and lets that
+ * one call omit its now-redundant capacity branch.
+ *
+ * @irOptimizationOwner IR-OPT-COUNTED-VECTOR-PUSH-PRESIZE
  */
-function detectCountedPushLoopSize(expr: ts.ArrayLiteralExpression): number {
+function detectCountedPushLoop(
+  expr: ts.ArrayLiteralExpression,
+): { tripCount: number; call: ts.CallExpression; arrayName: string } | undefined {
   // Walk up: ArrayLiteralExpression → VariableDeclaration → VariableDeclarationList → VariableStatement → Block/SourceFile
   const varDecl = expr.parent;
-  if (!varDecl || !ts.isVariableDeclaration(varDecl) || !ts.isIdentifier(varDecl.name)) return 0;
+  if (!varDecl || !ts.isVariableDeclaration(varDecl) || !ts.isIdentifier(varDecl.name)) return undefined;
   const arrName = varDecl.name.text;
 
   const declList = varDecl.parent;
-  if (!declList || !ts.isVariableDeclarationList(declList)) return 0;
+  if (!declList || !ts.isVariableDeclarationList(declList)) return undefined;
   const varStmt = declList.parent;
-  if (!varStmt || !ts.isVariableStatement(varStmt)) return 0;
+  if (!varStmt || !ts.isVariableStatement(varStmt)) return undefined;
 
   const block = varStmt.parent;
-  if (!block) return 0;
+  if (!block) return undefined;
   let stmts: ts.NodeArray<ts.Statement>;
   if (ts.isBlock(block)) stmts = block.statements;
   else if (ts.isSourceFile(block)) stmts = block.statements;
-  else return 0;
+  else return undefined;
 
   // Find the variable statement's index and look at the next statement
   const idx = stmts.indexOf(varStmt);
-  if (idx < 0 || idx + 1 >= stmts.length) return 0;
+  if (idx < 0 || idx + 1 >= stmts.length) return undefined;
   const nextStmt = stmts[idx + 1]!;
-  if (!ts.isForStatement(nextStmt)) return 0;
+  if (!ts.isForStatement(nextStmt)) return undefined;
 
   // Check initializer: `let i = 0` or `var i = 0`
   const init = nextStmt.initializer;
-  if (!init || !ts.isVariableDeclarationList(init)) return 0;
-  if (init.declarations.length !== 1) return 0;
+  if (!init || !ts.isVariableDeclarationList(init)) return undefined;
+  if (init.declarations.length !== 1) return undefined;
   const loopDecl = init.declarations[0]!;
-  if (!ts.isIdentifier(loopDecl.name)) return 0;
+  if (!ts.isIdentifier(loopDecl.name)) return undefined;
   const loopVar = loopDecl.name.text;
   if (!loopDecl.initializer || !ts.isNumericLiteral(loopDecl.initializer) || loopDecl.initializer.text !== "0")
-    return 0;
+    return undefined;
 
   // Check condition: `i < N` where N is a numeric literal
   const cond = nextStmt.condition;
-  if (!cond || !ts.isBinaryExpression(cond)) return 0;
-  if (cond.operatorToken.kind !== ts.SyntaxKind.LessThanToken) return 0;
-  if (!ts.isIdentifier(cond.left) || cond.left.text !== loopVar) return 0;
-  if (!ts.isNumericLiteral(cond.right)) return 0;
+  if (!cond || !ts.isBinaryExpression(cond)) return undefined;
+  if (cond.operatorToken.kind !== ts.SyntaxKind.LessThanToken) return undefined;
+  if (!ts.isIdentifier(cond.left) || cond.left.text !== loopVar) return undefined;
+  if (!ts.isNumericLiteral(cond.right)) return undefined;
   const tripCount = Number(cond.right.text);
-  if (!Number.isFinite(tripCount) || tripCount <= 0 || tripCount > 1_000_000) return 0;
+  if (!Number.isFinite(tripCount) || tripCount <= 0 || tripCount > 1_000_000) return undefined;
 
   // Check incrementor: `i++` or `i += 1`
   const inc = nextStmt.incrementor;
-  if (!inc) return 0;
+  if (!inc) return undefined;
   if (ts.isPostfixUnaryExpression(inc)) {
-    if (inc.operator !== ts.SyntaxKind.PlusPlusToken) return 0;
-    if (!ts.isIdentifier(inc.operand) || inc.operand.text !== loopVar) return 0;
+    if (inc.operator !== ts.SyntaxKind.PlusPlusToken) return undefined;
+    if (!ts.isIdentifier(inc.operand) || inc.operand.text !== loopVar) return undefined;
   } else if (ts.isPrefixUnaryExpression(inc)) {
-    if (inc.operator !== ts.SyntaxKind.PlusPlusToken) return 0;
-    if (!ts.isIdentifier(inc.operand) || inc.operand.text !== loopVar) return 0;
+    if (inc.operator !== ts.SyntaxKind.PlusPlusToken) return undefined;
+    if (!ts.isIdentifier(inc.operand) || inc.operand.text !== loopVar) return undefined;
+  } else if (
+    ts.isBinaryExpression(inc) &&
+    inc.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    ts.isIdentifier(inc.left) &&
+    inc.left.text === loopVar &&
+    ts.isBinaryExpression(inc.right) &&
+    inc.right.operatorToken.kind === ts.SyntaxKind.PlusToken &&
+    ts.isIdentifier(inc.right.left) &&
+    inc.right.left.text === loopVar &&
+    ts.isNumericLiteral(inc.right.right) &&
+    Number(inc.right.right.text) === 1
+  ) {
+    // Canonical compiler-friendly spelling used by the benchmark corpus:
+    // `i = i + 1`.
   } else {
-    return 0;
+    return undefined;
   }
 
   // Check body: must contain only `arr.push(expr)` (as expression statement)
   const body = nextStmt.statement;
   let bodyStmt: ts.Statement;
   if (ts.isBlock(body)) {
-    if (body.statements.length !== 1) return 0;
+    if (body.statements.length !== 1) return undefined;
     bodyStmt = body.statements[0]!;
   } else {
     bodyStmt = body;
   }
-  if (!ts.isExpressionStatement(bodyStmt)) return 0;
+  if (!ts.isExpressionStatement(bodyStmt)) return undefined;
   const callExpr = bodyStmt.expression;
-  if (!ts.isCallExpression(callExpr)) return 0;
-  if (!ts.isPropertyAccessExpression(callExpr.expression)) return 0;
-  if (callExpr.expression.name.text !== "push") return 0;
-  if (!ts.isIdentifier(callExpr.expression.expression)) return 0;
-  if (callExpr.expression.expression.text !== arrName) return 0;
-  if (callExpr.arguments.length !== 1) return 0;
+  if (!ts.isCallExpression(callExpr)) return undefined;
+  if (!ts.isPropertyAccessExpression(callExpr.expression)) return undefined;
+  if (callExpr.expression.name.text !== "push") return undefined;
+  if (!ts.isIdentifier(callExpr.expression.expression)) return undefined;
+  if (callExpr.expression.expression.text !== arrName) return undefined;
+  if (callExpr.arguments.length !== 1) return undefined;
 
-  return tripCount;
+  return { tripCount, call: callExpr, arrayName: arrName };
 }
 
 /**
@@ -3248,7 +3377,7 @@ function detectCountedPushLoopSize(expr: ts.ArrayLiteralExpression): number {
  *   const arr = [];
  *   for (let i = 0; i < N; i++) arr[i] = <pure expr involving i and outer locals>;
  *
- * This is the cousin of `detectCountedPushLoopSize` for `a[i] = …` instead of
+ * This is the cousin of `detectCountedPushLoop` for `a[i] = …` instead of
  * `a.push(…)`. The match unlocks pre-sizing the WasmGC backing array to N up
  * front, eliminating O(n²) grow-and-copy churn that the per-write
  * grow-on-demand path emits.
@@ -3273,9 +3402,11 @@ function detectCountedPushLoopSize(expr: ts.ArrayLiteralExpression): number {
  * - The loop body must not reference `arr` anywhere else (rules out `arr
  *   .length` reads, which would observe the pre-sized length immediately
  *   instead of the grow-as-you-go length).
+ *
+ * @irOptimizationOwner IR-OPT-DENSE-VECTOR-PRESIZE
  */
 function detectCountedFillLoopBound(expr: ts.ArrayLiteralExpression): ts.Expression | null {
-  // Same outer-walk as detectCountedPushLoopSize: literal must be the
+  // Same outer-walk as detectCountedPushLoop: literal must be the
   // initializer of a single variable declaration whose next sibling
   // statement is the for-loop.
   const varDecl = expr.parent;
@@ -3438,6 +3569,40 @@ function isExprFreeOfReference(expr: ts.Node, name: string): boolean {
   return ok;
 }
 
+/**
+ * (#3532) Element wasm type for a bare empty `[]` from its contextual type.
+ * Handles a direct `Array<T>`/`ReadonlyArray<T>` context AND a UNION context
+ * (e.g. flatMap's `U | readonly U[]`) with array member(s), so `[]` adopts the
+ * array member's element type and registers the SAME vec type as a sibling
+ * `[x]` in the same conditional (`cond ? [] : [x]`) — otherwise the union falls
+ * through to `externref` while `[x]` is a numeric vec → invalid closure. Only
+ * adopts a union's element type when EVERY array member resolves to the same
+ * wasm type (ambiguous otherwise, e.g. `number[] | string[]` → keep externref).
+ */
+function resolveEmptyArrayElemWasm(ctx: CodegenContext, ctxType: ts.Type): ValType | undefined {
+  const fromArrayType = (t: ts.Type): ValType | undefined => {
+    const sym = (t as ts.TypeReference).symbol ?? t.symbol;
+    if (sym?.name === "Array" || sym?.name === "ReadonlyArray") {
+      const typeArgs = ctx.checker.getTypeArguments(t as ts.TypeReference);
+      if (typeArgs[0]) return resolveWasmType(ctx, typeArgs[0]);
+    }
+    return undefined;
+  };
+  const direct = fromArrayType(ctxType);
+  if (direct) return direct;
+  if (ctxType.isUnion()) {
+    const elems: ValType[] = [];
+    for (const part of ctxType.types) {
+      const e = fromArrayType(part);
+      if (e) elems.push(e);
+    }
+    if (elems.length > 0 && elems.every((e) => valTypesMatch(e, elems[0]!))) {
+      return elems[0];
+    }
+  }
+  return undefined;
+}
+
 export function compileArrayLiteral(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -3514,7 +3679,8 @@ export function compileArrayLiteral(
 
   if (expr.elements.length === 0) {
     // Detect counted push loop pattern and preallocate (#1001)
-    const prealloc = detectCountedPushLoopSize(expr);
+    const countedPush = detectCountedPushLoop(expr);
+    const prealloc = countedPush?.tripCount ?? 0;
     // Detect counted dense-fill loop pattern (#1198) — sister of the
     // push-loop matcher. When the array is followed by a
     // `for (let i = 0; i < N; i++) arr[i] = pureExpr` loop, we know the
@@ -3523,20 +3689,19 @@ export function compileArrayLiteral(
     // the per-write grow-on-demand path otherwise pays.
     const fillBoundExpr = prealloc > 0 ? null : detectCountedFillLoopBound(expr);
 
-    // Empty array — try to determine element type from contextual type (e.g. number[])
+    // Empty array — try to determine element type from contextual type (e.g. number[]).
+    // Handles a direct `Array<T>`/`ReadonlyArray<T>` context AND a union context
+    // (e.g. flatMap's `U | readonly U[]`) so `[]` in `cond ? [] : [x]` adopts the
+    // sibling's concrete vec type instead of mis-defaulting to externref (#3532).
     let emptyElemKind = "externref";
     const ctxType = ctx.checker.getContextualType(expr) ?? ctx.checker.getTypeAtLocation(expr);
     if (ctxType) {
-      const sym = (ctxType as ts.TypeReference).symbol ?? ctxType.symbol;
-      if (sym?.name === "Array") {
-        const typeArgs = ctx.checker.getTypeArguments(ctxType as ts.TypeReference);
-        if (typeArgs[0]) {
-          const elemWasmType = resolveWasmType(ctx, typeArgs[0]);
-          emptyElemKind =
-            elemWasmType.kind === "ref" || elemWasmType.kind === "ref_null"
-              ? `ref_${(elemWasmType as { typeIdx: number }).typeIdx}`
-              : elemWasmType.kind;
-        }
+      const elemWasmType = resolveEmptyArrayElemWasm(ctx, ctxType);
+      if (elemWasmType) {
+        emptyElemKind =
+          elemWasmType.kind === "ref" || elemWasmType.kind === "ref_null"
+            ? `ref_${(elemWasmType as { typeIdx: number }).typeIdx}`
+            : elemWasmType.kind;
       }
     }
     const vecTypeIdx = getOrRegisterVecType(ctx, emptyElemKind);
@@ -3544,6 +3709,9 @@ export function compileArrayLiteral(
     if (arrTypeIdx < 0) {
       reportError(ctx, expr, "Empty array literal: invalid vec type");
       return null;
+    }
+    if (countedPush) {
+      registerCountedPushArray(fctx, countedPush, vecTypeIdx);
     }
 
     if (fillBoundExpr !== null) {
@@ -3584,8 +3752,18 @@ export function compileArrayLiteral(
     }
 
     fctx.body.push({ op: "i32.const", value: 0 }); // length field (field 0)
-    fctx.body.push({ op: "i32.const", value: prealloc > 0 ? prealloc : 0 }); // size for array.new_default (#1001: preallocate if counted push loop detected)
-    fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx }); // data field (field 1)
+    // (#3921 follow-up) With no prealloc the backing store is zero-length and
+    // DEAD ON ARRIVAL — `push` grows on `capacity < length + argc`, which from
+    // capacity 0 always trips, so the first push replaces it. Share one
+    // immutable singleton per element type instead of allocating 31,414 of
+    // them per acorn parse. Prealloc'd literals keep their own store.
+    const sharedEmpty = prealloc > 0 ? undefined : emptyBackingStoreInstrs(ctx, arrTypeIdx);
+    if (sharedEmpty) {
+      for (const instr of sharedEmpty) fctx.body.push(instr);
+    } else {
+      fctx.body.push({ op: "i32.const", value: prealloc > 0 ? prealloc : 0 }); // size for array.new_default (#1001: preallocate if counted push loop detected)
+      fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx }); // data field (field 1)
+    }
     fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx }); // wrap in vec struct
     return { kind: "ref_null", typeIdx: vecTypeIdx };
   }
@@ -3901,6 +4079,38 @@ export function compileArrayLiteral(
         }
       }
     }
+  }
+  // (#3543) Preserve the carrier that a nested heterogeneous literal ACTUALLY
+  // builds in an `any` context. With `unionAnyRep` enabled, the outer literal's
+  // first-element TS type `(string | number)[]` resolves to
+  // `__vec_ref_<AnyValue>`. The inner literal's existing #2190b/#2106 writer,
+  // however, correctly widens its mixed elements to canonical
+  // `__vec_externref`. Compiling that inner value against the inferred outer
+  // carrier immediately copies every externref element into `$AnyValue`; the
+  // dynamic vec reader then externalizes the wrapper rather than its payload,
+  // so numbers become NaN and native-string casts null-deref. The RTT arm order
+  // is not involved: the correct AnyValue vec arm matches.
+  //
+  // Re-key only this proven writer/inference mismatch. Both literals must be in
+  // a genuine any context, the inferred element must specifically be a vec of
+  // AnyValue, and neither construction may contain a spread. Typed union
+  // matrices, homogeneous matrices, flat arrays, and the flag-off lane remain
+  // byte-identical.
+  const inferredInnerVec =
+    elemWasm.kind === "ref" || elemWasm.kind === "ref_null" ? getVecInfo(ctx, elemWasm.typeIdx) : null;
+  if (
+    ctx.unionAnyRep &&
+    !hasSpread &&
+    ts.isArrayLiteralExpression(firstElem) &&
+    !firstElem.elements.some(ts.isSpreadElement) &&
+    arrayLiteralHasAnyElementContext(ctx, expr) &&
+    arrayLiteralHasAnyElementContext(ctx, firstElem) &&
+    inferredInnerVec &&
+    (inferredInnerVec.elemType.kind === "ref" || inferredInnerVec.elemType.kind === "ref_null") &&
+    inferredInnerVec.elemType.typeIdx === ctx.anyValueTypeIdx
+  ) {
+    const innerVecIdx = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
+    elemWasm = { kind: "ref_null", typeIdx: innerVecIdx };
   }
   // (#2769) for-of over a direct array LITERAL whose binding pattern has an
   // element default / nested sub-pattern: the OUTER literal must not coerce an

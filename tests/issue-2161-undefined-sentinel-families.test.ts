@@ -260,8 +260,8 @@ describe("#2161 B4 — never-reassigned var/let pattern fold (standalone)", () =
   });
 
   it("guard: a reassigned var is NOT mis-folded to its initial value", async () => {
-    // p is reassigned, so the fold must refuse; the ctor keeps the prior
-    // dynamic behaviour (compiles; the regex methods on it stay dynamic).
+    // p is reassigned, so the static fold must decline and the runtime compiler
+    // must observe the final value rather than silently retaining "a".
     const r = await compile(
       `export function main(): number {
         var p = "a";
@@ -274,14 +274,6 @@ describe("#2161 B4 — never-reassigned var/let pattern fold (standalone)", () =
     expect(r.success).toBe(true);
     const { instance } = await WebAssembly.instantiate(r.binary, {});
     const main = instance.exports.main as () => unknown;
-    // Either a correct dynamic result (1) or a runtime refusal throw is
-    // acceptable — a SILENT wrong answer (0: matched "a" instead of "b") is not.
-    let out: unknown;
-    try {
-      out = main();
-    } catch {
-      out = "threw";
-    }
-    expect(out === 1 || out === "threw").toBe(true);
+    expect(main()).toBe(1);
   });
 });

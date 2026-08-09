@@ -189,3 +189,34 @@ contains only this analysis note.
   a naive `assert.sameValue` harness produces are probe artifacts; the real
   runner rewrites `assert.sameValue` → `assert_sameValue` and the failures
   above are genuine value mismatches.
+
+## 2026-07-27 update — #1665 shipped partially; this issue's gap is still open
+
+`blocked_on: 1665` is now stale: #1665 (Wasm-native generator lowering)
+shipped 2026-06-03, but only **Phase 1/2** of the lowering
+(`src/codegen/generators-native.ts` — simple sequential yields, then yields
+inside loops/conditionals). Per that file's own header comment, exactly
+this issue's scope — sent-values (`.next(v)` threading), `yield*`
+delegation, `.return()`/`.throw()` injection — is explicitly still **not
+modeled** ("Phase 3" per the `generator-model` goal doc) and falls through
+to the eager-buffer host path this issue describes. So #1665 being `done`
+did NOT close this gap; the remaining blocker is Phase 3 of the native
+lowering specifically, not #1665 as a whole.
+
+Independently re-derived and confirmed the same root cause from a fresh
+differential-testing angle (#3690 — a corpus of programs run under both
+Node and compiled js2wasm), with three new minimal repros pinned as
+regression tests, cross-linked here rather than duplicated:
+
+- **#3710** — `x = yield y` sent-value threading (this issue's primary case)
+- **#3711** — `yield*` delegation, but note: **traps** ("illegal cast")
+  rather than degrading to a wrong value, a harder failure mode worth
+  checking when Phase 3 lands
+- **#3712** — the sharpest evidence yet for *why* eager evaluation is
+  dangerous, not just spec-incomplete: two generator instances from a
+  shared closure factory (`while(true) yield total` capturing outer
+  `total`) silently corrupt each other's state, because generator
+  *creation* eagerly drains the infinite loop up to the runtime's
+  `__EAGER_GEN_LIMIT` (1,000,000) cap — the wrong output literally contains
+  the cap value. Recommended as a canonical acceptance-test addition for
+  whoever picks up Phase 3.

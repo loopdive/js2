@@ -17,24 +17,45 @@
 // What it does (the plain `pnpm version` experience, but covering BOTH packages
 // in a single commit + tag):
 //   1. Resolve a concrete target version V.
-//   2. Bump root + packages/js2wasm package.json to V (no per-package commit/tag).
+//   2. Bump root + packages/js2wasm package.json to V and pin the proxy's
+//      @loopdive/js2 dependency to V (no per-package commit/tag).
 //   3. Make ONE commit `release: vV` with both package.jsons (+ lockfile if it
 //      changed) and ONE annotated tag `vV` pointing at it.
 //   4. It does NOT push — pushing the tag before the PR merges would fire
 //      publish-npm.yml on un-reviewed code. See docs/releasing.md.
 
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+const releaseScriptPath = fileURLToPath(import.meta.url);
+const __dirname = dirname(releaseScriptPath);
 const repoRoot = resolve(__dirname, "..");
 const proxyDir = join(repoRoot, "packages", "js2wasm");
 
 function readVersion(dir) {
   const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
   return pkg.version;
+}
+
+export function pinProxyDependency(pkg, version) {
+  if (typeof pkg.dependencies?.["@loopdive/js2"] !== "string") {
+    throw new Error('proxy package.json must depend on "@loopdive/js2"');
+  }
+  return {
+    ...pkg,
+    dependencies: {
+      ...pkg.dependencies,
+      "@loopdive/js2": version,
+    },
+  };
+}
+
+function setProxyDependency(dir, version) {
+  const path = join(dir, "package.json");
+  const pkg = JSON.parse(readFileSync(path, "utf8"));
+  writeFileSync(path, `${JSON.stringify(pinProxyDependency(pkg, version), null, 2)}\n`);
 }
 
 function fail(msg) {
@@ -93,6 +114,99 @@ function setVersion(dir, version) {
   });
 }
 
+// Which remote is the PUBLISHING repo? `origin` is NOT a safe default: in this
+// project's agent worktrees (and any fork-based clone) `origin` is the FORK, so
+// the script's old `git push origin <tag>` instruction tagged the fork — where
+// publish-npm.yml never fires against the real package. The release then looks
+// done while nothing ships. Resolve by URL, and say so when it isn't `origin`.
+export function pickUpstreamRemote(remotesOutput) {
+  const remotes = new Map();
+  for (const line of remotesOutput.split("\n")) {
+    const m = line.match(/^(\S+)\s+(\S+)/);
+    if (m) remotes.set(m[1], m[2]);
+  }
+  for (const [name, url] of remotes) {
+    if (/[/:]loopdive\/js2(\.git)?$/.test(url)) {
+      return {
+        name,
+        note:
+          name === "origin"
+            ? null
+            : `the publishing remote here is '${name}' (${url}), NOT 'origin' ` +
+              `(${remotes.get("origin") ?? "unset"}). Pushing the tag to 'origin' would tag a fork ` +
+              `and publish nothing.`,
+      };
+    }
+  }
+  return {
+    name: "origin",
+    note: "could not identify a remote pointing at loopdive/js2 — VERIFY which remote publishes before pushing the tag.",
+  };
+}
+
+function upstreamRemote() {
+  try {
+    return pickUpstreamRemote(git(["remote", "-v"]));
+  } catch {
+    return { name: "origin", note: "could not read git remotes — verify the publishing remote by hand." };
+  }
+}
+
+// Draft release notes from the commit range, so the notes exist before the
+// release PR is opened rather than being reconstructed afterwards. Merge
+// commits carry the PR titles, which are the useful unit here (the project
+// merges, never rebases). Written to docs/release-notes/<tag>.md and included
+// in the release commit; edit before merging if the generated grouping is off.
+export function groupReleaseLines(subjects) {
+  const groups = { Features: [], Fixes: [], Other: [] };
+  for (const s of subjects) {
+    const title = s.replace(/^Merge pull request #\d+ from \S+\s*/, "").trim();
+    if (!title || /^release: v/.test(title)) continue;
+    if (/^(feat|perf)[(:]/.test(title)) groups.Features.push(title);
+    else if (/^fix[(:]/.test(title)) groups.Fixes.push(title);
+    else groups.Other.push(title);
+  }
+  return groups;
+}
+
+function writeReleaseNotes(target, tag, previousVersion) {
+  const prevTag = `v${previousVersion}`;
+  let subjects = [];
+  try {
+    const hasPrev = git(["tag", "--list", prevTag]).trim();
+    const range = hasPrev ? `${prevTag}..HEAD` : "HEAD";
+    subjects = git(["log", range, "--format=%s"]).split("\n").filter(Boolean);
+  } catch {
+    return null; // notes are a convenience; never fail a release over them
+  }
+
+  const g = groupReleaseLines(subjects);
+  const section = (name, lines) => (lines.length ? `## ${name}\n\n${lines.map((l) => `- ${l}`).join("\n")}\n\n` : "");
+  const body =
+    `# ${tag}\n\n` +
+    `Lockstep release of \`@loopdive/js2\` and the \`js2wasm\` proxy: ` +
+    `${previousVersion} → ${target}.\n\n` +
+    section("Features", g.Features) +
+    section("Fixes", g.Fixes) +
+    section("Other", g.Other) +
+    `<!-- Drafted by scripts/release.mjs from ${prevTag}..HEAD. Edit before merging: ` +
+    `commit subjects are a starting point, not the announcement. Conformance ` +
+    `numbers belong here with their denominators. -->\n`;
+
+  const notesDir = join(repoRoot, "docs", "release-notes");
+  const notesPath = join(notesDir, `${tag}.md`);
+  try {
+    mkdirSync(notesDir, { recursive: true });
+    writeFileSync(notesPath, body);
+    git(["add", notesPath]);
+    git(["commit", "--amend", "--no-edit", "--no-verify"]);
+    git(["tag", "-f", "-a", tag, "-m", tag]); // re-point the tag at the amended commit
+    return `docs/release-notes/${tag}.md`;
+  } catch {
+    return null;
+  }
+}
+
 function main() {
   const arg = process.argv[2];
   if (!arg) {
@@ -124,6 +238,7 @@ function main() {
 
   setVersion(repoRoot, target);
   setVersion(proxyDir, target);
+  setProxyDependency(proxyDir, target);
 
   // Bump the JSR manifest (jsr.json) in lockstep too. It carries its OWN
   // "version" field that pnpm/setVersion never touches — so without this,
@@ -137,14 +252,20 @@ function main() {
   // Assert both ended up identical — guards against pnpm version surprises.
   const newRoot = readVersion(repoRoot);
   const newProxy = readVersion(proxyDir);
-  if (newRoot !== target || newProxy !== target) {
-    fail(`lockstep bump failed: root=${newRoot} proxy=${newProxy} expected=${target}`);
+  const proxyPkg = JSON.parse(readFileSync(join(proxyDir, "package.json"), "utf8"));
+  const newProxyDependency = proxyPkg.dependencies?.["@loopdive/js2"];
+  if (newRoot !== target || newProxy !== target || newProxyDependency !== target) {
+    fail(
+      `lockstep bump failed: root=${newRoot} proxy=${newProxy} ` +
+        `proxy dependency=${newProxyDependency} expected=${target}`,
+    );
   }
 
   console.log(
     `\nBumped both packages to ${target}:\n` +
       `  - package.json (@loopdive/js2)            → ${newRoot}\n` +
-      `  - packages/js2wasm/package.json (proxy)   → ${newProxy}\n`,
+      `  - packages/js2wasm/package.json (proxy)   → ${newProxy}\n` +
+      `  - proxy dependency on @loopdive/js2       → ${newProxyDependency}\n`,
   );
 
   // Stage exactly the files the bump touches: both package.jsons plus the
@@ -161,17 +282,33 @@ function main() {
   const commitSha = git(["rev-parse", "HEAD"]).trim();
   console.log(`Created release commit ${commitSha.slice(0, 9)} and tag ${tag}.\n`);
 
+  const notesPath = writeReleaseNotes(target, tag, currentRoot);
+  if (notesPath) console.log(`Release notes drafted: ${notesPath}\n`);
+
+  const upstream = upstreamRemote();
   console.log("NEXT STEPS:");
   console.log(`  1) Push the BRANCH normally and open a 'release: ${tag}' PR — do NOT push the tag yet.`);
   console.log(`  2) ⚠️  Do NOT 'git push --tags' / '--follow-tags' before merge — publish-npm.yml`);
   console.log(`     fires on ANY v<x.y.z> push and would publish un-reviewed code.`);
-  console.log(`  3) After the PR merges (the merge commit keeps your tagged commit in main's`);
-  console.log(
-    `     history), push the tag to trigger publish:\n` +
-      `       git push origin ${tag}\n` +
-      `     publish-npm.yml's verify-version job confirms tag == both package.json`,
-  );
-  console.log(`     versions before publishing. See docs/releasing.md.`);
+  console.log(`  3) After the PR merges, VERIFY before tagging — a squash/rebase would leave the`);
+  console.log(`     tagged commit off main and the tag would point at an orphan:`);
+  console.log(`       git fetch ${upstream.name} main`);
+  console.log(`       git merge-base --is-ancestor ${tag}^{commit} FETCH_HEAD && echo IN-MAIN`);
+  console.log(`  4) Then push the tag to trigger publish:`);
+  console.log(`       git push --no-verify ${upstream.name} refs/tags/${tag}:refs/tags/${tag}`);
+  console.log(`       git ls-remote --tags ${upstream.name} refs/tags/${tag}   # verify it LANDED`);
+  console.log(`     publish-npm.yml's verify-version job confirms the tag, manifests,`);
+  console.log(`     and proxy dependency all match before publishing. See docs/releasing.md.`);
+  if (notesPath) {
+    console.log(`  5) Publish the notes onto the GitHub Release (publish-npm.yml creates the`);
+    console.log(`     release with an EMPTY body, so this is what readers actually see):`);
+    console.log(`       gh release edit ${tag} -R loopdive/js2 --notes-file ${notesPath}`);
+    console.log(`       gh release view ${tag} -R loopdive/js2 --json body   # verify it landed`);
+    console.log(`     ('edit', not 'create' — the release already exists by then.)`);
+  }
+  if (upstream.note) console.log(`\n  ⚠️  ${upstream.note}`);
 }
 
-main();
+if (resolve(process.argv[1] || "") === releaseScriptPath) {
+  main();
+}

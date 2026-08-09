@@ -5,6 +5,7 @@ metadata:
   node_type: memory
   type: feedback
   originSessionId: 1ef96580-7db6-4559-9e05-7f637b7f44c5
+  modified: 2026-07-24T00:15:51.338Z
 ---
 
 **The lapse (2026-07-10):** while "holding for the flip," the lead let the
@@ -52,3 +53,17 @@ claimable pool sat idle. Even the flip PREREQUISITE (#2833) sat DIRTY.
    NOT mean admittable — a `hold`/`do-not-merge`/`wip` label (or a bot
    park-hold) still blocks it. Read `.labels` before telling the shepherd to
    enqueue (2026-07-10: mis-flagged a held #3040 PR as an enqueue candidate).
+
+**REPEATED 2026-07-24 (worse — ACTIVELY wound down):** when Fable hit its rate
+limit, the lead told a 3-dev Opus fleet to "finish in-flight then stand down, no
+new claims," inferring "resume Fable tomorrow" ⇒ "wrap up the whole fleet." User
+corrected: 43% weekly budget, 6+ days left. Two errors: (a) **conflated a drained
+SUB-lane with global drain** — the Opus *codegen clean-increment* queue was
+genuinely exhausted (measured), but Lane-A CI/infra/tooling, hygiene/reconcile,
+and non-codegen sprint tasks all had runway the devs were actively mining; (b)
+**budget-conservation instinct** — 43% budget is a reason to KEEP the pipeline
+fed ([[feedback_budget_is_own_agents_pipeline_not_idle]]), not to hoard.
+**Rule:** suspend ONLY the specifically-blocked lane (here: fable-tier substrate);
+keep the fleet running every other Opus-appropriate lane. A user request to
+suspend X is not license to stop Y. "One queue is dry" ⇒ redirect to another
+lane, never wind down while budget + a claimable pool remain.

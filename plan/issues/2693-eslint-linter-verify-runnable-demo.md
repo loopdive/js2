@@ -3,15 +3,44 @@ id: 2693
 title: "MILESTONE: ESLint-style Linter.verify runs as Wasm in Node (host-delegated parse)"
 status: done
 created: 2026-06-26
+updated: 2026-07-26
 completed: 2026-06-26
-assignee: ttraenkler/sendev-eslint
 priority: high
-area: codegen
-goal: npm-library-support
 feasibility: hard
-related: [1282, 1573, 1712, 2689, 2691, 1791]
+reasoning_effort: high
+task_type: test
+area: codegen
+language_feature: host-delegated-parsing
+goal: npm-library-support
+assignee: ttraenkler/sendev-eslint
+es_edition: n/a
+related: [1282, 1400, 1573, 1712, 2689, 2691, 1791, 3653, 3654, 3655, 3657]
 ---
 # MILESTONE — ESLint-style Linter.verify runs as Wasm in Node.js
+
+## 2026-07-26 scope correction
+
+The original TypeScript-scanner demo remains real and green: its one test
+compiles, validates, instantiates, and checks four runtime results.
+
+The separate real-`espree`/real-`esquery` confirmation was not exercising that
+seam on macOS. Its hard-coded `/workspace/...` lookup was caught and returned
+from the test, which Vitest reported as PASS. With only the path corrected, the
+test loads the real packages and then fails compilation:
+
+```text
+IR path failed for Linter_verify:
+call to unknown function "__host_is_statement" [IR-FALLBACK]
+```
+
+Path/skip correctness is #3653; the ambient boolean host-call IR gap is #3657.
+Accordingly, this completed milestone proves the smaller scanner-delegated
+architecture, **not** the real dual-delegation seam and not the real ESLint npm
+package.
+
+The older statement below that ESLint's external dependencies are uninstalled
+is historical and no longer true. Current package-graph resolution is #3654;
+JSON `require` is #3655.
 
 The demonstrable "eslint runs as Wasm" milestone for the npm-library-support
 goal. An ESLint-style `Linter` class with `verify()` + the ESLint-core `semi`

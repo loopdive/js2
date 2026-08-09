@@ -4,15 +4,20 @@
  */
 import { ts } from "../../ts-api.js";
 import { isBooleanType, isNumberType, isStringType } from "../../checker/type-mapper.js";
-import type { Instr, ValType } from "../../ir/types.js";
+import type { Instr, ValType, WasmFunction } from "../../ir/types.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { resolveArrayInfo } from "../array-methods.js";
-import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js"; // (#1916 S3b) stable-regime minting
+import { definedFuncHandleOf, mintDefinedFunc, pushDefinedFunc } from "../func-space.js"; // (#1916 S3b) stable-regime minting
 import { allocLocal, allocTempLocal, releaseTempLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { ensureLateImport, flushLateImportShifts } from "../expressions/late-imports.js";
 import { addFuncType, ensureWasiWriteAnyStringHelper } from "../index.js";
 import { emitStandaloneStdoutAppendValue, ensureNativeStringExternBridge } from "../native-strings.js";
+import {
+  planProgramAbiEntrySourceSupportCallable,
+  PROGRAM_ABI_CALLABLE_ROLE,
+  resolveProgramAbiSupportCallableHandle,
+} from "../program-abi-planning.js";
 import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression, VOID_RESULT } from "../shared.js";
 import { compileStringLiteral } from "../string-ops.js";
@@ -147,6 +152,37 @@ function compileConsoleCall(
 // using Howard Hinnant's civil_from_days algorithm, implemented purely in
 // i64 arithmetic — no host imports needed.
 
+const DATE_CIVIL_SUPPORT_ROLE = "date-civil-support";
+const DATE_CIVIL_SUPPORT_ORDINAL = 0;
+const dateCivilHelperByContext = new WeakMap<CodegenContext, WasmFunction>();
+
+/**
+ * Give the civil-date helper one structural owner and resolve its exact
+ * allocator object back to the current function handle.
+ *
+ * The helper's stable handle is byte-compatible with untracked compilation.
+ * Program ABI tracking only prevents the final retained-callable sweep from
+ * assigning a second generic owner.
+ */
+function ownDateCivilHelper(ctx: CodegenContext, func: WasmFunction): number {
+  const ref = planProgramAbiEntrySourceSupportCallable(ctx, {
+    role: DATE_CIVIL_SUPPORT_ROLE,
+    roleOrdinal: PROGRAM_ABI_CALLABLE_ROLE.dateCivilSupport,
+    derivedOrdinal: DATE_CIVIL_SUPPORT_ORDINAL,
+    displayName: func.name,
+    func,
+  });
+  const funcIdx = resolveProgramAbiSupportCallableHandle(ctx, ref, func);
+  if (funcIdx === undefined) {
+    throw new Error(`${func.name} lost its exact allocator object`);
+  }
+  const stableHandle = definedFuncHandleOf(ctx, func);
+  if (stableHandle === undefined) {
+    throw new Error(`${func.name} is not present in the defined function registry`);
+  }
+  return stableHandle;
+}
+
 /** Ensure the $__Date struct type exists, return its type index. */
 export function ensureDateStruct(ctx: CodegenContext): number {
   const existing = ctx.structMap.get("__Date");
@@ -236,14 +272,22 @@ function emitPackedMmdd(out: Instr[], tmpLocal: number, yearTmp: number): void {
  * Uses Hinnant's algorithm: http://howardhinnant.github.io/date_algorithms.html#civil_from_days
  */
 export function ensureDateCivilHelper(ctx: CodegenContext): number {
-  const existing = ctx.funcMap.get("__date_civil_from_days");
-  if (existing !== undefined) return existing;
+  const owned = dateCivilHelperByContext.get(ctx);
+  if (owned) {
+    if (definedFuncHandleOf(ctx, owned) === undefined) {
+      throw new Error("__date_civil_from_days lost its exact allocator object");
+    }
+    return ownDateCivilHelper(ctx, owned);
+  }
+  const installCompatibilityAlias = !ctx.funcMap.has("__date_civil_from_days");
 
   // func (param $z i64) (result i64)
   // locals: $z(0), $era(1), $doe(2), $yoe(3), $doy(4), $mp(5), $y(6), $m(7), $d(8)
   const funcTypeIdx = addFuncType(ctx, [{ kind: "i64" }], [{ kind: "i64" }]);
   const funcIdx = mintDefinedFunc(ctx);
-  ctx.funcMap.set("__date_civil_from_days", funcIdx);
+  if (installCompatibilityAlias) {
+    ctx.funcMap.set("__date_civil_from_days", funcIdx);
+  }
 
   const body: Instr[] = [];
 
@@ -396,7 +440,7 @@ export function ensureDateCivilHelper(ctx: CodegenContext): number {
     { op: "i64.add" },
   );
 
-  pushDefinedFunc(ctx, funcIdx, {
+  const func: WasmFunction = {
     name: "__date_civil_from_days",
     typeIdx: funcTypeIdx,
     locals: [
@@ -412,9 +456,11 @@ export function ensureDateCivilHelper(ctx: CodegenContext): number {
     ],
     body,
     exported: false,
-  });
+  };
+  pushDefinedFunc(ctx, funcIdx, func);
+  dateCivilHelperByContext.set(ctx, func);
 
-  return funcIdx;
+  return ownDateCivilHelper(ctx, func);
 }
 
 /**

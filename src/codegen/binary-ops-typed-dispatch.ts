@@ -23,7 +23,7 @@ import { ensureObjectRuntime } from "./object-runtime.js";
 import { addStringImports, addUnionImports } from "./index.js";
 import type { InnerResult } from "./shared.js";
 import { coerceType, ensureAnyHelpers, flushLateImportShifts } from "./shared.js";
-import { emitAnyEqFromExternTemps } from "./coercion-engine.js";
+import { emitAnyEqFromExternTemps, emitHostEqualityFromStack } from "./coercion-engine.js";
 import {
   compileBooleanBinaryOp,
   compileI32BinaryOp,
@@ -549,12 +549,18 @@ export function compileTypedBinaryDispatch(
   if ((leftType.kind === "externref" || rightType.kind === "externref") && (isEqOp || isNeqOp)) {
     const isStrict = op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
     const isStrictNeq = op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
-    const leftIsString = isStringType(leftTsType);
-    const rightIsString = isStringType(rightTsType);
-    const leftIsNumber = isNumberType(leftTsType);
-    const rightIsNumber = isNumberType(rightTsType);
-    const leftIsBool = isBooleanType(leftTsType);
-    const rightIsBool = isBooleanType(rightTsType);
+    // A function-scoped var used as a bare for-in target is dynamically a
+    // property-key string during the loop even when a later initializer makes
+    // TypeScript report `number` at every use. Do not constant-fold equality
+    // from that stale static type; compare the actual boxed value.
+    const leftIsDynamicForIn = ts.isIdentifier(expr.left) && fctx.forInIdentifierVars?.has(expr.left.text) === true;
+    const rightIsDynamicForIn = ts.isIdentifier(expr.right) && fctx.forInIdentifierVars?.has(expr.right.text) === true;
+    const leftIsString = !leftIsDynamicForIn && isStringType(leftTsType);
+    const rightIsString = !rightIsDynamicForIn && isStringType(rightTsType);
+    const leftIsNumber = !leftIsDynamicForIn && isNumberType(leftTsType);
+    const rightIsNumber = !rightIsDynamicForIn && isNumberType(rightTsType);
+    const leftIsBool = !leftIsDynamicForIn && isBooleanType(leftTsType);
+    const rightIsBool = !rightIsDynamicForIn && isBooleanType(rightTsType);
 
     // #1776: standalone / WASI (no-JS-host) dynamic equality.
     //
@@ -1056,6 +1062,10 @@ export function compileTypedBinaryDispatch(
       releaseTempLocal(fctx, rTmp);
       releaseTempLocal(fctx, lTmp);
       return { kind: "i32" };
+    }
+
+    if (!noJsHost && (leftIsDynamicForIn || rightIsDynamicForIn)) {
+      return emitHostEqualityFromStack(ctx, fctx, leftType, rightType, isStrict, isNeqOp);
     }
 
     // Wrapper object semantics (#1111): `new Number(n)`, `new String(s)`,

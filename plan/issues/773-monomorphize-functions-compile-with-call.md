@@ -9,7 +9,6 @@ priority: critical
 feasibility: hard
 model: opus
 fable_role: spec
-assignee: ttraenkler/fable-773
 reasoning_effort: max
 task_type: performance
 area: codegen

@@ -10,7 +10,7 @@ import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { addUnionImports } from "../index.js";
 import { addStringConstantGlobal, ensureExnTag } from "../registry/imports.js";
 import { coerceType, compileExpression, compileStatement, ensureLateImport, flushLateImportShifts } from "../shared.js";
-import { walkChildren } from "../walk-instructions.js";
+import { walkChildren, walkInstructions } from "../walk-instructions.js";
 import {
   compileExternrefArrayDestructuringDecl,
   compileExternrefObjectDestructuringDecl,
@@ -79,6 +79,23 @@ function bumpOuterBranchDepths(instrs: Instr[], outerDepths: Set<number>, delta:
     const childLocalDepth = isLabelOp ? localDepth + 1 : localDepth;
     walkChildren(instr, (children) => bumpOuterBranchDepths(children, outerDepths, delta, childLocalDepth));
   }
+}
+
+/** Deep-clone an instruction tree while retaining finalize-time flag fixups. */
+function cloneInstructions(ctx: CodegenContext, instrs: Instr[]): Instr[] {
+  const cloned = structuredClone(instrs) as Instr[];
+  const trackedReads = ctx.inModuleInitFlagReads;
+  if (!trackedReads || trackedReads.length === 0) return cloned;
+
+  const tracked = new Set(trackedReads);
+  const originals: Instr[] = [];
+  const copies: Instr[] = [];
+  walkInstructions(instrs, (instr) => originals.push(instr));
+  walkInstructions(cloned, (instr) => copies.push(instr));
+  for (let i = 0; i < originals.length; i++) {
+    if (tracked.has(originals[i]!)) trackedReads.push(copies[i]!);
+  }
+  return cloned;
 }
 
 function compileExternrefCatchDestructure(
@@ -306,7 +323,7 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
 
   /** Return a deep clone of the pre-compiled finally instructions. */
   function cloneFinally(): Instr[] {
-    return structuredClone(finallyInstrs!);
+    return cloneInstructions(ctx, finallyInstrs!);
   }
 
   /**
@@ -318,7 +335,7 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
    * finally was compiled at +1.
    */
   function cloneFinallyAtDepth(extraDepth: number): Instr[] {
-    const cloned = structuredClone(finallyInstrs!);
+    const cloned = cloneInstructions(ctx, finallyInstrs!);
     if (extraDepth === 0 || outerBreakDepths.size === 0) return cloned;
     bumpOuterBranchDepths(cloned, outerBreakDepths, extraDepth);
     return cloned;
@@ -447,6 +464,24 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
       }
 
       if (finallyInstrs) {
+        // (#4249) Snapshot the depth baselines BEFORE the inner-try `+1`.
+        //
+        // `finallyInlineDelta` (control-flow.ts) retargets a clone by
+        // `current − baseline`, so the baseline must name the depth the clone
+        // was COMPILED at — which is `+1` (the try block), NOT the `+2` of this
+        // catch body (try block + the inner try that wraps it so the finally
+        // also runs on a catch-body throw). Capturing it after the `++` made
+        // every break/continue inside a catch body inline the finally at delta
+        // 0, one label too shallow: a `finally { continue; }` reached from
+        // `catch { break; }` branched to the enclosing TRY instead of the loop,
+        // so control fell out of the try and ran the statements AFTER it
+        // (`language/statements/try/S12.14_A9..A12_T4` CHECK#2 — the loop body
+        // executed its post-try tail, `fin2` ended at -1). The sibling
+        // catch_all insertion sites already pass an explicit
+        // `cloneFinallyAtDepth(1)` for exactly this reason; the break/continue
+        // site is the one that derived its delta and got it wrong.
+        const catchBreakBaseline = fctx.breakStack.slice();
+        const catchContinueBaseline = fctx.continueStack.slice();
         for (let i = 0; i < fctx.breakStack.length; i++) fctx.breakStack[i]!++;
         for (let i = 0; i < fctx.continueStack.length; i++) fctx.continueStack[i]!++;
         adjustRethrowDepth(fctx, 1);
@@ -459,8 +494,8 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
           cloneFinallyAtDepth,
           breakStackLen: fctx.breakStack.length,
           continueStackLen: fctx.continueStack.length,
-          breakDepthBaseline: fctx.breakStack.slice(),
-          continueDepthBaseline: fctx.continueStack.slice(),
+          breakDepthBaseline: catchBreakBaseline,
+          continueDepthBaseline: catchContinueBaseline,
         });
       }
 
@@ -505,7 +540,7 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
 
     /** Deep-clone the catch body instructions for reuse in catch_all. */
     function cloneCatchBody(): Instr[] {
-      return structuredClone(catchBodyInstrs);
+      return cloneInstructions(ctx, catchBodyInstrs);
     }
 
     // Build "catch $exn" body: receives the externref value on the stack
@@ -600,6 +635,16 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
       const varName = stmt.catchClause.variableDeclaration.name.text;
       if (savedCatchVarIdx !== undefined) {
         fctx.localMap.set(varName, savedCatchVarIdx);
+      } else if (fctx.name === "__module_init" && ctx.annexBModuleBindings?.has(varName)) {
+        // (#4182) With no prior local to restore, the catch parameter used to
+        // LEAK in the flat localMap past the catch scope, shadowing the
+        // module-scope Annex B live-binding global forever after the `try`
+        // (`annexB/language/global-code/*-no-skip-try`: post-try `typeof f`
+        // read the leaked catch local instead of the updated global). Delete
+        // it so resolution falls back to the module global. Scoped to the
+        // normally-empty `annexBModuleBindings` set — the general leak is
+        // pre-existing behavior other resolution paths may lean on.
+        fctx.localMap.delete(varName);
       }
     }
   }

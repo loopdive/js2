@@ -11,10 +11,10 @@ async function run(src: string): Promise<any> {
   const { instance } = await instantiateWasm(
     result.binary,
     imports.env,
-    imports["wasm:js-string"],
     imports.string_constants,
+    imports.string_constants16,
   );
-  if (imports.setExports) imports.setExports(instance.exports as Record<string, Function>);
+  imports.setInstance?.(instance);
   return (instance.exports as any).test();
 }
 

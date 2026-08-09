@@ -3,10 +3,12 @@
 // CommonJS `require()` → ESM import rewrite (#1279).
 //
 // Phase 1: detect static `const X = require('Y')` and `const { a, b } = require('Y')`
-// patterns at module top-level and rewrite them to ESM `import` declarations. After
-// rewrite, the existing import resolver (`resolveAllImports`), preprocessor
-// (`preprocessImports`) and TypeScript-based multi-source analyzer all see them as
-// regular ESM imports and link them correctly.
+// patterns at module top-level — including grouped `const a = require("a"),
+// b = require("b")` declarations — and rewrite them to ESM `import`
+// declarations. After rewrite, the existing import resolver
+// (`resolveAllImports`), preprocessor (`preprocessImports`) and TypeScript-based
+// multi-source analyzer all see them as regular ESM imports and link them
+// correctly.
 //
 // We deliberately keep this conservative — only top-level `const` declarations whose
 // initializer is a direct call to `require` with a single string-literal argument.
@@ -82,10 +84,20 @@ function tryRewriteStatement(stmt: ts.Statement, sf: ts.SourceFile): RequireRewr
   const flags = stmt.declarationList.flags & ts.NodeFlags.BlockScoped;
   if (!(flags & ts.NodeFlags.Const)) return null;
 
-  // Single-declaration form only. `const a = require('a'), b = require('b')` is uncommon
-  // in CJS code and keeping it as a single rewrite is awkward — skip for now.
-  if (stmt.declarationList.declarations.length !== 1) return null;
-  const decl = stmt.declarationList.declarations[0];
+  const imports: string[] = [];
+  for (const decl of stmt.declarationList.declarations) {
+    const importText = tryRenderRequireImport(decl);
+    // Keep the rewrite atomic. Mixing a rewritten import with a residual
+    // declarator would change declaration order and binding semantics.
+    if (importText === null) return null;
+    imports.push(importText);
+  }
+  if (imports.length === 0) return null;
+  return { start: stmt.getStart(sf), end: stmt.end, text: imports.join("\n") };
+}
+
+/** Render one static require declarator as an ESM import, or reject it. */
+function tryRenderRequireImport(decl: ts.VariableDeclaration): string | null {
   if (!decl.initializer) return null;
 
   const moduleSpec = extractRequireSpecifier(decl.initializer);
@@ -94,8 +106,7 @@ function tryRewriteStatement(stmt: ts.Statement, sf: ts.SourceFile): RequireRewr
   // Now look at the binding pattern to decide between default-import and named-import.
   if (ts.isIdentifier(decl.name)) {
     // const X = require('Y') → import X from 'Y'
-    const importText = `import ${decl.name.text} from ${JSON.stringify(moduleSpec)};`;
-    return { start: stmt.getStart(sf), end: stmt.end, text: importText };
+    return `import ${decl.name.text} from ${JSON.stringify(moduleSpec)};`;
   }
 
   if (ts.isObjectBindingPattern(decl.name)) {
@@ -124,11 +135,9 @@ function tryRewriteStatement(stmt: ts.Statement, sf: ts.SourceFile): RequireRewr
     }
     if (named.length === 0) {
       // Empty destructuring is legal but pointless; treat as a side-effect import.
-      const importText = `import ${JSON.stringify(moduleSpec)};`;
-      return { start: stmt.getStart(sf), end: stmt.end, text: importText };
+      return `import ${JSON.stringify(moduleSpec)};`;
     }
-    const importText = `import { ${named.join(", ")} } from ${JSON.stringify(moduleSpec)};`;
-    return { start: stmt.getStart(sf), end: stmt.end, text: importText };
+    return `import { ${named.join(", ")} } from ${JSON.stringify(moduleSpec)};`;
   }
 
   // Array destructuring or other patterns — leave alone.

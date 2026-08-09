@@ -18,8 +18,24 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../../src/index.js";
-import { asBlockId, asValueId, irVal, verifyIrFunction, type IrFunction, type IrValueId } from "../../src/ir/index.js";
+import {
+  asBlockId,
+  asValueId,
+  irImportFuncRef,
+  irIntrinsicFuncRef,
+  irRuntimeFuncRef,
+  irSupportFuncRef,
+  irUnitFuncRef,
+  irVal,
+  verifyIrFunction,
+  type IrFuncRef,
+  type IrFunction,
+  type IrValueId,
+} from "../../src/ir/index.js";
 import { inlineSmall } from "../../src/ir/passes/inline-small.js";
+import { createTestIrFunctionIdentityFactory } from "../helpers/ir-identities.js";
+
+const irIdentities = createTestIrFunctionIdentityFactory("ir/inline-small");
 
 // ---------------------------------------------------------------------------
 // Unit-test helpers
@@ -36,7 +52,7 @@ const BOOL = irVal({ kind: "i32" });
 // 1 param + 4 instrs + return. Well under the 10-instr limit.
 function makeAbsCallee(): IrFunction {
   return {
-    name: "abs",
+    ...irIdentities.next("abs"),
     params: [{ value: id(0), type: F64, name: "x" }],
     resultTypes: [F64],
     blocks: [
@@ -66,9 +82,9 @@ function makeAbsCallee(): IrFunction {
 }
 
 // Caller: `run(n) = abs(n)`. Single-block, single call, returns the result.
-function makeRunCaller(): IrFunction {
+function makeRunCaller(callee: IrFunction): IrFunction {
   return {
-    name: "run",
+    ...irIdentities.next("run"),
     params: [{ value: id(0), type: F64, name: "n" }],
     resultTypes: [F64],
     blocks: [
@@ -79,7 +95,7 @@ function makeRunCaller(): IrFunction {
         instrs: [
           {
             kind: "call",
-            target: { kind: "func", name: "abs" },
+            target: irUnitFuncRef(callee),
             args: [id(0)],
             result: id(1),
             resultType: F64,
@@ -93,6 +109,59 @@ function makeRunCaller(): IrFunction {
   };
 }
 
+function makeConstantCallee(name: string, value: number): IrFunction {
+  return {
+    ...irIdentities.next(name),
+    params: [],
+    resultTypes: [F64],
+    blocks: [
+      {
+        id: asBlockId(0),
+        blockArgs: [],
+        blockArgTypes: [],
+        instrs: [
+          {
+            kind: "const",
+            value: { kind: "f64", value },
+            result: id(0),
+            resultType: F64,
+          },
+        ],
+        terminator: { kind: "return", values: [id(0)] },
+      },
+    ],
+    exported: false,
+    valueCount: 1,
+  };
+}
+
+function makeZeroArgCaller(name: string, target: IrFuncRef): IrFunction {
+  return {
+    ...irIdentities.next(name),
+    params: [],
+    resultTypes: [F64],
+    blocks: [
+      {
+        id: asBlockId(0),
+        blockArgs: [],
+        blockArgTypes: [],
+        instrs: [
+          {
+            kind: "call",
+            target,
+            args: [],
+            result: id(0),
+            resultType: F64,
+          },
+        ],
+        terminator: { kind: "return", values: [id(0)] },
+      },
+    ],
+    exported: false,
+    valueCount: 1,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
@@ -100,7 +169,7 @@ function makeRunCaller(): IrFunction {
 describe("#1167b — inlineSmall (unit)", () => {
   it("inlines a single-block non-recursive callee", () => {
     const callee = makeAbsCallee();
-    const caller = makeRunCaller();
+    const caller = makeRunCaller(callee);
     const out = inlineSmall({ functions: [callee, caller] });
     expect(out).not.toBe({ functions: [callee, caller] }); // module changed
 
@@ -129,7 +198,7 @@ describe("#1167b — inlineSmall (unit)", () => {
 
   it("operands of inlined instructions are rewired to caller SSA ids", () => {
     const callee = makeAbsCallee();
-    const caller = makeRunCaller();
+    const caller = makeRunCaller(callee);
     const out = inlineSmall({ functions: [callee, caller] });
     const newCaller = out.functions[1]!;
     const block = newCaller.blocks[0]!;
@@ -153,8 +222,9 @@ describe("#1167b — inlineSmall (unit)", () => {
   it("skips a recursive callee", () => {
     // `rec(x) = rec(x)` — trivially recursive, single-block, returns via
     // the recursive call's result. canInline must reject it.
+    const recIdentity = irIdentities.next("rec");
     const rec: IrFunction = {
-      name: "rec",
+      ...recIdentity,
       params: [{ value: id(0), type: F64, name: "x" }],
       resultTypes: [F64],
       blocks: [
@@ -165,7 +235,7 @@ describe("#1167b — inlineSmall (unit)", () => {
           instrs: [
             {
               kind: "call",
-              target: { kind: "func", name: "rec" },
+              target: irUnitFuncRef(recIdentity),
               args: [id(0)],
               result: id(1),
               resultType: F64,
@@ -178,7 +248,7 @@ describe("#1167b — inlineSmall (unit)", () => {
       valueCount: 2,
     };
     const caller: IrFunction = {
-      name: "run",
+      ...irIdentities.next("run"),
       params: [{ value: id(0), type: F64, name: "n" }],
       resultTypes: [F64],
       blocks: [
@@ -189,7 +259,7 @@ describe("#1167b — inlineSmall (unit)", () => {
           instrs: [
             {
               kind: "call",
-              target: { kind: "func", name: "rec" },
+              target: irUnitFuncRef(rec),
               args: [id(0)],
               result: id(1),
               resultType: F64,
@@ -207,10 +277,74 @@ describe("#1167b — inlineSmall (unit)", () => {
     expect(out.functions[1]).toBe(caller);
   });
 
+  it("uses exact unit identities when duplicate display names include a recursive function", () => {
+    const exactTarget = makeConstantCallee("same", 11);
+    const recursiveIdentity = irIdentities.next("same");
+    const recursive: IrFunction = {
+      ...recursiveIdentity,
+      params: [],
+      resultTypes: [F64],
+      blocks: [
+        {
+          id: asBlockId(0),
+          blockArgs: [],
+          blockArgTypes: [],
+          instrs: [
+            {
+              kind: "call",
+              target: irUnitFuncRef(recursiveIdentity),
+              args: [],
+              result: id(0),
+              resultType: F64,
+            },
+          ],
+          terminator: { kind: "return", values: [id(0)] },
+        },
+      ],
+      exported: false,
+      valueCount: 1,
+    };
+    const caller = makeZeroArgCaller("run-exact", irUnitFuncRef(exactTarget));
+
+    const out = inlineSmall({ functions: [exactTarget, recursive, caller] });
+    const newCaller = out.functions[2]!;
+    expect(newCaller).not.toBe(caller);
+    expect(newCaller.blocks[0]!.instrs).toEqual([
+      {
+        kind: "const",
+        value: { kind: "f64", value: 11 },
+        result: id(1),
+        resultType: F64,
+      },
+    ]);
+    expect(verifyIrFunction(newCaller)).toEqual([]);
+
+    // Recursion belongs only to the other same-labelled unit.
+    expect(out.functions[1]).toBe(recursive);
+    expect(recursive.blocks[0]!.instrs[0]).toMatchObject({
+      kind: "call",
+      target: { binding: { kind: "unit", unitId: recursive.unitId } },
+    });
+  });
+
+  it("does not treat provider bindings as local units with matching display names", () => {
+    const local = makeConstantCallee("provider", 23);
+    const providerTargets: readonly IrFuncRef[] = [
+      irImportFuncRef("env", "provider"),
+      irRuntimeFuncRef("provider"),
+      irIntrinsicFuncRef("provider"),
+      irSupportFuncRef(local.unitId, "provider-test", "provider"),
+    ];
+    const callers = providerTargets.map((target, index) => makeZeroArgCaller(`provider-caller-${index}`, target));
+    const mod = { functions: [local, ...callers] };
+
+    expect(inlineSmall(mod)).toBe(mod);
+  });
+
   it("skips a multi-block callee", () => {
     // A two-block callee is rejected by canInline regardless of size.
     const multi: IrFunction = {
-      name: "two",
+      ...irIdentities.next("two"),
       params: [{ value: id(0), type: F64, name: "x" }],
       resultTypes: [F64],
       blocks: [
@@ -233,7 +367,7 @@ describe("#1167b — inlineSmall (unit)", () => {
       valueCount: 1,
     };
     const caller: IrFunction = {
-      name: "run",
+      ...irIdentities.next("run"),
       params: [{ value: id(0), type: F64, name: "n" }],
       resultTypes: [F64],
       blocks: [
@@ -244,7 +378,7 @@ describe("#1167b — inlineSmall (unit)", () => {
           instrs: [
             {
               kind: "call",
-              target: { kind: "func", name: "two" },
+              target: irUnitFuncRef(multi),
               args: [id(0)],
               result: id(1),
               resultType: F64,
@@ -275,7 +409,7 @@ describe("#1167b — inlineSmall (unit)", () => {
       });
     }
     const large: IrFunction = {
-      name: "large",
+      ...irIdentities.next("large"),
       params: [],
       resultTypes: [F64],
       blocks: [
@@ -291,7 +425,7 @@ describe("#1167b — inlineSmall (unit)", () => {
       valueCount: 11,
     };
     const caller: IrFunction = {
-      name: "run",
+      ...irIdentities.next("run"),
       params: [],
       resultTypes: [F64],
       blocks: [
@@ -302,7 +436,7 @@ describe("#1167b — inlineSmall (unit)", () => {
           instrs: [
             {
               kind: "call",
-              target: { kind: "func", name: "large" },
+              target: irUnitFuncRef(large),
               args: [],
               result: id(0),
               resultType: F64,
@@ -320,7 +454,7 @@ describe("#1167b — inlineSmall (unit)", () => {
 
   it("returns the same module reference when nothing is inlinable", () => {
     const only: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [{ value: id(0), type: F64, name: "n" }],
       resultTypes: [F64],
       blocks: [

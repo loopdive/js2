@@ -1,9 +1,10 @@
 ---
 id: 2916
 title: "[SUBSTRATE][ARCH] Standalone native instanceof operator + isPrototypeOf residual (~31 leaky-PASS conversions)"
-status: in-progress
-updated: 2026-07-17
-assignee: ttraenkler/sendev-instanceof
+status: ready
+updated: 2026-08-08
+loc-budget-allow:
+  - src/codegen/expressions/identifiers.ts
 sprint: current
 created: 2026-07-01
 priority: medium
@@ -22,7 +23,76 @@ origin: "2026-07-01 — sr-tail2 escalation: leaky-PASS conversion cluster, subs
 
 # #2916 — Standalone native `instanceof` operator + `isPrototypeOf` residual
 
-## Problem (verified on `main` `f350ba855`, 2026-07-01)
+## Claim status: UNCLAIMED and AVAILABLE — take this issue freely
+
+> **As of 2026-07-31 08:55:03Z the `issue-assignments` record for #2916 reads
+> `status: released`.** The issue is unclaimed. Nothing is in flight and nothing
+> is half-implemented.
+>
+> Groundwork landed in **PR #3881** — measured scope, counted baseline, tiered
+> acceptance, the confirmed #2580 M3 dependency, and both leak sites. The
+> deliberate stopping point was _before_ the Slice B/C substrate, because a
+> stranded `OrdinaryHasInstance` tri-state is how a wrong `true` ships.
+>
+> **Historical note, resolved — do not act on it.** Earlier on 2026-07-31 this
+> file carried a warning that the claim record was stale and stuck at
+> `in-progress`. That warning was itself wrong. The departing agent's release
+> **did** land at 08:55:03Z; one of the attempts it reported as failed had in
+> fact written the record. It trusted its own error output instead of reading the
+> record back, then wrote a note explaining that a ref could not be fixed which
+> had already been fixed. Compounding it, `pre-dispatch-gate.mjs` tested
+> `assignee` alone and ignored `status`, so a **released** record still printed
+> `CLAIMED by …` — that gate defect is fixed in **#3901**. Three separate readers
+> were misled for ~6 h. Read the record, not the prose:
+> `gh api "repos/loopdive/js2/contents/2916.json?ref=issue-assignments"`
+> (quote the URL — zsh globs the `?`).
+
+## RE-GROUNDED 2026-07-31 — scope is narrower than filed; the headline figure is stale
+
+> **The "~31 leaky-PASS conversions" figure in the title is SUPERSEDED.** It is
+> kept visible rather than deleted so nobody re-derives it, but it must not be
+> used to size this work or to measure acceptance. Two of the three filed leak
+> shapes no longer reproduce.
+>
+> Measured on current `main`, `--target standalone`, reading the module's
+> **import list** (a compile-time property — the right instrument for a leak
+> question; #3885's hazard concerns host _evaluation_ of `Object.*` statics, not
+> the import list). Control: a plain module with no `instanceof` emits
+> `imports=0`.
+>
+> | shape                                            | filed leak                | measured 2026-07-31                   |
+> | ------------------------------------------------ | ------------------------- | ------------------------------------- |
+> | `a instanceof Array` (builtin-name RHS)          | `env::__instanceof`       | **clean** — Slice A                   |
+> | `a instanceof C` (user-class RHS)                | —                         | **clean**                             |
+> | Error family                                     | —                         | **clean** (already native)            |
+> | RHS resolves to no class/struct                  | `env::__instanceof_dyn`   | **never observed**                    |
+> | `a instanceof K`, `K` an `any`-typed local       | `env::__instanceof_check` | **LEAKS**                             |
+> | `x instanceof K`, `K` a fn-valued param          | —                         | **LEAKS** `__instanceof_check`        |
+> | `a instanceof holder.K` (property access)        | —                         | **LEAKS** `__instanceof_check`        |
+> | `a instanceof mk()` (call result)                | —                         | **LEAKS** `__instanceof_check`        |
+> | `C.prototype.isPrototypeOf(a)` (static receiver) | (paired residual)         | **clean**                             |
+> | `p.isPrototypeOf(a)`, `p` a dynamic receiver     | —                         | **LEAKS** `env::Object_isPrototypeOf` |
+>
+> **The residual is TWO host imports, not three:**
+>
+> 1. **`env::__instanceof_check`** — every dynamic-RHS `instanceof` shape. Four
+>    surface variants, one import, one root cause (`identifiers.ts:1247`/`1252`).
+> 2. **`env::Object_isPrototypeOf`** — `isPrototypeOf` on a **dynamic** receiver
+>    only; the static `C.prototype.isPrototypeOf(a)` form is already clean.
+>
+> `env::__instanceof` and `env::__instanceof_dyn` were not observed on any probed
+> shape.
+>
+> **A correction to this re-grounding's own first pass**, recorded because it is
+> the same class of error the issue text made: an initial probe tested only the
+> _static_ `C.prototype.isPrototypeOf(a)` form, saw it clean, and concluded
+> `isPrototypeOf` was fully fixed. It is not — the dynamic-receiver form leaks.
+> One shape is not the surface.
+>
+> **Acceptance must therefore be set on counted rows, not on the stale
+> estimate** — see the re-grounded acceptance criteria at the end of this issue.
+
+## Problem (verified on `main` `f350ba855`, 2026-07-01 — see RE-GROUNDED above)
 
 Under `--target standalone` the dynamic `instanceof` operator leaks an
 unsatisfiable `env::__instanceof*` host import, so the module cannot instantiate
@@ -32,11 +102,11 @@ emits the import and dies at instantiation.
 
 Confirmed by probe (`--target standalone`, `.tmp/probe_name.ts` / `probe_inst.ts`):
 
-| Source shape | Leaked host import |
-|---|---|
-| `a instanceof Array` (any LHS, builtin-name RHS) | `env::__instanceof` |
-| `a instanceof C` (any LHS, `any`-typed RHS identifier) | `env::__instanceof_check` |
-| `a instanceof C` where RHS resolves to no class/struct name | `env::__instanceof_dyn` |
+| Source shape                                                | Leaked host import        |
+| ----------------------------------------------------------- | ------------------------- |
+| `a instanceof Array` (any LHS, builtin-name RHS)            | `env::__instanceof`       |
+| `a instanceof C` (any LHS, `any`-typed RHS identifier)      | `env::__instanceof_check` |
+| `a instanceof C` where RHS resolves to no class/struct name | `env::__instanceof_dyn`   |
 
 Because the host import is **entirely absent** in standalone, making `instanceof`
 native does not swap one leaf — it **REPLACES §13.10.2 InstanceofOperator /
@@ -86,6 +156,7 @@ leaks. It shares the `$Object.$proto` walk with the instanceof substrate.
 ## Implementation Plan
 
 ### Root cause
+
 `ensureLateImport` (`late-imports.ts:382`) has native routing for
 `UNION_NATIVE_HELPER_NAMES` / `OBJECT_RUNTIME_HELPER_NAMES` (line 438) but
 **none for `__instanceof*`**, so those names fall through to
@@ -117,6 +188,7 @@ as the harder, smaller slice (below).
 ### Slice A — generalize the native inline string-name branch (bulk of ~31)
 
 **File: `src/codegen/expressions/identifiers.ts`**
+
 - In `compileHostInstanceOf`, BEFORE the `__instanceof` late-import
   (line 1465), extend the existing `noJsHost(ctx)` native branch (currently
   gated on Error-family only at line 1394) to a general
@@ -156,6 +228,7 @@ as the harder, smaller slice (below).
 line 1247), `src/codegen/typeof-delete.ts` (`compileInstanceOf` dyn arm,
 line 790), plus a new `ensureInstanceofRuntime(ctx)` (co-locate with
 `ensureObjectRuntime` in `object-runtime.ts`).**
+
 - Emit native WasmGC `__instanceof_check(anyLHS, anyRHS) -> i32` and
   `__instanceof_dyn` (same body) as **DEFINED** functions (no import → no index
   shift, same invariant as the object-runtime helpers). Register their names in
@@ -186,6 +259,7 @@ line 790), plus a new `ensureInstanceofRuntime(ctx)` (co-locate with
 
 **Files: `src/codegen/expressions/calls.ts` (~4830 generic extern-method arm),
 `src/codegen/expressions/calls-closures.ts:418`.**
+
 - Route the generic host-method fallback for `isPrototypeOf` (the
   `Function.prototype.isPrototypeOf` / borrowed-generic form that currently
   bypasses the wired native helper) to the **existing native `__isPrototypeOf`**
@@ -198,6 +272,7 @@ line 790), plus a new `ensureInstanceofRuntime(ctx)` (co-locate with
   `emitProtoChainWalk(targetLocal, curLocal)` helper reused by both.
 
 ### Wasm IR pattern (Slice A — `a instanceof Function`, native)
+
 ```wasm
 local.get $a
 any.convert_extern            ;; externref -> anyref
@@ -207,6 +282,7 @@ ref.test $__closure_base      ;; ctx.closureInfoByTypeIdx supertype
 ```
 
 ### Edge cases
+
 - LHS null / undefined / primitive (i31, boxed number/bool) → every arm 0
   (ref.test on a non-matching type is 0, never traps).
 - `x instanceof Object` for a `$Vec` / closure / `$Error_struct` → 1 (§1729
@@ -223,6 +299,7 @@ ref.test $__closure_base      ;; ctx.closureInfoByTypeIdx supertype
   per #2907's methodology).
 
 ### Regression-risk mitigation
+
 - **Byte-inert for gc/host**: all changes behind `noJsHost(ctx)` /
   `ctx.standalone || ctx.wasi` gates; the host `__instanceof*` path is untouched
   when a JS host is present.
@@ -239,6 +316,7 @@ ref.test $__closure_base      ;; ctx.closureInfoByTypeIdx supertype
   merge-shard reports.
 
 ### Corpus-verify plan
+
 - Leak-probe (per #2907 methodology) over `test/language/expressions/instanceof/`
   (~43 files, local sweep was 28 pass / 15 fail #2740) + the `built-ins`
   `isPrototypeOf` / `Function/prototype` families, `--target standalone`, count
@@ -249,7 +327,9 @@ ref.test $__closure_base      ;; ctx.closureInfoByTypeIdx supertype
   #1536c/#2188) and native-collection instanceof (#2605) stay green.
 
 ### Split recommendation
+
 **Split into two dev slices, spec'd together (shared proto-walk substrate):**
+
 - **Slice A** (medium, byte-inert): generalize the native inline string-name
   branch — captures the dominant `__instanceof` leak (bulk of ~31). Land first.
 - **Slice B + C** (large, harder): native `__instanceof_check` /
@@ -257,13 +337,100 @@ ref.test $__closure_base      ;; ctx.closureInfoByTypeIdx supertype
   residual, sharing `emitProtoChainWalk`. Depends on Slice A landing.
 
 ## Acceptance
-- Standalone dynamic `instanceof` emits **zero** `env::__instanceof*` imports
-  and instantiates host-free.
-- The `isPrototypeOf` generic-host-method residual no longer leaks.
-- `net_per_test > 0` on the standalone floor; no wrong-`true` correctness
-  regression in the `instanceof` / `isPrototypeOf` corpus.
+
+> **RE-GROUNDED 2026-07-31 — baseline counted BEFORE implementing**, so the
+> result cannot be rationalised afterward. Population and ceiling below are
+> measured row counts, not the superseded "~31" estimate.
+>
+> **READ THE TIERING FIRST — test262 rows are the SECONDARY metric here, not the
+> deliverable.** `goal: standalone`, under umbrella #2860. The deliverable is
+> **import elimination**. A leaked `env::__instanceof_check` means standalone
+> mode is _not actually standalone_ for any program using `instanceof` with a
+> dynamic RHS — ordinary code, not an edge case. The product claim is "JS host
+> optional"; an import that fires on ordinary `instanceof` falsifies that claim
+> **regardless of how many conformance rows move**. Anyone sizing this by row
+> count is measuring the wrong thing.
+
+### PRIMARY acceptance — binary, and the actual deliverable
+
+Both imports gone, verified **per shape** rather than on one sample:
+
+- `env::__instanceof_check` absent for **all four** dynamic-RHS variants:
+  any-typed local · fn-valued param · property access · call result.
+- `env::Object_isPrototypeOf` absent for the dynamic-receiver form.
+- The already-clean shapes stay clean: builtin-name RHS, user-class RHS, Error
+  family, and static `C.prototype.isPrototypeOf(a)`.
+
+This either holds or it does not. **If it fails, stop and report — do not pursue
+rows.** The import is the thing.
+
+### SECONDARY acceptance — rows, expected ~4, ceiling 24
+
+Quoted **with** its decomposition so `≤24` cannot be read as the target: of the
+24 leaky-PASS rows, only **4** carry a `host_import_leak` signature. Out of
+scope: 8 `runtime-eval`, 3 TypeError-not-thrown, 3 null/undefined conversion,
+3 `compile_error`, 6 assorted.
+
+**A row that stops leaking but still fails is a NEW FINDING, not a shortfall.**
+Removing an import makes a module _instantiate_; it must then still produce the
+right answer. Such a row is a second defect wearing the first one's clothes —
+report it as its own observation rather than counting it against this issue.
+
+**Measured baseline** — host baseline vs standalone baseline, joined on `file`:
+
+| population (path-matched)           |   rows |
+| ----------------------------------- | -----: |
+| `instanceof` / `Symbol.hasInstance` |     56 |
+| `isPrototypeOf`                     |     10 |
+| **total population**                | **66** |
+
+| leaky-PASS (host `pass`, standalone not-`pass`) |   rows |
+| ----------------------------------------------- | -----: |
+| `instanceof`-ish                                |     22 |
+| `isPrototypeOf`                                 |      2 |
+| **addressable CEILING**                         | **24** |
+
+**The ceiling is 24, but the leak-attributable subset is far smaller.** By
+standalone failure signature, only **4** of the 24 carry
+`host_import_leak: standalone target emitted host imports`. The rest fail for
+causes this issue does not address:
+
+|     n | standalone signature                                          | addressed here?           |
+| ----: | ------------------------------------------------------------- | ------------------------- |
+|     8 | `Import "js2wasm:runtime-eval"`                               | no — eval, separate issue |
+| **4** | **`host_import_leak: … emitted host imports`**                | **yes**                   |
+|     3 | `Expected a TypeError to be thrown`                           | unlikely                  |
+|     3 | `TypeError: Cannot convert undefined or null to object`       | unlikely                  |
+|     3 | `compile_error` (S11.8.6_A6_T3, A2.4_T3, primitive-prototype) | no                        |
+|     6 | assorted single assertion failures                            | unknown                   |
+
+**So the honest expectation is ~4 rows directly, ≤24 as an absolute ceiling** —
+and "leaking ≠ flipping": removing the import makes a module _instantiate_, after
+which it still has to produce the right answer.
+
+### Criteria — how each tier is evidenced
+
+The two tiers are stated above; these are the verification rules that apply to
+them. Correctness constraints bind **both** tiers.
+
+- **Primary evidence:** per-shape import-list assertion, on all four dynamic-RHS
+  variants and the dynamic-receiver `isPrototypeOf` form — not on one sample.
+  A single-shape probe is what let the original scope statement stand wrong, and
+  what made this re-grounding's own first pass miss `isPrototypeOf`.
+- **Secondary evidence:** A/B the 24 ceiling rows, reporting `before → after`
+  **per row** rather than a net. Both lanes; a control that must hold under any
+  spec version; **discard the run if the control fails**; state harness, lane,
+  and both commit SHAs on every comparison.
+- **Correctness (binds both tiers, and outranks both):** no wrong-`true`
+  regression in the `instanceof` / `isPrototypeOf` corpus. A native tri-state
+  that answers `true` too eagerly is **worse than the leak it replaces** — a
+  leak fails loudly at instantiation, a wrong `true` passes silently.
 - gc/host byte-identical (compile-diff probe).
-- Full `merge_group` net-positive.
+- `merge_group` net: **subtract #3884's ~20 phantom `compile_timeout` credits
+  before reading it.** With an expected effect of ~4 rows the phantom credit is
+  roughly **five times the signal**, so an unadjusted net here is pure noise —
+  not a weak positive, no information at all. This must be stated in the PR
+  description, not just computed.
 
 ## Implementation Notes — Slice A landed (sendev-instanceof, 2026-07-01)
 
@@ -271,10 +438,11 @@ ref.test $__closure_base      ;; ctx.closureInfoByTypeIdx supertype
 churned).**
 
 ### Why this split (root-cause + measure-first)
+
 Confirmed by broad standalone sweep (196 instanceof-using tests): the leak is
-dominated by `env::__instanceof` on the *string-name* path (~30 files), with a
+dominated by `env::__instanceof` on the _string-name_ path (~30 files), with a
 smaller `__instanceof_check` fully-dynamic-RHS tail (~7). Crucially, the 12
-leaky-PASSES *inside* the `instanceof`/`isPrototypeOf` test directories are ALL
+leaky-PASSES _inside_ the `instanceof`/`isPrototypeOf` test directories are ALL
 the hard cases — `symbol-hasinstance-*` (@@hasInstance dispatch, spec-declared
 out-of-scope), `primitive-prototype`/`prototype-getter` (the reflective
 `Get(C,"prototype")` crux sr-tail2 flagged), and non-callable-RHS `TypeError`
@@ -285,6 +453,7 @@ here is the "partial/wrong instanceof" graveyard, so it was deliberately left to
 a follow-up rather than churned.
 
 ### What Slice A does (`src/codegen/expressions/identifiers.ts`)
+
 On the `noJsHost` string-name path in `compileHostInstanceOf`, BEFORE the
 `__instanceof` late-import, dispatch on the compile-time-known `ctorName` to an
 inline native `ref.test` membership test
@@ -294,27 +463,29 @@ structs (#1992), `Map`/`Set`/`WeakMap`/`WeakSet`→`mapTypeIdx` (#2605 shared-$M
 imprecision carried), `Number`/`String`/`Boolean`→wrapper structs. Error-family
 keeps its existing native branch untouched. Any builtin not modeled here
 (`Object`, `Date`, `RegExp`, `Promise`, `ArrayBuffer`, …) or an unresolvable
-non-builtin ctor falls to a conservative `0` — a *missed conversion*, never a
+non-builtin ctor falls to a conservative `0` — a _missed conversion_, never a
 wrong `true`. The host `__instanceof` import is NEVER emitted under `noJsHost`.
 
 ### Why this is regression-safe (the airtight part)
-1. The `noJsHost` string-name branch *currently always leaks* `__instanceof` →
+
+1. The `noJsHost` string-name branch _currently always leaks_ `__instanceof` →
    the module cannot instantiate standalone → **every reaching test already
    fails**. A native answer can only CONVERT a failing test, never regress a
    passing one (a standalone-passing test cannot contain a leaking instanceof).
 2. gc/host is **byte-identical**: the branch is gated `noJsHost(ctx)`; verified
    with a 6-program binary-SHA compile-diff (branch == baseline, all match).
-3. `ref.test` uses *type* indices, which are rec-group / dead-elim stable — no
+3. `ref.test` uses _type_ indices, which are rec-group / dead-elim stable — no
    funcidx-ordering hazard (cf. `dyn-read.ts:287`). No late-import shift added.
 
 ### Measured
+
 Synthetic corpus: `__instanceof` leaks 21→2 (the 2 residual are Slice-B
 `__instanceof_check`). Runtime correctness verified standalone: `[]`/Map/Set/
 WeakMap → true, closure → true (#1992), primitive/null/non-matching → false,
 Error-family preserved. Real-corpus dynamic-LHS conversion confirmed
 (`RegExp.prototype.exec(...) instanceof Array`, an `any`-typed result, flips
 sa-fail→sa-pass; baseline fails). Note: many statically-typed `instanceof Array`
-sites were already resolved by `tryStaticInstanceOf`, so the *net* Slice-A yield
+sites were already resolved by `tryStaticInstanceOf`, so the _net_ Slice-A yield
 is the dynamic-LHS residual; the `new Number()`-wrapper cases do NOT convert
 because `new Number(x): any` collapses to a boxed primitive (a separate
 representation gap, #1111/#2503), not `$WrapperNumber` — kept in the set but
@@ -322,6 +493,7 @@ harmless (never a wrong `true`). Authoritative conversion count = `merge_group`
 `net_per_test`.
 
 ### Deferred to follow-up (NOT in this PR)
+
 - **Slice B**: native `__instanceof_check`/`__instanceof_dyn` fully-dynamic
   tri-state (reflective `.prototype`, non-callable-RHS throw). Needs the
   ctor-carrier `.prototype`/brand infra (#2907 follow-up) first.
@@ -331,7 +503,6 @@ harmless (never a wrong `true`). Authoritative conversion count = `merge_group`
   a wrong `true` on boxed primitives), `Date`/`RegExp`/`Promise`/`ArrayBuffer`
   membership (readable backing-struct idxs not yet wired), TypedArray brand
   (#2893/#2872).
-
 
 ## Reconciliation note (shepherd, 2026-07-01)
 
@@ -345,7 +516,7 @@ The Slice-A deferral said B/C wait on "ctor-carrier `.prototype`/brand infra
 (#2907 follow-up)". That substrate now has all its raw parts on main — they
 just aren't connected:
 
-- **Ctor carriers exist and are identity-stable** but are *unbranded, empty*
+- **Ctor carriers exist and are identity-stable** but are _unbranded, empty_
   `$Object`s: the #2907 namespace/Error carriers
   (`src/codegen/builtin-static-globals.ts`, `SUPPORTED_STATIC_PROPS`) and the
   #3006 per-name `__builtin_ctor_<Name>` singletons
@@ -461,3 +632,126 @@ to the earlier sketch beyond using the #2580 M3 walk.
   (never wrong-`true`; `noJsHost` gating; full `merge_group`; leak-probe
   corpus). Coordinate with #2651 M3 (consumes B0 — do not let sd-2651 mint a
   parallel carrier) and #2622 (consumes the arm-1/arm-2 split above).
+
+---
+
+## PARTIAL LANDING 2026-08-08 — Slice C done, Slice B step 1 + step 4 done
+
+A slice of this issue landed as part of the **ES5-standalone-90 WP5** sweep
+("remove the instanceof / isPrototypeOf host-import leaks"). It does **not**
+close the issue: the reflective `Get(C, "prototype")` off an arbitrary runtime
+callable — Slice B's crux — is still unimplemented, and is what the remaining
+8 leaking files need.
+
+### Measured before / after (`--target standalone`, module import list)
+
+Source: the ≤ES5 failure census `.tmp/es5-buckets.json` (2026-08-07 baseline),
+re-probed file by file on this branch.
+
+| host import                | files gated before | still leaking after | now PASS |
+| -------------------------- | ------------------ | ------------------- | -------- |
+| `env::Object_isPrototypeOf` | 9                  | **0**               | 3        |
+| `env::__instanceof_check`   | 10                 | 8                   | 2        |
+
+The 6 `isPrototypeOf` files that no longer leak but still fail moved from
+`host_import_leak` (unsatisfiable module) to honest `assertion_fail` on
+*unrelated* assertions (`x.constructor.prototype`, `new Object.prototype.constructor`,
+the `$proto` seeding gap below).
+
+### What landed
+
+- **Slice C — `isPrototypeOf` residual.** New `src/codegen/native-is-prototype-of.ts`.
+  Both dispatchers that can reach the method now share one answer: the #2994
+  static folds, then the WasmGC-native `$Object.$proto` walk (`__isPrototypeOf`).
+  The TYPED-receiver path (`compileExternMethodCall`, extern.ts) previously had
+  neither and always emitted `env::Object_isPrototypeOf`, because `Object` is
+  the ROOT extern class and every extern class inherits its prototype methods —
+  so the leak fired on any receiver the checker typed as an interface. Two new
+  folds: `X.prototype.isPrototypeOf(v)` where `v`'s type IS the builtin instance
+  interface `X`, and `Object.prototype.isPrototypeOf(b)` where `b` is a
+  single-assignment binding provably holding a fresh object.
+- **Slice B step 4 (non-callable RHS ⇒ TypeError)** and **the builtin-alias
+  case**. New `src/codegen/native-ordinary-instanceof.ts`. §7.3.20 step 1 now
+  throws in wasm when the RHS is a provably non-callable object, and
+  `var OBJECT = Object; x instanceof OBJECT` resolves the builtin behind the
+  alias so the Slice-A builtin dispatch is not skipped.
+- Regression test: `tests/es5-standalone-instanceof.test.ts` (10 cases, each
+  asserting BOTH the answer and a zero-import binary).
+- `tests/issue-2994.test.ts`'s "does NOT mis-fold" case was rewritten: its
+  proof of "not folded" was the PRESENCE of `env::Object_isPrototypeOf`, which
+  is exactly the leak being retired. It now proves the same property by the
+  answer (`0`) plus a zero-import binary.
+
+### What is still open (the 8 remaining `__instanceof_check` files)
+
+1. **`obj instanceof FACTORY`, `FACTORY` a runtime `Function(…)` value** —
+   `S15.3.5.3_A2_T2/T5/T6`, `_A3_T1/T2` (5 files). Needs Slice B's reflective
+   `Get(C, "prototype")` off an arbitrary callable. Deliberately left on the
+   host import rather than answered wrongly.
+2. **`(OBJECT = Object, {}) instanceof OBJECT`** — `S11.8.6_A2.4_T1/T3`
+   (2 files). The RHS binding's static type is `number` (its declared
+   initializer), so the alias rule cannot see the builtin; a union-based fold
+   would be unsound.
+3. **`S11.8.6_A6_T4`** (1 file) — its `instanceof MyFunct` arm leaks because
+   `tryEmitNativeUserCtorInstanceOf` (#3962) requires `ctx.topLevelFunctionNames`,
+   which holds only for function DECLARATIONS, not `var F = function(){}`. Note
+   the file would still fail after that: its CHECK#3 needs
+   `instanceof Object` on a `$Object`, which `nativeBuiltinInstanceOfTypeIdxs`
+   deliberately does not model.
+
+### Adjacent gap found while measuring — the `$proto` seeding, not instanceof
+
+`F.prototype.isPrototypeOf(new F())` answers **0**, and so does
+`__PROTO.isPrototypeOf(__monster)` after `__FACTORY.prototype = __PROTO`
+(`S13.2.2_A1_T1/T2`, `S8.6.2_A1` CHECK#2.2/#3.2). The chain walk is correct;
+the instance's `$Object.$proto` is simply not seeded from the per-fnctor
+prototype global except for #2660-S3a-approved reconstructions, and a fnctor
+value is not an `$Object` so it cannot be stored in `$proto` at all. That is
+#2660 M3 substrate work, which this issue already names as a predecessor.
+
+### 2026-08-08 — the 8 `S15.3.5.3_A1_T*` "regressions" were an INSTRUMENT ARTIFACT, not this change
+
+A scoped standalone validation run on the integration branch reported
+`S15.3.5.3_A1_T1 … T8` as pass→fail against the partial landing above, all with
+
+```
+TypeError: dynamic code evaluation is not supported in this standalone build
+(no js2wasm:runtime-eval interpreter linked — tracking: #2928)
+```
+
+**They are not regressions.** A/B measured with the real instrument
+(`runTest262File`, `--target standalone`) at `a8bbc0d7` (base) vs `4c2c4448`
+(this work), all eight files:
+
+| runtime-eval tier                                | base    | this change |
+| ------------------------------------------------ | ------- | ----------- |
+| INTERPRETER (`TEST262_FULL_RUNTIME_EVAL=1`)      | 8× PASS | 8× PASS     |
+| REFUSAL (the default when the full cache is cold) | 8× FAIL | 8× FAIL     |
+
+Both sides move together on both tiers. The delta is the TIER, not the commit.
+
+**The quoted error text is itself the tell.** That sentence is emitted by the
+REFUSAL provider, which `selectCachedRuntimeEvalProvider` announces on stderr as
+"fast local diagnostic only, **NOT CI-comparable**". Comparing a refusal-tier run
+against a baseline captured on the interpreter tier turns every eval-dependent
+test into a phantom regression — and `assembleOriginalHarness` injects a
+`$262.evalScript` shim containing a direct `eval` into EVERY assembled test, so
+the eval-dependent set is large, not exotic.
+
+**Before attributing an eval-shaped standalone regression to a compiler change:**
+
+```bash
+node scripts/build-runtime-eval-provider.mjs        # ~3 min, once (cached)
+TEST262_FULL_RUNTIME_EVAL=1 <run the lane>          # authoritative, CI-comparable
+```
+
+Without the env var the lane silently selects REFUSAL even when the full
+provider is cached (`TEST262_FULL_RUNTIME_EVAL` is an explicit opt-in, not a
+cache-presence check), and the single stderr announcement is easy to lose in a
+long log. Read the `runtime-eval tier:` line before trusting a pass→fail list.
+
+`tests/es5-standalone-instanceof.test.ts` now pins the compile-level property
+those eight files depend on — the §7.3.20-step-1 non-callable rule must DECLINE
+for a `Function(…)`/`new Function(…)`-valued RHS — across all three declaration
+spellings, so the real hazard is caught in the fast lane instead of only in a
+lane that has the interpreter linked.

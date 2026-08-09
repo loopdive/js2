@@ -3,7 +3,7 @@ id: 1198
 title: "perf: pre-size dense arrays at allocation site (`const a = []; for ... a[i] = ...` → `new Array(n)`)"
 status: done
 created: 2026-04-27
-updated: 2026-04-27
+updated: 2026-07-30
 completed: 2026-05-01
 priority: high
 feasibility: easy
@@ -16,7 +16,18 @@ sprint: 47
 es_edition: n/a
 related: [1126, 1179, 1195, 1196, 1197]
 origin: 2026-04-27 array-sum perf analysis — Tier 1 win #1, simplest of the three (~1 day). Avoids quadratic grow-on-write.
+loc-budget-allow:
+  - src/ir/builder.ts
+  - src/ir/from-ast.ts
+  - src/ir/lower.ts
+  - src/ir/nodes.ts
+  - src/ir/verify.ts
+func-budget-allow:
+  - src/ir/lower.ts::lowerIrFunctionBody
+  - src/ir/lower.ts::emitInstrTree
+  - src/ir/passes/inline-small.ts::renameInstrOperands
 ---
+
 # #1198 — Pre-size dense arrays at allocation site
 
 ## Problem
@@ -57,6 +68,7 @@ When matched, emit the array allocation as `new Array(n)` (pre-sized to n) inste
 If `n` is a constant, even better — emit a fixed-size allocation. Otherwise emit `array.new_default <typeIdx>` with `n` from the loop bound expression.
 
 Code touch points:
+
 - `src/codegen/expressions/array-literal.ts` (or wherever `[]` is lowered) — add the post-allocation hook to consult the look-ahead analysis
 - `src/codegen/analysis/dense-fill.ts` (new file) — pattern matcher, pure function over AST
 - Tests: `tests/issue-1192.test.ts`
@@ -66,8 +78,12 @@ Code touch points:
 1. `array-sum` competitive benchmark `runtimeArg=1000000` hot runtime improves by **at least 2×** standalone (no other Tier 1 fixes applied). Combined with #1195/#1196/#1197 the total improvement is multiplicative.
 2. The fill pattern with `n` as a parameter is correctly pre-sized:
    ```js
-   function f(n) { const a = []; for (let i = 0; i < n; i++) a[i] = i*2; return a; }
-   f(1000)  // must work, must return [0, 2, 4, ..., 1998]
+   function f(n) {
+     const a = [];
+     for (let i = 0; i < n; i++) a[i] = i * 2;
+     return a;
+   }
+   f(1000); // must work, must return [0, 2, 4, ..., 1998]
    ```
 3. Patterns that DON'T match must fall back to grow-on-write:
    - `for (let i = 0; i < n; i++) { a[i] = ...; if (...) a.push(x); }` — pushes inside body
@@ -91,6 +107,12 @@ One subtlety: if the loop body throws partway through, ECMAScript expects `a` to
 ## Notes
 
 This is the simplest of the three Tier 1 array-perf wins (~1 day estimate per the bench analysis). Composes with:
+
 - #1195 (escape analysis) — eliminates the array entirely when non-escaping; this issue is a fallback for arrays that DO escape
 - #1196 (bounds-check elimination) — pre-sized arrays make BCE easier (length is now a known constant)
 - #1197 (i32 element specialization) — orthogonal storage optimization
+
+The 2026-07-30 IR follow-up recognizes canonical counted `push` loops. The
+matcher and element lowering live in `src/ir/array-element-lowering.ts`; these
+allowances cover only the necessary backend-neutral node, builder, verifier,
+and exhaustive-lowering plumbing in the central IR drivers.

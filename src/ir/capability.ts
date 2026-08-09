@@ -125,7 +125,9 @@ const PREFIX_OP_CAPABILITY: ReadonlyMap<ts.PrefixUnaryOperator, IrOpCapability> 
   [ts.SyntaxKind.MinusToken, "claim"], // f64.neg
   [ts.SyntaxKind.PlusToken, "claim"], // numeric identity
   [ts.SyntaxKind.ExclamationToken, "claim"], // i32.eqz over bool
-  [ts.SyntaxKind.TildeToken, "defer"], // ToInt32 + i32.xor -1 — not lowered yet
+  // `~x` is the same ToInt32 composite as `x ^ -1`. The selector only
+  // admits operands proven numeric; wider JS coercions remain legacy-owned.
+  [ts.SyntaxKind.TildeToken, "claim-partial"],
 ]);
 
 // ── Host-extern member access (#2856 — document/console et al.) ────────────

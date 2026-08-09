@@ -1,8 +1,7 @@
 ---
 id: 3032
 title: "Lazy-first-resume generator thunks: stop running eager-buffer generator bodies at creation (unblocks #2141 S3 / #2626 classifier)"
-status: in-progress
-assignee: ttraenkler/sendev-3032-w6
+status: ready
 sprint: current
 created: 2026-07-04
 priority: high

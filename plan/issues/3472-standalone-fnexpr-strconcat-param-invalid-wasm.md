@@ -4,7 +4,7 @@ title: "Standalone: native-string-reassigned `any`/externref param that is then 
 status: done
 assignee: ttraenkler/senior-dev
 completed: 2026-07-19
-sprint: current
+sprint: 73
 created: 2026-07-19
 priority: high
 feasibility: hard

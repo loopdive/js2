@@ -147,8 +147,8 @@ describe("#2134 — cross-table drift tripwire (scheduler table vs DCE facet)", 
 describe("#2134 — wired end-to-end (the verifier does not fire on correct schedules)", () => {
   it("the #1982 shape compiles IR-claimed and computes correctly", async () => {
     // Interleaved class reads/writes — the exact hazard family. The anchor
-    // pass must anchor the read; the schedule verifier (now wired, HARD under
-    // vitest via irVerifierHardFailureEnabled) must stay silent.
+    // pass must anchor the read; the schedule verifier (now wired, with typed
+    // Invariants always fatal) must stay silent.
     const src = `
 class Box {
   v: number;

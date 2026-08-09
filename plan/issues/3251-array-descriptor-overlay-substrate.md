@@ -2,7 +2,7 @@
 id: 3251
 title: "standalone: array-descriptor OVERLAY substrate — $Vec receivers have no per-index/expando property-descriptor storage (blocks array-exotic defineProperty + Array generic-method-over-accessor-index)"
 status: in-progress
-assignee: ttraenkler/fable-1
+assignee: ttraenkler/L2-fable-array-exotic
 sprint: current
 s1_completed: 2026-07-18
 created: 2026-07-13
@@ -15,7 +15,7 @@ area: codegen, runtime, standalone
 language_feature: arrays, property-descriptors
 goal: standalone-mode
 umbrella: 1781
-related: [3246, 2042, 2992, 3116, 2668]
+related: [3246, 2042, 2992, 3116, 2668, 4159]
 horizon: xl
 epic: true
 # (#3102 LOC ratchet) S1 grows only the unavoidable arm/wiring lines in these
@@ -28,6 +28,22 @@ loc-budget-allow:
   - src/codegen/object-ops.ts
   - src/codegen/registry/imports.ts
   - src/codegen/object-runtime.ts
+  # S2-residual+S3 port (2026-08-06): ArraySetLength (§10.4.2.1) + the
+  # accessor-setter write arm live in the overlay's finalize fill by design —
+  # the fork-validated implementation is instruction-list emission (~+420
+  # lines), all inside the existing standalone-gated subsystem module.
+  - src/codegen/vec-overlay.ts
+# The S3 length arms are body fills of the SAME reserved natives
+# (__vec_dp_value/__vec_dp_accessor/__vec_gopd) that fillVecOverlayHelpers
+# already owns; splitting the fill across modules would break the
+# emission-order discipline documented in the module header.
+# compileObjectDefineProperty: +7 lines — the S3 standalone-gate on the inline
+# static ArraySetLength plus its load-bearing why-comment (the inline path
+# silently shrank past non-configurable indices; the comment prevents a
+# well-meaning un-gate).
+func-budget-allow:
+  - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
+  - src/codegen/object-ops.ts::compileObjectDefineProperty
 # (#2108 coercion-sites ratchet) vec-overlay's number_toString uses are NOT a
 # hand-rolled coercion matrix — they canonicalise an array index to its
 # property key (§7.1.19, the same number_toString pattern __extern_get_idx's
@@ -105,10 +121,44 @@ Two host-free-FAIL clusters are downstream of the SAME missing substrate:
   `Object.defineProperty(arr, "1", { get() {...} })` then iterate; the getter
   is never stored/consulted during iteration, so the callback never sees the
   accessor value. Same root: no per-index accessor-descriptor storage on `$Vec`.
-  (opus-crashes independently observed array/function EXPANDO writes returning
-  NaN — same substrate; that symptom belongs here.)
+  (Scope narrowed 2026-07-23: the plain named-data EXPANDO-write half of the
+  "array/function expando writes return NaN" symptom LANDED separately via
+  **#3537 / PR #3506** — array expando own-properties on standalone `$Vec`
+  receivers. It no longer belongs to this epic. What REMAINS here for expandos
+  is the descriptor half: accessor entries, attribute enforcement, and
+  ValidateAndApplyPropertyDescriptor legality through the overlay. Function
+  receivers are the #3468 own-property family, not this epic.)
 
 Total addressable ≈ **250–300 host-free-FAIL** once the overlay is coherent.
+
+### Default (JS-host / gc) lane hits the SAME wall (2026-07-24, #3201 measurement)
+
+The overlay is NOT a standalone-only lever — the default host/gc lane's Array
+method residue bottoms out on the identical missing substrate. The #3201
+fork-per-file measurement (default gc/"honest" lane, 2026-07-12→24 baseline)
+found, across `built-ins/Array/prototype/{indexOf,lastIndexOf,slice,splice,
+sort,concat,pop}`:
+
+- **Indexed accessors** ~34 default-lane fails — `sort/precise-getter-*` /
+  `precise-setter-*` (16) + the search/structural analogues. `Object.
+  defineProperty(arr, i, {get/set})` then a method reads/sorts: the accessor is
+  never stored/consulted (returns `undefined`). Same root as the ~204 host-free
+  cluster above, on the host lane.
+- **Prototype-chain index inheritance** — `Array.prototype.indexOf.call(
+  {length:3}, v)` with `Object.prototype[i]=v` (indexOf/lastIndexOf `.call`
+  cluster), and `Array.prototype[i] = v` inherited-index reads (pop/splice/sort
+  `S15.4.4.*_A4`). The flat `$Vec` can't model inherited/own index descriptors,
+  so these read the backing (or trap) instead of the prototype value.
+- **Hole → `undefined` read** — `new Array(2); x[0]` reads **`null`**, not
+  `undefined` (sort `S15.4.4.11_A1.1_T1` etc.). A hole must materialize as the
+  `undefined` singleton on read; the flat vec serves a raw null. (Adjacent to
+  #2001 sparse-holes-materialize-defaults.)
+
+Same fix (per-index descriptor + hole/accessor coherence through the overlay)
+unblocks both lanes. #3201 split its contained slices out (the sort/coercion
+micro-fixes) and its species/@@isConcatSpreadable mass to **#3575**; this
+accessor/proto-index/hole-read mass is recorded HERE as the shared host-lane
+consumer of the overlay.
 
 ## Proposed direction (for the architect to spec)
 
@@ -302,6 +352,72 @@ byte-identical (the #1917 discipline).
     through the dynamic lane) is not consulted (the ~204-test cluster reads
     through `__hof_*`/`__extern_get_idx`, which are covered).
 
+## 2026-07-23 claim reconciliation — stale `fable-1` claim RELEASED (lead-directed)
+
+- The `ttraenkler/fable-1` in-progress claim was released as **stale** on all
+  three liveness signals: no `3251.json` record on the `issue-assignments` ref,
+  no open PR for #3251, and last branch activity 2026-07-18 (agent no longer
+  active). Status returned to `ready` — the next senior-dev claims fresh via
+  `claim-issue.mjs` (no `--force` needed; there is no live lock).
+- **Do NOT restart from scratch — validated, UNMERGED S2+S3(+S4) work exists**
+  on the fork (`ttraenkler/js2`):
+  - `issue-3251-s2-write-enforcement` (tip `766af9b980`) — S2 write-side
+    enforcement + S3 ArraySetLength + the plural `Object.defineProperties`
+    vec-target fix, all implemented and validated per the Resume State below.
+    It was gated on "open the S2 PR only AFTER #3327 lands" — and S1 PR #3327
+    **has since merged** (2026-07-18). The next step is exactly: fresh
+    `git merge origin/main` into that branch, re-validate, open the S2+S3 PR.
+  - `issue-3251-s4-forin` (tip `be7b292cc0`) — stacked on S2; tip commit says
+    "resume state — unpark clean, S4 validated, stack order recorded".
+  - The **branch copies of this issue file carry fuller resume notes** (S2/S3
+    validation detail, probe lists) than this on-main copy — read them first.
+- The on-main Resume State below predates the release; ignore its "fable-1
+  holds the claim-issue lock" line.
+
+## S2-residual + S3 port notes (L2-fable-array-exotic, 2026-08-06, branch `issue-3251-s2-port`)
+
+The fork's S2/S3 was ported by RE-DERIVING against current main, not blind
+patch application — main had moved substantially since the fork base:
+
+- **S2 was already ~80% on main.** The #4010 vec-bag work gave `__extern_set`
+  a write prologue (deleted-index recreate, non-writable drop, writable →
+  `__vec_dp_value` routing). The ONLY S2 gap left was the accessor arm, which
+  silently `return`ed instead of invoking the setter. This PR replaces that
+  `return` with a `__call_accessor_set(vec, e.set, v)` invoke (null setter =
+  sloppy no-op). Do NOT port the fork's whole 177-line S2 prologue — it would
+  duplicate and fight the #4010 one.
+- **S3 (ArraySetLength §10.4.2.1) ported onto the three `lengthKeyGuard` bail
+  sites** (`__vec_dp_value` / `__vec_dp_accessor` / `__vec_gopd`) plus a
+  `notLengthWrap` skip on the `__extern_get` companion consult. Two
+  deliberate divergences from the fork version:
+  1. **Full ToNumber for the length value** (`__to_primitive` number-hint →
+     `__str_to_number` for a string primitive, else `__unbox_number`). The
+     fork used raw `__unbox_number`, which RangeErrors on `{value: "2"}` and
+     `{value: {toString(){…}}}` — the 15.2.3.6-4-142..151 family (measured:
+     9 spurious RangeErrors without this).
+  2. **The inline static ArraySetLength (`maybeEmitVecLengthDefine`,
+     array-length-define.ts) is now STANDALONE-GATED OFF** in
+     `compileObjectDefineProperty` — it fired for statically-typed array
+     receivers with literal descriptors BEFORE the runtime native could run,
+     and it has no companion knowledge, so it silently shrank past
+     non-configurable indices (the whole static-lane TypeError cluster).
+     Host mode unchanged.
+- **gOPD("length") synthesis reads the value from the LIVE vec length field**;
+  only the writable bit comes from the companion entry — a companion length
+  value goes stale on push/pop/plain writes and must never be authoritative.
+- Measured on the L2 lever list (162 ES5-label standalone array-exotic
+  failures, CI-aligned shimmed instrument): **1 → 42 pass** (see PR body for
+  the exact per-round A/B; rounds: setter+S3 = 20, +ToNumber = 30, +static
+  gate = 42). Zero regressions in any round; host lane byte-identical.
+- **Residual failure roots (measured, NOT this PR's scope)**: (a) the runtime-eval mixed-type-ternary miscompile (see `## RESIDUAL BLOCKER` below) —
+  runtime-eval-consumer mode miscompiles mixed-type ternaries, which caps
+  every propertyHelper `verifyProperty(arr, "length", {writable:…})` (the
+  harness's `isWritable` writes an incoherent box); (b) #4159 — typed-lane
+  `array.get` reads bypass the overlay accessor (`arr2[1]` with a defined
+  getter answers the vec element in the static lane); (c) a pre-existing
+  `illegal cast` trap reading `d.value`/`d.configurable` off a gOPD result in
+  the JS static lane (also traps on main).
+
 ## Resume State (keep current — session-kill insurance)
 
 - **Branch/worktree**: `issue-3251-array-overlay-s1`, checked out in the
@@ -363,3 +479,133 @@ Filed from the #3246 follow-up scope-first analysis (tech-lead-directed). The
 compile-time-`definedPropertyFlags`-for-indices interim was explicitly declined
 (flips only the few index throw-only tests that don't read back — not worth the
 complexity). This epic is the correct-sized fix.
+
+## Known hole in the S1 coherence strategy — #4159 (confirmed 2026-08-04)
+
+The "data-define VALUES written back INTO the vec, so the typed inline
+`array.get` fast path stays coherent with zero read overhead" trick is sound
+**for data descriptors only**. An accessor define has no value to write back,
+and the typed lane is documented here as "NOT hookable cheaply" — so the
+accessor arm reaches the dynamic lane and nothing else.
+
+Confirmed on this tree, `--target standalone`:
+
+```ts
+const arr: number[] = [10, 20, 30];
+Object.defineProperty(arr, "1", { get: () => 99, configurable: true });
+arr[1]        // 20  — stale element, getter never invoked
+(arr as any)[1] // 99 — dynamic lane is correct
+```
+
+The setter write is dropped the same way. The `writable:false` typed-write case
+throws and is inconclusive (may be the correct strict-mode TypeError).
+
+This matters for the epic's own acceptance criteria: *"dense-array fast path
+unchanged (no perf/behaviour regression)"* is satisfied **while this hole is
+open** — the fast path is unchanged, and that is precisely the bug. So the epic
+can be closed as done without closing this. Tracked separately as **#4159**;
+the OOB-index mitigation recorded above ("accessor defines do NOT extend the vec
+length") does not cover it, because the failing index is in-bounds.
+
+## RESIDUAL BLOCKER (found during S3, NOT an array bug) — mixed-type ternary yields an incoherent box (runtime-eval-consumer mode only)
+
+## Problem
+
+A conditional expression whose branches have different primitive types
+(`number : string`) compiles to a value the runtime classifiers cannot agree
+on — but ONLY when the module is compiled as a **runtime-eval consumer**
+(`sourceUsesRuntimeEvalBoundary`, e.g. because it reads the global `Function`
+value). Verified 2026-08-06, `--target standalone`, CI-aligned in-process
+test262 harness (refusal-tier provider):
+
+```js
+// this single line flips the compile into runtime-eval-consumer mode:
+var __call = Function.prototype.call.bind(Function.prototype.call);
+
+var localNum = 4294967295;
+var cond = true;
+var v = cond ? localNum : "str";
+typeof v      // "string"          (should be "number")
+Number(v)     // NaN               (should be 4294967295)
+"" + v        // "[object Object]" (should be "4294967295")
+String(v)     // "4294967295"      (correct!)
+v.length      // undefined
+```
+
+Four readers, four different answers. **Without** the `Function.prototype`
+line the same program is fully coherent (`number / 4294967295 /
+"4294967295"`) — the plain lowering is fine; only the runtime-eval-consumer
+lowering miscompiles the mixed-type ternary result.
+
+Negative result recorded so the next owner doesn't re-chase it: a plain TS
+probe (`function pick(c: any): any { return c ? 4294967295 : "unlikely"; }`)
+does NOT reproduce; `Math.pow`, module-scope `var`s, and `&&`-guarded
+conditions are all irrelevant (bisected via scratch probes v9–v15 in the
+#3251 S3 session).
+
+## Why it matters (measured impact)
+
+`test262/harness/propertyHelper.js` reads the global `Function` at line 31,
+so **every test that includes propertyHelper.js is a runtime-eval consumer**
+— and `isWritable` (line 174) computes exactly this shape:
+
+```js
+var unlikelyValue = __isArray(obj) && name === "length" ?
+  nonIndexNumericPropertyName :   // 4294967295, a number
+  "unlikelyValue";                // a string
+obj[name] = unlikelyValue;
+```
+
+Every `verifyProperty(arr, "length", {...})` / `verifyWritable(arr,
+"length")` therefore writes an incoherent box into `arr.length`. With #3251
+S3 (ArraySetLength) landed, `ToNumber(box)` is NaN → a spec-correct
+RangeError where the harness expects a clean write; propertyHelper rethrows
+as `Test262Error: Expected TypeError, got RangeError: Invalid array length`.
+`built-ins/Object/defineProperty/15.2.3.6-4-116.js` fails solely on this,
+and the whole length-cluster `verifyProperty(…, "length", {writable: …})`
+family is capped by it. Pre-S3 the bug was invisible (standalone length
+writes were a lenient no-op).
+
+Blast radius is wider than arrays: ANY propertyHelper test whose control flow
+depends on a mixed-type ternary value is affected.
+
+## Root-cause direction (unverified)
+
+Whatever the runtime-eval-consumer mode changes about expression lowering
+(value-representation widening for the eval boundary?), its mixed-type
+conditional unification emits a box whose tag and payload the standard
+classifiers (`__typeof_*`, `__unbox_number`, concat's ToString) read
+inconsistently — while `String()` reads it correctly, so the payload is
+intact and the tagging/classifier disagreement is the bug. Start from the
+conditional-expression result-type unification under
+`sourceUsesRuntimeEvalBoundary` (`src/codegen/index.ts:3196, :5951`-era
+flags) and diff the emitted ternary lowering with/without the boundary flag.
+
+## Acceptance criteria
+
+- The v15 repro above returns `number / 4294967295 / "4294967295"` for
+  `typeof/Number/concat` in standalone runtime-eval-consumer mode.
+- `built-ins/Object/defineProperty/15.2.3.6-4-116.js` passes with #3251 S3
+  merged (its only remaining failure is this).
+- No regression on the equivalence suite / standalone floor.
+
+### Why this is recorded here instead of in its own issue
+
+It is **not** an array-descriptor bug and does not belong to this epic — it is a
+runtime-eval codegen miscompile (goal `runtime-eval`, Lane A) that merely
+*surfaced* here, because #3251 S3 made a previously-invisible incoherent box
+observable. It wants its own id and its own owner.
+
+It has none yet for a mundane reason: ids **4163–4171** are all claimed by the
+long-open fork PR #4124, which hand-picked them without reserving on
+`origin/issue-assignments`. Filing this as #4164 tripped
+`check:issue-ids:against-open-prs` on the S3 PR. Per that gate's own tie-break
+the reservation holder wins (#4164 was reserved 2026-08-06T10:42:54Z by
+`ttraenkler/L2-fable-array-exotic`; #4124 holds no reservation), so #4124 is the
+branch that should renumber — but it is not this lane's to rewrite, and burning
+six more ids to allocate past its range would leave permanent holes in the
+sequence for a PR that is already fully superseded (its four slices landed as
+#4023, #4025, #4161, and #4132).
+
+**Action for whoever resolves #4124:** once it closes or renumbers, lift this
+section into a real issue via `claim-issue.mjs --allocate` and drop it from here.

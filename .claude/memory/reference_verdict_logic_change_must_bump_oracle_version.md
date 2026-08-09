@@ -5,11 +5,22 @@ metadata:
   node_type: memory
   type: reference
   originSessionId: 1ef96580-7db6-4559-9e05-7f637b7f44c5
+  modified: 2026-07-24T23:23:09.396Z
 ---
 
 Root cause of BOTH intentional-reclassification queue wedges in 2026-07 (the −439 strict-negative-verdict and the #2463 vacuity-scorer). When a PR changes VERDICT LOGIC (how a test262 result is scored: test262-worker.mjs / test262-shared.ts / a scorer like the vacuity reclassifier), the new-policy results diff against the OLD-policy baseline as a mass pass→fail cluster. If the change does NOT bump the #2096 `oracle_version`:
 
 - the push-to-main run's Catastrophic regression guard (#1668) sees the huge delta and FAILS → `promote-baseline` never runs → baselines stay old-policy → every merge_group since diffs new-vs-old → identical cluster signature → auto-park → the whole queue wedges against a baseline that can only be fixed by the promote the guard is blocking.
+
+**THE GATE HAS A BLIND SPOT — do NOT rely on it to catch a missing bump (measured 2026-07-25).**
+`scripts/check-verdict-oracle-bump.mjs` reported **"no verdict-logic files changed"** for a PR
+that changed the #3189 trap-ratchet exclusion policy in `scripts/diff-test262.ts` — a genuine
+verdict-logic change. Its `VERDICT_SIGNAL_RE` only matches `status:` **verdict-literal
+assignments**, so **ratchet/gate-policy changes are invisible to it**. The `ORACLE_VERSION`
+10→11 bump on that PR was made deliberately by the author, NOT forced by the gate; had the
+author not known the rule, the gate would have waved it through and the queue would have
+wedged. This is the same false-negative class already noted in the v4 oracle history.
+**So: decide the bump from what the change DOES, never from whether the gate complains.**
 
 **Prevention (the durable fix, reserved as #3003):** a CI check that flags any change to scorer/verdict-logic files that does NOT also bump `oracle_version`. When the oracle IS bumped, the guards correctly refuse the cross-oracle diff (or require `ORACLE_REBASE=1`) instead of catastrophic-blocking the promote.
 

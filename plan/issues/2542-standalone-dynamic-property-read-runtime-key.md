@@ -17,6 +17,17 @@ language_feature: property-access, dynamic-keys
 goal: standalone-mode
 related: [2371, 2151, 2001]
 origin: "2026-06-19 sd1 standalone host-import-leak hunt — the broad gap underlying #2371-phase2 (native for-in) and #2151 (any-receiver dispatch)"
+# (#3102/#3400) The wasi-arm follow-up below widens three existing gates by one
+# disjunct each (`ctx.standalone` -> `ctx.standalone || ctx.wasi`) plus short
+# pointer comments; the long-form analysis lives in this file rather than in the
+# god-files. Comments were trimmed from +23 to +8 lines across both files.
+loc-budget-allow:
+  - src/codegen/index.ts
+  - src/codegen/literals.ts
+func-budget-allow:
+  - src/codegen/index.ts::resolveWasmType
+  - src/codegen/index.ts::ensureStructForType
+  - src/codegen/literals.ts::compileObjectLiteral
 ---
 
 # #2542 — standalone dynamic property read/write by a runtime string key
@@ -147,3 +158,57 @@ dynamic write, spread, nested dict-of-dict — all correct value, valid Wasm, an
 path preserved (regression guard). `string`/`boolean`-valued index sigs compile
 valid + leak-free. The pre-existing `for-in` `env.__for_in_*` leak is unchanged
 and remains #2371's job (this fix unblocks #2371-phase-2's value reads).
+
+## Follow-up (2026-08-01) — the same defect on `--target wasi`
+
+The three routing gates above were written `ctx.standalone`-only, with the
+stated rationale that "gc/host/wasi keep their existing struct/externref mapping
+byte-identical". That holds for **gc/host**, where a JS host services `o[k]`
+through the `__extern_get` host import. It does **not** hold for **wasi**, which
+is equally host-free: it had neither the host import nor this routing, so an
+index-signature object silently answered the DEFAULT.
+
+Measured, identical source, only the target differing:
+
+| target                 | `o["b"]` on `{ [s: string]: number } = { a: 5, b: 7 }` |
+| ---------------------- | ------------------------------------------------------ |
+| `--target standalone`  | **7** (correct)                                        |
+| `--target wasi`        | **default** — no diagnostic, no trap                   |
+
+Same silent-wrong-answer class as #2620's dropped collection calls: valid Wasm,
+zero diagnostics, wrong number. This is NOT a regression of the original fix —
+that fix was correct for the target it covered; it simply left the other
+host-free target behind, because `compiler.ts` sets
+`standalone: options.target === "standalone"` and `wasi` is a separate flag.
+
+### Fix
+
+`ctx.standalone` -> `ctx.standalone || ctx.wasi` at all three sites
+(`resolveWasmType`, `ensureStructForType`, and both `compileObjectLiteral`
+gates). Verified first that BOTH targets already emit the open-object runtime as
+defined Wasm with **zero non-wasi imports**, so the routing cannot leak a host
+import into the wasi build.
+
+**One deliberate narrowing.** `objectLiteralTakesStandaloneAnyObjectPath` is an
+exported lockstep predicate that also drives #1901's any/unknown/`object`
+divert. Only the pure string-index arm was widened:
+
+```ts
+return (ctx.standalone && isAnyContextNonEmpty) || isPureStringIndexContext;
+```
+
+Widening the any-context arm would change the lowering of *every* any-typed
+object literal under wasi — far beyond this defect. gc/host is provably
+untouched: with neither flag set the early guard still returns `false`.
+
+### Verified
+
+- 6 previously-failing shapes now pass (inline index signature, `Record<string,
+  number>`, key from a variable, key from an array element, key in a loop,
+  8-property object).
+- The original 15 standalone rungs still pass; 7 wasi rungs added to
+  `tests/issue-2542-standalone-dynamic-key.test.ts` (22/22), including a
+  regression guard that a plain inferred struct still takes the fast struct path
+  on wasi, so the widened gate cannot over-reach.
+- `#2804`'s 8 failures are A/B-confirmed identical with and without this change.
+- typecheck + biome clean.

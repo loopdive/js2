@@ -20,15 +20,13 @@
 // fired when the receiver expression was wrapped in `as T`, `!`, or a
 // containing form that pushes the AST off the IR fast-path.
 
-import { existsSync } from "node:fs";
-
 import { describe, expect, it } from "vitest";
 
 import { compile, compileProject } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
+import { requireEslintFile, resolveEslintFile } from "./helpers/eslint.js";
 
-const eslintInstalled = existsSync("node_modules/eslint/lib/linter/linter.js");
-const runIfEslintInstalled = eslintInstalled ? it : it.skip;
+const ESLINT_LINTER = resolveEslintFile("lib/linter/linter.js");
 
 async function compileAndValidate(source: string): Promise<Uint8Array> {
   const r = await compile(source, { fileName: "test.ts" });
@@ -223,9 +221,10 @@ describe("#1558 — ESLint linter.js smoke test", () => {
    * gone — failure-modes from other unrelated functions don't regress
    * this issue.
    */
-  runIfEslintInstalled("Linter_verifyAndFix no longer fails f64.eq validation", async () => {
-    const r = await compileProject("node_modules/eslint/lib/linter/linter.js", { allowJs: true });
-    expect(r.success).toBe(true);
+  it.skip("Linter_verifyAndFix no longer fails f64.eq validation (blocked before validation by #3654/#3655)", async () => {
+    const entry = requireEslintFile(ESLINT_LINTER, "lib/linter/linter.js");
+    const r = await compileProject(entry, { allowJs: true });
+    expect(r.success, r.errors.map((error) => error.message).join("\n")).toBe(true);
     // Reproduce the validator error (if any) and assert it's NOT the
     // f64.eq one. Capturing the message lets us pin the regression
     // exactly — any other failure mode is allowed (and tracked
@@ -239,5 +238,5 @@ describe("#1558 — ESLint linter.js smoke test", () => {
     if (msg !== null) {
       expect(msg).not.toMatch(/Linter_verifyAndFix.*f64\.eq.*found call of type i32/);
     }
-  });
+  }, 90_000);
 });

@@ -1,10 +1,11 @@
 ---
 id: 3400
 title: "R-FUNC: per-function LOC ceiling ratchet (check:func-budget) — enforce the 300-LOC function criterion (#3102 slice 2)"
-status: ready
-sprint: current
+status: done
+completed: 2026-07-24
+sprint: 76
 created: 2026-07-18
-updated: 2026-07-18
+updated: 2026-07-24
 priority: high
 horizon: m
 feasibility: medium
@@ -165,4 +166,33 @@ The design is fully specified above and is a structural copy of an existing,
 battle-tested script (`check-loc-budget.mjs`) with one new measurement
 function. No open design questions remain — the only judgment call
 (AST-node set + key stability) is decided here. Suitable for Opus execution.
+
+## Resolution (2026-07-24)
+
+Shipped as specified — a structural copy of `check-loc-budget.mjs` at function
+granularity, reusing `scripts/lib/change-scope.mjs` 1:1.
+
+- **`scripts/check-func-budget.mjs`** — measures every function unit via the TS
+  AST (`collectFunctionSizes`: FunctionDeclaration/Expression, block-bodied
+  ArrowFunction, Method/Get/Set/Constructor; 1-based inclusive line span; nested
+  counted independently; `"<relpath>::<qualifiedName>"` keys with `#N` ordinal
+  disambiguation). Change-scoped gate (`classifyFunctionChanges`, exported +
+  unit-tested): grandfathers the base, fails on regrowth / newly-over-300 /
+  brand-new-over-300, honors the `func-budget-allow:` frontmatter hatch, banks
+  shrinkage. `--all` / `--update` / `--update-on-decrease` mirror loc-budget.
+- **`scripts/func-budget-baseline.json`** — seeded from main: **185** functions
+  > 300 LOC (the AST count is authoritative; the #3399 awk census of ~166
+  undercounted nested/method units). Top entries match the spot-check
+  (`resolveImport` 7098, `ensureObjectRuntime` 3513, `compileReceiverMethodCall`
+  3127, `compileBuiltinStaticCall` 3096).
+- **`package.json`** — `check:func-budget`.
+- **`.github/workflows/ci.yml`** — wired into `quality` next to `check:loc-budget`.
+- Post-merge writer twin (`--update-on-decrease` + `git add -f
+  func-budget-baseline.json`) added beside every loc-budget `--update` site in
+  `test262-sharded.yml` and `baseline-summary-sync.yml`.
+- **`tests/issue-3400-func-budget.test.ts`** — 12 tests (measurement + verdict).
+
+Verified live: a synthetic 350-LOC new function FAILS the gate (exit 1,
+`__probeGiant__: 351 (> 300, +51)`); a 200-LOC function and a shrink PASS.
+Byte-inert (no `src/` change) ⇒ zero conformance/equivalence delta.
 </content>

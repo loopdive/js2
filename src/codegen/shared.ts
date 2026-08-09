@@ -167,6 +167,7 @@ const REQUIRED_DELEGATE_OWNERS: Readonly<Record<string, string>> = {
   compileArrowAsClosure: "closures.ts",
   emitBoundsCheckedArrayGet: "array-methods.ts",
   coerceType: "type-coercion.ts",
+  ensureExternrefToStringProvider: "coercion-engine.ts",
   ensureLateImport: "expressions/late-imports.ts (registered by expressions.ts)",
   flushLateImportShifts: "expressions/late-imports.ts (registered by expressions.ts)",
   ensureAnyHelpers: "any-helpers.ts",
@@ -344,6 +345,37 @@ export function coerceType(
   _coerceType(ctx, fctx, from, to, toPrimitiveHint);
 }
 
+// ── externref ToString provider ──────────────────────────────────────
+//
+// The implementation belongs to coercion-engine.ts, the single owner of the
+// runtime ToString vocabulary. type-coercion.ts needs its function index for a
+// nested OrdinaryToPrimitive branch while the engine already imports
+// coerceType/tryStructToString from type-coercion.ts, so this registered
+// delegate preserves the acyclic dependency boundary.
+
+type EnsureExternrefToStringProviderFn = (
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  hint: "string" | "default",
+) => number | undefined;
+
+let _ensureExternrefToStringProvider: EnsureExternrefToStringProviderFn = () => {
+  throw unregisteredDelegateError("ensureExternrefToStringProvider");
+};
+
+export function registerEnsureExternrefToStringProvider(fn: EnsureExternrefToStringProviderFn): void {
+  _ensureExternrefToStringProvider = fn;
+  markRegistered("ensureExternrefToStringProvider");
+}
+
+export function ensureExternrefToStringProvider(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  hint: "string" | "default",
+): number | undefined {
+  return _ensureExternrefToStringProvider(ctx, fctx, hint);
+}
+
 // ── materializeStructAsObject (#2358) ─────────────────────────────────
 //
 // Reify a nominal object struct (whose ref is on the Wasm stack) into a
@@ -386,6 +418,7 @@ type EnsureLateImportFn = (
   name: string,
   paramTypes: ValType[],
   resultTypes: ValType[],
+  module?: string,
 ) => number | undefined;
 
 type FlushLateImportShiftsFn = (ctx: CodegenContext, fctx: FunctionContext | null) => void;
@@ -413,12 +446,62 @@ export function ensureLateImport(
   name: string,
   paramTypes: ValType[],
   resultTypes: ValType[],
+  module?: string,
 ): number | undefined {
-  return _ensureLateImport(ctx, name, paramTypes, resultTypes);
+  return _ensureLateImport(ctx, name, paramTypes, resultTypes, module);
 }
 
 export function flushLateImportShifts(ctx: CodegenContext, fctx: FunctionContext | null): void {
   _flushLateImportShifts(ctx, fctx);
+}
+
+// ── reserveMemberGetDispatch delegate (#3178) ────────────────────────
+// destructuring-params.ts routes `done`/`value` property reads through the
+// finalize-filled `__get_member_<name>` dispatcher (#2674), but a STATIC
+// import of member-get-dispatch.ts from destructuring-params.ts closes an
+// eval-time module cycle (ReferenceError: `COLLECTION_KIND` before
+// initialization in collections-brand.ts). Late-bound like the delegates
+// above; SOFT (returns undefined when unregistered) so the destructure path
+// degrades to its raw `__extern_get` read instead of throwing.
+
+type ReserveMemberGetDispatchFn = (ctx: CodegenContext, propName: string, fctx?: FunctionContext) => number | undefined;
+
+let _reserveMemberGetDispatch: ReserveMemberGetDispatchFn | undefined;
+
+export function registerReserveMemberGetDispatch(fn: ReserveMemberGetDispatchFn): void {
+  _reserveMemberGetDispatch = fn;
+}
+
+/** Late-bound `reserveMemberGetDispatch` (see the delegate note above). */
+export function reserveMemberGetDispatchLate(
+  ctx: CodegenContext,
+  propName: string,
+  fctx?: FunctionContext,
+): number | undefined {
+  return _reserveMemberGetDispatch?.(ctx, propName, fctx);
+}
+
+// ── reserveTypedMemberGetF64Dispatch delegate (#3673) ─────────────────
+// type-coercion.ts rewrites `call __get_member_<p>` + ToNumber into the typed
+// `__get_member_<p>__f64` dispatcher, but member-get-dispatch.ts statically
+// imports `coercionInstrs` FROM type-coercion.ts — the reverse static import
+// would close that cycle at eval time. Same late-bound/SOFT shape as the
+// generic reserve delegate above: unregistered → the coercion site keeps its
+// `__to_primitive` + `__unbox_number` path.
+
+let _reserveTypedMemberGetF64Dispatch: ReserveMemberGetDispatchFn | undefined;
+
+export function registerReserveTypedMemberGetF64Dispatch(fn: ReserveMemberGetDispatchFn): void {
+  _reserveTypedMemberGetF64Dispatch = fn;
+}
+
+/** Late-bound `reserveTypedMemberGetF64Dispatch` (see the delegate note above). */
+export function reserveTypedMemberGetF64DispatchLate(
+  ctx: CodegenContext,
+  propName: string,
+  fctx?: FunctionContext,
+): number | undefined {
+  return _reserveTypedMemberGetF64Dispatch?.(ctx, propName, fctx);
 }
 
 // ── isAnyValue ────────────────────────────────────────────────────────

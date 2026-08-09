@@ -28,6 +28,13 @@ import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { emitSelfHostedFunc } from "./stdlib-selfhost.js";
 import { SELF_HOSTED_STRING_HELPERS } from "../stdlib/strings.js";
 import type { NativeStrShared } from "./native-strings-shared.js";
+import { emitStrWsSpanHelpers } from "./native-strings-ws.js";
+
+/**
+ * (#3899) The leaf whose emission the whitespace-span kernels are sequenced
+ * against: they bake its funcIdx, and the trim units that follow call them.
+ */
+const IS_WS_UNIT = "__sh_str_isWs";
 
 /**
  * Emit the Tier-1 self-hosted string family (leaf-first), registering each
@@ -42,6 +49,10 @@ export function emitSelfHostedStringHelpers(shared: NativeStrShared): void {
     if (unit.canonicalName !== undefined) {
       ctx.nativeStrHelpers.set(unit.canonicalName, shIdx);
     }
+    // (#3899) Sequenced here rather than in emitStrSearchHelpers: the kernels
+    // bake `__sh_str_isWs`'s funcIdx for their exotic-code-unit slow path, and
+    // the trim units later in this same leaf-first list call them by name.
+    if (unit.def.name === IS_WS_UNIT) emitStrWsSpanHelpers(shared);
     if (!unit.thunk) continue;
 
     // Legacy-ABI thunk: exact hand signature (i32 numeric params), widening

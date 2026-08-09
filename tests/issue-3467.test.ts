@@ -7,10 +7,12 @@
 // then nearest-first ancestors, with the commit DISTANCE surfaced so a cold base
 // is never silent.
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { resolveFromCandidates } from "../scripts/resolve-merge-base-baseline.mjs";
+
+const ROOT = resolve(import.meta.dirname ?? ".", "..");
 
 describe("#3467 resolveFromCandidates ancestor-walk", () => {
   let dir: string;
@@ -92,5 +94,28 @@ describe("#3467 resolveFromCandidates ancestor-walk", () => {
     // the blank slot is filtered out, so anc1 is index 0 of the filtered list.
     expect(r.sha).toBe("anc1");
     expect(r.distance).toBe(0);
+  });
+});
+
+describe("#3467 merge-base cache workflow contract", () => {
+  const workflow = readFileSync(resolve(ROOT, ".github/workflows/test262-sharded.yml"), "utf8");
+  const stepStart = workflow.indexOf("- name: Load cached baseline for merge-base (#1081, base_sha #3467)");
+  const stepEnd = workflow.indexOf("- name: Resolve predecessor-group baseline (#1956)", stepStart);
+  const step = workflow.slice(stepStart, stepEnd);
+
+  it("probes the exact base once without blocking the regression gate", () => {
+    expect(stepStart).toBeGreaterThanOrEqual(0);
+    expect(stepEnd).toBeGreaterThan(stepStart);
+    expect(step).toContain("one-shot exact-base probe");
+    expect(step).toContain("continuing immediately to the ancestor-walk");
+    expect(step).not.toContain("WAITED=");
+    expect(step).not.toContain("for attempt in");
+    expect(step).not.toContain("sleep 30");
+  });
+
+  it("retains both safe fallbacks after an exact-cache miss", () => {
+    expect(step).toContain("--max-count=25");
+    expect(step).toContain("resolve-merge-base-baseline.mjs");
+    expect(workflow.indexOf("- name: Resolve predecessor-group baseline (#1956)")).toBeGreaterThan(stepStart);
   });
 });

@@ -70,8 +70,19 @@ type Sig = { params: readonly IrType[]; returnType: IrType | null };
 
 /** Retained rep kernel: flatten a (possibly cons) string to a FlatString. */
 const FLATTEN_CALLEE: [string, Sig] = ["__str_flatten", { params: [STR], returnType: STR }];
-/** Self-hosted whitespace predicate (f64 code unit → i32 bool). */
-const IS_WS_CALLEE: [string, Sig] = ["__sh_str_isWs", { params: [F64], returnType: I32 }];
+/**
+ * (#3899) Retained rep kernel: caller-proven-in-bounds fixed-offset compare of
+ * `len` code units. Numeric params are declared `f64` per the caller-side
+ * dialect rule (no implicit f64→i32 arg coercion); the kernel truncs once.
+ */
+const REGION_EQ_CALLEE: [string, Sig] = ["__str_region_eq", { params: [STR, F64, STR, F64, F64], returnType: I32 }];
+/**
+ * (#3899) Retained rep kernels for the trim boundary scans — `(s, from, to)`
+ * → the first non-whitespace index / one past the last one, as an f64 index so
+ * the callers keep doing ordinary `number` arithmetic.
+ */
+const WS_START_CALLEE: [string, Sig] = ["__str_ws_start", { params: [STR, F64, F64], returnType: F64 }];
+const WS_END_CALLEE: [string, Sig] = ["__str_ws_end", { params: [STR, F64, F64], returnType: F64 }];
 
 /**
  * §22.1.3.32 TrimString whitespace class (#1963): WhiteSpace + LineTerminator.
@@ -96,82 +107,98 @@ export function __sh_str_isWs(ch: number): boolean {
 }
 `;
 
-/** Forward whitespace scan, then substring view — mirrors hand `__str_trimStart`. */
+/**
+ * Forward whitespace scan, then substring view — mirrors hand `__str_trimStart`.
+ * (#3899) The scan is the `__str_ws_start` rep kernel: the `charCodeAt` +
+ * `__sh_str_isWs` loop this replaces cost ~25 Wasm ops and one non-inlined call
+ * PER CODE UNIT. See the kernel doc in `src/codegen/native-strings-ws.ts` —
+ * `__sh_str_isWs` is still the single source of truth for the spec table, the
+ * kernel only fast-paths ASCII.
+ */
 const TRIM_START_SOURCE = `
 export function __str_trimStart(str0: string): string {
   let s: string = __str_flatten(str0);
   let len: number = s.length;
-  let i: number = 0;
-  while (i < len && __sh_str_isWs(s.charCodeAt(i))) {
-    i = i + 1;
-  }
-  return s.substring(i, len);
+  return s.substring(__str_ws_start(s, 0, len), len);
 }
 `;
 
-/** Backward whitespace scan — mirrors hand `__str_trimEnd`. */
+/** Backward whitespace scan — mirrors hand `__str_trimEnd`. (#3899: rep kernel.) */
 const TRIM_END_SOURCE = `
 export function __str_trimEnd(str0: string): string {
   let s: string = __str_flatten(str0);
-  let end: number = s.length;
-  while (end > 0 && __sh_str_isWs(s.charCodeAt(end - 1))) {
-    end = end - 1;
-  }
-  return s.substring(0, end);
+  let len: number = s.length;
+  return s.substring(0, __str_ws_end(s, 0, len));
 }
 `;
 
-/** trimStart ∘ trimEnd — mirrors hand `__str_trim`. */
+/**
+ * §22.1.3.34 Trim — ONE fused pass (#3899).
+ *
+ * The former body was `__str_trimEnd(__str_trimStart(s))`, which paid the whole
+ * per-call preamble twice: two `__str_flatten` guards, two cross-function calls,
+ * and two `struct.new $NativeString` view allocations, of which the
+ * intermediate one is immediately garbage.
+ *
+ * MEASURED CAVEAT (#3899): fusing on its own moved `string/trim` by ~0 %. That
+ * scaffolding was NOT the cost — the per-code-unit `charCodeAt` + `__sh_str_isWs`
+ * scan was, which is why the scans now go through the rep kernels. Fusing is
+ * kept because it is free and strictly less work, not because it is the fix.
+ *
+ * Fusing is behaviour-preserving: trimStart yields the view `[i, len)`, and
+ * trimEnd then scans that view backwards from its end down to its own start —
+ * which is exactly the `from = i` bound passed to `__str_ws_end` below. One view
+ * is allocated, and the backward scan can never cross `i`, so the
+ * all-whitespace case still yields the empty string `[i, i)`.
+ */
 const TRIM_SOURCE = `
-export function __str_trim(s: string): string {
-  return __str_trimEnd(__str_trimStart(s));
+export function __str_trim(str0: string): string {
+  let s: string = __str_flatten(str0);
+  let len: number = s.length;
+  let i: number = __str_ws_start(s, 0, len);
+  return s.substring(i, __str_ws_end(s, i, len));
 }
 `;
 
 /**
  * §22.1.3.23 StartsWith. Clamps mirror the hand body incl. #2875:
- * position = min(max(position, 0), sLen), then a unit-wise compare loop.
+ * position = min(max(position, 0), sLen), then a fixed-offset compare.
+ *
+ * (#3899) The compare itself delegates to the `__str_region_eq` rep kernel
+ * instead of a `charCodeAt` loop. The clamps above PROVE `pos + pLen <= sLen`,
+ * which is exactly the kernel's in-bounds precondition — see the kernel doc in
+ * `src/codegen/native-strings-search.ts` for why the scan does not belong in
+ * the self-hosted spec layer. `.length` reads `$AnyString.len` directly, so a
+ * cons receiver needs no pre-flatten here (the kernel flattens, guarded).
  */
 const STARTS_WITH_SOURCE = `
 export function __sh_str_startsWith(str0: string, prefix0: string, position: number): boolean {
-  let s: string = __str_flatten(str0);
-  let prefix: string = __str_flatten(prefix0);
-  let sLen: number = s.length;
-  let pLen: number = prefix.length;
+  let sLen: number = str0.length;
+  let pLen: number = prefix0.length;
   let pos: number = position;
   if (pos < 0) { pos = 0; }
   if (pos > sLen) { pos = sLen; }
   if (pos + pLen > sLen) { return false; }
-  let i: number = 0;
-  while (i < pLen) {
-    if (s.charCodeAt(pos + i) !== prefix.charCodeAt(i)) { return false; }
-    i = i + 1;
-  }
-  return true;
+  return __str_region_eq(str0, pos, prefix0, 0, pLen);
 }
 `;
 
 /**
  * §22.1.3.7 EndsWith. Clamps mirror the hand body incl. #2875:
  * endPos = min(max(endPos, 0), sLen); start = endPos - suffix.length.
+ * (#3899) Same `__str_region_eq` delegation as `startsWith`: `start >= 0` and
+ * `start + xLen === end <= sLen` are the kernel's in-bounds precondition.
  */
 const ENDS_WITH_SOURCE = `
 export function __sh_str_endsWith(str0: string, suffix0: string, endPos: number): boolean {
-  let s: string = __str_flatten(str0);
-  let suffix: string = __str_flatten(suffix0);
-  let xLen: number = suffix.length;
-  let sLen: number = s.length;
+  let xLen: number = suffix0.length;
+  let sLen: number = str0.length;
   let end: number = endPos;
   if (end < 0) { end = 0; }
   if (end > sLen) { end = sLen; }
   let start: number = end - xLen;
   if (start < 0) { return false; }
-  let i: number = 0;
-  while (i < xLen) {
-    if (s.charCodeAt(start + i) !== suffix.charCodeAt(i)) { return false; }
-    i = i + 1;
-  }
-  return true;
+  return __str_region_eq(str0, start, suffix0, 0, xLen);
 }
 `;
 
@@ -286,26 +313,23 @@ function def(
 export const SELF_HOSTED_STRING_HELPERS: readonly SelfHostedStringHelper[] = [
   { def: def("__sh_str_isWs", IS_WS_SOURCE, [F64], I32, []) },
   {
-    def: def("__str_trimStart", TRIM_START_SOURCE, [STR], STR, [FLATTEN_CALLEE, IS_WS_CALLEE]),
+    def: def("__str_trimStart", TRIM_START_SOURCE, [STR], STR, [FLATTEN_CALLEE, WS_START_CALLEE]),
     canonicalName: "__str_trimStart",
   },
   {
-    def: def("__str_trimEnd", TRIM_END_SOURCE, [STR], STR, [FLATTEN_CALLEE, IS_WS_CALLEE]),
+    def: def("__str_trimEnd", TRIM_END_SOURCE, [STR], STR, [FLATTEN_CALLEE, WS_END_CALLEE]),
     canonicalName: "__str_trimEnd",
   },
   {
-    def: def("__str_trim", TRIM_SOURCE, [STR], STR, [
-      ["__str_trimStart", { params: [STR], returnType: STR }],
-      ["__str_trimEnd", { params: [STR], returnType: STR }],
-    ]),
+    def: def("__str_trim", TRIM_SOURCE, [STR], STR, [FLATTEN_CALLEE, WS_START_CALLEE, WS_END_CALLEE]),
     canonicalName: "__str_trim",
   },
   {
-    def: def("__sh_str_startsWith", STARTS_WITH_SOURCE, [STR, STR, F64], I32, [FLATTEN_CALLEE]),
+    def: def("__sh_str_startsWith", STARTS_WITH_SOURCE, [STR, STR, F64], I32, [REGION_EQ_CALLEE]),
     thunk: { name: "__str_startsWith", params: ["str", "str", "i32"], result: "i32" },
   },
   {
-    def: def("__sh_str_endsWith", ENDS_WITH_SOURCE, [STR, STR, F64], I32, [FLATTEN_CALLEE]),
+    def: def("__sh_str_endsWith", ENDS_WITH_SOURCE, [STR, STR, F64], I32, [REGION_EQ_CALLEE]),
     thunk: { name: "__str_endsWith", params: ["str", "str", "i32"], result: "i32" },
   },
   {

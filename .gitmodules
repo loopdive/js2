@@ -6,7 +6,7 @@
 	path = vendor/Porffor
 	url = https://github.com/CanadaHonk/porffor.git
 	update = none
-	ignore = all
+	ignore = dirty
 [submodule "test262-fyi/data"]
 	path = test262-fyi/data
 	url = https://github.com/test262-fyi/data.git

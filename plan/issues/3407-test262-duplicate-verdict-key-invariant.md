@@ -1,7 +1,8 @@
 ---
 id: 3407
 title: "test262 fixture runner emits duplicate and contradictory verdict rows; enforce one canonical result per file"
-status: in-review
+status: done
+completed: 2026-07-23
 created: 2026-07-18
 updated: 2026-07-19
 priority: high
@@ -12,7 +13,7 @@ task_type: bugfix
 area: testing
 language_feature: test262-harness
 goal: test-infrastructure
-sprint: current
+sprint: 75
 related: [1221, 2913, 2920, 3003]
 origin: "2026-07-18 codebase engineering audit (plan/log/2026-07-18-codebase-engineering-audit.md, F2)"
 ---

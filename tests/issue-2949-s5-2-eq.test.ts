@@ -55,7 +55,9 @@ import {
 } from "../src/ir/index.js";
 import { createEmptyModule } from "../src/ir/types.js";
 import type { FuncTypeDef } from "../src/ir/types.js";
+import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
 
+const identities = createTestIrFunctionIdentityFactory("issue-2949-s5-2-eq");
 const F64: IrType = irVal({ kind: "f64" });
 const I32: IrType = irVal({ kind: "i32" });
 const DYN: IrType = irDynamic();
@@ -183,7 +185,7 @@ function hostEnvFor(ctx: CodegenContext): Record<string, unknown> {
 
 /** `eqNum(a,b: f64): i32` — box both f64 params, strict/loose eq. */
 function eqNum(name: string, opts: { loose: boolean; negate: boolean }): IrFunction {
-  const b = new IrFunctionBuilder(name, [I32], true);
+  const b = new IrFunctionBuilder(identities.next(name), [I32], true);
   const a = b.addParam("a", F64);
   const c = b.addParam("c", F64);
   b.openBlock();
@@ -199,7 +201,7 @@ function eqNum(name: string, opts: { loose: boolean; negate: boolean }): IrFunct
  * and an f64 (tag-3), strict-eq: exercises the numeric-CLASS arm (`5 === 5.0`).
  */
 function eqI32F64(name: string): IrFunction {
-  const b = new IrFunctionBuilder(name, [I32], true);
+  const b = new IrFunctionBuilder(identities.next(name), [I32], true);
   const a = b.addParam("a", I32);
   const c = b.addParam("c", F64);
   b.openBlock();
@@ -212,7 +214,7 @@ function eqI32F64(name: string): IrFunction {
 
 /** `eqNumBool(a: f64, b: i32): i32` — number vs Boolean-refined i32, strict. */
 function eqNumBool(name: string): IrFunction {
-  const b = new IrFunctionBuilder(name, [I32], true);
+  const b = new IrFunctionBuilder(identities.next(name), [I32], true);
   const a = b.addParam("a", F64);
   const c = b.addParam("c", I32);
   b.openBlock();
@@ -225,7 +227,7 @@ function eqNumBool(name: string): IrFunction {
 
 /** `eqDyn(a,b: dynamic): i32` — both params ARE carriers (host: externref). */
 function eqDyn(name: string, opts: { loose: boolean; negate: boolean }): IrFunction {
-  const b = new IrFunctionBuilder(name, [I32], true);
+  const b = new IrFunctionBuilder(identities.next(name), [I32], true);
   const a = b.addParam("a", DYN);
   const c = b.addParam("c", DYN);
   b.openBlock();
@@ -236,7 +238,7 @@ function eqDyn(name: string, opts: { loose: boolean; negate: boolean }): IrFunct
 
 /** `isTag(x: dynamic): i32` — the strict null/undefined FAST-PATH primitive. */
 function isTag(name: string, tag: JsTag): IrFunction {
-  const b = new IrFunctionBuilder(name, [I32], true);
+  const b = new IrFunctionBuilder(identities.next(name), [I32], true);
   const x = b.addParam("x", DYN);
   b.openBlock();
   const r = b.emitTagTest(x, tag);
@@ -250,7 +252,7 @@ function isTag(name: string, tag: JsTag): IrFunction {
 
 describe("#2949 S5.2 — emitDynEq emits a verifier-clean i32 dyn.eq node", () => {
   it("appends a dyn.eq node with i32 result, loose/negate flags, and registers typeOf", () => {
-    const b = new IrFunctionBuilder("eq1", [I32], true);
+    const b = new IrFunctionBuilder(identities.next("eq1"), [I32], true);
     const x = b.addParam("x", DYN);
     const y = b.addParam("y", DYN);
     b.openBlock();
@@ -272,7 +274,7 @@ describe("#2949 S5.2 — emitDynEq emits a verifier-clean i32 dyn.eq node", () =
   });
 
   it("rejects a non-dynamic operand at construction (carrier equality only)", () => {
-    const b = new IrFunctionBuilder("eqBad", [I32], true);
+    const b = new IrFunctionBuilder(identities.next("eqBad"), [I32], true);
     const x = b.addParam("x", DYN);
     const c = b.addParam("c", F64);
     b.openBlock();
@@ -281,7 +283,7 @@ describe("#2949 S5.2 — emitDynEq emits a verifier-clean i32 dyn.eq node", () =
   });
 
   it("a dyn.eq fed a concrete operand fails the verifier (defense in depth)", () => {
-    const b = new IrFunctionBuilder("eqVerify", [I32], true);
+    const b = new IrFunctionBuilder(identities.next("eqVerify"), [I32], true);
     const x = b.addParam("x", DYN);
     const c = b.addParam("c", I32);
     b.openBlock();

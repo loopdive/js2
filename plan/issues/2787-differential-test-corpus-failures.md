@@ -1,7 +1,8 @@
 ---
 id: 2787
 title: "Differential-test corpus failures — 2 malformed_wasm + 13 mismatch + 6 runtime_error"
-status: in-review
+status: done
+completed: 2026-07-23
 sprint: Backlog
 created: 2026-06-28
 updated: 2026-07-19

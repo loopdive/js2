@@ -7,7 +7,7 @@
  * shared.ts (NOT expressions.ts) to avoid circular dependencies.
  */
 import { ts } from "../ts-api.js";
-import { isBooleanType, isStringType } from "../checker/type-mapper.js";
+import { isBooleanType, isStringType, isVoidType } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType } from "./context/locals.js";
@@ -19,8 +19,10 @@ import {
   addStringImports,
   addUnionImports,
   resolveWasmType,
+  resolveWasmTypeForClosureReturn,
   typedArrayPackedSignedness,
 } from "./index.js";
+import { getClosureFuncSelfTypeIdx, getOrCreateFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js";
 import { addStringConstantGlobal, localGlobalIdx } from "./registry/imports.js";
 import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./js-errors.js";
 import { emitTypedArraySetBoundsCheck } from "./typed-array-set-bounds.js";
@@ -57,9 +59,15 @@ import {
 } from "./native-strings.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
 import { ensureNativeArrayHof } from "./hof-native.js";
+// (§15.4.4.20 / §23.1.3.7) live per-index HasProperty + fresh Get for `filter`.
+import { filterSelectStage, overlayFilterAccess } from "./array-filter-spec-access.js";
 import { allocJoinFoldLocals, emitStringJoinFold, hostStringRepr, nativeStringRepr } from "./builtin-scaffold.js";
 import { ensureTimsortHelper } from "./timsort.js";
-import { coerceType, coercionInstrs, defaultValueInstrs } from "./type-coercion.js";
+import { emitStableMergeSort } from "./merge-sort.js"; // (#3902) shared stable O(n log n) sort skeleton
+import { coerceType, coercionInstrs, defaultValueInstrs, emitGuardedRefCast } from "./type-coercion.js";
+import { staticIntegerRange } from "./analysis/static-numeric-range.js";
+import { tryEmitStaticI32Expression } from "./i32-static-range-expr.js";
+import { countedPushIndexOfUnroll, emitArrayIndexOfScan } from "./array-indexof-scan.js";
 
 // (#3264) Array.prototype-borrow subsystem extracted to array-prototype-borrow.ts;
 // re-export the two public entries so existing importers keep resolving.
@@ -186,7 +194,10 @@ function isKnownNonCallable(ctx: CodegenContext, arg: ts.Expression): boolean {
     ts.TypeFlags.BooleanLike |
     ts.TypeFlags.NumberLike |
     ts.TypeFlags.StringLike |
-    ts.TypeFlags.BigIntLike;
+    ts.TypeFlags.BigIntLike |
+    // A symbol is never callable → spec-correct §23.1.3.* step-3 TypeError for
+    // every array HOF (e.g. `[].flatMap(Symbol())`, `[].map(Symbol())`). (#3200)
+    ts.TypeFlags.ESSymbolLike;
   if (tsType.flags & NON_CALLABLE_FLAGS) return true;
   // (#2934 host-bridge A) A plain OBJECT type with NO call and NO construct
   // signatures is statically non-callable — `arr.map(new Object())`
@@ -346,6 +357,177 @@ function isReceiverNonNull(expr: ts.Expression, checker: ts.TypeChecker): boolea
     }
   }
   return false;
+}
+
+/**
+ * Prove `arr` is filled exactly once by `for (i=0; i<N; i++) arr.push(i)`
+ * before this call and is otherwise only searched. Such a dense identity array
+ * admits exact source-level indexOf/find results without reading its backing.
+ */
+function canonicalIdentityArrayLength(
+  ctx: CodegenContext,
+  receiver: ts.Expression,
+  callExpr: ts.CallExpression,
+): number | undefined {
+  if (!ts.isIdentifier(receiver)) return undefined;
+  let scope: ts.Node = callExpr;
+  while (scope.parent && !ts.isFunctionLike(scope.parent) && !ts.isSourceFile(scope.parent)) scope = scope.parent;
+  scope = scope.parent ?? scope;
+  const declarations: ts.VariableDeclaration[] = [];
+  const collectDeclarations = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === receiver.text) {
+      declarations.push(node);
+    }
+    ts.forEachChild(node, collectDeclarations);
+  };
+  collectDeclarations(scope);
+  if (declarations.length !== 1) return undefined;
+  const declaration = declarations[0]!;
+  if (
+    !declaration.initializer ||
+    !ts.isArrayLiteralExpression(declaration.initializer) ||
+    declaration.initializer.elements.length !== 0
+  ) {
+    return undefined;
+  }
+
+  let fillLoop: ts.ForStatement | undefined;
+  let length: number | undefined;
+  let safe = true;
+  const findFill = (node: ts.Node): void => {
+    if (ts.isForStatement(node)) {
+      const statement = ts.isBlock(node.statement)
+        ? node.statement.statements.length === 1
+          ? node.statement.statements[0]
+          : undefined
+        : node.statement;
+      const expression = statement && ts.isExpressionStatement(statement) ? statement.expression : undefined;
+      if (
+        expression &&
+        ts.isCallExpression(expression) &&
+        ts.isPropertyAccessExpression(expression.expression) &&
+        expression.expression.name.text === "push" &&
+        ts.isIdentifier(expression.expression.expression) &&
+        expression.expression.expression.text === receiver.text &&
+        isIdentityFillLoop(ctx, node, expression)
+      ) {
+        fillLoop = node;
+        length = Number((node.condition as ts.BinaryExpression).right.getText());
+      }
+    }
+    ts.forEachChild(node, findFill);
+  };
+  findFill(scope);
+  const visit = (node: ts.Node): void => {
+    if (!safe) return;
+    if (ts.isIdentifier(node) && node.text === receiver.text) {
+      if (node === declaration.name) return;
+      const property = node.parent;
+      const methodCall = ts.isPropertyAccessExpression(property) ? property.parent : undefined;
+      if (
+        !ts.isPropertyAccessExpression(property) ||
+        property.expression !== node ||
+        methodCall === undefined ||
+        !ts.isCallExpression(methodCall) ||
+        methodCall.expression !== property ||
+        !["push", "indexOf", "find"].includes(property.name.text)
+      ) {
+        safe = false;
+        return;
+      }
+      if (property.name.text === "push") {
+        let loop: ts.Node | undefined = methodCall.parent;
+        while (loop && !ts.isForStatement(loop) && !ts.isFunctionLike(loop) && !ts.isSourceFile(loop)) {
+          loop = loop.parent;
+        }
+        if (!ts.isForStatement(loop) || !isIdentityFillLoop(ctx, loop, methodCall)) {
+          safe = false;
+          return;
+        }
+        const condition = loop.condition as ts.BinaryExpression;
+        const bound = Number((condition.right as ts.NumericLiteral).text);
+        if (fillLoop && fillLoop !== loop) {
+          safe = false;
+          return;
+        }
+        fillLoop = loop;
+        length = bound;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(scope);
+  return safe && fillLoop && length !== undefined && fillLoop.getStart() < callExpr.getStart() ? length : undefined;
+}
+
+function isIdentityFillLoop(ctx: CodegenContext, loop: ts.ForStatement, push: ts.CallExpression): boolean {
+  if (!loop.initializer || !ts.isVariableDeclarationList(loop.initializer)) return false;
+  if (loop.initializer.declarations.length !== 1) return false;
+  const induction = loop.initializer.declarations[0]!;
+  if (!ts.isIdentifier(induction.name) || !induction.initializer || !ts.isNumericLiteral(induction.initializer)) {
+    return false;
+  }
+  if (Number(induction.initializer.text) !== 0 || !loop.condition || !ts.isBinaryExpression(loop.condition))
+    return false;
+  if (
+    !ts.isIdentifier(loop.condition.left) ||
+    loop.condition.left.text !== induction.name.text ||
+    loop.condition.operatorToken.kind !== ts.SyntaxKind.LessThanToken ||
+    !ts.isNumericLiteral(loop.condition.right)
+  ) {
+    return false;
+  }
+  const length = Number(loop.condition.right.text);
+  if (!Number.isSafeInteger(length) || length <= 0 || !loop.incrementor) return false;
+  const increment = loop.incrementor;
+  const incrementsByOne =
+    ((ts.isPostfixUnaryExpression(increment) || ts.isPrefixUnaryExpression(increment)) &&
+      increment.operator === ts.SyntaxKind.PlusPlusToken &&
+      ts.isIdentifier(increment.operand) &&
+      increment.operand.text === induction.name.text) ||
+    (ts.isBinaryExpression(increment) &&
+      increment.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(increment.left) &&
+      increment.left.text === induction.name.text &&
+      ts.isBinaryExpression(increment.right) &&
+      increment.right.operatorToken.kind === ts.SyntaxKind.PlusToken &&
+      ts.isIdentifier(increment.right.left) &&
+      increment.right.left.text === induction.name.text &&
+      ts.isNumericLiteral(increment.right.right) &&
+      Number(increment.right.right.text) === 1);
+  if (!incrementsByOne) return false;
+  if (push.arguments.length !== 1 || !ts.isIdentifier(push.arguments[0]!)) return false;
+  if (push.arguments[0]!.text !== induction.name.text) return false;
+  const statement = ts.isBlock(loop.statement)
+    ? loop.statement.statements.length === 1
+      ? loop.statement.statements[0]
+      : undefined
+    : loop.statement;
+  return statement !== undefined && ts.isExpressionStatement(statement) && statement.expression === push;
+}
+
+function identityFindLiteral(
+  ctx: CodegenContext,
+  callExpr: ts.CallExpression,
+  length: number,
+): ts.NumericLiteral | undefined {
+  if (callExpr.arguments.length !== 1 || !ts.isArrowFunction(callExpr.arguments[0]!)) return undefined;
+  const callback = callExpr.arguments[0]!;
+  if (callback.parameters.length !== 1 || !ts.isIdentifier(callback.parameters[0]!.name)) return undefined;
+  if (!ts.isBinaryExpression(callback.body)) return undefined;
+  const body = callback.body;
+  if (
+    body.operatorToken.kind !== ts.SyntaxKind.EqualsEqualsEqualsToken &&
+    body.operatorToken.kind !== ts.SyntaxKind.EqualsEqualsToken
+  ) {
+    return undefined;
+  }
+  const paramSymbol = ctx.checker.getSymbolAtLocation(callback.parameters[0]!.name);
+  const literal = ts.isNumericLiteral(body.left) ? body.left : ts.isNumericLiteral(body.right) ? body.right : undefined;
+  const param = literal === body.left ? body.right : body.left;
+  if (!literal || !ts.isIdentifier(param) || ctx.checker.getSymbolAtLocation(param) !== paramSymbol) return undefined;
+  const value = Number(literal.text);
+  return Number.isSafeInteger(value) && value >= 0 && value < length ? literal : undefined;
 }
 
 function typeIncludesUndefined(type: ts.Type): boolean {
@@ -990,7 +1172,7 @@ function emitDynViewMethodTwoArm(
   fctx: FunctionContext,
   propAccess: ts.PropertyAccessExpression | ts.ElementAccessExpression,
   callExpr: ts.CallExpression,
-  receiverType: ts.Type,
+  receiverType: ts.Type | undefined,
   methodName: string,
   expectedType: ValType | undefined,
 ): ValType | null | undefined | typeof VOID_RESULT {
@@ -1116,7 +1298,7 @@ export function compileArrayMethodCall(
   fctx: FunctionContext,
   propAccess: ts.PropertyAccessExpression | ts.ElementAccessExpression,
   callExpr: ts.CallExpression,
-  receiverType: ts.Type,
+  receiverType: ts.Type | undefined,
   overrideMethodName?: string,
   expectedType?: ValType,
   skipDynViewWrap = false,
@@ -1181,8 +1363,8 @@ export function compileArrayMethodCall(
 
   const receiverExpr = propAccess.expression;
   const arrInfo =
-    resolveArrayInfo(ctx, receiverType) ??
-    resolveArrayInfoFromWasmType(ctx, inferExpressionWasmType(ctx, fctx, receiverExpr, false));
+    (receiverType === undefined ? null : resolveArrayInfo(ctx, receiverType)) ??
+    resolveArrayInfoFromWasmType(ctx, inferExpressionWasmType(ctx, fctx, receiverExpr, receiverType === undefined));
   if (!arrInfo) return undefined;
 
   let { vecTypeIdx, arrTypeIdx, elemType } = arrInfo;
@@ -1376,9 +1558,32 @@ export function compileArrayMethodCall(
 
   let result: ValType | null | undefined;
   switch (methodName) {
-    case "indexOf":
-      result = compileArrayIndexOf(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
+    case "indexOf": {
+      const identityLength = canonicalIdentityArrayLength(ctx, methodAccess.expression, callExpr);
+      const search = callExpr.arguments[0];
+      const range = search ? staticIntegerRange(ctx, search) : undefined;
+      if (
+        identityLength !== undefined &&
+        callExpr.arguments.length === 1 &&
+        range !== undefined &&
+        range.min >= 0 &&
+        range.max < identityLength
+      ) {
+        if (!tryEmitStaticI32Expression(ctx, fctx, search!)) {
+          const searchType = compileExpression(ctx, fctx, search!, { kind: "i32" });
+          if (searchType && searchType.kind !== "i32") coerceType(ctx, fctx, searchType, { kind: "i32" });
+        }
+        if (ctx.fast) {
+          result = { kind: "i32" };
+        } else {
+          fctx.body.push({ op: "f64.convert_i32_s" });
+          result = { kind: "f64" };
+        }
+      } else {
+        result = compileArrayIndexOf(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
+      }
       break;
+    }
     case "includes":
       result = compileArrayIncludes(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
@@ -1401,7 +1606,13 @@ export function compileArrayMethodCall(
       result = compileArraySlice(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "concat":
-      result = compileArrayConcat(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
+      // Host methods such as String.prototype.split return ordinary JavaScript
+      // arrays. They cannot be cast to the WasmGC vec representation expected
+      // by the native concat lowering, so preserve their Array.prototype.concat
+      // semantics through the existing host fallback.
+      result = receiverIsExternref
+        ? compileArrayConcatExtern(ctx, fctx, methodAccess, callExpr)
+        : compileArrayConcat(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "join":
     // #1997: Array.prototype.toString() (§23.1.3.36) is specified to call join
@@ -1495,11 +1706,20 @@ export function compileArrayMethodCall(
       result = feResult === null ? (VOID_RESULT as any) : feResult;
       break;
     }
-    case "find":
-      result = hofElemKindOk(elemType)
-        ? compileArrayFind(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
-        : undefined;
+    case "find": {
+      const identityLength = canonicalIdentityArrayLength(ctx, methodAccess.expression, callExpr);
+      const literal = identityLength === undefined ? undefined : identityFindLiteral(ctx, callExpr, identityLength);
+      if (literal) {
+        const literalType = compileExpression(ctx, fctx, literal, elemType);
+        if (literalType && !valTypesMatch(literalType, elemType)) coerceType(ctx, fctx, literalType, elemType);
+        result = elemType;
+      } else {
+        result = hofElemKindOk(elemType)
+          ? compileArrayFind(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+          : undefined;
+      }
       break;
+    }
     case "findIndex":
       result = hofElemKindOk(elemType)
         ? compileArrayFindIndex(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
@@ -1549,7 +1769,7 @@ export function compileArrayMethodCall(
       result = compileArrayFlat(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "flatMap":
-      result = compileArrayFlatMap(ctx, fctx, methodAccess, callExpr);
+      result = compileArrayFlatMap(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "set": {
       const setResult = compileTypedArraySet(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
@@ -2523,54 +2743,25 @@ function compileArrayIndexOf(
     holeMap = holeToUndefinedInstrs(ctx, fctx);
   }
 
-  const loopBody: Instr[] = [
-    { op: "local.get", index: iTmp },
-    { op: "local.get", index: effLenTmp },
-    { op: "i32.ge_s" },
-    { op: "br_if", depth: 1 },
-
-    { op: "local.get", index: dataTmp },
-    { op: "local.get", index: iTmp },
-    { op: getOp, typeIdx: arrTypeIdx },
-    ...holeMap,
-    { op: "local.get", index: valTmp },
-    ...eqInstrs,
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: ctx.fast
-        ? [
-            { op: "local.get", index: iTmp },
-            { op: "local.set", index: resTmp },
-            { op: "br", depth: 2 }, // break out of block
-          ]
-        : [
-            { op: "local.get", index: iTmp },
-            { op: "f64.convert_i32_s" },
-            { op: "local.set", index: resTmp },
-            { op: "br", depth: 2 }, // break out of block
-          ],
-    },
-
-    { op: "local.get", index: iTmp },
-    { op: "i32.const", value: 1 },
-    { op: "i32.add" },
-    { op: "local.set", index: iTmp },
-    { op: "br", depth: 0 },
-  ];
-
-  fctx.body.push({
-    op: "block",
-    blockType: { kind: "empty" },
-    body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }],
+  emitArrayIndexOfScan(fctx, {
+    fast: ctx.fast,
+    arrTypeIdx,
+    dataLocal: dataTmp,
+    indexLocal: iTmp,
+    effectiveLengthLocal: effLenTmp,
+    valueLocal: valTmp,
+    resultLocal: resTmp,
+    getOp,
+    equality: eqInstrs,
+    holeMap,
+    unroll: countedPushIndexOfUnroll(
+      fctx,
+      ts.isIdentifier(propAccess.expression) ? propAccess.expression.text : undefined,
+      elemType,
+    ),
   });
-
   fctx.body.push({ op: "local.get", index: resTmp });
-
-  if (ctx.fast) {
-    return { kind: "i32" };
-  }
-  return { kind: "f64" };
+  return ctx.fast ? { kind: "i32" } : { kind: "f64" };
 }
 
 /**
@@ -2951,6 +3142,7 @@ function compileArrayPush(
   }
 
   const argCount = callExpr.arguments.length;
+  const presizedCountedPush = fctx.presizedArrayPushCalls?.get(callExpr) === vecTypeIdx;
   const vecTmp = allocLocal(fctx, `__arr_push_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
   const dataTmp = allocLocal(fctx, `__arr_push_data_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
   const lenTmp = allocLocal(fctx, `__arr_push_len_${fctx.locals.length}`, { kind: "i32" });
@@ -2963,7 +3155,7 @@ function compileArrayPush(
   // Compile receiver -> vec ref
   compileExpression(ctx, fctx, propAccess.expression);
   fctx.body.push({ op: "local.tee", index: vecTmp });
-  emitReceiverNullGuard(ctx, fctx, vecTmp, propAccess.expression);
+  if (!presizedCountedPush) emitReceiverNullGuard(ctx, fctx, vecTmp, propAccess.expression);
 
   // Get length
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
@@ -2972,62 +3164,65 @@ function compileArrayPush(
   // Get data array
   fctx.body.push({ op: "local.get", index: vecTmp });
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
-  fctx.body.push({ op: "local.tee", index: dataTmp });
+  fctx.body.push({ op: "local.set", index: dataTmp });
 
-  // Check: length + argCount > capacity?
-  fctx.body.push({ op: "array.len" });
-  fctx.body.push({ op: "local.get", index: lenTmp });
-  fctx.body.push({ op: "i32.const", value: argCount });
-  fctx.body.push({ op: "i32.add" });
-  fctx.body.push({ op: "i32.lt_s" });
+  if (!presizedCountedPush) {
+    // Check: length + argCount > capacity?
+    fctx.body.push({ op: "local.get", index: dataTmp });
+    fctx.body.push({ op: "array.len" });
+    fctx.body.push({ op: "local.get", index: lenTmp });
+    fctx.body.push({ op: "i32.const", value: argCount });
+    fctx.body.push({ op: "i32.add" });
+    fctx.body.push({ op: "i32.lt_s" });
 
-  // if (capacity < length + argCount) -> grow
-  fctx.body.push({
-    op: "if",
-    blockType: { kind: "empty" },
-    then: [
-      // newCap = max((len + argCount) * 2, 4)
-      { op: "local.get", index: lenTmp },
-      { op: "i32.const", value: argCount },
-      { op: "i32.add" },
-      { op: "i32.const", value: 1 },
-      { op: "i32.shl" }, // (len + argCount) * 2
-      { op: "i32.const", value: 4 },
-      // select: if (len+argCount)*2 > 4 then (len+argCount)*2 else 4
-      { op: "local.get", index: lenTmp },
-      { op: "i32.const", value: argCount },
-      { op: "i32.add" },
-      { op: "i32.const", value: 1 },
-      { op: "i32.shl" },
-      { op: "i32.const", value: 4 },
-      { op: "i32.gt_s" },
-      { op: "select" },
-      { op: "local.set", index: newCapTmp },
+    // if (capacity < length + argCount) -> grow
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        // newCap = max((len + argCount) * 2, 4)
+        { op: "local.get", index: lenTmp },
+        { op: "i32.const", value: argCount },
+        { op: "i32.add" },
+        { op: "i32.const", value: 1 },
+        { op: "i32.shl" }, // (len + argCount) * 2
+        { op: "i32.const", value: 4 },
+        // select: if (len+argCount)*2 > 4 then (len+argCount)*2 else 4
+        { op: "local.get", index: lenTmp },
+        { op: "i32.const", value: argCount },
+        { op: "i32.add" },
+        { op: "i32.const", value: 1 },
+        { op: "i32.shl" },
+        { op: "i32.const", value: 4 },
+        { op: "i32.gt_s" },
+        { op: "select" },
+        { op: "local.set", index: newCapTmp },
 
-      // newData = array.new_default(newCap)
-      { op: "local.get", index: newCapTmp },
-      { op: "array.new_default", typeIdx: arrTypeIdx },
-      { op: "local.set", index: newDataTmp },
+        // newData = array.new_default(newCap)
+        { op: "local.get", index: newCapTmp },
+        { op: "array.new_default", typeIdx: arrTypeIdx },
+        { op: "local.set", index: newDataTmp },
 
-      // array.copy newData[0..len] = data[0..len]
-      { op: "local.get", index: newDataTmp },
-      { op: "i32.const", value: 0 },
-      { op: "local.get", index: dataTmp },
-      { op: "i32.const", value: 0 },
-      { op: "local.get", index: lenTmp },
-      { op: "array.copy", dstTypeIdx: arrTypeIdx, srcTypeIdx: arrTypeIdx },
+        // array.copy newData[0..len] = data[0..len]
+        { op: "local.get", index: newDataTmp },
+        { op: "i32.const", value: 0 },
+        { op: "local.get", index: dataTmp },
+        { op: "i32.const", value: 0 },
+        { op: "local.get", index: lenTmp },
+        { op: "array.copy", dstTypeIdx: arrTypeIdx, srcTypeIdx: arrTypeIdx },
 
-      // Update vec struct data field
-      { op: "local.get", index: vecTmp },
-      { op: "local.get", index: newDataTmp },
-      { op: "ref.as_non_null" },
-      { op: "struct.set", typeIdx: vecTypeIdx, fieldIdx: 1 },
+        // Update vec struct data field
+        { op: "local.get", index: vecTmp },
+        { op: "local.get", index: newDataTmp },
+        { op: "ref.as_non_null" },
+        { op: "struct.set", typeIdx: vecTypeIdx, fieldIdx: 1 },
 
-      // Update local data pointer
-      { op: "local.get", index: newDataTmp },
-      { op: "local.set", index: dataTmp },
-    ],
-  });
+        // Update local data pointer
+        { op: "local.get", index: newDataTmp },
+        { op: "local.set", index: dataTmp },
+      ],
+    });
+  }
 
   // Set elements: data[length + i] = args[i] for each argument (compile-time unrolled)
   for (let i = 0; i < argCount; i++) {
@@ -3450,10 +3645,22 @@ function compileArraySlice(
   fctx.body.push({ op: "local.set", index: startTmp });
 
   // end arg into a local (only when explicit); null = "use length".
-  const hasEnd = callExpr.arguments.length >= 2;
+  // (#3201) §23.1.3.25 step 6: an explicit `undefined` end is spec-equivalent to
+  // an OMITTED end (relativeEnd = len), NOT `ToIntegerOrInfinity(undefined)` = 0.
+  // Compiling `undefined` in f64 context yields `f64.const NaN` → `trunc_sat` = 0,
+  // which turned `x.slice(3, undefined)` into an empty slice instead of `x.slice(3)`.
+  // Treat a statically-`undefined` end (the literal, or the `undefined` global) as
+  // "no end". A literal/identifier `undefined` has no side effects, so skipping its
+  // compilation preserves observable evaluation order. (undefined START already
+  // coerces correctly: ToIntegerOrInfinity(undefined) = 0 = the default.)
+  const endArg = callExpr.arguments.length >= 2 ? callExpr.arguments[1]! : undefined;
+  const endIsExplicitUndefined =
+    !!endArg &&
+    (endArg.kind === ts.SyntaxKind.UndefinedKeyword || (ts.isIdentifier(endArg) && endArg.text === "undefined"));
+  const hasEnd = endArg !== undefined && !endIsExplicitUndefined;
   const endTmp = allocLocal(fctx, `__arr_slc_e_${fctx.locals.length}`, { kind: "i32" });
   if (hasEnd) {
-    compileExpression(ctx, fctx, callExpr.arguments[1]!, { kind: "f64" });
+    compileExpression(ctx, fctx, endArg!, { kind: "f64" });
     fctx.body.push({ op: "i32.trunc_sat_f64_s" });
     fctx.body.push({ op: "local.set", index: endTmp });
   }
@@ -4709,6 +4916,54 @@ function compileThisArg(
 }
 
 /**
+ * (#3015) Resolve the canonical funcref-wrapper closure for a DYNAMIC
+ * function-typed callback value that compiled to an opaque `externref` — i.e. a
+ * function PARAMETER (`function run(cb){ return arr.some(cb); }`), the one
+ * callback shape that still routed through the `__call_1_*` / `__call_2_*` host
+ * bridge. In standalone (host-free) mode that import makes the module
+ * non-instantiable, so those tests never ran.
+ *
+ * The value IS a wasm closure struct at runtime (the caller passed an arrow /
+ * function value), so we recover a native `call_ref` by resolving the
+ * callback SIGNATURE's canonical wrapper via `getOrCreateFuncRefWrapperTypes` —
+ * the SAME cache-keyed wrapper the arrow value-site registers, so the runtime
+ * closure struct (a subtype of the wrapper root) casts and calls cleanly. We
+ * return the `ClosureInfo` plus the lifted self carrier (the wrapper root) that
+ * the externref is cast to.
+ *
+ * Returns `undefined` (→ host-bridge fallback, unchanged) when the callback has
+ * no single resolvable call signature.
+ */
+function resolveDynamicCallbackClosure(
+  ctx: CodegenContext,
+  cbArg: ts.Expression,
+): { closureInfo: ClosureInfo; selfStructTypeIdx: number } | undefined {
+  // oracle-ratchet-allow (#3015): the wrapper cache key is a wasm-lowering
+  // ValType question (`resolveWasmType`), deliberately ABOVE `ctx.oracle`. This
+  // mirrors `compileArrowAsClosure`'s `computeClosureWrapperSig` lowering so the
+  // key MATCHES the arrow value-site's — they share the wrapper struct + func
+  // type, which is exactly what makes the runtime `ref.cast` + `call_ref` valid.
+  const cbType = ctx.checker.getTypeAtLocation(cbArg);
+  const sigs = cbType.getCallSignatures();
+  if (sigs.length !== 1) return undefined;
+  const sig = sigs[0]!;
+  const paramValTypes: ValType[] = [];
+  for (const p of sig.parameters) {
+    const loc = p.valueDeclaration ?? p.declarations?.[0] ?? cbArg;
+    paramValTypes.push(resolveWasmType(ctx, ctx.checker.getTypeOfSymbolAtLocation(p, loc)));
+  }
+  const retTsType = ctx.checker.getReturnTypeOfSignature(sig);
+  const results: ValType[] =
+    isVoidType(retTsType) || (retTsType.flags & ts.TypeFlags.Never) !== 0
+      ? []
+      : [resolveWasmTypeForClosureReturn(ctx, retTsType)];
+  const wrapper = getOrCreateFuncRefWrapperTypes(ctx, paramValTypes, results);
+  if (!wrapper) return undefined;
+  const selfStructTypeIdx = getClosureFuncSelfTypeIdx(ctx, wrapper.liftedFuncTypeIdx) ?? wrapper.structTypeIdx;
+  return { closureInfo: wrapper.closureInfo, selfStructTypeIdx };
+}
+
+/**
  * Compile the callback argument and set up either a closure (call_ref) path
  * or a host bridge fallback. Returns null if setup fails (error pushed).
  *
@@ -4742,6 +4997,32 @@ function setupArrayCallback(
     closureInfo = ctx.closureInfoByTypeIdx.get(closureTypeIdx);
     if (closureInfo) {
       closureTmp = allocLocal(fctx, `__arr_${tag}_clcb_${fctx.locals.length}`, cbResult);
+      fctx.body.push({ op: "local.set", index: closureTmp });
+    }
+  } else if (ctx.standalone && cbResult && cbResult.kind === "externref") {
+    // (#3015) Standalone: a dynamic function-typed callback value (a function
+    // PARAMETER, e.g. `arr.some(cb)`) arrives as an opaque externref and would
+    // otherwise route through the `__call_1_*`/`__call_2_*` host bridge — a
+    // host import that is not instantiable host-free. Recover a native
+    // `call_ref` via the callback signature's canonical funcref wrapper. Host
+    // mode is untouched (this branch is standalone-gated) and keeps the bridge
+    // as its fast path per the dual-mode principle.
+    const dyn = resolveDynamicCallbackClosure(ctx, cbArg);
+    if (dyn) {
+      closureInfo = dyn.closureInfo;
+      closureTypeIdx = dyn.selfStructTypeIdx;
+      // The externref callback value is on the stack: convert it to the wrapper
+      // self carrier and store a NON-NULL closure ref. The native invocation
+      // path (`buildClosureCallInstrs` / reduce) pushes `closureTmp` as the
+      // `call_ref` self argument, whose param type is `(ref root)` — non-null,
+      // matching the arrow branch's `(ref …)` `closureTmp`.
+      fctx.body.push({ op: "any.convert_extern" });
+      emitGuardedRefCast(fctx, dyn.selfStructTypeIdx);
+      fctx.body.push({ op: "ref.as_non_null" });
+      closureTmp = allocLocal(fctx, `__arr_${tag}_dyncb_${fctx.locals.length}`, {
+        kind: "ref",
+        typeIdx: dyn.selfStructTypeIdx,
+      });
       fctx.body.push({ op: "local.set", index: closureTmp });
     }
   }
@@ -4792,6 +5073,25 @@ interface ArrayLoopLocals {
   logicalLenTmp: number;
   iTmp: number;
   getOp: "array.get_u" | "array.get_s" | "array.get";
+}
+
+/** Substitute closure parameter reads with the HOF loop's concrete operands. */
+function instantiateInlineClosureBody(
+  closureInfo: ClosureInfo,
+  parameterLoads: readonly (readonly Instr[])[],
+): Instr[] | undefined {
+  if (!closureInfo.inlineBody || closureInfo.needsCallSiteArity !== false) return undefined;
+  const body: Instr[] = [];
+  for (const instr of closureInfo.inlineBody) {
+    if (instr.op === "local.get") {
+      const replacement = parameterLoads[(instr as { index: number }).index - 1];
+      if (!replacement) return undefined;
+      body.push(...replacement.map((item) => ({ ...item })));
+    } else {
+      body.push({ ...instr });
+    }
+  }
+  return body;
 }
 
 /**
@@ -4889,7 +5189,14 @@ function buildClosureCallInstrs(
   // emitArgumentsVecBody. Convention from #1053: argc = numFormals
   // (slots filled by direct params); extras vec holds slots beyond.
   const SPEC_ARITY = 3;
-  const argsPlumbing = emitArrayCallbackArgsPlumbing(ctx, fctx, SPEC_ARITY, numParams, vecTypeIdx, arrTypeIdx, loop);
+  // Simple source callbacks neither construct `arguments` nor inspect omitted
+  // parameters. Avoid allocating/boxing an extras vec on every array element.
+  // Synthetic and dynamically recovered closures leave the metadata undefined
+  // and conservatively retain the full call-site arity protocol.
+  const argsPlumbing =
+    closureInfo.needsCallSiteArity === false
+      ? []
+      : emitArrayCallbackArgsPlumbing(ctx, fctx, SPEC_ARITY, numParams, vecTypeIdx, arrTypeIdx, loop);
 
   // #2152 — install thisArg as the callback's `this` for the duration of the
   // call_ref. The callback body (funcexpr / named-decl that references `this`)
@@ -4916,6 +5223,34 @@ function buildClosureCallInstrs(
           { op: "global.set", index: ctx.currentThisGlobalIdx },
         ]
       : [];
+
+  const inlineBody = instantiateInlineClosureBody(closureInfo, [
+    [
+      ...(elemSource.kind === "local"
+        ? ([{ op: "local.get", index: elemSource.index }] satisfies Instr[])
+        : ([
+            { op: "local.get", index: loop.dataTmp },
+            { op: "local.get", index: loop.iTmp },
+            { op: loop.getOp, typeIdx: arrTypeIdx },
+          ] satisfies Instr[])),
+      ...(elemType.kind === "externref" && ctx.usesArrayHoles ? holeToUndefinedInstrs(ctx, fctx) : []),
+      ...elemCoerce,
+    ],
+    [
+      { op: "local.get", index: loop.iTmp },
+      ...coercionInstrs(ctx, { kind: "i32" }, closureInfo.paramTypes[1] ?? { kind: "i32" }, fctx),
+    ],
+    [
+      { op: "local.get", index: loop.vecTmp },
+      ...coercionInstrs(
+        ctx,
+        { kind: "ref_null", typeIdx: vecTypeIdx },
+        closureInfo.paramTypes[2] ?? { kind: "ref_null", typeIdx: vecTypeIdx },
+        fctx,
+      ),
+    ],
+  ]);
+  if (inlineBody) return inlineBody;
 
   return [
     ...argsPlumbing,
@@ -5218,7 +5553,7 @@ function emitArrayLoop(fctx: FunctionContext, loopBody: Instr[]): void {
  * are byte-identical — no `ref.test`, no gate.
  *
  * (PR #2832 merge-group park) ALSO disabled module-wide when the pre-scan saw
- * an `Array.prototype` INDEX write (`arrayProtoIndexDirty`): §23.1.3.* keys the
+ * an `Array`/`Object.prototype` INDEX write (`protoIndexDirty`): §23.1.3.* keys the
  * skip on `HasProperty(O, k)`, which is TRUE for a hole whose index is
  * inherited from `Array.prototype` — a relationship the flat vec cannot check
  * per element. Falling back to the S1 visit-with-`undefined` behavior matches
@@ -5227,7 +5562,7 @@ function emitArrayLoop(fctx: FunctionContext, loopBody: Instr[]): void {
  * `{every,filter,some}/*-c-i-22.js`.
  */
 function shouldHoleSkip(ctx: CodegenContext, elemType: ValType): boolean {
-  return ctx.usesArrayHoles && !ctx.arrayProtoIndexDirty && elemType.kind === "externref";
+  return ctx.usesArrayHoles && !ctx.protoIndexDirty && elemType.kind === "externref";
 }
 
 /**
@@ -5374,8 +5709,12 @@ function compileArrayFilter(
 
   const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "flt");
 
-  // Allocate result array with same capacity as source
-  fctx.body.push({ op: "local.get", index: loop.lenTmp });
+  // §15.4.4.20 step 3: `len` is captured ONCE — see array-filter-spec-access.ts
+  // for why the overlay route walks the LOGICAL length and the dense route the
+  // #3215 backing-clamped one. Result capacity = one push per visited index.
+  const overlay = overlayFilterAccess(ctx, fctx, loop, elemType, elemTmp);
+  const boundTmp = overlay ? loop.logicalLenTmp : loop.lenTmp;
+  fctx.body.push({ op: "local.get", index: boundTmp });
   fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
   fctx.body.push({ op: "local.set", index: resData });
 
@@ -5395,18 +5734,12 @@ function compileArrayFilter(
   );
 
   const loopBody: Instr[] = [
-    ...loopExitCheck(loop),
-
-    // elem = data[i]
-    { op: "local.get", index: loop.dataTmp },
-    { op: "local.get", index: loop.iTmp },
-    { op: loop.getOp, typeIdx: arrTypeIdx },
-    { op: "local.set", index: elemTmp },
-
     // (#2001 S2) filter does not call the callback for a hole (§23.1.3.7 uses
     // HasProperty) and never adds it to the result. The flag-gate yields 0 for
     // a hole → the push `if` below does not fire (and the callback isn't run).
-    ...gateHoleFlag(ctx, loop, arrTypeIdx, elemType, callAndCheck),
+    ...filterSelectStage(loop, vecTypeIdx, arrTypeIdx, boundTmp, elemTmp, overlay, callAndCheck, (inner) =>
+      gateHoleFlag(ctx, loop, arrTypeIdx, elemType, inner),
+    ),
 
     // if result is truthy, add element to result
     {
@@ -5701,54 +6034,54 @@ function compileArrayReduce(
     const numParams = ci.paramTypes.length;
     const accCoerce = ci.paramTypes[0] ? coercionInstrs(ctx, accType, ci.paramTypes[0], fctx) : [];
     const elemCoerce = ci.paramTypes[1] ? coercionInstrs(ctx, elemType, ci.paramTypes[1], fctx) : [];
-    callInstrs = [
-      { op: "local.get", index: setup.closureTmp },
-      // Accumulator (1st user param) — gate on numParams >= 1.
-      ...(numParams >= 1 ? ([{ op: "local.get", index: accTmp }, ...accCoerce] satisfies Instr[]) : []),
-      // Element (2nd user param) — gate on numParams >= 2.
-      ...(numParams >= 2
-        ? ([
-            { op: "local.get", index: loop.dataTmp },
-            { op: "local.get", index: loop.iTmp },
-            { op: loop.getOp, typeIdx: arrTypeIdx },
-            // (#2001 S1) A `$Hole` element reaches the reducer as `undefined`.
-            ...(ctx.usesArrayHoles && elemType.kind === "externref" ? holeToUndefinedInstrs(ctx, fctx) : []),
-            ...elemCoerce,
-          ] satisfies Instr[])
-        : []),
-      ...(numParams >= 3
-        ? ([
-            { op: "local.get", index: loop.iTmp },
-            ...coercionInstrs(ctx, { kind: "i32" }, ci.paramTypes[2] ?? { kind: "i32" }, fctx),
-          ] satisfies Instr[])
-        : []),
-      ...(numParams >= 4
-        ? ([
-            { op: "local.get", index: loop.vecTmp },
-            ...coercionInstrs(
-              ctx,
-              { kind: "ref_null", typeIdx: vecTypeIdx },
-              ci.paramTypes[3] ?? { kind: "ref_null", typeIdx: vecTypeIdx },
-              fctx,
-            ),
-          ] satisfies Instr[])
-        : []),
-      { op: "local.get", index: setup.closureTmp },
-      { op: "struct.get", typeIdx: setup.closureTypeIdx, fieldIdx: 0 },
-      ...guardedFuncRefCastInstrs(fctx, ci.funcTypeIdx),
-      { op: "ref.as_non_null" },
-      { op: "call_ref", typeIdx: ci.funcTypeIdx },
-      // Void-returning callback (e.g. `function() {}`): nothing on stack →
-      // push default-of-accumulator so the trailing `local.set accTmp`
-      // validates. JS: cb returns `undefined` → acc becomes undefined →
-      // for numeric kind that's NaN (f64) / 0 (i32). (#1522 Cluster 2)
-      ...(ci.returnType === null
+    const elemLoad: Instr[] = [
+      { op: "local.get", index: loop.dataTmp },
+      { op: "local.get", index: loop.iTmp },
+      { op: loop.getOp, typeIdx: arrTypeIdx },
+      ...(ctx.usesArrayHoles && elemType.kind === "externref" ? holeToUndefinedInstrs(ctx, fctx) : []),
+      ...elemCoerce,
+    ];
+    const indexLoad: Instr[] = [
+      { op: "local.get", index: loop.iTmp },
+      ...coercionInstrs(ctx, { kind: "i32" }, ci.paramTypes[2] ?? { kind: "i32" }, fctx),
+    ];
+    const arrayLoad: Instr[] = [
+      { op: "local.get", index: loop.vecTmp },
+      ...coercionInstrs(
+        ctx,
+        { kind: "ref_null", typeIdx: vecTypeIdx },
+        ci.paramTypes[3] ?? { kind: "ref_null", typeIdx: vecTypeIdx },
+        fctx,
+      ),
+    ];
+    const inlineBody = instantiateInlineClosureBody(ci, [
+      [{ op: "local.get", index: accTmp }, ...accCoerce],
+      elemLoad,
+      indexLoad,
+      arrayLoad,
+    ]);
+    const normalizeResult: Instr[] =
+      ci.returnType === null
         ? defaultValueInstrs(accType)
         : ci.returnType.kind !== accType.kind
           ? coercionInstrs(ctx, ci.returnType, accType, fctx)
-          : []),
-      { op: "local.set", index: accTmp },
-    ];
+          : [];
+    callInstrs = inlineBody
+      ? [...inlineBody, ...normalizeResult, { op: "local.set", index: accTmp }]
+      : [
+          { op: "local.get", index: setup.closureTmp },
+          ...(numParams >= 1 ? ([{ op: "local.get", index: accTmp }, ...accCoerce] satisfies Instr[]) : []),
+          ...(numParams >= 2 ? elemLoad : []),
+          ...(numParams >= 3 ? indexLoad : []),
+          ...(numParams >= 4 ? arrayLoad : []),
+          { op: "local.get", index: setup.closureTmp },
+          { op: "struct.get", typeIdx: setup.closureTypeIdx, fieldIdx: 0 },
+          ...guardedFuncRefCastInstrs(fctx, ci.funcTypeIdx),
+          { op: "ref.as_non_null" },
+          { op: "call_ref", typeIdx: ci.funcTypeIdx },
+          ...normalizeResult,
+          { op: "local.set", index: accTmp },
+        ];
   } else {
     // Host-bridge fallback path: the bridge takes/returns the numeric kind, so
     // the accumulator must be numeric here. resolveReduceAccType returns the
@@ -6727,7 +7060,36 @@ function compileArrayDefaultToStringSort(
   elemType: ValType,
 ): ValType | null {
   const isNumeric = elemType.kind === "f64" || elemType.kind === "i32";
+  // (#3902 → #3912) This used to carry a host-import DETECTION probe:
+  //
+  //     const numToStrExisting = ctx.funcMap.get("number_toString");
+  //     const importedFuncCount = ctx.mod.imports.filter(…).length;
+  //     const numToStrIsHostImport = numToStrExisting < importedFuncCount;
+  //
+  // …because `import-collector.ts` gated the two helpers this function needs on
+  // DIFFERENT conditions: `string_compare` was skipped under `ctx.nativeStrings`
+  // (the native `__str_compare` replaces it), while `number_toString` went
+  // native only under `ctx.wasi || ctx.standalone`. In plain `nativeStrings`
+  // mode — i.e. `fast: true`, the whole gc-native lane — the module got the
+  // JS-HOST `env.number_toString`, whose genuine JS string then failed
+  // `stringifyTail`'s `any.convert_extern` + `ref.cast $AnyString` with an
+  // `illegal cast` trap on every numeric `arr.sort()`.
+  //
+  // #3912 removed the mismatch at its source: `number_toString` is now native
+  // wherever strings are native (`usesNativeNumberFormat`), so
+  // `numToStrIsHostImport` can no longer be true while `ctx.nativeStrings` is —
+  // the probe was dead code. Removed here, together with #3902's temporary
+  // `coercion-sites-allow` for this file, exactly as #3902's frontmatter
+  // instructed. `native` is now the plain question it always meant to ask.
   const native = ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0;
+  // (#3579) HOST default sort only supports numeric or externref (boxed-any /
+  // js-string) elements. A ref/ref_null (struct) element cannot flow into the
+  // `string_compare(externref, externref)` host import, so bail to the caller's
+  // no-op rather than emit an invalid `string_compare(ref struct, …)`. (Native
+  // mode already bailed above for the externref case.)
+  if (!native && !isNumeric && elemType.kind !== "externref") {
+    return null;
+  }
 
   // #2379 — in NATIVE-string mode this ToString sort's non-numeric branch
   // `ref.cast`s each `array.get` element to `$AnyString` (see `stringifyTail`),
@@ -6751,6 +7113,18 @@ function compileArrayDefaultToStringSort(
   let compareIdx: number | undefined;
   let numToStrIdx: number | undefined;
   let anyStrTypeIdx = -1;
+  // (#3579) HOST mode, non-numeric (boxed-`any`/externref element) branch: the
+  // element must be ToString'd via the runtime `__extern_toString` before the
+  // string comparison. Previously `stringifyTail` assumed the element was ALREADY
+  // a string (`ref.as_non_null` only) — true for `string[]` but NOT for an
+  // `any[]` whose elements are boxed numbers/undefined, so `string_compare` on
+  // raw boxed values could not order them and the default sort silently no-op'd
+  // (`[10,9,1].sort()` on an untyped array stayed unordered). `__extern_toString`
+  // is the SAME runtime primitive `emitToString`'s dynamic branch wraps and is
+  // already used directly in this file (compileArrayJoinExtern); reusing it needs
+  // no `ts.Type`/checker query. Ensured BEFORE the `string_compare` funcMap lookup
+  // so the captured `compareIdx` reflects any import-insertion index shift.
+  let externToStrIdx: number | undefined;
   if (native) {
     ensureNativeStringHelpers(ctx);
     anyStrTypeIdx = ctx.anyStrTypeIdx;
@@ -6761,8 +7135,28 @@ function compileArrayDefaultToStringSort(
       numToStrIdx = ctx.funcMap.get("number_toString");
     }
   } else {
-    compareIdx = ctx.funcMap.get("string_compare");
     cmpStrType = { kind: "externref" };
+    if (!isNumeric) {
+      externToStrIdx = ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
+      flushLateImportShifts(ctx, fctx);
+      if (externToStrIdx === undefined) return null;
+    }
+    // (#3902) In `nativeStrings` mode import-collector deliberately skips the
+    // `string_compare` host import (the native `__str_compare` normally covers
+    // it), so the host fallback selected above has no comparator yet. Add it
+    // late — and flush BEFORE reading the two indices below, since inserting an
+    // import shifts every function index.
+    if (!ctx.funcMap.has("string_compare")) {
+      const added = ensureLateImport(
+        ctx,
+        "string_compare",
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "i32" }],
+      );
+      flushLateImportShifts(ctx, fctx);
+      if (added === undefined) return null;
+    }
+    compareIdx = ctx.funcMap.get("string_compare");
     if (isNumeric) numToStrIdx = ctx.funcMap.get("number_toString");
   }
   if (compareIdx === undefined || (isNumeric && numToStrIdx === undefined)) {
@@ -6772,10 +7166,6 @@ function compileArrayDefaultToStringSort(
   const vecTmp = allocLocal(fctx, `__dsort_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
   const dataTmp = allocLocal(fctx, `__dsort_data_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
   const lenTmp = allocLocal(fctx, `__dsort_len_${fctx.locals.length}`, { kind: "i32" });
-  const iTmp = allocLocal(fctx, `__dsort_i_${fctx.locals.length}`, { kind: "i32" });
-  const jTmp = allocLocal(fctx, `__dsort_j_${fctx.locals.length}`, { kind: "i32" });
-  const keyTmp = allocLocal(fctx, `__dsort_key_${fctx.locals.length}`, elemType);
-  const keyStrTmp = allocLocal(fctx, `__dsort_keystr_${fctx.locals.length}`, cmpStrType);
 
   compileExpression(ctx, fctx, propAccess.expression);
   fctx.body.push({ op: "local.tee", index: vecTmp });
@@ -6800,6 +7190,19 @@ function compileArrayDefaultToStringSort(
   // Stringify an element value (already on the stack as elemType) to cmpStrType.
   const stringifyTail = (): Instr[] => {
     if (!isNumeric) {
+      if (!native && externToStrIdx !== undefined && elemType.kind === "externref") {
+        // (#3579) HOST boxed-`any`/string element → runtime ToString before the
+        // string comparison. A real string passes through (`ToString(str)===str`);
+        // a boxed number/undefined is stringified ("10"/"undefined"), so an
+        // untyped-array default sort orders by ToString per §23.1.3.30 instead of
+        // no-op'ing. Pass the RAW (nullable) externref straight to
+        // `__extern_toString` — it handles null (`String(null)`→"null"), so a
+        // `new Array(N)` all-holes array must NOT be `ref.as_non_null`'d first
+        // (that traps on the null holes; #2502 regression). Only the externref
+        // (boxed-any) element kind is retargeted — every other kind keeps its
+        // exact prior lowering (no regression surface).
+        return [{ op: "call", funcIdx: externToStrIdx }];
+      }
       // String element: ensure non-null, and (native) cast NativeString → AnyString.
       const out: Instr[] = [{ op: "ref.as_non_null" }];
       if (native) out.push({ op: "ref.cast", typeIdx: anyStrTypeIdx });
@@ -6815,96 +7218,33 @@ function compileArrayDefaultToStringSort(
     return out;
   };
 
-  // `string_compare(ToString(data[j]), keyStr) > 0`
-  const compareDataJGtKey: Instr[] = [
-    { op: "local.get", index: dataTmp },
-    { op: "local.get", index: jTmp },
-    { op: getOp, typeIdx: arrTypeIdx },
+  // (#3902) `string_compare(ToString(left), ToString(right)) > 0`.
+  //
+  // The insertion sort this replaced hoisted the RIGHT operand's stringification
+  // out of the inner loop (it was always the same `key`), so it paid one
+  // `number_toString` per comparison instead of two. The merge sort pays two —
+  // but it performs `n·log₂ n` comparisons instead of `n²/4`, so on the
+  // 10,000-element `array/sort-i32` benchmark that is 2×133,000 = 266,000
+  // stringifications instead of 25,000,000: a ~94× net reduction in host calls
+  // on top of the algorithmic win. Caching the per-element string in a parallel
+  // array would remove the remaining factor of ~13 (n·log n → n) and is the
+  // obvious follow-up if the default ToString sort ever becomes hot.
+  const compareGtZero = (pushLeft: Instr[], pushRight: Instr[]): Instr[] => [
+    ...pushLeft,
     ...stringifyTail(),
-    { op: "local.get", index: keyStrTmp },
+    ...pushRight,
+    ...stringifyTail(),
     { op: "call", funcIdx: compareIdx },
     { op: "i32.const", value: 0 },
     { op: "i32.gt_s" },
   ];
 
-  // for (i = 1; i < len; i++) { key = data[i]; keyStr = ToString(key); j = i-1;
-  //   while (j >= 0 && cmp(data[j], key) > 0) { data[j+1] = data[j]; j--; }
-  //   data[j+1] = key; }
-  fctx.body.push({ op: "i32.const", value: 1 });
-  fctx.body.push({ op: "local.set", index: iTmp });
-  fctx.body.push({
-    op: "block",
-    blockType: { kind: "empty" },
-    body: [
-      {
-        op: "loop",
-        blockType: { kind: "empty" },
-        body: [
-          { op: "local.get", index: iTmp },
-          { op: "local.get", index: lenTmp },
-          { op: "i32.ge_s" },
-          { op: "br_if", depth: 1 },
-
-          { op: "local.get", index: dataTmp },
-          { op: "local.get", index: iTmp },
-          { op: getOp, typeIdx: arrTypeIdx },
-          { op: "local.set", index: keyTmp },
-          { op: "local.get", index: keyTmp },
-          ...stringifyTail(),
-          { op: "local.set", index: keyStrTmp },
-          { op: "local.get", index: iTmp },
-          { op: "i32.const", value: 1 },
-          { op: "i32.sub" },
-          { op: "local.set", index: jTmp },
-
-          {
-            op: "block",
-            blockType: { kind: "empty" },
-            body: [
-              {
-                op: "loop",
-                blockType: { kind: "empty" },
-                body: [
-                  { op: "local.get", index: jTmp },
-                  { op: "i32.const", value: 0 },
-                  { op: "i32.lt_s" },
-                  { op: "br_if", depth: 1 },
-                  ...compareDataJGtKey,
-                  { op: "i32.eqz" },
-                  { op: "br_if", depth: 1 },
-                  { op: "local.get", index: dataTmp },
-                  { op: "local.get", index: jTmp },
-                  { op: "i32.const", value: 1 },
-                  { op: "i32.add" },
-                  { op: "local.get", index: dataTmp },
-                  { op: "local.get", index: jTmp },
-                  { op: getOp, typeIdx: arrTypeIdx },
-                  { op: "array.set", typeIdx: arrTypeIdx },
-                  { op: "local.get", index: jTmp },
-                  { op: "i32.const", value: 1 },
-                  { op: "i32.sub" },
-                  { op: "local.set", index: jTmp },
-                  { op: "br", depth: 0 },
-                ],
-              },
-            ],
-          },
-
-          { op: "local.get", index: dataTmp },
-          { op: "local.get", index: jTmp },
-          { op: "i32.const", value: 1 },
-          { op: "i32.add" },
-          { op: "local.get", index: keyTmp },
-          { op: "array.set", typeIdx: arrTypeIdx },
-
-          { op: "local.get", index: iTmp },
-          { op: "i32.const", value: 1 },
-          { op: "i32.add" },
-          { op: "local.set", index: iTmp },
-          { op: "br", depth: 0 },
-        ],
-      },
-    ],
+  emitStableMergeSort(fctx, {
+    arrTypeIdx,
+    getOp,
+    dataLocal: dataTmp,
+    lenLocal: lenTmp,
+    buildCompareGtZero: compareGtZero,
   });
 
   fctx.body.push({ op: "local.get", index: vecTmp });
@@ -6913,17 +7253,22 @@ function compileArrayDefaultToStringSort(
 }
 
 /**
- * #1816 — comparator-aware sort. Emits an in-place stable insertion sort that
- * invokes the user comparator closure via `call_ref` at every comparison,
- * using the spec ordering: `comparator(a, b) > 0` ⇒ `a` sorts after `b`.
+ * #1816 — comparator-aware sort. Emits an in-place stable sort that invokes the
+ * user comparator closure via `call_ref` at every comparison, using the spec
+ * ordering: `comparator(a, b) > 0` ⇒ `a` sorts after `b`.
  *
  * Returns the result ValType on success, or `null` if the comparator is not a
  * compilable Wasm closure (caller then falls back to the default Timsort).
  *
- * Insertion sort (not Timsort) is used here because (a) it is naturally stable,
- * (b) correctness — not throughput — is the requirement for comparator sorts,
- * and (c) it keeps the comparator-call site inline in the calling function so
- * the closure local stays in scope (no closure-threading through module helpers).
+ * (#3902) The sort itself is the shared stable bottom-up MERGE sort
+ * (`emitStableMergeSort`), not the insertion sort this originally shipped with.
+ * The original rationale for insertion sort was that it is naturally stable and
+ * keeps the comparator-call site inline in the calling function so the closure
+ * local stays in scope — merge sort keeps both properties (it is emitted inline
+ * too) while cutting comparator invocations from `n²/4` to `n·log₂ n`. That was
+ * worth ~190× on the `array/sort-i32` benchmark: every comparison here is a
+ * `call_ref` through a closure struct, which is far too expensive to do
+ * quadratically.
  */
 function tryCompileComparatorSort(
   ctx: CodegenContext,
@@ -6965,9 +7310,6 @@ function tryCompileComparatorSort(
   const vecTmp = allocLocal(fctx, `__arr_sort_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
   const dataTmp = allocLocal(fctx, `__arr_sort_data_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
   const lenTmp = allocLocal(fctx, `__arr_sort_len_${fctx.locals.length}`, { kind: "i32" });
-  const iTmp = allocLocal(fctx, `__arr_sort_i_${fctx.locals.length}`, { kind: "i32" });
-  const jTmp = allocLocal(fctx, `__arr_sort_j_${fctx.locals.length}`, { kind: "i32" });
-  const keyTmp = allocLocal(fctx, `__arr_sort_key_${fctx.locals.length}`, elemType);
 
   compileExpression(ctx, fctx, propAccess.expression);
   fctx.body.push({ op: "local.tee", index: vecTmp });
@@ -6987,10 +7329,10 @@ function tryCompileComparatorSort(
   const getOp: Instr["op"] =
     elemType.kind === "i8" ? "array.get_u" : elemType.kind === "i16" ? "array.get_s" : "array.get";
 
-  // Comparator-call instruction sequence with `data[j]` and `key` already
-  // on the stack as `elemType`; coerces each to the closure's declared param
-  // type, invokes call_ref, coerces the (f64/typed) result to f64, leaves an
-  // i32 `(result > 0)` on the stack.
+  // Comparator-call instruction sequence with the two operands pushed by the
+  // caller-supplied sequences as `elemType`; coerces each to the closure's
+  // declared param type, invokes call_ref, coerces the (f64/typed) result to
+  // f64, leaves an i32 `(result > 0)` on the stack.
   // Comparator call convention (matches the other array-method call_ref sites):
   // push the closure struct (`__self`, the 1st funcType param) FIRST, then the
   // two user args, then re-fetch the funcref from the struct (field 0) and
@@ -7012,99 +7354,14 @@ function tryCompileComparatorSort(
     { op: "f64.gt" },
   ];
 
-  // for (i = 1; i < len; i++) { key = data[i]; j = i-1;
-  //   while (j >= 0 && cmp(data[j], key) > 0) { data[j+1] = data[j]; j--; }
-  //   data[j+1] = key; }
-  fctx.body.push({ op: "i32.const", value: 1 });
-  fctx.body.push({ op: "local.set", index: iTmp });
-  fctx.body.push({
-    op: "block",
-    blockType: { kind: "empty" },
-    body: [
-      {
-        op: "loop",
-        blockType: { kind: "empty" },
-        body: [
-          // if (i >= len) break
-          { op: "local.get", index: iTmp },
-          { op: "local.get", index: lenTmp },
-          { op: "i32.ge_s" },
-          { op: "br_if", depth: 1 },
-          // key = data[i]
-          { op: "local.get", index: dataTmp },
-          { op: "ref.as_non_null" },
-          { op: "local.get", index: iTmp },
-          { op: getOp, typeIdx: arrTypeIdx },
-          { op: "local.set", index: keyTmp },
-          // j = i - 1
-          { op: "local.get", index: iTmp },
-          { op: "i32.const", value: 1 },
-          { op: "i32.sub" },
-          { op: "local.set", index: jTmp },
-          // inner while
-          {
-            op: "block",
-            blockType: { kind: "empty" },
-            body: [
-              {
-                op: "loop",
-                blockType: { kind: "empty" },
-                body: [
-                  // if (j < 0) break
-                  { op: "local.get", index: jTmp },
-                  { op: "i32.const", value: 0 },
-                  { op: "i32.lt_s" },
-                  { op: "br_if", depth: 1 },
-                  // if (cmp(data[j], key) > 0) == 0 → break
-                  ...buildCompareGtZero(
-                    [
-                      { op: "local.get", index: dataTmp },
-                      { op: "ref.as_non_null" },
-                      { op: "local.get", index: jTmp },
-                      { op: getOp, typeIdx: arrTypeIdx },
-                    ],
-                    [{ op: "local.get", index: keyTmp }],
-                  ),
-                  { op: "i32.eqz" },
-                  { op: "br_if", depth: 1 },
-                  // data[j+1] = data[j]
-                  { op: "local.get", index: dataTmp },
-                  { op: "ref.as_non_null" },
-                  { op: "local.get", index: jTmp },
-                  { op: "i32.const", value: 1 },
-                  { op: "i32.add" },
-                  { op: "local.get", index: dataTmp },
-                  { op: "ref.as_non_null" },
-                  { op: "local.get", index: jTmp },
-                  { op: getOp, typeIdx: arrTypeIdx },
-                  { op: "array.set", typeIdx: arrTypeIdx },
-                  // j--
-                  { op: "local.get", index: jTmp },
-                  { op: "i32.const", value: 1 },
-                  { op: "i32.sub" },
-                  { op: "local.set", index: jTmp },
-                  { op: "br", depth: 0 },
-                ],
-              },
-            ],
-          },
-          // data[j+1] = key
-          { op: "local.get", index: dataTmp },
-          { op: "ref.as_non_null" },
-          { op: "local.get", index: jTmp },
-          { op: "i32.const", value: 1 },
-          { op: "i32.add" },
-          { op: "local.get", index: keyTmp },
-          { op: "array.set", typeIdx: arrTypeIdx },
-          // i++
-          { op: "local.get", index: iTmp },
-          { op: "i32.const", value: 1 },
-          { op: "i32.add" },
-          { op: "local.set", index: iTmp },
-          { op: "br", depth: 0 },
-        ],
-      },
-    ],
+  // (#3902) Stable bottom-up merge sort — `n·log₂ n` comparator invocations
+  // instead of the `n²/4` the previous insertion sort needed.
+  emitStableMergeSort(fctx, {
+    arrTypeIdx,
+    getOp,
+    dataLocal: dataTmp,
+    lenLocal: lenTmp,
+    buildCompareGtZero,
   });
 
   // Return the same vec ref (sort is in-place).
@@ -7912,18 +8169,17 @@ function compileArrayLastIndexOf(
  * deeper recursion, and heterogeneous array/scalar unions stay deferred to the
  * larger #2717 follow-up.
  */
-function tryCompileArrayFlatNativeDepth1(
+/**
+ * (#2717) Precondition for the native depth-1 flatten: the outer vec's element
+ * must be a `ref`/`ref_null` to an INNER vec struct (an array-of-arrays), and
+ * that inner vec must resolve to a concrete backing array type. Returns the
+ * inner vec + array type indices, or null when the shape is not a homogeneous
+ * nested array (scalar / externref / mixed elements → the caller falls back).
+ */
+function canFlattenVecElem(
   ctx: CodegenContext,
-  fctx: FunctionContext,
-  propAccess: ts.PropertyAccessExpression,
-  callExpr: ts.CallExpression,
-  vecTypeIdx: number,
-  arrTypeIdx: number,
   elemType: ValType,
-): ValType | null {
-  // Default depth only — an explicit `depth` argument falls through to refusal.
-  if (callExpr.arguments.length > 0) return null;
-  // Outer element must be a ref to an inner vec struct.
+): { innerVecTypeIdx: number; innerArrTypeIdx: number } | null {
   if (elemType.kind !== "ref" && elemType.kind !== "ref_null") return null;
   const innerVecTypeIdx = (elemType as { typeIdx?: number }).typeIdx;
   if (innerVecTypeIdx === undefined) return null;
@@ -7931,8 +8187,28 @@ function tryCompileArrayFlatNativeDepth1(
   if (innerArrTypeIdx < 0) return null;
   const innerArrDef = ctx.mod.types[innerArrTypeIdx];
   if (!innerArrDef || innerArrDef.kind !== "array") return null;
+  return { innerVecTypeIdx, innerArrTypeIdx };
+}
 
-  const outerVec = allocLocal(fctx, `__arr_flat_ov_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
+/**
+ * (#2717) Emit a native depth-1 flatten of an outer vec-of-vecs. The outer vec
+ * value must be BOTH on the Wasm stack AND stored in the `outerVec` local (the
+ * caller tees it and, for a user receiver, null-guards it first). Consumes the
+ * stack value; returns a fresh inner-element vec holding every non-null inner
+ * vec's elements concatenated in order.
+ *
+ * Shared by `Array.prototype.flat()` (outer vec = the receiver) and the
+ * `Array.prototype.flatMap()` native arm (outer vec = the native `map` result).
+ */
+function emitFlattenDepth1FromVec(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  outerVec: number,
+  vecTypeIdx: number,
+  arrTypeIdx: number,
+  innerVecTypeIdx: number,
+  innerArrTypeIdx: number,
+): ValType {
   const outerData = allocLocal(fctx, `__arr_flat_od_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
   const outerLen = allocLocal(fctx, `__arr_flat_ol_${fctx.locals.length}`, { kind: "i32" });
   const total = allocLocal(fctx, `__arr_flat_tot_${fctx.locals.length}`, { kind: "i32" });
@@ -7949,10 +8225,7 @@ function tryCompileArrayFlatNativeDepth1(
   });
   const pos = allocLocal(fctx, `__arr_flat_pos_${fctx.locals.length}`, { kind: "i32" });
 
-  // receiver -> outerVec (null-guarded), then unpack len/data.
-  compileExpression(ctx, fctx, propAccess.expression);
-  fctx.body.push({ op: "local.tee", index: outerVec });
-  emitReceiverNullGuard(ctx, fctx, outerVec);
+  // outer vec is on the stack (also in `outerVec`): unpack len/data.
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
   fctx.body.push({ op: "local.set", index: outerLen });
   fctx.body.push({ op: "local.get", index: outerVec });
@@ -8075,6 +8348,121 @@ function tryCompileArrayFlatNativeDepth1(
 }
 
 /**
+ * (#3363) Native depth-1 homogeneous nested-array flatten for `arr.flat()` on
+ * the host-free lanes. Default depth only (an explicit `depth` argument falls
+ * through to the loud refusal); the outer element must be a nested vec.
+ */
+function tryCompileArrayFlatNativeDepth1(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+  callExpr: ts.CallExpression,
+  vecTypeIdx: number,
+  arrTypeIdx: number,
+  elemType: ValType,
+): ValType | null {
+  // Default depth only — an explicit `depth` argument falls through to refusal.
+  if (callExpr.arguments.length > 0) return null;
+  const pre = canFlattenVecElem(ctx, elemType);
+  if (!pre) return null;
+
+  const outerVec = allocLocal(fctx, `__arr_flat_ov_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
+  // receiver -> outerVec (null-guarded), leaving the vec on the stack for the flatten.
+  compileExpression(ctx, fctx, propAccess.expression);
+  fctx.body.push({ op: "local.tee", index: outerVec });
+  emitReceiverNullGuard(ctx, fctx, outerVec);
+  return emitFlattenDepth1FromVec(
+    ctx,
+    fctx,
+    outerVec,
+    vecTypeIdx,
+    arrTypeIdx,
+    pre.innerVecTypeIdx,
+    pre.innerArrTypeIdx,
+  );
+}
+
+/**
+ * (#2717) Native `arr.flatMap(cb, thisArg?)` for the host-free lanes.
+ *
+ * `flatMap(cb)` is spec-equivalent to `map(cb).flat(1)`, so we compile the native
+ * `map` directly (its arg layout — arg0 = cb, arg1 = thisArg — matches flatMap's)
+ * and dispatch on the RESULT vec's element type — the ground truth for what the
+ * callback returned:
+ *   - element is a nested vec (callback returned arrays) → depth-1 flatten;
+ *   - element is a concrete scalar / non-array ref (callback returned a scalar or
+ *     a plain object) → `flatMap` ≡ `map` (a depth-1 flatten of non-arrays is the
+ *     identity), so the map result IS the answer;
+ *   - element is `externref`/`anyref` (dynamic — could be an array at runtime) →
+ *     drop + refuse loudly (a runtime-heterogeneous flatten is out of scope; never
+ *     a silent-wrong result), per the #2711 policy.
+ *
+ * Compiling `map` unconditionally (rather than into a throwaway buffer) mirrors
+ * the working `map(cb).flat()` codegen exactly; only the rare dynamic-return case
+ * leaves dead map code before the caller's `unreachable`, which is well-typed.
+ */
+function tryCompileFlatMapNative(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+  callExpr: ts.CallExpression,
+  vecTypeIdx: number,
+  arrTypeIdx: number,
+  elemType: ValType,
+): ValType | null {
+  if (callExpr.arguments.length < 1) return null; // flatMap requires a callback
+
+  // (#3532) The former a-priori guard here — refusing any inline callback whose
+  // body contained a bare `[]` — is no longer needed. The underlying bug (an
+  // empty `[]` under flatMap's `U | readonly U[]` union contextual type resolving
+  // to a DIFFERENT vec type than a sibling non-empty array in the same
+  // conditional, yielding an invalid closure) is fixed at its source in
+  // `compileArrayLiteral` (`resolveEmptyArrayElemWasm`): `[]` now adopts the
+  // union's array-member element type, so `cond ? [] : [x]` unifies correctly.
+
+  const mapType = compileArrayMap(ctx, fctx, propAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
+  if (!mapType || (mapType.kind !== "ref" && mapType.kind !== "ref_null")) {
+    // map couldn't type its result; the caller's unreachable keeps the body valid.
+    return null;
+  }
+  const mapVecTypeIdx = (mapType as { typeIdx?: number }).typeIdx;
+  if (mapVecTypeIdx === undefined) return null;
+  const mapArrTypeIdx = getArrTypeIdxFromVec(ctx, mapVecTypeIdx);
+  const mapArrDef = mapArrTypeIdx >= 0 ? ctx.mod.types[mapArrTypeIdx] : undefined;
+  const mapElemType = mapArrDef && mapArrDef.kind === "array" ? mapArrDef.element : undefined;
+
+  // Callback returned arrays → flatten the map result depth-1.
+  const pre = mapElemType ? canFlattenVecElem(ctx, mapElemType) : null;
+  if (pre) {
+    const mapVec = allocLocal(fctx, `__arr_flatmap_mv_${fctx.locals.length}`, {
+      kind: "ref_null",
+      typeIdx: mapVecTypeIdx,
+    });
+    fctx.body.push({ op: "local.tee", index: mapVec });
+    return emitFlattenDepth1FromVec(
+      ctx,
+      fctx,
+      mapVec,
+      mapVecTypeIdx,
+      mapArrTypeIdx,
+      pre.innerVecTypeIdx,
+      pre.innerArrTypeIdx,
+    );
+  }
+
+  // Dynamic element (externref/anyref) — could be an array at runtime; a native
+  // depth-1 flatten would need per-element runtime IsArray. Out of scope → drop
+  // the map result and refuse loudly.
+  if (mapElemType && (mapElemType.kind === "externref" || mapElemType.kind === "anyref")) {
+    fctx.body.push({ op: "drop" });
+    return null;
+  }
+
+  // Concrete non-array element (scalar or plain-object ref): flatMap ≡ map.
+  return mapType;
+}
+
+/**
  * Compile arr.flat(depth?) — delegates to __array_flat host import (#1136).
  * Converts WasmGC vec receiver to externref, passes depth arg, returns externref.
  */
@@ -8157,23 +8545,38 @@ function compileArrayFlatMap(
   fctx: FunctionContext,
   propAccess: ts.PropertyAccessExpression,
   callExpr: ts.CallExpression,
+  vecTypeIdx: number,
+  arrTypeIdx: number,
+  elemType: ValType,
 ): ValType | null {
+  // §23.1.3.11 step 3: IsCallable(mapperFunction) is false → throw TypeError,
+  // BEFORE any flatten work. Mirrors map/filter/forEach; covers the missing
+  // callback (`[].flatMap()`) and known-non-callable args (`{}`, `0`, `null`,
+  // `Symbol()`, …). Placed above the standalone arm so both lanes get it.
+  if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.flatMap")) {
+    fctx.body.push({ op: "unreachable" });
+    return { kind: "externref" };
+  }
   if (callExpr.arguments.length < 1) return null; // flatMap requires a callback
 
-  // (#2717) `flatMap` has no Wasm-native arm — it delegates to the host
-  // `__array_flatMap` import, which is unsatisfiable under `--target
-  // standalone`/`wasi` (no JS host) and traps at instantiation. Per the #2711
-  // fail-loud policy, refuse loudly instead of emitting the unsatisfiable import.
-  // A native arm (callback invocation + depth-1 flatten of scalar-or-array
-  // returns) is a separate follow-up. Host/gc mode is unchanged.
+  // (#2717) On the host-free lanes `flatMap` has no host `__array_flatMap` to
+  // satisfy. `flatMap(cb)` ≡ `map(cb).flat(1)`, so try the native arm first
+  // (reuses the native `map` + the #3363 depth-1 flatten); it applies when the
+  // callback provably returns arrays. Otherwise fall through to the loud refusal
+  // below (scalar / union / externref returns), per the #2711 fail-loud policy.
+  // Host/gc mode is unchanged — it keeps the fast `__array_flatMap` import path.
   if (ctx.standalone || ctx.wasi) {
+    const native = tryCompileFlatMapNative(ctx, fctx, propAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
+    if (native) return native;
     reportError(
       ctx,
       callExpr,
-      `Codegen error: Array.prototype.flatMap() is not yet supported in --target standalone/wasi ` +
-        `(#2717) — there is no Wasm-native arm and emitting the host import __array_flatMap ` +
-        `would produce a module that traps at instantiation. Recompile without --target ` +
-        `standalone, or avoid flatMap() in standalone/WASI code.`,
+      `Codegen error: Array.prototype.flatMap() with a non-array-returning callback is not yet ` +
+        `supported in --target standalone/wasi (#2717) — the native arm handles callbacks that ` +
+        `return arrays (flatMap ≡ map+flat(1)); scalar/union/dynamic returns would need a ` +
+        `runtime-heterogeneous flatten. Emitting the host import __array_flatMap would produce a ` +
+        `module that traps at instantiation. Recompile without --target standalone, or have the ` +
+        `flatMap callback return an array.`,
     );
     // Non-null type + `unreachable` so the #1919 speculative wrapper commits and
     // the diagnostic is not rolled back into a silent default (see compileArrayFlat).

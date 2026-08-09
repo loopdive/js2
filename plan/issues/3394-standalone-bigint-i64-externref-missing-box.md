@@ -2,7 +2,6 @@
 id: 3394
 title: "standalone: bigint (i64) value reaches externref coercion via extern.convert_any instead of __box_bigint — invalid Wasm (~59 tests)"
 status: ready
-assignee: ttraenkler/fable-dev-1
 sprint: current
 created: 2026-07-18
 updated: 2026-07-18

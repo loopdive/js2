@@ -1,7 +1,8 @@
 ---
 id: 3410
 title: "Private labs pre-push guard misses the legacy public js2wasm origin URL"
-status: in-review
+status: done
+completed: 2026-07-23
 created: 2026-07-18
 updated: 2026-07-19
 priority: critical
@@ -12,7 +13,7 @@ task_type: infrastructure
 area: tooling
 language_feature: n/a
 goal: reliability
-sprint: current
+sprint: 75
 related: [3409]
 origin: "2026-07-18 codebase engineering audit publication preflight (plan/log/2026-07-18-codebase-engineering-audit.md, F9)"
 ---

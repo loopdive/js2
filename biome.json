@@ -5,7 +5,24 @@
   },
   "files": {
     "include": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts"],
-    "ignore": ["**/node_modules/**", "**/dist/**", "**/vendor/**", "test262/**"]
+    "ignore": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/vendor/**",
+      "test262/**",
+      "tests/dogfood/.acorn/**",
+      "tests/dogfood/.marked/**",
+      "tests/dogfood/.acorn-test-suite/**",
+      "tests/dogfood/.clsx/**",
+      "tests/dogfood/.cookie/**",
+      "tests/dogfood/.eslint/**",
+      "tests/dogfood/.prettier/**",
+      "tests/dogfood/.react/**",
+      "tests/dogfood/.react-upstream-suite/**",
+      "tests/dogfood/.lit-upstream-suite/**",
+      "tests/dogfood/.lit-implementation/**",
+      "tests/dogfood/.npm-compat/**"
+    ]
   },
   "linter": {
     "enabled": true,

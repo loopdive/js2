@@ -1,0 +1,10 @@
+{
+  "name": "eslint",
+  "version": "10.0.3",
+  "tarball": "fixtures/eslint-10.0.3.tgz",
+  "registryTarball": "https://registry.npmjs.org/eslint/-/eslint-10.0.3.tgz",
+  "shasum": "360a7de7f2706eb8a32caa17ca983f0089efe694",
+  "integrity": "sha512-COV33RzXZkqhG9P2rZCFl9ZmJ7WL+gQSCRzE7RhkbclbQPtLAWReL7ysA0Sh4c8Im2U9ynybdR56PV0XcKvqaQ==",
+  "entryModule": "package/lib/api.js",
+  "_note": "Pinned with the same committed npm-pack discipline as the other npm-compat packages. ESLint is a multi-file CommonJS package rather than a self-contained dist bundle. setup-eslint.mjs verifies the complete installed eslint package payload against this tarball byte-for-byte, then compiles the verified installed path so Node/pnpm can resolve ESLint's pinned dependency graph from the package's real importer context."
+}

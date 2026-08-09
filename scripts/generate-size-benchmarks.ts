@@ -21,6 +21,7 @@ import * as path from "node:path";
 import * as zlib from "node:zlib";
 import * as ts from "typescript";
 import { compile, compileMulti, optimizeBinaryAsync } from "./compiler-bundle.mjs";
+import { calibrateBenchmarkBatchSize, timeBenchmarkBatch } from "../benchmarks/timing.ts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const HELPERS_PATH = path.resolve(ROOT, "website", "playground", "examples", "benchmarks", "helpers.ts");
@@ -47,11 +48,61 @@ const LOADTIME_RUNTIME_SOURCE = `const jsString = {
   charCodeAt: (s, i) => s.charCodeAt(i),
 };
 
+const reflectApply = Reflect.apply;
+const instanceExportsGetter = Object.getOwnPropertyDescriptor(WebAssembly.Instance.prototype, "exports")?.get;
+const dataStructHostBridgeToken = String.fromCharCode(0) + "js2_data_struct_host_bridge_token";
+
+function brandedInstanceExports(value) {
+  if (!instanceExportsGetter) return undefined;
+  try {
+    return reflectApply(instanceExportsGetter, value, []);
+  } catch {
+    return undefined;
+  }
+}
+
+function hasLoneSurrogate(s) {
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c >= 0xd800 && c <= 0xdbff) {
+      const next = i + 1 < s.length ? s.charCodeAt(i + 1) : 0;
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        i++;
+        continue;
+      }
+      return true;
+    }
+    if (c >= 0xdc00 && c <= 0xdfff) return true;
+  }
+  return false;
+}
+
+function hexCodeUnits(s) {
+  let out = "";
+  for (let i = 0; i < s.length; i++) {
+    out += s.charCodeAt(i).toString(16).padStart(4, "0");
+  }
+  return out;
+}
+
 export function buildStringConstants(stringPool = []) {
-  const constants = {};
+  const constants = Object.create(null);
   for (const s of stringPool) {
+    if (hasLoneSurrogate(s)) continue;
     if (!(s in constants)) {
       constants[s] = new WebAssembly.Global({ value: "externref", mutable: false }, s);
+    }
+  }
+  return constants;
+}
+
+export function buildStringConstants16(stringPool = []) {
+  const constants = Object.create(null);
+  for (const s of stringPool) {
+    if (!hasLoneSurrogate(s)) continue;
+    const key = hexCodeUnits(s);
+    if (!(key in constants)) {
+      constants[key] = new WebAssembly.Global({ value: "externref", mutable: false }, s);
     }
   }
   return constants;
@@ -112,19 +163,32 @@ export function buildImports(manifest, deps = {}, stringPool = []) {
     env,
     "wasm:js-string": jsString,
     string_constants: buildStringConstants(stringPool),
+    string_constants16: buildStringConstants16(stringPool),
     setExports(exports) {
+      wasmExports = exports;
+    },
+    setInstance(instance) {
+      const exports = brandedInstanceExports(instance);
+      if (exports === undefined) {
+        throw new TypeError("setInstance: expected a genuine WebAssembly.Instance");
+      }
       wasmExports = exports;
     },
   };
 }
 
-export async function instantiateWasm(binary, env, stringConstants = {}) {
-  if (typeof WebAssembly.instantiate === "function") {
+export async function instantiateWasm(binary, env, stringConstants = {}, stringConstants16 = {}) {
+  const preserveDataStructAssociation = stringConstants[dataStructHostBridgeToken] !== undefined;
+  if (typeof WebAssembly.instantiate === "function" && !preserveDataStructAssociation) {
     try {
-      const { instance } = await WebAssembly.instantiate(binary, { env, string_constants: stringConstants }, {
-        builtins: ["js-string"],
-        importedStringConstants: "string_constants",
-      });
+      const { instance } = await WebAssembly.instantiate(
+        binary,
+        { env, string_constants: stringConstants, string_constants16: stringConstants16 },
+        {
+          builtins: ["js-string"],
+          importedStringConstants: "string_constants",
+        },
+      );
       return { instance, nativeBuiltins: true };
     } catch {
       // Fall through.
@@ -134,19 +198,21 @@ export async function instantiateWasm(binary, env, stringConstants = {}) {
     env,
     "wasm:js-string": jsString,
     string_constants: stringConstants,
+    string_constants16: stringConstants16,
   });
   return { instance, nativeBuiltins: false };
 }
 
-export async function instantiateWasmStreaming(source, env, stringConstants = {}) {
+export async function instantiateWasmStreaming(source, env, stringConstants = {}, stringConstants16 = {}) {
   const response =
     source instanceof Response ? source : source instanceof Promise ? await source : await fetch(source);
   const fallback = response.clone();
-  if (typeof WebAssembly.instantiateStreaming === "function") {
+  const preserveDataStructAssociation = stringConstants[dataStructHostBridgeToken] !== undefined;
+  if (typeof WebAssembly.instantiateStreaming === "function" && !preserveDataStructAssociation) {
     try {
       const { instance } = await WebAssembly.instantiateStreaming(
         response,
-        { env, string_constants: stringConstants },
+        { env, string_constants: stringConstants, string_constants16: stringConstants16 },
         { builtins: ["js-string"], importedStringConstants: "string_constants" },
       );
       return { instance, nativeBuiltins: true };
@@ -154,7 +220,7 @@ export async function instantiateWasmStreaming(source, env, stringConstants = {}
       // Fall through.
     }
   }
-  return instantiateWasm(new Uint8Array(await fallback.arrayBuffer()), env, stringConstants);
+  return instantiateWasm(new Uint8Array(await fallback.arrayBuffer()), env, stringConstants, stringConstants16);
 }
 
 let binaryenModulePromise = null;
@@ -352,17 +418,18 @@ function parseModule(jsSource: string): void {
   new Function(scriptCompatible);
 }
 
-/** Measure time in ms for a synchronous operation (median over N iterations). */
-function timeSync(fn: () => void, iterations = 20): number {
+/** Measure per-call time in ms using scheduler-sized batches. */
+function timeSync(fn: () => void, iterations = 20): { medianMs: number; batchSize: number } {
+  const batchSize = calibrateBenchmarkBatchSize(fn);
+  timeBenchmarkBatch(fn, batchSize);
   const timings: number[] = [];
   for (let i = 0; i < iterations; i++) {
-    const t0 = performance.now();
-    fn();
-    timings.push(performance.now() - t0);
+    timings.push(timeBenchmarkBatch(fn, batchSize) / batchSize);
   }
   timings.sort((a, b) => a - b);
   const mid = timings.length >> 1;
-  return timings.length % 2 ? timings[mid]! : (timings[mid - 1]! + timings[mid]!) / 2;
+  const medianMs = timings.length % 2 ? timings[mid]! : (timings[mid - 1]! + timings[mid]!) / 2;
+  return { medianMs, batchSize };
 }
 
 interface SizeEntry {
@@ -377,8 +444,11 @@ interface SizeEntry {
   hostJsGzip: number;
   wasmTotalGzip: number;
   jsParseMs: number;
+  jsParseBatchSize: number;
   wasmCompileMs: number;
+  wasmCompileBatchSize: number;
   hostJsParseMs: number;
+  hostJsParseBatchSize: number;
   wasmTotalMs: number;
 }
 
@@ -452,22 +522,25 @@ async function measureSizes(name: string, label: string, jsSrc: string, tsSrc: s
 
   // JS parse time: new Function(transpiled body)
   const transpiledJs = transpileToJs(tsSrc);
-  const jsParseMs = timeSync(() => {
+  const jsParse = timeSync(() => {
     new Function(transpiledJs);
   });
 
   // Wasm compile time: new WebAssembly.Module(binary) (synchronous)
   const binaryBuffer = Buffer.from(wasmBinary);
-  const wasmCompileMs = timeSync(() => {
+  const wasmCompile = timeSync(() => {
     new WebAssembly.Module(binaryBuffer);
   });
 
   // Host JS parse time (strip export keywords for new Function compatibility)
-  const hostJsParseMs = hostJs
+  const hostJsParse = hostJs
     ? timeSync(() => {
         parseModule(hostJs);
       })
-    : 0;
+    : { medianMs: 0, batchSize: 1 };
+  const jsParseMs = jsParse.medianMs;
+  const wasmCompileMs = wasmCompile.medianMs;
+  const hostJsParseMs = hostJsParse.medianMs;
   const wasmTotalMs = wasmCompileMs + hostJsParseMs;
 
   return {
@@ -482,8 +555,11 @@ async function measureSizes(name: string, label: string, jsSrc: string, tsSrc: s
     hostJsGzip,
     wasmTotalGzip,
     jsParseMs: Math.round(jsParseMs * 1e4) / 1e4,
+    jsParseBatchSize: jsParse.batchSize,
     wasmCompileMs: Math.round(wasmCompileMs * 1e4) / 1e4,
+    wasmCompileBatchSize: wasmCompile.batchSize,
     hostJsParseMs: Math.round(hostJsParseMs * 1e4) / 1e4,
+    hostJsParseBatchSize: hostJsParse.batchSize,
     wasmTotalMs: Math.round(wasmTotalMs * 1e4) / 1e4,
   };
 }
@@ -526,22 +602,25 @@ async function measureMultiSizes(name: string, label: string, entryPath: string)
 
   // JS parse time: transpile entry + helpers
   const transpiledJs = transpileToJs(fullJsSrc);
-  const jsParseMs = timeSync(() => {
+  const jsParse = timeSync(() => {
     new Function(transpiledJs);
   });
 
   // Wasm compile time
   const binaryBuffer = Buffer.from(wasmBinary);
-  const wasmCompileMs = timeSync(() => {
+  const wasmCompile = timeSync(() => {
     new WebAssembly.Module(binaryBuffer);
   });
 
   // Host JS parse time (strip export keywords for new Function compatibility)
-  const hostJsParseMs = hostJs
+  const hostJsParse = hostJs
     ? timeSync(() => {
         parseModule(hostJs);
       })
-    : 0;
+    : { medianMs: 0, batchSize: 1 };
+  const jsParseMs = jsParse.medianMs;
+  const wasmCompileMs = wasmCompile.medianMs;
+  const hostJsParseMs = hostJsParse.medianMs;
   const wasmTotalMs = wasmCompileMs + hostJsParseMs;
 
   emitLoadtimeArtifacts(name, label, entryPath, fullJsSrc, wasmBinary, result.imports, result.stringPool);
@@ -558,8 +637,11 @@ async function measureMultiSizes(name: string, label: string, entryPath: string)
     hostJsGzip,
     wasmTotalGzip,
     jsParseMs: Math.round(jsParseMs * 1e4) / 1e4,
+    jsParseBatchSize: jsParse.batchSize,
     wasmCompileMs: Math.round(wasmCompileMs * 1e4) / 1e4,
+    wasmCompileBatchSize: wasmCompile.batchSize,
     hostJsParseMs: Math.round(hostJsParseMs * 1e4) / 1e4,
+    hostJsParseBatchSize: hostJsParse.batchSize,
     wasmTotalMs: Math.round(wasmTotalMs * 1e4) / 1e4,
   };
 }

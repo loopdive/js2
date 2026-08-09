@@ -31,7 +31,7 @@ came from an old per-sprint / manual version-tagging habit. To prevent a repeat,
 `vX.Y.Z` tags are cut **exclusively** via `node scripts/release.mjs <x.y.z>` (the
 flow below). **Sprint-end must NOT create a version tag** — the sprint protocol
 tags only `sprint/N` (+ `sprint-N/begin`); see `CLAUDE.md` and
-`.claude/skills/sprint-wrap-up.md`. Never `git tag vX.Y.Z` outside this flow.
+`.claude/skills/sprint-wrap-up/SKILL.md`. Never `git tag vX.Y.Z` outside this flow.
 
 ## How to cut a release
 

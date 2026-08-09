@@ -1,7 +1,8 @@
 ---
 id: 3408
 title: "Retire non-atomic issue-ID entrypoints and stale collision-remediation guidance"
-status: in-review
+status: done
+completed: 2026-07-23
 created: 2026-07-18
 updated: 2026-07-19
 priority: high
@@ -12,7 +13,7 @@ task_type: infrastructure
 area: tooling
 language_feature: n/a
 goal: developer-experience
-sprint: current
+sprint: 75
 related: [2530, 2531, 2943, 2974, 2977]
 origin: "2026-07-18 codebase engineering audit (plan/log/2026-07-18-codebase-engineering-audit.md, F4)"
 ---

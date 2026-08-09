@@ -366,27 +366,42 @@ export function eliminateDeadImports(mod: WasmModule, ctx?: CodegenContext): voi
     }
   }
 
+  const previousTypes = mod.types;
   const tR = new Map<number, number>();
   const surv: TypeDef[] = [];
+  const targetsByOldIndex: (number | null)[] = new Array(previousTypes.length).fill(null);
   let rem = 0;
   {
     let n = 0;
-    for (let o = 0; o < mod.types.length; o++) {
+    for (let o = 0; o < previousTypes.length; o++) {
       if (!usedT.has(o)) {
         rem++;
         continue;
       }
       if (o !== n) tR.set(o, n);
-      surv.push(mod.types[o]!);
+      targetsByOldIndex[o] = n;
+      surv.push(previousTypes[o]!);
       n++;
     }
   }
+  const nextTypes = rem > 0 ? surv.map((td) => (tR.size > 0 ? remapTD(td, tR) : td)) : previousTypes;
 
   if (fR.size === 0 && tR.size === 0 && deadF.size === 0 && rem === 0) {
     return;
   }
 
   // --- Phase 5: Apply remapping ---
+
+  if (rem > 0) {
+    // Validate and remap ABI sidecars before changing any module-owned array or
+    // index. A rejected layout must not leave imports compacted while bodies,
+    // exports, and the remaining index spaces still use the old layout.
+    ctx?.programAbiSession?.applyTypeLayoutRemap({
+      previousTypes,
+      nextTypes,
+      targetsByOldIndex,
+    });
+  }
 
   // Remove dead function imports
   if (deadF.size > 0) {
@@ -403,7 +418,7 @@ export function eliminateDeadImports(mod: WasmModule, ctx?: CodegenContext): voi
 
   // Replace types array
   if (rem > 0) {
-    mod.types = surv.map((td) => (tR.size > 0 ? remapTD(td, tR) : td));
+    mod.types = nextTypes;
   }
 
   // Remap function bodies

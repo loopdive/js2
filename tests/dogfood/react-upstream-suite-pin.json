@@ -1,0 +1,27 @@
+{
+  "repo": "https://github.com/facebook/react.git",
+  "tag": "v19.2.6",
+  "commit": "eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401",
+  "testDirectory": "packages/react/src/__tests__",
+  "testFiles": [
+    "packages/react/src/__tests__/ReactChildren-test.js",
+    "packages/react/src/__tests__/ReactClassEquivalence-test.js",
+    "packages/react/src/__tests__/ReactContextValidator-test.js",
+    "packages/react/src/__tests__/ReactCreateElement-test.js",
+    "packages/react/src/__tests__/ReactCreateRef-test.js",
+    "packages/react/src/__tests__/ReactES6Class-test.js",
+    "packages/react/src/__tests__/ReactElementClone-test.js",
+    "packages/react/src/__tests__/ReactJSXElementValidator-test.js",
+    "packages/react/src/__tests__/ReactJSXRuntime-test.js",
+    "packages/react/src/__tests__/ReactJSXTransformIntegration-test.js",
+    "packages/react/src/__tests__/ReactMismatchedVersions-test.js",
+    "packages/react/src/__tests__/ReactPureComponent-test.js",
+    "packages/react/src/__tests__/ReactStartTransition-test.js",
+    "packages/react/src/__tests__/ReactStrictMode-test.js",
+    "packages/react/src/__tests__/ReactVersion-test.js",
+    "packages/react/src/__tests__/createReactClassIntegration-test.js",
+    "packages/react/src/__tests__/forwardRef-test.js",
+    "packages/react/src/__tests__/onlyChild-test.js"
+  ],
+  "_note": "The published react@19.2.6 tarball deliberately excludes React's source tests, so this pin acquires the matching upstream tag and verifies its immutable commit before any test is attributed to upstream React. testFiles is React's entire public `packages/react/src/__tests__` directory. React's suite is welded to Jest, ReactDOM, `internal-test-utils` and a jsdom document — there is no build-independent driver as there is for acorn — so the harness lifts each upstream `it()` verbatim (JSX transpiled with the classic runtime, exactly as React's own jest transform does) and admits only the tests that need nothing but React itself. Every rejection is counted and reported by reason so the admitted slice is never mistaken for the whole suite."
+}

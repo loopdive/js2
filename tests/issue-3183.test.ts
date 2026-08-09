@@ -108,22 +108,33 @@ describe("#3183 — standalone dynamic-path for-in / string-key over an any-type
     ).toBe(18);
   });
 
-  it("OOB string-key read answers undefined (→ 0 in a number context)", async () => {
+  // (2026-07-23 re-pin, tech-lead authorized) These two originally pinned the
+  // legacy undefined→0-in-f64 shortcut. That shortcut belongs to `null`, not
+  // `undefined`: ToNumber(undefined) is NaN (`Number(undefined) === NaN`), and
+  // the coercion table's documented split is "null → f64.const 0 / undefined →
+  // f64.const NaN". The current pipeline answers the spec-correct NaN, so the
+  // old `toBe(0)` encoded a superseded convention — this is a stale-test fix,
+  // not behavior-bending. `Number.isNaN` because `NaN !== NaN`.
+  it("OOB string-key read answers undefined (→ NaN in a number context)", async () => {
     expect(
-      await runStandaloneNum(`export function test(): number {
+      Number.isNaN(
+        await runStandaloneNum(`export function test(): number {
         var a: any = [1, 2];
         return a["5"];
       }`),
-    ).toBe(0);
+      ),
+    ).toBe(true);
   });
 
-  it("non-numeric non-length string key answers undefined (→ 0)", async () => {
+  it("non-numeric non-length string key answers undefined (→ NaN)", async () => {
     expect(
-      await runStandaloneNum(`export function test(): number {
+      Number.isNaN(
+        await runStandaloneNum(`export function test(): number {
         var a: any = [1, 2];
         return a["foo"];
       }`),
-    ).toBe(0);
+      ),
+    ).toBe(true);
   });
 
   it("regression guard: for-in over a plain any-typed object is unchanged", async () => {

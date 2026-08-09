@@ -160,7 +160,7 @@ describe("#1292 lodash Tier 2 stress test — memoize, flow, partial, negate", (
     const runtime = await import("../../src/runtime.ts");
     const imports = runtime.buildImports(result.imports, undefined, result.stringPool);
     const { instance } = await WebAssembly.instantiate(result.binary, imports);
-    const exports = runtime.wrapExports(instance.exports);
+    const exports = runtime.wrapExports(instance);
 
     const isEven = (n: number) => n % 2 === 0;
     const negated = exports.negate(isEven);

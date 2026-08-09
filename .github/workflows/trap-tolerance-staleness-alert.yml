@@ -1,0 +1,115 @@
+name: Trap-tolerance stale-open valve alert (#3487)
+
+# Companion to the trap-gate freeze alert (#3442). That alert catches failure
+# mode A — the #3335 trap-growth gate too STRICT (a refusal FREEZES the baseline
+# promote). This one catches the OPPOSITE, mode B — a trap-tolerance valve left
+# OPEN.
+#
+# BASELINE_TRAP_GROWTH_ALLOW and TRAP_RATCHET_TOLERANCE are one-cycle emergency
+# valves (repo Actions variables) that loosen the #3189/#3335 uncatchable-trap
+# ratchet to land an acknowledged reclassification. They MUST be reset to 0 once
+# the landing PR promotes: a valve left non-zero silently banks any later
+# trap-mode regression up to the tolerance. The 2026-07-20 #3430 landing left
+# BOTH at 25 after the merge (caught only by a manual spot-check), and a stale
+# TRAP_RATCHET_TOLERANCE=4 leak from a PRIOR cycle was found open at the same
+# time — two silent-open near-misses. This hourly check ntfy's + fails red when
+# either valve has stayed open beyond a grace window.
+
+on:
+  schedule:
+    - cron: "53 * * * *" # hourly, offset from the :23 floor alert and :37 sync
+  workflow_dispatch:
+    inputs:
+      grace_hours:
+        description: "Hours a valve may stay open before it is a breach"
+        required: false
+        default: "3"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trap-tolerance-staleness-alert
+  cancel-in-progress: true
+
+jobs:
+  check-valves:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check trap-tolerance valves
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GRACE_H: ${{ github.event_name == 'workflow_dispatch' && inputs.grace_hours || '3' }}
+          # Values via the vars context — always readable, no API permission
+          # needed. Age (updated_at) is fetched best-effort below.
+          VAL_RATCHET: ${{ vars.TRAP_RATCHET_TOLERANCE || '0' }}
+          VAL_PROMOTE: ${{ vars.BASELINE_TRAP_GROWTH_ALLOW || '0' }}
+        run: |
+          set -uo pipefail
+          BREACH=""
+          add_breach() { BREACH="${BREACH}${BREACH:+; }$1"; }
+
+          check_valve() {
+            name="$1"; val="$2"
+            # 0 (default) is the closed/strict state — nothing to flag.
+            if [ "${val:-0}" = "0" ]; then
+              echo "${name}=0 (closed)"
+              return 0
+            fi
+            # Non-zero: measure how long it has been open via the variable's
+            # updated_at. Best-effort: GITHUB_TOKEN may lack variables:read, in
+            # which case we alert WITHOUT a grace — the safe default (a valve we
+            # can see is open but cannot age is still worth surfacing).
+            upd=$(gh api "/repos/${GITHUB_REPOSITORY}/actions/variables/${name}" --jq '.updated_at' 2>/dev/null || echo "")
+            upd_epoch=$(date -d "${upd:-}" +%s 2>/dev/null || echo 0)
+            if [ "$upd_epoch" = "0" ]; then
+              echo "${name}=${val} OPEN (age unknown — token cannot read updated_at; flagging to be safe)"
+              add_breach "${name}=${val} (open, age unknown)"
+              return 0
+            fi
+            age_h=$(( ( $(date +%s) - upd_epoch ) / 3600 ))
+            if [ "$age_h" -ge "${GRACE_H:-3}" ]; then
+              echo "${name}=${val} OPEN for ${age_h}h (grace ${GRACE_H}h) — BREACH"
+              add_breach "${name}=${val} open ${age_h}h (grace ${GRACE_H}h)"
+            else
+              echo "${name}=${val} open ${age_h}h (within ${GRACE_H}h grace — ok)"
+            fi
+            return 0
+          }
+
+          check_valve TRAP_RATCHET_TOLERANCE "${VAL_RATCHET}"
+          check_valve BASELINE_TRAP_GROWTH_ALLOW "${VAL_PROMOTE}"
+
+          if [ -n "$BREACH" ]; then
+            echo "breach=true" >> "$GITHUB_OUTPUT"
+            echo "breach_detail=$BREACH" >> "$GITHUB_OUTPUT"
+          else
+            echo "breach=false" >> "$GITHUB_OUTPUT"
+            echo "All trap-tolerance valves closed (or within grace)."
+          fi
+
+      - name: Notify on breach (ntfy)
+        if: steps.check.outputs.breach == 'true'
+        env:
+          NTFY_URL: ${{ secrets.NTFY_URL }}
+          DETAIL: ${{ steps.check.outputs.breach_detail }}
+        run: |
+          [ -z "${NTFY_URL:-}" ] && exit 0
+          MSG="STALE trap-tolerance valve(s) left OPEN (#3487): ${DETAIL}. Reset to 0 via REST PATCH (gh api -X PATCH /repos/OWNER/REPO/actions/variables/NAME -f value=0) unless a landing is ACTIVELY promoting — a non-zero valve silently banks trap-mode regressions up to the tolerance."
+          curl -s --max-time 10 \
+            -H "Title: js2wasm trap-tolerance left OPEN" \
+            -H "Priority: high" \
+            -H "Tags: warning" \
+            -d "$MSG" \
+            "$NTFY_URL" >/dev/null 2>&1 || true
+
+      - name: Fail the run on breach (visible red signal)
+        if: steps.check.outputs.breach == 'true'
+        env:
+          DETAIL: ${{ steps.check.outputs.breach_detail }}
+        run: |
+          echo "::error::Trap-tolerance valve left open beyond the grace window (#3487): ${DETAIL}. Reset BASELINE_TRAP_GROWTH_ALLOW / TRAP_RATCHET_TOLERANCE to 0 (REST PATCH) unless a landing is actively promoting."
+          exit 1

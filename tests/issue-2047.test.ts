@@ -20,6 +20,15 @@
 // `number[]` and cannot be distinguished by a struct-level `ref.test` without a
 // brand bit, so they remain a false-positive pending that follow-up. Only the
 // `_byte` carriers are filtered here.
+//
+// #3562 (2026-07-24): the byte-carrier subtests below silently regressed to red
+// on main (invisible outside required checks, #3008) — the `$__vec_base`
+// common-supertype WasmGC refactor defeated the leaf-level exclusion: the
+// isArray collector matched the abstract base via its `__vec_*` name prefix, so
+// `ref.test $__vec_base` subsumed the byte-vec subtypes and
+// `Array.isArray(ArrayBuffer/Uint8Array)` wrongly answered `true`. Fixed by
+// skipping `$__vec_base` in `collectStandaloneArrayCarrierTypeIdxs`; this file
+// is now in the required guard suite (`tests/guard-suite.json`) to stay caught.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 

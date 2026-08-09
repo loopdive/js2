@@ -191,9 +191,7 @@ export function test(): number {
     if (!r.success) return;
     const imps = buildImports(r.imports as never, undefined, r.stringPool);
     const inst = await WebAssembly.instantiate(r.binary, imps as never);
-    if (typeof (imps as { setExports?: Function }).setExports === "function") {
-      (imps as { setExports: Function }).setExports(inst.instance.exports);
-    }
+    (imps as { setInstance?: Function }).setInstance?.(inst.instance);
     const ret = (inst.instance.exports as { test: () => number }).test();
     expect(ret).toBe(1);
   });

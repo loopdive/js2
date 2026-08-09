@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 /** Porffor commit whose internal IR surface this adapter understands. */
-export const PORFFOR_IR_COMMIT = "60a1d41d60580ff4faa38ffd5f7783d23df68bad";
+export const PORFFOR_IR_COMMIT = "257e8437bea2f00c8a1453a325561071d32be9cd";
 
 export const PORFFOR_TYPE_ENTRIES = [
   ["none", 0],
@@ -47,7 +47,6 @@ export const PORFFOR_KIND_NAMES = [
   "Eq",
   "Add",
   "Cmp",
-  "ToNum",
   "JvTruthy",
   "Load",
   "Store",
@@ -157,6 +156,7 @@ export interface PorfforIrModule {
   readonly N_B: number;
   readonly N_C: number;
   readonly Const: (type: number, literal: unknown) => PorfforNode;
+  readonly Alloc: (bytes: PorfforNode, typeId: number) => PorfforNode;
   readonly [exportName: string]: unknown;
 }
 
@@ -232,6 +232,28 @@ export function assertPorfforIrCompatibility(
     if (probe[i] !== expectedProbe[i]) {
       throw new PorfforCompatibilityError(
         `six-slot Const probe differs at slot ${i}: expected ${expectedProbe[i]}, received ${describe(probe[i])}`,
+        actualCommit,
+      );
+    }
+  }
+
+  if (typeof module.Alloc !== "function") {
+    throw new PorfforCompatibilityError("IR export Alloc must be a function", actualCommit);
+  }
+  const allocProbe = module.Alloc(probe, 0);
+  assertPorfforNode(allocProbe, "Alloc probe", actualCommit);
+  const expectedAllocProbe = [
+    PORFFOR_KIND_NAMES.indexOf("Alloc"),
+    PORFFOR_TYPE_ENTRIES[7][1],
+    PORFFOR_EFFECT_ENTRIES[3][1],
+    probe,
+    0,
+    0,
+  ];
+  for (let i = 0; i < expectedAllocProbe.length; i++) {
+    if (allocProbe[i] !== expectedAllocProbe[i]) {
+      throw new PorfforCompatibilityError(
+        `six-slot Alloc probe differs at slot ${i}: expected ${describe(expectedAllocProbe[i])}, received ${describe(allocProbe[i])}`,
         actualCommit,
       );
     }

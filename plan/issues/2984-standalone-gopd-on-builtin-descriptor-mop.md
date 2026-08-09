@@ -1,9 +1,11 @@
 ---
 id: 2984
 title: "Standalone gOPD-on-builtin descriptor MOP (~178: getOwnPropertyDescriptor on builtin objects / proto receivers)"
-status: in-progress
-updated: 2026-07-17
-sprint: current
+status: done
+completed: 2026-07-24
+updated: 2026-07-30
+assignee: ttraenkler/dev-opus5-mop
+sprint: 77
 priority: high
 horizon: xl
 feasibility: hard
@@ -13,7 +15,6 @@ area: codegen, runtime
 goal: standalone-mode
 related: [2965, 2861, 2863, 2896, 2949, 2989]
 origin: "#2965 descriptor-cluster triage — follow-up class 1"
-assignee: ttraenkler/fable-2
 loc-budget-allow:
   - src/codegen/expressions/calls.ts
   - src/codegen/object-runtime.ts
@@ -22,6 +23,213 @@ loc-budget-allow:
 
 # #2984 — standalone gOPD-on-builtin descriptor MOP
 
+> **RESIDUAL — `status: done` here closes the ISSUE FILE, not the work.** This
+> is an `horizon: xl` issue and eight slices have landed against it. The
+> 2026-07-24 re-measurement (below) shows the newly-identified RUNTIME axis
+> still has, under `test/built-ins/` alone, **199 native-proto + 62 namespace +
+> 48 global-`this` + 27 TypedArray-ctor** `hasOwnProperty`-miss rows open, plus
+> the `__extern_set` non-writable-store gap that gates the `{writable:true}`
+> families. **A successor issue must be filed** for that axis — do not read
+> this `done` as "the standalone descriptor MOP is finished". See "The next
+> slice on this axis" at the end of the top section.
+
+## Slice "ctor-carrier own props" LANDED (2026-07-24, dev-opus5-mop) — the runtime (any-param receiver) axis
+
+> PR branch: `issue-2984-ctor-carrier-own-props`. Base = `origin/main` @
+> `bb5b414a05b6d0`. Standalone baseline JSONL = the 2026-07-24 13:38 promote
+> (oracle_version 10, lane `honest`, 48,088 rows).
+
+### Re-measurement — the issue's own narrative was pointing at the wrong axis
+
+The "## Measured current-main state (2026-07-03, sr-gopd)" section below is
+marked STALE and it is: **every landed slice so far fixes the SYNTACTIC axis**
+(a gOPD call site whose receiver expression the compiler can resolve at
+compile time). But the dominant remaining test262 cluster does not go through
+that axis at all.
+
+Census over the fresh standalone baseline (measured, denominators given):
+
+- `Test262Error: obj should have an own property <k>` ("a1") — **1,938 rows**
+  total; **673** under `test/built-ins/`, **1,246** under `test/language/`
+  (the language ones are the ambiguous ceiling — `verifyProperty` is only the
+  assert harness there; do NOT bank them on this issue).
+- The companion "a2" bucket (`descriptor should (not) be writable/…`) is
+  **0 rows** — because a1 throws first, so the attribute asserts are never
+  reached.
+- 4,735 test262 files call `verifyProperty()`; only **1,190 pass** standalone
+  (25 %).
+
+`propertyHelper.js:63` is `assert(__hasOwnProperty(obj, name), "obj should have
+an own property " + nameStr)`, i.e. a1 is a **`hasOwnProperty` miss, not a gOPD
+miss**, and `obj` is the harness's own **untyped parameter**.
+
+### Root cause (probe-measured on main @ bb5b414a05b6d0, real `runTest262File`)
+
+Routing the receiver through `function ho(a,b){return
+Object.prototype.hasOwnProperty.call(a,b);}` — the exact shape `verifyProperty`
+has — splits cleanly:
+
+| receiver kind                                                     | `ho(X,k)` | why                                       |
+| ----------------------------------------------------------------- | --------- | ----------------------------------------- |
+| native METHOD/STATIC closure (`Math.abs`, `Array.prototype.flat`) | **true**  | #2896 `__builtinfn_*` reflective natives  |
+| builtin CTOR (`WeakMap`, `Map`, `RangeError`)                     | false     | #3006/#2907 carrier is an EMPTY `$Object` |
+| native proto (`Date.prototype`, `String.prototype`)               | false     | `$NativeProto`, not `$Object`             |
+| builtin namespace (`Math`, `Reflect`)                             | false     | carrier is an empty `$Object`             |
+| plain object literal                                              | false     | lowers to a typed struct                  |
+
+Same split for `Object.getOwnPropertyDescriptor` through an any-param. The
+DIRECT (syntactic) forms of the same expressions answer correctly — that is
+exactly the Phase-2/3 work, and exactly why it never reached `prop-desc.js`.
+
+Crucially, the `$Object` runtime **already honours per-property attributes** on
+every dynamic path. Witness measured on main with
+`Object.defineProperty(Math,"zz",{value:1,writable:false,enumerable:false,
+configurable:true})`: runtime `hasOwnProperty` true, runtime gOPD returns the
+full correct triple, `for-in` skips it, and `verifyProperty` passes end-to-end
+for both `configurable:true` and `configurable:false`. So the ctor carriers
+were simply **empty** — nothing about the MOP itself was missing.
+
+### Fix
+
+New subsystem module `src/codegen/builtin-ctor-own-props.ts` —
+`pushBuiltinCtorOwnPropSeed(ctx, fctx, builtinName, objLocal)` installs, at
+carrier materialization time and via the existing native
+`__defineProperty_value`:
+
+- `length` §20.2.4.1 `{w:F,e:F,c:T}`, value = `BUILTIN_CTOR_ARITY[name]`
+- `name` §20.2.4.2 `{w:F,e:F,c:T}`, value = the ctor name string
+- `prototype` `{w:F,e:F,c:F}`, value = the `$NativeProto` from
+  `emitLazyNativeProtoGet` — i.e. the SAME object the syntactic
+  `<Ctor>.prototype` read yields, so `desc.value === X.prototype` holds
+
+Two thin call sites in `builtin-static-globals.ts`:
+`emitBuiltinConstructorIdentity` (#3006: Set/Map/WeakMap/WeakSet/WeakRef/RegExp/
+FinalizationRegistry/DisposableStack/AsyncDisposableStack/SuppressedError) —
+restructured to the proven initBody + local + `ctx.liveBodies` swap pattern so
+the `__box_number` late import is shift-safe — and `emitBuiltinNamespaceObject`
+(#2907: the Error family, `Array`, `Object`). The seed **no-ops for true
+namespaces** (`Math`/`JSON`/`Reflect` are not in `BUILTIN_CTOR_ARITY` and own
+none of the three). Pattern mirrors `emitGeneratorPrototypeSingleton`
+(#3236 S1). `ctx.standalone`-gated; strictly additive (the carriers had ZERO
+own properties before, and all three are non-enumerable so `Object.keys` /
+for-in are unchanged).
+
+Ctors with no `$NativeProto` brand (`AggregateError`) keep only
+`length`/`name`; `AggregateError`'s arity lives in a LOCAL supplement rather
+than widening the shared `BUILTIN_CTOR_ARITY` (that table also drives the
+compile-time `.length` / gOPD folds, which are outside this slice's measured
+set).
+
+### Measured (real runner, standalone lane, base = origin/main @ bb5b414a05b6d0)
+
+| Sweep                                                                          | before     | after       | Δ                      |
+| ------------------------------------------------------------------------------ | ---------- | ----------- | ---------------------- |
+| the 50 a1 rows with a seedable-ctor receiver and key ∈ {name,length,prototype} | **0 / 50** | **49 / 50** | **+49, 0 regressions** |
+
+The one hold-out is `AggregateError/prototype/prop-desc.js`, which fails BEFORE
+`verifyProperty` on `assert.sameValue(typeof AggregateError.prototype,
+'object')` — unrelated, pre-existing.
+
+**Regression sweep — 2,137 files** (the touched ctor dirs + the MOP-sensitive
+`Object/{getOwnPropertyNames,getOwnPropertyDescriptor{,s},keys,freeze,seal,
+prototype}` dirs), diffed **local-vs-local**, i.e. the SAME runner in the SAME
+process shape with the seed force-disabled behind a temporary env switch vs
+enabled:
+
+- **0 regressions** (pass → non-pass)
+- **0 changed error signatures** on fail→fail rows — so the #3439 hard-0
+  unclassified-root-causes gate has nothing new to park on
+- **+50 improvements**, of which 46 are in the target set and **all 4 outside it
+  are directly attributable to the seeded `prototype`**:
+  `Error/prototype/S15.11.3.1_A{1,2,4}_T1.js` (`Error.hasOwnProperty('prototype')`
+  / `delete Error.prototype === false`) and `Object/prototype/S15.2.3.1_A3.js`
+  (`delete Object.prototype === false`).
+
+> **Do NOT diff a local sweep against the committed standalone baseline JSONL.**
+> I tried that first and got a plausible-looking "0 regressions / +118
+> improvements" — it is **contaminated**. The baseline comes from the sharded CI
+> worker (`scripts/test262-worker.mjs`); a local in-process `runTest262File` run
+> differs on things unrelated to any code change (the `L:N ` error-prefix, and a
+> large `standalone target emitted host imports: env::X` (#2961) population that
+> does not reproduce locally). 611 rows showed a changed signature purely from
+> that. Local-vs-local with the change force-disabled is the only sound control.
+
+`prove-emit-identity`: **IDENTICAL** — all 60 (file,target) emits across
+gc/standalone/wasi/linear match the pre-change baseline.
+
+`tests/issue-2984-ctor-carrier-own-props.test.ts` 11/11, asserting each
+attribute and value **independently** (numeric `length`, object-identity
+`prototype`) rather than trusting a test262 verdict — see the honesty note.
+Related suites: 2984 ×6 + 3006 + 2896 = 85/85; #1888 guardrails 23/23;
+`check:loc-budget` OK; `check:oracle-ratchet` +0/+0.
+
+### HONESTY NOTE — how much of the +49 is earned (read this before citing it)
+
+A deliberately-wrong-expectation control set (`.tmp/ctrl`, A/B'd with the seed
+force-disabled) shows **`verifyProperty` is VACUOUS past its a1 gate on the
+standalone lane, on main, today**:
+
+| control                                                                      | seed OFF | seed ON  | expected |
+| ---------------------------------------------------------------------------- | -------- | -------- | -------- |
+| `verifyProperty(WeakMap,"length",{value:0,…})`                               | fail     | pass     | pass ✓   |
+| `verifyProperty(WeakMap,"length",{value:12345,…})`                           | fail     | **pass** | fail ✗   |
+| `…{value:0,writable:TRUE,…}` (wrong attr)                                    | fail     | **pass** | fail ✗   |
+| `verifyProperty(WeakMap,"absentKey",…)`                                      | fail     | fail     | fail ✓   |
+| `verifyProperty(Math.abs,"name",{…writable:TRUE})` — an UNTOUCHED #2896 path | **pass** | **pass** | fail ✗   |
+
+The last row is the control that matters: the vacuity reproduces with the seed
+disabled, on a path this slice does not touch, so it is **pre-existing and
+independent of this change**. Mechanism: `verifyProperty` accumulates into
+`failures` via `__push`/`__join` — `Function.prototype.call.bind(Array.prototype.
+push|join)` — the **uncurryThis** family; those aliases misbehave standalone, so
+`failures.length` stays 0 and the final `assert(false, …)` never fires. Only the
+a1 assert (a plain `assert(cond, msg)`) is live.
+
+So the honest split of this slice is:
+
+- **REAL and independently verified** — builtin-ctor carriers now own
+  spec-correct, correctly-attributed `length` / `name` / `prototype`, readable
+  through the runtime MOP. Verified by direct `===` reads in the vitest suite,
+  not by the harness.
+- **HARNESS-CREDITED** — the 49 test262 flips are earned only at the a1 gate.
+  Their attribute assertions are vacuous for a reason outside this slice. Cite
+  this as "+49 rows, a1-gate-earned", not "+49 conforming descriptors".
+
+### Two verdict-oracle holes found while measuring (NOT fixed here — file separately)
+
+Both inflate the standalone floor and both reproduce on main:
+
+1. A test whose ONLY statement is `throw new Test262Error("HELLO")` reports
+   **pass** in the standalone lane — a top-level `throw` statement is silently
+   dropped. (`assert.sameValue(1,2)` correctly fails, so it is specific to a
+   bare top-level `throw`.)
+2. `assert.sameValue(<dynamic string>, <literal string>)` false-positives:
+   `assert.sameValue("" + true, "SHOWME")` **passes**. Any test whose only
+   discrimination is a string `sameValue` can pass vacuously.
+3. (Related, this issue's own family) the `verifyProperty` `__push`/`__join`
+   vacuity above — the uncurryThis half of the PH wall.
+
+### Known gap left behind (pinned by a test, pre-existing)
+
+A dynamic `o[k] = v` store bypasses the `$PropEntry` non-writable flag
+(`__extern_set` does not consult flags), so a runtime write to a seeded
+`writable:false` property lands even though the descriptor correctly reports
+`writable:false`. Reproduces for ANY `Object.defineProperty`-defined
+non-writable property, not just these carriers. Pinned in the test suite as a
+KNOWN GAP so a future store-path fix is noticed.
+
+### The next slice on this axis (measured, in priority order)
+
+Remaining a1 rows under `built-ins/`, by receiver kind:
+**native-proto 199** (`Array.prototype` 41, `TypedArrayPrototype` 25,
+`String.prototype` 16, `Iterator.prototype` 11, `RegExp.prototype` 9 …),
+**namespace 62** (`Math` 45, `Reflect` 13, `JSON` 4), **global (`this`) 48**,
+TypedArray ctors 27 (no `$Object` carrier at all — `typeof id(Uint16Array) !==
+"object"`, so they need a carrier first). Note the namespace/proto rows mostly
+carry `{writable:true, …}` descriptors, so flipping them for the RIGHT reason
+additionally needs a working write path — i.e. the `__extern_set` flag gap
+above is a prerequisite there, unlike for the `{writable:false}` ctor triple.
+
 ## Slice "@@species key" LANDED (2026-07-11, fable-sub1) — builtin receiver + non-literal key
 
 > PR: `issue-2984-gopd-builtin-key-dispatch`. Takes the "builtin receiver +
@@ -29,7 +237,7 @@ loc-budget-allow:
 > suite-wide `__get_builtin` non-pass cluster is 565; the gOPD-at-flagged-line
 > subset is only **38**, decomposing (measured 2026-07-11 off the standalone
 > baseline JSONL + flagged-source-line classification): **26 × `gOPD(<Ctor>,
-> Symbol.species)`** (the dominant non-literal-key shape) + 12 × RegExp annex-B
+Symbol.species)`** (the dominant non-literal-key shape) + 12 × RegExp annex-B
 > legacy accessors (open universe — deliberately refused). The remaining ~527
 > are NOT gOPD — they are direct unimplemented static-method calls
 > (`Atomics.*` 213, `Iterator.zip/zipKeyed/concat/from` ~99, `String.raw` 22,
@@ -65,15 +273,15 @@ dynamic fallback, which routes a builtin-identifier receiver through
   signature-wrapper base is untouched) so a statically-resolvable
   `g.call(thisVal)` threads the receiver.
 - Thin gate in calls.ts after the Phase-3 arm (`ctx.standalone && propLiteral
-  === undefined && isSymbolSpeciesKeyExpression`), receiver via the bucket-1
+=== undefined && isSymbolSpeciesKeyExpression`), receiver via the bucket-1
   alias resolver. Host/gc byte-inert.
 
 ### Measured (real runner, standalone lane, base = origin/main @ 026f40f771 merged)
 
-| Sweep                                             | before          | after              | Δ                        |
-| ------------------------------------------------- | --------------- | ------------------ | ------------------------ |
-| `built-ins/*/Symbol.species/*` (29)               | 0 / 5 / 24 CE   | **18 / 11 / 0 CE** | **+18 pass, 0 regressions** |
-| `built-ins/Object/getOwnPropertyDescriptor{,s}` (328) | 281 / 47 / 0 | **281 / 47 / 0**   | unchanged (0 regressions) |
+| Sweep                                                 | before        | after              | Δ                           |
+| ----------------------------------------------------- | ------------- | ------------------ | --------------------------- |
+| `built-ins/*/Symbol.species/*` (29)                   | 0 / 5 / 24 CE | **18 / 11 / 0 CE** | **+18 pass, 0 regressions** |
+| `built-ins/Object/getOwnPropertyDescriptor{,s}` (328) | 281 / 47 / 0  | **281 / 47 / 0**   | unchanged (0 regressions)   |
 
 - `prove-emit-identity`: **IDENTICAL** — all 39 (file,target) emits match the
   main-state baseline (host/gc/wasi inert; corpus has no species gOPD).
@@ -217,7 +425,7 @@ key — every previously-answered shape keeps its exact answer.
 
 > PR: `issue-2984-gopd-runtime-dispatch`. Takes the "obj-VAR receivers"
 > entry of "Still remaining after Phase 3" bucket 1 — `var m = Math;
-> gOPD(m, "atan2")`, the dominant 15.2.3.3-4-* fixture shape, which fell to
+gOPD(m, "atan2")`, the dominant 15.2.3.3-4-\* fixture shape, which fell to
 > the dynamic `__getOwnPropertyDescriptor` path and silently answered
 > `undefined` standalone (probe-verified on main @ 4ac4b6e01a).
 
@@ -242,7 +450,7 @@ key — every previously-answered shape keeps its exact answer.
 > PR: `issue-2984-gopd-ctor-receivers`. Takes the **72 CE ctor/namespace
 > receivers** bucket (bucket 1 of "Still remaining after Phase 2" below) —
 > `gOPD(Math, "atan2")`, `gOPD(Date, "prototype")`, `gOPD(Number,
-> "MAX_VALUE")`, `gOPD(String, "length")`, `gOPD(JSON, "stringify")`.
+"MAX_VALUE")`, `gOPD(String, "length")`, `gOPD(JSON, "stringify")`.
 
 ### Root cause (re-measured on main @ d7a1feaa1cf, 72 CE confirmed intact)
 
@@ -271,21 +479,21 @@ statics.
    `tryEmitStandaloneBuiltinStaticGopd`, called from a new synthesis site in
    the calls.ts gOPD handler (after Site-2, before the `__get_builtin`
    fallback; gate = standalone + unshadowed `BUILTIN_CLASS_NAMES` identifier
-   + literal key). Classification: static method → `{w:true,e:false,c:true}`
-   + singleton `.value` (same value the plain read yields — identity holds);
-   Math/Number constants + `<TypedArray>.BYTES_PER_ELEMENT` → all-false
-   value descriptors; `prototype` (ctors only; Proxy §28.2 and the
-   namespaces own none) → all-false + `$NativeProto` value via
-   `emitLazyNativeProtoGet`; `length`/`name` → `{w:false,e:false,c:true}`;
-   unknown string keys on CLOSED-universe receivers → `undefined`
-   (`gOPD(Math,"caller")`). **Symbol + RegExp unknown members keep the loud
-   refusal** (open universes: well-known-symbol own props / annex-B legacy
-   statics — refuse-loud > silent-wrong).
+   - literal key). Classification: static method → `{w:true,e:false,c:true}`
+   - singleton `.value` (same value the plain read yields — identity holds);
+     Math/Number constants + `<TypedArray>.BYTES_PER_ELEMENT` → all-false
+     value descriptors; `prototype` (ctors only; Proxy §28.2 and the
+     namespaces own none) → all-false + `$NativeProto` value via
+     `emitLazyNativeProtoGet`; `length`/`name` → `{w:false,e:false,c:true}`;
+     unknown string keys on CLOSED-universe receivers → `undefined`
+     (`gOPD(Math,"caller")`). **Symbol + RegExp unknown members keep the loud
+     refusal** (open universes: well-known-symbol own props / annex-B legacy
+     statics — refuse-loud > silent-wrong).
 
 ### Measured (real runner, standalone lane, base = main @ d7a1feaa1cf)
 
 | Sweep                                                                                       | main                       | branch               | Δ                      |
-| -------------------------------------------------------------------------------------------- | -------------------------- | -------------------- | ---------------------- |
+| ------------------------------------------------------------------------------------------- | -------------------------- | -------------------- | ---------------------- |
 | `built-ins/Object/getOwnPropertyDescriptor{,s}` (328)                                       | 199 pass / 57 fail / 72 CE | **270 / 58 / 0**     | **+71, 0 regressions** |
 | collateral (defineProperty + gOPN + Boolean + Function + Error + **Math** + **JSON**, 2286) | 1122 / 1063 / 101 CE       | **1165 / 1068 / 53** | **+43, 0 regressions** |
 

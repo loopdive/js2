@@ -1,47 +1,67 @@
 ---
 id: 3090
-title: "Shrink codegen: delete dormant legacy direct-codegen handlers superseded by IR (~40–55K net LOC)"
+title: "Retire direct front-end after IR-only reachability gates close (~59,676 fn-lines)"
 status: blocked
 # Phase 0 (audit) landed 2026-07-10; Phase 2 (unreferenced/dead deletions,
 # slices 2a/2b/2d/2e) is EXHAUSTED as of the 2026-07-16 Phase 2f re-run — the
 # residue is exactly the 16 deliberate keeps in the dead-export baseline (see
-# "## Phase 2f" below). Every remaining deletion is Phase 1 (handler
-# deletions), hard-GATED on G1–G4 (audit doc): G2 claim coverage (#2856
-# rejection buckets → 0), skip-allowlist widening (#3203 sequels), G3
-# top-level IR adoption. BLOCKED until a gate-clearing track closes a file's
-# last gate — do NOT claim for ad-hoc deletion hunting.
-sprint: current
+# "## Phase 2f" below). Every remaining deletion is hard-gated on #3518 R0a–R9
+# (including the #3529 typed-producer parity prerequisite):
+# typed outcome coverage, prepare-before-emit ownership for every unit kind,
+# whole-program M0/runtime/linear consumption, and fail-closed IR-only default.
+# BLOCKED until R9 lands and a fresh reachability audit proves exact targets
+# dead — do NOT claim for ad-hoc deletion hunting.
+sprint: Backlog
 created: 2026-07-08
-updated: 2026-07-16
+updated: 2026-07-21
 priority: high
 horizon: xl
+complexity: XL
 feasibility: medium
 reasoning_effort: medium
 task_type: refactor
 area: codegen
 language_feature: compiler-internals
+es_edition: n/a
 goal: ir-full-coverage
-related: [2855, 2856]
+related: [2855, 2856, 3142, 3143, 3518, 3519, 3529, 3520, 3521, 3522, 3523, 3525, 3526, 3527, 3528]
 ---
 
-# #3090 — Shrink codegen: delete the dormant legacy direct-codegen handlers the IR already supersedes
+# #3090 — Retire the direct front-end after IR-only reachability gates close
+
+> **Reconciled 2026-07-21:** the remaining handlers are not dormant. The latest
+> audit found **59,676 frontend-only fn-lines**, but default-on hybrid compilation
+> still reaches them through compile-twice functions, class members, module
+> init, multi-source/M0, and direct linear lowering. #3518 is the gate-clearing
+> program; this issue is its R10 deletion ledger. Do not dispatch deletion
+> slices before #3518 R9 makes IR-only fail-closed and a refreshed reachability
+> audit proves the exact targets dead. #3529 restored equivalence parity while
+> preserving strict typed Invariant classification; neither reclassification
+> nor baseline expansion is reachability evidence.
+
+The concrete gate spine is #3520 (R1 identity/ABI), #3521 (R2 Prepared free
+functions), #3522 (R3 classes/closures), #3523 (R4 ordered module init), #3525
+(R5 whole-program ownership), #3526 (R6 semantic runtime contract), #3527 (R7
+AST-free async plans), and #3528 (R8 shared linear consumption). All must
+preserve any direct implementation still needed for typed hybrid Unsupported
+outcomes; none authorizes general deletion from this ledger.
 
 ## Why (motivation)
 
 The compiler ships **two front-ends at once**: the legacy direct AST→Wasm
 path (`src/codegen/`, accumulated hacks) and the typed IR
 (`src/ir/`, `from-ast.ts` → `lower.ts` → `backend/`). With
-`experimentalIR: true` the default (`src/codegen/index.ts:1540`), the IR
-body is the one that **ships** for every `ir-owned` kind — yet the legacy
-direct handler for those kinds is still compiled in as dormant fallback.
+`experimentalIR: true` the default, an IR body may ship for a selected unit,
+but many units still retain or exclusively use the legacy body. Even an
+IR-emitted unit may have been compiled twice before its slot was patched.
 That duplication is the single biggest reason the compiler is ~6.4× the
 size of a comparable linear-memory TS→Wasm compiler (Porffor: ~32K code
 vs our ~207K).
 
-`#2855` (+ `#2856`–`#2859`) drives the _fallback buckets_ to zero and
-promotes reasons into `STRICT_IR_REASONS` — but it **does not delete** the
-now-dead legacy bodies. This issue is the complementary **subtraction**
-pass: actually remove the dormant code so the tree shrinks.
+`#2855` (+ `#2856`–`#2859`) drove a bounded function fallback corpus to zero,
+but that does not make legacy bodies globally unreachable. #3518 R0–R9
+establishes typed fail-closed, prepare-before-emit ownership; this issue then
+performs the complementary R10 subtraction pass.
 
 ## Measured opportunity (tokei, 2026-07-08 baseline)
 
@@ -65,19 +85,20 @@ stdlib.
 
 ## Scope — what to delete vs never touch
 
-**Delete (only):** legacy direct-codegen handlers for AST kinds that are
-already `ir-owned` in `plan/log/ir-adoption.md` (22 kinds today), i.e. the
-FRONTEND-bucket lowering that is unreachable when `experimentalIR: true`.
+**Delete (only):** legacy direct-codegen handlers that a post-R9 reachability
+audit proves have no caller. An `ir-owned` adoption row is not sufficient
+evidence: the current matrix has 18/56 such rows, yet mixed units can still
+reach every handler they contain.
 
 **Never touch:**
 
 - Any file in **STAYS** or **RUNTIME** (substrate + stdlib behavior).
-- **Deferred** kinds (`eval`, `with`, `Proxy`, `for-in`, async-generator…) —
-  they remain direct-only by design; their handlers (e.g. `with-scope.ts`)
-  stay.
+- **Deferred** syntax is not a permanent direct-path exception. #3518 R7 makes
+  supported async behavior IR-owned and turns deliberately unsupported syntax
+  into explicit diagnostics; R10 can then delete its direct handlers.
 - Any handler for a `mixed`/`direct-only` kind — the legacy path is still
-  live for those until `#2855`-family work flips them to `ir-owned`
-  (Phase 3 couples deletion to that flip, per-PR).
+  live until #3518 prepares every containing unit, R9 makes IR-only fail
+  closed, and R10's fresh reachability audit proves the handler has no caller.
 
 ## Plan (Fable-friendly: mechanical, sliceable, test-gated)
 
@@ -90,14 +111,10 @@ non-IR branch in `src/codegen/index.ts` (the demote-to-warning fallback
 `ir-owned` rows of `plan/log/ir-adoption.md`. Replaces the ±10K estimate
 band with a hard number and becomes the work-list for Phases 1–2.
 
-**Phase 1 — delete dormant `ir-owned` legacy handlers (many `s`/`m` slices).**
-One slice per kind (or per FRONTEND file). Delete the dead handler + its
-now-unreferenced local helpers; keep the dispatch shim only if a
-`mixed`/deferred kind still needs it. **Zero capability change** — proven by
-green full CI + equivalence tests + **no test262 regression** (broad-impact
-change ⇒ validate on full CI / `merge_group`, never a scoped sweep;
-standalone-floor only runs on `merge_group`). Highest-confidence subtraction;
-do first.
+**Phase 1 — historical proposal, superseded.** The planned per-`ir-owned`-kind
+deletion is unsafe because adoption labels do not prove whole-unit
+compile-once reachability. #3518 R10 instead deletes only functions a post-R9
+audit proves unreachable.
 
 **Phase 2 — dead-code sweep (1 slice, `s`).**
 No `knip`/`ts-prune` is configured today. Add `knip` to the `quality` CI
@@ -105,11 +122,9 @@ job and delete the orphaned exports it flags across `src/codegen/`
 (handlers stranded by refactors, helpers no longer dispatched). Low-risk
 mechanical win; catches residue Phase 1 leaves behind.
 
-**Phase 3 — couple deletion to bucket-flips (ongoing, follows `#2855`).**
-As each `mixed`/`direct-only` kind flips to `ir-owned` (via `#2856`-family
-work), **delete its legacy handler in the same PR** rather than leaving it
-dormant. Add a "legacy LOC deleted" metric alongside the `#2855` ratchet so
-retirement is tracked as subtraction, not just bucket-zeroing.
+**Phase 3 — superseded by #3518 R0–R10.** Bucket/adoption changes continue as
+telemetry, but handler deletion waits for #3520–#3523, #3525–#3528, and
+fail-closed R9 ownership.
 
 ## Phase 0 audit landed (2026-07-10)
 
@@ -122,17 +137,10 @@ numbers, kind→file mapping).
 (ranked list in the doc); deletable-NOW (unreferenced) ≈ **2.1K fn-lines**
 (index.ts `collect*Imports` family ~1.4K, regex/vm.ts 245, strays).
 
-**Premise correction — handler deletion is GATED, not free:** (G1) the
-default pipeline legacy-compiles EVERY function and the IR merely overlays
-bodies (IR-first #2138 is flag-gated, not default); (G2) the whole-function
-claim unit means any rejected function needs the legacy handler for every
-kind it contains — `ir-owned` status does NOT make a handler dead; (G3)
-top-level statements always compile via legacy; (G4) ~47K fn-lines of
-RUNTIME stdlib emission are reachable ONLY via legacy dispatch — the IR
-needs its own entry points before front-end retirement. Revised phase order
-in the audit doc: Phase 2 (knip + unreferenced) first; handler deletions
-couple to gate-clearing slices (IR-first default, module-level adoption,
-per-kind bucket closure, IR→runtime entry points).
+**Premise correction — handler deletion is GATED, not free:** the
+whole-function claim unit, compile-twice classes/module init, incomplete M0 /
+linear consumption, and ~47K runtime-entry lines keep the handler graph live.
+See #3518 for the current structural gate sequence.
 
 ## Acceptance criteria
 
@@ -144,8 +152,9 @@ per-kind bucket closure, IR→runtime entry points).
       `src` = 206,674 code; `src/codegen` = 154,938).
 - [ ] **Zero test262 regressions** vs baseline on `merge_group` for every
       slice; equivalence suite green.
-- [ ] No file in the STAYS/RUNTIME buckets or any deferred-kind handler is
-      modified by Phase 1.
+- [ ] Runtime/substrate behavior is retained or moved behind typed IR intents;
+      no behavior implementation is deleted merely because its current entry
+      edge comes from AST dispatch.
 - [x] Dead-export gate wired into the `quality` CI job (Phase 2); no new
       orphaned exports. (2026-07-10 — implemented **dep-free** via the Phase 0
       audit tool instead of `knip`: `pnpm run check:dead-exports` ratchets the
@@ -234,14 +243,9 @@ check:dead-exports`: **OK, 16 known entries, 0 new**.
 
 **Conclusion: there is no deletable-today residue left.** Phase 2 (2a −1,474 /
 2b −332 / 2d −198 / 2e −14) has fully harvested the unconditional lane. All
-remaining shrinkage is Phase 1 handler deletion, which per the audit's
-post-flip status unlocks per-file only when that file's LAST gate closes —
-the levers live in OTHER tracks (G2: #2856 rejection buckets → 0 +
-skip-allowlist widening; G3: top-level IR adoption; G4: IR→runtime entry
-points). Umbrella set `status: blocked` with those unblock conditions; the
-first file expected to close is an all-`ir-owned`-kind file
-(`literals.ts` / `expressions/identifiers.ts`) once claim coverage
-approaches 100%.
+remaining shrinkage is #3518 R10 handler deletion. The umbrella remains
+`blocked` until R9 lands and a fresh audit proves exact call edges gone; no
+“first file” is predicted from adoption labels or the 28.1% allowlist ceiling.
 
 ## Guardrails / hazards
 

@@ -66,7 +66,7 @@ describe("Global index shifting with string constants in try/catch (#429)", () =
         return flag;
       }
     `);
-    expect(result.success).toBe(true);
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(result.errors.filter((e) => e.severity === "error")).toHaveLength(0);
 
     // Instantiate and run - should not throw CompileError

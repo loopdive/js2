@@ -2,24 +2,43 @@
 id: 2690
 title: "ESLint rule-tester.js: cloneDeeplyExcludesParent polymorphic return widens i32 into anyref slot"
 status: ready
-updated: 2026-07-17
+created: 2026-06-26
+updated: 2026-07-26
+priority: low
+feasibility: hard
+reasoning_effort: max
+task_type: bugfix
+area: codegen
+language_feature: allowjs-param-inference
+goal: npm-library-support
+sprint: current
 model: fable
 fable_role: spec
-sprint: current
-created: 2026-06-26
-priority: low
-area: codegen
-goal: npm-library-support
-feasibility: hard
-related: [1573, 684]
+es_edition: ES5
+related: [1573, 684, 1400]
 disposition: "senior-dev/architect-lane — param-type MONOMORPHIZATION in JS/allowJs mode (not return-widening). Fix = param-widening in usage-inference (#684); central/fragile inference, high regression risk. Do NOT treat as a contained dev fallback. Re-scoped 2026-07-17 by dev-2961 with a minimal repro + root cause."
 ---
-
 # ESLint rule-tester.js — cloneDeeplyExcludesParent polymorphic return widening
 
 Carved from the de-staled #1573 ESLint survey. This is rule-tester.js's NEW
 first-error after #1573 bug A (`inferLastType` branch-arm fix) unblocked the
 prior `LazyLoadingRuleMap_new` blocker.
+
+## Revalidated 2026-07-26
+
+On current `origin/main` with ESLint 10.0.3, direct `rule-tester.js`
+compilation still returns `success: true`, but constructing a
+`WebAssembly.Module` fails:
+
+```text
+Compiling function #233:"cloneDeeplyExcludesParent" failed:
+local.tee[0] expected type (ref null 2), found local.get of type i32
+@+158758
+```
+
+This is **1 compile+invalid target out of the 6-target ESLint critical-path
+sample** recorded in #1400. The refreshed result confirms the existing root
+cause below; no duplicate issue is needed.
 
 ## Reproducer
 
@@ -109,3 +128,9 @@ architect spec before implementation.
 
 CODEGEN — **param-type monomorphization vs polymorphic body usage** (JS/allowJs
 mode). Pure ES5.
+
+## Permanent regression target
+
+`tests/issue-2690.test.ts` must pin both the reduced `allowJs` polymorphic
+parameter fixture and successful Wasm validation of the real ESLint
+`rule-tester.js` entry before this issue moves to `done`.

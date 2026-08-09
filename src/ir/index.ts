@@ -1,6 +1,13 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 export * from "./types.js";
+export * from "./outcomes.js";
+export * from "./identity.js";
+export * from "./planning-identity.js";
+export * from "./program-abi.js";
+export * from "./async-plan.js";
 export * from "./nodes.js";
+export * from "./callable-bindings.js";
+export * from "./abi-bindings.js";
 export * from "./alloc-registry.js";
 export * from "./builder.js";
 export * from "./verify.js";
@@ -8,6 +15,7 @@ export * from "./verify-alloc.js";
 export * from "./lower.js";
 export * from "./backend/legality.js";
 export * from "./select.js";
+export * from "./select-identity.js";
 export * from "./from-ast.js";
 export * from "./integration.js";
 export * from "./analysis/encoding.js";

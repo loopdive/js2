@@ -17,32 +17,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { compile } from "../../src/index.js";
-import { buildImports } from "../../src/runtime.js";
-
-const ENV_STUB = {
-  env: {
-    console_log_number: () => {},
-    console_log_string: () => {},
-    console_log_bool: () => {},
-  },
-};
-
-async function compileAndRun(
-  source: string,
-  fnName: string,
-  args: ReadonlyArray<string | number | boolean>,
-  experimentalIR: boolean,
-): Promise<unknown> {
-  const r = await compile(source, { experimentalIR });
-  if (!r.success) {
-    throw new Error(`compile failed: ${r.errors[0]?.message ?? "<unknown>"}`);
-  }
-  const imports = buildImports(r.imports, ENV_STUB.env, r.stringPool);
-  const { instance } = await WebAssembly.instantiate(r.binary, imports);
-  const fn = instance.exports[fnName] as (...a: unknown[]) => unknown;
-  return fn(...args);
-}
+import { compileAndRunIRVariant as compileAndRun } from "../helpers/compile.js";
 
 describe("IR slice 4 — class instances behavioural parity (#1169d)", () => {
   it("(a) class with typed fields, constructor, and one method", async () => {

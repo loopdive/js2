@@ -1,8 +1,84 @@
 # CI Acceleration Review — js2wasm test262 pipeline
 
 - **Author**: fable architect (arch-ci-accel), 2026-07-19 ~00:30 UTC
-- **Scope**: analysis + prioritized plan only; no CI config changed, no PRs opened.
+- **Original review scope**: analysis + prioritized plan only; the
+  implementation update below records the later CI changes.
 - **Ground truth read**: `.github/workflows/test262-sharded.yml` (2,187 lines), `.github/workflows/ci.yml`, `scripts/gen-test262-mg-matrix.mjs`, `scripts/test262-worker.mjs`, `tests/test262-shared.ts`, `tests/test262-original-harness.ts`, `tests/test262-oracle-version.ts`, issues #3431/#3433/#3438/#3404, plus live `gh run` timing data from 2026-07-18/19.
+
+## 2026-07-21 implementation update
+
+The highest-priority levers from this review have since landed: merge-group
+artifact reuse on push, a contention-tolerant compile-timeout guard, the
+native-harness implementation behind a separate oracle mode, cached setup,
+and a target-weighted merge-group matrix.
+
+The first matrix revision used 34 host + 19 standalone jobs because the old
+queue configuration allowed five speculative merge groups to build at once.
+That configuration caused both runner oversubscription and cancellation churn:
+adding, removing, or ejecting an earlier entry invalidated descendant groups
+and restarted their full matrices. The live main ruleset now deliberately has
+`max_entries_to_build=1`, so retaining the contention-sized 53-job matrix would
+leave more than half of the 120-runner pool idle.
+
+Production merge-group run 29807524490 validated the serial-queue model: all 53
+jobs started within one second, with no runner queue. Its `Run shard` timings
+were:
+
+| lane       | shards | total runner-s | mean job |  max job |
+| ---------- | -----: | -------------: | -------: | -------: |
+| js-host    |     34 |         24,071 | 11.8 min | 13.6 min |
+| standalone |     19 |         11,284 |  9.9 min | 10.9 min |
+
+The measured 2.13:1 work ratio maps to 72 host + 34 standalone jobs (2.12:1).
+That uses 106 runners and reserves 14 for the overlapping quality, equivalence,
+differential, Test262-gate, and orchestration jobs. Perfect distribution is
+about 334 vs 332 seconds of shard work per runner, targeting a 6–8 minute shard
+phase while keeping the existing 25-minute safety ceiling.
+
+The host cost is compilation, not corpus size. Both lanes in the production
+run used the honest full in-Wasm harness (the fast native-host mode was not set
+in the merge-group environment). Host compile time totaled 77.7M ms versus
+42.3M ms standalone; execution totaled only 2.4M versus 0.7M ms. Host interop
+codegen is costlier and more host tests reach pass, which also triggers more
+strict-mode recompilations.
+
+Other implemented pipeline reductions:
+
+- the pnpm content-addressable store is restored through one shared composite
+  setup action, removing repeated `corepack prepare` network points;
+- lint, formatting, and typecheck run concurrently inside the existing
+  required `quality` context;
+- each equivalence shard evaluates its own baseline membership, so the final
+  `equivalence-gate` is a status fan-in instead of a second checkout/install
+  plus eight artifact uploads and downloads.
+
+Production merge-group run 29810082992 then validated the 106-job matrix. The
+Test262 workflow took 13:09 end to end, split across the critical path as:
+
+| phase                                                | wall  | notes                                                           |
+| ---------------------------------------------------- | ----: | --------------------------------------------------------------- |
+| workflow start → first shard                         |  0:39 | change detection plus matrix release                            |
+| first shard start → last shard finish                |  7:47 | 106 jobs; the final standalone job started 50 s after the first |
+| post-shard regression gate                           |  4:41 | ran in parallel with the 0:45 report merge                      |
+| └ merge-base cache lookup                            |  3:40 | six fetch/probe attempts, including five 30 s sleeps             |
+| └ checkout, setup, install, baseline fetch, and diff |  1:01 | all remaining regression-gate work                              |
+
+The cache poll was therefore 78% of the post-shard gate and 28% of the entire
+workflow. It also waited on cache entries that can never appear when the
+predecessor is doc-only and intentionally ran no shards. The workflow now makes
+one immediate exact-base probe against the freshly cloned baseline repository,
+then falls through without sleeping to the nearest cached ancestor. The later
+predecessor-group artifact lookup remains the strongest exact fallback. This
+keeps distance-0 reuse when it is already available without turning a cache
+miss into a multi-minute critical-path stall.
+
+Running js-host then standalone on one runner remains a poor fit for the serial
+queue and available capacity: it saves setup work but serializes two compiler-
+heavy lanes while idle runners are available. Pairing is a contingency only if
+runner capacity shrinks. Shared linked harness/runtime code remains the
+#2527/#2514 end-state; mutable compiler/checker and execution-realm state stays
+process-isolated and is reused only behind the existing periodic recreation,
+poison retry, and realm-canary recycle guards.
 
 ## 0. Executive summary — the brief is partially stale (good news)
 
@@ -14,11 +90,11 @@ Since the brief was written, **both** in-flight fixes landed:
 
 Measured effect (real merge_group runs):
 
-| state | matrix | host shard avg/max | standalone avg/max | run wall |
-|---|---|---|---|---|
-| pre-#3374 (issue #3431 evidence, run 29631214965) | 114 jobs | 13.6 / 15.9 min | 5.8 / 7.0 min | 15–19 min uncontended, **38.5 min contended**, ~60+ min in queue waves |
-| post-#3374 (run 29665278780) | 114 jobs | 6.7 / 7.6 min | 5.4 / 6.5 min | **12.1 min** |
-| post-#3431, first live run (29666753663, in progress at 00:30) | 59 jobs | 9.2 / 10.9 min (40-way) | ~12–15 min (19-way, long pole) | est. **~16–18 min** |
+| state                                                          | matrix   | host shard avg/max      | standalone avg/max             | run wall                                                               |
+| -------------------------------------------------------------- | -------- | ----------------------- | ------------------------------ | ---------------------------------------------------------------------- |
+| pre-#3374 (issue #3431 evidence, run 29631214965)              | 114 jobs | 13.6 / 15.9 min         | 5.8 / 7.0 min                  | 15–19 min uncontended, **38.5 min contended**, ~60+ min in queue waves |
+| post-#3374 (run 29665278780)                                   | 114 jobs | 6.7 / 7.6 min           | 5.4 / 6.5 min                  | **12.1 min**                                                           |
+| post-#3431, first live run (29666753663, in progress at 00:30) | 59 jobs  | 9.2 / 10.9 min (40-way) | ~12–15 min (19-way, long pole) | est. **~16–18 min**                                                    |
 
 merge_group validation is back from ~1 h to ~12–18 min. The remaining acceleration is therefore **not** about the merge_group run in isolation — it is about (a) the **per-merge total job load** that creates cross-run contention (the push:main 114-job rerun is now the single largest consumer), (b) the **structural ~146k redundant harness compiles per full run** (both lanes), and (c) the **fragile #1942 count guard** that already ejected #3365 twice and remains contention-variable.
 
@@ -37,30 +113,33 @@ The two stakeholder structural directions (L3 native-JS harness for the host lan
 Per-PR lifecycle, with measured wall-clock (all runs 2026-07-18/19):
 
 ### Stage A — PR-time (on every push to a PR branch)
-| check | workflow | jobs | wall | notes |
-|---|---|---|---|---|
-| `cheap gate (main-ancestor + lint)` **(required)** | test262-sharded.yml:119–181 | 1 | ~1.8–2 min | typecheck ∥ lint; shallow checkout |
-| `merge shard reports` **(required)** | test262-sharded.yml:673+ | 1 | trivial pass | shards deliberately do NOT run at PR-time (test262-sharded.yml:349–355) |
-| `quality` **(required)** | ci.yml:66 | 1 | ~4–6 min | lint, format, typecheck, IR-fallback, dead-export, oracle-ratchet, loc-budget gates |
-| linear-tests + equivalence-shard ×8 + equivalence-gate | ci.yml:449–525 | 10 | ~3–5 min | code-change-gated |
-| observed total PR-time runs | | ~13 | **~2–3.5 min** for the sharded workflow (runs 29666861222 et al.) | PR-time is NOT a bottleneck |
+
+| check                                                  | workflow                    | jobs | wall                                                              | notes                                                                               |
+| ------------------------------------------------------ | --------------------------- | ---- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `cheap gate (main-ancestor + lint)` **(required)**     | test262-sharded.yml:119–181 | 1    | ~1.8–2 min                                                        | typecheck ∥ lint; shallow checkout                                                  |
+| `merge shard reports` **(required)**                   | test262-sharded.yml:673+    | 1    | trivial pass                                                      | shards deliberately do NOT run at PR-time (test262-sharded.yml:349–355)             |
+| `quality` **(required)**                               | ci.yml:66                   | 1    | ~4–6 min                                                          | lint, format, typecheck, IR-fallback, dead-export, oracle-ratchet, loc-budget gates |
+| linear-tests + equivalence-shard ×8 + equivalence-gate | ci.yml:449–525              | 10   | ~3–5 min                                                          | code-change-gated                                                                   |
+| observed total PR-time runs                            |                             | ~13  | **~2–3.5 min** for the sharded workflow (runs 29666861222 et al.) | PR-time is NOT a bottleneck                                                         |
 
 ### Stage B — queue-time (merge_group, the authoritative gate)
-| job | jobs | wall | notes |
-|---|---|---|---|
-| `changes` (+ mg matrix compute, #3431) | 1 | 0.6 min | doc-only groups skip shards entirely (truth table at test262-sharded.yml:322–338) |
-| `test262-shard-mg` (#3431) | **59** (40 host + 19 standalone) | host max ~10.9, standalone max ~13–15 min | dynamic entry `tests/test262-chunk-dynamic.test.ts`, pool 4/job (#3425 contract) |
-| `merge-report` (**required**) incl. catastrophic guard, #1942 compile-time guard (lines 1040–1086), #1668 stale-baseline guard | 1 | ~2–3 min | |
-| `regression-gate` | 1 | ~1.2 min | parallel to merge-report |
-| ci.yml re-run (quality, equivalence…) | ~12 | ~4–6 min | parallel, off critical path |
-| **critical path** | | **max(shard lane) + ~3 min ≈ 16–18 min** currently | was ~60+ min pre-#3374/#3431 |
+
+| job                                                                                                                            | jobs                             | wall                                               | notes                                                                             |
+| ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------- | -------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `changes` (+ mg matrix compute, #3431)                                                                                         | 1                                | 0.6 min                                            | doc-only groups skip shards entirely (truth table at test262-sharded.yml:322–338) |
+| `test262-shard-mg` (#3431)                                                                                                     | **59** (40 host + 19 standalone) | host max ~10.9, standalone max ~13–15 min          | dynamic entry `tests/test262-chunk-dynamic.test.ts`, pool 4/job (#3425 contract)  |
+| `merge-report` (**required**) incl. catastrophic guard, #1942 compile-time guard (lines 1040–1086), #1668 stale-baseline guard | 1                                | ~2–3 min                                           |                                                                                   |
+| `regression-gate`                                                                                                              | 1                                | ~1.2 min                                           | parallel to merge-report                                                          |
+| ci.yml re-run (quality, equivalence…)                                                                                          | ~12                              | ~4–6 min                                           | parallel, off critical path                                                       |
+| **critical path**                                                                                                              |                                  | **max(shard lane) + ~3 min ≈ 16–18 min** currently | was ~60+ min pre-#3374/#3431                                                      |
 
 ### Stage C — post-merge (push:main, per merged src-PR)
-| job | jobs | wall | notes |
-|---|---|---|---|
-| `test262-shard` full matrix | **114** (57×2) | ~14–17 min (runs 29666312826: 13.6 min; 29665627877: 17.2 min) | sole purpose: produce merged JSONLs for `promote-baseline` |
-| `promote-baseline` | 1 | ~2–4 min | pushes baseline to `loopdive/js2wasm-baselines` + main summary |
-| ci.yml on push | ~12 | | |
+
+| job                         | jobs           | wall                                                           | notes                                                          |
+| --------------------------- | -------------- | -------------------------------------------------------------- | -------------------------------------------------------------- |
+| `test262-shard` full matrix | **114** (57×2) | ~14–17 min (runs 29666312826: 13.6 min; 29665627877: 17.2 min) | sole purpose: produce merged JSONLs for `promote-baseline`     |
+| `promote-baseline`          | 1              | ~2–4 min                                                       | pushes baseline to `loopdive/js2wasm-baselines` + main summary |
+| ci.yml on push              | ~12            |                                                                |                                                                |
 
 **Per-merge total: ~59 (mg) + 114 (push) + ~25 (ci.yml ×2) ≈ 200 jobs.** The push:main 114-job block does not gate the merge, but it **contends for the same ~120-concurrent-runner ceiling as the NEXT queue entry's merge_group run** — with `max_entries_to_build: 5` (docs/ci-policy.md:110), a busy queue plus 1–2 in-flight push runs still oversubscribes runners ~3×.
 
@@ -85,7 +164,7 @@ Issue #3431's evidence stands: fixed per-job setup is ~30–45 s; an uncontended
 
 ### 2.3 The no-skip full-suite change (oracle v8)
 
-`ORACLE_VERSION = 8` (#3370, tests/test262-oracle-version.ts:180–193) made the literal upstream harness authoritative — the *honesty* win that caused the cost spike. The `changes` job (test262-sharded.yml:183–320) still skips shards for genuinely non-test262 merge groups (fail-safe run-on-uncertainty), so "full suite every time" applies only to src-touching PRs — which is nearly all of them.
+`ORACLE_VERSION = 8` (#3370, tests/test262-oracle-version.ts:180–193) made the literal upstream harness authoritative — the _honesty_ win that caused the cost spike. The `changes` job (test262-sharded.yml:183–320) still skips shards for genuinely non-test262 merge groups (fail-safe run-on-uncertainty), so "full suite every time" applies only to src-touching PRs — which is nearly all of them.
 
 ### 2.4 Guard fragility (#1942) — the #3365 double-ejection
 
@@ -93,22 +172,22 @@ Mechanism (test262-sharded.yml:1040–1086): two signals from the same diff — 
 
 Why the count guard is structurally fragile: the count measures how many tests near the 30 s boundary crossed it **this run** — a function of runner CPU contention (variable, wave-shaped, per §2.2), shard density (doubled by #3431), and the boundary population size (slashed by #3374). #3365's ejections showed exactly the signature of a false positive: **CT > threshold while aggregate Δ = +3.2 %** (a real compile-perf regression that pushes >50 tests past 30 s cannot leave the shared-set aggregate at +3 %). The bump to 50 treats a symptom; the count remains an unbounded function of contention.
 
-There is one honest hole to preserve: **survivor bias** — a pathological slowdown makes its victims time out, which *removes them from the both-compiled shared set*, so the aggregate can stay flat while the count spikes. The fix must keep a count-shaped backstop, just not a contention-priced one (see L2).
+There is one honest hole to preserve: **survivor bias** — a pathological slowdown makes its victims time out, which _removes them from the both-compiled shared set_, so the aggregate can stay flat while the count spikes. The fix must keep a count-shaped backstop, just not a contention-priced one (see L2).
 
 ---
 
 ## 3. Prioritized acceleration levers
 
-| # | lever | wall/job win | risk | effort | verdict |
-|---|---|---|---|---|---|
-| L2 | Contention-tolerant #1942 guard | removes false ejections (each ≈ 30–60 min queue time + full re-run) | low | **S** (one workflow step) | **do first** |
-| L1 | Reuse mg JSONLs for push:main promote-baseline | −114 jobs/merge (−~66 % of shard-job load); −~800 runner-min/merge; directly de-contends the next mg run | low-med | **M** (workflow-only) | **do** |
-| L6 | Re-derive mg shard constants post-#3374 | −3–5 min per merge_group run (standalone long pole); optionally −10–15 more jobs | low | **S** (two constants + evidence) | **do** |
-| #3404 | Tolerate single-shard upload flake in promote | removes rerun-whole-114 on 1 ETIMEDOUT | low | S | already filed, endorse |
-| L3 | JS-host lane: native-JS harness, compile body only | ~2–4× host compile cut → host lane ~40–50 % faster or half the shards | **high** (oracle policy, v9 rebase) | **L** | decision issue first, then build |
-| L4 | Standalone lane: linked harness .wasm | same shape for standalone lane | high | **XL** (#1046/#33/#34 linker slices) | endorsed end-state, roadmap |
-| L5 | Re-enable disk cache (task #29) | ~0 for src-touching runs (key includes bundle hash ⇒ 100 % miss) | med (the "false baselines" scar) | M | **recommend wont-fix / superseded by L1** |
-| L7 | Cache pnpm store / prebuilt compiler bundle artifact | ~30–45 s/job × ~160 jobs ≈ 100+ runner-min/merge, small wall win | low | S-M | opportunistic |
+| #     | lever                                                | wall/job win                                                                                             | risk                                | effort                               | verdict                                   |
+| ----- | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------------- | ------------------------------------ | ----------------------------------------- |
+| L2    | Contention-tolerant #1942 guard                      | removes false ejections (each ≈ 30–60 min queue time + full re-run)                                      | low                                 | **S** (one workflow step)            | **do first**                              |
+| L1    | Reuse mg JSONLs for push:main promote-baseline       | −114 jobs/merge (−~66 % of shard-job load); −~800 runner-min/merge; directly de-contends the next mg run | low-med                             | **M** (workflow-only)                | **do**                                    |
+| L6    | Re-derive mg shard constants post-#3374              | −3–5 min per merge_group run (standalone long pole); optionally −10–15 more jobs                         | low                                 | **S** (two constants + evidence)     | **do**                                    |
+| #3404 | Tolerate single-shard upload flake in promote        | removes rerun-whole-114 on 1 ETIMEDOUT                                                                   | low                                 | S                                    | already filed, endorse                    |
+| L3    | JS-host lane: native-JS harness, compile body only   | ~2–4× host compile cut → host lane ~40–50 % faster or half the shards                                    | **high** (oracle policy, v9 rebase) | **L**                                | decision issue first, then build          |
+| L4    | Standalone lane: linked harness .wasm                | same shape for standalone lane                                                                           | high                                | **XL** (#1046/#33/#34 linker slices) | endorsed end-state, roadmap               |
+| L5    | Re-enable disk cache (task #29)                      | ~0 for src-touching runs (key includes bundle hash ⇒ 100 % miss)                                         | med (the "false baselines" scar)    | M                                    | **recommend wont-fix / superseded by L1** |
+| L7    | Cache pnpm store / prebuilt compiler bundle artifact | ~30–45 s/job × ~160 jobs ≈ 100+ runner-min/merge, small wall win                                         | low                                 | S-M                                  | opportunistic                             |
 
 ### L1 — Promote from the merge_group's own results (kill the per-merge 114-job rerun)
 
@@ -140,7 +219,7 @@ Win (from #3433's measurements): body-only compile is 59–173 ms vs 250–511 m
 
 Correctness — this is the hard part, and it is an **oracle policy change, not a perf tweak** (#3433 "Roadmap" section records the same conclusion + the user design input of 2026-07-18):
 
-- Nothing in test262 requires the harness to *be* wasm; test262.fyi runs it all in one JS engine. But #3370/v8's honesty contract is "compile the literal assembly" — moving the harness across the boundary changes what a verdict *measures*: `Test262Error` identity across the wasm/JS boundary, `verifyProperty`'s MOP operations against wasm-created objects, script-global sharing (harness `var`s visible to the test body and vice versa), and the strict rerun (a native harness is strict-neutral, but the *body* still needs both compilations — the 1.7× multiplier stays).
+- Nothing in test262 requires the harness to _be_ wasm; test262.fyi runs it all in one JS engine. But #3370/v8's honesty contract is "compile the literal assembly" — moving the harness across the boundary changes what a verdict _measures_: `Test262Error` identity across the wasm/JS boundary, `verifyProperty`'s MOP operations against wasm-created objects, script-global sharing (harness `var`s visible to the test body and vice versa), and the strict rerun (a native harness is strict-neutral, but the _body_ still needs both compilations — the 1.7× multiplier stays).
 - Some current honest fails would become boundary artifacts; some current passes could flip. ⇒ requires ORACLE_VERSION 9 + `ORACLE_REBASE` + promote-baseline force-refresh, and a deliberate sign-off by the lane owner + user per the #3433 roadmap note.
 
 Recommendation: file it as a **decision issue** (design doc + 200-test A/B sample quantifying verdict flips) before any implementation. Do not sequence CI health on it — L1/L2/L6 deliver the queue-throughput fix without touching the oracle.
@@ -170,20 +249,25 @@ Sequencing lesson for the log: a shard-density change and a compile-speed change
 Tech lead: allocate ids via `claim-issue.mjs --allocate` (per CLAUDE.md); titles/criteria below. Suggested lane: A (CI/infra).
 
 ### A. `ci(test262): promote push:main baseline from the merge_group's own artifacts (skip the 114-job rerun)` — P1, M
+
 Implements L1. **AC**: (1) push:main runs whose `github.sha` has a `test262-group-<sha>` artifact skip `test262-shard` entirely and promote from the downloaded JSONLs; (2) artifact-miss falls back to the current full matrix (fail-safe, logged); (3) promote output byte-comparable to a control full-run promote on the same SHA (one-time validation); (4) `merge shard reports` required-context semantics unchanged on push; (5) mg artifact retention ≥ promote window (3 days OK, document); (6) rollback = revert one workflow diff.
 
 ### B. `ci(test262): make the #1942 compile-timeout count guard contention-tolerant` — P1, S
+
 Implements L2. **AC**: (1) fail only on (CT > 50 AND aggregate Δ > +10 %) OR (CT > CT_HARD ≈ 200); (2) flat-aggregate CT spikes emit `::warning` + run-summary metric, not failure; (3) aggregate +20 % arm unchanged; (4) thresholds documented in-workflow with the #3365 ejection evidence (CT>50 at Δ=+3.2 % twice); (5) optional: CT_SOFT scales by 114/shard-count.
 
 ### C. `ci(#3431 follow-up): re-derive merge_group shard constants from post-#3374 timings` — P2, S
+
 Implements L6. **AC**: (1) `JS_HOST_CHUNKS`/`STANDALONE_CHUNKS` re-derived from ≥1 completed post-#3374 mg run (e.g. 29666753663) with both-lane max within ~1 min of each other and ≤ ~18 min; (2) evidence table in the script header updated (it currently cites only pre-#3374 numbers); (3) sequenced AFTER issue B (guard tolerance) if density increases.
 
 ### D. `#3404` (exists, `ready`): promote tolerates single-shard upload flake — endorse as-is, pairs with A (A also reduces its blast radius since push promotes stop depending on 114 fresh uploads).
 
 ### E. `decision(test262): JS-host lane native-JS harness — oracle v9 policy proposal` — P2 until stakeholder decision, then L
+
 Implements L3, gated. **AC for the decision issue** (no implementation): (1) design doc covering Test262Error cross-boundary identity, verifyProperty-on-wasm-objects MOP, script-global sharing, strict-rerun handling; (2) A/B verdict-flip measurement on a ≥200-test stratified sample (native harness vs v8 assembly); (3) explicit sign-off from lane owner + user per the #3433 roadmap note; (4) if approved: ORACLE_VERSION→9 + ORACLE_REBASE plan per tests/test262-oracle-version.ts header.
 
 ### F. `arch(#1046/#33/#34): linked harness .wasm as the driving use case for separate compilation` — roadmap, XL
+
 Implements L4. **AC**: #1046 slice-2 spec names the test262 prelude as its acceptance workload: compile the assembled prelude once per (includes-set × strict), link per-test bodies against it; class identity + shared globals across the module boundary; per-run prelude codegens collapse ~73k → ~10². No CI change until the linker slice exists.
 
 ### G. Task #29 (disk cache): close as superseded by A (rationale in §L5).

@@ -1,10 +1,8 @@
 {
-  "generated": "2026-07-16",
-  "unintended": {
-    "body-shape-rejected": 14
-  },
+  "generated": "2026-08-03",
+  "unintended": {},
   "deferred": {
-    "async-function": 4
+    "string-builder-candidate": 2
   },
   "postClaim": {
     "build": {},
@@ -12,7 +10,5 @@
     "lower": {},
     "backend-legality": {}
   },
-  "moduleLevel": {
-    "body-shape-rejected": 2
-  }
+  "moduleLevel": {}
 }

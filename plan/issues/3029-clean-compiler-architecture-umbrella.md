@@ -1,8 +1,7 @@
 ---
 id: 3029
 title: "Clean compiler architecture umbrella: layered module map, five-part backend contract, reviewability ratchets"
-status: in-progress
-assignee: ttraenkler/fable-arch-slices
+status: ready
 sprint: current
 created: 2026-07-04
 updated: 2026-07-04

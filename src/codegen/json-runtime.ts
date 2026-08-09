@@ -15,6 +15,9 @@
  *   - escape `\b` (U+0008), `\t` (U+0009), `\n` (U+000A), `\f` (U+000C),
  *     `\r` (U+000D) with their short forms
  *   - escape every other control char U+0000–U+001F as `\u00XX`
+ *   - escape a **lone** UTF-16 surrogate (unpaired U+D800–U+DFFF) as `\uXXXX`
+ *     (well-formed JSON.stringify, ES2019 §25.5.4.3); copy the two code units
+ *     of a valid high+low pair through verbatim
  *   - copy all other code units verbatim
  *
  * Result is returned as an `externref` (the WasmGC `$NativeString` widened via
@@ -35,6 +38,7 @@
 import type { Instr, ValType } from "../ir/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
 import { ensureAnyValueType } from "./any-helpers.js";
+import { counterLoopInstrs } from "./emit-idioms.js";
 import type { CodegenContext } from "./context/types.js";
 import { ensureNativeStringHelpers, nativeStringType } from "./native-strings.js";
 import { addFuncType } from "./registry/types.js";
@@ -54,53 +58,47 @@ const C_LC_R = 114; // 'r'
 const C_LC_U = 117; // 'u'
 const C_ZERO = 48; // '0'
 const C_LC_A_MINUS_10 = 87; // 'a' - 10  (for hex digit a-f)
+// UTF-16 surrogate ranges (well-formed JSON.stringify, ES2019 §25.5.4.3):
+// a lone surrogate code unit must be escaped as \uXXXX; a valid high+low pair
+// is copied through verbatim (the astral code point).
+const SURR_HIGH_LO = 0xd800; // high (leading) surrogate range 0xD800..0xDBFF
+const SURR_HIGH_HI = 0xdbff;
+const SURR_LOW_LO = 0xdc00; // low (trailing) surrogate range 0xDC00..0xDFFF
+const SURR_LOW_HI = 0xdfff;
+
+const I32: ValType = { kind: "i32" };
+
+// __json_quote_string local index layout, shared by the sizing and fill passes:
+//  1 flat  2 data  3 end  4 i  5 c  6 outLen  7 out  8 w  9 off  10 nib  11 nb
+const L_FLAT = 1;
+const L_DATA = 2;
+const L_END = 3;
+const L_I = 4;
+const L_C = 5;
+const L_OUTLEN = 6;
+const L_OUT = 7;
+const L_W = 8;
+const L_OFF = 9;
+const L_NIB = 10;
+const L_NB = 11;
 
 /**
- * Emit `__json_quote_string(s: externref) -> externref` and register it in
- * `ctx.funcMap`. Idempotent. Must run after `ensureNativeStringHelpers` (called
- * here) so `__str_flatten` exists, and before any function body that calls it.
- *
- * Algorithm: flatten the input to a `$NativeString`, walk its `[off, off+len)`
- * code units twice — first to size the output buffer, then to fill it — so the
- * output `$__str_data` is allocated exactly once at the right capacity.
+ * Instr builders for `__json_quote_string`, factored out of `emitJsonQuoteString`
+ * so neither function trips the per-function LOC ceiling (#3400). `d` is the
+ * `$__str_data` (array (mut i16)) type index. Returns only the pieces the outer
+ * emitter assembles; the smaller helpers stay closed over `d` internally.
  */
-export function emitJsonQuoteString(ctx: CodegenContext): number {
-  const existing = ctx.funcMap.get("__json_quote_string");
-  if (existing !== undefined) return existing;
-
-  ensureNativeStringHelpers(ctx);
-  const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten")!;
-  const strTypeIdx = ctx.nativeStrTypeIdx; // $NativeString (FlatString): len, off, data
-  const strDataTypeIdx = ctx.nativeStrDataTypeIdx; // (array (mut i16))
-  const i32: ValType = { kind: "i32" };
-  const extern: ValType = { kind: "externref" };
-
-  const strRef = nativeStringType(ctx);
-  const typeIdx = addFuncType(ctx, [extern], [strRef]);
-  const funcIdx = mintDefinedFunc(ctx);
-  ctx.funcMap.set("__json_quote_string", funcIdx);
-
-  // params: 0 s:externref
-  // locals:
-  //  1 flat:ref $NativeString   2 data:ref $__str_data   3 end:i32   4 i:i32
-  //  5 c:i32   6 outLen:i32   7 out:ref $__str_data   8 w:i32 (write cursor)
-  //  9 off:i32  10 nib:i32 (scratch nibble)
-  const L_FLAT = 1;
-  const L_DATA = 2;
-  const L_END = 3;
-  const L_I = 4;
-  const L_C = 5;
-  const L_OUTLEN = 6;
-  const L_OUT = 7;
-  const L_W = 8;
-  const L_OFF = 9;
-  const L_NIB = 10;
-
+function qQuoteBuilders(d: number): {
+  getC: Instr[];
+  putConst: (v: number) => Instr[];
+  widthExpr: Instr[];
+  fillCharDispatch: Instr[];
+} {
   // c = data[i]
   const getC: Instr[] = [
     { op: "local.get", index: L_DATA },
     { op: "local.get", index: L_I },
-    { op: "array.get_u", typeIdx: strDataTypeIdx },
+    { op: "array.get_u", typeIdx: d },
     { op: "local.set", index: L_C },
   ];
 
@@ -109,7 +107,7 @@ export function emitJsonQuoteString(ctx: CodegenContext): number {
     { op: "local.get", index: L_OUT },
     { op: "local.get", index: L_W },
     ...valueInstrs,
-    { op: "array.set", typeIdx: strDataTypeIdx },
+    { op: "array.set", typeIdx: d },
     { op: "local.get", index: L_W },
     { op: "i32.const", value: 1 },
     { op: "i32.add" },
@@ -124,28 +122,88 @@ export function emitJsonQuoteString(ctx: CodegenContext): number {
     { op: "i32.eq" },
   ];
 
-  // Shared preamble: flatten s, load data/off, compute end = off + len.
-  const preamble: Instr[] = [
-    { op: "local.get", index: 0 },
-    { op: "any.convert_extern" },
-    { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
-    { op: "call", funcIdx: flattenIdx },
-    { op: "ref.cast", typeIdx: strTypeIdx },
-    { op: "local.set", index: L_FLAT },
-    { op: "local.get", index: L_FLAT },
-    { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 2 }, // data
-    { op: "local.set", index: L_DATA },
-    { op: "local.get", index: L_FLAT },
-    { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 1 }, // off
-    { op: "local.set", index: L_OFF },
-    { op: "local.get", index: L_FLAT },
-    { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 }, // len
-    { op: "local.get", index: L_OFF },
-    { op: "i32.add" },
-    { op: "local.set", index: L_END }, // end = off + len (exclusive)
+  // (local at `idx`) is in the inclusive unsigned range [lo, hi]  (leaves i32)
+  const localInRange = (idx: number, lo: number, hi: number): Instr[] => [
+    { op: "local.get", index: idx },
+    { op: "i32.const", value: lo },
+    { op: "i32.ge_u" },
+    { op: "local.get", index: idx },
+    { op: "i32.const", value: hi },
+    { op: "i32.le_u" },
+    { op: "i32.and" },
   ];
 
-  // width(c): '"','\',\b\t\n\f\r -> 2 ; other ctrl (<0x20) -> 6 ; else 1
+  // Well-formed JSON.stringify (ES2019 §25.5.4.3, feature well-formed-json-
+  // stringify): a code unit at data[i] that is a LONE surrogate must be escaped
+  // as \uXXXX; a code unit that is part of a valid high+low pair is copied
+  // verbatim. This predicate leaves i32 (1 = c is a lone surrogate → escape).
+  //
+  // Adjacency is unambiguous: a high surrogate pairs forward with the
+  // immediately-following low; a low pairs backward with the immediately-
+  // preceding high. Both passes (sizing + fill) iterate the same indices with
+  // the same bounds, so they compute identical decisions. Uses L_NB scratch.
+  const escapeSurr: Instr[] = [
+    ...localInRange(L_C, SURR_HIGH_LO, SURR_HIGH_HI), // c is a high surrogate?
+    {
+      op: "if",
+      blockType: { kind: "val", type: I32 },
+      // High: escape unless the NEXT unit (i+1 < end) is a low surrogate.
+      then: [
+        { op: "local.get", index: L_I },
+        { op: "i32.const", value: 1 },
+        { op: "i32.add" },
+        { op: "local.get", index: L_END },
+        { op: "i32.lt_u" },
+        {
+          op: "if",
+          blockType: { kind: "val", type: I32 },
+          then: [
+            { op: "local.get", index: L_DATA },
+            { op: "local.get", index: L_I },
+            { op: "i32.const", value: 1 },
+            { op: "i32.add" },
+            { op: "array.get_u", typeIdx: d },
+            { op: "local.set", index: L_NB },
+            ...localInRange(L_NB, SURR_LOW_LO, SURR_LOW_HI),
+          ],
+          else: [{ op: "i32.const", value: 0 }], // no next unit → lone high
+        },
+        { op: "i32.eqz" }, // escape = !nextIsLow
+      ],
+      else: [
+        ...localInRange(L_C, SURR_LOW_LO, SURR_LOW_HI), // c is a low surrogate?
+        {
+          op: "if",
+          blockType: { kind: "val", type: I32 },
+          // Low: escape unless the PREV unit (i > off) is a high surrogate.
+          then: [
+            { op: "local.get", index: L_I },
+            { op: "local.get", index: L_OFF },
+            { op: "i32.gt_u" },
+            {
+              op: "if",
+              blockType: { kind: "val", type: I32 },
+              then: [
+                { op: "local.get", index: L_DATA },
+                { op: "local.get", index: L_I },
+                { op: "i32.const", value: 1 },
+                { op: "i32.sub" },
+                { op: "array.get_u", typeIdx: d },
+                { op: "local.set", index: L_NB },
+                ...localInRange(L_NB, SURR_HIGH_LO, SURR_HIGH_HI),
+              ],
+              else: [{ op: "i32.const", value: 0 }], // no prev unit → lone low
+            },
+            { op: "i32.eqz" }, // escape = !prevIsHigh
+          ],
+          else: [{ op: "i32.const", value: 0 }], // not a surrogate → not escaped
+        },
+      ],
+    },
+  ];
+
+  // width(c): '"','\',\b\t\n\f\r -> 2 ; ctrl (<0x20) or lone surrogate -> 6 ;
+  // else 1 (verbatim, incl. code units of a valid surrogate pair)
   const widthExpr: Instr[] = [
     ...cEq(C_QUOTE),
     ...cEq(C_BACKSLASH),
@@ -162,7 +220,7 @@ export function emitJsonQuoteString(ctx: CodegenContext): number {
     { op: "i32.or" },
     {
       op: "if",
-      blockType: { kind: "val", type: i32 },
+      blockType: { kind: "val", type: I32 },
       then: [{ op: "i32.const", value: 2 }],
       else: [
         { op: "local.get", index: L_C },
@@ -170,81 +228,30 @@ export function emitJsonQuoteString(ctx: CodegenContext): number {
         { op: "i32.lt_s" },
         {
           op: "if",
-          blockType: { kind: "val", type: i32 },
+          blockType: { kind: "val", type: I32 },
           then: [{ op: "i32.const", value: 6 }],
-          else: [{ op: "i32.const", value: 1 }],
-        },
-      ],
-    },
-  ];
-
-  // Pass 1: outLen = 2 + Σ width(c)
-  const sizingLoop: Instr[] = [
-    { op: "i32.const", value: 2 },
-    { op: "local.set", index: L_OUTLEN },
-    { op: "local.get", index: L_OFF },
-    { op: "local.set", index: L_I },
-    {
-      op: "block",
-      blockType: { kind: "empty" },
-      body: [
-        {
-          op: "loop",
-          blockType: { kind: "empty" },
-          body: [
-            { op: "local.get", index: L_I },
-            { op: "local.get", index: L_END },
-            { op: "i32.ge_s" },
-            { op: "br_if", depth: 1 },
-            ...getC,
-            { op: "local.get", index: L_OUTLEN },
-            ...widthExpr,
-            { op: "i32.add" },
-            { op: "local.set", index: L_OUTLEN },
-            { op: "local.get", index: L_I },
-            { op: "i32.const", value: 1 },
-            { op: "i32.add" },
-            { op: "local.set", index: L_I },
-            { op: "br", depth: 0 },
+          else: [
+            ...escapeSurr,
+            {
+              op: "if",
+              blockType: { kind: "val", type: I32 },
+              then: [{ op: "i32.const", value: 6 }],
+              else: [{ op: "i32.const", value: 1 }],
+            },
           ],
         },
       ],
     },
   ];
 
-  // Allocate out buffer (outLen), w=0, write opening quote.
-  const allocOut: Instr[] = [
-    { op: "i32.const", value: 0 },
-    { op: "local.get", index: L_OUTLEN },
-    { op: "array.new", typeIdx: strDataTypeIdx },
-    { op: "local.set", index: L_OUT },
-    { op: "i32.const", value: 0 },
-    { op: "local.set", index: L_W },
-    ...putConst(C_QUOTE),
-  ];
-
   // short escape: backslash + letter
   const emitShort = (letter: number): Instr[] => [...putConst(C_BACKSLASH), ...putConst(letter)];
 
-  // \u00XX for control chars (c is 0x00..0x1f so high hex nibbles are 0,0,0..1)
-  const emitUnicode: Instr[] = [
-    ...putConst(C_BACKSLASH),
-    ...putConst(C_LC_U),
-    ...putConst(C_ZERO),
-    ...putConst(C_ZERO),
-    // high nibble = (c >> 4) & 0xf  → always 0 or 1 → '0'+n
-    ...put([
+  // Emit one hex digit for nibble `(c >> shift) & 0xf`, mapped '0'-'9'/'a'-'f'.
+  const emitHexNibble = (shift: number): Instr[] =>
+    put([
       { op: "local.get", index: L_C },
-      { op: "i32.const", value: 4 },
-      { op: "i32.shr_u" },
-      { op: "i32.const", value: 0xf },
-      { op: "i32.and" },
-      { op: "i32.const", value: C_ZERO },
-      { op: "i32.add" },
-    ]),
-    // low nibble = c & 0xf  → '0'+n (n<10) else 'a'+(n-10)
-    ...put([
-      { op: "local.get", index: L_C },
+      ...(shift > 0 ? [{ op: "i32.const", value: shift } as Instr, { op: "i32.shr_u" } as Instr] : []),
       { op: "i32.const", value: 0xf },
       { op: "i32.and" },
       { op: "local.tee", index: L_NIB },
@@ -252,11 +259,23 @@ export function emitJsonQuoteString(ctx: CodegenContext): number {
       { op: "i32.lt_s" },
       {
         op: "if",
-        blockType: { kind: "val", type: i32 },
+        blockType: { kind: "val", type: I32 },
         then: [{ op: "local.get", index: L_NIB }, { op: "i32.const", value: C_ZERO }, { op: "i32.add" }],
         else: [{ op: "local.get", index: L_NIB }, { op: "i32.const", value: C_LC_A_MINUS_10 }, { op: "i32.add" }],
       },
-    ]),
+    ]);
+
+  // \uXXXX for control chars (U+0000–U+001F) and lone surrogates. All four hex
+  // nibbles are emitted with the full 0-9/a-f mapping — for control chars the
+  // top two nibbles are 0, reproducing the prior `\u00XX`; for surrogates the
+  // top nibble is `d`, giving e.g. `\ud834`.
+  const emitUnicode: Instr[] = [
+    ...putConst(C_BACKSLASH),
+    ...putConst(C_LC_U),
+    ...emitHexNibble(12),
+    ...emitHexNibble(8),
+    ...emitHexNibble(4),
+    ...emitHexNibble(0),
   ];
 
   // copy verbatim
@@ -313,7 +332,18 @@ export function emitJsonQuoteString(ctx: CodegenContext): number {
                                   op: "if",
                                   blockType: { kind: "empty" },
                                   then: emitUnicode,
-                                  else: emitVerbatim,
+                                  // Not a control char: a lone surrogate is
+                                  // escaped \uXXXX; everything else (incl. the
+                                  // units of a valid pair) is copied verbatim.
+                                  else: [
+                                    ...escapeSurr,
+                                    {
+                                      op: "if",
+                                      blockType: { kind: "empty" },
+                                      then: emitUnicode,
+                                      else: emitVerbatim,
+                                    },
+                                  ],
                                 },
                               ],
                             },
@@ -331,33 +361,97 @@ export function emitJsonQuoteString(ctx: CodegenContext): number {
     },
   ];
 
+  return { getC, putConst, widthExpr, fillCharDispatch };
+}
+
+/**
+ * Emit `__json_quote_string(s: externref) -> externref` and register it in
+ * `ctx.funcMap`. Idempotent. Must run after `ensureNativeStringHelpers` (called
+ * here) so `__str_flatten` exists, and before any function body that calls it.
+ *
+ * Algorithm: flatten the input to a `$NativeString`, walk its `[off, off+len)`
+ * code units twice — first to size the output buffer, then to fill it — so the
+ * output `$__str_data` is allocated exactly once at the right capacity.
+ */
+export function emitJsonQuoteString(ctx: CodegenContext): number {
+  const existing = ctx.funcMap.get("__json_quote_string");
+  if (existing !== undefined) return existing;
+
+  ensureNativeStringHelpers(ctx);
+  const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten")!;
+  const strTypeIdx = ctx.nativeStrTypeIdx; // $NativeString (FlatString): len, off, data
+  const strDataTypeIdx = ctx.nativeStrDataTypeIdx; // (array (mut i16))
+  const i32: ValType = { kind: "i32" };
+  const extern: ValType = { kind: "externref" };
+
+  const strRef = nativeStringType(ctx);
+  const typeIdx = addFuncType(ctx, [extern], [strRef]);
+  const funcIdx = mintDefinedFunc(ctx);
+  ctx.funcMap.set("__json_quote_string", funcIdx);
+
+  // params: 0 s:externref; locals L_FLAT..L_NB (see the module index layout).
+  const { getC, putConst, widthExpr, fillCharDispatch } = qQuoteBuilders(strDataTypeIdx);
+
+  // Shared preamble: flatten s, load data/off, compute end = off + len.
+  const preamble: Instr[] = [
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+    { op: "call", funcIdx: flattenIdx },
+    { op: "ref.cast", typeIdx: strTypeIdx },
+    { op: "local.set", index: L_FLAT },
+    { op: "local.get", index: L_FLAT },
+    { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 2 }, // data
+    { op: "local.set", index: L_DATA },
+    { op: "local.get", index: L_FLAT },
+    { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 1 }, // off
+    { op: "local.set", index: L_OFF },
+    { op: "local.get", index: L_FLAT },
+    { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 }, // len
+    { op: "local.get", index: L_OFF },
+    { op: "i32.add" },
+    { op: "local.set", index: L_END }, // end = off + len (exclusive)
+  ];
+
+  // Pass 1: outLen = 2 + Σ width(c)
+  const sizingLoop: Instr[] = [
+    { op: "i32.const", value: 2 },
+    { op: "local.set", index: L_OUTLEN },
+    { op: "local.get", index: L_OFF },
+    { op: "local.set", index: L_I },
+    ...counterLoopInstrs({
+      i: L_I,
+      bound: [{ op: "local.get", index: L_END }],
+      body: [
+        ...getC,
+        { op: "local.get", index: L_OUTLEN },
+        ...widthExpr,
+        { op: "i32.add" },
+        { op: "local.set", index: L_OUTLEN },
+      ],
+    }),
+  ];
+
+  // Allocate out buffer (outLen), w=0, write opening quote.
+  const allocOut: Instr[] = [
+    { op: "i32.const", value: 0 },
+    { op: "local.get", index: L_OUTLEN },
+    { op: "array.new", typeIdx: strDataTypeIdx },
+    { op: "local.set", index: L_OUT },
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: L_W },
+    ...putConst(C_QUOTE),
+  ];
+
   // Pass 2: fill
   const fillLoop: Instr[] = [
     { op: "local.get", index: L_OFF },
     { op: "local.set", index: L_I },
-    {
-      op: "block",
-      blockType: { kind: "empty" },
-      body: [
-        {
-          op: "loop",
-          blockType: { kind: "empty" },
-          body: [
-            { op: "local.get", index: L_I },
-            { op: "local.get", index: L_END },
-            { op: "i32.ge_s" },
-            { op: "br_if", depth: 1 },
-            ...getC,
-            ...fillCharDispatch,
-            { op: "local.get", index: L_I },
-            { op: "i32.const", value: 1 },
-            { op: "i32.add" },
-            { op: "local.set", index: L_I },
-            { op: "br", depth: 0 },
-          ],
-        },
-      ],
-    },
+    ...counterLoopInstrs({
+      i: L_I,
+      bound: [{ op: "local.get", index: L_END }],
+      body: [...getC, ...fillCharDispatch],
+    }),
     ...putConst(C_QUOTE), // closing quote
   ];
 
@@ -385,6 +479,7 @@ export function emitJsonQuoteString(ctx: CodegenContext): number {
       { count: 1, type: i32 }, // L_W
       { count: 1, type: i32 }, // L_OFF
       { count: 1, type: i32 }, // L_NIB
+      { count: 1, type: i32 }, // L_NB
     ],
     body,
     exported: false,
@@ -513,46 +608,31 @@ export function emitJsonParsePrimitive(ctx: CodegenContext): number {
 
   // skip whitespace: while i<end && (c==' '|'\t'|'\n'|'\r') i++
   const skipWs: Instr[] = [
-    {
-      op: "block",
-      blockType: { kind: "empty" },
+    ...counterLoopInstrs({
+      i: L_I,
+      bound: [{ op: "local.get", index: L_END }],
       body: [
-        {
-          op: "loop",
-          blockType: { kind: "empty" },
-          body: [
-            { op: "local.get", index: L_I },
-            { op: "local.get", index: L_END },
-            { op: "i32.ge_s" },
-            { op: "br_if", depth: 1 },
-            ...getC,
-            // ws = c==32 | c==9 | c==10 | c==13
-            { op: "local.get", index: L_C },
-            { op: "i32.const", value: 32 },
-            { op: "i32.eq" },
-            { op: "local.get", index: L_C },
-            { op: "i32.const", value: 9 },
-            { op: "i32.eq" },
-            { op: "i32.or" },
-            { op: "local.get", index: L_C },
-            { op: "i32.const", value: 10 },
-            { op: "i32.eq" },
-            { op: "i32.or" },
-            { op: "local.get", index: L_C },
-            { op: "i32.const", value: 13 },
-            { op: "i32.eq" },
-            { op: "i32.or" },
-            { op: "i32.eqz" },
-            { op: "br_if", depth: 1 }, // non-ws → stop
-            { op: "local.get", index: L_I },
-            { op: "i32.const", value: 1 },
-            { op: "i32.add" },
-            { op: "local.set", index: L_I },
-            { op: "br", depth: 0 },
-          ],
-        },
+        ...getC,
+        // ws = c==32 | c==9 | c==10 | c==13
+        { op: "local.get", index: L_C },
+        { op: "i32.const", value: 32 },
+        { op: "i32.eq" },
+        { op: "local.get", index: L_C },
+        { op: "i32.const", value: 9 },
+        { op: "i32.eq" },
+        { op: "i32.or" },
+        { op: "local.get", index: L_C },
+        { op: "i32.const", value: 10 },
+        { op: "i32.eq" },
+        { op: "i32.or" },
+        { op: "local.get", index: L_C },
+        { op: "i32.const", value: 13 },
+        { op: "i32.eq" },
+        { op: "i32.or" },
+        { op: "i32.eqz" },
+        { op: "br_if", depth: 1 }, // non-ws → stop
       ],
-    },
+    }),
     // c = data[i] (first non-ws char). If i>=end the input is empty → trap.
     { op: "local.get", index: L_I },
     { op: "local.get", index: L_END },
@@ -594,46 +674,31 @@ export function emitJsonParsePrimitive(ctx: CodegenContext): number {
       ],
     },
     // integer digits: while i<end && '0'<=c<='9' { mant=mant*10+(c-'0'); i++ }
-    {
-      op: "block",
-      blockType: { kind: "empty" },
+    ...counterLoopInstrs({
+      i: L_I,
+      bound: [{ op: "local.get", index: L_END }],
       body: [
-        {
-          op: "loop",
-          blockType: { kind: "empty" },
-          body: [
-            { op: "local.get", index: L_I },
-            { op: "local.get", index: L_END },
-            { op: "i32.ge_s" },
-            { op: "br_if", depth: 1 },
-            ...getC,
-            { op: "local.get", index: L_C },
-            { op: "i32.const", value: 48 },
-            { op: "i32.lt_s" },
-            { op: "br_if", depth: 1 },
-            { op: "local.get", index: L_C },
-            { op: "i32.const", value: 57 },
-            { op: "i32.gt_s" },
-            { op: "br_if", depth: 1 },
-            // mant = mant*10 + (c-48)
-            { op: "local.get", index: L_MANT },
-            { op: "f64.const", value: 10 },
-            { op: "f64.mul" },
-            { op: "local.get", index: L_C },
-            { op: "i32.const", value: 48 },
-            { op: "i32.sub" },
-            { op: "f64.convert_i32_s" },
-            { op: "f64.add" },
-            { op: "local.set", index: L_MANT },
-            { op: "local.get", index: L_I },
-            { op: "i32.const", value: 1 },
-            { op: "i32.add" },
-            { op: "local.set", index: L_I },
-            { op: "br", depth: 0 },
-          ],
-        },
+        ...getC,
+        { op: "local.get", index: L_C },
+        { op: "i32.const", value: 48 },
+        { op: "i32.lt_s" },
+        { op: "br_if", depth: 1 },
+        { op: "local.get", index: L_C },
+        { op: "i32.const", value: 57 },
+        { op: "i32.gt_s" },
+        { op: "br_if", depth: 1 },
+        // mant = mant*10 + (c-48)
+        { op: "local.get", index: L_MANT },
+        { op: "f64.const", value: 10 },
+        { op: "f64.mul" },
+        { op: "local.get", index: L_C },
+        { op: "i32.const", value: 48 },
+        { op: "i32.sub" },
+        { op: "f64.convert_i32_s" },
+        { op: "f64.add" },
+        { op: "local.set", index: L_MANT },
       ],
-    },
+    }),
     // fraction: if c=='.' { i++; while digit { mant=mant*10+d; exp--; i++ } }
     { op: "local.get", index: L_I },
     { op: "local.get", index: L_END },
@@ -652,49 +717,34 @@ export function emitJsonParsePrimitive(ctx: CodegenContext): number {
             { op: "i32.const", value: 1 },
             { op: "i32.add" },
             { op: "local.set", index: L_I },
-            {
-              op: "block",
-              blockType: { kind: "empty" },
+            ...counterLoopInstrs({
+              i: L_I,
+              bound: [{ op: "local.get", index: L_END }],
               body: [
-                {
-                  op: "loop",
-                  blockType: { kind: "empty" },
-                  body: [
-                    { op: "local.get", index: L_I },
-                    { op: "local.get", index: L_END },
-                    { op: "i32.ge_s" },
-                    { op: "br_if", depth: 1 },
-                    ...getC,
-                    { op: "local.get", index: L_C },
-                    { op: "i32.const", value: 48 },
-                    { op: "i32.lt_s" },
-                    { op: "br_if", depth: 1 },
-                    { op: "local.get", index: L_C },
-                    { op: "i32.const", value: 57 },
-                    { op: "i32.gt_s" },
-                    { op: "br_if", depth: 1 },
-                    { op: "local.get", index: L_MANT },
-                    { op: "f64.const", value: 10 },
-                    { op: "f64.mul" },
-                    { op: "local.get", index: L_C },
-                    { op: "i32.const", value: 48 },
-                    { op: "i32.sub" },
-                    { op: "f64.convert_i32_s" },
-                    { op: "f64.add" },
-                    { op: "local.set", index: L_MANT },
-                    { op: "local.get", index: L_EXP },
-                    { op: "i32.const", value: 1 },
-                    { op: "i32.sub" },
-                    { op: "local.set", index: L_EXP },
-                    { op: "local.get", index: L_I },
-                    { op: "i32.const", value: 1 },
-                    { op: "i32.add" },
-                    { op: "local.set", index: L_I },
-                    { op: "br", depth: 0 },
-                  ],
-                },
+                ...getC,
+                { op: "local.get", index: L_C },
+                { op: "i32.const", value: 48 },
+                { op: "i32.lt_s" },
+                { op: "br_if", depth: 1 },
+                { op: "local.get", index: L_C },
+                { op: "i32.const", value: 57 },
+                { op: "i32.gt_s" },
+                { op: "br_if", depth: 1 },
+                { op: "local.get", index: L_MANT },
+                { op: "f64.const", value: 10 },
+                { op: "f64.mul" },
+                { op: "local.get", index: L_C },
+                { op: "i32.const", value: 48 },
+                { op: "i32.sub" },
+                { op: "f64.convert_i32_s" },
+                { op: "f64.add" },
+                { op: "local.set", index: L_MANT },
+                { op: "local.get", index: L_EXP },
+                { op: "i32.const", value: 1 },
+                { op: "i32.sub" },
+                { op: "local.set", index: L_EXP },
               ],
-            },
+            }),
           ],
         },
       ],
@@ -763,44 +813,29 @@ export function emitJsonParsePrimitive(ctx: CodegenContext): number {
             // explicit exponent digits: expMag = Σ digits; exp += expSign*expMag
             { op: "i32.const", value: 0 },
             { op: "local.set", index: L_EXPMAG },
-            {
-              op: "block",
-              blockType: { kind: "empty" },
+            ...counterLoopInstrs({
+              i: L_I,
+              bound: [{ op: "local.get", index: L_END }],
               body: [
-                {
-                  op: "loop",
-                  blockType: { kind: "empty" },
-                  body: [
-                    { op: "local.get", index: L_I },
-                    { op: "local.get", index: L_END },
-                    { op: "i32.ge_s" },
-                    { op: "br_if", depth: 1 },
-                    ...getC,
-                    { op: "local.get", index: L_C },
-                    { op: "i32.const", value: 48 },
-                    { op: "i32.lt_s" },
-                    { op: "br_if", depth: 1 },
-                    { op: "local.get", index: L_C },
-                    { op: "i32.const", value: 57 },
-                    { op: "i32.gt_s" },
-                    { op: "br_if", depth: 1 },
-                    { op: "local.get", index: L_EXPMAG },
-                    { op: "i32.const", value: 10 },
-                    { op: "i32.mul" },
-                    { op: "local.get", index: L_C },
-                    { op: "i32.const", value: 48 },
-                    { op: "i32.sub" },
-                    { op: "i32.add" },
-                    { op: "local.set", index: L_EXPMAG },
-                    { op: "local.get", index: L_I },
-                    { op: "i32.const", value: 1 },
-                    { op: "i32.add" },
-                    { op: "local.set", index: L_I },
-                    { op: "br", depth: 0 },
-                  ],
-                },
+                ...getC,
+                { op: "local.get", index: L_C },
+                { op: "i32.const", value: 48 },
+                { op: "i32.lt_s" },
+                { op: "br_if", depth: 1 },
+                { op: "local.get", index: L_C },
+                { op: "i32.const", value: 57 },
+                { op: "i32.gt_s" },
+                { op: "br_if", depth: 1 },
+                { op: "local.get", index: L_EXPMAG },
+                { op: "i32.const", value: 10 },
+                { op: "i32.mul" },
+                { op: "local.get", index: L_C },
+                { op: "i32.const", value: 48 },
+                { op: "i32.sub" },
+                { op: "i32.add" },
+                { op: "local.set", index: L_EXPMAG },
               ],
-            },
+            }),
             // exp += expSign * expMag
             { op: "local.get", index: L_EXP },
             { op: "local.get", index: L_EXPSIGN },

@@ -51,13 +51,13 @@ import {
 } from "./native-strings.js";
 import { ensureObjectRuntime, OBJ_FLAG_RAWJSON } from "./object-runtime.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
-import { addFuncType } from "./registry/types.js";
+import { addFuncType, getOrRegisterVecBaseType } from "./registry/types.js";
 import { emitJsonQuoteString } from "./json-runtime.js";
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { reserveReplacerDriver, reserveReviverDriver, reserveToJsonDriver } from "./accessor-driver.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
-
+import { buildRawJsonSymbolToStringGuard, prepareRawJsonSymbolToString } from "./json-rawjson-symbol.js";
 const EQ_HEAP_TYPE = -19; // signed LEB128 → 0x6d → TYPE.eq (for ref.null any/eq)
 
 /**
@@ -84,6 +84,46 @@ function deepCloneInstrs<T>(value: T): T {
 
 /** Maximum nesting depth before the codec bails (circular-ref guard). */
 const MAX_JSON_DEPTH = 512;
+
+function buildRawJsonStringifyArm(
+  ctx: CodegenContext,
+  anyLocal: number,
+  objectTypeIdx: number,
+  anyStrTypeIdx: number,
+  externGetIdx: number,
+): Instr[] {
+  return [
+    // ES2025 §25.5.2.2: a branded raw-JSON carrier contributes its source text
+    // verbatim, after toJSON/replacer processing and before object walking.
+    { op: "local.get", index: anyLocal },
+    { op: "ref.test", typeIdx: objectTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: anyLocal },
+        { op: "ref.cast", typeIdx: objectTypeIdx },
+        { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
+        { op: "i32.const", value: OBJ_FLAG_RAWJSON },
+        { op: "i32.and" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: anyLocal },
+            { op: "extern.convert_any" },
+            ...nativeStringLiteralInstrs(ctx, "rawJSON"),
+            { op: "extern.convert_any" },
+            { op: "call", funcIdx: externGetIdx },
+            { op: "any.convert_extern" },
+            { op: "ref.cast", typeIdx: anyStrTypeIdx },
+            { op: "return" },
+          ],
+        },
+      ],
+    },
+  ];
+}
 
 /**
  * Emit `__json_stringify_value(v: anyref, depth: i32) -> ref null $AnyString`
@@ -119,6 +159,19 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
   const propEntryTypeIdx = objTypes.propEntryTypeIdx;
   const objVecTypeIdx = objTypes.objVecTypeIdx;
   const objVecArrTypeIdx = objTypes.objVecArrTypeIdx;
+
+  // (#4085) A real standalone JS array is a `__vec_<elemKind>` struct subtyping
+  // `$__vec_base` (#2186). `$ObjVec` is the enumeration-RESULT vector — a
+  // DIFFERENT type — so the value dispatch below matched NO arm for an ordinary
+  // array and fell through to "unsupported ref", rendering the JSON literal
+  // `null` for `JSON.stringify([10,20,30])`. These four let the ladder normalise
+  // a vec receiver into a `$ObjVec` and then reuse the existing array arm
+  // verbatim, rather than duplicating ~120 instructions of element / replacer /
+  // indent logic that would then have to be kept in sync.
+  const vecBaseIdx = getOrRegisterVecBaseType(ctx);
+  const objVecNewIdx = ctx.funcMap.get("__objvec_new");
+  const objVecPushIdx = ctx.funcMap.get("__objvec_push");
+  const externGetIdxIdx = ctx.funcMap.get("__extern_get_idx");
 
   const i32: ValType = { kind: "i32" };
   const f64: ValType = { kind: "f64" };
@@ -199,6 +252,13 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
   const L_TJM = 23; // externref — the toJSON method looked up on the value
   const L_CHILDV = 24; // anyref — child value after replacer transform (recursion arg)
   const L_CKEY = 25; // externref — current child key (object/array arms)
+  // (#4085) `$__vec_base` → `$ObjVec` normalisation scratch. Dedicated locals
+  // rather than reusing L_CAP/L_I: normalisation runs BEFORE the array arm,
+  // which re-initialises those, but keeping them separate makes the two loops
+  // independently readable and immune to a future reordering of the ladder.
+  const L_VB = 26; // externref — the normalised $ObjVec built from a vec receiver
+  const L_VBLEN = 27; // i32 — vec length
+  const L_VBI = 28; // i32 — normalisation loop index
 
   const litStr = (s: string): Instr[] => nativeStringLiteralInstrs(ctx, s);
 
@@ -828,7 +888,7 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
             ],
           },
         ] satisfies Instr[])),
-    // $Object?
+    ...buildRawJsonStringifyArm(ctx, L_ANY, objectTypeIdx, anyStrTypeIdx, externGetIdxTJ),
     { op: "local.get", index: L_ANY },
     { op: "ref.test", typeIdx: objectTypeIdx },
     {
@@ -836,6 +896,73 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
       blockType: { kind: "empty" },
       then: objectArm,
     },
+    // (#4085) $__vec_base (a REAL JS array) → normalise to $ObjVec, then fall
+    // into the $ObjVec arm below. Elements are read through `__extern_get_idx`,
+    // which is already `$__vec_base`-aware (#2190) and handles every element
+    // kind (f64 / i32 / externref / …), so this needs no per-elemKind cases.
+    //
+    // Ordering: this sits AFTER the `$Object` test and BEFORE the `$ObjVec`
+    // test. A `__vec_<k>` struct is not a `$Object`, so the earlier arm cannot
+    // claim it; re-pointing L_ANY here is what lets the untouched `$ObjVec` arm
+    // do the actual serialisation.
+    //
+    // Known deviation: inside the arm, `holder` for a function `replacer` is the
+    // normalised $ObjVec rather than the original array object. Only observable
+    // via `this` in a replacer over an array; today the entire value serialises
+    // as `null`, so this is strictly an improvement. Noted in #4085.
+    ...(objVecNewIdx !== undefined && objVecPushIdx !== undefined && externGetIdxIdx !== undefined
+      ? ([
+          { op: "local.get", index: L_ANY },
+          { op: "ref.test", typeIdx: vecBaseIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "call", funcIdx: objVecNewIdx },
+              { op: "local.set", index: L_VB },
+              { op: "local.get", index: L_ANY },
+              { op: "ref.cast", typeIdx: vecBaseIdx },
+              { op: "struct.get", typeIdx: vecBaseIdx, fieldIdx: 0 }, // len
+              { op: "local.set", index: L_VBLEN },
+              { op: "i32.const", value: 0 },
+              { op: "local.set", index: L_VBI },
+              {
+                op: "block",
+                blockType: { kind: "empty" },
+                body: [
+                  {
+                    op: "loop",
+                    blockType: { kind: "empty" },
+                    body: [
+                      { op: "local.get", index: L_VBI },
+                      { op: "local.get", index: L_VBLEN },
+                      { op: "i32.ge_s" },
+                      { op: "br_if", depth: 1 },
+                      // __objvec_push(out, __extern_get_idx(vec, f64(i)))
+                      { op: "local.get", index: L_VB },
+                      { op: "local.get", index: L_ANY },
+                      { op: "extern.convert_any" },
+                      { op: "local.get", index: L_VBI },
+                      { op: "f64.convert_i32_s" },
+                      { op: "call", funcIdx: externGetIdxIdx },
+                      { op: "call", funcIdx: objVecPushIdx },
+                      { op: "local.get", index: L_VBI },
+                      { op: "i32.const", value: 1 },
+                      { op: "i32.add" },
+                      { op: "local.set", index: L_VBI },
+                      { op: "br", depth: 0 },
+                    ],
+                  },
+                ],
+              },
+              // Re-point the tested value at the $ObjVec so the arm below runs.
+              { op: "local.get", index: L_VB },
+              { op: "any.convert_extern" },
+              { op: "local.set", index: L_ANY },
+            ],
+          },
+        ] satisfies Instr[])
+      : []),
     // $ObjVec?
     { op: "local.get", index: L_ANY },
     { op: "ref.test", typeIdx: objVecTypeIdx },
@@ -863,13 +990,31 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
       ? ([
           { op: "local.get", index: L_ANY },
           { op: "ref.test", typeIdx: boxNumTypeIdx },
+          // (#3673) …or an i31-boxed small int.
+          { op: "local.get", index: L_ANY },
+          { op: "ref.test", typeIdx: -20 },
+          { op: "i32.or" },
           {
             op: "if",
             blockType: { kind: "empty" },
             then: [
               { op: "local.get", index: L_ANY },
-              { op: "ref.cast", typeIdx: boxNumTypeIdx },
-              { op: "struct.get", typeIdx: boxNumTypeIdx, fieldIdx: 0 },
+              { op: "ref.test", typeIdx: -20 },
+              {
+                op: "if",
+                blockType: { kind: "val", type: { kind: "f64" } },
+                then: [
+                  { op: "local.get", index: L_ANY },
+                  { op: "ref.cast", typeIdx: -20 },
+                  { op: "i31.get_s" },
+                  { op: "f64.convert_i32_s" },
+                ],
+                else: [
+                  { op: "local.get", index: L_ANY },
+                  { op: "ref.cast", typeIdx: boxNumTypeIdx },
+                  { op: "struct.get", typeIdx: boxNumTypeIdx, fieldIdx: 0 },
+                ],
+              },
               { op: "local.set", index: L_NUM },
               ...formatNumber,
               { op: "return" },
@@ -935,6 +1080,9 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
       { count: 1, type: { kind: "externref" } }, // L_TJM   (#2166 PR-D2)
       { count: 1, type: anyref }, // L_CHILDV (#2166 PR-D3)
       { count: 1, type: { kind: "externref" } }, // L_CKEY (#2166 PR-D3)
+      { count: 1, type: { kind: "externref" } }, // L_VB (#4085)
+      { count: 1, type: i32 }, // L_VBLEN (#4085)
+      { count: 1, type: i32 }, // L_VBI (#4085)
     ],
     // (#2166 PR-D2) Deep-clone so every `call`/operand occurrence is an
     // INDEPENDENT object. The body spreads shared helper `Instr[]` arrays
@@ -2604,6 +2752,178 @@ export function emitJsonParseText(ctx: CodegenContext): number {
 // (#3176) ES2025 `JSON.rawJSON` / `JSON.isRawJSON` — standalone / WASI.
 // ───────────────────────────────────────────────────────────────────────────
 
+interface RawJsonValidationPlan {
+  rawStringLocal: number;
+  flatLocal: number;
+  lengthLocal: number;
+  dataLocal: number;
+  offsetLocal: number;
+  resultLocal: number;
+  objectLocal: number;
+  objectRefLocal: number;
+  strTypeIdx: number;
+  strDataTypeIdx: number;
+  anyStrTypeIdx: number;
+  objectTypeIdx: number;
+  objVecTypeIdx: number;
+  flattenIdx: number;
+  parseTextIdx: number;
+  newObjectIdx: number;
+  externSetIdx: number;
+}
+
+function buildRawJsonValidationAndCarrier(ctx: CodegenContext, plan: RawJsonValidationPlan): Instr[] {
+  const {
+    rawStringLocal,
+    flatLocal,
+    lengthLocal,
+    dataLocal,
+    offsetLocal,
+    resultLocal,
+    objectLocal,
+    objectRefLocal,
+    strTypeIdx,
+    strDataTypeIdx,
+    anyStrTypeIdx,
+    objectTypeIdx,
+    objVecTypeIdx,
+    flattenIdx,
+    parseTextIdx,
+    newObjectIdx,
+    externSetIdx,
+  } = plan;
+  const tagIdx = ensureExnTag(ctx);
+  const ctorIdx = ctx.funcMap.get("__new_SyntaxError")!;
+  const throwSyntaxError = (message: string): Instr[] => {
+    addStringConstantGlobal(ctx, message);
+    return [
+      ...stringConstantExternrefInstrs(ctx, message),
+      { op: "call", funcIdx: ctorIdx },
+      { op: "throw", tagIdx },
+      { op: "unreachable" },
+    ];
+  };
+  const isWhitespace = (loadCodeUnit: Instr[]): Instr[] => [
+    ...loadCodeUnit,
+    { op: "i32.const", value: 0x20 },
+    { op: "i32.eq" },
+    ...loadCodeUnit,
+    { op: "i32.const", value: 0x09 },
+    { op: "i32.eq" },
+    { op: "i32.or" },
+    ...loadCodeUnit,
+    { op: "i32.const", value: 0x0a },
+    { op: "i32.eq" },
+    { op: "i32.or" },
+    ...loadCodeUnit,
+    { op: "i32.const", value: 0x0d },
+    { op: "i32.eq" },
+    { op: "i32.or" },
+  ];
+  const loadFirst: Instr[] = [
+    { op: "local.get", index: dataLocal },
+    { op: "local.get", index: offsetLocal },
+    { op: "array.get_u", typeIdx: strDataTypeIdx },
+  ];
+  const loadLast: Instr[] = [
+    { op: "local.get", index: dataLocal },
+    { op: "local.get", index: offsetLocal },
+    { op: "local.get", index: lengthLocal },
+    { op: "i32.add" },
+    { op: "i32.const", value: 1 },
+    { op: "i32.sub" },
+    { op: "array.get_u", typeIdx: strDataTypeIdx },
+  ];
+  addStringConstantGlobal(ctx, "rawJSON");
+
+  return [
+    { op: "local.get", index: rawStringLocal },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: anyStrTypeIdx },
+    { op: "call", funcIdx: flattenIdx },
+    { op: "ref.cast", typeIdx: strTypeIdx },
+    { op: "local.set", index: flatLocal },
+    { op: "local.get", index: flatLocal },
+    { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 },
+    { op: "local.set", index: lengthLocal },
+    { op: "local.get", index: flatLocal },
+    { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 2 },
+    { op: "local.set", index: dataLocal },
+    { op: "local.get", index: flatLocal },
+    { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 1 },
+    { op: "local.set", index: offsetLocal },
+    { op: "local.get", index: lengthLocal },
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: throwSyntaxError("Unexpected end of JSON input in rawJSON") },
+    ...isWhitespace(loadFirst),
+    { op: "if", blockType: { kind: "empty" }, then: throwSyntaxError("Unexpected whitespace in rawJSON") },
+    ...isWhitespace(loadLast),
+    { op: "if", blockType: { kind: "empty" }, then: throwSyntaxError("Unexpected whitespace in rawJSON") },
+    { op: "local.get", index: rawStringLocal },
+    { op: "call", funcIdx: parseTextIdx },
+    { op: "local.set", index: resultLocal },
+    { op: "local.get", index: resultLocal },
+    { op: "ref.test", typeIdx: objectTypeIdx },
+    { op: "if", blockType: { kind: "empty" }, then: throwSyntaxError("rawJSON does not accept an object") },
+    { op: "local.get", index: resultLocal },
+    { op: "ref.test", typeIdx: objVecTypeIdx },
+    { op: "if", blockType: { kind: "empty" }, then: throwSyntaxError("rawJSON does not accept an array") },
+    { op: "call", funcIdx: newObjectIdx },
+    { op: "local.set", index: objectLocal },
+    { op: "local.get", index: objectLocal },
+    ...stringConstantExternrefInstrs(ctx, "rawJSON"),
+    { op: "local.get", index: rawStringLocal },
+    { op: "call", funcIdx: externSetIdx },
+    { op: "local.get", index: objectLocal },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: objectTypeIdx },
+    { op: "local.set", index: objectRefLocal },
+    { op: "local.get", index: objectRefLocal },
+    { op: "local.get", index: objectRefLocal },
+    { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
+    { op: "i32.const", value: OBJ_FLAG_RAWJSON },
+    { op: "i32.or" },
+    { op: "struct.set", typeIdx: objectTypeIdx, fieldIdx: 4 },
+    { op: "local.get", index: objectLocal },
+  ];
+}
+
+interface RawJsonFunctionPlan {
+  body: Instr[];
+  strRefNative: ValType;
+  i32: ValType;
+  strDataRef: ValType;
+  anyref: ValType;
+  externref: ValType;
+  objectRef: ValType;
+}
+
+function registerRawJsonFunction(ctx: CodegenContext, plan: RawJsonFunctionPlan): number {
+  const funcIdx = mintDefinedFunc(ctx);
+  ctx.funcMap.set("__json_rawjson", funcIdx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: "__json_rawjson",
+    typeIdx: addFuncType(ctx, [plan.externref], [plan.externref]),
+    locals: [
+      { count: 1, type: plan.strRefNative },
+      { count: 1, type: plan.i32 },
+      { count: 1, type: plan.strDataRef },
+      { count: 1, type: plan.i32 },
+      { count: 1, type: plan.i32 },
+      { count: 1, type: plan.anyref },
+      { count: 1, type: plan.externref },
+      { count: 1, type: plan.objectRef },
+      { count: 1, type: plan.externref },
+      { count: 1, type: plan.anyref },
+      { count: 1, type: plan.i32 },
+      { count: 1, type: plan.externref },
+    ],
+    body: plan.body,
+    exported: false,
+  } as unknown as (typeof ctx.mod.functions)[number]);
+  return funcIdx;
+}
+
 /**
  * Emit `__json_rawjson(s: externref) -> externref` (§25.5.3 JSON.rawJSON).
  * `s` is the ALREADY-ToString'd JSON text (the call site coerces via
@@ -2630,10 +2950,7 @@ export function emitJsonRawJson(ctx: CodegenContext): number {
   ensureNativeStringHelpers(ctx);
   const rt = ensureObjectRuntime(ctx);
   emitNativeNumberFormat(ctx, new Set(["number_toString"]));
-  emitWasiErrorConstructor(ctx, "SyntaxError", 1);
-  // `emitJsonParseText` registers the boxed-primitive struct types
-  // (`nativeBoxNumberTypeIdx`/`nativeBoxBooleanTypeIdx`) if not already present;
-  // capture them AFTER so the self-contained ToString below can tag-dispatch.
+  prepareRawJsonSymbolToString(ctx);
   const parseTextIdx = emitJsonParseText(ctx);
 
   const i32: ValType = { kind: "i32" };
@@ -2644,6 +2961,8 @@ export function emitJsonRawJson(ctx: CodegenContext): number {
   const anyStrTypeIdx = ctx.anyStrTypeIdx;
   const boxNumTypeIdx = ctx.nativeBoxNumberTypeIdx;
   const boxBoolTypeIdx = ctx.nativeBoxBooleanTypeIdx;
+  const anyValueTypeIdx = ctx.anyValueTypeIdx;
+  const f64: ValType = { kind: "f64" };
   const strDataRef: ValType = { kind: "ref", typeIdx: strDataTypeIdx };
   const strRefNative: ValType = { kind: "ref", typeIdx: strTypeIdx };
   const objRef: ValType = { kind: "ref", typeIdx: rt.objectTypeIdx };
@@ -2657,19 +2976,6 @@ export function emitJsonRawJson(ctx: CodegenContext): number {
     return stringConstantExternrefInstrs(ctx, s);
   };
 
-  const tagIdx = ensureExnTag(ctx);
-  const ctorIdx = ctx.funcMap.get("__new_SyntaxError")!;
-  const throwSyntaxError = (msg: string): Instr[] => {
-    addStringConstantGlobal(ctx, msg);
-    return [
-      ...stringConstantExternrefInstrs(ctx, msg),
-      { op: "call", funcIdx: ctorIdx },
-      { op: "throw", tagIdx },
-      { op: "unreachable" },
-    ];
-  };
-
-  // params: 0 = v (raw externref value — ToString'd inside)
   const R_V = 0;
   const R_FLAT = 1; // ref $NativeString
   const R_LEN = 2; // i32
@@ -2681,43 +2987,10 @@ export function emitJsonRawJson(ctx: CodegenContext): number {
   const R_O = 8; // ref $Object (carrier cast once for the brand-bit write)
   const R_STR = 9; // externref — ToString(v), the JSON source text
   const R_ANY = 10; // anyref — v widened for the ToString tag-dispatch
-
-  // isWhitespace(c): space | tab | LF | CR
-  const isWs = (loadC: Instr[]): Instr[] => [
-    ...loadC,
-    { op: "i32.const", value: 0x20 },
-    { op: "i32.eq" },
-    ...loadC,
-    { op: "i32.const", value: 0x09 },
-    { op: "i32.eq" },
-    { op: "i32.or" },
-    ...loadC,
-    { op: "i32.const", value: 0x0a },
-    { op: "i32.eq" },
-    { op: "i32.or" },
-    ...loadC,
-    { op: "i32.const", value: 0x0d },
-    { op: "i32.eq" },
-    { op: "i32.or" },
-  ];
-  const loadFirst: Instr[] = [
-    { op: "local.get", index: R_DATA },
-    { op: "local.get", index: R_OFF },
-    { op: "array.get_u", typeIdx: strDataTypeIdx },
-  ];
-  const loadLast: Instr[] = [
-    { op: "local.get", index: R_DATA },
-    { op: "local.get", index: R_OFF },
-    { op: "local.get", index: R_LEN },
-    { op: "i32.add" },
-    { op: "i32.const", value: 1 },
-    { op: "i32.sub" },
-    { op: "array.get_u", typeIdx: strDataTypeIdx },
-  ];
+  const R_TAG = 11; // i32 — $AnyValue tag
+  const R_PAYLOAD = 12; // externref — overloaded tag-5 payload
 
   const body: Instr[] = [
-    // ── str = ToString(v) ────────────────────────────────────────────────
-    // Self-contained ToString for the primitive shapes rawJSON accepts, so it
     // does NOT depend on `__any_to_string` (whose boxed-number/boolean arms go
     // dead when the helper is baked before the union-import box structs are
     // registered — the exact ordering that a harness `assert_compareArray`
@@ -2726,8 +2999,9 @@ export function emitJsonRawJson(ctx: CodegenContext): number {
     //   $AnyString           → the string itself
     //   $__box_number_struct → number_toString(value)
     //   $__box_boolean_struct→ "true" / "false"
-    //   else (object/array/symbol/undefined) → "[object Object]", which the
-    //        parser below rejects → SyntaxError (matching §25.5.3).
+    //   $AnyValue             → tag-dispatch its primitive payload
+    //   $Symbol → TypeError; other unsupported refs → "[object Object]", which
+    //   the parser below rejects → SyntaxError (matching §25.5.3).
     { op: "local.get", index: R_V },
     { op: "ref.is_null" },
     {
@@ -2737,7 +3011,7 @@ export function emitJsonRawJson(ctx: CodegenContext): number {
       else: [
         { op: "local.get", index: R_V },
         { op: "any.convert_extern" },
-        { op: "local.tee", index: R_ANY },
+        ...buildRawJsonSymbolToStringGuard(ctx, R_ANY),
         { op: "ref.test", typeIdx: anyStrTypeIdx },
         {
           op: "if",
@@ -2746,13 +3020,31 @@ export function emitJsonRawJson(ctx: CodegenContext): number {
           else: [
             { op: "local.get", index: R_ANY },
             { op: "ref.test", typeIdx: boxNumTypeIdx },
+            // (#3673) …or an i31-boxed small int.
+            { op: "local.get", index: R_ANY },
+            { op: "ref.test", typeIdx: -20 },
+            { op: "i32.or" },
             {
               op: "if",
               blockType: { kind: "val", type: externref },
               then: [
                 { op: "local.get", index: R_ANY },
-                { op: "ref.cast", typeIdx: boxNumTypeIdx },
-                { op: "struct.get", typeIdx: boxNumTypeIdx, fieldIdx: 0 }, // f64 value
+                { op: "ref.test", typeIdx: -20 },
+                {
+                  op: "if",
+                  blockType: { kind: "val", type: { kind: "f64" } },
+                  then: [
+                    { op: "local.get", index: R_ANY },
+                    { op: "ref.cast", typeIdx: -20 },
+                    { op: "i31.get_s" },
+                    { op: "f64.convert_i32_s" },
+                  ],
+                  else: [
+                    { op: "local.get", index: R_ANY },
+                    { op: "ref.cast", typeIdx: boxNumTypeIdx },
+                    { op: "struct.get", typeIdx: boxNumTypeIdx, fieldIdx: 0 },
+                  ],
+                },
                 { op: "call", funcIdx: numToStrIdx }, // -> externref string
               ],
               else: [
@@ -2772,7 +3064,182 @@ export function emitJsonRawJson(ctx: CodegenContext): number {
                       else: strConst("false"),
                     },
                   ],
-                  else: strConst("[object Object]"),
+                  else: [
+                    // Generic array/union lanes carry their values in
+                    // `$AnyValue`, not in the native box structs above. Apply
+                    // the same primitive ToString conversion to that carrier
+                    // so JSON.rawJSON(value) remains representation-neutral.
+                    { op: "local.get", index: R_ANY },
+                    { op: "ref.test", typeIdx: anyValueTypeIdx },
+                    {
+                      op: "if",
+                      blockType: { kind: "val", type: externref },
+                      then: [
+                        { op: "local.get", index: R_ANY },
+                        { op: "ref.cast", typeIdx: anyValueTypeIdx },
+                        { op: "struct.get", typeIdx: anyValueTypeIdx, fieldIdx: 0 },
+                        { op: "local.set", index: R_TAG },
+                        // tag 2/3 = integer/f64 number
+                        { op: "local.get", index: R_TAG },
+                        { op: "i32.const", value: 2 },
+                        { op: "i32.eq" },
+                        { op: "local.get", index: R_TAG },
+                        { op: "i32.const", value: 3 },
+                        { op: "i32.eq" },
+                        { op: "i32.or" },
+                        {
+                          op: "if",
+                          blockType: { kind: "val", type: externref },
+                          then: [
+                            { op: "local.get", index: R_TAG },
+                            { op: "i32.const", value: 2 },
+                            { op: "i32.eq" },
+                            {
+                              op: "if",
+                              blockType: { kind: "val", type: f64 },
+                              then: [
+                                { op: "local.get", index: R_ANY },
+                                { op: "ref.cast", typeIdx: anyValueTypeIdx },
+                                { op: "struct.get", typeIdx: anyValueTypeIdx, fieldIdx: 1 },
+                                { op: "f64.convert_i32_s" },
+                              ],
+                              else: [
+                                { op: "local.get", index: R_ANY },
+                                { op: "ref.cast", typeIdx: anyValueTypeIdx },
+                                { op: "struct.get", typeIdx: anyValueTypeIdx, fieldIdx: 2 },
+                              ],
+                            },
+                            { op: "call", funcIdx: numToStrIdx },
+                          ],
+                          else: [
+                            // tag 4 = boolean
+                            { op: "local.get", index: R_TAG },
+                            { op: "i32.const", value: 4 },
+                            { op: "i32.eq" },
+                            {
+                              op: "if",
+                              blockType: { kind: "val", type: externref },
+                              then: [
+                                { op: "local.get", index: R_ANY },
+                                { op: "ref.cast", typeIdx: anyValueTypeIdx },
+                                { op: "struct.get", typeIdx: anyValueTypeIdx, fieldIdx: 1 },
+                                {
+                                  op: "if",
+                                  blockType: { kind: "val", type: externref },
+                                  then: strConst("true"),
+                                  else: strConst("false"),
+                                },
+                              ],
+                              else: [
+                                // tag 5 = string; tag 0 = null; tag 1 =
+                                // undefined (invalid JSON, rejected below).
+                                { op: "local.get", index: R_TAG },
+                                { op: "i32.const", value: 5 },
+                                { op: "i32.eq" },
+                                {
+                                  op: "if",
+                                  blockType: { kind: "val", type: externref },
+                                  then: [
+                                    // Generic externref boxing also uses tag 5
+                                    // for native number/boolean boxes. Peel
+                                    // those before treating the payload as a
+                                    // string; this mirrors the established
+                                    // AnyValue ToString ABI without depending
+                                    // on helper-emission order.
+                                    { op: "local.get", index: R_ANY },
+                                    { op: "ref.cast", typeIdx: anyValueTypeIdx },
+                                    { op: "struct.get", typeIdx: anyValueTypeIdx, fieldIdx: 4 },
+                                    { op: "local.tee", index: R_PAYLOAD },
+                                    { op: "any.convert_extern" },
+                                    { op: "local.tee", index: R_ANY },
+                                    { op: "ref.test", typeIdx: anyStrTypeIdx },
+                                    {
+                                      op: "if",
+                                      blockType: { kind: "val", type: externref },
+                                      then: [{ op: "local.get", index: R_PAYLOAD }],
+                                      else: [
+                                        { op: "local.get", index: R_ANY },
+                                        { op: "ref.test", typeIdx: boxNumTypeIdx },
+                                        // (#3673) …or an i31-boxed small int.
+                                        { op: "local.get", index: R_ANY },
+                                        { op: "ref.test", typeIdx: -20 },
+                                        { op: "i32.or" },
+                                        {
+                                          op: "if",
+                                          blockType: { kind: "val", type: externref },
+                                          then: [
+                                            { op: "local.get", index: R_ANY },
+                                            { op: "ref.test", typeIdx: -20 },
+                                            {
+                                              op: "if",
+                                              blockType: { kind: "val", type: { kind: "f64" } },
+                                              then: [
+                                                { op: "local.get", index: R_ANY },
+                                                { op: "ref.cast", typeIdx: -20 },
+                                                { op: "i31.get_s" },
+                                                { op: "f64.convert_i32_s" },
+                                              ],
+                                              else: [
+                                                { op: "local.get", index: R_ANY },
+                                                { op: "ref.cast", typeIdx: boxNumTypeIdx },
+                                                { op: "struct.get", typeIdx: boxNumTypeIdx, fieldIdx: 0 },
+                                              ],
+                                            },
+                                            { op: "call", funcIdx: numToStrIdx },
+                                          ],
+                                          else: [
+                                            { op: "local.get", index: R_ANY },
+                                            { op: "ref.test", typeIdx: boxBoolTypeIdx },
+                                            {
+                                              op: "if",
+                                              blockType: { kind: "val", type: externref },
+                                              then: [
+                                                { op: "local.get", index: R_ANY },
+                                                { op: "ref.cast", typeIdx: boxBoolTypeIdx },
+                                                { op: "struct.get", typeIdx: boxBoolTypeIdx, fieldIdx: 0 },
+                                                {
+                                                  op: "if",
+                                                  blockType: { kind: "val", type: externref },
+                                                  then: strConst("true"),
+                                                  else: strConst("false"),
+                                                },
+                                              ],
+                                              else: strConst("[object Object]"),
+                                            },
+                                          ],
+                                        },
+                                      ],
+                                    },
+                                  ],
+                                  else: [
+                                    { op: "local.get", index: R_TAG },
+                                    { op: "i32.eqz" },
+                                    {
+                                      op: "if",
+                                      blockType: { kind: "val", type: externref },
+                                      then: strConst("null"),
+                                      else: [
+                                        { op: "local.get", index: R_TAG },
+                                        { op: "i32.const", value: 1 },
+                                        { op: "i32.eq" },
+                                        {
+                                          op: "if",
+                                          blockType: { kind: "val", type: externref },
+                                          then: strConst("undefined"),
+                                          else: strConst("[object Object]"),
+                                        },
+                                      ],
+                                    },
+                                  ],
+                                },
+                              ],
+                            },
+                          ],
+                        },
+                      ],
+                      else: strConst("[object Object]"),
+                    },
+                  ],
                 },
               ],
             },
@@ -2781,91 +3248,36 @@ export function emitJsonRawJson(ctx: CodegenContext): number {
       ],
     },
     { op: "local.set", index: R_STR },
-    // flat = flatten(str)
-    { op: "local.get", index: R_STR },
-    { op: "any.convert_extern" },
-    { op: "ref.cast", typeIdx: anyStrTypeIdx },
-    { op: "call", funcIdx: flattenIdx },
-    { op: "ref.cast", typeIdx: strTypeIdx },
-    { op: "local.set", index: R_FLAT },
-    { op: "local.get", index: R_FLAT },
-    { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 }, // len
-    { op: "local.set", index: R_LEN },
-    { op: "local.get", index: R_FLAT },
-    { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 2 }, // data
-    { op: "local.set", index: R_DATA },
-    { op: "local.get", index: R_FLAT },
-    { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 1 }, // off
-    { op: "local.set", index: R_OFF },
-    // empty string → SyntaxError
-    { op: "local.get", index: R_LEN },
-    { op: "i32.eqz" },
-    { op: "if", blockType: { kind: "empty" }, then: throwSyntaxError("Unexpected end of JSON input in rawJSON") },
-    // leading whitespace → SyntaxError
-    ...isWs(loadFirst),
-    { op: "if", blockType: { kind: "empty" }, then: throwSyntaxError("Unexpected whitespace in rawJSON") },
-    // trailing whitespace → SyntaxError
-    ...isWs(loadLast),
-    { op: "if", blockType: { kind: "empty" }, then: throwSyntaxError("Unexpected whitespace in rawJSON") },
-    // parse (throws on invalid grammar / trailing non-ws)
-    { op: "local.get", index: R_STR },
-    { op: "call", funcIdx: parseTextIdx },
-    { op: "local.set", index: R_RES },
-    // reject Object / Array (rawJSON wraps only primitives)
-    { op: "local.get", index: R_RES },
-    { op: "ref.test", typeIdx: rt.objectTypeIdx },
-    { op: "if", blockType: { kind: "empty" }, then: throwSyntaxError("rawJSON does not accept an object") },
-    { op: "local.get", index: R_RES },
-    { op: "ref.test", typeIdx: rt.objVecTypeIdx },
-    { op: "if", blockType: { kind: "empty" }, then: throwSyntaxError("rawJSON does not accept an array") },
-    // obj = new plain object
-    { op: "call", funcIdx: newObjIdx },
-    { op: "local.set", index: R_OBJ },
-    // obj["rawJSON"] = s
-    { op: "local.get", index: R_OBJ },
-    ...((): Instr[] => {
-      addStringConstantGlobal(ctx, "rawJSON");
-      return stringConstantExternrefInstrs(ctx, "rawJSON");
-    })(),
-    { op: "local.get", index: R_STR },
-    { op: "call", funcIdx: externSetIdx },
-    // set the [[IsRawJSON]] internal-slot bit on $Object.flags (field 4).
-    // Cast the carrier to `ref $Object` ONCE into R_O, then read/write flags.
-    { op: "local.get", index: R_OBJ },
-    { op: "any.convert_extern" },
-    { op: "ref.cast", typeIdx: rt.objectTypeIdx },
-    { op: "local.set", index: R_O },
-    { op: "local.get", index: R_O },
-    { op: "local.get", index: R_O },
-    { op: "struct.get", typeIdx: rt.objectTypeIdx, fieldIdx: 4 },
-    { op: "i32.const", value: OBJ_FLAG_RAWJSON },
-    { op: "i32.or" },
-    { op: "struct.set", typeIdx: rt.objectTypeIdx, fieldIdx: 4 },
-    { op: "local.get", index: R_OBJ },
+    ...buildRawJsonValidationAndCarrier(ctx, {
+      rawStringLocal: R_STR,
+      flatLocal: R_FLAT,
+      lengthLocal: R_LEN,
+      dataLocal: R_DATA,
+      offsetLocal: R_OFF,
+      resultLocal: R_RES,
+      objectLocal: R_OBJ,
+      objectRefLocal: R_O,
+      strTypeIdx,
+      strDataTypeIdx,
+      anyStrTypeIdx,
+      objectTypeIdx: rt.objectTypeIdx,
+      objVecTypeIdx: rt.objVecTypeIdx,
+      flattenIdx,
+      parseTextIdx,
+      newObjectIdx: newObjIdx,
+      externSetIdx,
+    }),
   ];
 
-  const typeIdx = addFuncType(ctx, [externref], [externref]);
-  const funcIdx = mintDefinedFunc(ctx);
-  ctx.funcMap.set("__json_rawjson", funcIdx);
-  pushDefinedFunc(ctx, funcIdx, {
-    name: "__json_rawjson",
-    typeIdx,
-    locals: [
-      { count: 1, type: strRefNative }, // R_FLAT
-      { count: 1, type: i32 }, // R_LEN
-      { count: 1, type: strDataRef }, // R_DATA
-      { count: 1, type: i32 }, // R_OFF
-      { count: 1, type: i32 }, // R_C
-      { count: 1, type: anyref }, // R_RES
-      { count: 1, type: externref }, // R_OBJ
-      { count: 1, type: objRef }, // R_O
-      { count: 1, type: externref }, // R_STR
-      { count: 1, type: anyref }, // R_ANY
-    ],
+  return registerRawJsonFunction(ctx, {
     body,
-    exported: false,
-  } as unknown as (typeof ctx.mod.functions)[number]);
-  return funcIdx;
+    strRefNative,
+    i32,
+    strDataRef,
+    anyref,
+    externref,
+    objectRef: objRef,
+  });
 }
 
 /**

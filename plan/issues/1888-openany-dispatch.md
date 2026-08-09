@@ -1,7 +1,7 @@
 ---
 id: 1888
 title: "standalone open-any method dispatch + built-ins-as-static-globals (prototype vtable)"
-status: done
+status: ready
 pr: 1273
 created: 2026-06-05
 updated: 2026-06-11
@@ -13,12 +13,14 @@ task_type: feat
 area: codegen, runtime
 language_feature: objects, prototype chain, method dispatch, built-ins
 goal: host-independence
-sprint: 61
+sprint: current
 related: [1472, 2177, 1629, 1104, 1539, 1103]
 parent: 1472
 claimed_by: codex-developer
 claimed_at: 2026-06-07T10:22:55.064Z
 completed: 2026-06-11
+loc-budget-allow:
+  - src/codegen/array-prototype-borrow.ts
 ---
 # #1888 — Standalone open-any method dispatch + built-ins-as-static-globals
 
@@ -983,3 +985,7 @@ Validation:
 
 PR #1273 remains the review vehicle; status stays `in-review` until the PR
 status poller marks it done after merge.
+
+## Reopened 2026-07-20 (stale false-done review)
+
+Marked `done` but live test262 shows: BigUint64Array built-in static property value read still unsupported (standalone). Reopened as `ready`. See #3474 (done-status integrity).

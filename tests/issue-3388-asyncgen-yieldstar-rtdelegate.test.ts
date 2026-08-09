@@ -35,6 +35,11 @@ async function instantiate(src: string, target: "wasi" | "standalone" = "wasi"):
 }
 
 /** Drive one outer next(), drain microtasks, read the settled IteratorResult. */
+// (#3178) The DONE result's `value` field now carries the canonical undefined
+// singleton (spec: a completed IteratorResult's value IS undefined), so the
+// f64 reader probe reports ToNumber(undefined) = NaN — the same convention the
+// #2979 sentinel producer established for exhausted sync-gen reads. The old
+// `0` came from the pre-#3178 null-externref rep.
 function step(ex: GenExports, stem: string, frame: unknown): { done: number; value: number } {
   const p = ex[`__async_gen_next_${stem}`](frame);
   ex.__drain_microtasks(frame);
@@ -61,7 +66,7 @@ describe("#3388 — async-gen yield* runtime delegation (standalone, host-free)"
       { done: 0, value: 11 },
       { done: 0, value: 22 },
       { done: 0, value: 33 },
-      { done: 1, value: 0 },
+      { done: 1, value: NaN },
     ]);
   });
 
@@ -81,7 +86,7 @@ describe("#3388 — async-gen yield* runtime delegation (standalone, host-free)"
       { done: 0, value: 2 },
       { done: 0, value: 3 },
       { done: 0, value: 4 },
-      { done: 1, value: 0 },
+      { done: 1, value: NaN },
     ]);
   });
 
@@ -96,7 +101,7 @@ describe("#3388 — async-gen yield* runtime delegation (standalone, host-free)"
     expect([step(ex, "g", f), step(ex, "g", f), step(ex, "g", f)]).toEqual([
       { done: 0, value: 7 },
       { done: 0, value: 8 },
-      { done: 1, value: 0 },
+      { done: 1, value: NaN },
     ]);
   });
 
@@ -119,7 +124,7 @@ describe("#3388 — async-gen yield* runtime delegation (standalone, host-free)"
       }
     `);
     const f = ex.g();
-    expect(step(ex, "g", f)).toEqual({ done: 1, value: 0 });
+    expect(step(ex, "g", f)).toEqual({ done: 1, value: NaN });
   });
 });
 

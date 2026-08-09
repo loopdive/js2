@@ -68,12 +68,55 @@ describe("#1907 standalone built-in static method value reads", () => {
     expect(value).toBe(2);
   });
 
-  it("unsupported built-in static method value reads fail loud with #1907", async () => {
-    const result = await compile(`export function run(): number { const max = Math.max; return max(1, 2); }`, {
-      target: "standalone",
-    });
-    expect(result.success).toBe(false);
-    expect(result.errors.map((e) => e.message).join("\n")).toMatch(/#1907|#1888 S6-b/);
+  // #2984 moved the "fail loud" boundary: an unsupported built-in static method
+  // value read no longer hard-refuses at COMPILE time — it reifies as a
+  // runtime-refusal closure that fails loud (a catchable throw) only when CALLED,
+  // and never leaks `__get_builtin`. (This test previously used `Math.max`, which
+  // #2933 later implemented natively; `Object.seal` has no standalone native body
+  // yet, so it exercises the generic-throw-body path.)
+  it("unsupported built-in static method value reads reify host-free and fail loud when called (#1907 / #2984)", async () => {
+    const result = await compile(
+      `export function run(): number { const seal: any = Object.seal; seal({}); return 1; }`,
+      {
+        target: "standalone",
+      },
+    );
+    expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
     assertNoBannedImports(result.imports);
+    expect(WebAssembly.validate(result.binary), "module must validate").toBe(true);
+    const { instance } = await WebAssembly.instantiate(result.binary, {});
+    expect(() => (instance.exports as { run: () => number }).run()).toThrow();
   });
+
+  // #1907 reopened (2026-07-20): after #838 landed BigInt64Array / BigUint64Array
+  // as typed arrays, their `<View>.prototype` VALUE read still refused-loud
+  // (`#1907 / #1888 S6-b`) — the two bigint views were excluded from the wired
+  // `<View>.prototype` glue. They inherit the same `%TypedArray%.prototype` member
+  // set (ECMA-262 §23.2), so the value read now resolves host-free like the 9
+  // non-bigint views.
+  it.each(["BigInt64Array", "BigUint64Array"])(
+    "reads %s.prototype as a value without __get_builtin (#1907 reopened)",
+    async (view) => {
+      const value = await runStandalone(`
+        export function run(): number {
+          const p: any = ${view}.prototype;
+          return p ? 1 : 0;
+        }
+      `);
+      expect(value).toBe(1);
+    },
+  );
+
+  it.each(["BigInt64Array", "BigUint64Array"])(
+    "%s.prototype method value read folds arity like the non-bigint views",
+    async (view) => {
+      const value = await runStandalone(`
+        export function run(): number {
+          const n: any = ${view}.prototype.map.length;
+          return n;
+        }
+      `);
+      expect(value).toBe(1);
+    },
+  );
 });

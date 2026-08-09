@@ -1,8 +1,7 @@
 ---
 id: 2001
 title: "sparse arrays: holes materialize as element-type defaults and HOFs visit them — [1,,3].forEach runs 3×, b[5]=9 join shows zeros"
-status: in-progress
-assignee: ttraenkler/fable-2773t
+status: ready
 sprint: current
 created: 2026-06-10
 updated: 2026-07-09

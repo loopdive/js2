@@ -3,7 +3,7 @@ id: 2793
 title: "[ARCH][SUBSTRATE] Structural-narrowing struct COPY at call boundary breaks reference semantics (mutation through interface/structural-class param lost)"
 status: blocked
 blocked_reason: "Senior-dev investigation (2026-06-28): no safe localized patch — needs phased substrate work (Gap A anon-literal field order → interfaces-as-externref everywhere → class-structural sibling detection). Routed to architect lane. See '## Senior-dev investigation & design recommendation'."
-sprint: current
+sprint: Backlog
 created: 2026-06-28
 updated: 2026-06-28
 priority: medium

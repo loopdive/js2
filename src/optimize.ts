@@ -124,6 +124,8 @@ export interface OptimizeOptions {
   referenceTypes?: boolean;
   /** Enable exception handling (default: true) */
   exceptionHandling?: boolean;
+  /** Preserve function names in the optimized binary for profiling. */
+  preserveNames?: boolean;
 }
 
 /** Result of {@link optimizeBinaryAsync}. */
@@ -201,6 +203,7 @@ export async function optimizeBinaryAsync(binary: Uint8Array, options: OptimizeO
   const gc = options.gc !== false;
   const referenceTypes = options.referenceTypes !== false;
   const exceptionHandling = options.exceptionHandling !== false;
+  const preserveNames = options.preserveNames === true;
 
   // The original binary is presumed valid (it came straight from codegen and
   // is validated by every caller's test harness). If it doesn't validate we
@@ -210,7 +213,7 @@ export async function optimizeBinaryAsync(binary: Uint8Array, options: OptimizeO
 
   // 1. System / bundled wasm-opt CLI — the correct backend (#1941).
   try {
-    const result = optimizeWithSystemBinary(binary, level, gc, referenceTypes, exceptionHandling);
+    const result = optimizeWithSystemBinary(binary, level, gc, referenceTypes, exceptionHandling, preserveNames);
     if (result && result.optimized) {
       if (optimizedBinaryValidates(result.binary)) return result;
       // CLI produced an invalid binary — do not ship it. Fall through to the
@@ -230,7 +233,15 @@ export async function optimizeBinaryAsync(binary: Uint8Array, options: OptimizeO
   try {
     const binaryen = await getBinaryenModule();
     if (binaryen) {
-      const result = optimizeWithBinaryenModule(binaryen, binary, level, gc, referenceTypes, exceptionHandling);
+      const result = optimizeWithBinaryenModule(
+        binaryen,
+        binary,
+        level,
+        gc,
+        referenceTypes,
+        exceptionHandling,
+        preserveNames,
+      );
       if (result && result.optimized) {
         if (optimizedBinaryValidates(result.binary)) return result;
         // Module miscompiled (the #1941 case). Discard — return the original
@@ -307,6 +318,7 @@ function optimizeWithBinaryenModule(
   gc: boolean,
   referenceTypes: boolean,
   exceptionHandling: boolean,
+  preserveNames: boolean,
 ): OptimizeResult | null {
   const featureFlags = binaryen.Features ?? binaryen.features;
   if (!featureFlags) return null;
@@ -323,6 +335,7 @@ function optimizeWithBinaryenModule(
     const previousOptimizeLevel =
       typeof binaryen.getOptimizeLevel === "function" ? binaryen.getOptimizeLevel() : undefined;
     const previousShrinkLevel = typeof binaryen.getShrinkLevel === "function" ? binaryen.getShrinkLevel() : undefined;
+    const previousDebugInfo = typeof binaryen.getDebugInfo === "function" ? binaryen.getDebugInfo() : undefined;
 
     // Set features on the module. #1580: enable the full superset js2wasm
     // can emit so wasm-opt doesn't bail on saturating-float-to-int,
@@ -374,6 +387,9 @@ function optimizeWithBinaryenModule(
     if (typeof binaryen.setShrinkLevel === "function") {
       binaryen.setShrinkLevel(level >= 4 ? 1 : 0);
     }
+    if (preserveNames && typeof binaryen.setDebugInfo === "function") {
+      binaryen.setDebugInfo(true);
+    }
 
     try {
       // Run optimization
@@ -385,6 +401,9 @@ function optimizeWithBinaryenModule(
       }
       if (typeof binaryen.setShrinkLevel === "function" && previousShrinkLevel !== undefined) {
         binaryen.setShrinkLevel(previousShrinkLevel);
+      }
+      if (typeof binaryen.setDebugInfo === "function" && previousDebugInfo !== undefined) {
+        binaryen.setDebugInfo(previousDebugInfo);
       }
     }
 
@@ -401,6 +420,7 @@ function optimizeWithSystemBinary(
   gc: boolean,
   referenceTypes: boolean,
   exceptionHandling: boolean,
+  preserveNames: boolean,
 ): OptimizeResult | null {
   const n = getNodeImportsSync();
   if (!n) return null; // Not in Node.js environment (browser)
@@ -489,6 +509,7 @@ function optimizeWithSystemBinary(
       "--all-features",
       "--disable-custom-descriptors",
     ];
+    if (preserveNames) args.push("-g");
     void gc;
     void referenceTypes;
     void exceptionHandling;

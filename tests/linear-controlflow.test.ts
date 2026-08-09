@@ -472,37 +472,16 @@ describe("linear-controlflow: NaN truthiness (#1937)", () => {
 // ── #1937: fail-loud dispatchers ─────────────────────────────────────────
 
 describe("linear-controlflow: unsupported constructs fail loud (#1937)", () => {
+  // (#2952 slice 3) "labeled break" moved OUT of this list: the IR path now
+  // claims labeled loops and lowers `br.label` to core-Wasm `br`
+  // (backend-identical), so the linear target compiles and runs it — see the
+  // positive test after this block.
   const unsupportedStatements: [name: string, source: string][] = [
-    [
-      "labeled break",
-      `export function test(): number {
-        outer: for (let i = 0; i < 3; i = i + 1) {
-          for (let j = 0; j < 3; j = j + 1) {
-            break outer;
-          }
-        }
-        return 0;
-      }`,
-    ],
     [
       "throw",
       `export function test(x: number): number {
         if (x < 0) throw new Error("negative");
         return x;
-      }`,
-    ],
-    [
-      "switch case fall-through from non-empty body",
-      `export function test(n: number): number {
-        let r: number = 0;
-        switch (n) {
-          case 0:
-            r = r + 1;
-          case 1:
-            r = r + 10;
-            break;
-        }
-        return r;
       }`,
     ],
     [
@@ -527,6 +506,41 @@ describe("linear-controlflow: unsupported constructs fail loud (#1937)", () => {
     // At least one diagnostic must carry a real source position (#1937
     // threads getLineAndCharacterOfPosition into linear diagnostics).
     expect(errors.some((e) => e.line > 0)).toBe(true);
+  });
+
+  it("switch fallthrough from a non-empty body now compiles and runs on linear (#2952 slice 4)", async () => {
+    const e = await compileLinear(`
+      export function test(n: number): number {
+        let r: number = 0;
+        switch (n) {
+          case 0:
+            r = r + 1;
+          case 1:
+            r = r + 10;
+            break;
+        }
+        return r;
+      }
+    `);
+    expect(e.test(0)).toBe(11); // case 0 falls into case 1
+    expect(e.test(1)).toBe(10);
+    expect(e.test(2)).toBe(0);
+  });
+
+  it("labeled break now compiles and runs on linear (#2952 slice 3)", async () => {
+    const e = await compileLinear(`
+      export function test(): number {
+        let n: number = 0;
+        outer: for (let i = 0; i < 3; i = i + 1) {
+          for (let j = 0; j < 3; j = j + 1) {
+            if (i === 1) { break outer; }
+            n = n + 1;
+          }
+        }
+        return n;
+      }
+    `);
+    expect(e.test()).toBe(3); // i=0 counts j=0..2, i=1 breaks out immediately
   });
 
   it("dynamic typeof (unsupported expression) fails loud with a located message", async () => {

@@ -2,12 +2,10 @@
 id: 1373b
 title: "IR async Phase C: CPS lowering for await + async-return + async-throw"
 status: in-progress
-assignee: ttraenkler/fable-4
 created: 2026-05-09
-updated: 2026-07-18
+updated: 2026-08-03
 priority: top
 feasibility: hard
-model: fable
 reasoning_effort: max
 task_type: feature
 area: ir, codegen
@@ -15,6 +13,9 @@ language_feature: async
 goal: ir-full-coverage
 sprint: Backlog
 depends_on: [1326c]
+required_by: [2570]
+assignee: ttraenkler/fable-4
+model: fable
 note: "Verified 2026-05-21: src/codegen/async-scheduler.ts exists; src/codegen/async-cps.ts does NOT exist yet (still pending #1042 introducing it). async-cluster-architect-spec.md exists. Unblocked 2026-06-16 (se1): sole dependency #1326c flipped done — Phase 1C microtask queue + chained .then landed on main."
 reconcile_note: "2026-06-24 (PO reconcile vs upstream/main): DEFERRED EPIC, NOT dev-claimable this sprint. Commit 79dad304f ('docs(#55/#1373b): re-ground verdict — genuine EPIC, deferral correct') + 3897722bf de-prioritised CPS off top. The CPS gate-flip is blocked on the synchronous-consumption-contract architecture wall (larger than one sprint). Same epic as #1042. → backlog (was ready, but no landable slice)."
 loc-budget-allow:
@@ -24,11 +25,66 @@ loc-budget-allow:
   - src/ir/select.ts
   - src/ir/from-ast.ts
   - src/ir/builder.ts
+  - src/ir/async-plan.ts
+  - src/ir/index.ts
   - src/ir/integration.ts
   - src/codegen/index.ts
   - src/codegen/context/types.ts
+  - tests/ir/issue-1373b-async-plan.test.ts
 ---
 # #1373b — IR async Phase C: CPS lowering
+
+## Update — playground free async family complete (2026-08-03)
+
+#4102, #4104, #4106, #4110, and #4124 now prepare the complete playground
+free-function chain `delay -> fetchUser -> {fetchAllSequential,
+fetchAllParallel} -> main`. The bounded host census is 37/37 IR bodies, 30
+legacy bodies, zero Unsupported, and zero Invariant outcomes. The reconciled
+fallback gate retires its preliminary `async-function` count from four to
+zero, and an active direct-body poison shadow proves the migrated family does
+not execute the legacy async body compiler.
+
+#4124 generalizes the AST-free plan/frame consumer to five-state counted-loop
+and three-state/two-suspension graphs with typed spill updates, exact
+per-suspension restores, semantic clock/concat/number-format/log providers,
+and canonical Promise<void> settlement. Runtime and WAT parity cover both
+rejection edges and every retained optimization.
+
+This does not close the broader async epic. Async methods, closures, function
+expressions/arrows, `for await`, async generators, `yield*`, standalone/WASI
+prepared consumers, and final deletion of AST planners/activation hooks remain
+owned by #3527 and the remaining-body checklist in #4124.
+
+## Update — AST-free plan/Promise ABI foundation (2026-08-02)
+
+The strict R0 production ledger was re-measured on `origin/main` at
+`b310b3b3c5e`: 5/5 playground entries produced 37 terminal units, 33 IR
+bodies, 35 legacy bodies, and exactly four typed async blockers in
+`website/playground/examples/js/async.ts`:
+
+- `fetchAllParallel` — `select/body-shape-rejected`;
+- `fetchAllSequential` — `select/call-graph-closure`;
+- `fetchUser` and `main` — `select/async-function`.
+
+These are three distinct production populations, so widening or relabeling a
+selector cannot safely close them. This bounded foundation adds
+`src/ir/async-plan.ts`: one immutable, target-neutral `IrAsyncPlan` contract
+with canonical Promise-only ABI, semantic Promise/scheduler intents, explicit
+suspend/resume/rejection-handler edges, typed frame spills, deterministic
+serialization/content hashing, and a fail-closed graph/liveness/purity
+verifier. It rejects AST/checker/codegen callbacks, raw Wasm, target/backend
+selection, concrete Wasm indices, raw-value-or-Promise ABI, bad edges, and
+under/over-reported suspension liveness.
+
+This slice intentionally changes no selector, async activation, planner,
+frame, scheduler, import manifest, or production route. Anti-vacuity tests pin
+the exact four typed outcomes and execute the existing two-suspension frame
+engine, while hand-built plan tests cover two suspends, a branch/back-edge,
+handler routing, exact liveness, target-independent hashes, and malformed-plan
+negative controls. The next critical-path slice is to produce this plan from a
+Prepared async free-function unit and adapt the existing frame engine to
+consume it; it must not build a second suspension engine or revive C-1's
+consumer-sensitive raw-`T` ABI.
 
 ## Implementation Plan (AUTHORITATIVE — re-grounded 2026-07-18, fable-4, fable-final sprint)
 

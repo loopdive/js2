@@ -14,6 +14,8 @@ import { emitNativeParseNumber } from "./parse-number-native.js";
 import { addFuncType } from "./registry/types.js";
 import { addStringImportsDelegate, registerEnsureAnyHelpers } from "./shared.js";
 import { registerAnyBoxHelpers, registerAnyUnboxHelpers } from "./any-boxing-helpers.js";
+import { registerAnyEqHelpers } from "./any-eq-helpers.js";
+import { buildFastStrictEqDispatch } from "./extern-eq-fast.js";
 
 /**
  * Register the $AnyValue struct type for boxing `any` typed values.
@@ -69,6 +71,20 @@ export function ensureAnyValueType(ctx: CodegenContext): void {
     });
     ctx.undefinedGlobalIdx = globalIdx;
   }
+}
+
+/**
+ * Resolve the one physical carrier used by prepared IR `dynamic` values.
+ *
+ * Program-ABI planning records this exact type symbolically. Legacy allocation
+ * sites that reserve a callable before IR preparation must use the same
+ * contract rather than re-inferring an implicit `any` parameter from a paired
+ * accessor signature (which can narrow it to string, for example).
+ */
+export function resolveIrDynamicCarrierType(ctx: CodegenContext): ValType {
+  if (!ctx.fast) return { kind: "externref" };
+  ensureAnyValueType(ctx);
+  return { kind: "ref_null", typeIdx: ctx.anyValueTypeIdx };
 }
 
 /**
@@ -508,6 +524,27 @@ export function ensureAnyFromExternHelper(ctx: CodegenContext, opts?: { forceHon
         { op: "return" },
       ],
     },
+    // (#3673) i31-boxed small int → tag-3 (f64) number classification, so
+    // every downstream tag consumer (__any_add / __any_eq / __any_to_f64)
+    // sees it as an ordinary number.
+    { op: "local.get", index: 1 },
+    { op: "ref.test", typeIdx: -20 },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "i32.const", value: 3 },
+        { op: "i32.const", value: 0 },
+        { op: "local.get", index: 1 },
+        { op: "ref.cast", typeIdx: -20 },
+        { op: "i31.get_s" },
+        { op: "f64.convert_i32_s" },
+        { op: "ref.null", typeIdx: EQ_HEAP_TYPE },
+        { op: "ref.null.extern" },
+        { op: "struct.new", typeIdx: anyTypeIdx },
+        { op: "return" },
+      ],
+    },
     { op: "local.get", index: 1 },
     { op: "ref.test", typeIdx: ctx.nativeBoxBooleanTypeIdx },
     {
@@ -568,6 +605,11 @@ export function ensureExternStrictEqHelper(ctx: CodegenContext): number | undefi
   );
   const funcIdx = mintDefinedFunc(ctx);
   const EQ_HEAP_TYPE = -19; // WasmGC `eq` abstract heap type
+  // (#4173) Fast tag-pair dispatch for the identity-MISS path — flag-gated
+  // (`ctx.fastStrictEq`, default ON), built in extern-eq-fast.ts. `[]` when
+  // the fast path cannot be built (flag off / missing box types / strings
+  // present without a native `__str_equals`).
+  const fastDispatch = buildFastStrictEqDispatch(ctx);
   const body: Instr[] = [
     // (#2734) Object/reference-identity fast path. `__any_from_extern` has no
     // dedicated Object tag — it folds an object externref into the tag-5 (string)
@@ -631,6 +673,10 @@ export function ensureExternStrictEqHelper(ctx: CodegenContext): number | undefi
                 ]
               : [{ op: "i32.const", value: 1 }, { op: "return" }],
         },
+        // (#4173) identity MISSED and both sides are eq-refs — the fast
+        // tag-pair dispatch (see canFastDispatch above) decides every
+        // non-$AnyValue pairing right here, alloc- and call-free.
+        ...fastDispatch,
       ],
     },
     // (#3173) $BigInt-box arm: two DISTINCT bigint boxes with the same i64
@@ -684,6 +730,45 @@ export function ensureExternStrictEqHelper(ctx: CodegenContext): number | undefi
     exported: false,
   });
   ctx.funcMap.set("__extern_strict_eq", funcIdx);
+  return funcIdx;
+}
+
+/**
+ * Native standalone `(externref, externref) -> i32` loose equality. Each
+ * carrier is classified by the shared externref-to-AnyValue helper and the
+ * existing `__any_eq` body owns the complete IsLooselyEqual dispatch.
+ */
+export function ensureExternLooseEqHelper(ctx: CodegenContext): number | undefined {
+  if (!(ctx.standalone || ctx.wasi)) return undefined;
+  const existing = ctx.funcMap.get("__extern_loose_eq");
+  if (existing !== undefined) return existing;
+  const fromExternIdx = ensureAnyFromExternHelper(ctx);
+  ensureAnyHelpers(ctx);
+  const anyEqIdx = ctx.funcMap.get("__any_eq");
+  if (fromExternIdx === undefined || anyEqIdx === undefined) return undefined;
+
+  const typeIdx = addFuncType(
+    ctx,
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "i32" }],
+    "__extern_loose_eq",
+  );
+  const funcIdx = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: "__extern_loose_eq",
+    typeIdx,
+    locals: [],
+    body: [
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: fromExternIdx },
+      { op: "local.get", index: 1 },
+      { op: "call", funcIdx: fromExternIdx },
+      { op: "call", funcIdx: anyEqIdx },
+    ],
+    exported: false,
+  });
+  ctx.funcMap.set("__extern_loose_eq", funcIdx);
+  ctx.anyHelpers.set("__extern_loose_eq", funcIdx);
   return funcIdx;
 }
 
@@ -837,6 +922,41 @@ export function ensureAnyToExternHelper(ctx: CodegenContext): number | undefined
         { op: "return" },
       ],
     },
+    // A genuine native string payload is safe to unwrap. Generic externref
+    // boxing recreates exactly the same tag-5 string box on the next any-typed
+    // operation. Keeping the whole box here instead creates a nested tag-5
+    // carrier; a second `+` then classifies the inner `$AnyValue` as an object
+    // (`let s = ""; s += "a"; s += "b"` became NaN in the standalone
+    // interpreter). The runtime type test is essential because field 4 is also
+    // used by legacy tag-5 boxes for numbers, booleans, null, and opaque refs.
+    ...((ctx.anyStrTypeIdx >= 0
+      ? [
+          { op: "local.get", index: 1 },
+          { op: "i32.const", value: 5 },
+          { op: "i32.eq" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 0 },
+              { op: "ref.as_non_null" },
+              { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
+              { op: "any.convert_extern" },
+              { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "local.get", index: 0 },
+                  { op: "ref.as_non_null" },
+                  { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
+                  { op: "return" },
+                ],
+              },
+            ],
+          },
+        ]
+      : []) satisfies Instr[]),
     // (#2106 S1) Under the `undefinedSingleton` regime tag 0 (null) unwraps to
     // its canonical externref-plane representation `ref.null.extern` — and the
     // round-trip is SAFE there because `__any_from_extern`'s null arm boxes
@@ -854,17 +974,17 @@ export function ensureAnyToExternHelper(ctx: CodegenContext): number | undefined
           },
         ]
       : []) satisfies Instr[]),
-    // Tags 0 (null), 1 (undefined), 5 (string), 6 (GC ref): keep the WHOLE
-    // $AnyValue box wrapped via extern.convert_any. Standalone/WASI has no host
-    // that needs unwrapped values, and __any_from_extern recovers the wrapped
-    // box exactly via its `ref.test $AnyValue` arm — preserving the tag and
-    // reference identity. Unwrapping these here was NOT round-trip-safe (in the
-    // legacy regime; see the S1 arm above for the flagged tag-0 exception):
+    // Tags 0 (null), 1 (undefined), non-string-overloaded 5, and 6 (GC ref):
+    // keep the WHOLE $AnyValue box wrapped via extern.convert_any.
+    // Standalone/WASI has no host that needs unwrapped values, and
+    // __any_from_extern recovers the wrapped box exactly via its `ref.test
+    // $AnyValue` arm — preserving the tag and reference identity. Unwrapping
+    // these here is NOT round-trip-safe (see the S1 and guarded-string arms):
     //   - tag 0 came back as tag 1 (null → undefined across every boundary),
     //   - tag 6 (raw struct) was mis-tagged as tag 5 (string) by the
     //     __any_from_extern fallback.
-    // Only the numeric/boolean carriers (tags 2/3/4 above) are unwrapped into
-    // __box_number / __box_boolean — the NaN/number fix this helper exists for.
+    // Numeric/boolean carriers (tags 2/3/4) and proven native strings are the
+    // only values unwrapped; every other carrier takes this wrapped tail.
     { op: "local.get", index: 0 },
     { op: "ref.as_non_null" },
     { op: "extern.convert_any" },
@@ -1239,47 +1359,58 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
                           blockType: { kind: "val", type: { kind: "f64" } },
                           then: [{ op: "f64.const", value: NaN }],
                           else: [
+                            // (#3673) i31-boxed small int externval → value.
                             { op: "local.get", index: 2 },
-                            { op: "ref.test", typeIdx: ctx.nativeBoxNumberTypeIdx },
+                            { op: "ref.test", typeIdx: -20 },
                             {
                               op: "if",
                               blockType: { kind: "val", type: { kind: "f64" } },
                               then: [
                                 { op: "local.get", index: 2 },
-                                { op: "ref.cast", typeIdx: ctx.nativeBoxNumberTypeIdx },
-                                { op: "struct.get", typeIdx: ctx.nativeBoxNumberTypeIdx, fieldIdx: 0 },
+                                { op: "ref.cast", typeIdx: -20 },
+                                { op: "i31.get_s" },
+                                { op: "f64.convert_i32_s" },
                               ],
-                              else:
-                                // (#2966) $BoxedBoolean recovery, symmetric with the
-                                // $BoxedNumber arm above: a boolean crossing the
-                                // open-any boundary is a tag-5 box whose externval is
-                                // the native `$BoxedBoolean` carrier. §7.1.4
-                                // ToNumber(true)=1 / ToNumber(false)=0 — reading the
-                                // box's f64val (always 0) made every dispatched
-                                // boolean numerically 0. Same gate style as #1888.
-                                ctx.nativeBoxBooleanTypeIdx >= 0
-                                  ? [
-                                      { op: "local.get", index: 2 },
-                                      { op: "ref.test", typeIdx: ctx.nativeBoxBooleanTypeIdx },
-                                      {
-                                        op: "if",
-                                        blockType: { kind: "val", type: { kind: "f64" } },
-                                        then: [
+                              else: [
+                                { op: "local.get", index: 2 },
+                                { op: "ref.test", typeIdx: ctx.nativeBoxNumberTypeIdx },
+                                {
+                                  op: "if",
+                                  blockType: { kind: "val", type: { kind: "f64" } },
+                                  then: [
+                                    { op: "local.get", index: 2 },
+                                    { op: "ref.cast", typeIdx: ctx.nativeBoxNumberTypeIdx },
+                                    { op: "struct.get", typeIdx: ctx.nativeBoxNumberTypeIdx, fieldIdx: 0 },
+                                  ],
+                                  else:
+                                    // (#2966) $BoxedBoolean recovery, symmetric with the
+                                    // $BoxedNumber arm above. §7.1.4 ToNumber(true)=1 /
+                                    // ToNumber(false)=0.
+                                    ctx.nativeBoxBooleanTypeIdx >= 0
+                                      ? [
                                           { op: "local.get", index: 2 },
-                                          { op: "ref.cast", typeIdx: ctx.nativeBoxBooleanTypeIdx },
-                                          { op: "struct.get", typeIdx: ctx.nativeBoxBooleanTypeIdx, fieldIdx: 0 },
-                                          { op: "f64.convert_i32_s" },
-                                        ],
-                                        else: [
+                                          { op: "ref.test", typeIdx: ctx.nativeBoxBooleanTypeIdx },
+                                          {
+                                            op: "if",
+                                            blockType: { kind: "val", type: { kind: "f64" } },
+                                            then: [
+                                              { op: "local.get", index: 2 },
+                                              { op: "ref.cast", typeIdx: ctx.nativeBoxBooleanTypeIdx },
+                                              { op: "struct.get", typeIdx: ctx.nativeBoxBooleanTypeIdx, fieldIdx: 0 },
+                                              { op: "f64.convert_i32_s" },
+                                            ],
+                                            else: [
+                                              { op: "local.get", index: 0 },
+                                              { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 2 },
+                                            ],
+                                          },
+                                        ]
+                                      : [
                                           { op: "local.get", index: 0 },
                                           { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 2 },
                                         ],
-                                      },
-                                    ]
-                                  : [
-                                      { op: "local.get", index: 0 },
-                                      { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 2 },
-                                    ],
+                                },
+                              ],
                             },
                           ],
                         },
@@ -1348,6 +1479,12 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
       { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
       { op: "any.convert_extern" },
       { op: "ref.test", typeIdx: ctx.nativeBoxNumberTypeIdx },
+      // (#3673) …or an i31-boxed small int.
+      { op: "local.get", index: opIdx },
+      { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: -20 },
+      { op: "i32.or" },
       {
         op: "if",
         blockType: { kind: "val", type: { kind: "f64" } },
@@ -1550,6 +1687,10 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
         else: [
           { op: "local.get", index: 4 },
           { op: "ref.test", typeIdx: ctx.nativeBoxNumberTypeIdx },
+          // (#3673) …or an i31-boxed small int.
+          { op: "local.get", index: 4 },
+          { op: "ref.test", typeIdx: -20 },
+          { op: "i32.or" },
           ...((ctx.nativeBoxBooleanTypeIdx >= 0
             ? [
                 { op: "local.get", index: 4 },
@@ -1745,522 +1886,12 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
     ],
   );
 
-  // __any_eq(a, b) -> i32
-  // Same tag: compare values. Different tag: return 0.
-  addHelper(
-    "__any_eq",
-    [anyRefNull, anyRefNull],
-    [{ kind: "i32" }],
-    [
-      // Fast path: if both refs point to the same AnyValue struct, they are equal.
-      { op: "local.get", index: 0 },
-      { op: "local.get", index: 1 },
-      { op: "ref.eq" },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "i32" } },
-        then: [{ op: "i32.const", value: 1 }],
-        else: [
-          // tagA = a.tag
-          { op: "local.get", index: 0 },
-          { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 0 },
-          { op: "local.set", index: 2 },
-          // tagB = b.tag
-          { op: "local.get", index: 1 },
-          { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 0 },
-          { op: "local.set", index: 3 },
-          // if tagA != tagB → 0
-          { op: "local.get", index: 2 },
-          { op: "local.get", index: 3 },
-          { op: "i32.ne" },
-          {
-            op: "if",
-            blockType: { kind: "val", type: { kind: "i32" } },
-            then: [
-              // Cross-tag loose equality (§7.2.15):
-              // 1. null == undefined (tags 0+1): both tags < 2 → true
-              { op: "local.get", index: 2 },
-              { op: "i32.const", value: 2 },
-              { op: "i32.lt_s" },
-              { op: "local.get", index: 3 },
-              { op: "i32.const", value: 2 },
-              { op: "i32.lt_s" },
-              { op: "i32.and" },
-              {
-                op: "if",
-                blockType: { kind: "val", type: { kind: "i32" } },
-                then: [{ op: "i32.const", value: 1 }],
-                else: [
-                  // 2. Both tags are numeric-coercible (tags 2,3,4 = i32,f64,bool)?
-                  //    §7.2.15 steps 4-5, 8-9: coerce to number and compare
-                  //    Check: both tags are in {2,3,4} → tag >= 2 && tag <= 4
-                  { op: "local.get", index: 2 },
-                  { op: "i32.const", value: 2 },
-                  { op: "i32.ge_s" },
-                  { op: "local.get", index: 2 },
-                  { op: "i32.const", value: 4 },
-                  { op: "i32.le_s" },
-                  { op: "i32.and" },
-                  { op: "local.get", index: 3 },
-                  { op: "i32.const", value: 2 },
-                  { op: "i32.ge_s" },
-                  { op: "local.get", index: 3 },
-                  { op: "i32.const", value: 4 },
-                  { op: "i32.le_s" },
-                  { op: "i32.and" },
-                  { op: "i32.and" },
-                  {
-                    op: "if",
-                    blockType: { kind: "val", type: { kind: "i32" } },
-                    then: [
-                      { op: "local.get", index: 0 },
-                      { op: "call", funcIdx: toF64Idx },
-                      { op: "local.get", index: 1 },
-                      { op: "call", funcIdx: toF64Idx },
-                      { op: "f64.eq" },
-                    ],
-                    // (#2081) §7.2.15 steps 4-7: String(tag 5) ⇄ Number/Boolean
-                    // (tags 2,3,4) ⇒ compare ToNumber(both). Today this returned
-                    // a wrong `false` (`"1" == 1`). Gate on EXACTLY one side being
-                    // a string and the other numeric-coercible — never pull
-                    // null/undefined (tag<2) or object (tag 6) into coercion. Only
-                    // available with the native StringToNumber scanner (standalone
-                    // /WASI nativeStrings); else fall through to the prior `0`.
-                    else:
-                      strToNumIdx >= 0
-                        ? [
-                            // (tagA==5 && tagB in {2..4}) || (tagB==5 && tagA in {2..4})
-                            { op: "local.get", index: 2 },
-                            { op: "i32.const", value: 5 },
-                            { op: "i32.eq" },
-                            { op: "local.get", index: 3 },
-                            { op: "i32.const", value: 2 },
-                            { op: "i32.ge_s" },
-                            { op: "local.get", index: 3 },
-                            { op: "i32.const", value: 4 },
-                            { op: "i32.le_s" },
-                            { op: "i32.and" },
-                            { op: "i32.and" },
-                            { op: "local.get", index: 3 },
-                            { op: "i32.const", value: 5 },
-                            { op: "i32.eq" },
-                            { op: "local.get", index: 2 },
-                            { op: "i32.const", value: 2 },
-                            { op: "i32.ge_s" },
-                            { op: "local.get", index: 2 },
-                            { op: "i32.const", value: 4 },
-                            { op: "i32.le_s" },
-                            { op: "i32.and" },
-                            { op: "i32.and" },
-                            { op: "i32.or" },
-                            {
-                              op: "if",
-                              blockType: { kind: "val", type: { kind: "i32" } },
-                              then: [
-                                // ToNumber(a): tag5 → (boxed-number? __any_to_f64 : __str_to_number),
-                                // else __any_to_f64. (#2040) The tag-5 field-4 may hold a
-                                // $BoxedNumber, not a string — __str_to_number on it would
-                                // mis-coerce; route those through __any_to_f64's #1888 recovery.
-                                { op: "local.get", index: 2 },
-                                { op: "i32.const", value: 5 },
-                                { op: "i32.eq" },
-                                {
-                                  op: "if",
-                                  blockType: { kind: "val", type: { kind: "f64" } },
-                                  then: tag5ToNumber(0),
-                                  else: [
-                                    { op: "local.get", index: 0 },
-                                    { op: "call", funcIdx: toF64Idx },
-                                  ],
-                                },
-                                // ToNumber(b)
-                                { op: "local.get", index: 3 },
-                                { op: "i32.const", value: 5 },
-                                { op: "i32.eq" },
-                                {
-                                  op: "if",
-                                  blockType: { kind: "val", type: { kind: "f64" } },
-                                  then: tag5ToNumber(1),
-                                  else: [
-                                    { op: "local.get", index: 1 },
-                                    { op: "call", funcIdx: toF64Idx },
-                                  ],
-                                },
-                                { op: "f64.eq" },
-                              ],
-                              else: [{ op: "i32.const", value: 0 }],
-                            },
-                          ]
-                        : [{ op: "i32.const", value: 0 }],
-                  },
-                ],
-              },
-            ],
-            else: [
-              // Same tag — compare by tag type
-              { op: "local.get", index: 2 },
-              { op: "i32.const", value: 2 },
-              { op: "i32.eq" },
-              {
-                op: "if",
-                blockType: { kind: "val", type: { kind: "i32" } },
-                then: [
-                  // i32 eq
-                  { op: "local.get", index: 0 },
-                  { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 1 },
-                  { op: "local.get", index: 1 },
-                  { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 1 },
-                  { op: "i32.eq" },
-                ],
-                else: [
-                  { op: "local.get", index: 2 },
-                  { op: "i32.const", value: 3 },
-                  { op: "i32.eq" },
-                  {
-                    op: "if",
-                    blockType: { kind: "val", type: { kind: "i32" } },
-                    then: [
-                      // f64 eq
-                      { op: "local.get", index: 0 },
-                      { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 2 },
-                      { op: "local.get", index: 1 },
-                      { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 2 },
-                      { op: "f64.eq" },
-                    ],
-                    else: [
-                      { op: "local.get", index: 2 },
-                      { op: "i32.const", value: 4 },
-                      { op: "i32.eq" },
-                      {
-                        op: "if",
-                        blockType: { kind: "val", type: { kind: "i32" } },
-                        then: [
-                          // bool eq (compare i32val)
-                          { op: "local.get", index: 0 },
-                          { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 1 },
-                          { op: "local.get", index: 1 },
-                          { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 1 },
-                          { op: "i32.eq" },
-                        ],
-                        else: [
-                          // tag 6 (ref): compare refval (eqref) with ref.eq
-                          { op: "local.get", index: 2 },
-                          { op: "i32.const", value: 6 },
-                          { op: "i32.eq" },
-                          {
-                            op: "if",
-                            blockType: { kind: "val", type: { kind: "i32" } },
-                            then: [
-                              { op: "local.get", index: 0 },
-                              { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 3 },
-                              { op: "local.get", index: 1 },
-                              { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 3 },
-                              { op: "ref.eq" },
-                            ],
-                            else: [
-                              // tag 5 (string): compare content via wasm:js-string equals
-                              { op: "local.get", index: 2 },
-                              { op: "i32.const", value: 5 },
-                              { op: "i32.eq" },
-                              {
-                                op: "if",
-                                blockType: { kind: "val", type: { kind: "i32" } },
-                                // (#2040/#1888) tag-5 string-CONTENT equality, GUARDED on
-                                // `ref.test $AnyString` (see tag5StringEqThen). The #2040
-                                // numeric (`f64.eq`) + #2585 object-identity (`ref.eq`)
-                                // CLASSIFIER arms are DROPPED: changing tag-5 boxed-value
-                                // equality for non-strings flips a comparison the
-                                // destructuring / generator-iterator lowering implicitly
-                                // relied on, regressing the class/dstr cluster by −162
-                                // (ejected #1888 from the standalone floor). Those arms move
-                                // to the value-rep substrate (#2580 M2 / #35). The guarded
-                                // string path keeps #2579 boxed-string-eq + #2583 search.
-                                then: tag5ValueEqThen(),
-                                else: [
-                                  // null/undefined (tag < 2): both same tag → equal
-                                  { op: "local.get", index: 2 },
-                                  { op: "i32.const", value: 2 },
-                                  { op: "i32.lt_s" },
-                                ],
-                              },
-                            ],
-                          },
-                        ],
-                      },
-                    ],
-                  },
-                ],
-              },
-            ],
-          },
-        ],
-      },
-    ],
-    [
-      { name: "tagA", type: { kind: "i32" } },
-      { name: "tagB", type: { kind: "i32" } },
-      // (#2040/#2585) tag-5 field-4 classifier scratch (anyA/anyB at locals 4/5).
-      { name: "anyA", type: { kind: "anyref" } },
-      { name: "anyB", type: { kind: "anyref" } },
-    ],
-  );
-
-  // __any_strict_eq(a, b) -> i32
-  // Strict equality (===): different tags always return 0 (no cross-type coercion). (#296)
-  addHelper(
-    "__any_strict_eq",
-    [anyRefNull, anyRefNull],
-    [{ kind: "i32" }],
-    [
-      // Fast path: if both refs point to the same AnyValue struct, they are equal.
-      // This handles object identity (var b = a) for all tag types.
-      { op: "local.get", index: 0 },
-      { op: "local.get", index: 1 },
-      { op: "ref.eq" },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "i32" } },
-        then: [{ op: "i32.const", value: 1 }],
-        else: [
-          // tagA = a.tag
-          { op: "local.get", index: 0 },
-          { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 0 },
-          { op: "local.set", index: 2 },
-          // tagB = b.tag
-          { op: "local.get", index: 1 },
-          { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 0 },
-          { op: "local.set", index: 3 },
-          // Numeric class first: tags 2 (i32) and 3 (f64) are ONE JS type
-          // ("number") split only by internal representation. `23 === 23.0`
-          // must be true even when one side is a tag-2 box and the other a
-          // tag-3 box (e.g. a value recovered via __any_from_extern from a
-          // __box_number carrier vs a directly boxed i32 literal). Compare
-          // numerically as f64 whenever BOTH tags are in {2, 3}.
-          { op: "local.get", index: 2 },
-          { op: "i32.const", value: 2 },
-          { op: "i32.ge_s" },
-          { op: "local.get", index: 2 },
-          { op: "i32.const", value: 3 },
-          { op: "i32.le_s" },
-          { op: "i32.and" },
-          { op: "local.get", index: 3 },
-          { op: "i32.const", value: 2 },
-          { op: "i32.ge_s" },
-          { op: "local.get", index: 3 },
-          { op: "i32.const", value: 3 },
-          { op: "i32.le_s" },
-          { op: "i32.and" },
-          { op: "i32.and" },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [
-              { op: "local.get", index: 0 },
-              { op: "call", funcIdx: toF64Idx },
-              { op: "local.get", index: 1 },
-              { op: "call", funcIdx: toF64Idx },
-              { op: "f64.eq" },
-              { op: "return" },
-            ],
-          },
-          // if tagA != tagB → 0 (strict: no cross-type coercion), EXCEPT the
-          // (#2175 V2-S3 — raw-anyref carrier) cross-representation identity case.
-          { op: "local.get", index: 2 },
-          { op: "local.get", index: 3 },
-          { op: "i32.ne" },
-          {
-            op: "if",
-            blockType: { kind: "val", type: { kind: "i32" } },
-            // (#2175 V2-S3) Reference-IDENTITY reconciliation, cross-representation
-            // ONLY. A GC object can reach `===` under TWO $AnyValue reps that point
-            // at the SAME reference: tag-6 `refval` (raw GC ref via `__any_box_ref`)
-            // vs tag-5 `externval` (the SAME ref externref-wrapped, e.g. a
-            // descriptor `.value` / array-element read boxed via `__any_box_string`).
-            // Those differ in TAG, so they land in THIS `tagA != tagB` arm — where
-            // the legacy answer was a flat `0`. Recover each operand's reference
-            // payload (refval if non-null, else `any.convert_extern(externval)`) to
-            // a common `eqref`; if both are `eq` refs and `ref.eq`-identical they are
-            // the identical object → 1, else 0. This lives ONLY in the different-tag
-            // branch: same-tag pairs keep their existing tag-specific arms untouched
-            // (an earlier revision ran this before the tag gate — for ALL tag pairs —
-            // and regressed same-tag identity, measured −7228 host-free; #2175).
-            // Cannot false-positive a primitive: distinct number/string/object boxes
-            // are distinct refs. GATED on standalone/wasi (native-GC-only; host mode
-            // uses host externrefs and answers identity correctly, byte-identical).
-            then:
-              ctx.standalone === true || ctx.wasi === true
-                ? (() => {
-                    const EQ_HEAP_TYPE = -19; // WasmGC `eq` abstract heap type
-                    const recoverRefPayload = (opIdx: number, dstLocal: number): Instr[] => [
-                      { op: "local.get", index: opIdx },
-                      { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 3 }, // refval (eqref)
-                      { op: "local.tee", index: dstLocal },
-                      { op: "ref.is_null" },
-                      {
-                        op: "if",
-                        blockType: { kind: "empty" },
-                        then: [
-                          { op: "local.get", index: opIdx },
-                          { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 }, // externval (externref)
-                          { op: "any.convert_extern" },
-                          { op: "local.set", index: dstLocal },
-                        ],
-                      },
-                    ];
-                    return [
-                      ...recoverRefPayload(0, 4),
-                      ...recoverRefPayload(1, 5),
-                      { op: "local.get", index: 4 },
-                      { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
-                      { op: "local.get", index: 5 },
-                      { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
-                      { op: "i32.and" },
-                      {
-                        op: "if",
-                        blockType: { kind: "val", type: { kind: "i32" } },
-                        then: [
-                          { op: "local.get", index: 4 },
-                          { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
-                          { op: "local.get", index: 5 },
-                          { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
-                          { op: "ref.eq" },
-                        ],
-                        else: [{ op: "i32.const", value: 0 }],
-                      },
-                    ];
-                  })()
-                : [{ op: "i32.const", value: 0 }],
-            else: [
-              // Same tag — compare by tag type
-              { op: "local.get", index: 2 },
-              { op: "i32.const", value: 2 },
-              { op: "i32.eq" },
-              {
-                op: "if",
-                blockType: { kind: "val", type: { kind: "i32" } },
-                then: [
-                  // i32 eq (unreachable in practice — the numeric-class arm
-                  // above already handled tag2/tag2 — kept as a safe fallback)
-                  { op: "local.get", index: 0 },
-                  { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 1 },
-                  { op: "local.get", index: 1 },
-                  { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 1 },
-                  { op: "i32.eq" },
-                ],
-                else: [
-                  { op: "local.get", index: 2 },
-                  { op: "i32.const", value: 3 },
-                  { op: "i32.eq" },
-                  {
-                    op: "if",
-                    blockType: { kind: "val", type: { kind: "i32" } },
-                    then: [
-                      // f64 eq
-                      { op: "local.get", index: 0 },
-                      { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 2 },
-                      { op: "local.get", index: 1 },
-                      { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 2 },
-                      { op: "f64.eq" },
-                    ],
-                    else: [
-                      { op: "local.get", index: 2 },
-                      { op: "i32.const", value: 4 },
-                      { op: "i32.eq" },
-                      {
-                        op: "if",
-                        blockType: { kind: "val", type: { kind: "i32" } },
-                        then: [
-                          // bool eq (compare i32val)
-                          { op: "local.get", index: 0 },
-                          { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 1 },
-                          { op: "local.get", index: 1 },
-                          { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 1 },
-                          { op: "i32.eq" },
-                        ],
-                        else: [
-                          // tag 6 (ref): compare refval (eqref) with ref.eq
-                          { op: "local.get", index: 2 },
-                          { op: "i32.const", value: 6 },
-                          { op: "i32.eq" },
-                          {
-                            op: "if",
-                            blockType: { kind: "val", type: { kind: "i32" } },
-                            then: [
-                              { op: "local.get", index: 0 },
-                              { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 3 },
-                              { op: "local.get", index: 1 },
-                              { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 3 },
-                              { op: "ref.eq" },
-                            ],
-                            else: [
-                              // tag 5 (string): compare content via wasm:js-string equals
-                              { op: "local.get", index: 2 },
-                              { op: "i32.const", value: 5 },
-                              { op: "i32.eq" },
-                              {
-                                op: "if",
-                                blockType: { kind: "val", type: { kind: "i32" } },
-                                // (#2040/#1888) tag-5 string-CONTENT equality, GUARDED on
-                                // `ref.test $AnyString` (see tag5StringEqThen). The #2040
-                                // numeric (`f64.eq`) + #2585 object-identity (`ref.eq`)
-                                // CLASSIFIER arms are DROPPED: changing tag-5 boxed-value
-                                // equality for non-strings flips a comparison the
-                                // destructuring / generator-iterator lowering implicitly
-                                // relied on, regressing the class/dstr cluster by −162
-                                // (ejected #1888 from the standalone floor). Those arms move
-                                // to the value-rep substrate (#2580 M2 / #35). The guarded
-                                // string path keeps #2579 boxed-string-eq + #2583 search.
-                                then: tag5ValueEqThen(),
-                                else: [
-                                  // null/undefined (tag < 2): both same tag → equal
-                                  { op: "local.get", index: 2 },
-                                  { op: "i32.const", value: 2 },
-                                  { op: "i32.lt_s" },
-                                ],
-                              },
-                            ],
-                          },
-                        ],
-                      },
-                    ],
-                  },
-                ],
-              },
-            ],
-          },
-        ],
-      },
-    ],
-    [
-      { name: "tagA", type: { kind: "i32" } },
-      { name: "tagB", type: { kind: "i32" } },
-      // (#2040/#2585) tag-5 field-4 classifier scratch (anyA/anyB at locals 4/5).
-      { name: "anyA", type: { kind: "anyref" } },
-      { name: "anyB", type: { kind: "anyref" } },
-    ],
-  );
-
-  // Comparison helpers: __any_lt, __any_gt, __any_le, __any_ge
-  // All use numeric comparison (convert to f64, compare)
-  function addComparisonHelper(name: string, f64op: "f64.lt" | "f64.gt" | "f64.le" | "f64.ge"): void {
-    addHelper(
-      name,
-      [anyRefNull, anyRefNull],
-      [{ kind: "i32" }],
-      [
-        { op: "local.get", index: 0 },
-        { op: "call", funcIdx: toF64Idx },
-        { op: "local.get", index: 1 },
-        { op: "call", funcIdx: toF64Idx },
-        { op: f64op },
-      ],
-    );
-  }
-
-  addComparisonHelper("__any_lt", "f64.lt");
-  addComparisonHelper("__any_gt", "f64.gt");
-  addComparisonHelper("__any_le", "f64.le");
-  addComparisonHelper("__any_ge", "f64.ge");
+  // (#3282) __any_eq / __any_strict_eq / __any_lt/gt/le/ge — the equality &
+  // relational-comparison family, extracted verbatim to any-eq-helpers.ts to
+  // decompose this god-function. Byte-identical: registered in the same order
+  // with the same bodies; the tag-5 coercion/equality closures are threaded in
+  // so their captured environment is unchanged.
+  registerAnyEqHelpers(ctx, addHelper, anyRefNull, anyTypeIdx, toF64Idx, strToNumIdx, tag5ToNumber, tag5ValueEqThen);
 
   // __any_neg(a) -> ref $AnyValue
   // Negate numeric value: tag 2 → negate i32, tag 3 → negate f64

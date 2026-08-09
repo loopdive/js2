@@ -28,6 +28,7 @@
 import { coercionPlan } from "./coercion-plan.js";
 import type { BlockType, FuncTypeDef, Instr, TypeDef, ValType, WasmFunction, WasmModule } from "../ir/types.js";
 import { STABLE_FUNC_BASE, absoluteFuncIndexCached } from "../emit/resolve-layout.js"; // (#1916 S3)
+import { walkInstructions } from "./walk-instructions.js";
 
 /**
  * (#2934) Widen a packed i8/i16 STORAGE type to the i32 that actually lives on
@@ -264,6 +265,20 @@ function resolveFuncType(types: TypeDef[], typeIdx: number): FuncTypeDef | null 
     return (t as any).type;
   }
   return null;
+}
+
+function assertLocalRefsInRange(func: WasmFunction, ft: FuncTypeDef | null, stage: string): void {
+  const limit = (ft?.params.length ?? 0) + func.locals.length;
+  walkInstructions(func.body, (instr) => {
+    if ((instr.op === "local.get" || instr.op === "local.set" || instr.op === "local.tee") && instr.index >= limit) {
+      throw new Error(
+        `stack-balance invariant (${stage}): '${func.name}' references local ${instr.index}, ` +
+          `but only ${ft?.params.length ?? 0} params + ${func.locals.length} locals are declared ` +
+          `(locals: ${func.locals.map((local, index) => `${(ft?.params.length ?? 0) + index}:${local.name}`).join(", ")}; ` +
+          `body: ${JSON.stringify(func.body)})`,
+      );
+    }
+  });
 }
 
 /**
@@ -1211,6 +1226,7 @@ function buildFuncSigs(mod: WasmModule): FuncSigInfo {
   const numImports = idx;
   for (const func of mod.functions) {
     const ft = resolveFuncType(mod.types, func.typeIdx);
+    assertLocalRefsInRange(func, ft, "entry");
     if (ft) {
       const resultType = ft.results.length === 1 ? valTypeCategory(ft.results[0]!) : undefined;
       map.set(idx, { params: ft.params.length, results: ft.results.length, resultType });
@@ -1878,10 +1894,15 @@ function fixCallArgTypesInBody(
       pos--;
     }
 
-    // Apply insertions in reverse order (so positions don't shift)
+    // (#3910) Apply HIGHEST position first — any other order shifts the
+    // not-yet-applied ones. The old loop drained back-to-front under "reverse
+    // order (so positions don't shift)", which assumed an ASCENDING build order;
+    // the producer scan above walks BACKWARD, so back-to-front WAS ascending and
+    // every call with 2+ mismatched args stacked its 2nd coercion on the 1st arg.
+    // Trace: plan/issues/3910-regex-plus-string-constants-global-get.md.
     if (insertions.length > 0) {
-      for (let k = insertions.length - 1; k >= 0; k--) {
-        const { afterPos, instrs } = insertions[k]!;
+      insertions.sort((a, b) => b.afterPos - a.afterPos);
+      for (const { afterPos, instrs } of insertions) {
         body.splice(afterPos + 1, 0, ...instrs);
         recordFixup("call-arg-coerce", `coerced a call argument (${instrs.length} instr(s))`); // #1918
         ci += instrs.length;
@@ -2129,7 +2150,16 @@ function updateTypeStack(
 
   // Pop 1, push 1 (type-changing or type-preserving)
   if (op === "local.tee") {
-    // Type doesn't change, just peek
+    // NOT a pass-through: wasm types a tee's result as the LOCAL's declared
+    // type (it is set-then-get), which may be a SUPERTYPE of the value that
+    // went in — storing a $NativeString through an $AnyString-typed local
+    // re-reads as $AnyString. Keeping the incoming type here made the
+    // struct.new fixup type its save-temp too narrowly and emit a local.set
+    // the engine rejects (acorn UMD, __closure_0:
+    // "local.set[0] expected (ref null 7), found local.tee of (ref null 6)").
+    const idx = (instr as any).index as number;
+    stack.pop();
+    stack.push(localTypes[idx] ?? null);
     return;
   }
   if (op === "extern.convert_any") {
@@ -2604,6 +2634,7 @@ export function stackBalance(mod: WasmModule): number {
         unboxNumberIdx,
       );
     }
+    assertLocalRefsInRange(func, ft, "exit");
   }
 
   // #2090 — drain the invented-value collector into structured compile errors.
@@ -2629,6 +2660,34 @@ export function stackBalance(mod: WasmModule): number {
   }
 
   return totalFixups;
+}
+
+/**
+ * Return whether a reference stack value is already assignable to a local via
+ * Wasm GC's declared struct-subtype relation.
+ *
+ * `closure.new` produces the concrete closure struct while IR locals use the
+ * shared closure root. A concrete non-null closure is valid in that wider
+ * local without a cast; treating the different type indices as a mismatch
+ * makes stack-balance report (and insert) a false `local-set-coerce` repair.
+ */
+function isDeclaredRefSubtypeAssignable(actual: ValType, expected: ValType, types: TypeDef[]): boolean {
+  if (actual.kind !== "ref" && actual.kind !== "ref_null") return false;
+  if (expected.kind !== "ref" && expected.kind !== "ref_null") return false;
+
+  // A nullable value cannot flow into a non-null local without a check.
+  if (actual.kind === "ref_null" && expected.kind === "ref") return false;
+
+  let current = actual.typeIdx;
+  for (let depth = 0; depth < 64; depth++) {
+    if (current === expected.typeIdx) return true;
+    const def = types[current];
+    if (!def || def.kind !== "struct") return false;
+    const parent = def.superTypeIdx;
+    if (parent === undefined || parent < 0) return false;
+    current = parent;
+  }
+  return false;
 }
 
 /**
@@ -2756,6 +2815,11 @@ function fixLocalSetCoercion(
     const prev = body[i - 1]!;
     const stackType = inferInstrType(prev, localTypes, globalTypes, types, mod, numImports);
     if (!stackType) continue;
+
+    // A declared struct subtype is already valid in a wider ref local. In
+    // particular, concrete closure structs flow into the canonical closure
+    // root used by IR locals without needing a repair cast.
+    if (isDeclaredRefSubtypeAssignable(stackType, localType, types)) continue;
 
     // Check if coercion is needed
     const coercion = callArgCoercionInstrs(stackType, localType, boxNumberIdx, unboxNumberIdx);

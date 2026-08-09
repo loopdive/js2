@@ -472,6 +472,21 @@ elif [ -f "$report" ]; then
     pass=$(jq -r '.summary.pass // .pass // 0' "$_local_t262" 2>/dev/null)
     total=$(jq -r '.summary.total // .total // 1' "$_local_t262" 2>/dev/null)
   fi
+  # A locally-run host report that is genuinely NEWER than the committed CI
+  # baseline takes precedence — mirrors the standalone lane below. CI data
+  # (test262-current.json, refreshed by promote-baseline on every push to main)
+  # stays the default; a fresh local `pnpm run test:262` overrides it only while
+  # it is actually newer. Both read .summary.* — the official standard+annexB
+  # scope — so the denominator stays consistent with the CI numbers either way.
+  _local_t262_ci="/workspace/benchmarks/results/test262-current.json"
+  if [ -f "$report" ] && { [ ! -f "$_local_t262_ci" ] || [ "$report" -nt "$_local_t262_ci" ]; }; then
+    _lp=$(jq -r '.summary.pass // empty' "$report" 2>/dev/null)
+    _lt=$(jq -r '.summary.total // empty' "$report" 2>/dev/null)
+    if [ -n "$_lp" ] && [ -n "$_lt" ] && [ "$_lt" -gt 0 ] 2>/dev/null; then
+      pass="$_lp"
+      total="$_lt"
+    fi
+  fi
   pass_pct=$(awk "BEGIN {printf \"%.1f\", $pass * 100 / $total}")
   free_mb=$(free -m | awk '/Mem/{print $7}')
   free_g=$(awk "BEGIN {printf \"%.0f\", $free_mb / 1024}")
@@ -484,11 +499,34 @@ elif [ -f "$report" ]; then
     sa_bar=""
     sa_pass=""; sa_total=""
     # Read standalone from the base remote ref (always current).
-    _sa_json=$(git -C "${cwd:-$(pwd)}" show "${_base_ref}:benchmarks/results/test262-standalone-highwater.json" 2>/dev/null)
+    # PREFERRED: a committed CURRENT standalone summary, mirroring the host
+    # lane's test262-current.json. NOTE: as of 2026-07-24 CI does not yet write
+    # this file — the landing page computes standalone live from
+    # test262-standalone-current.jsonl in the baselines repo, which is why the
+    # statusline and the landing page disagree. The moment promote-baseline
+    # starts committing this summary, the statusline picks it up with no further
+    # change. Until then we fall through to the high-water mark below, which is
+    # a BEST-EVER figure, not a current rate.
+    # Cheap stat guard FIRST: `git show` costs ~13s on this repo, so never pay
+    # it for a path that does not exist yet. When CI starts committing the file
+    # it will be present in the worktree after a pull, and only then do we read
+    # the authoritative copy from the base ref.
+    _sa_cur_json=""
+    if [ -f "/workspace/benchmarks/results/test262-standalone-current.json" ]; then
+      _sa_cur_json=$(git -C "${cwd:-$(pwd)}" show "${_base_ref}:benchmarks/results/test262-standalone-current.json" 2>/dev/null)
+    fi
+    if [ -n "$_sa_cur_json" ]; then
+      sa_pass=$(printf '%s' "$_sa_cur_json" | jq -r '.official_summary.pass // .summary.pass // .official_pass // empty' 2>/dev/null)
+      sa_total=$(printf '%s' "$_sa_cur_json" | jq -r '.official_summary.total // .summary.total // .official_total // empty' 2>/dev/null)
+    fi
+    _sa_json=""
+    if [ -z "$sa_total" ]; then
+      _sa_json=$(git -C "${cwd:-$(pwd)}" show "${_base_ref}:benchmarks/results/test262-standalone-highwater.json" 2>/dev/null)
+    fi
     if [ -n "$_sa_json" ]; then
       sa_pass=$(printf '%s' "$_sa_json" | jq -r '.official_pass // empty' 2>/dev/null)
       sa_total=$(printf '%s' "$_sa_json" | jq -r '.official_total // empty' 2>/dev/null)
-    else
+    elif [ -z "$sa_total" ]; then
       # Fallback to local high-water file
       if [ -f "$standalone_highwater" ]; then
         sa_pass=$(jq -r '.official_pass // empty' "$standalone_highwater" 2>/dev/null)

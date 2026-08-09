@@ -5,7 +5,6 @@ status: ready
 sprint: current
 created: 2026-07-02
 updated: 2026-07-17
-assignee: ttraenkler/fable-e
 priority: medium
 horizon: m
 feasibility: medium

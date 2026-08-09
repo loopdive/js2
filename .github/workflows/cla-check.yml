@@ -20,16 +20,29 @@ name: CLA Check
 #   fork's.
 #
 # The job is named `cla-check` so it maps to that branch-protection context.
-# It is currently informational (not yet a required check) — see the follow-up
-# note in plan/issues/1660-real-cla-gate.md before promoting it to required.
 #
-# ADMIN NOTE for the eventual branch-protection promotion: this workflow pushes
-# the signature commit directly to the default branch as github-actions[bot].
-# If `main` is later protected with required PR reviews / linear history, that
-# direct push can be rejected. When promoting, either (a) allow the
-# github-actions bot to bypass protection for `.github/cla/signatures.json`, or
-# (b) switch the signing path to open a tiny auto-merge PR instead of a direct
-# push. Until protection is enabled this direct push works as-is.
+# THIS IS A REQUIRED CHECK. The promotion contemplated by #1660 has happened:
+# `cla-check` is one of the six contexts in the live `main` ruleset (verified
+# 2026-08-08 against `gh api repos/loopdive/js2/rules/branches/main`; see
+# docs/ci-policy.md §7 for the full list). The note in
+# plan/issues/1660-real-cla-gate.md calling this gate "informational" is a
+# record of May 2026 and no longer describes enforcement. Two consequences:
+#   - The `merge_group` trigger below is load-bearing, not belt-and-braces — a
+#     required context that never posts on the merge-group commit wedges the
+#     queue (#1668).
+#   - A failure here BLOCKS the merge. It is not advisory.
+#
+# ADMIN NOTE on the signing path: this workflow pushes the signature commit
+# directly to the default branch as github-actions[bot]. `main` is now
+# ruleset-protected and the ruleset declares NO bypass actors, so that push has
+# only the permissions of the workflow token. Direct bot pushes to `main` are
+# observed to land (the test262 baseline-refresh commits take the same path), so
+# this works as-is — but if a future ruleset change adds a require-PR or
+# linear-history rule, the signing push is the first thing that breaks, and an
+# external contributor's signature would then never record. The fix at that
+# point is either (a) a bypass actor for github-actions on
+# `.github/cla/signatures.json`, or (b) switching the signing path to open a
+# tiny auto-merge PR instead of pushing.
 
 on:
   pull_request_target:
@@ -90,7 +103,7 @@ jobs:
       - uses: actions/setup-node@v6
         if: github.event_name == 'pull_request_target' || github.event_name == 'issue_comment'
         with:
-          node-version: 25
+          node-version: "24"
 
       - name: Evaluate / record CLA acceptance
         if: github.event_name == 'pull_request_target' || github.event_name == 'issue_comment'

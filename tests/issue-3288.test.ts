@@ -16,6 +16,9 @@ import {
   type IrInstr,
   type IrLowerResolver,
 } from "../src/ir/index.js";
+import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
+
+const irIdentities = createTestIrFunctionIdentityFactory("issue-3288");
 
 const F64 = irVal({ kind: "f64" });
 const I32 = irVal({ kind: "i32" });
@@ -37,7 +40,7 @@ function resolver(onIntern = (): void => {}): IrLowerResolver {
 function oneBlock(name: string, instrs: readonly IrInstr[], results = [F64]): IrFunction {
   const last = instrs.at(-1);
   return {
-    name,
+    ...irIdentities.next(name),
     params: [],
     resultTypes: results,
     blocks: [
@@ -60,7 +63,7 @@ function oneBlock(name: string, instrs: readonly IrInstr[], results = [F64]): Ir
 describe("#3288 P1 backend-neutral lowering metadata", () => {
   it("returns named Porffor slots without interning a Wasm function type", () => {
     const fn: IrFunction = {
-      name: "porfforSlots",
+      ...irIdentities.next("porfforSlots"),
       params: [
         { value: asValueId(0), type: F64, name: "left" },
         { value: asValueId(1), type: F64, name: "right" },
@@ -129,7 +132,7 @@ describe("#3288 P1 backend-neutral lowering metadata", () => {
     ["u64", U64, { kind: "i64", value: 1n }],
   ] as const)("preserves %s signedness when an SSA value is materialized as a local", (slot, type, value) => {
     const fn: IrFunction = {
-      name: `${slot}Local`,
+      ...irIdentities.next(`${slot}Local`),
       params: [{ value: asValueId(0), type: I32, name: "condition" }],
       resultTypes: [type],
       blocks: [
@@ -206,7 +209,7 @@ describe("#3288 P1 Porffor legality", () => {
     );
   });
 
-  it("rejects composite JS bitwise lowering instead of reaching pushRaw", () => {
+  it("admits composite JS bitwise lowering through typed emitter operations", () => {
     const binary: IrInstr = {
       kind: "binary",
       op: "js.bitand",
@@ -223,8 +226,18 @@ describe("#3288 P1 Porffor legality", () => {
       ],
       valueCount: 3,
     };
-    expect(verifyIrBackendLegality(fn, "porffor")[0]?.message).toMatch(
-      /porffor backend does not support binary op 'js\.bitand'/,
+    expect(verifyIrBackendLegality(fn, "porffor")).toEqual([]);
+
+    const lowered = lowerIrFunctionBody(fn, resolver(), new StubEmitter("porffor"), new PorfforTypeConverter());
+    expect(lowered.body).toEqual(
+      expect.arrayContaining([
+        "unary:f64.trunc",
+        "scalar.const:f64:4294967296",
+        "numeric.convert:i32.trunc_sat_f64_u",
+        "i32.bitwise:i32.and",
+        "numeric.convert:f64.convert_i32_s",
+      ]),
     );
+    expect(lowered.body.some((op) => op.startsWith("raw:"))).toBe(false);
   });
 });

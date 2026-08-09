@@ -11,12 +11,9 @@ import { emitNativeHtmlWrapperHelpers } from "./html-wrapper-native.js";
 import { emitStrSearchHelpers } from "./native-strings-search.js";
 import { emitStrCaseHelpers } from "./native-strings-transform.js";
 import { emitSelfHostedStringHelpers } from "./native-strings-selfhost.js";
-import {
-  emitStrReplaceHelpers,
-  emitStrSplitHelper,
-  emitStrConstructHelpers,
-  emitStrRegexEscapeHelper,
-} from "./native-strings-rewrite.js";
+import { emitStrReplaceHelpers, emitStrConstructHelpers, emitStrRegexEscapeHelper } from "./native-strings-rewrite.js";
+// (#3901) `__str_split` lives in its own module — see native-strings-split.ts.
+import { emitStrSplitHelper } from "./native-strings-split.js";
 import { makeNativeStrShared } from "./native-strings-shared.js";
 import { emitStrFlattenHelpers, emitStrToUtf8Helper } from "./native-strings-core.js";
 import { emitStrConcatHelpers, emitStrCompareHelpers, emitStrSliceCharHelpers } from "./native-strings-basics.js";
@@ -25,6 +22,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3) stable-regime minting
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
+import { nativeStringLiteralInstrs } from "./native-string-literals.js";
 import { addImport, addUnionImports } from "./registry/imports.js";
 import {
   addFuncType,
@@ -32,115 +30,19 @@ import {
   getOrRegisterArrayType,
   getOrRegisterErrorStructType,
   getOrRegisterVecType,
+  withSuppressedVecUsage,
 } from "./registry/types.js";
+
+export {
+  nativeStringLiteralHash,
+  nativeStringLiteralInstrs,
+  nativeStringLiteralMaterialization,
+  type NativeStringLiteralMaterialization,
+  type StringEncoding,
+} from "./native-string-literals.js";
 
 export function nativeStringType(ctx: CodegenContext): ValType {
   return { kind: "ref", typeIdx: ctx.anyStrTypeIdx };
-}
-
-/**
- * Build the inline instruction sequence that materializes a string literal as
- * a NativeString (FlatString) struct ref. Mirrors `compileNativeStringLiteral`
- * but returns an `Instr[]` for callers that build instruction streams without
- * a `FunctionContext` (e.g. throw-instr builders that return `Instr[]`).
- */
-export function nativeStringLiteralInstrs(ctx: CodegenContext, value: string, encoding?: StringEncoding): Instr[] {
-  // #1588 PR-B: when `--utf8-storage` is on and the literal is proven
-  // `ascii`/`utf8-guaranteed`, materialize an i8-backed `Utf8String` instead
-  // of the i16 `NativeString`. When off (or the literal is `wtf16`/unknown),
-  // this is byte-identical to before.
-  if (ctx.utf8Storage && ctx.utf8StrTypeIdx >= 0 && (encoding === "ascii" || encoding === "utf8-guaranteed")) {
-    return utf8StringLiteralInstrs(ctx, value);
-  }
-
-  const strDataTypeIdx = ctx.nativeStrDataTypeIdx;
-  const strTypeIdx = ctx.nativeStrTypeIdx;
-  const instrs: Instr[] = [];
-  // len (i32), off (i32) = 0
-  instrs.push({ op: "i32.const", value: value.length });
-  instrs.push({ op: "i32.const", value: 0 });
-  // code units, then array.new_fixed
-  for (let i = 0; i < value.length; i++) {
-    instrs.push({ op: "i32.const", value: value.charCodeAt(i) });
-  }
-  instrs.push({
-    op: "array.new_fixed",
-    typeIdx: strDataTypeIdx,
-    length: value.length,
-  });
-  // struct.new $NativeString(len, off, data)
-  instrs.push({ op: "struct.new", typeIdx: strTypeIdx });
-  return instrs;
-}
-
-/** #1588 PR-B: encoding annotation values the lowering sites consume. Mirrors
- *  `Encoding` in `src/ir/analysis/encoding.ts` (kept as a local string-union to
- *  avoid a codegen→ir import cycle). */
-export type StringEncoding = "ascii" | "utf8-guaranteed" | "wtf16";
-
-/**
- * #1588 PR-B: materialize a string literal as an i8-backed `Utf8String`.
- * Precondition (asserted): `value` contains no lone surrogate — guaranteed by
- * the encoding classifier (a lone surrogate is always `wtf16`, never reaches
- * here). The assert is a defensive guard against a future classifier bug
- * emitting malformed UTF-8 bytes.
- */
-function utf8StringLiteralInstrs(ctx: CodegenContext, value: string): Instr[] {
-  const bytes = utf8Encode(value);
-  const instrs: Instr[] = [];
-  // len = code-unit (UTF-16) length, byteLen = UTF-8 byte length, off = 0.
-  instrs.push({ op: "i32.const", value: value.length });
-  instrs.push({ op: "i32.const", value: bytes.length });
-  instrs.push({ op: "i32.const", value: 0 });
-  for (const b of bytes) {
-    instrs.push({ op: "i32.const", value: b });
-  }
-  instrs.push({
-    op: "array.new_fixed",
-    typeIdx: ctx.utf8StrDataTypeIdx,
-    length: bytes.length,
-  });
-  // struct.new $Utf8String(len, byteLen, off, data)
-  instrs.push({ op: "struct.new", typeIdx: ctx.utf8StrTypeIdx });
-  return instrs;
-}
-
-/**
- * Encode a JS (WTF-16) string to UTF-8 bytes. Asserts no lone surrogate — the
- * caller only invokes this for `ascii`/`utf8-guaranteed` strings, which the
- * classifier guarantees are well-formed. Uses code points (handles
- * well-formed surrogate pairs for astral scalars).
- */
-function utf8Encode(value: string): number[] {
-  const out: number[] = [];
-  for (let i = 0; i < value.length; i++) {
-    let cp = value.charCodeAt(i);
-    if (cp >= 0xd800 && cp <= 0xdbff) {
-      const lo = i + 1 < value.length ? value.charCodeAt(i + 1) : -1;
-      if (lo >= 0xdc00 && lo <= 0xdfff) {
-        cp = 0x10000 + ((cp - 0xd800) << 10) + (lo - 0xdc00);
-        i++;
-      } else {
-        throw new Error(
-          `#1588 utf8Encode: lone high surrogate in a string annotated utf8-guaranteed/ascii — classifier bug`,
-        );
-      }
-    } else if (cp >= 0xdc00 && cp <= 0xdfff) {
-      throw new Error(
-        `#1588 utf8Encode: lone low surrogate in a string annotated utf8-guaranteed/ascii — classifier bug`,
-      );
-    }
-    if (cp <= 0x7f) {
-      out.push(cp);
-    } else if (cp <= 0x7ff) {
-      out.push(0xc0 | (cp >> 6), 0x80 | (cp & 0x3f));
-    } else if (cp <= 0xffff) {
-      out.push(0xe0 | (cp >> 12), 0x80 | ((cp >> 6) & 0x3f), 0x80 | (cp & 0x3f));
-    } else {
-      out.push(0xf0 | (cp >> 18), 0x80 | ((cp >> 12) & 0x3f), 0x80 | ((cp >> 6) & 0x3f), 0x80 | (cp & 0x3f));
-    }
-  }
-  return out;
 }
 
 /**
@@ -215,24 +117,33 @@ export function ensureNativeStringHelpers(ctx: CodegenContext): void {
   // by name in ctx.nativeStrHelpers, so this fixed order preserves every
   // baked-in sibling funcIdx and mintDefinedFunc/addFuncType side-effect.
   const methodShared = makeNativeStrShared(ctx, strTypeIdx, strDataTypeIdx, anyStrTypeIdx, consStrTypeIdx);
-  emitStrFlattenHelpers(methodShared);
-  emitStrToUtf8Helper(methodShared);
-  emitStrConcatHelpers(methodShared);
-  emitStrCompareHelpers(methodShared);
-  emitStrSliceCharHelpers(methodShared);
-  emitStrSearchHelpers(methodShared);
-  emitSelfHostedStringHelpers(methodShared); // #3256 — trim/affix/pad/repeat from TS source (stdlib/strings.ts)
-  emitStrCaseHelpers(methodShared);
-  emitStrReplaceHelpers(methodShared);
-  emitStrSplitHelper(methodShared);
-  emitStrConstructHelpers(methodShared);
-  emitStrRegexEscapeHelper(methodShared);
+  // (#4034) This is a PRELUDE, not a usage site: `emitStrSplitHelper` registers a
+  // vec type for split's result array, which flipped `usesVecValue` and made every
+  // arith-only module look like an array user — cascading into ~21 kB of
+  // unstrippable standalone exports (#2083's fix, one level down). Types are still
+  // registered (only the flag is pinned), so no type index moves. Full chain +
+  // measurements in plan/issues/4034-*.md; guarded by
+  // tests/issue-4034-standalone-prelude-size.test.ts.
+  withSuppressedVecUsage(ctx, () => {
+    emitStrFlattenHelpers(methodShared);
+    emitStrToUtf8Helper(methodShared);
+    emitStrConcatHelpers(methodShared);
+    emitStrCompareHelpers(methodShared);
+    emitStrSliceCharHelpers(methodShared);
+    emitStrSearchHelpers(methodShared);
+    emitSelfHostedStringHelpers(methodShared); // #3256 — trim/affix/pad/repeat from TS source (stdlib/strings.ts)
+    emitStrCaseHelpers(methodShared);
+    emitStrReplaceHelpers(methodShared);
+    emitStrSplitHelper(methodShared);
+    emitStrConstructHelpers(methodShared);
+    emitStrRegexEscapeHelper(methodShared);
 
-  // (#3069) Annex B §B.2.2 HTML string-wrapper methods — the `__str_html_escape_quot`
-  // helper (CreateHTML step-4.b `"`→`&quot;` escaping). Emitted here, AFTER
-  // __str_flatten/__str_concat are registered. The tag/attribute concatenation
-  // is built inline at each call site in string-ops.ts via __str_concat.
-  emitNativeHtmlWrapperHelpers(ctx, strTypeIdx, strDataTypeIdx, anyStrTypeIdx);
+    // (#3069) Annex B §B.2.2 HTML string-wrapper methods — the `__str_html_escape_quot`
+    // helper (CreateHTML step-4.b `"`→`&quot;` escaping). Emitted here, AFTER
+    // __str_flatten/__str_concat are registered. The tag/attribute concatenation
+    // is built inline at each call site in string-ops.ts via __str_concat.
+    emitNativeHtmlWrapperHelpers(ctx, strTypeIdx, strDataTypeIdx, anyStrTypeIdx);
+  });
 }
 
 /**
@@ -369,6 +280,52 @@ function ensureErrorToStringHelper(ctx: CodegenContext): number | undefined {
       { name: "name", type: { kind: "ref_null", typeIdx: anyStrTypeIdx } },
       { name: "msg", type: { kind: "ref_null", typeIdx: anyStrTypeIdx } },
     ],
+    body,
+    exported: false,
+  });
+  return funcIdx;
+}
+
+/**
+ * (#3548) `__str_truthy(ref null $AnyString) -> i32` — §7.1.2 ToBoolean for a
+ * NULLABLE native string: `null` (an under-applied param's `undefined`, or a
+ * genuinely-null binding) is falsy; otherwise empty-string falsy via the rope
+ * `len` field (field 0 — maintained on concat, no flatten needed). The
+ * non-null ToBoolean arm in coercion-engine.ts keeps its historical
+ * flatten+len path byte-identical; only `ref_null` strings route here (they
+ * previously called `__str_flatten(null)` → an unconditional trap — the
+ * residual half of the #3548 zero-arg-call fix). Registration is append-only
+ * (a defined func mints at the end of the index space — no shifts).
+ */
+export function ensureStrTruthyHelper(ctx: CodegenContext): number | undefined {
+  const existing = ctx.funcMap.get("__str_truthy");
+  if (existing !== undefined) return existing;
+  if (ctx.anyStrTypeIdx < 0) return undefined;
+  const anyStrTypeIdx = ctx.anyStrTypeIdx;
+  const body: Instr[] = [
+    { op: "local.get", index: 0 },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [{ op: "i32.const", value: 0 }],
+      else: [
+        { op: "local.get", index: 0 },
+        { op: "ref.as_non_null" },
+        { op: "struct.get", typeIdx: anyStrTypeIdx, fieldIdx: 0 }, // rope len
+        { op: "i32.const", value: 0 },
+        { op: "i32.gt_s" },
+      ],
+    },
+  ];
+  const typeIdx = addFuncType(ctx, [{ kind: "ref_null", typeIdx: anyStrTypeIdx }], [{ kind: "i32" }]);
+  const funcIdx = mintDefinedFunc(ctx);
+  ctx.nativeStrHelpers.set("__str_truthy", funcIdx);
+  ctx.funcMap.set("__str_truthy", funcIdx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: "__str_truthy",
+    typeIdx,
+    locals: [],
     body,
     exported: false,
   });
@@ -522,13 +479,31 @@ export function ensureAnyToStringHelper(ctx: CodegenContext): number {
             else: [
               { op: "local.get", index: L_RECOVER },
               { op: "ref.test", typeIdx: boxNumIdxEarly },
+              // (#3673) …or an i31-boxed small int.
+              { op: "local.get", index: L_RECOVER },
+              { op: "ref.test", typeIdx: -20 },
+              { op: "i32.or" },
               {
                 op: "if",
                 blockType: { kind: "val", type: strRef },
                 then: numberArm([
                   { op: "local.get", index: L_RECOVER },
-                  { op: "ref.cast", typeIdx: boxNumIdxEarly },
-                  { op: "struct.get", typeIdx: boxNumIdxEarly, fieldIdx: 0 },
+                  { op: "ref.test", typeIdx: -20 },
+                  {
+                    op: "if",
+                    blockType: { kind: "val", type: { kind: "f64" } },
+                    then: [
+                      { op: "local.get", index: L_RECOVER },
+                      { op: "ref.cast", typeIdx: -20 },
+                      { op: "i31.get_s" },
+                      { op: "f64.convert_i32_s" },
+                    ],
+                    else: [
+                      { op: "local.get", index: L_RECOVER },
+                      { op: "ref.cast", typeIdx: boxNumIdxEarly },
+                      { op: "struct.get", typeIdx: boxNumIdxEarly, fieldIdx: 0 },
+                    ],
+                  },
                 ]),
                 else: [
                   { op: "local.get", index: L_RECOVER },
@@ -718,16 +693,33 @@ export function ensureAnyToStringHelper(ctx: CodegenContext): number {
   const residualArm: Instr[] =
     boxNumIdx >= 0 && boxBoolIdx >= 0
       ? [
-          // $__box_number_struct? → number_toString(value)
+          // $__box_number_struct (or #3673 i31 small int)? → number_toString(value)
           { op: "local.get", index: L_V },
           { op: "ref.test", typeIdx: boxNumIdx },
+          { op: "local.get", index: L_V },
+          { op: "ref.test", typeIdx: -20 },
+          { op: "i32.or" },
           {
             op: "if",
             blockType: { kind: "val", type: strRef },
             then: numberArm([
               { op: "local.get", index: L_V },
-              { op: "ref.cast", typeIdx: boxNumIdx },
-              { op: "struct.get", typeIdx: boxNumIdx, fieldIdx: 0 },
+              { op: "ref.test", typeIdx: -20 },
+              {
+                op: "if",
+                blockType: { kind: "val", type: { kind: "f64" } },
+                then: [
+                  { op: "local.get", index: L_V },
+                  { op: "ref.cast", typeIdx: -20 },
+                  { op: "i31.get_s" },
+                  { op: "f64.convert_i32_s" },
+                ],
+                else: [
+                  { op: "local.get", index: L_V },
+                  { op: "ref.cast", typeIdx: boxNumIdx },
+                  { op: "struct.get", typeIdx: boxNumIdx, fieldIdx: 0 },
+                ],
+              },
             ]),
             else: [
               // $__box_boolean_struct? → "true" / "false"
@@ -1405,6 +1397,47 @@ export function ensureStrToCharVecHelper(ctx: CodegenContext): { funcIdx: number
   return { funcIdx, vecTypeIdx: nstrVecTypeIdx };
 }
 
+/**
+ * (#3912) Can the `__str_to_extern` / `__str_from_extern` bridge be emitted in
+ * this module at all?
+ *
+ * ## Why this is NOT `ctx.nativeStrings`
+ *
+ * The bridge is the only way to convert between a WasmGC `$AnyString` and a
+ * REAL JS string, and it does that by copying UTF-16 code units through linear
+ * memory using three **JS-host imports** — `__str_from_mem`, `__str_to_mem`,
+ * `__str_extern_len` (see `ensureNativeStringExternBridge` below). There is no
+ * pure-Wasm way to manufacture a JS string, so the bridge is *inherently*
+ * host-dependent even though it is part of the NATIVE string subsystem.
+ *
+ * That makes "strings are native here" (`ctx.nativeStrings`) exactly the wrong
+ * question — it is true in six lanes, three of which have no usable host:
+ *
+ *     nativeStrings = fast || wasi || standalone || strictNoHostImports || utf8Storage
+ *
+ * `wasi` / `standalone` have no JS runtime at all, and `strictNoHostImports`
+ * has one but **forbids** host imports — the strict gate DROPS them, and
+ * because `ensureNativeStringExternBridge` bakes the three funcidxs into
+ * compiled helper bodies before the drop, the result is not a clean refusal but
+ * a hard `absoluteFuncIndex: unresolved call target` codegen error.
+ *
+ * So the real question is "is there a JS host AND are host imports allowed?".
+ * Callers that can degrade (hand the host an externref some other way, or skip
+ * the marshal) MUST consult this first.
+ *
+ * ## Known pre-existing violation, deliberately not fixed here
+ *
+ * `console.log(<string>)` reaches the bridge unguarded, so it already fails to
+ * compile under `strictNoHostImports` on `main` today with this exact error
+ * (verified directly). Fixing that needs a decision about what `console.log`
+ * should *do* with no host — it cannot both refuse to marshal and still call
+ * the host console — so it is left alone rather than guessed at. This predicate
+ * exists so that decision has a name to hang on.
+ */
+export function hostStringBridgeUsable(ctx: CodegenContext): boolean {
+  return !ctx.wasi && !ctx.standalone && !ctx.strictNoHostImports;
+}
+
 export function ensureNativeStringExternBridge(ctx: CodegenContext): void {
   ensureNativeStringHelpers(ctx);
   if (ctx.nativeStrExternBridgeEmitted) return;
@@ -1416,7 +1449,11 @@ export function ensureNativeStringExternBridge(ctx: CodegenContext): void {
   const strRef: ValType = { kind: "ref", typeIdx: anyStrTypeIdx };
   const strDataRef: ValType = { kind: "ref", typeIdx: strDataTypeIdx };
 
-  if (ctx.mod.memories.length === 0) {
+  // (#4238) With `importMemory` the module already has a memory at index 0 (an
+  // IMPORTED one — `mod.memories` only holds DEFINED memories). Defining a
+  // second one here would land at index 1 while every emitted load/store still
+  // targets index 0, so skip: the bridge shares the peer's memory.
+  if (ctx.mod.memories.length === 0 && ctx.importMemory === undefined) {
     ctx.mod.memories.push({ min: 1 });
     ctx.mod.exports.push({
       name: "__str_mem",

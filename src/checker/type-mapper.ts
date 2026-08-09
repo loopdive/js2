@@ -36,6 +36,11 @@ const BUILTIN_TYPES = new Set([
   "IteratorReturnResult",
 ]);
 
+/**
+ * (#3907) `fast` no longer influences the `number` mapping and is retained only
+ * because it is threaded through the recursive calls below. Do NOT reintroduce
+ * a mode-dependent numeric representation here — see the `number` arm.
+ */
 export function mapTsTypeToWasm(type: ts.Type, checker: ts.TypeChecker, fast?: boolean): ValType {
   if (type.flags & ts.TypeFlags.BigInt || type.flags & ts.TypeFlags.BigIntLiteral) {
     // (#1644) Brand the i64 as bigint so coercion sites box/unbox it as a JS
@@ -45,7 +50,21 @@ export function mapTsTypeToWasm(type: ts.Type, checker: ts.TypeChecker, fast?: b
     return { kind: "i64", bigint: true };
   }
   if (type.flags & ts.TypeFlags.Number || type.flags & ts.TypeFlags.NumberLiteral) {
-    return { kind: fast ? "i32" : "f64" };
+    // (#3907) This was `{ kind: fast ? "i32" : "f64" }`, and it is THE narrowing
+    // site behind the mixed/fibonacci wrap. It made EVERY TypeScript `number` a
+    // Wasm i32 under `fast` — local, parameter, return, array element, object
+    // field — so `Math.sqrt(2)` was 1, `100000 * 100000` was 1410065408, and the
+    // published `gc-native` benchmark lane was comparing wrapping 32-bit integer
+    // arithmetic against JS's IEEE-754 doubles.
+    //
+    // A TS `number` is an IEEE-754 double in every mode. i32 storage is reached
+    // only through a PROOF, all of which live elsewhere and were already
+    // correct: the explicit `type i32 = number` opt-in (#323/#3673),
+    // `collectI32CoercedLocals` (#1120/#1236/#2789), `detectI32LoopVar`,
+    // `planI32Slots` (#3741), and the ToInt32-guarded operator paths in
+    // `binary-ops.ts`. Note #1236 and #2789 had already hardened those matchers
+    // against exactly this failure mode — the bug was upstream of all of them.
+    return { kind: "f64" };
   }
   if (type.flags & ts.TypeFlags.Boolean || type.flags & ts.TypeFlags.BooleanLiteral) {
     // (#1788) Brand the i32 as boolean so struct field getters box it as a JS

@@ -57,15 +57,26 @@ if (mode === "single") {
 } else if (mode === "warm") {
   for (let i = 0; i < WARMUP; i++) mod.run(inputValue);
   const samplesMs = [];
+  const samplesCpuNs = [];
+  let result;
   for (let i = 0; i < MEASURED; i++) {
+    const cpuStarted = process.cpuUsage();
     const t0 = performance.now();
-    const result = mod.run(inputValue);
+    result = mod.run(inputValue);
     samplesMs.push(performance.now() - t0);
-    void result;
+    const cpu = process.cpuUsage(cpuStarted);
+    samplesCpuNs.push((cpu.user + cpu.system) * 1000);
   }
   const sorted = [...samplesMs].sort((a, b) => a - b);
   const median = sorted[Math.floor(sorted.length / 2)];
-  process.stdout.write(JSON.stringify({ mode: "warm", samplesMs, medianMs: median }) + "\n");
+  const sortedCpu = [...samplesCpuNs].sort((a, b) => a - b);
+  const medianCpuNs = sortedCpu[Math.floor(sortedCpu.length / 2)];
+  const peakRss = process.resourceUsage().maxRSS;
+  const peakRssBytes = process.platform === "darwin" ? peakRss : peakRss * 1024;
+  process.stdout.write(
+    JSON.stringify({ mode: "warm", samplesMs, samplesCpuNs, medianMs: median, medianCpuNs, peakRssBytes, result }) +
+      "\n",
+  );
 } else {
   process.stderr.write(`Unknown mode: ${mode}\n`);
   process.exit(1);

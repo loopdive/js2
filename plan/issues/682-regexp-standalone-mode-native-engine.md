@@ -11,6 +11,8 @@ reasoning_effort: max
 goal: standalone-mode
 sprint: 58
 owner: Raman
+loc-budget-allow:
+  - src/codegen/string-ops.ts
 files:
   src/codegen/regexp-standalone.ts:
     new:

@@ -14,18 +14,21 @@
 //   4. Branch arg arity: each `br`/`br_if` passes exactly as many args as the
 //      target block declares.
 //   5. Symbolic refs: the only references to functions/globals/types in
-//      instructions are IrFuncRef/IrGlobalRef/IrTypeRef (no raw indices).
+//      instructions are structurally-bound IrFuncRef/IrGlobalRef/IrTypeRef
+//      values (no raw indices or legacy name-only callable refs).
 //
 // On failure, returns a list of `IrVerifyError`s rather than throwing, so
 // callers can decide whether to bail or fall back to the legacy path.
 
 import type { IrBlock, IrFunction, IrInstr, IrLabelId, IrType, IrValueId } from "./nodes.js";
-import { asVal, forEachInstrDeep, forEachNestedBuffer } from "./nodes.js";
+import { asVal, forEachInstrDeep, forEachNestedBuffer, irTypeEquals } from "./nodes.js";
 import type { ValType } from "./types.js";
 // #2949 slice 1 — canonical JsTag policy for the dynamic-operand rules
 // (payload-kind consistency of unbox/tag.test on `dynamic` values). Imported
 // from the dependency-free leaf, so this adds no codegen module-graph pull.
 import { JsTag, jsTagUnboxKind } from "./js-tag.js";
+import { verifyIrIntrinsicInstruction } from "./intrinsic-support.js";
+import { verifyIrAsyncPlan } from "./async-plan.js";
 
 /**
  * #1850 — successor block ids of a block, derived from its terminator.
@@ -161,11 +164,259 @@ export interface IrVerifyError {
   readonly message: string;
   readonly func: string;
   readonly block?: number;
+  /**
+   * (#3565) When true, this verify error is a DESIGNED demote-to-legacy signal,
+   * not a compiler invariant — the integration layer classifies it as
+   * `unsupported` (warning → keep legacy body) rather than the hard `invariant`
+   * that #3341/#3519 promoted. Set ONLY on the #1798 return-value gate
+   * (return/early.return arity + type mismatch), whose whole purpose is to
+   * demote a function that would otherwise emit invalid Wasm. Every other verify
+   * error (SSA scope, dominance, branch/instr type rules, block-id shape) is a
+   * genuine invalid-IR invariant and stays a hard error.
+   */
+  readonly demote?: boolean;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+function callableReferenceProblem(value: unknown): string | null {
+  if (!isRecord(value)) return "must be an IrFuncRef object";
+  if (value.kind !== "func") return 'must have kind "func"';
+  if (!nonEmptyString(value.name)) return "must carry a non-empty compatibility name";
+  if (!("binding" in value)) {
+    return "is missing required callable binding; legacy name-only refs are not valid IR";
+  }
+  if (!isRecord(value.binding)) return "has a malformed callable binding object";
+
+  const binding = value.binding;
+  switch (binding.kind) {
+    case "unit":
+      return nonEmptyString(binding.unitId) && binding.unitId.startsWith("ir-unit:v1:")
+        ? null
+        : "has a malformed unit callable binding";
+    case "import":
+      return nonEmptyString(binding.module) && nonEmptyString(binding.field)
+        ? null
+        : "has a malformed import callable binding";
+    case "runtime":
+      return nonEmptyString(binding.symbol) ? null : "has a malformed runtime callable binding";
+    case "intrinsic":
+      return nonEmptyString(binding.symbol) ? null : "has a malformed intrinsic callable binding";
+    case "support":
+      return nonEmptyString(binding.bindingId) && binding.bindingId.startsWith("ir-binding:v1:")
+        ? null
+        : "has a malformed support callable binding";
+    default:
+      return "has an unknown callable binding kind";
+  }
+}
+
+function structuralBindingId(value: unknown, domain: "global" | "type" | "class"): value is string {
+  return nonEmptyString(value) && value.startsWith(`ir-binding:v1:${domain}:`);
+}
+
+/** Validate a serialized/in-memory global ref without trusting its TypeScript type. */
+export function irGlobalReferenceProblem(value: unknown): string | null {
+  if (!isRecord(value)) return "must be an IrGlobalRef object";
+  if (value.kind !== "global") return 'must have kind "global"';
+  if (!nonEmptyString(value.name)) return "must carry a non-empty compatibility name";
+  if (!("binding" in value)) {
+    return "is missing required global binding; legacy name-only refs are not valid IR";
+  }
+  if (!isRecord(value.binding)) return "has a malformed global binding object";
+  const binding = value.binding;
+  if (!structuralBindingId(binding.bindingId, "global")) return "has a malformed global-domain bindingId";
+  switch (binding.kind) {
+    case "source":
+    case "support":
+      return null;
+    case "import":
+      return nonEmptyString(binding.module) && typeof binding.field === "string"
+        ? null
+        : "has a malformed import global binding";
+    case "runtime":
+      return nonEmptyString(binding.symbol) ? null : "has a malformed runtime global binding";
+    default:
+      return "has an unknown global binding kind";
+  }
+}
+
+/** Validate a symbolic type ref before a backend adapter resolves it. */
+export function irTypeReferenceProblem(value: unknown): string | null {
+  if (!isRecord(value)) return "must be an IrTypeRef object";
+  if (value.kind !== "type") return 'must have kind "type"';
+  if (!nonEmptyString(value.name)) return "must carry a non-empty compatibility name";
+  if (!("binding" in value)) {
+    return "is missing required type binding; legacy name-only refs are not valid IR";
+  }
+  if (!isRecord(value.binding)) return "has a malformed type binding object";
+  const binding = value.binding;
+  const expectedDomain = binding.kind === "class" ? "class" : "type";
+  if (!structuralBindingId(binding.bindingId, expectedDomain)) {
+    return `has a malformed ${expectedDomain}-domain bindingId`;
+  }
+  switch (binding.kind) {
+    case "source":
+    case "support":
+      return null;
+    case "class":
+      return nonEmptyString(binding.classId) && binding.classId.startsWith("ir-class:v1:")
+        ? null
+        : "has a malformed class type binding";
+    case "runtime":
+      return nonEmptyString(binding.symbol) ? null : "has a malformed runtime type binding";
+    default:
+      return "has an unknown type binding kind";
+  }
+}
+
+/** Verify direct symbolic refs in every nested instruction buffer. */
+function verifySymbolicReferences(func: IrFunction, errors: IrVerifyError[]): void {
+  for (const block of func.blocks) {
+    for (const instr of block.instrs) {
+      forEachInstrDeep(instr, (nested) => {
+        let site: string;
+        let ref: unknown;
+        if (nested.kind === "call") {
+          site = "call target";
+          ref = nested.target;
+        } else if (nested.kind === "closure.new") {
+          site = "closure.new liftedFunc";
+          ref = nested.liftedFunc;
+        } else if (nested.kind === "global.get" || nested.kind === "global.set") {
+          const problem = irGlobalReferenceProblem(nested.target);
+          if (problem !== null) {
+            errors.push({
+              message: `${nested.kind} target ${problem}`,
+              func: func.name,
+              block: block.id as number,
+            });
+          }
+          return;
+        } else if (nested.kind === "string.const") {
+          if (nested.storage && nested.materializer) {
+            errors.push({
+              message: "string.const cannot carry both storage and a materializer",
+              func: func.name,
+              block: block.id as number,
+            });
+          }
+          if (nested.storage) {
+            const problem = irGlobalReferenceProblem(nested.storage);
+            if (problem !== null) {
+              errors.push({
+                message: `string.const storage ${problem}`,
+                func: func.name,
+                block: block.id as number,
+              });
+            }
+          }
+          if (nested.materializer) {
+            const problem = callableReferenceProblem(nested.materializer);
+            if (problem !== null) {
+              errors.push({
+                message: `string.const materializer ${problem}`,
+                func: func.name,
+                block: block.id as number,
+              });
+            }
+          }
+          return;
+        } else if (nested.kind === "string.len" && nested.provider) {
+          if (nested.provider.kind === "callable") {
+            const problem = callableReferenceProblem(nested.provider.target);
+            if (problem !== null) {
+              errors.push({
+                message: `string.len provider ${problem}`,
+                func: func.name,
+                block: block.id as number,
+              });
+            }
+          } else {
+            const problem = irTypeReferenceProblem(nested.provider.ownerType);
+            if (
+              problem !== null ||
+              !Number.isSafeInteger(nested.provider.fieldIndex) ||
+              nested.provider.fieldIndex < 0
+            ) {
+              errors.push({
+                message:
+                  problem === null
+                    ? "string.len provider has an invalid struct field index"
+                    : `string.len provider ${problem}`,
+                func: func.name,
+                block: block.id as number,
+              });
+            }
+          }
+          return;
+        } else if (
+          (nested.kind === "string.concat" ||
+            nested.kind === "string.eq" ||
+            nested.kind === "string.char_at" ||
+            nested.kind === "string.char_code_at" ||
+            nested.kind === "forof.string") &&
+          nested.provider
+        ) {
+          const problem = callableReferenceProblem(nested.provider);
+          if (problem !== null) {
+            errors.push({
+              message: `${nested.kind} provider ${problem}`,
+              func: func.name,
+              block: block.id as number,
+            });
+          }
+          return;
+        } else {
+          return;
+        }
+        const problem = callableReferenceProblem(ref);
+        if (problem !== null) {
+          errors.push({ message: `${site} ${problem}`, func: func.name, block: block.id as number });
+        }
+      });
+    }
+  }
 }
 
 export function verifyIrFunction(func: IrFunction): IrVerifyError[] {
   const errors: IrVerifyError[] = [];
   const defs = new Set<IrValueId>();
+
+  if (func.asyncPlan) {
+    if (func.funcKind !== "async") {
+      errors.push({ message: "asyncPlan requires funcKind=async", func: func.name });
+    }
+    if (func.asyncPlan.ownerUnitId !== func.unitId) {
+      errors.push({ message: "asyncPlan ownerUnitId does not match its IrFunction", func: func.name });
+    }
+    for (const error of verifyIrAsyncPlan(func.asyncPlan)) {
+      errors.push({ message: `asyncPlan ${error.code}: ${error.message}`, func: func.name });
+    }
+  } else if (func.asyncRuntime) {
+    errors.push({ message: "asyncRuntime requires a semantic asyncPlan", func: func.name });
+  }
+  if (func.asyncRuntime) {
+    const capabilities = new Set<string>();
+    for (const adapter of func.asyncRuntime.adapters) {
+      if (capabilities.has(adapter.capability)) {
+        errors.push({ message: `asyncRuntime duplicates capability ${adapter.capability}`, func: func.name });
+      }
+      capabilities.add(adapter.capability);
+      const problem = callableReferenceProblem(adapter.target);
+      if (problem !== null) {
+        errors.push({ message: `asyncRuntime adapter ${adapter.capability} ${problem}`, func: func.name });
+      }
+    }
+  }
+
+  verifySymbolicReferences(func, errors);
 
   for (const p of func.params) {
     if (defs.has(p.value)) {
@@ -234,6 +485,7 @@ export function verifyIrFunction(func: IrFunction): IrVerifyError[] {
         message: `return arity ${t.values.length} != declared result arity ${func.resultTypes.length}`,
         func: func.name,
         block: block.id as number,
+        demote: true, // (#3565) #1798 gate — DESIGNED demote-to-legacy, not an invariant
       });
       continue;
     }
@@ -248,6 +500,7 @@ export function verifyIrFunction(func: IrFunction): IrVerifyError[] {
             `result ${describeKind(declared)}`,
           func: func.name,
           block: block.id as number,
+          demote: true, // (#3565) #1798 gate — DESIGNED demote-to-legacy, not an invariant
         });
       }
     }
@@ -267,6 +520,7 @@ export function verifyIrFunction(func: IrFunction): IrVerifyError[] {
             message: `early.return arity ${arity} != declared result arity ${func.resultTypes.length}`,
             func: func.name,
             block: block.id as number,
+            demote: true, // (#3565) #1798 gate — DESIGNED demote-to-legacy, not an invariant
           });
           return;
         }
@@ -280,6 +534,7 @@ export function verifyIrFunction(func: IrFunction): IrVerifyError[] {
               `result ${describeKind(func.resultTypes[0]!)}`,
             func: func.name,
             block: block.id as number,
+            demote: true, // (#3565) #1798 gate — DESIGNED demote-to-legacy, not an invariant
           });
         }
       });
@@ -344,6 +599,290 @@ function describeKind(t: IrType): string {
   const v = asVal(t);
   if (v) return v.kind;
   return t.kind;
+}
+
+/**
+ * Per-instruction structural (type-system) rules: loop/if condValue i32
+ * contracts, switch shape rules, and the tagged-union box/unbox/dyn.*
+ * operand checks. Extracted from the `walkBuffer` scope walk (#2952
+ * slice 4) — these need only the instruction and its operand types
+ * (`operandIrType` scans the whole function), none of the walk state
+ * (label envs, buffer position), so the walk calls this once per
+ * instruction and stays a pure SSA/label-scope walker.
+ */
+function verifyInstrStructure(
+  instr: IrInstr,
+  func: IrFunction,
+  block: IrBlock,
+  localDefs: ReadonlySet<IrValueId>,
+  errors: IrVerifyError[],
+): void {
+  // The lowerer emits an unconditional `i32.eqz` on a loop `condValue`, so
+  // a non-i32 cond produces invalid Wasm that bricks the whole module.
+  // Reject it here (the lowerer's #1980 fix throws a fallback before
+  // reaching this, but the verifier is the structural backstop — the
+  // #1850 gap that let this through silently). (#1980)
+  if (instr.kind === "while.loop" || instr.kind === "for.loop") {
+    const condT = operandIrType(func, block, instr.condValue, localDefs);
+    if (condT && asVal(condT)?.kind !== "i32") {
+      errors.push({
+        message: `${instr.kind} condValue must be i32, got ${asVal(condT)?.kind ?? condT.kind}`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+  }
+
+  // #2952 slice 2 — if.stmt cond must be i32 (same backstop rationale).
+  if (instr.kind === "if.stmt") {
+    const condT = operandIrType(func, block, instr.cond, localDefs);
+    if (condT && asVal(condT)?.kind !== "i32") {
+      errors.push({
+        message: `if.stmt cond must be i32, got ${asVal(condT)?.kind ?? condT.kind}`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+  }
+
+  // #2952 slice 4 — switch structural rules: disc must be numeric (the
+  // lowerer emits i32.eq / f64.eq against literal tests), the tests/bodies
+  // arrays must be parallel, and at most one default.
+  if (instr.kind === "switch") {
+    const discT = operandIrType(func, block, instr.disc, localDefs);
+    const discK = discT ? asVal(discT)?.kind : undefined;
+    if (discT && discK !== "i32" && discK !== "f64") {
+      errors.push({
+        message: `switch disc must be i32/f64, got ${discK ?? discT.kind}`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+    if (instr.tests.length !== instr.bodies.length) {
+      errors.push({
+        message: `switch tests (${instr.tests.length}) and bodies (${instr.bodies.length}) must be parallel`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+    if (instr.tests.filter((t) => t === null).length > 1) {
+      errors.push({
+        message: `switch has more than one default clause`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+  }
+
+  // Structural checks for the tagged-union instructions. These are
+  // type-system-level, not SSA-scope — misuse should surface here rather
+  // than silently lowering to a trap.
+  if (instr.kind === "box") {
+    if (instr.toType.kind === "dynamic") {
+      // #2949 R1 — box-to-dynamic erases any concrete value into the
+      // boxed-any carrier. Re-boxing an already-dynamic value is
+      // provably redundant (the intended node is a move or an unbox) —
+      // reject it so a producer bug surfaces here, not as a double-boxed
+      // runtime value.
+      const operandIr = operandIrType(func, block, instr.value, localDefs);
+      if (operandIr && operandIr.kind === "dynamic") {
+        errors.push({
+          message: `box operand is already dynamic — re-boxing a dynamic value is invalid (#2949)`,
+          func: func.name,
+          block: block.id as number,
+        });
+      }
+    } else if (instr.toType.kind !== "union") {
+      errors.push({
+        message: `box target must be a union or dynamic IrType, got ${instr.toType.kind}`,
+        func: func.name,
+        block: block.id as number,
+      });
+    } else {
+      // box requires the operand's ValType to be a member of the union.
+      const operandT = operandValType(func, block, instr.value, localDefs);
+      if (operandT && !unionContains(instr.toType.members, operandT)) {
+        errors.push({
+          // #1926 — members are IrTypes; describe each member's ValType kind.
+          message: `box operand type ${operandT.kind} is not a member of union<${instr.toType.members.map((m) => asVal(m)?.kind ?? m.kind).join(",")}>`,
+          func: func.name,
+          block: block.id as number,
+        });
+      }
+    }
+  }
+  if (instr.kind === "unbox" || instr.kind === "tag.test") {
+    const operandIr = operandIrType(func, block, instr.value, localDefs);
+    if (operandIr && operandIr.kind === "dynamic") {
+      // #2949 R2/R3 — dynamic operands discriminate on the JS partition,
+      // so `jsTag` is REQUIRED (the ValType `tag` cannot distinguish
+      // e.g. String from Object — both are reference-shaped).
+      if (instr.jsTag === undefined) {
+        errors.push({
+          message: `${instr.kind} on a dynamic operand requires jsTag (#2949)`,
+          func: func.name,
+          block: block.id as number,
+        });
+      } else {
+        const payload = jsTagUnboxKind(instr.jsTag);
+        // R2 — Null/Undefined are singleton partitions with no payload:
+        // unboxing them is invalid (identity is observed via tag.test).
+        if (instr.kind === "unbox" && payload === null) {
+          errors.push({
+            message: `unbox with payload-less JsTag ${JsTag[instr.jsTag]} is invalid — use tag.test (#2949)`,
+            func: func.name,
+            block: block.id as number,
+          });
+        }
+        // When the producer also wrote a ValType `tag`, it must be
+        // consistent with the partition's payload kind: exact for the
+        // scalar partitions, ref-shaped for String/Object/Function.
+        if (instr.tag && payload !== null) {
+          const k = instr.tag.kind;
+          const refShaped =
+            k === "ref" ||
+            k === "ref_null" ||
+            k === "externref" ||
+            k === "ref_extern" ||
+            k === "eqref" ||
+            k === "anyref" ||
+            k === "funcref";
+          const consistent = payload === "ref" ? refShaped : k === payload;
+          if (!consistent) {
+            errors.push({
+              message: `${instr.kind} tag ${k} is inconsistent with jsTag ${JsTag[instr.jsTag]} (payload kind ${payload}) (#2949)`,
+              func: func.name,
+              block: block.id as number,
+            });
+          }
+        }
+      }
+    } else if (operandIr && operandIr.kind !== "union") {
+      errors.push({
+        message: `${instr.kind} operand must be a union or dynamic IrType, got ${operandIr.kind}`,
+        func: func.name,
+        block: block.id as number,
+      });
+    } else if (operandIr) {
+      // Union operand (V1) — the ValType `tag` is REQUIRED (#2949 made
+      // the field optional on the node because dynamic operands use
+      // `jsTag` instead) and must name a member of the union.
+      if (!instr.tag) {
+        errors.push({
+          message: `${instr.kind} on a union operand requires a ValType tag`,
+          func: func.name,
+          block: block.id as number,
+        });
+      } else if (!unionContains(operandIr.members, instr.tag)) {
+        errors.push({
+          // #1926 — members are IrTypes; describe each member's ValType kind.
+          message: `${instr.kind} tag ${instr.tag.kind} is not a member of union<${operandIr.members.map((m) => asVal(m)?.kind ?? m.kind).join(",")}>`,
+          func: func.name,
+          block: block.id as number,
+        });
+      }
+    }
+  }
+  // #2949 S5.1 — dyn.truthy is ToBoolean on the boxed-any carrier: the
+  // operand MUST be dynamic (a concrete scalar has an inline ToBoolean
+  // and must not route through the carrier helper). Result is i32,
+  // already enforced structurally by the loop/if condValue rules.
+  if (instr.kind === "dyn.truthy") {
+    const operandIr = operandIrType(func, block, instr.value, localDefs);
+    if (operandIr && operandIr.kind !== "dynamic") {
+      errors.push({
+        message: `dyn.truthy operand must be a dynamic IrType, got ${operandIr.kind} (#2949)`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+  }
+  // #2949 S5.3 — dyn.to_number is ToNumber on the boxed-any carrier → f64:
+  // the operand MUST be dynamic (a concrete numeric operand converts to f64
+  // inline and must not route through the carrier ToNumber helper). Result
+  // is f64, consumed by the numeric-abstract relational compare.
+  if (instr.kind === "dyn.to_number") {
+    const operandIr = operandIrType(func, block, instr.value, localDefs);
+    if (operandIr && operandIr.kind !== "dynamic") {
+      errors.push({
+        message: `dyn.to_number operand must be a dynamic IrType, got ${operandIr.kind} (#2949)`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+  }
+  // #2949 S5.2 — dyn.eq compares TWO boxed-any carriers via the canonical
+  // `__any_strict_eq`/`__any_eq` helpers (which take `(ref null $AnyValue,
+  // ref null $AnyValue)`). BOTH operands MUST be dynamic — the producer
+  // boxes any concrete operand into the carrier before this node, so a
+  // non-dynamic operand here is a producer bug (a concrete-vs-concrete
+  // `===` has an inline `i32.eq`/`f64.eq` and must never route through the
+  // carrier helper). Result is i32, satisfying downstream condValue rules.
+  if (instr.kind === "dyn.eq") {
+    for (const operand of [instr.lhs, instr.rhs]) {
+      const operandIr = operandIrType(func, block, operand, localDefs);
+      if (operandIr && operandIr.kind !== "dynamic") {
+        errors.push({
+          message: `dyn.eq operand must be a dynamic IrType, got ${operandIr.kind} (#2949)`,
+          func: func.name,
+          block: block.id as number,
+        });
+      }
+    }
+  }
+  // #3053 U1 / #2949 S5.4 — dyn.member_get reads a member off a boxed-any
+  // receiver via `__dyn_member_get(recv, key)`, which takes and returns the
+  // carrier. BOTH operands MUST be dynamic (the producer boxes the receiver
+  // and the property key into the carrier first) and the RESULT must be
+  // dynamic (the honest-boxed read value) — anything else is a producer bug
+  // that would mis-shape the reader ABI.
+  if (instr.kind === "dyn.member_get") {
+    for (const [label, operand] of [
+      ["recv", instr.recv],
+      ["key", instr.key],
+    ] as const) {
+      const operandIr = operandIrType(func, block, operand, localDefs);
+      if (operandIr && operandIr.kind !== "dynamic") {
+        errors.push({
+          message: `dyn.member_get ${label} must be a dynamic IrType, got ${operandIr.kind} (#3053 U1)`,
+          func: func.name,
+          block: block.id as number,
+        });
+      }
+    }
+    if (instr.resultType === null || instr.resultType.kind !== "dynamic") {
+      errors.push({
+        message: `dyn.member_get result must be a dynamic IrType, got ${instr.resultType?.kind ?? "null"} (#3053 U1)`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+  }
+  // #3795 — the statement-position write dual consumes three canonical
+  // dynamic carriers and produces no SSA result.
+  if (instr.kind === "dyn.member_set") {
+    for (const [label, operand] of [
+      ["recv", instr.recv],
+      ["key", instr.key],
+      ["value", instr.value],
+    ] as const) {
+      const operandIr = operandIrType(func, block, operand, localDefs);
+      if (operandIr && operandIr.kind !== "dynamic") {
+        errors.push({
+          message: `dyn.member_set ${label} must be a dynamic IrType, got ${operandIr.kind} (#3795)`,
+          func: func.name,
+          block: block.id as number,
+        });
+      }
+    }
+    if (instr.result !== null || instr.resultType !== null) {
+      errors.push({
+        message: "dyn.member_set must be void (#3795)",
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+  }
 }
 
 function verifyBlock(
@@ -416,10 +955,23 @@ function verifyBlock(
   // cond/update buffers do NOT (no statement can occur there), and try/if
   // buffers inherit unchanged (break out of a try is legal — the lowerer
   // inlines crossed finallys).
-  const walkBuffer = (instrs: readonly IrInstr[], labelsInScope: ReadonlySet<IrLabelId>): void => {
+  // (#2952 slice 4) `breakOnlyInScope` — labels bound by enclosing
+  // `labeled.block` / `switch` frames: valid targets for mode "break"
+  // ONLY (JS grammar — `continue` must target a loop; the from-ast layer
+  // never emits a continue against these, this is the structural backstop).
+  const walkBuffer = (
+    instrs: readonly IrInstr[],
+    labelsInScope: ReadonlySet<IrLabelId>,
+    breakOnlyInScope: ReadonlySet<IrLabelId> = new Set(),
+  ): void => {
     const withLabel = (l: IrLabelId | undefined): ReadonlySet<IrLabelId> => {
       if (l === undefined) return labelsInScope;
       const next = new Set(labelsInScope);
+      next.add(l);
+      return next;
+    };
+    const withBreakOnly = (l: IrLabelId): ReadonlySet<IrLabelId> => {
+      const next = new Set(breakOnlyInScope);
       next.add(l);
       return next;
     };
@@ -432,19 +984,6 @@ function verifyBlock(
       // would spuriously read as use-before-def. (#1844)
       if (instr.kind === "while.loop" || instr.kind === "for.loop") {
         walkBuffer(instr.cond, labelsInScope);
-        // The lowerer emits an unconditional `i32.eqz` on `condValue`, so a
-        // non-i32 cond produces invalid Wasm that bricks the whole module.
-        // Reject it here (the lowerer's #1980 fix throws a fallback before
-        // reaching this, but the verifier is the structural backstop — the
-        // #1850 gap that let this through silently). (#1980)
-        const condT = operandIrType(func, block, instr.condValue, localDefs);
-        if (condT && asVal(condT)?.kind !== "i32") {
-          errors.push({
-            message: `${instr.kind} condValue must be i32, got ${asVal(condT)?.kind ?? condT.kind}`,
-            func: func.name,
-            block: block.id as number,
-          });
-        }
       }
 
       // #2952 slice 2 — br.label rules: (a) the label must be bound by an
@@ -453,9 +992,14 @@ function verifyBlock(
       // emitting after a break/continue, so trailing instrs are a producer
       // bug, not dead code to tolerate).
       if (instr.kind === "br.label") {
-        if (!labelsInScope.has(instr.label)) {
+        // (slice 4) break may additionally target a labeled.block / switch
+        // frame; continue must target a loop label.
+        const bound = labelsInScope.has(instr.label) || (instr.mode === "break" && breakOnlyInScope.has(instr.label));
+        if (!bound) {
           errors.push({
-            message: `br.label(${instr.label as number}, ${instr.mode}) targets no enclosing loop label`,
+            message: `br.label(${instr.label as number}, ${instr.mode}) targets no enclosing ${
+              instr.mode === "break" ? "loop/block/switch" : "loop"
+            } label`,
             func: func.name,
             block: block.id as number,
           });
@@ -469,210 +1013,16 @@ function verifyBlock(
         }
       }
 
-      // #2952 slice 2 — if.stmt cond must be i32: the lowerer emits a Wasm
-      // `if` directly on it (same backstop rationale as the loop condValue
-      // check above).
-      if (instr.kind === "if.stmt") {
-        const condT = operandIrType(func, block, instr.cond, localDefs);
-        if (condT && asVal(condT)?.kind !== "i32") {
-          errors.push({
-            message: `if.stmt cond must be i32, got ${asVal(condT)?.kind ?? condT.kind}`,
-            func: func.name,
-            block: block.id as number,
-          });
-        }
-      }
-
       // Use-before-def check (params + block args always count). Nested-body
       // uses additionally see anything registered in `localDefs` so far,
       // which by construction includes the outer values defined before the
       // enclosing nesting instr.
       for (const u of collectUses(instr)) checkUse(u);
 
-      // Structural checks for the tagged-union instructions. These are
-      // type-system-level, not SSA-scope — misuse should surface here rather
-      // than silently lowering to a trap.
-      if (instr.kind === "box") {
-        if (instr.toType.kind === "dynamic") {
-          // #2949 R1 — box-to-dynamic erases any concrete value into the
-          // boxed-any carrier. Re-boxing an already-dynamic value is
-          // provably redundant (the intended node is a move or an unbox) —
-          // reject it so a producer bug surfaces here, not as a double-boxed
-          // runtime value.
-          const operandIr = operandIrType(func, block, instr.value, localDefs);
-          if (operandIr && operandIr.kind === "dynamic") {
-            errors.push({
-              message: `box operand is already dynamic — re-boxing a dynamic value is invalid (#2949)`,
-              func: func.name,
-              block: block.id as number,
-            });
-          }
-        } else if (instr.toType.kind !== "union") {
-          errors.push({
-            message: `box target must be a union or dynamic IrType, got ${instr.toType.kind}`,
-            func: func.name,
-            block: block.id as number,
-          });
-        } else {
-          // box requires the operand's ValType to be a member of the union.
-          const operandT = operandValType(func, block, instr.value, localDefs);
-          if (operandT && !unionContains(instr.toType.members, operandT)) {
-            errors.push({
-              // #1926 — members are IrTypes; describe each member's ValType kind.
-              message: `box operand type ${operandT.kind} is not a member of union<${instr.toType.members.map((m) => asVal(m)?.kind ?? m.kind).join(",")}>`,
-              func: func.name,
-              block: block.id as number,
-            });
-          }
-        }
-      }
-      if (instr.kind === "unbox" || instr.kind === "tag.test") {
-        const operandIr = operandIrType(func, block, instr.value, localDefs);
-        if (operandIr && operandIr.kind === "dynamic") {
-          // #2949 R2/R3 — dynamic operands discriminate on the JS partition,
-          // so `jsTag` is REQUIRED (the ValType `tag` cannot distinguish
-          // e.g. String from Object — both are reference-shaped).
-          if (instr.jsTag === undefined) {
-            errors.push({
-              message: `${instr.kind} on a dynamic operand requires jsTag (#2949)`,
-              func: func.name,
-              block: block.id as number,
-            });
-          } else {
-            const payload = jsTagUnboxKind(instr.jsTag);
-            // R2 — Null/Undefined are singleton partitions with no payload:
-            // unboxing them is invalid (identity is observed via tag.test).
-            if (instr.kind === "unbox" && payload === null) {
-              errors.push({
-                message: `unbox with payload-less JsTag ${JsTag[instr.jsTag]} is invalid — use tag.test (#2949)`,
-                func: func.name,
-                block: block.id as number,
-              });
-            }
-            // When the producer also wrote a ValType `tag`, it must be
-            // consistent with the partition's payload kind: exact for the
-            // scalar partitions, ref-shaped for String/Object/Function.
-            if (instr.tag && payload !== null) {
-              const k = instr.tag.kind;
-              const refShaped =
-                k === "ref" ||
-                k === "ref_null" ||
-                k === "externref" ||
-                k === "ref_extern" ||
-                k === "eqref" ||
-                k === "anyref" ||
-                k === "funcref";
-              const consistent = payload === "ref" ? refShaped : k === payload;
-              if (!consistent) {
-                errors.push({
-                  message: `${instr.kind} tag ${k} is inconsistent with jsTag ${JsTag[instr.jsTag]} (payload kind ${payload}) (#2949)`,
-                  func: func.name,
-                  block: block.id as number,
-                });
-              }
-            }
-          }
-        } else if (operandIr && operandIr.kind !== "union") {
-          errors.push({
-            message: `${instr.kind} operand must be a union or dynamic IrType, got ${operandIr.kind}`,
-            func: func.name,
-            block: block.id as number,
-          });
-        } else if (operandIr) {
-          // Union operand (V1) — the ValType `tag` is REQUIRED (#2949 made
-          // the field optional on the node because dynamic operands use
-          // `jsTag` instead) and must name a member of the union.
-          if (!instr.tag) {
-            errors.push({
-              message: `${instr.kind} on a union operand requires a ValType tag`,
-              func: func.name,
-              block: block.id as number,
-            });
-          } else if (!unionContains(operandIr.members, instr.tag)) {
-            errors.push({
-              // #1926 — members are IrTypes; describe each member's ValType kind.
-              message: `${instr.kind} tag ${instr.tag.kind} is not a member of union<${operandIr.members.map((m) => asVal(m)?.kind ?? m.kind).join(",")}>`,
-              func: func.name,
-              block: block.id as number,
-            });
-          }
-        }
-      }
-      // #2949 S5.1 — dyn.truthy is ToBoolean on the boxed-any carrier: the
-      // operand MUST be dynamic (a concrete scalar has an inline ToBoolean
-      // and must not route through the carrier helper). Result is i32,
-      // already enforced structurally by the loop/if condValue rules.
-      if (instr.kind === "dyn.truthy") {
-        const operandIr = operandIrType(func, block, instr.value, localDefs);
-        if (operandIr && operandIr.kind !== "dynamic") {
-          errors.push({
-            message: `dyn.truthy operand must be a dynamic IrType, got ${operandIr.kind} (#2949)`,
-            func: func.name,
-            block: block.id as number,
-          });
-        }
-      }
-      // #2949 S5.3 — dyn.to_number is ToNumber on the boxed-any carrier → f64:
-      // the operand MUST be dynamic (a concrete numeric operand converts to f64
-      // inline and must not route through the carrier ToNumber helper). Result
-      // is f64, consumed by the numeric-abstract relational compare.
-      if (instr.kind === "dyn.to_number") {
-        const operandIr = operandIrType(func, block, instr.value, localDefs);
-        if (operandIr && operandIr.kind !== "dynamic") {
-          errors.push({
-            message: `dyn.to_number operand must be a dynamic IrType, got ${operandIr.kind} (#2949)`,
-            func: func.name,
-            block: block.id as number,
-          });
-        }
-      }
-      // #2949 S5.2 — dyn.eq compares TWO boxed-any carriers via the canonical
-      // `__any_strict_eq`/`__any_eq` helpers (which take `(ref null $AnyValue,
-      // ref null $AnyValue)`). BOTH operands MUST be dynamic — the producer
-      // boxes any concrete operand into the carrier before this node, so a
-      // non-dynamic operand here is a producer bug (a concrete-vs-concrete
-      // `===` has an inline `i32.eq`/`f64.eq` and must never route through the
-      // carrier helper). Result is i32, satisfying downstream condValue rules.
-      if (instr.kind === "dyn.eq") {
-        for (const operand of [instr.lhs, instr.rhs]) {
-          const operandIr = operandIrType(func, block, operand, localDefs);
-          if (operandIr && operandIr.kind !== "dynamic") {
-            errors.push({
-              message: `dyn.eq operand must be a dynamic IrType, got ${operandIr.kind} (#2949)`,
-              func: func.name,
-              block: block.id as number,
-            });
-          }
-        }
-      }
-      // #3053 U1 / #2949 S5.4 — dyn.member_get reads a member off a boxed-any
-      // receiver via `__dyn_member_get(recv, key)`, which takes and returns the
-      // carrier. BOTH operands MUST be dynamic (the producer boxes the receiver
-      // and the property key into the carrier first) and the RESULT must be
-      // dynamic (the honest-boxed read value) — anything else is a producer bug
-      // that would mis-shape the reader ABI.
-      if (instr.kind === "dyn.member_get") {
-        for (const [label, operand] of [
-          ["recv", instr.recv],
-          ["key", instr.key],
-        ] as const) {
-          const operandIr = operandIrType(func, block, operand, localDefs);
-          if (operandIr && operandIr.kind !== "dynamic") {
-            errors.push({
-              message: `dyn.member_get ${label} must be a dynamic IrType, got ${operandIr.kind} (#3053 U1)`,
-              func: func.name,
-              block: block.id as number,
-            });
-          }
-        }
-        if (instr.resultType === null || instr.resultType.kind !== "dynamic") {
-          errors.push({
-            message: `dyn.member_get result must be a dynamic IrType, got ${instr.resultType?.kind ?? "null"} (#3053 U1)`,
-            func: func.name,
-            block: block.id as number,
-          });
-        }
-      }
+      // Per-instruction structural (type-system) rules — extracted so the
+      // scope walk stays readable (#2952 slice 4; the checks need only the
+      // instr + operand types, none of the walk state).
+      verifyInstrStructure(instr, func, block, localDefs, errors);
 
       if (instr.result !== null) {
         if (defs.has(instr.result)) {
@@ -693,17 +1043,22 @@ function verifyBlock(
       // (#2952 slice 2) Loop BODY buffers extend the label environment with
       // the loop's label; every other buffer inherits it unchanged.
       if (instr.kind === "while.loop") {
-        walkBuffer(instr.body, withLabel(instr.loopLabel));
+        walkBuffer(instr.body, withLabel(instr.loopLabel), breakOnlyInScope);
       } else if (instr.kind === "for.loop") {
-        walkBuffer(instr.body, withLabel(instr.loopLabel));
-        walkBuffer(instr.update, labelsInScope);
+        walkBuffer(instr.body, withLabel(instr.loopLabel), breakOnlyInScope);
+        walkBuffer(instr.update, labelsInScope, breakOnlyInScope);
       } else if (instr.kind === "forof.vec" || instr.kind === "forof.iter" || instr.kind === "forof.string") {
-        walkBuffer(instr.body, withLabel(instr.loopLabel));
+        walkBuffer(instr.body, withLabel(instr.loopLabel), breakOnlyInScope);
+      } else if (instr.kind === "labeled.block") {
+        // (#2952 slice 4) break-only label frames.
+        walkBuffer(instr.body, labelsInScope, withBreakOnly(instr.label));
+      } else if (instr.kind === "switch") {
+        for (const body of instr.bodies) walkBuffer(body, labelsInScope, withBreakOnly(instr.breakLabel));
       } else {
         // Non-loop buffer-bearing kinds (if / if.stmt / try). Loops are
         // handled above so their cond buffer (already walked) isn't
         // re-walked here.
-        forEachNestedBuffer(instr, (buffer) => walkBuffer(buffer, labelsInScope));
+        forEachNestedBuffer(instr, (buffer) => walkBuffer(buffer, labelsInScope, breakOnlyInScope));
       }
     }
   };
@@ -731,6 +1086,8 @@ function collectUses(instr: IrBlock["instrs"][number]): readonly IrValueId[] {
     case "const":
       return [];
     case "call":
+      return instr.args;
+    case "intrinsic":
       return instr.args;
     case "global.get":
       return [];
@@ -761,6 +1118,8 @@ function collectUses(instr: IrBlock["instrs"][number]): readonly IrValueId[] {
       return [instr.lhs, instr.rhs];
     case "dyn.member_get":
       return [instr.recv, instr.key];
+    case "dyn.member_set":
+      return [instr.recv, instr.key, instr.value];
     case "string.const":
       return [];
     case "string.concat":
@@ -768,6 +1127,9 @@ function collectUses(instr: IrBlock["instrs"][number]): readonly IrValueId[] {
       return [instr.lhs, instr.rhs];
     case "string.len":
       return [instr.value];
+    case "string.char_at":
+    case "string.char_code_at":
+      return [instr.value, instr.index];
     case "object.new":
       return instr.values;
     case "object.get":
@@ -793,9 +1155,6 @@ function collectUses(instr: IrBlock["instrs"][number]): readonly IrValueId[] {
     // Slice 4 (#1169d): class ops.
     case "class.new":
       return instr.args;
-    case "class.alloc":
-      // #3000-C: fresh default-initialised allocation — no SSA operands.
-      return [];
     case "class.super_init":
       return [...instr.args, instr.self];
     case "class.super_call":
@@ -821,6 +1180,8 @@ function collectUses(instr: IrBlock["instrs"][number]): readonly IrValueId[] {
       return [instr.vec, instr.index];
     case "vec.set":
       return [instr.vec, instr.index, instr.newValue];
+    case "vec.set_length":
+      return [instr.vec, instr.length];
     case "vec.new_fixed":
       // #1804 — every element is an SSA use (like object.new's values).
       return instr.elements;
@@ -893,6 +1254,12 @@ function collectUses(instr: IrBlock["instrs"][number]): readonly IrValueId[] {
       return [];
     case "if.stmt":
       return [instr.cond];
+    // #2952 slice 4 — labeled.block has no operands; switch surfaces only
+    // its disc (clause buffers are walked via the buffer recursion).
+    case "labeled.block":
+      return [];
+    case "switch":
+      return [instr.disc];
     // (#1373 Phase B) Async / await IR nodes — type-only in this slice.
     // The verifier sees their operands as plain SSA uses; lowering
     // (Phase C, #1373b) will define the per-arm SSA scope.
@@ -1095,6 +1462,12 @@ function binopResultKind(op: import("./nodes.js").IrBinop): ValType["kind"] | nu
     case "js.shr_s":
     case "js.shr_u":
       return null;
+    // (#3758) native i32 arithmetic — genuine i32 values (not bool), but the
+    // `ValType.kind` is still "i32" like every other i32-domain binop below.
+    case "i32.add":
+    case "i32.sub":
+    case "i32.mul":
+      return "i32";
     default:
       // All remaining binops are comparisons / i32 logical → i32 (bool).
       return "i32";
@@ -1117,6 +1490,7 @@ function binopOperandKind(op: import("./nodes.js").IrBinop): ValType["kind"] | n
 function unopResultKind(op: import("./nodes.js").IrUnop): ValType["kind"] | null {
   switch (op) {
     case "f64.neg":
+    case "f64.reinterpret_i64":
     // (#3168) boolean → f64 ToNumber for unary `+`/`-`.
     case "f64.convert_i32_s":
       return "f64";
@@ -1136,6 +1510,8 @@ function unopOperandKind(op: import("./nodes.js").IrUnop): ValType["kind"] | nul
     case "f64.neg":
     case "i32.trunc_sat_f64_s":
       return "f64";
+    case "f64.reinterpret_i64":
+      return "i64";
     case "i32.eqz":
     // (#3168) the boolean-ToNumber conversion consumes the i32 0/1.
     case "f64.convert_i32_s":
@@ -1164,6 +1540,12 @@ function verifyInstrTypeRules(func: IrFunction, typeOf: ReadonlyMap<IrValueId, I
 
   const checkInstr = (instr: IrInstr, blockId: number): void => {
     switch (instr.kind) {
+      case "intrinsic": {
+        for (const message of verifyIrIntrinsicInstruction(instr, typeOf)) {
+          errors.push({ message, func: func.name, block: blockId });
+        }
+        break;
+      }
       case "binary": {
         const want = binopOperandKind(instr.op);
         for (const [label, v] of [
@@ -1241,14 +1623,14 @@ function verifyInstrTypeRules(func: IrFunction, typeOf: ReadonlyMap<IrValueId, I
         }
         break;
       }
-      // String ops produce a known IrType kind; validate resultType when set.
       case "string.len":
       case "vec.len": {
         if (instr.result !== null && instr.resultType) {
           const got = asVal(instr.resultType)?.kind ?? null;
-          if (got !== null && got !== "f64") {
+          const want = instr.kind === "vec.len" && instr.integer === true ? "i32" : "f64";
+          if (got !== null && got !== want) {
             errors.push({
-              message: `${instr.kind} resultType must be f64 (length), got ${got}`,
+              message: `${instr.kind} resultType must be ${want} (length), got ${got}`,
               func: func.name,
               block: blockId,
             });
@@ -1257,10 +1639,42 @@ function verifyInstrTypeRules(func: IrFunction, typeOf: ReadonlyMap<IrValueId, I
         break;
       }
       case "string.const":
-      case "string.concat": {
+      case "string.concat":
+      case "string.char_at": {
         if (instr.result !== null && instr.resultType && instr.resultType.kind !== "string") {
           errors.push({
             message: `${instr.kind} resultType must be string, got ${instr.resultType.kind}`,
+            func: func.name,
+            block: blockId,
+          });
+        }
+        if (instr.kind === "string.char_at") {
+          const indexKind = valKindOf(typeOf, instr.index);
+          if (indexKind !== null && indexKind !== "i32") {
+            errors.push({
+              message: `${instr.kind} index must be i32, got ${indexKind}`,
+              func: func.name,
+              block: blockId,
+            });
+          }
+        }
+        break;
+      }
+      case "string.char_code_at": {
+        if (instr.result !== null && instr.resultType) {
+          const got = asVal(instr.resultType)?.kind ?? null;
+          if (got !== null && got !== "f64") {
+            errors.push({
+              message: `${instr.kind} resultType must be f64, got ${got}`,
+              func: func.name,
+              block: blockId,
+            });
+          }
+        }
+        const indexKind = valKindOf(typeOf, instr.index);
+        if (indexKind !== null && indexKind !== "i32") {
+          errors.push({
+            message: `${instr.kind} index must be i32, got ${indexKind}`,
             func: func.name,
             block: blockId,
           });
@@ -1289,6 +1703,65 @@ function verifyInstrTypeRules(func: IrFunction, typeOf: ReadonlyMap<IrValueId, I
             func: func.name,
             block: blockId,
           });
+        }
+        const vecType = typeOf.get(instr.vec);
+        if (vecType?.kind === "vec") {
+          if (instr.kind === "vec.get" && instr.resultType && !irTypeEquals(instr.resultType, vecType.elementType)) {
+            errors.push({
+              message: `vec.get result type ${describeKind(instr.resultType)} does not match element type ${describeKind(vecType.elementType)}`,
+              func: func.name,
+              block: blockId,
+            });
+          }
+          if (instr.kind === "vec.set") {
+            const valueType = typeOf.get(instr.newValue);
+            if (valueType && !irTypeEquals(valueType, vecType.elementType)) {
+              errors.push({
+                message: `vec.set value type ${describeKind(valueType)} does not match element type ${describeKind(vecType.elementType)}`,
+                func: func.name,
+                block: blockId,
+              });
+            }
+          }
+        }
+        break;
+      }
+      case "vec.set_length": {
+        const lengthKind = valKindOf(typeOf, instr.length);
+        if (lengthKind !== null && lengthKind !== "i32") {
+          errors.push({
+            message: `vec.set_length length must be i32, got ${lengthKind}`,
+            func: func.name,
+            block: blockId,
+          });
+        }
+        break;
+      }
+      case "vec.new_fixed": {
+        const capacity = instr.capacity ?? instr.elements.length;
+        if (!Number.isSafeInteger(capacity) || capacity < instr.elements.length) {
+          errors.push({
+            message: `vec.new_fixed capacity ${capacity} is smaller than logical length ${instr.elements.length}`,
+            func: func.name,
+            block: blockId,
+          });
+        }
+        if (instr.resultType?.kind === "vec" && !irTypeEquals(instr.resultType.elementType, instr.elementType)) {
+          errors.push({
+            message: `vec.new_fixed result element type ${describeKind(instr.resultType.elementType)} does not match instruction element type ${describeKind(instr.elementType)}`,
+            func: func.name,
+            block: blockId,
+          });
+        }
+        for (const element of instr.elements) {
+          const elementType = typeOf.get(element);
+          if (elementType && !irTypeEquals(elementType, instr.elementType)) {
+            errors.push({
+              message: `vec.new_fixed element type ${describeKind(elementType)} does not match ${describeKind(instr.elementType)}`,
+              func: func.name,
+              block: blockId,
+            });
+          }
         }
         break;
       }

@@ -51,12 +51,23 @@ import type {
   IrVecLowering,
   LinearVecLowering,
 } from "./handles.js";
+import type { StringBackendEmitter } from "./string-contract.js";
 
 // #1714: the vec primitives accept either backend's vec-layout handle. WasmGc
 // uses IrVecLowering (typeIdx-based); Linear uses LinearVecLowering
 // (offset-based). Each emitter narrows to its own shape. This is the
 // "widen to a handle union" option from the #1713 spec section 7.
 type VecLayout = IrVecLowering | LinearVecLowering;
+
+/**
+ * Backend-neutral scalar operations used while expanding composite JS
+ * semantics. These are deliberately narrower than `Instr`: lower.ts may use
+ * them for a multi-step lowering without leaking raw Wasm into a non-Wasm
+ * sink, while each backend still chooses its native typed representation.
+ */
+export type BackendScalarConstType = "i32" | "f64";
+export type BackendNumericConversionOp = "i32.trunc_sat_f64_u" | "f64.convert_i32_s" | "f64.convert_i32_u";
+export type BackendI32BitwiseOp = "i32.and" | "i32.or" | "i32.xor" | "i32.shl" | "i32.shr_s" | "i32.shr_u";
 
 /**
  * #1584: the trait is generic over its SINK type `S`. `WasmGcEmitter` /
@@ -76,7 +87,7 @@ type VecLayout = IrVecLowering | LinearVecLowering;
  *    not-yet-migrated boundary, surfaced loudly). As each family migrates
  *    (§2a), its sites move from `pushRaw` to a typed primitive.
  */
-export interface BackendEmitter<S = Instr[]> {
+export interface BackendEmitter<S = Instr[]> extends StringBackendEmitter<S> {
   /** Backend identity used by the IR legality verifier at the emit boundary. */
   readonly backend: IrBackendKind;
 
@@ -107,16 +118,18 @@ export interface BackendEmitter<S = Instr[]> {
    * address calculation must temporarily move the topmost value.
    */
   emitElemSet(layout: VecLayout, valueScratchLocal: number, out: S): void;
+  /** vec ref + i32 logical length on stack -> update the vec length field. */
+  emitVecSetLength(layout: VecLayout, out: S): void;
   /**
    * #1804 — N element values on the stack (e0 deepest … eN top) -> a fully
-   * built vec ref. WasmGC: `array.new_fixed $arr N`, stash the data ref in
-   * `dataScratchLocal`, push `i32.const N` (length, field 0), re-load the data
-   * ref (field 1), `struct.new $vec`. Linear: bump-allocate
-   * `[header][len=N][cap=N][e0…eN]` and leave the base i32 (or `notImplemented`).
+   * built vec ref. When `capacity === N`, WasmGC uses `array.new_fixed`;
+   * an empty vec with greater reserved capacity uses `array.new_default`.
+   * Logical length remains N in both cases. Linear uses
+   * `[header][len=N][cap=capacity][e0…eN]`.
    * `dataScratchLocal` is a function-local index of the array's ValType,
    * allocated lazily by `lower.ts`.
    */
-  emitVecNewFixed(layout: VecLayout, count: number, dataScratchLocal: number, out: S): void;
+  emitVecNewFixed(layout: VecLayout, count: number, capacity: number, dataScratchLocal: number, out: S): void;
 
   // ---- scalars / locals / globals / control flow (Phase-1 stage 1) ----
   /** Emit a `const` IR instr's literal op(s). Delegates to the shared free fn. */
@@ -126,6 +139,12 @@ export interface BackendEmitter<S = Instr[]> {
   emitBinary(op: IrBinop, out: S): void;
   /** Pass-through unary op. */
   emitUnary(op: IrUnop, out: S): void;
+  /** Scalar literal used by a backend-neutral composite lowering. */
+  emitScalarConst(type: BackendScalarConstType, value: number, out: S): void;
+  /** Numeric conversion used by a backend-neutral composite lowering. */
+  emitNumericConversion(op: BackendNumericConversionOp, out: S): void;
+  /** Native 32-bit bitwise operation; operands are already in the i32 domain. */
+  emitI32Bitwise(op: BackendI32BitwiseOp, out: S): void;
   emitLocalGet(index: number, out: S): void;
   emitLocalSet(index: number, out: S): void;
   emitLocalTee(index: number, out: S): void;
@@ -210,6 +229,12 @@ export interface BackendEmitter<S = Instr[]> {
   // representation hooks; these hooks own closure allocation and field reads.
   /** lifted function ref + captureCount captures on the stack -> closure value. */
   emitClosureNew(layout: IrClosureLowering, captureCount: number, out: S): void;
+  /** (#3673/#4241) Optional: push the closure HEADER operands — declared arity
+   *  and the `$bag` expando slot — between the lifted-func reference and the
+   *  capture values. Only backends whose closure layout carries that header
+   *  (WasmGC root-wrapper hierarchy) implement this; bytecode/linear closures
+   *  have their own representation. */
+  emitClosureArityOperand?(arity: number, out: S): void;
   /** closure ref on the stack -> its abstract funcref field. */
   emitClosureFuncGet(layout: IrClosureLowering, out: S): void;
   /** downcast closure-subtype ref on the stack -> capture at `index`. */

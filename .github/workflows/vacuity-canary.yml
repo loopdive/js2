@@ -1,0 +1,104 @@
+name: Vacuity canary (advisory)
+
+# (#3613) Sampled detection of VACUOUS test262 passes — tests scored `pass`
+# that never validated anything.
+#
+# Why a scheduled canary and NOT a required check:
+#   • it needs a network fetch of the baseline JSONL, and a flaky fetch must
+#     never gate a PR;
+#   • it compiles real corpus files, so it costs wall-clock that PR authors
+#     should not pay on every push.
+# The CHEAP, hermetic half of #3613 (the vacuous-verifier guard, the probe
+# shape, the `new (X as any)(…)` ratchet) IS a required check — it is in
+# tests/guard-suite.json. This workflow covers the half that needs the corpus.
+#
+# What it protects: ~5,000 standalone passes (18.4 % of that lane) were vacuous
+# for months (#3592) because nothing sampled for it. A regression of that class
+# should be LOUD within a week, not discovered in the next audit.
+#
+# Reading the result:
+#   exit 0  — sample clean at the declared ceiling
+#   exit 1  — vacuity rate ABOVE the ceiling: real finding, triage the listed files
+#   exit 3  — CONTROL FAILURE: the probe or runner misbehaved, NO finding is
+#             claimed (this is the guard that caught the spurious "43/43
+#             vacuous" of 2026-07-25)
+#   exit 4  — PROBE INERT: nothing could be probed, or the probe bit nothing.
+#             NOT "clean" — see the ineligible-reason histogram it prints; a
+#             stale lane baseline dominated by negative tests looks like this.
+
+on:
+  schedule:
+    # Weekly, Monday 04:17 UTC — offset off the hour to avoid the scheduler rush.
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      sample:
+        description: "Files to probe per lane"
+        required: false
+        default: "25"
+      max_vacuous_rate:
+        description: "Fail above this rate (0..1)"
+        required: false
+        default: "0.02"
+
+permissions:
+  contents: read
+
+jobs:
+  vacuity-sample:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      # Both lanes always run: a green host lane says nothing about standalone,
+      # which is where the entire ~5,000-test #3592 class lived.
+      fail-fast: false
+      matrix:
+        lane: [gc, standalone]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: false
+
+      - name: Check out the test262 corpus
+        run: git submodule update --init --checkout test262
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Setup pnpm via Corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.30.2 --activate
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Probe for vacuous passes (${{ matrix.lane }} lane)
+        id: probe
+        run: |
+          set -o pipefail
+          npx tsx scripts/detect-vacuity.ts \
+            --lane "${{ matrix.lane }}" \
+            --sample "${{ github.event.inputs.sample || '25' }}" \
+            --seed "$(date -u +%Y%m%d)" \
+            --max-vacuous-rate "${{ github.event.inputs.max_vacuous_rate || '0.02' }}" \
+            --json "vacuity-${{ matrix.lane }}.json"
+
+      - name: Upload the report
+        if: always()
+        # (#3635) The ONLY upload in this repo without an explicit
+        # `retention-days`, so it silently inherited the repo default of 90 —
+        # against a scheduled workflow, which is the shape that accumulates.
+        # Every other upload already declares one (test262-sharded's 114-per-run
+        # matrix is at 1). A small JSON report has no value past a few days.
+        #
+        # Honest sizing: today this leaks NOTHING. The workflow has run once
+        # (2026-07-27) and produced zero `vacuity-*` artifacts. This is hygiene
+        # closing the last gap in the policy, not a storage win — see #3635 for
+        # why the "985k artifacts" figure is not a storage figure at all.
+        uses: actions/upload-artifact@v4
+        with:
+          name: vacuity-${{ matrix.lane }}
+          path: vacuity-${{ matrix.lane }}.json
+          if-no-files-found: warn
+          retention-days: 7

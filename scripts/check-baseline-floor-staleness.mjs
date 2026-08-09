@@ -122,8 +122,11 @@ function gitOk(args) {
 }
 
 // Count commits in `ref` not reachable from `floorSha` whose changed file set
-// touches a test262-relevant path. Returns { total, relevant, exact } or null
-// when the floor SHA is unreachable from the checkout.
+// touches a test262-relevant path FOR `target` ("any" | "host" | "standalone").
+// Returns { total, relevant, exact } or null when the floor SHA is unreachable
+// from the checkout. Passing the lane matters: a standalone shard-weight
+// refresh is drift for the standalone floor only, and counting it against the
+// host floor overstates that lane's lag.
 //
 // A single `git log --name-only` pass streams every commit + its changed files
 // (one subprocess, not one-per-commit). We early-exit the moment `relevant`
@@ -131,7 +134,7 @@ function gitOk(args) {
 // walk thousands of commits when the floor is far behind. `exact` is false in
 // that early-exit case (the reported counts are a lower bound ≥ the threshold,
 // which is all the breach decision needs).
-export function countRelevantDrift(floorSha, ref, maxBehind) {
+export function countRelevantDrift(floorSha, ref, maxBehind, target = "any") {
   // Floor SHA must be a commit we can name; if not, staleness is undetermined.
   if (!gitOk(["cat-file", "-e", `${floorSha}^{commit}`])) {
     return null;
@@ -152,7 +155,7 @@ export function countRelevantDrift(floorSha, ref, maxBehind) {
   const flush = () => {
     if (!sawCommit) return;
     total++;
-    if (pathsTouchTest262(curFiles.join("\n"))) relevant++;
+    if (pathsTouchTest262(curFiles.join("\n"), target)) relevant++;
     curFiles = [];
   };
   for (const rawLine of out.split("\n")) {
@@ -173,34 +176,57 @@ export function countRelevantDrift(floorSha, ref, maxBehind) {
 }
 
 // Mirror of scripts/test262-paths-match.sh — kept in lockstep with the
-// &test262-paths allowlist in test262-sharded.yml. A changed-file blob (one
-// path per line) touches test262 conformance iff any line matches.
-export function pathsTouchTest262(changedBlob) {
-  const EXACT = new Set([
-    ".github/workflows/test262-sharded.yml",
-    "package.json",
-    "pnpm-lock.yaml",
-    "tsconfig.json",
-    "scripts/tsconfig.json",
-    "vitest.config.ts",
-    "scripts/build-test262-report.mjs",
-    "scripts/compiler-fork-worker.mjs",
-    "scripts/compiler-pool.ts",
-    "scripts/diff-test262.ts",
-    "scripts/generate-editions.ts",
-    "scripts/test262-worker.mjs",
-    "tests/test262-runner.ts",
-    "tests/test262-scope-classification.test.ts",
-    "tests/test262-shared.ts",
-    "scripts/test262-paths-match.sh",
-  ]);
+// &test262-paths allowlist in test262-sharded.yml (pinned by the
+// "stays in lockstep with scripts/test262-paths-match.sh" case in
+// tests/issue-2178-baseline-floor-staleness.test.ts, which runs a shared path
+// set through BOTH implementations for every target).
+const EXACT_TEST262_PATHS = new Set([
+  ".github/actions/setup-node-pnpm/action.yml",
+  ".github/workflows/test262-sharded.yml",
+  "package.json",
+  "pnpm-lock.yaml",
+  "tsconfig.json",
+  "scripts/tsconfig.json",
+  "vitest.config.ts",
+  "scripts/build-test262-report.mjs",
+  "scripts/compiler-fork-worker.mjs",
+  "scripts/compiler-pool.ts",
+  "scripts/diff-test262.ts",
+  "scripts/generate-editions.ts",
+  "scripts/test262-worker.mjs",
+  "tests/test262-runner.ts",
+  "tests/test262-scope-classification.test.ts",
+  "tests/test262-shared.ts",
+  "scripts/test262-paths-match.sh",
+]);
+
+// Which lane(s) a changed path can move: "both" | "host" | "standalone" | "".
+// Mirrors classify_test262_path in scripts/test262-paths-match.sh — see that
+// file for why the default is "both" and why only the shard-weight maps are
+// lane-exclusive.
+export function classifyTest262Path(p) {
+  if (!p) return "";
+  if (p === "tests/test262-slow-tests-standalone.json") return "standalone";
+  if (p === "tests/test262-slow-tests.json") return "host";
+  if (EXACT_TEST262_PATHS.has(p)) return "both";
+  if (p.startsWith("src/")) return "both";
+  if (/^tests\/test262-chunk.*\.test\.ts$/.test(p)) return "both";
+  if (/^tests\/test262-slow-tests.*\.json$/.test(p)) return "both";
+  return "";
+}
+
+/**
+ * A changed-file blob (one path per line) touches test262 conformance iff any
+ * line matches. `target` narrows the question to a single lane:
+ *   "any" (default) — either lane, i.e. the historical behaviour
+ *   "host"          — the JS-host (gc) lane
+ *   "standalone"    — the standalone lane
+ */
+export function pathsTouchTest262(changedBlob, target = "any") {
   for (const line of changedBlob.split("\n")) {
-    const p = line.trim();
-    if (!p) continue;
-    if (EXACT.has(p)) return true;
-    if (p.startsWith("src/")) return true;
-    if (/^tests\/test262-chunk.*\.test\.ts$/.test(p)) return true;
-    if (/^tests\/test262-slow-tests.*\.json$/.test(p)) return true;
+    const scope = classifyTest262Path(line.trim());
+    if (!scope) continue;
+    if (target === "any" || scope === "both" || scope === target) return true;
   }
   return false;
 }
@@ -227,7 +253,9 @@ async function main() {
       );
       continue;
     }
-    const drift = countRelevantDrift(floor.sha, args.ref, args.maxBehind);
+    // Count drift for THIS lane only: a change that provably cannot move this
+    // lane's results is not lag for this lane's floor (see classifyTest262Path).
+    const drift = countRelevantDrift(floor.sha, args.ref, args.maxBehind, lane);
     if (drift === null) {
       results.push({
         lane,

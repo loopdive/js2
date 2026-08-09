@@ -119,9 +119,17 @@ export function rollbackSpeculative(ctx: CodegenContext, fctx: FunctionContext, 
   }
   // 2. Locals (#1847).
   restoreLocals(fctx, snap.locals);
-  // 3. Diagnostics pushed during the probe.
+  // 3. Diagnostics pushed during the probe — EXCEPT the ones marked `sticky`.
+  //    (#3725) A probe's diagnostic describes emission this unwind just erased,
+  //    so dropping it is right. A `sticky` diagnostic is not a probe result: it
+  //    is a deliberate refusal ("this program cannot be compiled for this
+  //    target"), which no fallback value can repair. Discarding those turned the
+  //    #1599 standalone-JSON refusal into a module that compiled clean and
+  //    trapped at runtime. See `CodegenError.sticky`.
   if (ctx.errors.length > snap.errorsLen) {
+    const sticky = ctx.errors.slice(snap.errorsLen).filter((e) => e.sticky === true);
     ctx.errors.length = snap.errorsLen;
+    if (sticky.length > 0) ctx.errors.push(...sticky);
   }
   // 4. Late FUNC imports registered during the probe. Pop them, rewind
   //    `numImportFuncs`, drop their funcMap names, and restore the deferred-shift

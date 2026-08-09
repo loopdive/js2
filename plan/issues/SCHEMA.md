@@ -131,6 +131,19 @@ assignee: "ttraenkler/senior-dev-1"
   - `easy`, `medium`, `hard`
 - `reasoning_effort`
   - `low`, `medium`, `high`, `max`
+- `model`
+  - **Lane pin** (#3965). Which agent lane owns the issue — see
+    `plan/method/lane-partition.md`. Typical values: `opus`, `fable`,
+    `sonnet`, `gpt-5.6-sol`.
+  - Semantics are **exact-match-or-unset**: an issue with **no** `model:` is
+    claimable by any lane; an issue pinned to a lane is skipped for every other
+    one. Names normalise by lowercasing, collapsing spaces/underscores to `-`
+    and dropping a trailing version number, so `Opus 5`, `opus-5` and `opus`
+    are the same pin and an agent may pass the model name it knows itself by.
+  - Read at pull time by `scripts/budget-status.mjs --pick --model <name>`,
+    which excludes other-lane issues and prints the reason. Absent
+    `--model`/`$JS2WASM_MODEL`, the lane filter is **not applied** and the tool
+    says so — it never silently treats "no lane given" as "no lane needed".
 - `task_type`
   - One of:
     - `analysis`
@@ -143,6 +156,14 @@ assignee: "ttraenkler/senior-dev-1"
     - `docs`
     - `refactor`
     - `test`
+  - The live corpus carries many more values than this list (57 distinct as of
+    2026-08-01, e.g. `architecture`, `epic`, `umbrella`, `ci`, `conformance`).
+    Tools that gate on `task_type` therefore use a **deny-list of the values a
+    role must not take**, never an allow-list of the values it may: an
+    allow-list sends every unrecognised value down the dangerous path, which for
+    a work-picker means silently making real tasks invisible. See the role rules
+    in `scripts/budget-status.mjs` and the same asymmetry argument in
+    `scripts/lib/claim-record.mjs`.
 - `area`
   - Broad subsystem classification.
   - Optional until historically verified.

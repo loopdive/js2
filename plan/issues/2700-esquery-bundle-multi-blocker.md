@@ -1,24 +1,39 @@
 ---
 id: 2700
 title: "esquery@1.7.0 bundle fails to compile — multi-blocker (PEG parser codegen index-shift + syntax + hard-type errors)"
-horizon: l
 status: ready
-assignee: ""
-sprint: current
 created: 2026-06-26
+updated: 2026-07-26
 priority: high
 feasibility: hard
-model: fable
 reasoning_effort: high
 task_type: bugfix
 area: codegen
 language_feature: transpiled-bundle, peg-parser
 goal: real-eslint-runs
-related: [1573, 1282, 2660, 2043]
+sprint: current
+horizon: l
+assignee: ""
+model: fable
+es_edition: n/a
+related: [1573, 1282, 2660, 2043, 2693, 3654, 3657]
 origin: "Surfaced by sd-2674b validating the real-eslint Linter.verify npm dep tree (#1573 gate-list item 6). esquery is the rule-listener selector matcher on the verify path; it is the ONE external dep (of the 5: eslint-scope/eslint-visitor-keys/@eslint/plugin-kit/@eslint/core/esquery) that does NOT compile+validate."
 ---
-
 # #2700 — esquery@1.7.0 bundle: multi-blocker compile failure
+
+## 2026-07-26 integration note
+
+The package is installed and resolvable from ESLint's real importer context.
+Do not add a setup/download issue. Two distinct paths remain:
+
+- native esquery compilation is still owned by this issue;
+- the minimal real-Linter milestone intends to host-delegate selector matching,
+  but its confirmation test currently stops earlier on IR ambient host-call
+  issue #3657 (after #3653 removes the vacuous path return).
+
+Direct `linter.js` also reports installed deps as unresolved inside the compiler
+graph; that importer-context resolver layer is #3654 and is not evidence that
+the npm packages are absent.
 
 ## Context
 
@@ -103,3 +118,41 @@ the entire dep closure (incl. esquery) is already reproducibly installed by the
 normal `pnpm install` CI runs — resolvable from eslint's context via pnpm
 symlinks. No tarball-pinning setup script (the acorn-dogfood pattern, which
 exists because acorn is NOT a devDep) is required for these deps.
+
+Before this issue moves to `done`, `tests/issue-2700.test.ts` must retain the
+reduced bundle repro and assert both compile success and Wasm validation for
+the selected esquery entry.
+
+## Carry-over from the closed PR #3687 — prefer `module` over `main` for a bare package root (2026-07-31)
+
+The reproduction above pins esquery's entry to `dist/esquery.min.js`, which is
+the package's **`main`** — a UMD bundle. PR #3687 (closed, branch
+`codex/1400-eslint-e2e` @ `561c933af16651e49f50556b8128967892ce529e`) recorded
+that this entry choice is itself part of the blocker: the UMD wrapper's browser
+fallback reads `self`, and js2wasm deliberately does not synthesize CommonJS
+`module`/`exports` host globals, so the bundle takes a branch that cannot work.
+
+Its `src/resolve.ts` fix: for a **bare package-root** specifier
+(`specifier === pkgName`), route through `findImplementationBody` so a
+published ESM `module` field wins over `main` when both exist. Packages
+without a `module` field keep standard TypeScript/Node resolution unchanged.
+
+```ts
+if (pkgName && specifier === pkgName) {
+  const implementation = this.findImplementationBody(pkgName, specifier, resolutionContainingFile);
+  if (implementation) {
+    resolved = this.host.realpath?.(implementation) ?? implementation;
+  }
+}
+```
+
+This is **not** on `main` (verified 2026-07-31 against `e4187572`);
+`findImplementationBody` exists but is only reached on the `@types/` path.
+
+Suggested measurable criterion if this is adopted here: `new
+ModuleResolver(...).resolve("esquery", <importer>)` returns the `module`-field
+ESM entry rather than `dist/esquery.min.js`, and the "1005 syntax" error count
+for the resolved entry is re-measured against that entry rather than the UMD
+bundle — the current 128-error figure may be an artifact of compiling the wrong
+file. **Measure before assuming the fix helps**; a different entry is a
+different program, not necessarily a working one.

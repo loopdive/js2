@@ -36,14 +36,17 @@ describe("real-world: WASI command-line programs", () => {
     expect(WebAssembly.validate(result.binary)).toBe(true);
   });
 
-  // KNOWN BUG (pre-existing, unrelated to #1801): `process.argv.length` under
-  // --target wasi reports success but emits an invalid binary — instantiation
-  // fails in `__str_flatten` with "call[1] expected type (ref null 5), found
-  // i32.const of type i32" (a native-string codegen type mismatch, NOT the
-  // process.exit i32/f64 defect fixed here). This was already red on main;
-  // `it.fails` documents it and keeps the suite green until the native-string
-  // argv path is fixed under its own issue, at which point remove `.fails`.
-  it.fails("reads process.argv as a valid WASI module", async () => {
+  // (#3340) Formerly an `it.fails` documenting a native-string codegen defect
+  // that made a `process.argv.length` WASI program emit an INVALID binary
+  // (instantiation failed in `__str_flatten`). That codegen defect is FIXED on
+  // current main — the binary now compiles AND validates — so the `it.fails`
+  // was a stale inverted sentinel: the improvement made the test "unexpectedly
+  // pass", which the root issue-tests baseline absorbed as accepted rot. This is
+  // now a positive validity guard. NOTE: only the binary VALIDITY is asserted
+  // here; the actual `process.argv` RUNTIME semantics (reading real command-line
+  // args) is still missing and is tracked separately under #3337 — do NOT assert
+  // runtime argv behavior here.
+  it("compiles process.argv under --target wasi to a valid module (validity only; runtime argv → #3337)", async () => {
     const result = await compile(
       `
         declare const process: { argv: string[] };

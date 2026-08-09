@@ -17,7 +17,10 @@ import { tryCompileNativeSetMethodCall } from "../set-runtime.js";
 import { tryCompileNativeSetAlgebraCall } from "../set-algebra.js";
 import { tryCompileNativeWeakMethodCall } from "../weak-collections-runtime.js";
 import { tryCompileNativeWeakRefDeref } from "../weakref-runtime.js";
+import { noJsHost } from "../js-errors.js";
+import { tryEmitStaticOrNativeIsPrototypeOf } from "../native-is-prototype-of.js";
 import { addStringConstantGlobal } from "../registry/imports.js";
+import { emitStandaloneClassProtoObject } from "../class-proto-object.js"; // (#3976) standalone proto as a real $Object
 import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression, valTypesMatch, VOID_RESULT } from "../shared.js";
 import { pushDefaultValue } from "../type-coercion.js";
@@ -145,6 +148,18 @@ function compileExternMethodCall(
     if (dsResult !== undefined) return dsResult;
   }
 
+  // (#2916) `recv.isPrototypeOf(v)` on a TYPED receiver. `Object` is the ROOT
+  // extern class, so every extern class inherits `isPrototypeOf` and this
+  // dispatch emitted `env::Object_isPrototypeOf` — unsatisfiable host-free (9
+  // sole-import leaks in the ≤ES5 standalone scope). Answer natively instead:
+  // the #2994 static folds, then the WasmGC `$Object.$proto` walk. Runs BEFORE
+  // the `className` guard because the receiver's class is irrelevant — every
+  // object inherits this method. JS-host mode is untouched.
+  if (noJsHost(ctx) && methodName === "isPrototypeOf") {
+    const nativeProtoOf = tryEmitStaticOrNativeIsPrototypeOf(ctx, fctx, propAccess.expression, callExpr);
+    if (nativeProtoOf !== null) return nativeProtoOf;
+  }
+
   if (!className) return null;
 
   // Walk inheritance chain to find the class that declares the method
@@ -217,6 +232,18 @@ export function emitLazyProtoGet(ctx: CodegenContext, fctx: FunctionContext, cla
   const structTypeIdx = ctx.structMap.get(className);
   const fields = ctx.structFields.get(className);
   if (structTypeIdx === undefined || !fields) return false;
+
+  // (#3976) Standalone: build the prototype as a REAL `$Object` with the class's
+  // methods installed as own data properties at §17 attributes, so the whole
+  // reflective surface (gOPD / hasOwnProperty / propertyIsEnumerable / for-in /
+  // write-through / delete) answers through the existing `$Object` natives.
+  // Declines — leaving nothing emitted — for accessors-only classes, classes
+  // with a builtin parent, and every non-standalone target, which then take the
+  // legacy defaulted-struct path below unchanged. See class-proto-object.ts for
+  // why the descriptor-synthesis alternative was measured to be worth zero.
+  if (emitStandaloneClassProtoObject(ctx, fctx, className, ctx.protoGlobals.get(className)!, emitLazyClassObjectGet)) {
+    return true;
+  }
 
   // #1047 — look up the pre-registered __register_prototype host import (added
   // in generateModule when any class declaration is present). The CSV string

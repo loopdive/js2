@@ -3,17 +3,31 @@ id: 1573
 title: "ESLint next-layer validation-error survey (post #1557 / #1558)"
 status: done
 created: 2026-05-20
-updated: 2026-06-26
+updated: 2026-07-26
 completed: 2026-06-26
-assignee: ttraenkler/sendev-eslint
 priority: high
+feasibility: hard
+reasoning_effort: high
+task_type: planning
 area: codegen
+language_feature: npm-package-integration
 goal: npm-library-support
 sprint: 66
+assignee: ttraenkler/sendev-eslint
+es_edition: n/a
 owner: tech-lead
-related: [1400, 1289, 1287, 1282, 1557, 1558, 1559, 1560, 2688, 2689, 2690, 2691]
+related: [1400, 1289, 1287, 1282, 1557, 1558, 1559, 1560, 2688, 2689, 2690, 2691, 2693, 2700, 3653, 3654, 3655, 3656, 3657]
 ---
 # ESLint next-layer validation-error survey
+
+> **2026-07-26 bounded refresh.** The June **16/21 validate** result remains a
+> historical measurement; the full 21-module matrix was not rerun and must not
+> be presented as current. A fresh six-target critical-path sample measured
+> **3 compile+validate / 1 compile+invalid / 2 compile-fail**; see #1400 for the
+> exact matrix. `config.js`, `apply-disable-directives.js`, and
+> `source-code.js` still validate. `rule-tester.js` still fails exactly as
+> #2690 describes. The package entry and direct `linter.js` now stop before
+> Wasm on #3654/#3655/#3656. Test portability/vacuity is #3653.
 
 > **DE-STALED 2026-06-26 (sprint 66).** The sprint-53 matrix below is STALE —
 > see `## 2026-06-26 re-scan (current main)` for the accurate frontier. ESLint

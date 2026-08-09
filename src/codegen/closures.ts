@@ -19,6 +19,7 @@ import { isVoidType, unwrapPromiseType, isPromiseType } from "../checker/type-ma
 import type { FieldDef, Instr, LocalDef, StructTypeDef, ValType } from "../ir/types.js";
 import { isStandalonePromiseActive } from "./async-scheduler.js"; // (#2867 Gap 1) native-$Promise carrier gate
 import { definedFuncAt, funcSignatureOf, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
+import { pushProgramAbiNestedCallable, pushProgramAbiTypedThisTwin } from "./program-abi-source-callable-planning.js";
 import { inLiveShiftRange } from "../emit/resolve-layout.js"; // (#1916 S3b) manual import-shift must skip stable handles
 import { addStringConstantGlobal } from "./registry/imports.js"; // (#2025)
 import { stringConstantExternrefInstrs } from "./native-strings.js"; // (#2025)
@@ -29,6 +30,7 @@ import { reportError } from "./context/errors.js";
 import { reportSilentFallback } from "./fallback-telemetry.js";
 import { resolveLiftedMethodThisStruct } from "./fnctor-escape-gate.js"; // (#2681/#2686 A3) lifted-method `this`→struct
 import { allocLocal, allocTempLocal, getLocalType } from "./context/locals.js";
+import { seedLiftedClosureArgumentsCallee } from "./arguments-callee.js"; // (#4243) §10.6 step 13.a
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import {
   addFuncType,
@@ -81,12 +83,26 @@ import {
   paramDefaultNeedsArgc,
 } from "./statements/nested-declarations.js";
 import { detectStringBuilders, type StringBuilderPresizeInfo } from "./string-builder.js";
+// (#3683 S2) typed-`this` twin admission + prologue/shim emission.
+import {
+  admitTypedThisTwin,
+  buildTypedThisForwardGuard,
+  directCallLoweringEnabled,
+  emitTypedThisPrologue,
+  recordDirectCallGeneric,
+  recordDirectCallTwin,
+  refinedTwinReturnType,
+} from "./typed-this.js";
 import { addFunctionOwnLocals, registerOwnLocalsCollector } from "./binding-info.js"; // (#2103) shared, memoized per-function binding-info oracle
 // (#2957 phase 2) arrow/fn-expr async activation. Imported LAST: `async-activation`
 // pulls the `async-cps`/`async-frame` chain which imports back into `closures`
 // (a cycle), so it must evaluate after this module's other deps are loaded to
 // avoid perturbing the init order of the coercion-engine/string-ops chain.
-import { planAsyncClosureActivation, emitAsyncClosureBody } from "./async-activation.js";
+import {
+  planAsyncClosureActivation,
+  emitAsyncClosureBody,
+  reportDeclinedAsyncRejectionHazard,
+} from "./async-activation.js";
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "./async-frame.js"; // (#2865) async-gen fn-expr producer
 // (#3164) Native generator FUNCTION EXPRESSIONS (standalone/wasi): the lifted
 // closure body emits the state-struct factory instead of the eager-buffer host
@@ -100,11 +116,13 @@ import type { NativeGeneratorInfo } from "./context/types.js";
 // (#3270) Extracted closure subsystems. Re-exported below so external importers
 // that reference these symbols via `./closures.js` are unaffected.
 import {
+  getClosureFuncSelfTypeIdx,
+  CLOSURE_CAPTURE_FIELD_BASE,
   getFuncSignature,
   getOrCreateFuncRefWrapperTypes,
   getFuncRefWrapperRootTypeIdx,
 } from "./closures/funcref-wrapper-types.js";
-export { getFuncSignature, getOrCreateFuncRefWrapperTypes, getFuncRefWrapperRootTypeIdx };
+export { getClosureFuncSelfTypeIdx, getFuncSignature, getOrCreateFuncRefWrapperTypes, getFuncRefWrapperRootTypeIdx };
 import {
   isVecOrArrayRefType,
   isHostCallbackArgument,
@@ -115,6 +133,7 @@ export { isVecOrArrayRefType, isHostCallbackArgument, isDeferredCallbackArgument
 import { emitFuncRefAsClosure } from "./closures/funcref-as-closure.js";
 export { emitFuncRefAsClosure };
 import { spliceNullGuarded, emitDefaultReturnValue } from "./closures/param-emit-helpers.js";
+import type { ArrowClosureCapture } from "./closures/arrow-phases.js";
 import {
   planClosureCaptures,
   mintClosureStructTypes,
@@ -123,10 +142,18 @@ import {
   registerClosureBindingInfo,
 } from "./closures/arrow-phases.js"; // (#3278) arrow/fn-expr closure phase helpers
 import {
+  collectDirectEvalActivationBindingNames,
+  collectDirectEvalBindingNames,
+  functionMayReachDirectEval,
+  reifyCurrentDirectEvalBindings,
+} from "./direct-eval-environment.js";
+import { initializeFunctionPoisonPillContext } from "./function-poison-pill.js";
+import {
   emitObjectMethodAsClosure,
   finalizeMethodTrampolines,
   emitCachedMethodClosureAccess,
   ensureMethodClosureSingleton,
+  ensureFuncClosureSingleton,
   emitCachedFuncClosureAccess,
 } from "./closures/method-trampolines.js";
 export {
@@ -134,6 +161,7 @@ export {
   finalizeMethodTrampolines,
   emitCachedMethodClosureAccess,
   ensureMethodClosureSingleton,
+  ensureFuncClosureSingleton,
   emitCachedFuncClosureAccess,
 };
 
@@ -322,6 +350,35 @@ export function collectReferencedIdentifiers(node: ts.Node, names: Set<string>, 
   // enclosing scope's `this` through the normal closure mechanism.
   if (node.kind === ts.SyntaxKind.ThisKeyword || node.kind === ts.SyntaxKind.SuperKeyword) {
     if (!shadowed || !shadowed.has("this")) names.add("this");
+    return;
+  }
+  // (#3378) A non-computed MEMBER/PROPERTY NAME is never a free-variable
+  // reference — `a.join`, the key of `{ join: x }`, or `ns.Type` name a
+  // property, not a binding. The generic `forEachChild` walk below would
+  // otherwise collect the `.name` Identifier and, if it collides with an
+  // outer local (e.g. `parts.join('')` vs. a module-scope `let join`), record
+  // a SPURIOUS capture. That capture's `outerLocalIdx` is valid only in the
+  // declaring frame, so baking it into a differently-framed nested closure
+  // emits a `local.get` past the closure's local count ("local index out of
+  // range" — the deepEqual.js `__closure_NN` crash). Recurse only into the
+  // reference-bearing children (the object/expression, the initializer, and
+  // any computed key), skipping the member NAME. Optional chaining
+  // (`a?.b`, `a?.[k]`) shares the same node kinds.
+  if (ts.isPropertyAccessExpression(node)) {
+    collectReferencedIdentifiers(node.expression, names, shadowed);
+    return;
+  }
+  if (ts.isQualifiedName(node)) {
+    collectReferencedIdentifiers(node.left, names, shadowed);
+    return;
+  }
+  if (ts.isPropertyAssignment(node)) {
+    // A computed key (`{ [k]: v }`) IS a reference; a plain identifier / string
+    // / numeric key is a property name. Always recurse the initializer.
+    if (ts.isComputedPropertyName(node.name)) {
+      collectReferencedIdentifiers(node.name, names, shadowed);
+    }
+    collectReferencedIdentifiers(node.initializer, names, shadowed);
     return;
   }
   if (isFunctionScopeBoundary(node)) {
@@ -1446,6 +1503,66 @@ export function runtimeParameters(arrow: ts.ArrowFunction | ts.FunctionExpressio
 }
 
 /**
+ * (#4249) True for a declaration the TS **binder never visited** — it has no
+ * `symbol`, so every checker query that resolves through one (notably
+ * `getSignatureFromDeclaration`, which does `getDeclarationOfKind(symbol, …)`)
+ * throws `Cannot read properties of undefined (reading 'declarations' |
+ * 'escapedName')` rather than returning `undefined`.
+ *
+ * The only such nodes in the compiler are foreign ASTs spliced in from a bare
+ * `ts.createSourceFile` parse — today, the eval-inline lifter
+ * (`src/codegen/expressions/eval-inline.ts`). `allNodesInlineSupported` bails on
+ * the node kinds whose codegen it knew reached the checker (function/arrow
+ * expressions, classes), but object-literal **accessors** were missed: they are
+ * fed to `compileArrowAsClosure` through an `as unknown as ts.FunctionExpression`
+ * cast in `emitObjectLiteralAccessorFn`, so `eval("o = {get foo(){…}}")` crashed
+ * the whole compile in the standalone lane.
+ *
+ * Widening the eval bail list instead would have been wrong: on the gc lane the
+ * same splice compiles fine (it routes to `compileArrowAsCallback`, which asks
+ * the checker nothing) and five test262 files PASS through it — bailing would
+ * have traded a standalone crash for a gc regression.
+ */
+function declarationIsUnbound(decl: ts.Declaration): boolean {
+  return (decl as { symbol?: ts.Symbol }).symbol === undefined;
+}
+
+/**
+ * (#4249) The syntactic stand-in for a return type when the checker cannot be
+ * asked (see `declarationIsUnbound`). A body with any value-carrying `return`
+ * yields a value; anything else is void. Nested functions are not descended
+ * into — their `return`s belong to them, not to `fn`.
+ */
+function unboundClosureReturnsAValue(fn: ts.ArrowFunction | ts.FunctionExpression): boolean {
+  const body = fn.body;
+  if (body === undefined) return false;
+  if (!ts.isBlock(body)) return true; // concise arrow body — always a value
+  let found = false;
+  const visit = (n: ts.Node): void => {
+    if (found) return;
+    if (
+      ts.isFunctionDeclaration(n) ||
+      ts.isFunctionExpression(n) ||
+      ts.isArrowFunction(n) ||
+      ts.isClassDeclaration(n) ||
+      ts.isClassExpression(n) ||
+      ts.isMethodDeclaration(n) ||
+      ts.isGetAccessorDeclaration(n) ||
+      ts.isSetAccessorDeclaration(n)
+    ) {
+      return; // a nested function's `return` is not ours
+    }
+    if (ts.isReturnStatement(n) && n.expression !== undefined) {
+      found = true;
+      return;
+    }
+    n.forEachChild(visit);
+  };
+  body.forEachChild(visit);
+  return found;
+}
+
+/**
  * (#2939) Compute the funcref-wrapper signature (user param ValTypes + return
  * ValType) of an arrow / function-expression closure, WITHOUT emitting anything.
  *
@@ -1469,6 +1586,19 @@ export function computeClosureWrapperSig(
   arrow: ts.ArrowFunction | ts.FunctionExpression,
 ): { params: ValType[]; returnType: ValType | null } {
   const isGenerator = ts.isFunctionExpression(arrow) && arrow.asteriskToken !== undefined;
+
+  // (#4249) A foreign, never-bound declaration (an eval-inline splice) cannot be
+  // asked ANY symbol-resolving question. Answer it syntactically instead — which
+  // is also the semantically right answer, since such a body is untyped JS:
+  // every parameter is `any` (externref) and the return is externref iff the
+  // body returns a value. Skipping the checker here is what keeps
+  // `eval("o = {get foo(){…}}")` from taking down the whole compile.
+  if (declarationIsUnbound(arrow)) {
+    return {
+      params: runtimeParameters(arrow).map(() => ({ kind: "externref" as const })),
+      returnType: isGenerator || unboundClosureReturnsAValue(arrow) ? { kind: "externref" } : null,
+    };
+  }
 
   // 1. Parameter types. (#3359) A TS `this` param is type-level only — exclude it.
   const arrowParams: ValType[] = [];
@@ -1858,92 +1988,109 @@ export function compileArrowFunction(
   return compileArrowAsClosure(ctx, fctx, arrow);
 }
 
-/** Compile an arrow function as a first-class closure value (Wasm GC struct + funcref) */
-export function compileArrowAsClosure(
+/**
+ * (#3683 S2) Options for {@link compileLiftedClosureBody} — every value
+ * `compileArrowAsClosure` computes in its phases 1-4 that the body-compilation
+ * core consumes. Extracting this core is the prerequisite for typed-`this`
+ * monomorphization: the SAME arrow AST must be compilable TWICE (once for the
+ * generic `__current_this` body, once for the typed twin), and the ~200 lines
+ * of coupled machinery below (capture/TDZ materialization, named-expr self
+ * bindings, savedFunc swap + liveBodies tracking, param defaults/destructuring,
+ * `arguments` vec, string-builder detection, var/let-const hoisting,
+ * generator/async lanes) were not reusable in place.
+ */
+export interface LiftedClosureBodyOptions {
+  /** Wasm function name for the lifted body (the twin uses a distinct name). */
+  closureName: string;
+  captures: ArrowClosureCapture[];
+  selfBindingName: string | undefined;
+  arrowParams: ValType[];
+  /** Mutated in place by the concise-body return-type repair (see below). */
+  closureResults: ValType[];
+  liftedParams: ValType[];
+  structTypeIdx: number;
+  liftedSelfTypeIdx: number;
+  liftedFuncTypeIdx: number;
+  closureReturnType: ValType | null;
+  isGenerator: boolean;
+  isAsync: boolean;
+  asyncDecision: ReturnType<typeof planAsyncClosureActivation>;
+  isNamedFuncExpr: boolean;
+  /**
+   * (#3683 S2) When set, compile this body as the TYPED TWIN of an admitted
+   * fnctor prototype method: param 0 is the `(ref $__fnctor_F)` receiver (see
+   * `emitTypedThisPrologue`), and `fctx.typedThisStructIdx` /
+   * `typedThisLocalIdx` let the property-read / assignment / compound-update
+   * lowerings emit bare `struct.get`/`struct.set` against it instead of the
+   * `__get_member_*` / `__set_member_*` dispatcher calls.
+   */
+  typedThis?: { fnctorStructTypeIdx: number; structName: string };
+}
+
+/** (#3683 S2) What {@link compileLiftedClosureBody} produces / may have repaired. */
+export interface LiftedClosureBodyResult {
+  liftedFctx: FunctionContext;
+  /** May differ from `opts.closureReturnType` (concise-body f64 repair). */
+  closureReturnType: ValType | null;
+  /** May differ from `opts.liftedFuncTypeIdx` (same repair). */
+  liftedFuncTypeIdx: number;
+}
+
+/**
+ * (#3683 S2) Compile the body of ONE lifted closure function. Extracted
+ * verbatim from `compileArrowAsClosure` phase 5 so the same arrow AST can be
+ * compiled more than once; the generic call site passes no `typedThis` and is
+ * byte-identical to the pre-extraction emission.
+ *
+ * Does NOT mint/register the wasm function, emit the construction site, or
+ * register closure binding info — those stay with the caller (they must happen
+ * exactly ONCE per arrow even when two bodies are emitted).
+ */
+export function compileLiftedClosureBody(
   ctx: CodegenContext,
   fctx: FunctionContext,
   arrow: ts.ArrowFunction | ts.FunctionExpression,
-): ValType | null {
-  const closureId = ctx.closureCounter++;
-  const closureName = `__closure_${closureId}`;
+  opts: LiftedClosureBodyOptions,
+): LiftedClosureBodyResult {
   const body = arrow.body;
-
-  // Check if this is a generator function expression (function*() { ... })
-  const isGenerator = ts.isFunctionExpression(arrow) && arrow.asteriskToken !== undefined;
-  if (isGenerator) {
-    ctx.generatorFunctions.add(closureName);
-  }
-  // `isAsync` is still consumed below (generator-create name selection); the
-  // return-type derivation moved into computeClosureWrapperSig.
-  const isAsync = arrow.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
-
-  // 1. Determine arrow parameter types and return type. (#2939) Factored into
-  //    `computeClosureWrapperSig` so the dynamic-dispatch candidate pre-scan
-  //    registers the IDENTICAL wrapper type for inner-scope callbacks. The
-  //    (#585 contextual-void / #2867 Gap-1 / async-unwrap / #1151 binding-pattern
-  //    / #2640 array-callback-widen) logic all lives there now.
-  const { params: arrowParams, returnType: closureReturnTypeInit } = computeClosureWrapperSig(ctx, arrow);
-  let closureReturnType: ValType | null = closureReturnTypeInit;
-
-  // (#2957 phase 2) Async state-machine activation for arrows / function
-  // expressions. `computeClosureWrapperSig` above set `closureReturnType` to the
-  // *unwrapped* awaited type (the legacy synchronous pass-through model), so an
-  // async arrow silently returned a sync value instead of a Promise. Decide
-  // activation NOW — before the lifted func type + closure struct are built —
-  // and, on a match, bake the `externref` (Promise) result into the signature so
-  // the struct's funcref field, the wrapper type, and every call site agree. The
-  // body is emitted by the async machine at the statement-loop point below (see
-  // `asyncDecision` use). Generators have their own async machinery and are
-  // excluded here. The `__self` closure-env param (lifted param 0) is only ever
-  // spilled by the CPS emitter when a live-after-await capture resolves to it;
-  // the canonical single-tail-await (`return await P`) has no live-after set, so
-  // the env param is untouched — richer shapes stay on the legacy path via the
-  // predicate gate.
-  const asyncDecision = isAsync && !isGenerator ? planAsyncClosureActivation(ctx, arrow, /*isAsync*/ true) : null;
-  if (asyncDecision) {
-    closureReturnType = { kind: "externref" };
-  }
-
-  // 2. Analyze captured variables (referenced/written free vars, outer-write +
-  //    TDZ-flag boxing) and the self-recursive binding — see planClosureCaptures.
-  const { captures, selfBindingName } = planClosureCaptures(ctx, fctx, arrow, body);
-
-  // 3. Create struct type: field 0 = funcref, fields 1..N = captured vars
-  //    For mutable captures, the field type is a ref cell (struct { value: T })
-  const closureResults: ValType[] = closureReturnType ? [closureReturnType] : [];
-
-  // For closures with no captures, reuse the shared wrapper struct type from
-  // getOrCreateFuncRefWrapperTypes. This ensures all no-capture closures with
-  // the same signature share the same struct type, enabling consistent call_ref
-  // dispatch when closures are passed as callable parameters (externref).
-  let structTypeIdx: number;
-  let liftedFuncTypeIdx: number;
-  let liftedParams: ValType[];
-  const isNamedFuncExpr = ts.isFunctionExpression(arrow) && arrow.name;
-
-  ({ structTypeIdx, liftedFuncTypeIdx, liftedParams } = mintClosureStructTypes(ctx, {
+  const {
+    closureName,
     captures,
+    selfBindingName,
     arrowParams,
     closureResults,
-    closureName,
-    isNamedFuncExpr: !!isNamedFuncExpr,
-  }));
+    liftedParams,
+    structTypeIdx,
+    liftedSelfTypeIdx,
+    isGenerator,
+    isAsync,
+    asyncDecision,
+    isNamedFuncExpr,
+  } = opts;
+  let { closureReturnType, liftedFuncTypeIdx } = opts;
 
   // 5. Build the lifted function body
-  // For no-capture closures using wrapper types, self param is non-null ref.
-  // For captured closures sharing wrapper types, self param uses the WRAPPER struct
-  // type (non-null ref) — captures are accessed via ref.cast to the subtype.
-  // For named func exprs, self param is ref_null (var hoisting support).
-  const usesWrapperFuncType =
-    captures.length > 0 && !isNamedFuncExpr && !!getOrCreateFuncRefWrapperTypes(ctx, arrowParams, closureResults);
+  // Shared-wrapper lifted functions receive the canonical wrapper ROOT,
+  // regardless of their per-signature allocation wrapper. Captured bodies
+  // downcast that root to their concrete environment subtype. Named function
+  // expressions retain their private nullable self type for var hoisting.
+  const usesWrapperFuncType = liftedSelfTypeIdx !== structTypeIdx;
   const selfParamKind = isNamedFuncExpr ? ("ref_null" as const) : ("ref" as const);
-  const selfTypeIdx = usesWrapperFuncType
-    ? getOrCreateFuncRefWrapperTypes(ctx, arrowParams, closureResults)!.structTypeIdx
-    : structTypeIdx;
+  const selfTypeIdx = liftedSelfTypeIdx;
+  // (#3683 S3) A twin's param 0 carries the RECEIVER, not the closure env. See
+  // `emitTypedThisPrologue` for the full argument; the short version is that
+  // admission already requires zero captures / no self binding / not a named
+  // function expression, so nothing in an admitted body can read `__self` — and
+  // handing the receiver in as a real parameter is what lets a devirtualized
+  // caller invoke the twin without first materializing the closure singleton.
+  const twinSelfTypeIdx =
+    opts.typedThis && directCallLoweringEnabled() ? opts.typedThis.fnctorStructTypeIdx : undefined;
   const liftedFctx: FunctionContext = {
     name: closureName,
     params: [
-      { name: "__self", type: { kind: selfParamKind, typeIdx: selfTypeIdx } },
+      twinSelfTypeIdx !== undefined
+        ? { name: "__self", type: { kind: "ref" as const, typeIdx: twinSelfTypeIdx } }
+        : { name: "__self", type: { kind: selfParamKind, typeIdx: selfTypeIdx } },
       // (#3359) Skip a TS `this` param — type-level only, never a runtime arg.
       ...runtimeParameters(arrow).map((p, i) => ({
         name: ts.isIdentifier(p.name) ? p.name.text : `__param${i}`,
@@ -1965,6 +2112,7 @@ export function compileArrowAsClosure(
     // class-object singleton rather than `undefined`.
     isStaticContext: fctx.isStaticContext,
     isGenerator,
+    deferredDynamicImportTrap: !isAsync && !isGenerator,
     // (#1636-S1) This lifted closure body can be dispatched from the host via
     // `__call_fn_method_N` (e.g. as a `JSON.stringify` replacer / `toJSON`),
     // which installs the host receiver into `__current_this`. Allow `this`
@@ -1980,6 +2128,17 @@ export function compileArrowAsClosure(
     // native struct → the #2681/#2686 throw).
     thisStructName: resolveLiftedMethodThisStruct(ctx, arrow),
   };
+  const reachesDirectEval = functionMayReachDirectEval(arrow, ctx.oracle);
+  if (reachesDirectEval) {
+    liftedFctx.directEvalBindingNames = collectDirectEvalBindingNames(arrow);
+    liftedFctx.directEvalActivationBindingNames = collectDirectEvalActivationBindingNames(arrow);
+    liftedFctx.directEvalOuterBindingNames = new Set<string>();
+    for (const capture of captures) {
+      liftedFctx.directEvalBindingNames.add(capture.name);
+      liftedFctx.directEvalOuterBindingNames.add(capture.name);
+    }
+  }
+  initializeFunctionPoisonPillContext(ctx, liftedFctx, arrow);
 
   // (#1384) Track liftedFctx.body in liveBodies BEFORE any emission so
   // addUnionImports / shiftLateImportIndices can shift any `call funcIdx`
@@ -1991,6 +2150,18 @@ export function compileArrowAsClosure(
 
   for (let i = 0; i < liftedFctx.params.length; i++) {
     liftedFctx.localMap.set(liftedFctx.params[i]!.name, i);
+  }
+
+  // (#3683 S2/S3) Typed-`this` TWIN prologue. Runs FIRST so `typedThisLocalIdx`
+  // is live for every subsequent statement. Since S3 this emits NO instructions
+  // at all — the receiver arrives as param 0 — see typed-this.ts.
+  if (opts.typedThis) {
+    emitTypedThisPrologue(
+      liftedFctx,
+      opts.typedThis.structName,
+      opts.typedThis.fnctorStructTypeIdx,
+      twinSelfTypeIdx === undefined ? ensureCurrentThisGlobal(ctx) : undefined,
+    );
   }
 
   // Initialize locals for captured variables from struct fields.
@@ -2043,9 +2214,13 @@ export function compileArrowAsClosure(
       }
       const refCellType: ValType = { kind: "ref_null", typeIdx: refCellTypeIdx };
       const localIdx = allocLocal(liftedFctx, cap.name, refCellType);
-      selfCaptureLayoutEntries.push({ name: cap.name, fieldIdx: i + 1, localType: refCellType });
+      selfCaptureLayoutEntries.push({
+        name: cap.name,
+        fieldIdx: CLOSURE_CAPTURE_FIELD_BASE + i,
+        localType: refCellType,
+      });
       liftedFctx.body.push({ op: "local.get", index: selfLocalForCaptures });
-      liftedFctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: i + 1 });
+      liftedFctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: CLOSURE_CAPTURE_FIELD_BASE + i });
       liftedFctx.body.push({ op: "local.set", index: localIdx });
       // Register as boxed so identifier read/write uses struct.get/set
       if (!liftedFctx.boxedCaptures) liftedFctx.boxedCaptures = new Map();
@@ -2060,17 +2235,21 @@ export function compileArrowAsClosure(
       const valType = outerBoxed?.valType ?? refCellValueType(ctx, refCellTypeIdx) ?? { kind: "f64" as const };
       const refCellType: ValType = { kind: "ref_null", typeIdx: refCellTypeIdx };
       const localIdx = allocLocal(liftedFctx, cap.name, refCellType);
-      selfCaptureLayoutEntries.push({ name: cap.name, fieldIdx: i + 1, localType: refCellType });
+      selfCaptureLayoutEntries.push({
+        name: cap.name,
+        fieldIdx: CLOSURE_CAPTURE_FIELD_BASE + i,
+        localType: refCellType,
+      });
       liftedFctx.body.push({ op: "local.get", index: selfLocalForCaptures });
-      liftedFctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: i + 1 });
+      liftedFctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: CLOSURE_CAPTURE_FIELD_BASE + i });
       liftedFctx.body.push({ op: "local.set", index: localIdx });
       if (!liftedFctx.boxedCaptures) liftedFctx.boxedCaptures = new Map();
       liftedFctx.boxedCaptures.set(cap.name, { refCellTypeIdx, valType });
     } else {
       const localIdx = allocLocal(liftedFctx, cap.name, cap.type);
-      selfCaptureLayoutEntries.push({ name: cap.name, fieldIdx: i + 1, localType: cap.type });
+      selfCaptureLayoutEntries.push({ name: cap.name, fieldIdx: CLOSURE_CAPTURE_FIELD_BASE + i, localType: cap.type });
       liftedFctx.body.push({ op: "local.get", index: selfLocalForCaptures });
-      liftedFctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: i + 1 });
+      liftedFctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: CLOSURE_CAPTURE_FIELD_BASE + i });
       liftedFctx.body.push({ op: "local.set", index: localIdx });
     }
   }
@@ -2079,8 +2258,8 @@ export function compileArrowAsClosure(
   // local in the lifted fctx and register it in `boxedTdzFlags` +
   // `tdzFlagLocals`. This makes existing TDZ-check call sites (calls.ts,
   // identifiers.ts) automatically route through `struct.get` on the ref cell.
-  // Field-layout invariant: TDZ flag fields come AFTER all value fields,
-  // i.e. fieldIdx = 1 + captures.length + tdzCaptureIndex.
+  // Field-layout invariant: TDZ flag fields come AFTER all value fields, i.e.
+  // fieldIdx = CLOSURE_CAPTURE_FIELD_BASE + captures.length + tdzCaptureIndex.
   {
     const tdzFlaggedCapturesForPrologue = captures.filter((c) => c.hasTdzFlag);
     if (tdzFlaggedCapturesForPrologue.length > 0) {
@@ -2088,7 +2267,7 @@ export function compileArrowAsClosure(
       const flagRefType: ValType = { kind: "ref_null", typeIdx: i32RefCellTypeIdx };
       for (let ti = 0; ti < tdzFlaggedCapturesForPrologue.length; ti++) {
         const cap = tdzFlaggedCapturesForPrologue[ti]!;
-        const tdzFieldIdx = 1 + captures.length + ti;
+        const tdzFieldIdx = CLOSURE_CAPTURE_FIELD_BASE + captures.length + ti;
         const flagBoxLocal = allocLocal(liftedFctx, `__tdz_box_${cap.name}`, flagRefType);
         liftedFctx.body.push({ op: "local.get", index: selfLocalForCaptures });
         liftedFctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: tdzFieldIdx });
@@ -2147,10 +2326,10 @@ export function compileArrowAsClosure(
   // (#2118) Register the self-recursive const/let arrow binding so recursive
   // calls compile as closure calls dispatched through __self. The struct.get
   // that fetches the funcref runs against __self's *actual* param type
-  // (selfTypeIdx — the wrapper base struct when capture-subtyping is used, else
-  // the specific struct), not necessarily the concrete subtype, so use
-  // selfTypeIdx as the call-site struct type. Field 0 (funcref) is inherited
-  // from the wrapper base, so the lifted func type still drives call_ref.
+  // (`selfTypeIdx`: the canonical wrapper root for shared wrappers, or the
+  // private struct for named function expressions), not necessarily the
+  // concrete allocation subtype. Field 0 is available on that root, and the
+  // lifted func type still drives call_ref.
   let savedSelfBindingClosureInfo: ClosureInfo | undefined;
   let hadSavedSelfBindingClosureInfo = false;
   if (selfBindingName !== undefined && selfBindingName !== funcExprName) {
@@ -2172,7 +2351,7 @@ export function compileArrowAsClosure(
 
   // Set up `arguments` object for function expressions (not arrow functions).
   // Arrow functions don't have their own `arguments` binding in JS.
-  if (ts.isFunctionExpression(arrow) && ts.isBlock(body) && closureBodyUsesArguments(body)) {
+  if (ts.isFunctionExpression(arrow) && ts.isBlock(body) && (closureBodyUsesArguments(body) || reachesDirectEval)) {
     // Ensure __box_number is available for boxing numeric params
     const hasNumericParam = arrowParams.some((pt) => pt.kind === "f64" || pt.kind === "i32");
     if (hasNumericParam) {
@@ -2197,6 +2376,9 @@ export function compileArrowAsClosure(
       argsLocalIdx: argsLocal,
       arrTmpIdx: arrTmp,
     });
+
+    // (#4243) §10.6 step 13.a — `callee` on a non-strict arguments object.
+    seedLiftedClosureArgumentsCallee(ctx, liftedFctx, arrow, argsLocal);
   }
 
   let conciseBodyHasValue = false;
@@ -2231,6 +2413,7 @@ export function compileArrowAsClosure(
   // accesses before the declaration site throw ReferenceError (#790).
   if (ts.isBlock(body)) {
     hoistLetConstWithTdz(ctx, liftedFctx, body.statements);
+    reifyCurrentDirectEvalBindings(ctx, liftedFctx);
   }
 
   // (#3164) Native generator FUNCTION EXPRESSION (standalone/wasi). When the
@@ -2287,7 +2470,7 @@ export function compileArrowAsClosure(
         })),
         tdzFlags: tdzFlaggedForGen.map((c, ti) => ({
           name: c.name,
-          fieldIdx: 1 + captures.length + ti,
+          fieldIdx: CLOSURE_CAPTURE_FIELD_BASE + captures.length + ti,
           refCellTypeIdx: i32CellForGen,
         })),
       };
@@ -2311,7 +2494,14 @@ export function compileArrowAsClosure(
     // the resume fn. TDZ-flagged captures store PARAM indices in
     // `boxedTdzFlags` (wrong in the resume fn's local layout) → legacy path.
     emitAsyncGenerator(ctx, liftedFctx, arrow);
-  } else if (isGenerator && ts.isBlock(body) && nativeGenExprInfo) {
+    // (#3683 S2) The trailing `ts.isFunctionExpression(arrow)` below is IMPLIED
+    // by a non-null `nativeGenExprInfo` (only the fn-expr arm above registers
+    // it); it is restated purely so TypeScript narrows `arrow` for
+    // `compileNativeGeneratorFunction`. Pre-extraction that narrowing came for
+    // free from the aliased-condition `const isGenerator =
+    // ts.isFunctionExpression(arrow) && …`, which no longer reaches this scope
+    // now that `isGenerator` arrives via `opts`.
+  } else if (isGenerator && ts.isBlock(body) && nativeGenExprInfo && ts.isFunctionExpression(arrow)) {
     // (#3164) Emit the native state-struct factory (mirrors the class-method /
     // object-literal wiring, #2571/#2581): construct `$GenState_<closure>` from
     // the lifted wasm params (param 0 = `__self`, threaded as a leading
@@ -2511,9 +2701,221 @@ export function compileArrowAsClosure(
   if (savedFunc) ctx.parentBodiesStack.pop();
   ctx.currentFunc = savedFunc;
 
-  // 6. Register the lifted function
+  return { liftedFctx, closureReturnType, liftedFuncTypeIdx };
+}
+
+/** (#4134) Report a lifted closure whose body escapes its own local frame. */
+function reportClosureFrameBreach(
+  ctx: CodegenContext,
+  arrow: ts.ArrowFunction | ts.FunctionExpression,
+  closureName: string,
+  liftedFuncTypeIdx: number,
+  liftedFctx: FunctionContext,
+): void {
+  const type = ctx.mod.types[liftedFuncTypeIdx];
+  if (!type || type.kind !== "func") return;
+  const frame = type.params.length + liftedFctx.locals.length;
+  const localOps = new Set(["local.get", "local.set", "local.tee"]);
+  let worst = -1;
+  const walk = (instrs: readonly Instr[]): void => {
+    for (const instr of instrs) {
+      if (localOps.has(instr.op)) {
+        const index = (instr as { index?: number }).index;
+        if (typeof index === "number" && index >= frame && index > worst) worst = index;
+      }
+      for (const key of ["body", "then", "else", "catchAll"] as const) {
+        const nested = (instr as unknown as Record<string, unknown>)[key];
+        if (Array.isArray(nested)) walk(nested as Instr[]);
+      }
+      const catches = (instr as { catches?: { body?: Instr[] }[] }).catches;
+      if (Array.isArray(catches)) for (const c of catches) if (Array.isArray(c.body)) walk(c.body);
+    }
+  };
+  walk(liftedFctx.body);
+  if (worst < 0) return;
+  if (process.env?.JS2WASM_FRAME_OPS) {
+    const flat: string[] = [];
+    const dump = (instrs: readonly Instr[], depth: number): void => {
+      for (const instr of instrs) {
+        const idx = (instr as { index?: number }).index;
+        flat.push(
+          `${"  ".repeat(depth)}${instr.op}${idx === undefined ? "" : ` ${idx}`}${typeof idx === "number" && idx >= frame ? "   <<<< OUT OF FRAME" : ""}`,
+        );
+        for (const key of ["body", "then", "else", "catchAll"] as const) {
+          const nested = (instr as unknown as Record<string, unknown>)[key];
+          if (Array.isArray(nested)) dump(nested as Instr[], depth + 1);
+        }
+      }
+    };
+    dump(liftedFctx.body, 0);
+    const stale = [...liftedFctx.localMap.entries()].filter(([, v]) => v >= frame);
+    process.stderr.write(
+      `[js2:frame-ops] ${closureName} params=${type.params.map((p) => p.kind).join(",")} locals=${liftedFctx.locals.map((l) => `${l.name}:${l.type.kind}`).join(",")}` +
+        ` STALE-localMap=${stale.map(([k, v]) => `${k}->${v}`).join(",") || "none"}\n`,
+    );
+    for (const line of flat) process.stderr.write(`[js2:frame-ops]   ${line}\n`);
+  }
+  let text = "<unavailable>";
+  try {
+    text = arrow.getText().replace(/\s+/g, " ").slice(0, 200);
+  } catch {
+    // A synthesized node has no source text; the name and frame still localise it.
+  }
+  const file = arrow.getSourceFile?.()?.fileName ?? "<unknown>";
+  process.stderr.write(
+    `[js2:closure-frame] ${closureName} frame=${frame} (${type.params.length} params + ` +
+      `${liftedFctx.locals.length} locals) worst=${worst}\n` +
+      `[js2:closure-frame]   at ${file}\n[js2:closure-frame]   source: ${text}\n`,
+  );
+}
+
+/**
+ * (#4157) `JS2WASM_CLOSURE_NAME_MAP=1` prints one line per lifted closure
+ * mapping the opaque emitted name (`__closure_N`, and by suffix its
+ * `__closure_N__typed_this` twin) back to the source function it came from.
+ * CPU profiles of compiled packages surface hot frames only under the emitted
+ * name; without this map "which package function is hot" is guesswork.
+ * Consumed by `scripts/profile-buckets.mjs`.
+ */
+function reportClosureNameMap(arrow: ts.ArrowFunction | ts.FunctionExpression, closureName: string): void {
+  if (typeof process === "undefined" || !process.env?.JS2WASM_CLOSURE_NAME_MAP) return;
+  let label = ts.isFunctionExpression(arrow) && arrow.name ? arrow.name.text : "";
+  if (!label) {
+    const parent = arrow.parent;
+    if (ts.isBinaryExpression(parent) && parent.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      label = parent.left.getText();
+    } else if (ts.isPropertyAssignment(parent) || ts.isVariableDeclaration(parent)) {
+      label = parent.name.getText();
+    }
+  }
+  const sourceFile = arrow.getSourceFile();
+  const { line } = sourceFile.getLineAndCharacterOfPosition(arrow.getStart());
+  console.error(`[js2:closure-map] ${closureName} <- ${label || "(anonymous)"} @${line + 1}`);
+}
+
+/** Compile an arrow function as a first-class closure value (Wasm GC struct + funcref) */
+export function compileArrowAsClosure(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  arrow: ts.ArrowFunction | ts.FunctionExpression,
+): ValType | null {
+  const closureId = ctx.closureCounter++;
+  const closureName = `__closure_${closureId}`;
+  const body = arrow.body;
+  reportClosureNameMap(arrow, closureName);
+
+  // Check if this is a generator function expression (function*() { ... })
+  const isGenerator = ts.isFunctionExpression(arrow) && arrow.asteriskToken !== undefined;
+  if (isGenerator) {
+    ctx.generatorFunctions.add(closureName);
+  }
+  // `isAsync` is still consumed below (generator-create name selection); the
+  // return-type derivation moved into computeClosureWrapperSig.
+  const isAsync = arrow.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
+
+  // 1. Determine arrow parameter types and return type. (#2939) Factored into
+  //    `computeClosureWrapperSig` so the dynamic-dispatch candidate pre-scan
+  //    registers the IDENTICAL wrapper type for inner-scope callbacks. The
+  //    (#585 contextual-void / #2867 Gap-1 / async-unwrap / #1151 binding-pattern
+  //    / #2640 array-callback-widen) logic all lives there now.
+  const { params: arrowParams, returnType: closureReturnTypeInit } = computeClosureWrapperSig(ctx, arrow);
+  let closureReturnType: ValType | null = closureReturnTypeInit;
+
+  // (#2957 phase 2) Async state-machine activation for arrows / function
+  // expressions. `computeClosureWrapperSig` above set `closureReturnType` to the
+  // *unwrapped* awaited type (the legacy synchronous pass-through model), so an
+  // async arrow silently returned a sync value instead of a Promise. Decide
+  // activation NOW — before the lifted func type + closure struct are built —
+  // and, on a match, bake the `externref` (Promise) result into the signature so
+  // the struct's funcref field, the wrapper type, and every call site agree. The
+  // body is emitted by the async machine at the statement-loop point below (see
+  // `asyncDecision` use). Generators have their own async machinery and are
+  // excluded here. The `__self` closure-env param (lifted param 0) is only ever
+  // spilled by the CPS emitter when a live-after-await capture resolves to it;
+  // the canonical single-tail-await (`return await P`) has no live-after set, so
+  // the env param is untouched — richer shapes stay on the legacy path via the
+  // predicate gate.
+  const asyncDecision = isAsync && !isGenerator ? planAsyncClosureActivation(ctx, arrow, /*isAsync*/ true) : null;
+  if (asyncDecision) {
+    closureReturnType = { kind: "externref" };
+  } else if (isAsync && !isGenerator) {
+    // (#3587) Declined async arrow/fn-expr with a genuinely-suspending await
+    // inside a `try`: refuse loudly instead of silently compiling the legacy
+    // pass-through that cannot deliver awaited rejections.
+    reportDeclinedAsyncRejectionHazard(ctx, arrow);
+  }
+
+  // 2. Analyze captured variables (referenced/written free vars, outer-write +
+  //    TDZ-flag boxing) and the self-recursive binding — see planClosureCaptures.
+  const reachesDirectEval = functionMayReachDirectEval(arrow, ctx.oracle);
+  const { captures, selfBindingName } = planClosureCaptures(
+    ctx,
+    fctx,
+    arrow,
+    body,
+    reachesDirectEval ? fctx.boxedCaptures?.keys() : undefined,
+  );
+
+  // 3. Create struct type: field 0 = funcref, fields 1..N = captured vars
+  //    For mutable captures, the field type is a ref cell (struct { value: T })
+  const closureResults: ValType[] = closureReturnType ? [closureReturnType] : [];
+
+  // For closures with no captures, reuse the shared wrapper struct type from
+  // getOrCreateFuncRefWrapperTypes. This ensures all no-capture closures with
+  // the same signature share the same struct type, enabling consistent call_ref
+  // dispatch when closures are passed as callable parameters (externref).
+  const isNamedFuncExpr = ts.isFunctionExpression(arrow) && arrow.name;
+
+  const mintedTypes = mintClosureStructTypes(ctx, {
+    captures,
+    arrowParams,
+    closureResults,
+    closureName,
+    isNamedFuncExpr: !!isNamedFuncExpr,
+    constructible:
+      noJsHost(ctx) &&
+      ts.isFunctionExpression(arrow) &&
+      arrow.asteriskToken === undefined &&
+      !(arrow.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false),
+  });
+  let { structTypeIdx, liftedFuncTypeIdx, liftedParams } = mintedTypes;
+  const { liftedSelfTypeIdx } = mintedTypes;
+  // (#4139) Record the node -> closure-struct mapping for the fnctor twin
+  // build, which materializes the ctor's sibling captures from this struct.
+  (ctx.closureStructByNode ??= new WeakMap()).set(arrow, { structTypeIdx });
+
+  // 5. Build the lifted function body — extracted to compileLiftedClosureBody
+  //    (#3683 S2) so the same AST can also be compiled as a typed-`this` twin.
+  const generic = compileLiftedClosureBody(ctx, fctx, arrow, {
+    closureName,
+    captures,
+    selfBindingName,
+    arrowParams,
+    closureResults,
+    liftedParams,
+    structTypeIdx,
+    liftedSelfTypeIdx,
+    liftedFuncTypeIdx,
+    closureReturnType,
+    isGenerator,
+    isAsync,
+    asyncDecision,
+    isNamedFuncExpr: !!isNamedFuncExpr,
+  });
+  const liftedFctx = generic.liftedFctx;
+  closureReturnType = generic.closureReturnType;
+  liftedFuncTypeIdx = generic.liftedFuncTypeIdx;
+
   const liftedFuncIdx = mintDefinedFunc(ctx);
-  pushDefinedFunc(ctx, liftedFuncIdx, {
+  // (#4134) `JS2WASM_CHECK_FRAMES=1` reports a lifted closure body that reads or
+  // writes a local its own frame never declares, AT THE MOMENT IT IS CREATED,
+  // together with the offending source text. The end-of-codegen checker can only
+  // say which function is broken; this says which ARROW produced it, which is
+  // the last link needed to reduce a fixture. Inert unless set.
+  if (typeof process !== "undefined" && process.env?.JS2WASM_CHECK_FRAMES) {
+    reportClosureFrameBreach(ctx, arrow, closureName, liftedFuncTypeIdx, liftedFctx);
+  }
+  pushProgramAbiNestedCallable(ctx, arrow, liftedFuncIdx, {
     name: closureName,
     typeIdx: liftedFuncTypeIdx,
     locals: liftedFctx.locals,
@@ -2524,14 +2926,233 @@ export function compileArrowAsClosure(
   // remove from liveBodies to keep it tight (the regular walker dedupes anyway).
   ctx.liveBodies.delete(liftedFctx.body);
   ctx.funcMap.set(closureName, liftedFuncIdx);
+  let recordedTwin = false;
 
-  // 7. At the creation site, emit struct.new with funcref + captured values.
-  emitClosureConstruction(ctx, fctx, captures, liftedFuncIdx, structTypeIdx);
+  // 6b. (#3683 S2) Typed-`this` TWIN. When this lifted closure is an admitted
+  //     write-once fnctor prototype method, compile its body a SECOND time with
+  //     the receiver arriving as a typed `(ref $__fnctor_F)` PARAMETER, then
+  //     prepend a `ref.test` shim to the GENERIC body that casts
+  //     `__current_this` and forwards on a shape hit. Detached receivers /
+  //     patched prototypes / foreign shapes keep the untouched generic body.
+  //     (#3683 S3) The twin's param 0 replaces `__self` — admission guarantees
+  //     nothing reads it — which is what makes a devirtualized DIRECT call
+  //     possible without materializing the closure singleton. See typed-this.ts
+  //     for the equivalence argument behind the inline struct.get/struct.set
+  //     branches and for the receiver-param design note.
+  {
+    const admitted = admitTypedThisTwin(ctx, arrow, {
+      thisStructName: liftedFctx.thisStructName,
+      captureCount: captures.length,
+      selfBindingName,
+      isGenerator,
+      isAsync,
+      isNamedFuncExpr: !!isNamedFuncExpr,
+    });
+    if (admitted) {
+      const twinName = `${closureName}__typed_this`;
+      // The twin's own wasm type: `(ref $__fnctor_F, ...userParams) -> results`.
+      // `return_call` constrains only RESULTS to match the caller, so the shim
+      // in the generic body can tail-call across this param-type difference.
+      const useReceiverParam = directCallLoweringEnabled();
+      const twinParams: ValType[] = useReceiverParam
+        ? [{ kind: "ref", typeIdx: admitted.structTypeIdx }, ...arrowParams]
+        : liftedParams;
+      // (#3754) NUMERIC-RETURN twin. When the whole-program fixpoint proved this
+      // method returns a number on every path, the twin is minted with `f64`
+      // results instead of the declaration-derived `externref` — see
+      // `refinedTwinReturnType` for why that is sound and why it cannot produce
+      // a stack-type mismatch. Skipped under `JS2WASM_DIRECT_CALLS=0`, where the
+      // twin SHARES the generic body's func type and so cannot diverge from it.
+      const refinedReturn = useReceiverParam ? refinedTwinReturnType(ctx, arrow, closureReturnType ?? null) : undefined;
+      const twinResults: ValType[] = refinedReturn ? [refinedReturn] : [...closureResults];
+      const twinTypeIdx = useReceiverParam
+        ? addFuncType(ctx, twinParams, twinResults, `${twinName}_type`)
+        : liftedFuncTypeIdx;
+      const twin = compileLiftedClosureBody(ctx, fctx, arrow, {
+        closureName: twinName,
+        captures,
+        selfBindingName,
+        arrowParams,
+        // The concise-body return repair cannot fire (admission requires a
+        // BLOCK body), but this is the twin's OWN array so a future shape
+        // change can never let it rewrite the generic's results in place.
+        closureResults: twinResults,
+        liftedParams: twinParams,
+        structTypeIdx,
+        liftedSelfTypeIdx,
+        liftedFuncTypeIdx: twinTypeIdx,
+        // The refined type is IMPOSED on the body, not asserted over it: every
+        // `return` coerces to it through the normal path, which is total for
+        // every kind a return expression can lower to.
+        closureReturnType: refinedReturn ?? closureReturnType,
+        isGenerator,
+        isAsync,
+        asyncDecision,
+        isNamedFuncExpr: !!isNamedFuncExpr,
+        typedThis: { fnctorStructTypeIdx: admitted.structTypeIdx, structName: admitted.structName },
+      });
+      // Admission requires a block body, so the concise-body return-type repair
+      // (the only thing that can rewrite `liftedFuncTypeIdx`) cannot have fired
+      // — but assert it rather than trust it: a repaired twin's RESULTS would no
+      // longer match the generic's, and the shim's `return_call` would emit a
+      // module that fails validation. That is much worse than silently skipping
+      // one monomorphization.
+      if (twin.liftedFuncTypeIdx !== twinTypeIdx) {
+        // Discard the twin (its body is unreferenced; the compile's other
+        // effects — late imports, string constants, dispatcher reservations —
+        // are all idempotent) and keep the generic body as the only lowering.
+        ctx.liveBodies.delete(twin.liftedFctx.body);
+      } else {
+        const twinFuncIdx = mintDefinedFunc(ctx);
+        pushProgramAbiTypedThisTwin(ctx, arrow, twinFuncIdx, {
+          name: twinName,
+          typeIdx: twin.liftedFuncTypeIdx,
+          locals: twin.liftedFctx.locals,
+          body: twin.liftedFctx.body,
+          exported: false,
+        });
+        ctx.liveBodies.delete(twin.liftedFctx.body);
+        ctx.funcMap.set(twinName, twinFuncIdx);
+        recordDirectCallTwin(ctx, arrow, twinName, twinParams, twinResults);
+        recordedTwin = true;
+        // Prepend IN PLACE: `liftedFctx.body` is the same array object already
+        // registered as the generic function's body, and it stays covered by
+        // `shiftLateImportIndices` (which walks `ctx.mod.functions`), so the
+        // baked `return_call twinFuncIdx` shifts with any later late-import
+        // addition. The guard's scratch anyref local is appended to the SAME
+        // `locals` array `pushDefinedFunc` already captured by reference.
+        const guardTmp = useReceiverParam
+          ? allocLocal(liftedFctx, `__tt_shim_${liftedFctx.locals.length}`, { kind: "anyref" })
+          : undefined;
+        // (#3754) A refined twin's results no longer equal the generic body's,
+        // so the shim cannot tail-call it — box on the way back out instead.
+        // Read `__box_number` HERE rather than at refinement time: compiling
+        // the twin above may have added late imports, which shift every
+        // function index (the same reason `twinFuncIdx` is minted after it).
+        // A module without the helper keeps the tail call and the boxed twin.
+        const boxNumberIdx = refinedReturn !== undefined ? ctx.funcMap.get("__box_number") : undefined;
+        const boxTwinResult: Instr[] | undefined =
+          boxNumberIdx === undefined ? undefined : [{ op: "call", funcIdx: boxNumberIdx }];
+        // `refinedTwinReturnType` already required the helper to be resolvable,
+        // so this cannot normally miss; if it ever did, emit NO shim rather than
+        // an ill-typed tail call. The generic body then simply stays generic —
+        // the direct-call trampolines still reach the twin, so the only cost is
+        // an unmonomorphized dynamic entry.
+        if (refinedReturn === undefined || boxTwinResult !== undefined) {
+          liftedFctx.body.unshift(
+            ...buildTypedThisForwardGuard(
+              admitted.structTypeIdx,
+              ensureCurrentThisGlobal(ctx),
+              liftedFctx.params.length,
+              twinFuncIdx,
+              guardTmp,
+              boxTwinResult,
+            ),
+          );
+        }
+        ctx.typedThisTwinCount = (ctx.typedThisTwinCount ?? 0) + 1;
+      }
+    }
+  }
+
+  const directGenericGlobalIdx = recordedTwin
+    ? undefined
+    : recordDirectCallGeneric(ctx, arrow, closureName, structTypeIdx, liftedParams, closureResults);
+
+  // 7. At the creation site, emit struct.new with funcref + arity + captured values.
+  emitClosureConstruction(ctx, fctx, captures, liftedFuncIdx, structTypeIdx, arrowParams.length);
+  if (directGenericGlobalIdx !== undefined) {
+    // Keep one typed handle to the exact closure instance installed on the
+    // write-once prototype. The assignment still consumes the same value:
+    // store it, then reload and narrow the nullable global back to the
+    // non-null allocation type left by `struct.new`.
+    fctx.body.push(
+      { op: "global.set", index: directGenericGlobalIdx },
+      { op: "global.get", index: directGenericGlobalIdx },
+      { op: "ref.as_non_null" },
+    );
+  }
 
   // 8. Register closure info so call sites can emit call_ref — see registerClosureBindingInfo.
-  registerClosureBindingInfo(ctx, arrow, structTypeIdx, liftedFuncTypeIdx, closureReturnType, arrowParams);
+  registerClosureBindingInfo(
+    ctx,
+    arrow,
+    structTypeIdx,
+    liftedFuncTypeIdx,
+    closureReturnType,
+    arrowParams,
+    captureFreeNumericInlineBody(arrow, captures.length, liftedFctx, arrowParams.length),
+  );
 
   return { kind: "ref", typeIdx: structTypeIdx };
+}
+
+const NUMERIC_CLOSURE_INLINE_OPS = new Set<string>([
+  "i32.const",
+  "i32.add",
+  "i32.sub",
+  "i32.mul",
+  "i32.div_s",
+  "i32.rem_s",
+  "i32.eq",
+  "i32.ne",
+  "i32.lt_s",
+  "i32.le_s",
+  "i32.gt_s",
+  "i32.ge_s",
+  "i32.eqz",
+  "f64.const",
+  "f64.add",
+  "f64.sub",
+  "f64.mul",
+  "f64.div",
+  "f64.rem",
+  "f64.eq",
+  "f64.ne",
+  "f64.lt",
+  "f64.le",
+  "f64.gt",
+  "f64.ge",
+  // Numeric helpers such as JS remainder lower to a direct Wasm function
+  // call. The surrounding body remains straight-line and is copied once at
+  // the original call site, so effects/traps and evaluation order are intact.
+  "call",
+]);
+const NUMERIC_CLOSURE_INLINE_MAX_INSTRS = 10;
+
+/**
+ * Extract the tiny expression-shaped numeric callbacks that array HOF loops
+ * can inline without materializing call-site state. The body must be
+ * capture-free, local-free, and consist only of parameter reads plus scalar
+ * arithmetic/comparisons. Anything scope-, heap-, trap-, or call-sensitive
+ * retains the ordinary closure call_ref path.
+ */
+function captureFreeNumericInlineBody(
+  arrow: ts.ArrowFunction | ts.FunctionExpression,
+  captureCount: number,
+  liftedFctx: FunctionContext,
+  paramCount: number,
+): Instr[] | undefined {
+  if (
+    captureCount !== 0 ||
+    liftedFctx.locals.length !== 0 ||
+    arrow.parameters.some((param) => param.dotDotDotToken || param.initializer) ||
+    (ts.isBlock(arrow.body) && closureBodyUsesArguments(arrow.body))
+  ) {
+    return undefined;
+  }
+  const body = liftedFctx.body.filter((instr) => instr.op !== "nop");
+  if (body.at(-1)?.op === "return") body.pop();
+  if (body.length === 0 || body.length > NUMERIC_CLOSURE_INLINE_MAX_INSTRS) return undefined;
+  for (const instr of body) {
+    if (instr.op === "local.get") {
+      const index = (instr as { index: number }).index;
+      if (index < 1 || index > paramCount) return undefined;
+      continue;
+    }
+    if (!NUMERIC_CLOSURE_INLINE_OPS.has(instr.op)) return undefined;
+  }
+  return body.map((instr) => ({ ...instr }));
 }
 
 /** Compile an arrow function as a host callback via __make_callback.
@@ -2597,6 +3218,27 @@ export function compileArrowAsCallback(
   // initializer / binding-pattern element default / computed key (see the
   // rationale on the identical scan in `compileArrowAsClosure`).
   collectParamDefaultReferences(arrow.parameters, referencedNames, ownLocals);
+
+  // A host callback can call a capturing nested declaration. Its callback
+  // frame must carry that declaration's environment just like a lifted Wasm
+  // closure does; otherwise the direct call reads owner-frame local indices
+  // from the callback frame.
+  const captureWorklist = [...referencedNames];
+  const visitedCaptureFunctions = new Set<string>();
+  while (captureWorklist.length > 0) {
+    const referencedName = captureWorklist.pop()!;
+    if (visitedCaptureFunctions.has(referencedName)) continue;
+    visitedCaptureFunctions.add(referencedName);
+    const transitiveCaptures = ctx.nestedFuncCaptures.get(referencedName);
+    if (!transitiveCaptures) continue;
+    for (const capture of transitiveCaptures) {
+      if (ownLocals.has(capture.name)) continue;
+      if (!referencedNames.has(capture.name)) {
+        referencedNames.add(capture.name);
+        captureWorklist.push(capture.name);
+      }
+    }
+  }
 
   // Detect which captured variables are written inside the callback body (#859)
   const writtenInCallback = new Set<string>();
@@ -2878,9 +3520,8 @@ export function compileArrowAsCallback(
   if (savedFunc) ctx.parentBodiesStack.pop();
   ctx.currentFunc = savedFunc;
 
-  // 6. Register and export the callback function
   const cbFuncIdx = mintDefinedFunc(ctx);
-  pushDefinedFunc(ctx, cbFuncIdx, {
+  pushProgramAbiNestedCallable(ctx, arrow, cbFuncIdx, {
     name: cbName,
     typeIdx: cbTypeIdx,
     locals: cbFctx.locals,
@@ -2970,6 +3611,16 @@ export function compileArrowAsCallback(
         }
       } else {
         // Immutable capture or already-boxed: push directly
+        if (process.env?.JS2WASM_FRAME_OPS) {
+          const liveFrame = fctx.params.length + fctx.locals.length;
+          if (cap.localIdx >= liveFrame) {
+            process.stderr.write(
+              `[js2:cap-emit] '${cap.name}' localIdx=${cap.localIdx} >= liveFrame=${liveFrame} ` +
+                `(params=${fctx.params.length} locals=${fctx.locals.length}) in ${fctx.name} ` +
+                `mapNow=${fctx.localMap.get(cap.name)} alreadyBoxed=${cap.alreadyBoxed}\n`,
+            );
+          }
+        }
         fctx.body.push({ op: "local.get", index: cap.localIdx });
       }
     }

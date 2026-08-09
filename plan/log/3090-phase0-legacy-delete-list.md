@@ -4,6 +4,17 @@
 **Tool:** `node scripts/audit-legacy-reachability.mjs` (re-run any time; writes
 per-function detail to `.tmp/legacy-reachability.json`, prints the tables below)
 
+> **Current disposition (2026-07-21):** this is the historical measurement and
+> R10 delete ledger for **#3518**, not evidence that handlers are dormant now.
+> The latest completed audit records **59,676 frontend-only fn-lines** and
+> roughly **47K runtime/builtin entry fn-lines**. None of the frontend handlers
+> is deletion-ready: hybrid compile-twice reachability remains for free
+> functions, classes, module init, multi-source/M0, and linear. Run the audit
+> again only after #3518 R9 establishes fail-closed IR-only ownership. R0
+> completed with #3529 typed-producer equivalence parity and #3519's honest
+> gate; neither capability reclassification nor equivalence-baseline expansion
+> is evidence that a handler became unreachable.
+
 ## What was measured
 
 Call-graph reachability over every top-level function in `src/` (function
@@ -32,14 +43,13 @@ before deleting.
 | Bucket                                               | files | legacy-only | shared | unreferenced |
 | ---------------------------------------------------- | ----: | ----------: | -----: | -----------: |
 | **frontend** (delete candidates)                     |    35 |  **59,976** |  7,413 |          288 |
-| **deferred** (`eval`/`with`/async-CPS — never touch) |     3 |       1,473 |  1,408 |           12 |
+| **deferred** (`eval`/`with`/async-CPS at audit time) |     3 |       1,473 |  1,408 |           12 |
 | **runtime** (stdlib behavior emission — keep)        |    58 |  **46,979** | 29,032 |          280 |
 | **stays** (substrate/orchestrator — keep)            |    57 |       4,136 | 45,802 |        1,573 |
 
-The FRONTEND delete-set is a hard **~60.0K fn-lines** (the issue's ±10K band
-was 70–80K file-lines; per-function attribution excludes the shared slices
-that live inside FRONTEND files, e.g. 3.2K of `closures.ts` the class/decl
-machinery reuses).
+The table is the 2026-07-10 baseline. Subsequent cleanup moved the current
+FRONTEND legacy-only count to **59,676 fn-lines** (Phase 2f, 2026-07-16). Treat
+that as an approximate R10 deletion opportunity, not as currently dead code.
 
 ## Ground-truth gates — what "dormant" actually means (premise corrections)
 
@@ -56,13 +66,10 @@ on four structural facts:
   proven-lowerable numeric/boolean subset (`irFirstBodyIsProvenLowerable`) AND
   whose internal callers are all also skipped (signature-parity fixpoint,
   `collectLocalCallEdges`). Safe-by-construction: everything else compiles
-  twice. **The −60k deletion is INCREMENTAL, not unlocked by this flip alone:**
-  a per-kind handler is deletable only once NO compile-twice function uses it,
-  which requires the allowlist to OWN that node kind. The initial subset is
-  pure-numeric, so the immediately-deletable set is small; it grows as the
-  allowlist WIDENS (proven strings/vecs/JS-host generators → …) via the
-  #2855/#2856 capability track. Per-kind deletion still also requires
-  G2/G3/G4.
+  twice. The historical proposal was to widen this allowlist and delete
+  per-kind handlers incrementally. The measured 28.1% ceiling disproved that as
+  the retirement path: #3521 (R2) replaces it with prepare-before-emit
+  ownership, and R9 clears G1 globally before deletion.
 - **G2 — whole-function claim unit keeps every handler live.** The selector
   claims `FunctionDeclaration`s; any rejection (every non-zero bucket in
   `plan/log/ir-adoption.md`, every `mixed`/`direct-only`/`deferred` kind in
@@ -71,10 +78,12 @@ on four structural facts:
   `ir-owned` ones. An `IfStatement` inside a function with a `switch` is
   compiled by the legacy `IfStatement` handler. **A kind being `ir-owned`
   does NOT make its legacy handler dead.**
-- **G3 — top-level statements are always legacy.** Module-level code is not
-  claimable (the claim unit is function declarations / class members), so
-  `compileStatement` and the statement handlers stay reachable for top-level
-  code until the IR adopts module-level lowering.
+- **G3 — module init is still compile-twice.** #3142 made a synthetic
+  module-init unit claimable and lets IR patch the legacy-created
+  `__module_init` slot. The legacy module-init body is nevertheless emitted
+  first, and a rejection or integration failure retains it. Claimable (or a
+  zero module histogram) therefore does not clear deletion reachability.
+  #3523 (R4) must prepare module init before emission; R9 removes fallback.
 - **G4 — runtime emission enters through legacy dispatch.** ~47K fn-lines of
   stdlib behavior emission (`array-methods`, `property-access`, `object-ops`,
   `native-regex`, `string-ops`, `json-*`, `dataview`, `map-runtime`…) are
@@ -83,25 +92,23 @@ on four structural facts:
   `object-runtime`). Retiring the front-end requires the IR to grow its own
   call-paths into this emission (per-kind adoption), not deletion.
 
-### Post-flip status (2026-07-13, re-verified on `origin/main` @ 3a0dabfeac)
+### Current hybrid status (reconciled 2026-07-21)
 
-The #3143 IR-first flip is **not** "flip ⇒ delete now". It cleared **G1 for the
-numeric population only**: `computeIrFirstSkipSet`'s allowlist skips legacy body
-emission for provably-lowerable pure-`f64` (now also `boolean`, #3203)
-functions. Re-running the audit post-flip, the FRONTEND `legacy-only` count went
-**UP** 59,976 → 61,889 — nothing in the frontend became newly dead, because
-**G2 keeps every per-kind handler reachable**: the measured skip rate is ~12% of
-functions (ir-fallbacks corpus), so the other ~88% still route through
-`compileStatement`/`compileExpression` and use the legacy handler for every kind
-they contain, including `ir-owned` ones. **No frontend handler is deletable from
-the flip alone.** The −60K unlocks per-file only as each file's LAST gate closes
-(revised phase plan below); the levers are **widening the skip allowlist**
-(#3203 f64→bool landed this; native-i32 next) and **driving the selector's
-rejection buckets to zero** (#2856, `body-shape-rejected` now 14) to raise G2
-claim coverage, plus **top-level IR adoption** (G3). Gate distance is dominated
-by G2 (near-total claim coverage), not by a kind's `ir-owned`-ness, so the first
-file to close will be an all-`ir-owned`-kind file (`literals.ts` /
-`expressions/identifiers.ts`) once claim coverage approaches 100% — not before.
+The #3143 flip is **not** “flip ⇒ delete now.” It cleared G1 only for a positive
+numeric/boolean allowlist. The latest measured maximum population reachable by
+signature/body widening is **441/1,568 (28.1%)**; the other 1,127 functions
+require runtime-path IR, not another signature widen. Class members, module
+init, multi-source/M0, and linear remain compile-twice or direct.
+
+The 18/56 `ir-owned` adoption rows also do not clear G2: one unsupported node
+causes the whole function to retain legacy, and an IR overlay may patch a body
+that was already emitted. **No frontend handler is deletable from the flip,
+function-corpus zero, or module claimability alone.** #3518 replaces incremental
+allowlist-to-deletion speculation with a prepare-before-emit whole-program
+sequence: #3529/#3519 completed R0 → #3520 identity/ABI → #3521
+PreparedIrProgram → #3522 classes/closures → #3523 module init → #3525 whole
+program / #3526 runtime → #3527 async → #3528 linear → fail-closed default →
+this audit's R10 deletion.
 
 **Consequence:** "deletable today with zero capability change" =
 the **unreferenced set (~2.1K fn-lines)** — everything else is conditional.
@@ -190,22 +197,26 @@ Caveat: the audit graph does not include `tests/` — confirm zero test-side
 imports (or move the helper) before each deletion; wiring `knip` into
 `quality` (issue Phase 2) automates exactly this.
 
-## Revised phase plan
+## Revised phase plan (superseded by #3518)
 
-1. **Phase 2 first (reordered):** knip wiring + delete the unreferenced set
-   (~2.1K, immediate, zero-risk after knip confirmation).
-2. **Gate-clearing prerequisites for any handler deletion** (each its own
-   issue/slice):
-   a. Make IR-first (`JS2WASM_IR_FIRST=1`, #2138) the default — clears G1.
-   b. Module-level (top-level statement) IR adoption — clears G3.
-   c. Per-kind fallback closure (#2855/#2856-family, STRICT_IR_REASONS) —
-   clears G2 kind by kind.
-   d. IR-side entry points into RUNTIME emission (per builtin family) —
-   clears G4 file by file.
-3. **Phase 1/3 (merged):** delete each FRONTEND file's legacy-only set in
-   the same PR that closes its last gate, largest first per the ranked list
-   (calls.ts 16.2K → assignment.ts 6.9K → loops.ts 5.6K → …). Validate every
-   slice on full CI / `merge_group` (standalone floor only runs there).
+The unconditional dead-export cleanup is exhausted. The remaining work follows
+#3518's R0–R10 spine; it is not safe to delete handlers kind-by-kind from
+adoption labels:
+
+1. R0 is complete: typed Prepared/Unsupported/Invariant outcomes, producer
+   parity, and an honest readiness gate (#3529/#3519).
+2. Build source-qualified whole-program identity/ABI and prepare all supported
+   units before backend/body emission (#3520 R1 → #3521 R2 → #3522 R3 → #3523
+   R4, followed by #3525–#3528 R5–R8).
+3. Make fail-closed IR-only the sole production policy and remove hybrid/
+   compile-twice escape hatches (#3518 R9).
+4. Re-run this reachability audit against that committed state. Delete only the
+   newly unreachable FRONTEND set, largest independent files first, while
+   retaining the runtime/substrate reached through IR semantic intents (#3518
+   R10 / #3090).
+
+Every deletion slice requires full CI / `merge_group`; the standalone floor is
+only authoritative there.
 
 ## Regenerate
 

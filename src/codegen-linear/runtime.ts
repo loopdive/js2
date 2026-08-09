@@ -1,13 +1,42 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import type { FuncTypeDef, GlobalDef, Instr, ValType, WasmModule } from "../ir/types.js";
-import type { LinearContext } from "./context.js";
-import { hashProbeAdvanceInstrs } from "./emit-idioms.js";
+import {
+  LINEAR_ARRAY_FORWARDING,
+  LINEAR_STRING_PAYLOAD_PREFIX_BYTES,
+  LINEAR_STRING_PAYLOAD_SIZE_OFFSET,
+} from "../ir/analysis/linear-memory-plan.js";
+import { hashProbeAdvanceInstrs, hashProbeInitInstrs } from "./emit-idioms.js";
+import { isLinearStringLiteralCacheGlobal } from "./string-literals.js";
 
 /** Heap starts at byte offset 1024 (leave low addresses for null/sentinel) */
 const HEAP_START = 1024;
 
 /** Wasm page size in bytes (64 KiB) — the unit `memory.grow` operates on. */
 const WASM_PAGE_SIZE = 65536;
+
+/**
+ * Byte 1 of a record header, used by the string runtime to memoise "is this
+ * string pure ASCII?" (#3673).
+ *
+ * Byte 0 is the record *tag* namespace (`LINEAR_ARRAY_FORWARDING.tag = 6`,
+ * class instances = 5) and is read by the array-forwarding probe, so it is left
+ * alone. Bytes 1..3 of the header word are unused by every string producer —
+ * `__str_from_data` and friends write only the capacity at +4, the byte length
+ * at +8 and the payload from +12.
+ *
+ * `__malloc` zeroes the whole header word on every hand-out, so
+ * {@link STRING_ASCII_UNKNOWN} is the guaranteed initial state even when an
+ * embedder recycles the arena via `__arena_reset` (without that, a recycled
+ * address could hand a *stale* verdict to a different string — silent wrong
+ * answers, the exact failure class this file just fixed for data segments).
+ */
+const STRING_ASCII_CACHE_OFFSET = 1;
+/** Not yet determined — take the slow path and memoise the answer. */
+const STRING_ASCII_UNKNOWN = 0;
+/** Every byte < 0x80: UTF-8 byte index == UTF-16 code-unit index. */
+const STRING_ASCII_YES = 1;
+/** At least one multi-byte sequence: indices diverge, decode is required. */
+const STRING_ASCII_NO = 2;
 
 /**
  * Options for the linear-memory bump/arena allocator (#1856).
@@ -35,6 +64,7 @@ export interface ArenaOptions {
    * exports are dead weight and are omitted to keep the binary minimal.
    */
   exposeArenaReset?: boolean;
+  heapStart?: number;
 }
 
 /**
@@ -52,6 +82,7 @@ export interface ArenaOptions {
  * ADR-0017.
  */
 export function addRuntime(mod: WasmModule, opts: ArenaOptions = {}): void {
+  const heapStart = opts.heapStart ?? HEAP_START;
   // Add memory (1 page = 64 KiB, growable to 256 pages = 16 MiB)
   if (mod.memories.length === 0) {
     mod.memories.push({ min: 1, max: 256 });
@@ -68,7 +99,7 @@ export function addRuntime(mod: WasmModule, opts: ArenaOptions = {}): void {
     name: "__heap_ptr",
     type: { kind: "i32" },
     mutable: true,
-    init: [{ op: "i32.const", value: HEAP_START }],
+    init: [{ op: "i32.const", value: heapStart }],
   };
   mod.globals.push(heapPtrGlobal);
 
@@ -139,11 +170,30 @@ export function addRuntime(mod: WasmModule, opts: ArenaOptions = {}): void {
     // __heap_ptr = next
     { op: "local.get", index: local_next },
     { op: "global.set", index: heapPtrGlobalIdx },
+    // Zero the record header word so every hand-out starts in a known state.
+    // The string runtime memoises its ASCII verdict in byte 1 of this word
+    // (see STRING_ASCII_CACHE_OFFSET); without this, an embedder that recycles
+    // the arena through `__arena_reset` could serve a *stale* verdict from the
+    // previous tenant of the address. Guarded on `size >= 4` purely so a
+    // zero-size request at the very end of memory cannot store out of bounds —
+    // every real record is header-bearing and takes the store.
+    { op: "local.get", index: 0 }, // size
+    { op: "i32.const", value: 4 },
+    { op: "i32.ge_u" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: local_ret },
+        { op: "i32.const", value: 0 },
+        { op: "i32.store", align: 2, offset: 0 },
+      ],
+      else: [],
+    },
     // return ret
     { op: "local.get", index: local_ret },
   ];
 
-  const mallocFuncIdx = mod.functions.length;
   mod.functions.push({
     name: "__malloc",
     typeIdx: mallocTypeIdx,
@@ -155,13 +205,104 @@ export function addRuntime(mod: WasmModule, opts: ArenaOptions = {}): void {
     exported: false,
   });
 
-  // Note: __malloc is NOT exported; it's internal. Register in a way
-  // that codegen can find it. The function index will be:
-  // numImportFuncs + mallocFuncIdx (but since we add early, it's just mallocFuncIdx for now)
-  void mallocFuncIdx;
+  // __malloc is internal; codegen finds it in the defined-function table.
 
   if (opts.exposeArenaReset) {
-    addArenaManagementExports(mod, heapPtrGlobalIdx);
+    addArenaManagementExports(mod, heapPtrGlobalIdx, heapStart);
+  }
+}
+
+/**
+ * Align an address up to the next 8-byte boundary — the alignment `__malloc`
+ * itself maintains for every allocation.
+ */
+function align8(value: number): number {
+  return (value + 7) & ~7;
+}
+
+/**
+ * Place the heap **above every emitted data segment** (#3686 bug 1).
+ *
+ * The linear backend appends string literals to a data segment while it
+ * compiles, but `__heap_ptr`'s initial value is baked in much earlier, by
+ * {@link addRuntime}, from a *fixed* floor (1024 by default, 65536 when the
+ * Ryū number formatter is linked). Nothing reconciled the two: a module whose
+ * literals ran past the floor had its first `__malloc` hand back an address
+ * that still belonged to the data segment, so the string runtime's own header
+ * writes silently overwrote literal bytes — wrong `.length`, wrong characters,
+ * and (once past the initial page) an out-of-bounds trap. It corrupted rather
+ * than failed, which is the dangerous kind.
+ *
+ * This finalizer runs after *all* data segments exist and lifts the heap floor
+ * to `align8(max(segment end))` when that is higher than the baked-in floor.
+ * It scans `mod.dataSegments` rather than just the literal cursor so the Ryū
+ * tables (emitted at their own base) are covered by the same rule, and it
+ * grows `memory.min` so the active segment initialisers themselves stay in
+ * bounds at instantiation time.
+ *
+ * Small modules are unaffected: their segments end below the existing floor,
+ * so the baked-in value wins and the emitted bytes are unchanged.
+ */
+export function finalizeLinearHeapLayout(mod: WasmModule): void {
+  let dataEnd = 0;
+  for (const seg of mod.dataSegments ?? []) {
+    dataEnd = Math.max(dataEnd, seg.offset + seg.bytes.length);
+  }
+  if (dataEnd === 0) return;
+
+  const heapPtr = mod.globals.find((g) => g.name === "__heap_ptr");
+  if (heapPtr === undefined) return;
+  const init = heapPtr.init[0];
+  if (heapPtr.init.length !== 1 || init.op !== "i32.const") {
+    throw new Error("linear runtime: unexpected __heap_ptr initialiser shape");
+  }
+  const oldHeapStart = init.value;
+  const newHeapStart = Math.max(oldHeapStart, align8(dataEnd));
+
+  // Arena reset invalidates every lazily interned literal pointer. Clear the
+  // caches with the heap rewind so the next use rematerializes valid records.
+  const arenaReset = mod.functions.find((func) => func.name === "__arena_reset");
+  if (arenaReset !== undefined) {
+    for (let index = 0; index < mod.globals.length; index++) {
+      if (!isLinearStringLiteralCacheGlobal(mod.globals[index]!.name)) continue;
+      arenaReset.body.push({ op: "i32.const", value: 0 }, { op: "global.set", index });
+    }
+  }
+
+  // Data segments are initialised before any code runs, so the *declared*
+  // minimum has to cover them (memory.grow in __malloc is too late).
+  const memory = mod.memories[0];
+  if (memory !== undefined) {
+    const neededPages = Math.ceil(dataEnd / WASM_PAGE_SIZE);
+    if (neededPages > memory.min) memory.min = neededPages;
+    if (memory.max !== undefined && memory.max < memory.min) memory.max = memory.min;
+  }
+
+  if (newHeapStart === oldHeapStart) return;
+  init.value = newHeapStart;
+  retargetArenaHeapStart(mod, oldHeapStart, newHeapStart);
+}
+
+/**
+ * Re-point the optional `__arena_reset` / `__arena_used` constants at the
+ * finalized heap floor. Both bodies embed `heapStart` as a literal, so lifting
+ * `__heap_ptr` without them would let `__arena_reset()` rewind *into* the data
+ * segment and make `__arena_used()` report a bogus, too-large figure.
+ */
+function retargetArenaHeapStart(mod: WasmModule, oldHeapStart: number, newHeapStart: number): void {
+  for (const name of ["__arena_reset", "__arena_used"] as const) {
+    const func = mod.functions.find((f) => f.name === name);
+    if (func === undefined) continue;
+    let patched = 0;
+    for (const instr of func.body) {
+      if (instr.op === "i32.const" && instr.value === oldHeapStart) {
+        instr.value = newHeapStart;
+        patched++;
+      }
+    }
+    if (patched !== 1) {
+      throw new Error(`linear runtime: expected exactly one heapStart constant in ${name}, found ${patched}`);
+    }
   }
 }
 
@@ -176,7 +317,7 @@ export function addRuntime(mod: WasmModule, opts: ArenaOptions = {}): void {
  * These are off by default (see {@link ArenaOptions.exposeArenaReset}) so the
  * "allocate-and-exit" common case pays nothing for them.
  */
-function addArenaManagementExports(mod: WasmModule, heapPtrGlobalIdx: number): void {
+function addArenaManagementExports(mod: WasmModule, heapPtrGlobalIdx: number, heapStart: number): void {
   // __arena_reset() -> void
   const resetTypeIdx = mod.types.length;
   mod.types.push({
@@ -191,7 +332,7 @@ function addArenaManagementExports(mod: WasmModule, heapPtrGlobalIdx: number): v
     typeIdx: resetTypeIdx,
     locals: [],
     body: [
-      { op: "i32.const", value: HEAP_START },
+      { op: "i32.const", value: heapStart },
       { op: "global.set", index: heapPtrGlobalIdx },
     ],
     exported: false,
@@ -210,7 +351,7 @@ function addArenaManagementExports(mod: WasmModule, heapPtrGlobalIdx: number): v
     name: "__arena_used",
     typeIdx: usedTypeIdx,
     locals: [],
-    body: [{ op: "global.get", index: heapPtrGlobalIdx }, { op: "i32.const", value: HEAP_START }, { op: "i32.sub" }],
+    body: [{ op: "global.get", index: heapPtrGlobalIdx }, { op: "i32.const", value: heapStart }, { op: "i32.sub" }],
     exported: false,
   });
 
@@ -489,9 +630,6 @@ export function addUint8ArrayRuntime(mod: WasmModule): void {
   );
 }
 
-/** Tag byte marking a relocated (grown) array header — see addArrayResolveRuntime (#1977). */
-const ARR_FORWARDED_TAG = 0x06;
-
 /**
  * Register the array forwarding resolver (#1977) — idempotent; called by
  * every runtime builder whose functions touch array memory
@@ -499,9 +637,10 @@ const ARR_FORWARDED_TAG = 0x06;
  *
  * When __arr_push outgrows capacity it relocates the array to a fresh
  * allocation and rewrites the OLD header into a forwarding record:
- * tag ARR_FORWARDED_TAG at +0, the new pointer at +4. Aliased locals/fields
+ * the shared forwarding tag at its planned tag offset, and the new pointer at
+ * its planned pointer offset. Aliased locals/fields
  * still hold the old pointer, so every accessor first chases the forwarding
- * chain: while (tag == ARR_FORWARDED_TAG) ptr = *(ptr+4).
+ * chain described by `LINEAR_ARRAY_FORWARDING`.
  */
 function ensureArrayResolveRuntime(mod: WasmModule): void {
   if (mod.functions.some((f) => f.name === "__arr_resolve")) return;
@@ -514,15 +653,15 @@ function ensureArrayResolveRuntime(mod: WasmModule): void {
           op: "loop",
           blockType: { kind: "empty" },
           body: [
-            // if tag != ARR_FORWARDED_TAG, break
+            // If this is not a forwarding record, break.
             { op: "local.get", index: 0 },
-            { op: "i32.load8_u", align: 0, offset: 0 },
-            { op: "i32.const", value: ARR_FORWARDED_TAG },
+            { op: "i32.load8_u", align: 0, offset: LINEAR_ARRAY_FORWARDING.tagOffset },
+            { op: "i32.const", value: LINEAR_ARRAY_FORWARDING.tag },
             { op: "i32.ne" },
             { op: "br_if", depth: 1 },
-            // ptr = *(ptr+4)
+            // ptr = forwarding replacement pointer
             { op: "local.get", index: 0 },
-            { op: "i32.load", align: 2, offset: 4 },
+            { op: "i32.load", align: 2, offset: LINEAR_ARRAY_FORWARDING.pointerOffset },
             { op: "local.set", index: 0 },
             { op: "br", depth: 0 },
           ],
@@ -598,7 +737,7 @@ export function addArrayRuntime(mod: WasmModule): void {
   // __arr_grow(ptr, minCap) → newPtr (#1977)
   // Relocate the array to a fresh allocation with cap = max(cap*2, minCap, 4),
   // copy len elements, and rewrite the old header into a forwarding record
-  // (tag ARR_FORWARDED_TAG at +0, newPtr at +4) so stale aliases resolve.
+  // using the shared forwarding contract so stale aliases resolve.
   // Caller must pass an already-resolved ptr.
   addRuntimeFunc(
     mod,
@@ -703,13 +842,13 @@ export function addArrayRuntime(mod: WasmModule): void {
             },
           ],
         },
-        // Forward the old header: tag ARR_FORWARDED_TAG, newPtr at +4
+        // Forward the old header with the shared tag and pointer offsets.
         { op: "local.get", index: 0 },
-        { op: "i32.const", value: ARR_FORWARDED_TAG },
-        { op: "i32.store8", align: 0, offset: 0 },
+        { op: "i32.const", value: LINEAR_ARRAY_FORWARDING.tag },
+        { op: "i32.store8", align: 0, offset: LINEAR_ARRAY_FORWARDING.tagOffset },
         { op: "local.get", index: 0 },
         { op: "local.get", index: newPtrLocal },
-        { op: "i32.store", align: 2, offset: 4 },
+        { op: "i32.store", align: 2, offset: LINEAR_ARRAY_FORWARDING.pointerOffset },
         // Return newPtr
         { op: "local.get", index: newPtrLocal },
       ];
@@ -1126,6 +1265,12 @@ export function addStringRuntime(mod: WasmModule): void {
         { op: "i32.add" },
         { op: "call", funcIdx: mallocIdx },
         { op: "local.set", index: ptrLocal },
+        // Preserve the canonical header meaning: length field + byte capacity.
+        { op: "local.get", index: ptrLocal },
+        { op: "local.get", index: 1 },
+        { op: "i32.const", value: LINEAR_STRING_PAYLOAD_PREFIX_BYTES },
+        { op: "i32.add" },
+        { op: "i32.store", align: 2, offset: LINEAR_STRING_PAYLOAD_SIZE_OFFSET },
         // Store len at ptr+8
         { op: "local.get", index: ptrLocal },
         { op: "local.get", index: 1 }, // len
@@ -1183,6 +1328,101 @@ export function addStringRuntime(mod: WasmModule): void {
     { op: "i32.load", align: 2, offset: 8 },
   ]);
 
+  // __str_is_ascii: 1 when every byte is < 0x80, else 0 (#3673).
+  //
+  // For an ASCII string the UTF-8 byte index *is* the UTF-16 code-unit index
+  // and the byte count *is* `.length`, which turns two otherwise O(n) walks
+  // (__str_length_utf16 and __linear_ir_str_char_code_at) into single loads.
+  // Both are called once per character by any tokenizer, so without this the
+  // pair costs O(n^2) — measured at 208x slower than the WasmGC lane, which
+  // stores fixed-width i16 and indexes in O(1).
+  //
+  // The verdict is a pure function of immutable string bytes, so it is
+  // computed once and memoised in the record header; that is what removes the
+  // quadratic term rather than merely shrinking its constant. `__malloc`
+  // zeroes the header word on every hand-out, so STRING_ASCII_UNKNOWN is the
+  // guaranteed initial state and a recycled arena address cannot inherit the
+  // previous tenant's verdict.
+  // locals: state(1), byteLen(2), i(3)
+  addRuntimeFunc(
+    mod,
+    "__str_is_ascii",
+    [{ kind: "i32" }],
+    [{ kind: "i32" }],
+    [],
+    (firstLocalIdx) => {
+      const state = firstLocalIdx;
+      const byteLen = firstLocalIdx + 1;
+      const i = firstLocalIdx + 2;
+      return [
+        { op: "local.get", index: 0 },
+        { op: "i32.load8_u", align: 0, offset: STRING_ASCII_CACHE_OFFSET },
+        { op: "local.set", index: state },
+        { op: "local.get", index: state },
+        { op: "i32.const", value: STRING_ASCII_UNKNOWN },
+        { op: "i32.eq" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: 0 },
+            { op: "i32.load", align: 2, offset: 8 },
+            { op: "local.set", index: byteLen },
+            { op: "i32.const", value: 0 },
+            { op: "local.set", index: i },
+            { op: "i32.const", value: STRING_ASCII_YES },
+            { op: "local.set", index: state },
+            {
+              op: "block",
+              blockType: { kind: "empty" },
+              body: [
+                {
+                  op: "loop",
+                  blockType: { kind: "empty" },
+                  body: [
+                    { op: "local.get", index: i },
+                    { op: "local.get", index: byteLen },
+                    { op: "i32.ge_u" },
+                    { op: "br_if", depth: 1 },
+                    { op: "local.get", index: 0 },
+                    { op: "local.get", index: i },
+                    { op: "i32.add" },
+                    { op: "i32.load8_u", align: 0, offset: 12 },
+                    { op: "i32.const", value: 0x80 },
+                    { op: "i32.ge_u" },
+                    {
+                      op: "if",
+                      blockType: { kind: "empty" },
+                      then: [
+                        { op: "i32.const", value: STRING_ASCII_NO },
+                        { op: "local.set", index: state },
+                        { op: "br", depth: 2 },
+                      ],
+                      else: [],
+                    },
+                    { op: "local.get", index: i },
+                    { op: "i32.const", value: 1 },
+                    { op: "i32.add" },
+                    { op: "local.set", index: i },
+                    { op: "br", depth: 0 },
+                  ],
+                },
+              ],
+            },
+            { op: "local.get", index: 0 },
+            { op: "local.get", index: state },
+            { op: "i32.store8", align: 0, offset: STRING_ASCII_CACHE_OFFSET },
+          ],
+          else: [],
+        },
+        { op: "local.get", index: state },
+        { op: "i32.const", value: STRING_ASCII_YES },
+        { op: "i32.eq" },
+      ];
+    },
+    3,
+  );
+
   // __str_length_utf16: JS `String.prototype.length` = number of UTF-16 code
   // units (#1976). Linear strings are stored as UTF-8 bytes, so walk the leading
   // bytes and count code units: a leading byte 0xxxxxxx/110xxxxx/1110xxxx starts
@@ -1208,6 +1448,17 @@ export function addStringRuntime(mod: WasmModule): void {
         { op: "local.get", index: 0 },
         { op: "i32.load", align: 2, offset: 8 },
         { op: "local.set", index: byteLen },
+        // ASCII fast path (#3673): code units == bytes, so skip the walk. A
+        // `while (pos < s.length)` scan calls this once per character, which is
+        // what made the walk quadratic.
+        { op: "local.get", index: 0 },
+        { op: "call", funcIdx: findFuncIndex(mod, "__str_is_ascii") },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [{ op: "local.get", index: byteLen }, { op: "return" }],
+          else: [],
+        },
         // i = 0; count = 0
         { op: "i32.const", value: 0 },
         { op: "local.set", index: i },
@@ -1567,6 +1818,14 @@ export function addStringRuntime(mod: WasmModule): void {
         { op: "i32.add" },
         { op: "call", funcIdx: mallocIdx },
         { op: "local.set", index: ptrLocal },
+        // Immutable concat has no spare capacity.
+        { op: "local.get", index: ptrLocal },
+        { op: "local.get", index: lenALocal },
+        { op: "local.get", index: lenBLocal },
+        { op: "i32.add" },
+        { op: "i32.const", value: LINEAR_STRING_PAYLOAD_PREFIX_BYTES },
+        { op: "i32.add" },
+        { op: "i32.store", align: 2, offset: LINEAR_STRING_PAYLOAD_SIZE_OFFSET },
         // Store total len at ptr+8
         { op: "local.get", index: ptrLocal },
         { op: "local.get", index: lenALocal },
@@ -1850,6 +2109,11 @@ export function addStringRuntime(mod: WasmModule): void {
         { op: "i32.add" },
         { op: "call", funcIdx: mallocIdx },
         { op: "local.set", index: ptrLocal },
+        { op: "local.get", index: ptrLocal },
+        { op: "local.get", index: newLenLocal },
+        { op: "i32.const", value: LINEAR_STRING_PAYLOAD_PREFIX_BYTES },
+        { op: "i32.add" },
+        { op: "i32.store", align: 2, offset: LINEAR_STRING_PAYLOAD_SIZE_OFFSET },
         // store length at ptr+8
         { op: "local.get", index: ptrLocal },
         { op: "local.get", index: newLenLocal },
@@ -2114,6 +2378,10 @@ export function addStringRuntime(mod: WasmModule): void {
 
 /** Reserved `(string pointer, UTF-16 index) -> code unit` helper for #2956 L3. */
 export const LINEAR_IR_STRING_CHAR_CODE_AT_FN = "__linear_ir_str_char_code_at";
+/** Reserved ASCII-proven `(string pointer, UTF-16 index) -> string` helper. */
+export const LINEAR_IR_STRING_CHAR_AT_FN = "__linear_ir_str_char_at";
+/** Reserved owned ASCII append over the canonical linear string layout. */
+export const LINEAR_IR_STRING_APPEND_ASCII_FN = "__linear_ir_str_append_ascii";
 
 /**
  * Add the string helper needed only by the opt-in linear-IR overlay.
@@ -2125,6 +2393,194 @@ export const LINEAR_IR_STRING_CHAR_CODE_AT_FN = "__linear_ir_str_char_code_at";
  * indices return NaN as required by ECMA-262 §22.1.3.3.
  */
 export function addLinearIrStringRuntime(mod: WasmModule): void {
+  if (!mod.functions.some((func) => func.name === LINEAR_IR_STRING_APPEND_ASCII_FN)) {
+    const mallocIdx = findFuncIndex(mod, "__malloc");
+    addRuntimeFunc(
+      mod,
+      LINEAR_IR_STRING_APPEND_ASCII_FN,
+      [{ kind: "i32" }, { kind: "i32" }],
+      [{ kind: "i32" }],
+      [],
+      (firstLocalIdx) => {
+        const leftLength = firstLocalIdx;
+        const rightLength = firstLocalIdx + 1;
+        const totalLength = firstLocalIdx + 2;
+        const capacity = firstLocalIdx + 3;
+        const result = firstLocalIdx + 4;
+        const nextCapacity = firstLocalIdx + 5;
+        const cursor = firstLocalIdx + 6;
+        return [
+          { op: "local.get", index: 0 },
+          { op: "i32.load", align: 2, offset: 8 },
+          { op: "local.set", index: leftLength },
+          { op: "local.get", index: 1 },
+          { op: "i32.load", align: 2, offset: 8 },
+          { op: "local.set", index: rightLength },
+          { op: "local.get", index: leftLength },
+          { op: "local.get", index: rightLength },
+          { op: "i32.add" },
+          { op: "local.set", index: totalLength },
+          { op: "local.get", index: 0 },
+          { op: "i32.load", align: 2, offset: LINEAR_STRING_PAYLOAD_SIZE_OFFSET },
+          { op: "i32.const", value: LINEAR_STRING_PAYLOAD_PREFIX_BYTES },
+          { op: "i32.sub" },
+          { op: "local.set", index: capacity },
+          { op: "local.get", index: 0 },
+          { op: "local.set", index: result },
+          // Grow geometrically only when the proven-owned carrier is full.
+          { op: "local.get", index: totalLength },
+          { op: "local.get", index: capacity },
+          { op: "i32.gt_u" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: capacity },
+              { op: "i32.const", value: 1 },
+              { op: "i32.shl" },
+              { op: "local.set", index: nextCapacity },
+              { op: "local.get", index: nextCapacity },
+              { op: "i32.const", value: 16 },
+              { op: "i32.lt_u" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "i32.const", value: 16 },
+                  { op: "local.set", index: nextCapacity },
+                ],
+              },
+              { op: "local.get", index: nextCapacity },
+              { op: "local.get", index: totalLength },
+              { op: "i32.lt_u" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "local.get", index: totalLength },
+                  { op: "local.set", index: nextCapacity },
+                ],
+              },
+              { op: "i32.const", value: 12 },
+              { op: "local.get", index: nextCapacity },
+              { op: "i32.add" },
+              { op: "call", funcIdx: mallocIdx },
+              { op: "local.set", index: result },
+              { op: "local.get", index: result },
+              { op: "local.get", index: nextCapacity },
+              { op: "i32.const", value: LINEAR_STRING_PAYLOAD_PREFIX_BYTES },
+              { op: "i32.add" },
+              { op: "i32.store", align: 2, offset: LINEAR_STRING_PAYLOAD_SIZE_OFFSET },
+              // Copy the prior contents once per geometric growth.
+              { op: "i32.const", value: 0 },
+              { op: "local.set", index: cursor },
+              {
+                op: "block",
+                blockType: { kind: "empty" },
+                body: [
+                  {
+                    op: "loop",
+                    blockType: { kind: "empty" },
+                    body: [
+                      { op: "local.get", index: cursor },
+                      { op: "local.get", index: leftLength },
+                      { op: "i32.ge_u" },
+                      { op: "br_if", depth: 1 },
+                      { op: "local.get", index: result },
+                      { op: "local.get", index: cursor },
+                      { op: "i32.add" },
+                      { op: "local.get", index: 0 },
+                      { op: "local.get", index: cursor },
+                      { op: "i32.add" },
+                      { op: "i32.load8_u", align: 0, offset: 12 },
+                      { op: "i32.store8", align: 0, offset: 12 },
+                      { op: "local.get", index: cursor },
+                      { op: "i32.const", value: 1 },
+                      { op: "i32.add" },
+                      { op: "local.set", index: cursor },
+                      { op: "br", depth: 0 },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+          // Append RHS to the selected carrier.
+          { op: "i32.const", value: 0 },
+          { op: "local.set", index: cursor },
+          {
+            op: "block",
+            blockType: { kind: "empty" },
+            body: [
+              {
+                op: "loop",
+                blockType: { kind: "empty" },
+                body: [
+                  { op: "local.get", index: cursor },
+                  { op: "local.get", index: rightLength },
+                  { op: "i32.ge_u" },
+                  { op: "br_if", depth: 1 },
+                  { op: "local.get", index: result },
+                  { op: "local.get", index: leftLength },
+                  { op: "i32.add" },
+                  { op: "local.get", index: cursor },
+                  { op: "i32.add" },
+                  { op: "local.get", index: 1 },
+                  { op: "local.get", index: cursor },
+                  { op: "i32.add" },
+                  { op: "i32.load8_u", align: 0, offset: 12 },
+                  { op: "i32.store8", align: 0, offset: 12 },
+                  { op: "local.get", index: cursor },
+                  { op: "i32.const", value: 1 },
+                  { op: "i32.add" },
+                  { op: "local.set", index: cursor },
+                  { op: "br", depth: 0 },
+                ],
+              },
+            ],
+          },
+          { op: "local.get", index: result },
+          { op: "local.get", index: totalLength },
+          { op: "i32.store", align: 2, offset: 8 },
+          { op: "local.get", index: result },
+        ];
+      },
+      7,
+    );
+  }
+
+  if (!mod.functions.some((func) => func.name === LINEAR_IR_STRING_CHAR_AT_FN)) {
+    const strSliceIdx = findFuncIndex(mod, "__str_slice");
+    addRuntimeFunc(mod, LINEAR_IR_STRING_CHAR_AT_FN, [{ kind: "i32" }, { kind: "i32" }], [{ kind: "i32" }], [], () => [
+      { op: "local.get", index: 1 },
+      { op: "i32.const", value: 0 },
+      { op: "i32.lt_s" },
+      { op: "local.get", index: 1 },
+      { op: "local.get", index: 0 },
+      { op: "i32.load", align: 2, offset: 8 },
+      { op: "i32.ge_u" },
+      { op: "i32.or" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [
+          { op: "local.get", index: 0 },
+          { op: "i32.const", value: 0 },
+          { op: "i32.const", value: 0 },
+          { op: "call", funcIdx: strSliceIdx },
+        ],
+        else: [
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: 1 },
+          { op: "local.get", index: 1 },
+          { op: "i32.const", value: 1 },
+          { op: "i32.add" },
+          { op: "call", funcIdx: strSliceIdx },
+        ],
+      },
+    ]);
+  }
+
   if (mod.functions.some((func) => func.name === LINEAR_IR_STRING_CHAR_CODE_AT_FN)) return;
 
   addRuntimeFunc(
@@ -2265,6 +2721,44 @@ export function addLinearIrStringRuntime(mod: WasmModule): void {
         { op: "local.get", index: 0 },
         { op: "i32.load", align: 2, offset: 8 },
         { op: "local.set", index: byteLen },
+        // A UTF-8 sequence never encodes more code units than it occupies
+        // bytes (4 bytes -> at most 2 units), so unitLen <= byteLen and an
+        // index at or past byteLen is out of range for *any* string. This
+        // replaces a full walk-to-the-end with one compare (§22.1.3.3 NaN).
+        { op: "local.get", index: 1 },
+        { op: "local.get", index: byteLen },
+        { op: "i32.ge_u" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [{ op: "f64.const", value: Number.NaN }, { op: "return" }],
+        },
+        // ── ASCII fast path ────────────────────────────────────────────────
+        // Indexing the i-th UTF-16 code unit by decoding UTF-8 from byte 0 is
+        // O(i), so an N-character scan — a tokenizer — costs O(N^2). That is
+        // an implementation choice, not a property of linear memory: the GC
+        // lane stores fixed-width i16 and indexes in O(1). For a pure-ASCII
+        // string the byte index *is* the code-unit index, so the whole decode
+        // collapses to one `i32.load8_u`. `__str_is_ascii` memoises its verdict
+        // in the header, which is what removes the quadratic term rather than
+        // merely shrinking its constant.
+        { op: "local.get", index: 0 },
+        { op: "call", funcIdx: findFuncIndex(mod, "__str_is_ascii") },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            // `index < byteLen` is already established above, so this load is
+            // in bounds.
+            { op: "local.get", index: 0 },
+            { op: "local.get", index: 1 },
+            { op: "i32.add" },
+            { op: "i32.load8_u", align: 0, offset: 12 },
+            { op: "f64.convert_i32_u" },
+            { op: "return" },
+          ],
+        },
+        // ── Slow path: mixed-width string, decode sequence by sequence ─────
         { op: "i32.const", value: 0 },
         { op: "local.set", index: bytePos },
         { op: "i32.const", value: 0 },
@@ -2322,30 +2816,6 @@ export function addLinearIrStringRuntime(mod: WasmModule): void {
     },
     5,
   );
-}
-
-/** Materialize a literal through canonical UTF-8 data and `__str_from_data`. */
-export function linearStringLiteralInstrs(
-  ctx: LinearContext,
-  value: string,
-  strFromDataIdx = ctx.funcMap.get("__str_from_data"),
-  plannedBytes?: readonly number[],
-): readonly Instr[] {
-  const encoded = plannedBytes === undefined ? [...new TextEncoder().encode(value)] : [...plannedBytes];
-  let literal = ctx.stringLiterals.get(value);
-  if (literal === undefined) {
-    literal = { offset: ctx.dataSegmentOffset, bytes: encoded };
-    ctx.stringLiterals.set(value, literal);
-    ctx.dataSegmentOffset += literal.bytes.length;
-  } else if (literal.bytes.length !== encoded.length || literal.bytes.some((byte, index) => byte !== encoded[index])) {
-    throw new Error(`linear string runtime: conflicting data bytes for ${JSON.stringify(value)}`);
-  }
-  if (strFromDataIdx === undefined) throw new Error("linear string runtime: __str_from_data helper missing");
-  return [
-    { op: "i32.const", value: literal.offset },
-    { op: "i32.const", value: literal.bytes.length },
-    { op: "call", funcIdx: strFromDataIdx },
-  ];
 }
 
 /**
@@ -2462,10 +2932,7 @@ export function addMapRuntime(mod: WasmModule): void {
         { op: "i32.load", align: 2, offset: 12 },
         { op: "local.set", index: capLocal },
         // idx = hash % cap (unsigned)
-        { op: "local.get", index: hashLocal },
-        { op: "local.get", index: capLocal },
-        { op: "i32.rem_u" },
-        { op: "local.set", index: idxLocal },
+        ...hashProbeInitInstrs(hashLocal, capLocal, idxLocal),
         // Linear probe loop
         {
           op: "block",
@@ -2576,10 +3043,7 @@ export function addMapRuntime(mod: WasmModule): void {
         { op: "local.get", index: 0 },
         { op: "i32.load", align: 2, offset: 12 },
         { op: "local.set", index: capLocal },
-        { op: "local.get", index: hashLocal },
-        { op: "local.get", index: capLocal },
-        { op: "i32.rem_u" },
-        { op: "local.set", index: idxLocal },
+        ...hashProbeInitInstrs(hashLocal, capLocal, idxLocal),
         {
           op: "block",
           blockType: { kind: "empty" },
@@ -2663,10 +3127,7 @@ export function addMapRuntime(mod: WasmModule): void {
         { op: "local.get", index: 0 },
         { op: "i32.load", align: 2, offset: 12 },
         { op: "local.set", index: capLocal },
-        { op: "local.get", index: hashLocal },
-        { op: "local.get", index: capLocal },
-        { op: "i32.rem_u" },
-        { op: "local.set", index: idxLocal },
+        ...hashProbeInitInstrs(hashLocal, capLocal, idxLocal),
         {
           op: "block",
           blockType: { kind: "empty" },
@@ -2832,10 +3293,7 @@ export function addSetRuntime(mod: WasmModule): void {
         { op: "local.get", index: 0 },
         { op: "i32.load", align: 2, offset: 12 },
         { op: "local.set", index: capLocal },
-        { op: "local.get", index: hashLocal },
-        { op: "local.get", index: capLocal },
-        { op: "i32.rem_u" },
-        { op: "local.set", index: idxLocal },
+        ...hashProbeInitInstrs(hashLocal, capLocal, idxLocal),
         {
           op: "block",
           blockType: { kind: "empty" },
@@ -2931,10 +3389,7 @@ export function addSetRuntime(mod: WasmModule): void {
         { op: "local.get", index: 0 },
         { op: "i32.load", align: 2, offset: 12 },
         { op: "local.set", index: capLocal },
-        { op: "local.get", index: hashLocal },
-        { op: "local.get", index: capLocal },
-        { op: "i32.rem_u" },
-        { op: "local.set", index: idxLocal },
+        ...hashProbeInitInstrs(hashLocal, capLocal, idxLocal),
         {
           op: "block",
           blockType: { kind: "empty" },
@@ -3104,10 +3559,7 @@ export function addNumericMapRuntime(mod: WasmModule): void {
         { op: "i32.load", align: 2, offset: 12 },
         { op: "local.set", index: capLocal },
         // idx = hash % cap
-        { op: "local.get", index: hashLocal },
-        { op: "local.get", index: capLocal },
-        { op: "i32.rem_u" },
-        { op: "local.set", index: idxLocal },
+        ...hashProbeInitInstrs(hashLocal, capLocal, idxLocal),
         {
           op: "block",
           blockType: { kind: "empty" },
@@ -3213,10 +3665,7 @@ export function addNumericMapRuntime(mod: WasmModule): void {
         { op: "local.get", index: 0 },
         { op: "i32.load", align: 2, offset: 12 },
         { op: "local.set", index: capLocal },
-        { op: "local.get", index: hashLocal },
-        { op: "local.get", index: capLocal },
-        { op: "i32.rem_u" },
-        { op: "local.set", index: idxLocal },
+        ...hashProbeInitInstrs(hashLocal, capLocal, idxLocal),
         {
           op: "block",
           blockType: { kind: "empty" },
@@ -3300,10 +3749,7 @@ export function addNumericMapRuntime(mod: WasmModule): void {
         { op: "local.get", index: 0 },
         { op: "i32.load", align: 2, offset: 12 },
         { op: "local.set", index: capLocal },
-        { op: "local.get", index: hashLocal },
-        { op: "local.get", index: capLocal },
-        { op: "i32.rem_u" },
-        { op: "local.set", index: idxLocal },
+        ...hashProbeInitInstrs(hashLocal, capLocal, idxLocal),
         {
           op: "block",
           blockType: { kind: "empty" },
@@ -3464,10 +3910,7 @@ export function addNumericSetRuntime(mod: WasmModule): void {
         { op: "local.get", index: 0 },
         { op: "i32.load", align: 2, offset: 12 },
         { op: "local.set", index: capLocal },
-        { op: "local.get", index: hashLocal },
-        { op: "local.get", index: capLocal },
-        { op: "i32.rem_u" },
-        { op: "local.set", index: idxLocal },
+        ...hashProbeInitInstrs(hashLocal, capLocal, idxLocal),
         {
           op: "block",
           blockType: { kind: "empty" },
@@ -3562,10 +4005,7 @@ export function addNumericSetRuntime(mod: WasmModule): void {
         { op: "local.get", index: 0 },
         { op: "i32.load", align: 2, offset: 12 },
         { op: "local.set", index: capLocal },
-        { op: "local.get", index: hashLocal },
-        { op: "local.get", index: capLocal },
-        { op: "i32.rem_u" },
-        { op: "local.set", index: idxLocal },
+        ...hashProbeInitInstrs(hashLocal, capLocal, idxLocal),
         {
           op: "block",
           blockType: { kind: "empty" },

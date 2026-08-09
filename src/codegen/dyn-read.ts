@@ -42,6 +42,7 @@ import { addFuncType } from "./registry/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3) stable-regime minting
 import {
   undefinedSingletonActive, // (#2106 S1)
+  undefinedExternInstrs,
   ensureAnyFromExternHelper, // (#3053 U0) settled honest classifier (CS1b)
   ensureAnyToExternHelper, // (#3053 U0) key marshalling
 } from "./any-helpers.js";
@@ -52,6 +53,8 @@ import { addStringConstantGlobal } from "./registry/imports.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { allocLocal } from "./context/locals.js";
 import { collectClosureBaseWrapperTypeIdxs as closureBaseWrapperTypeIdxs } from "./closure-classifier.js"; // (#2175 V2-S1) shared list
+import { buildThrowJsErrorInstrs } from "./js-errors.js";
+import { boxToAny } from "./value-tags.js";
 
 // `$AnyValue` tag constants (mirror any-helpers.ts box helpers).
 const TAG_NULL = 0;
@@ -523,6 +526,29 @@ export function ensureDynMemberGet(ctx: CodegenContext): void {
   const externref: ValType = { kind: "externref" };
   const i32: ValType = { kind: "i32" };
 
+  // `dyn.member_get` and `dyn.member_set` are the carrier-level equivalents of
+  // JS property access. Preserve RequireObjectCoercible before either helper
+  // reaches the object runtime: null and undefined throw, while all other
+  // primitive/object partitions continue through ordinary property semantics.
+  //
+  // Build the constructor in-module on every target. This keeps the guard
+  // import-neutral (important for standalone closure) and, because
+  // preregisterDynamicSupport calls us before Phase 3, all added types/functions
+  // are reserved before any IR body captures indices.
+  const objectCoercibleThrow = (): Instr[] =>
+    buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert undefined or null to object", {
+      forceInModuleCtor: true,
+    });
+  // The externref carrier needs the sentinel-aware undefined predicate. The
+  // object runtime owns the standalone native; host mode may need the import
+  // registered here. Settle that import before resolving any helper indices.
+  let externIsUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
+  if (!ctx.fast && externIsUndefinedIdx === undefined) {
+    ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [i32]);
+    flushLateImportShifts(ctx, null);
+    externIsUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
+  }
+
   const externGetIdx = ctx.funcMap.get("__extern_get");
   if (externGetIdx === undefined) {
     ctx.dynMemberGetHelpersEmitted = false;
@@ -595,21 +621,33 @@ export function ensureDynMemberGet(ctx: CodegenContext): void {
     //   difference from `__any_to_extern` (which WRAPS tag-6). tag 6 → the RAW
     //   `$Object` ref (field 3) so `__extern_get`'s `ref.test $Object` hits;
     //   tag 5 → the string externref (field 4); tag 2/3 → __box_number;
-    //   tag 4 → __box_boolean; tag 0/1/null → ref.null.extern (a null/undefined
-    //   receiver → __extern_get miss → the singleton, no null-deref).
+    //   tag 4 → __box_boolean. A null carrier or tag 0/1 is rejected here,
+    //   before conversion, so Get/Set both preserve RequireObjectCoercible.
     const peelBody: Instr[] = [
       { op: "local.get", index: 0 },
       { op: "ref.is_null" },
       {
         op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "ref.null.extern" }, { op: "return" }],
+        blockType: { kind: "val", type: i32 },
+        then: [{ op: "i32.const", value: 1 }],
+        else: [
+          { op: "local.get", index: 0 },
+          { op: "ref.as_non_null" },
+          { op: "struct.get", typeIdx: anyIdx, fieldIdx: AV_TAG },
+          { op: "local.tee", index: 1 },
+          { op: "i32.const", value: TAG_NULL },
+          { op: "i32.eq" },
+          { op: "local.get", index: 1 },
+          { op: "i32.const", value: TAG_UNDEFINED },
+          { op: "i32.eq" },
+          { op: "i32.or" },
+        ],
       },
-      // tag = v.tag
-      { op: "local.get", index: 0 },
-      { op: "ref.as_non_null" },
-      { op: "struct.get", typeIdx: anyIdx, fieldIdx: AV_TAG },
-      { op: "local.set", index: 1 },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: objectCoercibleThrow(),
+      },
       // tag 6 → extern.convert_any(v.refval)  — the RAW $Object
       { op: "local.get", index: 1 },
       { op: "i32.const", value: TAG_REF },
@@ -685,7 +723,7 @@ export function ensureDynMemberGet(ctx: CodegenContext): void {
           { op: "return" },
         ],
       },
-      // tag 0 (null) / 1 (undefined) receiver → null externref → __extern_get miss
+      // Residual carrier partition: keep the historical null extern fallback.
       { op: "ref.null.extern" },
     ];
     const peelIdx = addHelper("__carrier_recv_to_extern", [anyRefNull], [externref], peelBody, [
@@ -727,13 +765,41 @@ export function ensureDynMemberGet(ctx: CodegenContext): void {
     return;
   }
 
-  // ── host (gc) carrier = externref ───────────────────────────────────────
-  // The host `__extern_get` import already returns the spec `Get` externref; the
-  // carrier IS externref, so no box/peel. `externGetIdx` is a live import index;
-  // a later dead-elim import shift remaps this baked call (stable-handle body,
-  // scanned by `eliminateDeadImports`).
+  // ── host carrier = externref ────────────────────────────────────────────
+  // Use the same receiver-peel seam as the fast carrier. Here it is an identity
+  // after the null/undefined guard, with the sentinel-aware host predicate
+  // covering JS `undefined` (a non-null externref).
+  if (externIsUndefinedIdx === undefined) {
+    ctx.dynMemberGetHelpersEmitted = false;
+    ctx.usesDynMemberGet = false;
+    return;
+  }
+  const peelHostIdx = addHelper(
+    "__carrier_recv_to_extern",
+    [externref],
+    [externref],
+    [
+      { op: "local.get", index: 0 },
+      { op: "ref.is_null" },
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: externIsUndefinedIdx },
+      { op: "i32.or" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: objectCoercibleThrow(),
+      },
+      { op: "local.get", index: 0 },
+    ],
+  );
+  if (peelHostIdx === undefined) {
+    ctx.dynMemberGetHelpersEmitted = false;
+    ctx.usesDynMemberGet = false;
+    return;
+  }
   const dmgHostBody: Instr[] = [
     { op: "local.get", index: 0 },
+    { op: "call", funcIdx: peelHostIdx },
     { op: "local.get", index: 1 },
     { op: "call", funcIdx: externGetIdx },
   ];
@@ -744,6 +810,164 @@ export function ensureDynMemberGet(ctx: CodegenContext): void {
     return;
   }
   if (forceSelfTest) emitDynMemberGetSelfTestHost(ctx, dmgHostIdx);
+}
+
+/**
+ * #3795 — register the strict write dual
+ * `__dyn_member_set(recv,key,value) -> ()`.
+ *
+ * The helper consumes the same carrier chosen by `resolveDynamic()`. Fast/GC
+ * mode reuses `__carrier_recv_to_extern` for the receiver, the canonical
+ * `__any_to_extern` key conversion, and an identity-preserving value peel
+ * which unwraps tag-5 strings and tag-6 objects while leaving
+ * null/undefined/scalars to the established conversion helper. Host mode is a
+ * thin externref wrapper.
+ */
+export function ensureDynMemberSet(ctx: CodegenContext): void {
+  if (ctx.funcMap.has("__dyn_member_set")) return;
+
+  const externref: ValType = { kind: "externref" };
+  const nativeStrictSet = ctx.standalone || ctx.wasi;
+  const externSetIdx = ctx.funcMap.get(nativeStrictSet ? "__reflect_set" : "__extern_set_strict");
+  if (externSetIdx === undefined) return;
+  // Standalone receiver dispatch contains early-return arms before the
+  // string-keyed object table.  Canonicalize the key at the dynamic Reference
+  // boundary so IR dyn.member_set and legacy computed stores agree.  Host
+  // setters already perform ToPropertyKey themselves.
+  const toPropertyKeyIdx = nativeStrictSet ? ctx.funcMap.get("__to_property_key") : undefined;
+  const canonicalizeKey = (): Instr[] =>
+    toPropertyKeyIdx === undefined ? [] : [{ op: "call", funcIdx: toPropertyKeyIdx }];
+  const strictSetFailure = (): Instr[] =>
+    buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot assign to read only property", {
+      forceInModuleCtor: true,
+    });
+  const finishStrictSet = (): Instr[] =>
+    nativeStrictSet
+      ? [
+          { op: "call", funcIdx: externSetIdx },
+          { op: "i32.eqz" },
+          { op: "if", blockType: { kind: "empty" }, then: strictSetFailure() },
+        ]
+      : [{ op: "call", funcIdx: externSetIdx }];
+
+  const addHelper = (name: string, params: ValType[], results: ValType[], body: Instr[]): number | undefined => {
+    const existing = ctx.funcMap.get(name);
+    if (existing !== undefined) return existing;
+    const typeIdx = addFuncType(ctx, params, results, name);
+    const funcIdx = mintDefinedFunc(ctx);
+    pushDefinedFunc(ctx, funcIdx, { name, typeIdx, locals: [], body, exported: false } as never);
+    ctx.funcMap.set(name, funcIdx);
+    return funcIdx;
+  };
+
+  if (ctx.fast) {
+    // The read substrate owns the receiver peel. A dynamic write necessarily
+    // uses the same object runtime, so registering the read helper here is a
+    // small, safe dependency and keeps a single receiver-carrier policy.
+    ctx.usesDynMemberGet = true;
+    ensureDynMemberGet(ctx);
+    const anyIdx = ctx.anyValueTypeIdx;
+    const peelIdx = ctx.funcMap.get("__carrier_recv_to_extern");
+    const anyToExternIdx = ensureAnyToExternHelper(ctx);
+    if (anyIdx < 0 || peelIdx === undefined || anyToExternIdx === undefined) return;
+    const anyRefNull: ValType = { kind: "ref_null", typeIdx: anyIdx };
+
+    // Preserve ordinary JS storage when a dynamic string/object is assigned.
+    // `__any_to_extern` intentionally keeps tags 5/6 wrapped for generic any
+    // round trips; [[Set]] needs their raw payloads so the property contains
+    // the string/object value rather than the internal carrier. Other
+    // partitions retain the canonical null/undefined/number/boolean
+    // conversion.
+    const valueToExternBody: Instr[] = [
+      { op: "local.get", index: 0 },
+      { op: "ref.is_null" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [{ op: "ref.null.extern" }, { op: "return" }],
+      },
+      { op: "local.get", index: 0 },
+      { op: "ref.as_non_null" },
+      { op: "struct.get", typeIdx: anyIdx, fieldIdx: AV_TAG },
+      { op: "i32.const", value: TAG_STRING },
+      { op: "i32.eq" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 0 },
+          { op: "ref.as_non_null" },
+          { op: "struct.get", typeIdx: anyIdx, fieldIdx: AV_EXT },
+          { op: "return" },
+        ],
+      },
+      { op: "local.get", index: 0 },
+      { op: "ref.as_non_null" },
+      { op: "struct.get", typeIdx: anyIdx, fieldIdx: AV_TAG },
+      { op: "i32.const", value: TAG_REF },
+      { op: "i32.eq" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 0 },
+          { op: "ref.as_non_null" },
+          { op: "struct.get", typeIdx: anyIdx, fieldIdx: AV_REF },
+          { op: "extern.convert_any" },
+          { op: "return" },
+        ],
+      },
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: anyToExternIdx },
+    ];
+    const valueToExternIdx = addHelper("__carrier_value_to_extern", [anyRefNull], [externref], valueToExternBody);
+    if (valueToExternIdx === undefined) return;
+    const dmsIdx = addHelper(
+      "__dyn_member_set",
+      [anyRefNull, anyRefNull, anyRefNull],
+      [],
+      [
+        { op: "local.get", index: 0 },
+        { op: "call", funcIdx: peelIdx },
+        { op: "local.get", index: 1 },
+        { op: "call", funcIdx: anyToExternIdx },
+        ...canonicalizeKey(),
+        { op: "local.get", index: 2 },
+        { op: "call", funcIdx: valueToExternIdx },
+        ...finishStrictSet(),
+      ],
+    );
+    if (dmsIdx !== undefined && process.env.JS2WASM_FORCE_DYN_MEMBER_SET === "1") {
+      emitDynMemberSetNullishSelfTest(ctx);
+      emitDynMemberSetPrivateNameSelfTest(ctx);
+    }
+    return;
+  }
+
+  // Host writes share the same sentinel-aware RequireObjectCoercible seam as
+  // reads. A set-only module still registers the read substrate so the receiver
+  // policy cannot diverge between the two operations.
+  ctx.usesDynMemberGet = true;
+  ensureDynMemberGet(ctx);
+  const peelHostIdx = ctx.funcMap.get("__carrier_recv_to_extern");
+  if (peelHostIdx === undefined) return;
+  const dmsIdx = addHelper(
+    "__dyn_member_set",
+    [externref, externref, externref],
+    [],
+    [
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: peelHostIdx },
+      { op: "local.get", index: 1 },
+      ...canonicalizeKey(),
+      { op: "local.get", index: 2 },
+      ...finishStrictSet(),
+    ],
+  );
+  if (dmsIdx !== undefined && process.env.JS2WASM_FORCE_DYN_MEMBER_SET === "1") {
+    emitDynMemberSetNullishSelfTest(ctx);
+    emitDynMemberSetPrivateNameSelfTest(ctx);
+  }
 }
 
 /**
@@ -763,6 +987,265 @@ function addDriverExport(
   pushDefinedFunc(ctx, funcIdx, { name, typeIdx, locals, body, exported: true } as never);
   ctx.funcMap.set(name, funcIdx);
   ctx.mod.exports.push({ name, desc: { kind: "func", index: funcIdx } });
+}
+
+/** FORCE-only, zero-argument RequireObjectCoercible probes for Get and Set. */
+function emitDynMemberSetNullishSelfTest(ctx: CodegenContext): void {
+  const getIdx = ctx.funcMap.get("__dyn_member_get");
+  const setIdx = ctx.funcMap.get("__dyn_member_set");
+  if (
+    getIdx === undefined ||
+    setIdx === undefined ||
+    !ctx.stringGlobalMap.has("x") ||
+    !ctx.stringGlobalMap.has("true")
+  ) {
+    return;
+  }
+  const key = (value: string): Instr[] => stringConstantExternrefInstrs(ctx, value);
+  const call = (funcIdx: number): Instr => ({ op: "call", funcIdx });
+
+  if (ctx.fast) {
+    const honestIdx = ctx.funcMap.get("__any_from_extern_honest");
+    if (honestIdx === undefined || !undefinedSingletonActive(ctx)) return;
+    const carrier = (jsType: "null" | "undefined"): Instr[] | undefined => {
+      const body: Instr[] = [{ op: "ref.null.extern" }];
+      const emitted = boxToAny(ctx, { body } as FunctionContext, { kind: "externref" }, jsType);
+      return emitted ? body : undefined;
+    };
+    const nullCarrier = carrier("null");
+    const undefinedCarrier = carrier("undefined");
+    if (nullCarrier === undefined || undefinedCarrier === undefined) return;
+    const keyCarrier = (value: string): Instr[] => [...key(value), call(honestIdx)];
+    const getBody = (recv: Instr[]): Instr[] => [...recv, ...keyCarrier("x"), call(getIdx), { op: "drop" }];
+    const setBody = (recv: Instr[]): Instr[] => [...recv, ...keyCarrier("x"), ...keyCarrier("true"), call(setIdx)];
+    addDriverExport(ctx, "__dms_null_get", [], [], getBody(nullCarrier));
+    addDriverExport(ctx, "__dms_undefined_get", [], [], getBody(undefinedCarrier));
+    addDriverExport(ctx, "__dms_null_set", [], [], setBody(nullCarrier));
+    addDriverExport(ctx, "__dms_undefined_set", [], [], setBody(undefinedCarrier));
+    return;
+  }
+
+  const nullCarrier = (): Instr[] => [{ op: "ref.null.extern" }];
+  const undefinedCarrier = (): Instr[] => undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }];
+  const getBody = (recv: Instr[]): Instr[] => [...recv, ...key("x"), call(getIdx), { op: "drop" }];
+  const setBody = (recv: Instr[]): Instr[] => [...recv, ...key("x"), ...key("true"), call(setIdx)];
+  addDriverExport(ctx, "__dms_null_get", [], [], getBody(nullCarrier()));
+  addDriverExport(ctx, "__dms_undefined_get", [], [], getBody(undefinedCarrier()));
+  addDriverExport(ctx, "__dms_null_set", [], [], setBody(nullCarrier()));
+  addDriverExport(ctx, "__dms_undefined_set", [], [], setBody(undefinedCarrier()));
+}
+
+/**
+ * #3795 — FORCE-only zero-argument proof for Acorn's exact
+ * `isPrivateNameConflicted` body. The driver builds every receiver and element
+ * with the module's own object runtime, calls the compiled source function, and
+ * returns a 16-bit checksum. No JS object crosses the export boundary.
+ *
+ * This is deliberately keyed by source-function name and therefore lives only
+ * behind `JS2WASM_FORCE_DYN_MEMBER_SET=1`; production modules never emit it.
+ */
+function emitDynMemberSetPrivateNameSelfTest(ctx: CodegenContext): void {
+  // The exact standalone/gc Acorn lane uses the externref dynamic carrier.
+  // Fast-carrier helper coverage remains owned by the generic #3053 drivers.
+  if (ctx.fast) return;
+
+  const conflictIdx = ctx.funcMap.get("isPrivateNameConflicted");
+  const createIdx = ctx.funcMap.get("__object_create");
+  const newObjIdx = ctx.funcMap.get("__new_plain_object");
+  const setIdx = ctx.funcMap.get("__extern_set_strict");
+  const getIdx = ctx.funcMap.get("__extern_get");
+  const freezeIdx = ctx.funcMap.get("__object_freeze");
+  const hasOwnIdx = ctx.funcMap.get("__object_hasOwn") ?? ctx.funcMap.get("__hasOwnProperty");
+  const boxBooleanIdx = ctx.funcMap.get("__box_boolean");
+  const requiredStrings = [
+    "name",
+    "key",
+    "type",
+    "kind",
+    "static",
+    "get",
+    "set",
+    "field",
+    "MethodDefinition",
+    "PropertyDefinition",
+    "x",
+    "__proto__",
+    "iget",
+    "sset",
+    "true",
+  ];
+  if (
+    conflictIdx === undefined ||
+    createIdx === undefined ||
+    newObjIdx === undefined ||
+    setIdx === undefined ||
+    getIdx === undefined ||
+    freezeIdx === undefined ||
+    hasOwnIdx === undefined ||
+    boxBooleanIdx === undefined ||
+    requiredStrings.some((value) => !ctx.stringGlobalMap.has(value))
+  ) {
+    return;
+  }
+
+  const externref: ValType = { kind: "externref" };
+  const i32: ValType = { kind: "i32" };
+  const key = (value: string): Instr[] => stringConstantExternrefInstrs(ctx, value);
+  const call = (funcIdx: number): Instr => ({ op: "call", funcIdx });
+  const addHelper = (
+    name: string,
+    params: ValType[],
+    results: ValType[],
+    locals: { name: string; type: ValType }[],
+    body: Instr[],
+  ): number => {
+    const existing = ctx.funcMap.get(name);
+    if (existing !== undefined) return existing;
+    const typeIdx = addFuncType(ctx, params, results, name);
+    const funcIdx = mintDefinedFunc(ctx);
+    pushDefinedFunc(ctx, funcIdx, { name, typeIdx, locals, body, exported: false } as never);
+    ctx.funcMap.set(name, funcIdx);
+    return funcIdx;
+  };
+
+  // (kind, type, static, name) -> element
+  const elementIdx = addHelper(
+    "__dms_test_element",
+    [externref, externref, externref, externref],
+    [externref],
+    [
+      { name: "keyObj", type: externref },
+      { name: "element", type: externref },
+    ],
+    [
+      call(newObjIdx),
+      { op: "local.set", index: 4 },
+      { op: "local.get", index: 4 },
+      ...key("name"),
+      { op: "local.get", index: 3 },
+      call(setIdx),
+      call(newObjIdx),
+      { op: "local.set", index: 5 },
+      { op: "local.get", index: 5 },
+      ...key("key"),
+      { op: "local.get", index: 4 },
+      call(setIdx),
+      { op: "local.get", index: 5 },
+      ...key("type"),
+      { op: "local.get", index: 1 },
+      call(setIdx),
+      { op: "local.get", index: 5 },
+      ...key("kind"),
+      { op: "local.get", index: 0 },
+      call(setIdx),
+      { op: "local.get", index: 5 },
+      ...key("static"),
+      { op: "local.get", index: 2 },
+      call(setIdx),
+      { op: "local.get", index: 5 },
+    ],
+  );
+
+  const newNullProto = (): Instr[] => [{ op: "ref.null.extern" }, call(createIdx)];
+  const bool = (value: boolean): Instr[] => [{ op: "i32.const", value: value ? 1 : 0 }, call(boxBooleanIdx)];
+  const element = (kind: string, isStatic: boolean, name = "x"): Instr[] => [
+    ...key(kind),
+    ...key(kind === "field" ? "PropertyDefinition" : "MethodDefinition"),
+    ...bool(isStatic),
+    ...key(name),
+    call(elementIdx),
+  ];
+  const conflict = (mapLocal: number, kind: string, isStatic: boolean, name = "x"): Instr[] => [
+    { op: "local.get", index: mapLocal },
+    ...element(kind, isStatic, name),
+    call(conflictIdx),
+  ];
+  const addBit = (condition: Instr[]): Instr[] => [
+    { op: "local.get", index: 1 },
+    { op: "i32.const", value: 2 },
+    { op: "i32.mul" },
+    ...condition,
+    { op: "i32.add" },
+    { op: "local.set", index: 1 },
+  ];
+  const expectFalse = (mapLocal: number, kind: string, isStatic: boolean, name = "x"): Instr[] =>
+    addBit([...conflict(mapLocal, kind, isStatic, name), { op: "i32.eqz" }]);
+  const expectTrue = (mapLocal: number, kind: string, isStatic: boolean, name = "x"): Instr[] =>
+    addBit(conflict(mapLocal, kind, isStatic, name));
+  const expectStored = (mapLocal: number, name: string, value: string): Instr[] =>
+    addBit([
+      ...newNullProto(),
+      { op: "local.set", index: 2 },
+      { op: "local.get", index: 2 },
+      ...key(value),
+      ...bool(true),
+      call(setIdx),
+      { op: "local.get", index: 2 },
+      { op: "local.get", index: mapLocal },
+      ...key(name),
+      call(getIdx),
+      call(hasOwnIdx),
+    ]);
+
+  addDriverExport(
+    ctx,
+    "__dms_private_name_checksum",
+    [i32],
+    [
+      { name: "map", type: externref },
+      { name: "checksum", type: i32 },
+      { name: "expectedValues", type: externref },
+    ],
+    [
+      { op: "i32.const", value: 0 },
+      { op: "local.set", index: 1 },
+
+      // Instance getter/setter transition and duplicate after the "true" marker.
+      ...newNullProto(),
+      { op: "local.set", index: 0 },
+      ...expectFalse(0, "get", false),
+      ...expectStored(0, "x", "iget"),
+      ...expectFalse(0, "set", false),
+      ...expectStored(0, "x", "true"),
+      ...expectTrue(0, "get", false),
+
+      // Static setter/getter transition.
+      ...newNullProto(),
+      { op: "local.set", index: 0 },
+      ...expectFalse(0, "set", true),
+      ...expectStored(0, "x", "sset"),
+      ...expectFalse(0, "get", true),
+      ...expectStored(0, "x", "true"),
+
+      // Mixed instance/static does not form an accessor pair.
+      ...newNullProto(),
+      { op: "local.set", index: 0 },
+      ...expectFalse(0, "get", false),
+      ...expectTrue(0, "set", true),
+
+      // Duplicate field declarations conflict.
+      ...newNullProto(),
+      { op: "local.set", index: 0 },
+      ...expectFalse(0, "field", false),
+      ...expectTrue(0, "field", false),
+
+      // Object.create(null): "__proto__" is an own data key, not prototype magic.
+      ...newNullProto(),
+      { op: "local.set", index: 0 },
+      ...expectFalse(0, "field", false, "__proto__"),
+      ...addBit([{ op: "local.get", index: 0 }, ...key("__proto__"), call(hasOwnIdx)]),
+      ...expectStored(0, "__proto__", "true"),
+      { op: "local.get", index: 1 },
+    ],
+  );
+
+  addDriverExport(
+    ctx,
+    "__dms_private_name_strict_failure",
+    [],
+    [{ name: "map", type: externref }],
+    [...newNullProto(), call(freezeIdx), { op: "local.set", index: 0 }, ...conflict(0, "field", false), { op: "drop" }],
+  );
 }
 
 /**

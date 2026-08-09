@@ -26,7 +26,9 @@ import { STANDALONE_REGEXP_REFLECTION_PROPS } from "../regexp-standalone.js";
 import { reconcileNativeStrFinalizeShift } from "../expressions/late-imports.js";
 import { emitWasiErrorConstructor } from "./error-types.js";
 import { emitNativeParseNumber } from "../parse-number-native.js";
+import { boxBooleanBody } from "../interned-boolean-boxes.js"; // (#3780) interned true/false carriers
 import { isTupleType, isStandaloneRegExpMatchArrayValue } from "../index.js";
+import { planProgramAbiStringConstantImport } from "../program-abi-import-planning.js";
 
 /**
  * Register an import (`module.name`) on the current module.
@@ -49,7 +51,7 @@ import { isTupleType, isStandaloneRegExpMatchArrayValue } from "../index.js";
  * If they ARE requested under strict mode, the gate rejects them with a
  * dedicated error pointing the user at the nativeStrings option.
  */
-export function addImport(ctx: CodegenContext, module: string, name: string, desc: Import["desc"]): void {
+export function addImport(ctx: CodegenContext, module: string, name: string, desc: Import["desc"]): Import | undefined {
   // #1984 — freeze-point discipline. Once the module's index spaces are
   // declared final (set right before `stackBalance` in generateModule/
   // generateMultiModule), any further import mutation is a producer bug:
@@ -102,7 +104,7 @@ export function addImport(ctx: CodegenContext, module: string, name: string, des
       // Skip registration. The caller may record a stale funcMap index if it
       // looks the import up by name; if that index is ever emitted into the
       // binary the emit-time leak scan / link step catches it.
-      return;
+      return undefined;
     }
   }
   ctx.mod.imports.push({ module, name, desc });
@@ -113,6 +115,7 @@ export function addImport(ctx: CodegenContext, module: string, name: string, des
   if (desc.kind === "global") {
     ctx.numImportGlobals++;
   }
+  return ctx.mod.imports[ctx.mod.imports.length - 1]!;
 }
 
 /**
@@ -129,7 +132,6 @@ export function addImport(ctx: CodegenContext, module: string, name: string, des
  */
 export function addStringConstantGlobal(ctx: CodegenContext, value: string): void {
   if (ctx.stringGlobalMap.has(value)) return;
-
   if (ctx.nativeStrings) {
     // Sentinel: no host import, materialize inline at use sites.
     ctx.stringGlobalMap.set(value, -1);
@@ -139,10 +141,8 @@ export function addStringConstantGlobal(ctx: CodegenContext, value: string): voi
     ctx.mod.stringPool.push(value);
     return;
   }
-
   const hasModuleGlobals = ctx.mod.globals.length > 0 || ctx.mod.functions.length > 0;
   const oldNumImportGlobals = ctx.numImportGlobals;
-
   const globalIdx = ctx.numImportGlobals;
   // (#2880) A wasm import field name must be valid UTF-8. A literal containing a
   // lone surrogate cannot be its own field name (TextEncoder makes it lossy,
@@ -152,17 +152,18 @@ export function addStringConstantGlobal(ctx: CodegenContext, value: string): voi
   const useSurrogateNs = hasLoneSurrogate(value);
   const importModule = useSurrogateNs ? STRING_CONSTANTS16_NS : "string_constants";
   const importName = useSurrogateNs ? hexCodeUnits(value) : value;
-  addImport(ctx, importModule, importName, {
+  const stableOrdinal = ctx.stringLiteralCounter;
+  const importValue = addImport(ctx, importModule, importName, {
     kind: "global",
     type: { kind: "externref" },
     mutable: false,
   });
+  if (importValue) planProgramAbiStringConstantImport(ctx, importValue, stableOrdinal);
   ctx.stringGlobalMap.set(value, globalIdx);
   ctx.stringLiteralMap.set(value, `__str_${ctx.stringLiteralCounter}`);
   ctx.stringLiteralValues.set(`__str_${ctx.stringLiteralCounter}`, value);
   ctx.stringLiteralCounter++;
   ctx.mod.stringPool.push(value);
-
   if (hasModuleGlobals) {
     fixupModuleGlobalIndices(ctx, oldNumImportGlobals, 1);
   }
@@ -254,6 +255,22 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
   // `newTargetGlobalIdx`/`holeGlobalIdx` above.
   if (ctx.genEagerFlagGlobalIdx !== undefined && ctx.genEagerFlagGlobalIdx >= threshold) {
     ctx.genEagerFlagGlobalIdx += delta;
+  }
+  // (#3933) And again for the per-element-type shared zero-length vec backing
+  // store. This is the FOURTH instance of the identical bug — the cache is a
+  // Map rather than a scalar, but the failure is the same: the emitted
+  // `global.get`s below are shifted correctly while the cache is not, so the
+  // NEXT `[]` of that element type reuses an index that now names an unrelated
+  // global. Landing on an i32/f64 global fails validation ("struct.new[1]
+  // expected type (ref null N), found global.get of type i32"); landing on an
+  // externref one instead validates — the coercion layer repairs it with
+  // `any.convert_extern` + `ref.cast` — and traps at run time. That is the
+  // 400 `wasm_compile` / 3,634 `illegal_cast` split that took PR #3933 out of
+  // the merge queue at −2,621 test262 passes.
+  if (ctx.sharedEmptyVecGlobals !== undefined) {
+    for (const [typeIdx, globalIdx] of ctx.sharedEmptyVecGlobals) {
+      if (globalIdx >= threshold) ctx.sharedEmptyVecGlobals.set(typeIdx, globalIdx + delta);
+    }
   }
 
   const visitedInstrs = new WeakSet<object>();
@@ -430,6 +447,13 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
   }
   if (ctx.currentThisGlobalIdx >= threshold) {
     ctx.currentThisGlobalIdx += delta;
+  }
+  // (#4203) Explicit-null receiver marker — same reason as `currentThisGlobalIdx`.
+  if (ctx.explicitNullThisGlobalIdx !== undefined && ctx.explicitNullThisGlobalIdx >= threshold) {
+    ctx.explicitNullThisGlobalIdx += delta;
+  }
+  if (ctx.callerStrictGlobalIdx >= threshold) {
+    ctx.callerStrictGlobalIdx += delta;
   }
   // (#3251 S1) Vec-overlay state global (registered at finalize; standalone
   // only — no import globals arrive that late, this is belt-and-suspenders).
@@ -769,6 +793,13 @@ export function addUnionImports(ctx: CodegenContext): void {
   const ctorBigType = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i64" }]);
   addImport(ctx, "env", "__bigint_ctor", { kind: "func", typeIdx: ctorBigType });
 
+  // __bigint_ctor_ref: (externref) → externref (#2846 follow-up). The ordinary
+  // i64 constructor above remains the arithmetic carrier; this variant keeps
+  // arbitrary-width host BigInts exact when the surrounding value is already
+  // nullable/dynamic externref (Acorn's `bigint | null` stringToBigInt result).
+  const ctorBigRefType = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
+  addImport(ctx, "env", "__bigint_ctor_ref", { kind: "func", typeIdx: ctorBigRefType });
+
   // __typeof: (externref) → externref (returns type string)
   const typeofStrType = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
   addImport(ctx, "env", "__typeof", {
@@ -801,6 +832,7 @@ export function addUnionImports(ctx: CodegenContext): void {
       "__box_bigint",
       "__to_bigint",
       "__bigint_ctor",
+      "__bigint_ctor_ref",
       "__typeof",
     ]);
     // Update funcMap entries for defined functions (not imports)
@@ -1079,11 +1111,53 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
   };
 
   // 3. __box_number(f64) -> externref
-  registerNative("__box_number", f64ToExternref, [
-    { op: "local.get", index: 0 },
-    { op: "struct.new", typeIdx: boxNumStructIdx },
-    { op: "extern.convert_any" },
-  ]);
+  // (#3673) i31 fast path: an integral value in the signed-31-bit range is
+  // encoded as an UNBOXED `(ref i31)` — no allocation. Every consumer that
+  // discriminates boxed numbers carries a matching i31 arm. Excluded: -0
+  // (i31 cannot carry the sign — `1/x` and Object.is would lose it), NaN and
+  // infinities (fail the trunc round-trip), and values outside [-2^30, 2^30-1]
+  // (fail the shl/shr round-trip).
+  registerNative(
+    "__box_number",
+    f64ToExternref,
+    [
+      { op: "local.get", index: 0 },
+      { op: "i32.trunc_sat_f64_s" },
+      { op: "local.tee", index: 1 },
+      { op: "f64.convert_i32_s" },
+      { op: "local.get", index: 0 },
+      { op: "f64.eq" }, // integral (and clamp-free) round-trip
+      { op: "local.get", index: 1 },
+      { op: "i32.const", value: 1 },
+      { op: "i32.shl" },
+      { op: "i32.const", value: 1 },
+      { op: "i32.shr_s" },
+      { op: "local.get", index: 1 },
+      { op: "i32.eq" }, // fits signed 31 bits
+      { op: "i32.and" },
+      { op: "local.get", index: 1 },
+      { op: "i32.const", value: 0 },
+      { op: "i32.ne" },
+      { op: "local.get", index: 0 },
+      { op: "i64.reinterpret_f64" },
+      { op: "i64.const", value: 0n },
+      { op: "i64.lt_s" },
+      { op: "i32.eqz" },
+      { op: "i32.or" }, // t != 0 || sign bit clear (rejects -0 only)
+      { op: "i32.and" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: [{ op: "local.get", index: 1 }, { op: "ref.i31" }, { op: "extern.convert_any" }],
+        else: [
+          { op: "local.get", index: 0 },
+          { op: "struct.new", typeIdx: boxNumStructIdx },
+          { op: "extern.convert_any" },
+        ],
+      },
+    ],
+    [{ name: "$i31_temp", type: { kind: "i32" } as ValType }],
+  );
 
   // 4. __unbox_number(externref) -> f64
   //    Local 1 is an anyref temp used to ref.test then ref.cast without
@@ -1104,7 +1178,22 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
       // any = any.convert_extern(param)
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
-      { op: "local.tee", index: 1 },
+      { op: "local.set", index: 1 },
+      // (#3673) i31-boxed small int → its value.
+      { op: "local.get", index: 1 },
+      { op: "ref.test", typeIdx: -20 },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 1 },
+          { op: "ref.cast", typeIdx: -20 },
+          { op: "i31.get_s" },
+          { op: "f64.convert_i32_s" },
+          { op: "return" },
+        ],
+      },
+      { op: "local.get", index: 1 },
       // if (ref.test $box_number_struct any) return any.value
       { op: "ref.test", typeIdx: boxNumStructIdx },
       {
@@ -1155,12 +1244,8 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
     [{ name: "$any_temp", type: { kind: "anyref" } as ValType }],
   );
 
-  // 5. __box_boolean(i32) -> externref
-  registerNative("__box_boolean", i32ToExternref, [
-    { op: "local.get", index: 0 },
-    { op: "struct.new", typeIdx: boxBoolStructIdx },
-    { op: "extern.convert_any" },
-  ]);
+  // 5. __box_boolean(i32) -> externref — interned carriers (#3780).
+  registerNative("__box_boolean", i32ToExternref, boxBooleanBody(ctx, boxBoolStructIdx));
 
   // #1644 Slice E1 — __box_bigint(i64) -> externref. In no-JS-host mode a
   // bigint-branded i64 needs a WasmGC carrier so it cannot fall through to the
@@ -1299,6 +1384,20 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
           { op: "return" },
         ],
       },
+      // (#3673) i31 small int → i64.
+      { op: "local.get", index: 1 },
+      { op: "ref.test", typeIdx: -20 },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 1 },
+          { op: "ref.cast", typeIdx: -20 },
+          { op: "i31.get_s" },
+          { op: "i64.extend_i32_s" },
+          { op: "return" },
+        ],
+      },
       { op: "local.get", index: 1 },
       { op: "ref.test", typeIdx: boxNumStructIdx },
       {
@@ -1364,6 +1463,9 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
       // (§7.1.2); other wrapped tags (5 string / 6 object) keep the non-null-
       // ref default (truthy). Without this arm the non-null `$undefined`
       // singleton would be truthy — `if (undefined)` taking the then-branch.
+      // (#4173, flag-gated) The legacy body internalized the operand TWICE
+      // (once for this arm, once for the ladder below); with `fastStrictEq`
+      // on, convert once and let the teed value feed whichever test is next.
       ...(s1AnyValIdx >= 0
         ? ([
             { op: "local.get", index: 0 },
@@ -1384,10 +1486,30 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
             },
           ] satisfies Instr[])
         : []),
-      // any = any.convert_extern(param)
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "local.tee", index: 1 },
+      // any = any.convert_extern(param) — skipped under fastStrictEq when the
+      // $AnyValue arm above already converted (local 1 holds the anyref).
+      ...((ctx.fastStrictEq === true && s1AnyValIdx >= 0
+        ? [{ op: "local.get", index: 1 }]
+        : [
+            { op: "local.get", index: 0 },
+            { op: "any.convert_extern" },
+            { op: "local.tee", index: 1 },
+          ]) satisfies Instr[]),
+      // (#3673) i31 small int → value !== 0 (no NaN possible in i31).
+      { op: "ref.test", typeIdx: -20 },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 1 },
+          { op: "ref.cast", typeIdx: -20 },
+          { op: "i31.get_s" },
+          { op: "i32.const", value: 0 },
+          { op: "i32.ne" },
+          { op: "return" },
+        ],
+      },
+      { op: "local.get", index: 1 },
       // boxed number? → value !== 0 && value === value
       { op: "ref.test", typeIdx: boxNumStructIdx },
       {
@@ -1483,6 +1605,11 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
     { op: "local.get", index: 0 },
     { op: "any.convert_extern" },
     { op: "ref.test", typeIdx: boxNumStructIdx },
+    // (#3673) …or an i31-boxed small int.
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: -20 },
+    { op: "i32.or" },
   ]);
 
   // 9. __typeof_boolean(externref) -> i32 — `ref.test $box_boolean_struct`.
@@ -1601,6 +1728,14 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
         blockType: { kind: "empty" },
         then: [{ op: "i32.const", value: 0 }, { op: "return" }],
       },
+      // (#3673) i31 small int is a number → not this type.
+      { op: "local.get", index: 1 },
+      { op: "ref.test", typeIdx: -20 },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [{ op: "i32.const", value: 0 }, { op: "return" }],
+      },
       { op: "local.get", index: 1 },
       { op: "ref.test", typeIdx: boxBoolStructIdx },
       {
@@ -1693,6 +1828,10 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
           [
             { op: "local.get", index: 1 },
             { op: "ref.test", typeIdx: boxNumStructIdx },
+            // (#3673) …or an i31-boxed small int.
+            { op: "local.get", index: 1 },
+            { op: "ref.test", typeIdx: -20 },
+            { op: "i32.or" },
           ],
           "number",
         ),
@@ -2080,6 +2219,11 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
   // after subsequent late imports are added — so `new UserClass(...)` lowers
   // to a call against an unrelated host import (e.g. `__extern_set`).
   const userClassNames = new Set<string>();
+  // Bare built-in constructors can be checker-unresolved in JavaScript files
+  // that preprocessing upgrades to TypeScript grammar (for example when timer
+  // declarations are injected). Keep a conservative source-wide binding set so
+  // the syntactic extern fallback below never captures a user-shadowed name.
+  const userValueNames = new Set<string>();
   // (#1794) A class is only a USER class if it is not ambient. `declare class X`
   // and classes inside `declare namespace N { class X }` ARE the extern-class
   // declarations themselves — collecting them here made the #1284 shadow guard
@@ -2103,6 +2247,25 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
   function collectUserClassNames(node: ts.Node): void {
     if ((ts.isClassDeclaration(node) || ts.isClassExpression(node)) && node.name && !isAmbientClassDecl(node)) {
       userClassNames.add(node.name.text);
+      userValueNames.add(node.name.text);
+    }
+    if (
+      (ts.isVariableDeclaration(node) || ts.isParameter(node) || ts.isBindingElement(node)) &&
+      ts.isIdentifier(node.name)
+    ) {
+      userValueNames.add(node.name.text);
+    }
+    if ((ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node)) && node.name) {
+      userValueNames.add(node.name.text);
+    }
+    if (ts.isImportClause(node) && node.name) {
+      userValueNames.add(node.name.text);
+    }
+    if (ts.isImportSpecifier(node)) {
+      userValueNames.add(node.name.text);
+    }
+    if (ts.isNamespaceImport(node)) {
+      userValueNames.add(node.name.text);
     }
     forEachChild(node, collectUserClassNames);
   }
@@ -2134,7 +2297,13 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
     // new ClassName()
     if (ts.isNewExpression(node)) {
       const type = ctx.checker.getTypeAtLocation(node);
-      const className = type.getSymbol()?.name;
+      const inferredClassName = type.getSymbol()?.name;
+      const bareClassName = ts.isIdentifier(node.expression) ? node.expression.text : undefined;
+      const className =
+        inferredClassName ??
+        (bareClassName && !userValueNames.has(bareClassName) && ctx.externClasses.has(bareClassName)
+          ? bareClassName
+          : undefined);
       if (className && !userClassNames.has(className) && !isNativeEncodingClass(className)) {
         const info = ctx.externClasses.get(className);
         if (info) register(`${info.importPrefix}_new`, info.constructorParams, [{ kind: "externref" }]);

@@ -1,7 +1,27 @@
 #!/usr/bin/env node
 
-import { createReadStream, writeFileSync } from "node:fs";
+import { createReadStream, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
+import { fileURLToPath } from "node:url";
+
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+
+// (#2871 follow-up) Per-file ES-edition index written by
+// scripts/generate-editions.ts. Read here so every standalone root-cause bucket
+// carries a per-edition count breakdown — without it the report page's edition
+// slider has nothing to filter the standalone view by (it ships no per-file
+// JSONL, so the page cannot classify those failures itself).
+// Resolved against the repo, not the cwd: CI runs this from several working
+// directories, and a silently-missing index would just drop the breakdown.
+const DEFAULT_FILE_EDITIONS = join(
+  REPO_ROOT,
+  "website",
+  "public",
+  "benchmarks",
+  "results",
+  "test262-file-editions.json",
+);
 
 function parseArgs(argv) {
   const args = {
@@ -12,6 +32,7 @@ function parseArgs(argv) {
     baselineGeneratedAt: "",
     target: "",
     maxUnclassifiedRootCauses: undefined,
+    fileEditions: DEFAULT_FILE_EDITIONS,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -28,6 +49,8 @@ function parseArgs(argv) {
       args.baselineGeneratedAt = argv[++i] || "";
     } else if (arg === "--target") {
       args.target = argv[++i] || "";
+    } else if (arg === "--file-editions") {
+      args.fileEditions = argv[++i] || "";
     } else if (arg === "--max-unclassified-root-causes") {
       const raw = argv[++i] || "";
       const parsed = Number.parseInt(raw, 10);
@@ -41,7 +64,7 @@ function parseArgs(argv) {
 
   if (!args.input || !args.output) {
     console.error(
-      "Usage: node scripts/build-test262-report.mjs --input <results.jsonl> --output <report.json> [--include-proposals] [--target standalone] [--max-unclassified-root-causes N]",
+      "Usage: node scripts/build-test262-report.mjs --input <results.jsonl> --output <report.json> [--include-proposals] [--target standalone] [--file-editions <file-editions.json>] [--max-unclassified-root-causes N]",
     );
     process.exit(1);
   }
@@ -191,7 +214,9 @@ const STANDALONE_ROOT_CAUSE_BUCKETS = [
   {
     // #3086 — honest-vacuity reclassification. A would-be pass whose harness
     // wrapper or nested callback never executed (so no assertion ran) is scored
-    // `fail` + `vacuous: true` by the runner's vacuity gate (#2463/#2940/#3086).
+    // `fail` + `vacuous: true` by the runner's vacuity gate (#2940/#3086,
+    // implemented by PR #2463 — a PR number, so it is deliberately NOT in the
+    // `issues` list below: those render as links to plan/issues/<id>.md).
     // These are a KNOWN, deliberate honest-metric reclassification, not a
     // codegen root cause — so they get their own bucket rather than falling into
     // `unclassified` (which the strict threshold-0 gate would then trip). Placed
@@ -199,7 +224,7 @@ const STANDALONE_ROOT_CAUSE_BUCKETS = [
     // IS the dropped callback, never the feature the dead assertion targeted, so
     // no feature-path bucket should poach it.
     id: "honest-vacuity-reclassification",
-    issues: ["#3086", "#2940", "#2463"],
+    issues: ["#3086", "#2940"],
     label:
       "Honest-vacuity reclassification (harness/nested callback never executed → no assertion ran; scored vacuous fail, excluded from host_free_pass)",
     match: (record, text) => record.vacuous === true || hasAny(text, ["vacuous:", "no assertion ran"]),
@@ -434,9 +459,23 @@ const STANDALONE_ROOT_CAUSE_BUCKETS = [
       pathHas(record, ["generator", "asyncgenerator", "for-await"]) || hasAny(text, ["generator", "async iterator"]),
   },
   {
-    id: "class-prototype-private-descriptor",
+    id: "class-element-private-descriptor",
     issues: ["#1591", "#1365", "#1364"],
-    label: "Class element, prototype, private-name, and descriptor reconciliation gaps",
+    label: "Class element, private-name, and descriptor reconciliation gaps",
+    // (2026-08-04) The free-text arm used to carry a bare "prototype" token.
+    // `textOf(record)` INCLUDES `record.file`, so that token matched every
+    // `built-ins/*/prototype/*` path and this bucket swallowed the entire
+    // builtin-prototype corpus. Measured on the ES5+untagged standalone scope
+    // before the fix: 1,662 files matched, of which only 66 came from the
+    // intended path arm — 1,589 matched on the "prototype" token alone, and
+    // 1,130 of those had NO such token anywhere in the error text at all. It
+    // was a path match wearing a free-text disguise, and it sits at position 22
+    // of ~59, so it stole from every later bucket (`object-property-semantics`,
+    // `array-typedarray-buffer`, `function-object-semantics`, …).
+    //
+    // Keep free-text tokens that name a MECHANISM ("private", "class element").
+    // Never add a token that also occurs in a file path — put those in the path
+    // arm, where the intent is explicit and reviewable.
     match: (record, text) =>
       pathHas(record, [
         "language/classes",
@@ -446,7 +485,7 @@ const STANDALONE_ROOT_CAUSE_BUCKETS = [
         "private",
         "computed-property-names",
         "built-ins/object/getownpropertydescriptor",
-      ]) || hasAny(text, ["private", "class element", "prototype", "property descriptor", "getownpropertydescriptor"]),
+      ]) || hasAny(text, ["private", "class element", "getownpropertydescriptor"]),
   },
   {
     id: "object-to-primitive",
@@ -818,9 +857,37 @@ function emptyRootCauseBucket(bucket) {
     count: 0,
     statuses: createCounts(),
     error_categories: {},
+    // (#2871 follow-up) failures in this bucket per ES edition, e.g.
+    // { ES5: 12, ES2015: 40 }. Empty when no per-file edition index was
+    // readable; the report page then falls back to showing bucket totals.
+    by_edition: {},
     sample_files: [],
     sample_signatures: [],
   };
+}
+
+// (#2871 follow-up) Load the per-file edition index as a Map of
+// "language/…/x.js" → "ES5". Returns null (and warns) when it isn't present:
+// the map is committed by the edition-bucket refresh, so a fresh checkout that
+// has not promoted yet simply gets no edition breakdown rather than a failure.
+function loadFileEditions(path) {
+  if (!path || !existsSync(path)) {
+    console.warn(`No per-file edition index at ${path || "(unset)"} — standalone buckets get no edition breakdown.`);
+    return null;
+  }
+  try {
+    const raw = JSON.parse(readFileSync(path, "utf8"));
+    if (!raw || !Array.isArray(raw.editions) || !raw.files) return null;
+    const map = new Map();
+    for (const [file, idx] of Object.entries(raw.files)) {
+      const label = raw.editions[idx];
+      if (label) map.set(file, label);
+    }
+    return map;
+  } catch (err) {
+    console.warn(`Could not read per-file edition index at ${path}: ${err.message}`);
+    return null;
+  }
 }
 
 function addSample(samples, value, limit = 5) {
@@ -828,18 +895,22 @@ function addSample(samples, value, limit = 5) {
   samples.push(value);
 }
 
-function recordRootCauseHit(target, record) {
+function recordRootCauseHit(target, record, fileEditions) {
   target.count++;
   target.statuses.total++;
   target.statuses[record.status] = (target.statuses[record.status] ?? 0) + 1;
   if (record.error_category) {
     target.error_categories[record.error_category] = (target.error_categories[record.error_category] ?? 0) + 1;
   }
+  if (fileEditions) {
+    const edition = fileEditions.get(String(record.file || "").replace(/^test\//, ""));
+    if (edition) target.by_edition[edition] = (target.by_edition[edition] ?? 0) + 1;
+  }
   addSample(target.sample_files, record.file);
   addSample(target.sample_signatures, record.error_signature ?? record.error);
 }
 
-function buildStandaloneRootCauseMap(records, maxUnclassified) {
+function buildStandaloneRootCauseMap(records, maxUnclassified, fileEditions) {
   const buckets = STANDALONE_ROOT_CAUSE_BUCKETS.map(emptyRootCauseBucket);
   const byId = new Map(buckets.map((bucket) => [bucket.id, bucket]));
   const unclassified = {
@@ -849,6 +920,7 @@ function buildStandaloneRootCauseMap(records, maxUnclassified) {
     count: 0,
     statuses: createCounts(),
     error_categories: {},
+    by_edition: {},
     sample_files: [],
     sample_signatures: [],
   };
@@ -857,17 +929,22 @@ function buildStandaloneRootCauseMap(records, maxUnclassified) {
     const text = textOf(record);
     const bucketDef = STANDALONE_ROOT_CAUSE_BUCKETS.find((bucket) => bucket.match(record, text));
     if (bucketDef) {
-      recordRootCauseHit(byId.get(bucketDef.id), record);
+      recordRootCauseHit(byId.get(bucketDef.id), record, fileEditions);
     } else {
-      recordRootCauseHit(unclassified, record);
+      recordRootCauseHit(unclassified, record, fileEditions);
     }
   }
 
+  const classifiedByEdition = fileEditions !== null;
   return {
     target: "standalone",
     total_non_pass_non_skip: records.length,
     classified: records.length - unclassified.count,
     unclassified_threshold: maxUnclassified ?? null,
+    // Tells the report page whether `by_edition` is trustworthy — an empty
+    // breakdown on a bucket means "no failures in that edition", but only if
+    // the index was actually read.
+    has_edition_breakdown: classifiedByEdition,
     buckets: buckets.filter((bucket) => bucket.count > 0),
     unclassified,
   };
@@ -1092,7 +1169,11 @@ async function main() {
   };
 
   if (target === "standalone") {
-    report.root_cause_map = buildStandaloneRootCauseMap(rootCauseRecords, args.maxUnclassifiedRootCauses);
+    report.root_cause_map = buildStandaloneRootCauseMap(
+      rootCauseRecords,
+      args.maxUnclassifiedRootCauses,
+      loadFileEditions(args.fileEditions),
+    );
   }
 
   writeFileSync(args.output, JSON.stringify(report, null, 2));

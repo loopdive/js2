@@ -17,6 +17,7 @@ import { addFuncType } from "./registry/types.js";
 import { addImport, addStringConstantGlobal, addStringImports } from "./registry/imports.js";
 import { brandExternMethodResult } from "./shared.js";
 import { ensureNativeStringHelpers } from "./native-strings.js";
+import { nativeTypeFromTypeNode } from "./native-type-annotations.js";
 import { reportError } from "./context/errors.js";
 
 // ── Built-in extern class registration ───────────────────────────────
@@ -670,7 +671,13 @@ export function collectExternDeclarations(
       // that breaks wasmtime instantiation (loopdive/js2#389 bug 1).
       // tryCompileRawWasiCall (raw-wasi-api.ts) already handles every call site,
       // so skip the stub entirely under `--target wasi`.
+      // (#4238) `ctx.importMemory` is the second regime in which the
+      // `wasm:memory` accessors lower inline (a peer module owns the memory,
+      // this module imports it at index 0) — see raw-wasi-api.ts. Skip the
+      // stub there too, or the accessor names would re-register as host
+      // imports the peer cannot satisfy.
       if (ctx.wasi && (ctx.wasiMemAccessors.has(name) || ctx.wasiRawImports.has(name))) continue;
+      if (ctx.importMemory !== undefined && ctx.wasiMemAccessors.has(name)) continue;
       // #2696 — the #2632 fd0 stdin-reactor intrinsics. The injected
       // process.stdin prelude (src/process-stdin-prelude.ts) declares these as
       // `declare function __wasiStdin*` stubs, but every call site is
@@ -725,13 +732,26 @@ export function collectExternDeclarations(
       if (!ctx.funcMap.has(name)) {
         const sig = ctx.checker.getSignatureFromDeclaration(stmt);
         if (sig) {
-          const params: ValType[] = stmt.parameters.map((p) =>
-            mapTsTypeToWasm(ctx.checker.getTypeAtLocation(p), ctx.checker),
+          // (#4238) Under `externNativeTypes` an explicit native annotation
+          // (`type i32 = number` & friends) wins over the default mapping, so
+          // a peer-wasm binding can declare its REAL `(i32,i32,i32) -> i32`
+          // signature and bind with no JS wrapper closure. Without the option
+          // — every user compile — `nativeTypeFromTypeNode` is never consulted
+          // and `number` keeps mapping to f64, byte-identical.
+          const nativeOf = (node: ts.TypeNode | undefined): ValType | null =>
+            ctx.externNativeTypes ? nativeTypeFromTypeNode(ctx.checker, node) : null;
+          const params: ValType[] = stmt.parameters.map(
+            (p) => nativeOf(p.type) ?? mapTsTypeToWasm(ctx.checker.getTypeAtLocation(p), ctx.checker),
           );
           const retType = ctx.checker.getReturnTypeOfSignature(sig);
-          const results: ValType[] = isVoidType(retType) ? [] : [mapTsTypeToWasm(retType, ctx.checker)];
+          const results: ValType[] = isVoidType(retType)
+            ? []
+            : [nativeOf(stmt.type) ?? mapTsTypeToWasm(retType, ctx.checker)];
           const typeIdx = addFuncType(ctx, params, results);
-          addImport(ctx, "env", name, { kind: "func", typeIdx });
+          // (#4238) `externImportModule` retargets extern declarations at a
+          // wasm-to-wasm provider namespace (`js2wasm:qjs`) instead of the
+          // `env` JS-host module. Unset for every user compile.
+          addImport(ctx, ctx.externImportModule ?? "env", name, { kind: "func", typeIdx });
         }
       }
     }
@@ -1163,7 +1183,13 @@ export function collectDeclaredGlobals(ctx: CodegenContext, libFile: ts.SourceFi
       if (!referencedNames.has(name)) continue; // only register used globals
       if (ctx.declaredGlobals.has(name)) continue;
       const type = ctx.checker.getTypeAtLocation(decl);
-      if (!isExternalDeclaredClass(type, ctx.checker)) continue;
+      // `window` is declared by lib.dom as `Window & typeof globalThis`, so
+      // its intersection type has no single external-class symbol even though
+      // it is a real ambient host value. The same rule applies to the other
+      // browser-only ambient variables below. Register those by their proven
+      // lib declaration/name; otherwise a bare `window.event` read silently
+      // lowers to `ref.null` (ReactDOM's update-priority path).
+      if (!isExternalDeclaredClass(type, ctx.checker) && !DOM_ONLY_GLOBALS.has(name)) continue;
       // #2907 — under no-JS-host mode (standalone as well as
       // strictNoHostImports/wasi) there is no host to satisfy
       // `env.global_<Name>`. `TypeError`, `Error`, `RegExp`, `Reflect`, the
@@ -1341,11 +1367,11 @@ export function registerNodeBuiltinImports(ctx: CodegenContext, builtins: NodeBu
     ctx.mod.nodeBuiltinModules.add(builtin.moduleName);
 
     const importName = `__node_${builtin.moduleName}`;
-    // Skip if already registered (e.g. duplicate imports)
-    if (ctx.funcMap.has(importName)) continue;
-
-    const typeIdx = addFuncType(ctx, [], [{ kind: "externref" }]);
-    addImport(ctx, "env", importName, { kind: "func", typeIdx });
+    // Emit one host import per module; bind every graph alias to its shared thunk.
+    if (!ctx.funcMap.has(importName)) {
+      const typeIdx = addFuncType(ctx, [], [{ kind: "externref" }]);
+      addImport(ctx, "env", importName, { kind: "func", typeIdx });
+    }
     const funcIdx = ctx.funcMap.get(importName);
     if (funcIdx !== undefined) {
       // Register as a declared global so identifier resolution picks it up

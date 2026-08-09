@@ -22,18 +22,44 @@ import { describe, expect, it } from "vitest";
 import binaryen from "binaryen";
 import { compile } from "../src/index.js";
 
-async function compileNative(source: string): Promise<{ wat: string; binary: Uint8Array }> {
-  const result = await compile(source, { fileName: "t.js", target: "wasi", nativeStrings: true });
+async function compileNative(source: string): Promise<{ wat: string; emittedWat: string; binary: Uint8Array }> {
+  const result = await compile(source, { fileName: "t.js", target: "wasi", nativeStrings: true, emitWat: true });
   expect(result.success, `Compile failed: ${result.errors?.map((e) => e.message).join("; ")}`).toBe(true);
   const mod = binaryen.readBinary(result.binary);
   const wat = mod.emitText();
   mod.dispose();
-  return { wat, binary: result.binary };
+  return { wat, emittedWat: result.wat ?? "", binary: result.binary };
 }
 
-/** Count of `__str_buf_next_cap` grow calls — zero means the presize fired. */
-function growCalls(wat: string): number {
-  return (wat.match(/call \$__str_buf_next_cap/g) || []).length;
+/**
+ * Isolate one exported function's own body text within the module WAT.
+ * Needed because `growCalls` must count grow calls WITHIN the function under
+ * test, not module-wide: unrelated native-string runtime helpers (e.g. the
+ * IR-only `__str_concat_owned`, #3744) also contain a static
+ * `call $__str_buf_next_cap` in their own body, which would otherwise read
+ * as a false "presize didn't fire" positive even though the tested function
+ * never calls it.
+ */
+function exportedFuncWat(wat: string, exportName: string): string {
+  const exportMatch = wat.match(new RegExp(`\\(export "${exportName}" \\(func (\\$[\\w.$]+)\\)\\)`));
+  if (!exportMatch) throw new Error(`export "${exportName}" not found in WAT`);
+  const funcRef = exportMatch[1]!.replace(/\$/, "\\$");
+  const startMatch = new RegExp(`^ \\(func ${funcRef} `, "m").exec(wat);
+  if (!startMatch) throw new Error(`func ${exportMatch[1]} body not found in WAT`);
+  const rest = wat.slice(startMatch.index);
+  const endMatch = /\n \)\n/.exec(rest);
+  return endMatch ? rest.slice(0, endMatch.index + endMatch[0].length) : rest;
+}
+
+/** Count of `__str_buf_next_cap` grow calls in `exportName`'s own body — zero means the presize fired. */
+function growCalls(wat: string, exportName = "run"): number {
+  return (exportedFuncWat(wat, exportName).match(/call \$__str_buf_next_cap/g) || []).length;
+}
+
+function emittedFunctionWat(wat: string, functionName: string): string {
+  const start = wat.indexOf(`(func $${functionName}`);
+  const end = wat.indexOf("\n  (func ", start + 1);
+  return wat.slice(start, end < 0 ? undefined : end);
 }
 
 async function instantiate(binary: Uint8Array): Promise<WebAssembly.Exports> {
@@ -82,10 +108,21 @@ function jsStringHash(n: number): number {
 
 describe("#1761 — presize string-build buffer from static trip count", () => {
   it("fires on the string-hash build loop (no grow call) and matches JS across trip counts", async () => {
-    const { wat, binary } = await compileNative(STRING_HASH_SOURCE);
+    const { wat, emittedWat, binary } = await compileNative(STRING_HASH_SOURCE);
     // The build loop's final length is provably 3*n → presize fires → the
     // doubling grow helper is gone from the module.
     expect(growCalls(wat), "presize must eliminate the doubling grow path").toBe(0);
+    const emittedRun = emittedFunctionWat(emittedWat, "run");
+    expect(
+      (emittedRun.match(/\bref\.is_null\b/g) ?? []).length,
+      "the hash loop condition must read the builder length local without materializing a string view",
+    ).toBe(1);
+    const mutableAlphabet = await compileNative(STRING_HASH_SOURCE.replace("const alphabet", "let alphabet"));
+    const mutableRun = emittedFunctionWat(mutableAlphabet.emittedWat, "run");
+    expect(
+      (emittedRun.match(/\bref\.cast\b/g) ?? []).length - (mutableRun.match(/\bref\.cast\b/g) ?? []).length,
+      "the two const-literal alphabet.charAt appends must use the proven-flat cast path",
+    ).toBe(2);
 
     const exports = await instantiate(binary);
     const run = exports.run as (n: number) => number;
@@ -126,7 +163,7 @@ describe("#1761 — presize string-build buffer from static trip count", () => {
     `;
     const { wat, binary } = await compileNative(src);
     // i % 9 is a fixed-length (1-unit) charAt → presize fires.
-    expect(growCalls(wat)).toBe(0);
+    expect(growCalls(wat, "build")).toBe(0);
     const exports = await instantiate(binary);
     const build = exports.build as (n: number) => number;
 

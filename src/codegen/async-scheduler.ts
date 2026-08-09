@@ -29,7 +29,13 @@ import { inLiveShiftRange } from "../emit/resolve-layout.js"; // (#1916 S3) stab
 // this module; both bindings are only dereferenced inside function bodies,
 // never at module evaluation). The other three are cycle-free leaves relative
 // to this module.
-import { getOrCreateFuncRefWrapperTypes } from "./closures.js";
+import { getClosureFuncSelfTypeIdx, getOrCreateFuncRefWrapperTypes } from "./closures.js";
+import {
+  CLOSURE_CAPTURE_FIELD_BASE,
+  closureArityField,
+  closureBagField,
+  closureBagInitInstr,
+} from "./closures/funcref-wrapper-types.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { reserveClosedMethodDispatchVararg } from "./closed-method-dispatch.js";
@@ -925,10 +931,10 @@ export interface PromiseExecutorClosures {
  * site `ref.test (ref $wrap)` and dispatches natively. It inherits field 0
  * (`func: funcref`) and adds field 1 (`cap_promise: (ref $Promise)`).
  *
- * Each trampoline has EXACTLY the canonical lifted func type
- * (`(ref null $wrap, externref) -> ()`) so the call site's
- * `ref.cast (ref $wrapFuncType); call_ref` succeeds; the body downcasts self to
- * the `cap` subtype to recover the promise.
+ * Each trampoline has exactly the canonical lifted func type
+ * (`(ref $wrapperRoot, externref) -> ()`) so the call site's typed-funcref cast
+ * and `call_ref` succeed; the body downcasts root self to the `cap` subtype to
+ * recover the promise.
  */
 export function ensurePromiseExecutorClosures(ctx: CodegenContext): PromiseExecutorClosures | null {
   const cache = ctx as unknown as { __promiseExecutorClosures?: PromiseExecutorClosures };
@@ -953,8 +959,10 @@ export function ensurePromiseExecutorClosures(ctx: CodegenContext): PromiseExecu
     name: "$__promise_settle_cap",
     fields: [
       // Field 0 is inherited from the wrapper root (funcref); it MUST be
-      // redeclared identically in the subtype.
+      // redeclared identically in the subtype — as must the #3673 $arity slot.
       { name: "func", type: { kind: "funcref" }, mutable: false },
+      closureArityField(),
+      closureBagField(),
       { name: "cap_promise", type: { kind: "ref", typeIdx: promiseTypeIdx }, mutable: false },
     ],
     superTypeIdx: wrapper.structTypeIdx,
@@ -972,9 +980,9 @@ export function ensurePromiseExecutorClosures(ctx: CodegenContext): PromiseExecu
   // settle helpers (buildPromiseSettleBody), so double-settle / settle-after-
   // throw is a spec-correct no-op by construction.
   const makeBody = (settleFuncIdx: number): Instr[] => [
-    { op: "local.get", index: 0 }, // self: (ref null $wrap)
+    { op: "local.get", index: 0 }, // self: (ref $wrapperRoot)
     { op: "ref.cast", typeIdx: capTypeIdx }, // downcast to the cap subtype (non-null)
-    { op: "struct.get", typeIdx: capTypeIdx, fieldIdx: 1 }, // captured (ref $Promise)
+    { op: "struct.get", typeIdx: capTypeIdx, fieldIdx: CLOSURE_CAPTURE_FIELD_BASE }, // captured (ref $Promise)
     { op: "local.get", index: 1 }, // value: externref
     { op: "call", funcIdx: settleFuncIdx }, // settle -> externref
     { op: "drop" }, // trampoline result type is () — discard the settled value
@@ -1136,6 +1144,8 @@ function ensurePromiseThenableSubstrate(
   ];
   const emitSettleCap = (clFuncIdx: number): Instr[] => [
     { op: "ref.func", funcIdx: clFuncIdx },
+    { op: "i32.const", value: 1 }, // (#3673) $arity — settle callbacks take 1 arg
+    closureBagInitInstr(), // (#4241) $bag
     { op: "local.get", index: promiseLocal },
     { op: "ref.as_non_null" },
     { op: "struct.new", typeIdx: execClosures.capTypeIdx },
@@ -1733,10 +1743,11 @@ function emitThenWrapperFunction(
   const callbackLocal = 3;
   const resultLocal = 4;
   const funcIdx = mintDefinedFunc(ctx);
+  const selfTypeIdx = getClosureFuncSelfTypeIdx(ctx, info.funcTypeIdx) ?? info.structTypeIdx;
 
   const locals: LocalDef[] = [
     { name: "$caps", type: { kind: "ref", typeIdx: capsTypeIdx } },
-    { name: "$callback", type: { kind: "ref", typeIdx: info.structTypeIdx } },
+    { name: "$callback", type: { kind: "ref", typeIdx: selfTypeIdx } },
     { name: "$result", type: { kind: "externref" } },
   ];
   const body: Instr[] = [
@@ -1747,7 +1758,7 @@ function emitThenWrapperFunction(
     { op: "local.get", index: capLocal },
     { op: "struct.get", typeIdx: capsTypeIdx, fieldIdx: 0 },
     { op: "any.convert_extern" },
-    { op: "ref.cast", typeIdx: info.structTypeIdx },
+    { op: "ref.cast", typeIdx: selfTypeIdx },
     { op: "local.set", index: callbackLocal },
   ];
 
@@ -1776,7 +1787,7 @@ function emitThenWrapperFunction(
   }
   tryBody.push(
     { op: "local.get", index: callbackLocal },
-    { op: "struct.get", typeIdx: info.structTypeIdx, fieldIdx: 0 },
+    { op: "struct.get", typeIdx: selfTypeIdx, fieldIdx: 0 },
     { op: "ref.cast", typeIdx: info.funcTypeIdx },
     { op: "call_ref", typeIdx: info.funcTypeIdx },
   );
@@ -3575,13 +3586,14 @@ export function emitTimerCallbackWrapper(ctx: CodegenContext, info: ClosureInfo)
   const wrapperName = `__timer_cb_${wrapperId}`;
   const callbackLocal = 2; // decoded closure struct
   const funcIdx = mintDefinedFunc(ctx);
+  const selfTypeIdx = getClosureFuncSelfTypeIdx(ctx, info.funcTypeIdx) ?? info.structTypeIdx;
 
-  const locals: LocalDef[] = [{ name: "$callback", type: { kind: "ref", typeIdx: info.structTypeIdx } }];
+  const locals: LocalDef[] = [{ name: "$callback", type: { kind: "ref", typeIdx: selfTypeIdx } }];
   const body: Instr[] = [
     // caps (param 0) is the closure struct, lifted to externref. Decode it.
     { op: "local.get", index: 0 },
     { op: "any.convert_extern" },
-    { op: "ref.cast", typeIdx: info.structTypeIdx },
+    { op: "ref.cast", typeIdx: selfTypeIdx },
     { op: "local.set", index: callbackLocal },
 
     // call_ref shape: [closure_self, ...default_args, typed_funcref]
@@ -3592,7 +3604,7 @@ export function emitTimerCallbackWrapper(ctx: CodegenContext, info: ClosureInfo)
   }
   body.push(
     { op: "local.get", index: callbackLocal },
-    { op: "struct.get", typeIdx: info.structTypeIdx, fieldIdx: 0 },
+    { op: "struct.get", typeIdx: selfTypeIdx, fieldIdx: 0 },
     { op: "ref.cast", typeIdx: info.funcTypeIdx },
     { op: "call_ref", typeIdx: info.funcTypeIdx },
   );
@@ -4070,10 +4082,11 @@ function emitFinallyWrapperFunction(ctx: CodegenContext, info: ClosureInfo, isRe
   const resultLocal = 4;
   const reasonLocal = 5;
   const funcIdx = mintDefinedFunc(ctx);
+  const selfTypeIdx = getClosureFuncSelfTypeIdx(ctx, info.funcTypeIdx) ?? info.structTypeIdx;
 
   const locals: LocalDef[] = [
     { name: "$caps", type: { kind: "ref", typeIdx: capsTypeIdx } },
-    { name: "$callback", type: { kind: "ref", typeIdx: info.structTypeIdx } },
+    { name: "$callback", type: { kind: "ref", typeIdx: selfTypeIdx } },
     { name: "$result", type: { kind: "externref" } },
     { name: "$reason", type: { kind: "externref" } },
   ];
@@ -4085,7 +4098,7 @@ function emitFinallyWrapperFunction(ctx: CodegenContext, info: ClosureInfo, isRe
     { op: "local.get", index: capLocal },
     { op: "struct.get", typeIdx: capsTypeIdx, fieldIdx: 0 },
     { op: "any.convert_extern" },
-    { op: "ref.cast", typeIdx: info.structTypeIdx },
+    { op: "ref.cast", typeIdx: selfTypeIdx },
     { op: "local.set", index: callbackLocal },
   ];
 
@@ -4096,7 +4109,7 @@ function emitFinallyWrapperFunction(ctx: CodegenContext, info: ClosureInfo, isRe
   for (const paramType of info.paramTypes) pushDefaultForType(tryBody, paramType);
   tryBody.push(
     { op: "local.get", index: callbackLocal },
-    { op: "struct.get", typeIdx: info.structTypeIdx, fieldIdx: 0 },
+    { op: "struct.get", typeIdx: selfTypeIdx, fieldIdx: 0 },
     { op: "ref.cast", typeIdx: info.funcTypeIdx },
     { op: "call_ref", typeIdx: info.funcTypeIdx },
   );

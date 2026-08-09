@@ -1,32 +1,36 @@
 ---
 id: 2855
-title: "IR front-end migration: ratchet unintended fallback buckets to zero + promote to STRICT_IR_REASONS"
-status: ready
-sprint: current
+title: "IR fallback-corpus ratchet: drive unintended function buckets to zero"
+status: done
+sprint: 73
 created: 2026-06-30
-updated: 2026-06-30
+updated: 2026-07-21
+completed: 2026-07-21
 priority: high
 horizon: xl
+complexity: XL
 feasibility: hard
 model: fable
 reasoning_effort: high
 task_type: feature
 area: ir, codegen
 language_feature: compiler-internals
+es_edition: n/a
 goal: ir-full-coverage
-model: fable
 fable_role: spec
 depends_on: [2856, 2857, 2858, 2859]
-related: [1376, 2089, 1923]
+related: [1376, 2089, 1923, 3143, 3341, 3518, 3519]
+superseded_by: 3518
 ---
 
-# #2855 — IR front-end migration: drive the unintended fallback buckets to zero
+# #2855 — IR fallback-corpus ratchet: unintended function buckets to zero
 
-> **Tracking epic — not a single dev task.** This is the narrative anchor for
-> the direct-AST→Wasm → typed-IR front-end migration. The actionable work is in
-> the per-bucket child issues (`depends_on`). Kept `status: backlog` so it stays
-> visible in planning without being offered as a code task in the TaskList; the
-> children carry `status: ready` and are the queued, dev-claimable slices.
+> **Closed narrow milestone; not the IR-only retirement epic.** #2856–#2859
+> drove the measured playground **function** rejection buckets to zero. That is
+> a useful ratchet, but it does not prove source-language completeness,
+> compile-once ownership, module/class/M0/linear ownership, or safe direct-path
+> deletion. The full fail-closed/default/deletion program is now **#3518**; its
+> first executable gate slice is **#3519**.
 
 ## Why this exists / supersedes the stale `#1530` reference
 
@@ -37,15 +41,11 @@ unit) that the selector cannot fully lower demotes to the legacy path via the
 demote-to-warning channel (`src/codegen/index.ts`), bucketed by an
 `IrFallbackReason` (`src/ir/select.ts`).
 
-The retirement is governed by the **IR fallback budget gate** (`pnpm run
-check:ir-fallbacks`, built in **#1376**, the ratchet mechanism) which counts
-each rejection reason against `scripts/ir-fallback-baseline.json`. The direction
-is to drive every **unintended** bucket to zero, then add the retired reason to
-`STRICT_IR_REASONS` (`src/codegen/index.ts:1511`, currently the **empty set** —
-no reason promoted yet) so any future regression becomes a hard compile error
-instead of a silent legacy fallback. **Corpus-zero is NOT the promotion
-trigger** — see the re-scoped #3341 for why a reason may only be promoted once
-it is genuinely *unreachable* in the IR.
+The **IR fallback budget gate** (`pnpm run check:ir-fallbacks`, built in #1376)
+counts rejection reasons against `scripts/ir-fallback-baseline.json`. #2855
+used it to ratchet a bounded function corpus downward. It is not the retirement
+gate: #3341 proved corpus zero is insufficient for strictness, and #3519 now
+owns the complete typed readiness verdict.
 
 **Stale-reference note (#1530):** `CLAUDE.md`, `docs/architecture/codegen-axes.md`,
 and `plan/log/ir-adoption.md` all cite **#1530** as "the issue that phases out
@@ -53,59 +53,50 @@ the demote-to-warning channel / drives the unintended buckets to zero."
 **`#1530` is actually a WASI Native-Messaging host example** — an unrelated,
 already-`done` issue. The real ratchet _mechanism_ is **#1376** (the telemetry
 gate, done) + **#2089** (silent-fallback ratchet, done) + **#1923** (post-claim
-demotion metering, done). This epic (#2855) is the live tracking owner for the
-remaining _content_ work — driving the buckets to zero. `plan/log/ir-adoption.md`
-has been repointed to #2855; **`CLAUDE.md` and
+demotion metering, done). This epic (#2855) became the historical owner for
+driving the measured function buckets to zero; #3518 owns the remaining
+retirement. `plan/log/ir-adoption.md` was repointed to #2855; **`CLAUDE.md` and
 `docs/architecture/codegen-axes.md` still carry the stale `#1530` citation and
 need a one-line repoint to #2855 by an agent that may edit non-`plan/` files**
 (PO is plan-only).
 
-## Live bucket snapshot (verified against `origin/main` @ dc29fd081, 2026-06-30)
+## Completion snapshot (2026-07-21)
 
 `pnpm run check:ir-fallbacks -- --verbose`:
 
-| Bucket                      | Count | Category     | Child issue      | Priority |
-| --------------------------- | ----- | ------------ | ---------------- | -------- |
-| `body-shape-rejected`       | 31    | unintended   | **#2856**        | high     |
-| `call-graph-closure`        | 7     | unintended   | **#2858**        | medium   |
-| `class-method`              | 6     | unintended   | **#2857**        | medium   |
-| `param-type-not-resolvable` | 1     | unintended   | **#2859**        | low      |
-| `async-function`            | 4     | **deferred** | #1373b (blocked) | —        |
+| Bucket                      | Start | Final | Disposition                                           |
+| --------------------------- | ----: | ----: | ----------------------------------------------------- |
+| `body-shape-rejected`       |    31 | **0** | #2856 done; generic reason remains non-strict         |
+| `call-graph-closure`        |     7 | **0** | #2858 done; corpus zero is not global unreachability  |
+| `class-method`              |     6 | **0** | #2857 done; classes still compile twice               |
+| `param-type-not-resolvable` |     1 | **0** | #2859 done; wider legitimate non-claimability remains |
+| `async-function`            |     4 | **4** | Deferred here; owned by #1373b / #3518 R7             |
 
-`async-function` is a **deferred** bucket (documented decision, not a TODO) —
-the CPS lowering is gated on standalone microtask drain and tracked in **#1373b**
-(`status: backlog`, blocked on #1326c). **Not queued here.** All other
-unintended buckets that previously had values (`external-call`,
-`param-shape-rejected`, `return-type-not-resolvable`, `type-resolution-failure`,
-`destructuring-param-complex`) are **already at zero** — retired by #1371 / #1372
-/ #1374 / #1375 / #1370 (all done) — so they are **not** queued.
+The separate module-level histogram was not part of this function-bucket
+acceptance. It was at one `body-shape-rejected` residual before #3517. Even a
+zero module histogram would show only claimability; #3142 still compiles the
+legacy `__module_init` before the IR overlay patches it.
 
-## Acceptance criteria
+## Acceptance criteria (reconciled)
 
-This epic is `done` when, for every unintended bucket:
-
-1. The bucket count in `scripts/ir-fallback-baseline.json` is `0`.
-2. The corresponding `IrFallbackReason` is added to `STRICT_IR_REASONS`
-   (`src/codegen/index.ts:1511`), so a regression hard-errors. **Bucket-zero
-   alone does NOT satisfy this** (re-scoped #3341): corpus-zero is measured on
-   the playground corpus only, so a reason may be promoted only once it is
-   genuinely *unreachable* in the IR — i.e. the IR is expected to always
-   claim+lower the construct, making a rejection a bug rather than a legitimate
-   fallback. `tests/issue-3341.test.ts` locks this: it keeps a valid program
-   per reason compiling, so a premature promotion fails loudly.
-3. The matching row in `plan/log/ir-adoption.md` is promoted `mixed → ir-owned`
-   (regenerate via `pnpm run gen:ir-adoption`).
-4. Once all unintended buckets are zero + strict, the demote-to-warning channel
-   (`~1889` selector-claimed unresolvable-types fallback / `~2390` IR-build
-   throw in `src/codegen/index.ts`) can be removed for the affected kinds — the
-   final goal the stale #1530 citation referred to.
+- [x] Every **function-level unintended** bucket owned by #2856–#2859 is zero
+      in the committed playground baseline.
+- [x] Post-claim build/verify/lower/backend-legality buckets are zero on that
+      gate's production compile pass.
+- [x] Every decrease is banked by `check:ir-fallbacks`; the four child issues
+      contain their implementation/test evidence.
+- [x] Corpus-zero reasons that remain legitimate on wider source are explicitly
+      left non-strict, per #3341. No hard-error policy is inferred from a zero
+      sample count.
+- [x] Remaining async, module-init compile-once, class, multi-source, linear,
+      runtime-entry, fail-closed, and deletion work is transferred to #3518.
 
 ## Children
 
-- **#2856** — `body-shape-rejected` (31) → 0. Dominant bucket. high / horizon L.
-- **#2857** — `class-method` (6) → 0. #1370 Phase C/D/E residual. medium / horizon M.
-- **#2858** — `call-graph-closure` (7) → 0. Derivative of #2856 + #2857. medium / horizon M.
-- **#2859** — `param-type-not-resolvable` (1) → 0. TypeMap propagation. low / horizon S.
+- **#2856** — `body-shape-rejected` (31 → 0), done 2026-07-21.
+- **#2857** — `class-method` (6 → 0), done.
+- **#2858** — `call-graph-closure` (7 → 0), done.
+- **#2859** — `param-type-not-resolvable` (1 → 0), done.
 
 ## References
 
@@ -115,6 +106,22 @@ This epic is `done` when, for every unintended bucket:
 - `plan/log/ir-adoption.md` — per-AST-kind adoption status (selector-bucket
   table at the bottom maps reasons → promotable rows).
 - `src/ir/select.ts` — `IrFallbackReason` union + the per-function claim checks.
+
+## Completion summary
+
+#2855 successfully created and drained the bounded fallback buckets it was
+designed to measure. The work exposed the more important distinction that now
+drives #3518: selector acceptance and even successful overlay emission do not
+prove that the legacy body was never built. The retirement gate must classify
+typed outcomes across real compile results and all backends, then move
+preparation before emission.
+
+## Historical planning record
+
+The audit and implementation-plan sections below are retained as chronology.
+Any statement that equates a zero playground bucket with strictness or direct
+handler deletion is superseded by the reconciled acceptance criteria above and
+by #3518/#3519.
 
 ## Audit note 2026-07-17 (IR audit 01)
 
@@ -148,12 +155,12 @@ invisible to the `check:pushraw` ratchet (§3).
 
 ### Verified program state (2026-07-18)
 
-| Bucket | Count | Where it retires |
-| --- | --- | --- |
-| `body-shape-rejected` (function-level) | **14** | #2856 — three capabilities (A imported-callee calls, B first-class fn/arrow values, C module-scope mutable bindings); see #2856 plan |
-| `body-shape-rejected` (moduleLevel, #3142) | **2** (calendar.ts 9 stmts, algorithms.ts 1 stmt) | same capability C + DOM extern chains at module level; retire together with #2856's calendar cluster |
-| `async-function` (deferred) | 4 | #1373b (IR async CPS lowering — **in flight**; do not spec here) |
-| all other unintended reasons | 0 | zeroed by #1370/#1371/#1372/#1374/#1375/#2857/#2858/#2859 |
+| Bucket                                     | Count                                             | Where it retires                                                                                                                     |
+| ------------------------------------------ | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `body-shape-rejected` (function-level)     | **14**                                            | #2856 — three capabilities (A imported-callee calls, B first-class fn/arrow values, C module-scope mutable bindings); see #2856 plan |
+| `body-shape-rejected` (moduleLevel, #3142) | **2** (calendar.ts 9 stmts, algorithms.ts 1 stmt) | same capability C + DOM extern chains at module level; retire together with #2856's calendar cluster                                 |
+| `async-function` (deferred)                | 4                                                 | #1373b (IR async CPS lowering — **in flight**; do not spec here)                                                                     |
+| all other unintended reasons               | 0                                                 | zeroed by #1370/#1371/#1372/#1374/#1375/#2857/#2858/#2859                                                                            |
 
 `STRICT_IR_REASONS` (`src/codegen/index.ts:1415`) is still the **empty set**;
 `STRICT_IR_BUILD_ERRORS` is **active** with the three `ir/integration: unknown
@@ -181,19 +188,19 @@ invisible to the `check:pushraw` ratchet (§3).
 
 AC #2's original "bucket zero ⇒ add reason to `STRICT_IR_REASONS`" is
 **superseded** by the #3341 re-scope: corpus-zero is necessary but not
-sufficient; promote per-reason only when a rejection is *genuinely a bug*.
+sufficient; promote per-reason only when a rejection is _genuinely a bug_.
 Per-reason verdicts (recorded so nobody re-litigates):
 
-| Reason | Promotable? | Why |
-| --- | --- | --- |
-| name-repoint build errors | **promoted** (#3341 B, done) | builder↔finalize desync is always a bug |
-| `position-type-internal-desync` (to be peeled, below) | **yes, after the peel** | annotation-accepted-then-unmaterializable is a resolver bug |
-| `body-shape-rejected` | **not in this program's horizon** | legitimately fires on any shape from-ast can't lower yet; promotable only at IR-completeness endgame (IR-first sole path). At corpus-zero: bank the floor, keep the reason demoted, write the rationale at the `STRICT_IR_REASONS` comment |
-| `external-call`, `call-graph-closure`, `class-method`, `*-not-resolvable`, destructuring buckets | **no (as whole reasons)** | legitimate non-claimability; `call-graph-closure` additionally still fires by design in standalone/wasi (#2858 residual — caller arm is host-gated) |
+| Reason                                                                                           | Promotable?                       | Why                                                                                                                                                                                                                                        |
+| ------------------------------------------------------------------------------------------------ | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| name-repoint build errors                                                                        | **promoted** (#3341 B, done)      | builder↔finalize desync is always a bug                                                                                                                                                                                                    |
+| `position-type-internal-desync` (to be peeled, below)                                            | **yes, after the peel**           | annotation-accepted-then-unmaterializable is a resolver bug                                                                                                                                                                                |
+| `body-shape-rejected`                                                                            | **not in this program's horizon** | legitimately fires on any shape from-ast can't lower yet; promotable only at IR-completeness endgame (IR-first sole path). At corpus-zero: bank the floor, keep the reason demoted, write the rationale at the `STRICT_IR_REASONS` comment |
+| `external-call`, `call-graph-closure`, `class-method`, `*-not-resolvable`, destructuring buckets | **no (as whole reasons)**         | legitimate non-claimability; `call-graph-closure` additionally still fires by design in standalone/wasi (#2858 residual — caller arm is host-gated)                                                                                        |
 
-The epic's AC #2 should be read as: *for every unintended bucket, either the
+The epic's AC #2 should be read as: _for every unintended bucket, either the
 reason is promoted, or a recorded verdict explains why demote-to-warning is
-the permanent contract for that reason.* AC #4 (demote-channel removal at
+the permanent contract for that reason._ AC #4 (demote-channel removal at
 `index.ts` ~1889/~2390) applies per-kind once the covering reason is either
 strict or verdict-recorded.
 
@@ -202,7 +209,7 @@ strict or verdict-recorded.
 dev-h proved `resolveParamType` (`src/ir/select.ts:1159–1207`) never returns
 `null` for an annotated primitive/class — the select-side peel is unreachable.
 The REAL desync seam is **cross-layer**: `resolveParamType` answers `"object"`
-for *every* TypeReference/TypeLiteral/ArrayType (`select.ts:1192`), but the
+for _every_ TypeReference/TypeLiteral/ArrayType (`select.ts:1192`), but the
 codegen-side `resolvePositionType` (`src/codegen/index.ts:673`) /
 `objectIrTypeFromTsType` (`:931`) may then fail to materialize the `IrType`
 (e.g. method-carrying interfaces — `:815` comment), failing the overrideMap
@@ -214,7 +221,7 @@ claims, index can materialize". Opus-executable steps:
 1. **Measure first.** Opt-in recorder on the overrideMap-build bail path
    (`index.ts:1764–1812`), mirroring the `shapeNo`/`JS2WASM_IR_SHAPE_DIAG`
    pattern (byte-inert when off): record `(position, annotation SyntaxKind,
-   tsType flags, objectIrTypeFromTsType bail arm)` for every `null`
+tsType flags, objectIrTypeFromTsType bail arm)` for every `null`
    `resolvePositionType` on a selector-claimed function. Run the corpus + a
    STRIDE-50 test262 sample; produce the legitimate-vs-desync split.
 2. **Peel.** Mint `position-type-internal-desync` for the arms where the
@@ -248,8 +255,8 @@ umbrella side-slice.
 - Gate: `pnpm run check:ir-fallbacks` (CI `quality`); shape attribution:
   `JS2WASM_IR_SHAPE_DIAG=1 … -- --shape-diag`; per-file: `-- --verbose`.
 - Bank a decrease in the slice PR: `pnpm run check:ir-fallbacks --
-  --update-on-decrease` + commit `scripts/ir-fallback-baseline.json`.
-- A slice that only *moves* count between unintended buckets fails the gate —
+--update-on-decrease` + commit `scripts/ir-fallback-baseline.json`.
+- A slice that only _moves_ count between unintended buckets fails the gate —
   the unit of landability is net-unintended-negative (Step-2 lesson in #2856).
 - After promoting rows: `pnpm run gen:ir-adoption` (the generator
   cross-checks the reason union; skipping it fails `quality`).

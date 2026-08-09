@@ -23,15 +23,25 @@ import { describe, expect, it } from "vitest";
 import { analyzeSource } from "../src/checker/index.js";
 import { WasmGcEmitter } from "../src/ir/backend/wasmgc-emitter.js";
 import { LinearEmitter } from "../src/ir/backend/linear-emitter.js";
+import { collectIrDirectCallLoweringPlans } from "../src/ir/ast-lowering-plans.js";
 import type { IrVecLowering, LinearVecLowering } from "../src/ir/backend/handles.js";
+import { irUnitFuncRef } from "../src/ir/callable-bindings.js";
 import { lowerFunctionAstToIr } from "../src/ir/from-ast.js";
 import { lowerIrFunctionToWasm } from "../src/ir/lower.js";
 import { emitBinary } from "../src/emit/binary.js";
-import { defaultOperationsForLayout, irVal, planLinearVectorLayout, type IrLowerResolver } from "../src/ir/index.js";
+import {
+  defaultOperationsForLayout,
+  irVal,
+  planLinearVectorLayout,
+  type IrLowerResolver,
+  type IrType,
+} from "../src/ir/index.js";
 import type { BlockType, Instr, ValType, WasmFunction, WasmModule } from "../src/ir/types.js";
+import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
 
 const wasmgc = new WasmGcEmitter();
 const linear = new LinearEmitter();
+const irIdentities = createTestIrFunctionIdentityFactory("ir-vec-two-backend");
 
 const gcVec: IrVecLowering = {
   vecStructTypeIdx: 7,
@@ -282,14 +292,37 @@ describe("#2954 whole-function lowering through LinearEmitter runs in linear mem
   };
 
   /** Lower a named top-level function from `source` to IR via the frontend. */
-  function irOf(source: string, name: string, calleeTypes?: Map<string, { params: unknown[]; returnType: unknown }>) {
+  function irOf(
+    source: string,
+    name: string,
+    calleeTypes?: Map<string, { params: IrType[]; returnType: IrType | null }>,
+  ) {
     const ast = analyzeSource(source);
     const decl = ast.sourceFile.statements.find(
       (s): s is ts.FunctionDeclaration => ts.isFunctionDeclaration(s) && s.name?.text === name,
     );
     if (!decl) throw new Error(`no function ${name} in source`);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return lowerFunctionAstToIr(decl, { exported: true, calleeTypes: calleeTypes as any }).main;
+    const ownerIdentity = irIdentities.next(name);
+    const directCalls = calleeTypes
+      ? collectIrDirectCallLoweringPlans(
+          decl,
+          ownerIdentity.unitId,
+          new Map(
+            [...calleeTypes].map(([calleeName, signature]) => [
+              calleeName,
+              {
+                target: irUnitFuncRef(calleeName === name ? ownerIdentity : irIdentities.next(`callee:${calleeName}`)),
+                signature,
+              },
+            ]),
+          ),
+        )
+      : undefined;
+    return lowerFunctionAstToIr(decl, {
+      ownerUnitId: ownerIdentity.unitId,
+      exported: true,
+      directCalls,
+    }).main;
   }
 
   /** Wrap one lowered WasmFunction (index 0, exported) in a linear-memory module. */
@@ -319,7 +352,7 @@ describe("#2954 whole-function lowering through LinearEmitter runs in linear mem
     name: string,
     params: ValType[],
     results: ValType[],
-    calleeTypes?: Map<string, { params: unknown[]; returnType: unknown }>,
+    calleeTypes?: Map<string, { params: IrType[]; returnType: IrType | null }>,
   ): Promise<(...a: number[]) => number> {
     const ir = irOf(source, name, calleeTypes);
     const linFn = lowerIrFunctionToWasm(ir, resolver, new LinearEmitter()).func;

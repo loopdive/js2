@@ -63,6 +63,9 @@ describe("#3303 — parseFrontmatterCountReason", () => {
     expect(parseFrontmatterCountReason(text, REGRESSIONS_ALLOW_KEY)).toEqual({
       count: 2700,
       reason: "#3285 assert_throws tightening, see #3286",
+      // #3596 added an optional nested `tests:` list; a declaration without one
+      // parses exactly as before and reports an empty list.
+      tests: [],
     });
   });
 
@@ -358,7 +361,13 @@ describe("#3303 — CLI gate behaviour (rebase-mode, REGRESSIONS_ALLOW_FILE hook
     expect(r.status).toBe(1);
   });
 
-  it("keeps trap-growth-allow inert without an oracle bump (#3370)", () => {
+  // #3596 SUPERSEDES the original "#3370 inert without an oracle bump" case.
+  // The PROPERTY it protected is unchanged and still asserted below: a BARE
+  // count:/reason: declaration grants nothing on a same-oracle PR. What changed
+  // is only the mechanism — instead of never being read, the declaration is now
+  // read and then REFUSED for being uncheckable, which fails with a message that
+  // says what to do. The PR is blocked either way (status 1).
+  it("a bare trap-growth-allow still grants nothing without an oracle bump (#3370/#3596)", () => {
     const allowFile = join(tmp, "9999-combined-same-oracle.md");
     writeFileSync(allowFile, combinedAllowanceFileText(100, 100));
     const r = runDiffCli(rebaseRows(1, { sameOracle: true, traps: 1 }), {
@@ -366,9 +375,136 @@ describe("#3303 — CLI gate behaviour (rebase-mode, REGRESSIONS_ALLOW_FILE hook
       TRAP_GROWTH_ALLOW_FILE: allowFile,
       TRAP_RATCHET_TOLERANCE: "0",
     });
-    expect(r.out).not.toContain("trap-growth-allow (#3370): maximum category growth");
-    expect(r.out).toMatch(/GATE FAIL: trap category "null_deref" grew/);
+    expect(r.out).toMatch(/must NAME the reclassified tests/);
     expect(r.status).toBe(1);
+  });
+
+  // #3596 — the load-bearing containment at CLI level. `rebaseRows`' trap rows
+  // are `pass` on the baseline, so naming one is a REGRESSION claim, not a
+  // reclassification, and must be refused even though the ceiling would cover it.
+  it("refuses a named trap-growth-allow test that was passing on the baseline (#3596)", () => {
+    const allowFile = join(tmp, "9999-named-but-passing.md");
+    writeFileSync(
+      allowFile,
+      fm(
+        `regressions-allow:\n  count: 100\n  reason: "fixture reclassification"\n` +
+          `trap-growth-allow:\n  count: 100\n  reason: "fixture claim"\n  tests:\n    - test/trap0/a/b/c/t.js`,
+      ),
+    );
+    const r = runDiffCli(rebaseRows(1, { sameOracle: true, traps: 1 }), {
+      REGRESSIONS_ALLOW_FILE: allowFile,
+      TRAP_GROWTH_ALLOW_FILE: allowFile,
+      TRAP_RATCHET_TOLERANCE: "0",
+    });
+    expect(r.out).toMatch(/was "pass" on the baseline/);
+    expect(r.out).toMatch(/REGRESSION, not a reclassification/);
+    expect(r.status).toBe(1);
+  });
+
+  // #3596 — the case the valve exists for: a test that ALREADY failed and only
+  // changed the flavour of its failure (fail → trap), correctly named.
+  it("honours a named trap-growth-allow for a genuine fail→trap reclassification (#3596)", () => {
+    const allowFile = join(tmp, "9999-named-reclass.md");
+    writeFileSync(
+      allowFile,
+      fm(
+        `trap-growth-allow:\n  count: 1\n  reason: "pre-existing latent trap, unmasked"\n` +
+          `  tests:\n    - test/zip/a/b/c/t.js`,
+      ),
+    );
+    const rows = {
+      base: [
+        {
+          oracle_version: 1,
+          file: "test/zip/a/b/c/t.js",
+          status: "fail",
+          error_category: "assertion_fail",
+          wasm_sha: "z1",
+        },
+        {
+          oracle_version: 1,
+          file: "test/win/a/b/c/t.js",
+          status: "fail",
+          error_category: "assertion_fail",
+          wasm_sha: "w1",
+        },
+      ],
+      cand: [
+        {
+          oracle_version: 1,
+          file: "test/zip/a/b/c/t.js",
+          status: "fail",
+          error_category: "null_deref",
+          wasm_sha: "z2",
+        },
+        { oracle_version: 1, file: "test/win/a/b/c/t.js", status: "pass", wasm_sha: "w2" },
+      ],
+    };
+    const r = runDiffCli(rows, { TRAP_GROWTH_ALLOW_FILE: allowFile, TRAP_RATCHET_TOLERANCE: "0" });
+    expect(r.out).toMatch(/reclassification VERIFIED for 1 declared test/);
+    expect(r.out).not.toMatch(/GATE FAIL/);
+    expect(r.status).toBe(0);
+  });
+
+  // #3596 MODE-INDEPENDENCE. The declaration's own SHAPE selects the contract,
+  // not the run mode. Motivation is concrete: #3583 declared a `tests:` list and
+  // merged, but an oracle v10→v11 bump happened to be in flight, so the run took
+  // the rebase path and the named list was never verified. Whether a PR lands
+  // during a re-baseline is not something the author can predict, so identical
+  // frontmatter must not receive weaker enforcement purely because of timing.
+  describe("#3596 — a `tests:` list is enforced in BOTH modes", () => {
+    const namedButPassingAllowance = (dir: string, name: string) => {
+      const f = join(dir, name);
+      writeFileSync(
+        f,
+        fm(
+          `regressions-allow:\n  count: 100\n  reason: "fixture reclassification"\n` +
+            `trap-growth-allow:\n  count: 100\n  reason: "fixture claim"\n  tests:\n    - test/trap0/a/b/c/t.js`,
+        ),
+      );
+      return f;
+    };
+
+    // `rebaseRows`' trap rows are `pass` on the baseline, so naming one is a
+    // REGRESSION claim. Before this change, rebase mode accepted it unchecked.
+    it("REBASE mode: refuses a named test that was passing on the baseline", () => {
+      const allowFile = namedButPassingAllowance(tmp, "9999-named-passing-rebase.md");
+      const r = runDiffCli(rebaseRows(1, { traps: 1 }), {
+        REGRESSIONS_ALLOW_FILE: allowFile,
+        TRAP_GROWTH_ALLOW_FILE: allowFile,
+        TRAP_RATCHET_TOLERANCE: "0",
+      });
+      expect(r.out).toMatch(/was "pass" on the baseline/);
+      expect(r.status).toBe(1);
+    });
+
+    it("NON-REBASE mode: refuses the same declaration identically", () => {
+      const allowFile = namedButPassingAllowance(tmp, "9999-named-passing-same-oracle.md");
+      const r = runDiffCli(rebaseRows(1, { sameOracle: true, traps: 1 }), {
+        REGRESSIONS_ALLOW_FILE: allowFile,
+        TRAP_GROWTH_ALLOW_FILE: allowFile,
+        TRAP_RATCHET_TOLERANCE: "0",
+      });
+      expect(r.out).toMatch(/was "pass" on the baseline/);
+      expect(r.status).toBe(1);
+    });
+
+    // Backward compatibility, the reason this is shape-driven rather than
+    // "always check": a BARE count with no `tests:` list is a valid #3370
+    // declaration and must keep working in rebase mode. Making the check
+    // unconditional would hard-fail these mid-re-baseline.
+    it("REBASE mode: a bare count (no tests:) keeps #3370 semantics and is NOT checked", () => {
+      const allowFile = join(tmp, "9999-bare-rebase.md");
+      writeFileSync(allowFile, combinedAllowanceFileText(100, 1));
+      const r = runDiffCli(rebaseRows(5, { traps: 1 }), {
+        REGRESSIONS_ALLOW_FILE: allowFile,
+        TRAP_GROWTH_ALLOW_FILE: allowFile,
+        TRAP_RATCHET_TOLERANCE: "0",
+      });
+      expect(r.out).toContain("trap-growth-allow (#3370): maximum category growth 1 within declared");
+      expect(r.out).not.toMatch(/must NAME the reclassified tests/);
+      expect(r.status).toBe(0);
+    });
   });
 
   it("resets compile-time gate signals when an oracle bump changes the harness workload (#3370)", () => {

@@ -2,15 +2,17 @@
 id: 680
 title: "Wasm-native generators (state machines) with optional JS host fallback"
 status: ready
-completed: 2026-06-12
 created: 2026-03-20
-updated: 2026-06-03
+updated: 2026-07-24
 priority: high
 feasibility: hard
 reasoning_effort: max
 goal: standalone-mode
-sprint: Backlog
+sprint: current
 required_by: [681, 735, 762, 1042]
+loc-budget-allow:
+  - src/codegen/index.ts
+  - src/ir/from-ast.ts
 files:
   src/codegen/statements.ts:
     breaking:
@@ -292,3 +294,61 @@ for completeness, treat as a low-priority #680 follow-up, not a conformance slic
 ## Reopened 2026-07-20 (harvest cross-reference)
 
 Marked `status: done` but the test262 harvest shows **398 live failures still citing #680** in the error field. Premature close — reopened as `ready`. See the sprint-73 harvest note.
+
+## Regression-fix slice (2026-07-24, dev-opus-2) — #3341/#3519 STRICT-IR regression fixed; #680 STAYS OPEN
+
+**Scope: this is a REGRESSION FIX under #680, NOT a completion.** #680 the
+umbrella feature still has **364 live test262 failures** citing it (the broader
+native-generator scope — for-of/spread/delegation/async-gen edges), so the issue
+stays `status: ready`. This slice fixes ONLY the specific #3341/#3519 STRICT-IR
+regression that broke *basic* standalone generator compilation.
+
+Surfaced by the invisible-guard-test audit (`tests/issue-680.test.ts` silently
+red on main, outside required checks — the #3008 gap). **A basic standalone
+generator regressed from compile+run to a HARD COMPILE ERROR.**
+
+**Verify-first + bisect (measured, not assumed).** `function* gen(){ yield 1;
+yield 2; return 3 }` + a caller doing `g.next()` under `--target standalone`:
+GOOD at `d093f05` → BAD at `a3a3a76`. **Culprit: #3341 (PR #3249,
+`issue-3341-strict-ir-buildorerrors`), 2026-07-17** — a 7-day-old regression,
+NOT recent. Two independent hard-error paths, both from #3341/#3519 promoting IR
+fallbacks to hard errors on a premise validated on a scope that missed valid
+standalone programs:
+
+1. **`gen`** — the IR generator path emits a ref to the host-only
+   `__gen_create_buffer`, which `addGeneratorImports` (registry/imports.ts)
+   intentionally **skips** under standalone/wasi (the native `__GenState` path
+   serves those targets). #3341 promoted that `unknown-function-ref` invariant to
+   hard. The premise ("no valid TS source produces an unresolvable ref on a
+   claimed function") was validated on the **gc-target** playground corpus,
+   missing the standalone-target dimension.
+2. **`run`** — the caller's `.next()` hit `ir/from-ast: method call .next(...) on
+   externref not in slice 4`, thrown as a **plain `Error`** → classified as the
+   untyped `unexpected-internal-throw` invariant → hard (#3519). Its sibling
+   property-write "not in slice 4" throw was already a typed `IrUnsupportedError`;
+   the method-call one being a plain Error was an inconsistency.
+
+**Fix (two scoped source changes).**
+- `src/codegen/index.ts` (`formatIrPathFallbackDiagnostic`): an
+  `unknown-function-ref` invariant demotes to warning ONLY when the target is
+  standalone/wasi AND the ref is a host-only generator import (exactly the set
+  `addGeneratorImports` omits). Genuine desync still hard-errors.
+- `src/ir/from-ast.ts` (~L4941): type the method-call "not in slice 4" throw as
+  `IrUnsupportedError("method-call-unsupported")` (new code in `outcomes.ts`),
+  matching its property-write sibling — a not-yet-adopted construct is
+  UNSUPPORTED (→ warning/legacy), not an unexpected bug. Un-breaks EVERY
+  method-call-not-in-slice-4 program, not just generators (merge_group-measured).
+
+Both leave #3519's genuine-desync / genuinely-unexpected-throw hard-erroring
+intact (its 3 tests stay green). `tests/issue-680.test.ts` refreshed (the 2 stale
+host-import-presence subtests → native host-free assertions) and folded into the
+required guard suite (`tests/guard-suite.json`, #3552) to close the #3008
+invisibility. Regression guard: standalone `function* gen(){yield 1;yield 2;
+return 3}` + caller compiles host-free, `run() === 1235`.
+
+**Broader lesson (flagged for the next STRICT_IR / classify tightening):** both
+over-strict promotions (#3341 `unknown-function-ref`, #3519
+`unexpected-internal-throw`) were validated on a scope (gc-target /
+recognized-throws) that did not exercise the fallback-demotion cases across ALL
+targets. A future tightening must check that valid standalone programs still
+demote.

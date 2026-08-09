@@ -66,7 +66,9 @@ import {
 import type { FuncTypeDef, Instr } from "../src/ir/types.js";
 import { createEmptyModule } from "../src/ir/types.js";
 import { addFuncType } from "../src/codegen/registry/types.js";
+import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
 
+const identities = createTestIrFunctionIdentityFactory("issue-3053-u1-ir-member-read");
 const DYN: IrType = irDynamic();
 const F64: IrType = irVal({ kind: "f64" });
 
@@ -109,7 +111,7 @@ function makeHostCtxWithHelper(): CodegenContext {
 
 describe("#3053 U1 — emitDynMemberGet builds a verifier-clean dyn.member_get node", () => {
   it("appends a dyn.member_get node with a dynamic result and registers typeOf", () => {
-    const b = new IrFunctionBuilder("read1", [DYN], true);
+    const b = new IrFunctionBuilder(identities.next("read1"), [DYN], true);
     const recv = b.addParam("recv", DYN);
     const key = b.addParam("key", DYN);
     b.openBlock();
@@ -123,7 +125,7 @@ describe("#3053 U1 — emitDynMemberGet builds a verifier-clean dyn.member_get n
   });
 
   it("rejects a non-dynamic receiver at construction (carrier-only)", () => {
-    const b = new IrFunctionBuilder("readBadRecv", [DYN], true);
+    const b = new IrFunctionBuilder(identities.next("readBadRecv"), [DYN], true);
     const recv = b.addParam("recv", F64);
     const key = b.addParam("key", DYN);
     b.openBlock();
@@ -131,7 +133,7 @@ describe("#3053 U1 — emitDynMemberGet builds a verifier-clean dyn.member_get n
   });
 
   it("rejects a non-dynamic key at construction (carrier-only)", () => {
-    const b = new IrFunctionBuilder("readBadKey", [DYN], true);
+    const b = new IrFunctionBuilder(identities.next("readBadKey"), [DYN], true);
     const recv = b.addParam("recv", DYN);
     const key = b.addParam("key", F64);
     b.openBlock();
@@ -139,7 +141,7 @@ describe("#3053 U1 — emitDynMemberGet builds a verifier-clean dyn.member_get n
   });
 
   it("a hand-crafted dyn.member_get with a concrete operand fails the verifier (defense in depth)", () => {
-    const b = new IrFunctionBuilder("readVerify", [DYN], true);
+    const b = new IrFunctionBuilder(identities.next("readVerify"), [DYN], true);
     const recv = b.addParam("recv", DYN);
     const concrete = b.addParam("c", F64);
     b.openBlock();
@@ -161,7 +163,7 @@ describe("#3053 U1 — emitDynMemberGet builds a verifier-clean dyn.member_get n
   });
 
   it("a hand-crafted dyn.member_get with a non-dynamic RESULT fails the verifier", () => {
-    const b = new IrFunctionBuilder("readVerifyRes", [DYN], true);
+    const b = new IrFunctionBuilder(identities.next("readVerifyRes"), [DYN], true);
     const recv = b.addParam("recv", DYN);
     const key = b.addParam("key", DYN);
     b.openBlock();
@@ -251,7 +253,7 @@ function fnWithMemberGet(recvFirst: boolean): IrFunction {
   const result = asValueId(2);
   void recvFirst;
   return {
-    name: "memberRead",
+    ...identities.next("memberRead"),
     params: [
       { value: recv, type: DYN, name: "recv" },
       { value: key, type: DYN, name: "key" },
@@ -319,7 +321,7 @@ describe("#3053 U1 — lower.ts drives the handle: [recv][key][call] in order", 
     const badKey = asValueId(1);
     const result = asValueId(2);
     const fn: IrFunction = {
-      name: "badRead",
+      ...identities.next("badRead"),
       params: [
         { value: recv, type: DYN, name: "recv" },
         { value: badKey, type: F64, name: "key" }, // concrete key

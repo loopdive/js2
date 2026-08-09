@@ -98,7 +98,7 @@ run_url=$(jq -r '.run_url // ""' "$FILE")
 # Compose a reminder tailored to the result. Gate on net_per_test (per-test),
 # not snapshot_delta (can lie when the committed baseline is stale — see #1082).
 if [ "$conclusion" = "success" ] && [ "$net_per_test" != "unknown" ] && [ "$net_per_test" -ge 0 ] 2>/dev/null; then
-  reminder="CI completed for YOUR PR #$pr_num: conclusion=success, net_per_test=+$net_per_test (improvements=$improvements, regressions=$regressions, snapshot_delta=$snapshot_delta). You may self-merge per .claude/skills/dev-self-merge.md if ratio and scope criteria also hold. Otherwise stay on your current task."
+  reminder="CI completed for YOUR PR #$pr_num: conclusion=success, net_per_test=+$net_per_test (improvements=$improvements, regressions=$regressions, snapshot_delta=$snapshot_delta). You may self-merge per .claude/skills/dev-self-merge/SKILL.md if ratio and scope criteria also hold. Otherwise stay on your current task."
 elif [ "$conclusion" = "success" ]; then
   reminder="CI completed for YOUR PR #$pr_num: conclusion=success but net_per_test=$net_per_test (improvements=$improvements, regressions=$regressions, snapshot_delta=$snapshot_delta). Context-switch back, sample the regressions, decide whether to narrow the fix or close. Run URL: $run_url"
 else

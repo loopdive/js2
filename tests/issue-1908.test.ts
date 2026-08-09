@@ -75,8 +75,8 @@ describe("#1908 standalone isSameValue residual bucket split", () => {
     expect(byId.get("issamevalue-invalid-wasm")?.sample_files).toContain(
       "test/language/statements/async-generator/dflt-params-ref-self.js",
     );
-    expect(byId.get("class-prototype-private-descriptor")?.count).toBe(1);
-    expect(byId.get("class-prototype-private-descriptor")?.sample_signatures).toContain(
+    expect(byId.get("class-element-private-descriptor")?.count).toBe(1);
+    expect(byId.get("class-element-private-descriptor")?.sample_signatures).toContain(
       "assertion_fail:returned # - assert ## at L#: assert.sameValue(C[''], 'get string');",
     );
     expect(report.root_cause_map.unclassified.count).toBe(0);

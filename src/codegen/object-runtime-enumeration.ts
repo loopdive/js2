@@ -27,6 +27,10 @@ import { addUnionImportsViaRegistry } from "./shared.js";
 import { getOrRegisterVecBaseType } from "./registry/types.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
 import { buildExternGetIdxBody } from "./object-runtime.js";
+import { bagKeysIf } from "./carrier-bag-visibility.js"; // (#4010 S3) carrier-bag key enumeration
+// (#4160) prototype-index companion consult for the vec OOB Has (resolves to
+// `undefined` unless `ctx.standalone && ctx.protoIndexDirty` reserved it).
+import { protoIndexHasIdxInstrs } from "./proto-index-store.js";
 
 /**
  * Everything the enumeration/array-like/object-static block reads from the
@@ -107,17 +111,13 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
       // vec = __objvec_new()
       { op: "call", funcIdx: objVecNewIdx },
       { op: "local.set", index: 7 },
-      // any = any.convert_extern(obj); if !$Object → return empty vec
+      // any = any.convert_extern(obj); if !$Object → the carrier bag's keys, else empty (#4010 S3)
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "local.tee", index: 1 },
       { op: "ref.test", typeIdx: objectTypeIdx },
       { op: "i32.eqz" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "local.get", index: 7 }, { op: "return" }],
-      },
+      bagKeysIf(ctx, { vecLocal: 7, includeNonEnum: false }),
       // o = cast<$Object>(any) ; arr = __obj_ordered(o) ; cap = arr.len
       { op: "local.get", index: 1 },
       { op: "ref.cast", typeIdx: objectTypeIdx },
@@ -222,17 +222,13 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
       { op: "local.set", index: 7 },
       { op: "call", funcIdx: newPlainObjectIdx },
       { op: "local.set", index: 8 },
-      // any = any.convert_extern(obj); if !$Object → return empty vec
+      // any = any.convert_extern(obj); if !$Object → the carrier bag's keys, else empty (#4010 S3)
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "local.tee", index: 1 },
       { op: "ref.test", typeIdx: objectTypeIdx },
       { op: "i32.eqz" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "local.get", index: 7 }, { op: "return" }],
-      },
+      bagKeysIf(ctx, { vecLocal: 7, includeNonEnum: false }),
       // cur = cast<$Object>(any)
       { op: "local.get", index: 1 },
       { op: "ref.cast", typeIdx: objectTypeIdx },
@@ -811,6 +807,14 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
     // fast path is untouched). Standalone-gated; host import owns the path in
     // gc/host mode.
     const vecBaseHasIdx = objArrayLikeArms ? getOrRegisterVecBaseType(ctx) : -1;
+    // (#4160) Under `protoIndexDirty`, an OOB index on a real array is a
+    // prototype lookup (§7.3.12 walks the chain; the chain is
+    // Array.prototype → Object.prototype), so the miss consults the
+    // prototype-index companions instead of answering a constant 0. In-bounds
+    // stays the dense-presence answer, byte-for-byte. `protoHasConsult` is
+    // `undefined` for every flag-clear / host compile → the exact
+    // pre-existing `i32.and; return` tail is emitted.
+    const protoHasConsult = objArrayLikeArms ? protoIndexHasIdxInstrs(ctx, 1, 1) : undefined;
     const vecHasArm: Instr[] = objArrayLikeArms
       ? [
           { op: "local.get", index: 2 },
@@ -830,6 +834,16 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
               { op: "struct.get", typeIdx: vecBaseHasIdx, fieldIdx: 0 },
               { op: "i32.lt_s" },
               { op: "i32.and" },
+              ...(protoHasConsult === undefined
+                ? []
+                : ([
+                    {
+                      op: "if",
+                      blockType: { kind: "val", type: { kind: "i32" } },
+                      then: [{ op: "i32.const", value: 1 }],
+                      else: protoHasConsult,
+                    },
+                  ] satisfies Instr[])),
               { op: "return" },
             ],
           },

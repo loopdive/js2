@@ -1,54 +1,55 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * #2980 conservative Promise-lane fallback — a module containing ANY async
- * generator keeps BOTH carrier gates OFF on the widened-standalone measure lane
- * (`isStandalonePromiseActive` / `isStandaloneThenChainNativeActive` →
- * `ctx.standalone && !ctx.moduleHasAsyncGen`), so its whole promise pipeline
- * stays host-consistent (a native `$Promise` never feeds the legacy `__gen_*`
- * buffer / a host `.then` over `__gen_next` — the 07-09 async-generator −4 in
- * the carrier A/B).
+ * #2980 conservative Promise-lane fallback, as refined by #3132 PR-2
+ * (rewritten by #3558 — the original assertions guarded superseded behavior
+ * and sat red for 10 days, invisible to per-PR CI).
  *
- * The widen is measured via `JS2WASM_ASYNC_CARRIER_WIDEN` (read at
- * async-scheduler module-load), so this file sets the env BEFORE a DYNAMIC
- * import of the compiler — a fresh module graph (vitest isolates test files) so
- * the toggle is live. CI never sets the env, so the fallback is dead code there;
- * this test exercises the measure path directly.
+ * History of the gate this file guards
+ * (`widenAsyncGenFallback` in src/codegen/async-scheduler.ts):
+ *  - #2980 (2026-07-09, `b66d7e2`): ANY async generator in the module kept
+ *    BOTH standalone carrier gates OFF (`moduleHasAsyncGen`) so a native
+ *    `$Promise` never fed the legacy `__gen_*` host buffer (the 07-09
+ *    async-generator −4). Measured via the `JS2WASM_ASYNC_CARRIER_WIDEN` env
+ *    toggle, which this file originally set.
+ *  - 2026-07-10: the widen FLIPPED to production (`2a2aa49`/PR #2867) and the
+ *    env toggle was RETIRED — the on-arm is now the default standalone
+ *    behavior, so setting the env is a no-op.
+ *  - #3132 PR-2 (2026-07-13, `90ba2a8`/PR #3013): the blanket fallback was
+ *    refined to `moduleHasNonDrivableAsyncGen` — a module whose async gens are
+ *    ALL drivable under the carrier keeps the carrier ON (native `$Promise`,
+ *    NO host imports: the host-free floor). Only a module with at least one
+ *    NON-drivable gen (method exclusions / rest param / unbounded body /
+ *    unsafe spill / stem collision) still falls back to the host lane, because
+ *    only there a legacy `__gen_*` buffer exists to mix into.
+ *
+ * So the CURRENT invariants, asserted from the binary's import section:
+ *  1. all-drivable async-gen module → native carrier, ZERO imports;
+ *  2. non-drivable async-gen module → host lane fires (legacy `__gen_*` /
+ *     `__get_caught_exception` imports present — no native/legacy mixing);
+ *  3. non-async-gen module → native carrier, no host Promise imports.
  */
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import { compile } from "../src/index.js";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let compile: (src: string, opts: any) => Promise<any>;
-
-beforeAll(async () => {
-  process.env.JS2WASM_ASYNC_CARRIER_WIDEN = "1";
-  ({ compile } = await import("../src/index.js"));
-});
-
-// Belt-and-suspenders: vitest isolates test files (fresh module registry per
-// file), but unset the process-wide toggle so a reused worker can't leak the
-// widen into a later file's compiler load.
-afterAll(() => {
-  // Empty (≠ "1") is equivalent to absent for the `=== "1"` gate.
-  process.env.JS2WASM_ASYNC_CARRIER_WIDEN = "";
-});
-
-async function standaloneImports(src: string): Promise<string[]> {
+async function standaloneBinaryImports(src: string): Promise<string[]> {
   const r = await compile(src, { fileName: "t.ts", target: "standalone", nativeStrings: true });
   expect(r.success, r.success ? "" : `CE: ${r.errors?.[0]?.message}`).toBe(true);
-  return (r.imports ?? []).map((i: { name: string }) => i.name);
+  expect(WebAssembly.validate(r.binary)).toBe(true);
+  return WebAssembly.Module.imports(new WebAssembly.Module(r.binary)).map((i) => `${i.module}.${i.name}`);
 }
 
-describe("#2980 conservative Promise-lane fallback (widened-standalone measure)", () => {
-  it("async-gen module: Promise.reject falls BACK to host (whole lane host-consistent)", async () => {
-    const imports = await standaloneImports(`
+describe("#2980/#3132 Promise-lane carrier gates (standalone, post-widen)", () => {
+  it("all-drivable async-gen module: Promise.reject stays NATIVE (#3132 PR-2 — no host imports at all)", async () => {
+    const imports = await standaloneBinaryImports(`
       export async function* g() { yield Promise.reject(new Error("x")); }
     `);
-    // Fallback fired → host Promise construction is present, NOT the native $Promise.
-    expect(imports).toContain("Promise_reject");
+    // The whole point of the #3132 PR-2 refinement: an all-drivable module
+    // keeps the carrier ON and loses every env.* import (host-free floor).
+    expect(imports).toEqual([]);
   });
 
-  it("async-gen module: a Promise.resolve elsewhere ALSO stays host under the fallback", async () => {
-    const imports = await standaloneImports(`
+  it("all-drivable async-gen module: a Promise.resolve elsewhere ALSO stays native", async () => {
+    const imports = await standaloneBinaryImports(`
       async function* g(): AsyncGenerator<number> { yield 1; }
       export async function f(): Promise<number> {
         const p = await Promise.resolve(7);
@@ -56,21 +57,40 @@ describe("#2980 conservative Promise-lane fallback (widened-standalone measure)"
         return p;
       }
     `);
-    expect(imports).toContain("Promise_resolve");
+    expect(imports).toEqual([]);
   });
 
-  it("NON-async-gen module: Promise.reject stays NATIVE (fallback is scoped, widen still wins)", async () => {
-    const imports = await standaloneImports(`
+  it("NON-drivable async-gen module (stem collision): the #2980 host fallback still fires", async () => {
+    // Two object-literal async-gen methods share the stem `g` → the second is
+    // non-drivable (stem collision) → `moduleHasNonDrivableAsyncGen` → both
+    // carrier gates OFF → the gens run on the legacy `__gen_*` HOST buffer.
+    // This is the still-live #2980 lane: the module must be host-consistent
+    // (legacy buffer imports present), never a native $Promise mixed into it.
+    const imports = await standaloneBinaryImports(`
+      const o1 = { async *g(): AsyncGenerator<number> { yield 1; } };
+      const o2 = { async *g(): AsyncGenerator<number> { yield 2; } };
+      export async function f(): Promise<number> {
+        const p = await Promise.resolve(7);
+        for await (const x of o1.g()) { void x; }
+        for await (const x of o2.g()) { void x; }
+        return p;
+      }
+    `);
+    expect(imports).toContain("env.__gen_next");
+    expect(imports).toContain("env.__get_caught_exception");
+  });
+
+  it("NON-async-gen module: Promise.reject stays NATIVE (widen wins, unchanged since #2980)", async () => {
+    const imports = await standaloneBinaryImports(`
       export async function f(): Promise<number> {
         try { await Promise.reject(new Error("x")); return 0; } catch (e) { return 1; }
       }
     `);
-    // No async generator → widen active → native $Promise construction, no host import.
-    expect(imports).not.toContain("Promise_reject");
-    expect(imports).not.toContain("Promise_resolve");
+    expect(imports).not.toContain("env.Promise_reject");
+    expect(imports).not.toContain("env.Promise_resolve");
   });
 
-  it("the 5 A/B async-gen regressions pass host-consistently under the fallback (spot-check one)", async () => {
+  it("the 5 A/B async-gen regressions compile host-consistently (spot-check one)", async () => {
     // named-yield-promise-reject-next shape: rejecting yield + close, .next().then().
     const r = await compile(
       `
@@ -81,7 +101,6 @@ describe("#2980 conservative Promise-lane fallback (widened-standalone measure)"
     `,
       { fileName: "t.ts", target: "standalone", nativeStrings: true },
     );
-    // Must compile (the widen no longer feeds a native $Promise into the legacy gen).
     expect(r.success, r.success ? "" : `CE: ${r.errors?.[0]?.message}`).toBe(true);
   });
 });

@@ -21,12 +21,8 @@ import {
   emitObjectPatternRestFromVec,
   emitStandaloneObjectRest,
 } from "../destructuring-params.js";
-import {
-  emitAssignToTarget,
-  findUnresolvableInArrayPattern,
-  findUnresolvableInObjectPattern,
-  isStrictContext,
-} from "../expressions/assignment.js";
+import { emitAssignToTarget, isStrictContext } from "../expressions/assignment.js";
+import { findUnresolvableInArrayPattern, findUnresolvableInObjectPattern } from "../expressions/unresolvable-assign.js";
 import { emitCoercedLocalSet, emitThrowTypeError } from "../expressions/helpers.js";
 import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "../expressions/late-imports.js";
 import { arrayIteratorOverrideGlobalIdx } from "../expressions/proto-override.js";
@@ -61,10 +57,30 @@ import { collectInstrs } from "./shared.js";
  * `if (syncGlobalIdx !== undefined) { local.get targetLocal; global.set … }`.
  * Extracted from 10 identical inline copies (#3269 DRY). NOT for the
  * boxed-capture variants that struct.get through the cell first (different shape).
+ *
+ * (#3024) A module global's declared slot type can differ from the
+ * destructured local's type — e.g. an array-rest target `for ([...y] of …)`
+ * materializes a `(ref null vec)` local while the untyped module `var y` global
+ * is `externref`. The raw `local.get; global.set` then emits invalid Wasm
+ * (`global.set expected externref, found local.get of type (ref null N)`).
+ * Coerce local→global type before the store, mirroring the binding-form
+ * `syncDestructuredLocalsToGlobals` (destructuring.ts). Byte-inert whenever the
+ * types already match (the previously-valid shapes); the coercion only fires on
+ * shapes that were ALWAYS invalid Wasm before, so no valid module changes.
  */
-function emitGlobalSyncWriteback(fctx: FunctionContext, targetLocal: number, syncGlobalIdx: number | undefined): void {
+function emitGlobalSyncWriteback(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  targetLocal: number,
+  syncGlobalIdx: number | undefined,
+): void {
   if (syncGlobalIdx !== undefined) {
     fctx.body.push({ op: "local.get", index: targetLocal });
+    const localType = getLocalType(fctx, targetLocal);
+    const globalType = ctx.mod.globals[localGlobalIdx(ctx, syncGlobalIdx)]?.type;
+    if (localType && globalType && !valTypesMatch(localType, globalType)) {
+      coerceType(ctx, fctx, localType, globalType);
+    }
     fctx.body.push({ op: "global.set", index: syncGlobalIdx });
   }
 }
@@ -891,7 +907,7 @@ export function compileForOfAssignDestructuring(
         coerceType(ctx, fctx, fieldType, targetType);
       }
       emitCoercedLocalSet(ctx, fctx, targetLocal, effectiveStackType);
-      emitGlobalSyncWriteback(fctx, targetLocal, targetSyncGlobalIdx);
+      emitGlobalSyncWriteback(ctx, fctx, targetLocal, targetSyncGlobalIdx);
     }
   } else if (ts.isArrayLiteralExpression(expr)) {
     // for ([x, y] of arr) — elem is a vec struct or tuple struct, extract by index
@@ -951,7 +967,7 @@ export function compileForOfAssignDestructuring(
               fctx.body.push({ op: "local.set", index: oobLocal! });
             });
             fctx.body.push(...instrs);
-            emitGlobalSyncWriteback(fctx, oobLocal, oobSyncGlobalIdx);
+            emitGlobalSyncWriteback(ctx, fctx, oobLocal, oobSyncGlobalIdx);
           }
         }
       }
@@ -1005,7 +1021,7 @@ export function compileForOfAssignDestructuring(
                 fctx.body.push({ op: "local.set", index: oobLocal! });
               });
               fctx.body.push(...instrs);
-              emitGlobalSyncWriteback(fctx, oobLocal, oobSyncGlobalIdx);
+              emitGlobalSyncWriteback(ctx, fctx, oobLocal, oobSyncGlobalIdx);
             }
           }
           continue;
@@ -1105,7 +1121,7 @@ export function compileForOfAssignDestructuring(
           fctx.body.push({ op: "local.set", index: targetLocal });
         }
 
-        emitGlobalSyncWriteback(fctx, targetLocal, tupleSyncGlobalIdx);
+        emitGlobalSyncWriteback(ctx, fctx, targetLocal, tupleSyncGlobalIdx);
       }
     } else {
       // Vec array assignment destructuring
@@ -1343,7 +1359,7 @@ export function compileForOfAssignDestructuring(
           }
         }
 
-        emitGlobalSyncWriteback(fctx, targetLocal, vecSyncGlobalIdx);
+        emitGlobalSyncWriteback(ctx, fctx, targetLocal, vecSyncGlobalIdx);
       }
     }
   }
@@ -1437,7 +1453,7 @@ function emitForOfRestAssignment(
   }
   fctx.body.push({ op: "local.set", index: targetLocal });
 
-  emitGlobalSyncWriteback(fctx, targetLocal, restSyncGlobalIdx);
+  emitGlobalSyncWriteback(ctx, fctx, targetLocal, restSyncGlobalIdx);
   return true;
 }
 
@@ -1557,7 +1573,7 @@ function emitVecRestAssignment(
   }
   fctx.body.push({ op: "local.set", index: targetLocal });
 
-  emitGlobalSyncWriteback(fctx, targetLocal, restSyncGlobalIdx);
+  emitGlobalSyncWriteback(ctx, fctx, targetLocal, restSyncGlobalIdx);
 }
 
 /**
@@ -1820,7 +1836,7 @@ function compileForOfAssignDestructuringExternref(
       emitCoercedLocalSet(ctx, fctx, targetLocal, { kind: "externref" });
     }
 
-    emitGlobalSyncWriteback(fctx, targetLocal, extSyncGlobalIdx);
+    emitGlobalSyncWriteback(ctx, fctx, targetLocal, extSyncGlobalIdx);
   }
 }
 
@@ -1892,7 +1908,7 @@ export function compileForOfIteratorAssignDestructuring(
       // Coerce externref to target local's type and set
       emitCoercedLocalSet(ctx, fctx, targetLocal, { kind: "externref" });
 
-      emitGlobalSyncWriteback(fctx, targetLocal, iterObjSyncGlobalIdx);
+      emitGlobalSyncWriteback(ctx, fctx, targetLocal, iterObjSyncGlobalIdx);
     }
   } else if (ts.isArrayLiteralExpression(expr)) {
     // for ([x, y] of iterable) — use __extern_get(elem, box(i)) for each element
@@ -2105,7 +2121,7 @@ export function compileForOfIteratorAssignDestructuring(
         emitCoercedLocalSet(ctx, fctx, targetLocal, { kind: "externref" });
       }
 
-      emitGlobalSyncWriteback(fctx, targetLocal, iterArrSyncGlobalIdx);
+      emitGlobalSyncWriteback(ctx, fctx, targetLocal, iterArrSyncGlobalIdx);
     }
   }
 }

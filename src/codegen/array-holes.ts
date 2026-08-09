@@ -42,6 +42,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import type { Instr, StructTypeDef } from "../ir/types.js";
 import { allocTempLocal } from "./context/locals.js";
 import { emitUndefined } from "./expressions/late-imports.js";
+import { isBrandedBuiltinName } from "./builtin-brands.js"; // (#4176) named proto-write pre-scan
 
 /**
  * Cheap AST pre-scan: set `ctx.usesArrayHoles` when the program contains any
@@ -57,7 +58,17 @@ import { emitUndefined } from "./expressions/late-imports.js";
  */
 export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
   const visit = (node: ts.Node): void => {
-    if (ctx.usesArrayHoles && ctx.arrayProtoIndexDirty) return;
+    if (
+      ctx.usesArrayHoles &&
+      ctx.protoIndexDirty &&
+      ctx.protoNamedDirty &&
+      ctx.vecAccessorDescriptorDirty &&
+      ctx.vecIndexDeleteDirty &&
+      ctx.vecOwnKeysDirty &&
+      ctx.dynamicCodeDirty
+    ) {
+      return;
+    }
     if (ts.isArrayLiteralExpression(node)) {
       for (const el of node.elements) {
         if (ts.isOmittedExpression(el)) {
@@ -66,27 +77,247 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
         }
       }
     }
-    if (!ctx.arrayProtoIndexDirty && isArrayProtoIndexWrite(node)) {
-      ctx.arrayProtoIndexDirty = true;
+    if (!ctx.protoIndexDirty && isProtoIndexWrite(node)) {
+      ctx.protoIndexDirty = true;
+    }
+    if (!ctx.protoNamedDirty && isProtoNamedWrite(node)) {
+      ctx.protoNamedDirty = true;
+    }
+    if (!ctx.vecAccessorDescriptorDirty && isNonDataDescriptorDefine(node)) {
+      ctx.vecAccessorDescriptorDirty = true;
+    }
+    if (!ctx.vecIndexDeleteDirty && isIndexDelete(node)) {
+      ctx.vecIndexDeleteDirty = true;
+    }
+    if (!ctx.vecOwnKeysDirty && isOwnKeysOrDescriptorDefineUse(node)) {
+      ctx.vecOwnKeysDirty = true;
+    }
+    // (#4159/#4160) Dynamic code defeats the whole pre-scan: static eval
+    // inlining (#1163) splices parsed statements in during BODY compilation,
+    // after this pass has finished, so `eval('Array.prototype[0] = 1')` would
+    // otherwise leave every flag clear. Setting a flag lazily at splice time is
+    // exactly the desync this pass exists to prevent, so presence of dynamic
+    // code dirties everything, statically.
+    if (!ctx.dynamicCodeDirty && isDynamicCodeUse(node)) {
+      ctx.dynamicCodeDirty = true;
+      ctx.protoIndexDirty = true;
+      ctx.protoNamedDirty = true;
+      ctx.vecAccessorDescriptorDirty = true;
+      ctx.vecIndexDeleteDirty = true;
+      ctx.vecOwnKeysDirty = true;
     }
     forEachChild(node, visit);
   };
   visit(root);
 }
 
-/** Structurally `Array.prototype` (`PropertyAccess(Identifier "Array", "prototype")`). */
-function isArrayPrototypeExpr(node: ts.Node): boolean {
+/**
+ * Structurally `Array.prototype` or `Object.prototype`
+ * (`PropertyAccess(Identifier "Array"|"Object", "prototype")`).
+ *
+ * (#4160) `Object.prototype` was added 2026-08-05. Only `Array.prototype` was
+ * matched before, which missed the dominant test262 shape — `15.4.4.18-7-b-12`
+ * and the 135 files sharing its assertion write `Object.prototype[1] = 1` and
+ * then iterate an array-LIKE (a plain object with a `length`), never an array.
+ */
+function isArrayOrObjectPrototypeExpr(node: ts.Node): boolean {
+  const inner = unwrapExpr(node);
   return (
-    ts.isPropertyAccessExpression(node) &&
-    node.name.text === "prototype" &&
-    ts.isIdentifier(node.expression) &&
-    node.expression.text === "Array"
+    ts.isPropertyAccessExpression(inner) &&
+    inner.name.text === "prototype" &&
+    ts.isIdentifier(inner.expression) &&
+    (inner.expression.text === "Array" || inner.expression.text === "Object")
   );
 }
 
 /**
- * (#2001 S2 / PR #2832 park) Does this node WRITE an index property onto
- * `Array.prototype`? Detects the shapes test262 uses to make a hole's index
+ * Strip the wrappers that carry no runtime meaning — parentheses and the
+ * type-only assertion forms — so a structural match sees the real expression.
+ *
+ * Load-bearing for TS input, which is what this compiler consumes: writing
+ * `Array.prototype[0] = 1` in TypeScript needs a cast
+ * (`(Array.prototype as any)[0] = 1`), and without this the `AsExpression`
+ * wrapper made the match fail. test262's plain-JS corpus has no cast, which is
+ * why the #2001 predicate worked there and the gap went unnoticed.
+ */
+function unwrapExpr(node: ts.Node): ts.Node {
+  let cur = node;
+  for (;;) {
+    if (ts.isParenthesizedExpression(cur) || ts.isAsExpression(cur) || ts.isNonNullExpression(cur)) {
+      cur = cur.expression;
+      continue;
+    }
+    if (ts.isTypeAssertionExpression?.(cur) || ts.isSatisfiesExpression?.(cur)) {
+      cur = (cur as ts.TypeAssertion | ts.SatisfiesExpression).expression;
+      continue;
+    }
+    return cur;
+  }
+}
+
+/** Descriptor fields that make a descriptor purely a DATA descriptor. */
+const DATA_DESCRIPTOR_KEYS = new Set(["value", "writable", "enumerable", "configurable"]);
+
+/**
+ * Is `node` PROVABLY a data-only descriptor object literal — `{value, writable,
+ * enumerable, configurable}` and nothing else?
+ *
+ * Deliberately conservative: anything this cannot see through (a spread, a
+ * computed key, a `get`/`set` accessor or shorthand method, a descriptor held in
+ * a variable rather than written inline) answers `false`, i.e. "may be an
+ * accessor". False negatives cost a fast path; false positives would be a
+ * miscompile.
+ */
+function isDataOnlyDescriptorLiteral(node: ts.Expression | undefined): boolean {
+  if (!node || !ts.isObjectLiteralExpression(node)) return false;
+  for (const prop of node.properties) {
+    if (ts.isSpreadAssignment(prop)) return false;
+    if (ts.isGetAccessorDeclaration(prop) || ts.isSetAccessorDeclaration(prop)) return false;
+    const name = prop.name;
+    if (!name) return false;
+    let key: string;
+    if (ts.isIdentifier(name)) key = name.text;
+    else if (ts.isStringLiteral(name)) key = name.text;
+    else return false; // computed / numeric / private — cannot prove
+    if (!DATA_DESCRIPTOR_KEYS.has(key)) return false;
+  }
+  return true;
+}
+
+/**
+ * Is `node` provably a data-only descriptor BAG — the second argument shape of
+ * `Object.defineProperties(O, props)` / `Object.create(proto, props)`, where
+ * each own property's VALUE is itself a descriptor? Recurses one level, per the
+ * #4159 edge-case note.
+ */
+function isDataOnlyDescriptorBag(node: ts.Expression | undefined): boolean {
+  if (!node || !ts.isObjectLiteralExpression(node)) return false;
+  for (const prop of node.properties) {
+    // Anything other than `key: <literal descriptor>` (spread, shorthand,
+    // method, accessor) is unprovable.
+    if (!ts.isPropertyAssignment(prop)) return false;
+    if (!isDataOnlyDescriptorLiteral(prop.initializer)) return false;
+  }
+  return true;
+}
+
+/**
+ * (#4159) Does this node install a descriptor that might be an ACCESSOR (or a
+ * non-writable data descriptor) on some receiver?
+ *
+ * Matches `Object.defineProperty` / `Object.defineProperties` / `Object.create`
+ * / `Reflect.defineProperty` whose descriptor argument is not provably
+ * data-only. A plain `{value: 1, writable: true}` does NOT set the flag — that
+ * case stays coherent through #3251's value write-back into the vec, so the
+ * typed inline `array.get` fast path remains correct for it.
+ *
+ * Same deliberate over-approximation as `isProtoIndexWrite`: a module that might
+ * install an accessor ANYWHERE loses the typed element fast path EVERYWHERE. The
+ * flag is per-module, not per-array; a tighter escape analysis is the
+ * measurement-driven follow-up, not this substrate.
+ */
+function isNonDataDescriptorDefine(node: ts.Node): boolean {
+  if (!ts.isCallExpression(node)) return false;
+  const callee = node.expression;
+  if (!ts.isPropertyAccessExpression(callee) || !ts.isIdentifier(callee.expression)) return false;
+  const ns = callee.expression.text;
+  const method = callee.name.text;
+
+  if (method === "defineProperty" && (ns === "Object" || ns === "Reflect")) {
+    // (O, key, descriptor) — the descriptor is argument 2.
+    return !isDataOnlyDescriptorLiteral(node.arguments[2]);
+  }
+  if (method === "defineProperties" && ns === "Object") {
+    return !isDataOnlyDescriptorBag(node.arguments[1]);
+  }
+  if (method === "create" && ns === "Object") {
+    // `Object.create(proto)` installs no descriptors at all.
+    return node.arguments.length >= 2 && !isDataOnlyDescriptorBag(node.arguments[1]);
+  }
+  return false;
+}
+
+/**
+ * (#4222) Does this node delete a COMPUTED property — `delete o[k]`?
+ *
+ * `delete o.k` is deliberately NOT matched: a dotted name can never be an array
+ * index, so it cannot tombstone a dense vec slot, and matching it would arm the
+ * overlay route for the ubiquitous `delete obj.field` idiom that has nothing to
+ * do with arrays.
+ *
+ * Same per-module over-approximation as `isNonDataDescriptorDefine`: the key is
+ * usually not statically known (`delete srcArr[idx]` inside a callback is the
+ * dominant test262 shape), and the receiver's array-ness is a *type* question
+ * this cheap syntactic pre-pass deliberately does not ask — it runs before body
+ * compilation precisely so reads and stores cannot desync.
+ */
+function isIndexDelete(node: ts.Node): boolean {
+  if (!ts.isDeleteExpression(node)) return false;
+  return ts.isElementAccessExpression(unwrapExpr(node.expression));
+}
+
+/**
+ * (#4230 L1) `Object`/`Reflect` member names that can either PUT a named
+ * expando into the #3251 overlay companion or ASK for a vec's own key list.
+ * Either one makes `vec-overlay-keys.ts` observable; neither present means it
+ * cannot be, so the whole feature is skipped and emission stays byte-identical.
+ */
+const OWN_KEYS_OR_DEFINE_METHODS = new Set([
+  "defineProperty",
+  "defineProperties",
+  "getOwnPropertyNames",
+  "ownKeys",
+  "getOwnPropertyDescriptors",
+]);
+
+/**
+ * (#4230 L1) Does this node mention a descriptor-defining or own-name-reading
+ * `Object`/`Reflect` builtin?
+ *
+ * Matched on the PROPERTY ACCESS, not the call, so `const f =
+ * Object.getOwnPropertyNames; f(a)` is covered too. `create` is matched only in
+ * call position with two arguments: `Object.create(proto)` installs no
+ * descriptors, and it is far too common an idiom to arm the feature for.
+ *
+ * Deliberately syntactic and per-MODULE, like every other flag in this pre-scan
+ * — it runs before body compilation so a consumer cannot desync from it.
+ */
+function isOwnKeysOrDescriptorDefineUse(node: ts.Node): boolean {
+  if (ts.isCallExpression(node)) {
+    const callee = node.expression;
+    if (
+      ts.isPropertyAccessExpression(callee) &&
+      ts.isIdentifier(callee.expression) &&
+      callee.expression.text === "Object" &&
+      callee.name.text === "create"
+    ) {
+      return node.arguments.length >= 2;
+    }
+    return false;
+  }
+  if (!ts.isPropertyAccessExpression(node) || !ts.isIdentifier(node.expression)) return false;
+  const ns = node.expression.text;
+  if (ns !== "Object" && ns !== "Reflect") return false;
+  return OWN_KEYS_OR_DEFINE_METHODS.has(node.name.text);
+}
+
+/**
+ * (#4159/#4160) Does this node introduce code the pre-scan cannot see — `eval(…)`,
+ * `Function(…)`, or `new Function(…)`? Bare-identifier callees only: a
+ * `foo.eval(…)` member call is not the global `eval`.
+ */
+function isDynamicCodeUse(node: ts.Node): boolean {
+  if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
+    const callee = node.expression;
+    if (ts.isIdentifier(callee) && (callee.text === "eval" || callee.text === "Function")) return true;
+  }
+  return false;
+}
+
+/**
+ * (#2001 S2 / PR #2832 park; widened to `Object.prototype` by #4160) Does this
+ * node WRITE an index property onto `Array.prototype` or `Object.prototype`?
+ * Detects the shapes test262 uses to make an index
  * visible through the prototype chain (`HasProperty(O, k)` true although the
  * own slot is absent):
  *
@@ -102,12 +333,87 @@ function isArrayPrototypeExpr(node: ts.Node): boolean {
  * that dirties `Array.prototype` indices anywhere loses the HOF hole
  * visit-skip everywhere (falling back to the pre-S2 visit-with-`undefined`
  * behavior), because the flat vec cannot check the prototype per element at
- * runtime. See `arrayProtoIndexDirty` in context/types.ts.
+ * runtime. See `protoIndexDirty` in context/types.ts.
  */
-function isArrayProtoIndexWrite(node: ts.Node): boolean {
+/**
+ * (#4176) Structurally `<BrandedBuiltin>.prototype` — the generalization of
+ * `isArrayOrObjectPrototypeExpr` to every constructor in the builtin brand
+ * table (`Function.prototype`, `String.prototype`, `Error.prototype`, …).
+ */
+function isBrandedBuiltinPrototypeExpr(node: ts.Node): boolean {
+  const inner = unwrapExpr(node);
+  return (
+    ts.isPropertyAccessExpression(inner) &&
+    inner.name.text === "prototype" &&
+    ts.isIdentifier(inner.expression) &&
+    isBrandedBuiltinName(inner.expression.text)
+  );
+}
+
+/**
+ * (#4176) Does this node WRITE a NAMED (or any non-index, for the non-Array/
+ * Object builtins any) property onto a branded builtin's `.prototype`? The
+ * shapes test262 uses to make a named property inherited:
+ *
+ *   - `Function.prototype.value = …` / `Object.prototype.zzz = …` (any
+ *     assignment operator — property-access form; `isProtoIndexWrite` only
+ *     matches the ELEMENT-access form);
+ *   - `String.prototype[k] = …` for a non-Object/Array builtin (element form
+ *     — over-approximated into the named store, whose write arms accept both
+ *     named and integer keys);
+ *   - `Object.defineProperty(Number.prototype, …)` (+ `defineProperties` /
+ *     `Reflect.defineProperty`) targeting a non-Object/Array builtin proto.
+ *
+ * Sets `protoNamedDirty` ONLY (store reservation) — never `protoIndexDirty`,
+ * so the HOF hole visit-skip / typed element lanes keep their fast paths for
+ * the polyfill idiom. Same deliberate static over-approximation as
+ * `isProtoIndexWrite`.
+ */
+function isProtoNamedWrite(node: ts.Node): boolean {
+  // `X.prototype.name = …` — property-access assignment target (any builtin,
+  // including Object/Array whose index predicate ignores the named form).
+  if (
+    ts.isBinaryExpression(node) &&
+    node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+    node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+  ) {
+    const lhs = unwrapExpr(node.left);
+    if (ts.isPropertyAccessExpression(lhs) && isBrandedBuiltinPrototypeExpr(lhs.expression)) return true;
+    // `X.prototype[k] = …` for builtins the index predicate does not cover.
+    if (
+      ts.isElementAccessExpression(lhs) &&
+      isBrandedBuiltinPrototypeExpr(lhs.expression) &&
+      !isArrayOrObjectPrototypeExpr(lhs.expression)
+    ) {
+      return true;
+    }
+  }
+  // Object/Reflect.defineProperty(ies)(X.prototype, …) for the non-Object/
+  // Array builtins (the Object/Array form already sets `protoIndexDirty`,
+  // which reserves the same store).
+  if (
+    ts.isCallExpression(node) &&
+    node.arguments.length > 0 &&
+    isBrandedBuiltinPrototypeExpr(node.arguments[0]) &&
+    !isArrayOrObjectPrototypeExpr(node.arguments[0])
+  ) {
+    const callee = node.expression;
+    if (
+      ts.isPropertyAccessExpression(callee) &&
+      ts.isIdentifier(callee.expression) &&
+      (callee.expression.text === "Object" || callee.expression.text === "Reflect") &&
+      (callee.name.text === "defineProperty" || callee.name.text === "defineProperties")
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isProtoIndexWrite(node: ts.Node): boolean {
   // Object.defineProperty(Array.prototype, …) / Object.defineProperties /
   // Reflect.defineProperty — first argument is Array.prototype.
-  if (ts.isCallExpression(node) && node.arguments.length > 0 && isArrayPrototypeExpr(node.arguments[0])) {
+  if (ts.isCallExpression(node) && node.arguments.length > 0 && isArrayOrObjectPrototypeExpr(node.arguments[0])) {
     const callee = node.expression;
     if (
       ts.isPropertyAccessExpression(callee) &&
@@ -123,8 +429,8 @@ function isArrayProtoIndexWrite(node: ts.Node): boolean {
     ts.isBinaryExpression(node) &&
     node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
     node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
-    ts.isElementAccessExpression(node.left) &&
-    isArrayPrototypeExpr(node.left.expression)
+    ts.isElementAccessExpression(unwrapExpr(node.left)) &&
+    isArrayOrObjectPrototypeExpr((unwrapExpr(node.left) as ts.ElementAccessExpression).expression)
   ) {
     return true;
   }

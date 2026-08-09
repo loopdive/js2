@@ -13,7 +13,14 @@
 // same corpus at totalChunks=16 for local dev, vs. 57 in CI, with matching
 // pass counts).
 import { describe, expect, it } from "vitest";
-import { JS_HOST_CHUNKS, STANDALONE_CHUNKS, buildMergeGroupMatrix } from "../scripts/gen-test262-mg-matrix.mjs";
+import {
+  JS_HOST_CHUNKS,
+  MERGE_GROUP_RESERVED_RUNNERS,
+  MERGE_GROUP_RUNNER_CAPACITY,
+  STANDALONE_CHUNKS,
+  buildMergeGroupMatrix,
+  parseLanes,
+} from "../scripts/gen-test262-mg-matrix.mjs";
 
 describe("#3431 gen-test262-mg-matrix", () => {
   it("produces exactly JS_HOST_CHUNKS + STANDALONE_CHUNKS entries", () => {
@@ -63,11 +70,76 @@ describe("#3431 gen-test262-mg-matrix", () => {
     expect(standalone.result_prefix).toBe("test262-standalone");
   });
 
-  it("59 total shards is a ~48% reduction from the static 114-job matrix (57 chunks x 2 targets)", () => {
+  it("uses the serial queue's runner budget while reserving capacity for other required checks", () => {
     const matrix = buildMergeGroupMatrix();
-    const staticTotal = 57 * 2;
-    const reduction = 1 - matrix.length / staticTotal;
-    expect(reduction).toBeGreaterThan(0.4);
+    expect(matrix).toHaveLength(102);
+    expect(matrix.length).toBe(MERGE_GROUP_RUNNER_CAPACITY - MERGE_GROUP_RESERVED_RUNNERS);
+    // #3914 — the lane split tracks the MEASURED per-lane `Run shard` work
+    // ratio, which is 1.835 as of merge_group run 30631849709 (2026-07-31).
+    // It has already drifted once (2.13 at run 29807524490), so this asserts
+    // the constants stay mutually consistent rather than pinning a number
+    // forever: whoever re-derives the ratio updates both sides together.
+    expect(JS_HOST_CHUNKS / STANDALONE_CHUNKS).toBeCloseTo(1.835, 2);
+  });
+});
+
+describe("per-lane merge_group matrix (single-lane runs)", () => {
+  // The `changes` job drops a lane whose results the queued diff provably
+  // cannot move (see scripts/test262-paths-match.sh --target). These pin the
+  // two properties that make that safe.
+  it("emits only the requested lane", () => {
+    const hostOnly = buildMergeGroupMatrix({ host: true, standalone: false });
+    expect(hostOnly).toHaveLength(JS_HOST_CHUNKS);
+    expect(hostOnly.every((e) => e.target_name === "js-host")).toBe(true);
+
+    const standaloneOnly = buildMergeGroupMatrix({ host: false, standalone: true });
+    expect(standaloneOnly).toHaveLength(STANDALONE_CHUNKS);
+    expect(standaloneOnly.every((e) => e.target_name === "standalone")).toBe(true);
+  });
+
+  it("keeps the surviving lane's partition IDENTICAL to a full two-lane run", () => {
+    // Load-bearing: a single-lane run's results are diffed against a baseline
+    // produced by two-lane runs. assignBalancedChunk is a pure function of
+    // (chunk_index, chunk_total), so the freed runners must NOT be spent
+    // re-partitioning the surviving lane into more shards.
+    const full = buildMergeGroupMatrix();
+    for (const lanes of [
+      { host: true, standalone: false },
+      { host: false, standalone: true },
+    ]) {
+      for (const entry of buildMergeGroupMatrix(lanes)) {
+        const twin = full.find((e) => e.target_name === entry.target_name && e.chunk_index === entry.chunk_index);
+        expect(twin).toEqual(entry);
+      }
+    }
+  });
+
+  it("defaults to both lanes, and fail-safes an empty selection back to both", () => {
+    const both = buildMergeGroupMatrix();
+    expect(buildMergeGroupMatrix({})).toEqual(both);
+    // An empty matrix is a workflow-level error in GitHub Actions, not a
+    // skipped job — and skipping coverage is the wrong direction anyway.
+    expect(buildMergeGroupMatrix({ host: false, standalone: false })).toEqual(both);
+  });
+
+  it("parseLanes maps the CLI flag to lane selections, both-lanes by default", () => {
+    expect(parseLanes(["node", "gen.mjs"])).toEqual({ host: true, standalone: true });
+    expect(parseLanes(["node", "gen.mjs", "--lanes", "host,standalone"])).toEqual({
+      host: true,
+      standalone: true,
+    });
+    expect(parseLanes(["node", "gen.mjs", "--lanes=host"])).toEqual({ host: true, standalone: false });
+    expect(parseLanes(["node", "gen.mjs", "--lanes", "standalone"])).toEqual({
+      host: false,
+      standalone: true,
+    });
+    // Empty value = "no lane selected" -> buildMergeGroupMatrix fail-safes it.
+    expect(parseLanes(["node", "gen.mjs", "--lanes", ""])).toEqual({ host: false, standalone: false });
+  });
+
+  it("parseLanes rejects an unknown lane instead of silently narrowing coverage", () => {
+    expect(() => parseLanes(["node", "gen.mjs", "--lanes", "hsot"])).toThrow(/unknown lane/);
+    expect(() => parseLanes(["node", "gen.mjs", "--lanes", "host,gc"])).toThrow(/unknown lane/);
   });
 });
 
@@ -84,16 +156,16 @@ describe("#3431 test262-chunk-dynamic.test.ts env-var contract", () => {
   }
 
   it("accepts valid index/total pairs", () => {
-    expect(validateChunkEnv("0", "40")).toBe(true);
-    expect(validateChunkEnv("39", "40")).toBe(true);
-    expect(validateChunkEnv("18", "19")).toBe(true);
+    expect(validateChunkEnv("0", "72")).toBe(true);
+    expect(validateChunkEnv("71", "72")).toBe(true);
+    expect(validateChunkEnv("33", "34")).toBe(true);
   });
 
   it("rejects missing, out-of-range, or non-numeric env vars", () => {
     expect(validateChunkEnv("", "")).toBe(false);
-    expect(validateChunkEnv("40", "40")).toBe(false); // index == total (out of range)
-    expect(validateChunkEnv("-1", "40")).toBe(false);
-    expect(validateChunkEnv("abc", "40")).toBe(false);
+    expect(validateChunkEnv("72", "72")).toBe(false); // index == total (out of range)
+    expect(validateChunkEnv("-1", "72")).toBe(false);
+    expect(validateChunkEnv("abc", "72")).toBe(false);
     expect(validateChunkEnv("0", "0")).toBe(false); // total must be > 0
   });
 });

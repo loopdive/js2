@@ -56,6 +56,6 @@ export async function instantiate(
   const result = await compileValid(source, opts);
   const imports = buildImports(result.imports, deps, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
-  imports.setExports?.(instance.exports as Record<string, Function>);
+  imports.setInstance?.(instance);
   return instance.exports as Record<string, Function>;
 }

@@ -229,6 +229,37 @@ contiguous rec group; (P2b) wasm-opt rec-group preservation / post-emit
 canonical-hash gate wired into CI; (P2c) `runtime.wasm` exporting GC helpers +
 user modules importing them.
 
+## Measurement rule for whoever packages the runtime-eval provider (#2928 E7)
+
+The first real consumer of this linker is #2928's `js2wasm:runtime-eval`
+provider, and packaging it will generate standalone Test262 numbers. Two rules
+come out of #2928 E7 (2026-08-01), where getting this wrong silently invalidated
+a lane comparison:
+
+1. **State the TIER with every standalone eval figure.** Without
+   `TEST262_FULL_RUNTIME_EVAL=1` the harness links the cheap *refusal* provider
+   and the number is CI-comparable. With it, the number is **interpreter-linked
+   and NOT comparable** with the published baseline or the #1897/#2097 floor
+   gates — until this issue actually publishes the interpreter provider to CI,
+   at which point the two converge and this caveat retires. Every pre-E7 local
+   eval figure in #2928 carries this qualifier, including E6's headline
+   106→117 `eval-code` arm.
+
+2. **Never let the harness silently select a capability the published lane
+   lacks.** That is the general form of the defect: between E6 and E7 the worker
+   linked the real interpreter whenever it happened to be cached — no flag, no
+   log line naming the tier — while CI's cache was always cold. Local and CI
+   diverged by roughly the interpreter's yield, and *neither report said so*.
+   The fix has two halves and needs both: an explicit opt-in flag, and a tier
+   announcement on **every** path including the successful one
+   (`announceRuntimeEvalTier` in `scripts/test262-worker.mjs`). Provenance has
+   to travel **with** the number — inside the table, not in the prose near it —
+   or the number travels and the caveat does not.
+
+Apply the same discipline to any other capability this linker makes optional
+(host-API shims, `runtime.wasm` GC helpers): if a lane can run with or without
+it, the artifact must say which, unprompted.
+
 ## Notes
 
 Split from the #389-driven modularization discussion. The Component Model + WIT

@@ -11,10 +11,14 @@
  */
 import { createHash } from "crypto";
 import { closeSync, existsSync, mkdirSync, readFileSync, writeSync as fdWrite, fsyncSync, openSync } from "fs";
-import { dirname, join, relative } from "path";
+import { join, relative } from "path";
 import { afterAll, beforeAll, describe, it } from "vitest";
 import { availableParallelism } from "os";
 import { CompilerPool, type TestResult } from "../scripts/compiler-pool.js";
+import { discoverFixtureGraph } from "../scripts/test262-fixture-graph.mjs";
+// (#4162) ONE import-object finaliser, shared with scripts/test262-worker.mjs
+// and tests/test262-runner.ts.
+import { instantiateTest262Module } from "../scripts/test262-import-object.mjs";
 import { isPoisonCompileError } from "../scripts/test262-poison-error.mjs";
 import { negativeCompileErrorMatches, negativeCompileSucceededVerdict } from "../scripts/negative-verdict.mjs";
 import { isRecordedVerdictSentinel } from "../scripts/verdict-once.mjs";
@@ -58,19 +62,11 @@ async function getBuildImports() {
   return _buildImports;
 }
 
-/**
- * Extract _FIXTURE.js file references from static import/export statements.
- */
-function resolveFixtures(source: string, testFilePath: string): string[] {
-  const fixtures: string[] = [];
-  const dir = dirname(testFilePath);
-  const importRe = /(?:import|export)\s+.*?from\s+['"]([^'"]*_FIXTURE\.js)['"]/g;
-  let m;
-  while ((m = importRe.exec(source)) !== null) {
-    const resolved = join(dir, m[1]!);
-    if (existsSync(resolved)) fixtures.push(resolved);
-  }
-  return [...new Set(fixtures)];
+/** Provenance prefix for this lane's runtime-eval tier announcement (#2928 E7). */
+const RUNTIME_EVAL_PROVIDER_LABEL = "test262-fixture";
+
+function resolveFixtureGraph(source: string, testFilePath: string) {
+  return discoverFixtureGraph(relative(join(TEST262_ROOT, "test"), testFilePath), source);
 }
 
 // ── Slow-test priority map ─────────────────────────────────────────
@@ -196,6 +192,15 @@ function getCachePaths(wrappedSource: string): { wasmPath: string; metaPath: str
 // ── Pool setup ─────────────────────────────────────────────────────
 
 const POOL_SIZE = parseInt(process.env.COMPILER_POOL_SIZE || String(Math.max(1, availableParallelism() - 1)), 10);
+
+// (#2928 E6) Per-test vitest timeout. The 90s default measures POOL-QUEUE WAIT
+// as well as the test's own run: when a slow cluster occupies every pool worker
+// (e.g. interpreter-linked eval tests hitting the 30s pool timeout back to
+// back), queued tests blow this limit and vitest kills them WITHOUT a jsonl
+// row — the run silently under-reports its own denominator (measured: 202 of
+// 816 eval-code rows missing at 2 workers). Raise via env for slow-cluster
+// sweeps; the default stays 90s so CI behavior is unchanged.
+const IT_TIMEOUT_MS = parseInt(process.env.TEST262_IT_TIMEOUT_MS || "90000", 10);
 
 let pool: CompilerPool | null = null;
 
@@ -655,29 +660,47 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
             let lineAdjustOffset = harnessAssembly.primary.bodyLineOffset;
 
             // Multi-file compilation for FIXTURE imports (handled in-process)
-            const fixtures = resolveFixtures(source, filePath);
-            if (fixtures.length > 0) {
+            const fixtureGraph = resolveFixtureGraph(source, filePath);
+            // #3509 — Dynamic fixture metadata alone does not mean this test
+            // executes import(). Compiler capability validation rejects eager
+            // #3494 cases while allowing an uncalled ordinary closure to reach
+            // the test with a host-free runtime trap in its body. Do not turn
+            // dynamic fixtures into eager compileMulti inputs.
+            if (Object.keys(fixtureGraph.fixtureFiles).length > 0) {
               // Fixture tests are rare — compile in-process
               try {
-                const vfiles: Record<string, string> = { "./test.ts": compileSource };
-                for (const fixPath of fixtures) {
-                  vfiles["./" + relative(dirname(filePath), fixPath)] = readFileSync(fixPath, "utf-8");
-                }
+                const vfiles: Record<string, string> = {
+                  ...fixtureGraph.fixtureFiles,
+                  [fixtureGraph.entryFile]: compileSource,
+                };
                 const multiCompile = await getCompileMulti();
-                const result = await multiCompile(vfiles, "./test.ts", {
+                const result = await multiCompile(vfiles, fixtureGraph.entryFile, {
                   skipSemanticDiagnostics: true,
                   target: TEST262_TARGET,
                   inferModuleStrictArguments,
-                  // (#3049 C1 / #3123) NO deferTopLevelInit here — this is the
-                  // multi-module FIXTURE compile, which already synthesizes
-                  // per-module init plumbing; adding the deferred-export flag
-                  // emitted a SECOND `__module_init` export in one binary
-                  // (V8 "Duplicate export name '__module_init'" CompileError —
-                  // the 6-file `language/module-code/*` regression that parked
-                  // the stack PR #2835/#2839 in the merge queue). Single-file
-                  // compiles (the worker path) still defer; the exec block
-                  // calls the exported __module_init after setExports when
-                  // present, and is a no-op for this `(start)`-model binary.
+                  // (#3049 C1 / #3123 / #2900) The FIXTURE compile defers
+                  // top-level init, exactly like the worker's single-file path
+                  // and the worker's own fixture-graph branch
+                  // (scripts/test262-worker.mjs `...deferOpt`). Without it the
+                  // whole harness assembly runs in the wasm `(start)` section,
+                  // i.e. BEFORE `setInstance(instance)` wires the
+                  // runtime — and own properties on function objects are not
+                  // yet readable, so `assert.sameValue(...)` threw
+                  // "sameValue is not a function" in 22 module-code tests and
+                  // `assert.throws` in one more. Every OTHER test in the corpus
+                  // already ran deferred; this branch was the lone exception,
+                  // which is why the whole 204-test fixture bucket looked like
+                  // a semantics gap. Measured effect: 31 fail→pass, 0
+                  // pass→fail, identical compile_error set.
+                  // The historical reason for omitting it — compileMulti
+                  // emitting a SECOND `__module_init` export (V8 "Duplicate
+                  // export name '__module_init'", the #2835/#2839 queue park) —
+                  // was fixed by #3505: the progressively accumulated
+                  // dependency-order initializers now retain only the FINAL
+                  // `__module_init` export, so the graph is fully wired before
+                  // that one initializer runs. Re-verified: no duplicate-export
+                  // CompileError across all 204 fixture-graph tests.
+                  deferTopLevelInit: true,
                   // (#2932) Without allowJs, TypeScript excludes the `.js`
                   // _FIXTURE root files from the program entirely — their
                   // top-level declarations are never codegen'd and every
@@ -774,13 +797,20 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                   const importObj = buildImports(result.imports, { console: consoleProxy }, result.stringPool, {
                     globalSandbox: createTestSandbox(consoleProxy as unknown as Console),
                   });
-                  const { instance } = await WebAssembly.instantiate(result.binary, importObj as any);
+                  // (#4162) The fixture-graph lane executes in this process
+                  // instead of scripts/test262-worker.mjs. Both go through the
+                  // ONE shared instantiate seam, so a fixture that merely
+                  // mentions eval/new Function links the same provider tier the
+                  // worker would give it — a fresh instance per test, so
+                  // interpreter globals never leak between fixtures.
+                  const instance = await instantiateTest262Module(result.binary, importObj as any, {
+                    target: TEST262_TARGET,
+                    providerLabel: RUNTIME_EVAL_PROVIDER_LABEL,
+                  });
                   fixtureInstance = instance;
-                  if (typeof (importObj as any).setExports === "function") {
-                    (importObj as any).setExports(instance.exports);
-                  }
+                  (importObj as any).setInstance?.(instance);
                   // (#3049 C1) Deferred top-level init (host lane): run the
-                  // exported __module_init now that setExports has wired the
+                  // exported __module_init now that setInstance has wired the
                   // runtime. Same try as instantiate + test(), so a top-level
                   // throw keeps its pre-defer classification.
                   const moduleInit = (instance.exports as any).__module_init;
@@ -798,6 +828,40 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                   }
                   if (isRuntimeNegative) throw originalHarnessNoThrow;
                   if (harnessAssembly.async) {
+                    // (#3496) Multi-module fixture tests execute in this
+                    // process instead of the unified worker. Mirror the
+                    // worker's standalone async handling: the host-free
+                    // compiler writes console output to its native sink, not
+                    // `consoleProxy`, so drain the Wasm queue and copy that
+                    // sink into the same marker buffer before polling.
+                    let standaloneDrainError: unknown = null;
+                    if (TEST262_TARGET === "standalone") {
+                      const exp = instance.exports as Record<string, any>;
+                      if (typeof exp.__drain_microtasks === "function") {
+                        try {
+                          exp.__drain_microtasks();
+                        } catch (err) {
+                          standaloneDrainError = err;
+                        }
+                      }
+                      if (typeof exp.__stdout_prepare === "function" && typeof exp.__stdout_char === "function") {
+                        let length = 0;
+                        try {
+                          length = exp.__stdout_prepare() | 0;
+                        } catch {
+                          length = 0;
+                        }
+                        if (length > 0) {
+                          let sink = "";
+                          for (let i = 0; i < length; i++) {
+                            sink += String.fromCharCode(exp.__stdout_char(i) & 0xffff);
+                          }
+                          for (const line of sink.split("\n")) {
+                            if (line.length > 0) appendFixtureOutput(line);
+                          }
+                        }
+                      }
+                    }
                     const marker = (prefix: string) => fixtureOutput.find((line) => line.includes(prefix));
                     const deadline = Date.now() + 1_000;
                     while (
@@ -809,7 +873,16 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                     }
                     const failure = marker("Test262:AsyncTestFailure");
                     if (failure) throw new Error(failure);
-                    if (!marker("Test262:AsyncTestComplete")) throw new Error("async completion marker not observed");
+                    if (!marker("Test262:AsyncTestComplete")) {
+                      const detail =
+                        standaloneDrainError != null
+                          ? `async continuation threw before completion: ${extractWasmExceptionMessage(
+                              standaloneDrainError,
+                              instance,
+                            )}`
+                          : "async completion marker not observed";
+                      throw new Error(detail);
+                    }
                   }
                   recordResult(
                     relPath,
@@ -1226,7 +1299,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
               metadataFromWorkerResult(r, false),
             );
           },
-          90_000,
+          IT_TIMEOUT_MS,
         );
       }
     });

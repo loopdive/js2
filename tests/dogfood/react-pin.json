@@ -1,0 +1,10 @@
+{
+  "name": "react",
+  "version": "19.2.6",
+  "tarball": "fixtures/react-19.2.6.tgz",
+  "registryTarball": "https://registry.npmjs.org/react/-/react-19.2.6.tgz",
+  "shasum": "3dadb8e12b2a7934c1d5317973e5dce1301f9a4d",
+  "integrity": "sha512-sfWGGfavi0xr8Pg0sVsyHMAOziVYKgPLNrS7ig+ivMNb3wbCBw3KxtflsGBAwD3gYQlE/AEZsTLgToRrSCjb0Q==",
+  "entryModule": "package/index.js",
+  "_note": "Pinned from the canonical npm registry. index.js is React's published package entry and resolves its real CommonJS production/development implementation."
+}

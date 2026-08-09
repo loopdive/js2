@@ -12,7 +12,8 @@ import { isBooleanType, isStringType } from "../../checker/type-mapper.js";
 import type { FieldDef, Instr, ValType } from "../../ir/types.js";
 import { emitBoundsCheckedArrayGet } from "../array-methods.js";
 import { tryEmitLinearU8ElementCompound } from "../linear-uint8-codegen.js";
-import { emitAnyAdd, emitModulo, emitToInt32 } from "../binary-ops.js";
+import { emitAnyAdd, emitAnyAddFromExternTemps, emitModulo, emitToInt32 } from "../binary-ops.js";
+import { compileWithCompoundAssignment } from "../with-rmw.js";
 import { pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
@@ -27,6 +28,7 @@ import {
 } from "../index.js";
 import { resolveComputedKeyExpression } from "../literals.js";
 import { resolveReceiverStruct } from "../fnctor-escape-gate.js";
+import { EMIT_COMPOUND_OP_HANDLES, tryEmitTypedThisCompound } from "../typed-this.js"; // (#3683 S2) typed-`this` compound
 import { reserveMemberGetDispatch } from "../member-get-dispatch.js";
 import {
   emitAlternateStructSetDispatch,
@@ -46,17 +48,22 @@ import {
   emitWebCompatCallAssignmentTarget,
   getFuncParamTypes,
 } from "./helpers.js";
+import {
+  emitAnyStrToExternrefSlot,
+  emitExternrefSlotToAnyStr,
+  slotNeedsExternrefBridge,
+} from "../native-string-slot-bridge.js";
+import { compileComputedMemberKeyAfterBaseGuard, emitToPropertyKeyOnce } from "./computed-member-reference.js";
 import { ensureLateImport, flushLateImportShifts, patchStructNewForAddedField } from "./late-imports.js";
 import { emitMappedArgParamSync } from "./logical-ops.js";
 import { resolveStructNameForExpr } from "./misc.js";
-import { ensureObjectRuntime } from "../object-runtime.js";
 import {
   compileStringBuilderAppend,
   emitStringBuilderAppendCodeUnit,
   getBuilderInfo,
   type StringBuilderInfo,
 } from "../string-builder.js";
-import { compileExternSetFallback } from "./assignment.js";
+import { compileExternSetFallback, isNonWritableDataProperty, isStrictContext } from "./assignment.js";
 
 /**
  * Compile logical assignment operators: ??=, ||=, &&=
@@ -536,10 +543,17 @@ function compilePropertyLogicalAssignmentExternref(
   );
   if (getIdx === undefined) return null;
 
-  // Ensure __extern_set is available
+  // Ensure __extern_set is available. (#3430) PutValue's strict-Reference
+  // throw (§13.15.2 → §6.2.5.6 step 3.e) applies here exactly as it does for
+  // plain `=` assignment (assignment.ts's `compileExternSetFallback`) — a
+  // strict `obj.prop ??= v` that fails [[Set]] (non-writable data property /
+  // new key on a non-extensible object) must throw TypeError, not silently
+  // no-op. Select the strict sidecar terminal accordingly; sloppy keeps the
+  // legacy silent refusal.
+  const setName = isStrictContext(target, ctx.inferModuleStrictArguments) ? "__extern_set_strict" : "__extern_set";
   const setIdx = ensureLateImport(
     ctx,
-    "__extern_set",
+    setName,
     [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
     [],
   );
@@ -803,9 +817,13 @@ function compileElementLogicalAssignmentExternref(
     [{ kind: "externref" }, { kind: "externref" }],
     [{ kind: "externref" }],
   );
+  // (#3430) Strict `arr[i] ??= v` (etc.) mirrors the property-access sidecar:
+  // a failed [[Set]] must throw under a strict Reference. See the property
+  // arm above for the full rationale.
+  const elemSetName = isStrictContext(target, ctx.inferModuleStrictArguments) ? "__extern_set_strict" : "__extern_set";
   const setIdx = ensureLateImport(
     ctx,
-    "__extern_set",
+    elemSetName,
     [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
     [],
   );
@@ -1190,10 +1208,28 @@ function tryCompileSingleCharBuilderAppend(
       if (flattenIdx !== undefined) {
         const strTypeIdx = ctx.nativeStrTypeIdx;
         const strDataTypeIdx = ctx.nativeStrDataTypeIdx;
-        // flat = __str_flatten(receiver) → ref $NativeString, stash in a temp.
+        // A const initialized directly from a string literal is already a
+        // flat $NativeString for its entire lifetime. Avoid calling the
+        // generic flatten helper for every append in a hot loop (the landing
+        // string-hash shape reads the same alphabet twice per iteration).
+        const receiverDeclaration = ts.isIdentifier(receiver) ? ctx.oracle.variableDeclarationOf(receiver) : undefined;
+        const receiverIsConstLiteral =
+          receiverDeclaration !== undefined &&
+          ts.isVariableDeclaration(receiverDeclaration) &&
+          receiverDeclaration.initializer !== undefined &&
+          (ts.isStringLiteral(receiverDeclaration.initializer) ||
+            ts.isNoSubstitutionTemplateLiteral(receiverDeclaration.initializer)) &&
+          ts.isVariableDeclarationList(receiverDeclaration.parent) &&
+          (ts.getCombinedNodeFlags(receiverDeclaration.parent) & ts.NodeFlags.Const) !== 0;
+
+        // flat = receiver (proven flat) or __str_flatten(receiver), then stash.
         const recvVal = compileExpression(ctx, fctx, receiver);
         if (recvVal !== null) {
-          fctx.body.push({ op: "call", funcIdx: flattenIdx });
+          if (receiverIsConstLiteral) {
+            fctx.body.push({ op: "ref.cast", typeIdx: strTypeIdx });
+          } else {
+            fctx.body.push({ op: "call", funcIdx: flattenIdx });
+          }
           const flatTmp = allocLocal(fctx, `__sb_charAt_flat_${fctx.locals.length}`, {
             kind: "ref_null",
             typeIdx: strTypeIdx,
@@ -1282,25 +1318,13 @@ function compileNativeStringCompoundAssignment(
   const capturedIdx = ctx.capturedGlobals.get(name);
   const moduleIdx = ctx.moduleGlobals.get(name);
 
-  // Load current value. The store slot for a statically-`string` binding is a
+  // Load current value. A statically-`string` binding's slot is already a
   // native-string ref (`ref $AnyString`), which `__str_concat` accepts as-is.
-  // But an `any`/untyped binding routed here via `hasStringAssignment` (e.g. an
-  // unannotated param `msg` that is also assigned a string literal in some
-  // branch) has an EXTERNREF slot: a bare `local.get`/`global.get` leaves an
-  // externref where `__str_concat` expects `(ref null $AnyString)` →
-  // `call[0] expected (ref null $AnyString), found externref` CompileError, i.e.
-  // an INVALID module (#3472 — the RHS below is coerced, only the current-value
-  // load was not). Under no-JS-host (standalone / WASI) coerce the loaded
-  // externref to a native `ref $AnyString` via ToString (§7.1.17) — the same
-  // `__extern_toString` path `compileNativeConcatOperand` uses for a dynamic
-  // externref `+` operand — so a runtime number / undefined / object stringifies
-  // correctly instead of trapping an unconditional `ref.cast`. `__extern_toString`
-  // is a NATIVE defined function here (OBJECT_RUNTIME_HELPER_NAMES), so
-  // registering it adds no import and shifts no function index (`concatIdx` above
-  // stays valid). In JS-host `nativeStrings` mode `__extern_toString` is a host
-  // import (adding it mid-body would shift indices, #1175), so that path is left
-  // byte-identical and out of scope.
-  const noJsHost = ctx.standalone === true || ctx.wasi === true;
+  // An `any`/untyped binding routed here via `hasStringAssignment` — an
+  // unannotated param, or a `var` initialised with a String OBJECT wrapper —
+  // has an EXTERNREF slot, so the value must cross the externref bridge on the
+  // way IN and again on the way OUT. Both directions live together in
+  // native-string-slot-bridge.ts (#3472 inbound, #3989 outbound).
   let slotType: ValType | undefined;
   if (localIdx !== undefined) {
     fctx.body.push({ op: "local.get", index: localIdx });
@@ -1318,15 +1342,9 @@ function compileNativeStringCompoundAssignment(
     fctx.body.push({ op: "ref.null", typeIdx: ctx.anyStrTypeIdx });
     return anyStrTypeNullable;
   }
-  if (noJsHost && slotType?.kind === "externref") {
-    const externToStr = ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
-    flushLateImportShifts(ctx, fctx);
-    if (externToStr !== undefined) {
-      fctx.body.push({ op: "call", funcIdx: externToStr });
-    }
-    // externref → ref $AnyString (mirrors emitNativeStringRefFromExternref).
-    fctx.body.push({ op: "any.convert_extern" });
-    fctx.body.push({ op: "ref.cast", typeIdx: ctx.anyStrTypeIdx });
+  const bridgeSlot = slotNeedsExternrefBridge(ctx, slotType);
+  if (bridgeSlot) {
+    emitExternrefSlotToAnyStr(ctx, fctx);
   }
 
   // Compile RHS
@@ -1372,6 +1390,12 @@ function compileNativeStringCompoundAssignment(
   // Call __str_concat — returns ref $AnyString
   fctx.body.push({ op: "call", funcIdx: concatIdx });
 
+  // (#3989) Store back across the SAME bridge the load used. Without this the
+  // `ref $AnyString` result lands in an externref slot and the module fails to
+  // validate, costing the whole file rather than the statement.
+  if (bridgeSlot) {
+    emitAnyStrToExternrefSlot(fctx);
+  }
   // Store back. Re-read indices since RHS compilation may have shifted them.
   if (localIdx !== undefined) {
     fctx.body.push({ op: "local.tee", index: localIdx });
@@ -1384,6 +1408,13 @@ function compileNativeStringCompoundAssignment(
     fctx.body.push({ op: "global.set", index: moduleIdxPost });
     fctx.body.push({ op: "global.get", index: moduleIdxPost });
   }
+
+  // The value left on the stack is whatever the SLOT holds — `local.tee` and the
+  // `global.set`/`global.get` pair both re-expose the slot type. Reporting
+  // `anyStrType` after storing into an externref slot would hand callers a type
+  // the stack does not carry, which is how a validation error migrates from this
+  // statement to whatever consumes `x += y` as a value.
+  if (bridgeSlot) return { kind: "externref" };
 
   return anyStrType;
 }
@@ -1594,6 +1625,13 @@ export function compileCompoundAssignment(
 
   const name = expr.left.text;
 
+  // (#2663 Slice 3) An Object Environment Record pushed by `with` is consulted
+  // BEFORE the surrounding function/global environment, so this must precede the
+  // const / boxed-capture / local paths below. Declines (returns undefined) when
+  // no `with` scope binds the name — then the pre-existing lowering runs.
+  const withCompound = compileWithCompoundAssignment(ctx, fctx, expr.left, expr.right, op);
+  if (withCompound !== undefined) return withCompound;
+
   // const bindings — compound assignment throws TypeError at runtime
   if (fctx.constBindings?.has(name)) {
     const rhsType = compileExpression(ctx, fctx, expr.right);
@@ -1681,7 +1719,13 @@ export function compileCompoundAssignment(
   // infrastructure already round-trips `any += number` through the existing
   // numeric path, and the `__host_add` host import isn't part of that ABI.
   // Per the #2058 design rule, this per-site recovery is **default-mode only**.
-  if (op === ts.SyntaxKind.PlusEqualsToken && !fctx.boxedCaptures?.has(name) && ctx.anyValueTypeIdx < 0) {
+  // (#4137) …EXCEPT with no JS host: that exclusion was written for the
+  // `__host_add` ABI, which `emitAnyAddFromExternTemps` never emits in
+  // standalone/WASI. "Already round-trips" holds for `any += number` and is
+  // FALSE for a runtime STRING — which is how acorn's `message += " (" + …`
+  // rendered as the number NaN. Mirrors `emitAnyAdd`'s own `noJsHost` test.
+  const anyCompoundAddEligible = ctx.anyValueTypeIdx < 0 || ctx.standalone === true || ctx.wasi === true;
+  if (op === ts.SyntaxKind.PlusEqualsToken && !fctx.boxedCaptures?.has(name) && anyCompoundAddEligible) {
     const leftTsType = ctx.checker.getTypeAtLocation(expr.left);
     const rightTsType = ctx.checker.getTypeAtLocation(expr.right);
     const leftIsAnyish = (leftTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
@@ -2089,7 +2133,7 @@ function emitBitwiseCompoundOp(fctx: FunctionContext, op: ts.SyntaxKind): void {
 
 /** Emit the arithmetic/bitwise operation for a compound assignment operator.
  *  Stack must contain [left_f64, right_f64]. Replaces with result f64. */
-function emitCompoundOp(ctx: CodegenContext, fctx: FunctionContext, op: ts.SyntaxKind): void {
+export function emitCompoundOp(ctx: CodegenContext, fctx: FunctionContext, op: ts.SyntaxKind): void {
   switch (op) {
     case ts.SyntaxKind.PlusEqualsToken:
       fctx.body.push({ op: "f64.add" });
@@ -2135,6 +2179,48 @@ function compilePropertyCompoundAssignment(
 ): ValType | null {
   const objType = ctx.checker.getTypeAtLocation(target.expression);
   const propName = ts.isPrivateIdentifier(target.name) ? "__priv_" + target.name.text.slice(1) : target.name.text;
+
+  // (#3872) Compound assignment to a non-writable data property — `o.p %= 20`
+  // after `defineProperty(o,"p",{writable:false})`. §13.15.2 evaluates the RHS
+  // and computes, then PutValue fails: strict throws a TypeError.
+  //
+  // STRICT ONLY, deliberately. In strict mode the throw discards the computed
+  // value, so evaluating the RHS for its side effects and throwing is exact.
+  // Sloppy mode would need the *computed* value (GetValue ∘ op ∘ RHS) as the
+  // expression result while suppressing only the store — the surrounding code
+  // fuses those, and returning the bare RHS instead (the #2667 mapped-arguments
+  // shortcut) is correct for a simple assignment but WRONG here. So sloppy
+  // still falls through rather than being given a wrong expression value.
+  // The corpus this targets is `onlyStrict` (`11.13.2-*-s.js`), so the strict
+  // arm covers it; sloppy compound is recorded as not-covered in the issue.
+  if (
+    isNonWritableDataProperty(ctx, target.expression, propName) &&
+    isStrictContext(target, ctx.inferModuleStrictArguments)
+  ) {
+    const rhsType = compileExpression(ctx, fctx, rhs);
+    if (rhsType) fctx.body.push({ op: "drop" });
+    emitThrowTypeError(ctx, fctx, `Cannot assign to read only property '${propName}' of object`);
+    return { kind: "f64" }; // unreachable after the throw
+  }
+
+  // (#3683 S2 branch c1) TYPED-`this` compound assignment inside a twin. Only
+  // entered for operators `emitCompoundOp` actually lowers — its switch has no
+  // `default`, so an unlisted one would strand the read + RHS on the stack.
+  if (EMIT_COMPOUND_OP_HANDLES.has(op)) {
+    const typed = tryEmitTypedThisCompound(ctx, fctx, target, rhs, op, emitCompoundOp);
+    if (typed !== undefined) return typed;
+  }
+
+  // (#3496 merge-queue follow-up) `globalThis.<name> op= value` must keep the
+  // receiver on the realm-object externref path for both its read and write.
+  // The generic compound path resolves TypeScript's structural
+  // `typeof globalThis` as a Wasm struct before compiling the receiver, then
+  // casts the real host/native global object to that unrelated struct. The
+  // cast traps before the dedicated globalThis read/write lowerings can run.
+  // Plain reads and `=` writes already force this same externref route.
+  if (ts.isIdentifier(target.expression) && target.expression.text === "globalThis") {
+    return compilePropertyCompoundAssignmentExternref(ctx, fctx, target, rhs, op, propName);
+  }
 
   // #1456: Private methods and getter-only accessors throw TypeError on write
   if (ts.isPrivateIdentifier(target.name)) {
@@ -2488,34 +2574,73 @@ function compilePropertyCompoundAssignmentExternref(
   // ("Invalid property name" — the property name string was NaN). Route the
   // `+=` current-value/RHS pair through the runtime-dispatched JS `+`
   // (`__host_add`, the same bridge emitAnyAdd/#2058 uses for identifier
-  // targets). Host-lane only — standalone keeps the numeric path (its extern
-  // property surface is a different, native lowering).
-  if (op === ts.SyntaxKind.PlusEqualsToken && ctx.standalone !== true && ctx.wasi !== true) {
-    const rhsAny = compileExpression(ctx, fctx, rhs, { kind: "externref" });
-    if (!rhsAny) return null;
-    if (rhsAny.kind !== "externref") {
-      coerceType(ctx, fctx, rhsAny, { kind: "externref" });
+  // targets).
+  //
+  // (#3673) …and the STANDALONE/WASI lane now too. #2850 left it out ("its
+  // extern property surface is a different, native lowering"), so the exact
+  // symptoms #2850 names were still live standalone — compiled acorn's
+  // `state.lastStringValue += codePointToString(state.lastIntValue)` NaN'd, so
+  // every named capture group keyed the SAME `groupNames` entry and
+  // `/(?<year>\d{4})-(?<month>\d{2})/` failed with "Duplicate capture group
+  // name". Standalone has no `__host_add` import; `emitAnyAddFromExternTemps`
+  // is the in-module §13.15.3 dispatch (`__to_primitive` → typeof-string test →
+  // `__str_concat` or `f64.add`) that `emitAnyAdd` already builds for this lane,
+  // split out so a caller with pre-evaluated operands can reach it.
+  if (op === ts.SyntaxKind.PlusEqualsToken) {
+    const noJsHostAdd = ctx.standalone === true || ctx.wasi === true;
+    if (noJsHostAdd) {
+      // Current value is on the stack (from the read above) — park it, then
+      // evaluate the RHS, so both operands are temps the dispatch can re-read.
+      const lTmp = allocLocal(fctx, `__cmpd_padd_l_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push({ op: "local.set", index: lTmp });
+      const rhsAny = compileExpression(ctx, fctx, rhs, { kind: "externref" });
+      if (!rhsAny) return null;
+      if (rhsAny.kind !== "externref") {
+        coerceType(ctx, fctx, rhsAny, { kind: "externref" });
+      }
+      const rTmp = allocLocal(fctx, `__cmpd_padd_r_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push({ op: "local.set", index: rTmp });
+      const addType = emitAnyAddFromExternTemps(ctx, fctx, lTmp, rTmp);
+      // The no-native-strings fallback yields f64; box it so the write-back
+      // below (which stores an externref) stays uniform.
+      if (addType.kind !== "externref") {
+        coerceType(ctx, fctx, addType, { kind: "externref" });
+      }
+    } else {
+      const rhsAny = compileExpression(ctx, fctx, rhs, { kind: "externref" });
+      if (!rhsAny) return null;
+      if (rhsAny.kind !== "externref") {
+        coerceType(ctx, fctx, rhsAny, { kind: "externref" });
+      }
+      const hostAddIdx = ensureLateImport(
+        ctx,
+        "__host_add",
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "externref" }],
+      );
+      flushLateImportShifts(ctx, fctx);
+      const finalAddIdx = ctx.funcMap.get("__host_add") ?? hostAddIdx;
+      if (finalAddIdx === undefined) {
+        reportError(ctx, target, "Missing __host_add for compound externref property assignment");
+        return null;
+      }
+      fctx.body.push({ op: "call", funcIdx: finalAddIdx });
     }
-    const hostAddIdx = ensureLateImport(
-      ctx,
-      "__host_add",
-      [{ kind: "externref" }, { kind: "externref" }],
-      [{ kind: "externref" }],
-    );
-    flushLateImportShifts(ctx, fctx);
-    const finalAddIdx = ctx.funcMap.get("__host_add") ?? hostAddIdx;
-    if (finalAddIdx === undefined) {
-      reportError(ctx, target, "Missing __host_add for compound externref property assignment");
-      return null;
-    }
-    fctx.body.push({ op: "call", funcIdx: finalAddIdx });
     const anyResultLocal = allocLocal(fctx, `__cmpd_pany_${fctx.locals.length}`, { kind: "externref" });
     fctx.body.push({ op: "local.set", index: anyResultLocal });
 
     // Write back — same pinned-dispatch/bare-host split as the numeric arm.
+    // (#3430) The BARE (non-pinned) fallback is the general `obj.prop += v`
+    // path for a plain externref/host-object receiver — select the strict
+    // sidecar terminal there so a failed [[Set]] (non-writable data property /
+    // new key on a non-extensible object) throws under a strict Reference,
+    // matching plain `=` assignment (assignment.ts, #3374). The PINNED
+    // dispatcher branch below keeps its existing NON-strict wiring unchanged
+    // (see its own comment) — this only affects the bare sidecar write.
+    const anySetName = isStrictContext(target, ctx.inferModuleStrictArguments) ? "__extern_set_strict" : "__extern_set";
     const setAnyIdx = ensureLateImport(
       ctx,
-      "__extern_set",
+      anySetName,
       [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
       [],
     );
@@ -2577,9 +2702,13 @@ function compilePropertyCompoundAssignmentExternref(
   // forever → infinite loop). Emit the SYMMETRIC struct.set dispatch first so
   // the slot is written when the receiver owns `propName` as a real field;
   // fall back to `__extern_set` for genuine host externrefs / sidecar-only props.
+  // (#3430) The bare fallback selects the strict sidecar terminal for a
+  // strict Reference — see the `+=` string-concat arm above for rationale;
+  // this is the numeric-op mirror of the same fix.
+  const cmpdSetName = isStrictContext(target, ctx.inferModuleStrictArguments) ? "__extern_set_strict" : "__extern_set";
   const setIdx = ensureLateImport(
     ctx,
-    "__extern_set",
+    cmpdSetName,
     [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
     [],
   );
@@ -2609,38 +2738,6 @@ function compilePropertyCompoundAssignmentExternref(
 }
 
 /**
- * (#2666) ToPropertyKey §7.1.19, applied EXACTLY ONCE to the key externref on
- * the stack, leaving the coerced key externref on the stack. For a member
- * read-modify-write (`o[key] op= rhs`, `o[key]++`) the LHS Reference is
- * evaluated once (§13.15.2 / §13.4), so the key's ToPropertyKey must fire once —
- * but the raw key flows to both `__extern_get` and `__extern_set`, each of which
- * ToPropertyKeys internally, double-firing a side-effecting `toString`/`valueOf`.
- * Coercing here once yields a primitive (string) or a preserved Symbol, which is
- * idempotent under the host's internal ToPropertyKey (string→string,
- * symbol→symbol) so the subsequent get/set do not re-coerce.
- *
- * HOST mode: the `__to_property_key` JS import wraps `_toPropertyKey` (§7.1.19,
- * Symbol-preserving). STANDALONE: the native `__to_property_key` helper
- * (object-runtime.ts) — ensure the object runtime so it is emitted.
- */
-export function emitToPropertyKeyOnce(ctx: CodegenContext, fctx: FunctionContext): void {
-  if (ctx.standalone) {
-    ensureObjectRuntime(ctx);
-    flushLateImportShifts(ctx, fctx);
-    const tpkIdx = ctx.funcMap.get("__to_property_key");
-    if (tpkIdx !== undefined) {
-      fctx.body.push({ op: "call", funcIdx: tpkIdx });
-    }
-    return;
-  }
-  const tpkIdx = ensureLateImport(ctx, "__to_property_key", [{ kind: "externref" }], [{ kind: "externref" }]);
-  flushLateImportShifts(ctx, fctx);
-  if (tpkIdx !== undefined) {
-    fctx.body.push({ op: "call", funcIdx: tpkIdx });
-  }
-}
-
-/**
  * Compile compound assignment on an element access target: arr[i] += value
  * Handles both vec structs (arrays) and plain structs (bracket notation).
  */
@@ -2651,6 +2748,29 @@ function compileElementCompoundAssignment(
   rhs: ts.Expression,
   op: ts.SyntaxKind,
 ): ValType | null {
+  // (#3872) Computed COMPOUND write to a non-writable data property —
+  // `o[k] %= 20`. The fourth and last of the assignment shapes this issue
+  // names; the other three are handled in `compilePropertyAssignment`,
+  // `compilePropertyCompoundAssignment` and `compileElementAssignment`.
+  // Strict-only for the same reason as the property-compound arm: sloppy would
+  // need the computed value while suppressing only the store, and the lowering
+  // fuses those.
+  if (ts.isIdentifier(target.expression)) {
+    const nwKey = resolveComputedKeyExpression(ctx, target.argumentExpression);
+    if (
+      nwKey !== undefined &&
+      isNonWritableDataProperty(ctx, target.expression, nwKey) &&
+      isStrictContext(target, ctx.inferModuleStrictArguments)
+    ) {
+      const keyType = compileExpression(ctx, fctx, target.argumentExpression);
+      if (keyType !== null) fctx.body.push({ op: "drop" });
+      const rhsType = compileExpression(ctx, fctx, rhs);
+      if (rhsType) fctx.body.push({ op: "drop" });
+      emitThrowTypeError(ctx, fctx, `Cannot assign to read only property '${nwKey}' of object`);
+      return { kind: "f64" }; // unreachable after the throw
+    }
+  }
+
   // #2045 C.8: compound write `b[i] op= rhs` on a linear-backed Uint8Array must
   // read-modify-write the linear memory. Without this it fell through to the
   // GC/externref path below (which materialises the buffer as a value and never
@@ -2676,23 +2796,14 @@ function compileElementCompoundAssignment(
     });
     fctx.body.push({ op: "local.set", index: objLocal });
 
-    // Compile key as externref and save to local
-    const keyResult = compileExpression(ctx, fctx, target.argumentExpression, {
-      kind: "externref",
-    });
-    if (!keyResult) return null;
-    // (#2666) ToPropertyKey ONCE (§7.1.19): a read-modify-write
-    // (`o[key] op= rhs`) evaluates the LHS Reference once (§13.15.2), so the
-    // key's ToPropertyKey must fire once. The raw key flows to BOTH
-    // __extern_get and __extern_set, each of which ToPropertyKeys internally —
-    // coercing a side-effecting key object twice. Coerce here once; the stored
-    // primitive (string / preserved Symbol) is idempotent under the host's
-    // internal ToPropertyKey, so no second `toString`.
-    emitToPropertyKeyOnce(ctx, fctx);
-    const keyLocal = allocLocal(fctx, `__cmpd_ekey_${fctx.locals.length}`, {
-      kind: "externref",
-    });
-    fctx.body.push({ op: "local.set", index: keyLocal });
+    const keyLocal = compileComputedMemberKeyAfterBaseGuard(
+      ctx,
+      fctx,
+      objLocal,
+      target.argumentExpression,
+      "__cmpd_ekey",
+    );
+    if (keyLocal === null) return null;
 
     // Read current value: __extern_get(obj, key) -> externref
     fctx.body.push({ op: "local.get", index: objLocal });
@@ -2744,13 +2855,20 @@ function compileElementCompoundAssignment(
     });
     fctx.body.push({ op: "local.set", index: boxedLocal });
 
-    // Write back: __extern_set(obj, key, boxed_result)
+    // Write back: __extern_set(obj, key, boxed_result). (#3430) Select the
+    // strict sidecar terminal for a strict Reference — `arr[i] op= v` (etc.)
+    // on a plain host-object/externref receiver must throw TypeError when
+    // [[Set]] fails (non-writable data property / new key on a
+    // non-extensible object), mirroring plain `=` assignment (#3374).
     fctx.body.push({ op: "local.get", index: objLocal });
     fctx.body.push({ op: "local.get", index: keyLocal });
     fctx.body.push({ op: "local.get", index: boxedLocal });
+    const elemCmpdSetName = isStrictContext(target, ctx.inferModuleStrictArguments)
+      ? "__extern_set_strict"
+      : "__extern_set";
     const setIdx = ensureLateImport(
       ctx,
-      "__extern_set",
+      elemCmpdSetName,
       [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
       [],
     );
@@ -2842,13 +2960,20 @@ function compileElementCompoundAssignment(
     });
     fctx.body.push({ op: "local.set", index: boxedLocal });
 
-    // Write back: __extern_set(obj, key, boxed_result)
+    // Write back: __extern_set(obj, key, boxed_result). (#3430) Select the
+    // strict sidecar terminal for a strict Reference — `arr[i] op= v` (etc.)
+    // on a plain host-object/externref receiver must throw TypeError when
+    // [[Set]] fails (non-writable data property / new key on a
+    // non-extensible object), mirroring plain `=` assignment (#3374).
     fctx.body.push({ op: "local.get", index: objLocal });
     fctx.body.push({ op: "local.get", index: keyLocal });
     fctx.body.push({ op: "local.get", index: boxedLocal });
+    const elemCmpdSetName = isStrictContext(target, ctx.inferModuleStrictArguments)
+      ? "__extern_set_strict"
+      : "__extern_set";
     const setIdx = ensureLateImport(
       ctx,
-      "__extern_set",
+      elemCmpdSetName,
       [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
       [],
     );

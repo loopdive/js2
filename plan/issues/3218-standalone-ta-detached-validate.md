@@ -3,7 +3,7 @@ id: 3218
 title: "standalone: ValidateTypedArray for native __ta_dyn_{fill,copyWithin,reverse} — WONT-FIX (verify-first: target tests already pass; residual is elsewhere)"
 status: wont-fix
 assignee: ttraenkler/opus-ta
-sprint: current
+sprint: 75
 priority: high
 horizon: m
 feasibility: hard

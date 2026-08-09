@@ -1,5 +1,11 @@
 # Shared linear-memory allocation-policy proof (#3300)
 
+> **Scope:** #3300 is a hand-built-IR allocation-policy proof. Its Porffor and
+> linear-Wasm lanes do not start from the same source path, and it does not
+> include source compilation time. It must not be cited as a direct compiler
+> A/B. See [#3482's direct source methodology](porffor-direct-ab.md) for that
+> comparison.
+
 Measured 2026-07-17 on Apple M1 Max, macOS/Darwin 25.3.0, Node 22.16.0,
 pnpm 10.30.2, and `Apple clang version 17.0.0 (clang-1700.6.3.2)`.
 Porffor was present at the adapter's exact pinned commit
@@ -74,7 +80,7 @@ return `309`, `300`, and `300` through both policies/backends.
 ```sh
 git -C vendor/Porffor rev-parse HEAD
 cc --version
-npx --yes tsx scripts/benchmark-allocation-policies.mts
+pnpm exec tsx scripts/benchmark-allocation-policies.mts
 IR_VERIFY_ALLOC=1 pnpm exec vitest run tests/issue-3300.test.ts tests/issue-3299.test.ts tests/issue-3298.test.ts tests/issue-3297.test.ts --reporter=dot
 ```
 

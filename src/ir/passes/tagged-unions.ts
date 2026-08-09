@@ -16,12 +16,13 @@
 // and the CONSUMERS (`box`/`unbox`/`tag.test` lowering, already shipped in
 // #1168) sit on either side of this pass. What this pass owns in V1:
 //
-//   1. Validation — scan every `box`/`unbox`/`tag.test` occurrence and
-//      confirm the union referenced is supported by the V1 tagged-union
-//      registry (homogeneous scalar widths, no externref / ref / funcref
-//      members). Surfacing unsupported unions as pass output (rather than
-//      letting lower.ts throw) gives the integration step a clean place to
-//      fall back to the legacy path for that function.
+//   1. Validation — scan every union-backed `box`/`unbox`/`tag.test`
+//      occurrence and confirm the union referenced is supported by the V1
+//      tagged-union registry (homogeneous scalar widths, no externref / ref /
+//      funcref members). Dynamic boxes use the separate boxed-any carrier and
+//      therefore do not consult this registry. Surfacing unsupported unions
+//      as pass output (rather than letting lower.ts throw) gives the
+//      integration step a clean place to report the producer invariant.
 //
 //   2. Identity — unions that are already representable pass through
 //      unchanged. The module's struct types are registered lazily when the
@@ -58,8 +59,10 @@
 // error via this pass's `errors` output instead of crashing in lower.ts.
 
 import { type IrFunction, type IrInstr, type IrModule, type IrType, asVal } from "../nodes.js";
+import type { IrUnitId } from "../identity.js";
 
 export interface TaggedUnionsError {
+  readonly unitId: IrUnitId;
   readonly func: string;
   readonly block: number;
   readonly message: string;
@@ -71,10 +74,11 @@ export interface TaggedUnionsResult {
 }
 
 /**
- * Run the tagged-unions pass. V1: validates that every `box`/`unbox`/
- * `tag.test` operand references a registry-supported union; returns the
- * module unchanged. Errors are reported but non-fatal — the caller decides
- * whether to fall back.
+ * Run the tagged-unions pass. V1: validates that every union-backed
+ * `box`/`unbox`/`tag.test` operand references a registry-supported union;
+ * returns the module unchanged. Dynamic boxes belong to the boxed-any
+ * representation and bypass the tagged-union registry. Errors are reported
+ * but non-fatal — the caller decides how to surface them.
  */
 export function taggedUnions(mod: IrModule): IrModule {
   return runTaggedUnions(mod).module;
@@ -107,16 +111,23 @@ function validateFunction(fn: IrFunction, errors: TaggedUnionsError[]): void {
 
 function checkInstr(fn: IrFunction, blockId: number, instr: IrInstr, errors: TaggedUnionsError[]): void {
   if (instr.kind === "box") {
+    // #3529 — `box` has two valid representations. A dynamic target lowers
+    // through resolveDynamicLowering (the boxed-any carrier), while only a
+    // union target belongs to this pass's registry. Builder, verifier, and
+    // lowerer already share that contract; keep this pass aligned with them.
+    if (instr.toType.kind === "dynamic") return;
     if (instr.toType.kind !== "union") {
       errors.push({
+        unitId: fn.unitId,
         func: fn.name,
         block: blockId,
-        message: `box target must be a union IrType, got ${instr.toType.kind}`,
+        message: `box target must be a union or dynamic IrType, got ${instr.toType.kind}`,
       });
       return;
     }
     if (!isRegistrySupported(instr.toType)) {
       errors.push({
+        unitId: fn.unitId,
         func: fn.name,
         block: blockId,
         message: `box target union<${memberList(instr.toType)}> is not supported by the V1 tagged-union registry`,
@@ -132,6 +143,7 @@ function checkInstr(fn: IrFunction, blockId: number, instr: IrInstr, errors: Tag
     if (!operandType || operandType.kind !== "union") return;
     if (!isRegistrySupported(operandType)) {
       errors.push({
+        unitId: fn.unitId,
         func: fn.name,
         block: blockId,
         message: `${instr.kind} operand union<${memberList(operandType)}> is not supported by the V1 tagged-union registry`,

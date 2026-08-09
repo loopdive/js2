@@ -1,7 +1,7 @@
 ---
 id: 3305
 title: "Self-host stdlib: convert parse-number-native.ts + number-format-native.ts hand-emitted Instr[] to TS (family #2)"
-status: in-progress
+status: ready
 sprint: current
 priority: high
 horizon: xl

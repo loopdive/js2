@@ -2,7 +2,23 @@
 
 import { AllocSiteRegistry } from "../src/ir/alloc-registry.js";
 import { IrFunctionBuilder } from "../src/ir/builder.js";
+import { createIrSourceId, createIrUnitId } from "../src/ir/identity.js";
 import { irVal, type IrModule, type IrObjectShape, type IrType } from "../src/ir/nodes.js";
+
+const ALLOCATION_POLICY_SOURCE_ID = createIrSourceId({
+  kind: "synthetic",
+  order: 0,
+  sourceKey: "@benchmark/allocation-policy-proof",
+});
+const allocationPolicyIdentity = (ordinal: number, name: string) => ({
+  unitId: createIrUnitId({
+    sourceId: ALLOCATION_POLICY_SOURCE_ID,
+    lexicalOwnerId: null,
+    kind: "synthetic-support",
+    ordinal,
+  }),
+  name,
+});
 
 export const ALLOCATION_POLICY_F64: IrType = irVal({ kind: "f64" });
 export const ALLOCATION_POLICY_I32: IrType = irVal({ kind: "i32" });
@@ -17,7 +33,12 @@ export const ALLOCATION_POLICY_SHAPE: IrObjectShape = {
 export function buildAllocationPolicyProof(): { readonly module: IrModule; readonly registry: AllocSiteRegistry } {
   const registry = new AllocSiteRegistry();
 
-  const object = new IrFunctionBuilder("objectPolicyProof", [ALLOCATION_POLICY_F64], true, registry);
+  const object = new IrFunctionBuilder(
+    allocationPolicyIdentity(0, "objectPolicyProof"),
+    [ALLOCATION_POLICY_F64],
+    true,
+    registry,
+  );
   const seed = object.addParam("seed", ALLOCATION_POLICY_F64);
   object.openBlock();
   const five = object.emitConst({ kind: "f64", value: 5 }, ALLOCATION_POLICY_F64);
@@ -40,7 +61,12 @@ export function buildAllocationPolicyProof(): { readonly module: IrModule; reado
   const objectResult = object.emitBinary("f64.add", mutationScore, identityScore, ALLOCATION_POLICY_F64);
   object.terminate({ kind: "return", values: [objectResult] });
 
-  const vector = new IrFunctionBuilder("vectorPolicyProof", [ALLOCATION_POLICY_F64], true, registry);
+  const vector = new IrFunctionBuilder(
+    allocationPolicyIdentity(1, "vectorPolicyProof"),
+    [ALLOCATION_POLICY_F64],
+    true,
+    registry,
+  );
   const index = vector.addParam("index", ALLOCATION_POLICY_I32);
   vector.openBlock();
   const values = [4, 5, 6].map((value) => vector.emitConst({ kind: "f64", value }, ALLOCATION_POLICY_F64));

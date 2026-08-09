@@ -2,7 +2,6 @@
 id: 3395
 title: "standalone: object/closure GC ref not boxed (or double-boxed) at externref boundaries — any.convert_extern / extern.convert_any invalid Wasm (~34 tests)"
 status: ready
-assignee: ttraenkler/fable-dev-1
 sprint: current
 created: 2026-07-18
 updated: 2026-07-18

@@ -2,17 +2,50 @@
 id: 2691
 title: "ESLint api.js: re-export 'ESLint' declared locally but not exported (compile error)"
 status: blocked
-sprint: Backlog
 created: 2026-06-26
-updated: 2026-06-26
+updated: 2026-07-26
 priority: low
-area: module-resolution
-goal: npm-library-support
 feasibility: hard
-depends_on: [1791, 1792, 1575]
-related: [1573, 1791, 1792, 1793, 1794, 1575]
+reasoning_effort: high
+task_type: bugfix
+area: module-resolution
+language_feature: commonjs-reexports
+goal: npm-library-support
+sprint: Backlog
+depends_on: [1575, 3654, 3655, 3656]
+es_edition: n/a
+related: [1400, 1573, 1791, 1792, 1793, 1794, 2693, 3653, 3657]
 ---
 # ESLint api.js — re-export resolution: 'ESLint' declared locally but not exported
+
+## 2026-07-26 refresh — cascade now also hides `Linter`
+
+The cascade diagnosis remains correct, but the old statement that ESLint's npm
+dependencies are not installed is false in the current checkout. They are
+installed by the committed ESLint dependency:
+
+- `eslint-scope`, `eslint-visitor-keys`, `@eslint/plugin-kit`, `debug`,
+  `espree`, and `esquery` resolve from ESLint's importer context;
+- `@eslint/core` is installed as a types-only package.
+
+The compiler nonetheless reports those modules as missing in the direct
+`linter.js` graph, together with existing relative modules. That resolver
+frontier is #3654; static `require("../../package.json")` is #3655.
+
+The bare-package probe now starts with:
+
+```text
+Module '"eslint"' has no exported member 'Linter'.
+```
+
+This is the same cascade class as the issue's original missing `ESLint`
+diagnostic, not evidence that the reduced CJS re-export implementation in
+#1560 regressed. The graph's target modules fail first.
+
+Two fatal `undefined.kind` diagnostics at lines 240 and 562 also remain.
+The diagnostics do not carry a source-file path, so do **not** label them as
+`api.js` line numbers or merge them as one root cause without source-qualified
+instrumentation and minimization. #1400 owns the integration re-measure.
 
 > **INVESTIGATED 2026-06-26 — SUBSTRATE-GATED, do not grind.** The
 > "ESLint not exported" TS2459 is a **cascade symptom**, NOT a module-resolution

@@ -16,9 +16,10 @@
 //   SHARD=1/8 node scripts/equivalence-gate.mjs       # run one shard, gate
 //   node scripts/equivalence-gate.mjs --update        # rewrite baseline from a full run
 //
-// In CI each shard runs the gate with its own SHARD and writes a partial
-// result artifact; a final job merges partials and runs the gate against the
-// full baseline. See .github/workflows/ci.yml (equivalence job).
+// In CI each shard evaluates its own failures against the shared baseline.
+// A tiny final status job only verifies that every matrix cell succeeded; it
+// does not need to repeat checkout, dependency install, artifact upload, or
+// artifact download just to re-run this set comparison.
 
 import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync, mkdtempSync, readdirSync } from "node:fs";
@@ -109,13 +110,16 @@ function mergePartials(dir) {
 
 const { failing, passing } = MERGE_DIR ? mergePartials(MERGE_DIR) : runVitest();
 
-// When SHARD is set and we are NOT merging, just emit a partial artifact and exit 0.
-// The merge job does the gating against the full baseline.
+// A caller may still request a partial for diagnostics, but shard mode now
+// continues into the same baseline gate as a full run. Regression membership
+// is independent per test, so merging all shard sets first cannot change the
+// pass/fail verdict.
 if (SHARD && !MERGE_DIR && !UPDATE) {
-  const partialPath = process.env.PARTIAL_OUT || join(REPO_ROOT, `equiv-partial-${SHARD.replace("/", "-")}.json`);
-  writeFileSync(partialPath, JSON.stringify({ failing: [...failing], passing: [...passing] }, null, 2));
-  console.log(`equivalence-gate: wrote partial ${partialPath} (${failing.size} fail / ${passing.size} pass)`);
-  process.exit(0);
+  const partialPath = process.env.PARTIAL_OUT;
+  if (partialPath) {
+    writeFileSync(partialPath, JSON.stringify({ failing: [...failing], passing: [...passing] }, null, 2));
+    console.log(`equivalence-gate: wrote partial ${partialPath} (${failing.size} fail / ${passing.size} pass)`);
+  }
 }
 
 if (UPDATE) {

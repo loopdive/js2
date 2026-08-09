@@ -348,3 +348,168 @@ export function test(): number { let n = 0; for (const x of g()) n++; return n; 
     expect(r.errors?.[0]?.message ?? "").toContain("#680");
   });
 });
+
+// #2864 D2 — delegation abrupt forwarding (iterator close through `yield*`,
+// §27.5.3.7 steps 7.b/7.c). A `.return(v)` / `.throw(e)` on the OUTER while
+// suspended mid-delegation now (a) drives the INNER's resume once with the same
+// abrupt mode + payloads — so the inner's `finally` blocks run — then (b)
+// continues the outer's own abrupt path (its finalizers, then complete/throw).
+// Previously the outer completed WITHOUT closing the inner (inner finalizers
+// silently skipped). The slice also dedicates a state to every self-suspending
+// yield-star terminator, fixing three protocol bugs at once: a first-statement
+// `yield*` suspension was misclassified as NOT-STARTED by the dispatch (state
+// 0), the state's prelude statements re-ran on every mid-delegation `.next()`,
+// and a preceding `const x = yield …` resume binding was clobbered by later
+// `.next(v)` values during delegation.
+describe("#2864 D2 delegation abrupt forwarding (standalone)", () => {
+  it("M3 probe: .return(v) mid-delegation runs the inner finally, completes with v", async () => {
+    expect(
+      await runStandalone(`let log = 0;
+function* inner() { try { yield 1; yield 2; } finally { log = 100; } }
+function* outer() { yield* inner(); }
+export function test(): number {
+  const it = outer();
+  it.next();                       // 1 — suspended mid-delegation
+  const r = it.return(7 as any);
+  return log * 1000 + (r.value as number) * 10 + (r.done ? 1 : 0);
+}`),
+    ).toBe(100071); // inner finally ran (100), value 7, done
+  });
+
+  it(".throw(e) mid-delegation runs the inner finally then propagates to the caller", async () => {
+    expect(
+      await runStandalone(`let log = 0;
+function* inner() { try { yield 1; yield 2; } finally { log = 100; } }
+function* outer() { yield* inner(); }
+export function test(): number {
+  const it = outer();
+  it.next();
+  let caught = 0;
+  try { it.throw(new Error("boom")); } catch (e) { caught = 1; }
+  return log * 10 + caught;
+}`),
+    ).toBe(1001);
+  });
+
+  it("outer finally around the yield* also runs — inner first, outer second", async () => {
+    expect(
+      await runStandalone(`let ord = 0;
+let innerAt = 0;
+let outerAt = 0;
+function* inner() { try { yield 1; } finally { ord = ord + 1; innerAt = ord; } }
+function* outer() { try { yield* inner(); } finally { ord = ord + 1; outerAt = ord; } }
+export function test(): number {
+  const it = outer();
+  it.next();
+  it.return(5 as any);
+  return innerAt * 10 + outerAt;
+}`),
+    ).toBe(12);
+  });
+
+  it(".return(v) at a plain-yield suspension BEFORE delegation starts skips the inner", async () => {
+    expect(
+      await runStandalone(`let log = 0;
+function* inner() { try { yield 1; } finally { log = 100; } }
+function* outer() { yield 0; yield* inner(); }
+export function test(): number {
+  const it = outer();
+  it.next(); // 0 — inner NOT constructed yet
+  const r = it.return(7 as any);
+  return log * 1000 + (r.value as number) * 10 + (r.done ? 1 : 0);
+}`),
+    ).toBe(71); // inner never ran → its finally must not run
+  });
+
+  it("an inner finally that throws during close converts .return into a throw completion", async () => {
+    expect(
+      await runStandalone(`let log = 0;
+function* inner() { try { yield 1; } finally { log = 100; throw new Error("replace"); } }
+function* outer() { yield* inner(); }
+export function test(): number {
+  const it = outer();
+  it.next();
+  let caught = 0;
+  try { it.return(7 as any); } catch (e) { caught = 1; }
+  return log * 10 + caught;
+}`),
+    ).toBe(1001);
+  });
+
+  it("loop-carried yield*: normal pass completes the inner, close hits only the live one", async () => {
+    expect(
+      await runStandalone(`let log = 0;
+function* inner() { try { yield 1; yield 2; } finally { log = log + 100; } }
+function* outer() { for (let i = 0; i < 2; i = i + 1) { yield* inner(); } }
+export function test(): number {
+  const it = outer();
+  it.next(); // 1 (pass 0)
+  it.next(); // 2
+  it.next(); // 1 (pass 1) — first inner completed normally (finally ran)
+  const r = it.return(7 as any);   // closes the second inner
+  return log * 1000 + (r.value as number) * 10 + (r.done ? 1 : 0);
+}`),
+    ).toBe(200071);
+  });
+
+  it(".next() after a mid-delegation close follows the done protocol", async () => {
+    expect(
+      await runStandalone(`function* inner() { yield 1; yield 2; }
+function* outer() { yield* inner(); }
+export function test(): number {
+  const it = outer();
+  it.next();
+  it.return(7 as any);
+  const r = it.next();
+  return r.done ? 1 : 0;
+}`),
+    ).toBe(1);
+  });
+
+  it("first-statement yield* suspension is not misclassified as not-started (vec delegate)", async () => {
+    expect(
+      await runStandalone(`function* g() { yield* [1, 2, 3]; }
+export function test(): number {
+  const it = g();
+  it.next(); // 1
+  const r = it.return(7 as any);
+  return (r.value as number) * 10 + (r.done ? 1 : 0);
+}`),
+    ).toBe(71);
+  });
+
+  it("yield-star state prelude runs ONCE, not per mid-delegation .next()", async () => {
+    expect(
+      await runStandalone(`let calls = 0;
+function count(): number { calls = calls + 1; return calls; }
+function* inner2() { yield 1; yield 2; }
+function* outer2() { const a = count(); yield* inner2(); yield a; }
+export function test(): number {
+  const it = outer2();
+  it.next(); // runs count() once → a=1, delegates → 1
+  it.next(); // 2 — must NOT re-run count()
+  const r3 = it.next(); // inner done → yield a
+  return calls * 10 + (r3.value as number);
+}`),
+    ).toBe(11);
+  });
+
+  it("a resume binding preceding the yield* survives mid-delegation .next(v) values", async () => {
+    expect(
+      await runStandalone(`function* inner3() { yield 10; yield 20; }
+function* outer3(): Generator<number, void, number> {
+  const x = yield 1;
+  yield* inner3();
+  yield x;
+}
+export function test(): number {
+  const it = outer3();
+  it.next(0); // → 1
+  it.next(5); // x=5, delegation starts → 10
+  it.next(9); // mid-delegation → 20 (must not clobber x)
+  const r = it.next(7); // inner done → yield x
+  return r.value as number;
+}`),
+    ).toBe(5);
+  });
+});

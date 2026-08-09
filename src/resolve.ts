@@ -5,6 +5,14 @@ import type { CompileOptions } from "./index.js";
 import { rewriteCjsRequire } from "./cjs-rewrite.js";
 import { getDefaultEnvironment } from "./env.js";
 
+export interface ModuleResolutionDiagnostic {
+  message: string;
+  file: string;
+  line: number;
+  column: number;
+  severity: "error";
+}
+
 // Filesystem access goes through the environment adapter (#1096).
 // This module no longer probes `typeof window` / `typeof process` directly
 // and no longer uses top-level `await` — `getDefaultEnvironment()` is fully
@@ -25,6 +33,9 @@ export class ModuleResolver {
   private externals: Set<string>;
   private extensions: string[];
   private resolveCache = new Map<string, string | null>();
+  private resolvedImports = new Map<string, Map<string, string>>();
+  private staticJsonSources = new Map<string, string>();
+  private diagnostics: ModuleResolutionDiagnostic[] = [];
 
   /**
    * Create a resolver rooted at a directory.
@@ -45,6 +56,8 @@ export class ModuleResolver {
       target: ts.ScriptTarget.ES2022,
       module: ts.ModuleKind.ESNext,
       moduleResolution: ts.ModuleResolutionKind.Node10,
+      allowJs: options?.allowJs === true,
+      checkJs: options?.allowJs === true,
       baseUrl: rootDir,
       rootDir,
       // Allow TS to find types in the specified module directories
@@ -135,20 +148,39 @@ export class ModuleResolver {
       return null;
     }
 
-    // Build a cache key
-    const cacheKey = `${containingFile}::${specifier}`;
+    // Resolve from the importer's physical location. Package managers such as
+    // pnpm expose packages through symlinks, but a dependency's private
+    // node_modules tree lives beside the physical package in the store. Node
+    // resolves from that physical context; using the logical symlink path makes
+    // sibling dependencies such as eslint-scope disappear (#3654).
+    const resolutionContainingFile = this.host.realpath?.(containingFile) ?? containingFile;
+
+    // Build a cache key from the canonical importer identity.
+    const cacheKey = `${resolutionContainingFile}::${specifier}`;
     if (this.resolveCache.has(cacheKey)) {
       return this.resolveCache.get(cacheKey)!;
     }
 
+    // Static relative JSON requires are compile-time modules, not filesystem
+    // capabilities exposed to Wasm. Handle them before TypeScript's script
+    // resolver, which intentionally ignores JSON without resolveJsonModule.
+    if ((specifier.startsWith("./") || specifier.startsWith("../")) && specifier.endsWith(".json")) {
+      const resolvedJson = this.resolveStaticJson(specifier, resolutionContainingFile);
+      this.resolveCache.set(cacheKey, resolvedJson);
+      if (resolvedJson !== null) {
+        this.recordResolvedImport(resolutionContainingFile, specifier, resolvedJson);
+      }
+      return resolvedJson;
+    }
+
     // Use TypeScript's module resolution
-    const result = ts.resolveModuleName(specifier, containingFile, this.compilerOptions, this.host);
+    const result = ts.resolveModuleName(specifier, resolutionContainingFile, this.compilerOptions, this.host);
 
     let resolved: string | null = null;
     if (result.resolvedModule) {
       resolved = result.resolvedModule.resolvedFileName;
       // Normalize the path
-      resolved = path.resolve(resolved);
+      resolved = this.host.realpath?.(path.resolve(resolved)) ?? path.resolve(resolved);
 
       // TypeScript's standard resolver prefers `.d.ts` declarations over
       // implementation bodies in two cases relevant to js2wasm:
@@ -165,16 +197,92 @@ export class ModuleResolver {
       // sibling `node_modules/<pkg>/<subpath>` and return that instead.
       // If no implementation body is found (declaration-only package),
       // the `.d.ts` is kept and codegen falls back to extern stubs.
-      if (pkgName && (/[/\\]@types[/\\]/.test(resolved) || resolved.endsWith(".d.ts"))) {
-        const implPath = this.findImplementationBody(pkgName, specifier, containingFile);
+      if (pkgName && (/[/\\]@types[/\\]/.test(resolved) || /\.d\.[cm]?ts$/.test(resolved))) {
+        const implPath = this.findImplementationBody(pkgName, specifier, resolutionContainingFile);
         if (implPath) {
-          resolved = implPath;
+          resolved = this.host.realpath?.(implPath) ?? implPath;
         }
       }
     }
 
     this.resolveCache.set(cacheKey, resolved);
+    if (resolved !== null) {
+      this.recordResolvedImport(resolutionContainingFile, specifier, resolved);
+    }
     return resolved;
+  }
+
+  private recordResolvedImport(containingFile: string, specifier: string, resolved: string): void {
+    let imports = this.resolvedImports.get(containingFile);
+    if (!imports) {
+      imports = new Map();
+      this.resolvedImports.set(containingFile, imports);
+    }
+    imports.set(specifier, resolved);
+  }
+
+  private resolveStaticJson(specifier: string, containingFile: string): string | null {
+    const jsonPath = this.canonicalize(path.resolve(path.dirname(containingFile), specifier));
+    let raw: string;
+    try {
+      raw = getFs()!.readFileSync(jsonPath, "utf-8");
+    } catch {
+      this.diagnostics.push({
+        message:
+          `Static JSON require '${specifier}' from '${containingFile}' could not read ` +
+          `'${jsonPath}': file not found`,
+        file: containingFile,
+        line: 1,
+        column: 1,
+        severity: "error",
+      });
+      return null;
+    }
+
+    let value: unknown;
+    try {
+      value = JSON.parse(raw);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.diagnostics.push({
+        message:
+          `Static JSON require '${specifier}' from '${containingFile}' could not parse ` + `'${jsonPath}': ${detail}`,
+        file: containingFile,
+        line: 1,
+        column: 1,
+        severity: "error",
+      });
+      return null;
+    }
+
+    const binding = `__js2wasm_json_module_value_${this.staticJsonSources.size}`;
+    this.staticJsonSources.set(jsonPath, `const ${binding} = ${JSON.stringify(value)};\nexport default ${binding};\n`);
+    return jsonPath;
+  }
+
+  /** Return the physical identity used for package-resolution and graph de-duplication. */
+  canonicalize(filePath: string): string {
+    const absolute = path.resolve(filePath);
+    return this.host.realpath?.(absolute) ?? absolute;
+  }
+
+  /**
+   * Return the resolved import edges recorded while walking one source file.
+   * compileProject threads these exact edges into its virtual TypeScript host
+   * instead of asking the in-memory host to rediscover pnpm's filesystem.
+   */
+  getResolvedImports(containingFile: string): ReadonlyMap<string, string> {
+    return this.resolvedImports.get(this.canonicalize(containingFile)) ?? new Map();
+  }
+
+  /** Return the synthesized JavaScript module for a parsed static JSON file. */
+  getStaticJsonSource(filePath: string): string | undefined {
+    return this.staticJsonSources.get(this.canonicalize(filePath));
+  }
+
+  /** Return source-qualified resolver failures collected during graph expansion. */
+  getDiagnostics(): readonly ModuleResolutionDiagnostic[] {
+    return this.diagnostics;
   }
 
   /**
@@ -378,16 +486,19 @@ export function resolveAllImports(entryFile: string, resolver: ModuleResolver): 
   const onStack = new Set<string>();
 
   function visit(filePath: string): void {
-    if (visited.has(filePath) || onStack.has(filePath)) return;
-    onStack.add(filePath);
+    const canonicalPath = resolver.canonicalize(filePath);
+    if (visited.has(canonicalPath) || onStack.has(canonicalPath)) return;
+    onStack.add(canonicalPath);
 
-    let content: string;
-    try {
-      content = getFs()!.readFileSync(filePath, "utf-8");
-    } catch {
-      // File not found — skip (TS will report errors)
-      onStack.delete(filePath);
-      return;
+    let content = resolver.getStaticJsonSource(canonicalPath);
+    if (content === undefined) {
+      try {
+        content = getFs()!.readFileSync(canonicalPath, "utf-8");
+      } catch {
+        // File not found — skip (TS will report errors)
+        onStack.delete(canonicalPath);
+        return;
+      }
     }
 
     // Rewrite CJS `const X = require('Y')` to ESM `import X from 'Y'` so the
@@ -397,33 +508,77 @@ export function resolveAllImports(entryFile: string, resolver: ModuleResolver): 
 
     // Parse to find import specifiers
     const sf = ts.createSourceFile(
-      filePath,
+      canonicalPath,
       content,
       ts.ScriptTarget.Latest,
       true,
-      filePath.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+      canonicalPath.endsWith(".tsx")
+        ? ts.ScriptKind.TSX
+        : /\.[cm]?js$/.test(canonicalPath)
+          ? ts.ScriptKind.JS
+          : ts.ScriptKind.TS,
     );
 
     // Visit dependencies first (post-order DFS) so their content lands
     // in `resolved` before this file's content. This produces a true
     // topological order: deps before importers, entry last.
+    const resolveAndVisit = (specifier: string): void => {
+      const resolvedPath = resolver.resolve(specifier, canonicalPath);
+      if (resolvedPath) visit(resolvedPath);
+    };
     for (const stmt of sf.statements) {
       if (ts.isImportDeclaration(stmt) && ts.isStringLiteral(stmt.moduleSpecifier)) {
-        const specifier = stmt.moduleSpecifier.text;
-        const resolvedPath = resolver.resolve(specifier, filePath);
-        if (resolvedPath) visit(resolvedPath);
+        resolveAndVisit(stmt.moduleSpecifier.text);
       }
       // Also handle export ... from "..."
       if (ts.isExportDeclaration(stmt) && stmt.moduleSpecifier && ts.isStringLiteral(stmt.moduleSpecifier)) {
-        const specifier = stmt.moduleSpecifier.text;
-        const resolvedPath = resolver.resolve(specifier, filePath);
-        if (resolvedPath) visit(resolvedPath);
+        resolveAndVisit(stmt.moduleSpecifier.text);
+      }
+
+      // Some CommonJS bindings wrap a static require call, e.g.
+      // `const debug = require("debug")("namespace")`. That shape cannot be
+      // rewritten into a semantics-equivalent import declaration, but its
+      // package edge is still static and must participate in resolution.
+      if (ts.isVariableStatement(stmt)) {
+        const scanRequire = (node: ts.Node): void => {
+          if (
+            ts.isCallExpression(node) &&
+            ts.isIdentifier(node.expression) &&
+            node.expression.text === "require" &&
+            node.arguments.length === 1 &&
+            (ts.isStringLiteral(node.arguments[0]) || ts.isNoSubstitutionTemplateLiteral(node.arguments[0]))
+          ) {
+            resolveAndVisit(node.arguments[0].text);
+            return;
+          }
+          ts.forEachChild(node, scanRequire);
+        };
+        for (const declaration of stmt.declarationList.declarations) {
+          if (declaration.initializer) scanRequire(declaration.initializer);
+        }
       }
     }
 
-    visited.add(filePath);
-    onStack.delete(filePath);
-    resolved.set(filePath, content);
+    // TypeScript's JSDoc imports are checker-visible module edges but are not
+    // ordinary ImportDeclarations. ESLint uses both `import("...")` typedefs
+    // and the `@import { T } from "..."` form for declaration-only packages.
+    const jsdocSpecifiers = new Set<string>();
+    const scanner = ts.createScanner(ts.ScriptTarget.Latest, false, ts.LanguageVariant.Standard, content);
+    for (let token = scanner.scan(); token !== ts.SyntaxKind.EndOfFileToken; token = scanner.scan()) {
+      if (token !== ts.SyntaxKind.SingleLineCommentTrivia && token !== ts.SyntaxKind.MultiLineCommentTrivia) continue;
+      const comment = scanner.getTokenText();
+      for (const match of comment.matchAll(/\bimport\s*\(\s*["']([^"']+)["']\s*\)/g)) {
+        jsdocSpecifiers.add(match[1]);
+      }
+      for (const match of comment.matchAll(/@import[^\r\n]*?\bfrom\s+["']([^"']+)["']/g)) {
+        jsdocSpecifiers.add(match[1]);
+      }
+    }
+    for (const specifier of jsdocSpecifiers) resolveAndVisit(specifier);
+
+    visited.add(canonicalPath);
+    onStack.delete(canonicalPath);
+    resolved.set(canonicalPath, content);
   }
 
   visit(path.resolve(entryFile));

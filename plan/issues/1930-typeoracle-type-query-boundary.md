@@ -1,8 +1,7 @@
 ---
 id: 1930
 title: "TypeOracle — one type-query boundary between the TS checker and codegen (unblocks TS7, kills suppression heuristics)"
-status: in-progress
-assignee: ttraenkler/dev-2937f
+status: ready
 sprint: current
 model: fable
 fable_role: spec
@@ -392,24 +391,24 @@ Why one predicate is impossible: `a + b` of two i32 locals is Q-WRAP-safe
 (wrap ≡ ToInt32) but Q-CANON-unsafe (`i32.trunc_sat_f64_s` saturates);
 `x >>> 1` is Q-WRAP-safe but value-divergent above 2^31.
 
-| # | Divergence | Verdict | Action |
-| --- | --- | --- | --- |
-| **V1** | unary `-x`: array Q-CANON rejects (#2789 −0), scalar accepted | scalar matcher WRONG — live silent miscompile (re-verified 2026-07-18) | fix via salvage §1 (minus admits only `-<non-zero int literal>`; demotion-only ⇒ sound) |
-| **V2** | `a + b`/`a - b`: Q-WRAP accepts, Q-CANON rejects | both correct — different questions | doctrine cross-refs at both sites; never copy arms |
-| **V3** | `x >>> y`: Q-WRAP accepts, both Q-CANON exclude | both correct | doctrine cross-refs |
-| **V4** | equality ops: array Q-CANON accepts (0/1 canonical), scalar only relational | scalar conservatively incomplete, not wrong (only demotes) | documented; alignment = separate optimization slice with proof burden |
-| **V5** | `!x`/`instanceof`/`in`: Q-TAG yes, Q-CANON no arms | conservative gap, not wrong | documented; promotion = future optimization |
-| **V6** | Q-TAG checker vs syntactic lane on `: boolean`-typed identifier | both stay, separately — merging changes kernel return-type inference (#2795/#2770) | deliberate siblings, documented |
-| **V7** | `isStrictBooleanReturnType` (shared.ts) vs oracle boolean fact | semantically identical; duplicated only by raw-`ts.Type` plumbing | migrate in Slice-4 `signatureOf` bucket (six `brandExternMethodResult` sites) |
-| **V8** | `isNumericExpr` treats booleans as numeric | intentional layering (representability, not tag) | documented; spine extraction mirrors the boolean one |
+| #      | Divergence                                                                  | Verdict                                                                            | Action                                                                                  |
+| ------ | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| **V1** | unary `-x`: array Q-CANON rejects (#2789 −0), scalar accepted               | scalar matcher WRONG — live silent miscompile (re-verified 2026-07-18)             | fix via salvage §1 (minus admits only `-<non-zero int literal>`; demotion-only ⇒ sound) |
+| **V2** | `a + b`/`a - b`: Q-WRAP accepts, Q-CANON rejects                            | both correct — different questions                                                 | doctrine cross-refs at both sites; never copy arms                                      |
+| **V3** | `x >>> y`: Q-WRAP accepts, both Q-CANON exclude                             | both correct                                                                       | doctrine cross-refs                                                                     |
+| **V4** | equality ops: array Q-CANON accepts (0/1 canonical), scalar only relational | scalar conservatively incomplete, not wrong (only demotes)                         | documented; alignment = separate optimization slice with proof burden                   |
+| **V5** | `!x`/`instanceof`/`in`: Q-TAG yes, Q-CANON no arms                          | conservative gap, not wrong                                                        | documented; promotion = future optimization                                             |
+| **V6** | Q-TAG checker vs syntactic lane on `: boolean`-typed identifier             | both stay, separately — merging changes kernel return-type inference (#2795/#2770) | deliberate siblings, documented                                                         |
+| **V7** | `isStrictBooleanReturnType` (shared.ts) vs oracle boolean fact              | semantically identical; duplicated only by raw-`ts.Type` plumbing                  | migrate in Slice-4 `signatureOf` bucket (six `brandExternMethodResult` sites)           |
+| **V8** | `isNumericExpr` treats booleans as numeric                                  | intentional layering (representability, not tag)                                   | documented; spine extraction mirrors the boolean one                                    |
 
 **One correction to the frozen design (D4.1):** "the five divergent matchers
 die into `isBooleanProducing`/`staticJsTypeOf`" is wrong as written — only
 the **Q-TAG** lane unifies into the oracle. Q-CANON and Q-WRAP are
 Constraint-A-excluded (registry/codegen-state-coupled) and permanently stay
-codegen-local; their end state is *doctrine cross-references + aligned
+codegen-local; their end state is _doctrine cross-references + aligned
 semantics + (optionally) one parameterized `isCanonicalI32Expr(expr, opts)`
-for the two Q-CANON siblings* — pure code motion once V1 lands, with the V4
+for the two Q-CANON siblings_ — pure code motion once V1 lands, with the V4
 conservatism table as the parity spec.
 
 ### 3. Remaining slice sequencing (current ratchet: 454 `getTypeAtLocation` / 853 `ctx.checker.` across 53 files; gate is change-scoped net-per-field since #3273)
@@ -471,3 +470,23 @@ unchanged follow-ups.
 cross-reference that prevents the next dev from copy-pasting a Q-WRAP arm into a
 Q-CANON matcher — the exact V1 bug class), so it is granted the change-scoped
 `loc-budget-allow` frontmatter entry on this issue file.
+
+## Review (Fable, 2026-07-24)
+
+**The Slice-3 V1 scalar `-0` miscompile is FIXED on main — verified
+empirically.** The minus-arm of `isI32SafeExpr`
+(`src/codegen/function-body.ts:458-473`) now admits only
+`-<non-zero integer literal>`, mirroring the #2789 array-lane fix; landed in
+`20569059b` ("fix(#1930): Slice 3 salvage — V1 scalar -0 miscompile fix +
+boolean spine extraction", 2026-07-18), an ancestor of main tip `7652f0337`.
+Probe re-run 2026-07-24 (`.tmp/probe-1930-neg-zero.mts`, not committed):
+`let y = -x; return 1/y` with `x=0` returns `-Infinity` (i.e. `-0`
+preserved, `Object.is(-x, -0)` correct).
+
+Housekeeping: the stranded branch `upstream/issue-1930-slice3-i32-matchers`
+(tip `793c2260`, contains `724c272065`) still exists and still diverges from
+main by ~1.4K inserted lines (i32-safety doctrine tests, oracle tests, a
+declarations.ts refactor). The miscompile fix itself is fully salvaged; the
+residue needs a deliberate extract-onto-fresh-branch-or-discard decision by
+this issue's owner. Do NOT merge the stale branch as-is. The TypeOracle
+epic scope above remains open and unaffected.

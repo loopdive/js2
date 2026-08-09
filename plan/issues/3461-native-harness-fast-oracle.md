@@ -1,7 +1,8 @@
 ---
 id: 3461
 title: "test262: productionize native-harness fast oracle (worker mode flag + harness split + binding shim)"
-status: ready
+status: done
+completed: 2026-07-23
 sprint: Backlog
 priority: high
 horizon: l

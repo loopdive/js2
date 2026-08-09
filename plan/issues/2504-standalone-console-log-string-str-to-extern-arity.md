@@ -1,12 +1,13 @@
 ---
 id: 2504
 title: "standalone: console.log(string) emits invalid Wasm — __str_to_extern body calls a stale (shifted) funcIdx (need-3-got-2)"
-status: ready
+status: done
+completed: 2026-07-24
 sprint: Backlog
 assignee: ""
 needs_role: senior-developer
 created: 2026-06-19
-updated: 2026-06-19
+updated: 2026-07-24
 priority: low
 feasibility: hard
 reasoning_effort: max
@@ -110,3 +111,22 @@ fragile code path without measuring):
    longer references them in standalone (native fd path).
 4. No regression on host (GC) `console.log` or the existing native-string suites.
 5. Re-measure real test262 flips — string-output programs across the corpus.
+
+## Stale-verify → FIXED (2026-07-24, dev-std-4)
+
+MEASURED on current `main` (`--target standalone`, `WebAssembly.validate` +
+`instantiate({})`): the `__str_to_extern` need-3-got-2 invalid-Wasm bug is
+**gone**. All original repros now compile to VALID Wasm and instantiate
+host-free (`imports: 0`):
+
+| source                                                   | validate | instantiate |
+|----------------------------------------------------------|----------|-------------|
+| `console.log("hi")`                                      | true     | true        |
+| `const s = "hi"; console.log(s)`                         | true     | true        |
+| `const a=[3,1,2]; console.log(a.join(","))`              | true     | true        |
+| `export function f(){ console.log([3,1,2].join(",")); }` | true     | true        |
+| `console.log(42)`                                        | true     | true        |
+
+Fixed (not by a dedicated #2504 PR) by the late-import-shift reconcile lineage
+(#1677/#1903/#2039 and successors) that this issue's root-cause pinned to.
+Marking `done`.
