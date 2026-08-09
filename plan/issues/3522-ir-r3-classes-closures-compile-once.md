@@ -4,7 +4,7 @@ title: "IR-only R3: compile-once classes, members, and closures"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-08-03
+updated: 2026-08-09
 priority: critical
 horizon: xl
 complexity: XL
@@ -23,7 +23,7 @@ required_by: [3523, 3525, 3527]
 related: [1370, 1983, 2857, 2951, 3000, 3045, 3144, 3518]
 origin: "#3518 R3 — extend PreparedIrProgram from free functions to every single-source executable class/closure unit"
 files:
-  - src/ir/source-units.ts
+  - src/ir/identity.ts
   - src/ir/program.ts
   - src/ir/prepare.ts
   - src/ir/nodes.ts
@@ -32,6 +32,7 @@ files:
   - src/ir/integration.ts
   - src/ir/prepared-component-dependencies.ts
   - src/codegen/class-bodies.ts
+  - src/codegen/class-constructor-wrapper.ts
   - src/codegen/closures.ts
   - src/codegen/declarations.ts
   - src/codegen/ir-prepared-free-functions.ts
@@ -41,18 +42,18 @@ files:
   - src/codegen/program-abi-type-planning.ts
   - src/codegen/context/types.ts
   - src/codegen/index.ts
+  - tests/class-expressions.test.ts
   - tests/issue-3522-ir-class-compile-once.test.ts
   - tests/issue-3522-ir-static-class-method.test.ts
 loc-budget-allow:
   - src/codegen/class-bodies.ts
-  - src/codegen/declarations.ts
   - src/codegen/index.ts
-  - src/codegen/program-abi-session.ts
-  - src/ir/integration.ts
+  - src/ir/select.ts
 func-budget-allow:
-  - src/codegen/class-bodies.ts::compileClassBodiesInner
-  - src/codegen/declarations.ts::compileDeclarations
-  - src/codegen/index.ts::generateModule
+  - src/codegen/class-bodies.ts::collectClassDeclaration
+  - src/codegen/index.ts::buildIrClassShapes
+  - src/ir/prepared-component-dependencies.ts::collectFunctionEvidence
+  - src/ir/select.ts::whyNotIrClaimable
 ---
 
 # #3522 — IR-only R3: compile-once classes, members, and closures
@@ -94,7 +95,7 @@ Class integration still depends on direct compilation as its ABI producer:
   static globals, and static-init queue mutation.
 - `src/codegen/class-bodies.ts:1551-1740` then compiles constructor/default/
   field work directly. The source constructor body is split across
-  `${Class}_new` and `${Class}_init` support functions
+  generated `${Class}_new` and `${Class}_init` functions
   (`:1043-1075`, `:1642-1692`). Those support units are not represented in the
   current `IrModule` contract.
 - `src/codegen/declarations.ts:1872-2074` recursively eager/deferred-compiles
@@ -336,9 +337,73 @@ Final-head validation before publication:
   worktree at `f23ea5025e04ac`; this checkpoint does not refresh that unrelated
   baseline.
 
+### Explicit-constructor source-body checkpoint (2026-08-09)
+
+The two bounded WasmGC constructors now compile once. The terminal/reporting
+identity remains `Animal_new` / `Dog_new`, but physical ownership is no longer
+ambiguous:
+
+- `_init(sourceParams..., self) -> self` is the exact constructor source-unit
+  callable and the only function that contains source field writes, defaults,
+  and `super(...)` semantics;
+- `_new(sourceParams...) -> self` is a class-owned support callable containing
+  only default/tag allocation, one `struct.new`, argument forwarding, and one
+  `return_call` to the exact `_init`; and
+- `class.new` records both dependencies. Dependency sealing follows the
+  `_new` support binding and the `_init` source unit, while lowering consumes
+  those same exact targets. The constructor source component also pins its own
+  `_new` support binding even though `_init` contains no `class.new`
+  instruction. A derived init records the parent `_init` unit and passes the
+  same receiver.
+
+The wrapper is installed from stable Program ABI handles before the prepared
+component seals. `compileClassBodies` skips the source constructor before its
+direct body emitter/poison seam; it preserves the prepared `_init` and the
+already-installed wrapper. Generic direct `_init` compilation remains for
+constructors that are not yet eligible. In particular, conditional, late, or
+repeated `super()`, externref-backed classes, parameter properties, property
+initializers, implicit constructors, unresolved forward-class parameter ABIs,
+and constructor calls or accessor operations reached through `this`/`super`
+stay direct with typed telemetry and no post-claim demotion. The receiver
+dispatch families remain direct until IR can preserve virtual method and
+getter/setter dispatch rather than statically binding the constructor owner.
+
+The obsolete allocation-owning IR constructor model was deleted in this same
+checkpoint: `constructorClassShape`, `class.alloc`, `emitClassAlloc`,
+`IrClassLowering.allocInstrs`, the duplicate integration allocation prefix,
+and the old `class-constructor-init` support role have no remaining production
+or test consumer. The shared AST-free wrapper is now the single allocation
+implementation used by both prepared and generic-direct init bodies.
+
+Executable parity and output-shape coverage in GC and standalone proves:
+
+- direct constructor-body poison is never entered for `Animal_new` or
+  `Dog_new`, while unsupported constructor controls still enter it;
+- one allocation occurs in each `_new`, source `struct.set` operations occur
+  only in `_init`, and `Dog_init` calls `Animal_init` once on the same receiver;
+- private fields retain native string carriers and unboxed `f64`, with no
+  ambient-`this`, dynamic-member, boxing, or indirect-call ladder; and
+- receiver method calls and getter/setter accesses execute through the direct
+  dispatch path with their observable virtual/accessor behavior intact.
+
+Separate routing-only controls prove that unsafe-super, externref-backed, and
+forward-class-ABI constructors remain direct and still reach the direct-body
+poison seam. Those controls compile and validate but do not execute the
+constructor, so they are not runtime-parity claims.
+
+Fresh readiness measurement is **5/5 entries, 37/37 IR-emitted terminals, 22
+legacy bodies, 0 Unsupported, and 0 Invariant**. Hybrid is READY. Strict
+IR-only is expected red solely on those 22 bodies: the same 20 free functions
+and two module-init bodies listed in the prior handover, with `Animal_new` and
+`Dog_new` removed. The constructor family therefore moves from **24 to 22**
+legacy bodies without changing the 37-unit denominator.
+
 1. Retire `Animal_new` and `Dog_new` by making `_init` the sole source-body
    owner and `_new` an AST-free allocation wrapper; retain same-receiver
-   `Animal_init` chaining and delete the obsolete direct constructor-body path.
+   `Animal_init` chaining and delete the obsolete allocation-owning IR path.
+   **Completed by the 2026-08-09 checkpoint.** Generic direct `_init`
+   compilation intentionally remains for the unsupported constructor shapes
+   named above.
 2. Retire closures and cross-owner calls as one family, then module
    initialization, then runtime/linear-memory helpers. Keep only one
    overlapping production PR active. The class-member selector intentionally
@@ -347,6 +412,14 @@ Final-head validation before publication:
 3. For each family, reduce the measured legacy count, pass hybrid plus strict
    shadow validation, add semantic/output-shape optimization parity, and delete
    the obsolete legacy implementation in the same PR when no consumers remain.
+
+Resumability before publication: this checkpoint is on
+`codex/3522-constructor-retirement` in the isolated worktree
+`/private/tmp/ts2wasm-3522-constructor-retirement`. It began at
+`49cab5c821297b`; rebase onto the then-current `origin/main`, rerun the measured
+37/22 readiness gates, publish a ready PR, and replace this paragraph with the
+final head/base/PR and gate evidence before suspension. The dirty root checkout
+is outside this worktree and must remain untouched.
 
 ## Exhaustive source-unit census
 
@@ -377,9 +450,9 @@ Do not equate generated Wasm functions with source bodies. Record explicit
 support relationships:
 
 - A source constructor is one source unit. For a WasmGC class,
-  `<Class>_new` is an allocation wrapper and `<Class>_init` is the support unit
-  that executes field/default/source-constructor semantics. The source body
-  must occur in exactly one of them, never both.
+  `<Class>_init` is that exact source-unit callable and executes
+  field/default/source-constructor semantics. `<Class>_new` is an AST-free
+  class support binding. The source body occurs only in `_init`, never in both.
 - A default constructor receives a deterministic synthetic source-unit ID and
   support units derived from its `IrClassId`.
 - Inherited member aliases point to a canonical parent unit/slot and are not a
@@ -456,9 +529,11 @@ files remain R5/R8.
 
 `tests/issue-3522-ir-class-compile-once.test.ts` must prove:
 
-1. An explicit base constructor, synthesized default constructor, and derived
-   constructor inventory one source body each. `_new` and `_init` are distinct
-   support units; constructor/field code executes once and counters reconcile.
+1. An explicit base constructor and derived constructor inventory one source
+   body each. `_init` is the exact source callable and `_new` is distinct
+   support; constructor/field code executes once and counters reconcile.
+   Synthesized default constructors remain a follow-up family until they have
+   an exact synthetic IR body rather than generic direct init compilation.
 2. Instance/static methods with the same property name, instance/static
    getters/setters, and a top-level synthetic-key collision receive distinct
    IDs, slots, and correct receiver signatures.

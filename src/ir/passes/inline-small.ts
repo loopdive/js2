@@ -589,9 +589,6 @@ function renameInstrOperands(inst: IrInstr, rename: ReadonlyMap<IrValueId, IrVal
       if (!changed) return inst;
       return { ...inst, args: newArgs };
     }
-    // #3000-C: class.alloc has no SSA operands — nothing to rename.
-    case "class.alloc":
-      return inst;
     case "class.get": {
       const v = mapId(rename, inst.value);
       if (v === inst.value) return inst;
