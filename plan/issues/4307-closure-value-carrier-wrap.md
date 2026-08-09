@@ -242,4 +242,47 @@ residual below rather than half-done here.
 
 ## Scoped test262 — `language/eval-code/`
 
-See "Measured — test262" appended below.
+Same scoped set, same container, same commands as #4245 slice 1:
+
+```
+TEST262_TARGET=standalone TEST262_PATH_FILTER='language/eval-code/' \
+  JS2WASM_EVAL_ENGINE=quickjs        bash scripts/run-test262-vitest.sh
+TEST262_TARGET=standalone TEST262_PATH_FILTER='language/eval-code/' \
+  TEST262_FULL_RUNTIME_EVAL=1        bash scripts/run-test262-vitest.sh
+```
+
+| tier | #4245 slice 1 | **this change** | delta |
+| --- | --- | --- | --- |
+| quickjs | 560 / 816 | **560 / 816** | **0** |
+| interpreter (`TEST262_FULL_RUNTIME_EVAL=1`) | 779 / 816 | **779 / 816** | **0** |
+
+Per sub-corpus, quickjs — identical to slice 1 in **all four** buckets, so the
+zero is a genuine no-change and not a `+N/−N` that happens to cancel:
+
+| sub-corpus | slice 1 | this change |
+| --- | --- | --- |
+| `language/eval-code/direct` | 260 / 286 | 260 / 286 |
+| `language/eval-code/indirect` | 48 / 61 | 48 / 61 |
+| `annexB/…/eval-code/direct` | 155 / 309 | 155 / 309 |
+| `annexB/…/eval-code/indirect` | 97 / 160 | 97 / 160 |
+
+Interpreter tier, per sub-corpus: 271/286, 56/61, 300/309, 152/160 — the exact
+slice-1 split. The interpreter tier is **untouched**, which matters because
+this change is engine-independent caller-side codegen and therefore reaches
+that tier too.
+
+**Read this honestly: the fix moves ZERO tests in this corpus.** The probes
+prove the behaviour genuinely changed (TypeError → a working call, `"object"` →
+`"function"`); no test in these 816 depends on it. The 230-file harness bucket
+that made slice 1 worth +118 was `assert`/`fnGlobalObject`, i.e. top-level
+function DECLARATIONS, which slice 1 already fixed; what remains here is
+EvalDeclarationInstantiation (#4238's bucket 2) and annexB value/ordering.
+The value of this change is a correctness hole closed and a trap removed, not
+a conformance delta — and it is stated that way rather than extrapolated to
+some other corpus that was not run.
+
+Caveat on precision: `loopdive/main` was merged into the branch after the
+quickjs run started. The runner builds its compiler bundle up front, so that
+run measured the pre-merge tree (this change + its #4245/#4238 predecessors);
+the interpreter run measured the post-merge tree. Both landed on their
+respective slice-1 baselines.
