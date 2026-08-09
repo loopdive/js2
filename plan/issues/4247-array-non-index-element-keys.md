@@ -181,6 +181,15 @@ resolver rather than being "extra credit".
   `S15.4.5.2_A1_T1` — which additionally demands `length === 4294967295` —
   remains failing while its `_T2` sibling flips.
 
+## Permanent repro
+
+`tests/es5-standalone-array-nonindex-keys.test.ts` — 22 tests, both lanes:
+both key spellings (numeric and string), the `new Number(<const>)`/
+`new String(<const>)` key shapes, and the negative pins (ordinary indices,
+`length`, borrowed prototype names keep their lowering). Conformance bucket:
+`test262/test/built-ins/Array/{S15.4,15.4.5,property-cast,length}` (+7 both
+lanes, measured sequentially).
+
 ## Acceptance
 
 - A constant non-array-index element key round-trips under its canonical name,

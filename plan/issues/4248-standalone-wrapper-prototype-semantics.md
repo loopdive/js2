@@ -20,6 +20,17 @@ loc-budget-allow:
   # +5: the finalize splice call plus the comment saying why it runs AFTER the
   # closed-struct prologue. The arm itself is a satellite module.
   - src/codegen/index.ts
+func-budget-allow:
+  # The three RC splice calls (hasOwn arms, ToPrimitive arm, method-identity
+  # arm) are wired into BOTH module drivers, +11 lines each. The arms live in
+  # the satellite modules; only the finalize-ordered call sites are here.
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
+coercion-sites-allow:
+  # RC2 answers ToPrimitive for the three wrapper PROTOTYPES via the existing
+  # __to_primitive engine entry (one arm spliced onto it) — a routed use of
+  # the single coercion engine, not a hand-rolled matrix.
+  - src/codegen/native-proto-wrapper-primitive.ts
 ---
 
 # #4248 — builtin prototypes are wrapper objects, and standalone treats them as bare metadata
