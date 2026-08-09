@@ -2261,7 +2261,7 @@ export function tryLengthAndNameReads(
 ): PADispatchResult {
   if (propName === "length" && ts.isIdentifier(expr.expression)) {
     const symbol = ctx.checker.getSymbolAtLocation(expr.expression);
-    const substring = symbol ? fctx.derivedSubstringReads?.get(symbol) : undefined;
+    const substring = symbol?.valueDeclaration ? fctx.derivedSubstringReads?.get(symbol.valueDeclaration) : undefined;
     if (substring !== undefined) {
       fctx.body.push({ op: "local.get", index: substring.lenLocal });
       return { kind: "i32" };
