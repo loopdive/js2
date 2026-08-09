@@ -243,6 +243,7 @@ import {
 import { moduleMentionsObjectIdentifier, moduleReadsConstructorProp } from "./wrapper-constructor-carrier.js"; // (#4223/#4232)
 import { unshiftNativeProtoHasOwnArms } from "./native-proto-own-props.js"; // (#4248) builtin-proto own members
 import { unshiftNativeProtoToPrimitiveArm } from "./native-proto-wrapper-primitive.js"; // (#4248) proto [[PrimitiveValue]]
+import { unshiftExternGetProtoMethodArm } from "./native-proto-instance-method-read.js"; // (#4248) inherited method value
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { fillInstanceTombstones } from "./instance-tombstones.js"; // (#4098 G1 s1) per-instance own-property deletability
 import { fillInstanceProps } from "./instance-props.js"; // (#4194) instance expando bag substrate
@@ -4491,6 +4492,10 @@ export function generateModule(
     // (#4223) BEFORE the cache arm (which must stay last): answer
     // `<wrapper>.constructor` from the builtin ctor carrier.
     unshiftExternGetWrapperCtorArm(ctx);
+    // (#4248) §21.1.5 — an inherited builtin-proto METHOD read off a wrapper
+    // instance (or off the prototype through a binding) must yield the same
+    // singleton the static `<Builtin>.prototype.<m>` read does.
+    unshiftExternGetProtoMethodArm(ctx);
     unshiftExternGetProtoCacheArm(ctx);
 
     // (#1904) Fill the standalone native Array.isArray predicate after all
@@ -6777,6 +6782,10 @@ export function generateMultiModule(
     // (#4223) BEFORE the cache arm (which must stay last): answer
     // `<wrapper>.constructor` from the builtin ctor carrier.
     unshiftExternGetWrapperCtorArm(ctx);
+    // (#4248) §21.1.5 — an inherited builtin-proto METHOD read off a wrapper
+    // instance (or off the prototype through a binding) must yield the same
+    // singleton the static `<Builtin>.prototype.<m>` read does.
+    unshiftExternGetProtoMethodArm(ctx);
     unshiftExternGetProtoCacheArm(ctx);
     fillRuntimeEvalCallablePropertyGetArm(ctx);
 

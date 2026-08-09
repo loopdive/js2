@@ -148,6 +148,45 @@ export function plainObjectUnaffected(): boolean { return ({} as any) == "[objec
     });
   });
 
+  it("an inherited method read off an INSTANCE is the prototype's own function object", async () => {
+    const out = await runStandalone(`${PRELUDE}
+const n: any = new Number(5);
+const NP: any = Number.prototype;
+// (#4234's warning, made structural) BOTH sides read as absent before this
+// landed, and undefined === undefined is true. So establish each side is a
+// real function BEFORE comparing, and cross-check that two DIFFERENT members
+// are not equal — a "return the same thing for every key" arm passes the
+// positives and fails the cross.
+export function lhsIsFunction(): boolean { return typeof n.toString === "function"; }
+export function rhsIsFunction(): boolean { return typeof Number.prototype.toString === "function"; }
+export function identity(): boolean { return n.toString === Number.prototype.toString; }
+export function valueOfIdentity(): boolean { return n.valueOf === Number.prototype.valueOf; }
+export function cross(): boolean { return n.toString === Number.prototype.valueOf; }
+// The prototype reached through a BINDING — the receiver at the read site is
+// a bare identifier, so the static fold cannot see it.
+export function throughBinding(): boolean { return NP.toString === Number.prototype.toString; }
+// §7.3.2 — an own expando shadows the inherited value. (The paired CALL,
+// m.toString(), takes a static number-method arm in the TS lane and is a
+// separate surface; the JS lane returns "own" for it today.)
+export function ownShadows(): boolean {
+  const m: any = new Number(1);
+  m.toString = function (): string { return "own"; };
+  return m.toString !== Number.prototype.toString;
+}
+export function unknownMemberIsUndefined(): boolean { return n.zzz === undefined; }
+`);
+    expect(out).toEqual({
+      lhsIsFunction: 1,
+      rhsIsFunction: 1,
+      identity: 1,
+      valueOfIdentity: 1,
+      cross: 0,
+      throughBinding: 1,
+      ownShadows: 1,
+      unknownMemberIsUndefined: 1,
+    });
+  });
+
   it("ordinary objects and wrapper INSTANCES are unaffected (consult-only)", async () => {
     const out = await runStandalone(`${PRELUDE}
 export function plainObjectsUnaffected(): boolean {
