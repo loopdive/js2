@@ -16,6 +16,12 @@ es_edition: 5
 language_feature: object-literal-accessors, try-finally, regexp, eval
 goal: es5
 related: [993, 1858, 2061, 2923, 2939, 3633, 4230, 4233]
+loc-budget-allow:
+  # closures.ts +73: computeClosureWrapperSig's syntactic answer for
+  # never-bound (eval-spliced) declarations — RC1 of this issue. Granted by
+  # #4243's issue file while this PR stacked on the wave-3 branch; that file
+  # is now on main, so the grant moves here.
+  - src/codegen/closures.ts
 func-budget-allow:
   # compileTryStatement +18: the catch{break}/finally{continue} fix threads the
   # finally-completion override through the existing try lowering — the branch
