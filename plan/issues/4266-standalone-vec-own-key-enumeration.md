@@ -61,7 +61,7 @@ Wave 4 of the ES5-standalone-90 program. #4230 fixed the vec key source *inside*
 ("L1 — the overlay is invisible to every KEY-ENUMERATION surface"), together
 with a dedup hazard for whoever took it. This is that issue.
 
-## Measured on `upstream/main` (803a68c13), `--target standalone`
+## Measured on `upstream/main` (e1aeff7c2, PR #4265), `--target standalone`
 
 ```js
 const a = [];  Object.defineProperty(a, "p", { value: 12, enumerable: true });
