@@ -119,6 +119,45 @@ Half the sites never counted the this-parameter to begin with, and shifting
 those breaks what currently works. Each site has to be classified as
 AST-indexed or signature-indexed first.
 
+### Classification inventory
+
+**Signature-indexed (this-EXCLUSIVE) — must NOT be shifted:**
+
+- `resolveGenericCallSiteTypes` (`param-return-inference.ts:27`) — calls
+  `getResolvedSignature(node)` and builds the entire wasm param list from
+  `sig.getParameters()`. Located by `fable-743-fixpoint`, who flagged it for
+  the inventory without a repro.
+
+  **Probed 2026-08-09 — reachable, and it already fails today:**
+
+  | source | result |
+  | --- | --- |
+  | `function f<T>(this: any, v: T): T` → `f(7)` | **compile error** — *"stack-balance invariant (entry): 'f' references local 1, but only 1 params + 0 locals are declared"* |
+  | `function f<T>(this: any, a: T, b: T): T` → `f(1,2)` | **compile error** — same, references local 2 with 2 params |
+  | `class K { m<T>(this: K, v: T): T }` → `k.m(5)` | **runtime trap** — `RuntimeError: dereferencing a null pointer` |
+  | `function f<T>(v: T): T` → `f(7)` (control) | `7` ✓ |
+
+  Exactly the predicted mismatch: the body compiles this-INCLUSIVE (references
+  local 1 = `v`) while the inferred signature declares the this-EXCLUSIVE
+  count. The stack-balance invariant catches the function case.
+
+  **Mitigating, and it changes the priority**: these fail **loudly** — a
+  compile error and a trap, not a silent wrong answer — so they are a strictly
+  better class than the `new`-binding bug at the top of this issue. Narrow
+  population: a TS this-parameter on a generic callee.
+
+**AST-indexed (this-INCLUSIVE) — must be shifted with the emit path:**
+
+- the satellite's `runFixpoint` / `buildScope` / `paramInfo`
+  (`src/ir/fnctor-method-edges.ts`), `fnctor-receiver-provenance.ts`'s
+  `paramInfo`, `inferParamTypeFromCallSites`' call-site scan, the consumer's
+  `fn.parameters.indexOf(decl)`, and the `.d.ts` seeds — verified as a
+  consistent set by the #4250 lane.
+
+The two opposite treatments live **in one file, about fifty lines apart**:
+`resolveGenericCallSiteTypes` must not move, `inferParamTypeFromCallSites`
+must. That is the concrete shape of the trap.
+
 ## Acceptance criteria
 
 - [ ] Every row of the table above answers the JS value.
