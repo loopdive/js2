@@ -2023,6 +2023,8 @@ export interface CodegenContext {
     trampolineFuncIdx?: number;
     propertyGetTrampolineFuncIdx?: number;
     interpretedTrampolineFuncIdx?: number;
+    /** (#4307) `(externref) -> externref` closure→carrier wrap helper. */
+    wrapHelperFuncIdx?: number;
   };
   /** Runtime-eval global-object push/pull helpers have been reserved/filled. */
   runtimeEvalGlobalSyncReserved?: boolean;
