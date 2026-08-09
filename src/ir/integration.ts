@@ -113,7 +113,7 @@ import {
   closureBagField,
   getOrCreateFuncRefWrapperTypes,
 } from "../codegen/closures/funcref-wrapper-types.js";
-import { ensureFmod, FMOD_FN } from "../codegen/fmod.js"; // #2945 — on-demand `%` helper materialization
+import { ensureFmodIntrinsic, isFmodIntrinsic } from "../codegen/fmod.js"; // #2945 — on-demand `%` helper materialization
 import {
   ensureHostCharCodeAtGuarded,
   ensureHostSubstringGuarded,
@@ -3931,8 +3931,8 @@ function resolveAndObserveCallableProvider(
       );
     }
     index = preparedMathProviderIndex(ctx, provider.implementation.symbol);
-  } else if (ref.binding.kind === "intrinsic" && symbol === FMOD_FN) {
-    index = ensureFmod(ctx);
+  } else if (ref.binding.kind === "intrinsic" && isFmodIntrinsic(symbol)) {
+    index = ensureFmodIntrinsic(ctx, symbol);
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_ASYNC_CLOCK_SNAPSHOT_FN) {
     index = ensureLateImport(ctx, "__date_now", [], [{ kind: "f64" }]);
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_ASYNC_NUMBER_TO_STRING_FN) {
