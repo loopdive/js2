@@ -1660,13 +1660,15 @@ export function compileArrayMethodCall(
       // tryCompileComparatorSort (comparator) and compileArrayDefaultToStringSort
       // (default ToString order, #1993) — only this gate kept it unreachable.
       result =
-        elemType.kind === "f64" ||
-        elemType.kind === "i32" ||
-        elemType.kind === "externref" ||
-        elemType.kind === "ref" ||
-        elemType.kind === "ref_null"
-          ? compileArraySort(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
-          : undefined;
+        receiverIsExternref && !ctx.standalone && !ctx.wasi
+          ? compileArraySortExtern(ctx, fctx, methodAccess, callExpr)
+          : elemType.kind === "f64" ||
+              elemType.kind === "i32" ||
+              elemType.kind === "externref" ||
+              elemType.kind === "ref" ||
+              elemType.kind === "ref_null"
+            ? compileArraySort(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+            : undefined;
       break;
     // Functional array methods -- numeric (f64, i32) / externref element types,
     // plus ref/ref_null elements when the callback is a provable closure (#3126).
@@ -3975,6 +3977,56 @@ function compileArrayConcat(
   fctx.body.push({ op: "ref.as_non_null" });
   fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
   return { kind: "ref_null", typeIdx: vecTypeIdx };
+}
+
+/**
+ * #4300: sort a real JavaScript Array carried as externref. This is deliberately
+ * the same ordinary host method boundary used by dynamic receiver calls: the
+ * runtime wraps a compiled comparator closure, invokes Array.prototype.sort
+ * with the original receiver, and returns that receiver so mutation/identity
+ * are preserved. The caller may subsequently materialize the result into a
+ * typed Wasm vec when its destination is statically array-shaped.
+ */
+function compileArraySortExtern(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+  callExpr: ts.CallExpression,
+): ValType | null {
+  const arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
+  const arrPushIdx = ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
+  const methodCallIdx = ensureLateImport(
+    ctx,
+    "__extern_method_call",
+    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  addStringConstantGlobal(ctx, "sort");
+  flushLateImportShifts(ctx, fctx);
+  if (arrNewIdx === undefined || arrPushIdx === undefined || methodCallIdx === undefined) return null;
+
+  const recvLocal = allocLocal(fctx, `__sort_ext_recv_${fctx.locals.length}`, { kind: "externref" });
+  const recvType = compileExpression(ctx, fctx, propAccess.expression, { kind: "externref" });
+  if (recvType === null) fctx.body.push({ op: "ref.null.extern" });
+  else if (recvType.kind !== "externref") coerceType(ctx, fctx, recvType, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: recvLocal });
+
+  fctx.body.push({ op: "call", funcIdx: arrNewIdx });
+  const argsLocal = allocLocal(fctx, `__sort_ext_args_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: argsLocal });
+  for (const arg of callExpr.arguments) {
+    fctx.body.push({ op: "local.get", index: argsLocal });
+    const argType = compileExpression(ctx, fctx, arg, { kind: "externref" });
+    if (argType === null) fctx.body.push({ op: "ref.null.extern" });
+    else if (argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
+    fctx.body.push({ op: "call", funcIdx: arrPushIdx });
+  }
+
+  fctx.body.push({ op: "local.get", index: recvLocal });
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, "sort"));
+  fctx.body.push({ op: "local.get", index: argsLocal });
+  fctx.body.push({ op: "call", funcIdx: methodCallIdx });
+  return { kind: "externref" };
 }
 
 /**
