@@ -54,6 +54,9 @@ The capability lane is complete; compilation work resumes in those two issues.
 - [x] The report and card disclose the filesystem capability.
 - [x] The bounded Stylelint harness advances past the `readFileSync` refusal.
 
+Permanent coverage: `tests/dogfood/npm-compat-catalog.test.ts` verifies that
+Stylelint alone receives the explicit filesystem capability.
+
 ## Provenance
 
 Migrated on 2026-08-01 from a GitHub issue on `loopdive/js2` (opened 2026-07-30)
