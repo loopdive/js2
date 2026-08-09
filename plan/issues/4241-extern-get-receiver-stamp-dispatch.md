@@ -192,7 +192,18 @@ Rule of thumb this yields: *attribute hot leaves with the call census;
 use the profiler only to find the leaf, and the WAT census only to find the
 mechanism.*
 
-### 3c. The registry is not just linear — it is a cross-parse LEAK, so the scan is quadratic over a session
+### 3c. The registry is a cross-parse LEAK — but the growth rate stated here was WRONG by 75×
+
+> **CORRECTION (2026-08-09, step 1b).** This section originally read the 75
+> `__closure_bag_ensure` CALLS per parse as 75 new registry ENTRIES per parse.
+> They are not the same number. Measured directly with a counter on the registry
+> prepend site: population grows **1 entry per parse** (5 parses → 5, 12 parses
+> → 12). 74 of the 75 calls HIT the bag the first one created. The leak is real
+> and unbounded, but the "aggregate scan cost is quadratic over a session"
+> conclusion below is 75× weaker than written — at 300 parses the list is ~300
+> entries, not ~22,500, which is why the post-step-1 profile shows
+> `__closure_bag_lookup` at 0.22 % self rather than something enormous. Read the
+> rest of this section with that correction applied.
 
 `__closure_bag_ensure` measures **75 calls/parse, all via
 `__instance_prop_set`** (expando writes on closure/builtin-instance
@@ -556,3 +567,91 @@ issue-level tests never build.
 - [ ] No standalone or gc-lane conformance regression (merge-group gates).
 - [ ] The #4157 "< 3 %" line either closes or its residual is re-attributed
       with data.
+
+
+## Step 1b RESULT — 2026-08-09, MEASURED (instance-carrier `$bag`, narrow arm)
+
+### R8. The carrier was IDENTIFIED, not inferred
+
+A per-carrier-type counter on the `__instance_prop_set` path (receiver identity,
+not allocation-count correlation) says: **all 375 expando writes over 5 parses
+land on exactly ONE type, `__fnctor_Parser`** — 75/parse. That single Parser per
+parse is the entire leak on this corpus.
+
+### R9. Registry population: 1/parse → 0/parse
+
+| | before | after |
+| --- | ---: | ---: |
+| registry growth | 1 entry/parse | **0** |
+| population after 12 parses | 12 | 2 (module-init only, one-time) |
+| acorn checksum | 5064 | 5064 (unchanged) |
+
+The 2 residual entries are created once during module init and never grow; they
+are bounded, not a leak. The counter was verified **EMITTED** before its zero was
+believed — an absent counter and a zero counter are the same reading otherwise,
+and the harness reported "(counter absent)" for a genuine zero until that was
+fixed.
+
+**No performance claim.** The remaining registry walk was already at 0.22 %
+self-time after step 1; this slice is memory correctness.
+
+### R10. What still leaks — the residual, by name
+
+Slotted here: fnctors that are **not** layout-split. On acorn that is
+`BranchID`, `Parser`, `RegExpValidationState`, `SourceLocation`, `TokenType`.
+
+Still on the registry, and therefore **still leaking on other corpora**:
+
+| family | why excluded | what bounds it today |
+| --- | --- | --- |
+| layout-SPLIT fnctors (acorn's `Node`) | a split family rebuilds siblings as `[...base, ...moved]`; a slot must be sequenced against that pass, not appended before it | **nothing** — unbounded if such a carrier takes expando writes |
+| `class … extends …` hierarchies | `superTypeIdx` means appending to a parent INSERTS into every child and shifts the child's own fields | **nothing** |
+| `__anon_` object-literal shapes | the #2009 retro-stamp appends `$shape` to *colliding* anon structs; adding a second appended field wants that interaction checked first | **nothing** |
+| `__StandaloneRegExp`, `__Date`, runtime-eval AOT carrier | never slotted (step 1 scope note) | **nothing** |
+
+Stated plainly: **acorn reaching 0 does not retire the leak class.** A program
+whose expando-carrying receivers are class instances, split fnctors or object
+literals leaks exactly as before. What prevents *regrowth* for the slotted
+families is structural rather than policy — a slotted carrier never reaches
+`__closure_bag_ensure`'s registry path at all, because the slotted arm returns
+first — so the exclusion list above is the complete statement of what remains.
+
+### R11. Follow-up: step 1b-BROAD, and its named blocker
+
+The blocker is the **subtype-insert problem**: WasmGC requires a subtype's field
+list to be a prefix-extension of its supertype's, so a field appended to a class
+parent lands in the MIDDLE of every child and shifts that child's own fields —
+which are baked into already-emitted bodies by then. Two candidate seams, both
+unproven: append at struct REGISTRATION for the whole hierarchy at once (before
+any body emits), or extend the #2009 retro-stamp to patch a family rather than a
+single final struct. Split fnctors need the same treatment sequenced against
+`emitFnctorLayouts`.
+
+### R12. Hazard map → executable pins
+
+Each hazard identified by reading the passes has a pin in
+`tests/issue-4241-instance-carrier-bag-slot.test.ts`, so the reasoning cannot go
+stale silently: name-not-index resolution, the empty-shape brand, `extends`
+hierarchies still working while excluded, and the wide/cold-tail fnctor reading
+all 40 declared slots plus an expando.
+
+One hazard was **wrong as I first wrote it**: I claimed a `$bag` present during
+the cold-tail split would be presence-tracked and inflate the presence-word
+count. It would not — `applyColdTailSplit` calls `appendColdPresenceWords` on the
+**cold** field list, and `$bag` is never in `coldNames`. Acting on the unchecked
+version excluded every cold-tailed fnctor, which excluded `__fnctor_Parser`
+itself — i.e. the only carrier that leaks — and the first measurement showed
+population unchanged. The measurement caught the bad reasoning; reading alone had
+not.
+
+### R13. Pre-existing gaps found while writing the pins (NOT this slice)
+
+A/B'd against pre-1b main, identical on both sides, so they are recorded rather
+than fixed or pinned as passing:
+
+- `delete` of a fnctor expando does not take (pinned as CURRENT behaviour, expect
+  `0`, so a future fix is noticed here).
+- A conditionally-assigned field (`if (flag) this.rare = 1`) does not read back
+  `undefined` on an instance where the branch did not run.
+- A composite of prototype-method call + declared read + expando read on ONE
+  instance answers `0`, while each half answers correctly alone.
