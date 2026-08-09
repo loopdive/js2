@@ -22,15 +22,11 @@ const READS = "JS2WASM_FNCTOR_TYPED_READS";
 
 async function compileStandaloneJs(src: string, flagsOn: boolean): Promise<{ wat: string; binary: Uint8Array }> {
   const saved = { b: process.env[BINDINGS], r: process.env[READS] };
-  if (flagsOn) {
-    process.env[BINDINGS] = "1";
-    process.env[READS] = "1";
-  } else {
-    // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
-    delete process.env[BINDINGS];
-    // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
-    delete process.env[READS];
-  }
+  // (#743 defaults flip, 2026-08-08) OFF must be SPELLED, not left unset —
+  // unset is now ON, so `delete` here would compile both arms identically and
+  // every representation pin below would pass vacuously.
+  process.env[BINDINGS] = flagsOn ? "1" : "0";
+  process.env[READS] = flagsOn ? "1" : "0";
   try {
     const r = await compile(src, {
       fileName: "t.mjs",

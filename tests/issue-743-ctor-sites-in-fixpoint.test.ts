@@ -117,8 +117,9 @@ describe("#743 — new-expression sites in the propagation fixpoint", () => {
   });
 
   it("flag off: new-expression sites are invisible, exactly as before #743", () => {
-    // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
-    delete process.env.JS2WASM_FNCTOR_CTOR_PARAM_TYPES;
+    // (#743 defaults flip, 2026-08-08) OFF is a SPELLING now — unset is ON, so
+    // deleting the variable here would silently test the flag-ON path.
+    process.env.JS2WASM_FNCTOR_CTOR_PARAM_TYPES = "0";
     const { checker, file, context } = fixture(TWO_HOP);
     const map = buildIrUnitTypeMap([file], checker, context);
     // mk still narrows (plain call). P must NOT — its only inflow is `new`.
