@@ -8,12 +8,16 @@
 // after all ten terminals seal together and the IR shapes match the direct
 // backend. Seven statically emitted callback artifacts are not the same thing
 // as the 1,120 callback objects created by the scripted runtime exercise.
+// Absolute fork byte/local snapshots below are scaffold diagnostics only:
+// re-measure them after conflict resolution and delete them when enabling the
+// final relational direct-vs-IR ceilings.
 
 import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
 import { compile, type CompileResult, type IrObservedOutcome } from "../src/index.js";
+import { evaluateIrOutcomePolicy } from "../src/ir/outcomes.js";
 import { buildImports } from "../src/runtime.js";
 
 const SOURCE_URL = new URL("../website/playground/examples/dom/calendar.ts", import.meta.url);
@@ -43,6 +47,9 @@ const STATIC_DERIVED_CALLBACKS = [
   { owner: "main", name: "main__closure_2" },
   { owner: "main", name: "main__closure_3" },
 ] as const;
+const STATIC_DERIVED_CALLBACK_NAMES = STATIC_DERIVED_CALLBACKS.map(({ name }) => name);
+const DIRECT_CALLBACK_NAMES = Array.from({ length: 7 }, (_, ordinal) => `__cb_${ordinal}`);
+const COMPILED_ARTIFACT_NAMES = [...FUNCTION_TERMINALS, "<module-init>", ...STATIC_DERIVED_CALLBACK_NAMES] as const;
 
 const CLOCK_EPOCH_MS = 1_734_220_800_000; // 2024-12-15T00:00:00.000Z
 const BODY_CSS = "margin:0;background:#111;color:#ddd;font-family:system-ui,sans-serif;overflow:hidden";
@@ -153,6 +160,17 @@ function compileCalendar(experimentalIR: boolean): Promise<CompileResult> {
   return started;
 }
 
+function compileCalendarFresh(source: string, experimentalIR: boolean, fileName: string): Promise<CompileResult> {
+  return compile(source, {
+    fileName,
+    experimentalIR,
+    trackFallbacks: true,
+    trackIrOutcomes: true,
+    emitWat: true,
+    target: "gc",
+  });
+}
+
 function expectSuccess(result: CompileResult): void {
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
   expect(WebAssembly.validate(result.binary)).toBe(true);
@@ -202,6 +220,33 @@ function watCallTargets(wat: string, body: string): string[] {
   });
 }
 
+function watGlobalIndex(wat: string, name: string): number | undefined {
+  const imports = [...wat.matchAll(/^\s*\(import .+ \(global(?: \$([^\s(]+))?/gm)].map(
+    (match) => match[1] ?? "<anonymous-import>",
+  );
+  const globals = [...wat.matchAll(/^\s*\(global \$([^\s(]+)/gm)].map((match) => match[1]!);
+  const index = [...imports, ...globals].indexOf(name);
+  return index < 0 ? undefined : index;
+}
+
+function expectExactMultiset(actual: readonly string[], expected: readonly string[], label: string): void {
+  expect([...actual].sort(), label).toEqual([...expected].sort());
+}
+
+function bodySizeMetrics(
+  result: CompileResult,
+  names: readonly string[],
+): { readonly locals: number; readonly bytes: number } {
+  let locals = 0;
+  let bytes = 0;
+  for (const name of names) {
+    const body = watFunction(result, name).body.trimEnd();
+    locals += countMatches(body, /\(local /g);
+    bytes += body.length;
+  }
+  return { locals, bytes };
+}
+
 function countMatches(value: string, pattern: RegExp): number {
   return value.match(pattern)?.length ?? 0;
 }
@@ -214,7 +259,14 @@ function expectNoGenericBodyMachinery(result: CompileResult, name: string): void
   const body = watFunction(result, name).body;
   const targets = watCallTargets(result.wat, body);
   expect(body).not.toMatch(/\b(?:call_ref|call_indirect)\b/);
-  expect(body).not.toMatch(/__current_this|__argc|__arguments/);
+  for (const globalName of ["__current_this", "__argc", "__arguments"] as const) {
+    const globalIndex = watGlobalIndex(result.wat, globalName);
+    if (globalIndex !== undefined) {
+      expect(body, `${name} must not access $${globalName}`).not.toMatch(
+        new RegExp(`\\bglobal\\.(?:get|set) ${globalIndex}\\b`),
+      );
+    }
+  }
   expect(targets).not.toEqual(
     expect.arrayContaining([expect.stringMatching(/(?:^|_)(?:box|unbox|argc|arguments)(?:_|$)/)]),
   );
@@ -431,7 +483,6 @@ function semanticDomSnapshot(element: FakeElement): unknown {
 }
 
 function expectDirectOptimizationReference(result: CompileResult): void {
-  const dimOf = watFunction(result, "dimOf").body;
   expect(targetCount(result, "dimOf", "__fmod")).toBe(3);
 
   const fdow = watFunction(result, "fdow").body;
@@ -454,7 +505,7 @@ function expectDirectOptimizationReference(result: CompileResult): void {
   expect(countMatches(main, /\bi32\.lt_u\b/g)).toBe(2);
   expect(countMatches(main, /\barray\.get(?:_[su])?\b/g)).toBe(2);
   for (const name of FUNCTION_TERMINALS) expectNoGenericBodyMachinery(result, name);
-  expect(dimOf).not.toContain("__new_ReferenceError");
+  expect(targetCount(result, "dimOf", "__new_ReferenceError")).toBe(0);
 }
 
 function expectFinalIrOptimizationParity(result: CompileResult): void {
@@ -504,6 +555,10 @@ describe("#3523 Calendar retirement oracle and current baseline", () => {
     );
   });
 
+  // Scaffold-only numeric snapshot: re-measure after the production branch is
+  // rebased, then remove the absolute byte/local/WAT values when the final
+  // relational parity gate below is enabled. The semantic/call-shape checks
+  // remain durable acceptance evidence.
   it("pins the direct backend's optimization shapes as the retirement reference", async () => {
     const direct = await compileCalendar(false);
     expectSuccess(direct);
@@ -523,8 +578,19 @@ describe("#3523 Calendar retirement oracle and current baseline", () => {
     expect(importNames).not.toEqual(
       expect.arrayContaining(["Date_new", "Date_getDate", "Date_getMonth", "Date_getFullYear"]),
     );
+    expectExactMultiset(
+      parseWatFunctions(direct.wat)
+        .map(({ name }) => name)
+        .filter((name) => /^__cb_\d+$/.test(name)),
+      DIRECT_CALLBACK_NAMES,
+      "direct callback body multiset",
+    );
   });
 
+  // Scaffold-only fork diagnostic. Both recognized snapshots must be deleted,
+  // not promoted to acceptance ceilings, once conflict resolution chooses the
+  // production base. The skipped final gate compares the chosen IR artifact
+  // against a freshly compiled direct artifact instead.
   it("makes the current IR duplication and TDZ bloat explicit instead of treating emission as parity", async () => {
     const [direct, ir] = await Promise.all([compileCalendar(false), compileCalendar(true)]);
     expectSuccess(direct);
@@ -601,6 +667,12 @@ describe.skip("#3523 Calendar final ten-body retirement gate — enable with the
   it("seals the exact ten terminals as one prepared IR component with zero legacy bodies", async () => {
     const result = await compileCalendar(true);
     expectSuccess(result);
+    const outcomes = result.irOutcomes ?? [];
+    expectExactMultiset(
+      outcomes.map(({ unitKind, displayName }) => `${unitKind}:${displayName}`),
+      ALL_TERMINALS.map(({ unitKind, displayName }) => `${unitKind}:${displayName}`),
+      "exact ten-row terminal outcome universe",
+    );
     const componentIds = new Set<string>();
     for (const terminal of ALL_TERMINALS) {
       const observed = outcome(result, terminal.unitKind, terminal.displayName);
@@ -613,17 +685,77 @@ describe.skip("#3523 Calendar final ten-body retirement gate — enable with the
       componentIds.add(observed.preparedComponentId!);
     }
     expect(componentIds.size).toBe(1);
+    expect(evaluateIrOutcomePolicy(outcomes, "ir-only")).toEqual({
+      policy: "ir-only",
+      ready: true,
+      blockers: [],
+    });
+    expectExactMultiset(
+      result.irCompiledFuncs ?? [],
+      COMPILED_ARTIFACT_NAMES,
+      "ten terminals + seven derived artifacts",
+    );
+    expectExactMultiset(result.irFirstSkipped ?? [], FUNCTION_TERMINALS, "exact nine compile-once function skips");
+    for (const artifact of COMPILED_ARTIFACT_NAMES) {
+      const watName = artifact === "<module-init>" ? "__module_init" : artifact;
+      expect(
+        parseWatFunctions(result.wat).filter(({ name }) => name === watName),
+        `unique compiled artifact $${watName}`,
+      ).toHaveLength(1);
+    }
     expect(result.irPostClaimErrors ?? []).toEqual([]);
   });
 
   it("retains all direct optimizations and removes legacy callback artifacts", async () => {
-    const result = await compileCalendar(true);
+    const [result, direct] = await Promise.all([
+      compileCalendar(true),
+      compileCalendarFresh(SOURCE, false, "website/playground/examples/dom/calendar-direct-parity.ts"),
+    ]);
     expectSuccess(result);
+    expectSuccess(direct);
     expectFinalIrOptimizationParity(result);
     const names = parseWatFunctions(result.wat).map(({ name }) => name);
-    expect(names.filter((name) => /^__cb_[0-6]$/.test(name))).toEqual([]);
-    expect(names.filter((name) => /^(?:renderCal|main)__closure_\d+$/.test(name)).sort()).toEqual(
-      STATIC_DERIVED_CALLBACKS.map(({ name }) => name).sort(),
+    expect(names.filter((name) => /^__cb_\d+$/.test(name))).toEqual([]);
+    expectExactMultiset(
+      names.filter((name) => /__closure_\d+$/.test(name) || /^__cb_\d+$/.test(name)),
+      STATIC_DERIVED_CALLBACK_NAMES,
+      "exact final callback body multiset",
+    );
+    for (const name of ["el", "__module_init", ...STATIC_DERIVED_CALLBACK_NAMES]) {
+      expectNoGenericBodyMachinery(result, name);
+    }
+
+    const directCallbackNames = parseWatFunctions(direct.wat)
+      .map(({ name }) => name)
+      .filter((name) => /^__cb_\d+$/.test(name));
+    expectExactMultiset(directCallbackNames, DIRECT_CALLBACK_NAMES, "fresh direct callback body multiset");
+
+    const irRenderCal = bodySizeMetrics(result, ["renderCal"]);
+    const directRenderCal = bodySizeMetrics(direct, ["renderCal"]);
+    expect(irRenderCal.locals, "renderCal local ceiling").toBeLessThanOrEqual(Math.ceil(directRenderCal.locals * 1.6));
+    expect(irRenderCal.bytes, "renderCal body-size ceiling").toBeLessThanOrEqual(
+      Math.ceil(directRenderCal.bytes * 1.3),
+    );
+
+    const irMain = bodySizeMetrics(result, ["main"]);
+    const directMain = bodySizeMetrics(direct, ["main"]);
+    expect(irMain.locals, "main local ceiling").toBeLessThanOrEqual(Math.ceil(directMain.locals * 1.5));
+    expect(irMain.bytes, "main body-size ceiling").toBeLessThanOrEqual(Math.ceil(directMain.bytes * 1.3));
+
+    const irAggregate = bodySizeMetrics(result, [
+      ...FUNCTION_TERMINALS,
+      "__module_init",
+      ...STATIC_DERIVED_CALLBACK_NAMES,
+    ]);
+    const directAggregate = bodySizeMetrics(direct, [...FUNCTION_TERMINALS, "__module_init", ...DIRECT_CALLBACK_NAMES]);
+    expect(irAggregate.locals, "aggregate Calendar local ceiling").toBeLessThanOrEqual(
+      Math.ceil(directAggregate.locals * 1.5),
+    );
+    expect(irAggregate.bytes, "aggregate Calendar body-size ceiling").toBeLessThanOrEqual(
+      Math.ceil(directAggregate.bytes * 1.35),
+    );
+    expect(result.binary.length, "whole Calendar binary-size ceiling").toBeLessThanOrEqual(
+      Math.ceil(direct.binary.length * 1.36),
     );
   });
 
@@ -705,22 +837,57 @@ describe.skip("#3523 Calendar final ten-body retirement gate — enable with the
       "callback maker",
       `type i32 = number; function __make_callback(_id: i32, capture: object): object { return capture; }`,
     ],
+    // Known-red contract bank: the current selector does not reject this
+    // typed-DOM occupant. The production transaction must certify this seam
+    // (or replace it with the final typed-DOM collision proof) before enabling
+    // the surrounding describe block.
     ["typed DOM ABI", `function Document_createElement(): number { return 1; }`],
-  ])("rejects the whole prepared component before mutation on a %s collision", async (_label, prefix) => {
-    const result = await compile(`${prefix}\n${SOURCE}`, {
-      fileName: "website/playground/examples/dom/calendar-preflight-collision.ts",
-      experimentalIR: true,
-      trackFallbacks: true,
-      trackIrOutcomes: true,
-      target: "gc",
-    });
+  ])("rejects the whole prepared component before mutation on a %s collision", async (label, prefix) => {
+    const collisionSource = `${prefix}\n${SOURCE}`;
+    const collisionFileName = `website/playground/examples/dom/calendar-${label.replaceAll(" ", "-")}-collision.ts`;
+    const [result, direct] = await Promise.all([
+      compileCalendarFresh(collisionSource, true, collisionFileName),
+      compileCalendarFresh(collisionSource, false, collisionFileName),
+    ]);
     expectSuccess(result);
+    expectSuccess(direct);
+    const collisionOutcomes: IrObservedOutcome[] = [];
     for (const terminal of ALL_TERMINALS) {
-      expect(outcome(result, terminal.unitKind, terminal.displayName)).toMatchObject({
+      const observed = outcome(result, terminal.unitKind, terminal.displayName);
+      collisionOutcomes.push(observed);
+      expect(observed).toMatchObject({
         kind: "unsupported",
+        code: "late-preparation-unsupported",
+        stage: "resolve",
         legacyBodyEmitted: true,
         irBodyEmitted: false,
       });
+      expect(observed.preparedComponentId).toBeUndefined();
     }
+    expectExactMultiset(
+      collisionOutcomes.map(({ unitKind, displayName }) => `${unitKind}:${displayName}`),
+      ALL_TERMINALS.map(({ unitKind, displayName }) => `${unitKind}:${displayName}`),
+      "exact rejected Calendar terminal universe",
+    );
+    expect((result.irOutcomes ?? []).filter(({ preparedComponentId }) => preparedComponentId !== undefined)).toEqual(
+      [],
+    );
+
+    const calendarArtifacts = new Set<string>(COMPILED_ARTIFACT_NAMES);
+    expect((result.irCompiledFuncs ?? []).filter((name) => calendarArtifacts.has(name))).toEqual([]);
+    expect((result.irFirstSkipped ?? []).filter((name) => calendarArtifacts.has(name))).toEqual([]);
+    const resultNames = parseWatFunctions(result.wat).map(({ name }) => name);
+    const derivedArtifactNames = new Set<string>(STATIC_DERIVED_CALLBACK_NAMES);
+    expect(resultNames.filter((name) => derivedArtifactNames.has(name))).toEqual([]);
+
+    expect(result.imports, "no imports leaked by failed IR preparation").toEqual(direct.imports);
+    expect([...result.binary], "all-direct collision binary").toEqual([...direct.binary]);
+
+    const fallbackEvidence = await exerciseCalendar(result, "direct");
+    const directEvidence = await exerciseCalendar(direct, "direct");
+    expect(semanticDomSnapshot(fallbackEvidence.document.body)).toEqual(
+      semanticDomSnapshot(directEvidence.document.body),
+    );
+    expect(fallbackEvidence.logs).toEqual(directEvidence.logs);
   });
 });
