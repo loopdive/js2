@@ -1537,9 +1537,22 @@ export function buildShapePropFlagsTable(ctx: CodegenContext): void {
   }
 }
 
-/** Scan all function bodies for ref.func instructions and record their targets */
-export function collectDeclaredFuncRefs(ctx: CodegenContext): void {
-  const refs = new Set<number>();
+/**
+ * Scan all function bodies for ref.func instructions and record their targets.
+ *
+ * (#4257) `opts.additive` re-runs the scan over the ALREADY-collected set
+ * instead of replacing it. The one-shot mid-finalize call happens long before
+ * the `__extern_get` / dispatcher body FILLS run, so a `ref.func` whose only
+ * occurrence is inside a late-spliced arm was never declared and the module
+ * failed validation with "undeclared reference to function #N". Two arms
+ * (#2963's method trampolines, #2175's eval callables) had each hand-patched
+ * that by pushing their own index; the additive re-scan generalises the repair
+ * so a new arm cannot reintroduce the bug. Union, never replace: an entry a
+ * caller pushed by hand for a `ref.func` this scan cannot see (element
+ * segments, later rewriters) must survive.
+ */
+export function collectDeclaredFuncRefs(ctx: CodegenContext, opts?: { additive?: boolean }): void {
+  const refs = new Set<number>(opts?.additive ? ctx.mod.declaredFuncRefs : []);
   function scanInstrs(instrs: Instr[]): void {
     for (const instr of instrs) {
       if (instr.op === "ref.func") {

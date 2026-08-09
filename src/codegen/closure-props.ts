@@ -70,6 +70,7 @@ import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { protoIndexRecvGetMissInstrs } from "./proto-index-store.js"; // (#4176) inherited proto-named consult
+import { INSTANCE_BAG_FIELD } from "./closures/closure-header-layout.js"; // (#4241) one spelling of the slot name
 import { addFuncType } from "./registry/types.js";
 
 /** WasmGC `eq` abstract heap type (used for `ref.cast`/`ref.null` to eqref). */
@@ -93,7 +94,7 @@ const F_BAG = 2;
  * `closures/funcref-wrapper-types.js`. Resolved by NAME (the `$shape` idiom),
  * never by a baked index, so a later header change cannot silently misread it.
  */
-const BAG_SLOT_FIELD = "$bag";
+const BAG_SLOT_FIELD = INSTANCE_BAG_FIELD;
 
 /**
  * (#4241) The carrier roots that carry an intrinsic `$bag` slot, paired with
@@ -120,6 +121,30 @@ function slottedCarrierRoots(ctx: CodegenContext, carrierTypeIdxs: number[]): { 
     if (!def || def.kind !== "struct") continue;
     const bagIdx = def.fields.findIndex((f) => f?.name === BAG_SLOT_FIELD);
     if (bagIdx >= 0) out.push({ typeIdx, bagIdx });
+  }
+  return out;
+}
+
+/**
+ * (#4241 step 1b) Registered user-declared structs bearing an intrinsic `$bag`.
+ *
+ * Deliberately derived from `ctx.structFields` + the `$bag` FIELD NAME rather
+ * than from an imported "which carriers got a slot" list: the producer
+ * (`linear-type-reservations.ts`) and this consumer would then state the
+ * eligibility rule twice, and a private second copy of a layout fact is
+ * precisely the defect class that broke the IR wrapper-root validator and cost
+ * a merge-queue round on this same issue. One fact, read where it lives.
+ */
+function slottedInstanceCarrierRoots(ctx: CodegenContext): { typeIdx: number; bagIdx: number }[] {
+  const out: { typeIdx: number; bagIdx: number }[] = [];
+  const seen = new Set<number>();
+  for (const [structName, fields] of ctx.structFields) {
+    const bagIdx = fields.findIndex((f) => f?.name === BAG_SLOT_FIELD);
+    if (bagIdx < 0) continue;
+    const typeIdx = ctx.structMap.get(structName);
+    if (typeIdx === undefined || seen.has(typeIdx)) continue;
+    seen.add(typeIdx);
+    out.push({ typeIdx, bagIdx });
   }
   return out;
 }
@@ -596,7 +621,16 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
   // (#4241) Computed once and shared by the carrier predicate and BOTH bag
   // helpers, so the slotted/slotless split cannot drift between them.
   const carrierTypeIdxs = [...collectClosureBaseWrapperTypeIdxs(ctx), ...builtinInstanceCarrierTypeIdxs(ctx)];
-  const slotted = slottedCarrierRoots(ctx, carrierTypeIdxs);
+  const slotted = [
+    ...slottedCarrierRoots(ctx, carrierTypeIdxs),
+    // (#4241 step 1b) Instance carriers that were given an intrinsic `$bag` at
+    // struct-registration time. Discovered by FIELD NAME over the registered
+    // struct set rather than by an imported carrier list, so the two families
+    // cannot drift apart and a carrier that did not get a slot (split fnctor,
+    // cold-tailed fnctor, any class hierarchy) is automatically routed to the
+    // registry instead of being mis-read at a wrong index.
+    ...slottedInstanceCarrierRoots(ctx),
+  ];
 
   // ── __is_closure_prop_carrier(externref value) -> i32 ──
   // (#3468 F1) ref.test chain over the closure BASE-wrapper types (same set as
