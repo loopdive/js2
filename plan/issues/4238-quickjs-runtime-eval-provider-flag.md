@@ -1048,6 +1048,33 @@ Completion-value semantics, which the wrapper design targeted directly, are
 **21/21 on both engines** (`cptn-*`) — the `undefined;` guard and the
 `with`/block wrapper choices are carrying their weight.
 
+#### Cross-checked against #4242's own gate
+
+`scripts/eval-engine-parity.mjs` (which landed on main while this slice was in
+flight) was run over the two result files above and agrees, from an independent
+classifier:
+
+```
+eval-engine-parity — scoped mode, 816 measured files
+  pass: quickjs 442 vs interpreter 779 (net -337)
+  scope-fidelity     wins 0  losses  41  net  -41
+  engine-difference  wins 0  losses 294  net -294
+  unattributed       wins 0  losses   2  net   -2
+```
+
+Its `engine-difference` bucket is the membrane finding; `scope-fidelity` is what
+is genuinely left of the scope bridge. **Zero wins in every bucket** is the
+honest headline: this engine does not yet recover anything the interpreter
+misses, so #4242's default-flip gate must stay BLOCKED until the membrane lands.
+Reproduce with the two commands above plus:
+
+```bash
+node scripts/eval-engine-parity.mjs \
+  --quickjs <qjs>.jsonl --interpreter <interp>.jsonl \
+  --quickjs-tier 'QUICKJS (…)' --interpreter-tier 'INTERPRETER (… TEST262_FULL_RUNTIME_EVAL=1 …)' \
+  --markdown
+```
+
 ### Slice-3 residuals (all typed + catchable, none silent)
 
 Slice 2's list still stands. Added by this slice:

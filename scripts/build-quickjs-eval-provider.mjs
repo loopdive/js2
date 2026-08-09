@@ -258,12 +258,9 @@ async function verifyQuickjsProvider(compile, adapterBinary, artifact) {
   // ("quickjs".length) is the anti-vacuity anchor: it is a real QuickJS STRING
   // on the realm, so no compile-time fold and no other engine can produce it.
   await runCanary(QUICKJS_ADAPTER_CANARY_SOURCE, "quickjs-eval-canary.ts", QUICKJS_ADAPTER_CANARY_EXPECTATIONS, {});
-  await runCanary(
-    QUICKJS_DIRECT_CANARY_SOURCE,
-    "quickjs-eval-direct-canary.ts",
-    QUICKJS_DIRECT_CANARY_EXPECTATIONS,
-    { inferModuleStrictArguments: false },
-  );
+  await runCanary(QUICKJS_DIRECT_CANARY_SOURCE, "quickjs-eval-direct-canary.ts", QUICKJS_DIRECT_CANARY_EXPECTATIONS, {
+    inferModuleStrictArguments: false,
+  });
 }
 
 async function main() {
