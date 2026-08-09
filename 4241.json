@@ -1,10 +1,11 @@
 {
   "id": "4241",
   "assignee": "ttraenkler/opus-4237-bagslot",
-  "requested_by": "ttraenkler/opus-4237-bagslot",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "issue-4237-receiver-stamp-dispatch",
   "claimed_at": "2026-08-08T20:05:15Z",
-  "updated_at": "2026-08-08T20:05:15Z",
-  "write_id": "98459-690o2jx4"
+  "updated_at": "2026-08-09T03:06:43Z",
+  "write_id": "88933-xa5b8051",
+  "released_at": "2026-08-09T03:06:43Z"
 }
