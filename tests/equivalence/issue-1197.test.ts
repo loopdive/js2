@@ -139,6 +139,70 @@ describe("#1197 i32 element specialization for number[]", () => {
       expect((instance.exports.test as () => number)()).toBe(7);
     });
 
+    it("the batched miss path preserves f64 strict-equality search semantics", async () => {
+      const source = `export function test(): number {
+        const arr: number[] = [];
+        for (let i = 0; i < 1031; i = i + 1) {
+          arr.push(i + 0.25);
+        }
+        let passed = 0;
+        if (arr.indexOf(0.25) === 0) passed = passed + 1;
+        if (arr.indexOf(37.25) === 37) passed = passed + 1;
+        if (arr.indexOf(1030.25) === 1030) passed = passed + 1;
+        if (arr.indexOf(2000.25) === -1) passed = passed + 1;
+        if (arr.indexOf(NaN) === -1) passed = passed + 1;
+        if (arr.indexOf(37.25, 38) === -1) passed = passed + 1;
+        if (arr.indexOf(1030.25, -1) === 1030) passed = passed + 1;
+        return passed;
+      }`;
+      const result = await compile(source, { fast: true });
+      expect(result.success).toBe(true);
+      const imports = buildImports(result.imports, undefined, result.stringPool);
+      const { instance } = await WebAssembly.instantiate(result.binary, imports);
+      imports.setInstance?.(instance);
+      expect((instance.exports.test as () => number)()).toBe(7);
+    });
+
+    it("batches hot numeric misses while the kill switch restores the branch ladder", async () => {
+      const source = `export function test(): number {
+        const arr: number[] = [];
+        for (let i = 0; i < 1031; i = i + 1) {
+          arr.push((i * 37) % 1031);
+        }
+        return arr.indexOf(444);
+      }`;
+      const compileWithBatching = async (enabled: boolean) => {
+        const previous = process.env.JS2WASM_ARRAY_INDEXOF_BATCHED_BRANCHES;
+        try {
+          process.env.JS2WASM_ARRAY_INDEXOF_BATCHED_BRANCHES = enabled ? "1" : "0";
+          return await compile(source, { fast: true });
+        } finally {
+          if (previous === undefined) {
+            Reflect.deleteProperty(process.env, "JS2WASM_ARRAY_INDEXOF_BATCHED_BRANCHES");
+          } else process.env.JS2WASM_ARRAY_INDEXOF_BATCHED_BRANCHES = previous;
+        }
+      };
+      const candidate = await compileWithBatching(true);
+      const control = await compileWithBatching(false);
+      expect(candidate.success).toBe(true);
+      expect(control.success).toBe(true);
+
+      const functionBody = (wat: string): string => {
+        const start = wat.indexOf("(func $test ");
+        const end = wat.indexOf("\n  (func ", start + 1);
+        return wat.slice(start, end);
+      };
+      expect(functionBody(candidate.wat ?? "")).toContain("i32.or");
+      expect(functionBody(control.wat ?? "")).not.toContain("i32.or");
+
+      for (const compiled of [candidate, control]) {
+        const imports = buildImports(compiled.imports, undefined, compiled.stringPool);
+        const { instance } = await WebAssembly.instantiate(compiled.binary, imports);
+        imports.setInstance?.(instance);
+        expect((instance.exports.test as () => number)()).toBe(12);
+      }
+    });
+
     it("compound bitwise assignment on element preserves i32 semantics", async () => {
       await assertEquivalent(
         `export function test(): number {
