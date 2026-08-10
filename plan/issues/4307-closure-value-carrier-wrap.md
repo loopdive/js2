@@ -30,7 +30,7 @@ loc-budget-allow:
 # id 4307 reserved + claimed for this lane before work started. `gh` is NOT
 # available in this container, so the open-PR half of the collision scan was
 # DEGRADED (pr_scan=degraded): the id was verified against upstream `main`
-# (no plan/issues/4307-*.md) and against the assignment ref —
+# (no matching file under plan/issues/ for id 4307) and against the assignment ref —
 #   `node scripts/claim-issue.mjs 4307 --check` →
 #   "#4307 is CLAIMED by ttraenkler/opus-senior (since 2026-08-09T19:45:42Z)"
 #   "(read origin/issue-assignments)" (exit 3, i.e. claimed by THIS lane).
