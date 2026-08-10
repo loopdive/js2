@@ -20,8 +20,18 @@
 // handle box, compiled GC objects crossing inward → a typed TypeError), real
 // `__runtime_new_function` and `__runtime_apply_interpreted` (through the
 // artifact's `qjs_call`), error mapping with the real `name`/`message`, and the
-// globals push/pull mirror. Direct eval still returns the typed refusal — its
-// caller-scope snapshot is slice 3.
+// globals push/pull mirror.
+//
+// SLICE 3 SCOPE: DIRECT eval. The caller's live binding cells (three name/cell
+// layers plus the 64-slot activation state pool) are snapshotted onto a fresh
+// plain QuickJS object `S`; a sloppy caller evaluates `with (S) { … }` so
+// QuickJS runs the scope walk natively, a strict caller gets a block-scoped
+// `const` preamble instead (`with` is illegal there). After the evaluation the
+// changed PRIMITIVES are written straight back into the live cells, new sloppy
+// `var`s are mirrored into the activation state pool with the interpreter's own
+// vacancy discipline, and the global-lexical-cell carrier is mirrored the same
+// way. The primitive-only filter on every write-back path is load-bearing — see
+// the note above `qjsPullGlobals`.
 
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -101,14 +111,29 @@ export const QUICKJS_ADAPTER_EXTERNS = Object.freeze([
 export const QUICKJS_ENGINE_IDENTITY_GLOBAL = "__js2wasm_eval_engine";
 
 /**
+ * Adapter-owned names on the QuickJS realm. Every one of them starts with the
+ * shared prefix so the new-binding diff (`__js2wasm_eval_newnames__`) can
+ * exclude the adapter's own bookkeeping without a second list to keep in sync.
+ */
+export const QUICKJS_ADAPTER_GLOBAL_PREFIX = "__js2wasm_eval_";
+/** The direct-eval caller-scope snapshot object (`with (S) { … }`'s S). */
+export const QUICKJS_SCOPE_GLOBAL = "__js2wasm_eval_scope__";
+
+/**
+ * Private global-object slot carrying `[name, EvalBindingCell, …]` for the
+ * declarative half of the caller's GlobalEnvironmentRecord. Data, not a
+ * function ABI — keep byte-for-byte aligned with
+ * `RUNTIME_EVAL_GLOBAL_LEXICAL_CELLS_PROPERTY` in
+ * src/codegen/expressions/runtime-eval-provider.ts and src/interp/types.ts.
+ */
+export const RUNTIME_EVAL_GLOBAL_LEXICAL_CELLS_PROPERTY = "__js2wasm_runtime_eval_global_lexical_cells__";
+
+/**
  * The remaining typed refusals. Slice 2 retired the slice-1 value-bridge
- * refusals (non-ASCII source, non-number completion value, generic throw);
- * what is left is the slice-3 tier (direct eval) plus the two MVP boundaries
+ * refusals (non-ASCII source, non-number completion value, generic throw) and
+ * slice 3 retired the direct-eval one; what is left is the two MVP boundaries
  * that are deliberate, documented residuals rather than unfinished work.
  */
-export const QUICKJS_DIRECT_EVAL_REFUSAL =
-  "direct eval is not supported by the quickjs eval engine yet — run without " +
-  "JS2WASM_EVAL_ENGINE for the interpreter engine (#4238)";
 /** A compiled GC object/function cannot cross INTO QuickJS in the MVP. */
 export const QUICKJS_FOREIGN_VALUE_REFUSAL =
   "the quickjs eval engine (MVP) cannot pass compiled objects into evaluated " + "code (#4238)";
@@ -284,9 +309,34 @@ const QJS_TAG_STRING_ROPE: number = ${tags.STRING_ROPE};
 const QJS_TAG_OBJECT: number = ${tags.OBJECT};
 const QJS_TAG_SHORT_BIG_INT: number = ${tags.SHORT_BIG_INT};
 
+/**
+ * One mutable boxed binding shared by AOT code and this provider — the exact
+ * shape src/interp/types.ts declares, so the one-field WasmGC struct Core Wasm
+ * canonicalises across the module boundary is the SAME type on both sides.
+ *
+ * The annotation is load-bearing, not decoration: reading \`cell.value\` off an
+ * \`any\` compiles to the generic object-property path, which answers
+ * \`undefined\` for a ref cell (measured — every caller binding read as
+ * undefined until the cast was added). Always go through \`as EvalBindingCell\`.
+ */
+interface EvalBindingCell {
+  value: any;
+}
+
 // One QuickJS context per adapter INSTANCE. instantiateRuntimeEvalNamespace
 // builds a fresh adapter+libquickjs pair per call, so this is per-test state.
 var qjsContextHandle: number = 0;
+
+// Direct eval's realm-side helpers are installed on first use, not at context
+// init: a module that never takes the direct route should not pay an eval.
+var qjsDirectHelpersReady: boolean = false;
+
+// Every name a sloppy direct eval has ever created on the QuickJS realm. A
+// \`var\` there is NON-CONFIGURABLE, so once mirrored into an activation's pool
+// it is only blanked to \`undefined\`, not deleted — and then a LATER activation
+// that redeclares it would not show up in the realm diff. Remembering the names
+// keeps them mirrorable for the rest of the context's life.
+var qjsCreatedNames: string[] = [];
 
 // Byte length written by the last qjsPushUtf8 (a second return value without an
 // allocation — the adapter runs on the hot path of every string crossing).
@@ -667,6 +717,81 @@ function qjsIsMirrorablePrimitive(value: any): boolean {
   return t === "number" || t === "boolean" || t === "string" || t === "undefined";
 }
 
+/** The QuickJS-side half of the same filter, by TAG. Shared by every write-back
+ *  path (realm object, global lexical cells, direct-eval caller cells and the
+ *  activation state pool) so a foreign object can never reach a carrier the
+ *  caller keeps across provider entries. */
+function qjsIsMirrorableTag(tag: number): boolean {
+  return (
+    tag === QJS_TAG_INT ||
+    tag === QJS_TAG_FLOAT64 ||
+    tag === QJS_TAG_SHORT_BIG_INT ||
+    tag === QJS_TAG_BOOL ||
+    tag === QJS_TAG_NULL ||
+    tag === QJS_TAG_UNDEFINED ||
+    tag === QJS_TAG_STRING ||
+    tag === QJS_TAG_STRING_ROPE
+  );
+}
+
+/**
+ * Mirror the caller's GLOBAL LEXICAL cells (\`let\`/\`const\` at module top
+ * level) onto QuickJS \`globalThis\`. They live on a deliberately
+ * non-enumerable carrier property, so \`Object.keys\` in qjsPushGlobals cannot
+ * reach them; the interpreter reads the same alternating [name, cell, …] vector
+ * (src/interp/eval-environment.ts createRuntimeEvalGlobalEnvironment).
+ */
+function qjsPushGlobalLexicalCells(c: number, globalObject: any): void {
+  if (globalObject === undefined || globalObject === null) return;
+  const carrier: any = globalObject[${j(RUNTIME_EVAL_GLOBAL_LEXICAL_CELLS_PROPERTY)}];
+  if (carrier === undefined || carrier === null) return;
+  const g: number = qjs_global_object(c);
+  for (let i = 0; i + 1 < (carrier.length as number); i += 2) {
+    const name: any = carrier[i];
+    const cell: EvalBindingCell = carrier[i + 1] as EvalBindingCell;
+    if (typeof name !== "string" || cell === undefined || cell === null) continue;
+    const value: any = __runtime_eval_unwrap_result(cell.value);
+    if (!qjsIsMirrorablePrimitive(value)) continue;
+    const namePtr: number = qjsPushCString(name as string);
+    if (namePtr === 0) continue;
+    qjsPushRefusal = "";
+    const h: number = qjsToQuickjs(c, value);
+    if (qjsPushRefusal === "") qjs_set_prop_str(c, g, namePtr, h);
+    qjs_free_value(c, h);
+    qjs_free_raw(namePtr);
+  }
+  qjsPushRefusal = "";
+  qjs_free_value(c, g);
+}
+
+/** Copy the global lexical cells back. PRIMITIVES ONLY, both sides — the same
+ *  filter that keeps the realm object's intrinsic markers intact. */
+function qjsPullGlobalLexicalCells(c: number, globalObject: any): void {
+  if (globalObject === undefined || globalObject === null) return;
+  const carrier: any = globalObject[${j(RUNTIME_EVAL_GLOBAL_LEXICAL_CELLS_PROPERTY)}];
+  if (carrier === undefined || carrier === null) return;
+  const g: number = qjs_global_object(c);
+  for (let i = 0; i + 1 < (carrier.length as number); i += 2) {
+    const name: any = carrier[i];
+    const cell: EvalBindingCell = carrier[i + 1] as EvalBindingCell;
+    if (typeof name !== "string" || cell === undefined || cell === null) continue;
+    if (!qjsIsMirrorablePrimitive(__runtime_eval_unwrap_result(cell.value))) continue;
+    const namePtr: number = qjsPushCString(name as string);
+    if (namePtr === 0) continue;
+    const h: number = qjs_get_prop_str(c, g, namePtr);
+    qjs_free_raw(namePtr);
+    if (h === 0) continue;
+    if (qjsIsMirrorableTag(qjs_tag(h))) {
+      qjsPullRefusal = "";
+      const value: any = qjsToGc(c, h);
+      if (qjsPullRefusal === "") cell.value = __runtime_eval_wrap_result(value);
+    }
+    qjs_free_value(c, h);
+  }
+  qjsPullRefusal = "";
+  qjs_free_value(c, g);
+}
+
 /**
  * Copy the mirrored globals back after evaluating (the pull side is copy-back
  * by contract — see emitRuntimeEvalGlobalBindingPullBody). Names the evaluated
@@ -698,17 +823,7 @@ function qjsPullGlobals(c: number, globalObject: any): void {
         const h: number = qjs_get_prop_str(c, g, namePtr);
         qjs_free_raw(namePtr);
         if (h !== 0) {
-          const tag: number = qjs_tag(h);
-          const mirrorable: boolean =
-            tag === QJS_TAG_INT ||
-            tag === QJS_TAG_FLOAT64 ||
-            tag === QJS_TAG_SHORT_BIG_INT ||
-            tag === QJS_TAG_BOOL ||
-            tag === QJS_TAG_NULL ||
-            tag === QJS_TAG_UNDEFINED ||
-            tag === QJS_TAG_STRING ||
-            tag === QJS_TAG_STRING_ROPE;
-          if (mirrorable) {
+          if (qjsIsMirrorableTag(qjs_tag(h))) {
             qjsPullRefusal = "";
             const value: any = qjsToGc(c, h);
             if (qjsPullRefusal === "") globalObject[key] = __runtime_eval_wrap_result(value);
@@ -733,17 +848,20 @@ function qjsEvaluate(source: string, globalObject: any): any {
   if (buf === 0) return runtimeEvalResult(false, new TypeError(${j(QUICKJS_INIT_REFUSAL)}));
   const byteLen: number = qjsUtf8Len;
   qjsPushGlobals(c, globalObject);
+  qjsPushGlobalLexicalCells(c, globalObject);
   const handle: number = qjs_eval(c, buf, byteLen);
   qjs_free_raw(buf);
   if (handle === 0) return runtimeEvalResult(false, new TypeError(${j(QUICKJS_INIT_REFUSAL)}));
   if (qjs_is_exception(handle) !== 0) {
     qjs_free_value(c, handle);
+    qjsPullGlobalLexicalCells(c, globalObject);
     qjsPullGlobals(c, globalObject);
     return qjsThrewResult(c);
   }
   qjsPullRefusal = "";
   const value: any = qjsToGc(c, handle);
   qjs_free_value(c, handle);
+  qjsPullGlobalLexicalCells(c, globalObject);
   qjsPullGlobals(c, globalObject);
   if (qjsPullRefusal !== "") {
     const refusal: string = qjsPullRefusal;
@@ -811,6 +929,244 @@ export function __runtime_new_function(
   return qjsEvaluate(source, globalObject);
 }
 
+// ------------------------------------------------------- direct eval -------
+// The caller hands 12 arguments; ten of them describe the scope it is standing
+// in. Three name/cell layers (outer captures, the current activation, call-site
+// lexical shadows) plus a 64-slot activation STATE POOL that persists
+// eval-created sloppy vars across every direct eval in one AOT activation. The
+// cells are LIVE: writing \`cell.value\` updates the binding the caller's own
+// later reads dereference, with no copy-back shadow environment.
+//
+// QuickJS cannot be handed those cells, so the bridge is a snapshot object S:
+//  - SLOPPY caller ⇒ \`with (S) { … }\`. QuickJS performs the scope walk itself,
+//    including assignment-to-with-binding, which is what recovers the dominant
+//    \`eval("x = x + 1")\` shape.
+//  - STRICT caller ⇒ \`with\` is a SyntaxError, so S is read through a
+//    block-scoped \`const\` preamble instead. Writes then throw (assignment to a
+//    constant) rather than updating — the documented slice-3 residual.
+
+/** Realm-side helpers for the direct route, installed once per context. Kept in
+ *  QuickJS rather than in shim C so the artifact hash does not move. */
+function qjsEnsureDirectHelpers(c: number): boolean {
+  if (qjsDirectHelpersReady) return true;
+  const installed: number = qjsEvalInternal(
+    c,
+    "globalThis.__js2wasm_eval_mkobj__ = function () { return {}; };" +
+      "globalThis.__js2wasm_eval_prenames__ = function () {" +
+      " return Object.getOwnPropertyNames(globalThis); };" +
+      "globalThis.__js2wasm_eval_newnames__ = function (pre) {" +
+      " var g = Object.getOwnPropertyNames(globalThis), o = [], i, k, seen, n;" +
+      " for (i = 0; i < g.length; i++) {" +
+      "  n = g[i];" +
+      "  if (n.slice(0, ${QUICKJS_ADAPTER_GLOBAL_PREFIX.length}) === '${QUICKJS_ADAPTER_GLOBAL_PREFIX}') continue;" +
+      "  seen = false;" +
+      "  for (k = 0; k < pre.length; k++) { if (pre[k] === n) { seen = true; break; } }" +
+      "  if (!seen) o.push(n);" +
+      " }" +
+      " return o.join('\\\\u0001'); };" +
+      // A \`var\` at QuickJS global scope creates a NON-CONFIGURABLE property, so
+      // \`delete\` on it silently fails. Fall back to writing \`undefined\`, which
+      // is what the caller's other scopes must observe for a binding that was
+      // only ever function-scoped.
+      "globalThis.__js2wasm_eval_del__ = function (n) {" +
+      " delete globalThis[n];" +
+      " if (Object.getOwnPropertyDescriptor(globalThis, n)) globalThis[n] = undefined; };" +
+      "0"
+  );
+  if (installed === 0) return false;
+  qjs_free_value(c, installed);
+  qjsDirectHelpersReady = true;
+  return true;
+}
+
+/** Evaluate adapter-owned bookkeeping source. Returns an OWNED handle, or 0
+ *  when the evaluation failed — a pending exception is drained, never leaked
+ *  into the user's next entry. */
+function qjsEvalInternal(c: number, src: string): number {
+  const buf: number = qjsPushUtf8(src);
+  if (buf === 0) return 0;
+  const byteLen: number = qjsUtf8Len;
+  const h: number = qjs_eval(c, buf, byteLen);
+  qjs_free_raw(buf);
+  if (h === 0) return 0;
+  if (qjs_is_exception(h) !== 0) {
+    qjs_free_value(c, h);
+    const pending: number = qjs_take_exception(c);
+    qjs_free_value(c, pending);
+    return 0;
+  }
+  return h;
+}
+
+/** Call one of the realm-side helpers with 0 or 1 borrowed argument handles.
+ *  Returns an OWNED result handle, or 0 on failure (exception drained). */
+function qjsCallGlobalHelper(c: number, name: string, argc: number, arg: number): number {
+  const g: number = qjs_global_object(c);
+  const namePtr: number = qjsPushCString(name);
+  if (namePtr === 0) {
+    qjs_free_value(c, g);
+    return 0;
+  }
+  const fn: number = qjs_get_prop_str(c, g, namePtr);
+  qjs_free_raw(namePtr);
+  if (fn === 0) {
+    qjs_free_value(c, g);
+    return 0;
+  }
+  let argv: number = 0;
+  if (argc > 0) {
+    argv = qjs_malloc_raw(4);
+    if (argv !== 0) store32(argv, arg);
+  }
+  const ret: number = argc > 0 && argv === 0 ? 0 : qjs_call(c, fn, g, argc, argv);
+  if (argv !== 0) qjs_free_raw(argv);
+  qjs_free_value(c, fn);
+  qjs_free_value(c, g);
+  if (ret === 0) return 0;
+  if (qjs_is_exception(ret) !== 0) {
+    qjs_free_value(c, ret);
+    const pending: number = qjs_take_exception(c);
+    qjs_free_value(c, pending);
+    return 0;
+  }
+  return ret;
+}
+
+/** Record one caller binding. An INNER layer shadows an outer one of the same
+ *  name, exactly as the interpreter's env-record chain does, so the write-back
+ *  can only ever reach the binding the evaluated code actually saw. */
+function qjsAppendBinding(names: string[], cells: any[], name: string, cell: any): void {
+  for (let i = 0; i < names.length; i += 1) {
+    if (names[i] === name) {
+      cells[i] = cell;
+      return;
+    }
+  }
+  names.push(name);
+  cells.push(cell);
+}
+
+/** Collect one parallel name/cell layer handed in by the caller. */
+function qjsCollectLayer(nameVec: any, slotVec: any, names: string[], cells: any[]): void {
+  if (nameVec === undefined || nameVec === null) return;
+  if (slotVec === undefined || slotVec === null) return;
+  for (let i = 0; i < (nameVec.length as number); i += 1) {
+    const name: any = nameVec[i];
+    const cell: any = slotVec[i];
+    if (typeof name !== "string") continue;
+    if (cell === undefined || cell === null) continue;
+    qjsAppendBinding(names, cells, name as string, cell);
+  }
+}
+
+/** Collect the persistent activation state pool: alternating [nameCell,
+ *  valueCell]. An unclaimed pair carries \`undefined\` in its name cell — the
+ *  same vacancy discipline preparePersistentEvalBindings uses. */
+function qjsCollectPool(pool: any, names: string[], cells: any[]): void {
+  if (pool === undefined || pool === null) return;
+  for (let i = 0; i + 1 < (pool.length as number); i += 2) {
+    const nameCell: EvalBindingCell = pool[i] as EvalBindingCell;
+    if (nameCell === undefined || nameCell === null) continue;
+    const name: any = __runtime_eval_unwrap_result(nameCell.value);
+    if (typeof name !== "string") continue;
+    qjsAppendBinding(names, cells, name as string, pool[i + 1]);
+  }
+}
+
+function qjsIsIdentChar(ch: number): boolean {
+  if (ch >= 97 && ch <= 122) return true;
+  if (ch >= 65 && ch <= 90) return true;
+  if (ch >= 48 && ch <= 57) return true;
+  return ch === 95 || ch === 36;
+}
+
+/** Reserved words plus the two names a strict \`const\` may not bind. */
+const QJS_RESERVED_NAMES: string[] = [
+  "arguments", "await", "break", "case", "catch", "class", "const", "continue",
+  "debugger", "default", "delete", "do", "else", "enum", "eval", "export",
+  "extends", "false", "finally", "for", "function", "if", "implements",
+  "import", "in", "instanceof", "interface", "let", "new", "null", "package",
+  "private", "protected", "public", "return", "static", "super", "switch",
+  "this", "throw", "true", "try", "typeof", "var", "void", "while", "with",
+  "yield",
+];
+
+/** Can \`name\` legally appear as \`const <name> = …\` in strict code? */
+function qjsIsSafeConstName(name: string): boolean {
+  const n: number = name.length;
+  if (n === 0) return false;
+  const first: number = name.charCodeAt(0) as number;
+  if (first >= 48 && first <= 57) return false;
+  if (!qjsIsIdentChar(first)) return false;
+  for (let i = 1; i < n; i += 1) {
+    if (!qjsIsIdentChar(name.charCodeAt(i) as number)) return false;
+  }
+  for (let i = 0; i < QJS_RESERVED_NAMES.length; i += 1) {
+    if (QJS_RESERVED_NAMES[i] === name) return false;
+  }
+  return true;
+}
+
+/** Does \`source\` contain \`name\` as a whole identifier token? A conservative
+ *  scan (it also matches inside strings and comments), used only to keep the
+ *  strict preamble to the names the code could possibly reference — every
+ *  \`const\` it emits is one more chance to collide with a \`let\`/\`const\` the
+ *  evaluated code declares itself. */
+function qjsSourceMentions(source: string, name: string): boolean {
+  const sn: number = source.length;
+  const nn: number = name.length;
+  if (nn === 0 || nn > sn) return false;
+  const first: number = name.charCodeAt(0) as number;
+  for (let i = 0; i + nn <= sn; i += 1) {
+    if ((source.charCodeAt(i) as number) !== first) continue;
+    let match: boolean = true;
+    for (let k = 1; k < nn; k += 1) {
+      if ((source.charCodeAt(i + k) as number) !== (name.charCodeAt(k) as number)) {
+        match = false;
+        break;
+      }
+    }
+    if (!match) continue;
+    if (i > 0 && qjsIsIdentChar(source.charCodeAt(i - 1) as number)) continue;
+    if (i + nn < sn && qjsIsIdentChar(source.charCodeAt(i + nn) as number)) continue;
+    return true;
+  }
+  return false;
+}
+
+/** Split the helper's \\u0001-joined new-binding list. */
+function qjsSplitJoined(text: string, into: string[]): void {
+  let current: string = "";
+  for (let i = 0; i < text.length; i += 1) {
+    const ch: number = text.charCodeAt(i) as number;
+    if (ch === 1) {
+      if (current.length > 0) into.push(current);
+      current = "";
+    } else {
+      current = current + String.fromCharCode(ch);
+    }
+  }
+  if (current.length > 0) into.push(current);
+}
+
+/**
+ * Wrap the user's source so the snapshot object is in scope.
+ *
+ * The \`undefined;\` in the strict form is NOT decoration. A Script's completion
+ * value is the last NON-EMPTY statement value (UpdateEmpty), so a bare
+ * \`"use strict";\` prologue in front of a block whose body completes empty
+ * (\`eval("var x = 1")\`) would surface the STRING "use strict" as the eval's
+ * result. Seeding V with \`undefined\` first restores the correct answer. The
+ * sloppy form needs no such guard: WithStatement is specified to
+ * UpdateEmpty(C, undefined) on its own.
+ */
+function qjsWrapDirectEvalSource(source: string, preamble: string, callerStrict: boolean): string {
+  if (callerStrict) {
+    return '"use strict";\\nundefined;\\n{\\n' + preamble + source + "\\n}";
+  }
+  return "with (" + ${j(QUICKJS_SCOPE_GLOBAL)} + ") {\\n" + source + "\\n}";
+}
+
 export function __runtime_direct_eval(
   source: any,
   globalObject: any,
@@ -825,7 +1181,248 @@ export function __runtime_direct_eval(
   callerStrict: boolean,
   mappedParamNames: any
 ): any {
-  return runtimeEvalResult(false, new TypeError(${j(QUICKJS_DIRECT_EVAL_REFUSAL)}));
+  // PerformEval step 2: a non-string argument is returned unchanged.
+  if (typeof source !== "string") return runtimeEvalResult(true, source);
+  const c: number = qjsEnsureContext();
+  if (c === 0) return runtimeEvalResult(false, new TypeError(${j(QUICKJS_INIT_REFUSAL)}));
+  if (!qjsEnsureDirectHelpers(c)) {
+    return runtimeEvalResult(false, new TypeError(${j(QUICKJS_INIT_REFUSAL)}));
+  }
+
+  // Outermost first: a later qjsAppendBinding for the same name replaces the
+  // cell, so the innermost layer wins — the env-record chain, flattened.
+  const names: string[] = [];
+  const cells: any[] = [];
+  qjsCollectLayer(outerNames, outerSlots, names, cells);
+  qjsCollectLayer(activationSeedNames, activationSeedSlots, names, cells);
+  qjsCollectPool(activationState, names, cells);
+  qjsCollectLayer(lexicalNames, lexicalSlots, names, cells);
+
+  qjsPushGlobals(c, globalObject);
+  qjsPushGlobalLexicalCells(c, globalObject);
+
+  const scope: number = qjsCallGlobalHelper(c, "__js2wasm_eval_mkobj__", 0, 0);
+  if (scope === 0) return runtimeEvalResult(false, new TypeError(${j(QUICKJS_INIT_REFUSAL)}));
+
+  // Snapshot. A non-primitive binding is still DEFINED on S, as \`undefined\`:
+  // shadowing the caller's name is closer to its real scope shape than letting
+  // the lookup fall through to a same-named realm global. It is not written
+  // back — residual bucket 5, re-derived cheaply at write-back time from the
+  // cell's still-unchanged value rather than carried in a parallel array.
+  let preamble: string = "";
+  for (let i = 0; i < names.length; i += 1) {
+    const name: string = names[i] as string;
+    const cell: EvalBindingCell = cells[i] as EvalBindingCell;
+    const value: any = __runtime_eval_unwrap_result(cell.value);
+    const primitive: boolean = qjsIsMirrorablePrimitive(value);
+    const namePtr: number = qjsPushCString(name);
+    if (namePtr !== 0) {
+      qjsPushRefusal = "";
+      const h: number = primitive ? qjsToQuickjs(c, value) : qjs_new_undefined();
+      if (qjsPushRefusal === "") qjs_set_prop_str(c, scope, namePtr, h);
+      qjs_free_value(c, h);
+      qjs_free_raw(namePtr);
+    }
+    if (callerStrict && qjsIsSafeConstName(name) && qjsSourceMentions(source as string, name)) {
+      preamble = preamble + "const " + name + " = " + ${j(QUICKJS_SCOPE_GLOBAL)} + "." + name + ";\\n";
+    }
+  }
+  qjsPushRefusal = "";
+
+  const g0: number = qjs_global_object(c);
+  const scopeNamePtr: number = qjsPushCString(${j(QUICKJS_SCOPE_GLOBAL)});
+  if (scopeNamePtr !== 0) {
+    qjs_set_prop_str(c, g0, scopeNamePtr, scope);
+    qjs_free_raw(scopeNamePtr);
+  }
+  qjs_free_value(c, g0);
+
+  // A sloppy eval may create vars; capture the realm's binding set first so the
+  // diff afterwards names exactly what it added.
+  let preNames: number = 0;
+  if (!callerStrict) preNames = qjsCallGlobalHelper(c, "__js2wasm_eval_prenames__", 0, 0);
+
+  const wrapped: string = qjsWrapDirectEvalSource(source as string, preamble, callerStrict);
+  const buf: number = qjsPushUtf8(wrapped);
+  let result: any = undefined;
+  if (buf === 0) {
+    result = runtimeEvalResult(false, new TypeError(${j(QUICKJS_INIT_REFUSAL)}));
+  } else {
+    const byteLen: number = qjsUtf8Len;
+    const handle: number = qjs_eval(c, buf, byteLen);
+    qjs_free_raw(buf);
+    if (handle === 0) {
+      result = runtimeEvalResult(false, new TypeError(${j(QUICKJS_INIT_REFUSAL)}));
+    } else if (qjs_is_exception(handle) !== 0) {
+      qjs_free_value(c, handle);
+      result = qjsThrewResult(c);
+    } else {
+      qjsPullRefusal = "";
+      const value: any = qjsToGc(c, handle);
+      qjs_free_value(c, handle);
+      if (qjsPullRefusal !== "") {
+        const refusal: string = qjsPullRefusal;
+        qjsPullRefusal = "";
+        result = runtimeEvalResult(false, new TypeError(refusal));
+      } else {
+        result = runtimeEvalResult(true, value);
+      }
+    }
+  }
+
+  // Write-back runs on the THROW path too: a partially executed eval may have
+  // already updated caller bindings, and the interpreter exposes them likewise.
+  if (!callerStrict) {
+    qjsWriteBackCallerCells(c, scope, names, cells);
+    qjsMirrorNewBindings(c, activationState, names, preNames);
+  }
+  if (preNames !== 0) qjs_free_value(c, preNames);
+  qjs_free_value(c, scope);
+  qjsPullGlobalLexicalCells(c, globalObject);
+  qjsPullGlobals(c, globalObject);
+  return result;
+}
+
+/**
+ * Copy the snapshotted primitives out of S and into the LIVE caller cells.
+ *
+ * Both filters — \`qjsIsMirrorablePrimitive\` on the compiled side, the tag test
+ * on the QuickJS side — are the same primitives-only discipline qjsPullGlobals
+ * needs: a foreign object written into a shared carrier does not break the
+ * current entry, it breaks a LATER one, which reads as a flake rather than a
+ * bug. A binding whose PRE-eval value was not a primitive was never snapshotted
+ * (S holds \`undefined\` for it), so it is skipped; nothing has touched the cell
+ * yet, which is why re-deriving the test here is equivalent to remembering it.
+ */
+function qjsWriteBackCallerCells(c: number, scope: number, names: string[], cells: any[]): void {
+  for (let i = 0; i < names.length; i += 1) {
+    const cell: EvalBindingCell = cells[i] as EvalBindingCell;
+    if (!qjsIsMirrorablePrimitive(__runtime_eval_unwrap_result(cell.value))) continue;
+    const namePtr: number = qjsPushCString(names[i] as string);
+    if (namePtr === 0) continue;
+    const h: number = qjs_get_prop_str(c, scope, namePtr);
+    qjs_free_raw(namePtr);
+    if (h === 0) continue;
+    if (qjsIsMirrorableTag(qjs_tag(h))) {
+      qjsPullRefusal = "";
+      const value: any = qjsToGc(c, h);
+      if (qjsPullRefusal === "") cell.value = __runtime_eval_wrap_result(value);
+    }
+    qjs_free_value(c, h);
+  }
+  qjsPullRefusal = "";
+}
+
+/**
+ * Mirror the bindings a sloppy eval CREATED into the activation state pool.
+ *
+ * \`with (S) { var n = 1 }\` hoists \`n\` onto the QuickJS realm (the with-object
+ * only intercepts the assignment), so the realm diff is what names them. A
+ * primitive is moved into a pool vacancy — nameCell/valueCell, the interpreter's
+ * own slot discipline — and then DELETED from the realm, because it is a
+ * function-scoped binding that must not survive as a global for the next eval.
+ * A non-primitive (an eval-declared function, typically) has no pool
+ * representation and is left on the realm, where evaluated code can still reach
+ * it; that is residual bucket 2.
+ */
+function qjsMirrorNewBindings(c: number, pool: any, callerNames: string[], preNames: number): void {
+  if (preNames === 0 || pool === undefined || pool === null) return;
+  const listHandle: number = qjsCallGlobalHelper(c, "__js2wasm_eval_newnames__", 1, preNames);
+  if (listHandle === 0) return;
+  const joined: string = qjsReadString(c, listHandle);
+  qjs_free_value(c, listHandle);
+  const fresh: string[] = [];
+  qjsSplitJoined(joined, fresh);
+  const freshCount: number = fresh.length;
+  // Names an EARLIER activation created are candidates again: their realm
+  // property survived (non-configurable), so a redeclaration here is invisible
+  // to the diff. Only a non-undefined realm value claims a slot, so a name this
+  // activation never mentioned costs nothing.
+  for (let i = 0; i < qjsCreatedNames.length; i += 1) {
+    let known: boolean = false;
+    for (let k = 0; k < fresh.length; k += 1) {
+      if (fresh[k] === qjsCreatedNames[i]) {
+        known = true;
+        break;
+      }
+    }
+    if (!known) fresh.push(qjsCreatedNames[i] as string);
+  }
+  const g: number = qjs_global_object(c);
+  for (let i = 0; i < fresh.length; i += 1) {
+    const name: string = fresh[i] as string;
+    const isFresh: boolean = i < freshCount;
+    // A name the caller already binds is NOT new: \`var x\` under \`with (S)\`
+    // hoists a same-named realm global whose value the with-object shadowed.
+    // Mirroring it would shadow the real binding on the next entry.
+    let shadowsCaller: boolean = false;
+    for (let k = 0; k < callerNames.length; k += 1) {
+      if (callerNames[k] === name) {
+        shadowsCaller = true;
+        break;
+      }
+    }
+    const namePtr: number = qjsPushCString(name);
+    if (namePtr === 0) continue;
+    let claimed: boolean = false;
+    if (!shadowsCaller) {
+      const h: number = qjs_get_prop_str(c, g, namePtr);
+      if (h !== 0) {
+        const tag: number = qjs_tag(h);
+        const worthClaiming: boolean = isFresh || tag !== QJS_TAG_UNDEFINED;
+        if (worthClaiming && qjsIsMirrorableTag(tag)) {
+          qjsPullRefusal = "";
+          const value: any = qjsToGc(c, h);
+          if (qjsPullRefusal === "") claimed = qjsClaimPoolSlot(pool, name, value);
+        }
+        qjs_free_value(c, h);
+      }
+    }
+    qjs_free_raw(namePtr);
+    if (claimed) qjsRememberCreatedName(name);
+    if (claimed || shadowsCaller) {
+      qjsPushRefusal = "";
+      const arg: number = qjsToQuickjs(c, name);
+      if (qjsPushRefusal === "") {
+        const dropped: number = qjsCallGlobalHelper(c, "__js2wasm_eval_del__", 1, arg);
+        if (dropped !== 0) qjs_free_value(c, dropped);
+      }
+      qjs_free_value(c, arg);
+    }
+  }
+  qjsPushRefusal = "";
+  qjsPullRefusal = "";
+  qjs_free_value(c, g);
+}
+
+function qjsRememberCreatedName(name: string): void {
+  for (let i = 0; i < qjsCreatedNames.length; i += 1) {
+    if (qjsCreatedNames[i] === name) return;
+  }
+  qjsCreatedNames.push(name);
+}
+
+/** Take (or update) the pool pair for \`name\`. False when the pool is full —
+ *  the binding is then simply not persisted, never silently mis-slotted. */
+function qjsClaimPoolSlot(pool: any, name: string, value: any): boolean {
+  let vacancy: number = -1;
+  for (let i = 0; i + 1 < (pool.length as number); i += 2) {
+    const nameCell: EvalBindingCell = pool[i] as EvalBindingCell;
+    if (nameCell === undefined || nameCell === null) continue;
+    const held: any = __runtime_eval_unwrap_result(nameCell.value);
+    if (held === name) {
+      const valueCell: EvalBindingCell = pool[i + 1] as EvalBindingCell;
+      valueCell.value = __runtime_eval_wrap_result(value);
+      return true;
+    }
+    if (vacancy < 0 && (held === undefined || held === null)) vacancy = i;
+  }
+  if (vacancy < 0) return false;
+  const nameCell: EvalBindingCell = pool[vacancy] as EvalBindingCell;
+  const valueCell: EvalBindingCell = pool[vacancy + 1] as EvalBindingCell;
+  nameCell.value = __runtime_eval_wrap_result(name);
+  valueCell.value = __runtime_eval_wrap_result(value);
+  return true;
 }
 
 export function __runtime_apply_interpreted(
@@ -988,14 +1585,34 @@ export const QUICKJS_ADAPTER_CANARY_SOURCE = `
           ((err as any).message === "probe-msg" ? 10 : 0) +
           ((err as any).name === "RangeError" ? 1 : 0);
       }
+      // Slice 3, STRICT arm: this module carries a top-level \`export\`, so it is
+      // module code and every function in it is strict — the block-scoped
+      // \`const\` preamble is what runs here. The sloppy \`with (S)\` arm needs a
+      // second compile (QUICKJS_DIRECT_CANARY_SOURCE below).
+      var strictDirect = 0;
+      function strictDirectCaller(): number {
+        var localX = 20;
+        try {
+          var sum: any = eval(joinSource(["localX + ", "22"]));
+          // The second entry is the load-bearing one: a preamble emitted at
+          // GLOBAL scope would make it a redeclaration SyntaxError.
+          var again: any = eval(joinSource(["localX + ", "22"]));
+          return (sum as number) === 42 && (again as number) === 42 ? 42 : -3;
+        } catch (err) {
+          return -2;
+        }
+      }
+      strictDirect = strictDirectCaller();
+
       export function evalNumberProbe(): number { return evalNumber; }
       export function engineIdentityProbe(): number { return engineIdentity; }
       export function stringRoundTripProbe(): number { return stringRoundTrip; }
       export function newFunctionProbe(): number { return newFunctionValue; }
       export function errorFidelityProbe(): number { return errorFidelity; }
+      export function strictDirectProbe(): number { return strictDirect; }
     `;
 
-/** Expected canary readings — one per capability slice 2 adds. */
+/** Expected canary readings — one per capability slices 2–3 add. */
 export const QUICKJS_ADAPTER_CANARY_EXPECTATIONS = Object.freeze([
   { probe: "evalNumberProbe", expected: 42, why: "the number completion value did not round-trip through QuickJS" },
   { probe: "engineIdentityProbe", expected: 7, why: "evaluated code cannot see the in-band engine marker" },
@@ -1003,6 +1620,60 @@ export const QUICKJS_ADAPTER_CANARY_EXPECTATIONS = Object.freeze([
   { probe: "stringRoundTripProbe", expected: 151, why: "a STRING completion value did not round-trip ('abcde')" },
   { probe: "newFunctionProbe", expected: 42, why: "new Function + apply through the seam did not produce 20+21+1" },
   { probe: "errorFidelityProbe", expected: 111, why: "a thrown error lost its constructor, message or name" },
+  {
+    probe: "strictDirectProbe",
+    expected: 42,
+    why: "a STRICT caller's direct eval did not read its live bindings twice (const-preamble arm)",
+  },
+]);
+
+/**
+ * The SLOPPY direct-eval arm (`with (S) { … }`), which needs a SECOND compile
+ * with `inferModuleStrictArguments: false`.
+ *
+ * Without that option TypeScript flags any source carrying a top-level `export`
+ * as a module, module code is strict, and the `with` arm is unreachable — the
+ * canary would silently verify only half the tier. The test262 runner passes
+ * the same option for script-goal tests, which is exactly where the sloppy arm
+ * has to work.
+ */
+export const QUICKJS_DIRECT_CANARY_SOURCE = `
+      function joinSource(parts: string[]): string {
+        var out = "";
+        for (var i = 0; i < parts.length; i += 1) out = out + parts[i];
+        return out;
+      }
+      // Read a caller local, WRITE it back through the live cell, and prove an
+      // eval-created var persists into the next entry of the same activation.
+      var sloppyDirect = 0;
+      function sloppyDirectCaller(): number {
+        var localX = 7;
+        try {
+          var read: any = eval(joinSource(["localX + ", "1"]));
+          eval(joinSource(["localX = localX + ", "34"]));
+          eval(joinSource(["var carried", "Var = 100;"]));
+          var carried: any = eval(joinSource(["carriedVar + ", "1"]));
+          if ((read as number) !== 8) return -3;
+          if (localX !== 41) return -4;
+          if ((carried as number) !== 101) return -5;
+          return 42;
+        } catch (err) {
+          return -2;
+        }
+      }
+      sloppyDirect = sloppyDirectCaller();
+      export function sloppyDirectProbe(): number { return sloppyDirect; }
+    `;
+
+/** Expected readings for the sloppy-arm canary compile. */
+export const QUICKJS_DIRECT_CANARY_EXPECTATIONS = Object.freeze([
+  {
+    probe: "sloppyDirectProbe",
+    expected: 42,
+    why:
+      "a SLOPPY caller's direct eval did not read/write its live binding cells, or an eval-created " +
+      "var did not persist in the activation state pool (with-arm)",
+  },
 ]);
 
 // -------------------------------------------------------------- link/select --
