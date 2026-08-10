@@ -44,7 +44,7 @@
   {
     "name": "AOT compiled",
     "path": "array-sum",
-    "value": 132,
+    "value": 111,
     "label": "0.1 kB",
     "jsUs": 143
   },
