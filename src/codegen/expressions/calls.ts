@@ -355,7 +355,7 @@ import {
   finishClosureReceiverCall,
   planClosureReceiverInstall,
 } from "../closure-receiver-install.js";
-import { isStrictContext } from "../helpers/is-strict-function.js";
+import { directEvalRunsAtScriptGlobal } from "../direct-eval-environment.js";
 
 // Registry extracted to its own leaf module (#1793; LOC ratchet #3102) —
 // re-exported here so existing importers keep resolving via calls.js.
@@ -3261,32 +3261,6 @@ function isGlobalEvalIdentifier(ident: ts.Identifier, checker: ts.TypeChecker): 
   // Global eval is declared only in .d.ts files. A local shadow has at least one
   // declaration in a non-declaration (.ts) source file.
   return decls.every((d) => d.getSourceFile().isDeclarationFile);
-}
-
-/** A sloppy direct eval whose call expression belongs directly to Script code
- * has the same GlobalEnvironmentRecord as indirect eval. Use the global entry
- * instead of manufacturing an empty AOT activation record; the latter would
- * hide B.3.3 global properties in a provider-private declarative record. */
-function directEvalRunsAtScriptGlobal(call: ts.CallExpression, ctx: CodegenContext): boolean {
-  if (isStrictContext(call, ctx.inferModuleStrictArguments)) return false;
-  let node: ts.Node | undefined = call.parent;
-  while (node) {
-    if (ts.isSourceFile(node)) return true;
-    if (
-      ts.isFunctionLike(node) ||
-      ts.isClassDeclaration(node) ||
-      ts.isClassExpression(node) ||
-      ts.isBlock(node) ||
-      ts.isCaseClause(node) ||
-      ts.isDefaultClause(node) ||
-      ts.isCatchClause(node) ||
-      ts.isWithStatement(node)
-    ) {
-      return false;
-    }
-    node = node.parent;
-  }
-  return false;
 }
 
 /**

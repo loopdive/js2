@@ -3,7 +3,7 @@
  * Exception handling statement lowering: throw and try-catch.
  */
 import { ts } from "../../ts-api.js";
-import type { Instr } from "../../ir/types.js";
+import type { Instr, ValType } from "../../ir/types.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
@@ -17,7 +17,63 @@ import {
   ensureBindingLocals,
 } from "./destructuring.js";
 import { emitExternrefDestructureGuard } from "../destructuring-params.js";
+import { collectBindingNames } from "./loop-analysis.js";
 import { adjustRethrowDepth, restoreBlockScopedShadows, saveBlockScopedShadows } from "./shared.js";
+
+type BoxedCapture = { refCellTypeIdx: number; valType: ValType };
+
+/** Every source name a catch clause binds (`catch (e)` / `catch ({ message })`). */
+function catchClauseBoundNames(clause: ts.CatchClause): string[] {
+  const name = clause.variableDeclaration?.name;
+  if (!name) return [];
+  if (ts.isIdentifier(name)) return [name.text];
+  return collectBindingNames(name);
+}
+
+/**
+ * (#4305) Clear — and hand back — the ref-cell metadata of every name a catch
+ * clause is about to rebind.
+ *
+ * `fctx.boxedCaptures` is keyed by NAME but describes one specific SLOT: "this
+ * local holds a ref cell, deref field 0 to read it". A catch clause rebinds its
+ * name to a FRESH plain externref local holding the raw exception payload, so an
+ * entry left over from an earlier binding of that name is a lie: identifier
+ * reads emit `ref.cast $cell` + `struct.get` against the payload and trap with
+ * `illegal cast`. `saveBlockScopedShadows` already does this save/delete/restore
+ * for block-scoped let/const shadows; the catch parameter was the one binding
+ * form that did not.
+ *
+ * Reachable in ONE function via: a catch clause (whose parameter leaks into the
+ * flat localMap past its scope — see the #4182 note in `compileTryStatement`) →
+ * a direct `eval` call site, which promotes EVERY eval-visible binding, catch
+ * names included per `collectDirectEvalBindingNames`, to a `(mut externref)`
+ * cell and records it here → a second catch of the same name whose body READS
+ * the parameter. Only the read traps, which is why a catch that ignores its
+ * parameter hid this. Same shape for a name previously promoted to a
+ * captured-box global (closures.ts deletes localMap but keeps this entry).
+ */
+function takeCatchBoxedCaptures(fctx: FunctionContext, clause: ts.CatchClause): Map<string, BoxedCapture | undefined> {
+  const saved = new Map<string, BoxedCapture | undefined>();
+  for (const boundName of catchClauseBoundNames(clause)) {
+    saved.set(boundName, fctx.boxedCaptures?.get(boundName));
+    fctx.boxedCaptures?.delete(boundName);
+  }
+  return saved;
+}
+
+/**
+ * Re-impose the pre-catch metadata for one name. Called ONLY where the paired
+ * `localMap` slot is also restored: the two describe the same binding, and
+ * restoring one without the other re-creates the mismatch above. With no prior
+ * slot the catch body's own state is kept instead — a direct eval INSIDE the
+ * catch body legitimately promotes the parameter to a cell and updates both
+ * maps, and re-imposing the stale entry would make a later eval site box the
+ * cell it had already made.
+ */
+function restoreCatchBoxedCapture(fctx: FunctionContext, name: string, saved: BoxedCapture | undefined): void {
+  if (saved) (fctx.boxedCaptures ??= new Map()).set(name, saved);
+  else fctx.boxedCaptures?.delete(name);
+}
 
 /**
  * Walk an Instr tree and bump the `depth` field of `br`/`br_if`/`br_table`
@@ -417,6 +473,7 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
     // Save the previous localMap entry so we can restore it after the catch scope.
     let exnLocalIdx: number | null = null;
     let savedCatchVarIdx: number | undefined;
+    const savedCatchBoxed = takeCatchBoxedCaptures(fctx, stmt.catchClause); // (#4305)
     if (stmt.catchClause.variableDeclaration && ts.isIdentifier(stmt.catchClause.variableDeclaration.name)) {
       const varName = stmt.catchClause.variableDeclaration.name.text;
       savedCatchVarIdx = fctx.localMap.get(varName);
@@ -635,6 +692,8 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
       const varName = stmt.catchClause.variableDeclaration.name.text;
       if (savedCatchVarIdx !== undefined) {
         fctx.localMap.set(varName, savedCatchVarIdx);
+        // (#4305) The slot and its cell metadata move together — see the helper.
+        restoreCatchBoxedCapture(fctx, varName, savedCatchBoxed.get(varName));
       } else if (fctx.name === "__module_init" && ctx.annexBModuleBindings?.has(varName)) {
         // (#4182) With no prior local to restore, the catch parameter used to
         // LEAK in the flat localMap past the catch scope, shadowing the

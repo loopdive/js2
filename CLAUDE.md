@@ -212,7 +212,7 @@ Be concise. Lead with the answer, then only the context needed to act on it.
 | `benchmarks/results/test262-current.json`                 | main repo (committed, ~kB)  | landing-page summary, pass/total badges                                                                                    | `test262-sharded.yml` `promote-baseline` job (every push to main)      | (none)                                                                                                                                                    |
 | `test262-current.jsonl` (in `loopdive/js2wasm-baselines`) | separate repo               | PR regression-gate baseline (fetched fresh per CI run); `dev-self-merge` Step 4 bucket-by-path regression analysis (#1528) | `test262-sharded.yml` `promote-baseline` job (every push to main)      | `test262-baseline-validate.yml` spot-checks 50 random `pass` entries on every PR (#1218); fails the PR if any sampled entry no longer passes on main HEAD |
 | `benchmarks/results/playground-benchmark-sidebar.json`    | main repo (committed, ~1KB) | landing-page sidebar wasm/js perf chart; `benchmark-refresh.yml` regression diff baseline                                  | `benchmark-refresh.yml` auto-commit step on every push to main (#1216) | (none)                                                                                                                                                    |
-| `benchmarks/results/npm-compat.json` (+ `-perf`, `-history`, and the `website/public/` twins) | main repo (committed) | the whole `npm-compat.html` dashboard — every package card's compile/validate, tests and perf | `npm-compat-refresh.yml` auto-commit on every push to main, 6h cron backstop (#3988) | pre-promote check in that workflow: refuses to publish <20 packages or entries missing `name`/`compile` |
+| `benchmarks/results/npm-compat.json` (+ `-perf`, `-history`, and the `website/public/` twins) | main repo (committed) | the whole `npm-compat.html` dashboard — every package card's compile/validate, tests and perf | `npm-compat-refresh.yml` on every push to main, 6h cron backstop (#3988); promotes via a **PR on `ci/npm-compat-refresh`**, not a direct push | pre-promote check in that workflow: refuses to publish <20 packages or entries missing `name`/`compile` |
 
 
 **`npm-compat.json` is refreshed by CI on every merge to main
@@ -221,8 +221,22 @@ nothing regenerated it, so changing `scripts/generate-npm-compat-report.mjs` and
 merging left `website/npm-compat.html` serving the previous JSON with green CI
 and no signal; that shipped stale twice in one day (#3958 rendered `39/null`;
 #3977 kept showing `lit` as `not-integrated` after its suite landed). The
-workflow now regenerates and auto-commits with `[skip ci]`, gated on the merge
-queue (#3915) and on a pre-promote sanity check.
+workflow regenerates, sanity-checks (refuses <20 packages, or entries missing
+`name`/`compile`), and **promotes through a pull request** on the single reused
+branch `ci/npm-compat-refresh` — force-updated each cycle, at most one PR open,
+enqueued by `auto-enqueue.yml` like any other PR.
+
+**It no longer pushes to `main`, and the merge-queue gate is gone from this
+path.** Any push to main — _including_ a `[skip ci]` one — rebuilds every
+in-flight `merge_group` and discards the ~19-minute `Test262 Sharded` job under
+it (2026-08-09: PR #4323 lost a window to this bot; #4297 lost three). The gate
+(`scripts/main-push-queue-gate.mjs`) only bounded that: its staleness floor
+_overrides_ the queue check, and it fails open, so a busy day accumulated
+deferrals until a push landed in a live group anyway. The artifact diff touches
+nothing on the `&test262-paths` anchor, so the PR's merge group skips the shard
+matrix — **never add `package.json`, `pnpm-lock.yaml` or any source file to that
+branch.** The gate script stays for `benchmark-refresh.yml` and
+`refresh-baseline.yml`, which still push directly. See `docs/ci-policy.md`.
 
 **The refresh job is ~24 min — LONGER than the interval between merges to main.
 That is load-bearing for anything you change about it (#3988).** Its first cut
@@ -642,7 +656,7 @@ The issue frontmatter `status:` field tracks where an issue is, set by whichever
 
 <!-- AUTO:conformance-start -->
 
-**test262 conformance**: 31,861 / 43,621 (73.0 %)
+**test262 conformance**: 31,934 / 43,621 (73.2 %)
 
 <!-- AUTO:conformance-end -->
 
