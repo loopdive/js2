@@ -214,18 +214,17 @@ const PROBE_SOURCE = `
     vHandleBox = (describe(boxed) as string).length;
   } catch (err) { vHandleBox = -1; }
 
-  // --- a COMPILED object passed into evaluated code is REFUSED, loudly ------
-  // Loud beats silently-wrong: evaluated code must never quietly observe
-  // \`undefined\` where the caller handed it an object.
+  // --- a COMPILED object passed into evaluated code (#4245 slice 1) --------
+  // Slice 2 of #4238 refused this with a typed TypeError. The membrane
+  // replaces the refusal with a LIVE wrapper, so evaluated code reads the
+  // caller's real property value — still never a silent \`undefined\`.
   var vCompiledObjectArg = 0;
   try {
-    var classify: any = (0, eval)(joinSource(["(function(o){ return o === undefined ? 1 : ", "2; })"]));
-    vCompiledObjectArg = -(classify(compiledObject) as number);
-  } catch (err) {
-    vCompiledObjectArg =
-      (err instanceof TypeError ? 10 : 0) +
-      ((((err as any).message as string).indexOf("compiled objects") >= 0) ? 1 : 0);
-  }
+    var classify: any = (0, eval)(
+      joinSource(["(function(o){ return (o === undefined ? 1 : 0) + (o.marker === 1 ? ", "10 : 0); })"])
+    );
+    vCompiledObjectArg = classify(compiledObject) as number;
+  } catch (err) { vCompiledObjectArg = -1; }
 
   // --- case 11 (slice 3): direct eval against the caller's live cells ------
   // This module is a TS module, so every function here is STRICT code and the
@@ -408,13 +407,16 @@ const SLOPPY_DIRECT_SOURCE = `
     var value = inner();
     return value * 100 + captured;
   }
-  // An OBJECT-valued caller binding is the documented residual: it is shadowed
-  // as \`undefined\` inside evaluated code, and must NOT be clobbered outside.
+  // An OBJECT-valued caller binding used to be shadowed as \`undefined\` inside
+  // evaluated code (slice-2 residual). #4245 slice 1 snapshots it as a LIVE
+  // membrane wrapper instead: the read sees the real property and the write
+  // lands on the caller's own object, with no write-back copy involved.
   export function sloppyObjectResidualProbe(): number {
     var obj: any = { a: 1 };
     try {
-      var seen: any = eval(joinSource(["typeof o", "bj"]));
-      return (seen === "undefined" ? 10 : 0) + ((obj as any).a as number);
+      var seen: any = eval(joinSource(["typeof obj + ':' + ob", "j.a"]));
+      eval(joinSource(["obj.a = ", "4"]));
+      return (seen === "object:1" ? 10 : 0) + ((obj as any).a as number);
     } catch (err) { return -1; }
   }
   // The completion value: \`var\` completes empty, so eval answers undefined.
@@ -620,12 +622,11 @@ describe.skipIf(!enabled)("#4238 — quickjs eval engine (flag-gated)", () => {
       expect(probe.handleBoxProbe!()).toBe(8);
     });
 
-    it("a compiled object crossing INTO evaluated code is a typed TypeError, not a silent undefined", () => {
-      // 10 = TypeError, +1 = it carries the #4238 message. A negative reading
-      // means the call SUCCEEDED and evaluated code saw the value the MVP
-      // cannot represent — the silently-wrong outcome this refusal exists to
-      // prevent (the #4245 membrane is what will make it representable).
-      expect(probe.compiledObjectArgProbe!()).toBe(11);
+    it("a compiled object crossing INTO evaluated code is a LIVE wrapper (#4245 slice 1)", () => {
+      // 10 = evaluated code read `o.marker` off the caller's real object. 1
+      // would mean it saw `undefined` (the silently-wrong outcome the slice-2
+      // refusal existed to prevent); -1 means it still refuses.
+      expect(probe.compiledObjectArgProbe!()).toBe(10);
     });
 
     it("case 11 (strict caller) — direct eval reads the caller's live bindings", () => {
@@ -688,10 +689,10 @@ describe.skipIf(!enabled)("#4238 — quickjs eval engine (flag-gated)", () => {
       expect(sloppy.sloppyOuterProbe!()).toBe(4213);
     });
 
-    it("case 11 (sloppy caller) — an object-valued binding is shadowed, never clobbered", () => {
-      // 10 = evaluated code sees `undefined` for it (residual bucket 5), +1 =
-      // the caller's object is intact afterwards.
-      expect(sloppy.sloppyObjectResidualProbe!()).toBe(11);
+    it("case 11 (sloppy caller) — an object-valued binding crosses LIVE (#4245 slice 1)", () => {
+      // 10 = evaluated code saw `object:1` (not the pre-membrane `undefined`),
+      // +4 = a write performed INSIDE eval landed on the caller's own object.
+      expect(sloppy.sloppyObjectResidualProbe!()).toBe(14);
     });
 
     it("case 11 (sloppy caller) — completion values follow UpdateEmpty", () => {

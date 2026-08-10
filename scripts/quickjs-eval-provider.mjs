@@ -105,6 +105,27 @@ export const QUICKJS_ADAPTER_EXTERNS = Object.freeze([
   "qjs_global_object",
   "qjs_get_prop_str",
   "qjs_set_prop_str",
+  // #4245 slice 1 — inward membrane. `qjs_set_membrane_callbacks` is called by
+  // the LINK step (below), not imported by the adapter; it is listed here so
+  // `assertQuickjsArtifactExports` fails loudly on a stale artifact instead of
+  // surfacing as a bare `undefined is not a function` at link time.
+  "qjs_new_wrapper",
+  "qjs_wrapper_gc_handle",
+  "qjs_set_membrane_callbacks",
+]);
+
+/**
+ * Adapter exports wired into the artifact's `__indirect_function_table` at link
+ * time, IN THIS ORDER (the order is the ABI — `qjs_set_membrane_callbacks`
+ * takes the slot indices positionally). All-i32 signatures; see the membrane
+ * section of qjs_shim.c for the per-callback contract.
+ */
+export const QUICKJS_MEMBRANE_CALLBACKS = Object.freeze([
+  "__membrane_get",
+  "__membrane_set",
+  "__membrane_has",
+  "__membrane_delete",
+  "__membrane_call",
 ]);
 
 /** In-band engine identity — readable from evaluated code (acceptance box 5). */
@@ -232,7 +253,10 @@ export function assertQuickjsArtifactStandalone(binary) {
 export function assertQuickjsArtifactExports(binary) {
   const module = binary instanceof WebAssembly.Module ? binary : new WebAssembly.Module(binary);
   const present = new Set(WebAssembly.Module.exports(module).map((e) => e.name));
-  const missing = QUICKJS_ADAPTER_EXTERNS.filter((name) => !present.has(name));
+  // The membrane's trap edge needs the artifact's own function table exported
+  // and growable (#4245); an artifact built before that link-flag change has
+  // every qjs_* wrapper and still cannot carry a single trap.
+  const missing = [...QUICKJS_ADAPTER_EXTERNS, "__indirect_function_table"].filter((name) => !present.has(name));
   if (missing.length > 0) {
     throw new Error(
       `libquickjs.wasm is missing ${missing.length} wrapper export(s) the adapter needs: ${missing.join(", ")}. ` +
@@ -297,6 +321,8 @@ declare function qjs_take_exception(ctx: i32): i32;
 declare function qjs_global_object(ctx: i32): i32;
 declare function qjs_get_prop_str(ctx: i32, obj: i32, name: i32): i32;
 declare function qjs_set_prop_str(ctx: i32, obj: i32, name: i32, val: i32): i32;
+declare function qjs_new_wrapper(ctx: i32, gcId: i32, callable: i32): i32;
+declare function qjs_wrapper_gc_handle(h: i32): i32;
 
 // Baked from the artifact's own qjs-abi.json (build-time product, ABI note 3).
 const QJS_TAG_INT: number = ${tags.INT};
@@ -508,6 +534,192 @@ function qjsHandleOf(value: any): number {
   return 0;
 }
 
+// The two memoized intrinsic TARGETS (\`%eval%\` / \`%Function%\`). Declared here
+// rather than next to their wrappers below because the membrane's
+// wrappability test must exclude them, and a \`const\` cannot be read before its
+// own initializer runs.
+const qjsEvalTarget: any = { __qjs_intrinsic__: 1 };
+const qjsFunctionTarget: any = { __qjs_intrinsic__: 2 };
+
+// ------------------------------------------------ membrane, inward (#4245) --
+// A compiled GC object/function crossing INTO evaluated code becomes a QuickJS
+// exotic wrapper whose property traps call the five \`__membrane_*\` exports
+// below. Slice 1 covers plain data properties (get/set/has/delete) plus CALLS;
+// enumeration, the outward live view and the lifetime protocol are slices 2-3.
+//
+// The pin registry is a plain array + linear scan, deliberately: the population
+// is the handful of realm bindings and seam arguments that actually cross, and
+// identity is compiled-object reference identity, which \`===\` answers directly
+// (the same reason the handle registry above scans). Entries are RETAINED for
+// the instance lifetime — slice 3 replaces that with the finalizer-driven
+// release protocol.
+
+var gcRegistry: any[] = [];
+
+/** Registry id for \`value\`, or -1 when it has never crossed. */
+function qjsGcIdOf(value: any): number {
+  for (let i = 0; i < gcRegistry.length; i += 1) {
+    if (gcRegistry[i] === value) return i;
+  }
+  return -1;
+}
+
+/**
+ * Pin \`value\` and return an OWNED handle to its QuickJS wrapper. The same
+ * compiled object always yields the same wrapper within a context (the shim
+ * dedups by registry id), which is what makes \`g === h\` hold across separate
+ * evaluations when both names mirror one GC object.
+ */
+function qjsWrapOutbound(c: number, value: any): number {
+  let id: number = qjsGcIdOf(value);
+  if (id < 0) {
+    id = gcRegistry.length;
+    gcRegistry.push(value);
+  }
+  // The shared closure classifier includes the cross-module AOT callable
+  // carrier, so a compiled function pushed through the seam answers "function"
+  // here and gets the class whose \`call\` routes back into compiled code.
+  const callable: number = typeof value === "function" ? 1 : 0;
+  return qjs_new_wrapper(c, id, callable);
+}
+
+/**
+ * Is \`value\` something the membrane may wrap? Objects and functions are, with
+ * two exclusions that are load-bearing rather than defensive:
+ *  - the memoized \`eval\`/\`Function\` intrinsic markers must stay QuickJS's own
+ *    natives on the QuickJS realm. Mirroring them as wrappers would route
+ *    evaluated code's \`eval(...)\` back out into the compiled marker and re-enter
+ *    this provider mid-evaluation.
+ *  - a value that is already one of OUR QuickJS boxes: \`qjsToQuickjs\` collapses
+ *    it to the retained handle before it ever reaches the wrapper arm, so it
+ *    must not be pinned as a fresh compiled object.
+ */
+function qjsIsMembraneWrappable(value: any): boolean {
+  if (value === undefined || value === null) return false;
+  const t: string = typeof value;
+  if (t !== "object" && t !== "function") return false;
+  const target: any = __runtime_eval_unwrap_interpreted_callback(value);
+  if (target === qjsEvalTarget || target === qjsFunctionTarget) return false;
+  return true;
+}
+
+/** Compiled object behind registry id \`gc\`, or undefined for a stale id. */
+function qjsRegistryTarget(gc: number): any {
+  if (gc < 0 || gc >= gcRegistry.length) return undefined;
+  return gcRegistry[gc];
+}
+
+/**
+ * Read \`target[key]\` and hand the value to QuickJS. Returns an OWNED handle;
+ * 0 means "answer undefined" (absent, stale id, or an unrepresentable value).
+ *
+ * The refusal globals are saved/restored around every membrane entry: a trap
+ * runs INSIDE \`qjs_eval\`/\`qjs_call\`, i.e. in the middle of a conversion the
+ * outer entry point is still holding, and clobbering them there would surface
+ * as a refusal on an unrelated value.
+ */
+export function __membrane_get(gc: i32, keyPtr: i32, keyLen: i32): i32 {
+  const c: number = qjsContextHandle;
+  const target: any = qjsRegistryTarget(gc);
+  if (c === 0 || target === undefined || target === null) return 0;
+  const key: string = qjsReadUtf8(keyPtr, keyLen);
+  const value: any = target[key];
+  const saved: string = qjsPushRefusal;
+  qjsPushRefusal = "";
+  const h: number = qjsToQuickjs(c, value);
+  const refused: boolean = qjsPushRefusal !== "";
+  qjsPushRefusal = saved;
+  if (refused) {
+    if (h !== 0) qjs_free_value(c, h);
+    return 0;
+  }
+  return h;
+}
+
+/** Write \`h\` into \`target[key]\` through the compiled object's own dynamic
+ *  setter path (so user accessors run). 1 ok, 0 refused. \`h\` is BORROWED. */
+export function __membrane_set(gc: i32, keyPtr: i32, keyLen: i32, h: i32): i32 {
+  const c: number = qjsContextHandle;
+  const target: any = qjsRegistryTarget(gc);
+  if (c === 0 || target === undefined || target === null) return 0;
+  const key: string = qjsReadUtf8(keyPtr, keyLen);
+  const saved: string = qjsPullRefusal;
+  qjsPullRefusal = "";
+  const value: any = qjsToGc(c, h);
+  const refused: boolean = qjsPullRefusal !== "";
+  qjsPullRefusal = saved;
+  if (refused) return 0;
+  target[key] = value;
+  return 1;
+}
+
+/** \`key in target\` — own + prototype, resolved by the compiled object runtime. */
+export function __membrane_has(gc: i32, keyPtr: i32, keyLen: i32): i32 {
+  const target: any = qjsRegistryTarget(gc);
+  if (target === undefined || target === null) return 0;
+  const key: string = qjsReadUtf8(keyPtr, keyLen);
+  return key in target ? 1 : 0;
+}
+
+/** \`delete target[key]\` — 1 deleted-or-absent, 0 refused. */
+export function __membrane_delete(gc: i32, keyPtr: i32, keyLen: i32): i32 {
+  const target: any = qjsRegistryTarget(gc);
+  if (target === undefined || target === null) return 0;
+  const key: string = qjsReadUtf8(keyPtr, keyLen);
+  return delete target[key] ? 1 : 0;
+}
+
+/**
+ * Invoke the compiled callable behind \`gc\`. \`argvPtr\` points at \`argc\`
+ * consecutive i32 handles in the shared heap, all BORROWED (the shim minted
+ * them and frees them). Returns an OWNED result handle; 0 makes the shim throw
+ * a TypeError inside evaluated code.
+ *
+ * The invocation itself is \`__runtime_eval_apply_callable\`, the private
+ * intrinsic the standalone compiler lowers straight to \`__apply_closure\`
+ * (#2928) — whose cross-module AOT-callable-carrier arm is exactly how a
+ * separately compiled provider calls back into caller code. This is the reason
+ * test262's \`assert\` / \`fnGlobalObject\` become reachable from evaluated code.
+ */
+export function __membrane_call(gc: i32, thisH: i32, argc: i32, argvPtr: i32): i32 {
+  const c: number = qjsContextHandle;
+  const fn: any = qjsRegistryTarget(gc);
+  if (c === 0 || fn === undefined || fn === null) return 0;
+  const savedPull: string = qjsPullRefusal;
+  qjsPullRefusal = "";
+  const thisValue: any = thisH === 0 ? undefined : qjsToGc(c, thisH);
+  const args: any[] = [];
+  for (let i = 0; i < argc; i += 1) {
+    args.push(qjsToGc(c, load32(argvPtr + i * 4)));
+  }
+  const pullRefused: boolean = qjsPullRefusal !== "";
+  qjsPullRefusal = savedPull;
+  if (pullRefused) return 0;
+  const ret: any = __runtime_eval_apply_callable(fn, thisValue, args);
+  const savedPush: string = qjsPushRefusal;
+  qjsPushRefusal = "";
+  const out: number = qjsToQuickjs(c, ret);
+  const pushRefused: boolean = qjsPushRefusal !== "";
+  qjsPushRefusal = savedPush;
+  if (pushRefused) {
+    if (out !== 0) qjs_free_value(c, out);
+    return 0;
+  }
+  return out;
+}
+
+/**
+ * NEVER REACHED. The standalone compiler recognises this exact call site by
+ * name and lowers it to \`__apply_closure\` before the ordinary call path runs
+ * (src/codegen/expressions/calls.ts \`tryRuntimeEvalApplyCallableIntrinsic\`) —
+ * the same contract src/interp/loop.ts relies on. The body exists only so the
+ * module compiles; the link-time membrane canary is what proves the lowering
+ * actually fired, so a silent regression to this stub cannot ship.
+ */
+function __runtime_eval_apply_callable(callee: any, receiver: any, args: any[]): any {
+  return undefined;
+}
+
 // ------------------------------------------------------- value bridging -----
 
 /**
@@ -539,6 +751,9 @@ function qjsToQuickjs(c: number, value: any): number {
   const retained: number = qjsHandleOf(value);
   // Round-tripping one of our own handles preserves identity inside QuickJS.
   if (retained !== 0) return qjs_dup(c, retained);
+  // #4245 slice 1 — everything else that is an object or a function crosses as
+  // a LIVE membrane wrapper instead of the slice-2 typed refusal.
+  if (qjsIsMembraneWrappable(value)) return qjsWrapOutbound(c, value);
   qjsPushRefusal = ${j(QUICKJS_FOREIGN_VALUE_REFUSAL)};
   return 0;
 }
@@ -690,10 +905,13 @@ function qjsPushGlobals(c: number, globalObject: any): void {
   for (let i = 0; i < keys.length; i += 1) {
     const key: string = keys[i] as string;
     const value: any = __runtime_eval_unwrap_result(globalObject[key]);
-    // Same filter as the pull side: only primitives are mirrorable. A compiled
-    // object has no MVP representation, and the eval/Function markers must not
-    // be shadowed on the QuickJS realm by an \`undefined\` stand-in.
-    if (qjsIsMirrorablePrimitive(value)) {
+    // Primitives cross by copy; objects and functions cross as LIVE membrane
+    // wrappers (#4245 slice 1) — that is what makes the caller's own top-level
+    // functions (test262's \`assert\`, \`fnGlobalObject\`, …) callable from
+    // evaluated code instead of a ReferenceError. The eval/Function markers are
+    // still excluded, by qjsIsMembraneWrappable: they must stay QuickJS's own
+    // natives on the QuickJS realm.
+    if (qjsIsMirrorablePrimitive(value) || qjsIsMembraneWrappable(value)) {
       const namePtr: number = qjsPushCString(key);
       if (namePtr !== 0) {
         qjsPushRefusal = "";
@@ -751,7 +969,7 @@ function qjsPushGlobalLexicalCells(c: number, globalObject: any): void {
     const cell: EvalBindingCell = carrier[i + 1] as EvalBindingCell;
     if (typeof name !== "string" || cell === undefined || cell === null) continue;
     const value: any = __runtime_eval_unwrap_result(cell.value);
-    if (!qjsIsMirrorablePrimitive(value)) continue;
+    if (!qjsIsMirrorablePrimitive(value) && !qjsIsMembraneWrappable(value)) continue;
     const namePtr: number = qjsPushCString(name as string);
     if (namePtr === 0) continue;
     qjsPushRefusal = "";
@@ -881,8 +1099,7 @@ function qjsEvaluate(source: string, globalObject: any): any {
 var qjsIntrinsicEval: any = undefined;
 var qjsIntrinsicFunction: any = undefined;
 var qjsIntrinsicRealm: any = undefined;
-const qjsEvalTarget: any = { __qjs_intrinsic__: 1 };
-const qjsFunctionTarget: any = { __qjs_intrinsic__: 2 };
+// qjsEvalTarget / qjsFunctionTarget are declared with the membrane section.
 
 function qjsIntrinsicEvalValue(globalObject: any): any {
   qjsIntrinsicRealm = globalObject;
@@ -1214,11 +1431,16 @@ export function __runtime_direct_eval(
     const name: string = names[i] as string;
     const cell: EvalBindingCell = cells[i] as EvalBindingCell;
     const value: any = __runtime_eval_unwrap_result(cell.value);
+    // #4245 slice 1: an object-valued caller binding is snapshotted as a LIVE
+    // wrapper, not the \`undefined\` stand-in. Its write-back is still skipped
+    // below (qjsWriteBackCallerCells is primitives-only) — correctly so: the
+    // wrapper's traps already wrote through to the caller's own object.
     const primitive: boolean = qjsIsMirrorablePrimitive(value);
+    const crossable: boolean = primitive || qjsIsMembraneWrappable(value);
     const namePtr: number = qjsPushCString(name);
     if (namePtr !== 0) {
       qjsPushRefusal = "";
-      const h: number = primitive ? qjsToQuickjs(c, value) : qjs_new_undefined();
+      const h: number = crossable ? qjsToQuickjs(c, value) : qjs_new_undefined();
       if (qjsPushRefusal === "") qjs_set_prop_str(c, scope, namePtr, h);
       qjs_free_value(c, h);
       qjs_free_raw(namePtr);
@@ -1589,6 +1811,35 @@ export const QUICKJS_ADAPTER_CANARY_SOURCE = `
       // module code and every function in it is strict — the block-scoped
       // \`const\` preamble is what runs here. The sloppy \`with (S)\` arm needs a
       // second compile (QUICKJS_DIRECT_CANARY_SOURCE below).
+      // #4245 slice 1 — the membrane, in ONE reading. This canary is the
+      // build-time guard for a failure mode that is otherwise silent: the
+      // adapter's \`__membrane_call\` invokes the compiled callable through
+      // \`__runtime_eval_apply_callable\`, a private intrinsic the compiler
+      // recognises by NAME at the call site. If that lowering ever stops
+      // firing, the adapter falls back to the stub in its own source and every
+      // call from evaluated code answers \`undefined\` — green tests, dead
+      // membrane. Reading 4321 requires the call to have really run.
+      var membrane = 0;
+      var membraneObject: any = { n: 7 };
+      var membraneAlias: any = membraneObject;
+      try {
+        // read a compiled object, write it back, observe the write here,
+        // call a compiled function, and check wrapper identity across a
+        // SECOND evaluation — 4 digits, one per property.
+        var read: any = (0, eval)(joinSource(["membraneObject.n +", " 0"]));
+        (0, eval)(joinSource(["membraneObject.n = ", "8"]));
+        var called: any = (0, eval)(joinSource(["membraneAdd(20,", " 21)"]));
+        var same: any = (0, eval)(joinSource(["membraneObject === ", "membraneAlias ? 1 : 0"]));
+        membrane =
+          ((read as number) === 7 ? 4000 : 0) +
+          ((membraneObject.n as number) === 8 ? 300 : 0) +
+          ((called as number) === 42 ? 20 : 0) +
+          ((same as number) === 1 ? 1 : 0);
+      } catch (err) {
+        membrane = -1;
+      }
+      function membraneAdd(a: number, b: number): number { return a + b + 1; }
+
       var strictDirect = 0;
       function strictDirectCaller(): number {
         var localX = 20;
@@ -1610,6 +1861,7 @@ export const QUICKJS_ADAPTER_CANARY_SOURCE = `
       export function newFunctionProbe(): number { return newFunctionValue; }
       export function errorFidelityProbe(): number { return errorFidelity; }
       export function strictDirectProbe(): number { return strictDirect; }
+      export function membraneProbe(): number { return membrane; }
     `;
 
 /** Expected canary readings — one per capability slices 2–3 add. */
@@ -1624,6 +1876,15 @@ export const QUICKJS_ADAPTER_CANARY_EXPECTATIONS = Object.freeze([
     probe: "strictDirectProbe",
     expected: 42,
     why: "a STRICT caller's direct eval did not read its live bindings twice (const-preamble arm)",
+  },
+  {
+    probe: "membraneProbe",
+    expected: 4321,
+    why:
+      "the #4245 inward membrane is not live: 4000 = evaluated code read a compiled object's property, " +
+      "300 = its write was observed on the compiled side, 20 = it CALLED a compiled function " +
+      "(this digit is the __runtime_eval_apply_callable lowering), 1 = one compiled object is one wrapper " +
+      "across two separate evaluations",
   },
 ]);
 
@@ -1691,6 +1952,39 @@ export const QUICKJS_DIRECT_CANARY_EXPECTATIONS = Object.freeze([
  * global state, so the per-test isolation the interpreter tier needs applies
  * doubly here.
  */
+/**
+ * #4245 slice 1 — wire the inward membrane's trap callbacks.
+ *
+ * ONE-TIME link plumbing, not a data path: the artifact's own
+ * `__indirect_function_table` is grown once and the adapter's exported
+ * `__membrane_*` functions are stored into the fresh slots, then the shim is
+ * told their indices. Every subsequent trap is a wasm `call_indirect` from C
+ * into the adapter — no JS closure is ever on the trap path, which is the
+ * constraint the #4238 spec freezes. Funcref tables legally hold functions from
+ * any instance, and each callee runs against its own instance's state.
+ *
+ * Both sides are all-i32, so the engine typechecks the edge at `call_indirect`.
+ * A signature drift therefore surfaces as "indirect call type mismatch" on the
+ * FIRST trap rather than as silent garbage.
+ */
+function bindQuickjsMembraneCallbacks(qjs, adapter) {
+  const table = qjs.exports.__indirect_function_table;
+  const install = qjs.exports.qjs_set_membrane_callbacks;
+  if (!table || typeof install !== "function") {
+    throw new Error(
+      `libquickjs.wasm exports no ${!table ? "__indirect_function_table" : "qjs_set_membrane_callbacks"} — ` +
+        `the artifact predates the #4245 membrane (rebuild: bash scripts/quickjs-artifact/build.sh)`,
+    );
+  }
+  const missing = QUICKJS_MEMBRANE_CALLBACKS.filter((name) => typeof adapter.exports[name] !== "function");
+  if (missing.length > 0) {
+    throw new Error(`quickjs adapter exports no ${missing.join(", ")} — the cached adapter predates #4245 slice 1`);
+  }
+  const base = table.grow(QUICKJS_MEMBRANE_CALLBACKS.length);
+  QUICKJS_MEMBRANE_CALLBACKS.forEach((name, i) => table.set(base + i, adapter.exports[name]));
+  install(...QUICKJS_MEMBRANE_CALLBACKS.map((_, i) => base + i));
+}
+
 export function instantiateQuickjsEvalNamespace(bundle) {
   let qjs;
   const stub = makeWasiStub(() => qjs.exports.memory);
@@ -1704,6 +1998,7 @@ export function instantiateQuickjsEvalNamespace(bundle) {
   const adapter = new WebAssembly.Instance(bundle.adapterModule, {
     [QUICKJS_IMPORT_MODULE]: qjs.exports,
   });
+  bindQuickjsMembraneCallbacks(qjs, adapter);
   return {
     __runtime_new_function: adapter.exports.__runtime_new_function,
     __runtime_indirect_eval: adapter.exports.__runtime_indirect_eval,
