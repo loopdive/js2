@@ -17,6 +17,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../../src/index.js";
+import { irIntrinsicFuncRef } from "../../src/ir/callable-bindings.js";
 import {
   asAllocSiteId,
   asBlockId,
@@ -30,8 +31,10 @@ import {
   type IrValueId,
 } from "../../src/ir/index.js";
 import { constantFold } from "../../src/ir/passes/constant-fold.js";
+import { batchStringConcat } from "../../src/ir/passes/batch-string-concat.js";
 import { deadCode } from "../../src/ir/passes/dead-code.js";
 import { simplifyCFG } from "../../src/ir/passes/simplify-cfg.js";
+import { parseIrStringConcatManyArity } from "../../src/ir/string-runtime.js";
 import { createTestIrFunctionIdentityFactory } from "../helpers/ir-identities.js";
 
 const irIdentities = createTestIrFunctionIdentityFactory("ir/passes");
@@ -438,6 +441,64 @@ describe("#1167a — constantFold (instruction folding)", () => {
     };
     const out = constantFold(fn);
     expect(out).toBe(fn);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// batchStringConcat — final synchronous parity pass
+// ---------------------------------------------------------------------------
+
+describe("#3523 — batchStringConcat", () => {
+  it("preserves side-effecting operand order and assigns one exact semantic provider", () => {
+    const operandTargets = ["operand-a", "operand-b", "operand-c"].map((symbol) => irIntrinsicFuncRef(symbol));
+    const operandCalls = operandTargets.map(
+      (target, index) =>
+        ({
+          kind: "call",
+          target,
+          args: [],
+          result: id(index),
+          resultType: STRING,
+        }) as const,
+    );
+    const fn: IrFunction = {
+      ...irIdentities.next("orderedConcat"),
+      params: [],
+      resultTypes: [STRING],
+      blocks: [
+        {
+          id: asBlockId(0),
+          blockArgs: [],
+          blockArgTypes: [],
+          instrs: [
+            ...operandCalls,
+            { kind: "string.concat", lhs: id(0), rhs: id(1), result: id(3), resultType: STRING },
+            { kind: "string.concat", lhs: id(3), rhs: id(2), result: id(4), resultType: STRING },
+          ],
+          terminator: { kind: "return", values: [id(4)] },
+        },
+      ],
+      exported: false,
+      valueCount: 5,
+    };
+
+    expect(verifyIrFunction(fn)).toEqual([]);
+    const batched = batchStringConcat(fn);
+    expect(batched).not.toBe(fn);
+    expect(batched.blocks[0]!.instrs.slice(0, 3)).toEqual(operandCalls);
+
+    const fused = batched.blocks[0]!.instrs[4]!;
+    expect(fused.kind).toBe("call");
+    if (fused.kind !== "call" || fused.target.binding.kind !== "intrinsic") return;
+    expect(parseIrStringConcatManyArity(fused.target.binding.symbol)).toBe(3);
+    expect(fused.args).toEqual([id(0), id(1), id(2)]);
+
+    const cleaned = deadCode(batched);
+    const targets = cleaned.blocks[0]!.instrs.flatMap((instr) =>
+      instr.kind === "call" && instr.target.binding.kind === "intrinsic" ? [instr.target.binding.symbol] : [],
+    );
+    expect(targets).toEqual(["operand-a", "operand-b", "operand-c", fused.target.binding.symbol]);
+    expect(verifyIrFunction(cleaned)).toEqual([]);
   });
 });
 

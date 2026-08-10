@@ -36,6 +36,10 @@ on:
       - "scripts/compiler-pool.ts"
       - "scripts/diff-test262.ts"
       - "scripts/generate-editions.ts"
+      # Part of the merge_group gating logic (it decides which manifest
+      # changes the matcher never sees), so a change to it must be validated
+      # by exactly what it might skip.
+      - "scripts/manifest-version-only.mjs"
       - "scripts/test262-worker.mjs"
       - "tests/test262-chunk*.test.ts"
       - "tests/test262-runner.ts"
@@ -400,12 +404,40 @@ jobs:
             exit 0
           fi
 
+          # A VERSION-ONLY manifest bump cannot move conformance. `package.json`
+          # is on the allowlist above because a DEPENDENCY change genuinely can,
+          # but `node scripts/release.mjs <x.y.z>` touches it too — so every
+          # release PR dragged the full ~19-minute matrix through the queue for
+          # a one-line diff (measured on #4317 / v0.69.0: no source change, full
+          # matrix). This filter drops such a path from the list the matcher
+          # sees, and ONLY on positive proof that nothing outside the keys
+          # release.mjs moves differs; see scripts/manifest-version-only.mjs.
+          #
+          # Deliberately AFTER the empty-diff guard above: an empty RAW diff is
+          # suspicious and must still fail safe, whereas an empty FILTERED list
+          # is the legitimate "release-only group" answer and must reach the
+          # matcher (which prints false for empty input).
+          #
+          # Exit code, not emptiness, decides trust: empty stdout is a legal
+          # success here, so a crash must be detected some other way.
+          set +e
+          FILTERED=$(printf '%s\n' "$DIFF" | node scripts/manifest-version-only.mjs --base "$MG_BASE_SHA" --head "$MG_HEAD_SHA")
+          filter_rc=$?
+          set -e
+          if [ "$filter_rc" -ne 0 ]; then
+            echo "::warning::manifest-version-only filter exited ${filter_rc} — FAIL-SAFE, classifying the unfiltered diff."
+            FILTERED="$DIFF"
+          elif [ "$FILTERED" != "$DIFF" ]; then
+            echo "Paths after dropping version-only manifest bumps:"
+            printf '%s\n' "$FILTERED" | sed 's/^/  /'
+          fi
+
           # Per-lane classification. `run_shards` stays the OR of the two lanes,
           # so it keeps its exact previous value and meaning for every existing
           # consumer. A non-zero exit from the matcher (bad argument, unreadable
           # script) leaves RESULT empty → fail-safe to running everything.
-          HOST=$(printf '%s\n' "$DIFF" | bash scripts/test262-paths-match.sh --target host) || HOST=""
-          STANDALONE=$(printf '%s\n' "$DIFF" | bash scripts/test262-paths-match.sh --target standalone) || STANDALONE=""
+          HOST=$(printf '%s\n' "$FILTERED" | bash scripts/test262-paths-match.sh --target host) || HOST=""
+          STANDALONE=$(printf '%s\n' "$FILTERED" | bash scripts/test262-paths-match.sh --target standalone) || STANDALONE=""
           if [ "$HOST" != "true" ] && [ "$HOST" != "false" ]; then
             echo "::warning::unexpected host verdict '$HOST' from test262-paths-match.sh — FAIL-SAFE run_shards=true."
             emit_all true
