@@ -20,6 +20,8 @@ export type IrStringRuntimeResult = "string" | "number" | "boolean";
 /** Backend-neutral callable intents attached during final IR preparation. */
 export const IR_STRING_CONCAT_FN = "__ir_string_concat";
 export const IR_STRING_CONCAT_OWNED_FN = "__ir_string_concat_owned";
+/** Semantic prefix for an exact host-provided fixed-arity concat operation. */
+export const IR_STRING_CONCAT_MANY_PREFIX = "string.concat$arity";
 export const IR_STRING_EQUALS_FN = "__ir_string_equals";
 export const IR_STRING_CHAR_AT_FN = "__ir_string_char_at";
 export const IR_STRING_CHAR_CODE_AT_FN = "__ir_string_char_code_at";
@@ -27,6 +29,21 @@ export const IR_STRING_CHAR_CODE_AT_FN = "__ir_string_char_code_at";
 export const IR_STRING_ITERATOR_CHAR_AT_FN = "__ir_string_iterator_char_at";
 /** Prefix for per-literal backend materializers used beyond `array.new_fixed` limits. */
 export const IR_STRING_LITERAL_MATERIALIZE_FN = "__ir_string_literal_materialize";
+
+export function irStringConcatManySymbol(arity: number): string {
+  if (!Number.isInteger(arity) || arity < 3) {
+    throw new RangeError(`string concat-many arity must be an integer >= 3, got ${arity}`);
+  }
+  return `${IR_STRING_CONCAT_MANY_PREFIX}${arity}`;
+}
+
+export function parseIrStringConcatManyArity(symbol: string): number | null {
+  if (!symbol.startsWith(IR_STRING_CONCAT_MANY_PREFIX)) return null;
+  const suffix = symbol.slice(IR_STRING_CONCAT_MANY_PREFIX.length);
+  if (!/^[0-9]+$/.test(suffix)) return null;
+  const arity = Number(suffix);
+  return Number.isSafeInteger(arity) && arity >= 3 ? arity : null;
+}
 
 export interface IrStringIndexContract {
   readonly conversion: "ToIntegerOrInfinity";

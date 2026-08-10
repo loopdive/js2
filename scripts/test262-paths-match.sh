@@ -126,6 +126,10 @@ classify_test262_path() {
     # lanes so a change to the matcher always re-runs the full suite
     # (fail-safe: a matcher edit must be validated by what it might skip).
     scripts/test262-paths-match.sh) echo both ;;
+    # Same reasoning: this filter decides which version-only manifest changes
+    # are removed from the diff BEFORE this matcher ever sees them, so it is
+    # part of the same gating decision.
+    scripts/manifest-version-only.mjs) echo both ;;
     *) echo "" ;;
   esac
 }

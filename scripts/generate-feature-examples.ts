@@ -10,7 +10,7 @@
  */
 
 import { compile } from "../src/index.js";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createHighlighter } from "shiki";
 
@@ -129,25 +129,23 @@ function dropY(o: Obj): boolean {
   {
     name: "arguments object (full)",
     edition: "ES3 / Core",
-    badge: "none",
+    badge: "partial",
     sloppy: true,
     description: "Legacy arguments — partial, rest params preferred",
     js: `function legacy(): number {
   return arguments.length;
 }
 // prefer rest params: (...args)`,
-    explain:
-      "The full arguments object is partially supported. Rest parameters (...args) are preferred and fully compiled.",
-    noCompile: true,
+    explain: "arguments.length and indexed access work. Rest parameters (...args) are preferred and fully compiled.",
   },
   {
     name: "eval()",
     edition: "ES3 / Core",
-    badge: "none",
+    badge: "partial",
     description: "Dynamic code evaluation at runtime",
-    js: `eval("1 + 2"); // not supported`,
-    explain: "Requires a JS engine at runtime. Not possible in AOT compilation.",
-    noCompile: true,
+    js: `eval("1 + 2");`,
+    explain:
+      "A compiled-in evaluator handles common cases. Complex dynamic scoping is not fully equivalent to a real JS engine.",
   },
   {
     name: "with statement",
@@ -156,7 +154,8 @@ function dropY(o: Obj): boolean {
     sloppy: true,
     description: "Dynamic scope extension",
     js: `with (obj) { x; } // not supported`,
-    explain: "Disallowed in strict mode. All modules run strict.",
+    explain:
+      "Compiles without the spec-required early error in strict-mode code, but property writes inside the block do not reach the object.",
     noCompile: true,
   },
 
@@ -296,7 +295,7 @@ const sum = nums.reduce((a: number, b: number) => a + b, 0);`,
     badge: "partial",
     host: true,
     description: "Pattern matching and string search",
-    js: `const re = /\d+/g;
+    js: `const re = /\\d+/g;
 const found = "abc123def456".match(re);`,
     explain: "Basic patterns work. Named groups and lookbehind partially supported.",
   },
@@ -323,7 +322,8 @@ const found = "abc123def456".match(re);`,
   writable: false,
   value: 42,
 });`,
-    explain: "Property descriptor system not yet fully emitted in Wasm structs.",
+    explain:
+      "Compiles, but the descriptor is not applied — reading the property afterward returns undefined instead of the configured value.",
     noCompile: true,
   },
 
@@ -482,7 +482,8 @@ export const version = "1.0";`,
     badge: "none",
     description: "Object behavior interception and reflection",
     js: `new Proxy(target, handler); // not supported`,
-    explain: "Requires runtime trap dispatch. Not AOT-compilable.",
+    explain:
+      "Compiles, but trap forwarding is not implemented — property access on the proxy does not reach the target object.",
     noCompile: true,
   },
   {
@@ -525,7 +526,7 @@ function pairs(obj: Pair): [string, number][] {
     host: true,
     description: "Shared memory and atomic operations",
     js: `new SharedArrayBuffer(1024); // not supported`,
-    explain: "Requires shared Wasm linear memory.",
+    explain: "Compiles, but the returned buffer's properties are not wired up at runtime (byteLength reads as null).",
     noCompile: true,
   },
 
@@ -599,7 +600,7 @@ const sum = big + 1n;`,
     host: true,
     description: "Load modules at runtime on demand",
     js: `const mod = await import("./module"); // not yet`,
-    explain: "Requires a runtime module loader.",
+    explain: "Compiles, but the returned promise never settles — dynamic import is not wired to a runtime loader.",
     noCompile: true,
   },
 
@@ -607,12 +608,14 @@ const sum = big + 1n;`,
   {
     name: "WeakRef / FinalizationRegistry",
     edition: "ES2021",
-    badge: "none",
+    badge: "partial",
     host: true,
     description: "Weak references and GC callbacks",
-    js: `new WeakRef(obj); // not supported`,
-    explain: "GC-observable. Not available in WasmGC.",
-    noCompile: true,
+    js: `const target = { name: "cached" };
+const ref = new WeakRef(target);
+const value = ref.deref();`,
+    explain:
+      "WeakRef creation and deref() work correctly. FinalizationRegistry is not implemented — registering a target throws.",
   },
 
   // ── ES2022 ──────────────────────────────────────────────────────────────
@@ -652,6 +655,8 @@ const first = "hello".at(0);`,
     badge: "none",
     description: "Await at module scope without async wrapper",
     js: `await fetch("./data.json"); // not supported`,
+    explain:
+      "Compiles for a trivial `await Promise.resolve(x)`, but a `new Promise` executor or a `.then()`-chained promise at top level resolves incorrectly or throws — the async runtime is not reliable here yet.",
     noCompile: true,
   },
 
@@ -727,14 +732,13 @@ const lastIdx = nums.findLastIndex((x: number) => x % 2 === 0);`,
   {
     name: "Change array by copy (toSorted, toReversed, toSpliced)",
     edition: "ES2023",
-    badge: "none",
+    badge: "partial",
     host: true,
     description: "Immutable array operations returning new arrays",
     js: `const arr = [3, 1, 2];
 const sorted = arr.toSorted();
 const reversed = arr.toReversed();`,
-    explain: "Not yet implemented. Use spread + sort: [...arr].sort()",
-    noCompile: true,
+    explain: "toSorted, toReversed and toSpliced all produce correct copies without mutating the original array.",
   },
   {
     name: "Hashbang (#!) comments",
@@ -763,31 +767,29 @@ const x = 1;`,
     host: true,
     description: "ArrayBuffer that can grow or shrink after creation",
     js: `const buf = new ArrayBuffer(8, { maxByteLength: 1024 }); // not yet`,
-    explain: "Requires Wasm memory growth integration.",
+    explain: "Compiles, but calling resize() throws — growth is not wired to Wasm memory.",
     noCompile: true,
   },
   {
     name: "RegExp v flag",
     edition: "ES2024",
-    badge: "none",
+    badge: "full",
     description: "Enhanced Unicode set notation in regular expressions",
-    js: `const re = /[\p{Letter}&&\p{ASCII}]/v; // not yet`,
-    explain: "Requires v-flag Unicode set support in the regex engine.",
-    noCompile: true,
+    js: `const re = /[\\p{Letter}&&\\p{ASCII}]/v;
+const matches = re.test("a");`,
   },
 
   // ── ES2025 ──────────────────────────────────────────────────────────────
   {
     name: "Set methods (union, intersection, difference)",
     edition: "ES2025",
-    badge: "none",
+    badge: "partial",
     host: true,
     description: "Set algebra operations",
     js: `const a = new Set([1, 2, 3]);
 const b = new Set([2, 3, 4]);
-const union = a.union(b); // not yet`,
-    explain: "Set method extensions not yet implemented.",
-    noCompile: true,
+const union = a.union(b);`,
+    explain: "union() works correctly; intersection() and difference() are less thoroughly exercised.",
   },
   {
     name: "Iterator helpers (map, filter, take)",
@@ -796,7 +798,8 @@ const union = a.union(b); // not yet`,
     host: true,
     description: "Lazy iterator combinators on Iterator.prototype",
     js: `[1, 2, 3].values().map((x: number) => x * 2).take(2); // not yet`,
-    explain: "Iterator protocol helpers not yet implemented.",
+    explain:
+      "Rejected by the type-checker before codegen runs — Iterator.prototype.map/filter/take are not yet in the compiler's type surface.",
     noCompile: true,
   },
   {
@@ -804,8 +807,9 @@ const union = a.union(b); // not yet`,
     edition: "ES2025",
     badge: "none",
     description: "Same named capture groups across alternatives",
-    js: `const re = /(?<y>\d{4})-(?<m>\d{2})|(?<m>\d{2})\/(?<y>\d{4})/v; // not yet`,
-    explain: "Requires regex engine support for duplicate group names.",
+    js: `const re = /(?<y>\\d{4})-(?<m>\\d{2})|(?<m>\\d{2})\\/(?<y>\\d{4})/v; // not yet`,
+    explain:
+      "Rejected by the type-checker before codegen runs — the checker's TypeScript lib is pinned to ES2022, and this syntax requires newer lib typings.",
     noCompile: true,
   },
 
@@ -903,7 +907,8 @@ counts.getOrInsert("a", 0);`,
     js: `(function factorial(n) {
   return n <= 1 ? 1 : n * arguments.callee(n - 1);
 })(5); // not supported`,
-    explain: "Forbidden in strict mode. Use named function expressions instead.",
+    explain:
+      "Compiles without the spec-required restriction, but the recursive call through arguments.callee does not produce correct results. Use named function expressions instead.",
     noCompile: true,
   },
   {
@@ -913,17 +918,17 @@ counts.getOrInsert("a", 0);`,
     description: "Direct prototype chain mutation via __proto__",
     js: `const obj = {};
 obj.__proto__ = protoObj; // not supported`,
-    explain: "Prototype mutation not emitted in WasmGC struct hierarchy.",
+    explain:
+      "Compiles, but assigning __proto__ does not update the object's prototype chain — inherited methods remain unreachable at runtime.",
     noCompile: true,
   },
   {
     name: "String.prototype.substr",
     edition: "Legacy / Deprecated",
-    badge: "none",
+    badge: "full",
     description: "Legacy string slicing (use slice instead)",
-    js: `"hello".substr(1, 3); // not yet`,
+    js: `"hello".substr(1, 3);`,
     explain: "Deprecated. Use String.prototype.slice instead.",
-    noCompile: true,
   },
   {
     name: "Octal literals (0777)",
@@ -932,17 +937,18 @@ obj.__proto__ = protoObj; // not supported`,
     sloppy: true,
     description: "Legacy octal integer syntax (use 0o prefix instead)",
     js: `const n = 0777; // not supported in strict mode`,
-    explain: "Forbidden in strict mode. Use 0o prefix: 0o777.",
+    explain:
+      "Legacy octal without the 0o prefix is Annex B sloppy-mode syntax that strict-mode code should reject as a SyntaxError; the compiler does not yet enforce that early error. Use 0o prefix: 0o777.",
     noCompile: true,
   },
   {
     name: "escape() / unescape()",
     edition: "Legacy / Deprecated",
-    badge: "none",
+    badge: "partial",
     description: "Legacy URL-encoding functions (use encodeURIComponent instead)",
-    js: `escape("hello world"); // not supported`,
+    js: `const encoded = escape("hello world");
+const decoded = unescape(encoded);`,
     explain: "Deprecated globals. Use encodeURIComponent / decodeURIComponent.",
-    noCompile: true,
   },
   {
     name: "Function.prototype.caller",
@@ -951,26 +957,27 @@ obj.__proto__ = protoObj; // not supported`,
     sloppy: true,
     description: "Reference to the function that called the current function",
     js: `function f() { return f.caller; } // not supported`,
-    explain: "Forbidden in strict mode. Call stacks not inspectable in Wasm.",
+    explain:
+      "Compiles, but accessing .caller throws a runtime exception rather than resolving to the calling function.",
     noCompile: true,
   },
   {
     name: "HTML string methods (.bold(), .anchor())",
     edition: "Legacy / Deprecated",
-    badge: "none",
+    badge: "full",
     description: "Legacy String methods wrapping HTML tags",
-    js: `"hello".bold(); // not supported`,
+    js: `"hello".bold();
+"hello".anchor("name");`,
     explain: "Deprecated HTML wrapper methods. Use DOM APIs directly.",
-    noCompile: true,
   },
   {
     name: "RegExp.$1 static properties",
     edition: "Legacy / Deprecated",
     badge: "none",
     description: "Static capture group properties on RegExp constructor",
-    js: `/(\d+)/.test("abc123");
+    js: `/(\\d+)/.test("abc123");
 const match = RegExp.$1; // not supported`,
-    explain: "Legacy static properties on RegExp not implemented.",
+    explain: "Compiles, but the static capture-group properties are never populated — RegExp.$1 reads empty.",
     noCompile: true,
   },
 
@@ -1232,10 +1239,66 @@ async function main() {
   highlighter.dispose();
   console.log("Highlighting done.");
 
-  const output = {
+  // This script owns the compiled-example fields on each row (js/wat/
+  // compileSuccess/badge/noCompile/…, everything FeatureResult declares). It
+  // does NOT own `testCategories`/`passCount`/`totalCount`/`tests`/
+  // `testsTruncated`/`features_generated` — those are written by a SEPARATE
+  // pipeline (website/dashboard/build-data.js's buildFeatureStats, #1327,
+  // reconciled on top by scripts/generate-editions.ts's patchFeatureExamples,
+  // #2910) that scores each row against live test262 results.
+  //
+  // A naive overwrite here would silently WIPE those fields on every run:
+  // this script's own output only ever contains `{ generated, features }`,
+  // and generate-editions.ts's patch step READS `testCategories` (for its
+  // path-prefix fallback scoring) but never WRITES it if absent — so a wipe
+  // here is never self-healing downstream. Confirmed by hand: running this
+  // script standalone against a file already carrying those fields dropped
+  // `testCategories` from every row, which breaks the "view test262 sources"
+  // links on the landing page and the feature-report detail page for every
+  // row scored by path prefix (the ~29 core ES3/ES5 rows that predate
+  // `features:` tags) — silently, since nothing downstream restores it.
+  //
+  // So: merge into whatever is already on disk, carrying those fields forward
+  // untouched, rather than replacing the file outright. This makes the script
+  // safe to run in CI on its own, without depending on build-data.js having
+  // run first or after.
+  const PRESERVED_KEYS = ["testCategories", "passCount", "totalCount", "tests", "testsTruncated"] as const;
+  const previousByName = new Map<string, Record<string, unknown>>();
+  let previousFeaturesGenerated: string | undefined;
+  if (existsSync(OUT_FILE)) {
+    try {
+      const prev = JSON.parse(readFileSync(OUT_FILE, "utf-8")) as {
+        features_generated?: string;
+        features?: Array<Record<string, unknown>>;
+      };
+      if (Array.isArray(prev.features)) {
+        for (const f of prev.features) {
+          if (typeof f.name === "string") previousByName.set(f.name, f);
+        }
+      }
+      previousFeaturesGenerated = prev.features_generated;
+    } catch (err) {
+      console.warn(`Could not parse existing ${OUT_FILE} to preserve test262 fields: ${(err as Error).message}`);
+    }
+  }
+
+  const mergedResults = results.map((r) => {
+    const prev = previousByName.get(r.name);
+    if (!prev) return r;
+    const carried: Record<string, unknown> = {};
+    for (const key of PRESERVED_KEYS) {
+      if (key in prev) carried[key] = prev[key];
+    }
+    return { ...r, ...carried };
+  });
+
+  const output: Record<string, unknown> = {
     generated: new Date().toISOString(),
-    features: results,
+    features: mergedResults,
   };
+  // Carry the companion timestamp forward too — it is meaningless to reset it
+  // here since this script never touches the fields it describes.
+  if (previousFeaturesGenerated) output.features_generated = previousFeaturesGenerated;
 
   mkdirSync(join(ROOT, "website", "public"), { recursive: true });
   writeFileSync(OUT_FILE, JSON.stringify(output, null, 2) + "\n");

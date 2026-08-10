@@ -159,6 +159,8 @@ export interface DerivePreparedComponentDependenciesInput {
   readonly inventory: IrUnitInventory;
   readonly derivedUnits?: readonly ProgramAbiDerivedUnitRecord[];
   readonly closureSupport?: PreparedComponentClosureSupportEvidence;
+  /** Final IR proved exception ops and the shared tag was reserved before sealing. */
+  readonly exceptionSupportPrepared?: boolean;
   readonly classAccessorWritebacks?: ReadonlyMap<IrUnitId, PreparedClassAccessorWritebackEvidence>;
   readonly abi: PreparedComponentAbiLookup;
 }
@@ -634,14 +636,22 @@ function samePreparedVecLayout(left: IrVecLayoutRef, right: IrVecLayoutRef): boo
 
 function implicitSupportRequirement(
   instr: IrInstr,
+  valueTypes: ReadonlyMap<IrValueId, IrType>,
   hasPreparedClosureSupport = false,
-  hasPreparedExceptionTagSupport = false,
+  exceptionSupportPrepared = false,
 ): string | null {
   switch (instr.kind) {
-    case "binary":
-      return instr.op.startsWith("js.")
-        ? `${instr.op} may resolve __unbox_number without an explicit symbolic callable ref`
-        : null;
+    case "binary": {
+      if (!instr.op.startsWith("js.")) return null;
+      const concreteNumeric = (value: IrValueId): boolean => {
+        const type = valueTypes.get(value);
+        if (!type || type.kind !== "val") return false;
+        return type.val.kind === "f64" || type.val.kind === "i32";
+      };
+      return concreteNumeric(instr.lhs) && concreteNumeric(instr.rhs)
+        ? null
+        : `${instr.op} may resolve __unbox_number without an explicit symbolic callable ref`;
+    }
     case "raw.wasm":
       return "raw.wasm is opaque to symbolic dependency discovery";
     case "box":
@@ -705,11 +715,13 @@ function implicitSupportRequirement(
     case "gen.setReturn":
       return `${instr.kind} resolves generator runtime callables without explicit symbolic refs`;
     case "throw":
-      return hasPreparedExceptionTagSupport
+      return exceptionSupportPrepared
         ? null
         : `${instr.kind} resolves exception tag/support without an explicit symbolic ref`;
     case "try":
-      return `${instr.kind} resolves exception tag/support without an explicit symbolic ref`;
+      return exceptionSupportPrepared
+        ? null
+        : `${instr.kind} resolves exception tag/support without prepared final-IR evidence`;
     case "extern.new":
     case "extern.call":
     case "extern.prop":
@@ -1298,8 +1310,9 @@ function collectFunctionEvidence(
       }
       const implicitSupport = implicitSupportRequirement(
         nested,
+        valueTypes,
         hasPreparedClosureSupport,
-        exceptionTagTypeRef !== undefined,
+        input.exceptionSupportPrepared === true || exceptionTagTypeRef !== undefined,
       );
       if (implicitSupport) {
         addFailure(evidence, {

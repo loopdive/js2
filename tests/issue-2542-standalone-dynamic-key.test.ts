@@ -108,6 +108,33 @@ describe("#2542 — standalone dynamic property read/write by runtime string key
     expect(v).toBe(99);
   });
 
+  it("one-code-unit slice-view keys round-trip through the object hash", async () => {
+    const v = await runStandalone(
+      `export function run(): number {
+         const o: { [s: string]: number } = {};
+         let source = "prefix:z";
+         let start = source.length - 1;
+         let key = source.slice(start);
+         o[key] = 73;
+         return o[key];
+       }`,
+    );
+    expect(v).toBe(73);
+  });
+
+  it("rope keys still flatten before hashing", async () => {
+    const v = await runStandalone(
+      `export function run(): number {
+         const o: { [s: string]: number } = {};
+         let key = "";
+         for (let i = 0; i < 10; i = i + 1) key = key + "abcdefgh";
+         o[key] = 41;
+         return o[key];
+       }`,
+    );
+    expect(v).toBe(41);
+  });
+
   it("static member read off an index-signature object still works", async () => {
     const v = await runStandalone(
       `export function run(): number {
