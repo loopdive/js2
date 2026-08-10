@@ -60,7 +60,15 @@ run(process.execPath, ["--experimental-strip-types", "scripts/sync-es-edition-fe
 // snippets; the generator never instantiates or executes the compiled Wasm,
 // so it carries none of the async-runtime hang risk that live execution
 // would).
-run(process.execPath, ["--experimental-strip-types", "scripts/generate-feature-examples.ts"]);
+// Runs under `tsx`, NOT `node --experimental-strip-types`. This generator is
+// the only script in this file that imports the compiler itself
+// (`../src/index.js`, needed to compile the snippets). Type-stripping does not
+// perform TypeScript's `.js` -> `.ts` specifier rewriting, so plain node fails
+// with ERR_MODULE_NOT_FOUND on `src/index.js` (which does not exist on disk —
+// only `src/index.ts` does) and takes the whole Pages deploy down with it.
+// `pnpm run generate:feature-examples` is the canonical invocation; reuse it
+// rather than duplicating the runner here.
+run("pnpm", ["run", "generate:feature-examples"]);
 
 run(process.execPath, ["--experimental-strip-types", "scripts/generate-editions.ts"]);
 

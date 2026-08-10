@@ -96,6 +96,59 @@ describe("#1712 — host-callable fallback for non-closure-shaped callees", () =
     `);
     expect(exp.parse("x")).toBe(6);
   });
+
+  it("uses one fixed-arity host crossing without changing callback semantics", async () => {
+    const source = `
+      function identity(value) { return value; }
+      function invoke(callback, value) { return callback(value); }
+      export function test(callback, value) { return invoke(callback, value); }
+      export function local() { return invoke(identity, 13); }
+    `;
+    const result = await compile(source, {
+      fileName: "fixed-arity-host-call.js",
+      skipSemanticDiagnostics: true,
+    });
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    const module = await WebAssembly.compile(result.binary);
+    const importNames = WebAssembly.Module.imports(module).map((entry) => entry.name);
+    expect(importNames).toContain("__call_function_1");
+    expect(importNames).not.toContain("__call_function");
+    expect(importNames).not.toContain("__js_array_new");
+    expect(importNames).not.toContain("__js_array_push");
+
+    const importObject: any = result.importObject ?? {};
+    const instance = await WebAssembly.instantiate(module, importObject);
+    importObject.__setInstance?.(instance);
+    const exp = wrapExports(instance, { signatures: result.exportSignatures }) as any;
+    expect(exp.test((value: number) => value + 1, 10)).toBe(11);
+    expect(exp.local()).toBe(13);
+  });
+
+  it("keeps the legacy argument-array ABI available as a kill switch", async () => {
+    const previous = process.env.JS2WASM_FIXED_ARITY_HOST_CALLS;
+    process.env.JS2WASM_FIXED_ARITY_HOST_CALLS = "0";
+    try {
+      const result = await compile(
+        `
+          function identity(value) { return value; }
+          function invoke(callback, value) { return callback(value); }
+          export function test(callback, value) { return invoke(callback, value); }
+          export function local() { return invoke(identity, 13); }
+        `,
+        { fileName: "legacy-host-call.js", skipSemanticDiagnostics: true },
+      );
+      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+      const module = await WebAssembly.compile(result.binary);
+      const importNames = WebAssembly.Module.imports(module).map((entry) => entry.name);
+      expect(importNames).toContain("__call_function");
+      expect(importNames).toContain("__js_array_new");
+      expect(importNames).toContain("__js_array_push");
+      expect(importNames).not.toContain("__call_function_1");
+    } finally {
+      if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_FIXED_ARITY_HOST_CALLS");
+      else process.env.JS2WASM_FIXED_ARITY_HOST_CALLS = previous;
+    }
+  });
 });
 
 describe("#1712 — standalone first-class Object.hasOwn", () => {
