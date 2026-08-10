@@ -37,7 +37,7 @@ jobs:
     # A failed/cancelled Refresh Benchmarks run has nothing new to publish, and
     # redeploying on it would just burn a build — only follow through on success.
     if: |
-      github.repository == 'loopdive/js2' &&
+      github.repository == 'loopdive/js2wasm' &&
       (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     steps:
@@ -201,7 +201,7 @@ jobs:
           path: dist/pages
 
   deploy:
-    if: github.repository == 'loopdive/js2'
+    if: github.repository == 'loopdive/js2wasm'
     needs: build
     runs-on: ubuntu-latest
     environment:

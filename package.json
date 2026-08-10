@@ -223,6 +223,7 @@
     "report": "npx tsx scripts/serve-report.ts",
     "sync:conformance": "node scripts/sync-conformance-numbers.mjs",
     "sync:conformance:check": "node scripts/sync-conformance-numbers.mjs --check",
+    "sync:es-edition-features": "node --experimental-strip-types scripts/sync-es-edition-features.ts",
     "build:pages": "node scripts/run-pages-build.mjs",
     "deploy:registry-home": "mkdir -p .registry-home && cp website/index.html .registry-home/index.html && node ../file-registry-cli/dist/bin/main.js commit .registry-home -r users/tt/projects/ts2wasm && node ../file-registry-cli/dist/bin/main.js push .registry-home -r users/tt/projects/ts2wasm --public",
     "upload": "pnpm run build:playground && node ../file-registry-cli/dist/bin/main.js commit && node ../file-registry-cli/dist/bin/main.js push",

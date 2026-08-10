@@ -143,6 +143,11 @@ interface ValueDef {
   readonly expr?: ts.Expression;
   /** `x++` / `x -= 1`: JS guarantees a number regardless of the old value. */
   readonly forcedNumeric?: boolean;
+  /**
+   * An inconclusive value forwarded by a direct recursive call cannot be
+   * discarded when agreeing an implicit-any parameter ABI (#3961).
+   */
+  readonly dynamicConflict?: boolean;
 }
 
 /** A resolved (frame, name) variable slot. */
@@ -455,7 +460,7 @@ function buildScopes(sourceFiles: readonly ts.SourceFile[]): ScopeTable {
 interface NumericFlowFacts {
   readonly scopes: ScopeTable;
   functionsByName: Map<string, FunctionLike[]>;
-  calls: Map<string, ts.Expression[][]>;
+  calls: Map<string, { args: ts.Expression[]; recursive: boolean }[]>;
   parameters: { slot: Slot; owner: string; index: number; initializer?: ts.Expression }[];
   propertyWrites: PropWrite[];
   deletedNames: Set<string>;
@@ -541,9 +546,15 @@ function collectNumericFlowFacts(
         const name = callName(node);
         if (name) {
           const args = [...(node.arguments ?? [])];
+          let owner: ts.Node | undefined = node.parent;
+          while (owner && !isFunctionLikeWithBody(owner)) owner = owner.parent;
+          // This is deliberately conservative: a same-name call nested in a
+          // function is treated as recursive even when lexical resolution
+          // could distinguish it. A false positive only withholds narrowing.
+          const recursive = owner !== undefined && functionBindingName(owner) === name;
           const list = facts.calls.get(name);
-          if (list) list.push(args);
-          else facts.calls.set(name, [args]);
+          if (list) list.push({ args, recursive });
+          else facts.calls.set(name, [{ args, recursive }]);
         }
       } else if (ts.isVariableDeclaration(node)) {
         if (ts.isIdentifier(node.name)) {
@@ -765,10 +776,41 @@ interface FixpointSets {
 
 interface Prover {
   isNumeric(expr: ts.Expression): boolean;
+  isString(expr: ts.Expression): boolean;
   isBooleanish(expr: ts.Expression): boolean;
   isOpaqueParamRead(expr: ts.Expression): boolean;
   withSelf<T>(name: string, run: () => T): T;
   withoutSelf<T>(name: string, run: () => T): T;
+}
+
+/**
+ * Mirror implicit-any call-site ABI agreement for the whole-program carrier
+ * fixpoint. A concrete conflicting argument vetoes narrowing. An argument the
+ * checker still reports as `any`/`unknown` contributes no evidence, matching
+ * `inferParamTypeFromCallSites`; the one exception is a dynamic value forwarded
+ * recursively, which is part of the callee's runtime domain (#3961).
+ *
+ * Missing arguments are ignored here. Declaration lowering separately widens
+ * inferred reference parameters to nullable and applies the ordinary numeric
+ * boundary coercion, exactly as it does for the call-site inference result.
+ */
+function parameterDefinitionsAgree(
+  slot: Slot,
+  host: NumericPropertyAnalysisHost,
+  provesCarrier: (def: ValueDef) => boolean,
+): boolean {
+  let hasEvidence = false;
+  for (const def of slot.defs) {
+    if (provesCarrier(def)) {
+      hasEvidence = true;
+      continue;
+    }
+    if (def.dynamicConflict) return false;
+    if (def.expr === undefined) continue;
+    const kind = host.oracle?.typeFactOf(unwrap(def.expr)).kind;
+    if (kind !== "any" && kind !== "unknown" && kind !== "unresolvable") return false;
+  }
+  return hasEvidence;
 }
 
 /**
@@ -819,7 +861,10 @@ function makeProver(
       if (stringSlotsInFlight.has(slot)) return false;
       stringSlotsInFlight.add(slot);
       try {
-        return slot.defs.every((def) => def.expr !== undefined && isString(def.expr, depth + 1));
+        if (!slot.isParam) {
+          return slot.defs.every((def) => def.expr !== undefined && isString(def.expr, depth + 1));
+        }
+        return parameterDefinitionsAgree(slot, host, (def) => def.expr !== undefined && isString(def.expr, depth + 1));
       } finally {
         stringSlotsInFlight.delete(slot);
       }
@@ -848,6 +893,16 @@ function makeProver(
       ) {
         return true;
       }
+    }
+    // Addition produces a string whenever either operand's ToPrimitive result
+    // is provably a string. This is the same rule the earlier
+    // `collectStringProperties` seed pass already uses, but the main fixpoint
+    // omitted it, so a local assembled as `"a=" + dynamicValue + "; b=2"`
+    // could not carry string evidence into an imported parser. On every
+    // successful evaluation the result is a string; a Symbol operand throws
+    // before assigning and therefore cannot introduce a non-string definition.
+    if (ts.isBinaryExpression(value) && value.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+      return isString(value.left, depth + 1) || isString(value.right, depth + 1);
     }
     return false;
   };
@@ -1021,6 +1076,7 @@ function makeProver(
 
   return {
     isNumeric: (expr) => isNumeric(expr, 0),
+    isString: (expr) => isString(expr, 0),
     isBooleanish: (expr) => isBooleanish(expr, 0),
     // The documented trust boundary — see the module header. A bare identifier
     // resolving to a PARAMETER slot. Anything more structured (a property read,
@@ -1097,6 +1153,12 @@ export interface PropertyKindVerdicts {
    * which is where the two meet.
    */
   readonly isNumericLocal: (node: ts.Node, name: string) => boolean;
+  /**
+   * Does the same scope-resolved binding have only provably-string
+   * definitions? Unlike the numeric verdict this is consumed only as
+   * interprocedural parameter evidence; it does not retype the local slot.
+   */
+  readonly isStringLocal: (node: ts.Node, name: string) => boolean;
 }
 
 /**
@@ -1109,6 +1171,8 @@ export interface NumericPropertyAnalysisTarget {
   numericPropertyNames?: ReadonlySet<string>;
   stringPropertyNames?: ReadonlySet<string>;
   numericFunctionNames?: ReadonlySet<string>;
+  /** Runtime eval can introduce calls and values outside the static source graph. */
+  runtimeEvalCallableBoundaryEnabled?: boolean;
   /**
    * (#4122) The grounded slot verdict, exposed directly rather than only
    * through `usageInference`. `bindingHasMixedAssignmentCarrier` needs to ask
@@ -1128,6 +1192,7 @@ function noVerdicts(): PropertyKindVerdicts {
     string: new Set(),
     numericFunctions: new Set(),
     isNumericLocal: () => false,
+    isStringLocal: () => false,
   };
 }
 
@@ -1154,9 +1219,9 @@ export function analyzeNumericPropertyNames(
   for (const parameter of facts.parameters) {
     const before = parameter.slot.defs.length;
     if (parameter.initializer) parameter.slot.defs.push({ expr: parameter.initializer });
-    for (const args of facts.calls.get(parameter.owner) ?? []) {
-      const arg = args[parameter.index];
-      parameter.slot.defs.push(arg ? { expr: arg } : {});
+    for (const call of facts.calls.get(parameter.owner) ?? []) {
+      const arg = call.args[parameter.index];
+      parameter.slot.defs.push(arg ? { expr: arg, dynamicConflict: call.recursive } : {});
     }
     if (parameter.slot.defs.length === before) parameter.slot.defs.push({});
   }
@@ -1213,9 +1278,13 @@ export function analyzeNumericPropertyNames(
       }
     }
     for (const slot of [...numericSlots]) {
+      const provesNumeric = (def: ValueDef): boolean =>
+        def.forcedNumeric === true || (def.expr !== undefined && prover.isNumeric(def.expr));
+      const provesNumericCarrier = (def: ValueDef): boolean =>
+        provesNumeric(def) && (def.expr === undefined || !prover.isBooleanish(def.expr));
       const allNumeric =
         slot.defs.length > 0 &&
-        slot.defs.every((def) => def.forcedNumeric === true || (def.expr !== undefined && prover.isNumeric(def.expr)));
+        (slot.isParam ? parameterDefinitionsAgree(slot, host, provesNumericCarrier) : slot.defs.every(provesNumeric));
       if (!allNumeric) {
         numericSlots.delete(slot);
         changed = true;
@@ -1298,11 +1367,15 @@ export function analyzeNumericPropertyNames(
       groundedSlots.add(slot);
       let allNumeric: boolean;
       try {
+        const provesNumeric = (def: ValueDef): boolean =>
+          def.forcedNumeric === true || (def.expr !== undefined && groundedProver.isNumeric(def.expr));
+        const provesNumericCarrier = (def: ValueDef): boolean =>
+          provesNumeric(def) && (def.expr === undefined || !groundedProver.isBooleanish(def.expr));
         allNumeric =
           slot.defs.length > 0 &&
-          slot.defs.every(
-            (def) => def.forcedNumeric === true || (def.expr !== undefined && groundedProver.isNumeric(def.expr)),
-          ) &&
+          (slot.isParam
+            ? parameterDefinitionsAgree(slot, host, provesNumericCarrier)
+            : slot.defs.every(provesNumeric)) &&
           !slot.defs.some((def) => def.expr !== undefined && groundedProver.isBooleanish(def.expr));
       } finally {
         groundedSlots.delete(slot);
@@ -1374,6 +1447,14 @@ export function analyzeNumericPropertyNames(
       const slot = scopes.resolve(node, name);
       return slot !== undefined && groundedSlots.has(slot);
     },
+    isStringLocal: (node, name) => {
+      const slot = scopes.resolve(node, name);
+      return (
+        slot !== undefined &&
+        slot.defs.length > 0 &&
+        slot.defs.every((def) => def.expr !== undefined && prover.isString(def.expr))
+      );
+    },
   };
 }
 
@@ -1393,7 +1474,11 @@ export function applyNumericPropertyAnalysis(
   target.numericPropertyNames = verdicts.numeric;
   target.stringPropertyNames = verdicts.string;
   target.numericFunctionNames = verdicts.numericFunctions;
-  if (process.env.JS2WASM_NUMERIC_LOCALS !== "0") {
+  // Runtime-eval modules are not closed worlds: interpreted callables can feed
+  // values through AOT functions without a statically visible call site. The
+  // parameter fixpoint may still derive field/return facts, but its local
+  // carrier oracle must not narrow those dynamically reached bindings.
+  if (process.env.JS2WASM_NUMERIC_LOCALS !== "0" && target.runtimeEvalCallableBoundaryEnabled !== true) {
     target.usageInference.setNumericLocalOracle(verdicts.isNumericLocal);
     target.numericLocalVerdict = verdicts.isNumericLocal;
   }

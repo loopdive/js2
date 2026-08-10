@@ -14,8 +14,58 @@ import type { ValType } from "../ir/types.js";
 import type { TypeOracle } from "../checker/oracle.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { isStrictContext } from "./helpers/is-strict-function.js";
 import { getOrRegisterRefCellType } from "./registry/types.js";
 import { coerceType } from "./shared.js";
+
+/** (#4309) An iteration statement that installs its own declarative record —
+ * a `let`/`const` head. §14.7.4.2/§14.7.5.6 wrap the WHOLE statement (head,
+ * test, increment, body) in it, braced body or not. A `var` head installs
+ * none, so it is excluded — see `directEvalRunsAtScriptGlobal`. */
+function iterationStatementDeclaresLexicalHead(node: ts.Node): boolean {
+  if (!ts.isForStatement(node) && !ts.isForInStatement(node) && !ts.isForOfStatement(node)) return false;
+  const initializer: ts.ForInitializer | undefined = node.initializer;
+  if (initializer === undefined || !ts.isVariableDeclarationList(initializer)) return false;
+  return (initializer.flags & ts.NodeFlags.BlockScoped) !== 0;
+}
+
+/**
+ * A sloppy direct eval whose call expression belongs directly to Script code
+ * has the same GlobalEnvironmentRecord as indirect eval. Its call site uses the
+ * global entry instead of manufacturing an empty AOT activation record; the
+ * latter would hide B.3.3 global properties in a provider-private declarative
+ * record (#2929).
+ *
+ * The stopping set is exactly "nodes that install a LexicalEnvironment between
+ * the call and the script root". (#4309) `ts.isBlock` covers a braced loop body
+ * but not the per-iteration record itself, so `for (let i = 0; …) eval(s)`
+ * unbraced — and any call in a lexical head — walked past a real record to the
+ * source file and was mis-lowered to indirect. `var` heads stay out: routing
+ * them direct would move a B.3.3 global publication into the private record
+ * this shim exists to avoid.
+ */
+export function directEvalRunsAtScriptGlobal(call: ts.CallExpression, ctx: CodegenContext): boolean {
+  if (isStrictContext(call, ctx.inferModuleStrictArguments)) return false;
+  let node: ts.Node | undefined = call.parent;
+  while (node) {
+    if (ts.isSourceFile(node)) return true;
+    if (
+      ts.isFunctionLike(node) ||
+      ts.isClassDeclaration(node) ||
+      ts.isClassExpression(node) ||
+      ts.isBlock(node) ||
+      ts.isCaseClause(node) ||
+      ts.isDefaultClause(node) ||
+      ts.isCatchClause(node) ||
+      ts.isWithStatement(node) ||
+      iterationStatementDeclaresLexicalHead(node)
+    ) {
+      return false;
+    }
+    node = node.parent;
+  }
+  return false;
+}
 
 function isGlobalEvalIdentifier(ident: ts.Identifier, oracle: TypeOracle): boolean {
   const declaration = oracle.valueDeclarationOf(ident);

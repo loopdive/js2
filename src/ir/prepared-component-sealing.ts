@@ -243,6 +243,7 @@ export function sealDependencyCompletePreparedComponents(input: {
       inventory,
       derivedUnits,
       ...(input.closureSupport ? { closureSupport: input.closureSupport } : {}),
+      exceptionSupportPrepared: ctx.exnTagIdx >= 0,
       ...(input.classAccessorWritebacks ? { classAccessorWritebacks: input.classAccessorWritebacks } : {}),
       abi: {
         get: (id) => session.getDraft(id),
