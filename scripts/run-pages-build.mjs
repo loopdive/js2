@@ -37,6 +37,31 @@ if (hasPlanningArtifacts) {
 // deterministic while every Pages deployment gets a chance to refresh.
 run(process.execPath, ["--experimental-strip-types", "scripts/sync-es-edition-features.ts"]);
 
+// Recompile the landing-page feature-catalog examples (website/public/
+// feature-examples.json) against the CURRENT compiler, before the edition
+// reconciliation pass below overlays fresh test262 pass counts on top.
+//
+// This was previously a manual-only step (`pnpm run generate:feature-examples`,
+// #1157) and went unrun for two months while the compiler kept landing PRs —
+// 24 rows stayed flagged `noCompile: true` with "not supported" prose, nine of
+// which had started compiling and running correctly (some over the "full"
+// 90%+ test262 threshold) without anyone noticing, because nothing regenerated
+// the artifact to find out. Running it on every push to main, alongside the
+// edition data it already sits next to, closes that gap.
+//
+// Safe to run unconditionally: this script now MERGES into the existing
+// committed file rather than overwriting it (see the PRESERVED_KEYS comment
+// in generate-feature-examples.ts) — it owns the compiled-example fields
+// (js/wat/compileSuccess/badge/noCompile/…) and carries `testCategories` /
+// `passCount` / `totalCount` / `tests` / `testsTruncated` forward from
+// whatever is already on disk, since those belong to the SEPARATE test262
+// reconciliation pipeline below and this script has no test262 data of its
+// own to score them with. Costs ~30s (CPU-bound compilation of ~90 small
+// snippets; the generator never instantiates or executes the compiled Wasm,
+// so it carries none of the async-runtime hang risk that live execution
+// would).
+run(process.execPath, ["--experimental-strip-types", "scripts/generate-feature-examples.ts"]);
+
 run(process.execPath, ["--experimental-strip-types", "scripts/generate-editions.ts"]);
 
 // (#2636) Per-edition STANDALONE buckets. The host pass above wrote
