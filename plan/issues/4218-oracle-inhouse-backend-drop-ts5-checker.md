@@ -1,10 +1,18 @@
 ---
 id: 4218
 title: "Oracle backend: in-house binder + annotation propagation — make the TS5 checker droppable (JS-mode first, TS-mode second)"
-status: backlog
+status: in-progress
 sprint: Backlog
+assignee: "ttraenkler/fable-remote"
 created: 2026-08-08
 updated: 2026-08-08
+# Phase-1 slice adds the `oracleBackend` option to the two option bundles
+# (CodegenOptions is a type barrel, CompileOptions' resolver is the driver) —
+# +14 / +2 LOC of option + doc comment. There is no subsystem module to put a
+# public option field in; it has to live where the bundle is declared.
+loc-budget-allow:
+  - src/codegen/context/types.ts
+  - src/compiler.ts
 priority: medium
 horizon: xl
 feasibility: hard

@@ -1136,10 +1136,22 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
             },
           ] satisfies Instr[])
         : []),
-      // str = flatten(cast<$AnyString>(keyAny))
+      // str = flat key, or flatten(cast<$AnyString>(keyAny)) for a rope. The
+      // dynamic object path overwhelmingly receives an already-flat slice;
+      // inline flatten's first discriminator so that case avoids a helper call.
       { op: "local.get", index: 7 },
       { op: "ref.cast", typeIdx: anyStrTypeIdx },
-      { op: "call", funcIdx: strFlattenIdx },
+      { op: "local.tee", index: 8 },
+      { op: "ref.test", typeIdx: nativeStrTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: nativeStrRef },
+        then: [
+          { op: "local.get", index: 8 },
+          { op: "ref.cast", typeIdx: nativeStrTypeIdx },
+        ],
+        else: [{ op: "local.get", index: 8 }, { op: "ref.as_non_null" }, { op: "call", funcIdx: strFlattenIdx }],
+      },
       { op: "local.tee", index: 1 },
       // (#3673 round 9) Cached-hash fast path: interned literal keys carry a
       // compile-time-baked FNV hash in the `$HashedString` subtype's field 3
@@ -1180,6 +1192,37 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       { op: "local.get", index: 1 },
       { op: "struct.get", typeIdx: nativeStrTypeIdx, fieldIdx: 2 },
       { op: "local.set", index: 2 },
+      // A one-code-unit transient key has no cache slot to populate and does
+      // not need the generic counted loop. Cookie-style parsers commonly
+      // materialize exactly this shape from `slice(start, end)` before a
+      // dynamic object probe, so fold the single FNV step directly.
+      { op: "local.get", index: 3 },
+      { op: "i32.const", value: 1 },
+      { op: "i32.eq" },
+      ...(ctx.hashedStrTypeIdx >= 0
+        ? ([
+            { op: "local.get", index: 1 },
+            { op: "ref.test", typeIdx: ctx.hashedStrTypeIdx },
+            { op: "i32.eqz" },
+            { op: "i32.and" },
+          ] satisfies Instr[])
+        : []),
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "i32.const", value: FNV_OFFSET },
+          { op: "local.get", index: 2 },
+          { op: "local.get", index: 4 },
+          { op: "array.get_u", typeIdx: strDataTypeIdx },
+          { op: "i32.xor" },
+          { op: "i32.const", value: FNV_PRIME },
+          { op: "i32.mul" },
+          { op: "i32.const", value: 0x7fffffff },
+          { op: "i32.and" },
+          { op: "return" },
+        ],
+      },
       // h = FNV_OFFSET ; i = 0
       { op: "i32.const", value: FNV_OFFSET },
       { op: "local.set", index: 6 },
@@ -1260,6 +1303,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         { name: "i", type: { kind: "i32" } },
         { name: "h", type: { kind: "i32" } },
         { name: "keyAny", type: { kind: "anyref" } }, // (#2866) index 7
+        { name: "keyStr", type: anyStrRef },
       ],
       // #2042 S1 — coerce a non-string key (boxed number) to its canonical
       // string before the FNV walk's `ref.cast $AnyString`. key is param 0.

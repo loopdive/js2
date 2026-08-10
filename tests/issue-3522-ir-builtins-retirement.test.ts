@@ -370,20 +370,23 @@ describe("#3522 Builtins externref-ABI retirement", () => {
     }
   });
 
-  it("fully folds fixed CSS literal concatenations but preserves the four dynamic array-string concatenations", async () => {
-    const result = await compileBuiltins(true);
-    const concatTargets = (name: string): string[] =>
+  it("fully folds fixed CSS literals and preserves direct-backend batching for the dynamic array string", async () => {
+    const ir = await compileBuiltins(true);
+    const direct = await compileBuiltins(false);
+    const concatTargets = (result: CompileResult, name: string): string[] =>
       watCallTargets(result.wat, watFunctionBody(result.wat, name)).filter((target) =>
         /(?:^|_)concat(?:_|$)/.test(target),
       );
 
     for (const name of ["el", "crd", "rw"] as const) {
-      expect(concatTargets(name), `${name} must not retain a fixed CSS concat`).toEqual([]);
+      expect(concatTargets(ir, name), `${name} must not retain a fixed CSS concat`).toEqual([]);
     }
-    // main has exactly four genuine dynamic array-string concatenations:
-    // arrStr + ",", arrStr + value, "[" + arrStr, and the closing "]".
-    // Its fixed body CSS concat therefore must not add a fifth call.
-    expect(concatTargets("main")).toEqual(["concat_import", "concat_import", "concat_import", "concat_import"]);
+    // The two loop-carried updates stay pairwise. The final
+    // "[" + arrStr + "]" chain must use the same one-call batching shape as
+    // the direct backend, while the fixed body CSS concat stays folded away.
+    const expected = ["concat_import", "concat_import", "__concat_3_import"];
+    expect(concatTargets(ir, "main")).toEqual(expected);
+    expect(concatTargets(direct, "main")).toEqual(expected);
   });
 
   it("folds immutable literal includes without an import while retaining a dynamic near-miss", async () => {

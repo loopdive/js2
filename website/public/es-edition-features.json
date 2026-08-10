@@ -1,0 +1,396 @@
+{
+  "source": "https://raw.githubusercontent.com/tc39/proposals/main/finished-proposals.md",
+  "updated": "2026-08-09T03:11:46.422Z",
+  "features": [
+    {
+      "name": "Explicit Resource Management",
+      "edition": 2027,
+      "proposalUrl": "https://github.com/tc39/proposal-explicit-resource-management"
+    },
+    {
+      "name": "Atomics.pause",
+      "edition": 2027,
+      "proposalUrl": "https://github.com/tc39/proposal-atomics-microwait"
+    },
+    {
+      "name": "Joint Iteration",
+      "edition": 2027,
+      "proposalUrl": "https://github.com/tc39/proposal-joint-iteration"
+    },
+    {
+      "name": "Temporal",
+      "edition": 2027,
+      "proposalUrl": "https://github.com/tc39/proposal-temporal"
+    },
+    {
+      "name": "Upsert",
+      "edition": 2026,
+      "proposalUrl": "https://github.com/tc39/proposal-upsert"
+    },
+    {
+      "name": "JSON.parse source text access",
+      "edition": 2026,
+      "proposalUrl": "https://github.com/tc39/proposal-json-parse-with-source"
+    },
+    {
+      "name": "Iterator Sequencing",
+      "edition": 2026,
+      "proposalUrl": "https://github.com/tc39/proposal-iterator-sequencing"
+    },
+    {
+      "name": "Uint8Array to/from Base64",
+      "edition": 2026,
+      "proposalUrl": "https://github.com/tc39/proposal-arraybuffer-base64"
+    },
+    {
+      "name": "Math.sumPrecise",
+      "edition": 2026,
+      "proposalUrl": "https://github.com/tc39/proposal-math-sum"
+    },
+    {
+      "name": "Error.isError",
+      "edition": 2026,
+      "proposalUrl": "https://github.com/tc39/proposal-is-error"
+    },
+    {
+      "name": "Array.fromAsync",
+      "edition": 2026,
+      "proposalUrl": "https://github.com/tc39/proposal-array-from-async"
+    },
+    {
+      "name": "RegExp.escape",
+      "edition": 2025,
+      "proposalUrl": "https://github.com/tc39/proposal-regex-escaping"
+    },
+    {
+      "name": "Redeclarable global eval-introduced vars",
+      "edition": 2025,
+      "proposalUrl": "https://github.com/tc39/proposal-redeclarable-global-eval-vars"
+    },
+    {
+      "name": "Float16 on TypedArrays, DataView, Math.f16round",
+      "edition": 2025,
+      "proposalUrl": "https://github.com/tc39/proposal-float16array"
+    },
+    {
+      "name": "Promise.try",
+      "edition": 2025,
+      "proposalUrl": "https://github.com/tc39/proposal-promise-try"
+    },
+    {
+      "name": "Sync Iterator helpers",
+      "edition": 2025,
+      "proposalUrl": "https://github.com/tc39/proposal-iterator-helpers"
+    },
+    {
+      "name": "JSON Modules",
+      "edition": 2025,
+      "proposalUrl": "https://github.com/tc39/proposal-json-modules"
+    },
+    {
+      "name": "Import Attributes",
+      "edition": 2025,
+      "proposalUrl": "https://github.com/tc39/proposal-import-attributes"
+    },
+    {
+      "name": "RegExp Modifiers",
+      "edition": 2025,
+      "proposalUrl": "https://github.com/tc39/proposal-regexp-modifiers"
+    },
+    {
+      "name": "New Set methods",
+      "edition": 2025,
+      "proposalUrl": "https://github.com/tc39/proposal-set-methods"
+    },
+    {
+      "name": "Duplicate named capture groups",
+      "edition": 2025,
+      "proposalUrl": "https://github.com/tc39/proposal-duplicate-named-capturing-groups"
+    },
+    {
+      "name": "ArrayBuffer transfer",
+      "edition": 2024,
+      "proposalUrl": "https://github.com/tc39/proposal-arraybuffer-transfer"
+    },
+    {
+      "name": "Promise.withResolvers",
+      "edition": 2024,
+      "proposalUrl": "https://github.com/tc39/proposal-promise-with-resolvers"
+    },
+    {
+      "name": "Array Grouping",
+      "edition": 2024,
+      "proposalUrl": "https://github.com/tc39/proposal-array-grouping"
+    },
+    {
+      "name": "Resizable and growable ArrayBuffers",
+      "edition": 2024,
+      "proposalUrl": "https://github.com/tc39/proposal-resizablearraybuffer"
+    },
+    {
+      "name": "RegExp v flag with set notation + properties of strings",
+      "edition": 2024,
+      "proposalUrl": "https://github.com/tc39/proposal-regexp-v-flag"
+    },
+    {
+      "name": "Atomics.waitAsync",
+      "edition": 2024,
+      "proposalUrl": "https://github.com/tc39/proposal-atomics-wait-async"
+    },
+    {
+      "name": "Well-Formed Unicode Strings",
+      "edition": 2024,
+      "proposalUrl": "https://github.com/tc39/proposal-is-usv-string"
+    },
+    {
+      "name": "Change Array by Copy",
+      "edition": 2023,
+      "proposalUrl": "https://github.com/tc39/proposal-change-array-by-copy"
+    },
+    {
+      "name": "Symbols as WeakMap keys",
+      "edition": 2023,
+      "proposalUrl": "https://github.com/tc39/proposal-symbols-as-weakmap-keys"
+    },
+    {
+      "name": "Hashbang Grammar",
+      "edition": 2023,
+      "proposalUrl": "https://github.com/tc39/proposal-hashbang"
+    },
+    {
+      "name": "Array find from last",
+      "edition": 2023,
+      "proposalUrl": "https://github.com/tc39/proposal-array-find-from-last"
+    },
+    {
+      "name": "Error Cause",
+      "edition": 2022,
+      "proposalUrl": "https://github.com/tc39/proposal-error-cause"
+    },
+    {
+      "name": "Class Static Block",
+      "edition": 2022,
+      "proposalUrl": "https://github.com/tc39/proposal-class-static-block"
+    },
+    {
+      "name": "Accessible Object.prototype.hasOwnProperty",
+      "edition": 2022,
+      "proposalUrl": "https://github.com/tc39/proposal-accessible-object-hasownproperty"
+    },
+    {
+      "name": ".at()",
+      "edition": 2022,
+      "proposalUrl": "https://github.com/tc39/proposal-relative-indexing-method"
+    },
+    {
+      "name": "Ergonomic brand checks for Private Fields",
+      "edition": 2022,
+      "proposalUrl": "https://github.com/tc39/proposal-private-fields-in-in"
+    },
+    {
+      "name": "Top-level await",
+      "edition": 2022,
+      "proposalUrl": "https://github.com/tc39/proposal-top-level-await"
+    },
+    {
+      "name": "RegExp Match Indices",
+      "edition": 2022,
+      "proposalUrl": "https://github.com/tc39/proposal-regexp-match-indices"
+    },
+    {
+      "name": "Class Fields (Private instance methods and accessors, Class Public Instance Fields & Private Instance Fields, Static class fields and private static methods)",
+      "edition": 2022,
+      "proposalUrl": "https://github.com/tc39/proposal-private-methods"
+    },
+    {
+      "name": "Numeric separators",
+      "edition": 2021,
+      "proposalUrl": "https://github.com/tc39/proposal-numeric-separator"
+    },
+    {
+      "name": "Logical Assignment Operators",
+      "edition": 2021,
+      "proposalUrl": "https://github.com/tc39/proposal-logical-assignment"
+    },
+    {
+      "name": "WeakRefs",
+      "edition": 2021,
+      "proposalUrl": "https://github.com/tc39/proposal-weakrefs"
+    },
+    {
+      "name": "Promise.any",
+      "edition": 2021,
+      "proposalUrl": "https://github.com/tc39/proposal-promise-any"
+    },
+    {
+      "name": "String.prototype.replaceAll",
+      "edition": 2021,
+      "proposalUrl": "https://github.com/tc39/proposal-string-replaceall"
+    },
+    {
+      "name": "import.meta",
+      "edition": 2020,
+      "proposalUrl": "https://github.com/tc39/proposal-import-meta"
+    },
+    {
+      "name": "Nullish coalescing Operator",
+      "edition": 2020,
+      "proposalUrl": "https://github.com/tc39/proposal-nullish-coalescing"
+    },
+    {
+      "name": "Optional Chaining",
+      "edition": 2020,
+      "proposalUrl": "https://github.com/tc39/proposal-optional-chaining"
+    },
+    {
+      "name": "for-in mechanics",
+      "edition": 2020,
+      "proposalUrl": "https://github.com/tc39/proposal-for-in-order"
+    },
+    {
+      "name": "globalThis",
+      "edition": 2020,
+      "proposalUrl": "https://github.com/tc39/proposal-global"
+    },
+    {
+      "name": "Promise.allSettled",
+      "edition": 2020,
+      "proposalUrl": "https://github.com/tc39/proposal-promise-allSettled"
+    },
+    {
+      "name": "BigInt",
+      "edition": 2020,
+      "proposalUrl": "https://github.com/tc39/proposal-bigint"
+    },
+    {
+      "name": "import()",
+      "edition": 2020,
+      "proposalUrl": "https://github.com/tc39/proposal-dynamic-import"
+    },
+    {
+      "name": "String.prototype.matchAll",
+      "edition": 2020,
+      "proposalUrl": "https://github.com/tc39/proposal-string-matchall"
+    },
+    {
+      "name": "Array.prototype.{flat,flatMap}",
+      "edition": 2019,
+      "proposalUrl": "https://github.com/tc39/proposal-flatMap"
+    },
+    {
+      "name": "String.prototype.{trimStart,trimEnd}",
+      "edition": 2019,
+      "proposalUrl": "https://github.com/tc39/proposal-string-left-right-trim"
+    },
+    {
+      "name": "Well-formed JSON.stringify",
+      "edition": 2019,
+      "proposalUrl": "https://github.com/tc39/proposal-well-formed-stringify"
+    },
+    {
+      "name": "Object.fromEntries",
+      "edition": 2019,
+      "proposalUrl": "https://github.com/tc39/proposal-object-from-entries"
+    },
+    {
+      "name": "Function.prototype.toString revision",
+      "edition": 2019,
+      "proposalUrl": "https://github.com/tc39/Function-prototype-toString-revision"
+    },
+    {
+      "name": "Symbol.prototype.description",
+      "edition": 2019,
+      "proposalUrl": "https://github.com/tc39/proposal-Symbol-description"
+    },
+    {
+      "name": "JSON superset",
+      "edition": 2019,
+      "proposalUrl": "https://github.com/tc39/proposal-json-superset"
+    },
+    {
+      "name": "Optional catch binding",
+      "edition": 2019,
+      "proposalUrl": "https://github.com/tc39/proposal-optional-catch-binding"
+    },
+    {
+      "name": "Asynchronous Iteration",
+      "edition": 2018,
+      "proposalUrl": "https://github.com/tc39/proposal-async-iteration"
+    },
+    {
+      "name": "Promise.prototype.finally",
+      "edition": 2018,
+      "proposalUrl": "https://github.com/tc39/proposal-promise-finally"
+    },
+    {
+      "name": "RegExp Unicode Property Escapes",
+      "edition": 2018,
+      "proposalUrl": "https://github.com/tc39/proposal-regexp-unicode-property-escapes"
+    },
+    {
+      "name": "RegExp Lookbehind Assertions",
+      "edition": 2018,
+      "proposalUrl": "https://github.com/tc39/proposal-regexp-lookbehind"
+    },
+    {
+      "name": "Rest/Spread Properties",
+      "edition": 2018,
+      "proposalUrl": "https://github.com/tc39/proposal-object-rest-spread"
+    },
+    {
+      "name": "RegExp named capture groups",
+      "edition": 2018,
+      "proposalUrl": "https://github.com/tc39/proposal-regexp-named-groups"
+    },
+    {
+      "name": "s (dotAll) flag for regular expressions",
+      "edition": 2018,
+      "proposalUrl": "https://github.com/tc39/proposal-regexp-dotall-flag"
+    },
+    {
+      "name": "Lifting template literal restriction",
+      "edition": 2018,
+      "proposalUrl": "https://github.com/tc39/proposal-template-literal-revision"
+    },
+    {
+      "name": "Shared memory and atomics",
+      "edition": 2017,
+      "proposalUrl": "https://github.com/tc39/proposal-ecmascript-sharedmem"
+    },
+    {
+      "name": "Async functions",
+      "edition": 2017,
+      "proposalUrl": "https://github.com/tc39/proposal-async-await"
+    },
+    {
+      "name": "Trailing commas in function parameter lists and calls",
+      "edition": 2017,
+      "proposalUrl": "https://github.com/tc39/proposal-trailing-function-commas"
+    },
+    {
+      "name": "Object.getOwnPropertyDescriptors",
+      "edition": 2017,
+      "proposalUrl": "https://github.com/tc39/proposal-object-getownpropertydescriptors"
+    },
+    {
+      "name": "String padding",
+      "edition": 2017,
+      "proposalUrl": "https://github.com/tc39/proposal-string-pad-start-end"
+    },
+    {
+      "name": "Object.values/Object.entries",
+      "edition": 2017,
+      "proposalUrl": "https://github.com/tc39/proposal-object-values-entries"
+    },
+    {
+      "name": "Exponentiation operator",
+      "edition": 2016,
+      "proposalUrl": "https://github.com/tc39/proposal-exponentiation-operator"
+    },
+    {
+      "name": "Array.prototype.includes",
+      "edition": 2016,
+      "proposalUrl": "https://github.com/tc39/proposal-Array.prototype.includes"
+    }
+  ]
+}
