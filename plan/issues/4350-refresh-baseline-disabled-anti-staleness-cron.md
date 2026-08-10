@@ -70,6 +70,20 @@ exposed #4354: the workflow could not produce a correct standalone baseline at
 all, so re-enabling it briefly made things worse before #4355/#4356/#4357 fixed
 the provider wiring. Re-enabling and #4354 must be considered together.
 
+## Permanent repro
+
+`tests/issue-4350-baseline-refresh-cron.test.ts` pins that
+`refresh-baseline.yml` keeps a `schedule:` trigger and that its cron hour field
+stays `*/N` with `N <= 8`, so the anti-staleness cadence cannot be deleted or
+widened to once-daily by an edit.
+
+**Scope limit, stated plainly:** the actual failure was GitHub-side workflow
+state (`disabled_manually`), which is not represented in the repository and so
+cannot be asserted by any in-repo test. This covers the in-repo half — the
+schedule itself. A disabled workflow still requires the Actions UI to notice.
+The same workflow's provider wiring is separately guarded by
+`tests/issue-2928-e6-provider-cache.test.ts` (#4354).
+
 ## Follow-up worth considering
 
 `auto-park` could suppress parking when the gate has emitted a
