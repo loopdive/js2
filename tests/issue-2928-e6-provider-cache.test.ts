@@ -83,4 +83,23 @@ describe("#2928 E6 — runtime-eval provider seam", () => {
     expect(workflow.match(/--require-full-cache/g)).toHaveLength(2);
     expect(workflow).not.toContain("Prebuild refusal runtime-eval provider (#2928)");
   });
+
+  // (#4354) refresh-baseline.yml promotes the SAME standalone baseline that
+  // test262-sharded.yml does, so it must measure the same tier. It previously
+  // built the provider with `--refusal-only` and never set
+  // TEST262_FULL_RUNTIME_EVAL, so every baseline it promoted recorded
+  // eval-dependent standalone tests as "no js2wasm:runtime-eval interpreter
+  // linked" — 740 tests low (ES5 standalone 82.5 % instead of 89.1 %), and
+  // that figure reached the published site.
+  //
+  // The env var is the load-bearing half: building the provider only puts the
+  // module on disk, and without the flag the runner still links the refusal
+  // path. Fixing only the build produced a byte-identical wrong baseline with
+  // every step reporting success, so assert BOTH halves here.
+  it("measures the full runtime-eval tier in refresh-baseline too, not the refusal tier", () => {
+    const workflow = readFileSync(join(process.cwd(), ".github/workflows/refresh-baseline.yml"), "utf8");
+    expect(workflow).toContain("TEST262_FULL_RUNTIME_EVAL:");
+    expect(workflow).toContain("node scripts/build-runtime-eval-provider.mjs\n");
+    expect(workflow).not.toContain("build-runtime-eval-provider.mjs --refusal-only");
+  });
 });
