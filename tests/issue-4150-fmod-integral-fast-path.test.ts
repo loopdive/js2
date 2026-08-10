@@ -105,4 +105,99 @@ describe("#4150 — __fmod integral fast path", () => {
     }
     expect(mismatches).toEqual([]);
   });
+
+  it("checks magnitude before integral guards and preserves the legacy order behind its kill switch", async () => {
+    const source = `
+      export function run(n: number): number {
+        const modulus = 1000000007;
+        let sum = 0;
+        for (let i = 0; i < n; i = i + 1) {
+          sum = (sum + 832040) % modulus;
+        }
+        return sum;
+      }
+    `;
+
+    const compileArm = async (control: boolean, input = source) => {
+      const previous = process.env.JS2WASM_FMOD_EARLY_MAGNITUDE;
+      try {
+        if (control) process.env.JS2WASM_FMOD_EARLY_MAGNITUDE = "0";
+        else Reflect.deleteProperty(process.env, "JS2WASM_FMOD_EARLY_MAGNITUDE");
+        return await compile(`${input}\n// ${control ? "control" : "candidate"}`, {
+          fileName: "fmod-early-magnitude.ts",
+          target: "standalone",
+          fast: true,
+          optimize: 0,
+          emitWat: true,
+          emitWatOnlyFunctions: ["__fmod", "__fmod_early_magnitude"],
+        } as never);
+      } finally {
+        if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_FMOD_EARLY_MAGNITUDE");
+        else process.env.JS2WASM_FMOD_EARLY_MAGNITUDE = previous;
+      }
+    };
+
+    const candidate = await compileArm(false);
+    const control = await compileArm(true);
+    const smallDivisor = await compileArm(false, "export function run(a: number): number { return a % 3; }");
+    const previousLinearIr = process.env.JS2WASM_LINEAR_IR;
+    let linear: Awaited<ReturnType<typeof compile>>;
+    try {
+      process.env.JS2WASM_LINEAR_IR = "1";
+      linear = await compile(source, {
+        fileName: "fmod-early-magnitude-linear.ts",
+        target: "linear",
+        fast: true,
+        optimize: 0,
+        emitWat: true,
+      });
+    } finally {
+      if (previousLinearIr === undefined) Reflect.deleteProperty(process.env, "JS2WASM_LINEAR_IR");
+      else process.env.JS2WASM_LINEAR_IR = previousLinearIr;
+    }
+    expect(candidate.success, candidate.success ? undefined : candidate.errors?.[0]?.message).toBe(true);
+    expect(control.success, control.success ? undefined : control.errors?.[0]?.message).toBe(true);
+    expect(smallDivisor.success, smallDivisor.success ? undefined : smallDivisor.errors?.[0]?.message).toBe(true);
+    expect(linear.success, linear.success ? undefined : linear.errors?.[0]?.message).toBe(true);
+    expect(linear.wat).toContain("$__fmod");
+
+    const helperWat = (wat: string, name: string): string => {
+      const start = wat.indexOf(`(func $${name}`);
+      expect(start).toBeGreaterThanOrEqual(0);
+      const next = wat.indexOf("\n  (func $", start + 1);
+      return wat.slice(start, next < 0 ? undefined : next);
+    };
+    const candidateHelper = helperWat(candidate.wat, "__fmod_early_magnitude");
+    const controlHelper = helperWat(control.wat, "__fmod");
+    const smallHelper = helperWat(smallDivisor.wat, "__fmod");
+    const candidateTrunc = candidateHelper.indexOf("i32.trunc_sat_f64_s");
+    const candidateMagnitude = candidateHelper.indexOf("f64.lt");
+    const controlTrunc = controlHelper.indexOf("i32.trunc_sat_f64_s");
+    const controlMagnitude = controlHelper.indexOf("f64.lt");
+    const smallTrunc = smallHelper.indexOf("i32.trunc_sat_f64_s");
+    const smallMagnitude = smallHelper.indexOf("f64.lt");
+    expect(candidateMagnitude).toBeGreaterThanOrEqual(0);
+    expect(candidateMagnitude).toBeLessThan(candidateTrunc);
+    expect(controlTrunc).toBeGreaterThanOrEqual(0);
+    expect(controlTrunc).toBeLessThan(controlMagnitude);
+    expect(smallTrunc).toBeGreaterThanOrEqual(0);
+    expect(smallTrunc).toBeLessThan(smallMagnitude);
+
+    const candidateInstance = await WebAssembly.instantiate(candidate.binary!, {});
+    const controlInstance = await WebAssembly.instantiate(control.binary!, {});
+    const linearInstance = await WebAssembly.instantiate(linear.binary!, {});
+    const candidateRun = candidateInstance.instance.exports.run as (n: number) => number;
+    const controlRun = controlInstance.instance.exports.run as (n: number) => number;
+    const linearRun = linearInstance.instance.exports.run as (n: number) => number;
+    const expected = (n: number): number => {
+      let sum = 0;
+      for (let i = 0; i < n; i++) sum = (sum + 832040) % 1000000007;
+      return sum;
+    };
+    for (const n of [10_000, 100_000, 200_000]) {
+      expect(candidateRun(n)).toBe(expected(n));
+      expect(controlRun(n)).toBe(expected(n));
+      expect(linearRun(n)).toBe(expected(n));
+    }
+  });
 });

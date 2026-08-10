@@ -85,16 +85,16 @@ function benchmarkSource(name: string): string {
  * lane narrows a `number` to i32.
  */
 const CASES: ReadonlyArray<{ name: string; source: string; expected: number; lanes?: readonly Lane[] }> = [
-  // The published benchmark, verbatim from the suite. fib(30) = 832,040
-  // summed 10,000 times = 8,320,400,000, which is exactly representable as an
-  // f64 and ~3.9x past 2^31.
+  // The published benchmark, verbatim from the suite. It alternates fib(29)
+  // and fib(30), keeping the work induction-dependent while still taking an
+  // unbounded sum past 2^31.
   {
     name: "mixed/fibonacci (published benchmark source)",
     source: benchmarkSource("mixed/fibonacci"),
     // #3898 keeps the accumulator inside the exact i32 range with `% FIB_MOD`.
     // Keep this pinned to the published source's modulo result so source and
     // cross-lane semantics cannot drift independently again.
-    expected: 320_399_944,
+    expected: 731_344_958,
   },
   // The SECOND wrong published benchmark, found while re-measuring: `gc-native`
   // returned 704,982,704 where JS returns 4,999,950,000 — the same 2^31 wrap,

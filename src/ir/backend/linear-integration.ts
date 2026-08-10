@@ -40,7 +40,7 @@
 import { ts } from "../../ts-api.js";
 import type { LinearContext } from "../../codegen-linear/context.js";
 import { LINEAR_GENERIC_OBJECT_TAG } from "../../codegen-linear/layout.js";
-import { FMOD_FN } from "../../codegen/fmod.js";
+import { FMOD_EARLY_MAGNITUDE_FN, FMOD_FN } from "../../codegen/fmod.js";
 import {
   LINEAR_IR_STRING_CHAR_AT_FN,
   LINEAR_IR_STRING_CHAR_CODE_AT_FN,
@@ -1058,8 +1058,7 @@ function makeLinearIrResolver(
           return resolveRuntimeFunc(ref.binding.symbol);
         case "intrinsic": {
           const symbol = ref.binding.symbol;
-          // #2956 L3: from-ast keeps string comparison/method choice abstract.
-          // Resolve those intrinsics onto the canonical linear UTF-8 runtime.
+          // #2956 L3: resolve from-ast's abstract choices onto canonical linear runtimes.
           if (symbol === IR_STRING_COMPARE_FN) return resolveRuntimeFunc("__str_cmp");
           if (
             symbol === LINEAR_IR_STRING_CHAR_AT_FN ||
@@ -1068,9 +1067,10 @@ function makeLinearIrResolver(
             symbol === "__str_slice" ||
             symbol === "__arr_get" ||
             symbol === "__arr_len" ||
+            symbol === FMOD_EARLY_MAGNITUDE_FN ||
             symbol === FMOD_FN
           ) {
-            return resolveRuntimeFunc(symbol);
+            return resolveRuntimeFunc(symbol === FMOD_EARLY_MAGNITUDE_FN ? FMOD_FN : symbol);
           }
           // (#2956 L2) Vec mutation is an abstract element-store request. On
           // linear it maps to the canonical grow-on-OOB array runtime.

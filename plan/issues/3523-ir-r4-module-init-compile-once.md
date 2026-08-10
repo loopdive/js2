@@ -36,8 +36,15 @@ files:
   - tests/issue-3523-ir-module-init-compile-once.test.ts
 loc-budget-allow:
   - src/codegen/index.ts
+  - src/codegen/declarations.ts
+  - src/ir/integration.ts
+  - src/ir/prepared-component-dependencies.ts
 func-budget-allow:
   - src/codegen/index.ts::generateModule
+  - src/codegen/declarations.ts::compileDeclarations
+  - src/ir/integration.ts::compileIrPathFunctions
+  - src/ir/integration.ts::makeResolver
+  - src/ir/prepared-component-dependencies.ts::collectFunctionEvidence
 ---
 
 # #3523 — IR-only R4: typed ordered module-init compile-once ownership
@@ -267,6 +274,76 @@ before opening Calendar. Parallel work is limited to disjoint tests,
 inventories, optimization audits, and reviews. This Markdown issue and the
 parent/adjacent `plan/issues` records are the ownership and handover source of
 truth; do not create or use GitHub Issues for this migration checklist.
+
+### Algorithms compile-once checkpoint (2026-08-09)
+
+The Algorithms transaction now retires the exact six-body population above.
+All six functions plus the source-qualified `<module-init>` terminal seal as
+one dependency-complete prepared component, and all seven record
+`legacyBodyEmitted: false`, `irBodyEmitted: true`. The checked hybrid census is
+now **5/5 entries, 37/37 IR-emitted terminals, 10 legacy bodies, 0 Unsupported,
+and 0 Invariant**, reducing the ceiling from **16 to 10**. Strict IR-only is
+expected-red for one reason only: the ten Calendar bodies listed below.
+
+This is a deliberately bounded first R4 owner. Production routing accepts only
+the host WasmGC shape `const <binding> = new Map<K, V>()` with zero constructor
+arguments after the typed selector, complete/gap-free semantic init plan,
+legacy-plan parity, and ordinary Wasm-start policy all agree. The compiler
+preallocates the source-qualified Program ABI init callable before IR
+preparation. A complete component fills and preserves that exact slot through
+IR; a rejected or failed preparation fills the same slot once through the
+existing direct route. Standalone, WASI, deferred, native-string, fast,
+multi-statement, mutable-binding, and other initializer shapes remain
+fail-closed on the established route.
+
+The acceptance oracle proves:
+
+- the exact 20-line playground trace on two calls, one `Map_new` during
+  instantiation, one persistent receiver, and no second-run memo writes;
+- active direct-function and direct-module-init poison seams, with all five new
+  function bodies and the initializer bypassing them while unsupported controls
+  still reach them;
+- the original numeric/vector call shapes: call-free `binarySearch` with an
+  `i32.shr_s` midpoint, exact recursive `fibMemo`, four typed quicksort vector
+  stores with one tail call, and scalar `joinNums` formatting; and
+- the direct backend's synchronous concat batching through the target-neutral
+  `batchStringConcat` IR pass: one `__concat_6`, three `__concat_3`, no
+  accidental `__concat_4`, four required pairwise calls, stable leaf order,
+  and conservative shared-intermediate/two-part near misses. Builtins parity
+  independently pins the same direct/IR batching shape.
+
+The dependency preparation fixes are general rather than Algorithms-name
+special cases: concrete i32/f64 JS bitwise operands no longer invent a dynamic
+unbox dependency, exception support is discovered through all nested final-IR
+buffers before sealing, and callable-import planning no longer seals at string
+length attachment before late semantic providers are registered. The new
+`IR-OPT-SYNC-BATCHED-CONCAT` ledger row makes this migrated optimization
+explicit and fail-closed.
+
+Pre-publication qualification is green for the 68-test Algorithms, Builtins,
+pass, and prepared-dependency matrix; TypeScript, lint, formatting, fallback,
+hybrid readiness, allocation provenance, equivalence, vacuity shape, oracle,
+LOC/function budget, issue-integrity, and optimization-retirement gates. The
+full equivalence gate reports no new regressions and 12 existing baseline rows
+now passing; this PR does not rewrite that shared baseline. The wider adjacent
+matrix passes 102/106: the same two #3142 failures reproduce on the untouched
+base commit, and two #3505 cases require the optional uninitialized
+`test262-fyi/data` submodule. Full Test262 remains merge-queue-only.
+
+No shared legacy implementation is deleted in this checkpoint. The ordinary
+function-body and module-init emitters still have the ten measured Calendar
+consumers plus broader unsupported hybrid shapes, so deleting either would
+remove live behavior. The next and only overlapping production family is:
+
+- Calendar module initializer, `el`, `mname`, `dimOf`, `fdow`, `priceOf`,
+  `renderCal`, `onDay`, `updFoot`, and `main` (**10 → 0**).
+
+Resume from branch `codex/3523-algorithms-retirement` in isolated worktree
+`/private/tmp/ts2wasm-3523-algorithms-retirement`; the dirty root checkout is
+outside it and must remain untouched. Publish one ready PR, freeze it once
+queued, and run full Test262 only through the merge queue. Do not start the
+Calendar production branch until this checkpoint lands or is explicitly
+withdrawn.
 
 ### Commit 2 — prepare/lower module init and make fallback one-pass
 
