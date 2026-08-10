@@ -1909,7 +1909,7 @@ f64.const 3</pre
                 </details>
               </div>
               <div class="feat-row" data-t262-paths="language/statements/labeled">
-                <span class="feat-badge full">✓</span>
+                <span class="feat-badge partial">⚠</span>
                 <span class="feat-name">Labeled statements (break / continue)</span>
                 <span class="feat-desc">Named loop targets for break and continue</span>
 
@@ -2092,7 +2092,7 @@ for (let i = 0; i &lt; 10; i++) {
                 </details>
               </div>
               <div class="feat-row" data-t262-paths="language/statements/try">
-                <span class="feat-badge full">✓</span>
+                <span class="feat-badge partial">⚠</span>
                 <span class="feat-name">try / catch / finally</span>
                 <span class="feat-desc">Exception handling with optional finally block</span>
                 <details>
@@ -2279,7 +2279,7 @@ const found = arr.find(x =&gt; x &gt; 5);</pre
                 </details>
               </div>
               <div class="feat-row" data-t262-paths="built-ins/RegExp,built-ins/RegExpStringIteratorPrototype">
-                <span class="feat-badge full">✓</span>
+                <span class="feat-badge partial">⚠</span>
                 <span class="feat-host">host</span>
                 <span class="feat-name">Regular expressions</span>
                 <span class="feat-desc">Pattern matching and string search</span>
@@ -2688,7 +2688,7 @@ new Proxy(t, handler);      // trap dispatch not yet</pre
                 </details>
               </div>
               <div class="feat-row" data-t262-paths="built-ins/Promise">
-                <span class="feat-badge partial">⚠</span>
+                <span class="feat-badge none">✗</span>
                 <span class="feat-host">host</span>
                 <span class="feat-name">Promise .then / .catch / .finally</span>
                 <span class="feat-desc">Promise chaining and error handling</span>
@@ -2832,7 +2832,7 @@ const { a, ...rest } = obj;</pre
                 </details>
               </div>
               <div class="feat-row" data-t262-paths="language/expressions/coalesce">
-                <span class="feat-badge full">✓</span>
+                <span class="feat-badge partial">⚠</span>
                 <span class="feat-name">Nullish coalescing (??)</span>
                 <span class="feat-desc">Default values for null or undefined</span>
                 <details>
@@ -2945,7 +2945,7 @@ class Counter {
                 </details>
               </div>
               <div class="feat-row" data-t262-paths="built-ins/Error/cause">
-                <span class="feat-badge partial">⚠</span>
+                <span class="feat-badge none">✗</span>
                 <span class="feat-name">Error.cause</span>
                 <span class="feat-desc">Chain errors with a cause property</span>
                 <details>
@@ -3135,7 +3135,7 @@ const rev = arr.toReversed();</pre
                 </details>
               </div>
               <div class="feat-row" data-t262-paths="language/comments/hashbang,language/source-text">
-                <span class="feat-badge full">✓</span>
+                <span class="feat-badge partial">⚠</span>
                 <span class="feat-name">Hashbang (#!) comments</span>
                 <span class="feat-desc">Unix shebang line support</span>
 
@@ -3254,7 +3254,7 @@ nums().filter(x =&gt; x &gt; 1)
             </div>
             <div class="feat-section expanded">
               <div class="feat-edition">ES2026</div>
-              <div class="feat-row" data-t262-paths="built-ins/Error/isError">
+              <div class="feat-row" data-t262-paths="">
                 <span class="feat-badge partial">⚠</span>
                 <span class="feat-name">Error.isError</span>
                 <span class="feat-desc">Cross-realm-safe branded check for Error objects</span>
@@ -3270,7 +3270,7 @@ Error.isError({ name: "TypeError" }); // false</pre
                   </div>
                 </details>
               </div>
-              <div class="feat-row" data-t262-paths="built-ins/Map/prototype/getOrInsert">
+              <div class="feat-row" data-t262-paths="">
                 <span class="feat-badge partial">⚠</span>
                 <span class="feat-name">Upsert (Map.getOrInsert)</span>
                 <span class="feat-desc">Insert-if-absent then read, in one Map lookup</span>
@@ -3284,7 +3284,7 @@ counts.getOrInsert("a", 0);</pre
                   <div class="feat-explain">Replaces the has/get/set dance with a single lookup.</div>
                 </details>
               </div>
-              <div class="feat-row" data-t262-paths="built-ins/Array/fromAsync">
+              <div class="feat-row" data-t262-paths="">
                 <span class="feat-badge partial">⚠</span>
                 <span class="feat-host">host</span>
                 <span class="feat-name">Array.fromAsync</span>
@@ -3299,8 +3299,8 @@ counts.getOrInsert("a", 0);</pre
                   </div>
                 </details>
               </div>
-              <div class="feat-row" data-t262-paths="built-ins/Math/sumPrecise">
-                <span class="feat-badge none">✗</span>
+              <div class="feat-row" data-t262-paths="">
+                <span class="feat-badge partial">⚠</span>
                 <span class="feat-name">Math.sumPrecise</span>
                 <span class="feat-desc">Exactly-rounded sum of a list of numbers</span>
 
@@ -3314,7 +3314,7 @@ counts.getOrInsert("a", 0);</pre
                   </div>
                 </details>
               </div>
-              <div class="feat-row" data-t262-paths="built-ins/Iterator/concat">
+              <div class="feat-row" data-t262-paths="">
                 <span class="feat-badge partial">⚠</span>
                 <span class="feat-host">host</span>
                 <span class="feat-name">Iterator sequencing (Iterator.concat)</span>
@@ -3346,7 +3346,7 @@ counts.getOrInsert("a", 0);</pre
                   </div>
                 </details>
               </div>
-              <div class="feat-row" data-t262-paths="built-ins/JSON/rawJSON,built-ins/JSON/isRawJSON">
+              <div class="feat-row" data-t262-paths="">
                 <span class="feat-badge partial">⚠</span>
                 <span class="feat-name">JSON.parse source text access</span>
                 <span class="feat-desc">Preserve exact number source through parse/stringify</span>
