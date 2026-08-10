@@ -55,7 +55,7 @@ jobs:
     # `[skip ci]` commit is a push to main. `[skip ci]` suppresses workflows on
     # that commit, but the actor check is what makes the loop impossible rather
     # than merely unlikely.
-    if: github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
+    if: github.repository == 'loopdive/js2wasm' && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     environment: baseline-promote
