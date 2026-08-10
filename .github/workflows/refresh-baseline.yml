@@ -233,13 +233,31 @@ jobs:
           ./node_modules/.bin/esbuild src/runtime.ts --bundle --platform=node --format=esm \
             --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
 
-      # (#2928 E7) Mirror test262-sharded.yml: the standalone lane links the
-      # refusal runtime-eval provider so eval-mentioning modules instantiate.
-      # An emergency-heal baseline measured WITHOUT it would publish a
-      # standalone number the ordinary lane can no longer reproduce.
-      - name: Prebuild refusal runtime-eval provider (#2928)
+      # (#2928 E7 / #4013 / #4354) Mirror test262-sharded.yml: the standalone
+      # lane links the FULL Acorn+interpreter runtime-eval provider, so
+      # eval-dependent modules actually evaluate instead of refusing.
+      #
+      # This step used to pass `--refusal-only`, which silently made every
+      # baseline this workflow promoted ~740 standalone tests LOW: eval tests
+      # recorded `TypeError: dynamic code evaluation is not supported in this
+      # standalone build (no js2wasm:runtime-eval interpreter linked)` rather
+      # than their real result (ES5 standalone read 82.5 % instead of 89.1 %).
+      # `test262-sharded.yml` moved to the full provider in #4013; this
+      # workflow was left behind, so the two lanes disagreed and whichever ran
+      # last won. See #4354.
+      #
+      # test262-sharded.yml builds this ONCE in a dedicated job and fans the
+      # artifact out to its shards, because the build costs minutes and ~3 GB.
+      # Here it is built per standalone shard instead: this workflow's shards
+      # run in parallel, so the wall-clock cost is one build (~5 min), not N —
+      # at the price of extra runner-minutes on a workflow that fires at most
+      # every 8 h. Correctness first; if the runner-minutes matter, lift the
+      # build+upload/download job from test262-sharded.yml wholesale.
+      - name: Prebuild full runtime-eval provider (#2928/#4354)
         if: matrix.target.test262_target == 'standalone'
-        run: node scripts/build-runtime-eval-provider.mjs --refusal-only
+        env:
+          NODE_OPTIONS: --max-old-space-size=3072
+        run: node scripts/build-runtime-eval-provider.mjs
 
       - name: Run shard
         run: |
