@@ -48,6 +48,7 @@ import {
 import { emitThrowReferenceError } from "./expressions/helpers.js";
 import { compileObjectLiteralAsExternref } from "./literals.js";
 import { bodyUsesArguments } from "./helpers/body-uses-arguments.js";
+import { shouldRegisterArgumentsWithHost } from "./helpers/arguments-registration.js";
 import { seedDeclarationArgumentsCallee } from "./arguments-callee.js"; // (#4243) §10.6 step 13.a
 import { isStrictFunction, isSimpleParameterList } from "./helpers/is-strict-function.js";
 import { initializeFunctionPoisonPillContext } from "./function-poison-pill.js";
@@ -634,7 +635,6 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
     }
   }
   if (!paramDestructWasLive) ctx.liveBodies.delete(paramDestructBody);
-
   // Set up `arguments` object if the function body references it.
   // We create a vec struct (same as Array) populated from all function parameters.
   // Use externref elements so that all parameter types (numbers, strings, objects)
@@ -692,6 +692,7 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
       params.map((p) => p.type),
       0,
       { vecTypeIdx, arrTypeIdx, argsLocalIdx: argsLocal, arrTmpIdx: arrTmp },
+      shouldRegisterArgumentsWithHost(ctx, decl.body, fctx.directEvalBindingNames !== undefined),
     );
 
     // (#4243) §10.6 step 13.a — a non-strict arguments object carries `callee`.

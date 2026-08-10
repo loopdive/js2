@@ -280,10 +280,28 @@ export function inferParamTypeFromCallSites(
               // seed's type, mirroring the IR fixpoint's first hop. Null for
               // every arg outside that exact shape.
               const seededArg = dtsSeedValTypeForArgIdentifier(ctx, arg);
+              // Linked standalone graphs also carry a scope-resolved verdict
+              // that every definition reaching this binding is a string. This
+              // is stronger than the JS checker's `any` and gives downstream
+              // implicit-any helpers the native-string ABI without guessing
+              // from body use. Under-applied/null/non-string sites contribute
+              // opaque definitions to that verdict and therefore fail closed.
+              const stringArg =
+                ctx.nativeStrings && ctx.anyStrTypeIdx >= 0 && ctx.stringLocalVerdict?.(arg, arg.text) === true
+                  ? ({ kind: "ref", typeIdx: ctx.anyStrTypeIdx } as ValType)
+                  : null;
               if (declaration && ctx.usageInference.scalarForDecl(declaration) === "number") {
                 const wasmType: ValType = { kind: "f64" };
                 if (agreed === null) agreed = wasmType;
                 else if (agreed.kind !== wasmType.kind) conflict = true;
+              } else if (stringArg !== null) {
+                if (agreed === null) agreed = stringArg;
+                else if (
+                  agreed.kind !== stringArg.kind ||
+                  (agreed.kind === "ref" && stringArg.kind === "ref" && agreed.typeIdx !== stringArg.typeIdx)
+                ) {
+                  conflict = true;
+                }
               } else if (seededArg !== null) {
                 if (agreed === null) agreed = seededArg;
                 else if (
@@ -478,6 +496,16 @@ export function inferImplicitAnyParamType(
 ): ValType | null {
   const callSites = inferParamTypeFromCallSites(ctx, funcName, paramIndex, sourceFile);
   if (callSites.type) return callSites.type;
+  const parameter = decl.parameters[paramIndex];
+  if (
+    parameter &&
+    ts.isIdentifier(parameter.name) &&
+    ctx.nativeStrings &&
+    ctx.anyStrTypeIdx >= 0 &&
+    ctx.stringLocalVerdict?.(parameter, parameter.name.text) === true
+  ) {
+    return { kind: "ref", typeIdx: ctx.anyStrTypeIdx };
+  }
   if (callSites.sawCallSite) return null;
   // (#743) Truly-uncalled exported entrypoint: the shipped `.d.ts` claim is the
   // only signal and its export boundary is guarded (ToNumber for f64; a typed

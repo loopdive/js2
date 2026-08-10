@@ -155,6 +155,15 @@ export class ProgramAbiClassCallableRegistry {
     }
   }
 
+  /** Canonical last live allocator observation for one exact class unit. */
+  functionForUnit(unitId: IrUnitId): WasmFunction | undefined {
+    const observation = this.units
+      .get(unitId)
+      ?.filter((candidate) => definedFuncAt(this.ctx, candidate.funcIdx) !== undefined)
+      .at(-1);
+    return observation ? definedFuncAt(this.ctx, observation.funcIdx) : undefined;
+  }
+
   /** Observe one allocator function belonging to an exact class source unit. */
   observeUnit(declaration: ts.Node, displayName: string, funcIdx: FuncHandle): IrUnitId {
     this.assertOpen(displayName);

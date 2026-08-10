@@ -31,6 +31,12 @@ if (hasPlanningArtifacts) {
   run("node", ["scripts/build-planning-artifacts.mjs"]);
 }
 
+// Keep the visible ES2016+ feature catalog aligned with TC39's canonical
+// finished-proposals table. The sync script retains the committed last-known-
+// good artifact when the network is unavailable, so local/offline builds stay
+// deterministic while every Pages deployment gets a chance to refresh.
+run(process.execPath, ["--experimental-strip-types", "scripts/sync-es-edition-features.ts"]);
+
 run(process.execPath, ["--experimental-strip-types", "scripts/generate-editions.ts"]);
 
 // (#2636) Per-edition STANDALONE buckets. The host pass above wrote

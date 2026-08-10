@@ -222,6 +222,16 @@ export interface IrClassMethodDescriptor {
    */
   readonly target?: IrFuncRef;
   /**
+   * Exact source placement for body ownership and ABI patching. `name` is the
+   * already-resolved semantic property key; consumers must not recover this
+   * identity from a flat class/member spelling.
+   */
+  readonly placement?: {
+    readonly classId: IrClassId;
+    readonly unitId: IrUnitId;
+    readonly staticClassMember: boolean;
+  };
+  /**
    * (#3144) Member kind discriminator. Absent/`"method"` = instance method
    * (the pre-#3144 population — every existing consumer that reads
    * `shape.methods` expects instance methods, so lookups MUST filter on this

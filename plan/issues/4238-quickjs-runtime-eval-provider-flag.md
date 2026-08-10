@@ -4,7 +4,11 @@ title: "QuickJS-backed runtime-eval provider behind a flag — swap the eval eng
 status: in-progress
 sprint: current
 created: 2026-08-08
-updated: 2026-08-08
+updated: 2026-08-09
+# Slice 2 (2026-08-09) touches NO src/ file — the whole value bridge lives in
+# the js2wasm-compiled adapter source under scripts/, so it adds no loc/func/
+# oracle budget grants. Status stays in-progress: slice 3 (direct-eval scope
+# snapshot + the eval-code residual measurement, acceptance box 4) is open.
 # Slice 1 landed the three option-gated compiler enablers (§2). Every new code
 # path is behind `ctx.externNativeTypes` / `ctx.externImportModule` /
 # `ctx.importMemory`, all default-off, so a compile that does not set them is
@@ -113,20 +117,30 @@ does NOT change. User modules compile identically under both engines.
 
 ## Acceptance criteria
 
-- [ ] With no flag: byte-identical provider selection behavior; full test
-      suite + eval test262 subset unchanged.
-- [ ] With `JS2WASM_EVAL_ENGINE=quickjs` (name per spec): indirect eval,
+- [x] With no flag: byte-identical provider selection behavior; full test
+      suite + eval test262 subset unchanged. *(slice 1; re-proved in slice 2 —
+      the six default-path suites are green with no engine flag set, and the
+      lane workflow runs them in the same job so a regression cannot hide.)*
+- [x] With `JS2WASM_EVAL_ENGINE=quickjs` (name per spec): indirect eval,
       `new Function`, and eval-defined-function invocation work end-to-end
       from a js2wasm-compiled standalone module, with zero JS behind the
-      seam beyond the WASI stub.
-- [ ] A scoped test lane runs a defined eval subset under the QuickJS
+      seam beyond the WASI stub. *(slice 2)*
+- [x] A scoped test lane runs a defined eval subset under the QuickJS
       engine and is green; its pass/residual list is recorded in this file.
+      *(slice 2 — `tests/quickjs-eval-provider.test.ts`, 17/17; residuals in
+      "Slice 2 — implementation record" below. The eval-code test262 SUBSET
+      measurement is slice 3's done-signal, per §7.)*
 - [ ] Direct-eval scope semantics: MVP level defined, implemented or
-      explicitly deferred with the residual documented here.
-- [ ] Engine selection is observable (e.g. provider reports its tier/engine
-      string) so tests can assert which engine served an eval.
-- [ ] No new host imports without a standalone fallback (CLAUDE.md
+      explicitly deferred with the residual documented here. *(defined in §4;
+      slices 1–2 ship the typed refusal, slice 3 implements the snapshot.)*
+- [x] Engine selection is observable (e.g. provider reports its tier/engine
+      string) so tests can assert which engine served an eval. *(slice 1:
+      `selection.engine`, the QUICKJS message, and the in-band
+      `__js2wasm_eval_engine` marker.)*
+- [x] No new host imports without a standalone fallback (CLAUDE.md
       dual-mode principle) — the QuickJS path must remain pure-wasm+WASI.
+      *(the adapter imports only `js2wasm:qjs`, the artifact only
+      `wasi_snapshot_preview1`; both asserted before publish.)*
 
 ## Implementation Plan
 
@@ -722,3 +736,123 @@ QuickJS heap, imported at memory index 0.
 - **§2 `qjs_call` and the remaining shim additions** are slice 2 per §7; only
   `qjs_new_string_len` / `qjs_new_undefined` landed, as §7 specifies.
 - **§6 CI lane** (`quickjs-wasi-artifact.yml` second job) is slice 2 per §7.
+
+## Slice 2 — implementation record (2026-08-09)
+
+**Done-signal met.** Under `JS2WASM_EVAL_ENGINE=quickjs` a js2wasm-compiled
+standalone module gets, through the unchanged 4-import
+`js2wasm:runtime-eval` seam: number / string (UTF-8 both directions) /
+boolean / null / undefined round-trips, `new Function` including its early
+errors, invocation of an eval-defined function (`qjs_call`), errors carrying
+their real `name` and `message`, and a globals push/pull mirror. Still zero JS
+behind the seam beyond `wasi-stub.mjs`.
+
+Lane: `tests/quickjs-eval-provider.test.ts` **17/17 green** (§6 cases 1–11 plus
+the handle-box, compiled-object-refusal and cross-engine-parity cases).
+
+### Artifact
+
+`scripts/quickjs-artifact/qjs_shim.c` changed, so the artifact was rebuilt and
+the cache key moved:
+
+| | slice 1 | slice 2 |
+| --- | --- | --- |
+| artifact key | `0c848fd169d84e0f` | `d7ac807e1f14e8e5` |
+| `libquickjs.wasm` sha256 | `21b8f62e91998cb4…` | `18caf5889aaaa961f063be31f384f559ff8698a4b12fedaf8aec2524dd84d05f` |
+| raw / gzip bytes | — | 1,012,154 / 348,364 |
+
+New shim exports (all on the slice-1 borrow-in/own-out ABI): `qjs_call`,
+`qjs_new_bool`, `qjs_new_null`, `qjs_is_function`, `qjs_to_cstring_len`.
+`qjs_to_cstring_len` exists because `qjs_to_cstring` cannot serve the
+QuickJS→GC direction: a JS string may contain U+0000, so a NUL scan truncates.
+
+### What landed
+
+| file | why |
+| --- | --- |
+| `scripts/quickjs-artifact/qjs_shim.c` | the five slice-2 wrappers above |
+| `scripts/quickjs-eval-provider.mjs` | the full adapter: UTF-8 transcoder both directions, tag-dispatched value bridge, retained-handle registry, callable marker + opaque handle box, error mapping, globals mirror, real `__runtime_new_function` / `__runtime_apply_interpreted`; artifact-export assertion; five canary expectations |
+| `scripts/runtime-eval-provider.mjs` | NEW `loadProviderCompiler({label, capability})` — the shared bundle-or-tsx loader with stale-bundle DETECTION (below) |
+| `scripts/build-quickjs-eval-provider.mjs` | uses the shared loader with a capability probe; canary-verifies all five readings; asserts the artifact's exports before linking |
+| `scripts/build-runtime-eval-provider.mjs` | uses the shared loader (no probe) so the two prebuild scripts cannot drift |
+| `tests/quickjs-eval-provider.test.ts` | §6 cases 5–10 + handle box + compiled-object refusal + cross-engine parity; every eval source de-vacuumed (below) |
+| `.github/workflows/quickjs-wasi-artifact.yml` | `eval-provider-lane` job (NON-required, `workflow_dispatch` + weekly cron); artifact-export check extended; schedule-safe input defaults |
+
+### The stale-bundle landmine (robustness fix)
+
+`loadCompile()` prefers a prebuilt `scripts/compiler-bundle.mjs` over compiling
+from `src/`. A bundle built BEFORE slice 1's enablers still imports and still
+exports a working `compile`, so the adapter compiles "successfully" with its
+`wasm:memory` accessors NOT inline-lowered — `store8` leaks to `env` and the
+build dies with
+
+```
+quickjs adapter must import ONLY js2wasm:qjs, found env::store8 —
+an extern leaked outside the provider namespace
+```
+
+which accuses the adapter, and the adapter is fine. The fix probes the
+capability DIRECTLY on a two-line module (extern in `js2wasm:qjs`, memory
+imported, nothing in `env`) before accepting a compiler, skips a candidate that
+fails while naming the bundle as the suspect, and falls back to the source path.
+The bundle path is NOT abandoned — with a fresh bundle it builds and
+canary-verifies identically, so staleness detection is the right lever. The
+helper is shared with the interpreter prebuild (which passes no probe, so its
+behaviour is unchanged).
+
+### Two bugs this slice found and fixed in itself
+
+1. **The globals pull corrupted the caller's realm.** Without a filter, the pull
+   wrote every QuickJS `globalThis` value back onto the caller's realm object —
+   including `eval` and `Function`, replacing the memoized intrinsic markers
+   with QuickJS function boxes. Every LATER `(0, eval)` in the same module then
+   went somewhere else: the second evaluation of the same source came back as an
+   object, and direct eval stopped refusing. Both sides now mirror **primitives
+   only** (caller-side `typeof` filter + QuickJS-side tag filter), which is also
+   what §3 specifies.
+2. **Vacuous canaries.** The first slice-2 canary asserted a string round-trip
+   with `(0, eval)("'ab' + " + "'cde'")` — a compile-time constant, so
+   `tryStaticEvalInline` answered it at COMPILE time and the canary passed while
+   the real dynamic string path was broken. Every source in the canary and in
+   the test lane is now composed through a runtime `joinSource(parts)` loop.
+   This is slice-1 vacuity trap #1, and it re-bit immediately.
+
+### Slice-2 residuals (all typed + catchable, none silent)
+
+1. **Direct eval** still returns the typed `TypeError` (slice 3).
+2. **A compiled GC object cannot cross INTO evaluated code** — typed
+   `TypeError` naming "compiled objects" (spec §3). Locked by a test.
+   The #4245 membrane is what makes it representable.
+3. **Symbols and BigInts coming OUT** of QuickJS are a typed `TypeError`
+   (no MVP counterpart in the compiled heap). Numeric `SHORT_BIG_INT` is
+   converted as a number.
+4. **A non-callable QuickJS object** crosses out as an opaque handle box: AOT
+   property access sees a near-empty object. Passing it back in unwraps to the
+   SAME handle, so identity holds within the provider (tested).
+5. **Globals mirror carries primitives only.** A non-primitive caller global is
+   skipped without error, so evaluated code sees whatever QuickJS already has
+   for that name. Names the evaluated code CREATES are not pulled back — the
+   caller's realm object enumerates only bindings the compiled module owns.
+6. **Lone surrogates** in a string crossing INTO QuickJS encode as U+FFFD
+   (WTF-8 is not expressible through a C string API).
+7. **Handles are retained for the instance lifetime.** Every handle a wrapper
+   returns is freed exactly once on every path (success AND refusal), except
+   the deliberately retained ones: the registry's boxes, the runtime and the
+   context. Cross-heap cycle collection remains out of scope.
+
+### What slice 3 needs
+
+- The scope machinery in `__runtime_direct_eval`'s 12 arguments: the three
+  name/cell layers plus the 64-cell activation-state pool
+  (`runtime-eval-provider.ts:437-558`). The adapter already has everything else
+  it needs — primitives cross both ways, `qjs_eval` runs at global scope, and
+  the globals mirror is the model to copy for cells.
+- `with (S) { … }` for sloppy callers / `const`-preamble for strict, then write
+  changed primitives back into the live cells; mirror the
+  `RUNTIME_EVAL_GLOBAL_LEXICAL_CELLS_PROPERTY` carrier the same way.
+- **Reuse the primitive-only filter.** The realm-corruption bug above is
+  exactly the shape slice 3 will hit again with cells: writing a non-primitive
+  back through a shared carrier breaks later entries, not the current one, so
+  it looks like a flake.
+- Then run `language/eval-code/` under the flag and record the numbers here
+  against the interpreter's 797/816.
