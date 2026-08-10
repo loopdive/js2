@@ -354,6 +354,42 @@ Two design points that are easy to get wrong:
   reporting success. Pass a timestamp carried _inside_ the artifact
   (`benchmark-manifest.json` → `generatedAt`).
 
+**Better still: do not push to `main` at all — promote through a PR.** The gate
+above is damage control, and it is damage control with two deliberate holes: the
+staleness floor _overrides_ the queue check once the artifact is old enough, and
+a malfunctioning gate fails open. Both are the right call for a direct push, and
+both mean that on a busy day the deferrals accumulate until something forces a
+push into a live merge group anyway. Routing the artifact through a PR removes
+the class instead of bounding it: `main` then only ever advances via the queue,
+which is this document's own rule for everything else.
+
+`npm-compat-refresh.yml` is the reference implementation (2026-08-09). The shape
+that makes it cheap and non-blocking:
+
+- **One reused branch, force-updated, with at most one open PR on it.** Artifact
+  PRs coalesce; a backlog of stale ones would be worse than the problem.
+- **The diff must stay artifact-only.** `benchmarks/results/**` and
+  `website/public/**` are absent from the `&test262-paths` anchor in
+  `test262-sharded.yml`, so the merge_group `detect` job emits
+  `run_shards=false` and the ~19-minute shard matrix is skipped. One file on
+  that anchor — `package.json` is the easy mistake — puts the whole matrix back.
+- **No `[skip ci]`.** The PR needs its checks to run to reach `CLEAN`, and the
+  landing commit needs to be visible to `deploy-pages`.
+- **The PR must be opened by an actor that is not `GITHUB_TOKEN`** (mint a
+  GitHub App token). A `GITHUB_TOKEN`-created PR fires no `pull_request` /
+  `pull_request_target` events, so it never gets CI or `cla-check`, never
+  reaches `CLEAN`, and `auto-enqueue` never touches it — a PR that strands
+  forever while looking healthy.
+- **Do not enqueue from the workflow** (#2786). `auto-enqueue.yml` is the single
+  enqueuer.
+- **Do not force-update the branch while its PR is in the merge queue** — that
+  rebuilds the in-flight group and cancels its run, which is the same harm
+  relocated. If the queue cannot be read, push anyway: an unreadable gate must
+  never freeze the artifact.
+
+`benchmark-refresh.yml` and `refresh-baseline.yml` still push directly and still
+use the gate; the script stays for them.
+
 A **staleness floor** (`--stale-after-hours`, 6h) keeps a never-draining queue
 from freezing the artifact: past the floor the push proceeds anyway, trading at
 most one rebuild per floor-period against an unbounded freeze. A pusher whose

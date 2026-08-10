@@ -1133,7 +1133,8 @@
       /* Each edition section collapses independently, expanded by default —
          click the edition headline to collapse just that edition's rows. */
       .feat-section:not(.expanded) .feat-row,
-      .feat-section:not(.expanded) .feat-note {
+      .feat-section:not(.expanded) .feat-note,
+      .feat-section:not(.expanded) .feat-official-catalog {
         display: none;
       }
       .feat-edition {
@@ -1236,6 +1237,41 @@
       .feat-tables-note-mono {
         font-family: var(--mono);
         font-size: 12px;
+      }
+      .feat-official-catalog {
+        padding: 10px 24px 14px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      }
+      .feat-official-catalog-label {
+        margin: 0 0 8px;
+        font-family: var(--mono);
+        font-size: 9px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.34);
+      }
+      .feat-official-catalog-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      .feat-official-catalog-list a,
+      .feat-official-catalog-list span {
+        display: inline-block;
+        padding: 3px 7px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        color: rgba(255, 255, 255, 0.62);
+        font-family: var(--mono);
+        font-size: 9px;
+        line-height: 1.35;
+        text-decoration: none;
+      }
+      .feat-official-catalog-list a:hover {
+        border-color: rgba(255, 255, 255, 0.24);
+        color: #fff;
       }
       .feat-edition-passbar-track {
         display: block;
@@ -1681,7 +1717,9 @@
             <em>overlap</em>
             (they are slices, not a sum); and the ≤ES3 / ES5 core-language sections predate
             <span class="feat-tables-note-mono">features:</span>
-            tags, so they show the edition headline only.
+            tags, so they show the edition headline only. The ES2016+ edition membership list is synchronized from
+            TC39's finished-proposals record on every site build; the detailed rows retain examples where the compiler
+            has a curated demo.
           </p>
           <p style="margin-top: 1.25rem">
             <a class="btn-outline" href="./benchmarks/report.html">Compatibility Test Report</a>
@@ -1871,7 +1909,7 @@ f64.const 3</pre
                 </details>
               </div>
               <div class="feat-row" data-t262-paths="language/statements/labeled">
-                <span class="feat-badge full">✓</span>
+                <span class="feat-badge partial">⚠</span>
                 <span class="feat-name">Labeled statements (break / continue)</span>
                 <span class="feat-desc">Named loop targets for break and continue</span>
 
@@ -2241,7 +2279,7 @@ const found = arr.find(x =&gt; x &gt; 5);</pre
                 </details>
               </div>
               <div class="feat-row" data-t262-paths="built-ins/RegExp,built-ins/RegExpStringIteratorPrototype">
-                <span class="feat-badge full">✓</span>
+                <span class="feat-badge partial">⚠</span>
                 <span class="feat-host">host</span>
                 <span class="feat-name">Regular expressions</span>
                 <span class="feat-desc">Pattern matching and string search</span>
@@ -2650,7 +2688,7 @@ new Proxy(t, handler);      // trap dispatch not yet</pre
                 </details>
               </div>
               <div class="feat-row" data-t262-paths="built-ins/Promise">
-                <span class="feat-badge partial">⚠</span>
+                <span class="feat-badge none">✗</span>
                 <span class="feat-host">host</span>
                 <span class="feat-name">Promise .then / .catch / .finally</span>
                 <span class="feat-desc">Promise chaining and error handling</span>
@@ -2794,7 +2832,7 @@ const { a, ...rest } = obj;</pre
                 </details>
               </div>
               <div class="feat-row" data-t262-paths="language/expressions/coalesce">
-                <span class="feat-badge full">✓</span>
+                <span class="feat-badge partial">⚠</span>
                 <span class="feat-name">Nullish coalescing (??)</span>
                 <span class="feat-desc">Default values for null or undefined</span>
                 <details>
@@ -2907,7 +2945,7 @@ class Counter {
                 </details>
               </div>
               <div class="feat-row" data-t262-paths="built-ins/Error/cause">
-                <span class="feat-badge partial">⚠</span>
+                <span class="feat-badge none">✗</span>
                 <span class="feat-name">Error.cause</span>
                 <span class="feat-desc">Chain errors with a cause property</span>
                 <details>
@@ -3097,7 +3135,7 @@ const rev = arr.toReversed();</pre
                 </details>
               </div>
               <div class="feat-row" data-t262-paths="language/comments/hashbang,language/source-text">
-                <span class="feat-badge full">✓</span>
+                <span class="feat-badge partial">⚠</span>
                 <span class="feat-name">Hashbang (#!) comments</span>
                 <span class="feat-desc">Unix shebang line support</span>
 
@@ -3216,7 +3254,7 @@ nums().filter(x =&gt; x &gt; 1)
             </div>
             <div class="feat-section expanded">
               <div class="feat-edition">ES2026</div>
-              <div class="feat-row" data-t262-paths="built-ins/Error/isError">
+              <div class="feat-row" data-t262-paths="">
                 <span class="feat-badge partial">⚠</span>
                 <span class="feat-name">Error.isError</span>
                 <span class="feat-desc">Cross-realm-safe branded check for Error objects</span>
@@ -3232,7 +3270,7 @@ Error.isError({ name: "TypeError" }); // false</pre
                   </div>
                 </details>
               </div>
-              <div class="feat-row" data-t262-paths="built-ins/Map/prototype/getOrInsert">
+              <div class="feat-row" data-t262-paths="">
                 <span class="feat-badge partial">⚠</span>
                 <span class="feat-name">Upsert (Map.getOrInsert)</span>
                 <span class="feat-desc">Insert-if-absent then read, in one Map lookup</span>
@@ -3246,7 +3284,7 @@ counts.getOrInsert("a", 0);</pre
                   <div class="feat-explain">Replaces the has/get/set dance with a single lookup.</div>
                 </details>
               </div>
-              <div class="feat-row" data-t262-paths="built-ins/Array/fromAsync">
+              <div class="feat-row" data-t262-paths="">
                 <span class="feat-badge partial">⚠</span>
                 <span class="feat-host">host</span>
                 <span class="feat-name">Array.fromAsync</span>
@@ -3261,8 +3299,8 @@ counts.getOrInsert("a", 0);</pre
                   </div>
                 </details>
               </div>
-              <div class="feat-row" data-t262-paths="built-ins/Math/sumPrecise">
-                <span class="feat-badge none">✗</span>
+              <div class="feat-row" data-t262-paths="">
+                <span class="feat-badge partial">⚠</span>
                 <span class="feat-name">Math.sumPrecise</span>
                 <span class="feat-desc">Exactly-rounded sum of a list of numbers</span>
 
@@ -3276,7 +3314,7 @@ counts.getOrInsert("a", 0);</pre
                   </div>
                 </details>
               </div>
-              <div class="feat-row" data-t262-paths="built-ins/Iterator/concat">
+              <div class="feat-row" data-t262-paths="">
                 <span class="feat-badge partial">⚠</span>
                 <span class="feat-host">host</span>
                 <span class="feat-name">Iterator sequencing (Iterator.concat)</span>
@@ -3308,7 +3346,7 @@ counts.getOrInsert("a", 0);</pre
                   </div>
                 </details>
               </div>
-              <div class="feat-row" data-t262-paths="built-ins/JSON/rawJSON,built-ins/JSON/isRawJSON">
+              <div class="feat-row" data-t262-paths="">
                 <span class="feat-badge partial">⚠</span>
                 <span class="feat-name">JSON.parse source text access</span>
                 <span class="feat-desc">Preserve exact number source through parse/stringify</span>
@@ -3532,8 +3570,9 @@ match (value) {
             extending past the JS baseline mean Wasm is faster. The left chart pins both runtimes to their baseline
             tier, the no-optimizing-JIT path that matters for cold starts and multi-tenant edge runtimes; the right
             chart is the production setup with both full optimizing pipelines. These benchmarks run in a JS host
-            (Wasmtime/WASI figures are in the section below). Use &ldquo;Run Browser Benchmark&rdquo; to measure live in
-            your browser, including additional DOM benchmarks.
+            (Wasmtime/WASI figures are in the section below). Source for each program is shown inline below the charts.
+            Use &ldquo;Run Browser Benchmark&rdquo; to measure live in your browser, including additional DOM
+            benchmarks.
           </p>
           <div class="conformance-diagrams">
             <div class="diagram-panel">
@@ -3555,6 +3594,77 @@ match (value) {
                 baseline-label="JS"
                 legend="Production tiers enabled — V8 TurboFan for JS, Liftoff→TurboFan for Wasm. Bars show speedup over the warm/hot JS runtime."
               ></perf-benchmark-chart>
+            </div>
+            <h4 class="host-bench-section-title">Sources</h4>
+            <p class="host-bench-section-desc">
+              One bar per program above. Each block below is the measured kernel — the single exported function the
+              harness times, taken verbatim from
+              <code>website/playground/examples/benchmarks/</code>
+              . Each file also exports a
+              <code>main()</code>
+              that draws the playground's DOM card; that scaffolding is compiled but never timed, so it is not shown
+              here.
+            </p>
+            <div class="bench-test-group" data-test="fib">
+              <h4 class="bench-test-title">fib — fib(30)</h4>
+              <p class="bench-test-desc">Recursive — pure i32/f64 math, no host calls.</p>
+              <details class="bench-test-source">
+                <summary>Show source</summary>
+                <pre class="how-code js">
+export function fib(n: number): number {
+  if (n &lt;= 1) return n;
+  return fib(n - 1) + fib(n - 2);
+}
+
+export function bench_fib(): number {
+  return fib(30);
+}</pre
+                >
+              </details>
+            </div>
+            <div class="bench-test-group" data-test="loop">
+              <h4 class="bench-test-title">loop — 1M Int32 sum</h4>
+              <p class="bench-test-desc">Tight i32 loop with explicit | 0 wrap, no allocations.</p>
+              <details class="bench-test-source">
+                <summary>Show source</summary>
+                <pre class="how-code js">
+export function bench_loop(): number {
+  let s = 0;
+  for (let i = 0; i &lt; 1000000; i++) s = (s + i) | 0;
+  return s;
+}</pre
+                >
+              </details>
+            </div>
+            <div class="bench-test-group" data-test="string">
+              <h4 class="bench-test-title">string — concat 1k</h4>
+              <p class="bench-test-desc">wasm:js-string concat per iteration.</p>
+              <details class="bench-test-source">
+                <summary>Show source</summary>
+                <pre class="how-code js">
+export function bench_string(): number {
+  let str = "";
+  for (let i = 0; i &lt; 1000; i++) str = str + "abcde";
+  return str.length;
+}</pre
+                >
+              </details>
+            </div>
+            <div class="bench-test-group" data-test="array">
+              <h4 class="bench-test-title">array — fill+sum 10k</h4>
+              <p class="bench-test-desc">Wasm GC array — push / get loop.</p>
+              <details class="bench-test-source">
+                <summary>Show source</summary>
+                <pre class="how-code js">
+export function bench_array(): number {
+  const arr: number[] = [];
+  for (let i = 0; i &lt; 10000; i++) arr.push(i);
+  let total = 0;
+  for (let i = 0; i &lt; arr.length; i++) total = total + arr[i];
+  return total;
+}</pre
+                >
+              </details>
             </div>
           </div>
         </div>
@@ -5907,6 +6017,72 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           return section;
         };
 
+        const loadOfficialFeatureCatalog = (() => {
+          let promise;
+          return () => {
+            if (!promise) {
+              promise = fetch("./es-edition-features.json")
+                .then((response) => {
+                  if (!response.ok) throw new Error("official edition feature catalog unavailable");
+                  return response.json();
+                })
+                .then((payload) => (Array.isArray(payload?.features) ? payload.features : []));
+            }
+            return promise;
+          };
+        })();
+
+        const hydrateOfficialFeatureCatalog = async (panel) => {
+          const features = await loadOfficialFeatureCatalog();
+          const byEdition = new Map();
+          for (const feature of features) {
+            const year = Number(feature?.edition);
+            const name = typeof feature?.name === "string" ? feature.name.trim() : "";
+            if (!Number.isInteger(year) || year < 2016 || !name) continue;
+            const label = `ES${year}`;
+            const list = byEdition.get(label) ?? [];
+            list.push({ name, proposalUrl: typeof feature.proposalUrl === "string" ? feature.proposalUrl : "" });
+            byEdition.set(label, list);
+          }
+
+          for (const [label, entries] of byEdition) {
+            const section = ensureGeneratedEditionSection(panel, label);
+            let catalog = section.querySelector(".feat-official-catalog");
+            if (!(catalog instanceof HTMLElement)) {
+              catalog = document.createElement("div");
+              catalog.className = "feat-official-catalog";
+              const editionHeader = section.querySelector(".feat-edition");
+              editionHeader?.insertAdjacentElement("afterend", catalog);
+            }
+
+            catalog.replaceChildren();
+            const heading = document.createElement("p");
+            heading.className = "feat-official-catalog-label";
+            heading.textContent = "Edition features · synced from TC39";
+            catalog.appendChild(heading);
+
+            const list = document.createElement("ul");
+            list.className = "feat-official-catalog-list";
+            for (const entry of entries) {
+              const item = document.createElement("li");
+              const content = entry.proposalUrl ? document.createElement("a") : document.createElement("span");
+              content.textContent = entry.name;
+              if (content instanceof HTMLAnchorElement) {
+                content.href = entry.proposalUrl;
+                content.target = "_blank";
+                content.rel = "noopener";
+              }
+              item.appendChild(content);
+              list.appendChild(item);
+            }
+            catalog.appendChild(list);
+
+            // A generated edition used to contain only this stale placeholder.
+            // The TC39 list is now the useful empty-state content.
+            if (section.dataset.generatedEdition === "true") section.querySelector(":scope > .feat-note")?.remove();
+          }
+        };
+
         const updateEditionPassBars = async () => {
           try {
             const { editionList, editionMap, proposalBucket } = await loadEditionBuckets();
@@ -5915,6 +6091,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
               editionList.forEach((edition) => {
                 ensureGeneratedEditionSection(panel, edition.normalizedEdition);
               });
+              await hydrateOfficialFeatureCatalog(panel);
               sortFeatureSectionsChronologically();
               applyFeatureEditionScope(window.__conformanceEditionScope || "overall");
             }

@@ -105,7 +105,7 @@ export function buildIrRequestedFunctionSkipProjection(
 export function correlateIrSkippedBodyNames(
   requested: IrLegacyUnitProjection,
   returnedLegacyNames: readonly string[],
-  kind: "function" | "class member",
+  kind: "function" | "class member" | "module initializer",
 ): IrCorrelatedSkippedFunctions {
   const correlation = requested.startResultCorrelation<true>();
   for (const legacyName of returnedLegacyNames) {

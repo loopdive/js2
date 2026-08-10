@@ -161,7 +161,7 @@ export interface TypeOracle {
 
 /** Builtins with first-class compiler handling (mirrors type-mapper's set —
  *  will be unified with it in Slice 2 when type-mapper folds in). */
-const BUILTIN_NAMES = new Set([
+export const BUILTIN_NAMES = new Set([
   "Array",
   "ArrayBuffer",
   "DataView",

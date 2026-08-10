@@ -64,15 +64,15 @@ The following measurements are independent and must not be conflated:
 | Adoption matrix                                  |       **18 / 58 rows IR-owned** | Those syntax rows have an IR implementation in measured configurations | Their legacy handlers are unreachable in mixed functions or at module scope |
 | Front-end reachability                           | **59,676 legacy-only fn-lines** | Approximate final deletion opportunity                                 | Those lines are dormant today                                               |
 | Runtime/builtin reachability                     |               **~47K fn-lines** | Behavior emission must gain IR-owned entry points                      | Those routines should be deleted with the front-end                         |
-| Bounded host terminal readiness                  | **37/37 IR; 16 legacy bodies** | Every measured terminal has an IR body and no typed blocker remains    | The remaining direct bodies or global runtime/linear paths are unreachable  |
+| Bounded host terminal readiness                  | **37/37 IR; 10 legacy bodies** | Every measured terminal has an IR body and no typed blocker remains    | The remaining direct bodies or global runtime/linear paths are unreachable  |
 
-R0 is complete. After the #3522 cross-owner class and Builtins externref-ABI
-transactions, the bounded hybrid gate is green at 5/5 entries, 37 terminal
-units, 37 emitted IR bodies, 0 typed Unsupported outcomes, 0 Invariants, and
-16 legacy bodies. Strict IR-only is still red only because those 16 terminal
-units retain direct bodies. The same final-IR sealing pass also separates the
-independent Algorithms `fibIter` leaf from its blocked callers, so that body
-now compiles once too.
+R0 is complete. After the #3522 cross-owner/Builtins transactions and the
+#3523 Algorithms function-plus-module-init transaction, the bounded hybrid
+gate is green at 5/5 entries, 37 terminal units, 37 emitted IR bodies, 0 typed
+Unsupported outcomes, 0 Invariants, and 10 legacy bodies. Strict IR-only is
+still red only because the Calendar module initializer and its nine functions
+retain direct bodies. All seven Algorithms terminals now seal together and
+compile once through IR.
 
 Additional blockers:
 
@@ -83,16 +83,18 @@ Additional blockers:
   explicit ambient-console selector boundary, while implicit, externref-backed,
   unsafe-super, forward-ABI, nested-class, and closure families retain the
   typed direct route until their complete transactions land.
-- #3142 made module init claimable and patchable, but it still compiles the
-  legacy `__module_init` first. Claimability is not compile-once ownership.
+- #3523 now gives the exact host `const Map<K,V> = new Map()` Algorithms
+  initializer source-qualified compile-once ownership. Calendar and broader
+  module shapes still need the complete ordered R4 contract; the bounded route
+  is not evidence that generic `__module_init` compilation is dead.
 - Multi-source/M0 is a per-source, post-legacy overlay; fast-mode multi-source,
   class members, module init, and IR-first body skipping are incomplete.
 - The linear backend still has direct AST-reading paths and does not consume the
   same whole-program IR contract as WasmGC.
 - The R0 typed gate has replaced substring-matched build-error policy. Its
   current strict failure is expected: the bounded lane has no Unsupported or
-  Invariant outcomes, but 14 free functions and two module initializers still
-  emit legacy bodies.
+  Invariant outcomes, but nine Calendar functions and its module initializer
+  still emit legacy bodies.
 - The normal fallback gate now reconciles preliminary selector labels with
   source-qualified terminal outcomes. Its async-function bucket fell from four
   to zero with #4124; this does not claim that async methods, closures,
@@ -123,7 +125,7 @@ their order and acceptance boundaries.
 | **R1 — #3520 (in progress)** | Source-qualified `IrUnitId` and a whole-program `ProgramAbiMap`                                       | R0                                    | Same-named units across files/classes cannot collide; signatures, globals, imports, types, exports, and synthetic units are planned once                        |
 | **R2 — #3521 (in progress)** | `PreparedIrProgram` and prepare-before-emit compile-once pipeline                                     | #3520                                 | Prepared free functions never call legacy body compilation; unsupported units are decided before any body emitter side effect                                   |
 | **R3 — #3522 (in progress)** | Classes and class members are Prepared/compile-once                                                   | #3521                                 | Constructors, instance/static methods, fields, inheritance, wrappers, and type indices no longer depend on legacy body compilation                              |
-| **R4 — #3523 (blocked)**     | Module init is Prepared/compile-once                                                                  | #3521, #3522                          | One program-owned module-init unit replaces the compile-first/patch-later `__module_init` overlay, including top-level binding/TDZ/export effects               |
+| **R4 — #3523 (in progress)** | Module init is Prepared/compile-once                                                                  | #3521, #3522                          | One program-owned module-init unit replaces the compile-first/patch-later `__module_init` overlay, including top-level binding/TDZ/export effects               |
 | **R5 — #3525 (blocked)**     | Whole-program single- and multi-source Prepared ownership                                             | #3520–#3523                           | Cross-file calls/imports, fast mode, collisions, module init, and class members use one `PreparedIrProgram`; no per-source overlay loop remains                 |
 | **R6 — #3526 (blocked)**     | Typed semantic intrinsic/runtime-feature/host-capability contract                                     | #3521                                 | The ~47K runtime/builtin emission lines are reached from a frozen semantic manifest, never AST dispatch; families land in measured sub-slices                   |
 | **R7 — #3527 (blocked)**     | AST-free async suspension plans and canonical Promise ABI                                             | #3522, #3525, #3526                   | Every supported async container uses one verified `IrAsyncPlan` and the existing frame engine; no AST callback/direct async route remains                       |
