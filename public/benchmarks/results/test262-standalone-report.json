@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-08-10T02:07:33.705Z",
-  "baseline_generated_at": "2026-08-10T02:07:33.705Z",
-  "baseline_sha": "3371fa17a811e8c67fc98231df64e3e30c517ee7",
+  "timestamp": "2026-08-10T22:16:00.494Z",
+  "baseline_generated_at": "2026-08-10T22:16:00.495Z",
+  "baseline_sha": "a29362766abe7f3d1a342c865002968e950b2774",
   "oracle_version": 13,
   "mode": {
     "target": "standalone",
@@ -1247,8 +1247,8 @@
           "Proposals": 156
         },
         "sample_files": [
-          "test/language/expressions/dynamic-import/catch/nested-block-import-catch-import-source-specifier-tostring.js",
           "test/language/expressions/dynamic-import/syntax/valid/nested-function-import-source-empty-str-is-valid-assign-expr.js",
+          "test/language/expressions/dynamic-import/catch/nested-block-import-catch-import-source-specifier-tostring.js",
           "test/language/expressions/dynamic-import/catch/nested-block-labeled-import-source-specifier-tostring.js",
           "test/language/expressions/dynamic-import/catch/nested-function-import-catch-import-source-specifier-tostring.js",
           "test/language/expressions/dynamic-import/syntax/valid/nested-while-import-source-script-code-valid.js"
@@ -1288,9 +1288,9 @@
           "Proposals": 4547
         },
         "sample_files": [
-          "test/built-ins/Temporal/PlainYearMonth/from/argument-string-time-separators.js",
-          "test/built-ins/Temporal/Instant/prototype/since/roundingmode-halfTrunc.js",
           "test/built-ins/Temporal/Duration/prototype/round/options-read-before-algorithmic-validation.js",
+          "test/built-ins/Temporal/Instant/prototype/since/roundingmode-halfTrunc.js",
+          "test/built-ins/Temporal/PlainYearMonth/from/argument-string-time-separators.js",
           "test/built-ins/Temporal/PlainDateTime/prototype/since/roundingincrement-undefined.js",
           "test/built-ins/Temporal/Instant/prototype/until/roundingincrement-undefined.js"
         ],
@@ -1683,8 +1683,8 @@
         },
         "sample_files": [
           "test/language/expressions/assignment/dstr/obj-rest-getter-abrupt-get-error.js",
-          "test/built-ins/Promise/allSettledKeyed/non-enumerable-properties-only.js",
           "test/built-ins/Promise/allKeyed/reject-first.js",
+          "test/built-ins/Promise/allSettledKeyed/non-enumerable-properties-only.js",
           "test/built-ins/Function/prototype/S15.3.3.1_A1.js",
           "test/built-ins/Proxy/getPrototypeOf/not-extensible-same-proto.js"
         ],
@@ -1693,7 +1693,7 @@
           "other:L#:## Codegen error: '__get_builtin' (dynamic-shape object/property operation) is not yet supported in --target standalone (## Phase B). Use a typed object literal or class instance for fast-path codegen, which compiles to struct.get/struct",
           "assertion_fail:Test262Error: Expected SameValue(«[object Object]», «[object Object]») to be true",
           "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all",
-          "type_error:TypeError: Reflect.deleteProperty called on non-object"
+          "other:L#:## Codegen error: Reflect.apply not supported in standalone mode (## Phase C)."
         ]
       },
       {
@@ -1774,9 +1774,9 @@
           "ES2018": 405,
           "ES2022": 449,
           "ES2015": 594,
-          "ES2027": 174,
           "ES2026": 34,
           "ES2025": 270,
+          "ES2027": 174,
           "ES2019": 10,
           "ES2020": 5,
           "Unclassified (untagged)": 7,
@@ -1818,8 +1818,8 @@
           "wasm_compile": 8,
           "type_error": 46,
           "null_deref": 6,
-          "illegal_cast": 18,
           "promise_error": 15,
+          "illegal_cast": 18,
           "negative_test_fail": 2,
           "host_import_leak": 9,
           "range_error": 2
@@ -2090,8 +2090,8 @@
         "sample_files": [
           "test/language/expressions/assignment/dstr/obj-id-init-fn-name-fn.js",
           "test/language/expressions/assignment/fn-name-lhs-cover.js",
-          "test/language/expressions/object/dstr/gen-meth-obj-ptrn-prop-obj.js",
           "test/language/expressions/assignment/dstr/obj-prop-elem-init-fn-name-cover.js",
+          "test/language/expressions/object/dstr/gen-meth-obj-ptrn-prop-obj.js",
           "test/language/expressions/object/dstr/gen-meth-dflt-obj-ptrn-prop-obj.js"
         ],
         "sample_signatures": [
@@ -2268,15 +2268,15 @@
           "ES2025": 1
         },
         "sample_files": [
-          "test/built-ins/Number/prototype/valueOf/S15.7.4.4_A2_T05.js",
           "test/built-ins/Number/prototype/S15.7.3.1_A2_T1.js",
+          "test/built-ins/Number/prototype/valueOf/S15.7.4.4_A2_T05.js",
           "test/language/expressions/does-not-equals/bigint-and-number-extremes.js",
           "test/built-ins/Number/prototype/toPrecision/undefined-precision-arg.js",
           "test/language/expressions/greater-than-or-equal/bigint-and-number-extremes.js"
         ],
         "sample_signatures": [
-          "assertion_fail:Test262Error: The result of evaluating (e instanceof TypeError) is expected to be true",
           "assertion_fail:Test262Error: Number.prototype.toString() must return \"[object Number]\" Expected SameValue(«null», «\"[object Number]\"») to be true",
+          "assertion_fail:Test262Error: The result of evaluating (e instanceof TypeError) is expected to be true",
           "assertion_fail:Test262Error: The result of (0x#n != Number.MAX_VALUE) is false Expected SameValue(«true», «false») to be true",
           "assertion_fail:Test262Error: Expected SameValue(«\"#.000000e+#\"», «\"#\"») to be true",
           "assertion_fail:Test262Error: The result of (0x#n >= Number.MAX_VALUE) is true Expected SameValue(«false», «true») to be true"
@@ -2389,8 +2389,8 @@
         },
         "sample_files": [
           "test/built-ins/Symbol/isConcatSpreadable/prop-desc.js",
-          "test/built-ins/Symbol/prototype/Symbol.toPrimitive/length.js",
           "test/built-ins/Symbol/prototype/Symbol.toPrimitive/name.js",
+          "test/built-ins/Symbol/prototype/Symbol.toPrimitive/length.js",
           "test/built-ins/Symbol/search/cross-realm.js",
           "test/built-ins/Symbol/replace/cross-realm.js"
         ],
@@ -2582,7 +2582,7 @@
           "other:strict rerun: Test262Error: ##: arguments object doesn't exists",
           "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all",
           "assertion_fail:Test262Error: ##: arguments doesn't exists",
-          "null_deref:dereferencing a null pointer [in testcase() ← __module_init]"
+          "assertion_fail:Test262Error: length descriptor should be writable; length descriptor should be configurable"
         ]
       },
       {
@@ -2726,8 +2726,8 @@
           "test/language/expressions/object/method-definition/async-gen-yield-star-getiter-sync-returns-abrupt.js",
           "test/built-ins/Promise/any/invoke-resolve-get-once-no-calls.js",
           "test/built-ins/Promise/all/iter-arg-is-undefined-reject.js",
-          "test/built-ins/Promise/any/invoke-resolve-return.js",
-          "test/built-ins/Promise/allSettled/invoke-resolve-get-error.js"
+          "test/built-ins/Promise/allSettled/invoke-resolve-get-error.js",
+          "test/built-ins/Promise/any/invoke-resolve-return.js"
         ],
         "sample_signatures": [
           "type_error:TypeError: Cannot read properties of undefined (reading a class field)",
@@ -2890,8 +2890,8 @@
         },
         "sample_files": [
           "test/language/identifiers/start-unicode-16.0.0-class.js",
-          "test/language/identifiers/part-unicode-16.0.0.js",
           "test/language/identifiers/start-unicode-17.0.0.js",
+          "test/language/identifiers/part-unicode-16.0.0.js",
           "test/language/identifiers/part-unicode-17.0.0-class.js",
           "test/language/expressions/object/method-definition/yield-as-function-expression-binding-identifier.js"
         ],
@@ -3020,15 +3020,15 @@
           "test/built-ins/Atomics/store/bad-range.js",
           "test/built-ins/Atomics/notify/retrieve-length-before-index-coercion-non-shared.js",
           "test/built-ins/Atomics/exchange/immutable-buffer.js",
-          "test/built-ins/Atomics/xor/non-shared-bufferdata.js",
-          "test/built-ins/Atomics/and/non-shared-bufferdata.js"
+          "test/built-ins/Atomics/and/non-shared-bufferdata.js",
+          "test/built-ins/Atomics/xor/non-shared-bufferdata.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::SharedArrayBuffer_new (##)",
           "assertion_fail:Test262Error: Expected a RangeError but got a undefined",
           "null_deref:dereferencing a null pointer [in testWithAllTypedArrayConstructors() ← __module_init]",
-          "type_error:TypeError: Atomics.xor requires a shared integer TypedArray, which is unsupported in --target standalone",
-          "type_error:TypeError: Atomics.and requires a shared integer TypedArray, which is unsupported in --target standalone"
+          "type_error:TypeError: Atomics.and requires a shared integer TypedArray, which is unsupported in --target standalone",
+          "type_error:TypeError: Atomics.xor requires a shared integer TypedArray, which is unsupported in --target standalone"
         ]
       },
       {
