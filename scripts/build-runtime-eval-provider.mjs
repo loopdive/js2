@@ -23,6 +23,7 @@ import {
   computeCompilerBundleHash,
   defaultRuntimeEvalProviderCacheDir,
   instantiateRuntimeEvalNamespace,
+  loadProviderCompiler,
   readCachedRuntimeEvalProvider,
   runtimeEvalProviderCacheKey,
   runtimeEvalProviderCachePath,
@@ -30,20 +31,12 @@ import {
   writeCachedRuntimeEvalProvider,
 } from "./runtime-eval-provider.mjs";
 
+// The interpreter provider needs no compiler feature newer than the oldest
+// bundle we would ever ship, so it passes no capability probe — the shared
+// loader then behaves exactly as this function did before #4238 (bundle first,
+// tsx second). It shares the loader so the two prebuild scripts cannot drift.
 async function loadCompile() {
-  try {
-    const bundle = await import("./compiler-bundle.mjs");
-    if (typeof bundle.compile === "function") return { compile: bundle.compile, origin: "compiler-bundle.mjs" };
-  } catch {}
-  // Dev convenience: `node --import tsx scripts/build-runtime-eval-provider.mjs`
-  try {
-    const src = await import("../src/index.ts");
-    if (typeof src.compile === "function") return { compile: src.compile, origin: "src/index.ts (tsx)" };
-  } catch {}
-  throw new Error(
-    "no compiler available — build scripts/compiler-bundle.mjs first (run-test262-vitest.sh does), " +
-      "or run under tsx (`node --import tsx scripts/build-runtime-eval-provider.mjs`)",
-  );
+  return loadProviderCompiler({ label: "runtime-eval" });
 }
 
 function verifyProvider(binary) {

@@ -37,12 +37,15 @@ import {
   computeCompilerBundleHash,
   defaultRuntimeEvalProviderCacheDir,
   instantiateRuntimeEvalNamespace,
+  loadProviderCompiler,
   runtimeEvalProviderCacheKey,
   writeCachedRuntimeEvalProvider,
 } from "./runtime-eval-provider.mjs";
 import {
+  assertQuickjsArtifactExports,
   assertQuickjsArtifactStandalone,
   buildQuickjsAdapterSource,
+  QUICKJS_ADAPTER_CANARY_EXPECTATIONS,
   QUICKJS_ADAPTER_CANARY_SOURCE,
   QUICKJS_ADAPTER_COMPILE_OPTIONS,
   QUICKJS_ADAPTER_EXTERNS,
@@ -56,19 +59,59 @@ import {
 
 const RUNTIME_EVAL_IMPORT_MODULE = "js2wasm:runtime-eval";
 
+/**
+ * The stale-bundle guard (#4238 slice 2 — a real landmine, not a hypothetical).
+ *
+ * `loadProviderCompiler` prefers `scripts/compiler-bundle.mjs`, and a bundle
+ * built before slice 1's three enablers (`externNativeTypes`,
+ * `externImportModule`, `importMemory`) still imports and still exports a
+ * working `compile`. The adapter then compiles "successfully" with its
+ * `wasm:memory` accessors NOT inline-lowered, so `store8` leaks to `env` and
+ * the build dies at `verifyQuickjsProvider` with
+ * "quickjs adapter must import ONLY js2wasm:qjs, found env::store8" — a message
+ * that accuses the adapter, which is fine. The bundle is the suspect.
+ *
+ * So probe the capability directly on a two-line module rather than inferring
+ * it from a downstream symptom: with the enablers honoured, the probe's extern
+ * binds as `js2wasm:qjs::probe_ext (i32)->i32`, memory is IMPORTED from the
+ * same namespace, and nothing lands in `env`. Any deviation names the bundle.
+ */
+async function quickjsCompilerCapability(compile) {
+  const probeSource = `
+import { store8 } from "wasm:memory";
+type i32 = number;
+declare function probe_ext(a: i32): i32;
+export function probe(a: i32): i32 { store8(a, 1); return probe_ext(a); }
+`;
+  let result;
+  try {
+    result = await compile(probeSource, {
+      ...QUICKJS_ADAPTER_COMPILE_OPTIONS,
+      fileName: "quickjs-capability-probe.ts",
+    });
+  } catch (err) {
+    return `capability probe failed to compile: ${err?.message ?? err}`;
+  }
+  if (!result?.success || !result.binary) return "capability probe did not compile";
+  const imports = WebAssembly.Module.imports(new WebAssembly.Module(result.binary));
+  const foreign = imports.filter((i) => i.module !== QUICKJS_IMPORT_MODULE).map((i) => `${i.module}::${i.name}`);
+  if (foreign.length > 0) {
+    return (
+      `the wasm:memory accessors did not inline-lower and/or externs did not land in ` +
+      `${QUICKJS_IMPORT_MODULE} (leaked: ${foreign.join(", ")}) — this compiler predates the #4238 ` +
+      `externNativeTypes/externImportModule/importMemory enablers`
+    );
+  }
+  const ext = imports.find((i) => i.name === "probe_ext");
+  if (!ext) return `the declared extern probe_ext was not imported from ${QUICKJS_IMPORT_MODULE}`;
+  if (!imports.some((i) => i.kind === "memory")) {
+    return `memory was DEFINED rather than imported from ${QUICKJS_IMPORT_MODULE} (importMemory unsupported)`;
+  }
+  return null;
+}
+
 async function loadCompile() {
-  try {
-    const bundle = await import("./compiler-bundle.mjs");
-    if (typeof bundle.compile === "function") return { compile: bundle.compile, origin: "compiler-bundle.mjs" };
-  } catch {}
-  try {
-    const src = await import("../src/index.ts");
-    if (typeof src.compile === "function") return { compile: src.compile, origin: "src/index.ts (tsx)" };
-  } catch {}
-  throw new Error(
-    "no compiler available — build scripts/compiler-bundle.mjs first, or run under tsx " +
-      "(`node --import tsx scripts/build-quickjs-eval-provider.mjs`)",
-  );
+  return loadProviderCompiler({ label: "quickjs-eval-provider", capability: quickjsCompilerCapability });
 }
 
 /** Step 1–3 of the acquisition order. Returns the verified artifact. */
@@ -159,6 +202,9 @@ async function verifyQuickjsProvider(compile, adapterBinary, artifact) {
     }
   }
   const quickjsModule = assertQuickjsArtifactStandalone(artifact.binary);
+  // A cached artifact that predates the current qjs_shim.c would otherwise fail
+  // as a bare LinkError inside the canary, with nothing pointing at the shim.
+  assertQuickjsArtifactExports(quickjsModule);
 
   const canary = await compile(QUICKJS_ADAPTER_CANARY_SOURCE, {
     ...QUICKJS_ADAPTER_COMPILE_OPTIONS,
@@ -190,21 +236,14 @@ async function verifyQuickjsProvider(compile, adapterBinary, artifact) {
     }),
   });
   instance.exports._start?.();
-  const evalNumber = instance.exports.evalNumberProbe();
-  if (evalNumber !== 42) {
-    throw new Error(
-      `quickjs canary indirect eval returned ${evalNumber}, expected 42 ` +
-        `(the number completion value did not round-trip through QuickJS)`,
-    );
-  }
-  // "quickjs".length — proves the marker is a real QuickJS STRING on the
-  // realm, not merely a truthy property.
-  const identity = instance.exports.engineIdentityProbe();
-  if (identity !== 7) {
-    throw new Error(
-      `quickjs canary engine identity returned ${identity}, expected 7 ` +
-        `(evaluated code cannot see the in-band engine marker)`,
-    );
+  // One reading per capability the engine claims. `engineIdentityProbe === 7`
+  // ("quickjs".length) is the anti-vacuity anchor: it is a real QuickJS STRING
+  // on the realm, so no compile-time fold and no other engine can produce it.
+  for (const { probe, expected, why } of QUICKJS_ADAPTER_CANARY_EXPECTATIONS) {
+    const actual = instance.exports[probe]();
+    if (actual !== expected) {
+      throw new Error(`quickjs canary ${probe}() returned ${actual}, expected ${expected} (${why})`);
+    }
   }
 }
 
