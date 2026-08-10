@@ -43,6 +43,7 @@ import {
 import { ASYNC_CALLBACK_EXCEPTION_POLICY } from "./ir/async-runtime-providers.js";
 import { _arrayProtoSparseFastPaths } from "./runtime/array-proto-sparse.js"; // (#3103, #1234) sparse-aware Array.prototype fast paths
 import { registerVecMirror, snapshotVecMirrors, reconcileVecMirrors } from "./runtime/vec-mirror-writeback.js"; // (#3603 S1) vec-mirror write-back
+import { createHostCallImport, isHostCallImportName } from "./runtime/host-call-abi.js";
 import {
   _rerouteStringSymbolMethodPrimitive,
   _makeLegacyRegExpState,
@@ -12492,41 +12493,14 @@ assert._isSameValue = isSameValue;
       // structs — those can't be cast to a closure struct + call_ref. The host
       // handles [[Call]] with the function's own `this` binding (bound functions
       // already carry [[BoundThis]]; for plain functions `thisArg` is used).
-      if (name === "__call_function")
-        return (fn: any, thisArg: any, argsArray: any): any => {
-          if (typeof fn !== "function") {
-            // Wrap a wasm-struct closure if one slipped through. Arity-aware
-            // (#1712): the previous arity-0 wrap dropped every argument.
-            if (_isWasmStruct(fn)) {
-              const wrapped = _maybeWrapCallableUnknownArity(fn, callbackState);
-              if (typeof wrapped === "function") fn = wrapped;
-            }
-          }
-          if (typeof fn !== "function") {
-            throw new TypeError(String(fn) + " is not a function");
-          }
-          const args: any[] = Array.isArray(argsArray) ? argsArray : [];
-          // (#1712) Host-marshal wasmGC struct args the same way
-          // __extern_method_call does: callable closures become JS functions
-          // (so host higher-order callees can invoke them), plain structs get
-          // the live-mirror proxy (so `Object.hasOwn(o, "a")`-style builtins
-          // observe struct fields as real properties).
-          const exports = callbackState?.getExports();
-          const wrapHostValue = (v: any): any => {
-            if (!_isWasmStruct(v)) return v;
-            const callable = _maybeWrapCallableUnknownArity(v, callbackState);
-            return callable !== v ? callable : _wrapForHost(v, exports);
-          };
-          const wrappedThis = wrapHostValue(thisArg);
-          const wrappedArgs = args.map(wrapHostValue);
-          // (#3603 S1) `Function.prototype.call.bind(Array.prototype.push)` lands
-          // here as `__call_function(boundCall, null, [vecMirror, item])` — same
-          // bracket, so the uncurried push reaches the vec.
-          const mirrorSnaps = snapshotVecMirrors(wrappedThis, wrappedArgs, exports);
-          const ret = Reflect.apply(fn, wrappedThis, wrappedArgs);
-          reconcileVecMirrors(mirrorSnaps, exports, _unwrapForHost);
-          return _unwrapForHost(ret);
-        };
+      if (isHostCallImportName(name)) {
+        return createHostCallImport(name, callbackState, {
+          isWasmStruct: _isWasmStruct,
+          maybeWrapCallable: _maybeWrapCallableUnknownArity,
+          wrapForHost: _wrapForHost,
+          unwrapForHost: _unwrapForHost,
+        });
+      }
       if (name === "__reflect_construct")
         return (ctor: any, args: any, newTarget: any): any => {
           const exports = callbackState?.getExports();
