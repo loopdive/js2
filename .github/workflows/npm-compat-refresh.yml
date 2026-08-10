@@ -8,15 +8,65 @@ name: Refresh npm-compat
 # #3977 kept showing `lit` as `not-integrated` after its suite landed), which is
 # the case for a mechanism rather than for remembering. See #3988.
 #
-# Deliberately push-only. The artifact is DATA, not a correctness gate, so there
-# is nothing for a PR run to decide — and a full generation is expensive (it
-# re-runs the React and lit upstream suites and re-measures three perf lanes),
-# which is exactly the cost that made the manual step get skipped.
+# Deliberately push-triggered. The artifact is DATA, not a correctness gate, so
+# there is nothing for a PR run to decide — and a full generation is expensive
+# (it re-runs the React and lit upstream suites and re-measures three perf
+# lanes), which is exactly the cost that made the manual step get skipped.
+#
+# ── PROMOTION IS A PULL REQUEST, NOT A PUSH TO main ──────────────────────
+# This workflow used to `git push deploykey HEAD:main`. It no longer does.
+#
+# ANY push to main — INCLUDING a `[skip ci]` one — makes GitHub rebuild every
+# in-flight `merge_group` on the new base and THROW AWAY the validation running
+# under it. `[skip ci]` suppresses workflows on the commit; it does not make the
+# push inert to the queue. Measured 2026-08-09: PR #4323's merge group started
+# 22:52 on f70b4eb2, this workflow's auto-commit landed 22:59:30, and the group
+# was rebuilt at 22:59:51 — a ~19-minute `Test262 Sharded` job discarded.
+# #4297 lost three windows the same day, #4300 one.
+#
+# `scripts/main-push-queue-gate.mjs` was supposed to prevent that, but it is a
+# gate with two DELIBERATE holes: `--stale-after-hours` OVERRIDES the queue
+# check once the served artifact is older than the floor (12h originally, cut
+# to 1h so a deferred measurement was not lost for a whole day), and a
+# malfunctioning gate fails OPEN. Both holes are correct for a direct push (a
+# gate that can freeze the artifact forever is worse than an occasional rebuild
+# — that is #4130), and both mean that on a busy day deferrals accumulate until
+# the staleness floor forces a push into a live merge group. Cutting the floor
+# to 1h made that MORE frequent, not less.
+#
+# Routing through a PR makes the whole class structurally impossible: main then
+# only ever advances via the merge queue, which is the project's own rule. There
+# is nothing left to defer, so the gate, the staleness floor and the fail-open
+# branch are all gone from this path. The script itself STAYS — `benchmark-
+# refresh.yml` and `refresh-baseline.yml` still push to main directly and still
+# call it (see the class-coverage test in tests/issue-3915-*.test.ts).
 on:
   push:
     branches: [main]
-  # Backstop for a quiet main (no pushes ⇒ no push-triggered refresh) and for a
-  # run lost to a deferred merge-queue gate.
+    # DO NOT re-trigger on our OWN landing. Both of the old loop-breakers are
+    # gone with the direct push: the promotion commit can no longer carry
+    # `[skip ci]` (the PR *needs* CI to run in order to become CLEAN and be
+    # picked up by auto-enqueue), and it lands as an ordinary merge-queue merge
+    # whose actor is not `github-actions[bot]`.
+    #
+    # That matters because the measurement includes perf timings, which differ
+    # on every run — so every run publishes something. Without this filter each
+    # landing would trigger the next refresh, forever: a 24-minute runner and a
+    # merge-queue entry every ~25 minutes, in perpetuity.
+    #
+    # `paths-ignore` is evaluated against the union of files changed by the
+    # push, so a merge that ALSO carries real work (the normal case — our PR
+    # batched with, or landing between, ordinary PRs) still runs the refresh.
+    # It is also evaluated before a runner is allocated, so the loop is broken
+    # for free rather than 24 minutes in.
+    paths-ignore:
+      - "benchmarks/results/npm-compat.json"
+      - "benchmarks/results/npm-compat-perf.json"
+      - "benchmarks/results/npm-compat-history.json"
+      - "website/public/benchmarks/results/npm-compat.json"
+      - "website/public/benchmarks/results/npm-compat-perf.json"
+      - "website/public/benchmarks/results/npm-compat-history.json"
+  # Backstop for a quiet main (no pushes ⇒ no push-triggered refresh).
   #
   # It is NOT a backstop against starvation by a busy main, which is what the
   # original comment here claimed. A cron run lands in the same concurrency
@@ -30,6 +80,12 @@ on:
 
 permissions:
   contents: read
+
+env:
+  # ONE reused branch, force-updated every cycle, with at most ONE open PR on
+  # it. Coalescing is the point: a queue of stale artifact PRs would be worse
+  # than the problem being fixed. Nobody else ever touches this ref.
+  PROMOTION_BRANCH: ci/npm-compat-refresh
 
 concurrency:
   group: npm-compat-refresh-${{ github.ref }}
@@ -51,20 +107,19 @@ concurrency:
 
 jobs:
   refresh:
-    # `github-actions[bot]` guard breaks the trigger loop: this job's own
-    # `[skip ci]` commit is a push to main. `[skip ci]` suppresses workflows on
-    # that commit, but the actor check is what makes the loop impossible rather
-    # than merely unlikely.
+    # The `paths-ignore` filter above is what actually breaks the trigger loop
+    # now (this job's own landing changes only artifact paths). The actor guard
+    # is kept as a second, cheaper line against any OTHER bot push to main.
     if: github.repository == 'loopdive/js2wasm' && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     environment: baseline-promote
     permissions:
-      contents: write
-      # actions:write lets the post-publish step dispatch deploy-pages (#4217).
-      # workflow_dispatch is one of the two event types the GITHUB_TOKEN is
-      # allowed to create runs for, so no PAT is needed.
-      actions: write
+      # The branch push uses MAIN_DEPLOY_KEY (SSH) and the PR is opened with a
+      # GitHub App token, so GITHUB_TOKEN needs no write scope here. `actions:
+      # write` is gone with the deploy-pages dispatch it existed for (#4217 —
+      # see the note at the end of this job).
+      contents: read
 
     steps:
       - name: Resolve immutable source revision
@@ -88,22 +143,15 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # (#4130) MUST run BEFORE the regeneration below. The staleness floor in
-      # the queue gate asks "how old is the artifact main is currently serving",
-      # and the only moment that question is answerable is before this job
-      # overwrites the file. Reading it afterwards yields the age of the
-      # measurement this job just took — always ~0 — so the floor could never
-      # fire and a permanently busy queue deferred the promotion forever. The
-      # workflow ran, reported success, and committed nothing for two days.
-      - name: Capture the COMMITTED artifact's age (before regenerating)
-        id: committed
-        shell: bash
-        run: |
-          set -euo pipefail
-          LAST_REFRESH="$(node -e 'try{const r=JSON.parse(require("fs").readFileSync("benchmarks/results/npm-compat.json","utf8"));process.stdout.write(String(r.generatedAt??""))}catch{process.stdout.write("")}')"
-          echo "last_refresh=${LAST_REFRESH}" >> "$GITHUB_OUTPUT"
-          echo "committed artifact generatedAt: ${LAST_REFRESH:-<unreadable>}"
-
+      # (#4130) The "capture the COMMITTED artifact's age before regenerating"
+      # step that used to sit here is GONE. It existed for exactly one consumer:
+      # the `--stale-after-hours` floor in the merge-queue gate, which asked
+      # "how old is the artifact main is currently serving" and could only be
+      # answered before this job overwrote the file. There is no gate and no
+      # floor on this path any more, so there is nothing to feed. The freshness
+      # invariant that DOES survive — never overwrite a newer artifact with an
+      # older measurement — is enforced in the publish step below by comparing
+      # `generatedAt` values, which is a different question.
       - name: Regenerate the npm-compat artifacts
         # No `--only`: a focused run never writes, because a partial file would
         # drop the other packages. Refreshing anything means regenerating all of
@@ -135,11 +183,11 @@ jobs:
       # the #4252 bag-slot merge — deferred their promote behind a busy queue,
       # and their numbers were unrecoverable: no commit, no artifact, logs
       # don't carry the JSON. Upload the generated artifacts unconditionally
-      # so every measurement is inspectable the moment the run ends, deferred
-      # or not. Paired change: the queue-gate staleness floor drops 12h → 1h,
-      # so a busy queue can hold the PUBLISHED artifact back at most an hour
-      # (worst-case ~1 queue rebuild per hour, vs the measured 3h+ blackout).
-      - name: Upload generated artifacts (always — deferred measurements must survive)
+      # so every measurement is inspectable the moment the run ends, published
+      # or not. Still worth keeping now that promotion goes through a PR: a run
+      # that skips its push (queued PR, or a fresher artifact already pending)
+      # still has a measurement worth reading.
+      - name: Upload generated artifacts (always — unpublished measurements must survive)
         if: always()
         uses: actions/upload-artifact@v6
         with:
@@ -151,43 +199,85 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      # (#3915) DO NOT DISCARD AN IN-FLIGHT merge_group VALIDATION. Any push to
-      # main — INCLUDING a `[skip ci]` one — makes GitHub rebuild every queued
-      # merge group on the new base and throw away the validation running under
-      # it. `[skip ci]` suppresses workflows on the commit; it does not make the
-      # push inert to the queue. Same gate the two sibling bots use.
-      - name: Gate the main push on the merge queue
-        id: queue_gate
+      # THE PR MUST BE OPENED BY AN ACTOR THAT IS NOT `GITHUB_TOKEN`. A pull
+      # request created with `GITHUB_TOKEN` fires NO `pull_request` and no
+      # `pull_request_target` events — GitHub's "a workflow run cannot trigger
+      # another workflow run" rule — so it gets neither `CI` nor `cla-check`,
+      # never reaches `mergeStateStatus == CLEAN`, and `auto-enqueue.yml` (which
+      # takes only CLEAN/HAS_HOOKS) never touches it. The result would be a
+      # green-looking PR that strands forever and an artifact that silently
+      # stops moving: the exact failure shape this workflow exists to prevent.
+      # Same rule that wedged the merge queue for a full night in #2523.
+      #
+      # A GitHub App installation token is a distinct actor, which is why
+      # `auto-enqueue.yml` already mints one. Reuse those secrets rather than a
+      # PAT: `AUTO_ENQUEUE_TOKEN` is NOT set on this repo (#2523 resolved by
+      # adopting the app instead), so a `secrets.AUTO_ENQUEUE_TOKEN || ...`
+      # fallback would silently select the broken path.
+      #
+      # Minted HERE, after the ~24-minute generation, because an installation
+      # token expires in one hour.
+      - name: Mint a GitHub App token for the promotion PR
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.ENQUEUE_APP_ID }}
+          private-key: ${{ secrets.ENQUEUE_APP_PRIVATE_KEY }}
+
+      # Force-updating the promotion branch WHILE its PR is the in-flight merge
+      # group rebuilds that group and cancels its run — the same harm this whole
+      # change removes, just relocated. So look before pushing.
+      #
+      # FAIL-SAFE DIRECTION IS "PUSH ANYWAY". If the queue cannot be read we
+      # proceed: the harm of a wrong push is bounded (with
+      # `max_entries_to_build=1` the cancelled group contains only this PR), and
+      # the harm of a wrong skip is the artifact freezing behind an unreadable
+      # gate — which is #4130, the failure this repo has already paid for once.
+      - name: Check whether the promotion PR is already in the merge queue
+        id: queue_state
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        shell: bash
         run: |
           set -uo pipefail
-          # (#4130) From the step that ran BEFORE the regeneration — the age of
-          # what main is serving, not of the measurement just taken.
-          LAST_REFRESH="${{ steps.committed.outputs.last_refresh }}"
-          # `|| RC=$?`, not a bare call then `RC=$?`: the default step shell is
-          # `bash -e {0}`, so a bare non-zero exit aborts the step before the
-          # next line runs and the DEFER path would look like a step failure.
-          RC=0
-          node scripts/main-push-queue-gate.mjs \
-            --repo "$GITHUB_REPOSITORY" \
-            --last-refresh "$LAST_REFRESH" \
-            --stale-after-hours 1 \
-            --reason "landing npm-compat artifacts" || RC=$?
-          if [ "$RC" -eq 10 ]; then
-            echo "decision=defer" >> "$GITHUB_OUTPUT"
-          else
-            # 0 = proceed. Anything else is a gate malfunction, and a broken
-            # gate must never freeze the artifact — fail OPEN, loudly.
-            [ "$RC" -eq 0 ] || echo "::warning title=main-push-queue-gate::gate exited ${RC}; failing open"
-            echo "decision=proceed" >> "$GITHUB_OUTPUT"
-          fi
+          PR_NUMBER="$(gh pr list -R "$GITHUB_REPOSITORY" --head "$PROMOTION_BRANCH" \
+            --state open --json number --jq '.[0].number // empty' 2>/dev/null || true)"
+          echo "pr_number=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
 
-      - name: Promote the refreshed artifacts to main
-        # A deferred refresh is not a failure: the next push to main (or the 6h
-        # cron) regenerates and promotes, and the staleness floor in the gate
-        # bounds how long a permanently busy queue can hold the artifact back.
-        if: steps.queue_gate.outputs.decision != 'defer'
+          if [ -z "$PR_NUMBER" ]; then
+            echo "No open promotion PR on ${PROMOTION_BRANCH}; nothing can be queued."
+            echo "skip=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Open promotion PR: #${PR_NUMBER}"
+
+          QUEUED="$(gh api graphql -f query="
+            query(\$owner: String!, \$name: String!) {
+              repository(owner: \$owner, name: \$name) {
+                mergeQueue(branch: \"main\") {
+                  entries(first: 100) { nodes { pullRequest { number } } }
+                }
+              }
+            }" -f owner="${GITHUB_REPOSITORY%%/*}" -f name="${GITHUB_REPOSITORY##*/}" \
+            --jq "[.data.repository.mergeQueue.entries.nodes[].pullRequest.number] | index(${PR_NUMBER}) != null" 2>/dev/null || echo "unreadable")"
+
+          case "$QUEUED" in
+            true)
+              echo "::notice title=npm-compat-refresh::PR #${PR_NUMBER} is in the merge queue; leaving it alone. This measurement is uploaded as an artifact and the next run publishes a fresher one."
+              echo "skip=1" >> "$GITHUB_OUTPUT"
+              ;;
+            false)
+              echo "PR #${PR_NUMBER} is not queued; safe to force-update its branch."
+              echo "skip=0" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "::warning title=npm-compat-refresh::could not read the merge queue; proceeding (an unreadable gate must never freeze the artifact — #4130)."
+              echo "skip=0" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
+      - name: Publish the refreshed artifacts to the promotion branch
+        if: steps.queue_state.outputs.skip != '1'
         id: promote
         env:
           MAIN_DEPLOY_KEY: ${{ secrets.MAIN_DEPLOY_KEY }}
@@ -200,6 +290,10 @@ jobs:
             exit 1
           fi
 
+          # The branch push MUST NOT use GITHUB_TOKEN either, for the same
+          # reason as the PR: a `synchronize` from GITHUB_TOKEN would not
+          # re-run the PR's checks. A deploy key is a distinct credential and
+          # its pushes do trigger workflows.
           eval "$(ssh-agent -s)"
           echo "$MAIN_DEPLOY_KEY" | ssh-add -
           mkdir -p ~/.ssh
@@ -209,6 +303,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git remote add deploykey "git@github.com:${GITHUB_REPOSITORY}.git"
           git fetch deploykey main
+          git fetch deploykey "$PROMOTION_BRANCH" || true
 
           # Do NOT gate on "did main advance". It always advances — the job runs
           # ~24 min and main merges faster than that — so the sha-equality guard
@@ -219,19 +314,27 @@ jobs:
           #
           # The invariant that actually matters is FRESHNESS: never overwrite a
           # newer artifact with an older measurement. Compare `generatedAt`, not
-          # commit shas. A measurement taken a few commits behind head is still
-          # vastly better than one taken hours behind — that is the entire point
-          # of the job.
-          # Read the remote copy via `git show`, NOT `git checkout -- <path>`:
-          # the working tree currently holds the freshly generated artifact and
-          # a checkout would overwrite the very thing we are about to publish.
-          git show deploykey/main:benchmarks/results/npm-compat.json > /tmp/remote-npm-compat.json 2>/dev/null || true
-          REMOTE_STAMP="$(node -e 'try{const r=JSON.parse(require("fs").readFileSync("/tmp/remote-npm-compat.json","utf8"));process.stdout.write(String(r.generatedAt??""))}catch{process.stdout.write("")}')"
+          # commit shas. Both landed (main) and PENDING (the promotion branch)
+          # copies count — a measurement already waiting in the open PR is just
+          # as real as one on main, and clobbering it with an older one would
+          # move the dashboard backwards.
+          # Read remote copies via `git show`, NOT `git checkout -- <path>`: the
+          # work tree currently holds the freshly generated artifact and a
+          # checkout would overwrite the very thing we are about to publish.
+          stamp_of() {
+            git show "$1:benchmarks/results/npm-compat.json" 2>/dev/null > /tmp/other-npm-compat.json || : > /tmp/other-npm-compat.json
+            node -e 'try{const r=JSON.parse(require("fs").readFileSync("/tmp/other-npm-compat.json","utf8"));process.stdout.write(String(r.generatedAt??""))}catch{process.stdout.write("")}'
+          }
+          MAIN_STAMP="$(stamp_of deploykey/main)"
+          BRANCH_STAMP="$(stamp_of "deploykey/${PROMOTION_BRANCH}")"
           OURS_STAMP="$(node -e 'try{const r=JSON.parse(require("fs").readFileSync("benchmarks/results/npm-compat.json","utf8"));process.stdout.write(String(r.generatedAt??""))}catch{process.stdout.write("")}')"
-          if [ -n "$REMOTE_STAMP" ] && [ -n "$OURS_STAMP" ] && [[ "$REMOTE_STAMP" > "$OURS_STAMP" ]]; then
-            echo "main already carries a fresher artifact (${REMOTE_STAMP} > ${OURS_STAMP}); nothing to publish."
-            exit 0
-          fi
+          echo "generatedAt — main: ${MAIN_STAMP:-<none>} | ${PROMOTION_BRANCH}: ${BRANCH_STAMP:-<none>} | ours: ${OURS_STAMP:-<none>}"
+          for OTHER in "$MAIN_STAMP" "$BRANCH_STAMP"; do
+            if [ -n "$OTHER" ] && [ -n "$OURS_STAMP" ] && [[ "$OTHER" > "$OURS_STAMP" ]]; then
+              echo "A fresher artifact already exists (${OTHER} > ${OURS_STAMP}); nothing to publish."
+              exit 0
+            fi
+          done
 
           ARTIFACTS=(
             benchmarks/results/npm-compat.json
@@ -244,85 +347,120 @@ jobs:
 
           # Stash the generated artifacts OUTSIDE the work tree, then replay them
           # onto whatever main is now. The commit cannot be built on SOURCE_SHA:
-          # main has advanced during the ~24 min measurement, so a push from that
-          # base is a guaranteed non-fast-forward. This is the step that actually
-          # makes a long-running measurement publishable.
+          # main has advanced during the ~24 min measurement, so the PR would
+          # open behind main and immediately need a refresh. This is the step
+          # that actually makes a long-running measurement publishable.
           STAGE="$(mktemp -d)"
           for f in "${ARTIFACTS[@]}"; do
             mkdir -p "${STAGE}/$(dirname "$f")"
             cp "$f" "${STAGE}/$f"
           done
 
-          for attempt in 1 2 3 4 5; do
-            git fetch deploykey main
-            # `-f`: the work tree still holds the regenerated artifacts, which
-            # differ from main's committed copies, so a plain checkout would
-            # refuse with "local changes would be overwritten". Discarding them
-            # is safe — STAGE holds the only copy that matters.
-            git checkout -q -f -B npm-compat-publish deploykey/main
-            for f in "${ARTIFACTS[@]}"; do
-              mkdir -p "$(dirname "$f")"
-              cp "${STAGE}/$f" "$f"
-            done
-            git add -f -- "${ARTIFACTS[@]}"
-
-            if git diff --cached --quiet; then
-              echo "npm-compat artifacts are already current on main."
-              exit 0
-            fi
-
-            # (#4132/#4140) --no-verify on BOTH the commit and the push. This job
-            # installs dependencies, so husky's hooks are live:
-            #   pre-commit runs `test:changed-root`, which needs a merge base with
-            #     `origin/main`;
-            #   pre-push  runs the oracle ratchet, which fails here too.
-            # The checkout is `fetch-depth: 1` with `persist-credentials: false`
-            # and the push remote is `deploykey`, so `origin/main` does not exist
-            # and neither hook can do its job. The sibling `benchmark-refresh` is
-            # immune only structurally — its promote job is separate and never
-            # runs `pnpm install`, so no hook is installed. This workflow is
-            # deliberately a SINGLE job and has to opt out explicitly. Running
-            # either check over generated JSON artifacts would be meaningless.
-            git commit -q --no-verify -m "chore(ci): refresh npm-compat artifacts [skip ci]"
-
-            # (#4140) Distinguish a genuine mid-promotion race from any other push
-            # failure. Replaying only helps when main moved under us; for
-            # anything else the replay is guaranteed to fail identically, and it
-            # buries the real error under five rounds of a MISLEADING message.
-            # That is exactly how a rejected pre-push hook read as "main advanced
-            # mid-promotion" for a full cycle.
-            push_err="$(mktemp)"
-            if git push --no-verify deploykey HEAD:main 2>"$push_err"; then
-              echo "Published npm-compat artifacts measured at ${SOURCE_SHA}."
-              echo "published=1" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            cat "$push_err"
-            if ! grep -Eqi 'non-fast-forward|fetch first|behind its remote|stale info' "$push_err"; then
-              echo "::error::npm-compat push failed for a reason that replaying cannot fix (see above)."
-              exit 1
-            fi
-            echo "push rejected (main advanced mid-promotion); replaying onto the new head — attempt ${attempt}/5."
+          # `-f`: the work tree still holds the regenerated artifacts, which
+          # differ from main's committed copies, so a plain checkout would
+          # refuse with "local changes would be overwritten". Discarding them
+          # is safe — STAGE holds the only copy that matters.
+          git checkout -q -f -B "$PROMOTION_BRANCH" deploykey/main
+          for f in "${ARTIFACTS[@]}"; do
+            mkdir -p "$(dirname "$f")"
+            cp "${STAGE}/$f" "$f"
           done
+          git add -f -- "${ARTIFACTS[@]}"
 
-          echo "::error::could not publish npm-compat artifacts after 5 replay attempts."
-          exit 1
+          if git diff --cached --quiet; then
+            echo "npm-compat artifacts are already current on main; nothing to promote."
+            exit 0
+          fi
 
-      # (#4217) The artifact commit above carries `[skip ci]`, so it can never
-      # trigger its own Pages rebuild — the deployed npm-compat.html kept
-      # serving the previous JSON until the NEXT unrelated merge redeployed the
-      # site (observed 2026-08-08: artifact published 05:56, last deploy 05:34,
-      # page stale until a manual dispatch at 06:22). Dispatch the deploy
-      # explicitly after a real publish. Best-effort: the data is already
-      # safely on main, so a failed dispatch is a warning, not a job failure.
-      - name: Redeploy Pages so the site serves the fresh artifact
-        if: steps.queue_gate.outputs.decision != 'defer' && steps.promote.outputs.published == '1'
+          # (#4132/#4140) --no-verify on BOTH the commit and the push. This job
+          # installs dependencies, so husky's hooks are live:
+          #   pre-commit runs `test:changed-root`, which needs a merge base with
+          #     `origin/main`;
+          #   pre-push  runs the oracle ratchet, which fails here too.
+          # The checkout is `fetch-depth: 1` with `persist-credentials: false`
+          # and the push remote is `deploykey`, so `origin/main` does not exist
+          # and neither hook can do its job. The sibling `benchmark-refresh` is
+          # immune only structurally — its promote job is separate and never
+          # runs `pnpm install`, so no hook is installed. This workflow is
+          # deliberately a SINGLE job and has to opt out explicitly. Running
+          # either check over generated JSON artifacts would be meaningless.
+          #
+          # NO `[skip ci]`. The PR now NEEDS its checks to run to become CLEAN;
+          # a `[skip ci]` commit would leave it permanently unmergeable. Landing
+          # via the queue also means the merge to main is an ordinary,
+          # CI-visible push — which is what restores the Pages redeploy (#4217,
+          # see the note at the end of this job).
+          git commit -q --no-verify -m "chore(ci): refresh npm-compat artifacts"
+
+          # `--force` on purpose, and no replay loop. This is a bot-owned branch
+          # that nothing else authors; the five-attempt replay existed only
+          # because pushing to `main` races every other merge. Whatever is on
+          # the branch is a SUPERSEDED measurement (or an `auto-refresh-prs`
+          # merge of main into it), and the commit we just built is main's tip
+          # plus the newest artifacts — so overwriting is always the right
+          # answer and can never lose work.
+          git push --no-verify --force deploykey "HEAD:refs/heads/${PROMOTION_BRANCH}"
+          echo "Pushed npm-compat artifacts measured at ${SOURCE_SHA} to ${PROMOTION_BRANCH}."
+          echo "published=1" >> "$GITHUB_OUTPUT"
+
+      # Coalesce: open a PR only when none is open. An existing PR was just
+      # force-updated above, which fires `synchronize` and re-runs its checks —
+      # nothing more to do for it here.
+      #
+      # This workflow does NOT enqueue, by policy (#2786): `auto-enqueue.yml` is
+      # the single enqueuer and picks the PR up when its required checks go
+      # green. An artifact-only diff touches nothing on the `&test262-paths`
+      # anchor in test262-sharded.yml, so the ~19-minute shard matrix is skipped
+      # in the merge group (the `detect` job emits run_shards=false) — keep it
+      # that way: never let this PR touch `package.json`, `pnpm-lock.yaml`, or
+      # anything else on that list.
+      - name: Open the promotion PR if none is open
+        if: steps.promote.outputs.published == '1' && steps.queue_state.outputs.pr_number == ''
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          SOURCE_SHA: ${{ steps.refs.outputs.source_sha }}
         shell: bash
         run: |
-          if gh workflow run deploy-pages.yml -R "${GITHUB_REPOSITORY}" --ref main; then
-            echo "deploy-pages dispatched."
-          else
-            echo "::warning title=npm-compat-refresh::deploy-pages dispatch failed; the site stays on the previous build until the next merge to main."
+          set -euo pipefail
+          # Re-check right before creating. `queue_state` ran before a ~1-minute
+          # push; a PR opened in that window would make `gh pr create` fail the
+          # job over a condition that is actually the desired end state.
+          EXISTING="$(gh pr list -R "$GITHUB_REPOSITORY" --head "$PROMOTION_BRANCH" \
+            --state open --json number --jq '.[0].number // empty' 2>/dev/null || true)"
+          if [ -n "$EXISTING" ]; then
+            echo "PR #${EXISTING} already open on ${PROMOTION_BRANCH}; the force-update above is all it needed."
+            exit 0
           fi
+
+          # printf, not a heredoc: heredoc body lines would have to be indented
+          # to stay inside this YAML block scalar, and those leading spaces
+          # would land in the PR body as markdown code blocks.
+          BODY="$(printf '%s\n' \
+            'Automated by `.github/workflows/npm-compat-refresh.yml`.' \
+            '' \
+            "Regenerated \`benchmarks/results/npm-compat*.json\` and their \`website/public/\` twins from main at \`${SOURCE_SHA}\`." \
+            "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            '' \
+            'This branch is reused and force-updated on every refresh, so this PR always carries the newest measurement — there is never a backlog of stale artifact PRs. Merging it through the queue is deliberate: a direct push to main rebuilds every in-flight merge group and discards its validation.' \
+            '' \
+            'Data only. Do not add source, `package.json` or lockfile changes here — they would pull the full test262 matrix into this PR'"'"'s merge group.')"
+          gh pr create -R "$GITHUB_REPOSITORY" \
+            --base main \
+            --head "$PROMOTION_BRANCH" \
+            --title "chore(ci): refresh npm-compat artifacts" \
+            --body "$BODY"
+
+      # (#4217) The explicit `deploy-pages.yml` dispatch that used to live here
+      # is GONE, and its root cause with it. That dispatch existed because the
+      # artifact commit carried `[skip ci]`, which suppresses EVERY workflow for
+      # that push — including `deploy-pages`, whose only relevant trigger is
+      # `push: branches: [main]` with no path filter. The site therefore kept
+      # serving the previous JSON until some later unrelated merge redeployed it
+      # (observed 2026-08-08: artifact published 05:56, last deploy 05:34).
+      #
+      # The artifact now lands as an ordinary merge-queue merge with no
+      # `[skip ci]`, so that same `push: main` trigger fires on the landing
+      # commit and Pages rebuilds from a tree that already contains the fresh
+      # artifact. Dispatching from THIS run would in fact be wrong now: the
+      # artifact is not on main yet when this job ends, so the deploy would
+      # rebuild the stale page and #3958/#3977 would be back.
