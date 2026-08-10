@@ -1,12 +1,12 @@
 {
-  "timestamp": "2026-08-10T19:18:37.231Z",
-  "baseline_generated_at": "2026-08-10T19:18:37.231Z",
-  "baseline_sha": "6ea577f71557c81bb384988149181946321fd89f",
+  "timestamp": "2026-08-10T22:16:00.141Z",
+  "baseline_generated_at": "2026-08-10T22:16:00.142Z",
+  "baseline_sha": "a29362766abe7f3d1a342c865002968e950b2774",
   "oracle_version": 13,
   "mode": {
     "target": "gc",
-    "include_proposals": 1,
-    "label": "official test262 + proposals"
+    "include_proposals": 0,
+    "label": "official test262 (default scope)"
   },
   "summary": {
     "total": 43621,
