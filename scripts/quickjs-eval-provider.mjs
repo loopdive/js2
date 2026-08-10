@@ -84,6 +84,11 @@ export const QUICKJS_ADAPTER_COMPILE_OPTIONS = Object.freeze({
 export const QUICKJS_ADAPTER_EXTERNS = Object.freeze([
   "qjs_new_runtime",
   "qjs_new_context",
+  // (#4308 slice B) The EDI declared-names probe runs in a THROWAWAY context so
+  // the sentinel-abort hoist cannot pollute the caller's realm. Freeing it is
+  // what keeps that per-eval context from being a leak; the shim has always
+  // exported this, so listing it moves no artifact bytes.
+  "qjs_free_context",
   "qjs_malloc_raw",
   "qjs_free_raw",
   "qjs_eval",
@@ -300,6 +305,7 @@ type i32 = number;
 
 declare function qjs_new_runtime(): i32;
 declare function qjs_new_context(rt: i32): i32;
+declare function qjs_free_context(ctx: i32): void;
 declare function qjs_malloc_raw(n: i32): i32;
 declare function qjs_free_raw(p: i32): void;
 declare function qjs_eval(ctx: i32, src: i32, len: i32): i32;
@@ -352,6 +358,11 @@ interface EvalBindingCell {
 // One QuickJS context per adapter INSTANCE. instantiateRuntimeEvalNamespace
 // builds a fresh adapter+libquickjs pair per call, so this is per-test state.
 var qjsContextHandle: number = 0;
+
+// (#4308 slice B) The RUNTIME behind that context, kept so the EDI probe can
+// mint a scratch context in the same runtime (\`qjs_new_context(rt)\`) and free
+// it again. Nothing else may use it.
+var qjsRuntimeHandle: number = 0;
 
 // Direct eval's realm-side helpers are installed on first use, not at context
 // init: a module that never takes the direct route should not pay an eval.
@@ -948,11 +959,48 @@ function qjsInstallEngineIdentity(c: number): void {
  */
 var qjsIntrinsicErrorsSeeded: boolean = false;
 
+/**
+ * (#4308 slice B) The SAME identity trick, applied to the realm object itself.
+ *
+ * EvalDeclarationInstantiation at global scope needs one thing above all: the
+ * caller's global object and the QuickJS realm's \`globalThis\` must be ONE
+ * object at the boundary. Without it the two realms are simply disjoint, and
+ * the annexB \`eval-global\` corpus measures exactly that gap:
+ *
+ *   test262's \`fnGlobalObject.js\` is \`Function("return this;")()\`. Under this
+ *   engine that call lands in \`qjs_call\` with \`this === undefined\`, so a sloppy
+ *   function returns the QUICKJS realm global, which used to cross out as an
+ *   opaque published box. \`Object.defineProperty(fnGlobalObject(), 'f', …)\`
+ *   therefore defined \`f\` on a one-property box — not on the caller's realm and
+ *   not on QuickJS's — so the eval body's \`f\` read \`undefined\` ("binding is not
+ *   reinitialized") and \`verifyProperty(global, "f", …)\` found no own property
+ *   ("f should be an own property"). Both messages are verbatim in the failure
+ *   census.
+ *
+ * Seeding the pair fixes both directions at once, exactly as slice A's error
+ * constructors do: OUTWARD, the realm global publishes AS the caller's carrier,
+ * so compiled property work lands on the real global; INWARD, the carrier
+ * crosses back as QuickJS's own \`globalThis\` rather than a membrane wrapper, so
+ * \`global === this\` and realm-side global writes stay coherent.
+ *
+ * The handle is OWNED and retained for the context lifetime — the same policy
+ * every other registry entry carries.
+ */
+function qjsSeedRealmIdentity(c: number, realm: any): void {
+  const gself: number = qjs_global_object(c);
+  if (gself === 0) return;
+  qjsBoxHandles.push(gself);
+  qjsBoxTargets.push(realm);
+  qjsBoxExposed.push(realm);
+}
+
 function qjsSeedIntrinsicErrorIdentities(c: number, realm: any): void {
   if (qjsIntrinsicErrorsSeeded) return;
   if (realm === undefined || realm === null) return;
   qjsIntrinsicErrorsSeeded = true;
+  qjsSeedRealmIdentity(c, realm);
   const names: string[] = [
+    "AggregateError",
     "Error",
     "EvalError",
     "RangeError",
@@ -997,10 +1045,87 @@ function qjsEnsureContext(): number {
   if (rt === 0) return 0;
   const c: number = qjs_new_context(rt);
   if (c === 0) return 0;
+  qjsRuntimeHandle = rt;
   qjsContextHandle = c;
   qjsInstallEngineIdentity(c);
   return c;
 }
+
+/** Is \`name\` one of the compiler's / this adapter's private carriers? Every
+ *  one of them starts \`__js2wasm\` — the adapter's realm bookkeeping prefix and
+ *  \`RUNTIME_EVAL_GLOBAL_LEXICAL_CELLS_PROPERTY\` alike — so one test covers both.
+ *  Written on charCodeAt rather than \`slice\`/\`startsWith\` to stay inside the
+ *  string surface the standalone target guarantees. */
+function qjsIsAdapterPrivateName(name: string): boolean {
+  const tag: string = "__js2wasm";
+  if (name.length < tag.length) return false;
+  for (let i = 0; i < tag.length; i += 1) {
+    if ((name.charCodeAt(i) as number) !== (tag.charCodeAt(i) as number)) return false;
+  }
+  return true;
+}
+
+/** Membership test over an \`any\`-typed name vector (Object.keys' result). */
+function qjsAnyListHas(list: any, name: string): boolean {
+  if (list === undefined || list === null) return false;
+  for (let i = 0; i < (list.length as number); i += 1) {
+    if (list[i] === name) return true;
+  }
+  return false;
+}
+
+function qjsNameListHas(list: string[], name: string): boolean {
+  for (let i = 0; i < list.length; i += 1) {
+    if (list[i] === name) return true;
+  }
+  return false;
+}
+
+/** Own-property test on the caller's realm carrier. \`in\` would walk the
+ *  prototype chain, and EDI asks an OWN-property question. */
+function qjsHasOwnName(target: any, name: string): boolean {
+  return qjsAnyListHas(Object.getOwnPropertyNames(target), name);
+}
+
+/** The two memoized \`%eval%\` / \`%Function%\` markers. Writing over one of them
+ *  is the measured realm-corruption defect the :1022-era comment records, so
+ *  every write-back path tests this before touching a caller key. */
+function qjsIsIntrinsicMarker(value: any): boolean {
+  if (value === undefined || value === null) return false;
+  const t: string = typeof value;
+  if (t !== "object" && t !== "function") return false;
+  const target: any = __runtime_eval_unwrap_interpreted_callback(value);
+  return target === qjsEvalTarget || target === qjsFunctionTarget;
+}
+
+/** Is \`h\` one of OUR inward membrane wrappers (i.e. a compiled object wearing a
+ *  QuickJS face)? \`qjs_wrapper_gc_handle\` answers 0xFFFFFFFF for anything else;
+ *  the range test reads that correctly whether the i32 arrives as -1 or as the
+ *  unsigned value. Used as a GUARD only: a wrapper crossing back out would today
+ *  publish as an opaque box (outward identity is #4245 slice 2), so a write-back
+ *  path must LEAVE the caller's own value in place instead. */
+function qjsIsMembraneWrapperHandle(h: number): boolean {
+  const id: number = qjs_wrapper_gc_handle(h);
+  return id >= 0 && id < gcRegistry.length;
+}
+
+// (#4308 slice B) Names \`qjsPushGlobals\` actually mirrored on THIS entry, plus
+// the names EvalDeclarationInstantiation created on the caller's realm. The
+// pull walks exactly this union: a compiled global the push deliberately did
+// NOT mirror (a non-enumerable OBJECT — see the P3 hazard below) still has a
+// same-named QuickJS intrinsic in the realm, and pulling that would replace the
+// caller's own value with a box. Deriving the pull set from the push is what
+// makes the widened write-back below safe.
+var qjsPushedNames: string[] = [];
+var qjsEdiNames: string[] = [];
+
+// (#4308 slice B) Non-zero while a QuickJS evaluation or call is on the stack.
+// The globals mirror is a SNAPSHOT protocol, so re-running it re-entrantly —
+// which is easy to do, because evaluated code calls compiled code through the
+// membrane and compiled code calls back — would push the caller's pre-eval
+// values over realm state the running evaluation just created. Every re-entrant
+// sync is therefore skipped; the outermost entry still owns push and pull.
+var qjsEvalDepth: number = 0;
 
 /**
  * Mirror the caller's realm object onto QuickJS \`globalThis\` before evaluating.
@@ -1009,6 +1134,7 @@ function qjsEnsureContext(): number {
  * \`undefined\` for a name only the caller knows. Residual, documented.
  */
 function qjsPushGlobals(c: number, globalObject: any): void {
+  qjsPushedNames = [];
   if (globalObject === undefined || globalObject === null) return;
   // (#4308 slice A) The first point at which the CALLER'S REALM is in hand, and
   // it precedes every value crossing on both the direct and the indirect path
@@ -1016,10 +1142,34 @@ function qjsPushGlobals(c: number, globalObject: any): void {
   // \`__runtime_apply_interpreted\` needs no hook of its own: a realm callback
   // can only exist after an evaluation that already ran this.
   qjsSeedIntrinsicErrorIdentities(c, globalObject);
+  // (#4308 slice B) Record the realm HERE, not only in \`qjsIntrinsicEvalValue\`.
+  // That function runs when the module reads \`eval\`/\`Function\` FIRST-CLASS, so
+  // a module whose only entry is a plain \`eval(source)\` call left
+  // \`qjsIntrinsicRealm\` undefined — and every later consumer of it degraded to a
+  // silent no-op. Measured: the call-time globals sync below gained exactly zero
+  // files until this line existed.
+  qjsIntrinsicRealm = globalObject;
   const g: number = qjs_global_object(c);
   const keys: any = Object.keys(globalObject);
-  for (let i = 0; i < keys.length; i += 1) {
-    const key: string = keys[i] as string;
+  // (#4308 slice B, probe P3) \`Object.keys\` cannot see a \`defineProperty\`'d
+  // NON-ENUMERABLE global, which is the whole
+  // \`existing-non-enumerable-global-init\` cluster: the eval body asserts the
+  // pre-existing value and reads \`undefined\` because the name never reached the
+  // realm. P3 measured that \`Object.getOwnPropertyNames\` on this same carrier
+  // DOES return it, with its value and its true descriptor.
+  //
+  // P3 also measured the hazard, so this is NOT a blanket swap: on a realistic
+  // module the extra names are the compiler's private lexical-cells carrier and
+  // the EIGHT compiled intrinsic error constructors. Mirroring those would push
+  // compiled error constructors into the realm as membrane wrappers — precisely
+  // what §1.7 forbids and what would fight slice A's identity seeding. The
+  // widening is therefore restricted to non-enumerable PRIMITIVES (which is what
+  // the cluster needs) plus the adapter-private name filter; a non-enumerable
+  // OBJECT-valued global stays unmirrored, a declared residual.
+  const all: any = Object.getOwnPropertyNames(globalObject);
+  for (let i = 0; i < (all.length as number); i += 1) {
+    const key: string = all[i] as string;
+    if (qjsIsAdapterPrivateName(key)) continue;
     const value: any = __runtime_eval_unwrap_result(globalObject[key]);
     // Primitives cross by copy; objects and functions cross as LIVE membrane
     // wrappers (#4245 slice 1) — that is what makes the caller's own top-level
@@ -1027,15 +1177,19 @@ function qjsPushGlobals(c: number, globalObject: any): void {
     // evaluated code instead of a ReferenceError. The eval/Function markers are
     // still excluded, by qjsIsMembraneWrappable: they must stay QuickJS's own
     // natives on the QuickJS realm.
-    if (qjsIsMirrorablePrimitive(value) || qjsIsMembraneWrappable(value)) {
-      const namePtr: number = qjsPushCString(key);
-      if (namePtr !== 0) {
-        qjsPushRefusal = "";
-        const h: number = qjsToQuickjs(c, value);
-        if (qjsPushRefusal === "") qjs_set_prop_str(c, g, namePtr, h);
-        qjs_free_value(c, h);
-        qjs_free_raw(namePtr);
+    const primitive: boolean = qjsIsMirrorablePrimitive(value);
+    if (!primitive && !qjsIsMembraneWrappable(value)) continue;
+    if (!primitive && !qjsAnyListHas(keys, key)) continue;
+    const namePtr: number = qjsPushCString(key);
+    if (namePtr !== 0) {
+      qjsPushRefusal = "";
+      const h: number = qjsToQuickjs(c, value);
+      if (qjsPushRefusal === "") {
+        qjs_set_prop_str(c, g, namePtr, h);
+        qjsPushedNames.push(key);
       }
+      qjs_free_value(c, h);
+      qjs_free_raw(namePtr);
     }
   }
   qjsPushRefusal = "";
@@ -1147,43 +1301,341 @@ function qjsPullGlobalLexicalCells(c: number, globalObject: any): void {
 function qjsPullGlobals(c: number, globalObject: any): void {
   if (globalObject === undefined || globalObject === null) return;
   const g: number = qjs_global_object(c);
-  const keys: any = Object.keys(globalObject);
-  for (let i = 0; i < keys.length; i += 1) {
-    const key: string = keys[i] as string;
+  // The pull set is the PUSH set plus whatever EvalDeclarationInstantiation
+  // created — never a fresh enumeration of the carrier. See qjsPushedNames.
+  const names: string[] = [];
+  for (let i = 0; i < qjsPushedNames.length; i += 1) names.push(qjsPushedNames[i] as string);
+  for (let i = 0; i < qjsEdiNames.length; i += 1) {
+    const extra: string = qjsEdiNames[i] as string;
+    if (!qjsNameListHas(names, extra)) names.push(extra);
+  }
+  for (let i = 0; i < names.length; i += 1) {
+    const key: string = names[i] as string;
     const current: any = __runtime_eval_unwrap_result(globalObject[key]);
-    if (qjsIsMirrorablePrimitive(current)) {
-      const namePtr: number = qjsPushCString(key);
-      if (namePtr !== 0) {
-        const h: number = qjs_get_prop_str(c, g, namePtr);
-        qjs_free_raw(namePtr);
-        if (h !== 0) {
-          if (qjsIsMirrorableTag(qjs_tag(h))) {
-            qjsPullRefusal = "";
-            const value: any = qjsToGc(c, h);
-            if (qjsPullRefusal === "") globalObject[key] = __runtime_eval_wrap_result(value);
-          }
-          qjs_free_value(c, h);
-        }
+    // Sub-rule (b) of the write-back contract: never write to a key whose
+    // current compiled value is a memoized intrinsic marker.
+    if (qjsIsIntrinsicMarker(current)) continue;
+    const currentPrimitive: boolean = qjsIsMirrorablePrimitive(current);
+    const namePtr: number = qjsPushCString(key);
+    if (namePtr === 0) continue;
+    const h: number = qjs_get_prop_str(c, g, namePtr);
+    qjs_free_raw(namePtr);
+    if (h === 0) continue;
+    const tag: number = qjs_tag(h);
+    if (qjsIsMirrorableTag(tag)) {
+      // A primitive may only replace a primitive. Letting realm \`undefined\`
+      // (a name QuickJS does not hold) overwrite a compiled object or function
+      // is the clobber this filter has always existed to prevent.
+      if (currentPrimitive) {
+        qjsPullRefusal = "";
+        const value: any = qjsToGc(c, h);
+        if (qjsPullRefusal === "") globalObject[key] = __runtime_eval_wrap_result(value);
       }
+    } else if (tag === QJS_TAG_OBJECT && qjs_is_function(c, h) !== 0 && !qjsIsMembraneWrapperHandle(h)) {
+      // (#4308 slice B) FUNCTION values cross back. "Primitive-only" was always
+      // about RAW handles, not about non-primitives: a published function box
+      // is the sanctioned crossing — it is exactly what an eval COMPLETION
+      // value already uses, and invoking it re-enters through
+      // \`__runtime_apply_interpreted\`. This is what makes
+      // \`eval('{ function f(){} }')\` leave a callable \`f\` behind
+      // (\`existing-block-fn-update\`, \`block-scoping\`, \`existing-global-update\`).
+      //
+      // The wrapper guard is load-bearing: a compiled function the push mirrored
+      // IN is a membrane wrapper realm-side, and republishing it would replace
+      // the caller's own function with an opaque box — a silent downgrade on
+      // every eval that merely READ the binding.
+      qjsPullRefusal = "";
+      const value: any = qjsToGc(c, h);
+      if (qjsPullRefusal === "") globalObject[key] = __runtime_eval_wrap_result(value);
     }
+    qjs_free_value(c, h);
   }
   qjsPullRefusal = "";
   qjs_free_value(c, g);
 }
 
+// ------------------------------- EvalDeclarationInstantiation (#4308 B) -----
+//
+// The adapter has no parser — but it has QuickJS, and every question EDI asks
+// is answerable by PARSING, which executes nothing. Both probes below therefore
+// run in a THROWAWAY context (\`qjs_new_context\` on the same runtime, freed on
+// every path) so neither a hoisted \`var\` nor a pathological source that escapes
+// a wrapper can touch the caller's realm.
+//
+// What this replaces: the plan's original §1.1 hand-rolled directive-prologue
+// scanner, which probe Q5 measured WRONG on 5 of 18 prologue shapes
+// (\`"use strict" + ""\`, \`"use strict"\\n["length"]\`, \`"use strict", 1\`, …) where
+// the parse-only probe is wrong on 0.
+
+/** Set by \`qjsPlanEdiNames\` when EDI step 5/6 must throw. */
+var qjsEdiRedeclaration: string = "";
+
+/** Cheap gate: a source that cannot possibly declare a var-scoped name needs no
+ *  probe at all, which keeps the two scratch contexts off the hot path of the
+ *  overwhelmingly common \`eval("x + 1")\` shape. Deliberately over-approximate —
+ *  a false positive costs one throwaway context, a false negative would lose a
+ *  binding. */
+function qjsSourceCanDeclare(source: string): boolean {
+  if (qjsSourceMentions(source, "var")) return true;
+  return qjsSourceMentions(source, "function");
+}
+
+/** Does \`src\` PARSE in \`sc\`? (Evaluation of the wrapper forms below has no
+ *  effect: they declare a function expression and never call it.) */
+function qjsParsesIn(sc: number, src: string): boolean {
+  const h: number = qjsEvalInternal(sc, src);
+  if (h === 0) return false;
+  qjs_free_value(sc, h);
+  return true;
+}
+
+/**
+ * §1.1′ — is the eval CODE strict, independent of the caller?
+ *
+ * A FunctionBody has the same DirectivePrologue rules as eval code, and \`with\`
+ * is an EARLY (parse-time) SyntaxError in strict code. So:
+ *   control parses + marker parses      ⇒ sloppy
+ *   control parses + marker rejected    ⇒ strict
+ *   control rejected                    ⇒ INCONCLUSIVE
+ *
+ * INCONCLUSIVE ⊆ {the source is a SyntaxError as eval code} (measured across 22
+ * sources), where strictness is unobservable because the real evaluation throws
+ * regardless — so answering "sloppy" there and letting the caller's own
+ * strictness decide is sound.
+ *
+ * The PARENTHESISED FunctionExpression is load-bearing and not a style choice:
+ * with the statement form \`function __p(){SRC}\` a source of
+ * \`} ; globalThis.__BOOM__ = 1; function evil(){\` both parses AND RUNS
+ * (measured). \`void function(){…};\` leaks the same way. Running in the scratch
+ * context is the second line of defence behind that.
+ */
+function qjsSourceIsStrict(sc: number, source: string): boolean {
+  if (!qjsParsesIn(sc, "(function(){" + source + "\\n})")) return false;
+  return !qjsParsesIn(sc, "(function(){" + source + "\\n;with({}){}\\n})");
+}
+
+/** Own property names of \`c\`'s \`globalThis\`, appended to \`into\`. */
+function qjsRealmOwnNames(c: number, into: string[]): boolean {
+  const h: number = qjsEvalInternal(
+    c,
+    "Object.getOwnPropertyNames(globalThis).join(String.fromCharCode(1))"
+  );
+  if (h === 0) return false;
+  const joined: string = qjsReadString(c, h);
+  qjs_free_value(c, h);
+  qjsSplitJoined(joined, into);
+  return true;
+}
+
+/**
+ * §1.2 — evaluate \`prologue + "throw 0;" + source\` as a Script.
+ *
+ * GlobalDeclarationInstantiation hoists every var-scoped name — including the
+ * annex-B block-function survivors, using the ENGINE's own early-error
+ * applicability test — BEFORE the first statement runs, so the sentinel aborts
+ * after hoisting and before one user statement executes. Measured: a source of
+ * \`var x = (globalThis.__boom__ = 1)\` adds only \`x\`; \`__boom__\` is never set.
+ *
+ * P2 also measured that the GDI and EDI declared-NAME sets are identical on
+ * every cross-checked source (only the descriptors differ, and those are the
+ * scratch realm's, not the caller's).
+ *
+ * Returns 0 = sentinel abort (the plan is readable), 1 = some other exception
+ * (a SyntaxError — either in the source or, with a prologue, a redeclaration),
+ * 2 = the probe itself could not run.
+ */
+function qjsSentinelProbe(sc: number, prologue: string, source: string): number {
+  const src: string = prologue + "throw 0;\\n" + source;
+  const buf: number = qjsPushUtf8(src);
+  if (buf === 0) return 2;
+  const byteLen: number = qjsUtf8Len;
+  const h: number = qjs_eval(sc, buf, byteLen);
+  qjs_free_raw(buf);
+  if (h === 0) return 2;
+  if (qjs_is_exception(h) === 0) {
+    qjs_free_value(sc, h);
+    return 1;
+  }
+  qjs_free_value(sc, h);
+  const pending: number = qjs_take_exception(sc);
+  const tag: number = qjs_tag(pending);
+  let sentinel: boolean = false;
+  if (tag === QJS_TAG_INT || tag === QJS_TAG_FLOAT64) sentinel = qjs_to_f64(sc, pending) === 0;
+  qjs_free_value(sc, pending);
+  return sentinel ? 0 : 1;
+}
+
+function qjsCopyNames(from: string[], into: string[]): void {
+  for (let i = 0; i < from.length; i += 1) into.push(from[i] as string);
+}
+
+/** Names present in \`after\` but not \`before\`, minus this adapter's own. */
+function qjsDiffNames(before: string[], after: string[], out: string[]): void {
+  for (let i = 0; i < after.length; i += 1) {
+    const name: string = after[i] as string;
+    if (qjsIsAdapterPrivateName(name)) continue;
+    if (qjsNameListHas(before, name)) continue;
+    if (qjsNameListHas(out, name)) continue;
+    out.push(name);
+  }
+}
+
+/** The caller's GLOBAL LEXICAL names (module-level \`let\`/\`const\`) — the only
+ *  bindings an EDI var name may legally collide with at global scope. */
+function qjsCollectGlobalLexicalNames(globalObject: any, into: string[]): void {
+  if (globalObject === undefined || globalObject === null) return;
+  const carrier: any = globalObject[${j(RUNTIME_EVAL_GLOBAL_LEXICAL_CELLS_PROPERTY)}];
+  if (carrier === undefined || carrier === null) return;
+  for (let i = 0; i + 1 < (carrier.length as number); i += 2) {
+    const name: any = carrier[i];
+    if (typeof name === "string") into.push(name as string);
+  }
+}
+
+/**
+ * Compute the EDI declared-names plan for \`source\` into \`plan\`.
+ * Returns FALSE when EDI must throw a SyntaxError (\`qjsEdiRedeclaration\` names
+ * the offender) — before a single binding has been created, so there is no
+ * partial leak.
+ *
+ * §1.3′: the var-vs-annexB distinction the spec needs here is NOT recoverable
+ * from the probe (P2 correction 2 — after the abort, \`typeof\` separates
+ * top-level function declarations from {var ∪ annexB} but not those two, and a
+ * \`"use strict"\`-prefixed re-probe was tried and MEASURED to be nonsense). So
+ * the distinction is never made: the caller's lexical names are seeded into a
+ * second scratch realm as real \`let\` declarations and QuickJS applies its own
+ * rules — throwing for a colliding \`var\` and silently skipping a colliding
+ * annexB block function, which is exactly B.3.2.3. V8 in a fresh realm agrees
+ * with QuickJS on both, so this inherits engine-consistent behaviour rather than
+ * laundering a quirk.
+ */
+function qjsPlanEdiNames(source: string, globalObject: any, plan: string[]): boolean {
+  qjsEdiRedeclaration = "";
+  if (qjsRuntimeHandle === 0) return true;
+  if (!qjsSourceCanDeclare(source)) return true;
+
+  const sc: number = qjs_new_context(qjsRuntimeHandle);
+  if (sc === 0) return true;
+  // Strict eval code creates NO caller bindings, and the sentinel prefix
+  // DESTROYS the directive prologue — so this gate is a correctness
+  // precondition for the probe below, not an optimisation (P2 correction 1).
+  const strict: boolean = qjsSourceIsStrict(sc, source);
+  const before: string[] = [];
+  const after: string[] = [];
+  let ok: boolean = !strict;
+  // The baseline is taken AFTER the parse probes: if a pathological source ever
+  // did escape the wrapper, whatever it created is then part of the baseline
+  // and cannot be mistaken for a declared name.
+  if (ok) ok = qjsRealmOwnNames(sc, before);
+  if (ok && qjsSentinelProbe(sc, "", source) !== 0) ok = false;
+  if (ok) ok = qjsRealmOwnNames(sc, after);
+  qjs_free_context(sc);
+  if (!ok) return true;
+  const unseeded: string[] = [];
+  qjsDiffNames(before, after, unseeded);
+  if (unseeded.length === 0) return true;
+
+  const lexical: string[] = [];
+  qjsCollectGlobalLexicalNames(globalObject, lexical);
+  const collide: string[] = [];
+  for (let i = 0; i < unseeded.length; i += 1) {
+    const name: string = unseeded[i] as string;
+    // Only a name that can legally appear in the seeded \`let\` prologue may be
+    // probed; anything else keeps the unseeded plan (documented residual).
+    if (qjsNameListHas(lexical, name) && qjsIsSafeConstName(name)) collide.push(name);
+  }
+  if (collide.length === 0) {
+    qjsCopyNames(unseeded, plan);
+    return true;
+  }
+
+  const sc2: number = qjs_new_context(qjsRuntimeHandle);
+  if (sc2 === 0) {
+    qjsCopyNames(unseeded, plan);
+    return true;
+  }
+  let prologue: string = "let ";
+  for (let i = 0; i < collide.length; i += 1) {
+    if (i > 0) prologue = prologue + ",";
+    prologue = prologue + (collide[i] as string);
+  }
+  prologue = prologue + ";\\n";
+  const before2: string[] = [];
+  const after2: string[] = [];
+  let ok2: boolean = qjsRealmOwnNames(sc2, before2);
+  let verdict: number = 2;
+  if (ok2) verdict = qjsSentinelProbe(sc2, prologue, source);
+  if (verdict === 0) ok2 = qjsRealmOwnNames(sc2, after2);
+  qjs_free_context(sc2);
+  if (verdict === 1) {
+    // The unseeded probe already parsed this source, so the ONLY new input is
+    // the lexical seed: QuickJS is reporting EDI's redeclaration error.
+    qjsEdiRedeclaration = collide[0] as string;
+    return false;
+  }
+  if (verdict !== 0 || !ok2) {
+    qjsCopyNames(unseeded, plan);
+    return true;
+  }
+  // The seeded probe aborted on the sentinel: its diff is the plan with the
+  // annexB collisions already removed, silently, exactly as B.3.2.3 requires.
+  qjsDiffNames(before2, after2, plan);
+  return true;
+}
+
+/**
+ * EDI's creation step at global scope: \`CreateGlobalVarBinding\` /
+ * \`CreateGlobalFunctionBinding(F, undefined, true)\`.
+ *
+ * A name that already exists is left completely alone — no value, no descriptor
+ * (\`binding is not reinitialized\`). A NEW name is created by plain assignment,
+ * which P3 measured produces \`{writable:true, enumerable:true,
+ * configurable:true}\` on this carrier — exactly the attribute set B.3.3.3
+ * prescribes and the one the annexB \`verifyProperty\` assertions check.
+ */
+function qjsCreateEdiBindings(globalObject: any, plan: string[]): void {
+  if (globalObject === undefined || globalObject === null) return;
+  for (let i = 0; i < plan.length; i += 1) {
+    const name: string = plan[i] as string;
+    qjsEdiNames.push(name);
+    if (qjsHasOwnName(globalObject, name)) continue;
+    globalObject[name] = __runtime_eval_wrap_result(undefined);
+  }
+}
+
 // -------------------------------------------------------------- evaluate ----
 
 /** Evaluate \`source\` at QuickJS global scope — correct for INDIRECT eval and
- *  for the \`new Function\` source form by spec. */
-function qjsEvaluate(source: string, globalObject: any): any {
+ *  for the \`new Function\` source form by spec.
+ *
+ *  \`edi\` runs EvalDeclarationInstantiation against the caller's realm: TRUE for
+ *  indirect eval (whose varEnv IS the global environment) and for a direct eval
+ *  from global code, FALSE for \`new Function\` (whose \`var\`s are function-scoped
+ *  inside the synthesized function body). */
+function qjsEvaluate(source: string, globalObject: any, edi: boolean): any {
   const c: number = qjsEnsureContext();
   if (c === 0) return runtimeEvalResult(false, new TypeError(${j(QUICKJS_INIT_REFUSAL)}));
+  qjsPushGlobals(c, globalObject);
+  qjsPushGlobalLexicalCells(c, globalObject);
+  qjsEdiNames = [];
+  if (edi) {
+    const plan: string[] = [];
+    if (!qjsPlanEdiNames(source, globalObject, plan)) {
+      qjsPullGlobalLexicalCells(c, globalObject);
+      qjsPullGlobals(c, globalObject);
+      return runtimeEvalResult(
+        false,
+        new SyntaxError("redeclaration of '" + qjsEdiRedeclaration + "'")
+      );
+    }
+    qjsCreateEdiBindings(globalObject, plan);
+  }
   const buf: number = qjsPushUtf8(source);
   if (buf === 0) return runtimeEvalResult(false, new TypeError(${j(QUICKJS_INIT_REFUSAL)}));
   const byteLen: number = qjsUtf8Len;
-  qjsPushGlobals(c, globalObject);
-  qjsPushGlobalLexicalCells(c, globalObject);
+  qjsEvalDepth = qjsEvalDepth + 1;
   const handle: number = qjs_eval(c, buf, byteLen);
+  qjsEvalDepth = qjsEvalDepth - 1;
   qjs_free_raw(buf);
   if (handle === 0) return runtimeEvalResult(false, new TypeError(${j(QUICKJS_INIT_REFUSAL)}));
   if (qjs_is_exception(handle) !== 0) {
@@ -1247,7 +1699,9 @@ export function __runtime_indirect_eval(source: any, globalObject: any): any {
     qjsIntrinsicEvalValue(globalObject);
     return runtimeEvalResult(true, globalObject.Function);
   }
-  return qjsEvaluate(source as string, globalObject);
+  // Indirect eval's VariableEnvironment IS the global environment record, so
+  // EvalDeclarationInstantiation runs against the caller's realm.
+  return qjsEvaluate(source as string, globalObject, true);
 }
 
 /** §20.2.1.1.1 CreateDynamicFunction's source form. QuickJS performs the early
@@ -1259,7 +1713,8 @@ export function __runtime_new_function(
 ): any {
   const source: string =
     "(function anonymous(" + String(paramString) + "\\n) {\\n" + String(bodyString) + "\\n})";
-  return qjsEvaluate(source, globalObject);
+  // No EDI: the body's \`var\`s belong to the synthesized function's varEnv.
+  return qjsEvaluate(source, globalObject, false);
 }
 
 // ------------------------------------------------------- direct eval -------
@@ -1531,6 +1986,28 @@ export function __runtime_direct_eval(
   qjsCollectPool(activationState, names, cells);
   qjsCollectLayer(lexicalNames, lexicalSlots, names, cells);
 
+  // (#4308 slice B, probe P4) A direct eval from GLOBAL code arrives with all
+  // three layers empty — measured in six shapes, including the ones most likely
+  // to perturb it (\`let\` at top level, inside a block, inside a loop body) —
+  // while every ordinary function caller carries at least \`arguments\`. For that
+  // caller the VariableEnvironment IS the global environment record, so this
+  // route is byte-for-byte indirect eval's: evaluate the source RAW at global
+  // scope and run EDI against the caller's realm.
+  //
+  // Evaluating raw rather than through \`with (S) { … }\` is deliberate and not
+  // just an optimisation for an empty S: wrapping the source in a Block demotes
+  // its TOP-LEVEL function declarations to annex-B BLOCK-level ones, and it is
+  // exactly those declarations the \`eval-global\` corpus is measuring.
+  //
+  // KNOWN HOLE, booked as a residual: a declaration-free ARROW caller is
+  // indistinguishable here — arrows have no \`arguments\`, so all three layers are
+  // empty for them too (P4), and its eval-created \`var\` lands on the global
+  // object instead of the arrow's varEnv. The one-line \`src/\` fix (always emit a
+  // sentinel seed entry for a non-global call site) belongs to slice C.
+  const globalCaller: boolean = !callerStrict && names.length === 0;
+  if (globalCaller) return qjsEvaluate(source as string, globalObject, true);
+
+  qjsEdiNames = [];
   qjsPushGlobals(c, globalObject);
   qjsPushGlobalLexicalCells(c, globalObject);
 
@@ -1587,7 +2064,9 @@ export function __runtime_direct_eval(
     result = runtimeEvalResult(false, new TypeError(${j(QUICKJS_INIT_REFUSAL)}));
   } else {
     const byteLen: number = qjsUtf8Len;
+    qjsEvalDepth = qjsEvalDepth + 1;
     const handle: number = qjs_eval(c, buf, byteLen);
+    qjsEvalDepth = qjsEvalDepth - 1;
     qjs_free_raw(buf);
     if (handle === 0) {
       result = runtimeEvalResult(false, new TypeError(${j(QUICKJS_INIT_REFUSAL)}));
@@ -1807,6 +2286,24 @@ export function __runtime_apply_interpreted(
   const fnHandle: number = qjsHandleOf(callable);
   if (fnHandle === 0) return runtimeEvalResult(false, new TypeError(${j(QUICKJS_APPLY_FOREIGN_REFUSAL)}));
 
+  // (#4308 slice B) A function an eval CREATED shares the caller's global
+  // environment, and it can be invoked long after the evaluation that produced
+  // it returned — so the globals mirror has to run around the CALL too, not only
+  // around the eval. Measured on the annexB \`block-scoping\` cluster:
+  // \`eval('{ function f(){ initialBV = f; … } }')\` and then a compiled \`f()\`
+  // assigns the caller's \`initialBV\` from inside QuickJS, and without this sync
+  // that assignment lands on the realm and is never seen again.
+  //
+  // Only at depth 0: re-entering the snapshot protocol from inside a running
+  // evaluation would push the caller's PRE-eval values over bindings that
+  // evaluation just created.
+  const syncGlobals: boolean = qjsEvalDepth === 0 && qjsIntrinsicRealm !== undefined && qjsIntrinsicRealm !== null;
+  if (syncGlobals) {
+    qjsEdiNames = [];
+    qjsPushGlobals(c, qjsIntrinsicRealm);
+    qjsPushGlobalLexicalCells(c, qjsIntrinsicRealm);
+  }
+
   qjsPushRefusal = "";
   const thisHandle: number = qjsToQuickjs(c, __runtime_eval_unwrap_result(receiver));
   const argvPtr: number = args.length > 0 ? qjs_malloc_raw(args.length * 4) : 0;
@@ -1821,7 +2318,9 @@ export function __runtime_apply_interpreted(
     const refusal: string = qjsPushRefusal !== "" ? qjsPushRefusal : ${j(QUICKJS_INIT_REFUSAL)};
     result = runtimeEvalResult(false, new TypeError(refusal));
   } else {
+    qjsEvalDepth = qjsEvalDepth + 1;
     const ret: number = qjs_call(c, fnHandle, thisHandle, args.length, argvPtr);
+    qjsEvalDepth = qjsEvalDepth - 1;
     if (ret === 0) {
       result = runtimeEvalResult(false, new TypeError(${j(QUICKJS_INIT_REFUSAL)}));
     } else if (qjs_is_exception(ret) !== 0) {
@@ -1846,6 +2345,10 @@ export function __runtime_apply_interpreted(
   if (argvPtr !== 0) qjs_free_raw(argvPtr);
   qjs_free_value(c, thisHandle);
   qjsPushRefusal = "";
+  if (syncGlobals) {
+    qjsPullGlobalLexicalCells(c, qjsIntrinsicRealm);
+    qjsPullGlobals(c, qjsIntrinsicRealm);
+  }
   return result;
 }
 `;
