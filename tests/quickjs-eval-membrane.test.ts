@@ -231,12 +231,132 @@ const MEMBRANE_DIRECT_SOURCE = `
   export function directCallProbe(): number { return directCall; }
 `;
 
+/**
+ * #4308 slice A — intrinsic-error identity across the membrane.
+ *
+ * Shaped like the 64 `annexB/…/eval-code/**` files this slice targets: a SLOPPY
+ * function caller, a DIRECT eval, and `assert.throws(ReferenceError, fn)` living
+ * only INSIDE the eval string — `assert` is a top-level function declaration
+ * carrying `throws` as a property, which is verbatim test262's harness shape (an
+ * object-literal `assert` is NOT the same test: its `throws` is an uncarried
+ * closure value and is not callable from evaluated code at all).
+ *
+ * Liveness is not assumed: on the pre-slice-A adapter this same module measures
+ * `identity → 0` with `sameNameMisses → 3`, i.e. the exact
+ * "different error constructor with the same name" signature the corpus fails
+ * on. A regression to the old behaviour therefore cannot pass these cases.
+ */
+const MEMBRANE_ERROR_IDENTITY_SOURCE = `
+  function joinSource(parts: string[]): string {
+    var out = "";
+    for (var i = 0; i < parts.length; i += 1) out = out + parts[i];
+    return out;
+  }
+
+  // Counters live on an OBJECT, never on module-level primitive \`var\`s: the
+  // globals pull copies the realm's value of every primitive global back over
+  // the compiled one after the eval, so a primitive written by a membrane
+  // callback DURING the evaluation is silently reset when it returns.
+  var report: any = { hits: 0, misses: 0, sameNameMiss: 0 };
+
+  function assert(mustBeTrue: any): number { return mustBeTrue ? 1 : 0; }
+  (assert as any).throws = function (expectedErrorConstructor: any, func: any): number {
+    try {
+      func();
+    } catch (thrown) {
+      if ((thrown as any).constructor !== expectedErrorConstructor) {
+        report.misses = (report.misses as number) + 1;
+        if ((thrown as any).name === (expectedErrorConstructor as any).name) {
+          report.sameNameMiss = (report.sameNameMiss as number) + 1;
+        }
+        return 0;
+      }
+      report.hits = (report.hits as number) + 1;
+      return 1;
+    }
+    return -1;
+  };
+
+  // Each case gets its OWN function, which also keeps every \`catch\` out of a
+  // frame that later runs a direct eval. #4305 (fixed separately, PR #4339)
+  // traps \`illegal cast\` on the STATIC shape \`catch\` → direct eval → \`catch\`
+  // whose body READS its parameter: \`fctx.boxedCaptures\` is keyed by name, so a
+  // catch clause rebinding that name leaves stale direct-eval cell metadata and
+  // the identifier read emits a \`ref.cast\` against a raw exception payload.
+  // Neither \`instanceof\` nor a succeeding-then-throwing sequence is required —
+  // it is compile-time, engine-independent, and hits the refusal path too.
+  var vIdentity = 0;
+  function identityCaller(): number {
+    try { return eval(joinSource(["assert.throws(Reference", "Error, function() { f; })"])) as number; }
+    catch (e) { return -1; }
+  }
+  vIdentity = identityCaller();
+
+  // The other direction: the realm's own \`instanceof\` must keep working, i.e.
+  // the compiled constructor must NOT have been mirrored in over QuickJS's.
+  var vRealmInstanceof = 0;
+  function realmInstanceofCaller(): number {
+    try {
+      return eval(joinSource([
+        "(function(){ try { qq; return 0; } catch (e) {",
+        " return (e instanceof ReferenceError) ? 1 : 0; } })()"
+      ])) as number;
+    } catch (e) { return -1; }
+  }
+  vRealmInstanceof = realmInstanceofCaller();
+
+  // A SECOND and a THIRD evaluation after the new crossing path has run once —
+  // the delayed-realm-corruption class shows up here, not on the first eval.
+  var vSecond = 0;
+  function secondCaller(): number {
+    try { return eval(joinSource(["assert.throws(Type", "Error, function() { null.x; })"])) as number; }
+    catch (e) { return -1; }
+  }
+  vSecond = secondCaller();
+
+  var vThird = 0;
+  function thirdCaller(): number {
+    try { return eval(joinSource(["assert.throws(Reference", "Error, function() { zz; })"])) as number; }
+    catch (e) { return -1; }
+  }
+  vThird = thirdCaller();
+
+  // The constructor as an INDIRECT eval completion value, not a call argument.
+  var vIndirect = 0;
+  function indirectCaller(): number {
+    try {
+      var got: any = (0, eval)(joinSource(["Reference", "Error"]));
+      return got === ReferenceError ? 1 : 0;
+    } catch (e) { return -1; }
+  }
+  vIndirect = indirectCaller();
+
+  // Engine identity in-band: no value any engine can produce proves which one ran.
+  var vEngine = 0;
+  function engineCaller(): number {
+    try { return eval(joinSource(["(__js2wasm_eval_", "engine === 'quickjs') ? 1 : 0"])) as number; }
+    catch (e) { return -1; }
+  }
+  vEngine = engineCaller();
+
+  export function identityProbe(): number { return vIdentity; }
+  export function realmInstanceofProbe(): number { return vRealmInstanceof; }
+  export function secondProbe(): number { return vSecond; }
+  export function thirdProbe(): number { return vThird; }
+  export function indirectProbe(): number { return vIndirect; }
+  export function engineProbe(): number { return vEngine; }
+  export function hitsProbe(): number { return report.hits as number; }
+  export function missesProbe(): number { return report.misses as number; }
+  export function sameNameMissProbe(): number { return report.sameNameMiss as number; }
+`;
+
 const availableArtifactDir = quickjsProviderAvailable();
 const enabled = process.env[ENGINE_ENV] === "quickjs" || availableArtifactDir !== null;
 
 describe.skipIf(!enabled)("#4245 slice 1 — quickjs eval membrane (inward)", () => {
   let probe: Record<string, () => number>;
   let direct: Record<string, () => number>;
+  let errors: Record<string, () => number>;
 
   beforeAll(async () => {
     const selection = withEnv(
@@ -274,7 +394,10 @@ describe.skipIf(!enabled)("#4245 slice 1 — quickjs eval membrane (inward)", ()
     direct = await link(MEMBRANE_DIRECT_SOURCE, "quickjs-membrane-direct.ts", {
       inferModuleStrictArguments: false,
     });
-  }, 180_000);
+    errors = await link(MEMBRANE_ERROR_IDENTITY_SOURCE, "quickjs-membrane-error-identity.ts", {
+      inferModuleStrictArguments: false,
+    });
+  }, 240_000);
 
   it("reads a compiled object's property from inside evaluated code", () => {
     expect(probe.readProbe!()).toBe(7);
@@ -352,6 +475,41 @@ describe.skipIf(!enabled)("#4245 slice 1 — quickjs eval membrane (inward)", ()
     // throw). A reading of 42 alone would mean the call works but `typeof`
     // still lies; 1000 + -100 would mean the reverse.
     expect(direct.directCallProbe!()).toBe(1042);
+  });
+
+  // ---------------------------------------- #4308 slice A: error identity ---
+
+  it("the error-identity lane really ran under the quickjs engine", () => {
+    // In-band marker, not an arithmetic result any engine could produce.
+    expect(errors.engineProbe!()).toBe(1);
+  });
+
+  it("in-eval `assert.throws(ReferenceError, …)` matches on IDENTITY (the done-signal)", () => {
+    // 1 = `thrown.constructor === expectedErrorConstructor`. Pre-slice-A this
+    // reads 0 with sameNameMissProbe() === 3 — the corpus's exact failure.
+    expect(errors.identityProbe!()).toBe(1);
+    expect(errors.sameNameMissProbe!()).toBe(0);
+    expect(errors.missesProbe!()).toBe(0);
+  });
+
+  it("realm-side `e instanceof ReferenceError` still answers true", () => {
+    // The half a "mirror the compiled constructors INTO the realm" fix breaks:
+    // QuickJS builds engine-generated errors from its own intrinsics whatever
+    // the global binding says.
+    expect(errors.realmInstanceofProbe!()).toBe(1);
+  });
+
+  it("the SECOND and THIRD evaluations after the new crossing path still match", () => {
+    // Delayed realm corruption surfaces on a LATER eval, never the first.
+    expect(errors.secondProbe!()).toBe(1);
+    expect(errors.thirdProbe!()).toBe(1);
+    expect(errors.hitsProbe!()).toBe(3);
+  });
+
+  it("an intrinsic error constructor crossing out as a COMPLETION value is the caller's own", () => {
+    // The argument path and the completion path are different crossings; both
+    // funnel through qjsPublish, and this pins the one the arg case does not.
+    expect(errors.indirectProbe!()).toBe(1);
   });
 
   it("the callback ABI list is the link-time order the shim consumes positionally", () => {
