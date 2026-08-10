@@ -3570,8 +3570,9 @@ match (value) {
             extending past the JS baseline mean Wasm is faster. The left chart pins both runtimes to their baseline
             tier, the no-optimizing-JIT path that matters for cold starts and multi-tenant edge runtimes; the right
             chart is the production setup with both full optimizing pipelines. These benchmarks run in a JS host
-            (Wasmtime/WASI figures are in the section below). Use &ldquo;Run Browser Benchmark&rdquo; to measure live in
-            your browser, including additional DOM benchmarks.
+            (Wasmtime/WASI figures are in the section below). Source for each program is shown inline below the charts.
+            Use &ldquo;Run Browser Benchmark&rdquo; to measure live in your browser, including additional DOM
+            benchmarks.
           </p>
           <div class="conformance-diagrams">
             <div class="diagram-panel">
@@ -3593,6 +3594,77 @@ match (value) {
                 baseline-label="JS"
                 legend="Production tiers enabled — V8 TurboFan for JS, Liftoff→TurboFan for Wasm. Bars show speedup over the warm/hot JS runtime."
               ></perf-benchmark-chart>
+            </div>
+            <h4 class="host-bench-section-title">Sources</h4>
+            <p class="host-bench-section-desc">
+              One bar per program above. Each block below is the measured kernel — the single exported function the
+              harness times, taken verbatim from
+              <code>website/playground/examples/benchmarks/</code>
+              . Each file also exports a
+              <code>main()</code>
+              that draws the playground's DOM card; that scaffolding is compiled but never timed, so it is not shown
+              here.
+            </p>
+            <div class="bench-test-group" data-test="fib">
+              <h4 class="bench-test-title">fib — fib(30)</h4>
+              <p class="bench-test-desc">Recursive — pure i32/f64 math, no host calls.</p>
+              <details class="bench-test-source">
+                <summary>Show source</summary>
+                <pre class="how-code js">
+export function fib(n: number): number {
+  if (n &lt;= 1) return n;
+  return fib(n - 1) + fib(n - 2);
+}
+
+export function bench_fib(): number {
+  return fib(30);
+}</pre
+                >
+              </details>
+            </div>
+            <div class="bench-test-group" data-test="loop">
+              <h4 class="bench-test-title">loop — 1M Int32 sum</h4>
+              <p class="bench-test-desc">Tight i32 loop with explicit | 0 wrap, no allocations.</p>
+              <details class="bench-test-source">
+                <summary>Show source</summary>
+                <pre class="how-code js">
+export function bench_loop(): number {
+  let s = 0;
+  for (let i = 0; i &lt; 1000000; i++) s = (s + i) | 0;
+  return s;
+}</pre
+                >
+              </details>
+            </div>
+            <div class="bench-test-group" data-test="string">
+              <h4 class="bench-test-title">string — concat 1k</h4>
+              <p class="bench-test-desc">wasm:js-string concat per iteration.</p>
+              <details class="bench-test-source">
+                <summary>Show source</summary>
+                <pre class="how-code js">
+export function bench_string(): number {
+  let str = "";
+  for (let i = 0; i &lt; 1000; i++) str = str + "abcde";
+  return str.length;
+}</pre
+                >
+              </details>
+            </div>
+            <div class="bench-test-group" data-test="array">
+              <h4 class="bench-test-title">array — fill+sum 10k</h4>
+              <p class="bench-test-desc">Wasm GC array — push / get loop.</p>
+              <details class="bench-test-source">
+                <summary>Show source</summary>
+                <pre class="how-code js">
+export function bench_array(): number {
+  const arr: number[] = [];
+  for (let i = 0; i &lt; 10000; i++) arr.push(i);
+  let total = 0;
+  for (let i = 0; i &lt; arr.length; i++) total = total + arr[i];
+  return total;
+}</pre
+                >
+              </details>
             </div>
           </div>
         </div>
