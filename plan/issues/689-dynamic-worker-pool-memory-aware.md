@@ -3,7 +3,7 @@ id: 689
 title: "Dynamic worker pool: memory-aware scaling with dead worker recovery"
 status: done
 created: 2026-03-20
-updated: 2026-04-14
+updated: 2026-08-09
 completed: 2026-04-14
 priority: high
 feasibility: medium
@@ -18,6 +18,30 @@ files:
 # #689 — Dynamic worker pool: memory-aware scaling with dead worker recovery
 
 ## Status: open
+
+## 2026-08-09 — dead-worker recovery completed
+
+Two consecutive merge-queue runs exposed the unresolved dead-worker case in
+the authoritative Test262 pool:
+
+- run `31326495685` lost 195 standalone rows after shard 16's worker reached
+  the 512 MiB V8 heap ceiling;
+- run `31328183866` lost 210 standalone rows after the same failure in shard
+  18.
+
+Both shard jobs returned Vitest exit code 1, which the workflow deliberately
+accepts for ordinary conformance failures, so they uploaded partial JSONL
+artifacts as successful. The aggregate denominator guard caught both, but the
+pool had left the dead worker's in-flight promise unresolved and abandoned the
+rest of each shard.
+
+`CompilerPool` now owns the active job and timer for every fork. An unexpected
+worker error/exit requeues that job once on a fresh process. If the same job
+kills its replacement, the pool records a bounded `compile_error`, replaces
+the worker again, and continues the queue. This implements requirements 2 and
+3 without hiding deterministic OOMs or permitting incomplete shard artifacts.
+A deterministic crash-worker fixture covers the retry bound and verifies that
+subsequent queued work completes on the replacement process.
 
 POOL_SIZE is currently a fixed number (default 4). Workers can OOM on heavy tests, and their remaining batch is lost until retry phase.
 

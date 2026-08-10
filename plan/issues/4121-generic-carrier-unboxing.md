@@ -4,7 +4,7 @@ title: "perf: generic carrier unboxing — one `any`-typed definition boxes an e
 status: ready
 sprint: current
 created: 2026-08-03
-updated: 2026-08-03
+updated: 2026-08-09
 priority: high
 horizon: l
 feasibility: hard
@@ -15,6 +15,13 @@ language_feature: value-representation
 goal: ir-full-coverage
 related: [684, 1167c, 1168, 2855, 3683, 3754, 3765, 4118, 4122, 2773, 1624]
 origin: "measured on upstream/main d369562d7, 2026-08-03, investigating the residual 10x vs node on real npm packages"
+loc-budget-allow:
+  - src/codegen/context/types.ts
+  - src/codegen/index.ts
+  - src/codegen/object-runtime.ts
+func-budget-allow:
+  - src/codegen/index.ts::generateMultiModule
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
 ---
 
 # #4121 — generic carrier unboxing
@@ -253,6 +260,39 @@ That is a small, independent fix, it is what makes case 2/3 in the table above
 visible at all, and it is worth doing regardless of where the analysis
 eventually lives.
 
+## 2026-08-09 cookie runtime-dynamic checkpoint
+
+Branch: `codex/cookie-runtime-dynamic-perf-20260809`, based exactly on
+`dda0d1dc72f4a701b98c09f74f1edd2573985d26`.
+
+The linked legacy-codegen path now runs the same whole-program local analysis
+as a single-source standalone compilation and carries proven string/numeric
+arguments through implicit-any helper ABIs. The object runtime also avoids a
+flatten helper call for already-flat hash keys and folds the FNV operation for
+one-code-unit transient keys.
+
+The exact pinned `cookie@2.0.1` runtime-dynamic artifact A/B used separate Node
+processes, two warm-up rounds, nine measured rounds, 120,000 iterations per
+round, runtime seed 3751, and an exact checksum of 120,000 on both sides:
+
+| artifact                              | median runtime | binary size |
+| ------------------------------------- | -------------: | ----------: |
+| base `dda0d1dc`                       |       4.021 us |      49,906 |
+| linked-carrier + hash-key checkpoint  |       1.595 us |      46,883 |
+| `JS2WASM_NUMERIC_LOCALS=0` control    |       9.623 us |      49,972 |
+
+That is a **2.52x exact artifact speedup** and 3,023 fewer bytes. All artifacts
+have zero imports and execute the same host-supplied runtime input; no package,
+source-text, or expected-result recognizer is involved. The official harness
+measured the checkpoint at 1.9048 us versus Node at 0.4259 us (4.47x behind,
+up from the committed ratio near 0.096 to 0.2236). It still reports
+`benchmarkUsesIr: false`, so the remaining gap is on the legacy backend.
+
+The pinned correctness harness reports 21/21 operations equal for both the
+base and candidate. Its opt-in Vitest wrapper still expects the historical
+18/21 state and is therefore a pre-existing exact-base failure, not part of
+this compiler checkpoint.
+
 ## Acceptance criteria
 
 - [ ] A pre-flight report of **which benchmark functions the IR currently
@@ -263,7 +303,7 @@ eventually lives.
       **zero** `__box_number` / `__unbox_number` in the loop body.
 - [ ] IR-claimed coverage reported alongside every speedup, so a headline number
       cannot hide a shrinking denominator.
-- [ ] The standalone `cookie` runtime-dynamic lane improves measurably against
+- [x] The standalone `cookie` runtime-dynamic lane improves measurably against
       node, measured same-container interleaved behind a kill switch, with the
       checksum unchanged.
 - [ ] The residual box sites in the standalone cookie module are reported
