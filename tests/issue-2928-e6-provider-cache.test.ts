@@ -102,4 +102,19 @@ describe("#2928 E6 — runtime-eval provider seam", () => {
     expect(workflow).toContain("node scripts/build-runtime-eval-provider.mjs\n");
     expect(workflow).not.toContain("build-runtime-eval-provider.mjs --refusal-only");
   });
+
+  // (#4354) …and builds it ONCE, fanning the artifact out to the 57 standalone
+  // shards rather than recompiling an identical ~3 GB / ~5 min artifact in
+  // every cell. `--require-full-cache` is the integrity half: it fails loudly
+  // if the downloaded artifact is missing or stale, so a broken fan-out cannot
+  // silently drop the measured tier back to refusal.
+  it("builds the refresh-baseline provider once and fans it out to the shards", () => {
+    const workflow = readFileSync(join(process.cwd(), ".github/workflows/refresh-baseline.yml"), "utf8");
+    expect(workflow).toContain("runtime-eval-provider:");
+    expect(workflow).toContain("path: .test262-cache/runtime-eval-provider-*.wasm");
+    expect(workflow).toContain("uses: actions/upload-artifact@v6");
+    expect(workflow).toContain("uses: actions/download-artifact@v7");
+    expect(workflow).toContain("--require-full-cache");
+    expect(workflow).toContain("needs: [validate-inputs, runtime-eval-provider]");
+  });
 });
