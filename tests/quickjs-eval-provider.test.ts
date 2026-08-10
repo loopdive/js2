@@ -256,12 +256,15 @@ const PROBE_SOURCE = `
   function strictWrite(): void {
     var localX = 9;
     try {
-      // A strict caller snapshots as \`const\`, so an assignment to a caller
-      // binding THROWS instead of updating — the documented slice-3 residual.
+      // (#4308 slice D) The slice-3 residual is RETIRED. A strict caller used to
+      // snapshot as \`const\`, so an assignment to a caller binding threw a
+      // TypeError; it is now a \`let\` with a \`try…finally\` copy-out, so the
+      // assignment updates the caller's live cell.
+      //   11 = updated · -2 = threw (the old residual) · -3 = silently lost.
       eval(joinSource(["localX = ", "1"]));
-      strictDirectWrite = -2;
+      strictDirectWrite = (localX as number) === 1 ? 11 : -3;
     } catch (err) {
-      strictDirectWrite = (err instanceof TypeError ? 10 : 0) + (localX === 9 ? 1 : 0);
+      strictDirectWrite = -2;
     }
   }
   function strictTwice(): void {
@@ -631,15 +634,16 @@ describe.skipIf(!enabled)("#4238 — quickjs eval engine (flag-gated)", () => {
 
     it("case 11 (strict caller) — direct eval reads the caller's live bindings", () => {
       // 10 * 100 + "abc".length — a number and a STRING caller binding, both
-      // read through the block-scoped `const` preamble.
+      // read through the block-scoped preamble.
       expect(probe.strictDirectReadProbe!()).toBe(1003);
     });
 
-    it("case 11 (strict caller) — assignment is the documented residual, not a silent no-op", () => {
-      // 10 = a real, catchable TypeError (assignment to a constant); +1 = the
-      // caller's binding is genuinely unchanged. A reading of -2 would mean the
-      // write silently "succeeded" and was then lost, which is the outcome the
-      // residual has to be distinguishable from.
+    it("case 11 (strict caller) — assignment UPDATES the caller's binding (#4308 slice D)", () => {
+      // The slice-3 `const`-preamble residual is retired: a strict caller's eval
+      // may legitimately assign to an existing binding, and the `let` preamble's
+      // `finally` copy-out lands it. -2 = the old TypeError; -3 = the write was
+      // accepted and then silently lost, which is the outcome that must stay
+      // distinguishable from success.
       expect(probe.strictDirectWriteProbe!()).toBe(11);
     });
 

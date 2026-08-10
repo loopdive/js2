@@ -627,6 +627,160 @@ const MEMBRANE_OUTWARD_SOURCE = `
   export function cycleProbe(): number { return vCycle; }
 `;
 
+/**
+ * #4308 slices C (function-caller EDI) and D (strict caller / strict source).
+ *
+ * Shaped like the corpus these two slices close: sloppy FUNCTION callers with a
+ * DIRECT eval, plus the three `var-env-var-strict-*` shapes. Every source is
+ * composed through a runtime loop (`tryStaticEvalInline` folds literals), and
+ * every reading is asserted against compiled-side state.
+ *
+ * Anti-vacuity, measured: on the pre-slice adapter this module reads
+ * `fnUpdate 0 · noSkip 1 · strictSource 1 · strictCaller -1 · lexCls -1`
+ * — five of the twelve readings, i.e. it cannot pass with the slices reverted.
+ */
+const EDI_FUNC_SOURCE = `
+  function joinSource(parts: string[]): string {
+    var out = "";
+    for (var i = 0; i < parts.length; i += 1) out = out + parts[i];
+    return out;
+  }
+
+  // --- annexB B.3.3.3, function caller: a TOP-LEVEL function declaration is
+  // initialized at EDI, then the BLOCK one overwrites the varEnv binding. A
+  // block-wrapped source demotes the top-level declaration to a block-lexical
+  // one and answers "outer declaration" — the exact corpus failure.
+  var after: any = 0;
+  (function() {
+    eval(joinSource([
+      '{ function f() { return "inner declaration"; } }after = f;',
+      ' function f() { return "outer declaration"; }'
+    ]));
+  }());
+  var fnUpdate = 0;
+  try { fnUpdate = (after() as string) === "inner declaration" ? 1 : 0; } catch (e) { fnUpdate = -1; }
+
+  // --- the block function must UPDATE a same-named formal parameter, and must
+  // NOT re-initialize it to \`undefined\` first.
+  var init: any = 0;
+  var after2: any = 0;
+  (function(f: any) {
+    eval(joinSource(['init = f;{ function f() {  } }', 'after2 = f;']));
+  }(123));
+  var noSkip = ((init as number) === 123 ? 1 : 0) + (typeof after2 === "function" ? 10 : 0);
+
+  // --- an eval-CREATED FUNCTION is claimed into the caller's activation pool
+  // and is FUNCTION-SCOPED. The two readings together are what make this a
+  // measurement rather than a tautology: before the slice the function was
+  // simply LEFT on the QuickJS realm, where a later direct eval could still
+  // reach it (so \`poolFn\` alone would pass) — but so could an INDIRECT one,
+  // which is a global-scope evaluation and must NOT see a function-scoped
+  // binding. \`poolScoped\` is the reading that separates the two.
+  //
+  // The second and third evaluations are deliberate: a write-back path that
+  // corrupts the realm shows up on a LATER evaluation, not the first.
+  var poolFn = -1;
+  var poolScoped = -1;
+  function poolFnCaller(): void {
+    try {
+      eval(joinSource(["function created(a) { return a + ", "40; }"]));
+      var one = eval(joinSource(["created(", "1)"])) as number;
+      var two = (0, eval)(joinSource(["1 + ", "1"])) as number;
+      var three = eval(joinSource(["created(", "2)"])) as number;
+      poolFn = one + two + three;
+      poolScoped = (0, eval)(joinSource(["typeof crea", "ted === 'undefined' ? 1 : 0"])) as number;
+    } catch (e) { poolFn = -2; }
+  }
+  poolFnCaller();
+
+  // --- slice D: a STRICT SOURCE under a sloppy caller gets its own variable
+  // environment, so the caller's \`v\` is untouched.
+  var strictSource = -1;
+  (function() {
+    var v: any = 0;
+    (function() {
+      eval(joinSource(["'use strict';var v", " = 1"]));
+      strictSource = v as number;
+    }());
+  }());
+
+  // --- slice D: a STRICT CALLER. The eval's own \`var w\` must not reach the
+  // caller's \`w\`, an assignment to an existing binding must, and the
+  // assignment must survive a THROW (the \`finally\` copy-out).
+  var strictCaller = -1;
+  var strictWrite = -1;
+  var strictThrow = -1;
+  function strictArm(): void {
+    "use strict";
+    var w: any = 0;
+    eval(joinSource(["var w = ", "1"]));
+    strictCaller = w as number;
+    var x: any = 1;
+    eval(joinSource(["x = x + ", "41"]));
+    strictWrite = x as number;
+    var y: any = 0;
+    try { eval(joinSource(["y = 9; throw new Error('bo", "om')"])); } catch (e) { }
+    strictThrow = y as number;
+  }
+  strictArm();
+
+  // --- slice D: eval's lexical declarations do not leak between evaluations.
+  var lexCls = 0;
+  try {
+    eval(joinSource(["class outside", " {}"]));
+    eval(joinSource(["class outside", " {}"]));
+    lexCls = 1;
+  } catch (e) { lexCls = -1; }
+
+  // --- slice C: the declaration-free ARROW caller. Its layers are all empty,
+  // exactly like global code inside a block, so only the routing sentinel can
+  // tell them apart. \`arrowGlobal\` reads 1 when the \`var\` did NOT land on the
+  // global object, which is the whole point of the one \`src/\` line.
+  var arrowGlobal = -1;
+  var arrowInner = -1;
+  var arrowFn: any = () => {
+    eval(joinSource(["var arrowVar = ", "7; arrowInner = arrowVar;"]));
+    arrowGlobal = typeof (globalThis as any).arrowVar === "undefined" ? 1 : 0;
+  };
+  arrowFn();
+
+  // --- the pool's 64-slot ceiling is ACCEPTED but not silent: overflowing it
+  // must neither trap nor mis-slot, and the drop must be countable.
+  //
+  // The 70 declarations are built at MODULE level on purpose. A
+  // \`for (var i = …)\` loop in the same function as a direct eval currently
+  // emits an INVALID module (\`local.tee … expected (ref null N), found i32\`) —
+  // engine-independent caller-side codegen, reproduced on the base tree with
+  // this branch's \`src/\` change reverted, so it is neither slice C's nor D's.
+  // \`let\` in the loop head is unaffected.
+  var poolDecl = "";
+  for (var pi = 0; pi < 70; pi += 1) poolDecl = poolDecl + "var n" + pi + " = " + pi + ";";
+  var poolOverflow = -1;
+  var poolNamed = 0;
+  function poolCaller(): void {
+    try {
+      eval(joinSource([poolDecl, ""]));
+      poolOverflow = (0, eval)(joinSource(["typeof __js2wasm_eval_pool_overflow_count__ === 'number' ? __js2wasm_eval_pool_overflow_cou", "nt__ : 0"])) as number;
+      poolNamed = (0, eval)(joinSource(["1 + ", "1"])) as number;
+    } catch (e) { poolOverflow = -1; }
+  }
+  poolCaller();
+
+  export function fnUpdateProbe(): number { return fnUpdate; }
+  export function noSkipProbe(): number { return noSkip; }
+  export function poolFnProbe(): number { return poolFn; }
+  export function poolScopedProbe(): number { return poolScoped; }
+  export function strictSourceProbe(): number { return strictSource; }
+  export function strictCallerProbe(): number { return strictCaller; }
+  export function strictWriteProbe(): number { return strictWrite; }
+  export function strictThrowProbe(): number { return strictThrow; }
+  export function lexClsProbe(): number { return lexCls; }
+  export function arrowGlobalProbe(): number { return arrowGlobal; }
+  export function arrowInnerProbe(): number { return arrowInner; }
+  export function poolOverflowProbe(): number { return poolOverflow; }
+  export function poolNamedProbe(): number { return poolNamed; }
+`;
+
 const availableArtifactDir = quickjsProviderAvailable();
 const enabled = process.env[ENGINE_ENV] === "quickjs" || availableArtifactDir !== null;
 
@@ -635,6 +789,7 @@ describe.skipIf(!enabled)("#4245 slice 1 — quickjs eval membrane (inward)", ()
   let direct: Record<string, () => number>;
   let errors: Record<string, () => number>;
   let edi: Record<string, () => number>;
+  let ediFunc: Record<string, () => number>;
   let outward: Record<string, () => number>;
 
   beforeAll(async () => {
@@ -682,6 +837,9 @@ describe.skipIf(!enabled)("#4245 slice 1 — quickjs eval membrane (inward)", ()
       inferModuleStrictArguments: false,
     });
     outward = await link(MEMBRANE_OUTWARD_SOURCE, "quickjs-membrane-outward.ts", {
+      inferModuleStrictArguments: false,
+    });
+    ediFunc = await link(EDI_FUNC_SOURCE, "quickjs-edi-func.ts", {
       inferModuleStrictArguments: false,
     });
   }, 300_000);
@@ -923,6 +1081,77 @@ describe.skipIf(!enabled)("#4245 slice 1 — quickjs eval membrane (inward)", ()
 
   it("a self-referential QuickJS object mirrors without recursing forever", () => {
     expect(outward.cycleProbe!()).toBe(13); // self === box, v === 3
+  });
+
+  // ---- #4308 slice C — function-caller EvalDeclarationInstantiation --------
+
+  it("a TOP-LEVEL function declaration in eval code stays top-level (annexB order)", () => {
+    // 0 would be "outer declaration" — the reading a block-wrapped source gives,
+    // and the exact `func:existing-fn-update` corpus failure.
+    expect(ediFunc.fnUpdateProbe!()).toBe(1);
+  });
+
+  it("an annexB block function UPDATES a same-named formal parameter without re-initializing it", () => {
+    // 1 = `init` still 123 (not reset to undefined); 10 = the parameter is a
+    // function afterwards. 1 alone is the pre-slice reading.
+    expect(ediFunc.noSkipProbe!()).toBe(11);
+  });
+
+  it("an eval-created FUNCTION lands in the caller's variable environment and stays callable", () => {
+    // 41 + 2 + 42 — the first call, an intervening SECOND evaluation, and a
+    // THIRD call after it. A write-back that corrupts the realm fails the tail,
+    // not the head.
+    expect(ediFunc.poolFnProbe!()).toBe(85);
+  });
+
+  it("…and it is FUNCTION-scoped: an indirect eval does not see it", () => {
+    // The discriminating half. Before the slice the function was left on the
+    // QuickJS realm, where a global-scope evaluation could reach it too — this
+    // reads 0 in that world and 1 only when the binding really moved into the
+    // caller's activation pool.
+    expect(ediFunc.poolScopedProbe!()).toBe(1);
+  });
+
+  it("a declaration-free ARROW caller keeps its eval's `var` off the global object", () => {
+    // The one `src/` line. Without the routing sentinel the arrow is
+    // indistinguishable from global code and this reads 0.
+    expect(ediFunc.arrowGlobalProbe!()).toBe(1);
+    expect(ediFunc.arrowInnerProbe!()).toBe(7);
+  });
+
+  it("pool exhaustion fails SAFE and is countable, never a trap or a mis-slot", () => {
+    // 70 declared names against 64 slots: the tail is dropped by design, the
+    // drop is counted, and the very next evaluation still works.
+    expect(ediFunc.poolOverflowProbe!()).toBeGreaterThan(0);
+    expect(ediFunc.poolNamedProbe!()).toBe(2);
+  });
+
+  // ---- #4308 slice D — strict caller / strict source -----------------------
+
+  it("a STRICT SOURCE under a sloppy caller cannot instantiate the caller's var", () => {
+    expect(ediFunc.strictSourceProbe!()).toBe(0);
+  });
+
+  it("a STRICT CALLER's eval cannot instantiate a var in the caller's scope", () => {
+    // -1 is the pre-slice reading: the `const` preamble collided with the
+    // source's own `var` and the whole eval threw
+    // `invalid redefinition of lexical identifier`.
+    expect(ediFunc.strictCallerProbe!()).toBe(0);
+  });
+
+  it("a STRICT CALLER's eval CAN assign to an existing caller binding", () => {
+    expect(ediFunc.strictWriteProbe!()).toBe(42);
+  });
+
+  it("a strict-caller write survives a throw later in the same eval", () => {
+    expect(ediFunc.strictThrowProbe!()).toBe(9);
+  });
+
+  it("eval's lexical declarations do not leak into the next evaluation", () => {
+    // -1 = the second `class outside {}` threw `redeclaration of 'outside'`,
+    // which is what evaluating as a fresh Script (rather than through the
+    // realm's own eval) does.
+    expect(ediFunc.lexClsProbe!()).toBe(1);
   });
 
   it("the callback ABI list is the link-time order the shim consumes positionally", () => {
