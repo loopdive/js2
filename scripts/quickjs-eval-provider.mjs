@@ -527,6 +527,31 @@ var qjsBoxHandles: number[] = [];
 var qjsBoxTargets: any[] = [];
 var qjsBoxExposed: any[] = [];
 
+// (#4245 slice 2 — the OUTWARD live view) Three columns parallel to the three
+// above, carried only by the entries this slice mirrors:
+//
+//   qjsBoxMirror[i]  1 = a mirrored data box (a plain QuickJS object crossing
+//                    out), 0 = anything else — the two identity SEEDS (the realm
+//                    carrier, the eight error constructors) and the callable
+//                    boxes, none of which may be rewritten by the sync.
+//   qjsBoxKeyList[i] the own STRING keys currently mirrored, in QuickJS order.
+//   qjsBoxLast[i]    the value each of those keys last held on BOTH sides. It is
+//                    what makes the sync bidirectional without an intercept:
+//                    a compiled-side write is exactly \`box[k] !== last[k]\`.
+var qjsBoxMirror: number[] = [];
+var qjsBoxKeyList: any[] = [];
+var qjsBoxLast: any[] = [];
+
+/** Append one non-mirrored registry row (identity seeds, callable boxes). */
+function qjsPushBoxRow(handle: number, target: any, exposed: any, mirror: number): void {
+  qjsBoxHandles.push(handle);
+  qjsBoxTargets.push(target);
+  qjsBoxExposed.push(exposed);
+  qjsBoxMirror.push(mirror);
+  qjsBoxKeyList.push(undefined);
+  qjsBoxLast.push(undefined);
+}
+
 function qjsFindBoxIndex(c: number, h: number): number {
   for (let i = 0; i < qjsBoxHandles.length; i += 1) {
     if (qjs_is_equal(c, qjsBoxHandles[i] as number, h, 1) !== 0) return i;
@@ -809,8 +834,9 @@ function qjsPropNumber(c: number, obj: number, name: string): number {
  * Retain \`h\` and publish the compiled-side stand-in for it. A callable becomes
  * the branded provider→AOT marker (so the caller's \`__apply_closure\` routes
  * invocations back through \`__runtime_apply_interpreted\`); anything else
- * becomes an opaque box, which AOT sees as a near-empty object (residual — no
- * membrane in this issue) but which unwraps to the SAME handle on the way back
+ * becomes the #4245 slice-2 MIRRORED BOX — a real compiled \`$Object\` carrying
+ * the QuickJS object's own string-keyed properties, kept in step with it by the
+ * sync below. Either way the value unwraps to the SAME handle on the way back
  * in, so identity holds within the provider.
  *
  * The registry hit below is ALSO the intrinsic-error substitution (#4308 slice
@@ -818,23 +844,316 @@ function qjsPropNumber(c: number, obj: number, name: string): number {
  * so they cross out as the caller's own \`ReferenceError\`/… rather than a box.
  */
 function qjsPublish(c: number, h: number): any {
+  // (#4245 slice 2) COLLAPSE first. A compiled object that crossed INWARD as a
+  // membrane wrapper must come back out as the ORIGINAL GC object, never as a
+  // box wrapping a wrapper: \`qjs_wrapper_gc_handle\` has been exported and
+  // declared since slice 1 but had no caller on this path, so evaluated code
+  // handing a compiled object back to a compiled function (\`verifyProperty(o,
+  // …)\`, a callback argument) lost its identity — \`===\` failed and property
+  // work landed on a stand-in. This is the second half of the identity contract
+  // whose inward half slice 1 already had.
+  const wrapped: number = qjs_wrapper_gc_handle(h);
+  if (wrapped >= 0 && wrapped < gcRegistry.length) return gcRegistry[wrapped];
   const existing: number = qjsFindBoxIndex(c, h);
   if (existing >= 0) return qjsBoxExposed[existing];
   const retained: number = qjs_dup(c, h);
-  const target: any = { __qjs_handle__: retained };
-  let exposed: any = target;
   if (qjs_is_function(c, h) !== 0) {
-    exposed = __runtime_eval_wrap_interpreted_callback(
-      target,
+    const carrierTarget: any = {};
+    const exposed: any = __runtime_eval_wrap_interpreted_callback(
+      carrierTarget,
       qjsPropString(c, h, "name"),
       qjsPropNumber(c, h, "length"),
       undefined
     );
+    qjsPushBoxRow(retained, carrierTarget, exposed, 0);
+    return exposed;
   }
-  qjsBoxHandles.push(retained);
-  qjsBoxTargets.push(target);
-  qjsBoxExposed.push(exposed);
-  return exposed;
+  // Register BEFORE mirroring: a self-referential object (\`o.self = o\`) walks
+  // straight back into qjsPublish for the same handle, and without the row in
+  // place that recursion never terminates.
+  const box: any = {};
+  qjsPushBoxRow(retained, box, box, 1);
+  qjsPullBox(c, qjsBoxHandles.length - 1);
+  return box;
+}
+
+// ---------------------------------------------- outward live view (#4245 S2) --
+//
+// A plain QuickJS object crossing OUT is a compiled \`$Object\` whose own string
+// keys mirror the QuickJS object's, refreshed in BOTH directions at every seam
+// crossing (\`qjsSyncBoxesPush\` before entering QuickJS, \`qjsSyncBoxesPull\` on
+// the way back). The values are real own data properties rather than traps, and
+// that shape is the whole point rather than an implementation convenience:
+//
+//   - \`Object.getOwnPropertyNames\` / \`Object.keys\` / \`for…in\` / \`in\` /
+//     \`Object.prototype.hasOwnProperty\` / \`Object.getOwnPropertyDescriptor\` all
+//     answer NATIVELY and correctly, because the box is an ordinary object.
+//   - A \`Proxy\` box was built and measured first and is REJECTED: \`__extern_get\`,
+//     \`__extern_set\`, \`__extern_has\` and \`__getOwnPropertyNames\` do carry the
+//     \`$Proxy\` front-guard (so reads, writes and ownKeys work — verified), but
+//     \`__hasOwnProperty\` / \`__object_hasOwn\` do NOT: they \`ref.test $Object\`,
+//     miss, and answer FALSE. test262's \`verifyProperty\` gates every descriptor
+//     check behind \`__hasOwnProperty(desc, field)\`, so a Proxy box makes the
+//     whole helper a silent no-op — the 48 target files would go GREEN having
+//     verified nothing. Adding a \`$Proxy\` arm to \`__hasOwnProperty\` is a \`src/\`
+//     change and is reported as a follow-up, not taken here.
+//   - Per-key ACCESSOR properties (the plan's own fallback) were measured and
+//     are also rejected: the accessor arms dispatch through
+//     \`__call_accessor_get\` → \`__call_fn_method_0\`, whose only cross-module
+//     front-guard is the AOT-callable CARRIER (#4197). The provider→AOT
+//     interpreted-callback marker is recognised by \`__apply_closure\` alone, and
+//     a raw adapter closure only lands if the CALLER module happens to carry a
+//     structurally identical arity-0 closure shape. Measured: the getter
+//     installs (gOPD reports an accessor) and returns null on call.
+//
+// Residual, stated plainly: this is live AT SEAM GRANULARITY. A QuickJS getter
+// with side effects runs at sync time, not at compiled-read time, and a
+// mutation made and observed strictly between two crossings is invisible.
+
+var qjsBoxHelpersReady: boolean = false;
+
+/** Realm-side helpers for the outward box, installed once per context. Kept in
+ *  QuickJS rather than in shim C so the artifact hash does not move. */
+function qjsEnsureBoxHelpers(c: number): boolean {
+  if (qjsBoxHelpersReady) return true;
+  const installed: number = qjsEvalInternal(
+    c,
+    // Own STRING keys, each prefixed by its enumerability so the mirror can
+    // reproduce it. Symbol keys are absent by construction (getOwnPropertyNames
+    // never reports them) — the enumerated slice-1 residual, unchanged.
+    "globalThis.__js2wasm_eval_boxkeys__ = function (o) {" +
+      " if (o === null || (typeof o !== 'object' && typeof o !== 'function')) return '';" +
+      " var n = Object.getOwnPropertyNames(o), out = [], i, d;" +
+      " for (i = 0; i < n.length; i++) {" +
+      "  try { d = Object.getOwnPropertyDescriptor(o, n[i]); } catch (e) { d = null; }" +
+      "  out.push((d && d.enumerable ? 'e' : 'n') + n[i]);" +
+      " }" +
+      " return out.join('\\\\u0001'); };" +
+      "globalThis.__js2wasm_eval_boxdel__ = function (o, k) { try { delete o[k]; } catch (e) {} };" +
+      "0"
+  );
+  if (installed === 0) return false;
+  qjs_free_value(c, installed);
+  qjsBoxHelpersReady = true;
+  return true;
+}
+
+/** \`__js2wasm_eval_boxkeys__(obj)\` — "" when the helper is unavailable. */
+function qjsBoxKeySpec(c: number, h: number): string {
+  if (!qjsEnsureBoxHelpers(c)) return "";
+  const ret: number = qjsCallGlobalHelper(c, "__js2wasm_eval_boxkeys__", 1, h);
+  if (ret === 0) return "";
+  const spec: string = qjsReadString(c, ret);
+  qjs_free_value(c, ret);
+  return spec;
+}
+
+/** Read \`h[key]\` and convert it outward. Absent / unrepresentable ⇒ undefined. */
+function qjsBoxReadValue(c: number, h: number, key: string): any {
+  const namePtr: number = qjsPushCString(key);
+  if (namePtr === 0) return undefined;
+  const v: number = qjs_get_prop_str(c, h, namePtr);
+  qjs_free_raw(namePtr);
+  if (v === 0) return undefined;
+  const saved: string = qjsPullRefusal;
+  qjsPullRefusal = "";
+  const out: any = qjsToGc(c, v);
+  const refused: boolean = qjsPullRefusal !== "";
+  qjsPullRefusal = saved;
+  qjs_free_value(c, v);
+  return refused ? undefined : out;
+}
+
+/** Write \`value\` into \`h[key]\`. Silently skipped when it cannot cross inward —
+ *  a refusal here must never abort the sync of the other keys. */
+function qjsBoxWriteValue(c: number, h: number, key: string, value: any): void {
+  const namePtr: number = qjsPushCString(key);
+  if (namePtr === 0) return;
+  const saved: string = qjsPushRefusal;
+  qjsPushRefusal = "";
+  const vh: number = qjsToQuickjs(c, value);
+  const refused: boolean = qjsPushRefusal !== "";
+  qjsPushRefusal = saved;
+  if (!refused && vh !== 0) qjs_set_prop_str(c, h, namePtr, vh);
+  if (vh !== 0) qjs_free_value(c, vh);
+  qjs_free_raw(namePtr);
+}
+
+/** Call a realm-side helper with exactly TWO borrowed argument handles. The
+ *  one-argument sibling is \`qjsCallGlobalHelper\`; both free every handle they
+ *  minted, on every path. Returns an OWNED result handle, or 0. */
+function qjsCallGlobalHelper2(c: number, name: string, a0: number, a1: number): number {
+  const g: number = qjs_global_object(c);
+  const namePtr: number = qjsPushCString(name);
+  if (namePtr === 0) {
+    qjs_free_value(c, g);
+    return 0;
+  }
+  const fn: number = qjs_get_prop_str(c, g, namePtr);
+  qjs_free_raw(namePtr);
+  if (fn === 0) {
+    qjs_free_value(c, g);
+    return 0;
+  }
+  const argv: number = qjs_malloc_raw(8);
+  let ret: number = 0;
+  if (argv !== 0) {
+    store32(argv, a0);
+    store32(argv + 4, a1);
+    ret = qjs_call(c, fn, g, 2, argv);
+    qjs_free_raw(argv);
+  }
+  qjs_free_value(c, fn);
+  qjs_free_value(c, g);
+  if (ret === 0) return 0;
+  if (qjs_is_exception(ret) !== 0) {
+    qjs_free_value(c, ret);
+    const pending: number = qjs_take_exception(c);
+    qjs_free_value(c, pending);
+    return 0;
+  }
+  return ret;
+}
+
+/** \`delete h[key]\` through the realm helper (no shim export needed). */
+function qjsBoxDeleteKey(c: number, h: number, key: string): void {
+  if (!qjsEnsureBoxHelpers(c)) return;
+  const kh: number = qjsToQuickjs(c, key);
+  if (kh === 0) return;
+  const ret: number = qjsCallGlobalHelper2(c, "__js2wasm_eval_boxdel__", h, kh);
+  if (ret !== 0) qjs_free_value(c, ret);
+  qjs_free_value(c, kh);
+}
+
+/** Does \`list\` (a string[]) contain \`name\`? */
+function qjsKeyListHas(list: string[], name: string): boolean {
+  for (let i = 0; i < list.length; i += 1) {
+    if (list[i] === name) return true;
+  }
+  return false;
+}
+
+/**
+ * PULL — QuickJS is the truth. Re-reads the object's own keys and values onto
+ * the box, adds keys evaluated code created, drops keys it deleted, and records
+ * the result in \`qjsBoxLast\` so the next PUSH can tell a compiled-side write
+ * from an unchanged mirror.
+ */
+function qjsPullBox(c: number, idx: number): void {
+  const h: number = qjsBoxHandles[idx] as number;
+  const box: any = qjsBoxTargets[idx];
+  if (box === undefined || box === null) return;
+  const spec: string = qjsBoxKeySpec(c, h);
+  const parts: string[] = [];
+  qjsSplitJoined(spec, parts);
+  const keys: string[] = [];
+  const enumerables: number[] = [];
+  for (let i = 0; i < parts.length; i += 1) {
+    const part: string = parts[i] as string;
+    if (part.length === 0) continue;
+    keys.push(part.substring(1));
+    enumerables.push((part.charCodeAt(0) as number) === 101 ? 1 : 0);
+  }
+  const previous: any = qjsBoxKeyList[idx];
+  if (previous !== undefined && previous !== null) {
+    const old: string[] = previous as string[];
+    for (let i = 0; i < old.length; i += 1) {
+      const name: string = old[i] as string;
+      if (!qjsKeyListHas(keys, name)) delete box[name];
+    }
+  }
+  const values: any[] = [];
+  for (let i = 0; i < keys.length; i += 1) {
+    const key: string = keys[i] as string;
+    const value: any = qjsBoxReadValue(c, h, key);
+    values.push(value);
+    if ((enumerables[i] as number) === 1) {
+      box[key] = value;
+    } else {
+      // A non-enumerable own property (test262 leans on these through
+      // \`verifyProperty\`) must not surface in \`Object.keys\` / \`for…in\`.
+      Object.defineProperty(box, key, {
+        value: value,
+        writable: true,
+        enumerable: false,
+        configurable: true,
+      });
+    }
+  }
+  qjsBoxKeyList[idx] = keys;
+  qjsBoxLast[idx] = values;
+}
+
+/**
+ * PUSH — the compiled side is the truth for anything it changed since the last
+ * sync. Writes back changed values, new keys, and deletions, then re-records the
+ * baseline. Values it did NOT touch are left alone, so an evaluation's own
+ * mutations are never clobbered by a stale mirror.
+ */
+function qjsPushBox(c: number, idx: number): void {
+  const h: number = qjsBoxHandles[idx] as number;
+  const box: any = qjsBoxTargets[idx];
+  if (box === undefined || box === null) return;
+  const previous: any = qjsBoxKeyList[idx];
+  const keys: string[] = previous === undefined || previous === null ? [] : (previous as string[]);
+  const lastRaw: any = qjsBoxLast[idx];
+  const last: any[] = lastRaw === undefined || lastRaw === null ? [] : (lastRaw as any[]);
+  const namesRaw: any = Object.getOwnPropertyNames(box);
+  const names: string[] = [];
+  for (let i = 0; i < (namesRaw.length as number); i += 1) names.push(String(namesRaw[i]));
+  for (let i = 0; i < keys.length; i += 1) {
+    const key: string = keys[i] as string;
+    if (!qjsKeyListHas(names, key)) {
+      qjsBoxDeleteKey(c, h, key);
+      continue;
+    }
+    const current: any = box[key];
+    if (current !== last[i]) {
+      qjsBoxWriteValue(c, h, key, current);
+      last[i] = current;
+    }
+  }
+  for (let i = 0; i < names.length; i += 1) {
+    const name: string = names[i] as string;
+    if (qjsKeyListHas(keys, name)) continue;
+    const current: any = box[name];
+    qjsBoxWriteValue(c, h, name, current);
+    keys.push(name);
+    last.push(current);
+  }
+  qjsBoxKeyList[idx] = keys;
+  qjsBoxLast[idx] = last;
+}
+
+/**
+ * Sync every mirrored box. The loop re-reads \`qjsBoxMirror.length\` each turn on
+ * purpose: pulling one box publishes its object-valued properties, which appends
+ * NEW rows, and those have to be mirrored in the same pass or a nested object
+ * would be one crossing stale.
+ *
+ * \`qjsBoxSyncing\` is the re-entrancy guard. \`qjsBoxReadValue\` reaches
+ * \`qjsToGc\` → \`qjsPublish\`, which itself pulls the fresh row; without the guard
+ * a cyclic graph would recurse. Rows created during a sync are still covered,
+ * because \`qjsPublish\` pulls them once at creation.
+ */
+var qjsBoxSyncing: boolean = false;
+
+function qjsSyncBoxes(c: number, push: boolean): void {
+  if (qjsBoxSyncing) return;
+  if (c === 0) return;
+  qjsBoxSyncing = true;
+  let i: number = 0;
+  while (i < qjsBoxMirror.length) {
+    if ((qjsBoxMirror[i] as number) === 1) {
+      if (push) {
+        qjsPushBox(c, i);
+      } else {
+        qjsPullBox(c, i);
+      }
+    }
+    i += 1;
+  }
+  qjsBoxSyncing = false;
 }
 
 /**
@@ -989,9 +1308,7 @@ var qjsIntrinsicErrorsSeeded: boolean = false;
 function qjsSeedRealmIdentity(c: number, realm: any): void {
   const gself: number = qjs_global_object(c);
   if (gself === 0) return;
-  qjsBoxHandles.push(gself);
-  qjsBoxTargets.push(realm);
-  qjsBoxExposed.push(realm);
+  qjsPushBoxRow(gself, realm, realm, 0);
 }
 
 function qjsSeedIntrinsicErrorIdentities(c: number, realm: any): void {
@@ -1032,9 +1349,7 @@ function qjsSeedIntrinsicErrorIdentities(c: number, realm: any): void {
       qjs_free_value(c, h);
       continue;
     }
-    qjsBoxHandles.push(h);
-    qjsBoxTargets.push(ctor);
-    qjsBoxExposed.push(ctor);
+    qjsPushBoxRow(h, ctor, ctor, 0);
   }
   qjs_free_value(c, g);
 }
@@ -1331,7 +1646,18 @@ function qjsPullGlobals(c: number, globalObject: any): void {
         const value: any = qjsToGc(c, h);
         if (qjsPullRefusal === "") globalObject[key] = __runtime_eval_wrap_result(value);
       }
-    } else if (tag === QJS_TAG_OBJECT && qjs_is_function(c, h) !== 0 && !qjsIsMembraneWrapperHandle(h)) {
+    } else if (tag === QJS_TAG_OBJECT && !qjsIsMembraneWrapperHandle(h)) {
+      // (#4245 slice 2) NON-CALLABLE objects cross back too, now that there is
+      // something honest for them to cross back AS. This is not a widening for
+      // its own sake — it is the second half of the \`existing-*-global-init\`
+      // clusters, and the FIRST half (the descriptor box) is worth zero without
+      // it. Those tests read \`var global = fnGlobalObject();\` INSIDE the eval and
+      // then call \`verifyProperty(global, "f", …)\` from TOP-LEVEL compiled code
+      // after it returns; with objects excluded from the pull the compiled
+      // \`global\` stayed \`undefined\` and \`Object.getOwnPropertyDescriptor\` threw
+      // "Cannot convert undefined or null to object" — measured, as the exact
+      // error those 32 files moved to once the descriptor half landed.
+      //
       // (#4308 slice B) FUNCTION values cross back. "Primitive-only" was always
       // about RAW handles, not about non-primitives: a published function box
       // is the sanctioned crossing — it is exactly what an eval COMPLETION
@@ -1633,6 +1959,13 @@ function qjsEvaluate(source: string, globalObject: any, edi: boolean): any {
   const buf: number = qjsPushUtf8(source);
   if (buf === 0) return runtimeEvalResult(false, new TypeError(${j(QUICKJS_INIT_REFUSAL)}));
   const byteLen: number = qjsUtf8Len;
+  // (#4245 slice 2) The outward boxes are part of the caller's state the way its
+  // globals are, so they ride the same push/pull discipline: anything the
+  // compiled side wrote into a box since the last crossing goes IN before the
+  // evaluation can read it, and whatever the evaluation changed comes back OUT
+  // on every exit — including the throwing one, where the mutation is just as
+  // real as on the success path.
+  if (qjsEvalDepth === 0) qjsSyncBoxes(c, true);
   qjsEvalDepth = qjsEvalDepth + 1;
   const handle: number = qjs_eval(c, buf, byteLen);
   qjsEvalDepth = qjsEvalDepth - 1;
@@ -1640,6 +1973,7 @@ function qjsEvaluate(source: string, globalObject: any, edi: boolean): any {
   if (handle === 0) return runtimeEvalResult(false, new TypeError(${j(QUICKJS_INIT_REFUSAL)}));
   if (qjs_is_exception(handle) !== 0) {
     qjs_free_value(c, handle);
+    if (qjsEvalDepth === 0) qjsSyncBoxes(c, false);
     qjsPullGlobalLexicalCells(c, globalObject);
     qjsPullGlobals(c, globalObject);
     return qjsThrewResult(c);
@@ -1647,6 +1981,7 @@ function qjsEvaluate(source: string, globalObject: any, edi: boolean): any {
   qjsPullRefusal = "";
   const value: any = qjsToGc(c, handle);
   qjs_free_value(c, handle);
+  if (qjsEvalDepth === 0) qjsSyncBoxes(c, false);
   qjsPullGlobalLexicalCells(c, globalObject);
   qjsPullGlobals(c, globalObject);
   if (qjsPullRefusal !== "") {
@@ -2303,6 +2638,10 @@ export function __runtime_apply_interpreted(
     qjsPushGlobals(c, qjsIntrinsicRealm);
     qjsPushGlobalLexicalCells(c, qjsIntrinsicRealm);
   }
+  // (#4245 slice 2) Same reasoning as the globals mirror one line up: invoking a
+  // QuickJS callable is a seam crossing, so the outward boxes cross with it.
+  const syncBoxes: boolean = qjsEvalDepth === 0;
+  if (syncBoxes) qjsSyncBoxes(c, true);
 
   qjsPushRefusal = "";
   const thisHandle: number = qjsToQuickjs(c, __runtime_eval_unwrap_result(receiver));
@@ -2345,6 +2684,7 @@ export function __runtime_apply_interpreted(
   if (argvPtr !== 0) qjs_free_raw(argvPtr);
   qjs_free_value(c, thisHandle);
   qjsPushRefusal = "";
+  if (syncBoxes) qjsSyncBoxes(c, false);
   if (syncGlobals) {
     qjsPullGlobalLexicalCells(c, qjsIntrinsicRealm);
     qjsPullGlobals(c, qjsIntrinsicRealm);
@@ -2459,6 +2799,30 @@ export const QUICKJS_ADAPTER_CANARY_SOURCE = `
       }
       function membraneAdd(a: number, b: number): number { return a + b + 1; }
 
+      // #4245 slice 2 — the OUTWARD half, as one 4-digit reading. Each digit is
+      // a distinct way this can regress to a silently-passing no-op:
+      //   6000 the box carries the QuickJS object's OWN KEYS (an opaque box, or
+      //        a Proxy box whose __hasOwnProperty arm does not exist, reads 0
+      //        here while every downstream test262 assertion still "passes")
+      //    500 a value read off the box is the real one
+      //     40 a mutation made by a LATER evaluation is visible
+      //      3 a compiled-side write reaches the QuickJS object
+      var outward = 0;
+      try {
+        var obox: any = (0, eval)(joinSource(["globalThis.canaryObj = { n: 4", "1 }"]));
+        var okeys: any = Object.getOwnPropertyNames(obox);
+        var ownSeen: number =
+          ((okeys as any).length as number) === 1 && ((Object as any).hasOwn(obox, "n") ? 1 : 0) === 1 ? 6000 : 0;
+        var valueSeen: number = ((obox as any).n as number) === 41 ? 500 : 0;
+        (0, eval)(joinSource(["canaryOb", "j.n = 55"]));
+        var liveSeen: number = ((obox as any).n as number) === 55 ? 40 : 0;
+        (obox as any).n = 9;
+        var backSeen: number = ((0, eval)(joinSource(["canaryOb", "j.n"])) as number) === 9 ? 3 : 0;
+        outward = ownSeen + valueSeen + liveSeen + backSeen;
+      } catch (err) {
+        outward = -1;
+      }
+
       var strictDirect = 0;
       function strictDirectCaller(): number {
         var localX = 20;
@@ -2481,6 +2845,7 @@ export const QUICKJS_ADAPTER_CANARY_SOURCE = `
       export function errorFidelityProbe(): number { return errorFidelity; }
       export function strictDirectProbe(): number { return strictDirect; }
       export function membraneProbe(): number { return membrane; }
+      export function outwardProbe(): number { return outward; }
     `;
 
 /** Expected canary readings — one per capability slices 2–3 add. */
@@ -2504,6 +2869,15 @@ export const QUICKJS_ADAPTER_CANARY_EXPECTATIONS = Object.freeze([
       "300 = its write was observed on the compiled side, 20 = it CALLED a compiled function " +
       "(this digit is the __runtime_eval_apply_callable lowering), 1 = one compiled object is one wrapper " +
       "across two separate evaluations",
+  },
+  {
+    probe: "outwardProbe",
+    expected: 6543,
+    why:
+      "the #4245 slice-2 outward live view is not live: 6000 = the box reports the QuickJS object's own " +
+      "keys to getOwnPropertyNames/hasOwn (the digit that catches a box which passes every downstream " +
+      "assertion by answering 'no own properties'), 500 = a value read off it is the real one, " +
+      "40 = a LATER evaluation's mutation is visible, 3 = a compiled-side write reached QuickJS",
   },
 ]);
 
