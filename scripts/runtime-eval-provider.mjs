@@ -681,6 +681,77 @@ function selectQuickjsEngine() {
   );
 }
 
+/**
+ * (#4238 slice 2) Load a `compile` for a provider PREBUILD script.
+ *
+ * Both prebuild scripts prefer a prebuilt `scripts/compiler-bundle.mjs` over
+ * compiling the compiler from `src/` under tsx, because the bundle is an order
+ * of magnitude faster to load. The hazard the `capability` hook exists for: a
+ * bundle built BEFORE a compiler feature the provider source depends on is
+ * still importable and still exports a working `compile`, so the build proceeds
+ * and fails much later with a message that accuses the provider source. That
+ * cost real hours on #4238 — a stale bundle made the quickjs adapter's
+ * `wasm:memory` accessors fall back to `env::store8`, and the resulting error
+ * ("an extern leaked outside the provider namespace") pointed squarely at the
+ * adapter, which was fine.
+ *
+ * So: when `capability` is supplied, the bundle is probed BEFORE it is
+ * accepted. A bundle that fails the probe is skipped (with a loud warning that
+ * names the bundle as the suspect) and the source path is used instead; if the
+ * source path is unavailable too, the thrown error names the bundle first. The
+ * probe is deliberately the caller's business — this helper knows nothing about
+ * which compile options matter to which provider.
+ *
+ * @param {{label?: string, capability?: (compile: Function) => Promise<string | null> | string | null}} [options]
+ *   `capability` returns null when the compiler is usable, or a short reason
+ *   string when it is not.
+ */
+export async function loadProviderCompiler(options = {}) {
+  const label = options.label ?? "runtime-eval";
+  const capability = options.capability;
+  const notes = [];
+  const candidates = [
+    { specifier: "./compiler-bundle.mjs", origin: "compiler-bundle.mjs", isBundle: true },
+    // Dev convenience: `node --import tsx scripts/build-…-provider.mjs`.
+    { specifier: "../src/index.ts", origin: "src/index.ts (tsx)", isBundle: false },
+  ];
+  for (const candidate of candidates) {
+    let compile;
+    try {
+      const loaded = await import(candidate.specifier);
+      if (typeof loaded.compile !== "function") continue;
+      compile = loaded.compile;
+    } catch {
+      continue;
+    }
+    if (capability) {
+      let reason;
+      try {
+        reason = await capability(compile);
+      } catch (err) {
+        reason = `capability probe threw: ${err?.message ?? err}`;
+      }
+      if (reason) {
+        notes.push(`${candidate.origin}: ${reason}`);
+        console.warn(
+          `[${label}] SKIPPING ${candidate.origin} — it does not support a compiler feature this provider ` +
+            `needs (${reason}). This is the classic STALE-BUNDLE trap: rebuild scripts/compiler-bundle.mjs, ` +
+            `or run under tsx. Falling back to the next compiler source.`,
+        );
+        continue;
+      }
+    }
+    return { compile, origin: candidate.origin, notes };
+  }
+  throw new Error(
+    `no usable compiler for the ${label} provider` +
+      (notes.length > 0
+        ? ` — every candidate was rejected by the capability probe (${notes.join("; ")}). ` +
+          `A STALE scripts/compiler-bundle.mjs is the most likely cause: rebuild it, or run under tsx.`
+        : ` — build scripts/compiler-bundle.mjs first, or run under tsx.`),
+  );
+}
+
 /** Atomically (tmp + rename) publish a provider binary into the cache. */
 export function writeCachedRuntimeEvalProvider(cacheDir, key, binary, pathOf = runtimeEvalProviderCachePath) {
   mkdirSync(cacheDir, { recursive: true });

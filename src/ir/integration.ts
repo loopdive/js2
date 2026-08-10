@@ -232,6 +232,7 @@ import { analyzeEscape } from "./analysis/escape.js";
 import { analyzeOwnership } from "./analysis/ownership.js";
 import { constantFold } from "./passes/constant-fold.js";
 import { deadCode } from "./passes/dead-code.js";
+import { batchStringConcat } from "./passes/batch-string-concat.js";
 import { inlineSmall } from "./passes/inline-small.js";
 import { monomorphize } from "./passes/monomorphize.js";
 import { simplifyCFG } from "./passes/simplify-cfg.js";
@@ -300,6 +301,7 @@ import {
   IR_STRING_CHAR_AT_FN,
   IR_STRING_CHAR_CODE_AT_FN,
   IR_STRING_CONCAT_FN,
+  parseIrStringConcatManyArity,
   IR_STRING_CONCAT_OWNED_FN,
   IR_STRING_EQUALS_FN,
   IR_STRING_ITERATOR_CHAR_AT_FN,
@@ -1714,12 +1716,13 @@ export function compileIrPathFunctions(
   // the legacy-allocated `__mod_<name>` globals via symbolic global refs, so
   // every other function observes exactly the storage legacy init wrote.
   //
-  // Integration-time gates (each throws → the whole unit demotes to the
-  // legacy body, which is ALWAYS still emitted — module-init is never in the
-  // IR-first skip set):
-  //   - the exact legacy module-init slot must exist (legacy may drop
-  //     side-effect-free statements and emit nothing — then there is nothing
-  //     to patch and nothing to gain),
+  // Integration-time gates (each throws → the owner stays on the selected
+  // direct route). In the bounded R4 prepared route the exact callable is
+  // preallocated and a successful component enters the IR-first skip set;
+  // every other module-init shape still reaches this as a post-direct overlay:
+  //   - the exact module-init slot must exist, either preallocated by the
+  //     prepared route or emitted by legacy (legacy may drop side-effect-free
+  //     statements and emit nothing — then there is nothing to patch),
   //   - no static class initializers / live-func-binding seeds (legacy
   //     prepends those to the SAME body; replacing it would drop them),
   //   - every top-level binding must map to an f64/i32-backed module global
@@ -2270,7 +2273,13 @@ export function compileIrPathFunctions(
         );
       }
       const changed = before === undefined || fn !== before.fn;
-      const final = changed ? runHygienePasses(fn, allocRegistry) : fn;
+      const hygienic = changed ? runHygienePasses(fn, allocRegistry) : fn;
+      // Final synchronous parity pass: fuse only after mono/TU has settled.
+      const batched =
+        !ctx.nativeStrings && !ctx.standalone && !ctx.wasi && !ctx.strictNoHostImports
+          ? batchStringConcat(hygienic)
+          : hygienic;
+      const final = batched === hygienic ? hygienic : runHygienePasses(batched, allocRegistry);
       const verifyErrors = verifyIrFunction(final);
       if (verifyErrors.length > 0) {
         throw new IrInvariantError(
@@ -4295,6 +4304,14 @@ function resolveAndObserveCallableProvider(
       Array.from({ length: 5 }, () => ({ kind: "externref" }) as const),
       [{ kind: "externref" }],
     );
+  } else if (ref.binding.kind === "intrinsic" && parseIrStringConcatManyArity(symbol) !== null) {
+    const arity = parseIrStringConcatManyArity(symbol)!;
+    index = ensureLateImport(
+      ctx,
+      `__concat_${arity}`,
+      Array.from({ length: arity }, () => ({ kind: "externref" }) as const),
+      [{ kind: "externref" }],
+    );
   } else if (ref.binding.kind === "runtime" && symbol === "__new_ReferenceError") {
     if (ctx.wasi || ctx.standalone) {
       emitWasiErrorConstructor(ctx, "ReferenceError", 1);
@@ -4727,17 +4744,19 @@ function makeResolver(
     // -------------------------------------------------------------------
     // Exception handling dispatch (slice 9 — #1169h).
     //
-    // Lazily registers the shared `__exn` tag via the legacy registry's
-    // `ensureExnTag`. The tag has signature `(externref)` and is shared
+    // Resolves the already-prepared shared `__exn` tag. The tag has signature
+    // `(externref)` and is shared
     // between IR-compiled and legacy-compiled functions so cross-path
     // throws / catches interoperate. The integration loop pre-registers
     // the tag (see `preregisterExceptionSupport`) for any IR function
-    // that emits `throw` / `try`, but this method is the formal
-    // resolver entry point and remains correct even if pre-registration
-    // is skipped.
+    // that emits `throw` / `try`; lowering must never allocate it lazily after
+    // component dependency evidence has sealed.
     // -------------------------------------------------------------------
     ensureExnTag(): number {
-      return ensureExnTag(ctx);
+      if (ctx.exnTagIdx < 0) {
+        throw new Error("ir/integration: exception tag was not prepared from final IR evidence");
+      }
+      return ctx.exnTagIdx;
     },
     // -------------------------------------------------------------------
     // Async / Promise dispatch (#1373b Slice 1).
@@ -5062,7 +5081,6 @@ function prepareStrings(ctx: CodegenContext, fns: BuiltFn[]): BuiltFn[] {
       if (!imported || imported.desc.kind !== "func") {
         throw new Error("ir/integration: prepared string.len has no exact wasm:js-string.length import");
       }
-      ctx.programAbiCallableImports?.planPrepared(new Set([imported]));
       lengthProvider = { kind: "callable", target };
     }
   }
@@ -5334,10 +5352,10 @@ function preregisterDynamicAndForInSupport(ctx: CodegenContext, fns: readonly Bu
 function preregisterExceptionSupport(ctx: CodegenContext, fns: readonly BuiltFnRef[]): void {
   for (const entry of fns) {
     for (const block of entry.fn.blocks) {
-      for (const instr of block.instrs) {
+      for (const root of block.instrs) {
         let usesExceptions = false;
-        forEachInstrDeep(instr, (nested) => {
-          if (nested.kind === "throw" || nested.kind === "try") usesExceptions = true;
+        forEachInstrDeep(root, (instr) => {
+          if (instr.kind === "throw" || instr.kind === "try") usesExceptions = true;
         });
         if (usesExceptions) {
           ensureExnTag(ctx);
