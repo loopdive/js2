@@ -195,6 +195,17 @@ jobs:
       # Namespace by target so host + standalone shards for the same chunk never
       # collide on the JSONL path / blob outfile / artifact name.
       RUN_TIMESTAMP: ${{ github.run_id }}-${{ matrix.target.name }}-chunk${{ matrix.chunk }}
+      # (#4354) Mirror test262-sharded.yml — BOTH halves are required, and this
+      # one is the actual switch. Building the full provider only puts the
+      # module on disk; the runner links it solely when this flag is set, so
+      # without it the standalone lane silently falls back to the refusal path
+      # and every eval-dependent test records
+      #   "no js2wasm:runtime-eval interpreter linked".
+      # The first #4354 fix changed the build to drop `--refusal-only` but
+      # missed this env, and the resulting baseline was byte-for-byte as wrong
+      # as before (standalone still 28,455 instead of ~29,494) with the
+      # provider build step reporting success — a green no-op.
+      TEST262_FULL_RUNTIME_EVAL: ${{ matrix.target.test262_target == 'standalone' && '1' || '' }}
 
     steps:
       - name: Checkout
