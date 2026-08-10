@@ -1133,7 +1133,8 @@
       /* Each edition section collapses independently, expanded by default —
          click the edition headline to collapse just that edition's rows. */
       .feat-section:not(.expanded) .feat-row,
-      .feat-section:not(.expanded) .feat-note {
+      .feat-section:not(.expanded) .feat-note,
+      .feat-section:not(.expanded) .feat-official-catalog {
         display: none;
       }
       .feat-edition {
@@ -1236,6 +1237,41 @@
       .feat-tables-note-mono {
         font-family: var(--mono);
         font-size: 12px;
+      }
+      .feat-official-catalog {
+        padding: 10px 24px 14px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      }
+      .feat-official-catalog-label {
+        margin: 0 0 8px;
+        font-family: var(--mono);
+        font-size: 9px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.34);
+      }
+      .feat-official-catalog-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      .feat-official-catalog-list a,
+      .feat-official-catalog-list span {
+        display: inline-block;
+        padding: 3px 7px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        color: rgba(255, 255, 255, 0.62);
+        font-family: var(--mono);
+        font-size: 9px;
+        line-height: 1.35;
+        text-decoration: none;
+      }
+      .feat-official-catalog-list a:hover {
+        border-color: rgba(255, 255, 255, 0.24);
+        color: #fff;
       }
       .feat-edition-passbar-track {
         display: block;
@@ -1681,7 +1717,9 @@
             <em>overlap</em>
             (they are slices, not a sum); and the ≤ES3 / ES5 core-language sections predate
             <span class="feat-tables-note-mono">features:</span>
-            tags, so they show the edition headline only.
+            tags, so they show the edition headline only. The ES2016+ edition membership list is synchronized from
+            TC39's finished-proposals record on every site build; the detailed rows retain examples where the compiler
+            has a curated demo.
           </p>
           <p style="margin-top: 1.25rem">
             <a class="btn-outline" href="./benchmarks/report.html">Compatibility Test Report</a>
@@ -2054,7 +2092,7 @@ for (let i = 0; i &lt; 10; i++) {
                 </details>
               </div>
               <div class="feat-row" data-t262-paths="language/statements/try">
-                <span class="feat-badge partial">⚠</span>
+                <span class="feat-badge full">✓</span>
                 <span class="feat-name">try / catch / finally</span>
                 <span class="feat-desc">Exception handling with optional finally block</span>
                 <details>
@@ -5907,6 +5945,72 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           return section;
         };
 
+        const loadOfficialFeatureCatalog = (() => {
+          let promise;
+          return () => {
+            if (!promise) {
+              promise = fetch("./es-edition-features.json")
+                .then((response) => {
+                  if (!response.ok) throw new Error("official edition feature catalog unavailable");
+                  return response.json();
+                })
+                .then((payload) => (Array.isArray(payload?.features) ? payload.features : []));
+            }
+            return promise;
+          };
+        })();
+
+        const hydrateOfficialFeatureCatalog = async (panel) => {
+          const features = await loadOfficialFeatureCatalog();
+          const byEdition = new Map();
+          for (const feature of features) {
+            const year = Number(feature?.edition);
+            const name = typeof feature?.name === "string" ? feature.name.trim() : "";
+            if (!Number.isInteger(year) || year < 2016 || !name) continue;
+            const label = `ES${year}`;
+            const list = byEdition.get(label) ?? [];
+            list.push({ name, proposalUrl: typeof feature.proposalUrl === "string" ? feature.proposalUrl : "" });
+            byEdition.set(label, list);
+          }
+
+          for (const [label, entries] of byEdition) {
+            const section = ensureGeneratedEditionSection(panel, label);
+            let catalog = section.querySelector(".feat-official-catalog");
+            if (!(catalog instanceof HTMLElement)) {
+              catalog = document.createElement("div");
+              catalog.className = "feat-official-catalog";
+              const editionHeader = section.querySelector(".feat-edition");
+              editionHeader?.insertAdjacentElement("afterend", catalog);
+            }
+
+            catalog.replaceChildren();
+            const heading = document.createElement("p");
+            heading.className = "feat-official-catalog-label";
+            heading.textContent = "Edition features · synced from TC39";
+            catalog.appendChild(heading);
+
+            const list = document.createElement("ul");
+            list.className = "feat-official-catalog-list";
+            for (const entry of entries) {
+              const item = document.createElement("li");
+              const content = entry.proposalUrl ? document.createElement("a") : document.createElement("span");
+              content.textContent = entry.name;
+              if (content instanceof HTMLAnchorElement) {
+                content.href = entry.proposalUrl;
+                content.target = "_blank";
+                content.rel = "noopener";
+              }
+              item.appendChild(content);
+              list.appendChild(item);
+            }
+            catalog.appendChild(list);
+
+            // A generated edition used to contain only this stale placeholder.
+            // The TC39 list is now the useful empty-state content.
+            if (section.dataset.generatedEdition === "true") section.querySelector(":scope > .feat-note")?.remove();
+          }
+        };
+
         const updateEditionPassBars = async () => {
           try {
             const { editionList, editionMap, proposalBucket } = await loadEditionBuckets();
@@ -5915,6 +6019,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
               editionList.forEach((edition) => {
                 ensureGeneratedEditionSection(panel, edition.normalizedEdition);
               });
+              await hydrateOfficialFeatureCatalog(panel);
               sortFeatureSectionsChronologically();
               applyFeatureEditionScope(window.__conformanceEditionScope || "overall");
             }

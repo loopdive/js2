@@ -17,12 +17,22 @@ import {
   mapTsTypeToWasm,
   unwrapPromiseType,
 } from "../checker/type-mapper.js";
-import type { FieldDef, Instr, StructTypeDef, ValType, WasmFunction } from "../ir/types.js";
+import type { FieldDef, FuncHandle, Instr, StructTypeDef, ValType, WasmFunction } from "../ir/types.js";
+import {
+  exactPreparedAccessorExpressionKey,
+  exactPreparedAccessorSyntaxKey,
+  isBoundedPreparedAccessorClass,
+} from "../ir/class-accessor-safety.js";
+import { MODULE_INIT_UNIT_NAME } from "../ir/module-init.js";
 import { collectShapes } from "../shape-inference.js";
 // (#3623) Total classification of top-level ExpressionStatements, so the
 // allow-list's fall-through leaves evidence instead of silently dropping an
 // observable statement (the #1268/#2671/#2992/#3366/#3468/#3592/#3615 class).
-import { classifyTopLevelExpressionStatement, createsGlobalObjectBinding } from "./module-init-collection.js";
+import {
+  classifyTopLevelExpressionStatement,
+  createsGlobalObjectBinding,
+  isAssignmentOperator,
+} from "./module-init-collection.js";
 import { emitUndefinedExtern, ensureWrapperTypes } from "./any-helpers.js";
 import { ASYNC_CPS_ENABLED, analyzeAsyncBody, asyncFnNeedsCps } from "./async-cps.js";
 import { asyncFnNeedsHostDrive, asyncGenDrivableUnderCarrier, asyncGenStem } from "./async-frame.js";
@@ -642,7 +652,7 @@ function defaultReturnInstrs(returnType: ValType | undefined): Instr[] {
   }
 }
 
-function getAssignmentRootIdentifier(expr: ts.Expression): string | undefined {
+function getAssignmentRootIdentifierNode(expr: ts.Expression): ts.Identifier | undefined {
   let current: ts.Expression = expr;
   while (
     ts.isParenthesizedExpression(current) ||
@@ -663,7 +673,239 @@ function getAssignmentRootIdentifier(expr: ts.Expression): string | undefined {
       current = current.expression;
     }
   }
-  return ts.isIdentifier(current) ? current.text : undefined;
+  return ts.isIdentifier(current) ? current : undefined;
+}
+
+function getAssignmentRootIdentifier(expr: ts.Expression): string | undefined {
+  return getAssignmentRootIdentifierNode(expr)?.text;
+}
+
+function classElementIsStatic(member: ts.ClassElement): boolean {
+  return (
+    ts.canHaveModifiers(member) &&
+    (ts.getModifiers(member)?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword) ?? false)
+  );
+}
+
+function isReadOnlyElementAccess(access: ts.ElementAccessExpression): boolean {
+  let current: ts.Expression = access;
+  while (
+    (ts.isParenthesizedExpression(current.parent) ||
+      ts.isAsExpression(current.parent) ||
+      ts.isNonNullExpression(current.parent) ||
+      ts.isTypeAssertionExpression(current.parent)) &&
+    current.parent.expression === current
+  ) {
+    current = current.parent;
+  }
+  const parent = current.parent;
+  if (ts.isBinaryExpression(parent) && parent.left === current && isAssignmentOperator(parent.operatorToken.kind)) {
+    return false;
+  }
+  if (
+    (ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) &&
+    parent.operand === current &&
+    (parent.operator === ts.SyntaxKind.PlusPlusToken || parent.operator === ts.SyntaxKind.MinusMinusToken)
+  ) {
+    return false;
+  }
+  if (ts.isDeleteExpression(parent) && parent.expression === current) return false;
+  if ((ts.isForInStatement(parent) || ts.isForOfStatement(parent)) && parent.initializer === current) return false;
+  return true;
+}
+
+function exactReadOnlyAccessorObservation(
+  ctx: CodegenContext,
+  reference: ts.Identifier,
+  classDeclaration: ts.ClassDeclaration | ts.ClassExpression,
+  className: string,
+): boolean {
+  let access: ts.ElementAccessExpression | undefined;
+  let instance = false;
+  if (ts.isElementAccessExpression(reference.parent) && reference.parent.expression === reference) {
+    access = reference.parent;
+  } else if (
+    ts.isPropertyAccessExpression(reference.parent) &&
+    reference.parent.expression === reference &&
+    reference.parent.name.text === "prototype" &&
+    ts.isElementAccessExpression(reference.parent.parent) &&
+    reference.parent.parent.expression === reference.parent
+  ) {
+    access = reference.parent.parent;
+    instance = true;
+  }
+  if (!access || !isReadOnlyElementAccess(access)) return false;
+
+  const key = exactPreparedAccessorExpressionKey(access.argumentExpression);
+  if (key === undefined) return false;
+  const matchingGetters = classDeclaration.members.filter(
+    (member): member is ts.GetAccessorDeclaration =>
+      ts.isGetAccessorDeclaration(member) &&
+      exactPreparedAccessorSyntaxKey(member.name) === key &&
+      classElementIsStatic(member) !== instance,
+  );
+  if (matchingGetters.length !== 1) return false;
+
+  // The allow-list is intentionally smaller than "an accessor read". A
+  // getter may itself call out, mutate the class binding, or expose the class.
+  // The generated Test262 observations return one literal-only expression, so
+  // prove that exact side-effect-free body before allowing the root reference.
+  const getterBody = matchingGetters[0]!.body;
+  if (!getterBody || getterBody.statements.length !== 1) return false;
+  const [statement] = getterBody.statements;
+  if (
+    !statement ||
+    !ts.isReturnStatement(statement) ||
+    !statement.expression ||
+    exactPreparedAccessorExpressionKey(statement.expression) === undefined
+  ) {
+    return false;
+  }
+
+  const accessorKey = `${className}_${key}`;
+  return (
+    ctx.classAccessorSet.has(accessorKey) &&
+    (instance ? !ctx.staticAccessorSet.has(accessorKey) : ctx.staticAccessorSet.has(accessorKey)) &&
+    ctx.funcMap.has(`${className}_get_${key}`)
+  );
+}
+
+function bindingHasUnsafeReference(
+  ctx: CodegenContext,
+  declaration: ts.Declaration,
+  targetRoot: ts.Identifier,
+  classDeclaration: ts.ClassDeclaration | ts.ClassExpression,
+  className: string,
+): boolean {
+  const sourceFile = targetRoot.getSourceFile();
+  if (declaration.getSourceFile() !== sourceFile) return true;
+
+  let unsafe = false;
+  const visit = (node: ts.Node): void => {
+    if (unsafe || node === declaration || node === classDeclaration) return;
+    if (ts.isIdentifier(node) && ctx.oracle.valueDeclarationOf(node) === declaration) {
+      if (node === targetRoot || exactReadOnlyAccessorObservation(ctx, node, classDeclaration, className)) return;
+      unsafe = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sourceFile, visit);
+  return unsafe;
+}
+
+/**
+ * Exact #4259 Test262 call-site shape. A class binding is not a module global,
+ * so its top-level accessor write needs an explicit module-init keep. Resolve
+ * the source binding and the already-registered setter slot before retaining
+ * anything; name-only class registries are not sufficient evidence here.
+ */
+function isExactTopLevelClassAccessorWrite(ctx: CodegenContext, target: ts.Expression): boolean {
+  if (!ts.isElementAccessExpression(target)) return false;
+  let root: ts.Identifier | undefined;
+  let instance = false;
+  if (ts.isIdentifier(target.expression)) {
+    root = target.expression;
+  } else if (
+    ts.isPropertyAccessExpression(target.expression) &&
+    ts.isIdentifier(target.expression.expression) &&
+    target.expression.name.text === "prototype"
+  ) {
+    root = target.expression.expression;
+    instance = true;
+  }
+  if (!root) return false;
+
+  const declaration = ctx.oracle.valueDeclarationOf(root);
+  if (!declaration) return false;
+  let classDeclaration: ts.ClassDeclaration | ts.ClassExpression;
+  let className: string;
+  if (ts.isClassDeclaration(declaration) && ts.isSourceFile(declaration.parent)) {
+    if (
+      declaration.name?.text !== root.text ||
+      declaration.getSourceFile() !== root.getSourceFile() ||
+      ctx.classExprNameMap.has(root.text)
+    ) {
+      return false;
+    }
+    classDeclaration = declaration;
+    className = root.text;
+    if (ctx.classDeclarationMap.get(className) !== declaration) return false;
+  } else if (
+    ts.isVariableDeclaration(declaration) &&
+    declaration.initializer !== undefined &&
+    ts.isClassExpression(declaration.initializer) &&
+    ts.isVariableDeclarationList(declaration.parent) &&
+    ts.isVariableStatement(declaration.parent.parent) &&
+    ts.isSourceFile(declaration.parent.parent.parent)
+  ) {
+    if (declaration.getSourceFile() !== root.getSourceFile()) return false;
+    classDeclaration = declaration.initializer;
+    const syntheticName = ctx.anonClassExprNames.get(classDeclaration);
+    if (!syntheticName || ctx.classExprNameMap.get(root.text) !== syntheticName) return false;
+    className = syntheticName;
+  } else {
+    return false;
+  }
+  if (!isBoundedPreparedAccessorClass(classDeclaration) || !ctx.classSet.has(className)) return false;
+  const occupiedSlots = new Set<string>();
+  for (const member of classDeclaration.members) {
+    if (!ts.isGetAccessorDeclaration(member) && !ts.isSetAccessorDeclaration(member)) return false;
+    const memberKey = exactPreparedAccessorSyntaxKey(member.name);
+    if (memberKey === undefined) return false;
+    const slot = `${ts.isGetAccessorDeclaration(member) ? "getter" : "setter"}:${memberKey}`;
+    if (occupiedSlots.has(slot)) return false;
+    occupiedSlots.add(slot);
+  }
+  const key = exactPreparedAccessorExpressionKey(target.argumentExpression);
+  if (key === undefined) return false;
+  const matchingSetters = classDeclaration.members.filter(
+    (member): member is ts.SetAccessorDeclaration =>
+      ts.isSetAccessorDeclaration(member) && exactPreparedAccessorSyntaxKey(member.name) === key,
+  );
+  if (matchingSetters.length !== 1) return false;
+  const setterIsStatic = classElementIsStatic(matchingSetters[0]!);
+  if (setterIsStatic === instance) return false;
+  const accessorKey = `${className}_${key}`;
+  const hasSetter =
+    ctx.classAccessorSet.has(accessorKey) &&
+    (instance ? !ctx.staticAccessorSet.has(accessorKey) : ctx.staticAccessorSet.has(accessorKey));
+  return (
+    hasSetter &&
+    ctx.funcMap.has(`${className}_set_${key}`) &&
+    !bindingHasUnsafeReference(ctx, declaration, root, classDeclaration, className)
+  );
+}
+
+/**
+ * Prepared top-level class declarations are byte-inert unless a computed
+ * accessor name has source-ordered effects that module initialization must
+ * preserve. The statement emitter consults the final IR skip set.
+ */
+function collectPreparedTopLevelClassComputedNameEffects(ctx: CodegenContext, statement: ts.Statement): boolean {
+  if (
+    !ts.isClassDeclaration(statement) ||
+    !isBoundedPreparedAccessorClass(statement) ||
+    !statement.members.some(
+      (member) =>
+        (ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member)) &&
+        ts.isComputedPropertyName(member.name),
+    )
+  ) {
+    return false;
+  }
+  ctx.moduleInitStatements.push(statement);
+  return true;
+}
+
+function shouldCollectTopLevelAssignment(ctx: CodegenContext, target: ts.Expression, operator: ts.SyntaxKind): boolean {
+  const targetName = getAssignmentRootIdentifier(target);
+  const namedGlobal = targetName === "globalThis" || (!!targetName && ctx.moduleGlobals.has(targetName));
+  return (
+    namedGlobal ||
+    (operator === ts.SyntaxKind.EqualsToken && isExactTopLevelClassAccessorWrite(ctx, target)) ||
+    createsGlobalObjectBinding(target, ctx.sloppyImplicitGlobals)
+  );
 }
 
 function isTopLevelFunctionPropertyReceiver(ctx: CodegenContext, receiver: ts.Expression): boolean {
@@ -1648,6 +1890,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       }
       continue;
     }
+    if (collectPreparedTopLevelClassComputedNameEffects(ctx, stmt)) continue;
     // For control-flow statements at module level, recursively scan for
     // `var` declarations (JavaScript var-hoisting) and collect the statement
     // for init compilation so it executes at module load time.
@@ -1974,7 +2217,6 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
             continue;
           }
         }
-        const targetName = getAssignmentRootIdentifier(expr.left);
         // (#3493) A top-level write through `globalThis` is observable realm
         // state just like a write to one of our module globals. In particular,
         // fixture modules commonly initialise shared state with
@@ -1991,8 +2233,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         // (#3956) `this.p = v` and a sloppy implicit-global `p = v` create the
         // SAME realm state — see `createsGlobalObjectBinding` for why each was
         // silently dropped here (the #3623 mechanism, arms eight and nine).
-        const namedGlobal = targetName === "globalThis" || (!!targetName && ctx.moduleGlobals.has(targetName));
-        if (namedGlobal || createsGlobalObjectBinding(expr.left, ctx.sloppyImplicitGlobals)) {
+        if (shouldCollectTopLevelAssignment(ctx, expr.left, opKind)) {
           ctx.moduleInitStatements.push(stmt);
         }
       }
@@ -2071,6 +2312,31 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
  */
 export type ModuleInitMode = "full" | "discover" | "skip";
 
+/** Prepare-before-direct ownership for the exact source module initializer. */
+export interface ModuleInitBodyCompileRouting {
+  readonly skipBody: boolean;
+  readonly preserveSkippedBody: boolean;
+  readonly skippedNames: string[];
+}
+
+/**
+ * Reserve the Program ABI module-init callable before prepared IR lowering.
+ * Direct fallback later fills this same object; successful preparation keeps
+ * the IR body in place, so both routes preserve one exact startup handle.
+ */
+export function preallocateModuleInitCallable(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
+  if (ctx.programAbiModuleInitCallables?.functionForSource(sourceFile)) return;
+  const initTypeIdx = addFuncType(ctx, [], [], "__module_init_type");
+  const initFuncIdx = mintDefinedFunc(ctx);
+  pushProgramAbiModuleInitCallable(ctx, sourceFile, initFuncIdx, {
+    name: "__module_init",
+    typeIdx: initTypeIdx,
+    locals: [],
+    body: [],
+    exported: false,
+  });
+}
+
 /** Compile all function bodies (including class constructors and methods) */
 /**
  * Third pass — compile function bodies into the slots pre-allocated by
@@ -2101,6 +2367,7 @@ export function compileDeclarations(
   preserveSkippedBodies?: ReadonlySet<string>,
   classBodyRouting?: ClassBodyCompileRouting,
   moduleInitMode: ModuleInitMode = "full",
+  moduleInitBodyRouting?: ModuleInitBodyCompileRouting,
 ): string[] | undefined {
   const skippedNames: string[] | undefined = skipBodies ? [] : undefined;
   // Build a map from function name → index within ctx.mod.functions
@@ -2309,13 +2576,7 @@ export function compileDeclarations(
           ctx.deferredClassBodies.add(stmt.name.text);
         } else {
           try {
-            compileClassBodies(
-              ctx,
-              stmt,
-              funcByName,
-              undefined,
-              stmt.parent === sourceFile ? classBodyRouting : undefined,
-            );
+            compileClassBodies(ctx, stmt, funcByName, undefined, classBodyRouting);
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             reportError(ctx, stmt, `Internal error compiling class '${stmt.name.text}': ${msg}`);
@@ -2345,7 +2606,7 @@ export function compileDeclarations(
               if (synth !== undefined) ctx.deferredClassBodies.add(synth);
             } else {
               try {
-                compileClassBodies(ctx, decl.initializer, funcByName, decl.name.text);
+                compileClassBodies(ctx, decl.initializer, funcByName, decl.name.text, classBodyRouting);
               } catch (e) {
                 const msg = e instanceof Error ? e.message : String(e);
                 reportError(ctx, decl, `Internal error compiling class expression: ${msg}`);
@@ -2439,7 +2700,7 @@ export function compileDeclarations(
       // `compiledAnonClasses` above) so it is never eager-compiled; skip.
       if (ctx.deferredClassBodies.has(syntheticName)) return;
       try {
-        compileClassBodies(ctx, classExpr, funcByName, syntheticName);
+        compileClassBodies(ctx, classExpr, funcByName, syntheticName, classBodyRouting);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         reportError(ctx, classExpr, `Internal error compiling anonymous class: ${msg}`);
@@ -2488,6 +2749,18 @@ export function compileDeclarations(
   const hasModuleInits = ctx.moduleInitStatements.length > 0 || hasLiveFuncSeeds;
   const hasStaticInits = ctx.staticInitExprs.length > 0;
   let compiledInitFctx: FunctionContext | null = null;
+  const skipModuleInitBody = moduleInitMode === "full" && moduleInitBodyRouting?.skipBody === true;
+  if (skipModuleInitBody) {
+    const preallocated = ctx.programAbiModuleInitCallables?.functionForSource(sourceFile);
+    if (!preallocated) {
+      throw new Error("prepared module initializer has no exact preallocated Program ABI slot");
+    }
+    if (!moduleInitBodyRouting.preserveSkippedBody) {
+      preallocated.locals = [];
+      preallocated.body = [{ op: "unreachable" }];
+    }
+    moduleInitBodyRouting.skippedNames.push(MODULE_INIT_UNIT_NAME);
+  }
 
   // (#2965) The module-init body is compiled TWICE (the second pass, below,
   // re-runs after top-level function bodies so call sites see the final
@@ -2534,6 +2807,9 @@ export function compileDeclarations(
   let pass1DiagnosticMark = 0;
 
   function compileModuleInitBody(): FunctionContext {
+    if (process.env.JS2WASM_TEST_POISON_DIRECT_MODULE_INIT_BODY === "1") {
+      throw new Error("injected direct module-init body poison");
+    }
     const initFctx: FunctionContext = {
       name: "__module_init",
       params: [],
@@ -2666,7 +2942,7 @@ export function compileDeclarations(
   // Pass 1 seeds closure/setup discovery for the bodies compiled below. It is
   // skipped only in `"skip"` mode, where an earlier source already ran it over
   // the same complete statement list.
-  if ((hasModuleInits || hasStaticInits) && moduleInitMode !== "skip") {
+  if ((hasModuleInits || hasStaticInits) && moduleInitMode !== "skip" && !skipModuleInitBody) {
     profileCount("module-init-statements", ctx.moduleInitStatements.length);
     pass1DiagnosticMark = ctx.errors.length; // (#4195) see dedupeDiagnosticsFrom
     compiledInitFctx = profilePhase("module-init-pass1", () => compileModuleInitBody());
@@ -2795,7 +3071,7 @@ export function compileDeclarations(
   // The first compile above still serves early closure/setup discovery.
   // Only the emitting call needs the final-registry recompile; in the other
   // multi-source modes the body it would produce is discarded unread.
-  if ((hasModuleInits || hasStaticInits) && moduleInitMode === "full") {
+  if ((hasModuleInits || hasStaticInits) && moduleInitMode === "full" && !skipModuleInitBody) {
     // (#2965) Reset the program-order-sensitive property state to its
     // pre-pass-1 value so this recompile does not treat pass 1's own
     // defineProperty/freeze effects as pre-existing (see snapshot above).
@@ -2822,7 +3098,11 @@ export function compileDeclarations(
   // `"discover"`/`"skip"` never inject: each injection mints a fresh function
   // holding a full copy of the graph initializer, and only the last one is
   // ever reachable (via `startFuncIdx` / the `__module_init` export).
-  if (moduleInitMode === "full" && compiledInitFctx && compiledInitFctx.body.length > 0) {
+  const routedInitFunc = skipModuleInitBody
+    ? ctx.programAbiModuleInitCallables?.functionForSource(sourceFile)
+    : undefined;
+  const emittedInitBody = compiledInitFctx?.body ?? routedInitFunc?.body;
+  if (moduleInitMode === "full" && emittedInitBody && emittedInitBody.length > 0) {
     ctx.mod.hasTopLevelStatements = true;
 
     // Create a standalone __module_init and run it automatically via the Wasm
@@ -2854,15 +3134,25 @@ export function compileDeclarations(
     // standalone/WASI `_start` model and gives the diff-test HOST lane the same
     // fully-wired runtime; late-import shifting keeps its function index aligned with every other export.
     const exportModuleInit = ctx.deferTopLevelInit && !ctx.wasi;
-    const initTypeIdx = addFuncType(ctx, [], [], "__module_init_type");
-    const initFuncIdx = mintDefinedFunc(ctx);
-    pushProgramAbiModuleInitCallable(ctx, sourceFile, initFuncIdx, {
-      name: "__module_init",
-      typeIdx: initTypeIdx,
-      locals: compiledInitFctx.locals,
-      body: compiledInitFctx.body,
-      exported: exportModuleInit,
-    });
+    const existingInitFunc = ctx.programAbiModuleInitCallables?.functionForSource(sourceFile);
+    const existingInitFuncIdx = ctx.programAbiModuleInitCallables?.handleForSource(sourceFile);
+    let initFuncIdx: FuncHandle;
+    if (existingInitFunc && existingInitFuncIdx !== undefined) {
+      initFuncIdx = existingInitFuncIdx;
+      existingInitFunc.locals = compiledInitFctx?.locals ?? existingInitFunc.locals;
+      existingInitFunc.body = emittedInitBody;
+      existingInitFunc.exported = exportModuleInit;
+    } else {
+      const initTypeIdx = addFuncType(ctx, [], [], "__module_init_type");
+      initFuncIdx = mintDefinedFunc(ctx);
+      pushProgramAbiModuleInitCallable(ctx, sourceFile, initFuncIdx, {
+        name: "__module_init",
+        typeIdx: initTypeIdx,
+        locals: compiledInitFctx?.locals ?? [],
+        body: emittedInitBody,
+        exported: exportModuleInit,
+      });
+    }
     if (exportModuleInit) {
       // (#3505) compileMulti calls compileDeclarations once per source file
       // against one accumulating context. Each pass emits a progressively

@@ -9,7 +9,8 @@ changed to make it more honest.
 
 | Element | Means | Data source |
 |---|---|---|
-| Green `✓` / yellow `⚠` / red `✗` badge on a feature row | **Manually-authored** verdict from a prior compatibility audit. Not derived from test262. | Hard-coded in `index.html` |
+| `Edition features · synced from TC39` chips | Complete Stage-4 proposal membership for ES2016 and later, grouped by TC39's expected publication year. | `website/public/es-edition-features.json`, refreshed from TC39's `finished-proposals.md` during every Pages build. |
+| Green `✓` / yellow `⚠` / red `✗` badge on a feature row | Live verdict derived from the feature's Test262 pass rate; the hard-coded glyph is only the no-data/offline fallback. | `website/public/feature-examples.json`, hydrated at runtime and baked into `index.html` after baseline promotion. |
 | `N / T` fraction next to a feature name (e.g. `5844 / 9130`) | Live test262 pass-count for the listed `data-t262-paths`. Tone colour: green ≥ 90%, yellow ≥ 50%, red < 50%. | `public/benchmarks/results/test262-categories.json` (was 18 days stale prior to #1583); now also tries `test262-report.json` as the fresher fallback. |
 | `NN%` bar in the section header (e.g. "ES2015 — 63%") | Live aggregate pass rate for that ES edition. | `public/benchmarks/results/test262-editions.json` (auto-refreshed every push to main). |
 | Headline donut + pass-rate badge (top of page) | Live, fetched from the dedicated baselines repo (PR #486). | `https://raw.githubusercontent.com/loopdive/js2wasm-baselines/main/test262-current.json` |
@@ -18,20 +19,26 @@ changed to make it more honest.
 
 The Compatibility section is rendered by markup hard-coded in
 `index.html` (`#goals` → `<div class="feat-tables">`, lines
-~1550–3190). Three pieces of dynamic data are layered on top via the
+~1550–3190). Four pieces of dynamic data are layered on top via the
 inline scripts at the bottom of the file:
 
 | Script (search anchor) | Reads | Updates |
 |---|---|---|
 | `updateEditionPassBars` (~line 5150) | `./benchmarks/results/test262-editions.json` | The `NN%` bar in each `.feat-edition` section header. |
+| `hydrateOfficialFeatureCatalog` | `./es-edition-features.json` | The complete TC39 Stage-4 membership chips for every ES2016+ edition section. |
 | `hydrateFeatureCoverage` (~line 5198) | `https://raw.githubusercontent.com/loopdive/js2wasm-baselines/main/test262-current.json` | The "feature areas implemented" stat (≥ 50% pass threshold). |
-| `hydrateFeatureRowCounts` (~line 5241) | `./benchmarks/results/test262-categories.json` | Per-row `N / T` fraction and the "View test results →" link in the expanded body. |
+| `hydrateFeatureBadges` | `./feature-examples.json` | Per-row badge, `N / T` fraction, and the "View test results →" link in the expanded body. |
+
+The hard-coded detail rows are intentionally a smaller, curated set with compiler examples. They are no longer the
+edition membership list: `scripts/sync-es-edition-features.ts` parses TC39's canonical `finished-proposals.md` table,
+writes `website/public/es-edition-features.json`, and the landing page renders the complete ES2016+ list above those
+detail rows. `scripts/run-pages-build.mjs` refreshes that artifact on every Pages build and retains the committed
+last-known-good copy when TC39 is temporarily unreachable.
 
 ## 2. What does the green checkmark mean?
 
-**It is a manual verdict, not a computed pass rate.** Each
-`<div class="feat-row">` in `index.html` ships with one of three
-hard-coded badges:
+It is now a computed Test262 verdict. Each `<div class="feat-row">` in `index.html` still ships with one of three
+fallback badges:
 
 ```html
 <span class="feat-badge full">✓</span>     <!-- author says: works -->
@@ -39,12 +46,11 @@ hard-coded badges:
 <span class="feat-badge none">✗</span>     <!-- author says: not supported -->
 ```
 
-There is **no threshold** that promotes a row from `⚠` to `✓` based on
-test262 numbers. The badges were curated by hand during issue #972
-(the original feature-support tables) and have not been kept in sync
-with the actual conformance score.
+`hydrateFeatureBadges()` replaces that fallback from the live feature ratio: ≥90% is `✓`, a non-zero ratio below 90%
+is `⚠`, and 0% is `✗`. Rows without an isolated Test262 population retain a neutral/manual fallback. The historical
+audit below records the stale state before #2665 introduced this runtime derivation.
 
-This causes the symptom the stakeholder asked about: rows like
+The former behavior caused the symptom the stakeholder asked about: rows like
 `language/statements` ship a green `✓` while the live count next to
 them reads `5844 / 9130` (= 64% pass). The user sees a green
 checkmark and infers "this is fully supported"; the fraction tells a
