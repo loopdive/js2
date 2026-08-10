@@ -24,6 +24,7 @@
  * there is no output to assert on — the workflow goes green and the damage
  * lands on somebody else's PR.
  */
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -170,5 +171,52 @@ describe("the pre-promote sanity check is unrelated to the PR switch and stays",
     expect(at("- name: Sanity-check the generated artifact")).toBeLessThan(
       at("- name: Publish the refreshed artifacts"),
     );
+  });
+});
+
+describe("the promotion PR must survive auto-enqueue's author-trust gate", () => {
+  // Without this the whole change is inert in the worst possible way: the PR
+  // opens, goes green, and is skipped `untrusted-author:…` on every sweep. A
+  // skip is silent, so the only symptom is a dashboard that stops moving.
+  const autoEnqueue = readFileSync(resolve(ROOT, ".github/workflows/auto-enqueue.yml"), "utf8");
+
+  it("allowlists the app that opens the PR, derived from the minted token", () => {
+    // An app's authorAssociation is not OWNER/MEMBER/COLLABORATOR, its login is
+    // not `ttraenkler`, and the promotion branch's head repo owner is
+    // `loopdive` rather than the fork — so none of the gate's three layers
+    // match by default.
+    expect(autoEnqueue).toContain("TRUSTED_AUTHOR_LOGINS:");
+    expect(autoEnqueue).toContain("${{ steps.app-token.outputs.app-slug }}[bot]");
+    // Hardcoding a login would drift from whichever app actually mints the
+    // token; deriving it cannot.
+    expect(autoEnqueue).not.toMatch(/TRUSTED_AUTHOR_LOGINS:[^\n]*merge-queue-bot\[bot\]/);
+  });
+
+  it("keeps the existing maintainer login (the env REPLACES the default)", () => {
+    expect(autoEnqueue).toMatch(/TRUSTED_AUTHOR_LOGINS:\s*ttraenkler,/);
+  });
+
+  it("the gate honours the env var end to end", () => {
+    // Plumbing check, not a restatement of #2550: the allowlist is read from
+    // `process.env` at module load, so it has to be exercised in a fresh
+    // process to prove the workflow's env actually reaches the decision.
+    const probe = [
+      "const { isTrustedAuthor } = await import('./scripts/enqueue-green-prs.mjs');",
+      "process.stdout.write(JSON.stringify(isTrustedAuthor(",
+      "  { assoc: 'NONE', authorLogin: 'some-app[bot]', headRepoOwner: 'loopdive' })));",
+    ].join("");
+    const withAllowlist = execFileSync("node", ["--input-type=module", "-e", probe], {
+      cwd: ROOT,
+      encoding: "utf8",
+      env: { ...process.env, TRUSTED_AUTHOR_LOGINS: "ttraenkler,some-app[bot]" },
+    });
+    expect(JSON.parse(withAllowlist).trusted).toBe(true);
+
+    const withoutAllowlist = execFileSync("node", ["--input-type=module", "-e", probe], {
+      cwd: ROOT,
+      encoding: "utf8",
+      env: { ...process.env, TRUSTED_AUTHOR_LOGINS: "ttraenkler" },
+    });
+    expect(JSON.parse(withoutAllowlist).trusted).toBe(false);
   });
 });
