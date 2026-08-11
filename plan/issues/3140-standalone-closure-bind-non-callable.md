@@ -5,7 +5,7 @@ status: done
 completed: 2026-07-11
 assignee: ttraenkler/fable-harvest3
 created: 2026-07-11
-updated: 2026-07-13
+updated: 2026-08-11
 priority: high
 task_type: bug
 area: codegen, runtime
@@ -16,6 +16,7 @@ horizon: m
 related: [2872, 2860, 2876, 3016]
 umbrella: 2860
 loc-budget-allow:
+  - src/codegen/expressions/call-identifier.ts
   - src/codegen/expressions/calls.ts
   - src/codegen/object-runtime.ts
   - src/codegen/index.ts
@@ -65,6 +66,56 @@ harness's NEXT gate is `Array.from({length}, fn)` / `Array.from(iterable)`
 **Residuals (follow-ups):** bound-fn `.length`/`.name` fidelity (carrier
 reports arity 0); `Object.defineProperty` on a bound fn; `new bound(...)`
 [[Construct]]; the `Array.from` standalone gap below.
+
+## ES5 stored-call follow-up (2026-08-11)
+
+The native carrier itself worked for a bound function called from the same
+local expression, but a carrier stored in a module binding still trapped:
+
+```js
+function add(a, b) { return a + b; }
+var add4 = add.bind(undefined, 4);
+add4(3); // null dereference before this slice
+```
+
+The identifier-call path trusted TypeScript's inferred callable signature and
+first cast the live value to an ordinary funcref-wrapper struct. A
+`$__bound_fn` is deliberately a distinct carrier, so that cast returned null;
+signature-directed argument coercion could then trap before the existing
+bound-function arm in `tryEmitInlineDynamicCall` / `__apply_closure` ever saw
+the value.
+
+The fix recognises only a binding whose initializer is statically a
+`.bind(...)` result (the existing `calleeIsBoundFunctionVar` predicate) and
+routes that call through the canonical native callable ladder before the
+ordinary typed-wrapper fast path. It does not add a second bind implementation:
+argument packing, `[[BoundArguments]]`, `[[BoundThis]]`, and bound-of-bound
+composition remain owned by `$__bound_fn` plus `__apply_closure`.
+
+Measured on standalone, exact ES5 bind rows, main `c0b422b3792699` versus this
+change:
+
+- `S15.3.4.5_A1.js`: fail (null dereference) -> pass
+- `S15.3.4.5_A2.js`: fail (null dereference) -> pass
+- `S15.3.4.5_A4.js`: fail (null dereference) -> pass
+- `15.3.4.5-3-1.js`: fail (null dereference) -> still fails, but now executes
+  the bound target; its residual is `new Boolean(true) == true` wrapper
+  coercion, not bind argument delivery
+
+Net: **0/4 -> 3/4**, with the bound-argument probe confirming all five facts
+(`x`, `y`, `arguments[0]`, `arguments[1]`, and `arguments.length`) after the
+module-global round trip.
+
+### Exact IR boundary
+
+This repair is pre-IR adapter work, not a new legacy semantic model. The IR has
+no bound-function carrier/call node today, and
+`src/ir/fnctor-method-edges.ts` explicitly rejects any `.bind` invocation alias
+from the IR function-object graph. Consequently the stored carrier call reaches
+`compileIdentifierCall` only after IR selection has declined it. A future IR
+slice should represent bind creation and invocation explicitly and lower to the
+same `$__bound_fn` / `__apply_closure` runtime primitives; once that exists,
+this narrow syntactic adapter can be retired.
 
 ## Banked intel — the NEXT rock on this line: `Array.from` standalone (per lead throttle, 2026-07-11)
 
