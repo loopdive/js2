@@ -195,3 +195,17 @@ export function fnctorTypedReadsFlagEnabled(): boolean {
 export function fnctorTypedBindingsFlagEnabled(): boolean {
   return derivationFlagEnabled(process.env.JS2WASM_FNCTOR_TYPED_BINDINGS);
 }
+
+/**
+ * `JS2WASM_NUMERIC_RETURNS` — allow a standalone function's implicit-`any`
+ * result to use a numeric carrier when every returned value is independently
+ * proven numeric, even when an unrelated parameter uses a non-numeric ABI.
+ *
+ * This is a consumer of the grounded, symbol-scoped numeric-local verdict. It
+ * is deliberately separate from the older all-parameters-numeric recursive
+ * kernel inference so `=0` restores that established signature selection
+ * exactly.
+ */
+export function numericReturnsFlagEnabled(): boolean {
+  return derivationFlagEnabled(process.env.JS2WASM_NUMERIC_RETURNS);
+}

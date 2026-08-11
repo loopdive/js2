@@ -7,7 +7,7 @@
 import type { DtsSeedAtom } from "../../checker/dts-entrypoint-seeds.js";
 import { isVoidType, unwrapPromiseType } from "../../checker/type-mapper.js";
 import { isSyntacticallyBooleanExpr } from "../../checker/oracle.js";
-import { fnctorCtorParamTypesFlagEnabled } from "../../derivation-flags.js";
+import { fnctorCtorParamTypesFlagEnabled, numericReturnsFlagEnabled } from "../../derivation-flags.js";
 import { forEachChild, ts } from "../../ts-api.js";
 import { isStandalonePromiseActive } from "../async-scheduler.js";
 import { hasAsyncModifier, resolveWasmType } from "../index.js";
@@ -805,4 +805,230 @@ export function inferNumericReturnTypes(ctx: CodegenContext, sourceFile: ts.Sour
     result.set(fnName, boolean.has(fnName) ? { kind: "i32", boolean: true } : { kind: "f64" });
   }
   return result;
+}
+
+/**
+ * Infer numeric standalone result carriers without requiring every parameter
+ * to be numeric.
+ *
+ * The legacy #1121 analysis above intentionally assumes every implicit-any
+ * parameter is numeric and its declaration consumer therefore requires an
+ * all-numeric parameter ABI. That excludes helpers which merely *carry* a
+ * string/object parameter while returning a separately-proven numeric local.
+ * This companion analysis proves each returned binding through #4122's
+ * grounded, scope-resolved local oracle instead. It is deliberately a least
+ * fixpoint: only calls to an already-admitted callee are evidence, so a
+ * return-only recursive cycle cannot type itself.
+ */
+export function inferBindingAwareNumericReturnTypes(
+  ctx: CodegenContext,
+  sourceFiles: readonly ts.SourceFile[],
+): Map<string, ValType> {
+  if (!ctx.standalone || !numericReturnsFlagEnabled() || !ctx.numericLocalVerdict) return new Map();
+
+  const candidates = new Map<string, ts.FunctionDeclaration[]>();
+  for (const sourceFile of sourceFiles) {
+    const collect = (node: ts.Node): void => {
+      if (ts.isFunctionDeclaration(node) && node.name && node.body && !node.type && !node.asteriskToken) {
+        const isAsync = node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) === true;
+        if (!isAsync) {
+          const declarations = candidates.get(node.name.text);
+          if (declarations) declarations.push(node);
+          else candidates.set(node.name.text, [node]);
+        }
+      }
+      forEachChild(node, collect);
+    };
+    forEachChild(sourceFile, collect);
+  }
+  if (candidates.size === 0) return new Map();
+
+  type CandidateBody = { returns: ts.Expression[]; definitelyReturns: boolean };
+  const bodies = new Map<ts.FunctionDeclaration, CandidateBody>();
+  for (const declarations of candidates.values()) {
+    for (const declaration of declarations) {
+      const returns: ts.Expression[] = [];
+      let sawBareReturn = false;
+      const visit = (node: ts.Node): void => {
+        if (
+          node !== declaration &&
+          (ts.isFunctionDeclaration(node) ||
+            ts.isFunctionExpression(node) ||
+            ts.isArrowFunction(node) ||
+            ts.isMethodDeclaration(node) ||
+            ts.isAccessor(node) ||
+            ts.isConstructorDeclaration(node))
+        ) {
+          return;
+        }
+        if (ts.isReturnStatement(node)) {
+          if (node.expression) returns.push(node.expression);
+          else sawBareReturn = true;
+        }
+        forEachChild(node, visit);
+      };
+      forEachChild(declaration.body!, visit);
+      // This narrow syntactic gate is intentional. It admits straight-line
+      // helpers and functions with earlier guarded returns, while refusing to
+      // invent an f64/i32 value for an implicit-undefined fallthrough path.
+      const last = declaration.body!.statements.at(-1);
+      bodies.set(declaration, {
+        returns,
+        definitelyReturns: !sawBareReturn && !!last && ts.isReturnStatement(last) && !!last.expression,
+      });
+    }
+  }
+
+  const inferred = new Map<string, ValType>();
+  const MAX_DEPTH = 64;
+  const oracleSaysNumber = (expr: ts.Expression): boolean => ctx.oracle.staticJsTypeOf(expr) === "number";
+  const inferredCallType = (call: ts.CallExpression): ValType | undefined => {
+    if (!ts.isIdentifier(call.expression)) return undefined;
+    const declaration = ctx.oracle.valueDeclarationOf(call.expression);
+    if (!declaration || !ts.isFunctionDeclaration(declaration)) return undefined;
+    if (!candidates.get(call.expression.text)?.includes(declaration)) return undefined;
+    return inferred.get(call.expression.text);
+  };
+  const isNumericExpr = (expr: ts.Expression, depth = 0): boolean => {
+    if (depth > MAX_DEPTH) return false;
+    if (ts.isParenthesizedExpression(expr)) return isNumericExpr(expr.expression, depth + 1);
+    if (ts.isAsExpression(expr) || ts.isTypeAssertionExpression(expr) || ts.isNonNullExpression(expr)) {
+      return isNumericExpr(expr.expression, depth + 1);
+    }
+    if (ts.isNumericLiteral(expr)) return true;
+    if (expr.kind === ts.SyntaxKind.TrueKeyword || expr.kind === ts.SyntaxKind.FalseKeyword) return true;
+    if (ts.isIdentifier(expr)) {
+      // The local oracle is a grounded NUMBER-carrier proof: its construction
+      // explicitly rejects every booleanish definition and resolves the exact
+      // lexical slot, so same-name/shadowed bindings cannot leak evidence.
+      return oracleSaysNumber(expr) || ctx.numericLocalVerdict?.(expr, expr.text) === true;
+    }
+    if (ts.isPrefixUnaryExpression(expr)) {
+      if (expr.operator === ts.SyntaxKind.ExclamationToken) return true;
+      if (
+        expr.operator === ts.SyntaxKind.PlusToken ||
+        expr.operator === ts.SyntaxKind.MinusToken ||
+        expr.operator === ts.SyntaxKind.TildeToken
+      ) {
+        return isNumericExpr(expr.operand, depth + 1);
+      }
+      return false;
+    }
+    if (ts.isPostfixUnaryExpression(expr)) return isNumericExpr(expr.operand, depth + 1);
+    if (ts.isBinaryExpression(expr)) {
+      const op = expr.operatorToken.kind;
+      if (
+        op === ts.SyntaxKind.LessThanToken ||
+        op === ts.SyntaxKind.LessThanEqualsToken ||
+        op === ts.SyntaxKind.GreaterThanToken ||
+        op === ts.SyntaxKind.GreaterThanEqualsToken ||
+        op === ts.SyntaxKind.EqualsEqualsToken ||
+        op === ts.SyntaxKind.ExclamationEqualsToken ||
+        op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
+        op === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
+        op === ts.SyntaxKind.InstanceOfKeyword ||
+        op === ts.SyntaxKind.InKeyword
+      ) {
+        return true;
+      }
+      if (
+        op === ts.SyntaxKind.PlusToken ||
+        op === ts.SyntaxKind.MinusToken ||
+        op === ts.SyntaxKind.AsteriskToken ||
+        op === ts.SyntaxKind.AsteriskAsteriskToken ||
+        op === ts.SyntaxKind.SlashToken ||
+        op === ts.SyntaxKind.PercentToken ||
+        op === ts.SyntaxKind.AmpersandToken ||
+        op === ts.SyntaxKind.BarToken ||
+        op === ts.SyntaxKind.CaretToken ||
+        op === ts.SyntaxKind.LessThanLessThanToken ||
+        op === ts.SyntaxKind.GreaterThanGreaterThanToken ||
+        op === ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken ||
+        op === ts.SyntaxKind.AmpersandAmpersandToken ||
+        op === ts.SyntaxKind.BarBarToken ||
+        op === ts.SyntaxKind.QuestionQuestionToken
+      ) {
+        return isNumericExpr(expr.left, depth + 1) && isNumericExpr(expr.right, depth + 1);
+      }
+      return false;
+    }
+    if (ts.isConditionalExpression(expr)) {
+      return isNumericExpr(expr.whenTrue, depth + 1) && isNumericExpr(expr.whenFalse, depth + 1);
+    }
+    if (ts.isCallExpression(expr) && ts.isIdentifier(expr.expression)) {
+      return inferredCallType(expr) !== undefined || oracleSaysNumber(expr);
+    }
+    return oracleSaysNumber(expr);
+  };
+  const isBooleanExpr = (expr: ts.Expression, depth = 0): boolean => {
+    if (depth > MAX_DEPTH) return false;
+    if (ts.isParenthesizedExpression(expr)) return isBooleanExpr(expr.expression, depth + 1);
+    if (ts.isAsExpression(expr) || ts.isTypeAssertionExpression(expr) || ts.isNonNullExpression(expr)) {
+      return isBooleanExpr(expr.expression, depth + 1);
+    }
+    if (expr.kind === ts.SyntaxKind.TrueKeyword || expr.kind === ts.SyntaxKind.FalseKeyword) return true;
+    if (ts.isPrefixUnaryExpression(expr)) return expr.operator === ts.SyntaxKind.ExclamationToken;
+    if (ts.isBinaryExpression(expr)) {
+      const op = expr.operatorToken.kind;
+      if (
+        op === ts.SyntaxKind.LessThanToken ||
+        op === ts.SyntaxKind.LessThanEqualsToken ||
+        op === ts.SyntaxKind.GreaterThanToken ||
+        op === ts.SyntaxKind.GreaterThanEqualsToken ||
+        op === ts.SyntaxKind.EqualsEqualsToken ||
+        op === ts.SyntaxKind.ExclamationEqualsToken ||
+        op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
+        op === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
+        op === ts.SyntaxKind.InstanceOfKeyword ||
+        op === ts.SyntaxKind.InKeyword
+      ) {
+        return true;
+      }
+      if (op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.BarBarToken) {
+        return isBooleanExpr(expr.left, depth + 1) && isBooleanExpr(expr.right, depth + 1);
+      }
+      return false;
+    }
+    if (ts.isConditionalExpression(expr)) {
+      return isBooleanExpr(expr.whenTrue, depth + 1) && isBooleanExpr(expr.whenFalse, depth + 1);
+    }
+    if (ts.isCallExpression(expr)) return inferredCallType(expr)?.kind === "i32";
+    return false;
+  };
+
+  for (let pass = 0; pass <= candidates.size; pass++) {
+    let added = false;
+    for (const [name, declarations] of candidates) {
+      if (inferred.has(name)) continue;
+      let sawBoolean = false;
+      let sawNumber = false;
+      let valid = true;
+      for (const declaration of declarations) {
+        const body = bodies.get(declaration)!;
+        if (!body.definitelyReturns || body.returns.length === 0) {
+          valid = false;
+          break;
+        }
+        for (const expression of body.returns) {
+          if (!isNumericExpr(expression)) {
+            valid = false;
+            break;
+          }
+          if (isBooleanExpr(expression)) {
+            sawBoolean = true;
+          } else {
+            sawNumber = true;
+          }
+        }
+        if (!valid) break;
+      }
+      // A mixed boolean/number result needs the dynamic carrier to preserve JS
+      // identity; neither an unbranded f64 nor a branded i32 can represent it.
+      if (!valid || sawBoolean === sawNumber) continue;
+      inferred.set(name, sawBoolean ? { kind: "i32", boolean: true } : { kind: "f64" });
+      added = true;
+    }
+    if (!added) break;
+  }
+  return inferred;
 }
