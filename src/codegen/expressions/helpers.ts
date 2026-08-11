@@ -11,6 +11,7 @@
 import { ts } from "../../ts-api.js";
 import { isVoidType, unwrapPromiseType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
+import { classMemberFuncKey } from "../class-member-keys.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { funcSignatureOf } from "../func-space.js";
@@ -320,8 +321,14 @@ export function classifyPrivateMember(
   // of method / accessor / field sets in turn.
   let current: ts.Node | undefined = name.parent;
   while (current) {
-    if ((ts.isClassDeclaration(current) || ts.isClassExpression(current)) && current.name) {
-      const className = current.name.text;
+    if (ts.isClassDeclaration(current) || ts.isClassExpression(current)) {
+      const className = ts.isClassExpression(current)
+        ? (ctx.anonClassExprNames.get(current) ?? current.name?.text)
+        : current.name?.text;
+      if (!className) {
+        current = current.parent;
+        continue;
+      }
       const fullName = `${className}_${fieldName}`;
       // Method: registered in classMethodSet (instance) or staticMethodSet (static).
       if (ctx.classMethodSet.has(fullName) || ctx.staticMethodSet.has(fullName)) {
@@ -344,6 +351,65 @@ export function classifyPrivateMember(
     current = current.parent;
   }
   return undefined;
+}
+
+export function canonicalClassExpressionName(ctx: CodegenContext, className: string | undefined): string | undefined {
+  return className === undefined ? undefined : (ctx.classExprNameMap.get(className) ?? className);
+}
+
+/**
+ * Resolve the class body whose method ABI can consume this call's receiver.
+ *
+ * Variable-bound class expressions have a source-binding carrier and a
+ * declaration-identity carrier. Public structural calls use the latter. A
+ * private call normally uses its lexical declarer, except while compiling the
+ * duplicate source body: there the captured `this` must call the equivalent
+ * method whose self parameter has the exact same struct type. Descendants are
+ * deliberately excluded because private names are never virtual overrides.
+ */
+export function resolveReceiverMethodClassName(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+  receiverType: ts.Type,
+): string | undefined {
+  const symbolClassName = receiverType.getSymbol()?.name;
+  if (!ts.isPrivateIdentifier(propAccess.name)) {
+    return canonicalClassExpressionName(ctx, symbolClassName);
+  }
+
+  const privateMember = classifyPrivateMember(ctx, propAccess.name);
+  if (privateMember?.kind !== "method") {
+    return canonicalClassExpressionName(ctx, symbolClassName);
+  }
+  const lexicalClassName = privateMember.className;
+  if (propAccess.expression.kind !== ts.SyntaxKind.ThisKeyword) return lexicalClassName;
+
+  const thisLocalIdx = fctx.localMap.get("this");
+  const thisType = thisLocalIdx === undefined ? undefined : getLocalType(fctx, thisLocalIdx);
+  if (thisType?.kind !== "ref" && thisType?.kind !== "ref_null") return lexicalClassName;
+
+  const privateMethodName = `__priv_${propAccess.name.text.slice(1)}`;
+  const owners: string[] = [];
+  for (const [className, typeIdx] of ctx.structMap) {
+    if (className !== lexicalClassName && ctx.classExprNameMap.get(className) !== lexicalClassName) continue;
+    if (typeIdx !== thisType.typeIdx) continue;
+    const fullName = `${className}_${privateMethodName}`;
+    const methodHandle = ctx.funcMap.get(classMemberFuncKey(ctx, fullName)) ?? ctx.funcMap.get(fullName);
+    const methodSelfType = methodHandle === undefined ? undefined : getFuncParamTypes(ctx, methodHandle)?.[0];
+    if (
+      (methodSelfType?.kind === "ref" || methodSelfType?.kind === "ref_null") &&
+      methodSelfType.typeIdx === thisType.typeIdx
+    ) {
+      owners.push(className);
+    }
+  }
+  if (owners.length > 1) {
+    throw new Error(
+      `private receiver owner is ambiguous for ${propAccess.name.text} in ${fctx.name}: ${owners.join(", ")}`,
+    );
+  }
+  return owners[0] ?? lexicalClassName;
 }
 
 /**
