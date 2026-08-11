@@ -27,6 +27,10 @@ loc-budget-allow:
   # one-line `emitRuntimeEvalCarrierUnwrapAny(ctx, fctx)` calls and the comment
   # that explains why (+7).
   - src/codegen/expressions/calls-closures.ts
+  # The AOT-side unwrap reads one new optional field on the carrier record,
+  # and that record type is declared here — there is no subsystem module to
+  # move a type declaration into (+2).
+  - src/codegen/context/types.ts
 # id 4307 reserved + claimed for this lane before work started. `gh` is NOT
 # available in this container, so the open-PR half of the collision scan was
 # DEGRADED (pr_scan=degraded): the id was verified against upstream `main`
