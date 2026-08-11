@@ -538,3 +538,25 @@ Residual Slice E work after this PR:
 - Native standalone dynamic string parser for non-literal `BigInt(string)` inputs.
 - Native standalone `BigInt.prototype.toString(radix)` helper parity with Slice D
   host imports.
+
+---
+
+## Harvest note — 2026-08-11 (count grew after close → see #4363)
+
+Source: `test262-current.jsonl` from `loopdive/js2wasm-baselines`, run
+`20260811-103533` (gitHash `9268d5a5`).
+
+This issue closed scoped at **47 test262 fails**. The BigInt typed-path family
+now carries **287 official failures**, all one signature:
+
+```
+TypeError: Cannot convert N to a BigInt (Testing with BigInt64Array and makeArray.)
+```
+
+concentrated in `built-ins/TypedArray/prototype` (222) and
+`built-ins/TypedArrayConstructors/internals` (54).
+
+Whether this is a regression of this fix or an always-present adjacent bucket
+that this issue never covered is **not yet determined**. Filed as **#4363** for
+that determination; the leading hypothesis there is the same "typed paths assume
+f64 too eagerly" failure mode this issue was named for.

@@ -1,10 +1,11 @@
 ---
 id: 4020
 title: "test262 .js sources rejected with TS8010/8017 'can only be used in TypeScript files' at L1:1 — 153 tests (112 Atomics, 29 module-code, 12 import)"
-status: ready
+status: done
 sprint: current
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-11
+completed: 2026-08-11
 priority: medium
 horizon: m
 feasibility: medium
@@ -97,3 +98,31 @@ sees, rather than the test file on disk. That dump is the whole diagnosis.
       recorded — a genuine `SharedArrayBuffer`/Atomics gap is #674/#1354, not
       this issue.
 - [ ] Net official pass count does not regress.
+
+
+---
+
+## Harvest note — 2026-08-11 — RESOLVED, and this issue has a duplicate
+
+Source: `test262-current.jsonl` from `loopdive/js2wasm-baselines`, run
+`20260811-103533` (gitHash `9268d5a5`).
+
+**The TS8010/8017 bucket is now 0 records.** No official failing test in either
+lane reports `can only be used in TypeScript files`.
+
+Permanent conformance repro (this issue's own named sample):
+`test262/test/built-ins/Atomics/notify/notify-zero.js`, which now reads:
+
+```
+fail | runtime_error | Cannot read properties of null (reading 'bind') [in __module_init()]
+```
+
+The file compiles; it now fails on the *next* blocker. That satisfies the
+acceptance criterion "Whatever those tests then do (pass, or fail for a real
+Atomics reason) is recorded". Successor filed as **#4365** (`$262.agent` is
+null, same 112 Atomics tests).
+
+**Duplicate:** #4020 and #4170 are the same issue — identical title and body,
+both filed by the 2026-08-01 harvest, and #4020's body header reads `# #3973`,
+so the pattern was filed three times. Both are closed here; treat #4020 as the
+canonical record and #4170 as the duplicate.

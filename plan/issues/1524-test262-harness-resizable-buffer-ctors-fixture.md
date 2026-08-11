@@ -168,3 +168,25 @@ additionally the upstream root cause of the **1,496** default-lane
 before the assertion callback runs). Blast radius is materially larger than
 the recorded 434. Reiterating: cheap, `feasibility: easy`, high-leverage —
 strongest single non-substrate default-lane candidate for `sprint: current`.
+
+---
+
+## Harvest note — 2026-08-11 (symptom moved, family still failing → see #4364)
+
+Source: `test262-current.jsonl` from `loopdive/js2wasm-baselines`, run
+`20260811-103533` (gitHash `9268d5a5`).
+
+`ctors is not defined` is **gone** — that part of the fix holds. But the same
+test family now fails one layer later, at dependency injection:
+
+```
+No dependency provided for extern class "ctor"      (172 records)
+```
+
+**224 official failures** total across 9 distinct extern-class names, dominated
+by callback parameters (`ctor`, `TA`, `sourceCtor`, `targetCtor`,
+`badArrayType`, `nonSharedArrayType`) rather than globals. Directory profile
+matches this issue's family: `built-ins/TypedArray/prototype` (91),
+`built-ins/Array/prototype` (68).
+
+Original scope was 202 tests; the successor bucket is 224. Filed as **#4364**.
