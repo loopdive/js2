@@ -892,6 +892,8 @@ export interface FunctionContext {
         // into a local; bare names matching a field route to direct struct
         // get/set.
         kind: "static";
+        /** Hidden by-reference closure capture selected by ir/with-environment. */
+        captureName: string;
         localIdx: number;
         structTypeIdx: number;
         fields: FieldDef[];
@@ -903,6 +905,8 @@ export interface FunctionContext {
         // HasBinding gate (`__extern_has`) + `Get` (`emitDynGet`), falling back
         // to the outer lexical lowering when absent.
         kind: "dynamic";
+        /** Hidden by-reference closure capture selected by ir/with-environment. */
+        captureName: string;
         localIdx: number;
         blockedNames: Set<string>;
       }
