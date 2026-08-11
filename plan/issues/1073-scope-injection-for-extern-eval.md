@@ -249,3 +249,39 @@ Modified `src/runtime.ts::__extern_eval` handler (Option A — JS-side harness s
 
 Removed blanket `annexB/language/eval-code/` skip filter in `tests/test262-runner.ts`.
 Gap 2 (export syntax) and Gap 3 (indirect eval wiring) tests fail naturally.
+
+---
+
+## Harvest note — 2026-08-11 (residual, `status: done` but not resolved)
+
+Source: `test262-current.jsonl` from `loopdive/js2wasm-baselines`, run
+`20260811-103533` (gitHash `9268d5a5`).
+
+`annexB/language/eval-code` still carries **184 official failures** with the
+same root-cause shape this issue was opened for — harness identifiers not
+visible inside the eval'd string:
+
+| Signature | Count | Directory |
+|---|---|---|
+| `assert is not defined` | 120 | `annexB/language/eval-code` (all) |
+| `null is not a function [in __module_init()]` | 64 | `annexB/language/eval-code` |
+
+The original scoping table recorded **179** failures in this same directory
+("Harness visibility 107 / invalid eval body 48 / indirect-eval wiring 24").
+The count has **not gone down** — it is now 184.
+
+What did change is the identifier: the fix targeted the rewritten names
+(`assert_throws`, `assert_sameValue`, `__assert_count`, `fnGlobalObject`), and
+the failing tests now report the **un-rewritten** `assert`. That is consistent
+with the harness text-rewrite having changed since this fix landed, leaving the
+JS-side shim list matching names the harness no longer emits.
+
+Samples:
+
+- `test/annexB/language/eval-code/direct/func-if-stmt-else-decl-eval-func-skip-early-err-block.js`
+- `test/annexB/language/eval-code/direct/global-switch-case-eval-global-skip-early-err-try.js`
+- `test/annexB/language/eval-code/direct/global-block-decl-eval-global-existing-block-fn-no-init.js`
+
+**Action:** re-open, or file a successor that re-derives the shim list from the
+harness rewrite rather than hard-coding names. Left as `done` pending a
+maintainer call — flagged here so it is not invisible.

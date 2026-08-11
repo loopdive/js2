@@ -775,3 +775,72 @@ generic 1,720) → #2961 (in-progress) umbrella; new-Function/indirect-eval →
 (30, `compound-assignment/S11.13.2_A5.*`) → #1387 (done) niche; import-attributes
 early-SyntaxError (35, sub-50) → #1805 (done) residual. Temporal / ShadowRealm /
 import.defer|source / Atomics.waitAsync = non-official proposals, excluded.
+
+## 2026-08-11 /harvest-errors run (oracle-13 "honest", both lanes)
+
+Baselines run `20260811-103533` (gitHash `9268d5a5`), oracle_version 13
+`honest`. Default lane 31,776 / 43,621 official pass; standalone lane 29,519
+passing records of the same 43,621 official. Cross-referenced both lanes;
+**every standalone cluster >50 maps to an existing tracked issue** — the new
+issues are three default-lane clusters plus one standalone leak family.
+
+New issues:
+
+- [#4363](../4363-bigint-typedarray-makearray-harness-coercion.md) — **NEW.**
+  BigInt TypedArray paths reject the harness's own `makeArray` values —
+  **287 default-lane fails**, all
+  `TypeError: Cannot convert N to a BigInt (Testing with BigInt64Array and makeArray.)`.
+  Largest named-category bucket in the default lane. Likely the same eager-f64
+  failure mode as #1644 (`done`, scoped at 47) — see the regression note there.
+- [#4364](../4364-test262-extern-class-dependency-not-provided.md) — **NEW.**
+  `No dependency provided for extern class` — **224 default-lane fails** across
+  9 names, 172 on `ctor`. Direct successor to #1524 (`done`): `ctors is not
+  defined` is gone, but the family now fails one layer later at dependency
+  injection. Most names are callback *parameters*, not globals.
+- [#4365](../4365-test262-262-agent-missing-atomics.md) — **NEW.** `$262.agent`
+  is `null`, so all **112 Atomics agent tests** die at `__module_init()` on
+  `.bind`. Successor to #4020/#4170 (both closed, see below).
+- [#4366](../4366-standalone-array-host-helper-leak.md) — **NEW.** Standalone
+  array host-helper leak (`__js_array_new` / `__js_array_push` /
+  `__array_concat_any`) — **542 standalone fails**, of which **195 already pass
+  in the host lane** and are directly recoverable. Largest standalone leak
+  family after generators.
+
+Closed as already-fixed:
+
+- **#4020 and #4170** — the TS8010/8017 "can only be used in TypeScript files"
+  bucket is now **0 records** in both lanes; verified against #4020's own named
+  sample. These two are **duplicates of each other** (identical title and body,
+  same 2026-08-01 harvest; #4020's body header reads `# #3973`, so the pattern
+  was filed three times). Both set `done`; #4020 is the canonical record.
+
+Regression / residual flags on `done` issues (notes appended, status left as-is
+pending a maintainer call):
+
+- **#1073** (`done`) — `annexB/language/eval-code` still carries **184** fails
+  with this issue's own root-cause shape (`assert is not defined` 120,
+  `null is not a function` 64) vs **179** at close. The fix's JS-side shim list
+  targets the *rewritten* harness names (`assert_throws`, …); the harness now
+  emits bare `assert`, so the shim no longer matches. Not a count improvement.
+- **#1644** (`done`, scoped 47) — family now 287; see #4363.
+- **#1524** (`done`, scoped 202) — symptom moved, family now 224; see #4364.
+- **#1171** (`done`) — **84** `compile_timeout (10s)` records remain, spread
+  thinly (max 12 per directory). Sub-50 per family; no new issue.
+
+Verified-tracked, no new issue (safe-refill pointers): standalone dynamic import
+(402) → #3494 (blocked); native generator sequential-yield limit (317) → #680
+(ready) / #2864 (in-progress); async completion marker not observed (264
+standalone / 72 default) → #3421 (ready); `__get_builtin` dynamic-shape (118) →
+#1472 (ready); `$262.detachArrayBuffer` (89) → #3975 (ready); with-statement
+closed-shape refusal (66) → #1387 (done) / #2663 (in-progress);
+`SharedArrayBuffer_new` leak (425) → #3178 (ready) / #1354 (backlog);
+`Promise_*` leaks → #3178 (ready); generator `__gen_*` leaks → #680 / #2864.
+`verifyProperty` null-receiver (112 default) spans many directories with mixed
+root causes — aggregator, not one bug; not filed. ShadowRealm / Temporal =
+non-official proposals, excluded by design.
+
+**negative_test_fail**: 14 per lane, identical file set in both. 12 are
+"expected runtime ReferenceError but succeeded" (TDZ / lexical-scope early
+errors: `switch/scope-lex-*`, `global-use-before-initialization-*`), 2 are
+early-SyntaxError-not-detected. Sub-50; covered by existing early-error
+spec-gap issues (#1315/#1435); no new issue.
