@@ -110,7 +110,7 @@ export function registerModuleTdzGlobal(ctx: CodegenContext, sourceFile: ts.Sour
       throw new TypeError(`module TDZ global ${name} has no exact allocator object at index ${existingGlobalIdx}`);
     }
     const declaration = findRuntimeTopLevelDeclaration(sourceFile, name);
-    if (declaration) {
+    if (declaration && ctx.programAbiGlobals?.hasModuleValue(declaration)) {
       ctx.programAbiGlobals?.observeModuleTdz(declaration, name, existingGlobal);
     }
     return;
@@ -126,7 +126,7 @@ export function registerModuleTdzGlobal(ctx: CodegenContext, sourceFile: ts.Sour
   ctx.tdzGlobals.set(name, flagGlobalIdx);
 
   const declaration = findRuntimeTopLevelDeclaration(sourceFile, name);
-  if (declaration) {
+  if (declaration && ctx.programAbiGlobals?.hasModuleValue(declaration)) {
     ctx.programAbiGlobals?.observeModuleTdz(declaration, name, flagGlobal);
   }
 }
