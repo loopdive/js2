@@ -512,6 +512,121 @@ const EDI_GLOBAL_SOURCE = `
   export function directProbe(): number { return vDirect; }
 `;
 
+/**
+ * #4245 slice 2 — the OUTWARD half. A plain QuickJS object reaching compiled
+ * code is a mirrored live view, not an opaque handle box.
+ *
+ * The anti-vacuity bar here is higher than "a read works", because the failure
+ * this slice fixes was itself a passing-looking one: test262's `verifyProperty`
+ * gates EVERY descriptor check behind `hasOwnProperty(desc, field)`, so a box
+ * that answers "no own properties" makes the whole helper a silent no-op. Two
+ * cases below therefore assert the helper's own preconditions (`ownKeys` counts
+ * exactly 3, `hasOwn` answers true) rather than only its verdict, and one
+ * asserts a value QuickJS alone could produce (`configurable: false` — a
+ * synthesized all-true descriptor would read `true`).
+ */
+const MEMBRANE_OUTWARD_SOURCE = `
+  function joinSource(parts: string[]): string {
+    var out = "";
+    for (var i = 0; i < parts.length; i += 1) out = out + parts[i];
+    return out;
+  }
+
+  // A descriptor object built INSIDE the QuickJS realm and handed to a compiled
+  // function — verbatim the shape of the 48 annexB \`*-global-init\` files.
+  var report: any = { fields: 0, bad: 0, hasEnum: 0, hasValue: 0, enumVal: "", cfgVal: "" };
+  function inspectDescriptor(desc: any): number {
+    var names: any = Object.getOwnPropertyNames(desc);
+    report.fields = (names as any).length as number;
+    for (var i = 0; i < ((names as any).length as number); i += 1) {
+      var f: any = (names as any)[i];
+      if (f !== "value" && f !== "writable" && f !== "enumerable" && f !== "configurable" && f !== "get" && f !== "set") {
+        report.bad = (report.bad as number) + 1;
+      }
+    }
+    report.hasEnum = (Object as any).hasOwn(desc, "enumerable") ? 1 : 0;
+    report.hasValue = (Object as any).hasOwn(desc, "value") ? 1 : 0;
+    report.enumVal = String((desc as any).enumerable);
+    report.cfgVal = String((desc as any).configurable);
+    return 1;
+  }
+  var vInspect = 0;
+  try {
+    vInspect = (0, eval)(joinSource([
+      "inspectDescriptor({ enumerable: true, writable: tr",
+      "ue, configurable: false })"
+    ])) as number;
+  } catch (e) { vInspect = -1; }
+
+  // A box returned to compiled code: read, then MUTATED BY A LATER EVAL.
+  var vRead = 0;
+  var vLive = 0;
+  var vWriteBack = 0;
+  try {
+    var box: any = (0, eval)(joinSource(["globalThis.laneObj = { n: 4", "1, s: 'ok' }"]));
+    vRead = ((box as any).n as number) * 10 + (((box as any).s as string)).length;
+    (0, eval)(joinSource(["laneOb", "j.n = 55"]));
+    vLive = (box as any).n as number;
+    // …and the other direction: a compiled write, plus a compiled-side NEW key,
+    // both observed inside the next evaluation.
+    (box as any).n = 9;
+    (box as any).fresh = 4;
+    vWriteBack = (0, eval)(joinSource(["laneObj.n * 10 + laneOb", "j.fresh"])) as number;
+  } catch (e) { vRead = -1; }
+
+  // Enumerability is mirrored, not invented: a non-enumerable own property is
+  // reported by getOwnPropertyNames and hidden from Object.keys.
+  var vEnumFidelity = 0;
+  try {
+    var ne: any = (0, eval)(joinSource([
+      "globalThis.neObj = Object.defineProperty({ vis: 1 }, 'hid', { value: 2, enumera",
+      "ble: false, configurable: true, writable: true })"
+    ]));
+    vEnumFidelity =
+      ((Object.getOwnPropertyNames(ne) as any).length as number) * 100 +
+      ((Object.keys(ne) as any).length as number) * 10 +
+      (((ne as any).hid as number));
+  } catch (e) { vEnumFidelity = -1; }
+
+  // Identity COLLAPSE, both ways. A compiled object crossing in as a wrapper and
+  // straight back out must be the SAME object (\`qjs_wrapper_gc_handle\`), and one
+  // QuickJS object read by two evals must be one box.
+  var mine: any = { tag: 7 };
+  function sameAsMine(x: any): number { return x === mine ? 1 : 0; }
+  var vCollapse = 0;
+  var vBoxIdentity = 0;
+  try {
+    vCollapse = (0, eval)(joinSource(["sameAsMi", "ne(mine)"])) as number;
+  } catch (e) { vCollapse = -1; }
+  try {
+    var a1: any = (0, eval)(joinSource(["globalThis.idObj = { k: ", "1 }"]));
+    var a2: any = (0, eval)(joinSource(["idOb", "j"]));
+    vBoxIdentity = (a1 === a2) ? 1 : 0;
+  } catch (e) { vBoxIdentity = -1; }
+
+  // A self-referential object must not recurse forever while being mirrored.
+  var vCycle = 0;
+  try {
+    var cyc: any = (0, eval)(joinSource(["globalThis.cycObj = { v: 3 }; cycObj.self = cycObj; cycOb", "j"]));
+    vCycle = (((cyc as any).self as any) === cyc ? 10 : 0) + ((cyc as any).v as number);
+  } catch (e) { vCycle = -1; }
+
+  export function inspectProbe(): number { return vInspect; }
+  export function fieldsProbe(): number { return report.fields as number; }
+  export function badProbe(): number { return report.bad as number; }
+  export function hasEnumProbe(): number { return report.hasEnum as number; }
+  export function hasValueProbe(): number { return report.hasValue as number; }
+  export function enumValProbe(): number { return (report.enumVal as string) === "true" ? 1 : 0; }
+  export function cfgValProbe(): number { return (report.cfgVal as string) === "false" ? 1 : 0; }
+  export function readProbe(): number { return vRead; }
+  export function liveProbe(): number { return vLive; }
+  export function writeBackProbe(): number { return vWriteBack; }
+  export function enumFidelityProbe(): number { return vEnumFidelity; }
+  export function collapseProbe(): number { return vCollapse; }
+  export function boxIdentityProbe(): number { return vBoxIdentity; }
+  export function cycleProbe(): number { return vCycle; }
+`;
+
 const availableArtifactDir = quickjsProviderAvailable();
 const enabled = process.env[ENGINE_ENV] === "quickjs" || availableArtifactDir !== null;
 
@@ -520,6 +635,7 @@ describe.skipIf(!enabled)("#4245 slice 1 — quickjs eval membrane (inward)", ()
   let direct: Record<string, () => number>;
   let errors: Record<string, () => number>;
   let edi: Record<string, () => number>;
+  let outward: Record<string, () => number>;
 
   beforeAll(async () => {
     const selection = withEnv(
@@ -563,6 +679,9 @@ describe.skipIf(!enabled)("#4245 slice 1 — quickjs eval membrane (inward)", ()
     // `inferModuleStrictArguments: false` is the Script goal — the option (not
     // the source shape) that every `language/eval-code/` test compiles under.
     edi = await link(EDI_GLOBAL_SOURCE, "quickjs-edi-global.ts", {
+      inferModuleStrictArguments: false,
+    });
+    outward = await link(MEMBRANE_OUTWARD_SOURCE, "quickjs-membrane-outward.ts", {
       inferModuleStrictArguments: false,
     });
   }, 300_000);
@@ -742,6 +861,65 @@ describe.skipIf(!enabled)("#4245 slice 1 — quickjs eval membrane (inward)", ()
 
   it("a DIRECT eval written at global scope takes the same EDI route", () => {
     expect(edi.directProbe!()).toBe(1);
+  });
+
+  // ---------------------------------------------- #4245 slice 2 (outward) ---
+
+  it("a QuickJS descriptor object reaches a compiled function with its REAL own keys", () => {
+    // The precondition, not the verdict. `fields === 3` is what makes test262's
+    // `verifyProperty` a real check rather than a silent no-op, and `bad === 0`
+    // is the "Invalid descriptor field: __qjs_handle__" failure the 48-file
+    // cluster reported before this slice.
+    expect(outward.inspectProbe!()).toBe(1);
+    expect(outward.fieldsProbe!()).toBe(3);
+    expect(outward.badProbe!()).toBe(0);
+  });
+
+  it("hasOwnProperty on the box answers TRUE for a present key and FALSE for an absent one", () => {
+    // The single reason a Proxy box was rejected: `__hasOwnProperty` has no
+    // `$Proxy` arm, so it answers false for every key and `verifyProperty`
+    // verifies nothing while reporting success.
+    expect(outward.hasEnumProbe!()).toBe(1);
+    expect(outward.hasValueProbe!()).toBe(0);
+  });
+
+  it("descriptor VALUES cross faithfully, including a false flag", () => {
+    // `configurable: false` is the anti-vacuity half — a synthesized all-true
+    // descriptor, which is what the plan's own fallback would have produced,
+    // reads `true` here.
+    expect(outward.enumValProbe!()).toBe(1);
+    expect(outward.cfgValProbe!()).toBe(1);
+  });
+
+  it("a QuickJS object read by compiled code carries its properties", () => {
+    expect(outward.readProbe!()).toBe(412); // 41 * 10 + "ok".length
+  });
+
+  it("a LATER eval's mutation is visible to the compiled side (acceptance box 2)", () => {
+    expect(outward.liveProbe!()).toBe(55);
+  });
+
+  it("a compiled write — and a compiled-side NEW key — reach the QuickJS object", () => {
+    expect(outward.writeBackProbe!()).toBe(94); // n = 9, fresh = 4
+  });
+
+  it("enumerability is mirrored, not invented", () => {
+    // 2 own names, 1 enumerable key, and the hidden value still readable.
+    expect(outward.enumFidelityProbe!()).toBe(212);
+  });
+
+  it("a compiled object handed through eval and back is the SAME object", () => {
+    // `qjs_wrapper_gc_handle` was exported and declared by slice 1 but had no
+    // caller on this path, so identity was lost on the way out.
+    expect(outward.collapseProbe!()).toBe(1);
+  });
+
+  it("one QuickJS object read by two evals is ONE box", () => {
+    expect(outward.boxIdentityProbe!()).toBe(1);
+  });
+
+  it("a self-referential QuickJS object mirrors without recursing forever", () => {
+    expect(outward.cycleProbe!()).toBe(13); // self === box, v === 3
   });
 
   it("the callback ABI list is the link-time order the shim consumes positionally", () => {

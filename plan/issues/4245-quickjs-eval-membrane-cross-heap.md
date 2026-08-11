@@ -5,7 +5,7 @@ status: in-progress
 assignee: ttraenkler/opus-membrane
 sprint: current
 created: 2026-08-08
-updated: 2026-08-09
+updated: 2026-08-10
 priority: high
 horizon: xl
 feasibility: hard
@@ -934,3 +934,205 @@ bucket's count did not move), `$262.createRealm`, not this slice.
 - **Direct-eval scope snapshots also wrap** (the plan named only the globals
   mirror in slice 1); it is the same one-line predicate, and it is what makes a
   sloppy caller's local object live inside `with (S)`.
+
+## Slice 2 — implementation record
+
+Implementer: senior-dev, 2026-08-10. Branch `issue-4245-membrane-slice2`,
+stacked on `issue-4308-slice-b-edi` at `2aa44ab21` (PR #4343) → slice A
+`2c8b8f3fd` (PR #4340) → membrane slice 1 `e8e43ee86` (PR #4335) → #4321 →
+#4319. **Adapter-only**: `scripts/quickjs-eval-provider.mjs` +
+`tests/quickjs-eval-membrane.test.ts`. No `src/` change, no `qjs_shim.c` change.
+
+### Artifact — NOT moved
+
+The slice was authorized to move the artifact and did not need to. Every
+capability below is expressible over the shim exports slice 1 already had
+(`qjs_get_prop_str` / `qjs_set_prop_str` / `qjs_call` / `qjs_wrapper_gc_handle`),
+with own-key enumeration and `delete` done by realm-side helper functions
+installed once per context — the same "keep it in QuickJS, not in C" discipline
+`qjsEnsureDirectHelpers` already used. So the plan's `qjs_own_keys`,
+`qjs_new_array`, `qjs_set_prop_idx`, `qjs_value_ptr` and `qjs_*_prop_len` were
+NOT added.
+
+| | key | sha256 |
+| --- | --- | --- |
+| before | `d8a5a91d6f183b87` | `b0662069c241d043…` |
+| **after** | `d8a5a91d6f183b87` | `b0662069c241d043…` (identical) |
+
+### Measured result (tier-pinned, this tree)
+
+`TEST262_TARGET=standalone TEST262_PATH_FILTER='language/eval-code/'`, 816 files:
+
+| run | pass / 816 |
+| --- | --- |
+| quickjs, pre-slice-2 (base = `2aa44ab21`) | **710** |
+| quickjs, post-slice-2 | **758** |
+| interpreter (`TEST262_FULL_RUNTIME_EVAL=1`) | **779** (unchanged) |
+
+- **+48, exactly the projected cluster.** The 710 baseline was re-measured on
+  this tree before any edit and reproduced slice B's number exactly.
+- **Regressions: 0**, diffed test-for-test over all 816 files. The diff also
+  reports **0 error-text changes** among the still-failing files, so nothing
+  moved sideways either.
+- Gains, by cluster — the three slice B named, complete:
+
+| n | cluster |
+| --- | --- |
+| 16 | `global:init` (d+i) |
+| 16 | `global:existing-global-init` (d+i) |
+| 16 | `global:existing-non-enumerable-global-init` (d+i) |
+
+- The quickjs-only gap is now **23 files** (was 71): 8 `func:existing-fn-update`
+  + 8 `func:no-skip-param` (slice C), 2 `lang:lex-env-distinct-cls` + 2
+  `lang:global-env-rec-eval` (pre-existing), 3 `lang:var-env-var-strict-*`
+  (slice D). Correction to slice B's residual table: the 16
+  `func:existing-var-update` files it attributed to slice C are
+  **both-engines** failures, so they are not part of the parity gap at all.
+
+### What shipped
+
+**1. The outward box is a MIRRORED `$Object`, not an opaque handle box.** A
+plain QuickJS object crossing out is a real compiled object carrying that
+object's own string-keyed properties (values converted outward, so a nested
+object is a box and a function is a carrier), with enumerability reproduced from
+the QuickJS descriptor. `__qjs_handle__` is gone — it was write-only, never read,
+and it was the whole of the reported defect.
+
+**2. It is kept live by a bidirectional sync at seam granularity.** The boxes
+ride the same push/pull discipline as the globals mirror: `qjsSyncBoxes(c, true)`
+before entering QuickJS (`qjsEvaluate`, `__runtime_apply_interpreted`) and
+`qjsSyncBoxes(c, false)` on every exit **including the throwing one**. A
+compiled-side write is detected as `box[k] !== last[k]` against a per-key
+baseline recorded at the previous sync, so an evaluation's own mutations are
+never clobbered by a stale mirror. Key creation and deletion propagate both ways.
+
+**3. `qjs_wrapper_gc_handle` finally has a caller — the outward COLLAPSE.** It
+had been exported by the shim and declared in the externs since slice 1 with no
+use on this path, so a compiled object that crossed inward as a membrane wrapper
+and was handed straight back to a compiled function (`verifyProperty(o, …)`, a
+callback argument) lost its identity: `===` failed and property work landed on a
+stand-in. `qjsPublish` now collapses a wrapper handle to `gcRegistry[id]` first.
+
+**4. The globals pull widened from FUNCTION to any non-callable OBJECT.** This
+is half the slice, and the descriptor work is worth **zero** without it — which
+the measurement showed rather than the reasoning. With only items 1–3 the run
+read **726/816 (+16)**: the `global:init` cluster landed and the two `existing-*`
+clusters moved from `Invalid descriptor field: __qjs_handle__` to
+`TypeError: Cannot convert undefined or null to object`. Those tests do
+`var global = fnGlobalObject();` **inside** the eval and then call
+`verifyProperty(global, "f", …)` from **top-level compiled code** after it
+returns; with objects excluded from the pull the compiled `global` stayed
+`undefined` and `Object.getOwnPropertyDescriptor` threw. Slice B's wrapper guard
+(`!qjsIsMembraneWrapperHandle(h)`) still protects the caller's own objects from
+being downgraded to boxes, and the intrinsic-marker guard is unchanged.
+
+### The two designs that were built, measured, and REJECTED
+
+Both are recorded because both are what the plan called for, and the reason each
+fails is a property of the compiled MOP that is not visible from reading it.
+
+**(a) The `Proxy` box (the decision table's choice) — rejected.** The premise
+holds as far as it was validated: an adapter-minted `Proxy` IS structurally
+canonical with the caller's `$Proxy`, and the caller's `__extern_get`,
+`__extern_set`, `__extern_has` and `__getOwnPropertyNames` front-guards do
+dispatch its traps cross-module. Measured on a probe: a property read returned
+41 through the `get` trap, and `Object.getOwnPropertyNames` returned the
+`ownKeys` trap's list.
+
+What the premise validation did not cover is **`__hasOwnProperty` /
+`__object_hasOwn`, which have NO `$Proxy` arm** (`object-runtime.ts`,
+`emitHasOwn` — it `ref.test`s `$Object`, misses, and falls through the
+carrier-bag arm to 0). Measured: `Object.hasOwn(proxyBox, "a")` → **false**,
+control on a plain object → true. That is fatal in the specific way this
+workstream keeps paying for: test262's `verifyProperty` gates **every**
+descriptor check behind `__hasOwnProperty(desc, field)`, so a Proxy box makes
+the whole helper a silent no-op — the 48 target files would have gone GREEN
+having verified nothing, and a totals-only reading would have called that a
+complete success.
+
+**(b) Per-key ACCESSOR properties (the plan's own stated fallback) — also
+rejected.** The accessor arms of `__extern_get`/`__extern_set` dispatch through
+`__call_accessor_get` → `__call_fn_method_0`, whose only cross-module
+front-guard is the **AOT-callable carrier** (#4197). The provider→AOT
+*interpreted-callback* marker is recognised by `__apply_closure` alone, and a raw
+adapter closure only lands if the caller module happens to carry a structurally
+identical arity-0 closure shape. Measured, in this order:
+
+| attempt | result |
+| --- | --- |
+| `get:` given a factory-produced closure value | no accessor installed at all — gOPD reports a data property. This is a call-site routing rule and it reproduces IN-module: `emitAccessorFn` handles only a literal function expression or an identifier reference |
+| `get:` given a literal function expression over a `const` key | accessor installed (gOPD reports `get`), call returns **null** |
+| `get:` given the interpreted-callback marker via an identifier reference | accessor installed, call returns **null** |
+
+**Follow-up for the lead (`src/`, out of this issue's scope):** adding a `$Proxy`
+arm to `__hasOwnProperty`/`__object_hasOwn` would make a Proxy box viable and
+would also fix `Object.prototype.hasOwnProperty` on any user Proxy, which is a
+correctness gap independent of eval. Adding the interpreted-callback guard to
+`__call_fn_method_N` (it already carries the AOT-carrier one) would make
+provider-owned accessors work. Neither was attempted here — this issue's hard
+constraint says to report before touching `src/`.
+
+### Anti-vacuity — how each new path is proven live
+
+- **Build-time canary** (`outwardProbe`, expected `6543`): 6000 = the box
+  reports the QuickJS object's own keys to `getOwnPropertyNames`/`hasOwn` (the
+  digit that catches exactly the Proxy failure above — a box that passes every
+  downstream assertion by answering "no own properties"), 500 = a value read off
+  it is the real one, 40 = a LATER evaluation's mutation is visible, 3 = a
+  compiled-side write reached QuickJS. **Verified non-vacuous**: poisoning
+  `qjsBoxKeySpec` to return `""` fails the build with
+  `returned 3, expected 6543`.
+- **Lane cases** (10 new, `tests/quickjs-eval-membrane.test.ts`, 43 total, green
+  together with `tests/quickjs-eval-provider.test.ts` — 71 passed). Two of them
+  assert `verifyProperty`'s *preconditions* (`ownKeys` counts exactly 3,
+  `hasOwn` answers true) rather than its verdict, and one asserts
+  `configurable: false` — a value a synthesized all-true descriptor cannot
+  produce. **Verified non-vacuous**: poisoning `qjsBoxReadValue` to answer
+  `12345` for numbers turns 4 of the 10 red.
+- Every eval source in the lane and the canary is composed through a runtime
+  loop, so `tryStaticEvalInline` cannot fold it.
+
+### Residuals — what the outward view does NOT give
+
+1. **Liveness is at SEAM GRANULARITY, not per-read.** A QuickJS getter with side
+   effects runs at sync time rather than at compiled-read time, and a mutation
+   made and observed strictly between two crossings is invisible. Genuine
+   per-read liveness needs one of the two `src/` follow-ups above.
+2. **Own properties only — the prototype chain does not cross outward.**
+   `box.name` on a boxed Error, `arr.join`, and every inherited method read
+   `undefined`. This is deliberate and load-bearing rather than an omission:
+   flattening inherited names onto the box would put `hasOwnProperty`,
+   `toString`, … on a descriptor object and reintroduce
+   `Invalid descriptor field: …` for a different name.
+3. **Symbol keys still absent** in both directions (`getOwnPropertyNames` never
+   reports them) — unchanged from slice 1.
+4. **A boxed QuickJS Array is not a compiled array.** `Array.isArray(box)` is
+   false; `length` and the index keys are ordinary mirrored properties, so
+   indexed reads and `.length` work but there is no `$Vec` fast path and no
+   `for…of`.
+5. **Non-configurable / non-writable QuickJS properties are mirrored as
+   writable+configurable** data properties — only *enumerability* is reproduced.
+   A compiled-side write to a QuickJS non-writable property is accepted locally
+   and then silently dropped by QuickJS at the next push.
+6. **Sync cost is O(live boxes × keys) per crossing**, and boxes are retained for
+   the context lifetime until slice 3's release protocol exists. Bounded in
+   practice by one context per test module; worth re-measuring if a long-lived
+   context ever accumulates many boxes.
+7. **Cycles are safe but not collected.** A self-referential object mirrors
+   without recursing (the registry row is inserted before the pull, so the nested
+   publish hits it) and a lane case pins that — but reclamation is still slice 3.
+
+### Acceptance criteria — status after slice 2
+
+- [x] **box 1** — inward read/write/identity (slice 1), unchanged.
+- [x] **box 2** — an object created inside eval, returned to compiled code and
+      mutated by a LATER eval shows the mutation to compiled-side dynamic reads
+      (`liveProbe`), and the reverse direction works too (`writeBackProbe`).
+      Identity: one QuickJS object read by two evals is one box
+      (`boxIdentityProbe`), and a compiled object round-trips to itself
+      (`collapseProbe`).
+- [ ] box 3 — lifetimes / leak accounting (slice 3). Retention is still
+      context-lifetime, by design.
+- [x] box 4 — the lane covers the outward cases; the default path is
+      byte-identical by construction (no `src/` change at all).
+- [~] box 5 — residuals above; the lifetime ones are slice 3's.
