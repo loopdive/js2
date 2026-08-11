@@ -365,6 +365,23 @@ jobs:
             mkdir -p "$(dirname "$f")"
             cp "${STAGE}/$f" "$f"
           done
+
+          # The perf-history artifact ACCUMULATES; the other two are snapshots.
+          # Ours was derived from main as of SOURCE_SHA, so a run published
+          # during the ~24-minute measurement — still pending in the open
+          # promotion PR, or already landed on main — is missing from it, and a
+          # force-push of the branch would delete it. Union before committing so
+          # this branch is only ever additive. Idempotent by measurement
+          # identity, and a missing copy is skipped rather than fatal.
+          for REF in deploykey/main "deploykey/${PROMOTION_BRANCH}"; do
+            OTHER="$(mktemp)"
+            if git show "${REF}:benchmarks/results/npm-compat-history.json" > "$OTHER" 2>/dev/null; then
+              node scripts/merge-npm-compat-history.mjs "$OTHER"
+            else
+              echo "No npm-compat history on ${REF}; nothing to union."
+            fi
+          done
+
           git add -f -- "${ARTIFACTS[@]}"
 
           if git diff --cached --quiet; then
