@@ -2927,6 +2927,19 @@ export interface CodegenContext {
    */
   growableObjectLiteralVars: Set<string>;
   /**
+   * (#4208) Exact declarations whose shared `var` binding is repeatedly
+   * initialized with different OrdinaryToPrimitive method shapes. These
+   * literals must use the open `$Object` carrier: a closed anonymous struct
+   * cannot safely receive a later sibling shape, and the guarded reassignment
+   * otherwise stores null before `valueOf` / `toString` can run.
+   *
+   * Declaration identity is intentional. A bare-name set would poison every
+   * unrelated local named `object` in the same compilation unit.
+   */
+  ordinaryToPrimitiveObjectDeclarations: Set<ts.VariableDeclaration>;
+  /** Initializer-node twin of `ordinaryToPrimitiveObjectDeclarations`. */
+  ordinaryToPrimitiveObjectLiterals: Set<ts.ObjectLiteralExpression>;
+  /**
    * (#1239) Variable names whose initializer is an object literal carrying
    * `get`/`set` accessors. Such variables are stored as plain JS host
    * objects (via `__new_plain_object` + `__defineProperty_accessor`) and

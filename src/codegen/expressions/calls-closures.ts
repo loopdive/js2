@@ -848,13 +848,24 @@ export function compileObjectPrototypeFallback(
   receiverClassName: string,
   methodName: string,
 ): InnerResult | undefined {
+  const compileReceiverAsExternref = (): void => {
+    const receiverType = compileExpression(ctx, fctx, propAccess.expression);
+    if (receiverType === null) {
+      fctx.body.push({ op: "ref.null.extern" });
+    } else if (receiverType.kind !== "externref" && receiverType.kind !== "ref_extern") {
+      coerceType(ctx, fctx, receiverType, { kind: "externref" });
+    }
+  };
+
   // toString: coerce receiver to externref and call __extern_toString
   if (methodName === "toString") {
     const toStrIdx = ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
     flushLateImportShifts(ctx, fctx);
     if (toStrIdx !== undefined) {
-      compileExpression(ctx, fctx, propAccess.expression);
-      fctx.body.push({ op: "extern.convert_any" });
+      // A nominal class expression can be loaded through dynamic storage and
+      // therefore emit externref. Convert the actual compiled representation
+      // rather than blindly assuming a WasmGC class ref (#3999).
+      compileReceiverAsExternref();
       fctx.body.push({ op: "call", funcIdx: toStrIdx });
       return { kind: "externref" };
     }
@@ -866,8 +877,7 @@ export function compileObjectPrototypeFallback(
     const toStrIdx = ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
     flushLateImportShifts(ctx, fctx);
     if (toStrIdx !== undefined) {
-      compileExpression(ctx, fctx, propAccess.expression);
-      fctx.body.push({ op: "extern.convert_any" });
+      compileReceiverAsExternref();
       fctx.body.push({ op: "call", funcIdx: toStrIdx });
       return { kind: "externref" };
     }
@@ -876,8 +886,7 @@ export function compileObjectPrototypeFallback(
 
   // valueOf: return the receiver itself (Object.prototype.valueOf returns this)
   if (methodName === "valueOf") {
-    compileExpression(ctx, fctx, propAccess.expression);
-    fctx.body.push({ op: "extern.convert_any" });
+    compileReceiverAsExternref();
     return { kind: "externref" };
   }
 
@@ -891,10 +900,9 @@ export function compileObjectPrototypeFallback(
     );
     flushLateImportShifts(ctx, fctx);
     if (hopIdx !== undefined) {
-      compileExpression(ctx, fctx, propAccess.expression);
-      fctx.body.push({ op: "extern.convert_any" });
+      compileReceiverAsExternref();
       if (expr.arguments.length > 0) {
-        compileExpression(ctx, fctx, expr.arguments[0]!);
+        compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
       } else {
         fctx.body.push({ op: "ref.null.extern" });
       }
@@ -914,10 +922,9 @@ export function compileObjectPrototypeFallback(
     );
     flushLateImportShifts(ctx, fctx);
     if (pieIdx !== undefined) {
-      compileExpression(ctx, fctx, propAccess.expression);
-      fctx.body.push({ op: "extern.convert_any" });
+      compileReceiverAsExternref();
       if (expr.arguments.length > 0) {
-        compileExpression(ctx, fctx, expr.arguments[0]!);
+        compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
       } else {
         fctx.body.push({ op: "ref.null.extern" });
       }
@@ -937,10 +944,9 @@ export function compileObjectPrototypeFallback(
     );
     flushLateImportShifts(ctx, fctx);
     if (ipIdx !== undefined) {
-      compileExpression(ctx, fctx, propAccess.expression);
-      fctx.body.push({ op: "extern.convert_any" });
+      compileReceiverAsExternref();
       if (expr.arguments.length > 0) {
-        compileExpression(ctx, fctx, expr.arguments[0]!);
+        compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
       } else {
         fctx.body.push({ op: "ref.null.extern" });
       }

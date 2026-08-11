@@ -5522,6 +5522,13 @@ function preregisterDynamicSupport(ctx: CodegenContext, fns: readonly BuiltFnRef
   // that legacy registers on demand via `ensureLateImport` — another
   // dual-compile side effect IR-first skips. Detect + register the same way.
   let usesExternIsUndefined = false;
+  // #4208 S3/S7 — explicit runtime refs emitted for the IR-owned open
+  // OrdinaryToPrimitive literal. These providers must exist before Phase 3:
+  // host mode registers late imports, while standalone/wasi materialize the
+  // native object runtime. `__unbox_number` comes from the union family in
+  // every lane.
+  let usesOrdinaryToPrimitiveObjectRuntime = false;
+  let usesRuntimeUnboxNumber = false;
   const dynamicRuntimeNeeds = new Set<IrDynamicRuntimeNeed>();
   for (const entry of fns) {
     for (const block of entry.fn.blocks) {
@@ -5538,6 +5545,14 @@ function preregisterDynamicSupport(ctx: CodegenContext, fns: readonly BuiltFnRef
           }
           if (i.kind === "call" && i.target.binding.kind === "runtime") {
             switch (i.target.binding.symbol) {
+              case "__new_plain_object":
+              case "__extern_set":
+              case "__to_primitive":
+                usesOrdinaryToPrimitiveObjectRuntime = true;
+                break;
+              case "__unbox_number":
+                usesRuntimeUnboxNumber = true;
+                break;
               case IR_DYN_ADD_FN:
                 dynamicRuntimeNeeds.add("add");
                 break;
@@ -5568,6 +5583,17 @@ function preregisterDynamicSupport(ctx: CodegenContext, fns: readonly BuiltFnRef
       }
     }
   }
+  if (usesOrdinaryToPrimitiveObjectRuntime) {
+    if (ctx.standalone || ctx.wasi) {
+      ensureObjectRuntime(ctx);
+    } else {
+      ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]);
+      ensureLateImport(ctx, "__extern_set", [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }], []);
+      ensureLateImport(ctx, "__to_primitive", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
+      flushLateImportShifts(ctx, null);
+    }
+  }
+  if (usesRuntimeUnboxNumber) addUnionImports(ctx);
   // (#3143) A named union-import call needs the host/native import family
   // registered even when no `dyn.*` op is present (the boxing-coercion path).
   // `addUnionImports` covers host (env imports) AND wasi/standalone (native

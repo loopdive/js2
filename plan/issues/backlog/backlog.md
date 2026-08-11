@@ -2,6 +2,13 @@
 
 Lightweight pointer index for unscheduled issues that need sprint candidacy. Authoritative status lives in each issue file's frontmatter.
 
+## 2026-08-11 — Jest accessor descriptor import
+
+- [#4367](../4367-jest-parenthesized-accessor-descriptor-import.md) — unwrap
+  transparent parentheses/type wrappers before the accessor-descriptor import
+  pre-pass decides whether Jest's Webpack export getters need the
+  `__make_getter_callback` bridge.
+
 ## 2026-08-09 — Prepared provider transaction rollback
 
 - [#4260](../4260-prepared-provider-plans-leak-across-aborted-component-seal.md)
