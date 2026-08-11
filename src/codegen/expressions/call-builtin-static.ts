@@ -2135,16 +2135,16 @@ export function compileBuiltinStaticCall(
             // NativeString externref standalone and the host `global.get` under GC.
             addStringConstantGlobal(ctx, propName);
             fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
-            // value (or null for accessor descriptors)
+            // Missing value defaults to canonical JS undefined (§8.10.5; #3042).
             if (valueExpr) {
               const vt = compileExpression(ctx, fctx, valueExpr);
               if (!vt) {
-                fctx.body.push({ op: "ref.null.extern" });
+                emitUndefined(ctx, fctx);
               } else if (vt.kind !== "externref") {
                 coerceType(ctx, fctx, vt, { kind: "externref" });
               }
             } else {
-              fctx.body.push({ op: "ref.null.extern" });
+              emitUndefined(ctx, fctx);
             }
             // flags: bit 0=writable, 1=enumerable, 2=configurable, 3=writable specified,
             //        4=enumerable specified, 5=configurable specified, 7=has value
