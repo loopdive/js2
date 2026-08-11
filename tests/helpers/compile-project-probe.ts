@@ -30,7 +30,13 @@ const report = {
   binaryByteLength: result.success ? result.binary.byteLength : 0,
   valid,
   validationError,
-  errors: result.errors.map((error) => ({ message: error.message })),
+  errors: result.errors.map((error) => ({
+    message: error.message,
+    line: error.line,
+    column: error.column,
+    severity: error.severity,
+    ...(error.file ? { file: error.file } : {}),
+  })),
 };
 
 process.stdout.write(`${COMPILE_PROJECT_PROBE_MARKER}${JSON.stringify(report)}\n`);

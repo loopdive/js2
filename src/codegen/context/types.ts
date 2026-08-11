@@ -20,6 +20,8 @@ export interface CodegenError {
   message: string;
   line: number;
   column: number;
+  /** Source file that owns the diagnostic node, when one is available. */
+  file?: string;
   /**
    * #1921 — the compile-failure gate keys on this field, not on a magic
    * `"Codegen error:"` message prefix.
@@ -949,6 +951,14 @@ export interface FunctionContext {
    * so non-Annex-B function decls are byte-identical.
    */
   annexBOuterBindings?: Set<string>;
+  /**
+   * Subset of `annexBOuterBindings` whose name is shared by multiple eligible,
+   * capture-free declaration sites in the same var scope. Direct calls for
+   * these names must dispatch through the live outer-binding local because the
+   * executed branch, rather than the name-keyed funcMap winner, determines the
+   * callee.
+   */
+  annexBRepeatedOuterBindings?: Set<string>;
   /**
    * For TDZ flag locals that have been boxed in an i32 ref cell so that
    * mutations propagate to closures that captured the flag (#1177).
