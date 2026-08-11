@@ -1671,7 +1671,8 @@
               <code>eval</code>
               /
               <code>new Function</code>
-              ) is planned to fall back to a small embedded interpreter; today it delegates to the JS host.
+              ) falls back to a small interpreter, linked in as a separate zero-import provider module so standalone
+              builds need no JS host for it.
             </p>
           </article>
           <article class="feature-card">
@@ -1976,15 +1977,21 @@ function legacy() {
               </div>
               <div class="feat-row" data-t262-paths="language/eval-code,built-ins/eval">
                 <span class="feat-badge partial">⚠</span>
-                <span class="feat-host">host</span>
                 <span class="feat-name">eval()</span>
-                <span class="feat-desc">Dynamic code evaluation via JS host import</span>
+                <span class="feat-desc">
+                  Dynamic code evaluation — constant strings compiled away, else interpreted
+                </span>
                 <details>
                   <summary></summary>
-                  <pre>eval("1 + 2"); // delegated to host</pre>
+                  <pre>
+eval("1 + 2");    // constant: parsed and spliced at compile time
+eval(readLine()); // dynamic: runs on the embedded interpreter</pre
+                  >
                   <div class="feat-explain">
-                    Compiles to a host import that delegates to the JS engine. Requires a JS host runtime; not available
-                    in standalone Wasm.
+                    A compile-time-constant source string is parsed and spliced inline, so it costs nothing at runtime.
+                    A source string only known at runtime falls back to a WasmGC-native interpreter linked in as a
+                    zero-import provider module, so it works in standalone Wasm with no JS host. A JS host, when
+                    present, can serve the same call by recompiling through js2wasm instead.
                   </div>
                 </details>
               </div>
@@ -4328,10 +4335,11 @@ console.log(instance.exports.run()); // &rarr; 55</pre
                   <code>eval</code>
                   and dynamic
                   <code>Function</code>
-                  construction &mdash; would need a small interpreter fallback that runs only on those paths, not a full
-                  engine in every module. Whether that fallback can stay small while the rest is compiled, and how much
-                  real code can avoid it, is precisely what the prototype is testing. If it turns out the only way to be
-                  compatible is to ship an engine, that would be a negative result worth knowing.
+                  construction &mdash; are served by a small interpreter fallback that runs only on those paths, linked
+                  in as a separate provider module rather than a full engine embedded in every module. Whether that
+                  fallback stays small while the rest is compiled, and how much real code can avoid it, is precisely
+                  what the prototype is testing. If it turns out the only way to be compatible is to ship an engine,
+                  that would be a negative result worth knowing.
                 </p>
               </div>
             </details>
