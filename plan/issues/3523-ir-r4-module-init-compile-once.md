@@ -446,7 +446,7 @@ Current landing and handover sequence:
 
 The live production branch is `codex/3523-calendar-retirement` in isolated
 worktree `/private/tmp/ts2wasm-3523-calendar-retirement`, rebased onto
-`origin/main` `2a7152fb28e890`. The dirty root checkout
+`origin/main` `81ff7c4b1daa83`. The dirty root checkout
 remains untouched.
 
 The bounded Calendar transaction is now implemented and focused-green:
