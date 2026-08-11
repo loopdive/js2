@@ -99,6 +99,9 @@ then compares its result with the same operation in native Node.
 | **react upstream suite**                | —     | `cjs/react.production.js` | React's own real `packages/react/src/__tests__` unit tests                  |
 | **react-dom upstream suite**             | #3982 | `cjs/react-dom*.js`       | ReactDOM's own real `packages/react-dom/src/__tests__` unit tests            |
 | **uuid upstream suite**                 | #3995 | `dist/index.js`           | UUID's own 75 `src/test/*.test.ts` cases                                    |
+| **hono upstream suite**                 | #3995 | `dist/utils/*.js`         | pinned original Vitest callbacks; complete source inventory tracked          |
+| **lodash upstream suite**               | #3995 | modular method files      | unchanged QUnit module slices from the monolithic upstream suite              |
+| **moment upstream suite**               | #3995 | `moment.js`               | pinned original QUnit callbacks; complete core/locale inventory tracked       |
 | **redux** (state container)             | #3996 | `dist/redux.mjs`          | consumed store/reducer/subscription/action-creator API workload             |
 
 ## uuid v14.0.1 upstream suite (#3995)
@@ -113,9 +116,30 @@ matching `uuidjs/uuid` tag at commit
 `70177807e9229dfacde2038dc1e722f1828f358a` for the ten original TypeScript test
 files. It runs the same registered test bodies in a native Node oracle and in
 one Wasm module per file; the shared table helper is pinned alongside the test
-files. The 2026-08-09 baseline is **75/75 native, 6/75 Wasm** (exact runtime
-denominator 75). Every failure remains in the JSON report, including the
-invalid `v35` binary and v1/validate/version runtime traps.
+files. The measured mainline baseline is **75/75 native, 3/75 Wasm** (exact
+runtime denominator 75). Every failure remains in the JSON report, including
+the invalid `v7` callback binary and v1/validate/version runtime traps.
+
+## Hono, Lodash, and Moment upstream suites (#3995)
+
+```bash
+pnpm run dogfood:hono-upstream-suite
+pnpm run dogfood:lodash-upstream-suite
+pnpm run dogfood:moment-upstream-suite
+```
+
+Each lane clones the exact source tag matching the committed npm tarball,
+verifies the immutable commit and complete upstream test inventory, and runs
+unchanged upstream callbacks against the published package bytes in both Node
+and Wasm. The initial adapters select only synchronous, runner-independent
+files or complete QUnit module slices. Every unselected file or registration
+site remains counted as deferred in the JSON report; a supported slice is
+never presented as the whole upstream suite.
+
+The 2026-08-12 initial baselines are **Hono 25/31**, **Lodash 0/11**, and
+**Moment 0/10** in Wasm; their Node oracles pass 31/31, 11/11, and 10/10. Every
+generated module compiles and validates. Lodash fails at the callback-runner
+boundary; Moment reaches the callbacks but differs on their assertions.
 
 ## Redux 5.0.1 API workload (#3996)
 
