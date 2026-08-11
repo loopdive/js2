@@ -4610,7 +4610,18 @@ function lowerOrdinaryToPrimitiveObjectLiteral(expr: ts.ObjectLiteralExpression,
   }
   if (properties.length === 0) return null;
 
-  const objectType: IrType = { kind: "extern", className: "Object" };
+  const preferred = properties.find((property) => property.name === "valueOf") ?? properties[0]!;
+  const primitiveKind =
+    preferred.initializer.type?.kind === ts.SyntaxKind.StringKeyword
+      ? "string"
+      : preferred.initializer.type?.kind === ts.SyntaxKind.BooleanKeyword
+        ? "boolean"
+        : "number";
+  // Preserve the selector-proven default/number-hint primitive family in the
+  // internal extern brand. This is not a JS class name; it lets later binary
+  // lowering distinguish numeric/default object coercion from arbitrary host
+  // externrefs without consulting the checker after the literal was lowered.
+  const objectType: IrType = { kind: "extern", className: `Object:${primitiveKind}` };
   const object = cx.builder.emitCall(irRuntimeFuncRef("__new_plain_object"), [], objectType);
   if (object === null) {
     throw new Error(`ir/from-ast: __new_plain_object produced no value in ${cx.funcName}`);
@@ -8825,7 +8836,7 @@ function emitUnaryToNumber(rand: IrValueId, randType: IrType, cx: LowerCtx): IrV
   // not silently widen every host-class externref unary expression. A null
   // hint selects the default/number method order; the returned primitive then
   // flows through the canonical lane-specific ToNumber helper.
-  if (randType.kind === "extern" && randType.className === "Object") {
+  if (randType.kind === "extern" && randType.className.startsWith("Object:")) {
     const externref = irVal({ kind: "externref" });
     const hint = cx.builder.emitConst({ kind: "null", ty: externref }, externref);
     const primitive = cx.builder.emitCall(irRuntimeFuncRef("__to_primitive"), [rand, hint], externref);
@@ -8985,6 +8996,8 @@ function classifyPrimitiveProof(t: ts.Type): "number" | "string" | "unprovable" 
  * no checker there is no specialization whose unsoundness we would be masking).
  */
 function proveAdditiveOperand(node: ts.Expression, cx: LowerCtx): "number" | "string" | "unprovable" | "no-checker" {
+  const ordinaryLiteral = ordinaryToPrimitiveAdditiveProof(node);
+  if (ordinaryLiteral !== "unprovable") return ordinaryLiteral;
   const checker = cx.checker;
   if (!checker) return "no-checker";
   const byChecker = classifyPrimitiveProof(checker.getTypeAtLocation(node));
@@ -9000,6 +9013,30 @@ function proveAdditiveOperand(node: ts.Expression, cx: LowerCtx): "number" | "st
   // the lattice's bool atom is i32-branded and deliberately unmapped there).
   // See src/ir/lattice-param-facts.ts for the full soundness argument.
   return latticeAdditiveFact(node, cx) ?? "unprovable";
+}
+
+function ordinaryToPrimitiveAdditiveProof(node: ts.Expression): "number" | "string" | "unprovable" {
+  const candidate = peelParensExpr(node);
+  if (!ts.isObjectLiteralExpression(candidate)) return "unprovable";
+  let valueOfMethod: ts.FunctionExpression | undefined;
+  let toStringMethod: ts.FunctionExpression | undefined;
+  for (const property of candidate.properties) {
+    if (!ts.isPropertyAssignment(property) || !ts.isFunctionExpression(property.initializer)) return "unprovable";
+    const name = phase1PropertyName(property.name);
+    if (name === "valueOf") valueOfMethod = property.initializer;
+    else if (name === "toString") toStringMethod = property.initializer;
+    else return "unprovable";
+  }
+  const preferred = valueOfMethod ?? toStringMethod;
+  if (!preferred) return "unprovable";
+  if (preferred.type?.kind === ts.SyntaxKind.StringKeyword) return "string";
+  if (preferred.type?.kind === ts.SyntaxKind.NumberKeyword || preferred.type?.kind === ts.SyntaxKind.BooleanKeyword) {
+    // After ToPrimitive(default), a boolean participates in `+`'s numeric arm
+    // whenever the other primitive is non-string, so it shares the numeric
+    // specialization proof here (the emitted coercion still performs ToNumber).
+    return "number";
+  }
+  return "unprovable";
 }
 
 /**
@@ -9460,14 +9497,50 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
     isIrBitwiseOperatorToken(op) &&
     isI32PureExprIR(expr.left, cx.i32PureNames) &&
     isI32PureExprIR(expr.right, cx.i32PureNames);
-  const lhs = i32PureBitwiseOperands
-    ? emitI32PureExpr(expr.left, cx)
-    : lowerExpr(expr.left, cx, irVal({ kind: "f64" }));
-  const rhs = i32PureBitwiseOperands
+  let lhs = i32PureBitwiseOperands ? emitI32PureExpr(expr.left, cx) : lowerExpr(expr.left, cx, irVal({ kind: "f64" }));
+  let rhs = i32PureBitwiseOperands
     ? emitI32PureExpr(expr.right, cx)
     : lowerExpr(expr.right, cx, irVal({ kind: "f64" }));
-  const lt = typeOfValue(lhs, cx);
-  const rt = typeOfValue(rhs, cx);
+  let lt = typeOfValue(lhs, cx);
+  let rt = typeOfValue(rhs, cx);
+
+  // #4208 S3/S7 — numeric/default binary abstract operations over the exact
+  // OrdinaryToPrimitive IR object. Strict equality deliberately does not enter
+  // this path (Object vs primitive is false without coercion). `+` is admitted
+  // only for the number/boolean primitive brands; a string-producing object
+  // needs the future concat carrier unification and remains a clean fallback.
+  const coerceOrdinaryObject = (value: IrValueId, type: IrType): IrValueId | null => {
+    if (type.kind !== "extern" || !type.className.startsWith("Object:")) return null;
+    if (type.className === "Object:string") return null;
+    const looseEquality = op === ts.SyntaxKind.EqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsToken;
+    const numericOrRelational =
+      op === ts.SyntaxKind.PlusToken ||
+      op === ts.SyntaxKind.MinusToken ||
+      op === ts.SyntaxKind.AsteriskToken ||
+      op === ts.SyntaxKind.SlashToken ||
+      op === ts.SyntaxKind.PercentToken ||
+      op === ts.SyntaxKind.AmpersandToken ||
+      op === ts.SyntaxKind.BarToken ||
+      op === ts.SyntaxKind.CaretToken ||
+      op === ts.SyntaxKind.LessThanLessThanToken ||
+      op === ts.SyntaxKind.GreaterThanGreaterThanToken ||
+      op === ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken ||
+      op === ts.SyntaxKind.LessThanToken ||
+      op === ts.SyntaxKind.LessThanEqualsToken ||
+      op === ts.SyntaxKind.GreaterThanToken ||
+      op === ts.SyntaxKind.GreaterThanEqualsToken;
+    return numericOrRelational || looseEquality ? emitUnaryToNumber(value, type, cx) : null;
+  };
+  const coercedLhs = coerceOrdinaryObject(lhs, lt);
+  const coercedRhs = coerceOrdinaryObject(rhs, rt);
+  if (coercedLhs !== null) {
+    lhs = coercedLhs;
+    lt = typeOfValue(lhs, cx);
+  }
+  if (coercedRhs !== null) {
+    rhs = coercedRhs;
+    rt = typeOfValue(rhs, cx);
+  }
 
   // #2949 S5.2 — dynamic equality: `===`/`!==`/`==`/`!=` where either operand
   // is a boxed-any carrier. The concrete operand is boxed into the carrier

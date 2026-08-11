@@ -15556,12 +15556,21 @@ assert._isSameValue = isSameValue;
       //        comparison yielding `undefined` makes the relational expression
       //        false, so callers treat 2 as "no operator matches".
       return (a: any, b: any) => {
-        if (a < b) return -1;
-        if (a > b) return 1;
+        // Native JS cannot invoke compiled valueOf/toString fields on an opaque
+        // WasmGC struct. IsLessThan requires ToPrimitive(number) on both sides
+        // before deciding between string and numeric comparison, so mirror the
+        // host_add/host_loose_eq bridge here instead of feeding the raw structs
+        // to V8's relational operators.
+        const av =
+          a != null && typeof a === "object" && _isWasmStruct(a) ? _toPrimitiveSync(a, "number", callbackState) : a;
+        const bv =
+          b != null && typeof b === "object" && _isWasmStruct(b) ? _toPrimitiveSync(b, "number", callbackState) : b;
+        if (av < bv) return -1;
+        if (av > bv) return 1;
         // Equal, OR incomparable (NaN involved). `a <= b` distinguishes:
         // `a <= b` is true only when equal; false when a NaN/undefined operand
         // makes every comparison false.
-        return a <= b ? 0 : 2;
+        return av <= bv ? 0 : 2;
       };
     case "same_value_zero":
       // #1360 — SameValueZero comparison (§7.2.11).

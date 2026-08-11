@@ -392,6 +392,18 @@ export function tryStaticToNumber(
   }
   // Binary expressions: fold constant operands at compile time
   if (ts.isBinaryExpression(expr)) {
+    // `+` selects concatenation after ToPrimitive(default), before ToNumber.
+    // Folding an Object operand through this numeric helper loses whether its
+    // primitive was a string: for example `{} + {}` was folded as NaN + NaN,
+    // even though both objects first become "[object Object]" strings. Keep
+    // object/unknown additions on the runtime string-or-number dispatcher.
+    if (expr.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+      const leftFact = ctx.oracle.typeFactOf(expr.left).kind;
+      const rightFact = ctx.oracle.typeFactOf(expr.right).kind;
+      if (leftFact === "object" || rightFact === "object" || leftFact === "unknown" || rightFact === "unknown") {
+        return undefined;
+      }
+    }
     // Don't fold string + anything as numeric — JS semantics requires string concat
     if (
       expr.operatorToken.kind === ts.SyntaxKind.PlusToken &&

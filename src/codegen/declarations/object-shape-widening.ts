@@ -586,6 +586,41 @@ function isNumericOrdinaryToPrimitiveUse(identifier: ts.Identifier): boolean {
   }
 }
 
+function isDirectOrdinaryToPrimitiveLiteralUse(literal: ts.ObjectLiteralExpression): boolean {
+  const parent = literal.parent;
+  if (!parent) return false;
+  if (ts.isPrefixUnaryExpression(parent) && parent.operand === literal) {
+    return (
+      parent.operator === ts.SyntaxKind.PlusToken ||
+      parent.operator === ts.SyntaxKind.MinusToken ||
+      parent.operator === ts.SyntaxKind.TildeToken
+    );
+  }
+  if (!ts.isBinaryExpression(parent) || (parent.left !== literal && parent.right !== literal)) return false;
+  switch (parent.operatorToken.kind) {
+    case ts.SyntaxKind.PlusToken:
+    case ts.SyntaxKind.MinusToken:
+    case ts.SyntaxKind.AsteriskToken:
+    case ts.SyntaxKind.SlashToken:
+    case ts.SyntaxKind.PercentToken:
+    case ts.SyntaxKind.LessThanToken:
+    case ts.SyntaxKind.LessThanEqualsToken:
+    case ts.SyntaxKind.GreaterThanToken:
+    case ts.SyntaxKind.GreaterThanEqualsToken:
+    case ts.SyntaxKind.EqualsEqualsToken:
+    case ts.SyntaxKind.ExclamationEqualsToken:
+    case ts.SyntaxKind.AmpersandToken:
+    case ts.SyntaxKind.BarToken:
+    case ts.SyntaxKind.CaretToken:
+    case ts.SyntaxKind.LessThanLessThanToken:
+    case ts.SyntaxKind.GreaterThanGreaterThanToken:
+    case ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken:
+      return true;
+    default:
+      return false;
+  }
+}
+
 /**
  * #4208 — find one exact ES3/ES5 idiom before local-slot allocation:
  *
@@ -608,7 +643,17 @@ function collectRepeatedOrdinaryToPrimitiveObjects(
   const declarationsBySymbol = new Map<ts.Symbol, ts.VariableDeclaration[]>();
   const coerciveSymbols = new Set<ts.Symbol>();
   const visit = (node: ts.Node): void => {
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+    if (
+      ts.isObjectLiteralExpression(node) &&
+      isOrdinaryToPrimitiveLiteralCandidate(node) &&
+      isDirectOrdinaryToPrimitiveLiteralUse(node)
+    ) {
+      // A directly-coerced method-only literal has no closed-struct consumer:
+      // its first observable operation is ToPrimitive itself. Build it in the
+      // same open carrier as repeated declarations so runtime loose equality
+      // can distinguish an Object from the primitive returned by valueOf.
+      ctx.ordinaryToPrimitiveObjectLiterals.add(node);
+    } else if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
       const list = node.parent;
       const isVar =
         ts.isVariableDeclarationList(list) &&

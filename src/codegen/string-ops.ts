@@ -62,6 +62,7 @@ import {
   emitGuardedRefCast,
   pushDefaultValue,
   pushParamSentinel,
+  tryStructDefaultToStringAsExternref,
   tryStructToString,
 } from "./type-coercion.js";
 
@@ -363,9 +364,20 @@ function compileNativeConcatOperand(ctx: CodegenContext, fctx: FunctionContext, 
       compileStringLiteral(ctx, fctx, "undefined", operand);
       return true;
     }
-    // Dynamic externref (boxed string / any / $Object) → runtime ToString.
-    // For standalone $Object values this routes through native
-    // OrdinaryToPrimitive("string") before the native-string concat helper.
+    // Dynamic externref (boxed string / any / $Object) →
+    // ToPrimitive(default), then ToString. `+` uses valueOf-first even though
+    // this operand is about to feed string concatenation.
+    const toPrimIdx = ensureLateImport(
+      ctx,
+      "__to_primitive",
+      [{ kind: "externref" }, { kind: "externref" }],
+      [{ kind: "externref" }],
+    );
+    flushLateImportShifts(ctx, fctx);
+    const finalToPrimIdx = ctx.funcMap.get("__to_primitive") ?? toPrimIdx;
+    if (finalToPrimIdx !== undefined) {
+      fctx.body.push({ op: "ref.null.extern" }, { op: "call", funcIdx: finalToPrimIdx });
+    }
     const dynToStrIdx = ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
     flushLateImportShifts(ctx, fctx);
     if (dynToStrIdx !== undefined) {
@@ -381,6 +393,13 @@ function compileNativeConcatOperand(ctx: CodegenContext, fctx: FunctionContext, 
     // "[object Object]" fallthrough. The concrete vec type is known here, so
     // emit the join lowering inline (index-shift-safe — see #1448).
     if (tryCompileNativeVecConcatOperand(ctx, fctx, opType)) {
+      return true;
+    }
+    // A method-bearing object literal needs the same DEFAULT method order as
+    // the dynamic externref arm. The existing tryStructToString helper is a
+    // genuine ToString(string) path and therefore checks toString first.
+    if (tryStructDefaultToStringAsExternref(ctx, fctx, opType)) {
+      emitNativeStringRefFromExternref(ctx, fctx);
       return true;
     }
     // #1806 Phase 1 (string-hint): when the operand is a compile-time-resolvable

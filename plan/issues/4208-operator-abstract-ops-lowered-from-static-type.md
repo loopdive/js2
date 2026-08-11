@@ -2,7 +2,7 @@
 id: 4208
 title: "Operator abstract-ops are lowered from the STATIC type: ToNumber / ToPrimitive / Type() are skipped for string, wrapper and `{valueOf}` operands — 59 ES5 files, `1 === true` answers true"
 status: in-progress
-completed_slice: "S1 (Type() for ===/!==) and S2 (update-expression ToNumber) — 2026-08-11"
+completed_slice: "S1 (Type), S2 (updates), and S3/S7 numeric/default OrdinaryToPrimitive slices — 2026-08-11"
 sprint: current
 created: 2026-08-07
 updated: 2026-08-11
@@ -28,6 +28,10 @@ loc-budget-allow:
   - src/ir/module-bindings.ts
   - src/ir/select.ts
   - src/codegen/binary-ops-typed-dispatch.ts
+  - src/codegen/binary-ops.ts
+  - src/codegen/expressions/misc.ts
+  - src/codegen/string-ops.ts
+  - src/codegen/type-coercion.ts
   - src/ir/from-ast.ts
   - src/runtime.ts
 func-budget-allow:
@@ -35,6 +39,8 @@ func-budget-allow:
   - src/codegen/declarations.ts::collectDeclarations
   - src/codegen/literals.ts::compileObjectLiteral
   - src/codegen/statements/variables.ts::compileVariableStatement
+  - src/codegen/binary-ops.ts::compileBinaryExpression
+  - src/ir/from-ast.ts::lowerBinary
   - src/runtime.ts::resolveImport
 origin: "2026-08-07 W23 census of the ES5 standalone failing residue. #3055 covers only `any === any` on boxed numbers; nothing covers ToNumber/ToPrimitive in update, compound-assignment and relational operators."
 ---
@@ -596,3 +602,66 @@ The five previously crashing files are:
 This is a five-file slice, not closure of S3/S7 or the ES5 goal. Relational,
 addition, abstract-equality, Date/function operands, and wider
 OrdinaryToPrimitive shapes remain to be measured and implemented.
+
+---
+
+## S3/S7 binary OrdinaryToPrimitive slice — 2026-08-11
+
+The next slice extends the same coercion frontier to `+`, abstract equality,
+and the four relational operators. It fixes three independent ways the
+primitive family was lost:
+
+1. Concrete Object operands were excluded from the dynamic add/compare route
+   after `$AnyValue` had been registered. They then fell through to an f64
+   hint, applying ToNumber before `+` could choose concatenation.
+2. Native string concatenation used the string hint (`toString` first) instead
+   of the default hint (`valueOf` first). Standalone relational comparison now
+   performs ToPrimitive(number) before choosing its string or numeric arm.
+3. `tryStaticToNumber` folded `{} + {}` as `NaN + NaN`. That skipped
+   ToPrimitive entirely even though both objects first become
+   `"[object Object]"`, forcing string concatenation. Object/unknown `+` values
+   now decline both that folder and the long-chain numeric flattener.
+
+Direct empty-object and function literals use their fixed inherited string
+primitives before crossing the standalone externref boundary. Repeated ES5
+`var` declarations retain the bounded open-object compatibility carrier from
+the first slice, and method-only direct literals use the same default-hint
+dispatcher. Mixed method/data objects still reject before an IR claim.
+
+### IR ownership boundary
+
+Numeric/default method-only object literals are now branded by the IR
+front-end and lowered through the canonical ToPrimitive/ToNumber operations for
+binary arithmetic, loose equality, and relational comparison. Both the host
+and standalone focused probes prove `legacyBodyEmitted: true` and
+`irBodyEmitted: true`.
+
+String-producing object binary expressions remain a clean legacy fallback
+until the IR has a carrier that preserves the runtime string-versus-number
+result of ToPrimitive. The duplicate-`var` Test262 wrapper likewise remains a
+selector rejection. These are explicit ownership boundaries, not silent
+post-claim fallbacks.
+
+### Maintained-runner measurement
+
+The exact 15-file S3/S7 cluster was measured with the maintained
+`pnpm run test:262` runner in the standalone lane. The ready PR head before this
+slice passed **5 / 15**. The first candidate run (`20260811-220314`) passed
+**14 / 15** and exposed the early `{} + {}` numeric-folder bypass above. The
+exact failing file is now covered by the focused suite and passes; the final
+rerun (`20260811-221344`) passes **15 / 15**. This is a measured ten-file
+improvement over the ready PR head, not an extrapolation to the remaining ES5
+population.
+
+### Focused verification
+
+- Host and standalone IR-emission probes cover unary and numeric binary
+  method-only literals.
+- Standalone compatibility probes cover duplicate `var` objects, default-hint
+  ordering, loose equality, direct empty objects/functions, all four
+  relational forms, and the exact `{} + {}` Test262 shape.
+- The mixed method/data negative control remains a pre-claim IR rejection in
+  both lanes.
+
+This slice does not close the whole issue. Compound assignment, Date-specific
+ToPrimitive behavior, and broader dynamic object shapes remain open.

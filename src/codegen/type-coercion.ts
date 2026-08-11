@@ -304,6 +304,7 @@ function tryStructStringHintExternrefDispatch(
   from: ValType,
   typeIdx: number,
   name: string,
+  hint: "string" | "default" = "string",
 ): boolean {
   const fields = ctx.structFields.get(name);
   if (!fields) return false;
@@ -343,15 +344,29 @@ function tryStructStringHintExternrefDispatch(
 
   let primaryFieldIdx: number;
   let secondaryFieldIdx: number | undefined;
-  if (supportsDispatch(toStringFieldIdx)) {
+  const valueOfFieldIdx = fields.findIndex((field) => field.name === "valueOf");
+  if (hint === "default") {
+    // `+` uses OrdinaryToPrimitive(default): valueOf precedes toString. Keep
+    // the static dispatcher bounded to literals with an own toString fallback;
+    // an absent fallback would need to synthesize inherited
+    // Object.prototype.toString and belongs to the dynamic runtime path.
+    if (valueOfFieldIdx >= 0 && supportsDispatch(valueOfFieldIdx)) {
+      if (!supportsDispatch(toStringFieldIdx)) return false;
+      primaryFieldIdx = valueOfFieldIdx;
+      secondaryFieldIdx = toStringFieldIdx;
+    } else if (valueOfFieldIdx < 0 || !isCallableField(fields[valueOfFieldIdx]!)) {
+      if (!supportsDispatch(toStringFieldIdx)) return false;
+      primaryFieldIdx = toStringFieldIdx;
+    } else {
+      return false;
+    }
+  } else if (supportsDispatch(toStringFieldIdx)) {
     primaryFieldIdx = toStringFieldIdx;
-    const valueOfFieldIdx = fields.findIndex((field) => field.name === "valueOf");
     if (valueOfFieldIdx >= 0 && supportsDispatch(valueOfFieldIdx)) {
       secondaryFieldIdx = valueOfFieldIdx;
     }
   } else if (!isCallableField(fields[toStringFieldIdx]!)) {
     // An own non-callable toString is skipped before trying valueOf.
-    const valueOfFieldIdx = fields.findIndex((field) => field.name === "valueOf");
     if (valueOfFieldIdx < 0 || !supportsDispatch(valueOfFieldIdx)) return false;
     primaryFieldIdx = valueOfFieldIdx;
   } else {
@@ -566,6 +581,23 @@ function tryStructStringHintExternrefDispatch(
     else: stringify(primaryResult),
   });
   return true;
+}
+
+/**
+ * Compile a nominal object-literal struct through
+ * OrdinaryToPrimitive(default) and leave its ToString result as externref.
+ * Used by native `+` concatenation before converting the result back to the
+ * native string carrier.
+ */
+export function tryStructDefaultToStringAsExternref(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  from: ValType,
+): boolean {
+  if (from.kind !== "ref" && from.kind !== "ref_null") return false;
+  const typeIdx = from.typeIdx;
+  const name = ctx.typeIdxToStructName.get(typeIdx);
+  return name !== undefined && tryStructStringHintExternrefDispatch(ctx, fctx, from, typeIdx, name, "default");
 }
 
 /**
@@ -2557,7 +2589,7 @@ export function coerceType(
       }
       if (
         toPrimitiveHint === "string" &&
-        (tryStructStringHintExternrefDispatch(ctx, fctx, from, typeIdx, name) ||
+        (tryStructStringHintExternrefDispatch(ctx, fctx, from, typeIdx, name, "string") ||
           tryStructPrimitiveToStringAsExternref(ctx, fctx, from, typeIdx, name))
       ) {
         return;

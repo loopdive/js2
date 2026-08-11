@@ -18,7 +18,7 @@ import {
 import type { Instr, ValType } from "../ir/types.js";
 import { ensureAnyFromExternHelper, isAnyValue, undefinedSingletonActive } from "./any-helpers.js";
 import { reportError } from "./context/errors.js";
-import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
+import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { compileAssignment } from "./expressions/assignment.js";
 import {
@@ -33,7 +33,7 @@ import {
 } from "./expressions/helpers.js";
 import { ensureExternIsUndefinedImport, ensureLateImport } from "./expressions/late-imports.js";
 import { ensureFmod } from "./fmod.js";
-import { ensureNativeStringHelpers } from "./native-strings.js";
+import { ensureNativeStringHelpers, stringConstantExternrefInstrs } from "./native-strings.js";
 import { emitNewTargetClassId, getOrAssignClassNewTargetId } from "./new-target.js"; // (#2023)
 import { compileLogicalAnd, compileLogicalOr, compileNullishCoalescing } from "./expressions/logical-ops.js";
 import { tryStaticToNumber } from "./expressions/misc.js";
@@ -50,6 +50,7 @@ import {
   emitLooseEq,
   emitStrictEq,
   ensureExternrefToNumberProvider,
+  runtimeToPrimitiveInstrs,
 } from "./coercion-engine.js";
 import { compileInstanceOf, compileTypeofComparison } from "./typeof-delete.js";
 import { compileTypedBinaryDispatch } from "./binary-ops-typed-dispatch.js";
@@ -57,6 +58,8 @@ import { foldTypeDisjointThenPromote } from "./strict-eq-type-disjoint.js";
 import { compileInOperator } from "./binary-ops-in.js";
 import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { emitIsUndefF64 } from "./value-tags.js";
+import { NATIVE_FUNCTION_SOURCE } from "./callable-to-string.js";
+import { addStringConstantGlobal } from "./registry/imports.js";
 
 // ── Binary operations ─────────────────────────────────────────────────
 
@@ -223,6 +226,11 @@ function tryFlattenBinaryChain(
     if (isStringType(tsType)) return null;
     if (isBigIntType(tsType)) return null;
     if ((tsType.flags & ts.TypeFlags.Any) !== 0) return null;
+    // `+` is not numeric-only: Object/unknown operands may ToPrimitive to a
+    // string and force concatenation. Keep those chains on the dynamic path.
+    if (op === ts.SyntaxKind.PlusToken && (tsType.flags & (ts.TypeFlags.Object | ts.TypeFlags.Unknown)) !== 0) {
+      return null;
+    }
   }
 
   // Determine numeric hint — also check if all operands use native i32 type annotations
@@ -1270,7 +1278,7 @@ export function compileBinaryExpression(
     isEqualityOp && ts.isIdentifier(expr.left) && moduleGlobalIsDynamicButStaticallyPrimitive(ctx, expr.left);
   const rightIsAbstractNonString =
     !rightIsStrLike &&
-    (rightTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 &&
+    (rightTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Object)) !== 0 &&
     ctx.nativeStrings &&
     ctx.anyStrTypeIdx >= 0;
   if (
@@ -1621,26 +1629,27 @@ export function compileBinaryExpression(
     op === ts.SyntaxKind.GreaterThanGreaterThanToken ||
     op === ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken;
 
-  // (#2058) `+` where an operand is statically `any`/`unknown` (so it lowers to a
-  // dynamic externref that may hold a runtime string). §13.15.3 requires
+  // (#2058/#4208) `+` where an operand is statically `any`/`unknown`, or is a
+  // concrete object/function that must run ToPrimitive. §13.15.3 requires
   // concatenation when either ToPrimitive result is a string, but the numeric
   // paths below compile both operands with an f64 hint — ToNumber-coercing a
   // runtime string, so `1 + "2"` wrongly produced `3` instead of `"12"`. Route
-  // these through a runtime-dispatched add BEFORE the f64 hint is applied. We
-  // require at least one `any`/`unknown` operand: provably-numeric and
-  // provably-string `+` were already handled above (string concat at the
-  // isStringType gate, numeric via the typed fast paths), so this leaves their
-  // codegen untouched. `ctx.fast` mode keeps its i32/f64 numeric semantics for
-  // statically-typed operands and is unaffected (those aren't `any`/`unknown`).
+  // these through a runtime-dispatched add BEFORE the f64 hint is applied.
   //
-  // Fast mode (`anyValueTypeIdx >= 0`) is excluded: there `any + any` is routed
-  // through `compileAnyBinaryDispatch` (the AnyValue `__any_add` helper) earlier,
-  // and the `__host_add` host import isn't part of that ABI. Per the #2058 design
-  // rule, this per-site recovery is **default-mode only**.
-  if (op === ts.SyntaxKind.PlusToken && ctx.anyValueTypeIdx < 0) {
-    const leftIsAnyish = (leftTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
-    const rightIsAnyish = (rightTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
-    if ((leftIsAnyish || rightIsAnyish) && !isBigIntType(leftTsType) && !isBigIntType(rightTsType)) {
+  // Fast mode still owns `any + any` through `compileAnyBinaryDispatch`, but a
+  // concrete Object operand is not admitted to that gate. It must use this
+  // path in every mode or the later numeric hint erases its primitive family.
+  if (op === ts.SyntaxKind.PlusToken) {
+    const abstractOperandFlags = ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Object;
+    const leftIsAnyish = (leftTsType.flags & abstractOperandFlags) !== 0;
+    const rightIsAnyish = (rightTsType.flags & abstractOperandFlags) !== 0;
+    const hasConcreteObject =
+      (leftTsType.flags & ts.TypeFlags.Object) !== 0 || (rightTsType.flags & ts.TypeFlags.Object) !== 0;
+    if (
+      (hasConcreteObject || (ctx.anyValueTypeIdx < 0 && (leftIsAnyish || rightIsAnyish))) &&
+      !isBigIntType(leftTsType) &&
+      !isBigIntType(rightTsType)
+    ) {
       return emitAnyAdd(ctx, fctx, expr);
     }
   }
@@ -1652,20 +1661,25 @@ export function compileBinaryExpression(
   // `("a" as any) < ("b" as any)` wrongly yielded `false`. Route these through a
   // runtime-dispatched compare BEFORE the f64 hint is applied.
   //
-  // CRITICAL (#1374 lesson): gate on **statically any/unknown** operands only,
-  // NOT on "any non-numeric TS type". The closed PR #1374 gated on
-  // `!isPrimNumericish` (both sides), which routed object/class relationals to
-  // the host comparator — host `<` then threw on opaque WasmGC structs (14
-  // runtime_error regressions). A concrete object/class operand is NOT
-  // any/unknown, so it keeps its existing relational path.
+  // Concrete object/function operands are also runtime-dispatched now. The old
+  // #1374 attempt could not do this safely because the host comparator received
+  // opaque WasmGC structs directly. `host_compare` now performs the required
+  // ToPrimitive(number) walk first, while standalone does the same below before
+  // its string-vs-number split.
   //
-  // Fast mode (`anyValueTypeIdx >= 0`) is excluded for the same reason as the
-  // `+` gate — the AnyValue helpers own that ABI. Per-site recovery is
-  // default-mode only.
-  if (isRelational && ctx.anyValueTypeIdx < 0) {
-    const leftIsAnyish = (leftTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
-    const rightIsAnyish = (rightTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
-    if ((leftIsAnyish || rightIsAnyish) && !isBigIntType(leftTsType) && !isBigIntType(rightTsType)) {
+  // As with `+`, fast mode keeps its AnyValue dispatch for genuinely dynamic
+  // operands, while concrete Object operands always take this runtime path.
+  if (isRelational) {
+    const abstractOperandFlags = ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Object;
+    const leftIsAnyish = (leftTsType.flags & abstractOperandFlags) !== 0;
+    const rightIsAnyish = (rightTsType.flags & abstractOperandFlags) !== 0;
+    const hasConcreteObject =
+      (leftTsType.flags & ts.TypeFlags.Object) !== 0 || (rightTsType.flags & ts.TypeFlags.Object) !== 0;
+    if (
+      (hasConcreteObject || (ctx.anyValueTypeIdx < 0 && (leftIsAnyish || rightIsAnyish))) &&
+      !isBigIntType(leftTsType) &&
+      !isBigIntType(rightTsType)
+    ) {
       return emitAnyRelational(ctx, fctx, expr, op);
     }
   }
@@ -2232,6 +2246,37 @@ function structHasStaticNumericToPrimitive(ctx: CodegenContext, name: string | u
 }
 
 /**
+ * Emit the exact OrdinaryToPrimitive(default/number) result for the two direct
+ * literal families whose inherited conversion is statically fixed. This keeps
+ * an empty object or closure from crossing the externref boundary as an opaque
+ * nominal struct that the standalone `$Object` runtime cannot recognize.
+ */
+function emitKnownLiteralPrimitive(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Expression): boolean {
+  let inner = expr;
+  while (
+    ts.isParenthesizedExpression(inner) ||
+    ts.isAsExpression(inner) ||
+    ts.isNonNullExpression(inner) ||
+    ts.isSatisfiesExpression(inner) ||
+    ts.isTypeAssertionExpression(inner)
+  ) {
+    inner = inner.expression;
+  }
+
+  let text: string | undefined;
+  if (ts.isObjectLiteralExpression(inner) && inner.properties.length === 0) {
+    text = "[object Object]";
+  } else if (ts.isFunctionExpression(inner) || ts.isArrowFunction(inner) || ts.isClassExpression(inner)) {
+    text = NATIVE_FUNCTION_SOURCE;
+  }
+  if (text === undefined) return false;
+
+  addStringConstantGlobal(ctx, text);
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, text));
+  return true;
+}
+
+/**
  * (#2358) Compile one `+` operand into a fresh externref temp and return its
  * index (or null if the operand failed to compile).
  *
@@ -2267,8 +2312,15 @@ function emitAddOperand(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Exp
   ) {
     inner = (inner as ts.ParenthesizedExpression | ts.AsExpression | ts.NonNullExpression).expression;
   }
+  const localIdx = ts.isIdentifier(inner) ? fctx.localMap.get(inner.text) : undefined;
+  const liveExternrefBinding = localIdx !== undefined && getLocalType(fctx, localIdx)?.kind === "externref";
+  if (emitKnownLiteralPrimitive(ctx, fctx, inner)) {
+    const tmp = allocTempLocal(fctx, { kind: "externref" });
+    fctx.body.push({ op: "local.set", index: tmp });
+    return tmp;
+  }
   const structName = noJsHost ? resolveStructNameForExpr(ctx, fctx, inner) : undefined;
-  if (noJsHost && structHasStaticNumericToPrimitive(ctx, structName)) {
+  if (noJsHost && !liveExternrefBinding && structHasStaticNumericToPrimitive(ctx, structName)) {
     const opType = compileExpression(ctx, fctx, inner);
     if (!opType) return null;
     if (opType.kind === "ref" || opType.kind === "ref_null") {
@@ -2524,13 +2576,22 @@ export function emitAnyRelational(
 ): ValType {
   const noJsHost = ctx.standalone === true || ctx.wasi === true;
 
+  // Standalone needs the same OrdinaryToPrimitive frontier as host_compare.
+  // Register it before operand emission so defined-function indices remain
+  // stable while this function body is assembled.
+  if (noJsHost) ensureObjectRuntime(ctx);
+
   // Compile both operands to externref temps (keep runtime strings boxed).
-  const lType = compileExpression(ctx, fctx, expr.left, { kind: "externref" });
+  const lType = emitKnownLiteralPrimitive(ctx, fctx, expr.left)
+    ? ({ kind: "externref" } as const)
+    : compileExpression(ctx, fctx, expr.left, { kind: "externref" });
   if (!lType) return { kind: "i32" };
   if (lType.kind !== "externref") coerceType(ctx, fctx, lType, { kind: "externref" });
   const lTmp = allocTempLocal(fctx, { kind: "externref" });
   fctx.body.push({ op: "local.set", index: lTmp });
-  const rType = compileExpression(ctx, fctx, expr.right, { kind: "externref" });
+  const rType = emitKnownLiteralPrimitive(ctx, fctx, expr.right)
+    ? ({ kind: "externref" } as const)
+    : compileExpression(ctx, fctx, expr.right, { kind: "externref" });
   if (!rType) {
     releaseTempLocal(fctx, lTmp);
     return { kind: "i32" };
@@ -2538,6 +2599,14 @@ export function emitAnyRelational(
   if (rType.kind !== "externref") coerceType(ctx, fctx, rType, { kind: "externref" });
   const rTmp = allocTempLocal(fctx, { kind: "externref" });
   fctx.body.push({ op: "local.set", index: rTmp });
+
+  if (noJsHost) {
+    const toPrimitive = runtimeToPrimitiveInstrs(ctx, "number");
+    if (toPrimitive !== null) {
+      fctx.body.push({ op: "local.get", index: lTmp }, ...toPrimitive, { op: "local.set", index: lTmp });
+      fctx.body.push({ op: "local.get", index: rTmp }, ...toPrimitive, { op: "local.set", index: rTmp });
+    }
+  }
 
   // Map a -1/0/1/2 `cmp` (or an f64 comparison) to the operator's boolean result.
   // The `2` (incomparable) sentinel must make ALL four operators yield 0, so we
