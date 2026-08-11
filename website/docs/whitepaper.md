@@ -224,7 +224,7 @@ That number should be interpreted correctly. It does not mean the compiler is fi
 
 The project exposes public artifacts that make progress inspectable:
 
-- public landing page: [js2.loopdive.com](https://js2.loopdive.com)
+- public landing page: [js2wasm.loopdive.com](https://js2wasm.loopdive.com)
 - browser playground
 - public compatibility reporting
 - public benchmark reporting
@@ -402,7 +402,7 @@ The current public milestone is enough to make the direction concrete. The next 
 
 ## Public Surface
 
-- Project page: [js2.loopdive.com](https://js2.loopdive.com)
-- Playground: [js2.loopdive.com/playground](https://js2.loopdive.com/playground)
+- Project page: [js2wasm.loopdive.com](https://js2wasm.loopdive.com)
+- Playground: [js2wasm.loopdive.com/playground](https://js2wasm.loopdive.com/playground)
 - Repository: [github.com/loopdive/js2](https://github.com/loopdive/js2)
 - Contact: `js2@loopdive.com`

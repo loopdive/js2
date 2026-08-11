@@ -27,7 +27,7 @@ The line above is the **JS-host path** (default `gc` target): runs alongside the
 
 The line above is the **standalone path** (`--target standalone`/`wasi`): pure WasmGC with no JS host, measured host-free on the same official denominator. Lower today and actively hardening — this is where the current gap is.
 
-Full breakdowns, the trend graph, and benchmarks are in **[STATUS.md](./STATUS.md)**, the [Playground](https://js2.loopdive.com/playground/), and the [Roadmap](./ROADMAP.md).
+Full breakdowns, the trend graph, and benchmarks are in **[STATUS.md](./STATUS.md)**, the [Playground](https://js2wasm.loopdive.com/playground/), and the [Roadmap](./ROADMAP.md).
 
 ## Value proposition
 
@@ -64,7 +64,7 @@ The structural observation behind the project is that this *combination* of trad
 What exists today:
 
 - a JS-hosted compilation path passing a substantial subset of Test262 (the figure above)
-- a public browser [Playground](https://js2.loopdive.com/playground/)
+- a public browser [Playground](https://js2wasm.loopdive.com/playground/)
 - continuous conformance and benchmark reporting on every change
 - a standalone (no-JS-host) path that is in progress — host-free conformance (see the figure above) is meaningfully lower than the JS-host path and actively hardening
 
@@ -238,7 +238,7 @@ output, see [docs/standalone-io.md](./docs/standalone-io.md).
 In a JS host, `js2wasm` passes a substantial subset of Test262 — enough that a
 large, useful slice of the language works — but there are real gaps, and you
 will hit them. The current pass rate lives in [STATUS.md](./STATUS.md) and the
-full [Test262 report](https://js2.loopdive.com/benchmarks/report.html);
+full [Test262 report](https://js2wasm.loopdive.com/benchmarks/report.html);
 this section is the qualitative high-level shape, and the report is the
 authoritative per-feature detail. Note that Test262 measures conformance to the
 ECMAScript *language* specification — it does **not** cover Web APIs, Node.js
@@ -272,7 +272,7 @@ high pass rate is necessary but not sufficient for "runs real JavaScript."
 - dropping in an arbitrary npm package unchanged
 
 If a pattern you rely on does not work, check the
-[Test262 report](https://js2.loopdive.com/benchmarks/report.html) or
+[Test262 report](https://js2wasm.loopdive.com/benchmarks/report.html) or
 open an issue.
 
 ## FAQ
@@ -339,7 +339,7 @@ For a long-form, technical account of the methodology — how the team is struct
 `js2wasm` validates correctness through three complementary test layers:
 
 - **Unit & equivalence tests** — `npm test` (vitest). Targeted regression coverage and JS↔Wasm equivalence assertions. See `tests/equivalence/`.
-- **Test262 conformance** — `pnpm run test:262` runs the ECMAScript test suite (~48k tests: ~43k official plus ~5k staging/proposal tests) and reports per-edition / per-path pass rates. The headline conformance figure is scored against the 43,106 official tests (proposals excluded); CI runs this sharded on every PR and the [report](https://js2.loopdive.com/benchmarks/report.html) is regenerated on each merge.
+- **Test262 conformance** — `pnpm run test:262` runs the ECMAScript test suite (~48k tests: ~43k official plus ~5k staging/proposal tests) and reports per-edition / per-path pass rates. The headline conformance figure is scored against the 43,106 official tests (proposals excluded); CI runs this sharded on every PR and the [report](https://js2wasm.loopdive.com/benchmarks/report.html) is regenerated on each merge.
 - **Differential testing vs V8** — `pnpm run test:diff` (#1203). For each program in `tests/differential/corpus/`, the harness runs Node-V8 directly and the compiled `.wasm` and compares stdout. test262 measures spec compliance; differential testing measures whether real programs actually produce the right answer. CI gates each PR on a delta against `benchmarks/results/diff-test-baseline.json` — no new mismatches allowed. Use `pnpm run test:diff:triage` to bucket mismatches by category for follow-up filing.
 
 ## Licensing
@@ -357,7 +357,7 @@ The foundational design choices behind `js2wasm` — why WasmGC instead of linea
 
 ## Further reading
 
-- [Playground](https://js2.loopdive.com/playground/)
+- [Playground](https://js2wasm.loopdive.com/playground/)
 - [Status & live numbers](./STATUS.md)
 - [Roadmap](./ROADMAP.md)
 - [Architecture Decisions](./docs/adr/README.md)

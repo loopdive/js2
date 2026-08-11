@@ -1,7 +1,8 @@
 ---
 id: 4308
 title: "EvalDeclarationInstantiation + Annex B B.3.3 for the QuickJS eval engine — the bucket that dominates the remaining 256 eval-code failures"
-status: ready
+status: in-progress
+assignee: ttraenkler/senior-dev
 sprint: current
 created: 2026-08-09
 updated: 2026-08-10
@@ -103,10 +104,20 @@ afterwards (#4238 slice 3). That approximates scope *reads and writes*; it does
 4. Name-based lowerings can stop firing and fall back to a stub that answers
    `undefined` **with green tests**. Prove liveness by poisoning the stub
    (#4245 slice 1 did exactly this).
-5. **#4305** (open): a succeeding direct eval followed by a throwing one with an
-   `instanceof` catch traps with `RuntimeError: illegal cast` — caller-side
-   codegen, engine-independent. It will appear in eval-heavy runs; it is not
-   this issue's bug, and it pollutes the `unattributed` bucket of #4242's gate.
+5. **#4305** — root-caused and fixed in PR #4339; **the shape first written here
+   was wrong**, corrected 2026-08-09 during slice A. It is NOT "a succeeding
+   direct eval followed by a throwing one with an `instanceof` catch". The
+   trigger is STATIC: `catch` → direct eval → `catch` whose body **reads its
+   parameter**. `instanceof` is incidental (`typeof e === "object"` traps
+   identically), and succeeded-then-threw is incidental (the runtime outcome only
+   decides whether the second handler is entered). Root cause:
+   `fctx.boxedCaptures` is keyed by NAME but describes one specific slot, so a
+   catch clause rebinding that name leaves stale direct-eval cell metadata and
+   the identifier read emits a `ref.cast` to the cell type against a raw
+   exception payload — V8 reports `illegal cast`, which made a scoping bug look
+   like a type bug. It also hit the REFUSAL path, so it was never gated on direct
+   eval succeeding. Caller-side and engine-independent either way: match against
+   this shape, not the old one, before booking an eval-run delta as a regression.
 
 ## Acceptance criteria
 

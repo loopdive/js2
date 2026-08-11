@@ -480,11 +480,11 @@ copyFileIfExists(
 // Disable Jekyll processing so all generated assets are published as-is.
 writeFileSync(join(PAGES_DIST, ".nojekyll"), "");
 
-// Emit CNAME so the GitHub Pages custom domain (js2.loopdive.com) survives
+// Emit CNAME so the GitHub Pages custom domain (js2wasm.loopdive.com) survives
 // every re-deploy. GitHub Pages reads this file from the deployed artifact
 // and points the Pages site at the custom domain. Bare hostname only —
 // no scheme, trailing newline. See plan/issues/sprints/46/1188.md.
-writeFileSync(join(PAGES_DIST, "CNAME"), "js2.loopdive.com\n");
+writeFileSync(join(PAGES_DIST, "CNAME"), "js2wasm.loopdive.com\n");
 
 // Copy web components to pages-dist root and dashboard
 const COMPONENTS_DIR = join(WEBSITE, "components");

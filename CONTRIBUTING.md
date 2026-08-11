@@ -64,7 +64,7 @@ You do **not** need agents to contribute. Regular PRs from any contributor are w
 - `plan/issues/backlog/` — longer-term items that need more investigation first.
 - `plan/issues/wont-fix/` — decided against implementing (for context only).
 - `plan/log/dependency-graph.md` — current priorities and what's blocked on what.
-- [The dashboard](https://js2.loopdive.com/dashboard/) provides a filtered UI view of ready-to-pick issues.
+- [The dashboard](https://js2wasm.loopdive.com/dashboard/) provides a filtered UI view of ready-to-pick issues.
 
 **Protected paths** (changes to these go through CODEOWNERS review):
 
