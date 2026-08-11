@@ -1,11 +1,10 @@
 ---
 id: 3017
 title: "Function .caller/.arguments poison-pill throw + free-variable capture in Function/eval shim child module"
-status: done
-completed: 2026-07-28
+status: in-progress
 sprint: Backlog
 created: 2026-07-03
-updated: 2026-07-28
+updated: 2026-08-11
 priority: medium
 horizon: l
 feasibility: hard
@@ -20,6 +19,10 @@ loc-budget-allow:
   - src/codegen/closures.ts
   - src/codegen/context/types.ts
   - src/codegen/expressions/assignment.ts
+  - src/codegen/expressions/call-tail-dispatch.ts
+  - src/codegen/expressions/calls.ts
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/function-poison-pill.ts
   - src/codegen/index.ts
   - src/codegen/literals.ts
   - src/codegen/property-access.ts
@@ -30,6 +33,12 @@ func-budget-allow:
   - src/codegen/context/create-context.ts::createCodegenContext
   - src/codegen/expressions/assignment.ts::compileElementAssignment
   - src/codegen/expressions/assignment.ts::compilePropertyAssignment
+  - src/codegen/expressions/call-tail-dispatch.ts::compileTailDispatch
+  - src/codegen/expressions/calls.ts::compileIIFE
+  - src/codegen/expressions/new-super.ts::compileNewFunctionDeclaration
+  - src/codegen/expressions/new-super.ts::compileNewFunctionExpression
+  - src/codegen/expressions/new-super.ts::compileNewExpression
+  - src/codegen/function-poison-pill.ts::finalizeFunctionPoisonPillCalls
   - src/codegen/function-body.ts::compileFunctionBody
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
@@ -171,6 +180,40 @@ Gap 2 (global-environment resolution for free variables in the eval/Function
 shim child module) is intentionally unchanged and remains open. Accordingly,
 this combined tracking issue stays `in-progress`; the Gap 1 source-function
 slice is independently landable.
+
+## 2026-08-11 standalone follow-up
+
+The remaining ordinary-source activation routes now preserve strict caller
+state when their source function boundary does not coincide with a normal Wasm
+function body:
+
+- inlined function-expression IIFEs record their own strictness on the nested
+  instruction region, and the final call-site pass honors that override instead
+  of inheriting the containing Wasm function's strictness;
+- synthesized declaration- and expression-based constructor bodies are
+  registered as source activations before prologue/body emission;
+- parenthesized anonymous constructors (`new (function () { ... })()`) now run
+  through the existing source-body constructor lowering instead of collapsing
+  to a null placeholder without executing the body.
+
+Fresh maintained standalone measurement used the full runtime-eval interpreter
+and official scope. For the complete 97-file
+`built-ins/Function/15.3.5.4_2-*` family:
+
+- before (`20260811-214733`, `origin/main@6c1117f8767e9b`): **83/97 pass**,
+  14 fail, 0 compile errors;
+- after (`20260811-221556`): **92/97 pass**, 5 fail, 0 compile errors;
+- exact FAIL → PASS rows: `6gs`, `16gs`, `18gs`, `19gs`, `20gs`, `38gs`,
+  `41gs`, `44gs`, and `47gs` (9 total);
+- the five unchanged residuals are dynamic `Function` constructor calls
+  (`8gs`, `10gs`, `95gs`), getter-accessor activation (`96gs`), and bound-call
+  forwarding (`97gs`).
+
+All nine flips belong to the freshly harvested 98-row ES5 Function-object
+standalone root-cause bucket, reducing that assigned residue to **89**. The
+separate 73-row ES5 `with` residue is unchanged; its dominant 39-row compiler
+gate requires closure capture of an object environment and is tracked by
+#4206/#4264 rather than this bounded Function activation slice.
 
 ## Notes
 

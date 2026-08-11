@@ -950,6 +950,14 @@ export interface FunctionContext {
    */
   annexBOuterBindings?: Set<string>;
   /**
+   * Subset of `annexBOuterBindings` whose name is shared by multiple eligible,
+   * capture-free declaration sites in the same var scope. Direct calls for
+   * these names must dispatch through the live outer-binding local because the
+   * executed branch, rather than the name-keyed funcMap winner, determines the
+   * callee.
+   */
+  annexBRepeatedOuterBindings?: Set<string>;
+  /**
    * For TDZ flag locals that have been boxed in an i32 ref cell so that
    * mutations propagate to closures that captured the flag (#1177).
    *
@@ -2167,7 +2175,7 @@ export interface CodegenContext {
   callerStrictGlobalIdx: number;
   /** Source function name → source strictness, consumed by the final call-site pass. */
   sourceFunctionStrictness: Map<string, boolean>;
-  /** Root source-function body → strictness; avoids collisions between shadowed names. */
+  /** Source-function or inlined-IIFE instruction region → strictness. */
   sourceFunctionStrictnessByBody: Map<Instr[], boolean>;
   /** Idempotence guard for the final call-site instrumentation pass. */
   functionPoisonPillCallsFinalized?: boolean;
