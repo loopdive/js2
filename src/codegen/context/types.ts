@@ -20,6 +20,8 @@ export interface CodegenError {
   message: string;
   line: number;
   column: number;
+  /** Source file that owns the diagnostic node, when one is available. */
+  file?: string;
   /**
    * #1921 — the compile-failure gate keys on this field, not on a magic
    * `"Codegen error:"` message prefix.
