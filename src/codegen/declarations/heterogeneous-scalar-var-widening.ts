@@ -38,6 +38,11 @@
  */
 import type { JsTag } from "../../checker/oracle.js";
 import type { ValType } from "../../ir/types.js";
+import {
+  updateRetypesModuleBinding,
+  updateRetypesModuleBindingName,
+  updateRetypesModuleIdentifier,
+} from "../../ir/update-retyped-bindings.js";
 import { ts } from "../../ts-api.js";
 import type { CodegenContext } from "../context/types.js";
 import { localGlobalIdx } from "../registry/imports.js";
@@ -60,6 +65,13 @@ export function heterogeneousWidenedModuleGlobalType(
   decl: ts.VariableDeclaration,
 ): ValType | undefined {
   if (!ts.isIdentifier(decl.name)) return undefined;
+  // #4208 S2 — `++` / `--` always stores the result of ToNumeric back into
+  // the target. A string, Boolean, wrapper or ordinary object initializer may
+  // therefore need to coexist with a later Number even without an explicit
+  // assignment. IR owns the binding-identity proof; direct codegen uses the
+  // same verdict so a conservatively demoted module initializer keeps the
+  // representation chosen during selection.
+  if (updateRetypesModuleBinding(ctx.oracle, decl)) return { kind: "externref" };
   let perFile = analysisCache.get(ctx);
   if (perFile === undefined) {
     perFile = new Map();
@@ -106,6 +118,17 @@ export function moduleGlobalIsDynamicButStaticallyPrimitive(ctx: CodegenContext,
   const globalIdx = ctx.moduleGlobals.get(id.text);
   if (globalIdx === undefined) return false;
   if (ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type.kind !== "externref") return false;
+  // Sloppy-script `var` redeclarations make the oracle's singular declaration
+  // lookup intentionally return undefined. The update analysis is
+  // symbol/declaration-set based, so it remains exact for that legal binding
+  // shape and prevents stale checker types from selecting a string/Boolean
+  // comparison after the update has stored a Number.
+  if (
+    updateRetypesModuleIdentifier(ctx.oracle, id) ||
+    (isModuleScoped(id) && updateRetypesModuleBindingName(ctx.oracle, id.getSourceFile(), id.text))
+  ) {
+    return true;
+  }
   const decl = ctx.oracle.variableDeclarationOf(id);
   if (decl === undefined || !ts.isIdentifier(decl.name) || !isModuleScoped(decl)) return false;
   const tag = ctx.oracle.staticJsTypeOf(id);
