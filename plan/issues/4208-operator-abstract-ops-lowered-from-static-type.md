@@ -649,7 +649,9 @@ The exact 15-file S3/S7 cluster was measured with the maintained
 slice passed **5 / 15**. The first candidate run (`20260811-220314`) passed
 **14 / 15** and exposed the early `{} + {}` numeric-folder bypass above. The
 exact failing file is now covered by the focused suite and passes; the final
-rerun (`20260811-221344`) passes **15 / 15**. This is a measured ten-file
+rerun (`20260811-221344`) passes **15 / 15**. After the runtime ToPrimitive
+emission was centralized in the coercion engine, the post-refactor control run
+(`20260811-223059`) also passes **15 / 15**. This is a measured ten-file
 improvement over the ready PR head, not an extrapolation to the remaining ES5
 population.
 
