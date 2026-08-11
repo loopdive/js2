@@ -88,6 +88,9 @@ import {
   createLexicalEnvironment,
   createObjectEnvironment,
   createRuntimeEvalGlobalEnvironment,
+  deleteOwnEnvironmentBinding,
+  directEvalActivationStateBindingCell,
+  directEvalActivationStateFor,
   EVAL_TDZ,
   setEvalVariableEnvironmentBinding,
   variableEnvironmentFor,
@@ -653,6 +656,12 @@ function interpretedPropertyGet(env: EnvRec | null, value: JSValue, key: JSValue
 /** Return one binding cell owned by a declarative record. */
 function ownEnvCell(env: EnvRec, name: JSValue): EvalBindingCell | null {
   if ((env.kind !== ENV_DECLARATIVE && env.kind !== ENV_GLOBAL) || env.slots === null) return null;
+  // A retained eval closure's provider-local names vector is only a snapshot.
+  // Resolve through the caller-owned canonical name cells so a later delete or
+  // slot reuse cannot make stale `x` alias the new binding stored in that slot.
+  if (directEvalActivationStateFor(env) !== null) {
+    return directEvalActivationStateBindingCell(env, name);
+  }
   const names: JSValue = env.names;
   for (let i = 0; i < names.length; i += 1) {
     if (names[i] === name) return env.slots[i] as EvalBindingCell;
@@ -784,7 +793,8 @@ function envDelete(env: EnvRec | null, name: JSValue): boolean {
   let e = env;
   for (;;) {
     if (e === null) return true;
-    if (ownEnvCell(e, name) !== null) return false;
+    const ownBindingResult = deleteOwnEnvironmentBinding(e, name);
+    if (ownBindingResult >= 0) return ownBindingResult === 1;
     if (e.kind !== ENV_DECLARATIVE && name in e.backing) {
       return anyDelete(e.backing, name);
     }
@@ -820,15 +830,10 @@ function envInitialize(env: EnvRec | null, name: JSValue, value: JSValue): void 
   for (;;) {
     if (e === null) break;
     if (e.kind === ENV_DECLARATIVE) {
-      const names: JSValue = e.names;
-      const slots = e.slots;
-      if (slots !== null) {
-        for (let i = 0; i < names.length; i += 1) {
-          if (names[i] === name) {
-            (slots[i] as EvalBindingCell).value = value;
-            return;
-          }
-        }
+      const cell = ownEnvCell(e, name);
+      if (cell !== null) {
+        cell.value = value;
+        return;
       }
     }
     e = e.parent;

@@ -27,6 +27,127 @@ const VARIABLE_ENVIRONMENTS: WeakMap<object, EnvRec> = new WeakMap();
  * side table records that second legitimate VariableEnvironment target for
  * B.3.3's synthetic block-function assignment. */
 const EXISTING_VARIABLE_ENVIRONMENTS: WeakMap<object, EnvRec> = new WeakMap();
+/** Caller-owned direct-eval activation state associated with a provider-local
+ * declarative record. Keep this out-of-line: `EnvRec.backing` already carries
+ * mapped-parameter names for function activations, and overloading that field
+ * makes an eval-created binding named `arguments` look like an Arguments Exotic
+ * Object activation. The side table also lets every retained closure consult
+ * the canonical name cells instead of the names snapshot from its provider
+ * entry. */
+const DIRECT_EVAL_ACTIVATION_STATES: WeakMap<object, JSValue> = new WeakMap();
+/** Opaque companion name for a D=true eval binding. `$EnvRec` and
+ * `$EvalBindingCell` are frozen cross-module ABIs, so each source-visible name
+ * occupies an even entry and this impossible identifier occupies the adjacent
+ * odd entry. The flat string carrier is self-host-stable and introduces no new
+ * GC rec-group shape. */
+const DELETABLE_EVAL_BINDINGS_MARKER = "\0js2wasm:deletable-eval-binding";
+
+export function isDeletableEvalBindingsMarker(value: JSValue): boolean {
+  return value === DELETABLE_EVAL_BINDINGS_MARKER;
+}
+
+/** Associate one provider-local VariableEnvironment with the caller-owned
+ * four-cell-per-binding state pool. No `EnvRec` field or provider ABI changes. */
+export function registerDirectEvalActivationState(env: EnvRec, stateCells: JSValue): void {
+  if (stateCells === undefined || stateCells === null) return;
+  DIRECT_EVAL_ACTIVATION_STATES.set(env as object, stateCells);
+}
+
+/** Return the caller-owned state pool for `env`, or null for an ordinary
+ * declarative record. The explicit null normalization is required by the
+ * standalone compiler's nullable-class-reference representation. */
+export function directEvalActivationStateFor(env: EnvRec): JSValue {
+  const stateCells = DIRECT_EVAL_ACTIVATION_STATES.get(env as object);
+  return stateCells === undefined || stateCells === null ? null : stateCells;
+}
+
+/** Find a visible binding group in the canonical state pool. Returned offsets
+ * address the name cell; value and marker-name cells are +1 and +2. Marker
+ * validation belongs to deletion: a malformed/non-deletable group can still be
+ * read without granting it D=true semantics. */
+function directEvalActivationStateBindingOffset(stateCells: JSValue, name: JSValue): number {
+  for (let offset = 0; offset + 3 < stateCells.length; offset += 4) {
+    const nameCell = stateCells[offset] as EvalBindingCell;
+    if (nameCell !== undefined && nameCell !== null && nameCell.value === name) return offset;
+  }
+  return -1;
+}
+
+/** Resolve an own binding through the canonical caller-owned name cells.
+ * Retained closures must not trust their provider-entry names snapshot: a later
+ * direct eval can delete that binding and reuse the same group for another
+ * name. */
+export function directEvalActivationStateBindingCell(env: EnvRec, name: JSValue): EvalBindingCell | null {
+  const stateCells = directEvalActivationStateFor(env);
+  if (stateCells === null) return null;
+  const offset = directEvalActivationStateBindingOffset(stateCells, name);
+  if (offset < 0) return null;
+  return stateCells[offset + 1] as EvalBindingCell;
+}
+
+/** Tombstone one four-cell caller-owned direct-eval state-pool group.
+ *
+ * A closure can outlive the provider call that created it. Its EnvRec retains
+ * the provider-local names vector, while the out-of-line association retains
+ * the flat caller-owned carrier. Updating the exact deleted group here prevents
+ * a later provider entry from restoring the stale name without overloading the
+ * mapped-arguments payload in `EnvRec.backing`. */
+function tombstoneDirectEvalActivationState(env: EnvRec, bindingIndex: number): void {
+  const stateCells = directEvalActivationStateFor(env);
+  if (stateCells === null) return;
+  const firstStateCell = bindingIndex * 2;
+  const endStateCell = firstStateCell + 4;
+  if (endStateCell > stateCells.length) return;
+  for (let i = firstStateCell; i < endStateCell; i += 1) {
+    const stateCell = stateCells[i] as EvalBindingCell;
+    if (stateCell !== undefined && stateCell !== null) stateCell.value = undefined;
+  }
+}
+
+/** Try to delete an own declarative binding.
+ *
+ * Returns -1 when absent, 0 when present but non-deletable, and 1 after a
+ * successful eval-binding deletion. A tombstoned name is the existing state-
+ * pool vacancy convention; the live value cell is retained for later reuse. */
+export function deleteOwnEnvironmentBinding(env: EnvRec, name: JSValue): number {
+  if ((env.kind !== ENV_DECLARATIVE && env.kind !== ENV_GLOBAL) || env.slots === null) return -1;
+  const stateCells = directEvalActivationStateFor(env);
+  if (stateCells !== null) {
+    const offset = directEvalActivationStateBindingOffset(stateCells, name);
+    if (offset < 0) return -1;
+    const markerNameCell = stateCells[offset + 2] as EvalBindingCell;
+    if (
+      markerNameCell === undefined ||
+      markerNameCell === null ||
+      !isDeletableEvalBindingsMarker(markerNameCell.value)
+    ) {
+      return 0;
+    }
+    const bindingIndex = offset / 2;
+    const names: JSValue = env.names;
+    if (names !== undefined && names !== null && bindingIndex + 1 < names.length) {
+      names[bindingIndex] = undefined;
+      names[bindingIndex + 1] = undefined;
+    }
+    const valueCell = stateCells[offset + 1] as EvalBindingCell;
+    valueCell.value = undefined;
+    tombstoneDirectEvalActivationState(env, bindingIndex);
+    return 1;
+  }
+  const names: JSValue = env.names;
+  if (names === undefined || names === null) return -1;
+  for (let i = 0; i < names.length; i += 1) {
+    if (names[i] !== name) continue;
+    const cell = env.slots[i] as EvalBindingCell;
+    if (i + 1 >= names.length || !isDeletableEvalBindingsMarker(names[i + 1])) return 0;
+    names[i] = undefined;
+    names[i + 1] = undefined;
+    cell.value = undefined;
+    tombstoneDirectEvalActivationState(env, i);
+    return 1;
+  }
+  return -1;
+}
 
 /** Rehydrate the declarative half of a GlobalEnvironmentRecord from the
  * caller-owned canonical cells stored on the shared realm object. The carrier
@@ -351,20 +472,24 @@ export function preparePersistentEvalBindings(
     }
     if (exists) continue;
     let vacancy = -1;
-    for (let i = 0; i < names.length; i += 1) {
-      if (names[i] === undefined || names[i] === null) {
+    for (let i = 0; i + 1 < names.length; i += 2) {
+      if ((names[i] === undefined || names[i] === null) && (names[i + 1] === undefined || names[i + 1] === null)) {
         vacancy = i;
         break;
       }
     }
     if (vacancy >= 0) {
       names[vacancy] = name;
+      names[vacancy + 1] = DELETABLE_EVAL_BINDINGS_MARKER;
       (slots[vacancy] as EvalBindingCell).value = undefined;
     } else {
-      if (names.length >= 64) throw "direct eval activation binding capacity exceeded";
+      if (names.length >= 128) throw "direct eval activation binding capacity exceeded";
       names.push(name);
       const cell: EvalBindingCell = { value: undefined };
       slots.push(cell);
+      names.push(DELETABLE_EVAL_BINDINGS_MARKER);
+      const markerCell: EvalBindingCell = { value: undefined };
+      slots.push(markerCell);
     }
   }
 }
@@ -380,6 +505,8 @@ export function programIsStrict(program: Node): boolean {
 }
 
 function declarativeHasOwnBinding(env: EnvRec, name: string): boolean {
+  const stateCells = directEvalActivationStateFor(env);
+  if (stateCells !== null) return directEvalActivationStateBindingOffset(stateCells, name) >= 0;
   if (env.names === undefined || env.names === null || env.slots === null) return false;
   const names = env.names as JSValue[];
   for (let i = 0; i < names.length; i += 1) {
@@ -389,6 +516,13 @@ function declarativeHasOwnBinding(env: EnvRec, name: string): boolean {
 }
 
 function setOwnEnvironmentBinding(env: EnvRec, name: string, value: JSValue): boolean {
+  const stateCells = directEvalActivationStateFor(env);
+  if (stateCells !== null) {
+    const offset = directEvalActivationStateBindingOffset(stateCells, name);
+    if (offset < 0) return false;
+    (stateCells[offset + 1] as EvalBindingCell).value = value;
+    return true;
+  }
   if (
     (env.kind === ENV_DECLARATIVE || env.kind === ENV_GLOBAL) &&
     env.names !== undefined &&
@@ -432,6 +566,32 @@ function addDeclarativeBinding(env: EnvRec, name: string, value: JSValue): void 
   const cell: EvalBindingCell = { value };
   names.push(name);
   slots.push(cell);
+}
+
+/** Allocate one binding in a retained direct-eval activation. This is mainly
+ * exercised when an interpreted closure performs another direct eval after the
+ * original provider entry has returned. The fixed caller pool remains the
+ * authoritative storage and keeps its existing 64-visible-binding ceiling. */
+function addDirectEvalActivationStateBinding(env: EnvRec, name: string, value: JSValue): boolean {
+  const stateCells = directEvalActivationStateFor(env);
+  if (stateCells === null) return false;
+  for (let offset = 0; offset + 3 < stateCells.length; offset += 4) {
+    const nameCell = stateCells[offset] as EvalBindingCell;
+    const valueCell = stateCells[offset + 1] as EvalBindingCell;
+    const markerNameCell = stateCells[offset + 2] as EvalBindingCell;
+    const markerValueCell = stateCells[offset + 3] as EvalBindingCell;
+    if (
+      (nameCell.value === undefined || nameCell.value === null) &&
+      (markerNameCell.value === undefined || markerNameCell.value === null)
+    ) {
+      nameCell.value = name;
+      valueCell.value = value;
+      markerNameCell.value = DELETABLE_EVAL_BINDINGS_MARKER;
+      markerValueCell.value = undefined;
+      return true;
+    }
+  }
+  throw "direct eval activation binding capacity exceeded";
 }
 
 function declarativeWithBindings(parent: EnvRec | null, bindingNames: JSValue, initialValue: JSValue): EnvRec {
@@ -525,7 +685,12 @@ function ensureVarBinding(env: EnvRec, name: string, existingVarEnv?: EnvRec): v
     return;
   }
   if (env.kind === ENV_DECLARATIVE) {
-    if (!declarativeHasOwnBinding(env, name)) addDeclarativeBinding(env, name, undefined);
+    if (!declarativeHasOwnBinding(env, name)) {
+      if (!addDirectEvalActivationStateBinding(env, name, undefined)) {
+        addDeclarativeBinding(env, name, undefined);
+        addDeclarativeBinding(env, DELETABLE_EVAL_BINDINGS_MARKER, undefined);
+      }
+    }
     return;
   }
   if (

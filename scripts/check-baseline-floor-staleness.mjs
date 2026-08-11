@@ -192,6 +192,9 @@ const EXACT_TEST262_PATHS = new Set([
   "scripts/compiler-fork-worker.mjs",
   "scripts/compiler-pool.ts",
   "scripts/diff-test262.ts",
+  "scripts/build-quickjs-eval-provider.mjs",
+  "scripts/quickjs-eval-provider.mjs",
+  "scripts/runtime-eval-provider.mjs",
   "scripts/generate-editions.ts",
   "scripts/test262-worker.mjs",
   "tests/test262-runner.ts",
@@ -202,12 +205,16 @@ const EXACT_TEST262_PATHS = new Set([
 
 // Which lane(s) a changed path can move: "both" | "host" | "standalone" | "".
 // Mirrors classify_test262_path in scripts/test262-paths-match.sh — see that
-// file for why the default is "both" and why only the shard-weight maps are
+// file for why the default is "both" and which explicitly audited paths are
 // lane-exclusive.
 export function classifyTest262Path(p) {
   if (!p) return "";
   if (p === "tests/test262-slow-tests-standalone.json") return "standalone";
   if (p === "tests/test262-slow-tests.json") return "host";
+  if (p === "scripts/build-quickjs-eval-provider.mjs") return "standalone";
+  if (p === "scripts/quickjs-eval-provider.mjs") return "standalone";
+  if (p === "scripts/runtime-eval-provider.mjs") return "standalone";
+  if (p.startsWith("scripts/quickjs-artifact/")) return "standalone";
   if (EXACT_TEST262_PATHS.has(p)) return "both";
   if (p.startsWith("src/")) return "both";
   if (/^tests\/test262-chunk.*\.test\.ts$/.test(p)) return "both";

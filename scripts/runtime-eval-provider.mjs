@@ -323,7 +323,8 @@ const PROVIDER_EXPORT_WRAPPER = `
             outerNames,
             outerSlots,
             callerStrict,
-            mappedParamNames
+            mappedParamNames,
+            activationState
           );
           exposeRuntimeEvalCallerSlots(activationSeedSlots, lexicalSlots, outerSlots);
           exposeRuntimeEvalGlobalLexicalCells(globalObject);

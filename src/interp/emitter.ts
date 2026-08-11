@@ -1945,8 +1945,14 @@ class FunctionEmitter {
       return;
     }
     if (arg.type === "Identifier") {
-      if (this.isBoundName(arg.name)) this.enc.emit0(Op.LdaFalse);
-      else this.enc.emitConst(Op.DeleteName, this.enc.internConst(arg.name));
+      // PerformEval predeclares sloppy var/function bindings with D=true. The
+      // environment record, not syntax alone, must decide whether this name is
+      // an eval-created deletable binding or an established caller binding.
+      if (this.isBoundName(arg.name) && !(this.isScript && this.scriptBindingsPredeclared)) {
+        this.enc.emit0(Op.LdaFalse);
+      } else {
+        this.enc.emitConst(Op.DeleteName, this.enc.internConst(arg.name));
+      }
       return;
     }
     // Deleting a non-reference evaluates its operand for side effects and

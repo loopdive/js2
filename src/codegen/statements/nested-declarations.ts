@@ -63,8 +63,12 @@ import { pushProgramAbiNestedFunctionDeclaration } from "../program-abi-source-c
 import {
   collectDirectEvalActivationBindingNames,
   collectDirectEvalBindingNames,
+  emitEnsureDirectEvalActivationStatePoolInitialized,
+  enclosingFunctionOwnScopeMayReachDirectEval,
+  ensureDirectEvalActivationStatePoolLocal,
   functionMayReachDirectEval,
   reifyCurrentDirectEvalBindings,
+  RUNTIME_EVAL_STATE_POOL_CAPTURE_NAME,
 } from "../direct-eval-environment.js";
 import { annexBHoistCancels } from "../annexb-cancel.js";
 import { emitArgumentsVecTail } from "../arguments-vector-tail.js";
@@ -410,6 +414,7 @@ function transitiveVisibleDeclarationCaptures(
     if (!visible) continue;
 
     for (const capture of captures) {
+      if (capture.name === RUNTIME_EVAL_STATE_POOL_CAPTURE_NAME) continue;
       // A descendant can only re-capture a value that its immediate declaring
       // frame actually carries. This is the narrow, sound case; inaccessible
       // cross-module/cross-frame captures remain diagnosed by the frame guard.
@@ -472,6 +477,26 @@ function collectNamesMutatedInNestedFunctions(enclosingBody: ts.Node): Set<strin
   ts.forEachChild(enclosingBody, visit);
   nestedFnMutatedNamesCache.set(enclosingBody, out);
   return out;
+}
+
+/** A declaration with no direct-eval subtree can still observe eval-created
+ * vars belonging to its immediately enclosing activation. This predicate is
+ * deliberately source-based as well as state-based: declaration hoisting
+ * decides the lifted signature before the owner's pool local may be allocated.
+ * A declaration that reaches direct eval stays on the existing two-VarEnv
+ * path; sharing the outer pointer would merge distinct activation records. */
+function shouldCaptureEnclosingDirectEvalState(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.FunctionDeclaration,
+  reachesDirectEval = functionMayReachDirectEval(stmt, ctx.oracle),
+): boolean {
+  return (
+    (ctx.standalone || ctx.wasi) &&
+    !reachesDirectEval &&
+    (fctx.directEvalActivationStatePoolLocal !== undefined ||
+      enclosingFunctionOwnScopeMayReachDirectEval(stmt, ctx.oracle))
+  );
 }
 
 export function compileNestedFunctionDeclaration(
@@ -804,6 +829,24 @@ export function compileNestedFunctionDeclaration(
       tdzFlagIdx,
       alreadyBoxed,
       boxedValType: outerBoxedEntry?.valType,
+    });
+  }
+
+  if (shouldCaptureEnclosingDirectEvalState(ctx, fctx, stmt, reachesDirectEval)) {
+    // Phase 0 only needs a stable slot/type so its reserved signature matches
+    // the real compile. Runtime materialization belongs to the real hoist pass,
+    // where it executes in the owner's activation before a declaration value
+    // can escape or a direct call can forward the pointer.
+    const state = opts.preRegisterOnly
+      ? ensureDirectEvalActivationStatePoolLocal(ctx, fctx)
+      : emitEnsureDirectEvalActivationStatePoolInitialized(ctx, fctx);
+    captures.push({
+      name: RUNTIME_EVAL_STATE_POOL_CAPTURE_NAME,
+      type: { kind: "externref" },
+      localIdx: state.poolLocal,
+      mutable: false,
+      hasTdzFlag: false,
+      alreadyBoxed: false,
     });
   }
 
@@ -1224,6 +1267,18 @@ export function compileNestedFunctionDeclaration(
     initializeFunctionPoisonPillContext(ctx, liftedFctx, stmt);
     for (let i = 0; i < liftedFctx.params.length; i++) {
       liftedFctx.localMap.set(liftedFctx.params[i]!.name, i);
+    }
+    const statePoolCaptureParam = captures.findIndex(
+      (capture) => capture.name === RUNTIME_EVAL_STATE_POOL_CAPTURE_NAME,
+    );
+    if (statePoolCaptureParam !== -1) {
+      liftedFctx.directEvalActivationStatePoolLocal = statePoolCaptureParam;
+      liftedFctx.directEvalRefCellTypeIdx = fctx.directEvalRefCellTypeIdx;
+      liftedFctx.directEvalOuterBindingNames = new Set(
+        captures
+          .filter((capture) => capture.name !== RUNTIME_EVAL_STATE_POOL_CAPTURE_NAME)
+          .map((capture) => capture.name),
+      );
     }
     // (#4134) Record which names arrived as leading capture params. Forwarding
     // call sites must read OUR param for these, not the declaring function's
@@ -1950,6 +2005,7 @@ function preRegisterCapturingSibling(
       break;
     }
   }
+  if (shouldCaptureEnclosingDirectEvalState(ctx, fctx, stmt)) capturesOuter = true;
   if (!capturesOuter) return false;
   if (stmt.asteriskToken === undefined) {
     compileNestedFunctionDeclaration(ctx, fctx, stmt, { preRegisterOnly: true });

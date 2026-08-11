@@ -744,6 +744,76 @@ const EDI_FUNC_SOURCE = `
   };
   arrowFn();
 
+  // --- caller-pool metadata stays metadata. Each visible eval binding now has
+  // an adjacent impossible-name marker. Fill all 64 visible slots so a marker
+  // accidentally treated as a binding or capacity slot cannot hide.
+  var markerDecl = "";
+  for (var mi = 0; mi < 64; mi += 1) markerDecl = markerDecl + "var m" + mi + " = " + mi + ";";
+  var poolMarkerInvisible = -1;
+  var poolReuse = -1;
+  var poolReuseOverflow = -1;
+  function markerPoolCaller(): void {
+    try {
+      eval(joinSource([markerDecl, ""]));
+      poolMarkerInvisible = eval(joinSource([
+        "Object.getOwnPropertyNames(__js2wasm_eval_scope__).some(function (k) {",
+        " return k === '' || k.indexOf('js2wasm:deletable-eval-binding') >= 0; }) ? 0 : 1"
+      ])) as number;
+      var deleted: any = eval(joinSource(["delete m", "0"]));
+      eval(joinSource(["var replacement = ", "99;"]));
+      var replacementSum: any = eval(joinSource(["m1 + replace", "ment"]));
+      poolReuse = deleted === true && replacementSum === 100 ? 1 : 0;
+      poolReuseOverflow = (0, eval)(joinSource([
+        "typeof __js2wasm_eval_pool_overflow_count__ === 'number' ? ",
+        "__js2wasm_eval_pool_overflow_count__ : 0"
+      ])) as number;
+    } catch (e) {
+      poolMarkerInvisible = -1;
+      poolReuse = -1;
+      poolReuseOverflow = -1;
+    }
+  }
+  markerPoolCaller();
+
+  // --- redeclaring a persisted eval binding must not hide a successful
+  // deletion. EDI presents \`r0\` on the QuickJS realm for the redeclaration,
+  // while the paired marker in the caller pool remains the authority for
+  // whether that binding may become a vacancy. Fill all 64 groups so the
+  // replacement can only persist by reusing the exact deleted group.
+  var redeclaredPoolDecl = "";
+  for (var ri = 0; ri < 64; ri += 1) {
+    redeclaredPoolDecl = redeclaredPoolDecl + "var r" + ri + " = " + ri + ";";
+  }
+  var poolRedeclareDelete = -1;
+  var poolRedeclareReuse = -1;
+  var poolRedeclareScoped = -1;
+  var poolRedeclareOverflow = -1;
+  function redeclaredPoolCaller(): void {
+    try {
+      eval(joinSource([redeclaredPoolDecl, ""]));
+      var deleted: any = eval(joinSource(["var r0; delete r", "0"]));
+      var missing: any = eval(joinSource(["typeof r0 === 'undefined' ? ", "1 : 0"]));
+      eval(joinSource(["var replacementAfterRedeclare = ", "99;"]));
+      var replacementSum: any = eval(joinSource(["r1 + replacementAfterRede", "clare"]));
+      poolRedeclareDelete = deleted === true && missing === 1 ? 1 : 0;
+      poolRedeclareReuse = replacementSum === 100 ? 1 : 0;
+      poolRedeclareScoped = (0, eval)(joinSource([
+        "typeof replacementAfterRedeclare === 'undefined' ? ",
+        "1 : 0"
+      ])) as number;
+      poolRedeclareOverflow = (0, eval)(joinSource([
+        "typeof __js2wasm_eval_pool_overflow_count__ === 'number' ? ",
+        "__js2wasm_eval_pool_overflow_count__ : 0"
+      ])) as number;
+    } catch (e) {
+      poolRedeclareDelete = -1;
+      poolRedeclareReuse = -1;
+      poolRedeclareScoped = -1;
+      poolRedeclareOverflow = -1;
+    }
+  }
+  redeclaredPoolCaller();
+
   // --- the pool's 64-slot ceiling is ACCEPTED but not silent: overflowing it
   // must neither trap nor mis-slot, and the drop must be countable.
   //
@@ -777,6 +847,13 @@ const EDI_FUNC_SOURCE = `
   export function lexClsProbe(): number { return lexCls; }
   export function arrowGlobalProbe(): number { return arrowGlobal; }
   export function arrowInnerProbe(): number { return arrowInner; }
+  export function poolMarkerInvisibleProbe(): number { return poolMarkerInvisible; }
+  export function poolReuseProbe(): number { return poolReuse; }
+  export function poolReuseOverflowProbe(): number { return poolReuseOverflow; }
+  export function poolRedeclareDeleteProbe(): number { return poolRedeclareDelete; }
+  export function poolRedeclareReuseProbe(): number { return poolRedeclareReuse; }
+  export function poolRedeclareScopedProbe(): number { return poolRedeclareScoped; }
+  export function poolRedeclareOverflowProbe(): number { return poolRedeclareOverflow; }
   export function poolOverflowProbe(): number { return poolOverflow; }
   export function poolNamedProbe(): number { return poolNamed; }
 `;
@@ -1116,10 +1193,36 @@ describe.skipIf(!enabled)("#4245 slice 1 — quickjs eval membrane (inward)", ()
     expect(ediFunc.arrowInnerProbe!()).toBe(7);
   });
 
+  it("activation-pool marker entries never become QuickJS scope bindings", () => {
+    // A leaked leading-NUL marker reaches qjs_set_prop_str as the empty-string
+    // key today; the substring guard also catches it if the key transport ever
+    // becomes length-aware. The source fills every one of the 64 visible slots
+    // first, so a half-capacity walk cannot pass this by accident.
+    expect(ediFunc.poolMarkerInvisibleProbe!()).toBe(1);
+  });
+
+  it("deleting a persisted eval binding releases its paired slot for coherent reuse", () => {
+    expect(ediFunc.poolReuseProbe!()).toBe(1);
+    // Exactly 64 names, one deletion, then one replacement must not count as
+    // overflow. This separates real pair reuse from a replacement left on the
+    // QuickJS realm where a later indirect eval could see it.
+    expect(ediFunc.poolReuseOverflowProbe!()).toBe(0);
+  });
+
+  it("redeclaring then deleting a persisted eval binding releases that exact paired slot", () => {
+    expect(ediFunc.poolRedeclareDeleteProbe!()).toBe(1);
+    expect(ediFunc.poolRedeclareReuseProbe!()).toBe(1);
+    // The replacement belongs to the caller activation, not the QuickJS realm.
+    expect(ediFunc.poolRedeclareScopedProbe!()).toBe(1);
+    // With all 64 groups occupied, zero overflow proves the replacement reused
+    // the four-cell group whose redeclared binding was deleted.
+    expect(ediFunc.poolRedeclareOverflowProbe!()).toBe(0);
+  });
+
   it("pool exhaustion fails SAFE and is countable, never a trap or a mis-slot", () => {
     // 70 declared names against 64 slots: the tail is dropped by design, the
     // drop is counted, and the very next evaluation still works.
-    expect(ediFunc.poolOverflowProbe!()).toBeGreaterThan(0);
+    expect(ediFunc.poolOverflowProbe!()).toBe(6);
     expect(ediFunc.poolNamedProbe!()).toBe(2);
   });
 

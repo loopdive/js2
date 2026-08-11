@@ -392,7 +392,8 @@ function providerSource() {
             outerNames,
             outerSlots,
             callerStrict,
-            mappedParamNames
+            mappedParamNames,
+            activationState
           );
           snapshotDirectEvalActivationState(activationState, liveNames);
           return runtimeEvalResult(true, evalResult);

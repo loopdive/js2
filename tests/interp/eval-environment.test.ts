@@ -2,10 +2,17 @@
 // #2929 — EvalDeclarationInstantiation, inherited strictness, and lexical TDZ.
 
 import { beforeAll, describe, expect, it } from "vitest";
-import { executeDirectEval, executeIndirectEval, type DynamicParser } from "../../src/interp/dynamic-function.js";
+import {
+  executeDirectEval,
+  executeIndirectEval,
+  restoreDirectEvalActivationState,
+  snapshotDirectEvalActivationState,
+  type DynamicParser,
+} from "../../src/interp/dynamic-function.js";
 import {
   collectEvalDeclarations,
   createObjectEnvironment,
+  isDeletableEvalBindingsMarker,
   prepareEvalEnvironment,
   preparePersistentEvalBindings,
 } from "../../src/interp/eval-environment.js";
@@ -17,6 +24,7 @@ import {
   type EvalBindingCell,
   type JSValue,
 } from "../../src/interp/types.js";
+import { applyRuntimeEvalCallable } from "../../src/interp/loop.js";
 import { loadAcorn, parse } from "./harness.js";
 
 beforeAll(async () => {
@@ -81,7 +89,8 @@ describe("#2929 eval declaration environments", () => {
     const withEnv = createObjectEnvironment(variableEnv, { visible: 1 });
 
     prepareEvalEnvironment(parse("var visible"), withEnv, variableEnv, false);
-    expect(varNames).toEqual(["visible"]);
+    expect(varNames[0]).toBe("visible");
+    expect(isDeletableEvalBindingsMarker(varNames[1])).toBe(true);
     expect((varSlots[0] as EvalBindingCell).value).toBeUndefined();
   });
 
@@ -239,12 +248,177 @@ describe("#2929 eval declaration environments", () => {
     expect(run("var x = 1; x")).toBe(1);
     expect(outerCell.value).toBe(40);
     expect(activationNames).toEqual([]);
-    expect(createdVarNames).toEqual(["x"]);
+    expect(createdVarNames[0]).toBe("x");
     expect((createdVarSlots[0] as EvalBindingCell).value).toBe(1);
 
     expect(run("x = x + 1; x")).toBe(2);
     expect(outerCell.value).toBe(40);
     expect((createdVarSlots[0] as EvalBindingCell).value).toBe(2);
+  });
+
+  it("deletes newly-created sloppy eval var and function bindings but keeps caller bindings", () => {
+    const createdVarNames: JSValue[] = [];
+    const createdVarSlots: JSValue[] = [];
+    const callerCell: EvalBindingCell = { value: 40 };
+    const globalObject: JSValue = {};
+    const run = (source: string): JSValue =>
+      executeDirectEval(
+        parser,
+        source,
+        globalObject,
+        undefined,
+        createdVarNames,
+        createdVarSlots,
+        ["caller"],
+        [callerCell],
+        [],
+        [],
+        [],
+        [],
+        false,
+        [],
+      );
+
+    expect(run("var local; delete local")).toBe(true);
+    expect(createdVarNames[0]).toBeUndefined();
+    expect(run("var replacement = 9; replacement")).toBe(9);
+    expect(createdVarNames[0]).toBe("replacement");
+    expect(isDeletableEvalBindingsMarker(createdVarNames[1])).toBe(true);
+    expect(run("delete replacement")).toBe(true);
+
+    expect(
+      typeof run("initial = f; delete f; postDeletion = function () { return f; }; function f() { return 33; }"),
+    ).toBe("function");
+    expect(typeof globalObject.initial).toBe("function");
+    expect(globalObject.initial()).toBe(33);
+    expect(() => globalObject.postDeletion()).toThrow(ReferenceError);
+
+    expect(run("delete caller")).toBe(false);
+    expect(callerCell.value).toBe(40);
+  });
+
+  it("keeps a late closure deletion tombstoned in the caller-owned state pool", () => {
+    const stateCells: EvalBindingCell[] = [];
+    for (let i = 0; i < 8; i += 1) stateCells.push({ value: undefined });
+    const run = (source: string): JSValue => {
+      const liveNames: JSValue[] = [];
+      const liveSlots: JSValue[] = [];
+      restoreDirectEvalActivationState(stateCells, liveNames, liveSlots);
+      const result = executeDirectEval(
+        parser,
+        source,
+        {},
+        undefined,
+        liveNames,
+        liveSlots,
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+        false,
+        [],
+        stateCells,
+      );
+      snapshotDirectEvalActivationState(stateCells, liveNames);
+      return result;
+    };
+
+    const deleteLater = run("var doomed = 1; (function () { return delete doomed; })");
+    expect(stateCells[0]!.value).toBe("doomed");
+    expect(isDeletableEvalBindingsMarker(stateCells[2]!.value)).toBe(true);
+    expect(run("var survivor = 5; survivor")).toBe(5);
+    expect(stateCells[4]!.value).toBe("survivor");
+
+    expect(applyRuntimeEvalCallable(deleteLater, undefined, [])).toBe(true);
+    expect(stateCells[0]!.value).toBeUndefined();
+    expect(stateCells[2]!.value).toBeUndefined();
+    expect(stateCells[4]!.value).toBe("survivor");
+    expect(stateCells[5]!.value).toBe(5);
+
+    expect(run("var replacement = 9; replacement")).toBe(9);
+    expect(stateCells[0]!.value).toBe("replacement");
+    expect(isDeletableEvalBindingsMarker(stateCells[2]!.value)).toBe(true);
+    expect(run("replacement + survivor")).toBe(14);
+  });
+
+  it("does not let a retained closure alias a later binding that reuses its state group", () => {
+    const stateCells: EvalBindingCell[] = [];
+    for (let i = 0; i < 8; i += 1) stateCells.push({ value: undefined });
+    const run = (source: string): JSValue => {
+      const liveNames: JSValue[] = [];
+      const liveSlots: JSValue[] = [];
+      restoreDirectEvalActivationState(stateCells, liveNames, liveSlots);
+      const result = executeDirectEval(
+        parser,
+        source,
+        {},
+        undefined,
+        liveNames,
+        liveSlots,
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+        false,
+        [],
+        stateCells,
+      );
+      snapshotDirectEvalActivationState(stateCells, liveNames);
+      return result;
+    };
+
+    const getter = run("var x = 1; (function () { return x; })");
+    const futureGetter = run("(function () { return future; })");
+    const staleDelete = run("(function () { return delete x; })");
+    expect(run("delete x")).toBe(true);
+    expect(run("var y = 2; y")).toBe(2);
+    expect(stateCells[0]!.value).toBe("y");
+    expect(run("var future = 3; future")).toBe(3);
+
+    expect(() => applyRuntimeEvalCallable(getter, undefined, [])).toThrow(ReferenceError);
+    expect(applyRuntimeEvalCallable(futureGetter, undefined, [])).toBe(3);
+    expect(applyRuntimeEvalCallable(staleDelete, undefined, [])).toBe(true);
+    expect(run("y")).toBe(2);
+    expect(stateCells[0]!.value).toBe("y");
+    expect(stateCells[1]!.value).toBe(2);
+  });
+
+  it("keeps an eval-created arguments object separate from mapped-parameter metadata", () => {
+    const stateCells: EvalBindingCell[] = [];
+    for (let i = 0; i < 8; i += 1) stateCells.push({ value: undefined });
+    const run = (source: string): JSValue => {
+      const liveNames: JSValue[] = [];
+      const liveSlots: JSValue[] = [];
+      restoreDirectEvalActivationState(stateCells, liveNames, liveSlots);
+      const result = executeDirectEval(
+        parser,
+        source,
+        {},
+        undefined,
+        liveNames,
+        liveSlots,
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+        false,
+        [],
+        stateCells,
+      );
+      snapshotDirectEvalActivationState(stateCells, liveNames);
+      return result;
+    };
+
+    expect(run("var arguments = [1]; delete arguments[0]; typeof arguments[0]")).toBe("undefined");
+    expect(stateCells[0]!.value).toBe("arguments");
+    expect(isDeletableEvalBindingsMarker(stateCells[2]!.value)).toBe(true);
+    expect(run("arguments.length")).toBe(1);
   });
 
   it("keeps mapped parameters and arguments indices aliased in eval execution order", () => {

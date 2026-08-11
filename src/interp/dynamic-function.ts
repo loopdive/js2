@@ -11,13 +11,16 @@
 import { emitFunction, emitProgram } from "./emitter.js";
 import {
   createRuntimeEvalGlobalEnvironment,
+  isDeletableEvalBindingsMarker,
   prepareEvalEnvironment,
   preparePersistentEvalBindings,
   programIsStrict,
+  registerDirectEvalActivationState,
   registerVariableEnvironment,
 } from "./eval-environment.js";
 import {
   installRuntimeEvalRealm,
+  exposeRuntimeEvalSharedValue,
   interpEnter,
   makeInterpClosure,
   makeRuntimeEvalIntrinsic,
@@ -128,8 +131,9 @@ function ensureRuntimeEvalRealm(parse: DynamicParser, globalObject: JSValue): vo
 }
 
 /** Restore parallel provider-local names and caller-owned value cells from a
- * pool of alternating name/value cells. The provider never retains or grows a
- * foreign vector; all mutable values stay in canonical AOT-owned cells. */
+ * pool of alternating name/value cells. A closure's persistent EnvRec retains
+ * the flat carrier so later deletions can tombstone its canonical name cells,
+ * but the provider never grows that foreign vector. */
 export function restoreDirectEvalActivationState(stateCells: JSValue[], names: JSValue[], slots: JSValue[]): void {
   for (let i = 0; i + 1 < stateCells.length; i += 2) {
     const nameCell = stateCells[i] as EvalBindingCell;
@@ -139,12 +143,16 @@ export function restoreDirectEvalActivationState(stateCells: JSValue[], names: J
   }
 }
 
-/** Copy provider-local names back into their caller-owned name cells. Value
- * cells were shared with the interpreter and already contain live mutations. */
+/** Copy provider-local names back into their caller-owned name cells and
+ * normalize values written into the shared cells for the caller module. */
 export function snapshotDirectEvalActivationState(stateCells: JSValue[], names: JSValue[]): void {
   for (let i = 0; i < names.length; i += 1) {
     const nameCell = stateCells[i * 2] as EvalBindingCell;
+    const valueCell = stateCells[i * 2 + 1] as EvalBindingCell;
     nameCell.value = names[i];
+    if (!isDeletableEvalBindingsMarker(names[i])) {
+      valueCell.value = exposeRuntimeEvalSharedValue(valueCell.value);
+    }
   }
 }
 
@@ -237,6 +245,7 @@ export function executeDirectEval(
   outerSlots: JSValue[],
   callerStrict: boolean,
   mappedParamNames: JSValue,
+  activationState?: JSValue,
 ): JSValue {
   if (typeof source !== "string") return source;
 
@@ -251,6 +260,7 @@ export function executeDirectEval(
   const outerEnv = new EnvRec(ENV_DECLARATIVE, globalEnv, outerNames, outerSlots, undefined);
   const activationEnv = new EnvRec(ENV_DECLARATIVE, outerEnv, activationNames, activationSlots, mappedParamNames);
   const createdVarEnv = new EnvRec(ENV_DECLARATIVE, activationEnv, createdVarNames, createdVarSlots, undefined);
+  registerDirectEvalActivationState(createdVarEnv, activationState);
   const lexicalEnv = new EnvRec(ENV_DECLARATIVE, createdVarEnv, lexicalNames, lexicalSlots, undefined);
   registerRuntimeEvalCallerIntrinsic(lexicalEnv);
   const env = prepareEvalEnvironment(ast, lexicalEnv, createdVarEnv, strictEval, activationEnv);

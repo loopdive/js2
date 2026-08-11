@@ -77,6 +77,10 @@ export interface BlockScopeSave {
   constBindings: Map<string, boolean> | null;
   nullGuardAliases: Map<string, NullGuardFact | null> | null;
   boxedCaptures: Map<string, { refCellTypeIdx: number; valType: ValType } | null> | null;
+  /** Whether each block name denoted an outer capture before this lexical
+   * binding became active. Direct-eval state may shadow that outer capture,
+   * but never the active block binding with the same spelling. */
+  directEvalOuterBindings: Map<string, boolean> | null;
 }
 
 function collectBindingPatternNames(pattern: ts.BindingPattern, names: string[]): void {
@@ -135,7 +139,12 @@ export function saveBlockScopedShadows(fctx: FunctionContext, block: ts.Block): 
   let savedConstBindings: Map<string, boolean> | null = null;
   let savedNullGuardAliases: Map<string, NullGuardFact | null> | null = null;
   let savedBoxedCaptures: Map<string, { refCellTypeIdx: number; valType: ValType } | null> | null = null;
+  let savedDirectEvalOuterBindings: Map<string, boolean> | null = null;
   for (const name of blockNames) {
+    if (!savedDirectEvalOuterBindings) savedDirectEvalOuterBindings = new Map();
+    savedDirectEvalOuterBindings.set(name, fctx.directEvalOuterBindingNames?.has(name) ?? false);
+    fctx.directEvalOuterBindingNames?.delete(name);
+
     if (!savedConstBindings) savedConstBindings = new Map();
     savedConstBindings.set(name, fctx.constBindings?.has(name) ?? false);
     fctx.constBindings?.delete(name);
@@ -163,13 +172,22 @@ export function saveBlockScopedShadows(fctx: FunctionContext, block: ts.Block): 
       }
     }
   }
-  if (!savedLocals && !savedTdz && !savedConstBindings && !savedNullGuardAliases && !savedBoxedCaptures) return null;
+  if (
+    !savedLocals &&
+    !savedTdz &&
+    !savedConstBindings &&
+    !savedNullGuardAliases &&
+    !savedBoxedCaptures &&
+    !savedDirectEvalOuterBindings
+  )
+    return null;
   return {
     locals: savedLocals,
     tdzFlags: savedTdz,
     constBindings: savedConstBindings,
     nullGuardAliases: savedNullGuardAliases,
     boxedCaptures: savedBoxedCaptures,
+    directEvalOuterBindings: savedDirectEvalOuterBindings,
   };
 }
 
@@ -209,6 +227,12 @@ export function restoreBlockScopedShadows(fctx: FunctionContext, saved: BlockSco
     for (const [name, capture] of saved.boxedCaptures) {
       if (capture) fctx.boxedCaptures.set(name, capture);
       else fctx.boxedCaptures.delete(name);
+    }
+  }
+  if (saved.directEvalOuterBindings) {
+    for (const [name, wasOuterBinding] of saved.directEvalOuterBindings) {
+      if (wasOuterBinding) (fctx.directEvalOuterBindingNames ??= new Set()).add(name);
+      else fctx.directEvalOuterBindingNames?.delete(name);
     }
   }
 }

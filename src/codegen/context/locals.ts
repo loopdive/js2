@@ -63,8 +63,8 @@ export interface LocalsSnapshot {
   readonly tdzFlagEntries: ReadonlyArray<readonly [string, number]> | null;
   /** Stable direct-eval activation cells must roll back with their locals. */
   readonly directEvalActivationEntries: ReadonlyArray<readonly [string, number]> | null;
-  /** Hidden direct-eval state-pool locals allocated by a speculative route. */
-  readonly directEvalStateCellLocals: ReadonlyArray<number> | null;
+  /** Hidden direct-eval state-pool local allocated by a speculative route. */
+  readonly directEvalStatePoolLocal: number | null;
 }
 
 export function snapshotLocals(fctx: FunctionContext): LocalsSnapshot {
@@ -79,9 +79,7 @@ export function snapshotLocals(fctx: FunctionContext): LocalsSnapshot {
     directEvalActivationEntries: fctx.directEvalActivationBindings
       ? Array.from(fctx.directEvalActivationBindings.entries())
       : null,
-    directEvalStateCellLocals: fctx.directEvalActivationStateCellLocals
-      ? Array.from(fctx.directEvalActivationStateCellLocals)
-      : null,
+    directEvalStatePoolLocal: fctx.directEvalActivationStatePoolLocal ?? null,
   };
 }
 
@@ -157,8 +155,7 @@ export function restoreLocals(fctx: FunctionContext, snap: LocalsSnapshot): void
       fctx.directEvalActivationBindings.set(name, idx);
     }
   }
-  fctx.directEvalActivationStateCellLocals =
-    snap.directEvalStateCellLocals === null ? undefined : Array.from(snap.directEvalStateCellLocals);
+  fctx.directEvalActivationStatePoolLocal = snap.directEvalStatePoolLocal ?? undefined;
   // Prune any temp-free-list entries that now point past the truncated vector.
   if (fctx.tempFreeList) {
     const maxValid = fctx.params.length + snap.localsLen;

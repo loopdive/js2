@@ -66,6 +66,10 @@ describe("#2178 — pathsTouchTest262 mirrors the test262-paths allowlist", () =
       "tests/test262-chunk1.test.ts",
       "tests/test262-runner.ts",
       "scripts/diff-test262.ts",
+      "scripts/build-quickjs-eval-provider.mjs",
+      "scripts/quickjs-eval-provider.mjs",
+      "scripts/runtime-eval-provider.mjs",
+      "scripts/quickjs-artifact/build.sh",
       "tests/test262-slow-tests.json",
       "tests/test262-slow-tests-standalone.json",
       "tests/test262-slow-tests-future-lane.json",
@@ -88,9 +92,9 @@ describe("#2178 — pathsTouchTest262 mirrors the test262-paths allowlist", () =
 describe("per-lane test262 path gating (merge_group single-lane runs)", () => {
   // The merge_group `changes` job drops a whole shard lane (66 js-host or 36
   // standalone jobs) when the queued diff provably cannot move it. That is only
-  // sound while the lane-exclusive set stays exactly the shard-weight maps —
-  // everything else, `src/**` above all, must stay both-lane.
-  it("narrows ONLY the per-lane shard-weight maps", () => {
+  // sound while the lane-exclusive set stays explicitly audited — everything
+  // else, `src/**` above all, must stay both-lane.
+  it("narrows the audited lane-specific paths", () => {
     expect(pathsTouchTest262("tests/test262-slow-tests-standalone.json", "standalone")).toBe(true);
     expect(pathsTouchTest262("tests/test262-slow-tests-standalone.json", "host")).toBe(false);
     expect(pathsTouchTest262("tests/test262-slow-tests.json", "host")).toBe(true);
@@ -98,6 +102,17 @@ describe("per-lane test262 path gating (merge_group single-lane runs)", () => {
     // Both still count as test262-relevant for the coarse "run at all?" question.
     expect(pathsTouchTest262("tests/test262-slow-tests-standalone.json")).toBe(true);
     expect(pathsTouchTest262("tests/test262-slow-tests.json")).toBe(true);
+
+    for (const p of [
+      "scripts/build-quickjs-eval-provider.mjs",
+      "scripts/quickjs-eval-provider.mjs",
+      "scripts/runtime-eval-provider.mjs",
+      "scripts/quickjs-artifact/build.sh",
+    ]) {
+      expect(pathsTouchTest262(p, "host"), p).toBe(false);
+      expect(pathsTouchTest262(p, "standalone"), p).toBe(true);
+      expect(pathsTouchTest262(p), p).toBe(true);
+    }
   });
 
   it("keeps the entire compiler both-lane — `target: standalone` is a flag, not a source tree", () => {

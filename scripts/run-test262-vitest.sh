@@ -18,6 +18,7 @@ RUN_TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 INCLUDE_PROPOSALS=1
 TEST262_TARGET="${TEST262_TARGET:-gc}"
 TEST262_REPORTER="${TEST262_REPORTER:-verbose}"
+EVAL_ENGINE="${JS2WASM_EVAL_ENGINE:-interpreter}"
 
 case "$TEST262_TARGET" in
   gc|linear|wasi|standalone) ;;
@@ -26,6 +27,16 @@ case "$TEST262_TARGET" in
     exit 1
     ;;
 esac
+
+if [ "$TEST262_TARGET" = "standalone" ]; then
+  case "$EVAL_ENGINE" in
+    interpreter|quickjs) ;;
+    *)
+      echo "ERROR: JS2WASM_EVAL_ENGINE must be one of: interpreter, quickjs"
+      exit 1
+      ;;
+  esac
+fi
 
 RESULT_PREFIX="test262"
 if [ "$TEST262_TARGET" != "gc" ]; then
@@ -196,22 +207,28 @@ fi
 # frozen `js2wasm:runtime-eval` seam. Symmetric hook — prebuild it here (the
 # selector never builds), and fail the run on error rather than degrading to
 # the interpreter, which would invalidate every measurement made under the flag.
-# NOTE (slice 1/2): `assembleOriginalHarness` injects a direct-eval-bearing
-# `$262.evalScript` shim into every assembled test, and direct eval is a typed
-# refusal under this engine until slice 3 — so a FULL test262 run under the flag
-# is not yet meaningful; `tests/quickjs-eval-provider.test.ts` is the gate.
-if [ "$TEST262_TARGET" = "standalone" ] && [ "${JS2WASM_EVAL_ENGINE:-interpreter}" = "quickjs" ]; then
-  echo "Prebuilding QUICKJS eval-engine provider (#4238; JS2WASM_EVAL_ENGINE=quickjs)..."
-  NODE_OPTIONS="--max-old-space-size=3072" node scripts/build-quickjs-eval-provider.mjs
-fi
+#
+# Build ONLY the selected engine. Building the interpreter fallback after a
+# quickjs prebuild makes a missing/mis-keyed quickjs cache harder to diagnose
+# and wastes minutes, while the selector is deliberately forbidden from
+# falling back between engines.
 if [ "$TEST262_TARGET" = "standalone" ]; then
-  if [ "${TEST262_FULL_RUNTIME_EVAL:-}" = "1" ]; then
-    echo "Prebuilding runtime-eval provider — refusal + FULL interpreter (#2928 E7)..."
-    NODE_OPTIONS="--max-old-space-size=3072" node scripts/build-runtime-eval-provider.mjs
-  else
-    echo "Prebuilding runtime-eval REFUSAL provider (#2928 E7; TEST262_FULL_RUNTIME_EVAL=1 for the interpreter)..."
-    NODE_OPTIONS="--max-old-space-size=3072" node scripts/build-runtime-eval-provider.mjs --refusal-only
-  fi
+  echo "Eval engine selection: $EVAL_ENGINE"
+  case "$EVAL_ENGINE" in
+    quickjs)
+      echo "Prebuilding QUICKJS eval-engine provider (#4238; JS2WASM_EVAL_ENGINE=quickjs)..."
+      NODE_OPTIONS="--max-old-space-size=3072" node scripts/build-quickjs-eval-provider.mjs
+      ;;
+    interpreter)
+      if [ "${TEST262_FULL_RUNTIME_EVAL:-}" = "1" ]; then
+        echo "Prebuilding runtime-eval provider — refusal + FULL interpreter (#2928 E7)..."
+        NODE_OPTIONS="--max-old-space-size=3072" node scripts/build-runtime-eval-provider.mjs
+      else
+        echo "Prebuilding runtime-eval REFUSAL provider (#2928 E7; TEST262_FULL_RUNTIME_EVAL=1 for the interpreter)..."
+        NODE_OPTIONS="--max-old-space-size=3072" node scripts/build-runtime-eval-provider.mjs --refusal-only
+      fi
+      ;;
+  esac
 fi
 
 # ── Prepare result files ─────────────────────────────────────────

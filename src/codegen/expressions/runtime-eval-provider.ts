@@ -7,7 +7,10 @@ import { emitCachedFuncClosureAccess } from "../closures.js";
 import { emitBuiltinNamespaceObject } from "../builtin-static-globals.js";
 import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
-import { currentDirectEvalBindings } from "../direct-eval-environment.js";
+import {
+  currentDirectEvalBindings,
+  emitEnsureDirectEvalActivationStatePoolInitialized,
+} from "../direct-eval-environment.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
 import {
   emitGlobalEnvironmentKey,
@@ -35,10 +38,6 @@ import { emitUndefined, ensureLateImport, flushLateImportShifts } from "./late-i
 /** Core-Wasm provider namespace owned by #2928/#2527. */
 export const RUNTIME_EVAL_IMPORT_MODULE = "js2wasm:runtime-eval";
 
-/** Caller-owned spare cells available to names introduced by sloppy eval.
- * This is deliberately generous for the separate-module MVP; combined-module
- * packaging can replace it with a growable canonical carrier. */
-const DIRECT_EVAL_STATE_BINDING_CAPACITY = 64;
 const RUNTIME_EVAL_PUSH_GLOBALS = "__runtime_eval_push_globals";
 const RUNTIME_EVAL_PULL_GLOBALS = "__runtime_eval_pull_globals";
 /** Private global-object slot carrying `[name, EvalBindingCell, ...]`. The
@@ -613,50 +612,10 @@ export function emitStandaloneDirectEvalRuntime(
     );
     return [namesLocal, slotsLocal];
   };
-  const stateCellTypeIdx = fctx.directEvalRefCellTypeIdx ?? getOrRegisterRefCellType(ctx, externref);
+  const state = emitEnsureDirectEvalActivationStatePoolInitialized(ctx, fctx);
+  const stateCellTypeIdx = state.cellTypeIdx;
   fctx.directEvalRefCellTypeIdx = stateCellTypeIdx;
-  if (fctx.directEvalActivationStateCellLocals === undefined) {
-    fctx.directEvalActivationStateCellLocals = [];
-    for (let i = 0; i < DIRECT_EVAL_STATE_BINDING_CAPACITY * 2; i += 1) {
-      fctx.directEvalActivationStateCellLocals.push(
-        allocLocal(fctx, `__runtime_direct_eval_state_cell_${i}_${fctx.locals.length}`, {
-          kind: "ref_null",
-          typeIdx: stateCellTypeIdx,
-        }),
-      );
-    }
-  }
-  const activationStateCellLocals = fctx.directEvalActivationStateCellLocals;
-  for (const cellLocal of activationStateCellLocals) {
-    fctx.body.push(
-      { op: "local.get", index: cellLocal },
-      { op: "ref.is_null" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          { op: "ref.null.extern" },
-          { op: "struct.new", typeIdx: stateCellTypeIdx },
-          { op: "local.set", index: cellLocal },
-        ],
-      },
-    );
-  }
-  const activationStatePoolLocal = allocLocal(
-    fctx,
-    `__runtime_direct_eval_activation_state_pool_${fctx.locals.length}`,
-    externref,
-  );
-  fctx.body.push({ op: "call", funcIdx: objVecNewIdx }, { op: "local.set", index: activationStatePoolLocal });
-  for (const cellLocal of activationStateCellLocals) {
-    fctx.body.push(
-      { op: "local.get", index: activationStatePoolLocal },
-      { op: "local.get", index: cellLocal },
-      { op: "ref.as_non_null" },
-      { op: "extern.convert_any" },
-      { op: "call", funcIdx: objVecPushIdx },
-    );
-  }
+  const activationStatePoolLocal = state.poolLocal;
   const [activationNamesLocal, activationSlotsLocal] = freshLayer("activation_seed", bindings.activation);
   // (#4308 slice C) The caller-kind sentinel. Its cell is FRESH rather than
   // borrowed from the state pool: nothing writes the sentinel binding, but a

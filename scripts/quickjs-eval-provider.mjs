@@ -171,6 +171,19 @@ export const QUICKJS_INDIRECT_EVAL_GLOBAL = "__js2wasm_eval_indirect__";
 export const RUNTIME_EVAL_NON_GLOBAL_SENTINEL = "__js2wasm_eval_nonglobal__";
 
 /**
+ * Opaque companion name carried beside every deletable eval-created binding
+ * in the caller-owned activation state pool. One source-visible entry and its
+ * adjacent marker consume four pool cells total:
+ *   [visibleNameCell, visibleValueCell, markerNameCell, markerValueCell]
+ *
+ * The marker is metadata, never a binding. Keep this exact (including the
+ * leading NUL) with DELETABLE_EVAL_BINDINGS_MARKER in
+ * src/interp/eval-environment.ts. The provider cannot import that module: this
+ * value is baked into the separately compiled adapter source.
+ */
+const RUNTIME_EVAL_DELETABLE_BINDING_MARKER = "\0js2wasm:deletable-eval-binding";
+
+/**
  * Private global-object slot carrying `[name, EvalBindingCell, …]` for the
  * declarative half of the caller's GlobalEnvironmentRecord. Data, not a
  * function ABI — keep byte-for-byte aligned with
@@ -2169,6 +2182,10 @@ function qjsEnsureDirectHelpers(c: number): boolean {
       "  if (!seen) o.push(n);" +
       " }" +
       " return o.join('\\\\u0001'); };" +
+      "globalThis.__js2wasm_eval_scopenames__ = function () {" +
+      " return Object.getOwnPropertyNames(globalThis.${QUICKJS_SCOPE_GLOBAL}).join('\\\\u0001'); };" +
+      "globalThis.__js2wasm_eval_globalnames__ = function () {" +
+      " return Object.getOwnPropertyNames(globalThis).join('\\\\u0001'); };" +
       // A \`var\` at QuickJS global scope creates a NON-CONFIGURABLE property, so
       // \`delete\` on it silently fails. Fall back to writing \`undefined\`, which
       // is what the caller's other scopes must observe for a binding that was
@@ -2267,9 +2284,15 @@ function qjsCallGlobalHelper(c: number, name: string, argc: number, arg: number)
  *  name, exactly as the interpreter's env-record chain does, so the write-back
  *  can only ever reach the binding the evaluated code actually saw. */
 function qjsAppendBinding(names: string[], cells: any[], name: string, cell: any): void {
-  // (#4308 slice C) The routing sentinel is not a binding: it must never reach
-  // the snapshot object, the preamble or the write-back.
-  if (name === ${j(RUNTIME_EVAL_NON_GLOBAL_SENTINEL)}) return;
+  // Neither metadata name is a binding: neither may reach the snapshot object,
+  // the strict preamble, the QuickJS scope object, or either write-back path.
+  // Keep the exact marker guard even though qjsCollectPool also advances by a
+  // four-cell visible+marker group: parallel caller layers share this helper,
+  // and metadata must fail closed if one is ever routed through them.
+  if (
+    name === ${j(RUNTIME_EVAL_NON_GLOBAL_SENTINEL)} ||
+    name === ${j(RUNTIME_EVAL_DELETABLE_BINDING_MARKER)}
+  ) return;
   for (let i = 0; i < names.length; i += 1) {
     if (names[i] === name) {
       cells[i] = cell;
@@ -2293,12 +2316,13 @@ function qjsCollectLayer(nameVec: any, slotVec: any, names: string[], cells: any
   }
 }
 
-/** Collect the persistent activation state pool: alternating [nameCell,
- *  valueCell]. An unclaimed pair carries \`undefined\` in its name cell — the
- *  same vacancy discipline preparePersistentEvalBindings uses. */
+/** Collect the persistent activation state pool. Each source-visible binding
+ * owns two adjacent logical entries (four cells): [name, value, marker,
+ * markerValue]. Marker entries are deliberately skipped by structure, and the
+ * central qjsAppendBinding guard independently rejects the exact marker. */
 function qjsCollectPool(pool: any, names: string[], cells: any[]): void {
   if (pool === undefined || pool === null) return;
-  for (let i = 0; i + 1 < (pool.length as number); i += 2) {
+  for (let i = 0; i + 3 < (pool.length as number); i += 4) {
     const nameCell: EvalBindingCell = pool[i] as EvalBindingCell;
     if (nameCell === undefined || nameCell === null) continue;
     const name: any = __runtime_eval_unwrap_result(nameCell.value);
@@ -2659,6 +2683,7 @@ export function __runtime_direct_eval(
   qjsPullSeededBindings(c, seeded, names, cells);
   qjsWriteBackCallerCells(c, scope, seeded, names, cells);
   if (!callerStrict) {
+    qjsReconcileDeletedPoolBindings(c, activationState, seeded, names, cells);
     qjsMirrorNewBindings(c, activationState, names, preNames);
   }
   // …and only then hand the realm slot back to whatever the CALLER's realm says
@@ -2724,6 +2749,87 @@ function qjsWriteBackCallerCells(
     qjs_free_value(c, h);
   }
   qjsPullRefusal = "";
+}
+
+/**
+ * Reconcile deletions from the QuickJS scope object back into the caller-owned
+ * activation pool. Only a visible entry whose adjacent name is the exact
+ * deletability marker may be tombstoned; ordinary caller bindings merely use
+ * the same snapshot object and must never become pool vacancies.
+ *
+ * The helper snapshots S's own names once. Eval-created identifiers cannot
+ * contain U+0001, so the existing joined-name transport is lossless here.
+ */
+function qjsReconcileDeletedPoolBindings(
+  c: number,
+  pool: any,
+  seeded: string[],
+  names: string[],
+  cells: any[]
+): void {
+  if (pool === undefined || pool === null) return;
+  const listHandle: number = qjsCallGlobalHelper(c, "__js2wasm_eval_scopenames__", 0, 0);
+  if (listHandle === 0) return;
+  const joined: string = qjsReadString(c, listHandle);
+  qjs_free_value(c, listHandle);
+  const present: string[] = [];
+  qjsSplitJoined(joined, present);
+  // A persisted binding that the source REDECLARES is seeded on the realm
+  // rather than S so EvalDeclarationInstantiation can update the existing
+  // caller binding. Its absence from S is therefore expected, but its absence
+  // from the realm means a source-level delete really succeeded. Snapshot the
+  // realm names once and fail closed if that observation is unavailable.
+  const realmPresent: string[] = [];
+  let realmNamesKnown: boolean = seeded.length === 0;
+  if (seeded.length > 0) {
+    const realmListHandle: number = qjsCallGlobalHelper(
+      c,
+      "__js2wasm_eval_globalnames__",
+      0,
+      0
+    );
+    if (realmListHandle !== 0) {
+      const realmJoined: string = qjsReadString(c, realmListHandle);
+      qjs_free_value(c, realmListHandle);
+      qjsSplitJoined(realmJoined, realmPresent);
+      realmNamesKnown = true;
+    }
+  }
+  for (let i = 0; i + 3 < (pool.length as number); i += 4) {
+    const nameCell: EvalBindingCell = pool[i] as EvalBindingCell;
+    const valueCell: EvalBindingCell = pool[i + 1] as EvalBindingCell;
+    const markerCell: EvalBindingCell = pool[i + 2] as EvalBindingCell;
+    const markerValueCell: EvalBindingCell = pool[i + 3] as EvalBindingCell;
+    if (nameCell === undefined || nameCell === null) continue;
+    if (valueCell === undefined || valueCell === null) continue;
+    if (markerCell === undefined || markerCell === null) continue;
+    if (markerValueCell === undefined || markerValueCell === null) continue;
+    const name: any = __runtime_eval_unwrap_result(nameCell.value);
+    const marker: any = __runtime_eval_unwrap_result(markerCell.value);
+    if (typeof name !== "string") continue;
+    if (marker !== ${j(RUNTIME_EVAL_DELETABLE_BINDING_MARKER)}) continue;
+    // A same-named lexical/caller layer can shadow this pool entry in the
+    // flattened snapshot. Only the pool cell that was actually presented may
+    // authorize tombstoning its own marked group.
+    let selected: boolean = false;
+    for (let k = 0; k < names.length; k += 1) {
+      if (names[k] === name && cells[k] === valueCell) {
+        selected = true;
+        break;
+      }
+    }
+    if (!selected) continue;
+    // EDI-declared existing bindings are intentionally presented on the realm,
+    // not S. Keep one when its realm property survived; tombstone the exact
+    // marked group when that property is absent because deletion succeeded.
+    if (qjsNameListHas(seeded, name as string)) {
+      if (!realmNamesKnown || qjsNameListHas(realmPresent, name as string)) continue;
+    } else if (qjsNameListHas(present, name as string)) continue;
+    nameCell.value = __runtime_eval_wrap_result(undefined);
+    valueCell.value = __runtime_eval_wrap_result(undefined);
+    markerCell.value = __runtime_eval_wrap_result(undefined);
+    markerValueCell.value = __runtime_eval_wrap_result(undefined);
+  }
 }
 
 /**
@@ -2905,8 +3011,8 @@ function qjsRememberCreatedName(name: string): void {
 /**
  * (#4308 slice C) Publish a pool-exhaustion drop into the realm.
  *
- * The activation pool is 64 slots (\`activationState.length\` is the
- * compile-time constant 128 = 64 × 2 cells, measured by P4). A source
+ * The activation pool is 64 source-visible slots (128 logical entries / 256
+ * cells: each visible name/value pair has an adjacent marker pair). A source
  * declaring more distinct var names than that in ONE activation loses the
  * tail — which is the accepted ceiling, not a bug to engineer around. What was
  * NOT acceptable is losing it silently: the counter and the last dropped name
@@ -2936,26 +3042,38 @@ function qjsRecordPoolOverflow(c: number, name: string): void {
   qjs_free_value(c, g);
 }
 
-/** Take (or update) the pool pair for \`name\`. False when the pool is full —
- *  the binding is then simply not persisted, never silently mis-slotted. */
+/** Take (or update) the visible+marker group for \`name\`. False when all 64
+ * source-visible groups are full — marker entries never double the capacity. */
 function qjsClaimPoolSlot(pool: any, name: string, value: any): boolean {
   let vacancy: number = -1;
-  for (let i = 0; i + 1 < (pool.length as number); i += 2) {
+  for (let i = 0; i + 3 < (pool.length as number); i += 4) {
     const nameCell: EvalBindingCell = pool[i] as EvalBindingCell;
+    const markerCell: EvalBindingCell = pool[i + 2] as EvalBindingCell;
     if (nameCell === undefined || nameCell === null) continue;
+    if (markerCell === undefined || markerCell === null) continue;
     const held: any = __runtime_eval_unwrap_result(nameCell.value);
+    const marker: any = __runtime_eval_unwrap_result(markerCell.value);
     if (held === name) {
       const valueCell: EvalBindingCell = pool[i + 1] as EvalBindingCell;
       valueCell.value = __runtime_eval_wrap_result(value);
+      markerCell.value = __runtime_eval_wrap_result(${j(RUNTIME_EVAL_DELETABLE_BINDING_MARKER)});
       return true;
     }
-    if (vacancy < 0 && (held === undefined || held === null)) vacancy = i;
+    if (
+      vacancy < 0 &&
+      (held === undefined || held === null) &&
+      (marker === undefined || marker === null)
+    ) vacancy = i;
   }
   if (vacancy < 0) return false;
   const nameCell: EvalBindingCell = pool[vacancy] as EvalBindingCell;
   const valueCell: EvalBindingCell = pool[vacancy + 1] as EvalBindingCell;
+  const markerCell: EvalBindingCell = pool[vacancy + 2] as EvalBindingCell;
+  const markerValueCell: EvalBindingCell = pool[vacancy + 3] as EvalBindingCell;
   nameCell.value = __runtime_eval_wrap_result(name);
   valueCell.value = __runtime_eval_wrap_result(value);
+  markerCell.value = __runtime_eval_wrap_result(${j(RUNTIME_EVAL_DELETABLE_BINDING_MARKER)});
+  markerValueCell.value = __runtime_eval_wrap_result(undefined);
   return true;
 }
 

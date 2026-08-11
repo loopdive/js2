@@ -33,8 +33,9 @@
 # In particular ALL of `src/**` is `both`. The standalone regime is a flag
 # threaded through the SAME compiler (`compile(src, { target: "standalone" })`
 # — see src/index.ts CompileOptions.target), not a separate source tree, so
-# there is no sound src-level split. Only the per-target SHARD-WEIGHT MAPS are
-# lane-exclusive today; see `classify_test262_path` below for the full table.
+# there is no sound src-level split. The audited lane-exclusive paths are the
+# per-target shard-weight maps and the standalone-only QuickJS provider/build
+# inputs; see `classify_test262_path` below for the full table.
 #
 # Fail-safe: this script only decides false vs true on the path patterns. The
 # CALLER is responsible for the conservative default (emit "true" when the
@@ -113,6 +114,13 @@ classify_test262_path() {
     scripts/compiler-fork-worker.mjs) echo both ;;
     scripts/compiler-pool.ts) echo both ;;
     scripts/diff-test262.ts) echo both ;;
+    # QuickJS is a standalone-only eval engine. These files are never loaded by
+    # the JS-host runner, but they are part of the sharded workflow allowlist so
+    # a merge-group change cannot be misclassified as test262-irrelevant.
+    scripts/build-quickjs-eval-provider.mjs) echo standalone ;;
+    scripts/quickjs-eval-provider.mjs) echo standalone ;;
+    scripts/runtime-eval-provider.mjs) echo standalone ;;
+    scripts/quickjs-artifact/*) echo standalone ;;
     scripts/generate-editions.ts) echo both ;;
     scripts/test262-worker.mjs) echo both ;;
     tests/test262-chunk*.test.ts) echo both ;;

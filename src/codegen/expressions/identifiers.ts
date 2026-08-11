@@ -59,10 +59,14 @@ import {
 } from "../builtin-static-globals.js";
 import { tryEmitPromiseSubclassValue } from "./promise-subclass.js";
 import {
+  emitCaptureRuntimeEvalBindingValueCell,
   emitImplicitGlobalRead,
+  emitRuntimeEvalBindingRead,
   emitRuntimeEvalGlobalRead,
   emitRuntimeEvalSharedValueUnwrap,
+  runtimeEvalSharedValueUnwrapInstrs,
 } from "../global-environment.js";
+import { runtimeEvalStateMayShadowBinding } from "../direct-eval-environment.js";
 import { emitStandaloneIntrinsicEvalValue, emitStandaloneIntrinsicFunctionValue } from "./eval-inline.js";
 
 /**
@@ -538,7 +542,12 @@ function compileIdentifier(ctx: CodegenContext, fctx: FunctionContext, id: ts.Id
 /** The non-`with` identifier lowering (locals, globals, funcs, builders,
  *  ReferenceError). Split out so the Tier-2 dynamic `with` path can invoke it as
  *  the HasBinding-miss fallback (#2663 Slice 1). */
-function compileIdentifierCore(ctx: CodegenContext, fctx: FunctionContext, id: ts.Identifier): ValType | null {
+function compileIdentifierCore(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+  skipRuntimeEvalState = false,
+): ValType | null {
   const name = id.text;
 
   // #1210: string-builder bindings are stored as a (buf, len, cap, mat)
@@ -548,6 +557,48 @@ function compileIdentifierCore(ctx: CodegenContext, fctx: FunctionContext, id: t
   const sb = getBuilderInfo(fctx, name);
   if (sb !== undefined) {
     return emitStringBuilderRead(ctx, fctx, sb);
+  }
+
+  // A sloppy direct eval can create a var binding in this activation after an
+  // earlier source-position read was compiled, and that binding shadows an
+  // outer capture or ambient/global symbol. Compile the ordinary resolution as
+  // the miss arm, then select through the stable caller-owned value cell. A
+  // current-function local/lexical binding is excluded by the shared predicate.
+  if (!skipRuntimeEvalState && runtimeEvalStateMayShadowBinding(ctx, fctx, name)) {
+    const savedFallback = pushBody(fctx);
+    const fallbackType = compileIdentifierCore(ctx, fctx, id, true);
+    if (fallbackType === null) {
+      popBody(fctx, savedFallback);
+      return null;
+    }
+    if (fallbackType.kind !== "externref") coerceType(ctx, fctx, fallbackType, { kind: "externref" });
+    const fallbackBody = fctx.body;
+    popBody(fctx, savedFallback);
+
+    const captured = emitCaptureRuntimeEvalBindingValueCell(ctx, fctx, name);
+    if (!captured) {
+      fctx.body.push(...fallbackBody);
+      return { kind: "externref" };
+    }
+    const presentBody: Instr[] = [
+      { op: "local.get", index: captured.valueCellLocal },
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: captured.cellTypeIdx },
+      { op: "struct.get", typeIdx: captured.cellTypeIdx, fieldIdx: 0 },
+      ...runtimeEvalSharedValueUnwrapInstrs(ctx, fctx),
+    ];
+    fctx.body.push(
+      { op: "local.get", index: captured.valueCellLocal },
+      { op: "ref.is_null" },
+      { op: "i32.eqz" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: presentBody,
+        else: fallbackBody,
+      },
+    );
+    return { kind: "externref" };
   }
 
   // (#2200 Phase 1, Annex B B.3.3) If `name` is a block-nested function whose
@@ -1267,7 +1318,9 @@ function compileIdentifierCore(ctx: CodegenContext, fctx: FunctionContext, id: t
   const sym = ctx.checker.getSymbolAtLocation(id);
   if (!sym) {
     if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalGlobalFunctionBindings) {
-      const dynamicGlobal = emitRuntimeEvalGlobalRead(ctx, fctx, name, false);
+      const dynamicGlobal = skipRuntimeEvalState
+        ? emitRuntimeEvalGlobalRead(ctx, fctx, name, false)
+        : emitRuntimeEvalBindingRead(ctx, fctx, name, false);
       if (dynamicGlobal !== null) return dynamicGlobal;
     }
     // Truly undeclared variable — throw a proper ReferenceError instance.
