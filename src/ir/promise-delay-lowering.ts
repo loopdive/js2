@@ -44,6 +44,8 @@ export interface ExactClosureLoweringOptions {
   readonly expectedLiftedName?: string;
   readonly expectedLiftedTarget?: IrFuncRef;
   readonly allowConciseVoidBody?: boolean;
+  /** Exact inline host callback consumed once by `__make_callback(-2, ...)`. */
+  readonly hostOneShot?: boolean;
 }
 
 type PromiseDelayBuilder = Pick<IrFunctionBuilder, "emitCall" | "emitCallablePack" | "typeOf">;

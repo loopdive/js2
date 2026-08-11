@@ -462,8 +462,7 @@ export function emitSafeNarrowedI32VecGet(
   host: Pick<ArrayElementLoweringHost, "builder">,
 ): IrValueId {
   const elemIr = irVal({ kind: "i32" });
-  const lenF64 = host.builder.emitVecLen(recv);
-  const lenI32 = host.builder.emitUnary("i32.trunc_sat_f64_s", lenF64, elemIr);
+  const lenI32 = host.builder.emitVecLenI32(recv);
   const cond = host.builder.emitBinary("i32.lt_u", idxI32, lenI32, elemIr);
 
   let thenValue!: IrValueId;
@@ -520,8 +519,7 @@ export function emitSafeVecGet(
     }
   }
 
-  const lenF64 = host.builder.emitVecLen(recv);
-  const lenI32 = host.builder.emitUnary("i32.trunc_sat_f64_s", lenF64, irVal({ kind: "i32" }));
+  const lenI32 = host.builder.emitVecLenI32(recv);
   const cond = host.builder.emitBinary("i32.lt_u", idxI32, lenI32, irVal({ kind: "i32" }));
   let thenValue!: IrValueId;
   const thenBody = host.builder.collectBodyInstrs(() => {

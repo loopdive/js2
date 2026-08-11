@@ -250,7 +250,8 @@ function closeRetainedIrOwnersByIdentity(
 }
 
 /** Final-context proof for B2's symbolic `__make_callback` dependency. */
-function hasExactHostVoidCallbackMakerImport(ctx: CodegenContext): boolean {
+export function hasExactHostVoidCallbackMakerImport(ctx: CodegenContext): boolean {
+  if (process.env.JS2WASM_TEST_INJECT_IR_PREPARED_IMPORT_COLLISION === "callback") return false;
   const makerIdx = ctx.funcMap.get("__make_callback");
   if (makerIdx === undefined || makerIdx < 0 || makerIdx >= ctx.numImportFuncs) return false;
 
@@ -270,6 +271,36 @@ function hasExactHostVoidCallbackMakerImport(ctx: CodegenContext): boolean {
     );
   }
   return false;
+}
+
+/**
+ * Prove that every already-collected env function import still owns its
+ * compatibility slot. A source declaration with the same spelling may
+ * overwrite `funcMap` after the import was allocated; prepared IR must reject
+ * before it freezes TDZ globals or publishes any Program ABI state.
+ */
+export function hasExactCurrentEnvFunctionImportManifest(ctx: CodegenContext): boolean {
+  if (process.env.JS2WASM_TEST_INJECT_IR_PREPARED_IMPORT_COLLISION === "dom") return false;
+  const checked = new Set<string>();
+  for (const imported of ctx.mod.imports) {
+    if (imported.desc.kind !== "func" || imported.module !== "env" || checked.has(imported.name)) continue;
+    checked.add(imported.name);
+    const mappedIdx = ctx.funcMap.get(imported.name);
+    if (mappedIdx === undefined || mappedIdx < 0 || mappedIdx >= ctx.numImportFuncs) return false;
+    let functionIndex = 0;
+    let occupant: typeof imported | undefined;
+    for (const candidate of ctx.mod.imports) {
+      if (candidate.desc.kind !== "func") continue;
+      if (functionIndex++ === mappedIdx) {
+        occupant = candidate;
+        break;
+      }
+    }
+    if (occupant?.module !== "env" || occupant.name !== imported.name || occupant.desc.kind !== "func") return false;
+    const type = ctx.mod.types[occupant.desc.typeIdx];
+    if (type?.kind !== "func") return false;
+  }
+  return true;
 }
 
 /** Exact callback preparation keyed by structural terminal owner. */
@@ -350,10 +381,7 @@ interface HostDateImportSignature {
 }
 
 const HOST_DATE_IMPORT_SIGNATURES = new Map<string, HostDateImportSignature>([
-  ["Date_new", { params: [], results: [{ kind: "externref" }] }],
-  ["Date_getDate", { params: [{ kind: "externref" }], results: [{ kind: "f64" }] }],
-  ["Date_getMonth", { params: [{ kind: "externref" }], results: [{ kind: "f64" }] }],
-  ["Date_getFullYear", { params: [{ kind: "externref" }], results: [{ kind: "f64" }] }],
+  ["__date_now", { params: [], results: [{ kind: "f64" }] }],
 ]);
 
 /** Exact owner plus the validated legacy labels needed at the host-Date ABI seam. */
@@ -389,6 +417,41 @@ function validateHostDateSnapshotPlansByIdentity(
     plans.push(plan);
   }
   return plans;
+}
+
+/** Read-only host-Date preflight used by an aggregate prepared component. */
+export function canPrepareHostDateSnapshotLoweringByIdentity(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  importsByOwnerUnitId: ReadonlyMap<IrUnitId, IrHostDateSnapshotImportPlan>,
+  retainedFunctionUnitIds: ReadonlySet<IrUnitId>,
+  retainedModuleInitUnitId: IrUnitId | undefined,
+  identityContext: IrPlanningIdentityContext,
+  options: IrHostDateSnapshotPreparationOptions = {},
+): boolean {
+  const retained = validateRetainedHostDateOwners(
+    sourceFile,
+    identityContext,
+    retainedFunctionUnitIds,
+    retainedModuleInitUnitId,
+  );
+  const activePlans = validateHostDateSnapshotPlansByIdentity(sourceFile, identityContext, importsByOwnerUnitId).filter(
+    (plan) => retained.has(plan.ownerUnitId),
+  );
+  if (activePlans.length === 0) return true;
+  if (options.supportsHostDateSnapshots === false) return false;
+  for (const plan of activePlans) {
+    for (const name of plan.importNames) {
+      const signature = HOST_DATE_IMPORT_SIGNATURES.get(name);
+      if (
+        !signature ||
+        (ctx.funcMap.has(name) && !hasExactEnvFunctionImport(ctx, name, signature.params, signature.results))
+      ) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 function validateRetainedHostDateOwners(

@@ -90,6 +90,7 @@ import {
 } from "./effects.js";
 import { IrInvariantError } from "./outcomes.js";
 import { irImportFuncRef, irIntrinsicFuncRef, irRuntimeFuncRef } from "./callable-bindings.js";
+import { parseIrDateSnapshotGetter } from "./date-runtime.js";
 import { IR_STRING_ITERATOR_CHAR_AT_FN, type IrStringConcatMode, type IrStringEncoding } from "./string-runtime.js";
 import type { BlockType, FuncTypeDef, Instr, LocalDef, ValType, WasmFunction } from "./types.js";
 export type {
@@ -160,7 +161,11 @@ export interface IrLowerResolver {
    * signature's exact canonical wrapper, so the
    * lifted body's `ref.cast` recovers capture-field positions.
    */
-  resolveClosureSubtype?(signature: IrClosureSignature, captureFieldTypes: readonly IrType[]): IrClosureLowering | null;
+  resolveClosureSubtype?(
+    signature: IrClosureSignature,
+    captureFieldTypes: readonly IrType[],
+    hostOneShot?: boolean,
+  ): IrClosureLowering | null;
   /**
    * Slice 3 (#1169c): resolve the WasmGC struct type for a ref cell
    * over a primitive ValType. Delegates to the legacy
@@ -663,6 +668,92 @@ export function lowerIrFunctionBody<S, Slot>(
     }
   }
 
+  // Nested instruction buffers are structured regions, not basic-block
+  // boundaries for values that are both defined and consumed exactly once
+  // inside the same region. The historical synthetic `-1` accounting above
+  // deliberately materializes outer values before entering a loop/arm, but it
+  // also conservatively caught every buffer-internal temporary. A pure,
+  // single-use internal expression can stay as an ordinary Wasm stack tree:
+  // it cannot be observed across iterations/arms and moving a pure node to its
+  // sole consumer cannot reorder effects. Recover only that narrow subset;
+  // multi-use, effectful, cross-region, and carrier values retain their local.
+  const lexicalDefRegion = new Map<IrValueId, number>();
+  const lexicalUseRegions = new Map<IrValueId, Set<number>>();
+  const lexicalUseCounts = new Map<IrValueId, number>();
+  const lexicalDefPoints = new Map<IrValueId, { readonly region: number; readonly index: number }>();
+  const lexicalUsePoints = new Map<
+    IrValueId,
+    Array<{ readonly region: number; readonly index: number; readonly consumer?: IrInstr }>
+  >();
+  const lexicalInstrsByRegion = new Map<number, readonly IrInstr[]>();
+  let nextNestedRegion = -1;
+  const recordLexicalUse = (value: IrValueId, region: number, index: number, consumer?: IrInstr): void => {
+    lexicalUseCounts.set(value, (lexicalUseCounts.get(value) ?? 0) + 1);
+    const regions = lexicalUseRegions.get(value) ?? new Set<number>();
+    regions.add(region);
+    lexicalUseRegions.set(value, regions);
+    const points = lexicalUsePoints.get(value) ?? [];
+    points.push({ region, index, ...(consumer ? { consumer } : {}) });
+    lexicalUsePoints.set(value, points);
+  };
+  const visitLexicalBuffer = (instrs: readonly IrInstr[], region: number): void => {
+    lexicalInstrsByRegion.set(region, instrs);
+    for (let index = 0; index < instrs.length; index++) {
+      const instr = instrs[index]!;
+      if (instr.result !== null) {
+        lexicalDefRegion.set(instr.result, region);
+        lexicalDefPoints.set(instr.result, { region, index });
+      }
+      for (const value of collectIrUses(instr)) recordLexicalUse(value, region, index, instr);
+      const childRegions: number[] = [];
+      forEachNestedBuffer(instr, (buffer) => {
+        const childRegion = nextNestedRegion--;
+        childRegions.push(childRegion);
+        visitLexicalBuffer(buffer, childRegion);
+      });
+      if (instr.kind === "if") {
+        const thenRegion = childRegions[0];
+        const elseRegion = childRegions[1];
+        if (thenRegion !== undefined) recordLexicalUse(instr.thenValue, thenRegion, instr.then.length);
+        if (elseRegion !== undefined) recordLexicalUse(instr.elseValue, elseRegion, instr.else.length);
+      }
+    }
+  };
+  for (const block of func.blocks) {
+    const region = block.id as number;
+    visitLexicalBuffer(block.instrs, region);
+    for (const value of collectTerminatorUses(block)) recordLexicalUse(value, region, block.instrs.length);
+  }
+  const nestedPureEffects = new Map<IrInstr, IrEffects>();
+  for (const value of [...crossBlock]) {
+    const defRegion = lexicalDefRegion.get(value);
+    const useRegions = lexicalUseRegions.get(value);
+    const def = defBy.get(value);
+    if (
+      defRegion === undefined ||
+      defRegion >= 0 ||
+      !def ||
+      !useRegions ||
+      useRegions.size !== 1 ||
+      !useRegions.has(defRegion) ||
+      lexicalUseCounts.get(value) !== 1 ||
+      !effectsArePure(effectsOf(def, nestedPureEffects))
+    ) {
+      continue;
+    }
+    crossBlock.delete(value);
+    needsLocal.delete(value);
+  }
+  // Numeric/null constants are cheaper and safer to rematerialize at each use
+  // than to reserve a function local and emit local.tee/local.get traffic.
+  // Unlike computed pure values, this remains a win across loop boundaries:
+  // the Wasm const itself is the complete value and has no producer subtree to
+  // repeat. This mirrors the direct backend's literal emission strategy.
+  for (const value of [...needsLocal]) {
+    if (defBy.get(value)?.kind !== "const") continue;
+    needsLocal.delete(value);
+    crossBlock.delete(value);
+  }
   // --- #1982: effects-aware emission scheduling ---------------------------
   //
   // Lazy use-site emission re-emits a value's defining tree at its consumer,
@@ -801,6 +892,59 @@ export function lowerIrFunctionBody<S, Slot>(
     }
   }
 
+  // An effectful value in a nested region can also stay on the Wasm stack
+  // when its sole consumer is a later in-place instruction separated only by
+  // pure instructions. The consumer is guaranteed to emit at that exact
+  // region position, and crossing pure work cannot change observable order,
+  // so this removes only a redundant local.set/local.get pair.
+  for (const value of [...crossBlock]) {
+    const defPoint = lexicalDefPoints.get(value);
+    const usePoints = lexicalUsePoints.get(value);
+    const def = defBy.get(value);
+    const usePoint = usePoints?.length === 1 ? usePoints[0] : undefined;
+    const consumer = usePoint?.consumer;
+    if (
+      !defPoint ||
+      defPoint.region >= 0 ||
+      !def ||
+      effectsArePure(effectsOf(def)) ||
+      !usePoint ||
+      usePoint.region !== defPoint.region ||
+      usePoint.index <= defPoint.index ||
+      !consumer
+    ) {
+      continue;
+    }
+    const regionInstrs = lexicalInstrsByRegion.get(defPoint.region);
+    if (!regionInstrs) continue;
+    let terminalConsumer = consumer;
+    let terminalIndex = usePoint.index;
+    const isInPlace = (candidate: IrInstr): boolean =>
+      candidate.result === null ||
+      crossBlock.has(candidate.result) ||
+      anchorEager.has(candidate.result) ||
+      ((totalUses.get(candidate.result) ?? 0) === 0 && isSideEffecting(candidate));
+    while (!isInPlace(terminalConsumer)) {
+      if (terminalConsumer.result === null || !effectsArePure(effectsOf(terminalConsumer))) break;
+      const nextUses = lexicalUsePoints.get(terminalConsumer.result);
+      const next = nextUses?.length === 1 ? nextUses[0] : undefined;
+      if (
+        !next?.consumer ||
+        next.region !== defPoint.region ||
+        next.index <= terminalIndex ||
+        regionInstrs.slice(terminalIndex + 1, next.index).some((between) => !effectsArePure(effectsOf(between)))
+      ) {
+        break;
+      }
+      terminalConsumer = next.consumer;
+      terminalIndex = next.index;
+    }
+    if (!isInPlace(terminalConsumer)) continue;
+    if (regionInstrs.slice(defPoint.index + 1, terminalIndex).some((between) => !effectsArePure(effectsOf(between))))
+      continue;
+    crossBlock.delete(value);
+    needsLocal.delete(value);
+  }
   // --- local allocation ---------------------------------------------------
   // Stable order: scan blocks then instrs. Every `needsLocal` value gets one
   // internal emission slot, placed after the function's parameter slots.
@@ -910,6 +1054,23 @@ export function lowerIrFunctionBody<S, Slot>(
   let jsBitwiseRhsIdxF64: number | null = null;
   let jsBitwiseRhsIdxI32: number | null = null;
   let jsBitwiseTmpIdx: number | null = null;
+  let dateSnapshotScratch: { timestamp: number; packed: number; year: number } | null = null;
+  const ensureDateSnapshotScratch = (): { timestamp: number; packed: number; year: number } => {
+    if (dateSnapshotScratch === null) {
+      const alloc = (name: string): number => {
+        const idx = func.params.length + locals.length;
+        const type: ValType = { kind: "i64" };
+        locals.push({ name, type, logicalType: { kind: "val", val: type } });
+        return idx;
+      };
+      dateSnapshotScratch = {
+        timestamp: alloc("$date_snapshot_timestamp"),
+        packed: alloc("$date_snapshot_packed"),
+        year: alloc("$date_snapshot_year"),
+      };
+    }
+    return dateSnapshotScratch;
+  };
   // #1373b C-1 — scratch externref local for the native-carrier `await`
   // unwrap (holds the operand across the ref.test/if discrimination, exactly
   // like `emitStandaloneAwaitUnwrap`'s temp local). Allocated lazily on the
@@ -1263,6 +1424,76 @@ export function lowerIrFunctionBody<S, Slot>(
         emitter.emitConst(instr, func.name, out);
         return;
       case "call": {
+        const dateGetter =
+          instr.target.binding.kind === "intrinsic"
+            ? parseIrDateSnapshotGetter(instr.target.binding.symbol)
+            : undefined;
+        if (dateGetter !== undefined) {
+          if (instr.args.length !== 1) {
+            throw new Error(`ir/lower: ${dateGetter} snapshot getter expects one timestamp (${func.name})`);
+          }
+          emitValue(instr.args[0]!, out);
+          const wasmOut = requireInstrSink(out);
+          const scratch = ensureDateSnapshotScratch();
+          const civilIdx = resolver.resolveFunc(instr.target);
+          wasmOut.push(
+            { op: "i64.trunc_sat_f64_s" },
+            { op: "local.set", index: scratch.timestamp },
+            { op: "local.get", index: scratch.timestamp },
+            { op: "i64.const", value: 0n },
+            { op: "i64.ge_s" },
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "i64" } },
+              then: [
+                { op: "local.get", index: scratch.timestamp },
+                { op: "i64.const", value: 86400000n },
+                { op: "i64.div_s" },
+              ],
+              else: [
+                { op: "local.get", index: scratch.timestamp },
+                { op: "i64.const", value: 86399999n },
+                { op: "i64.sub" },
+                { op: "i64.const", value: 86400000n },
+                { op: "i64.div_s" },
+              ],
+            },
+            { op: "call", funcIdx: civilIdx },
+            { op: "local.tee", index: scratch.packed },
+            { op: "i64.const", value: 10000n },
+            { op: "i64.div_s" },
+            { op: "local.get", index: scratch.packed },
+            { op: "i64.const", value: 10000n },
+            { op: "i64.rem_s" },
+            { op: "i64.const", value: 0n },
+            { op: "i64.ne" },
+            { op: "local.get", index: scratch.packed },
+            { op: "i64.const", value: 0n },
+            { op: "i64.lt_s" },
+            { op: "i32.and" },
+            { op: "i64.extend_i32_s" },
+            { op: "i64.sub" },
+          );
+          if (dateGetter === "getFullYear") {
+            wasmOut.push({ op: "f64.convert_i64_s" });
+            return;
+          }
+          wasmOut.push(
+            { op: "local.set", index: scratch.year },
+            { op: "local.get", index: scratch.packed },
+            { op: "local.get", index: scratch.year },
+            { op: "i64.const", value: 10000n },
+            { op: "i64.mul" },
+            { op: "i64.sub" },
+            { op: "i64.const", value: 100n },
+            { op: dateGetter === "getDate" ? "i64.rem_s" : "i64.div_s" },
+          );
+          if (dateGetter === "getMonth") {
+            wasmOut.push({ op: "i64.const", value: 1n }, { op: "i64.sub" });
+          }
+          wasmOut.push({ op: "f64.convert_i64_s" });
+          return;
+        }
         // (a1) call family (#1584 §2a): route through the typed emitCall
         // primitive — byte-identical {op:"call"} on WasmGC, OP.CALL on bytecode.
         for (const a of instr.args) emitValue(a, out);
@@ -1868,7 +2099,11 @@ export function lowerIrFunctionBody<S, Slot>(
       }
       // Slice 3 (#1169c): closure / ref-cell ops.
       case "closure.new": {
-        const sub = resolver.resolveClosureSubtype?.(instr.signature, instr.captureFieldTypes);
+        const sub = resolver.resolveClosureSubtype?.(
+          instr.signature,
+          instr.captureFieldTypes,
+          instr.hostOneShot === true,
+        );
         if (!sub) {
           throw new Error(`ir/lower: resolver cannot lower closure subtype (${func.name})`);
         }
@@ -1888,7 +2123,11 @@ export function lowerIrFunctionBody<S, Slot>(
         if (!subMeta) {
           throw new Error(`ir/lower: closure.cap requires func.closureSubtype metadata (${func.name})`);
         }
-        const sub = resolver.resolveClosureSubtype?.(subMeta.signature, subMeta.captureFieldTypes);
+        const sub = resolver.resolveClosureSubtype?.(
+          subMeta.signature,
+          subMeta.captureFieldTypes,
+          subMeta.hostOneShot === true,
+        );
         if (!sub) {
           throw new Error(`ir/lower: resolver cannot resolve closure subtype for ${func.name}`);
         }

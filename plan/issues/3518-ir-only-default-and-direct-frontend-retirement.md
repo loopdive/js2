@@ -3,7 +3,7 @@ id: 3518
 title: "IR-only default and direct front-end retirement"
 status: in-progress
 created: 2026-07-21
-updated: 2026-08-09
+updated: 2026-08-11
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -64,15 +64,15 @@ The following measurements are independent and must not be conflated:
 | Adoption matrix                                  |       **18 / 58 rows IR-owned** | Those syntax rows have an IR implementation in measured configurations | Their legacy handlers are unreachable in mixed functions or at module scope |
 | Front-end reachability                           | **59,676 legacy-only fn-lines** | Approximate final deletion opportunity                                 | Those lines are dormant today                                               |
 | Runtime/builtin reachability                     |               **~47K fn-lines** | Behavior emission must gain IR-owned entry points                      | Those routines should be deleted with the front-end                         |
-| Bounded host terminal readiness                  | **37/37 IR; 10 legacy bodies** | Every measured terminal has an IR body and no typed blocker remains    | The remaining direct bodies or global runtime/linear paths are unreachable  |
+| Bounded host terminal readiness                  |  **37/37 IR; 0 legacy bodies** | Every measured playground terminal is prepared and compile-once        | Global runtime/linear/direct paths are unreachable or IR-only is ready       |
 
 R0 is complete. After the #3522 cross-owner/Builtins transactions and the
-#3523 Algorithms function-plus-module-init transaction, the bounded hybrid
-gate is green at 5/5 entries, 37 terminal units, 37 emitted IR bodies, 0 typed
-Unsupported outcomes, 0 Invariants, and 10 legacy bodies. Strict IR-only is
-still red only because the Calendar module initializer and its nine functions
-retain direct bodies. All seven Algorithms terminals now seal together and
-compile once through IR.
+#3523 Algorithms and Calendar function-plus-module-init transactions, the
+bounded single-host playground gate is green at 5/5 entries, 37 terminal
+units, 37 emitted IR bodies, 0 typed Unsupported outcomes, 0 Invariants, and 0
+legacy bodies. All Algorithms and Calendar terminals now seal in exact
+prepared components and compile once through IR. This is a bounded census,
+not repository-wide strict IR-only readiness.
 
 Additional blockers:
 
@@ -83,18 +83,20 @@ Additional blockers:
   explicit ambient-console selector boundary, while implicit, externref-backed,
   unsafe-super, forward-ABI, nested-class, and closure families retain the
   typed direct route until their complete transactions land.
-- #3523 now gives the exact host `const Map<K,V> = new Map()` Algorithms
-  initializer source-qualified compile-once ownership. Calendar and broader
-  module shapes still need the complete ordered R4 contract; the bounded route
-  is not evidence that generic `__module_init` compilation is dead.
+- #3523 now gives Algorithms' exact host `const Map<K,V> = new Map()` and
+  Calendar's gap-free initialized lexical sequence source-qualified
+  compile-once ownership. Broader statements, classes/statics, live seeds,
+  deferred/standalone/WASI startup, and multi-source module shapes still need
+  the complete ordered R4 contract; these bounded routes are not evidence that
+  generic `__module_init` compilation is dead.
 - Multi-source/M0 is a per-source, post-legacy overlay; fast-mode multi-source,
   class members, module init, and IR-first body skipping are incomplete.
 - The linear backend still has direct AST-reading paths and does not consume the
   same whole-program IR contract as WasmGC.
-- The R0 typed gate has replaced substring-matched build-error policy. Its
-  current strict failure is expected: the bounded lane has no Unsupported or
-  Invariant outcomes, but nine Calendar functions and its module initializer
-  still emit legacy bodies.
+- The R0 typed gate has replaced substring-matched build-error policy. The
+  bounded playground lane now passes its strict shadow with no legacy bodies;
+  the wider authoritative class/module/multi-source/runtime/linear matrices
+  remain the expected blockers to a repository-wide policy flip.
 - The normal fallback gate now reconciles preliminary selector labels with
   source-qualified terminal outcomes. Its async-function bucket fell from four
   to zero with #4124; this does not claim that async methods, closures,

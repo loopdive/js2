@@ -701,6 +701,43 @@ describe("#3521 post-pass prepared-component dependency evidence", () => {
     );
   });
 
+  it("normalizes only a certified physical vector carrier to its logical prepared type", () => {
+    const f = fixture();
+    const carrierRef = irSupportTypeRef(f.sourceId, "vector-carrier:vec<f64>", "__ir_vec_carrier_f64");
+    const dataRef = irSupportTypeRef(f.sourceId, "vector-data:vec<f64>", "__ir_vec_data_f64");
+    const layout = Object.freeze({
+      carrierType: carrierRef,
+      dataType: dataRef,
+      lengthFieldIndex: 0,
+      dataFieldIndex: 1,
+    });
+    const raw: IrFunction = {
+      ...irFunction(f.first),
+      params: [
+        { value: asValueId(0), name: "values", type: irVal({ kind: "ref", typeIdx: 17 }) },
+        { value: asValueId(1), name: "lookalike", type: irVal({ kind: "ref", typeIdx: 18 }) },
+      ],
+      valueCount: 2,
+    };
+
+    const attached = attachIrVecLayouts(
+      raw,
+      () => layout,
+      (type) =>
+        type.val.kind === "ref" && type.val.typeIdx === 17
+          ? { kind: "vec", elementType: irVal({ kind: "f64" }), nullable: false }
+          : null,
+    );
+    expect(attached.usesVec).toBe(true);
+    expect(attached.function.params[0]!.type).toMatchObject({
+      kind: "vec",
+      elementType: irVal({ kind: "f64" }),
+      nullable: false,
+      layout,
+    });
+    expect(attached.function.params[1]!.type).toEqual(irVal({ kind: "ref", typeIdx: 18 }));
+  });
+
   it("keeps logical vector helper identities independent of physical type indices", () => {
     const f64 = irVal({ kind: "f64" });
     const i32 = irVal({ kind: "i32" });

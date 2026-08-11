@@ -119,8 +119,8 @@ ledger as the positive control.
 
 ## Acceptance criteria
 
-- [x] Machine-readable ledger exists under `plan/log/` and records all 11 known
-      Acorn parity decisions.
+- [x] Machine-readable ledger exists under `plan/log/` and records the current
+      direct-optimization parity inventory.
 - [x] Every seed has stable identity, owners, typed IR status, three explicit
       evidence records, and retirement readiness.
 - [x] Incomplete migrations are represented without claiming deletion
@@ -138,11 +138,14 @@ ledger as the positive control.
       refreshed reachability audit authorizes deletion. This remains future
       migration work, not acceptance for the current hybrid gate machinery.
 
-## Result (2026-07-30)
+## Result (2026-08-11)
 
-The committed inventory measures **11 total rows**, **2 with complete IR
-ownership**, and **0 retirement-ready**. The result is intentionally
+The committed inventory measures **44 total rows**, **30 with complete IR
+ownership**, and **1 retirement-ready**. The result is intentionally
 fail-closed for deletion while remaining green for the hybrid compiler: pending
 evidence is explicit and cannot be mistaken for completed parity. Normal
-`check:issues` passes; deletion-time `--require-ready` fails on all **11/11**
-rows as expected.
+`check:issues` passes; deletion-time `--require-ready` remains red as expected.
+In particular, `IR-OPT-SSA-LOCAL-COALESCING` records Calendar's current 217
+`renderCal` / 358 aggregate IR local ceilings against direct references of 63 /
+142, so improved binary and engine-compile results cannot be mistaken for full
+direct allocation parity.

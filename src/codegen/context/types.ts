@@ -326,6 +326,13 @@ export interface ClosureInfo {
   /** True when the source closure has a `...rest` parameter. */
   hasRestParam?: boolean;
   /**
+   * True only while every concrete allocation of this wrapper/subtype is a
+   * checker-certified one-shot host callback. Such values are consumed by
+   * `__make_callback(-2, closure)` immediately and never enter the generic
+   * callable/property/method bridges. An ordinary allocation clears the bit.
+   */
+  hostOneShotOnly?: boolean;
+  /**
    * True when a source closure observes the call-site arity protocol through
    * its own `arguments`, a rest parameter, or a parameter default. Undefined
    * is conservative for synthetic/dynamic wrappers whose source is unknown.

@@ -130,6 +130,16 @@ describe("#2766 — IR ElementAccess prove-then-specialize", () => {
       const info = await compileInfo(src, "rd");
       expect(info.demotions).toBe(0);
       expect(info.hasStructuredIf).toBe(true); // not proven → SAFE bounds-check
+      expect(info.body).toContain("i32.lt_u");
+      expect(info.body).toContain("array.get");
+      expect(info.body).not.toContain("i32.trunc_sat_f64_s");
+      expect(info.body).not.toContain("f64.convert_i32_s");
+      expect(info.outcome).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+        preparedComponentId: expect.stringMatching(/^prepared-component:/),
+      });
     });
 
     it("a counted loop that reads arr[i+1] is NOT proven and stays safe at the boundary", async () => {
