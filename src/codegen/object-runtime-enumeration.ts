@@ -27,10 +27,10 @@ import { addUnionImportsViaRegistry } from "./shared.js";
 import { getOrRegisterVecBaseType } from "./registry/types.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
 import { buildExternGetIdxBody } from "./object-runtime.js";
-import { bagKeysIf } from "./carrier-bag-visibility.js"; // (#4010 S3) carrier-bag key enumeration
+import { bagKeysIf, buildBagPushKeys } from "./carrier-bag-visibility.js"; // (#4010 S3) carrier-bag key enumeration
 // (#4160) prototype-index companion consult for the vec OOB Has (resolves to
 // `undefined` unless `ctx.standalone && ctx.protoIndexDirty` reserved it).
-import { protoIndexHasIdxInstrs } from "./proto-index-store.js";
+import { protoIndexForInPushInstrs, protoIndexHasIdxInstrs } from "./proto-index-store.js";
 
 /**
  * Everything the enumeration/array-like/object-static block reads from the
@@ -63,6 +63,20 @@ export interface ObjectEnumerationHelperState {
   objOrderedAllIdx: number;
   FLAG_ENUMERABLE: number;
   FLAG_TOMBSTONE: number;
+}
+
+/** Non-$Object for-in snapshot: own carrier-bag keys, then implicit prototype. */
+function nonObjectForInKeysIf(ctx: CodegenContext): Instr {
+  return {
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [
+      ...buildBagPushKeys(ctx, { vecLocal: 7, includeNonEnum: false }),
+      ...protoIndexForInPushInstrs(ctx, 0, 7, 8),
+      { op: "local.get", index: 7 },
+      { op: "return" },
+    ],
+  };
 }
 
 /**
@@ -228,7 +242,7 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
       { op: "local.tee", index: 1 },
       { op: "ref.test", typeIdx: objectTypeIdx },
       { op: "i32.eqz" },
-      bagKeysIf(ctx, { vecLocal: 7, includeNonEnum: false }),
+      nonObjectForInKeysIf(ctx),
       // cur = cast<$Object>(any)
       { op: "local.get", index: 1 },
       { op: "ref.cast", typeIdx: objectTypeIdx },
@@ -374,7 +388,7 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
           },
         ],
       },
-      // return vec
+      ...protoIndexForInPushInstrs(ctx, 0, 7, 8),
       { op: "local.get", index: 7 },
     ];
     registerNative(
