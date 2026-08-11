@@ -1546,19 +1546,21 @@
       /* #1583 — test262 source-path links inside an expanded feat-row
          `<details>` body. */
       .feat-test262-paths {
-        margin: 8px 0 4px;
-        font-size: 12px;
+        margin: 5px 0 2px;
+        font-size: 10px;
+        line-height: 1.45;
         font-family: var(--mono);
         color: var(--fg-faint);
         display: flex;
         flex-wrap: wrap;
-        gap: 6px 10px;
+        gap: 1px 6px;
         align-items: baseline;
       }
       .feat-test262-paths-label {
         text-transform: uppercase;
-        letter-spacing: 0.08em;
-        font-size: 10px;
+        letter-spacing: 0.06em;
+        font-size: 9px;
+        opacity: 0.75;
       }
       .feat-test262-paths a {
         color: var(--accent, #60a5fa);
@@ -1568,6 +1570,22 @@
       .feat-test262-paths a:hover {
         opacity: 1;
         text-decoration: underline;
+      }
+      /* "+N" reveals the long tail; sized to sit inline with the links. */
+      .feat-test262-paths-more {
+        font-family: inherit;
+        font-size: inherit;
+        line-height: inherit;
+        color: var(--fg-faint);
+        background: rgba(255, 255, 255, 0.06);
+        border: 0;
+        border-radius: 3px;
+        padding: 0 4px;
+        cursor: pointer;
+      }
+      .feat-test262-paths-more:hover {
+        color: var(--fg);
+        background: rgba(255, 255, 255, 0.12);
       }
 
       @media (max-width: 980px) {
@@ -2216,7 +2234,6 @@ parseInt("42");
               </div>
               <div class="feat-row" data-t262-paths="built-ins/JSON">
                 <span class="feat-badge partial">⚠</span>
-                <span class="feat-host">host</span>
                 <span class="feat-name">JSON</span>
                 <span class="feat-desc">Parse and stringify JSON data</span>
                 <details>
@@ -2260,7 +2277,6 @@ throw new RangeError("out of bounds");</pre
                 data-t262-paths="built-ins/Array,built-ins/ArrayIteratorPrototype,language/expressions/array"
               >
                 <span class="feat-badge partial">⚠</span>
-                <span class="feat-host">host</span>
                 <span class="feat-name">Arrays</span>
                 <span class="feat-desc">Array methods and iteration helpers</span>
                 <details>
@@ -2287,7 +2303,6 @@ const found = arr.find(x =&gt; x &gt; 5);</pre
               </div>
               <div class="feat-row" data-t262-paths="built-ins/RegExp,built-ins/RegExpStringIteratorPrototype">
                 <span class="feat-badge full">✓</span>
-                <span class="feat-host">host</span>
                 <span class="feat-name">Regular expressions</span>
                 <span class="feat-desc">Pattern matching and string search</span>
                 <details>
@@ -2581,7 +2596,6 @@ class Dog extends Animal { }</pre
                 data-t262-paths="built-ins/Map,built-ins/Set,built-ins/MapIteratorPrototype,built-ins/SetIteratorPrototype"
               >
                 <span class="feat-badge partial">⚠</span>
-                <span class="feat-host">host</span>
                 <span class="feat-name">Map / Set</span>
                 <span class="feat-desc">Key-value and unique-value collections</span>
                 <details>
@@ -2696,15 +2710,15 @@ new Proxy(t, handler);      // trap dispatch not yet</pre
               </div>
               <div class="feat-row" data-t262-paths="built-ins/Promise">
                 <span class="feat-badge partial">⚠</span>
-                <span class="feat-host">host</span>
                 <span class="feat-name">Promise .then / .catch / .finally</span>
                 <span class="feat-desc">Promise chaining and error handling</span>
                 <details>
                   <summary></summary>
-                  <pre>Promise.resolve(1).then(v => v + 1); // callbacks need host microtasks</pre>
+                  <pre>Promise.resolve(1).then(v => v + 1);</pre>
                   <div class="feat-explain">
-                    Promise construction and Promise.resolve/all/race work. Chained .then/.catch/.finally callbacks need
-                    the host microtask queue to run.
+                    Promise construction, Promise.resolve/all/race and chained .then/.catch/.finally callbacks all run
+                    on a Wasm-native microtask queue — a standalone build of this compiles to a module with no imports
+                    at all. The remaining gaps are unsettled-rejection and ordering edge cases.
                   </div>
                 </details>
               </div>
@@ -2716,7 +2730,6 @@ new Proxy(t, handler);      // trap dispatch not yet</pre
                 data-t262-paths="built-ins/AsyncFunction,built-ins/AsyncGeneratorFunction,built-ins/AsyncGeneratorPrototype,built-ins/AsyncIteratorPrototype,built-ins/AsyncFromSyncIteratorPrototype"
               >
                 <span class="feat-badge partial">⚠</span>
-                <span class="feat-host">host</span>
                 <span class="feat-name">async / await</span>
                 <span class="feat-desc">Asynchronous functions with synchronous-style syntax</span>
                 <details>
@@ -2796,7 +2809,6 @@ const { a, ...rest } = obj;</pre
                 data-t262-paths="built-ins/AsyncGeneratorFunction,built-ins/AsyncGeneratorPrototype,built-ins/AsyncIteratorPrototype,built-ins/AsyncFromSyncIteratorPrototype,language/expressions/async-generator,language/statements/async-generator"
               >
                 <span class="feat-badge partial">⚠</span>
-                <span class="feat-host">host</span>
                 <span class="feat-name">Async iteration (for-await-of)</span>
                 <span class="feat-desc">Iterate over async data sources</span>
                 <details>
@@ -2858,7 +2870,6 @@ const { a, ...rest } = obj;</pre
               </div>
               <div class="feat-row" data-t262-paths="built-ins/global,built-ins/globalThis">
                 <span class="feat-badge partial">⚠</span>
-                <span class="feat-host">host</span>
                 <span class="feat-name">globalThis</span>
                 <span class="feat-desc">Universal global object reference</span>
                 <details>
@@ -3213,7 +3224,6 @@ buf.resize(16);</pre
                 data-t262-paths="built-ins/Set/prototype/union,built-ins/Set/prototype/intersection,built-ins/Set/prototype/difference,built-ins/Set/prototype/symmetricDifference,built-ins/Set/prototype/isSubsetOf,built-ins/Set/prototype/isSupersetOf,built-ins/Set/prototype/isDisjointFrom"
               >
                 <span class="feat-badge partial">⚠</span>
-                <span class="feat-host">host</span>
                 <span class="feat-name">Set methods (union, intersection, difference)</span>
                 <span class="feat-desc">Built-in set operations</span>
 
@@ -3224,7 +3234,10 @@ const a = new Set([1, 2, 3]);
 const b = new Set([2, 3, 4]);
 a.union(b); // {1,2,3,4}</pre
                   >
-                  <div class="feat-explain">ES2025 Set methods. Requires host import for Set operations.</div>
+                  <div class="feat-explain">
+                    ES2025 Set methods, compiled natively — no host import is involved, and a standalone build emits a
+                    module with no imports.
+                  </div>
                 </details>
               </div>
               <div class="feat-row" data-t262-paths="built-ins/Iterator">
@@ -6457,19 +6470,63 @@ console.log(instance.exports.run()); // &rarr; 55</pre
                 reportLink.textContent = total > 0 ? `View test results (${pass}/${total}) →` : "View test results →";
               }
               if (!details.querySelector(".feat-test262-paths")) {
+                // Compact rendering. Rows map to as many as 35 test262 paths
+                // (Operators), and printing each in full — every one repeating
+                // `language/expressions/` — turned this block into the tallest
+                // thing in an expanded row. Factor the shared directory out
+                // into the label and show only what differs; the full path
+                // stays in each link's `title` and in its href.
+                const commonDir = (list) => {
+                  if (list.length < 2) return "";
+                  const segs = list.map((p) => p.split("/"));
+                  const first = segs[0];
+                  let n = 0;
+                  while (n < first.length - 1 && segs.every((s) => s.length > n + 1 && s[n] === first[n])) n++;
+                  return n > 0 ? first.slice(0, n).join("/") + "/" : "";
+                };
+                const prefix = commonDir(paths);
                 const wrap = document.createElement("div");
                 wrap.className = "feat-test262-paths";
                 const label = document.createElement("span");
                 label.className = "feat-test262-paths-label";
-                label.textContent = "test262 source:";
+                label.textContent = prefix ? `test262 ${prefix}` : "test262";
                 wrap.appendChild(label);
-                for (const p of paths) {
+
+                const VISIBLE = 6;
+                const links = paths.map((p) => {
                   const a = document.createElement("a");
                   a.href = `https://github.com/tc39/test262/tree/main/test/${p}`;
                   a.target = "_blank";
                   a.rel = "noopener";
-                  a.textContent = p;
+                  a.textContent = prefix && p.startsWith(prefix) ? p.slice(prefix.length) : p;
+                  a.title = p;
+                  return a;
+                });
+                links.forEach((a, i) => {
+                  if (i >= VISIBLE) a.hidden = true;
                   wrap.appendChild(a);
+                });
+                // Keep the long tail one click away rather than always-on.
+                if (links.length > VISIBLE) {
+                  const more = document.createElement("button");
+                  more.type = "button";
+                  more.className = "feat-test262-paths-more";
+                  const hidden = links.length - VISIBLE;
+                  more.textContent = `+${hidden}`;
+                  more.title = `Show ${hidden} more test262 path${hidden === 1 ? "" : "s"}`;
+                  more.addEventListener("click", (event) => {
+                    // The row itself toggles <details> on click — this button
+                    // must not collapse the row it just expanded.
+                    event.stopPropagation();
+                    event.preventDefault();
+                    const expanded = more.dataset.expanded === "true";
+                    links.forEach((a, i) => {
+                      if (i >= VISIBLE) a.hidden = expanded;
+                    });
+                    more.dataset.expanded = expanded ? "false" : "true";
+                    more.textContent = expanded ? `+${hidden}` : "−";
+                  });
+                  wrap.appendChild(more);
                 }
                 details.appendChild(wrap);
               }

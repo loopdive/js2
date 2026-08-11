@@ -105,6 +105,66 @@ reads the standalone series instead of hiding.
   host numbers — the pre-#4362 behaviour, and strictly better than blank rows.
   Pinned by a test.
 
+## Phase 2 — content audit of the feature table (2026-08-11)
+
+With the toggle actually re-measuring, the **static** `feat-host` labels became
+auditable against data for the first time. `feat-host` renders a row as a red
+`×` scored 0 when the toggle is off, i.e. it asserts *"not available without a
+JS host"*. Of 24 labelled rows, **9 were measurably false**:
+
+| row | js-host | standalone (host-free) |
+| --- | --- | --- |
+| Map / Set | 88% | **85%** |
+| Regular expressions | 95% | **84%** |
+| async / await | 85% | **82%** |
+| Set methods (union, intersection, difference) | 90% | **81%** |
+| globalThis | 39% | **79%** |
+| Promise .then / .catch / .finally | 67% | **67%** |
+| Async iteration (for-await-of) | 67% | **66%** |
+| JSON | 73% | **55%** |
+| Arrays | 64% | **54%** |
+
+Confirmed by compiling one snippet per row with `target: "standalone"` and
+inspecting the module: **each produced a binary with ZERO imports that
+instantiated and ran**. A feature that compiles to a zero-import module is not
+host-dependent, whatever the label said.
+
+Labels removed from those 9. Two prose claims were disproven by the same probes
+and rewritten:
+
+- *"ES2025 Set methods. Requires host import for Set operations."* — no host
+  import is involved; a standalone build has no imports at all.
+- *"Chained .then/.catch/.finally callbacks need the host microtask queue to
+  run."* — they run on a Wasm-native microtask queue; the probe ran host-free.
+
+**Left in place, deliberately:** the 15 rows still labelled `host` all sit
+below 50% host-free (WeakRef 39% down to Resizable ArrayBuffer 0%). The `×`
+arguably still overstates the gap for the mid-range ones (Symbol 36%,
+TypedArray 26%), but "how a partially-working feature should render in
+standalone" is a design question about the badge vocabulary, not a false
+statement to correct. Filed as a follow-up thought rather than changed here.
+
+**Checked and NOT changed** — four rows make specific "not implemented" claims;
+all four were verified **still true** by compiling and running them, so the
+prose stands:
+
+| row | probe result |
+| --- | --- |
+| Uint8Array to/from Base64 | `fromBase64 is not a function` |
+| Math.sumPrecise | `sumPrecise is not a function` |
+| Iterator sequencing | `Iterator.concat` yields an empty sequence |
+| Array.fromAsync | resolves to an empty array (`len=0`) |
+
+## Phase 2b — compact test262 source lists
+
+The "test262 source:" block in an expanded row printed every mapped path in
+full. The Operators row maps **35** paths, all repeating
+`language/expressions/` — 1,150 characters, making the list the tallest element
+in the row. Now the shared directory is factored into the label and stripped
+from each link (full path preserved in `href` + `title`), and only the first 6
+render, with the rest behind a `+N` button: **~83 characters, 93% less text**.
+Font/gap/margins tightened to match. Single-path rows are unchanged.
+
 ## Verification
 
 - `tests/issue-4362-landing-host-standalone-toggle.test.ts` — drives the real
@@ -117,3 +177,9 @@ reads the standalone series instead of hiding.
   and in-place patching still works when no out path is given.
 - Ran the real generator over the fetched standalone baseline JSONL
   (48,735 entries): 51 tag-sliced, 29 path-scored, 8 headline-only rows.
+- `tests/issue-4362-test262-paths-compact.test.ts` — prefix factoring, the
+  6-link cap, the `+N` reveal, that `+N` does not collapse the row it sits in
+  (the row toggles `<details>` on click, so the button must stop propagation),
+  and that a single-path row is left alone.
+- Every Phase-2 label removal and prose rewrite is backed by a
+  `target: "standalone"` compile producing a zero-import module that ran.
