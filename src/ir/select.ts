@@ -63,7 +63,7 @@ import {
   type IrAsyncSelectionOptions,
 } from "./async-selection.js";
 export { isAsyncIrReady } from "./async-selection.js";
-import { collectIrSafeVarDeclarationLists } from "./function-local-var.js";
+import { collectIrSafeModuleVarDeclarationLists, collectIrSafeVarDeclarationLists } from "./function-local-var.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
 // (#1373b C-1) Pure-syntactic async helpers from the LEAF module (safe for
@@ -4978,6 +4978,11 @@ function obviousModuleValueFamily(expr: ts.Expression): ObviousModuleValueFamily
   if (binding?.valueKind.kind === "f64") return "f64";
   if (binding?.valueKind.kind === "i32") return "boolean";
   if (binding?.valueKind.kind === "extern") return "extern";
+  // A #4208 update-retyped module binding has deliberately stale checker
+  // evidence: after `value--`, a Boolean/string initializer now holds a
+  // Number. Do not fall through to scalarExpressionFamily and resurrect the
+  // initializer's static family after the binding resolver chose dynamic.
+  if (binding?.valueKind.kind === "dynamic") return undefined;
   const scalarAlias = moduleScalarAliasFamily(candidate);
   if (scalarAlias) return scalarAlias;
   if (isModuleMapGetAlias(candidate)) return "extern";
@@ -7379,7 +7384,28 @@ export function assessModuleInit(
   currentDynMemberEqualitySubject = null;
   currentStableFunctionCallSubject = null;
   currentStableDynamicRootNames = new Set<string>();
-  currentIrSafeVarDeclarationLists = new Set();
+  // #4208 S2 opens the direct top-level `var` gate only for a source that
+  // genuinely contains an update-retyped module binding. The exact binding
+  // resolver rejects same-named locals and ordinary narrow module globals, so
+  // unrelated modules retain the existing conservative `var` demotion.
+  let hasDynamicModuleUpdate = false;
+  const findDynamicModuleUpdate = (node: ts.Node): void => {
+    if (hasDynamicModuleUpdate) return;
+    if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken) &&
+      ts.isIdentifier(node.operand) &&
+      currentModuleBindingResolver?.(node.operand)?.valueKind.kind === "dynamic"
+    ) {
+      hasDynamicModuleUpdate = true;
+      return;
+    }
+    forEachChild(node, findDynamicModuleUpdate);
+  };
+  findDynamicModuleUpdate(sourceFile);
+  currentIrSafeVarDeclarationLists = hasDynamicModuleUpdate
+    ? collectIrSafeModuleVarDeclarationLists(population)
+    : new Set();
   currentModuleMapGetAliases = new Set<ts.VariableDeclaration>();
   currentModuleScalarAliasFamilies = new Map<ts.VariableDeclaration, "f64" | "boolean">();
   const scope = new Set<string>();

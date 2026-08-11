@@ -765,6 +765,32 @@ export interface LoweredFunctionResult {
   readonly liftedUnitProvenance: readonly IrDerivedUnitProvenance[];
 }
 
+function isDirectSourceVarStatement(statement: ts.Statement): boolean {
+  return (
+    ts.isVariableStatement(statement) &&
+    (statement.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0
+  );
+}
+
+/** Direct module `var`s have persistent globals; nested/for-init `var`s still need hoisting support. */
+function moduleInitContainsNestedVar(statements: readonly ts.Statement[]): boolean {
+  const findVarDecl = (node: ts.Node): boolean => {
+    if (
+      ts.isFunctionDeclaration(node) ||
+      ts.isFunctionExpression(node) ||
+      ts.isArrowFunction(node) ||
+      ts.isMethodDeclaration(node)
+    ) {
+      return false;
+    }
+    if (ts.isVariableDeclarationList(node) && (node.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0) {
+      return true;
+    }
+    return ts.forEachChild(node, findVarDecl) === true;
+  };
+  return statements.some((statement) => !isDirectSourceVarStatement(statement) && findVarDecl(statement));
+}
+
 export function lowerFunctionAstToIr(
   fn:
     | ts.FunctionDeclaration
@@ -1072,30 +1098,8 @@ export function lowerFunctionAstToIr(
     if (returnType !== null) {
       throw new Error(`ir/from-ast: module-init unit must be void (${name})`);
     }
-    // `var` gate: a `var` anywhere in the unit (including for-init /
-    // nested blocks, where the lowering below would bind it as a
-    // loop-local slot) is FUNCTION-scoped on the legacy path — it hoists
-    // to a module global other functions can observe. Slice 2 does not
-    // model that; demote the whole unit. `var`s inside nested
-    // function-likes are local to those functions and stay fine.
-    const findVarDecl = (node: ts.Node): boolean => {
-      if (
-        ts.isFunctionDeclaration(node) ||
-        ts.isFunctionExpression(node) ||
-        ts.isArrowFunction(node) ||
-        ts.isMethodDeclaration(node)
-      ) {
-        return false;
-      }
-      if (ts.isVariableDeclarationList(node) && (node.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0) {
-        return true;
-      }
-      return ts.forEachChild(node, findVarDecl) === true;
-    };
-    for (const s of stmts) {
-      if (findVarDecl(s)) {
-        throw new Error(`ir/from-ast: module-init unit contains a var declaration — not in Slice 2 scope (${name})`);
-      }
+    if (moduleInitContainsNestedVar(stmts)) {
+      throw new Error(`ir/from-ast: module-init unit contains a nested var declaration (${name})`);
     }
     for (const s of stmts) {
       lowerStmt(s, cx);
@@ -3014,7 +3018,7 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
     // the slot) would double-evaluate any side effect in `let s = f() | 0`.
     // Every other hint source wins: an explicit annotation, an empty-array
     // inference and a module binding each pin the representation.
-    const widenDynamic = cx.dynamicStringLocals.has(name);
+    const widenDynamic = cx.dynamicStringLocals.has(name) || moduleBinding?.type.kind === "dynamic";
     const promoteI32Slot =
       annotated === undefined &&
       inferredEmptyArrayHint === undefined &&
@@ -3039,7 +3043,7 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
         throw new IrUnsupportedError(
           "operand-coercion-unsupported",
           "build",
-          `ir/from-ast: proven dynamic local '${name}' initializer has no dynamic string carrier (${cx.funcName})`,
+          `ir/from-ast: proven dynamic binding '${name}' initializer has no supported carrier (${cx.funcName})`,
         );
       }
       value = boxed;
@@ -3429,6 +3433,10 @@ function resolveIrType(node: ts.TypeNode | undefined, override: IrType | undefin
 /** True when two logical IR types use the same already-allocated global slot. */
 function moduleStorageCompatible(actual: IrType, expected: IrType): boolean {
   if (irTypeEquals(actual, expected)) return true;
+  // Dynamic tag refinements describe the value partition, not a different
+  // physical carrier. A `dynamic<tag:String>` initializer and the unrefined
+  // dynamic module global therefore use the same slot.
+  if (actual.kind === "dynamic" && expected.kind === "dynamic") return true;
   if (expected.kind !== "extern") return false;
   if (actual.kind === "extern") return true;
   return asVal(actual)?.kind === "externref";
