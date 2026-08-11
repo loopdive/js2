@@ -214,7 +214,17 @@ function committedHistoryPoints() {
           maxBuffer: 16 * 1024 * 1024,
         }),
       );
-      return npmPerfHistoryPoint(report.packages ?? [], report.generatedAt, revision);
+      // `recordedIn`, NOT `sourceRevision`: this is the commit that committed
+      // the measurement, which is never the commit it was measured at — the
+      // generator runs at one revision and its output lands at a later one.
+      // Recording it as `sourceRevision` was the bug that ate the history. The
+      // refresh workflow checks out `fetch-depth: 1`, so this log yields
+      // exactly one revision, HEAD, whose committed artifact holds the
+      // PREVIOUS run — labelling that point `sourceRevision: HEAD` made it
+      // collide with the live point (also HEAD) and the previous run was
+      // dropped on every single refresh. See mergeNpmPerfHistory.
+      const { generatedAt, packages } = npmPerfHistoryPoint(report.packages ?? [], report.generatedAt);
+      return { generatedAt, recordedIn: revision, packages };
     });
   } catch (error) {
     console.warn(

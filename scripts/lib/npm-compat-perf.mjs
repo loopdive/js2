@@ -271,6 +271,19 @@ export function npmPerfHistoryPoint(packages, generatedAt, sourceRevision = null
  * revision or an unchanged report timestamp. Keeping the artifact keyed by
  * provenance makes repeated local generation idempotent while still
  * preserving every distinct committed measurement.
+ *
+ * A run's identity is its `generatedAt`. `sourceRevision` is the SECOND key,
+ * and it is only ever the commit a run was MEASURED at — that is what makes
+ * re-running the generator at an unchanged HEAD idempotent instead of
+ * additive. The commit that later RECORDS a measurement into the committed
+ * artifact is a different thing and belongs in `recordedIn`; conflating the
+ * two silently deletes runs, because a re-read of the committed artifact then
+ * re-keys an OLD measurement onto the CURRENT HEAD, where the fresh point
+ * promptly matches it and overwrites it. That is not hypothetical: it froze
+ * the committed history at 14 runs from 2026-08-08 to 2026-08-11, throwing
+ * away every measurement in between (~84 points) while the file kept being
+ * rewritten on every refresh, so the artifact looked alive and the charts
+ * showed a two-week hole.
  */
 export function mergeNpmPerfHistory(history, points) {
   const existing = Array.isArray(history) ? history : (history?.runs ?? []);
@@ -282,8 +295,20 @@ export function mergeNpmPerfHistory(history, points) {
         candidate.generatedAt === point.generatedAt ||
         (candidate.sourceRevision && point.sourceRevision && candidate.sourceRevision === point.sourceRevision),
     );
-    if (duplicateIndex >= 0) merged[duplicateIndex] = point;
-    else merged.push(point);
+    if (duplicateIndex < 0) {
+      merged.push(point);
+      continue;
+    }
+    // Later points win on measurement data, but provenance is fixed when the
+    // run is measured: a point that carries no `sourceRevision` (a backfill
+    // read out of git) must never erase the one already recorded, and must
+    // never invent one of its own.
+    const previous = merged[duplicateIndex];
+    merged[duplicateIndex] = {
+      ...previous,
+      ...point,
+      ...(previous.sourceRevision && !point.sourceRevision ? { sourceRevision: previous.sourceRevision } : {}),
+    };
   }
   return {
     schemaVersion: 1,
