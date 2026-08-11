@@ -1,12 +1,11 @@
 {
   "id": "4375",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/npm-upstream-tests-20260812",
-  "reserved_at": "2026-08-11T23:10:11Z",
   "claimed_at": "2026-08-11T23:10:11Z",
-  "updated_at": "2026-08-11T23:10:11Z",
-  "write_id": "3760-r5t19l0c",
-  "pr_scan": "ok"
+  "updated_at": "2026-08-11T23:15:10Z",
+  "write_id": "9997-smuhijka",
+  "released_at": "2026-08-11T23:15:10Z"
 }
