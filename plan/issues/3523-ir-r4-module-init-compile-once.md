@@ -4,7 +4,7 @@ title: "IR-only R4: typed ordered module-init compile-once ownership"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-08-11
+updated: 2026-08-12
 priority: critical
 horizon: xl
 complexity: XL
@@ -430,27 +430,23 @@ Optimization parity is part of the transaction, not follow-up cleanup:
   allocation/encoding metadata. The required Calendar shape is
   `__concat_8: 1 → 0`, `__concat_7: 0 → 1` with unchanged leaf order.
 
-Resume sequence:
+Current landing and handover sequence:
 
-1. Shepherd PR #4323 at its frozen head through full merge-queue Test262 and
-   verify that exact head is an ancestor of landed `main`.
-2. Create a fresh isolated Calendar production worktree from landed
-   `origin/main`; do not modify the dirty root checkout.
-3. Cherry-pick the two test checkpoint commits above, remeasure one clean
-   landed-main direct/IR baseline, and delete the temporary alternative
-   byte/local snapshots rather than accepting either as a production ceiling.
-4. Implement the generic selector/preflight/transaction changes and the four
-   optimization parity items in one overlapping production PR. Enable all
-   seven final Calendar tests only when the complete contract passes.
-5. Lower the checked legacy-body ceiling **10 → 0**, update the IR-only shadow
-   baseline and optimization-retirement ledger, run the full focused and
-   repository gates, open a ready PR, and freeze its exact head once queued.
+1. The isolated Calendar production worktree, checkpoint recovery, generic
+   transaction, optimization parity work, and checked legacy-body reduction
+   **10 → 0** are complete.
+2. Open one ready PR from `codex/3523-calendar-retirement`, run the full CI and
+   merge-queue gates, and freeze the exact head once queued.
+3. After landing, continue the repository-wide retirement families tracked by
+   #3518: broader classes/methods, closures/cross-owner calls, generic module
+   initialization, and runtime/linear-memory helpers. Do not reopen the bounded
+   Calendar implementation unless a regression gate fails.
 
-#### Calendar playground production checkpoint (2026-08-11)
+#### Calendar playground final parity checkpoint (2026-08-12)
 
 The live production branch is `codex/3523-calendar-retirement` in isolated
 worktree `/private/tmp/ts2wasm-3523-calendar-retirement`, rebased onto
-`origin/main` `6c1117f8767e9b43ab9eefa0bd0084bf9c980a7d`. The dirty root checkout
+`origin/main` `2a7152fb28e890`. The dirty root checkout
 remains untouched.
 
 The bounded Calendar transaction is now implemented and focused-green:
@@ -465,8 +461,8 @@ The bounded Calendar transaction is now implemented and focused-green:
 - the independent twelve-render DOM/Date oracle, 1,120 callback registrations,
   direct-body poison controls, and real plus injected import-collision controls
   pass; and
-- focused Calendar acceptance is **14/14** when the resource-heavy collision
-  cases are run together or in their documented split.
+- focused Calendar acceptance is **14/14**; the complete changed-root hook is
+  **194/194** across the eleven affected suites after the final rebase.
 
 The production selector remains intentionally bounded. It accepts only a
 gap-free sequence of initialized top-level `let`/`const` declarations with
@@ -492,35 +488,30 @@ Optimization and artifact evidence is explicit:
   `53895828283af9a34d20c21353dd1a858a195447de351e901b9985accb31b911`)
   at **12,895 raw / 4,795 gzip / 74,663 WAT / 28 defined functions**;
 - current all-IR (SHA-256
-  `45fa5e988b130180fb77bacd73df9587f560c97ab0131b46b928c62a60b72c99`)
-  is **15,442 raw / 6,151 gzip / 94,654 WAT / 48 defined
-  functions**, versus `origin/main` IR at **19,437 / 7,779 / 138,310 / 57**:
-  **-20.55% raw, -20.93% gzip, -31.56% WAT, and -9 functions**;
-- against direct, the remaining explicit IR artifact gap is **+19.75% raw,
-  +28.28% gzip, +26.77% WAT, and +20 defined functions**; the acceptance
-  ceilings fail closed above those measured bounds rather than claiming
-  byte-for-byte IR/direct parity;
-- all seven optimized public playground Wasm artifacts remain byte-identical
-  to the clean candidate; Calendar is **13,373 raw / 5,034 gzip / 7,130 total
-  gzip**, SHA-256
-  `ceeee3ff2e576fa525f365a02e282452a4bfe77e6e3fb48518c8b7aaa5ba0cf1`,
-  and is 33 raw / 7 gzip bytes smaller than the public base;
+  `9e31fb9fba6bc7840f8284fb562596f90ead95f21e3b4ae4f5a3dcbf53ae92c6`)
+  is **12,493 raw / 4,742 gzip / 70,034 WAT / 31 defined functions**;
+- against direct, IR is now **3.12% smaller raw, 1.11% smaller gzip, and
+  6.20% smaller in WAT**, with only three additional defined functions. The
+  acceptance test rejects any future raw/gzip/WAT growth above the direct
+  artifact rather than preserving the former positive gap;
 - deterministic repeat builds, raw/gzip/WAT/function/import ceilings, and the
   exact direct arithmetic, bounds, concat, formatting, DOM, Date, and TDZ
   helper shapes are enforced in the acceptance test; and
-- Calendar `renderCal` still uses 217 Wasm locals versus 63 in the direct-only
-  body, although it improves from 338 on `origin/main` IR and the aggregate
-  Calendar WAT body is only 8.96% larger with fewer calls. This is recorded as
-  the separate fail-closed SSA-local-coalescing optimization gap. The
-  acceptance test pins the direct references at **63 / 142** locals and rejects
-  IR growth above **217 / 358** for `renderCal` / the aggregate; the ledger
-  remains incomplete until direct allocation parity is proved.
+- `renderCal` is **71 locals / 14,998 WAT bytes** versus direct's
+  **63 / 19,112**; `main` is **24 / 5,776** versus **35 / 6,962**; and the
+  aggregate Calendar bodies are **133 / 39,909** versus **142 / 46,750**.
+  Generic nested-region stackification also preserves the pre-existing i32
+  vector read shape and removes the `fetchAllParallel` Promise-result spill.
+  The fail-closed ceilings are now **72 / 135** locals for `renderCal` /
+  aggregate, with all three body-size comparisons bounded at direct or better.
 
-Paired compiler time improved by about **7.9% median / 9.7% mean** versus
-`origin/main` IR. `WebAssembly.Module` compilation improved by about **18.0%
-at the median** (7.4% minimum, 11.9% p10, 14.0% p90). Runtime samples were noisy
-under concurrent host load, so they are not used to claim a runtime win or
-parity; the merge-queue benchmark host remains authoritative for that signal.
+The final exact production-clock runtime protocol is valid: direct/direct
+ratios were **0.967 / 1.026 / 1.000** (median **1.000**, every round within the
+predeclared 20% bound), while IR/direct ratios were **1.059 / 1.020 / 0.923**
+(median **1.020**). The final IR candidate is therefore on par with direct to
+within **2.0%** on the full 12-render / 1,120-callback workload. A prior valid
+five-round run of the same hot bodies measured IR/direct **0.896**; the final
+handover uses the more conservative post-rebase 1.020 result.
 
 This closes only the bounded single-host playground census. It does not make
 generic R4 complete or prove repository-wide IR-only readiness. Wider

@@ -694,7 +694,7 @@ describe("#3523 Calendar final ten-body retirement gate", () => {
     const irRenderCal = bodySizeMetrics(result, ["renderCal"]);
     const directRenderCal = bodySizeMetrics(direct, ["renderCal"]);
     expect(directRenderCal.locals, "direct renderCal local-count reference").toBe(63);
-    expect(irRenderCal.locals, "IR renderCal local-pressure no-regression ceiling").toBeLessThanOrEqual(96);
+    expect(irRenderCal.locals, "IR renderCal local-pressure no-regression ceiling").toBeLessThanOrEqual(72);
     expect(irRenderCal.bytes, "renderCal body-size parity ceiling").toBeLessThanOrEqual(directRenderCal.bytes);
 
     const irMain = bodySizeMetrics(result, ["main"]);
@@ -708,13 +708,11 @@ describe("#3523 Calendar final ten-body retirement gate", () => {
     ]);
     const directAggregate = bodySizeMetrics(direct, [...FUNCTION_TERMINALS, "__module_init", ...DIRECT_CALLBACK_NAMES]);
     expect(directAggregate.locals, "direct Calendar aggregate local-count reference").toBe(142);
-    expect(irAggregate.locals, "IR Calendar aggregate local-pressure no-regression ceiling").toBeLessThanOrEqual(175);
+    expect(irAggregate.locals, "IR Calendar aggregate local-pressure no-regression ceiling").toBeLessThanOrEqual(135);
     expect(irAggregate.bytes, "aggregate Calendar body-size parity ceiling").toBeLessThanOrEqual(directAggregate.bytes);
-    expect(result.binary.length, "whole Calendar binary-size parity ceiling").toBeLessThanOrEqual(
-      Math.ceil(direct.binary.length * 1.02),
-    );
+    expect(result.binary.length, "whole Calendar binary-size parity ceiling").toBeLessThanOrEqual(direct.binary.length);
     expect(gzipSync(result.binary).length, "gzipped Calendar binary-size parity ceiling").toBeLessThanOrEqual(
-      Math.ceil(gzipSync(direct.binary).length * 1.03),
+      gzipSync(direct.binary).length,
     );
     expect(result.wat.length, "whole Calendar WAT-size parity ceiling").toBeLessThanOrEqual(direct.wat.length);
 
