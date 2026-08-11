@@ -12,7 +12,7 @@ import { compileNumericBinaryOp } from "./binary-ops.js";
 import { callableToStringLiteral } from "./callable-to-string.js";
 import { reserveClosedMethodDispatch } from "./closed-method-dispatch.js";
 import { getClosureFuncSelfTypeIdx } from "./closures.js";
-import { compileAndEmitToString, emitToString } from "./coercion-engine.js";
+import { compileAndEmitToString, emitRuntimeToPrimitive, emitToString } from "./coercion-engine.js";
 import { registerStringHelperEmitters } from "./string-emitter-registry.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
@@ -367,17 +367,7 @@ function compileNativeConcatOperand(ctx: CodegenContext, fctx: FunctionContext, 
     // Dynamic externref (boxed string / any / $Object) →
     // ToPrimitive(default), then ToString. `+` uses valueOf-first even though
     // this operand is about to feed string concatenation.
-    const toPrimIdx = ensureLateImport(
-      ctx,
-      "__to_primitive",
-      [{ kind: "externref" }, { kind: "externref" }],
-      [{ kind: "externref" }],
-    );
-    flushLateImportShifts(ctx, fctx);
-    const finalToPrimIdx = ctx.funcMap.get("__to_primitive") ?? toPrimIdx;
-    if (finalToPrimIdx !== undefined) {
-      fctx.body.push({ op: "ref.null.extern" }, { op: "call", funcIdx: finalToPrimIdx });
-    }
+    emitRuntimeToPrimitive(ctx, fctx, "default");
     const dynToStrIdx = ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
     flushLateImportShifts(ctx, fctx);
     if (dynToStrIdx !== undefined) {

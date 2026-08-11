@@ -90,6 +90,34 @@ export function runtimeToPrimitiveInstrs(ctx: CodegenContext, hint: "string" | "
   return [...stringConstantExternrefInstrs(ctx, hint), { op: "call", funcIdx }];
 }
 
+/**
+ * Ensure the canonical runtime ToPrimitive provider exists, then emit its ABI
+ * for the value already on the stack. AST codegen sites use this entry point
+ * instead of spelling the helper import and hint protocol themselves.
+ */
+export function emitRuntimeToPrimitive(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  hint: "string" | "number" | "default",
+): boolean {
+  const provisionalIdx = ensureLateImport(
+    ctx,
+    "__to_primitive",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  flushLateImportShifts(ctx, fctx);
+  const funcIdx = ctx.funcMap.get("__to_primitive") ?? provisionalIdx;
+  if (funcIdx === undefined) return false;
+  if (hint === "default") {
+    fctx.body.push({ op: "ref.null.extern" }, { op: "call", funcIdx });
+    return true;
+  }
+  addStringConstantGlobal(ctx, hint);
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, hint), { op: "call", funcIdx });
+  return true;
+}
+
 /** True when the active mode represents strings as a native `$AnyString` GC ref. */
 function isNativeStringMode(mode: CoercionMode): boolean {
   return mode === "standalone" || mode === "native-strings-host";
