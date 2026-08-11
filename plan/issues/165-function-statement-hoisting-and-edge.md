@@ -102,12 +102,16 @@ comes from the `/annexB/` path rule in `scripts/generate-editions.ts`. Although
 their generated source uses a default-parameter-shaped setup, all eight count
 in the maintained `<= ES5` report.
 
-On baseline `c0b422b3792699e9b0d3f28a46714dd5c393dd97`, an exact local-vs-local
-standalone probe of the 22 Test262 files with statically exposed IIFE defaults
-had 2 passes, 14 runtime failures, 4 compile errors, and 2 skips. The candidate
-worktree had 10 passes, 6 runtime failures, 4 compile errors, and 2 skips:
-**+8 passes / 0 regressions**. The host lane produced the same +8/0 diff. The
-eight matching non-default Annex B controls remained passing.
+After rebasing, an exact local-vs-local comparison used canonical-main commit
+`2a7152fb28e890ed536a2a8a18ff081db83bd74b` as the control and implementation
+commit `251c957dbc0dc3b849c6f0b5723065ab93e714bd` as the candidate. The standalone
+probe of all 22 Test262 files with statically exposed IIFE defaults moved from
+2 passes, 14 runtime failures, 4 compile errors, and 2 skips to 10 passes, 6
+runtime failures, 4 compile errors, and 2 skips: **+8 passes / 0 regressions**.
+The host lane produced the same +8/0 diff. A separate 16-file standalone probe
+combined the eight affected Annex B files with their eight matching
+non-default controls; it moved from 8 passes / 8 failures to 16 passes, so all
+eight controls remained passing.
 
 ### IR ownership boundary
 
