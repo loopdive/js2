@@ -1,7 +1,11 @@
 ---
 id: 4308
 title: "EvalDeclarationInstantiation + Annex B B.3.3 for the QuickJS eval engine — the bucket that dominates the remaining 256 eval-code failures"
-status: in-progress
+# Slices A–D are all implemented and measured (see the four implementation
+# records below); the branch is handed off for PR + merge, so this is the
+# HANDOFF case of the status lifecycle — whoever observes the merge flips it to
+# `done`.
+status: in-review
 assignee: ttraenkler/senior-dev
 sprint: current
 created: 2026-08-09
@@ -1456,3 +1460,299 @@ One detail worth keeping, because it cost time: the lane writes
 `Function("return this;")` with **no `new` and no cast**. `(Function as any)(…)`
 is a different lowering — the cast stops it being the recognised intrinsic call
 site — and throws. The corpus takes the bare form, so the lane must too.
+
+---
+
+## Slice C — implementation record
+
+Implementer: senior-dev, 2026-08-10. Branch `issue-4308-slice-cd`, stacked on
+`issue-4245-membrane-slice2` at `1c721c8fa` (PR #4346) → slice B `2aa44ab21`
+(PR #4343) → slice A `2c8b8f3fd` (PR #4340) → membrane slice 1 `e8e43ee86`
+(PR #4335) → #4321 → #4319, per §7. Slices **C and D shipped together**: they
+touch the same three functions of the adapter and splitting them would have
+serialised one measurement behind the other for no benefit. This record covers
+C; the next covers D; the measurement is shared and reported once, here.
+
+### Measured result (tier-pinned, this tree)
+
+`TEST262_TARGET=standalone TEST262_PATH_FILTER='language/eval-code/'`, 816 files:
+
+| run | pass / 816 |
+| --- | --- |
+| quickjs, pre-slice (base = `1c721c8fa`) | **758** |
+| quickjs, post-slices-C+D | **783** |
+| interpreter (`TEST262_FULL_RUNTIME_EVAL=1`) | **779** (unchanged) |
+
+- **+25 with ZERO regressions and zero error-text changes**, diffed
+  test-for-test over all 816 files, never by totals.
+- The 758 baseline was re-measured on this tree before any edit and reproduced
+  slice 2's number with **zero per-file disagreement**.
+- The interpreter tier was re-run **after** the `src/` change (below) and is
+  779 with **zero per-file movement** — the sentinel does not degrade it.
+
+**The parity gap is 0.** Of the 34 remaining quickjs failures, **all 34 are
+files the interpreter fails too**; there is no quickjs-only residual left in
+this set. Going the other way, quickjs now passes **4 files the interpreter
+does not**: `non-definable-global-{function,generator}` and
+`var-env-{var,func}-init-local-new-delete` (all `direct`).
+
+### Gains, by cluster (25)
+
+| n | cluster | slice |
+| --- | --- | --- |
+| 8 | `annexB func:existing-fn-update` (direct) | C |
+| 8 | `annexB func:no-skip-param` (direct) | C |
+| 3 | `lang var-env-var-strict-{caller,caller-3,source}` | D |
+| 2 | `lang lex-env-distinct-cls` (d+i) | D |
+| 2 | `lang global-env-rec-eval` (d+i) | D |
+| 2 | `lang var-env-{var,func}-init-local-new-delete` | C (unplanned) |
+
+The last two were not on either target list; they fall out of the pre-seed.
+
+### What shipped, and why each piece exists
+
+**1. The user's source is HANDED to the realm's own `eval`, not spliced into
+the wrapper.** `with (S) { eval(SRC) }` instead of `with (S) { SRC }`, with SRC
+published to an adapter-private realm slot. This is the whole of slice C's
+`existing-fn-update` cluster and most of slice D, and it is not a refactor:
+
+- Splicing puts the source inside a **Block**, which demotes its TOP-LEVEL
+  function declarations to annex-B BLOCK declarations bound lexically in that
+  block. A later `f` in the source then resolves to the block binding instead of
+  the varEnv one the corpus measures — measured "outer declaration" where
+  "inner declaration" is right.
+- The inner eval is a DIRECT eval whose LexicalEnvironment is the with-object,
+  so EDI skips it when hunting for a conflicting binding (ObjectEnvironment
+  Records are skipped by construction) and the annex-B extension applies.
+- A `"use strict"` directive in the SOURCE becomes a directive again — which is
+  slice D's `var-env-var-strict-source` for free.
+
+Re-entrancy is safe by construction: every wrapper reads the slot as the first
+thing it does, so a nested evaluation cannot overwrite a value an outer wrapper
+has not consumed.
+
+**2. Pre-seeding: an EDI-declared name the caller already binds is presented as
+a realm global, not on S.** EDI step 15.d.iii does `SetMutableBinding(fn, fo)`
+on the caller's VariableEnvironment; in this bridge that environment is the
+QuickJS realm global, not S. A name on S therefore has the with-object SHADOW
+the binding EDI just updated. Measured on `var-env-func-init-local-update`:
+`eval('initial = f; function f(){ return 33; }')` under a caller `var f = 88`
+read **88**. GDI leaves an EXISTING property alone (measured: a seeded 123
+survives `var f;`), so the seed is what the body observes, EDI's update lands on
+it, and `qjsPullSeededBindings` copies it into the caller's live cell.
+
+**The pre-seed is NOT applied when the caller's realm already owns the same
+name**, and that exclusion is load-bearing rather than an optimisation. The
+realm slot is then spoken for by the true GLOBAL, and seeding an ACTIVATION
+binding over it makes that binding visible at global scope for the duration of
+the evaluation — which is exactly what `indirect/global-env-rec-eval` measures
+(an eval that declares `var x` and then runs an INDIRECT eval reading `x` must
+see the global's value). Without the exclusion this file was the single
+remaining parity-gap file; with it the gap is zero.
+
+`qjsRestoreSeededGlobals` hands the realm slot back to the caller's realm value
+(or drops it) afterwards, so `qjsPullGlobals` can never copy a function-scoped
+value onto a same-named compiled global.
+
+**3. The two write-back paths widened from primitives to the published
+crossings** (`qjsWriteBackCallerCells`, `qjsMirrorNewBindings`), exactly as
+slice B widened the globals pull, with slice B's wrapper guard intact.
+"Primitive-only" was always about RAW handles. This is what lets
+`eval('function f(){}')` leave a callable `f` in a function caller's variable
+environment instead of `f is not defined`.
+
+**4. Pool exhaustion is accepted but no longer silent.** 64 slots per
+activation (`activationState.length` is the compile-time constant 128, P4). A
+name that had a value and no vacancy is dropped — never mis-slotted, never a
+trap — and the drop is counted into `__js2wasm_eval_pool_overflow_count__` on
+the realm, where a probe can read it back. That realm global is the only
+diagnostic channel the frozen seam leaves open. Lane case: 70 declared names,
+reads **6** dropped, and the next evaluation still works.
+
+### The one `src/` line (authorized by the AMENDED §5 row)
+
+`src/codegen/expressions/runtime-eval-provider.ts` emits one extra
+activation-seed entry, `RUNTIME_EVAL_NON_GLOBAL_SENTINEL`, at every
+FUNCTION-scoped direct-eval call site (`directEvalCallerIsFunctionScoped`, a
+purely syntactic walk — no checker query, so no oracle involvement). The
+adapter reads it as a routing signal and `qjsAppendBinding` drops it before the
+snapshot.
+
+It closes P4's measured hole: a declaration-free ARROW caller has no
+`arguments` and no locals, so it arrives with all three layers empty —
+byte-identical to global code inside a block, which reaches the same entry
+because `directEvalRunsAtScriptGlobal` stops at Block. "Empty ⇒ global" put the
+arrow's eval-created `var`s on the global object. **The corpus contains no such
+caller, so this buys zero test262 files and is a correctness fix only** — which
+is why it needed its own lane case (`arrowGlobalProbe`, which reads 0 without
+the sentinel and 1 with it).
+
+Owed gates, all run: `equivalence-gate` shards 1-4/4 (no new regressions;
+12 baseline failures now PASS, not ratcheted here), `check:oracle-ratchet` OK
+(+0 raw checker calls), `check:loc-budget` OK (+51 LOC), `check:func-budget` OK,
+`tsc --noEmit` clean, prettier clean. **`check:godfiles` fails on this tree with
+5 regressions — all in `calls.ts` / `index.ts` / `object-runtime.ts`, none of
+which this branch touches. It is pre-existing drift on the stacked base, not
+this PR's.**
+
+### Artifact
+
+**Unmoved, as required**: key `d8a5a91d6f183b87`, `libquickjs.wasm` sha256
+`b0662069c241d0430d91c53a3b0e2d1281fd9eb78dd1c93490b0a9dfa70eec5b`.
+`scripts/quickjs-artifact/` is untouched; both slices are adapter TS plus the
+single `src/` line.
+
+### The silent-no-op this slice paid for (the workstream's fifth)
+
+The in-realm route captured `%eval%` at DIRECT-HELPER-INSTALL time. That is
+lazy, and on the indirect path it now runs **after** the first
+`qjsPushGlobals`. Once a module reads `eval` FIRST-CLASS,
+`qjsIntrinsicEvalValue` installs the memoized marker ON the caller's realm
+carrier and the next push mirrors that carrier — so the capture could take a
+MEMBRANE WRAPPER of the compiled marker, and calling it re-entered
+`__runtime_apply_interpreted` → `__runtime_indirect_eval` → itself until the
+stack was gone. It surfaced as `RuntimeError: memory access out of bounds` on
+four `global-env-rec*` files in the first full run. The capture now happens in
+`qjsEnsureContext`, the one instant at which the realm is provably untouched.
+
+This one was caught by the totals (four files went red), but the OTHER
+regression in that same run was not: `var-env-func-init-local-update` flipped
+pass→fail while the total still rose by 20. **Only the test-for-test diff
+separated "+25/−5" from "+20".**
+
+### Lane cases (`tests/quickjs-eval-membrane.test.ts`, `EDI_FUNC_SOURCE`)
+
+Thirteen readings, corpus-shaped (Script goal, sloppy FUNCTION callers, every
+source composed through a runtime loop). **Anti-vacuity, measured both ways:
+against the pre-slice adapter 9 of the 13 readings are wrong** —
+`fnUpdate 0` (the corpus's "outer declaration"), `noSkip 1`, `poolScoped 0`,
+`strictSource 1`, `strictCaller/-Write/-Throw -1` (the `const` preamble's
+`invalid redefinition of lexical identifier`), `lexCls -1`, `arrowGlobal 0`,
+`poolOverflow 0`.
+
+Two of those pairings are worth keeping, because each is a case that would
+otherwise have passed while verifying nothing:
+
+- `poolFnProbe` reads **85 on BOTH adapters**. Before the slice the eval-created
+  function was simply LEFT on the QuickJS realm, where a later direct eval could
+  still reach it. `poolScopedProbe` is the discriminating half: an INDIRECT eval
+  is a global-scope evaluation and must NOT see a function-scoped binding.
+- `arrowInnerProbe` also reads 7 on both. `arrowGlobalProbe` is the one that
+  moves, and it is the only reading that exercises the `src/` line.
+
+`tests/quickjs-eval-provider.test.ts` case 11 (strict caller) was **updated, not
+deleted**: it pinned the slice-3 `const`-preamble residual ("assignment THROWS")
+which slice D retires. It now asserts the assignment UPDATES the caller's
+binding, and still distinguishes that from both the old TypeError (−2) and a
+write that is accepted and silently lost (−3).
+
+### Incidental finding — a caller-side codegen defect, not ours
+
+**`for (var i = …)` in the same function as a direct eval emits an INVALID
+module**: `CompileError: local.tee[0] expected type (ref null N), found
+local.get of type i32`. `let` in the loop head is unaffected, and the order does
+not matter (eval before or after the loop both fail — the second variant fails
+on `extern.convert_any` instead). Engine-independent caller-side codegen, and
+**reproduced with this branch's `src/` change reverted**, so it is neither slice
+C's nor D's. It cost a lane rewrite (the pool-exhaustion case builds its 70
+declarations at module level for this reason). Handed to the lead for triage; it
+is a sibling of the #4305 / #4339 refusal-path family in shape but not the same
+defect.
+
+### Residuals slice C leaves
+
+1. **A compiled-side read of an eval-created binding does not work at all** —
+   `eval("var q = 5"); q` throws in the compiled caller. Measured identical on
+   the pre-slice adapter, so it is pre-existing and NOT this slice's; it is why
+   the pool lane case reads the binding through a second DIRECT eval instead.
+   The pool round-trip itself is correct: the value is in the caller's
+   activation pool and the next direct eval from that activation sees it.
+2. **A name that is both a caller binding and a compiled global does not get
+   EDI's update propagated to the realm** (only to S) — the deliberate price of
+   the pre-seed exclusion above. Zero occurrences in this corpus.
+3. **The 64-slot ceiling stands** (§1.5), now counted rather than silent.
+4. A sloppy caller that BINDS the name `eval` falls back to the spliced wrapper,
+   because `with (S)` would resolve the callee to the caller's shadow and the
+   call would stop being an eval at all (measured: it returns the shadow's
+   result). The strict arm cannot hit this — `eval` is reserved there.
+
+---
+
+## Slice D — implementation record
+
+Same branch, same commit, same measurement as slice C above (the two shipped
+together and share one before/after pair): **758 → 783 / 816**, interpreter
+**779** unchanged, **0 regressions**. Slice D's own clusters are the 7 files
+below.
+
+### Gains, by cluster (7 of the 25)
+
+| n | cluster | what unblocked it |
+| --- | --- | --- |
+| 3 | `lang var-env-var-strict-{caller,caller-3,source}` | the strict arm's in-realm eval |
+| 2 | `lang lex-env-distinct-cls` (d+i) | the global/indirect arm's in-realm eval |
+| 2 | `lang global-env-rec-eval` (d+i) | both of the above |
+
+Slice D's done-signal was ≥750; the pair landed 783.
+
+### What shipped
+
+**1. The strict arm is a `let` preamble plus `try…finally` copy-out around an
+IN-REALM direct eval** (§1.6′, but simpler than §1.6′ proposed):
+
+```
+"use strict"; undefined; { let x = S.x; try { eval(SRC) } finally { S.x = x; } }
+```
+
+- The `let` + copy-out retires the slice-3 residual: an assignment to an
+  existing caller binding now UPDATES it instead of throwing
+  `assignment to constant`, and the `finally` lands it **even when the body
+  throws**, matching the sloppy arm's write-back. Measured: `x = x + 41` → 42;
+  `y = 9; throw` → 9.
+- **§1.6′'s collision probe turned out to be unnecessary and was not built.**
+  Making the body a real strict eval gives it its OWN VariableEnvironment, so
+  the source's `var x` no longer collides with the preamble's `let x` at all —
+  there is nothing to detect. Measured: preamble `let x` + source `let x = 3`
+  parses and answers 3, with the caller's `x` untouched. That is what fixes
+  `var-env-var-strict-caller` (was `SyntaxError: invalid redefinition of
+  lexical identifier`), and it is also why `var-env-var-strict-caller-3` came
+  along for free: the strict eval's `var` never reaches the realm global, so
+  nothing propagates to the compiled global either.
+- The `undefined;` seeding guard is KEPT. Completion values re-measured through
+  the new shape: `1+1`→2, `var y = 1`→undefined, `function g(){}`→undefined,
+  `if(0);`→undefined, and a directive-only `'use strict'` source→`"use strict"`
+  (which is correct — a Script's completion value is its last non-empty
+  statement value).
+- The write-back step is no longer skipped for a strict caller. What stays
+  strict-only is the ABSENCE of `qjsMirrorNewBindings`: strict eval code creates
+  no bindings in the caller's variable environment.
+
+**2. §1.1′ is not needed on the direct path and was NOT implemented there.**
+Source strictness was going to be answered by the parenthesised-`with` parse
+probe and used to route. Handing the source to a real `eval` makes the engine
+answer it natively — a `"use strict"` directive is a directive because it is in
+directive position. §1.1′ survives where slice B put it, inside
+`qjsProbeDeclaredNames`, where the probe's own `throw 0;` prefix destroys the
+prologue and the question has to be asked separately.
+
+**3. The global/indirect arm evaluates through the realm's own %eval% too.** A
+Script's top-level `let`/`const`/`class` create GLOBAL LEXICAL bindings that
+outlive the evaluation, so a second eval of the same source answered
+`SyntaxError: redeclaration of 'outside'` — precisely what
+`lex-env-distinct-cls` asserts must not happen (eval code gets a
+NewDeclarativeEnvironment for its lexical declarations). Indirect eval keeps the
+global VariableEnvironment, so `var` hoisting, slice B's top-level function
+declaration ORDER gain and completion values are all unchanged — each
+re-measured before this landed. `new Function`'s synthesized body (`edi ===
+false`) stays on the direct route: it is a parenthesised function expression
+with nothing to leak.
+
+### Residuals slice D leaves
+
+1. `undefined;` seeding is retained even though the in-realm form makes the
+   block's completion always non-empty. It is one statement and it is the
+   documented reason the strict arm answers correctly; removing it would be a
+   change with no measurement behind it.
+2. A strict eval's `var` is still evaluated at the realm's script level, so a
+   strict source that does `var x = 1; globalThis.x` observes its own binding
+   where a real engine would show the global's. Not in this corpus.

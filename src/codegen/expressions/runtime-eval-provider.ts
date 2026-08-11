@@ -45,6 +45,39 @@ const RUNTIME_EVAL_PULL_GLOBALS = "__runtime_eval_pull_globals";
  * provider reads the structurally canonical cells into ENV_GLOBAL.names/slots;
  * the slot itself is deliberately non-enumerable and non-configurable. */
 export const RUNTIME_EVAL_GLOBAL_LEXICAL_CELLS_PROPERTY = "__js2wasm_runtime_eval_global_lexical_cells__";
+/**
+ * (#4308 slice C) One extra activation-seed entry emitted at every
+ * FUNCTION-scoped direct-eval call site, so a provider can tell an activation
+ * apart from the global environment record.
+ *
+ * It exists because the three binding layers alone cannot: a declaration-free
+ * ARROW caller has no `arguments` and no locals, so it arrives with all three
+ * empty — byte-identical to global code inside a block, which also reaches this
+ * entry (`directEvalRunsAtScriptGlobal` stops at Block). A provider that guesses
+ * "empty ⇒ global" puts the arrow's eval-created `var`s on the global object
+ * instead of its varEnv, silently and with green tests. Costing one name/cell
+ * pair per call site buys the distinction outright.
+ *
+ * It is a SIGNAL, not a binding: no source can reference it (the `__js2wasm`
+ * prefix is reserved), and the QuickJS provider drops it before the snapshot.
+ * Keep byte-for-byte aligned with `RUNTIME_EVAL_NON_GLOBAL_SENTINEL` in
+ * scripts/quickjs-eval-provider.mjs.
+ */
+export const RUNTIME_EVAL_NON_GLOBAL_SENTINEL = "__js2wasm_eval_nonglobal__";
+
+/**
+ * Is this direct eval's call site inside a function (of any kind, arrows
+ * included)? Purely syntactic — no checker query, so no oracle involvement.
+ */
+function directEvalCallerIsFunctionScoped(call: ts.CallExpression): boolean {
+  let node: ts.Node | undefined = call.parent;
+  while (node) {
+    if (ts.isSourceFile(node)) return false;
+    if (ts.isFunctionLike(node)) return true;
+    node = node.parent;
+  }
+  return false;
+}
 const RUNTIME_EVAL_GLOBAL_LEXICAL_CELL_GLOBAL_PREFIX = "\0runtime-eval-global-lexical-cell:";
 const RUNTIME_EVAL_INTRINSIC_GLOBALS = [
   "Error",
@@ -526,6 +559,8 @@ export function emitStandaloneDirectEvalRuntime(
   for (const layer of [bindings.activation, bindings.lexical, bindings.outer]) {
     for (const binding of layer) addStringConstantGlobal(ctx, binding.name);
   }
+  const functionScopedCaller = directEvalCallerIsFunctionScoped(call);
+  if (functionScopedCaller) addStringConstantGlobal(ctx, RUNTIME_EVAL_NON_GLOBAL_SENTINEL);
 
   const sourceLocal = allocLocal(fctx, `__runtime_direct_eval_source_${fctx.locals.length}`, externref);
   const sourceType = compileExpression(ctx, fctx, args[0]!);
@@ -623,6 +658,22 @@ export function emitStandaloneDirectEvalRuntime(
     );
   }
   const [activationNamesLocal, activationSlotsLocal] = freshLayer("activation_seed", bindings.activation);
+  // (#4308 slice C) The caller-kind sentinel. Its cell is FRESH rather than
+  // borrowed from the state pool: nothing writes the sentinel binding, but a
+  // shared cell would make that assumption load-bearing for the pool's own
+  // name/value pairs.
+  if (functionScopedCaller) {
+    fctx.body.push(
+      { op: "local.get", index: activationNamesLocal },
+      ...stringConstantExternrefInstrs(ctx, RUNTIME_EVAL_NON_GLOBAL_SENTINEL),
+      { op: "call", funcIdx: objVecPushIdx },
+      { op: "local.get", index: activationSlotsLocal },
+      { op: "ref.null.extern" },
+      { op: "struct.new", typeIdx: stateCellTypeIdx },
+      { op: "extern.convert_any" },
+      { op: "call", funcIdx: objVecPushIdx },
+    );
+  }
   const [lexicalNamesLocal, lexicalSlotsLocal] = freshLayer("lexical", bindings.lexical);
   const [outerNamesLocal, outerSlotsLocal] = freshLayer("outer", bindings.outer);
 
