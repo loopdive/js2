@@ -160,6 +160,7 @@ import {
 } from "../shared.js";
 // (#2193 PR-B) reflective `m.call(thisArg, …)` on a `$NativeProto` member-closure value.
 import {
+  ensureArrayBufferNativeProtoGlue,
   ensureArrayNativeProtoGlue,
   ensureDataViewNativeProtoGlue,
   ensureDateNativeProtoGlue,
@@ -1069,6 +1070,8 @@ function tryEmitNativeProtoReflectiveCall(
     brand = ensureStringNativeProtoGlue(ctx); // (#2875)
   else if (ifaceName === "DataView")
     brand = ensureDataViewNativeProtoGlue(ctx); // (#3173)
+  else if (ifaceName === "ArrayBuffer")
+    brand = ensureArrayBufferNativeProtoGlue(ctx); // (#1595)
   else if (ifaceName === "Date") brand = ensureDateNativeProtoGlue(ctx); // (#3219)
   if (brand === undefined) return undefined;
 
@@ -1183,6 +1186,13 @@ function emitReflectiveNativeProtoClosureCall(
   fctx.body.push({ op: "local.get", index: closureLocal });
 
   const paramTypes = closureInfo.paramTypes; // excludes the self param
+  // ArrayBufferCopyAndDetach must distinguish an omitted/undefined newLength
+  // from explicit null. This native-proto call surface normally pads optional
+  // externrefs with null, so use the canonical standalone undefined singleton
+  // for ArrayBuffer members; their shared helper applies the corresponding
+  // runtime predicate. Other builtin families retain their existing ABI.
+  const arrayBufferUndefinedPad =
+    getNativeProtoBuiltinGlue(ctx, brand)?.name === "ArrayBuffer" ? undefinedExternInstrs(ctx) : undefined;
   for (let i = 0; i < paramTypes.length; i++) {
     const pType = paramTypes[i]!;
     if (i < userArgs.length) {
@@ -1191,7 +1201,7 @@ function emitReflectiveNativeProtoClosureCall(
         coerceType(ctx, fctx, aType, pType);
       }
     } else if (pType.kind === "externref") {
-      fctx.body.push({ op: "ref.null.extern" });
+      fctx.body.push(...(arrayBufferUndefinedPad ?? [{ op: "ref.null.extern" }]));
     } else {
       pushDefaultValue(fctx, pType, ctx);
     }
