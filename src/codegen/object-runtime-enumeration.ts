@@ -217,10 +217,10 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
   //   2. ALL own keys (`__obj_ordered_all`, incl. non-enumerable): add each to
   //      `seen` so it shadows the same name at lower (proto) levels.
   // The `seen` set is a fresh empty `$Object` (null $proto) used purely as a
-  // membership table via `__extern_has`/`__extern_set` — this reuses the exact
+  // membership table via `__object_hasOwn`/`__extern_set` — this reuses the exact
   // key hashing + equality the property map uses, so there is no native-string
-  // representation mismatch. `__extern_has` proto-walks, but `seen`'s $proto is
-  // null so it degenerates to an own-property check.
+  // representation mismatch. The own-only test remains correct even after the
+  // Object.prototype companion has gained properties of its own.
   //
   // params: 0=obj(externref)
   // locals: 1=any(anyref) 2=cur(ref null $Object) 3=arr(ref null $PropMap)
@@ -228,7 +228,7 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
   //         8=seen(externref scratch $Object) 9=keyExt(externref)
   {
     const newPlainObjectIdx = ctx.funcMap.get("__new_plain_object")!;
-    const externHasIdx = ctx.funcMap.get("__extern_has")!;
+    const objectHasOwnIdx = ctx.funcMap.get("__object_hasOwn")!;
     const externSetIdx = ctx.funcMap.get("__extern_set")!;
     const body: Instr[] = [
       // vec = __objvec_new() ; seen = __new_plain_object()
@@ -296,10 +296,10 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
                       { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
                       { op: "extern.convert_any" },
                       { op: "local.set", index: 9 },
-                      // if __extern_has(seen, keyExt) == 0 → __objvec_push(vec, keyExt)
+                      // if __object_hasOwn(seen, keyExt) == 0 → __objvec_push(vec, keyExt)
                       { op: "local.get", index: 8 },
                       { op: "local.get", index: 9 },
-                      { op: "call", funcIdx: externHasIdx },
+                      { op: "call", funcIdx: objectHasOwnIdx },
                       { op: "i32.eqz" },
                       {
                         op: "if",
@@ -354,10 +354,10 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
                       { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
                       { op: "extern.convert_any" },
                       { op: "local.set", index: 9 },
-                      // if !__extern_has(seen, keyExt) → __extern_set(seen, keyExt, keyExt)
+                      // if !__object_hasOwn(seen, keyExt) → __extern_set(seen, keyExt, keyExt)
                       { op: "local.get", index: 8 },
                       { op: "local.get", index: 9 },
-                      { op: "call", funcIdx: externHasIdx },
+                      { op: "call", funcIdx: objectHasOwnIdx },
                       { op: "i32.eqz" },
                       {
                         op: "if",

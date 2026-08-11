@@ -90,6 +90,47 @@ describe("#4176 named keys on builtin prototypes (standalone)", () => {
     ).toBe(107);
   });
 
+  it("for-in enumerates Object.prototype companion keys on plain objects", async () => {
+    expect(
+      await runStandalone(`
+        export function main(): number {
+          Object.defineProperty(Object.prototype, "objectForInMarker", {
+            value: 3,
+            enumerable: true,
+            configurable: true
+          });
+          const value: any = {};
+          for (const key in value) {
+            if (key === "objectForInMarker") return value[key];
+          }
+          return 0;
+        }
+      `),
+    ).toBe(3);
+  });
+
+  it("for-in's array fast path appends Array.prototype companion keys", async () => {
+    expect(
+      await runStandalone(`
+        export function main(): number {
+          Object.defineProperty(Array.prototype, "arrayForInMarker", {
+            value: 5,
+            enumerable: true,
+            configurable: true
+          });
+          const value: any = [9];
+          let sawIndex = 0;
+          let sawInherited = 0;
+          for (const key in value) {
+            if (key === "0") sawIndex = 1;
+            if (key === "arrayForInMarker") sawInherited = value[key];
+          }
+          return sawIndex * 10 + sawInherited;
+        }
+      `),
+    ).toBe(15);
+  });
+
   it("prepared IR for-in shares prototype-companion enumeration", async () => {
     const result = await compile(
       `

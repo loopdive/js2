@@ -419,14 +419,12 @@ function fillForInPushBody(ctx: CodegenContext, deps: ProtoIndexFillDeps): void 
   const fn = findFn(ctx, PROTOIDX_FORIN_PUSH);
   const brandOffIdx = ctx.funcMap.get(PROTOIDX_BRAND_OFF);
   const objectHasOwnIdx = ctx.funcMap.get("__object_hasOwn");
-  const externHasIdx = ctx.funcMap.get("__extern_has");
   const objOrderedIdx = ctx.funcMap.get("__obj_ordered");
   const objVecPushIdx = ctx.funcMap.get("__objvec_push");
   if (
     !fn ||
     brandOffIdx === undefined ||
     objectHasOwnIdx === undefined ||
-    externHasIdx === undefined ||
     objOrderedIdx === undefined ||
     objVecPushIdx === undefined
   ) {
@@ -503,7 +501,7 @@ function fillForInPushBody(ctx: CodegenContext, deps: ProtoIndexFillDeps): void 
             { op: "call", funcIdx: objectHasOwnIdx },
             { op: "local.get", index: 2 },
             { op: "local.get", index: 10 },
-            { op: "call", funcIdx: externHasIdx },
+            { op: "call", funcIdx: objectHasOwnIdx },
             { op: "i32.or" },
             { op: "i32.eqz" },
             {

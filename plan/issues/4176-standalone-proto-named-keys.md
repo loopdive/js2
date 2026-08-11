@@ -152,14 +152,22 @@ and the closer-level shadow set before appending, and therefore neither
 duplicates an own carrier-bag key nor exposes a shadowed prototype key. No
 second prototype or descriptor model was introduced.
 
+The shadow set uses own-only membership: a prototype-inclusive lookup would
+make Object.prototype's companion see its own key through the empty scratch
+object and suppress it. The finalize-time array enumeration fast path also
+appends through this same adapter before returning, so Array receivers cannot
+bypass prototype enumeration.
+
 Exact maintained standalone A/B:
 
 | cohort | before | after |
 | --- | ---: | ---: |
 | `15.2.3.6-4-{404,409,419,580,585,595}` | 0 / 6 | **6 / 6** |
 
-The focused suite also proves that a prepared IR dynamic `for…in` body uses the
-same companion enumeration and that a bound-function carrier sees the inherited
-key. The remaining deeper implicit tail for non-Object brands is deliberately
-not approximated here; it needs native-prototype intrinsic-name shadowing as
-well as the next Object companion hop.
+The focused suite is **13 / 13**. It proves that a prepared IR dynamic `for…in`
+body uses the same companion enumeration, a bound-function carrier sees the
+inherited key, Object.prototype's own companion key is not self-suppressed, and
+the array fast path still appends Array.prototype keys. The remaining deeper
+implicit tail for non-Object brands is deliberately not approximated here; it
+needs native-prototype intrinsic-name shadowing as well as the next Object
+companion hop.
