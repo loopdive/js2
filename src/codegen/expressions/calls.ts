@@ -192,6 +192,7 @@ import {
 } from "../builtin-static-gopd.js"; // (#2984 Phase 3 + bucket-1 alias receivers + arg-2 name coercion + @@species)
 import { compileStatement, hoistFunctionDeclarations } from "../statements.js";
 import {
+  emitDefaultParamInit,
   emitSetExtrasArgv,
   ensureArgcGlobal,
   ensureExtrasArgvGlobal,
@@ -8637,6 +8638,13 @@ function compileIIFE(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallEx
   if (savedFunc) ctx.funcStack.push(savedFunc);
   ctx.currentFunc = liftedFctx;
 
+  // A lifted IIFE is a real function activation. Its parameter defaults must
+  // run in the synthesized callee before the body, just like defaults on a
+  // source FunctionDeclaration. The old path only padded missing numeric
+  // arguments with NaN and entered the body directly, so `function (x = 1)`
+  // observed NaN whenever the call omitted `x`.
+  emitDefaultParamInit(ctx, liftedFctx, funcExpr, paramTypes, captures.length);
+
   if (ts.isBlock(body)) {
     // Hoist var declarations and let/const with TDZ flags (#790)
     hoistVarDeclarations(ctx, liftedFctx, body.statements);
@@ -8736,6 +8744,15 @@ function compileIIFE(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallEx
     else if (pt.kind === "i32") fctx.body.push({ op: "i32.const", value: 0 });
     else if (pt.kind === "externref") fctx.body.push({ op: "ref.null.extern" });
     else if (pt.kind === "ref" || pt.kind === "ref_null") fctx.body.push({ op: "ref.null", typeIdx: pt.typeIdx });
+  }
+
+  // Numeric defaults use the exact call-site argc rather than treating an
+  // arbitrary NaN payload as the missing-argument sentinel. The synthesized
+  // callee consumes this value once and resets the shared carrier to -1.
+  if (funcExpr.parameters.some((param) => param.initializer)) {
+    const argcGlobalIdx = ensureArgcGlobal(ctx);
+    fctx.body.push({ op: "i32.const", value: Math.min(flatIIFEArgs.length, paramCount) });
+    fctx.body.push({ op: "global.set", index: argcGlobalIdx });
   }
 
   // Re-lookup in case addUnionImports shifted indices
