@@ -4,7 +4,7 @@ title: "Per-call \"clean elements\" protector cell for Array.prototype traversal
 status: ready
 sprint: current
 created: 2026-08-05
-updated: 2026-08-06
+updated: 2026-08-12
 priority: high
 horizon: l
 feasibility: hard
@@ -30,6 +30,7 @@ loc-budget-allow:
   - src/codegen/object-runtime.ts
   - src/codegen/index.ts
   - src/codegen/context/types.ts
+  - src/codegen/vec-overlay.ts
 # (#1917/#2108 coercion-sites gate) proto-index-store.ts's `__protoidx_norm_key`
 # DELEGATES to the engine's own helpers by funcMap name (number_toString /
 # __str_to_number / __unbox_number — the same trio __to_property_key composes);
@@ -60,6 +61,7 @@ func-budget-allow:
   - src/codegen/object-runtime.ts::fillExternArrayLikeStructArms
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
+  - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
 ---
 
 # #4160 — "clean elements" protector cell for Array.prototype traversal
@@ -70,6 +72,40 @@ Back to `ready`. The frontmatter said `in-progress` / `assignee:
 ttraenkler/sendev-4160-read`, but that agent no longer exists and its work
 merged; the claim on `origin/issue-assignments` was **released** on 2026-08-06
 so the remainder can be picked up. Nobody is working on this right now.
+
+## Follow-up (2026-08-12) — typed `filter` live-delete route
+
+The own-array descriptor dependency has now landed far enough to expose a
+smaller coherent Test262 slice. A fresh standalone <=ES5 census (oracle v13,
+48,735 baseline rows, 8,680 in goal scope) measured two `filter` rows whose
+remaining failure was the same shared index MOP gap:
+
+- `15.4.4.20-9-b-13.js`
+- `15.4.4.20-9-6.js`
+
+Both delete an own array index during iteration while the same index exists on
+`Array.prototype`. The typed filter loop stayed on its dense route because
+`overlayRouteActive` did not include `protoIndexDirty`; once routed, the
+`FLAG_DELETED_INDEX` overlay tombstone answered `undefined` / absent directly,
+incorrectly terminating the required prototype walk.
+
+The follow-up adds `protoIndexDirty` to the existing typed-lane route and makes
+the canonical `__extern_get_idx` / `__extern_has_idx` overlay prologues continue
+through the #4160 prototype-index companions after a deleted-own hit. The same
+helpers are emitted once in a hybrid prepared-IR module; there is no parallel
+IR-only implementation. Exact focused A/B is **0/7 -> 2/7**, with the two rows
+above flipping fail->pass and no pass->fail transition.
+The full 242-file `Array.prototype.filter` directory, run locally through the
+same instrument on exact `origin/main` `81ff7c4` and this rebased branch, moved
+from `{pass:162, fail:77, compile_error:3}` to
+`{pass:164, fail:75, compile_error:3}`; those same two rows were the only
+transitions.
+
+The other five measured rows are explicitly not claimed here. Two borrowed
+array-like rows require a different object-carrier model; two sparse numeric
+array rows collapse holes and `undefined` into the same f64 sentinel; and one
+row needs a filter result carrier capable of preserving an inherited string.
+Those are distinct roots, not safe extensions of this route patch.
 
 **Landed** (merged to main):
 
