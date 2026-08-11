@@ -15,8 +15,9 @@
 // rewrite; non-terminating then-arm → `isPhase1BodyStatement` guard.
 //
 // Every case asserts legacy/IR observable equality, ZERO post-claim demotions,
-// and that the IR path was genuinely exercised (bytes differ from the
-// `experimentalIR: false` compile — a silent legacy demote fails the test).
+// and an explicit emitted IR terminal outcome. Binary inequality is not a
+// valid ownership witness: sufficiently simple optimized IR and direct bodies
+// may intentionally converge to the same bytes.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
@@ -109,10 +110,10 @@ async function expectParity(
   expect(ir.value, "IR value matches legacy").toStrictEqual(legacy.value);
   expect(ir.postClaim, "no post-claim demotions").toStrictEqual([]);
   if (opts.expectClaimed !== false) {
-    expect(
-      Buffer.compare(Buffer.from(legacy.binary), Buffer.from(ir.binary)) !== 0,
-      "IR path exercised (bytes differ from legacy)",
-    ).toBe(true);
+    expect(ir.outcome, "IR path exercised through an emitted terminal").toMatchObject({
+      kind: "emitted",
+      irBodyEmitted: true,
+    });
   }
 }
 

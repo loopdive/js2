@@ -46,14 +46,28 @@ files:
 loc-budget-allow:
   - src/codegen/index.ts
   - src/codegen/declarations.ts
+  - src/codegen/closure-exports.ts
+  - src/codegen/context/types.ts
+  - src/ir/builder.ts
+  - src/ir/from-ast.ts
   - src/ir/integration.ts
+  - src/ir/lower.ts
+  - src/ir/nodes.ts
   - src/ir/prepared-component-dependencies.ts
+  - src/runtime.ts
 func-budget-allow:
+  - src/codegen/closure-exports.ts::emitClosureMethodCallExportN
+  - src/codegen/index.ts::planIrOverlay
   - src/codegen/index.ts::generateModule
   - src/codegen/declarations.ts::compileDeclarations
+  - src/ir/from-ast.ts::lowerFunctionAstToIr
+  - src/ir/from-ast.ts::lowerMethodCall
   - src/ir/integration.ts::compileIrPathFunctions
   - src/ir/integration.ts::makeResolver
+  - src/ir/lower.ts::emitInstrTree
+  - src/ir/lower.ts::lowerIrFunctionBody
   - src/ir/prepared-component-dependencies.ts::collectFunctionEvidence
+  - src/runtime.ts::resolveImport
 ---
 
 # #3523 — IR-only R4: typed ordered module-init compile-once ownership

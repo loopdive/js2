@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import { getFuncRefWrapperRootTypeIdx } from "../codegen/closures/funcref-wrapper-types.js";
+import { getFuncRefWrapperRootTypeIdx, type ClosureAllocationMode } from "../codegen/closures/funcref-wrapper-types.js";
 import type { CodegenContext } from "../codegen/context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "../codegen/func-space.js";
 import type {
@@ -24,8 +24,12 @@ import type { IrClosureLowering } from "./lower.js";
 import type { FuncTypeDef, StructTypeDef, ValType, WasmFunction } from "./types.js";
 
 export interface PreparedClosureRegistry {
-  resolveBase(signature: IrClosureSignature): IrClosureLowering | null;
-  resolveSubtype(signature: IrClosureSignature, captureFieldTypes: readonly IrType[]): IrClosureLowering | null;
+  resolveBase(signature: IrClosureSignature, mode?: ClosureAllocationMode): IrClosureLowering | null;
+  resolveSubtype(
+    signature: IrClosureSignature,
+    captureFieldTypes: readonly IrType[],
+    mode?: ClosureAllocationMode,
+  ): IrClosureLowering | null;
 }
 
 export function lowerPreparedClosureSupportType(ctx: CodegenContext, type: IrType): ValType {
@@ -181,9 +185,10 @@ export function prepareDependencyCompleteClosureSupport(
     signature: IrClosureSignature,
     captureFieldTypes: readonly IrType[],
     publish: (refs: readonly IrTypeRef[]) => void,
+    mode: ClosureAllocationMode = "support",
   ): void => {
-    const base = registry.resolveBase(signature);
-    const subtype = registry.resolveSubtype(signature, captureFieldTypes);
+    const base = registry.resolveBase(signature, mode);
+    const subtype = registry.resolveSubtype(signature, captureFieldTypes, mode);
     if (!base || !subtype) return;
     const rootTypeIdx = getFuncRefWrapperRootTypeIdx(ctx);
     if (rootTypeIdx === undefined) {
@@ -230,13 +235,23 @@ export function prepareDependencyCompleteClosureSupport(
       schedule(type.signature, [], (refs) => typeRefs.set(type, refs));
     }
     if (fn.closureSubtype) {
-      schedule(fn.closureSubtype.signature, fn.closureSubtype.captureFieldTypes, (refs) => functionRefs.set(fn, refs));
+      schedule(
+        fn.closureSubtype.signature,
+        fn.closureSubtype.captureFieldTypes,
+        (refs) => functionRefs.set(fn, refs),
+        fn.closureSubtype.hostOneShot ? "host-one-shot" : "ordinary",
+      );
     }
     for (const block of fn.blocks) {
       for (const instr of block.instrs) {
         forEachInstrDeep(instr, (nested) => {
           if (nested.kind === "closure.new") {
-            schedule(nested.signature, nested.captureFieldTypes, (refs) => instructionRefs.set(nested, refs));
+            schedule(
+              nested.signature,
+              nested.captureFieldTypes,
+              (refs) => instructionRefs.set(nested, refs),
+              nested.hostOneShot ? "host-one-shot" : "ordinary",
+            );
           } else if (nested.kind === "closure.call") {
             const calleeType = valueTypes.get(nested.callee);
             if (calleeType?.kind === "closure" || calleeType?.kind === "callable") {

@@ -62,6 +62,9 @@ import {
   type IrSelection,
 } from "../ir/select.js";
 import type {
+  IrHostDateGetterLoweringPlan,
+  IrHostDateSnapshotLoweringPlan,
+  IrHostDateSnapshotGetter,
   IrHostVoidCallbackLoweringPlan,
   IrImportedCallLoweringPlan,
   IrTopLevelFunctionValueLoweringPlan,
@@ -1888,6 +1891,9 @@ interface IrOverlayPlan {
   readonly topLevelFunctionValues: Map<ts.Identifier, IrTopLevelFunctionValueLoweringPlan>;
   /** Exact ambient addEventListener void arrows admitted by B2/Calendar. */
   readonly hostVoidCallbacks: Map<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>;
+  /** Exact ambient Date snapshot constructors and getter uses admitted by Calendar. */
+  readonly hostDateSnapshots: Map<ts.NewExpression, IrHostDateSnapshotLoweringPlan>;
+  readonly hostDateGetters: Map<ts.CallExpression, IrHostDateGetterLoweringPlan>;
   /** Synthetic host-Date ABI labels keyed by each exact certified terminal owner. */
   readonly hostDateImportsByOwnerUnitId: ReadonlyMap<IrUnitId, IrHostDateSnapshotImportPlan>;
   /** Exact Promise-delay plans, keyed separately by each owned AST call. */
@@ -2570,6 +2576,8 @@ function planIrOverlay(
     resolvePositionType: (node, mapped, classShapes) => resolvePositionType(node, mapped, ctx, classShapes),
   });
   const hostVoidCallbacks = new Map<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>();
+  const hostDateSnapshots = new Map<ts.NewExpression, IrHostDateSnapshotLoweringPlan>();
+  const hostDateGetters = new Map<ts.CallExpression, IrHostDateGetterLoweringPlan>();
   const hostDateImportsByOwnerUnitId = new Map<
     IrUnitId,
     { ownerUnitId: IrUnitId; ownerName: string; importNames: Set<string> }
@@ -2605,6 +2613,19 @@ function planIrOverlay(
         if (ts.isNewExpression(node)) {
           const certified = resolveHostDateSnapshot(node);
           if (certified) {
+            const snapshotPlan = { ownerUnitId, ownerName } satisfies IrHostDateSnapshotLoweringPlan;
+            const existingSnapshot = hostDateSnapshots.get(node);
+            if (
+              existingSnapshot &&
+              (existingSnapshot.ownerUnitId !== ownerUnitId || existingSnapshot.ownerName !== ownerName)
+            ) {
+              throw new IrInvariantError(
+                "selection-preparation-mismatch",
+                "resolve",
+                `host-Date snapshot changed owner from ${existingSnapshot.ownerUnitId} to ${ownerUnitId}`,
+              );
+            }
+            hostDateSnapshots.set(node, snapshotPlan);
             let plan = hostDateImportsByOwnerUnitId.get(ownerUnitId);
             if (!plan) {
               plan = { ownerUnitId, ownerName, importNames: new Set() };
@@ -2616,10 +2637,39 @@ function planIrOverlay(
                 `host-Date owner ${ownerUnitId} has conflicting legacy labels ${plan.ownerName} / ${ownerName}`,
               );
             }
-            plan.importNames.add("Date_new");
+            plan.importNames.add("__date_now");
             for (const call of certified.getterCalls) {
               const access = call.expression;
-              if (ts.isPropertyAccessExpression(access)) plan.importNames.add(`Date_${access.name.text}`);
+              if (!ts.isPropertyAccessExpression(access)) {
+                throw new IrInvariantError(
+                  "selection-preparation-mismatch",
+                  "resolve",
+                  `host-Date getter in ${ownerName} lost its property-access identity`,
+                );
+              }
+              const getter = access.name.text as IrHostDateSnapshotGetter;
+              if (getter !== "getDate" && getter !== "getMonth" && getter !== "getFullYear") {
+                throw new IrInvariantError(
+                  "selection-preparation-mismatch",
+                  "resolve",
+                  `host-Date snapshot in ${ownerName} gained unsupported getter ${getter}`,
+                );
+              }
+              const getterPlan = { ...snapshotPlan, snapshot: node, getter } satisfies IrHostDateGetterLoweringPlan;
+              const existingGetter = hostDateGetters.get(call);
+              if (
+                existingGetter &&
+                (existingGetter.ownerUnitId !== getterPlan.ownerUnitId ||
+                  existingGetter.snapshot !== getterPlan.snapshot ||
+                  existingGetter.getter !== getterPlan.getter)
+              ) {
+                throw new IrInvariantError(
+                  "selection-preparation-mismatch",
+                  "resolve",
+                  `host-Date getter in ${ownerName} has conflicting exact plans`,
+                );
+              }
+              hostDateGetters.set(call, getterPlan);
             }
           }
         }
@@ -2665,6 +2715,8 @@ function planIrOverlay(
     importedCalls,
     topLevelFunctionValues,
     hostVoidCallbacks,
+    hostDateSnapshots,
+    hostDateGetters,
     hostDateImportsByOwnerUnitId,
     promiseDelays,
     suspendingAsyncUnitIds: collectPreparedIrAsyncOwners(ctx, identityPlan, safeSelection.funcs),

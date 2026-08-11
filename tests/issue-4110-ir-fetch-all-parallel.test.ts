@@ -177,7 +177,10 @@ describe("#4110 prepared fetchAllParallel", () => {
     expect(entry).toMatch(/array\.new_fixed/);
     expect(entry.match(/array\.new_fixed/g)).toHaveLength(1);
     expect(entry).toMatch(new RegExp(`\\bcall ${fetchUserIdx}\\b`));
-    expect(entry).toMatch(new RegExp(`\\bcall ${fetchUserIdx}\\b\\s+local\\.(?:tee|set) \\d+`));
+    // The Promise result is single-use by pending.push. Keep it on the Wasm
+    // stack through the immediately following typed vec append; a local spill
+    // here is safe but needlessly regresses the direct backend's call shape.
+    expect(entry).toMatch(new RegExp(`\\bcall ${fetchUserIdx}\\b\\s+call \\d+\\b`));
     expect(scalarBridgeIndices.length).toBeGreaterThan(0);
     for (const index of scalarBridgeIndices) expect(entry).not.toMatch(new RegExp(`\\bcall ${index}\\b`));
     expect(entry).toMatch(new RegExp(`\\bcall ${promiseAllIdx}\\b`));

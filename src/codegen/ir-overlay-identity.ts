@@ -285,6 +285,8 @@ export function projectIrIntegrationLoweringPlans(
     readonly directCalls?: IrIntegrationLoweringPlans["directCalls"];
     readonly classShapesById?: IrIntegrationLoweringPlans["classShapesById"];
     readonly postWasmStartTdzSafeBindingsByOwnerUnitId?: IrIntegrationLoweringPlans["postWasmStartTdzSafeBindingsByOwnerUnitId"];
+    readonly hostDateSnapshots?: IrIntegrationLoweringPlans["hostDateSnapshots"];
+    readonly hostDateGetters?: IrIntegrationLoweringPlans["hostDateGetters"];
   } & Pick<
     IrIntegrationLoweringPlans,
     "importedCalls" | "topLevelFunctionValues" | "hostVoidCallbacks" | "promiseDelays" | "suspendingAsyncUnitIds"
@@ -340,6 +342,12 @@ export function projectIrIntegrationLoweringPlans(
     importedCalls: plan.importedCalls,
     topLevelFunctionValues: plan.topLevelFunctionValues,
     hostVoidCallbacks: plan.hostVoidCallbacks,
+    hostDateSnapshots: new Map(
+      [...(plan.hostDateSnapshots ?? [])].filter(([, hostDate]) => activeOwnerUnitIds.has(hostDate.ownerUnitId)),
+    ),
+    hostDateGetters: new Map(
+      [...(plan.hostDateGetters ?? [])].filter(([, hostDate]) => activeOwnerUnitIds.has(hostDate.ownerUnitId)),
+    ),
     promiseDelays: plan.promiseDelays,
     suspendingAsyncUnitIds: new Set(
       [...plan.suspendingAsyncUnitIds].filter((unitId) => activeOwnerUnitIds.has(unitId)),

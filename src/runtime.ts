@@ -1535,9 +1535,11 @@ const _wasmClosureWrapperCache = new WeakMap<object, Map<number, Function>>();
 const _wasmClosureWrapperTargets = new WeakMap<Function, object>();
 const _wasmAccessorGetterReturnWrappers = new WeakSet<Function>();
 const _wasmGetterCallbackWrappers = new WeakSet<Function>();
-// #3214 B2 — `__make_callback(-1, closure)` bridges a canonical void IR
-// closure without minting a legacy `__cb_N` export. Cache the non-constructible
-// JS arrow per raw closure so repeated boundary conversion preserves identity.
+// #3214 B2 — `__make_callback(-1, closure)` bridges a reusable canonical void
+// IR closure without minting a legacy `__cb_N` export. Cache the
+// non-constructible JS arrow per raw closure so repeated boundary conversion
+// preserves identity. The compiler-owned -2 sentinel proves an inline closure
+// is consumed once and intentionally bypasses this cache.
 const _wasmVoidHostCallbackCache = new WeakMap<object, Function>();
 const _test262ErrorConstructors = new WeakSet<Function>();
 
@@ -2076,23 +2078,47 @@ function _maybeWrapCallable(
 function _wrapVoidHostCallback(
   closure: any,
   callbackState?: { getExports: () => Record<string, Function> | undefined },
+  preserveIdentity = true,
 ): any {
   if (!_canBeWeakKey(closure)) return closure;
-  const cached = _wasmVoidHostCallbackCache.get(closure as object);
-  if (cached) return cached;
-  const dispatch = _maybeWrapCallable(closure, 0, callbackState);
-  if (typeof dispatch !== "function") return dispatch;
-
-  // Arrow functions have no [[Construct]], matching the source arrow. The
-  // block intentionally discards the Wasm dispatcher's result so a `void`
-  // callback observes JavaScript `undefined` even though the generic
-  // `__call_fn_0` bridge itself has an externref result carrier.
-  const wrapped = (..._args: any[]): void => {
-    dispatch();
-  };
+  if (preserveIdentity) {
+    const cached = _wasmVoidHostCallbackCache.get(closure as object);
+    if (cached) return cached;
+  }
+  let wrapped: (...args: any[]) => void;
+  if (typeof closure === "object" && callbackState) {
+    // The -1 callback-maker sentinel is emitted only for a TypedAST-certified
+    // zero-argument void IR closure. Dispatch that exact carrier directly:
+    // routing it through `_maybeWrapCallable` first allocated a generic
+    // closure wrapper, an arity Map, and then this second void wrapper for
+    // every DOM listener. Resolve exports at call time so callbacks created
+    // during Wasm start retain the established lazy-wiring contract.
+    wrapped = (..._args: any[]): void => {
+      const callFn = callbackState.getExports()?.__call_fn_0;
+      if (typeof callFn !== "function") {
+        throw new TypeError("wasm closure dispatcher __call_fn_0 is not available");
+      }
+      try {
+        callFn(closure);
+      } catch (error) {
+        throw normalizeModuleCallbackException(error, callbackState, ASYNC_CALLBACK_EXCEPTION_POLICY);
+      }
+    };
+  } else {
+    const dispatch = _maybeWrapCallable(closure, 0, callbackState);
+    if (typeof dispatch !== "function") return dispatch;
+    // Arrow functions have no [[Construct]], matching the source arrow. The
+    // block intentionally discards the dispatcher's result so a `void`
+    // callback observes JavaScript `undefined`.
+    wrapped = (..._args: any[]): void => {
+      dispatch();
+    };
+  }
   installNativeFunctionSourceFacade(wrapped);
-  _wasmVoidHostCallbackCache.set(closure as object, wrapped);
-  _wasmClosureWrapperTargets.set(wrapped, closure as object);
+  if (preserveIdentity) _wasmVoidHostCallbackCache.set(closure as object, wrapped);
+  // Certified void callbacks never need generic wrapper/raw equality
+  // canonicalization. The reusable -1 ABI keeps only its dedicated identity
+  // cache; the compiler-owned one-shot -2 ABI avoids both WeakMap operations.
   return wrapped;
 }
 
@@ -15103,9 +15129,10 @@ assert._isSameValue = isSameValue;
     }
     case "callback_maker":
       return (id: number, cap: any) => {
-        // #3214 B2 reserves -1 for an already-materialised canonical IR
-        // closure. Legacy callbacks keep their non-negative `__cb_N` ids and
-        // therefore remain byte-for-byte on the existing dispatch path.
+        // #3214 B2 reserves -1 for a reusable canonical IR closure and -2 for
+        // the checker-proven one-shot inline form. Legacy callbacks keep their
+        // non-negative `__cb_N` ids and remain on the existing dispatch path.
+        if (id === -2) return _wrapVoidHostCallback(cap, callbackState, false);
         if (id === -1) return _wrapVoidHostCallback(cap, callbackState);
         return createNativeFunctionCallbackBridge(id, cap, callbackState, ASYNC_CALLBACK_EXCEPTION_POLICY);
       };

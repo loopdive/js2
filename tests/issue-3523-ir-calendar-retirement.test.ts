@@ -122,10 +122,6 @@ interface CalendarDom {
   readonly save: FakeElement;
 }
 
-interface ClockSnapshot {
-  readonly id: number;
-}
-
 interface RuntimeEvidence {
   readonly document: FakeDocument;
   readonly logs: string[];
@@ -324,15 +320,11 @@ function expectMonth(dom: CalendarDom, month: string, year: string, cells: numbe
   expect(dom.total.textContent).toBe("");
 }
 
-function expectedIrClockEvents(): string[] {
-  const events = ["new:0", "getFullYear:0", "new:1", "getMonth:1"];
-  for (let id = 2; id < 14; id++) {
-    events.push(`new:${id}`, `getDate:${id}`, `getMonth:${id}`, `getFullYear:${id}`);
-  }
-  return events;
-}
-
-async function exerciseCalendar(result: CompileResult, lane: "direct" | "ir"): Promise<RuntimeEvidence> {
+async function exerciseCalendar(
+  result: CompileResult,
+  lane: "direct" | "ir",
+  clockMode: "import" | "source" = "import",
+): Promise<RuntimeEvidence> {
   expectSuccess(result);
   const document = new FakeDocument();
   document.body.innerHTML = "<stale>";
@@ -353,33 +345,15 @@ async function exerciseCalendar(result: CompileResult, lane: "direct" | "ir"): P
   };
   env.console_log_string = (value: unknown) => void logs.push(String(value));
 
-  if (lane === "direct") {
-    expect(env.__date_now, "direct Date clock import").toBeTypeOf("function");
+  if (clockMode === "import") {
+    expect(env.__date_now, `${lane} Date clock import`).toBeTypeOf("function");
     env.__date_now = () => {
       clockSnapshots++;
       clockEvents.push(`now:${clockSnapshots - 1}`);
       return CLOCK_EPOCH_MS;
     };
   } else {
-    expect(env.Date_new, "IR Date constructor import").toBeTypeOf("function");
-    const snapshots = new Set<ClockSnapshot>();
-    env.Date_new = () => {
-      const snapshot = { id: clockSnapshots++ };
-      snapshots.add(snapshot);
-      clockEvents.push(`new:${snapshot.id}`);
-      return snapshot;
-    };
-    const getter = (name: "getDate" | "getMonth" | "getFullYear", value: unknown): number => {
-      expect(snapshots.has(value as ClockSnapshot), `${name} receiver is a Date_new snapshot`).toBe(true);
-      const snapshot = value as ClockSnapshot;
-      clockEvents.push(`${name}:${snapshot.id}`);
-      if (name === "getDate") return 15;
-      if (name === "getMonth") return 11;
-      return 2024;
-    };
-    env.Date_getDate = (value: unknown) => getter("getDate", value);
-    env.Date_getMonth = (value: unknown) => getter("getMonth", value);
-    env.Date_getFullYear = (value: unknown) => getter("getFullYear", value);
+    expect(env.__date_now, `${lane} source-owned Date clock`).toBeUndefined();
   }
 
   const importObject: WebAssembly.Imports = {
@@ -458,11 +432,12 @@ async function exerciseCalendar(result: CompileResult, lane: "direct" | "ir"): P
 
   expect(document.registrations, "4 fixed + 12 renders × 31 days × 3 listeners").toHaveLength(1_120);
   expect(callbackCreations, "one runtime callback object per registration").toBe(1_120);
-  expect(clockSnapshots, "two module snapshots plus one per render").toBe(14);
-  if (lane === "direct") {
+  if (clockMode === "import") {
+    expect(clockSnapshots, "two module snapshots plus one per render").toBe(14);
     expect(clockEvents).toEqual(Array.from({ length: 14 }, (_, id) => `now:${id}`));
   } else {
-    expect(clockEvents).toEqual(expectedIrClockEvents());
+    expect(clockSnapshots).toBe(0);
+    expect(clockEvents).toEqual([]);
   }
 
   return { document, logs, callbackCreations, clockSnapshots, clockEvents };
@@ -508,10 +483,15 @@ function expectDirectOptimizationReference(result: CompileResult): void {
 
 function expectFinalIrOptimizationParity(result: CompileResult): void {
   expectDirectOptimizationReference(result);
-  expect(targetCount(result, "renderCal", "Date_new")).toBe(1);
-  expect(targetCount(result, "renderCal", "Date_getDate")).toBe(1);
-  expect(targetCount(result, "renderCal", "Date_getMonth")).toBe(1);
-  expect(targetCount(result, "renderCal", "Date_getFullYear")).toBe(1);
+  expect(targetCount(result, "renderCal", "__date_now")).toBe(1);
+  expect(targetCount(result, "renderCal", "__date_civil_from_days")).toBe(3);
+  expect(targetCount(result, "__module_init", "__date_now")).toBe(2);
+  expect(targetCount(result, "__module_init", "__date_civil_from_days")).toBe(2);
+  expect(parseWatFunctions(result.wat).some(({ name }) => name === "__ir_date_snapshot_get")).toBe(false);
+  for (const legacyTarget of ["Date_new", "Date_getDate", "Date_getMonth", "Date_getFullYear"] as const) {
+    expect(targetCount(result, "renderCal", legacyTarget)).toBe(0);
+    expect(targetCount(result, "__module_init", legacyTarget)).toBe(0);
+  }
   for (const name of ["renderCal", "onDay", "updFoot", "main"] as const) {
     expect(targetCount(result, name, "__new_ReferenceError"), `${name} redundant module TDZ guards`).toBe(0);
   }
@@ -714,14 +694,12 @@ describe("#3523 Calendar final ten-body retirement gate", () => {
     const irRenderCal = bodySizeMetrics(result, ["renderCal"]);
     const directRenderCal = bodySizeMetrics(direct, ["renderCal"]);
     expect(directRenderCal.locals, "direct renderCal local-count reference").toBe(63);
-    expect(irRenderCal.locals, "IR renderCal local-pressure no-regression ceiling").toBeLessThanOrEqual(217);
-    expect(irRenderCal.bytes, "renderCal body-size ceiling").toBeLessThanOrEqual(
-      Math.ceil(directRenderCal.bytes * 1.2),
-    );
+    expect(irRenderCal.locals, "IR renderCal local-pressure no-regression ceiling").toBeLessThanOrEqual(96);
+    expect(irRenderCal.bytes, "renderCal body-size parity ceiling").toBeLessThanOrEqual(directRenderCal.bytes);
 
     const irMain = bodySizeMetrics(result, ["main"]);
     const directMain = bodySizeMetrics(direct, ["main"]);
-    expect(irMain.bytes, "main body-size ceiling").toBeLessThanOrEqual(Math.ceil(directMain.bytes * 1.05));
+    expect(irMain.bytes, "main body-size parity ceiling").toBeLessThanOrEqual(directMain.bytes);
 
     const irAggregate = bodySizeMetrics(result, [
       ...FUNCTION_TERMINALS,
@@ -730,28 +708,22 @@ describe("#3523 Calendar final ten-body retirement gate", () => {
     ]);
     const directAggregate = bodySizeMetrics(direct, [...FUNCTION_TERMINALS, "__module_init", ...DIRECT_CALLBACK_NAMES]);
     expect(directAggregate.locals, "direct Calendar aggregate local-count reference").toBe(142);
-    expect(irAggregate.locals, "IR Calendar aggregate local-pressure no-regression ceiling").toBeLessThanOrEqual(358);
-    expect(irAggregate.bytes, "aggregate Calendar body-size ceiling").toBeLessThanOrEqual(
-      Math.ceil(directAggregate.bytes * 1.1),
+    expect(irAggregate.locals, "IR Calendar aggregate local-pressure no-regression ceiling").toBeLessThanOrEqual(175);
+    expect(irAggregate.bytes, "aggregate Calendar body-size parity ceiling").toBeLessThanOrEqual(directAggregate.bytes);
+    expect(result.binary.length, "whole Calendar binary-size parity ceiling").toBeLessThanOrEqual(
+      Math.ceil(direct.binary.length * 1.02),
     );
-    expect(result.binary.length, "whole Calendar binary-size ceiling").toBeLessThanOrEqual(
-      Math.ceil(direct.binary.length * 1.22),
+    expect(gzipSync(result.binary).length, "gzipped Calendar binary-size parity ceiling").toBeLessThanOrEqual(
+      Math.ceil(gzipSync(direct.binary).length * 1.03),
     );
-    expect(gzipSync(result.binary).length, "gzipped Calendar binary-size ceiling").toBeLessThanOrEqual(
-      Math.ceil(gzipSync(direct.binary).length * 1.3),
-    );
-    expect(result.wat.length, "whole Calendar WAT-size ceiling").toBeLessThanOrEqual(
-      Math.ceil(direct.wat.length * 1.3),
-    );
+    expect(result.wat.length, "whole Calendar WAT-size parity ceiling").toBeLessThanOrEqual(direct.wat.length);
 
     const irModule = new WebAssembly.Module(result.binary);
     const directModule = new WebAssembly.Module(direct.binary);
     expect(WebAssembly.Module.imports(irModule).length).toBeLessThanOrEqual(
       WebAssembly.Module.imports(directModule).length + 4,
     );
-    expect(parseWatFunctions(result.wat).length).toBeLessThanOrEqual(
-      Math.ceil(parseWatFunctions(direct.wat).length * 1.75),
-    );
+    expect(parseWatFunctions(result.wat).length).toBeLessThanOrEqual(parseWatFunctions(direct.wat).length + 3);
   });
 
   it("never enters any of the nine direct function bodies", async () => {
@@ -827,7 +799,11 @@ describe("#3523 Calendar final ten-body retirement gate", () => {
   });
 
   it.each([
-    { label: "Date import", prefix: `function Date_new(): number { return 1; }`, injection: undefined },
+    {
+      label: "Date import",
+      prefix: `function __date_now(): number { return ${CLOCK_EPOCH_MS}; }`,
+      injection: undefined,
+    },
     { label: "callback maker", prefix: "", injection: "callback" },
     { label: "typed DOM ABI", prefix: "", injection: "dom" },
   ])(
@@ -878,8 +854,9 @@ describe("#3523 Calendar final ten-body retirement gate", () => {
         expect(result.imports, "no imports leaked by failed IR preparation").toEqual(direct.imports);
         expect([...result.binary], "all-direct collision binary").toEqual([...direct.binary]);
 
-        const fallbackEvidence = await exerciseCalendar(result, "direct");
-        const directEvidence = await exerciseCalendar(direct, "direct");
+        const clockMode = label === "Date import" ? "source" : "import";
+        const fallbackEvidence = await exerciseCalendar(result, "direct", clockMode);
+        const directEvidence = await exerciseCalendar(direct, "direct", clockMode);
         expect(semanticDomSnapshot(fallbackEvidence.document.body)).toEqual(
           semanticDomSnapshot(directEvidence.document.body),
         );

@@ -35,6 +35,7 @@ import {
   resolveIrDynamicCarrierType,
 } from "../codegen/any-helpers.js"; // (#2949) boxed-any carrier for IrType.dynamic
 import { ensureDynMemberGet, ensureDynMemberSet } from "../codegen/dyn-read.js"; // (#3053 U1) / (#3795)
+import { ensureDateCivilHelper } from "../codegen/expressions/builtins.js";
 import {
   ensureIrDynamicRuntime,
   IR_DYN_ADD_FN,
@@ -114,6 +115,7 @@ import {
   closureArityField,
   closureBagField,
   getOrCreateFuncRefWrapperTypes,
+  type ClosureAllocationMode,
 } from "../codegen/closures/funcref-wrapper-types.js";
 import { ensureFmodIntrinsic, isFmodIntrinsic } from "../codegen/fmod.js"; // #2945 — on-demand `%` helper materialization
 import {
@@ -133,6 +135,7 @@ import {
   type ModuleBindingGlobal,
 } from "./from-ast.js";
 import { prepareSuspendingIrFunction } from "./async-prepare.js";
+import { parseIrDateSnapshotGetter } from "./date-runtime.js";
 import {
   collectIrDirectCallLoweringPlans,
   type IrDirectCallLoweringPlan,
@@ -1290,6 +1293,8 @@ export function compileIrPathFunctions(
         importedCalls: loweringPlans?.importedCalls,
         topLevelFunctionValues: loweringPlans?.topLevelFunctionValues,
         hostVoidCallbacks: loweringPlans?.hostVoidCallbacks,
+        hostDateSnapshots: loweringPlans?.hostDateSnapshots,
+        hostDateGetters: loweringPlans?.hostDateGetters,
         promiseDelays: loweringPlans?.promiseDelays,
         classShapes,
         // Slice 6 part 4 refactor (#1185): thread the from-ast subset
@@ -1480,6 +1485,8 @@ export function compileIrPathFunctions(
           importedCalls: loweringPlans?.importedCalls,
           topLevelFunctionValues: loweringPlans?.topLevelFunctionValues,
           hostVoidCallbacks: loweringPlans?.hostVoidCallbacks,
+          hostDateSnapshots: loweringPlans?.hostDateSnapshots,
+          hostDateGetters: loweringPlans?.hostDateGetters,
           classShapes,
           resolver: fromAstResolver,
           allocRegistry,
@@ -1651,6 +1658,8 @@ export function compileIrPathFunctions(
             importedCalls: loweringPlans?.importedCalls,
             topLevelFunctionValues: loweringPlans?.topLevelFunctionValues,
             hostVoidCallbacks: loweringPlans?.hostVoidCallbacks,
+            hostDateSnapshots: loweringPlans?.hostDateSnapshots,
+            hostDateGetters: loweringPlans?.hostDateGetters,
             classShapes,
             resolver: fromAstResolver,
             allocRegistry,
@@ -1801,6 +1810,8 @@ export function compileIrPathFunctions(
         importedCalls: loweringPlans?.importedCalls,
         topLevelFunctionValues: loweringPlans?.topLevelFunctionValues,
         hostVoidCallbacks: loweringPlans?.hostVoidCallbacks,
+        hostDateSnapshots: loweringPlans?.hostDateSnapshots,
+        hostDateGetters: loweringPlans?.hostDateGetters,
         classShapes,
         resolver: fromAstResolver,
         allocRegistry,
@@ -2850,7 +2861,8 @@ export function compileIrPathFunctions(
       preparedClosure?.registry ??
       new ClosureStructRegistry(ctx, (t) => lowerIrTypeToValType(t, resolver, "<closure-registry>"));
     deferredCl.resolveBase = (sig) => closureRegistry.resolveBase(sig);
-    deferredCl.resolveSubtype = (sig, fields) => closureRegistry.resolveSubtype(sig, fields);
+    deferredCl.resolveSubtype = (sig, fields, hostOneShot) =>
+      closureRegistry.resolveSubtype(sig, fields, hostOneShot ? "host-one-shot" : "ordinary");
     const refCellRegistry = new RefCellRegistry(ctx);
     deferredCell.resolve = (inner) => refCellRegistry.resolve(inner);
     // Slice 4 (#1169d): the class registry is a thin lookup over the
@@ -3589,7 +3601,11 @@ interface DeferredObjectResolver {
 
 interface DeferredClosureResolver {
   resolveBase: (sig: IrClosureSignature) => IrClosureLowering | null;
-  resolveSubtype: (sig: IrClosureSignature, fields: readonly IrType[]) => IrClosureLowering | null;
+  resolveSubtype: (
+    sig: IrClosureSignature,
+    fields: readonly IrType[],
+    hostOneShot?: boolean,
+  ) => IrClosureLowering | null;
 }
 
 interface DeferredRefCellResolver {
@@ -4400,6 +4416,8 @@ function resolveAndObserveCallableProvider(
       ensureNativeStringHelpers(ctx);
       index = nativeStrHelperHandle(ctx, "__str_charAt_cp");
     }
+  } else if (ref.binding.kind === "intrinsic" && parseIrDateSnapshotGetter(symbol) !== undefined) {
+    index = ensureDateCivilHelper(ctx);
   } else {
     index = ctx.funcMap.get(symbol) ?? nativeStrHelperHandle(ctx, symbol);
   }
@@ -4586,8 +4604,12 @@ function makeResolver(
     resolveClosureRoot(): number | null {
       return getFuncRefWrapperRootTypeIdx(ctx) ?? null;
     },
-    resolveClosureSubtype(sig: IrClosureSignature, fields: readonly IrType[]): IrClosureLowering | null {
-      return closureResolver.resolveSubtype(sig, fields);
+    resolveClosureSubtype(
+      sig: IrClosureSignature,
+      fields: readonly IrType[],
+      hostOneShot?: boolean,
+    ): IrClosureLowering | null {
+      return closureResolver.resolveSubtype(sig, fields, hostOneShot);
     },
     resolveRefCell(inner: ValType): IrRefCellLowering | null {
       return refCellResolver.resolve(inner);
@@ -4900,10 +4922,7 @@ interface HostDateImportSpec {
 }
 
 const HOST_DATE_IMPORTS = new Map<string, HostDateImportSpec>([
-  ["Date_new", { name: "Date_new", params: [], results: [{ kind: "externref" }] }],
-  ["Date_getDate", { name: "Date_getDate", params: [{ kind: "externref" }], results: [{ kind: "f64" }] }],
-  ["Date_getMonth", { name: "Date_getMonth", params: [{ kind: "externref" }], results: [{ kind: "f64" }] }],
-  ["Date_getFullYear", { name: "Date_getFullYear", params: [{ kind: "externref" }], results: [{ kind: "f64" }] }],
+  ["__date_now", { name: "__date_now", params: [], results: [{ kind: "f64" }] }],
 ]);
 
 function exactHostDateImport(ctx: CodegenContext, spec: HostDateImportSpec): boolean {
@@ -4937,9 +4956,13 @@ function preregisterHostDateSnapshotSupport(ctx: CodegenContext, fns: readonly B
     for (const block of entry.fn.blocks) {
       for (const instr of block.instrs) {
         forEachInstrDeep(instr, (nested) => {
-          if (nested.kind === "extern.new" && nested.className === "Date") needed.add("Date_new");
-          if (nested.kind === "extern.call" && nested.className === "Date") {
-            needed.add(`Date_${nested.method}`);
+          if (
+            nested.kind === "call" &&
+            nested.target.binding.kind === "import" &&
+            nested.target.binding.module === "env" &&
+            nested.target.binding.field === "__date_now"
+          ) {
+            needed.add("__date_now");
           }
         });
       }
@@ -6210,10 +6233,20 @@ class ClosureStructRegistry {
     private readonly resolveValType: (t: IrType) => ValType,
   ) {}
 
-  resolveBase(sig: IrClosureSignature): IrClosureLowering | null {
+  private observe(typeIdx: number, mode: ClosureAllocationMode): void {
+    const info = this.ctx.closureInfoByTypeIdx.get(typeIdx);
+    if (!info) return;
+    if (mode === "ordinary") info.hostOneShotOnly = false;
+    else if (mode === "host-one-shot" && info.hostOneShotOnly === undefined) info.hostOneShotOnly = true;
+  }
+
+  resolveBase(sig: IrClosureSignature, mode: ClosureAllocationMode = "support"): IrClosureLowering | null {
     const key = sigKey(sig);
     const cached = this.baseCache.get(key);
-    if (cached) return cached;
+    if (cached) {
+      this.observe(cached.structTypeIdx, mode);
+      return cached;
+    }
 
     // Resolve the source signature first, then delegate both the allocation
     // wrapper and lifted func type to the canonical legacy registry. This is
@@ -6227,7 +6260,7 @@ class ClosureStructRegistry {
     } catch {
       return null;
     }
-    const wrapper = getOrCreateFuncRefWrapperTypes(this.ctx, paramTypes, resultTypes);
+    const wrapper = getOrCreateFuncRefWrapperTypes(this.ctx, paramTypes, resultTypes, mode);
     if (!wrapper) return null;
 
     const lowering: IrClosureLowering = {
@@ -6242,17 +6275,24 @@ class ClosureStructRegistry {
     return lowering;
   }
 
-  resolveSubtype(sig: IrClosureSignature, captureFieldTypes: readonly IrType[]): IrClosureLowering | null {
+  resolveSubtype(
+    sig: IrClosureSignature,
+    captureFieldTypes: readonly IrType[],
+    mode: ClosureAllocationMode = "support",
+  ): IrClosureLowering | null {
     // A no-capture closure allocates the signature wrapper directly. Creating
     // a redundant empty subtype would add an unnecessary RTT; invocation reads
     // every wrapper through the root and discriminates on the funcref type.
-    if (captureFieldTypes.length === 0) return this.resolveBase(sig);
+    if (captureFieldTypes.length === 0) return this.resolveBase(sig, mode);
 
     const key = `${sigKey(sig)}#${captureFieldTypes.map(irTypeKey).join(",")}`;
     const cached = this.subCache.get(key);
-    if (cached) return cached;
+    if (cached) {
+      this.observe(cached.structTypeIdx, mode);
+      return cached;
+    }
 
-    const base = this.resolveBase(sig);
+    const base = this.resolveBase(sig, mode);
     if (!base) return null;
 
     const fields: FieldDef[] = [
@@ -6301,6 +6341,7 @@ class ClosureStructRegistry {
       paramTypes: [...baseInfo.paramTypes],
       returnType: baseInfo.returnType,
       hasCaptures: true,
+      ...(mode === "host-one-shot" ? { hostOneShotOnly: true } : mode === "ordinary" ? { hostOneShotOnly: false } : {}),
     });
 
     const fieldIdxByCap = new Map<number, number>();

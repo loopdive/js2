@@ -198,12 +198,14 @@ export function attachIrVecLayouts(
     ? {
         signature: mapSignature(fn.closureSubtype.signature),
         captureFieldTypes: mapArray(fn.closureSubtype.captureFieldTypes, mapType),
+        ...(fn.closureSubtype.hostOneShot ? { hostOneShot: true } : {}),
       }
     : undefined;
   const closureSubtypeUnchanged =
     closureSubtype === undefined ||
     (closureSubtype.signature === fn.closureSubtype?.signature &&
-      closureSubtype.captureFieldTypes === fn.closureSubtype.captureFieldTypes);
+      closureSubtype.captureFieldTypes === fn.closureSubtype.captureFieldTypes &&
+      closureSubtype.hostOneShot === fn.closureSubtype.hostOneShot);
   const mapped =
     !usesVec ||
     (params === fn.params && resultTypes === fn.resultTypes && blocks === fn.blocks && closureSubtypeUnchanged)

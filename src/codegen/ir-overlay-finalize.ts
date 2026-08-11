@@ -381,10 +381,7 @@ interface HostDateImportSignature {
 }
 
 const HOST_DATE_IMPORT_SIGNATURES = new Map<string, HostDateImportSignature>([
-  ["Date_new", { params: [], results: [{ kind: "externref" }] }],
-  ["Date_getDate", { params: [{ kind: "externref" }], results: [{ kind: "f64" }] }],
-  ["Date_getMonth", { params: [{ kind: "externref" }], results: [{ kind: "f64" }] }],
-  ["Date_getFullYear", { params: [{ kind: "externref" }], results: [{ kind: "f64" }] }],
+  ["__date_now", { params: [], results: [{ kind: "f64" }] }],
 ]);
 
 /** Exact owner plus the validated legacy labels needed at the host-Date ABI seam. */

@@ -43,6 +43,11 @@ export function collectClosureBaseWrapperTypeIdxs(ctx: CodegenContext): number[]
   const seenBase = new Set<number>();
   for (const [typeIdx, info] of ctx.closureInfoByTypeIdx) {
     if (!info) continue;
+    // Checker-certified one-shot host callbacks never surface as raw values:
+    // their -2 wrapper dispatches directly through __call_fn_0. Excluding a
+    // root is safe only when every registered allocation under it retains the
+    // one-shot bit; any ordinary allocation clears the shared base metadata.
+    if (info.hostOneShotOnly === true) continue;
     const typeDef = mod.types[typeIdx];
     if (!typeDef || typeDef.kind !== "struct") continue;
     // Walk up to the root struct in the chain.

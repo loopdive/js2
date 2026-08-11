@@ -104,6 +104,20 @@ export interface IrHostVoidCallbackLoweringPlan {
   readonly liftedOrdinal: number;
 }
 
+export type IrHostDateSnapshotGetter = "getDate" | "getMonth" | "getFullYear";
+
+/** Exact checker-certified zero-argument ambient Date snapshot construction. */
+export interface IrHostDateSnapshotLoweringPlan {
+  readonly ownerUnitId: IrUnitId;
+  readonly ownerName: string;
+}
+
+/** Exact getter use tied to one certified snapshot carrier. */
+export interface IrHostDateGetterLoweringPlan extends IrHostDateSnapshotLoweringPlan {
+  readonly snapshot: ts.NewExpression;
+  readonly getter: IrHostDateSnapshotGetter;
+}
+
 /** One module binding's legacy storage, optionally tied to an exact terminal owner. */
 export interface ModuleBindingGlobal {
   readonly ownerUnitId?: IrUnitId;
@@ -131,6 +145,8 @@ export interface IrIntegrationLoweringPlans {
   readonly importedCalls: ReadonlyMap<ts.CallExpression, IrImportedCallLoweringPlan>;
   readonly topLevelFunctionValues: ReadonlyMap<ts.Identifier, IrTopLevelFunctionValueLoweringPlan>;
   readonly hostVoidCallbacks: ReadonlyMap<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>;
+  readonly hostDateSnapshots: ReadonlyMap<ts.NewExpression, IrHostDateSnapshotLoweringPlan>;
+  readonly hostDateGetters: ReadonlyMap<ts.CallExpression, IrHostDateGetterLoweringPlan>;
   readonly promiseDelays: IrPromiseDelayLoweringPlans;
   /** Exact engine-activated source owners admitted by the async-plan producer. */
   readonly suspendingAsyncUnitIds: ReadonlySet<IrUnitId>;
@@ -142,7 +158,14 @@ export interface IrIntegrationLoweringPlans {
 }
 
 export function requireMatchingLoweringPlanOwner(
-  planKind: "direct call" | "imported call" | "top-level function value" | "host void callback" | "module binding",
+  planKind:
+    | "direct call"
+    | "imported call"
+    | "top-level function value"
+    | "host void callback"
+    | "host Date snapshot"
+    | "host Date getter"
+    | "module binding",
   planOwnerUnitId: IrUnitId,
   activeOwnerUnitId: IrUnitId | undefined,
   funcName: string,
