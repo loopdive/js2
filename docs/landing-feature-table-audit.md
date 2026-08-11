@@ -1,7 +1,7 @@
 # Landing page feature support table — audit (#1583)
 
 This document explains what the "Compatibility" section on the
-[landing page](https://js2.loopdive.com/) shows, where its data comes
+[landing page](https://js2wasm.loopdive.com/) shows, where its data comes
 from, what its badges and fractions actually mean, and what was
 changed to make it more honest.
 

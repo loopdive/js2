@@ -16,9 +16,9 @@ for current figures.
 
 | What | Live source |
 |------|-------------|
-| Test262 pass rate (overall + per category/edition) | The conformance dashboard on the [landing page](https://js2.loopdive.com/) and the [Test262 report](https://js2.loopdive.com/benchmarks/report.html). The underlying data is published to the [`loopdive/js2wasm-baselines`](https://github.com/loopdive/js2wasm-baselines) repo (`test262-current.json`) and refreshed by CI on every merge. |
-| Module size & cold-start characteristics | The benchmark charts on the [landing page](https://js2.loopdive.com/) (size and cold-start panels), regenerated from `benchmarks/results/` on every merge. |
-| Per-feature support detail | The feature tables and [Test262 report](https://js2.loopdive.com/benchmarks/report.html), which break results down by language feature and edition. |
+| Test262 pass rate (overall + per category/edition) | The conformance dashboard on the [landing page](https://js2wasm.loopdive.com/) and the [Test262 report](https://js2wasm.loopdive.com/benchmarks/report.html). The underlying data is published to the [`loopdive/js2wasm-baselines`](https://github.com/loopdive/js2wasm-baselines) repo (`test262-current.json`) and refreshed by CI on every merge. |
+| Module size & cold-start characteristics | The benchmark charts on the [landing page](https://js2wasm.loopdive.com/) (size and cold-start panels), regenerated from `benchmarks/results/` on every merge. |
+| Per-feature support detail | The feature tables and [Test262 report](https://js2wasm.loopdive.com/benchmarks/report.html), which break results down by language feature and edition. |
 
 If a number you see quoted elsewhere disagrees with these sources, the live
 sources win.
