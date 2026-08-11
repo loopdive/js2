@@ -15,7 +15,7 @@ import {
 import { irTypeBindingKey } from "./abi-bindings.js";
 import { sameIrCallableBinding } from "./callable-bindings.js";
 import type { IrVecLowering } from "./lower.js";
-import { asVal, type IrFuncRef, type IrFunction, type IrType, type IrVecLayoutRef } from "./nodes.js";
+import { asVal, irVal, type IrFuncRef, type IrFunction, type IrType, type IrVecLayoutRef } from "./nodes.js";
 import type { ValType } from "./types.js";
 import { attachIrVecLayouts } from "./vec-layout.js";
 
@@ -30,6 +30,7 @@ export function prepareIrVectorSupport<T extends PreparedVectorEntry>(input: {
   readonly ctx: CodegenContext;
   readonly entries: readonly T[];
   readonly resolveVecForElement: (element: ValType) => IrVecLowering | null;
+  readonly resolvePhysicalVec: (value: ValType) => IrVecLowering | null;
   readonly typeKey: (type: IrType) => string;
 }): T[] {
   const registry = input.ctx.programAbiTypes;
@@ -60,21 +61,31 @@ export function prepareIrVectorSupport<T extends PreparedVectorEntry>(input: {
   };
 
   return input.entries.map((entry) => {
-    const attachment = attachIrVecLayouts(entry.fn, (type) => {
-      const logicalKey = input.typeKey({ kind: "vec", elementType: type.elementType, nullable: false });
-      const cached = layouts.get(logicalKey);
-      if (cached) return cached;
-      const element = asVal(type.elementType);
-      if (!element || (element.kind !== "f64" && element.kind !== "i32" && element.kind !== "externref")) {
-        throw new Error(`prepared vec element ${input.typeKey(type.elementType)} is not supported`);
-      }
-      const vec = input.resolveVecForElement(element);
-      if (!vec) throw new Error(`no physical vector layout for ${logicalKey}`);
-      const layout = registry.prepareVectorLayout(logicalKey, vec.vecStructTypeIdx, vec.arrayTypeIdx);
-      layouts.set(logicalKey, layout);
-      physicalVectors.set(logicalKey, { structTypeIdx: vec.vecStructTypeIdx, element });
-      return layout;
-    });
+    const attachment = attachIrVecLayouts(
+      entry.fn,
+      (type) => {
+        const logicalKey = input.typeKey({ kind: "vec", elementType: type.elementType, nullable: false });
+        const cached = layouts.get(logicalKey);
+        if (cached) return cached;
+        const element = asVal(type.elementType);
+        if (!element || (element.kind !== "f64" && element.kind !== "i32" && element.kind !== "externref")) {
+          throw new Error(`prepared vec element ${input.typeKey(type.elementType)} is not supported`);
+        }
+        const vec = input.resolveVecForElement(element);
+        if (!vec) throw new Error(`no physical vector layout for ${logicalKey}`);
+        const layout = registry.prepareVectorLayout(logicalKey, vec.vecStructTypeIdx, vec.arrayTypeIdx);
+        layouts.set(logicalKey, layout);
+        physicalVectors.set(logicalKey, { structTypeIdx: vec.vecStructTypeIdx, element });
+        return layout;
+      },
+      (type) => {
+        if (type.val.kind !== "ref" && type.val.kind !== "ref_null") return null;
+        const vec = input.resolvePhysicalVec(type.val);
+        return vec
+          ? { kind: "vec", elementType: irVal(vec.elementValType), nullable: type.val.kind === "ref_null" }
+          : null;
+      },
+    );
     let fn = attachment.function;
     if (attachment.asyncPlanLayouts.size > 0) {
       if (!fn.asyncRuntime) throw new Error(`async vector owner ${fn.name} has no prepared runtime attachment`);

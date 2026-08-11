@@ -3435,7 +3435,7 @@ function lowerResolvedModuleBindingTdzCheck(name: string, binding: ModuleBinding
       cx.funcName,
     );
   }
-  if (binding.tdzGlobalRef) {
+  if (binding.tdzGlobalRef && binding.omitTdzReadCheck !== true) {
     const tdz = cx.builder.emitGlobalGet(binding.tdzGlobalRef, irVal({ kind: "i32" }));
     const cond = cx.builder.emitUnary("i32.eqz", tdz, irVal({ kind: "i32" }));
     const thenBody = cx.builder.collectBodyInstrs(() => {

@@ -31,6 +31,23 @@ export interface PreparedClosureRegistry {
 export function lowerPreparedClosureSupportType(ctx: CodegenContext, type: IrType): ValType {
   if (type.kind === "val" && type.val.kind !== "ref" && type.val.kind !== "ref_null") return type.val;
   if (type.kind === "extern" || type.kind === "callable") return { kind: "externref" };
+  if (type.kind === "string" && type.carrierRef && ctx.programAbiSession) {
+    const ref = type.carrierRef;
+    const draft = ctx.programAbiSession.getDraft(ref.binding.bindingId);
+    if (draft?.intent.kind !== "type" || draft.structuralReferenceKey !== irTypeBindingKey(ref.binding)) {
+      throw new Error("prepared closure string carrier has no exact Program ABI type plan");
+    }
+    if (draft.slotPolicy === "none") {
+      if (draft.intent.shapeKey !== JSON.stringify({ kind: "externref" })) {
+        throw new Error("prepared closure string carrier is not the canonical externref value type");
+      }
+      return { kind: "externref" };
+    }
+    return {
+      kind: "ref",
+      typeIdx: ctx.programAbiSession.resolveCurrentIndex(ref.binding.bindingId, "type", irTypeBindingKey(ref.binding)),
+    };
+  }
   if (type.kind === "vec" && type.layout && ctx.programAbiSession) {
     return {
       kind: type.nullable ? "ref_null" : "ref",

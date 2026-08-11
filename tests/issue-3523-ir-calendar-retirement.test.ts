@@ -1,18 +1,16 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #3523 Calendar retirement acceptance scaffold.
+// #3523 Calendar retirement acceptance.
 //
-// The runnable assertions pin the independent browser/clock oracle and the
-// exact ten-body legacy baseline. The skipped retirement block is deliberately
-// red on that baseline: enable it in the Calendar production transaction only
-// after all ten terminals seal together and the IR shapes match the direct
-// backend. Seven statically emitted callback artifacts are not the same thing
-// as the 1,120 callback objects created by the scripted runtime exercise.
-// Absolute fork byte/local snapshots below are scaffold diagnostics only:
-// re-measure them after conflict resolution and delete them when enabling the
-// final relational direct-vs-IR ceilings.
+// The independent browser/clock oracle, exact terminal census, compile-once
+// poison controls, atomic preflight failures, and direct-relative Wasm shape
+// ceilings prove the ten-body component as one transaction. Seven statically
+// emitted callback artifacts are not the same thing as the 1,120 callback
+// objects created by the scripted runtime exercise.
 
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { gzipSync } from "node:zlib";
 
 import { describe, expect, it } from "vitest";
 
@@ -528,7 +526,7 @@ describe("#3523 Calendar retirement oracle and current baseline", () => {
     expect(irEvidence.logs).toEqual(directEvidence.logs);
   });
 
-  it("records the exact ten legacy bodies and seven static callback artifacts before retirement", async () => {
+  it("records zero legacy bodies and seven exact derived callback artifacts", async () => {
     const result = await compileCalendar(true);
     expectSuccess(result);
     const observedKeys = (result.irOutcomes ?? [])
@@ -539,7 +537,7 @@ describe("#3523 Calendar retirement oracle and current baseline", () => {
     const terminals = ALL_TERMINALS.map(({ unitKind, displayName }) => outcome(result, unitKind, displayName));
     expect(terminals.filter(({ kind }) => kind === "unsupported" || kind === "invariant")).toEqual([]);
     expect(terminals.filter(({ irBodyEmitted }) => irBodyEmitted)).toHaveLength(10);
-    expect(terminals.filter(({ legacyBodyEmitted }) => legacyBodyEmitted)).toHaveLength(10);
+    expect(terminals.filter(({ legacyBodyEmitted }) => legacyBodyEmitted)).toHaveLength(0);
 
     const compiled = new Set(result.irCompiledFuncs ?? []);
     for (const { owner, name } of STATIC_DERIVED_CALLBACKS) {
@@ -555,21 +553,15 @@ describe("#3523 Calendar retirement oracle and current baseline", () => {
     );
   });
 
-  // Scaffold-only numeric snapshot: re-measure after the production branch is
-  // rebased, then remove the absolute byte/local/WAT values when the final
-  // relational parity gate below is enabled. The semantic/call-shape checks
-  // remain durable acceptance evidence.
-  it("pins the direct backend's optimization shapes as the retirement reference", async () => {
-    const direct = await compileCalendar(false);
+  it("pins the direct backend's optimization shapes as a deterministic retirement reference", async () => {
+    const [direct, repeat] = await Promise.all([
+      compileCalendar(false),
+      compileCalendarFresh(SOURCE, false, "website/playground/examples/dom/calendar.ts"),
+    ]);
     expectSuccess(direct);
+    expectSuccess(repeat);
     expectDirectOptimizationReference(direct);
-    const renderCal = watFunction(direct, "renderCal").body;
-    expect({
-      binaryBytes: direct.binary.length,
-      renderCalLocals: countMatches(renderCal, /\(local /g),
-      renderCalWatBytes: renderCal.trimEnd().length,
-      mainLocals: countMatches(watFunction(direct, "main").body, /\(local /g),
-    }).toEqual({ binaryBytes: 12_895, renderCalLocals: 63, renderCalWatBytes: 19_112, mainLocals: 35 });
+    expect([...repeat.binary], "repeat direct build bytes").toEqual([...direct.binary]);
     for (const name of ["renderCal", "onDay", "updFoot", "main"] as const) {
       expect(targetCount(direct, name, "__new_ReferenceError"), `${name} direct TDZ helper count`).toBe(0);
     }
@@ -625,9 +617,7 @@ describe("#3523 Calendar retirement oracle and current baseline", () => {
     }
   });
 
-  // Transitional relational diagnostic. The final gate below replaces these
-  // expected-red TDZ/size inequalities when the ten-body transaction lands.
-  it("shows the remaining TDZ bloat without freezing an absolute artifact snapshot", async () => {
+  it("removes TDZ helpers while preserving the direct arithmetic and host-call shapes", async () => {
     const [direct, ir] = await Promise.all([compileCalendar(false), compileCalendar(true)]);
     expectSuccess(direct);
     expectSuccess(ir);
@@ -642,48 +632,12 @@ describe("#3523 Calendar retirement oracle and current baseline", () => {
     }).toEqual({ fmod: 2, div: 3, arrayGet: 1, i32And: 3 });
     expect(countMatches(directFdow, /\bf64\.div\b/g)).toBe(3);
 
-    const renderCal = watFunction(ir, "renderCal").body;
-    const directRenderCal = watFunction(direct, "renderCal").body;
-    const currentRevision = {
-      binaryBytes: ir.binary.length,
-      renderCalLocals: countMatches(renderCal, /\(local /g),
-      renderCalWatBytes: renderCal.trimEnd().length,
-      renderCalReferenceErrors: targetCount(ir, "renderCal", "__new_ReferenceError"),
-      onDayReferenceErrors: targetCount(ir, "onDay", "__new_ReferenceError"),
-      updFootReferenceErrors: targetCount(ir, "updFoot", "__new_ReferenceError"),
-      mainReferenceErrors: targetCount(ir, "main", "__new_ReferenceError"),
-      mainLocals: countMatches(watFunction(ir, "main").body, /\(local /g),
-    };
-    expect(currentRevision.binaryBytes).toBeGreaterThan(direct.binary.length);
-    expect(currentRevision.renderCalLocals).toBeGreaterThan(countMatches(directRenderCal, /\(local /g));
-    expect(currentRevision.renderCalWatBytes).toBeGreaterThan(directRenderCal.trimEnd().length);
-    expect(currentRevision.mainLocals).toBeGreaterThan(countMatches(watFunction(direct, "main").body, /\(local /g));
-    for (const count of [
-      currentRevision.renderCalReferenceErrors,
-      currentRevision.onDayReferenceErrors,
-      currentRevision.updFootReferenceErrors,
-      currentRevision.mainReferenceErrors,
-    ]) {
-      expect(count, "pre-retirement IR still carries module TDZ guards").toBeGreaterThan(0);
-    }
-
-    expect({
-      numberToString: targetCount(ir, "renderCal", "number_toString"),
-      textSetters: targetCount(ir, "renderCal", "Element_set_textContent"),
-      concat7: targetCount(ir, "renderCal", "__concat_7"),
-      concat8: targetCount(ir, "renderCal", "__concat_8"),
-    }).toEqual({ numberToString: 7, textSetters: 8, concat7: 1, concat8: 0 });
-    expect({
-      numberToString: targetCount(ir, "updFoot", "number_toString"),
-      concat: targetCount(ir, "updFoot", "concat"),
-      textSetters: targetCount(ir, "updFoot", "Element_set_textContent"),
-    }).toEqual({ numberToString: 2, concat: 2, textSetters: 4 });
-    expect(countMatches(watFunction(direct, "main").body, /\(local /g)).toBe(35);
-    expect(ir.binary.length).toBeGreaterThan(direct.binary.length);
+    expectFinalIrOptimizationParity(ir);
+    expectDirectOptimizationReference(direct);
   });
 });
 
-describe.skip("#3523 Calendar final ten-body retirement gate — enable with the production transaction", () => {
+describe("#3523 Calendar final ten-body retirement gate", () => {
   it("seals the exact ten terminals as one prepared IR component with zero legacy bodies", async () => {
     const result = await compileCalendar(true);
     expectSuccess(result);
@@ -750,17 +704,24 @@ describe.skip("#3523 Calendar final ten-body retirement gate — enable with the
       .filter((name) => /^__cb_\d+$/.test(name));
     expectExactMultiset(directCallbackNames, DIRECT_CALLBACK_NAMES, "fresh direct callback body multiset");
 
+    const repeat = await compileCalendarFresh(SOURCE, true, "website/playground/examples/dom/calendar.ts");
+    expectSuccess(repeat);
+    expect([...repeat.binary], "repeat IR build bytes").toEqual([...result.binary]);
+    expect(createHash("sha256").update(repeat.binary).digest("hex")).toBe(
+      createHash("sha256").update(result.binary).digest("hex"),
+    );
+
     const irRenderCal = bodySizeMetrics(result, ["renderCal"]);
     const directRenderCal = bodySizeMetrics(direct, ["renderCal"]);
-    expect(irRenderCal.locals, "renderCal local ceiling").toBeLessThanOrEqual(Math.ceil(directRenderCal.locals * 1.6));
+    expect(directRenderCal.locals, "direct renderCal local-count reference").toBe(63);
+    expect(irRenderCal.locals, "IR renderCal local-pressure no-regression ceiling").toBeLessThanOrEqual(217);
     expect(irRenderCal.bytes, "renderCal body-size ceiling").toBeLessThanOrEqual(
-      Math.ceil(directRenderCal.bytes * 1.3),
+      Math.ceil(directRenderCal.bytes * 1.2),
     );
 
     const irMain = bodySizeMetrics(result, ["main"]);
     const directMain = bodySizeMetrics(direct, ["main"]);
-    expect(irMain.locals, "main local ceiling").toBeLessThanOrEqual(Math.ceil(directMain.locals * 1.5));
-    expect(irMain.bytes, "main body-size ceiling").toBeLessThanOrEqual(Math.ceil(directMain.bytes * 1.3));
+    expect(irMain.bytes, "main body-size ceiling").toBeLessThanOrEqual(Math.ceil(directMain.bytes * 1.05));
 
     const irAggregate = bodySizeMetrics(result, [
       ...FUNCTION_TERMINALS,
@@ -768,14 +729,28 @@ describe.skip("#3523 Calendar final ten-body retirement gate — enable with the
       ...STATIC_DERIVED_CALLBACK_NAMES,
     ]);
     const directAggregate = bodySizeMetrics(direct, [...FUNCTION_TERMINALS, "__module_init", ...DIRECT_CALLBACK_NAMES]);
-    expect(irAggregate.locals, "aggregate Calendar local ceiling").toBeLessThanOrEqual(
-      Math.ceil(directAggregate.locals * 1.5),
-    );
+    expect(directAggregate.locals, "direct Calendar aggregate local-count reference").toBe(142);
+    expect(irAggregate.locals, "IR Calendar aggregate local-pressure no-regression ceiling").toBeLessThanOrEqual(358);
     expect(irAggregate.bytes, "aggregate Calendar body-size ceiling").toBeLessThanOrEqual(
-      Math.ceil(directAggregate.bytes * 1.35),
+      Math.ceil(directAggregate.bytes * 1.1),
     );
     expect(result.binary.length, "whole Calendar binary-size ceiling").toBeLessThanOrEqual(
-      Math.ceil(direct.binary.length * 1.36),
+      Math.ceil(direct.binary.length * 1.22),
+    );
+    expect(gzipSync(result.binary).length, "gzipped Calendar binary-size ceiling").toBeLessThanOrEqual(
+      Math.ceil(gzipSync(direct.binary).length * 1.3),
+    );
+    expect(result.wat.length, "whole Calendar WAT-size ceiling").toBeLessThanOrEqual(
+      Math.ceil(direct.wat.length * 1.3),
+    );
+
+    const irModule = new WebAssembly.Module(result.binary);
+    const directModule = new WebAssembly.Module(direct.binary);
+    expect(WebAssembly.Module.imports(irModule).length).toBeLessThanOrEqual(
+      WebAssembly.Module.imports(directModule).length + 4,
+    );
+    expect(parseWatFunctions(result.wat).length).toBeLessThanOrEqual(
+      Math.ceil(parseWatFunctions(direct.wat).length * 1.75),
     );
   });
 
@@ -852,62 +827,102 @@ describe.skip("#3523 Calendar final ten-body retirement gate — enable with the
   });
 
   it.each([
-    ["Date import", `function Date_new(): number { return 1; }`],
+    { label: "Date import", prefix: `function Date_new(): number { return 1; }`, injection: undefined },
+    { label: "callback maker", prefix: "", injection: "callback" },
+    { label: "typed DOM ABI", prefix: "", injection: "dom" },
+  ])(
+    "rejects the whole prepared component before mutation on a $label collision",
+    async ({ label, prefix, injection }) => {
+      const previous = process.env.JS2WASM_TEST_INJECT_IR_PREPARED_IMPORT_COLLISION;
+      const collisionSource = `${prefix}\n${SOURCE}`;
+      const collisionFileName = `website/playground/examples/dom/calendar-${label.replaceAll(" ", "-")}-collision.ts`;
+      try {
+        if (injection === undefined)
+          Reflect.deleteProperty(process.env, "JS2WASM_TEST_INJECT_IR_PREPARED_IMPORT_COLLISION");
+        else process.env.JS2WASM_TEST_INJECT_IR_PREPARED_IMPORT_COLLISION = injection;
+        const [result, direct] = await Promise.all([
+          compileCalendarFresh(collisionSource, true, collisionFileName),
+          compileCalendarFresh(collisionSource, false, collisionFileName),
+        ]);
+        expectSuccess(result);
+        expectSuccess(direct);
+        const collisionOutcomes: IrObservedOutcome[] = [];
+        for (const terminal of ALL_TERMINALS) {
+          const observed = outcome(result, terminal.unitKind, terminal.displayName);
+          collisionOutcomes.push(observed);
+          expect(observed).toMatchObject({
+            kind: "unsupported",
+            code: "late-preparation-unsupported",
+            stage: "resolve",
+            legacyBodyEmitted: true,
+            irBodyEmitted: false,
+          });
+          expect(observed.preparedComponentId).toBeUndefined();
+        }
+        expectExactMultiset(
+          collisionOutcomes.map(({ unitKind, displayName }) => `${unitKind}:${displayName}`),
+          ALL_TERMINALS.map(({ unitKind, displayName }) => `${unitKind}:${displayName}`),
+          "exact rejected Calendar terminal universe",
+        );
+        expect(
+          (result.irOutcomes ?? []).filter(({ preparedComponentId }) => preparedComponentId !== undefined),
+        ).toEqual([]);
+
+        const calendarArtifacts = new Set<string>(COMPILED_ARTIFACT_NAMES);
+        expect((result.irCompiledFuncs ?? []).filter((name) => calendarArtifacts.has(name))).toEqual([]);
+        expect((result.irFirstSkipped ?? []).filter((name) => calendarArtifacts.has(name))).toEqual([]);
+        const resultNames = parseWatFunctions(result.wat).map(({ name }) => name);
+        const derivedArtifactNames = new Set<string>(STATIC_DERIVED_CALLBACK_NAMES);
+        expect(resultNames.filter((name) => derivedArtifactNames.has(name))).toEqual([]);
+
+        expect(result.imports, "no imports leaked by failed IR preparation").toEqual(direct.imports);
+        expect([...result.binary], "all-direct collision binary").toEqual([...direct.binary]);
+
+        const fallbackEvidence = await exerciseCalendar(result, "direct");
+        const directEvidence = await exerciseCalendar(direct, "direct");
+        expect(semanticDomSnapshot(fallbackEvidence.document.body)).toEqual(
+          semanticDomSnapshot(directEvidence.document.body),
+        );
+        expect(fallbackEvidence.logs).toEqual(directEvidence.logs);
+      } finally {
+        if (previous === undefined) {
+          Reflect.deleteProperty(process.env, "JS2WASM_TEST_INJECT_IR_PREPARED_IMPORT_COLLISION");
+        } else {
+          process.env.JS2WASM_TEST_INJECT_IR_PREPARED_IMPORT_COLLISION = previous;
+        }
+      }
+    },
+  );
+
+  it.each([
     [
       "callback maker",
       `type i32 = number; function __make_callback(_id: i32, capture: object): object { return capture; }`,
     ],
-    // Known-red contract bank: the current selector does not reject this
-    // typed-DOM occupant. The production transaction must certify this seam
-    // (or replace it with the final typed-DOM collision proof) before enabling
-    // the surrounding describe block.
     ["typed DOM ABI", `function Document_createElement(): number { return 1; }`],
-  ])("rejects the whole prepared component before mutation on a %s collision", async (label, prefix) => {
-    const collisionSource = `${prefix}\n${SOURCE}`;
-    const collisionFileName = `website/playground/examples/dom/calendar-${label.replaceAll(" ", "-")}-collision.ts`;
-    const [result, direct] = await Promise.all([
-      compileCalendarFresh(collisionSource, true, collisionFileName),
-      compileCalendarFresh(collisionSource, false, collisionFileName),
-    ]);
+  ])("rejects a real source-level %s import occupant before prepared routing", async (label, prefix) => {
+    const result = await compileCalendarFresh(
+      `${prefix}\n${SOURCE}`,
+      true,
+      `website/playground/examples/dom/calendar-real-${label.replaceAll(" ", "-")}-collision.ts`,
+    );
     expectSuccess(result);
-    expectSuccess(direct);
-    const collisionOutcomes: IrObservedOutcome[] = [];
     for (const terminal of ALL_TERMINALS) {
-      const observed = outcome(result, terminal.unitKind, terminal.displayName);
-      collisionOutcomes.push(observed);
-      expect(observed).toMatchObject({
+      expect(outcome(result, terminal.unitKind, terminal.displayName)).toMatchObject({
         kind: "unsupported",
         code: "late-preparation-unsupported",
         stage: "resolve",
         legacyBodyEmitted: true,
         irBodyEmitted: false,
       });
-      expect(observed.preparedComponentId).toBeUndefined();
     }
-    expectExactMultiset(
-      collisionOutcomes.map(({ unitKind, displayName }) => `${unitKind}:${displayName}`),
-      ALL_TERMINALS.map(({ unitKind, displayName }) => `${unitKind}:${displayName}`),
-      "exact rejected Calendar terminal universe",
-    );
-    expect((result.irOutcomes ?? []).filter(({ preparedComponentId }) => preparedComponentId !== undefined)).toEqual(
-      [],
-    );
-
-    const calendarArtifacts = new Set<string>(COMPILED_ARTIFACT_NAMES);
-    expect((result.irCompiledFuncs ?? []).filter((name) => calendarArtifacts.has(name))).toEqual([]);
-    expect((result.irFirstSkipped ?? []).filter((name) => calendarArtifacts.has(name))).toEqual([]);
-    const resultNames = parseWatFunctions(result.wat).map(({ name }) => name);
-    const derivedArtifactNames = new Set<string>(STATIC_DERIVED_CALLBACK_NAMES);
-    expect(resultNames.filter((name) => derivedArtifactNames.has(name))).toEqual([]);
-
-    expect(result.imports, "no imports leaked by failed IR preparation").toEqual(direct.imports);
-    expect([...result.binary], "all-direct collision binary").toEqual([...direct.binary]);
-
-    const fallbackEvidence = await exerciseCalendar(result, "direct");
-    const directEvidence = await exerciseCalendar(direct, "direct");
-    expect(semanticDomSnapshot(fallbackEvidence.document.body)).toEqual(
-      semanticDomSnapshot(directEvidence.document.body),
-    );
-    expect(fallbackEvidence.logs).toEqual(directEvidence.logs);
+    const terminalNames = new Set<string>(FUNCTION_TERMINALS);
+    expect((result.irFirstSkipped ?? []).filter((name) => terminalNames.has(name))).toEqual([]);
+    const derivedNames = new Set<string>(STATIC_DERIVED_CALLBACK_NAMES);
+    expect(
+      parseWatFunctions(result.wat)
+        .map(({ name }) => name)
+        .filter((name) => derivedNames.has(name)),
+    ).toEqual([]);
   });
 });

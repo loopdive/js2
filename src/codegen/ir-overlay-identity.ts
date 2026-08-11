@@ -284,6 +284,7 @@ export function projectIrIntegrationLoweringPlans(
     readonly overrideMapByUnitId: IrIntegrationLoweringPlans["signaturesByUnitId"];
     readonly directCalls?: IrIntegrationLoweringPlans["directCalls"];
     readonly classShapesById?: IrIntegrationLoweringPlans["classShapesById"];
+    readonly postWasmStartTdzSafeBindingsByOwnerUnitId?: IrIntegrationLoweringPlans["postWasmStartTdzSafeBindingsByOwnerUnitId"];
   } & Pick<
     IrIntegrationLoweringPlans,
     "importedCalls" | "topLevelFunctionValues" | "hostVoidCallbacks" | "promiseDelays" | "suspendingAsyncUnitIds"
@@ -343,6 +344,13 @@ export function projectIrIntegrationLoweringPlans(
     suspendingAsyncUnitIds: new Set(
       [...plan.suspendingAsyncUnitIds].filter((unitId) => activeOwnerUnitIds.has(unitId)),
     ),
+    ...(plan.postWasmStartTdzSafeBindingsByOwnerUnitId
+      ? {
+          postWasmStartTdzSafeBindingsByOwnerUnitId: new Map(
+            [...plan.postWasmStartTdzSafeBindingsByOwnerUnitId].filter(([unitId]) => activeOwnerUnitIds.has(unitId)),
+          ),
+        }
+      : {}),
   };
 }
 

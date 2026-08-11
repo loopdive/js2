@@ -435,53 +435,85 @@ Resume sequence:
 #### Calendar playground production checkpoint (2026-08-11)
 
 The live production branch is `codex/3523-calendar-retirement` in isolated
-worktree `/private/tmp/ts2wasm-3523-calendar-retirement`, based on
-`origin/main` `70d531bcccc8a608da45b90998a2f6f2d4efb73e`. PR #4323's merge commit
-`8c35f68e4467a43ea19ee6431a6d40446be8730f` is confirmed in that base's
-history. The dirty root checkout remains untouched. The two oracle commits and
-their documentation handover were cherry-picked as the first three branch
-commits.
+worktree `/private/tmp/ts2wasm-3523-calendar-retirement`, rebased onto
+`origin/main` `6c1117f8767e9b43ab9eefa0bd0084bf9c980a7d`. The dirty root checkout
+remains untouched.
 
-The Calendar oracle now has **5/5 active tests passing**; the **7** end-state
-tests stay skipped until all ten terminals can retire atomically. The combined
-optimization/parity matrix passes **117 active tests** with those seven skips,
-and TypeScript, fallback, allocation-provenance, formatting, and optimization-
-retirement checks are green.
+The bounded Calendar transaction is now implemented and focused-green:
 
-Three of the four required optimization groups are implemented and explicitly
-covered:
+- all **10/10** terminals seal in one prepared component;
+- all **9** source functions and the source-qualified module initializer emit
+  through IR with `legacyBodyEmitted: false`;
+- the seven exact callback plans produce seven owner-qualified derived
+  closures and no legacy `__cb_N` artifacts;
+- the bounded playground shadow is **5/5 entries, 37/37 targeted terminals,
+  zero legacy bodies, zero Unsupported, and zero Invariant**;
+- the independent twelve-render DOM/Date oracle, 1,120 callback registrations,
+  direct-body poison controls, and real plus injected import-collision controls
+  pass; and
+- focused Calendar acceptance is **14/14** when the resource-heavy collision
+  cases are run together or in their documented split.
 
-- nonterminating `if` guards lower as one structured body, evaluating the
-  condition and trailing statements once;
-- safe vector reads consume the native `i32` length, with both in-bounds and
-  out-of-bounds narrowed-vector runtime coverage; and
-- canonical deep string preparation plus provenance-safe adjacent-literal
-  concat batching covers synchronous nested buffers and post-`await` state
-  bodies, while retaining provider, owned-append, shared, and prepared
-  boundaries.
+The production selector remains intentionally bounded. It accepts only a
+gap-free sequence of initialized top-level `let`/`const` declarations with
+exact source, binding, TDZ, evaluation-order, and ordinary Wasm-start parity.
+It rejects destructuring, `var`, missing/multiple initializers, deferred and
+host-free modes, Promise/source-import preparation, and any initializer that
+can execute a same-source function or class before lexical initialization.
+The exact post-start TDZ certificate is projected only to selected function
+UnitIds and exact binding IDs; the module initializer and rejected/unselected
+owners retain their checks.
 
-The exact owner-qualified module-binding TDZ certificate remains pending. The
-production body count is therefore still **10**, not zero. The remaining
-atomic work is:
+Preparation is atomic before mutation. The component proves the current env
+function-import occupants, callback-maker ABI, and every required Date import
+before allocating TDZ globals or publishing Program ABI state. A collision
+withdraws all ten terminals with one typed `late-preparation-unsupported`
+reason and leaves an import- and byte-identical direct artifact. Tests cover
+both untouched-source injected failures and real source declarations that
+occupy `__make_callback` or `Document_createElement`.
 
-1. add the owner/source/binding-qualified post-start TDZ-elision certificate;
-2. generalize the lexical module-init selector with exact plan/order evidence;
-3. admit only the seven exact planned Calendar callbacks;
-4. aggregate callback-maker, all Date, and all typed-DOM provider checks in a
-   read-only preflight before any mutation;
-5. make every preflight rejection withdraw all ten terminals with one typed
-   reason, and make every post-prepare count/owner/artifact mismatch fatal;
-6. enable the seven final tests, using injected callback/DOM preflight
-   collisions against untouched source plus explicit missing-terminal and
-   missing-artifact invariant injections; and
-7. lower the bounded legacy/IR-only blocker ceiling from **10 to 0**.
+Optimization and artifact evidence is explicit:
 
-The last step proves only **5/5 playground entries, 37/37 targeted terminals,
-and zero legacy bodies in this bounded single-host lane**. It does not prove
-repository-wide IR-only readiness. Wider class/method and closure ownership,
-generic ordered module init, multi-source ownership, runtime intents,
-async-plan removal, shared linear IR, R9 default selection, and R10 direct-root
-deletion remain tracked by #3518 and the adjacent family issues.
+- the direct build is byte-identical to `origin/main` (SHA-256
+  `53895828283af9a34d20c21353dd1a858a195447de351e901b9985accb31b911`)
+  at **12,895 raw / 4,795 gzip / 74,663 WAT / 28 defined functions**;
+- current all-IR (SHA-256
+  `45fa5e988b130180fb77bacd73df9587f560c97ab0131b46b928c62a60b72c99`)
+  is **15,442 raw / 6,151 gzip / 94,654 WAT / 48 defined
+  functions**, versus `origin/main` IR at **19,437 / 7,779 / 138,310 / 57**:
+  **-20.55% raw, -20.93% gzip, -31.56% WAT, and -9 functions**;
+- against direct, the remaining explicit IR artifact gap is **+19.75% raw,
+  +28.28% gzip, +26.77% WAT, and +20 defined functions**; the acceptance
+  ceilings fail closed above those measured bounds rather than claiming
+  byte-for-byte IR/direct parity;
+- all seven optimized public playground Wasm artifacts remain byte-identical
+  to the clean candidate; Calendar is **13,373 raw / 5,034 gzip / 7,130 total
+  gzip**, SHA-256
+  `ceeee3ff2e576fa525f365a02e282452a4bfe77e6e3fb48518c8b7aaa5ba0cf1`,
+  and is 33 raw / 7 gzip bytes smaller than the public base;
+- deterministic repeat builds, raw/gzip/WAT/function/import ceilings, and the
+  exact direct arithmetic, bounds, concat, formatting, DOM, Date, and TDZ
+  helper shapes are enforced in the acceptance test; and
+- Calendar `renderCal` still uses 217 Wasm locals versus 63 in the direct-only
+  body, although it improves from 338 on `origin/main` IR and the aggregate
+  Calendar WAT body is only 8.96% larger with fewer calls. This is recorded as
+  the separate fail-closed SSA-local-coalescing optimization gap. The
+  acceptance test pins the direct references at **63 / 142** locals and rejects
+  IR growth above **217 / 358** for `renderCal` / the aggregate; the ledger
+  remains incomplete until direct allocation parity is proved.
+
+Paired compiler time improved by about **7.9% median / 9.7% mean** versus
+`origin/main` IR. `WebAssembly.Module` compilation improved by about **18.0%
+at the median** (7.4% minimum, 11.9% p10, 14.0% p90). Runtime samples were noisy
+under concurrent host load, so they are not used to claim a runtime win or
+parity; the merge-queue benchmark host remains authoritative for that signal.
+
+This closes only the bounded single-host playground census. It does not make
+generic R4 complete or prove repository-wide IR-only readiness. Wider
+class/method and closure ownership, generic ordered module init, multi-source
+ownership, runtime intents, async-plan removal, shared linear IR, R9 default
+selection, and R10 direct-root deletion remain tracked by #3518 and the
+adjacent family issues.
 
 Do not create a GitHub Issue for this work. This Markdown record remains the
 source of truth for ownership, acceptance, and handover.

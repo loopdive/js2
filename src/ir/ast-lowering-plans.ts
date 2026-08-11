@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import type { IrClassId, IrUnitId } from "./identity.js";
+import type { IrBindingId, IrClassId, IrUnitId } from "./identity.js";
 import type { IrClassShape, IrClosureSignature, IrFuncRef, IrGlobalRef, IrType } from "./nodes.js";
 import type { IrLegacyUnitProjection, IrPlanningIdentityContext } from "./planning-identity.js";
 import type { IrPromiseDelayLoweringPlans } from "./promise-delay-lowering.js";
@@ -115,6 +115,8 @@ export interface ModuleBindingGlobal {
   readonly globalName: string;
   readonly tdzGlobalName: string | null;
   readonly type: IrType;
+  /** Exact owner-qualified proof that this use executes only after Wasm start. */
+  readonly omitTdzReadCheck?: true;
 }
 
 export interface IrIntegrationLoweringPlans {
@@ -132,6 +134,11 @@ export interface IrIntegrationLoweringPlans {
   readonly promiseDelays: IrPromiseDelayLoweringPlans;
   /** Exact engine-activated source owners admitted by the async-plan producer. */
   readonly suspendingAsyncUnitIds: ReadonlySet<IrUnitId>;
+  /**
+   * Exact post-Wasm-start proof: these owners cannot execute until their
+   * source-owned lexical globals have completed module initialization.
+   */
+  readonly postWasmStartTdzSafeBindingsByOwnerUnitId?: ReadonlyMap<IrUnitId, ReadonlySet<IrBindingId>>;
 }
 
 export function requireMatchingLoweringPlanOwner(

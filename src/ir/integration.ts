@@ -1217,7 +1217,11 @@ export function compileIrPathFunctions(
   // Phase 3 once the registries exist; both share the same underlying
   // logic for the methods both expose.
   // -------------------------------------------------------------------------
-  const fromAstResolver = makeFromAstResolver(ctx, moduleBindingResolver);
+  const fromAstResolver = makeFromAstResolver(
+    ctx,
+    moduleBindingResolver,
+    loweringPlans?.postWasmStartTdzSafeBindingsByOwnerUnitId,
+  );
 
   // -------------------------------------------------------------------------
   // Phase 1 — Build: lower every selected AST function to an IrFunction.
@@ -3287,7 +3291,11 @@ function bodyContainsReturnClassOp(body: readonly Instr[]): boolean {
 }
 
 /** Resolve a checker-owned module declaration to its exact structural/legacy slot pair. */
-function resolveModuleBindingGlobal(ctx: CodegenContext, identity: IrModuleBindingIdentity): ModuleBindingGlobal {
+function resolveModuleBindingGlobal(
+  ctx: CodegenContext,
+  identity: IrModuleBindingIdentity,
+  postWasmStartTdzSafeBindingsByOwnerUnitId?: IrIntegrationLoweringPlans["postWasmStartTdzSafeBindingsByOwnerUnitId"],
+): ModuleBindingGlobal {
   const declaration = identity.declaration;
   if (!ts.isIdentifier(declaration.name)) {
     throw new IrInvariantError(
@@ -3424,6 +3432,9 @@ function resolveModuleBindingGlobal(ctx: CodegenContext, identity: IrModuleBindi
     globalName,
     tdzGlobalName,
     type,
+    ...(postWasmStartTdzSafeBindingsByOwnerUnitId?.get(identity.ownerUnitId)?.has(identity.globalBindingId)
+      ? { omitTdzReadCheck: true as const }
+      : {}),
   };
 }
 
@@ -3628,6 +3639,33 @@ function resolveVecForElementImpl(
   return {
     valueType: { kind: "ref", typeIdx: vecStructTypeIdx },
     vecStructTypeIdx,
+    lengthFieldIdx: 0,
+    dataFieldIdx: 1,
+    arrayTypeIdx,
+    elementValType: arrayDef.element,
+  };
+}
+
+/** Recover the exact registered vec layout behind a physical ref carrier. */
+function resolvePhysicalVecImpl(ctx: CodegenContext, valueType: ValType): import("./lower.js").IrVecLowering | null {
+  if (valueType.kind !== "ref" && valueType.kind !== "ref_null") return null;
+  const typeIdx = valueType.typeIdx;
+  // A coincidental `{ length: i32, data: ref array }` user struct is not a
+  // vector. Only allocator objects registered by the canonical vec registry
+  // may cross the prepared boundary as logical `IrType.vec` values.
+  if (![...ctx.vecTypeMap.values()].includes(typeIdx)) return null;
+  const vecDef = ctx.mod.types[typeIdx];
+  if (!vecDef || vecDef.kind !== "struct" || vecDef.fields.length < 2) return null;
+  const lengthField = vecDef.fields[0]!;
+  const dataField = vecDef.fields[1]!;
+  if (lengthField.type.kind !== "i32") return null;
+  if (dataField.type.kind !== "ref" && dataField.type.kind !== "ref_null") return null;
+  const arrayTypeIdx = dataField.type.typeIdx;
+  const arrayDef = ctx.mod.types[arrayTypeIdx];
+  if (!arrayDef || arrayDef.kind !== "array") return null;
+  return {
+    valueType,
+    vecStructTypeIdx: typeIdx,
     lengthFieldIdx: 0,
     dataFieldIdx: 1,
     arrayTypeIdx,
@@ -3849,7 +3887,11 @@ function resolveStaticNumericArrayGlobal(
   return { globalRef, type: expected };
 }
 
-function makeFromAstResolver(ctx: CodegenContext, moduleBindingResolver?: IrModuleBindingResolver): IrFromAstResolver {
+function makeFromAstResolver(
+  ctx: CodegenContext,
+  moduleBindingResolver?: IrModuleBindingResolver,
+  postWasmStartTdzSafeBindingsByOwnerUnitId?: IrIntegrationLoweringPlans["postWasmStartTdzSafeBindingsByOwnerUnitId"],
+): IrFromAstResolver {
   const isAmbientStringBinding = makeAmbientStringBindingPredicate(ctx.checker);
   const supportsBackendCapability = (capability: IrBackendTargetCapability): boolean =>
     supportsIrBackendTargetCapability(
@@ -4147,7 +4189,9 @@ function makeFromAstResolver(ctx: CodegenContext, moduleBindingResolver?: IrModu
     // only then map it to the legacy slot and retain the logical extern brand.
     resolveModuleBinding(node: ts.Identifier, writeValue?: ts.Expression) {
       const identity = moduleBindingResolver?.(node, writeValue);
-      return identity ? resolveModuleBindingGlobal(ctx, identity) : undefined;
+      return identity
+        ? resolveModuleBindingGlobal(ctx, identity, postWasmStartTdzSafeBindingsByOwnerUnitId)
+        : undefined;
     },
     isDirectModuleBinding(node: ts.Identifier): boolean {
       return moduleBindingResolver?.isDirectModuleBinding(node) === true;
@@ -4213,26 +4257,7 @@ function makeFromAstResolver(ctx: CodegenContext, moduleBindingResolver?: IrModu
     // ref_null) $vec_*` ValType. See the corresponding doc on
     // `IrLowerResolver.resolveVec` for the contract.
     resolveVec(valType: ValType) {
-      if (valType.kind !== "ref" && valType.kind !== "ref_null") return null;
-      const typeIdx = (valType as { typeIdx: number }).typeIdx;
-      const vecDef = ctx.mod.types[typeIdx];
-      if (!vecDef || vecDef.kind !== "struct") return null;
-      if (vecDef.fields.length < 2) return null;
-      const lengthField = vecDef.fields[0]!;
-      const dataField = vecDef.fields[1]!;
-      if (lengthField.type.kind !== "i32") return null;
-      if (dataField.type.kind !== "ref" && dataField.type.kind !== "ref_null") return null;
-      const arrayTypeIdx = (dataField.type as { typeIdx: number }).typeIdx;
-      const arrayDef = ctx.mod.types[arrayTypeIdx];
-      if (!arrayDef || arrayDef.kind !== "array") return null;
-      return {
-        valueType: valType,
-        vecStructTypeIdx: typeIdx,
-        lengthFieldIdx: 0,
-        dataFieldIdx: 1,
-        arrayTypeIdx,
-        elementValType: arrayDef.element,
-      };
+      return resolvePhysicalVecImpl(ctx, valType);
     },
     // #1804 — register-or-recover the vec struct for an element ValType, for
     // `vec.new_fixed` construction. See `resolveVecForElementImpl`.
@@ -4586,26 +4611,7 @@ function makeResolver(
     // should have rejected the function).
     // -------------------------------------------------------------------
     resolveVec(valType: ValType): import("./lower.js").IrVecLowering | null {
-      if (valType.kind !== "ref" && valType.kind !== "ref_null") return null;
-      const typeIdx = (valType as { typeIdx: number }).typeIdx;
-      const vecDef = ctx.mod.types[typeIdx];
-      if (!vecDef || vecDef.kind !== "struct") return null;
-      if (vecDef.fields.length < 2) return null;
-      const lengthField = vecDef.fields[0]!;
-      const dataField = vecDef.fields[1]!;
-      if (lengthField.type.kind !== "i32") return null;
-      if (dataField.type.kind !== "ref" && dataField.type.kind !== "ref_null") return null;
-      const arrayTypeIdx = (dataField.type as { typeIdx: number }).typeIdx;
-      const arrayDef = ctx.mod.types[arrayTypeIdx];
-      if (!arrayDef || arrayDef.kind !== "array") return null;
-      return {
-        valueType: valType,
-        vecStructTypeIdx: typeIdx,
-        lengthFieldIdx: 0,
-        dataFieldIdx: 1,
-        arrayTypeIdx,
-        elementValType: arrayDef.element,
-      };
+      return resolvePhysicalVecImpl(ctx, valType);
     },
     // #1804 — register-or-recover the vec struct for an element ValType, for
     // `vec.new_fixed` construction. See `resolveVecForElementImpl`.
@@ -5134,6 +5140,7 @@ function prepareVectors(ctx: CodegenContext, fns: BuiltFn[]): BuiltFn[] {
     ctx,
     entries: fns,
     resolveVecForElement: (element) => resolveVecForElementImpl(ctx, element),
+    resolvePhysicalVec: (value) => resolvePhysicalVecImpl(ctx, value),
     typeKey: irTypeKey,
   });
 }
