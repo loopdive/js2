@@ -34,6 +34,8 @@ export default defineConfig({
         index: "src/index.ts",
         cli: "src/cli.ts",
         runtime: "src/runtime.ts",
+        "runtime-isolated-evaluator": "src/runtime-isolated-evaluator.ts",
+        "runtime-node-eval-worker": "src/runtime-node-eval-worker.ts",
         optimize: "src/optimize.ts",
       },
       formats: ["es"],

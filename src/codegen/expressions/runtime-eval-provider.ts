@@ -41,6 +41,11 @@ export const RUNTIME_EVAL_IMPORT_MODULE = "js2wasm:runtime-eval";
 const DIRECT_EVAL_STATE_BINDING_CAPACITY = 64;
 const RUNTIME_EVAL_PUSH_GLOBALS = "__runtime_eval_push_globals";
 const RUNTIME_EVAL_PULL_GLOBALS = "__runtime_eval_pull_globals";
+export const HOST_RUNTIME_EVAL_VEC_LEN = "__runtime_eval_vec_len";
+export const HOST_RUNTIME_EVAL_VEC_GET = "__runtime_eval_vec_get";
+export const HOST_RUNTIME_EVAL_CELL_GET = "__runtime_eval_cell_get";
+export const HOST_RUNTIME_EVAL_CELL_SET = "__runtime_eval_cell_set";
+export const HOST_RUNTIME_DIRECT_EVAL_IMPORT = "__extern_direct_eval";
 /** Private global-object slot carrying `[name, EvalBindingCell, ...]`. The
  * provider reads the structurally canonical cells into ENV_GLOBAL.names/slots;
  * the slot itself is deliberately non-enumerable and non-configurable. */
@@ -77,6 +82,97 @@ function directEvalCallerIsFunctionScoped(call: ts.CallExpression): boolean {
     node = node.parent;
   }
   return false;
+}
+
+/**
+ * Export the narrow main-realm bridge needed by an isolated JS-host evaluator.
+ *
+ * The Worker never receives these WasmGC references. `buildImports` invokes the
+ * four exports in the AOT module's host realm and exposes only opaque binding
+ * ids/value handles to the evaluator. Dedicated exports keep the bridge alive
+ * when the general host-inspection surface is disabled.
+ */
+function ensureReifiedHostEvalBridgeExports(ctx: CodegenContext, cellTypeIdx: number): void {
+  const vecTypeIdx = ensureReifiedHostEvalVecType(ctx);
+  const externref: ValType = { kind: "externref" };
+
+  const register = (
+    name: string,
+    params: ValType[],
+    results: ValType[],
+    body: Instr[],
+    locals: { name: string; type: ValType }[] = [],
+  ): void => {
+    if (ctx.funcMap.has(name)) return;
+    const typeIdx = addFuncType(ctx, params, results, `$${name}_type`);
+    const funcIdx = mintDefinedFunc(ctx);
+    pushDefinedFunc(ctx, funcIdx, { name, typeIdx, locals, body, exported: true });
+    ctx.funcMap.set(name, funcIdx);
+    ctx.mod.exports.push({ name, desc: { kind: "func", index: funcIdx } });
+  };
+
+  register(
+    HOST_RUNTIME_EVAL_VEC_LEN,
+    [externref],
+    [{ kind: "i32" }],
+    [
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: vecTypeIdx },
+      { op: "array.len" },
+    ],
+  );
+  register(
+    HOST_RUNTIME_EVAL_VEC_GET,
+    [externref, { kind: "i32" }],
+    [externref],
+    [
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: vecTypeIdx },
+      { op: "local.get", index: 1 },
+      { op: "array.get", typeIdx: vecTypeIdx },
+    ],
+  );
+  register(
+    HOST_RUNTIME_EVAL_CELL_GET,
+    [externref],
+    [externref],
+    [
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: cellTypeIdx },
+      { op: "struct.get", typeIdx: cellTypeIdx, fieldIdx: 0 },
+    ],
+  );
+  register(
+    HOST_RUNTIME_EVAL_CELL_SET,
+    [externref, externref],
+    [],
+    [
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: cellTypeIdx },
+      { op: "local.set", index: 2 },
+      { op: "local.get", index: 2 },
+      { op: "local.get", index: 1 },
+      { op: "struct.set", typeIdx: cellTypeIdx, fieldIdx: 0 },
+    ],
+    [{ name: "__cell", type: { kind: "ref", typeIdx: cellTypeIdx } }],
+  );
+}
+
+function ensureReifiedHostEvalVecType(ctx: CodegenContext): number {
+  if (ctx.hostRuntimeEvalVecTypeIdx !== undefined) return ctx.hostRuntimeEvalVecTypeIdx;
+  const typeIdx = ctx.mod.types.length;
+  ctx.mod.types.push({
+    kind: "array",
+    name: "$HostRuntimeEvalVec",
+    element: { kind: "externref" },
+    mutable: false,
+  });
+  ctx.hostRuntimeEvalVecTypeIdx = typeIdx;
+  return typeIdx;
 }
 const RUNTIME_EVAL_GLOBAL_LEXICAL_CELL_GLOBAL_PREFIX = "\0runtime-eval-global-lexical-cell:";
 const RUNTIME_EVAL_INTRINSIC_GLOBALS = [
@@ -525,18 +621,19 @@ function directEvalCellWrapInstrs(
 }
 
 /**
- * Standalone direct eval route. The caller supplies three name/cell vector
+ * Direct eval route. The caller supplies three name/cell vector
  * pairs: a persistent current-activation environment, fresh call-site lexical
- * shadows, and captured outer bindings. The provider links those records in
- * that order, so eval-created sloppy vars persist without overwriting an outer
- * capture and interpreter stores still update canonical AOT cells directly.
+ * shadows, and captured outer bindings. Standalone links those records into
+ * its runtime provider. The opt-in JS-host lane sends the same canonical cells
+ * to a main-realm bridge; an isolated evaluator sees only opaque binding ids.
  */
 export function emitStandaloneDirectEvalRuntime(
   ctx: CodegenContext,
   fctx: FunctionContext,
   call: ts.CallExpression,
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined;
+  const reifiedHost = !ctx.standalone && ctx.directEvalMode === "reified-host";
+  if (!ctx.standalone && !reifiedHost) return undefined;
   const args = call.arguments;
   if (args.length === 0) {
     emitUndefined(ctx, fctx);
@@ -545,7 +642,7 @@ export function emitStandaloneDirectEvalRuntime(
 
   const callerStrict = isStrictContext(call, ctx.inferModuleStrictArguments);
   const externref: ValType = { kind: "externref" };
-  if (!callerStrict) {
+  if (!callerStrict && !reifiedHost) {
     ensureLateImport(ctx, "__extern_is_undefined", [externref], [{ kind: "i32" }]);
     flushLateImportShifts(ctx, fctx);
   }
@@ -554,13 +651,14 @@ export function emitStandaloneDirectEvalRuntime(
   // Register the builders before emitting argument expressions: doing so can
   // mint functions, and keeping that mutation ahead of the call operands makes
   // late-index repair straightforward.
-  ensureObjVecBuilders(ctx);
+  const hostVecTypeIdx = reifiedHost ? ensureReifiedHostEvalVecType(ctx) : undefined;
+  if (!reifiedHost) ensureObjVecBuilders(ctx);
   const bindings = currentDirectEvalBindings(ctx, fctx);
   for (const layer of [bindings.activation, bindings.lexical, bindings.outer]) {
     for (const binding of layer) addStringConstantGlobal(ctx, binding.name);
   }
   const functionScopedCaller = directEvalCallerIsFunctionScoped(call);
-  if (functionScopedCaller) addStringConstantGlobal(ctx, RUNTIME_EVAL_NON_GLOBAL_SENTINEL);
+  if (functionScopedCaller && !reifiedHost) addStringConstantGlobal(ctx, RUNTIME_EVAL_NON_GLOBAL_SENTINEL);
 
   const sourceLocal = allocLocal(fctx, `__runtime_direct_eval_source_${fctx.locals.length}`, externref);
   const sourceType = compileExpression(ctx, fctx, args[0]!);
@@ -580,12 +678,12 @@ export function emitStandaloneDirectEvalRuntime(
   const objVecNewIdx = ctx.funcMap.get("__objvec_new")!;
   const objVecPushIdx = ctx.funcMap.get("__objvec_push")!;
 
-  const wrapCallableIdx = ensureRuntimeEvalCallableWrapHelper(ctx);
+  const wrapCallableIdx = reifiedHost ? undefined : ensureRuntimeEvalCallableWrapHelper(ctx);
   const bindingPushInstrs = (namesLocal: number, slotsLocal: number, layer: typeof bindings.activation): Instr[] => {
     const instrs: Instr[] = [];
     const cellTypeIdx = fctx.directEvalRefCellTypeIdx;
     for (const binding of layer) {
-      if (cellTypeIdx !== undefined) {
+      if (cellTypeIdx !== undefined && wrapCallableIdx !== undefined) {
         instrs.push(...directEvalCellWrapInstrs(ctx, binding.cellLocal, cellTypeIdx, wrapCallableIdx));
       }
       instrs.push(
@@ -604,6 +702,23 @@ export function emitStandaloneDirectEvalRuntime(
   const freshLayer = (label: string, layer: typeof bindings.activation): [number, number] => {
     const namesLocal = allocLocal(fctx, `__runtime_direct_eval_${label}_names_${fctx.locals.length}`, externref);
     const slotsLocal = allocLocal(fctx, `__runtime_direct_eval_${label}_slots_${fctx.locals.length}`, externref);
+    if (hostVecTypeIdx !== undefined) {
+      for (const binding of layer) fctx.body.push(...stringConstantExternrefInstrs(ctx, binding.name));
+      fctx.body.push(
+        { op: "array.new_fixed", typeIdx: hostVecTypeIdx, length: layer.length },
+        { op: "extern.convert_any" },
+        { op: "local.set", index: namesLocal },
+      );
+      for (const binding of layer) {
+        fctx.body.push({ op: "local.get", index: binding.cellLocal }, { op: "extern.convert_any" });
+      }
+      fctx.body.push(
+        { op: "array.new_fixed", typeIdx: hostVecTypeIdx, length: layer.length },
+        { op: "extern.convert_any" },
+        { op: "local.set", index: slotsLocal },
+      );
+      return [namesLocal, slotsLocal];
+    }
     fctx.body.push(
       { op: "call", funcIdx: objVecNewIdx },
       { op: "local.set", index: namesLocal },
@@ -615,54 +730,61 @@ export function emitStandaloneDirectEvalRuntime(
   };
   const stateCellTypeIdx = fctx.directEvalRefCellTypeIdx ?? getOrRegisterRefCellType(ctx, externref);
   fctx.directEvalRefCellTypeIdx = stateCellTypeIdx;
-  if (fctx.directEvalActivationStateCellLocals === undefined) {
-    fctx.directEvalActivationStateCellLocals = [];
-    for (let i = 0; i < DIRECT_EVAL_STATE_BINDING_CAPACITY * 2; i += 1) {
-      fctx.directEvalActivationStateCellLocals.push(
-        allocLocal(fctx, `__runtime_direct_eval_state_cell_${i}_${fctx.locals.length}`, {
-          kind: "ref_null",
-          typeIdx: stateCellTypeIdx,
-        }),
-      );
-    }
-  }
-  const activationStateCellLocals = fctx.directEvalActivationStateCellLocals;
-  for (const cellLocal of activationStateCellLocals) {
-    fctx.body.push(
-      { op: "local.get", index: cellLocal },
-      { op: "ref.is_null" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          { op: "ref.null.extern" },
-          { op: "struct.new", typeIdx: stateCellTypeIdx },
-          { op: "local.set", index: cellLocal },
-        ],
-      },
-    );
-  }
   const activationStatePoolLocal = allocLocal(
     fctx,
     `__runtime_direct_eval_activation_state_pool_${fctx.locals.length}`,
     externref,
   );
-  fctx.body.push({ op: "call", funcIdx: objVecNewIdx }, { op: "local.set", index: activationStatePoolLocal });
-  for (const cellLocal of activationStateCellLocals) {
-    fctx.body.push(
-      { op: "local.get", index: activationStatePoolLocal },
-      { op: "local.get", index: cellLocal },
-      { op: "ref.as_non_null" },
-      { op: "extern.convert_any" },
-      { op: "call", funcIdx: objVecPushIdx },
-    );
+  if (reifiedHost) {
+    // Eval-created declaration persistence is a provider-owned concern. The
+    // first host slice bridges existing canonical caller cells only, so avoid
+    // allocating standalone's 128 spare state cells in every AOT activation.
+    fctx.body.push({ op: "ref.null.extern" }, { op: "local.set", index: activationStatePoolLocal });
+  } else {
+    if (fctx.directEvalActivationStateCellLocals === undefined) {
+      fctx.directEvalActivationStateCellLocals = [];
+      for (let i = 0; i < DIRECT_EVAL_STATE_BINDING_CAPACITY * 2; i += 1) {
+        fctx.directEvalActivationStateCellLocals.push(
+          allocLocal(fctx, `__runtime_direct_eval_state_cell_${i}_${fctx.locals.length}`, {
+            kind: "ref_null",
+            typeIdx: stateCellTypeIdx,
+          }),
+        );
+      }
+    }
+    const activationStateCellLocals = fctx.directEvalActivationStateCellLocals;
+    for (const cellLocal of activationStateCellLocals) {
+      fctx.body.push(
+        { op: "local.get", index: cellLocal },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "ref.null.extern" },
+            { op: "struct.new", typeIdx: stateCellTypeIdx },
+            { op: "local.set", index: cellLocal },
+          ],
+        },
+      );
+    }
+    fctx.body.push({ op: "call", funcIdx: objVecNewIdx }, { op: "local.set", index: activationStatePoolLocal });
+    for (const cellLocal of activationStateCellLocals) {
+      fctx.body.push(
+        { op: "local.get", index: activationStatePoolLocal },
+        { op: "local.get", index: cellLocal },
+        { op: "ref.as_non_null" },
+        { op: "extern.convert_any" },
+        { op: "call", funcIdx: objVecPushIdx },
+      );
+    }
   }
   const [activationNamesLocal, activationSlotsLocal] = freshLayer("activation_seed", bindings.activation);
   // (#4308 slice C) The caller-kind sentinel. Its cell is FRESH rather than
   // borrowed from the state pool: nothing writes the sentinel binding, but a
   // shared cell would make that assumption load-bearing for the pool's own
   // name/value pairs.
-  if (functionScopedCaller) {
+  if (functionScopedCaller && !reifiedHost) {
     fctx.body.push(
       { op: "local.get", index: activationNamesLocal },
       ...stringConstantExternrefInstrs(ctx, RUNTIME_EVAL_NON_GLOBAL_SENTINEL),
@@ -689,7 +811,9 @@ export function emitStandaloneDirectEvalRuntime(
     externref,
   );
   const mappedArgsInfo = fctx.mappedArgsInfo;
-  if (mappedArgsInfo) {
+  if (reifiedHost) {
+    fctx.body.push({ op: "ref.null.extern" }, { op: "local.set", index: mappedParamNamesLocal });
+  } else if (mappedArgsInfo) {
     if (mappedArgsInfo.runtimeMappedNamesLocalIdx === undefined) {
       mappedArgsInfo.runtimeMappedNamesLocalIdx = allocLocal(
         fctx,
@@ -746,32 +870,43 @@ export function emitStandaloneDirectEvalRuntime(
   }
 
   fctx.body.push({ op: "local.get", index: sourceLocal });
-  if (emitGlobalEnvironmentObject(ctx, fctx) === null) fctx.body.push({ op: "ref.null.extern" });
-  const globalLocal = allocLocal(fctx, `__runtime_direct_eval_global_${fctx.locals.length}`, externref);
-  fctx.body.push({ op: "local.tee", index: globalLocal });
-  const thisType = compileExpression(ctx, fctx, ts.factory.createThis());
-  if (thisType === null) {
-    emitUndefined(ctx, fctx);
-  } else if (thisType.kind !== "externref") {
-    coerceType(ctx, fctx, thisType, externref);
-  }
-  if (!callerStrict) {
-    const thisLocal = allocLocal(fctx, `__runtime_direct_eval_this_${fctx.locals.length}`, externref);
-    const liveIsUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
-    fctx.body.push({ op: "local.set", index: thisLocal }, { op: "local.get", index: thisLocal }, { op: "ref.is_null" });
-    if (liveIsUndefinedIdx !== undefined) {
-      fctx.body.push(
-        { op: "local.get", index: thisLocal },
-        { op: "call", funcIdx: liveIsUndefinedIdx },
-        { op: "i32.or" },
-      );
+  if (reifiedHost) {
+    // The isolated evaluator owns its global object, and host values need a
+    // separate reverse membrane. Keep both ABI positions explicit without
+    // constructing standalone's native global-object/callable substrate.
+    fctx.body.push({ op: "ref.null.extern" }, { op: "ref.null.extern" });
+  } else {
+    if (emitGlobalEnvironmentObject(ctx, fctx) === null) fctx.body.push({ op: "ref.null.extern" });
+    const globalLocal = allocLocal(fctx, `__runtime_direct_eval_global_${fctx.locals.length}`, externref);
+    fctx.body.push({ op: "local.tee", index: globalLocal });
+    const thisType = compileExpression(ctx, fctx, ts.factory.createThis());
+    if (thisType === null) {
+      emitUndefined(ctx, fctx);
+    } else if (thisType.kind !== "externref") {
+      coerceType(ctx, fctx, thisType, externref);
     }
-    fctx.body.push({
-      op: "if",
-      blockType: { kind: "val", type: externref },
-      then: [{ op: "local.get", index: globalLocal }],
-      else: [{ op: "local.get", index: thisLocal }],
-    });
+    if (!callerStrict) {
+      const thisLocal = allocLocal(fctx, `__runtime_direct_eval_this_${fctx.locals.length}`, externref);
+      const liveIsUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
+      fctx.body.push(
+        { op: "local.set", index: thisLocal },
+        { op: "local.get", index: thisLocal },
+        { op: "ref.is_null" },
+      );
+      if (liveIsUndefinedIdx !== undefined) {
+        fctx.body.push(
+          { op: "local.get", index: thisLocal },
+          { op: "call", funcIdx: liveIsUndefinedIdx },
+          { op: "i32.or" },
+        );
+      }
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "val", type: externref },
+        then: [{ op: "local.get", index: globalLocal }],
+        else: [{ op: "local.get", index: thisLocal }],
+      });
+    }
   }
   fctx.body.push(
     { op: "local.get", index: activationStatePoolLocal },
@@ -785,9 +920,11 @@ export function emitStandaloneDirectEvalRuntime(
     { op: "local.get", index: mappedParamNamesLocal },
   );
 
+  if (reifiedHost) ensureReifiedHostEvalBridgeExports(ctx, stateCellTypeIdx);
+  const importName = reifiedHost ? HOST_RUNTIME_DIRECT_EVAL_IMPORT : "__runtime_direct_eval";
   const evalIdx = ensureLateImport(
     ctx,
-    "__runtime_direct_eval",
+    importName,
     [
       externref,
       externref,
@@ -803,7 +940,7 @@ export function emitStandaloneDirectEvalRuntime(
       externref,
     ],
     [externref],
-    RUNTIME_EVAL_IMPORT_MODULE,
+    reifiedHost ? "env" : RUNTIME_EVAL_IMPORT_MODULE,
   );
   flushLateImportShifts(ctx, fctx);
   if (evalIdx === undefined) {
@@ -822,11 +959,12 @@ export function emitStandaloneDirectEvalRuntime(
       { op: "drop" },
       { op: "ref.null.extern" },
     );
-    emitRuntimeEvalProviderActive(ctx, fctx, false);
+    if (!reifiedHost) emitRuntimeEvalProviderActive(ctx, fctx, false);
     return externref;
   }
-  const liveIdx = ctx.funcMap.get("__runtime_direct_eval") ?? evalIdx;
+  const liveIdx = ctx.funcMap.get(importName) ?? evalIdx;
   fctx.body.push({ op: "call", funcIdx: liveIdx });
+  if (reifiedHost) return externref;
   return emitRuntimeEvalResultUnwrap(ctx, fctx);
 }
 

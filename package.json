@@ -43,6 +43,14 @@
       "types": "./dist/runtime.d.ts",
       "import": "./dist/runtime.js"
     },
+    "./runtime/evaluator": {
+      "types": "./dist/runtime-isolated-evaluator.d.ts",
+      "import": "./dist/runtime-isolated-evaluator.js"
+    },
+    "./runtime/node-eval-worker": {
+      "types": "./dist/runtime-node-eval-worker.d.ts",
+      "import": "./dist/runtime-node-eval-worker.js"
+    },
     "./optimize": {
       "types": "./dist/optimize.d.ts",
       "import": "./dist/optimize.js"

@@ -8406,6 +8406,8 @@ function resolveImport(
   // the leading `self` for `extern_class` members. Lets the generic method shim
   // below drop its rest parameter. Undefined when unknown → rest form kept.
   paramCount?: number,
+  dynamicCode: DynamicCodePolicy = "compat",
+  dynamicCodeEvaluator?: DynamicCodeEvaluator,
 ): Function {
   switch (intent.type) {
     case "string_literal":
@@ -9128,6 +9130,9 @@ function resolveImport(
           callbackState,
           globalSandbox,
           instanceState,
+          undefined,
+          dynamicCode,
+          dynamicCodeEvaluator,
         );
         return makeFixedExternMethodCall(fixedMethodArity, canonical);
       }
@@ -9324,7 +9329,108 @@ function resolveImport(
           const root: any = { "": unfiltered };
           return _internalizeJSONProperty(root, "", reviver, callbackState);
         };
+      if (name === "__extern_direct_eval") {
+        const bindingByCell = new WeakMap<object, DynamicCodeBinding>();
+        return (
+          src: any,
+          _globalObject: any,
+          _thisArg: any,
+          _activationState: any,
+          activationNames: any,
+          activationSlots: any,
+          lexicalNames: any,
+          lexicalSlots: any,
+          outerNames: any,
+          outerSlots: any,
+          callerStrict: number,
+          _mappedParamNames: any,
+        ): any => {
+          if (typeof src !== "string") return src;
+          if (dynamicCode === "deny") throw new EvalError("dynamic code generation is disabled by the host");
+          if (dynamicCode !== "evaluator" || !dynamicCodeEvaluator) {
+            throw new EvalError(
+              'reified host direct eval requires buildImports(..., { dynamicCode: "evaluator", dynamicCodeEvaluator })',
+            );
+          }
+          const exports = callbackState?.getExports();
+          const vecLen = exports?.__runtime_eval_vec_len;
+          const vecGet = exports?.__runtime_eval_vec_get;
+          const cellGet = exports?.__runtime_eval_cell_get;
+          const cellSet = exports?.__runtime_eval_cell_set;
+          if (
+            typeof vecLen !== "function" ||
+            typeof vecGet !== "function" ||
+            typeof cellGet !== "function" ||
+            typeof cellSet !== "function"
+          ) {
+            throw new EvalError("reified host direct-eval bridge exports are unavailable on the AOT instance");
+          }
+
+          const bindings: DynamicCodeBinding[] = [];
+          const appendLayer = (names: any, slots: any): void => {
+            if (names == null || slots == null) return;
+            const count = vecLen(names) >>> 0;
+            if (count !== vecLen(slots) >>> 0) {
+              throw new EvalError("reified host direct-eval binding vectors are misaligned");
+            }
+            for (let index = 0; index < count; index++) {
+              const bindingName = String(vecGet(names, index));
+              if (bindingName === "__js2wasm_eval_nonglobal__") continue;
+              const cell = vecGet(slots, index);
+              if ((typeof cell !== "object" || cell === null) && typeof cell !== "function") {
+                throw new EvalError(`reified host direct-eval binding '${bindingName}' has no canonical cell`);
+              }
+              let binding = bindingByCell.get(cell as object);
+              if (!binding) {
+                binding = {
+                  name: bindingName,
+                  get: () => cellGet(cell),
+                  set: (value: unknown) => cellSet(cell, value),
+                };
+                bindingByCell.set(cell as object, binding);
+              }
+              bindings.push(binding);
+            }
+          };
+
+          // Environment lookup is inner-to-outer. Build the list outer-first;
+          // the evaluator's later duplicate wins for a lexical shadow.
+          appendLayer(outerNames, outerSlots);
+          appendLayer(activationNames, activationSlots);
+          appendLayer(lexicalNames, lexicalSlots);
+          return dynamicCodeEvaluator.evaluate(src, {
+            direct: true,
+            strict: callerStrict !== 0,
+            bindings,
+          });
+        };
+      }
       if (name === "__extern_eval") {
+        if (dynamicCode === "deny") {
+          return (src: any) => {
+            if (typeof src !== "string") return src;
+            throw new EvalError("dynamic code generation is disabled by the host");
+          };
+        }
+        if (dynamicCode === "native") {
+          return (src: any) => {
+            if (typeof src !== "string") return src;
+            // A Wasm host-import boundary cannot carry the caller's lexical
+            // environment, so this is necessarily indirect eval. When the
+            // module is hosted in a Worker, the global below is the Worker
+            // realm rather than the main page/process realm.
+            // biome-ignore lint/style/noCommaOperator: (0, eval) forces indirect eval
+            // biome-ignore lint/security/noGlobalEval: explicit opt-in host-eval engine
+            return (0, eval)(src);
+          };
+        }
+        if (dynamicCode === "evaluator") {
+          return (src: any, isDirect: number = 0) => {
+            if (typeof src !== "string") return src;
+            if (!dynamicCodeEvaluator) throw new EvalError("no dynamic-code evaluator was supplied by the host");
+            return dynamicCodeEvaluator.evaluate(src, { direct: isDirect !== 0 });
+          };
+        }
         // #1164: dynamic eval via Wasm module compilation.  The primary
         // path compiles the eval string through js2wasm and instantiates
         // it as a fresh Wasm module via the JS Wasm API — no `(0, eval)`,
@@ -9516,6 +9622,21 @@ assert._isSameValue = isSameValue;
         }
       }
       if (name === "__extern_new_function") {
+        if (dynamicCode === "deny") {
+          return () => {
+            throw new EvalError("dynamic code generation is disabled by the host");
+          };
+        }
+        if (dynamicCode === "native") {
+          // biome-ignore lint/security/noGlobalEval: explicit opt-in host-eval engine
+          return (params: any, body: any) => new Function(String(params ?? ""), String(body ?? ""));
+        }
+        if (dynamicCode === "evaluator") {
+          return (params: any, body: any) => {
+            if (!dynamicCodeEvaluator) throw new EvalError("no dynamic-code evaluator was supplied by the host");
+            return dynamicCodeEvaluator.createFunction(String(params ?? ""), String(body ?? ""));
+          };
+        }
         // (#2960) Dynamic `new Function(params, body)` — meta-circular
         // construction via js2wasm's own compiler (see createNewFunctionShim).
         // Returns a real JS-callable function the parent module can invoke.
@@ -10017,6 +10138,9 @@ assert._isSameValue = isSameValue;
           callbackState,
           globalSandbox,
           instanceState,
+          undefined,
+          dynamicCode,
+          dynamicCodeEvaluator,
         ) as (o: any, k: any) => number;
         const getProp = resolveImport(
           { type: "extern_get" } as ImportIntent,
@@ -10024,6 +10148,9 @@ assert._isSameValue = isSameValue;
           callbackState,
           globalSandbox,
           instanceState,
+          undefined,
+          dynamicCode,
+          dynamicCodeEvaluator,
         ) as (o: any, k: any) => any;
         const toBool = resolveImport(
           { type: "builtin", name: "__to_boolean" } as ImportIntent,
@@ -10031,6 +10158,9 @@ assert._isSameValue = isSameValue;
           callbackState,
           globalSandbox,
           instanceState,
+          undefined,
+          dynamicCode,
+          dynamicCodeEvaluator,
         ) as (v: any) => number;
         return (obj: any, key: any): number => {
           // (1)+(2) value-independent HasProperty.
@@ -15977,11 +16107,47 @@ function isFastLeafHostImport(imp: ImportDescriptor): boolean {
  * `setExports(instance.exports)` remains available for legacy callback, vec,
  * closure, and string wiring.
  */
+export interface BuildImportsOptions {
+  domRoot?: Element | ShadowRoot;
+  globalSandbox?: Record<string, any>;
+  /**
+   * Runtime implementation for dynamic eval and new Function.
+   *
+   * `compat` preserves the existing meta-circular-first path and its native
+   * fallback. `native` delegates directly to the current realm's eval/Function.
+   * `evaluator` delegates to the explicit evaluator below. `deny` fails closed.
+   */
+  dynamicCode?: DynamicCodePolicy;
+  /** Synchronous evaluator used only when `dynamicCode` is `evaluator`. */
+  dynamicCodeEvaluator?: DynamicCodeEvaluator;
+}
+
+export type DynamicCodePolicy = "compat" | "native" | "evaluator" | "deny";
+
+/** Live caller binding retained by the AOT module's host realm. */
+export interface DynamicCodeBinding {
+  readonly name: string;
+  get(): unknown;
+  set(value: unknown): void;
+}
+
+export interface DynamicCodeEvaluationContext {
+  direct: boolean;
+  strict?: boolean;
+  /** Present only for `CompileOptions.directEval: "reified-host"`. */
+  bindings?: readonly DynamicCodeBinding[];
+}
+
+export interface DynamicCodeEvaluator {
+  evaluate(source: string, context: DynamicCodeEvaluationContext): unknown;
+  createFunction(parameters: string, body: string): Function;
+}
+
 export function buildImports(
   manifest: ImportDescriptor[],
   deps?: Record<string, any>,
   stringPool?: string[],
-  options?: { domRoot?: Element | ShadowRoot; globalSandbox?: Record<string, any> },
+  options?: BuildImportsOptions,
 ): {
   env: Record<string, Function>;
   "wasm:js-string": typeof jsString;
@@ -16068,7 +16234,16 @@ export function buildImports(
       continue;
     }
 
-    fn = resolveImport(imp.intent, deps, callbackState, options?.globalSandbox, instanceState, imp.paramCount);
+    fn = resolveImport(
+      imp.intent,
+      deps,
+      callbackState,
+      options?.globalSandbox,
+      instanceState,
+      imp.paramCount,
+      options?.dynamicCode,
+      options?.dynamicCodeEvaluator,
+    );
 
     // DOM containment wrapping
     if (options?.domRoot) {

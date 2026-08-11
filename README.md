@@ -154,6 +154,10 @@ The imports a module needs depend on the compile target:
   const { instance } = await WebAssembly.instantiate(r.binary, r.importObject);
   (instance.exports as any).add(2, 3); // → 5
   ```
+
+  Dynamic `eval` / `new Function` can instead use an isolated JS evaluator
+  while the AOT Wasm instance stays in its original host. See
+  [Isolated JS-host eval](docs/js-host-eval-isolation.md).
 - **Standalone mode** (`target: "standalone"`, also `target: "wasi"`) emits a
   pure WasmGC module with Wasm-native intrinsics and **no host imports**, so it
   instantiates with `WebAssembly.instantiate(binary, {})` and runs anywhere
