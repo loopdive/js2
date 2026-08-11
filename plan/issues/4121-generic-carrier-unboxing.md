@@ -17,9 +17,11 @@ related: [684, 1167c, 1168, 2855, 3683, 3754, 3765, 4118, 4122, 2773, 1624]
 origin: "measured on upstream/main d369562d7, 2026-08-03, investigating the residual 10x vs node on real npm packages"
 loc-budget-allow:
   - src/codegen/context/types.ts
+  - src/codegen/declarations.ts
   - src/codegen/index.ts
   - src/codegen/object-runtime.ts
 func-budget-allow:
+  - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
   - src/codegen/object-runtime.ts::ensureObjectRuntime
 ---
@@ -292,6 +294,73 @@ The pinned correctness harness reports 21/21 operations equal for both the
 base and candidate. Its opt-in Vitest wrapper still expects the historical
 18/21 state and is therefore a pre-existing exact-base failure, not part of
 this compiler checkpoint.
+
+## 2026-08-09 residual cookie return-carrier checkpoint
+
+Stacked branch: `codex/cookie-residual-runtime-perf-20260809`, based exactly on
+the updated parent checkpoint `d5f3583e5b65517951dece9cb8538422d75a745f`.
+Implementation commit: `1d44e406a17908d5cecc26f9a29b65783a7ba68e`.
+
+An exact CPU profile of the parent artifact showed the residual Wasm time in
+generic helpers rather than the package's numeric search kernels:
+`__obj_hash` 17.27%, `__extern_strict_eq` 9.79%, `valueSlice` 9.66%,
+`__str_flatten` 8.76%, and `__obj_find` 6.70%. Native Node instead spent its
+time directly in `eqIndex` (16.14%), `parseCookie` (15.61%), `endIndex`
+(8.99%), and `decode` (7.41%). V8's native Wasm code for the generic strict
+equality helper was about 3,168 instruction bytes, while the equivalent JS
+call sites were JIT-specialized. This made the next generic lever the return
+carrier of numeric helpers such as `endIndex(str, min, len)`: the result was
+boxed solely because an unrelated parameter was a string.
+
+The new binding-aware, least-fixpoint proof selects `f64`/boolean-branded `i32`
+returns independently of parameter carriers. It uses the shared semantic
+oracle and grounded numeric-local verdict, resolves every call to its exact
+declaration, and declines fallthrough, bare returns, mixed boolean/number
+results, generators, async functions, and ungrounded recursion. It contains no
+package, source-text, or function-name recognition. `JS2WASM_NUMERIC_RETURNS=0`
+(also `off` or an empty value) disables the new proof; default is on.
+
+Final debug artifacts were generated from the rebased tree with optimize level
+4 and preserved names:
+
+| mode                      | SHA-256                                                           | bytes  | imports | checksum (1 / 400k) |
+| ------------------------- | ----------------------------------------------------------------- | -----: | ------: | -------------------: |
+| default-on                | `14d5203cb3fc81b4a28c1fc1d6ab396ec43c45233c551ddb7019ac6ee3596596` | 47,955 |       0 |           1 / 400,000 |
+| `NUMERIC_RETURNS=0`       | `d03f2841a422adcbd3134b64606f0fff403526af5790f86494e403d7135d0c48` | 48,022 |       0 |           1 / 400,000 |
+| parent artifact `c76358b` | `d03f2841a422adcbd3134b64606f0fff403526af5790f86494e403d7135d0c48` | 48,022 |       0 |           1 / 400,000 |
+
+The switch-off artifact is byte-for-byte identical to the parent artifact. A
+same-process A/B used three warm-ups, eleven AB/BA-alternating measured rounds,
+400,000 operations per artifact and round, and runtime seed 3751. Median time
+fell from 1.9256 us/op to 1.8118 us/op (**5.91% faster**). An independent
+five-warm-up, 21-round, 100,000-operation run over the same artifact hashes
+measured 3.3064 us/op to 2.8396 us/op (**14.12% faster**); a fresh official
+harness pair measured 2.1940 us/op to 1.9305 us/op (**12.0% faster**). The
+spread is recorded rather than hidden; all three comparisons are positive and
+the same-process runs alternate order.
+
+The candidate also scaled with work instead of measuring setup noise:
+
+| operations | wall time | us/op |
+| ---------: | --------: | ----: |
+|     25,000 | 46.543 ms | 1.862 |
+|     50,000 | 91.648 ms | 1.833 |
+|    100,000 | 191.468 ms | 1.915 |
+|    200,000 | 382.064 ms | 1.910 |
+
+Under fixed 600,000-operation CPU sampling, the switch-off median was 1,384 ms
+and default-on was 1,111 ms (**19.7% faster**). The cast/conversion bucket fell
+from 6.19% to 1.21%; self time in `__box_number` fell from 1.68% to zero, and
+`__unbox_number` fell from 3.22% to 1.21%.
+
+IR coverage is deliberately unchanged: all eleven tracked units remain on the
+legacy path (`benchmarkUsesIr: false`, no IR-compiled functions). The pinned
+package API differential is 21/21 equal, zero divergent, in both default-on and
+switch-off modes. Focused regression coverage is 17/17, typecheck and the
+oracle ratchet pass, and commit hooks pass the LOC/function budgets plus the
+24-test dynamic-key, four-test linked-flow, and five-test return-carrier roots.
+The unrelated #1120 WAT-name assertion remains 7/8 in both modes; its runtime
+and ABI checks pass and the switch-off result is identical.
 
 ## Acceptance criteria
 

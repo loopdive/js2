@@ -350,6 +350,168 @@ const MEMBRANE_ERROR_IDENTITY_SOURCE = `
   export function sameNameMissProbe(): number { return report.sameNameMiss as number; }
 `;
 
+/**
+ * #4308 slice B — EvalDeclarationInstantiation for a GLOBAL caller / indirect
+ * eval.
+ *
+ * Shaped like the `annexB/language/eval-code/{direct,indirect}/global-*`
+ * corpus, including the two harness details that decide whether those files
+ * measure anything at all:
+ *
+ *  - `fnGlobalObject.js` is `Function("return this;")()`, and it is written here
+ *    with NO `new` and NO cast. That matters: `(Function as any)(…)` is a
+ *    DIFFERENT lowering (the cast stops it being the recognised intrinsic call
+ *    site) and throws — measured while writing this. The corpus takes the bare
+ *    form, so the lane must too.
+ *  - `verifyProperty` asks for `{writable, enumerable, configurable}`, so the
+ *    descriptor cases below read real descriptors rather than just values.
+ *
+ * Anti-vacuity, measured both ways: on the pre-slice-B adapter this same module
+ * fails 11 of its 19 readings — `realm` reads 0 (the caller's realm object and
+ * QuickJS's `globalThis` were disjoint), `fnWrite`/`fnCall` read 0 (a function
+ * could not cross back into a caller binding), `hidden` throws. It cannot pass
+ * with the slice reverted.
+ */
+const EDI_GLOBAL_SOURCE = `
+  function joinSource(parts: string[]): string {
+    var out = "";
+    for (var i = 0; i < parts.length; i += 1) out = out + parts[i];
+    return out;
+  }
+  var marker = 7;
+  var initialBV: any = 0;
+  var currentBV: any = 0;
+
+  var vEngine = 0;
+  try { vEngine = (0, eval)(joinSource(["(__js2wasm_eval_", "engine === 'quickjs') ? 1 : 0"])) as number; }
+  catch (e) { vEngine = -1; }
+
+  // test262's fnGlobalObject: the value it hands every eval-global test must be
+  // the CALLER'S realm carrier. While it was an opaque published box,
+  // \`Object.defineProperty(fnGlobalObject(), 'f', …)\` defined \`f\` on a
+  // one-property object and neither realm ever saw it.
+  var realmObj: any = 0;
+  var vRealm = 0;
+  try {
+    var mk: any = Function(joinSource(["return th", "is;"]));
+    realmObj = mk();
+    vRealm = ((realmObj as any).marker === 7) ? 1 : 0;
+  } catch (e) { vRealm = -1; }
+
+  // EDI creates the binding on the caller's realm, with the B.3.3.3 attributes.
+  var vCreate = 0;
+  var vDesc = 0;
+  try {
+    (0, eval)(joinSource(["var ediVar = ", "41 + 1;"]));
+    vCreate = ((realmObj as any).ediVar === 42) ? 1 : 0;
+    var d: any = Object.getOwnPropertyDescriptor(realmObj, "ediVar");
+    vDesc = (d && d.writable === true && d.enumerable === true && d.configurable === true) ? 1 : 0;
+  } catch (e) { vCreate = -1; }
+
+  // annex B: the var binding is \`undefined\` INSIDE the body and carries the
+  // function afterwards.
+  var vInit = 0;
+  var vAfter = 0;
+  try {
+    var seen: any = (0, eval)(joinSource([
+      "(function(){ return 0; })(); { function ediFn(){ return 'de", "cl'; } } typeof ediFn"
+    ]));
+    vInit = (seen === "function") ? 1 : 0;
+  } catch (e) { vInit = -1; }
+  try { vAfter = (typeof (realmObj as any).ediFn === "function") ? 1 : 0; } catch (e) { vAfter = -1; }
+
+  // The \`block-scoping\` shape: a FUNCTION written into a caller binding, and a
+  // primitive written into another, from one evaluation.
+  var vFnWrite = 0;
+  var vFnCall = 0;
+  var vPrim = 0;
+  try {
+    (0, eval)(joinSource([
+      "{ function bsF() { initialBV = bsF; bsF = 123; currentBV = bsF; return 'de", "cl'; } } bsF();"
+    ]));
+    vFnWrite = (typeof initialBV === "function") ? 1 : 0;
+    vFnCall = (vFnWrite === 1 && (initialBV as any)() === "decl") ? 1 : 0;
+    vPrim = (currentBV === 123) ? 1 : 0;
+  } catch (e) { vFnWrite = -1; }
+
+  // A pre-existing NON-ENUMERABLE global must reach the realm (probe P3): this
+  // is the whole \`existing-non-enumerable-global-init\` cluster.
+  var vHidden = 0;
+  try {
+    Object.defineProperty(realmObj, "hid", {
+      value: "hx", enumerable: false, writable: true, configurable: true
+    });
+    vHidden = (0, eval)(joinSource(["(hid === 'h", "x') ? 1 : 0"])) as number;
+  } catch (e) { vHidden = -1; }
+
+  // …and EDI must not REINITIALISE it: the value is still "hx" inside the body,
+  // the var-scoped binding is updated afterwards, and the DESCRIPTOR is untouched.
+  var vNoReinit = 0;
+  var vKeepDesc = 0;
+  try {
+    vNoReinit = (0, eval)(joinSource([
+      "var pre = (hid === 'hx') ? 1 : 0; { function h", "id(){} } pre"
+    ])) as number;
+    vNoReinit = (vNoReinit === 1 && typeof (realmObj as any).hid === "function") ? 1 : 0;
+    var d2: any = Object.getOwnPropertyDescriptor(realmObj, "hid");
+    vKeepDesc = (d2 && d2.enumerable === false && d2.writable === true && d2.configurable === true) ? 1 : 0;
+  } catch (e) { vNoReinit = -1; }
+
+  // SECOND and THIRD evaluations after the new function-valued write-back path.
+  var vSecond = 0;
+  var vThird = 0;
+  try { vSecond = (0, eval)(joinSource(["1 + ", "1"])) as number; } catch (e) { vSecond = -1; }
+  try {
+    (0, eval)(joinSource(["var lateVar = ", "9;"]));
+    vThird = ((realmObj as any).lateVar === 9) ? 1 : 0;
+  } catch (e) { vThird = -1; }
+
+  // The declared-names probe evaluates the source as TEXT twice and as EFFECTS
+  // zero times: the sentinel throw precedes the first statement by construction.
+  var vNoBoom = 0;
+  try {
+    vNoBoom = (0, eval)(joinSource([
+      "var boomWitness = 1; (function(){ return (boomWitn", "ess === 1) ? 1 : 0; })()"
+    ])) as number;
+  } catch (e) { vNoBoom = -1; }
+  var vBoomOnce = 0;
+  try {
+    // If the probe had EXECUTED the source it would have run the increment too,
+    // and the realm would read 2 rather than 1.
+    vBoomOnce = ((realmObj as any).boomWitness === 1) ? 1 : 0;
+  } catch (e) { vBoomOnce = -1; }
+
+  // The memoized eval/Function markers survive every new write-back path.
+  var vEvalAlive = 0;
+  try { vEvalAlive = (0, eval)(joinSource(["20 + ", "22"])) as number; } catch (e) { vEvalAlive = -1; }
+
+  // A DIRECT eval written at global scope takes the same route.
+  var vDirect = 0;
+  try {
+    eval(joinSource(["var direct", "Var = 55;"]));
+    vDirect = ((realmObj as any).directVar === 55) ? 1 : 0;
+  } catch (e) { vDirect = -1; }
+
+  export function engineProbe(): number { return vEngine; }
+  export function realmProbe(): number { return vRealm; }
+  export function createProbe(): number { return vCreate; }
+  export function descProbe(): number { return vDesc; }
+  export function initProbe(): number { return vInit; }
+  export function afterProbe(): number { return vAfter; }
+  export function fnWriteProbe(): number { return vFnWrite; }
+  export function fnCallProbe(): number { return vFnCall; }
+  export function primProbe(): number { return vPrim; }
+  export function hiddenProbe(): number { return vHidden; }
+  export function noReinitProbe(): number { return vNoReinit; }
+  export function keepDescProbe(): number { return vKeepDesc; }
+  export function secondProbe(): number { return vSecond; }
+  export function thirdProbe(): number { return vThird; }
+  export function noBoomProbe(): number { return vNoBoom; }
+  export function boomOnceProbe(): number { return vBoomOnce; }
+  export function evalAliveProbe(): number { return vEvalAlive; }
+  export function directProbe(): number { return vDirect; }
+`;
+
 const availableArtifactDir = quickjsProviderAvailable();
 const enabled = process.env[ENGINE_ENV] === "quickjs" || availableArtifactDir !== null;
 
@@ -357,6 +519,7 @@ describe.skipIf(!enabled)("#4245 slice 1 — quickjs eval membrane (inward)", ()
   let probe: Record<string, () => number>;
   let direct: Record<string, () => number>;
   let errors: Record<string, () => number>;
+  let edi: Record<string, () => number>;
 
   beforeAll(async () => {
     const selection = withEnv(
@@ -397,7 +560,12 @@ describe.skipIf(!enabled)("#4245 slice 1 — quickjs eval membrane (inward)", ()
     errors = await link(MEMBRANE_ERROR_IDENTITY_SOURCE, "quickjs-membrane-error-identity.ts", {
       inferModuleStrictArguments: false,
     });
-  }, 240_000);
+    // `inferModuleStrictArguments: false` is the Script goal — the option (not
+    // the source shape) that every `language/eval-code/` test compiles under.
+    edi = await link(EDI_GLOBAL_SOURCE, "quickjs-edi-global.ts", {
+      inferModuleStrictArguments: false,
+    });
+  }, 300_000);
 
   it("reads a compiled object's property from inside evaluated code", () => {
     expect(probe.readProbe!()).toBe(7);
@@ -510,6 +678,70 @@ describe.skipIf(!enabled)("#4245 slice 1 — quickjs eval membrane (inward)", ()
     // The argument path and the completion path are different crossings; both
     // funnel through qjsPublish, and this pins the one the arg case does not.
     expect(errors.indirectProbe!()).toBe(1);
+  });
+
+  // ------------------------------------- #4308 slice B: global/indirect EDI ---
+
+  it("the EDI lane really ran under the quickjs engine", () => {
+    expect(edi.engineProbe!()).toBe(1);
+  });
+
+  it("`Function('return this;')()` is the CALLER'S realm, not an opaque box", () => {
+    // The premise every eval-global test rests on: test262's fnGlobalObject.
+    // Pre-slice-B this reads 0 — a box with one `__qjs_handle__` property.
+    expect(edi.realmProbe!()).toBe(1);
+  });
+
+  it("EDI creates the var binding on the caller's realm with B.3.3.3 attributes", () => {
+    expect(edi.createProbe!()).toBe(1);
+    // {writable:true, enumerable:true, configurable:true} — what
+    // CreateGlobalVarBinding prescribes and what `verifyProperty` checks.
+    expect(edi.descProbe!()).toBe(1);
+  });
+
+  it("an annex-B block function is `undefined` inside the body and a function after", () => {
+    expect(edi.initProbe!()).toBe(1);
+    expect(edi.afterProbe!()).toBe(1);
+  });
+
+  it("a FUNCTION crosses back into a caller binding, callable (the done-signal)", () => {
+    // 1 = `typeof initialBV === "function"`, and the call returns the value only
+    // the evaluated body produces. This is the `block-scoping` /
+    // `existing-block-fn-update` shape. Pre-slice-B both read 0.
+    expect(edi.fnWriteProbe!()).toBe(1);
+    expect(edi.fnCallProbe!()).toBe(1);
+    // …and a primitive written in the SAME evaluation still lands.
+    expect(edi.primProbe!()).toBe(1);
+  });
+
+  it("a NON-ENUMERABLE compiled global is visible inside evaluated code", () => {
+    // Probe P3's decisive question. `Object.keys` cannot see it; the widened
+    // push reads it through `Object.getOwnPropertyNames`.
+    expect(edi.hiddenProbe!()).toBe(1);
+  });
+
+  it("EDI does not REINITIALISE an existing binding, and leaves its descriptor", () => {
+    expect(edi.noReinitProbe!()).toBe(1);
+    // enumerable:false survives — the pull assigns, it never re-defines.
+    expect(edi.keepDescProbe!()).toBe(1);
+  });
+
+  it("the SECOND and THIRD evaluations after the new write-back path are clean", () => {
+    expect(edi.secondProbe!()).toBe(2);
+    expect(edi.thirdProbe!()).toBe(1);
+    // The memoized eval/Function markers were not clobbered.
+    expect(edi.evalAliveProbe!()).toBe(42);
+  });
+
+  it("the declared-names probe has ZERO side effects on the caller's realm", () => {
+    // The source runs exactly once — under the real evaluation. If the probe
+    // had executed it too, the witness would read 2.
+    expect(edi.noBoomProbe!()).toBe(1);
+    expect(edi.boomOnceProbe!()).toBe(1);
+  });
+
+  it("a DIRECT eval written at global scope takes the same EDI route", () => {
+    expect(edi.directProbe!()).toBe(1);
   });
 
   it("the callback ABI list is the link-time order the shim consumes positionally", () => {

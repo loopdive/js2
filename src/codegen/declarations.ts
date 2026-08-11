@@ -112,6 +112,7 @@ import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import { prepareModuleTdzGlobals, registerModuleGlobal } from "./module-global-registration.js";
 import { annexBModuleGlobalSeedsFromTopLevel } from "./annexb-global-live-binding.js";
 import { emitRuntimeEvalAotCallableAdapter } from "./runtime-eval-callable.js";
+import { numericReturnsFlagEnabled } from "../derivation-flags.js";
 
 // ── Extracted subsystems (#3268) — re-exported for external consumers ─────
 export {
@@ -126,7 +127,11 @@ export {
   collectObjectLiteralAssignedPropertyNames,
   collectGrowableObjectLiterals,
 } from "./declarations/object-shape-widening.js";
-export { inferImplicitAnyParamType, inferNumericReturnTypes } from "./declarations/param-return-inference.js";
+export {
+  inferBindingAwareNumericReturnTypes,
+  inferImplicitAnyParamType,
+  inferNumericReturnTypes,
+} from "./declarations/param-return-inference.js";
 // Import-back: symbols the declaration trunk still calls internally.
 import { inferImplicitAnyParamType, resolveGenericCallSiteTypes } from "./declarations/param-return-inference.js";
 import {
@@ -420,6 +425,20 @@ function lowerParamType(
   return wasmType;
 }
 
+function inferredNumericResultType(
+  ctx: CodegenContext,
+  name: string,
+  isAsync: boolean,
+  isImplicitAnyReturn: boolean,
+  params: readonly ValType[],
+): ValType | undefined {
+  if (isAsync || !isImplicitAnyReturn) return undefined;
+  const bindingAware = numericReturnsFlagEnabled() ? ctx.bindingAwareNumericReturnTypes?.get(name) : undefined;
+  if (bindingAware) return bindingAware;
+  const legacy = ctx.numericReturnTypes?.get(name);
+  return legacy && params.every((param) => param.kind === "f64" || param.kind === "i32") ? legacy : undefined;
+}
+
 function containingFunctionOrSource(node: ts.Node): ts.Node | undefined {
   let current: ts.Node | undefined = node.parent;
   while (current) {
@@ -569,10 +588,9 @@ function registerBodylessFunctionDeclaration(
       }
     }
     const rUnwrapped = isAsync ? unwrapPromiseType(retType, ctx.checker) : retType;
-    const inferredNumericRet = !isAsync ? ctx.numericReturnTypes?.get(name) : undefined;
     const isImplicitAnyReturn = (rUnwrapped.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
-    const allParamsNumeric = params.every((p) => p.kind === "f64" || p.kind === "i32");
-    if (inferredNumericRet && isImplicitAnyReturn && allParamsNumeric) {
+    const inferredNumericRet = inferredNumericResultType(ctx, name, isAsync, isImplicitAnyReturn, params);
+    if (inferredNumericRet) {
       results = [inferredNumericRet];
     } else {
       results = isVoidType(rUnwrapped)
@@ -1269,10 +1287,9 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         // #1121: Override TS's implicit-any return with our inferred numeric
         // return type if every param is numeric and the body is a pure
         // numeric kernel (catches e.g. recursive `function fib(n) {...}`).
-        const inferredNumericRet = !isAsync ? ctx.numericReturnTypes?.get(name) : undefined;
         const isImplicitAnyReturn = (rUnwrapped.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
-        const allParamsNumeric = params.every((p) => p.kind === "f64" || p.kind === "i32");
-        if (inferredNumericRet && isImplicitAnyReturn && allParamsNumeric) {
+        const inferredNumericRet = inferredNumericResultType(ctx, name, isAsync, isImplicitAnyReturn, params);
+        if (inferredNumericRet) {
           results = [inferredNumericRet];
         } else {
           results = isVoidType(rUnwrapped)

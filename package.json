@@ -12,7 +12,7 @@
     "ahead-of-time",
     "javascript"
   ],
-  "homepage": "https://js2.loopdive.com",
+  "homepage": "https://js2wasm.loopdive.com",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/loopdive/js2.git"

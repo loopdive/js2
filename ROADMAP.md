@@ -20,7 +20,7 @@ Across 69 development sprints and **2,700+ merged pull requests**, js2wasm has g
 
 <!-- AUTO:conformance-end -->
 
-- Automated conformance tracking with historical trend data and a public [conformance report](https://js2.loopdive.com/benchmarks/report.html)
+- Automated conformance tracking with historical trend data and a public [conformance report](https://js2wasm.loopdive.com/benchmarks/report.html)
 - 200+ project-level equivalence tests validating JS↔Wasm output parity
 
 ### Language Features (compiled to native Wasm)
@@ -48,7 +48,7 @@ Across 69 development sprints and **2,700+ merged pull requests**, js2wasm has g
 
 ### Tooling
 
-- **[Live Playground](https://js2.loopdive.com/playground/)** — compile and run TypeScript as WebAssembly in the browser
+- **[Live Playground](https://js2wasm.loopdive.com/playground/)** — compile and run TypeScript as WebAssembly in the browser
 - **WAT inspector** — view generated WebAssembly Text Format
 - **Module analyzer** — binary size treemap visualization
 - **CLI** with WAT, `.d.ts`, and imports helper output
@@ -123,7 +123,7 @@ Same TypeScript input produces the same Wasm binary output. No runtime behavior 
 ## Current Performance
 
 _Point-in-time snapshot for illustration — the live, auto-refreshed benchmark
-panels on the [landing page](https://js2.loopdive.com/) are canonical._
+panels on the [landing page](https://js2wasm.loopdive.com/) are canonical._
 
 ```
 Benchmark     WASM          JS        Ratio     n
@@ -141,8 +141,8 @@ Compute-intensive workloads (fibonacci, loops, array operations) already match o
 ## Get Involved
 
 - **Repository**: [github.com/loopdive/js2](https://github.com/loopdive/js2)
-- **Playground**: [Live demo](https://js2.loopdive.com/playground/)
-- **Conformance report**: [Historical compatibility tracking](https://js2.loopdive.com/benchmarks/report.html)
+- **Playground**: [Live demo](https://js2wasm.loopdive.com/playground/)
+- **Conformance report**: [Historical compatibility tracking](https://js2wasm.loopdive.com/benchmarks/report.html)
 - **License**: Apache 2.0 with LLVM Exceptions
 
 ---
