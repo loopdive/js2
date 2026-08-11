@@ -49,6 +49,7 @@ import { staticIntegerRange } from "../analysis/static-numeric-range.js";
 import {
   emitArrayBufferResize,
   emitArrayBufferSlice,
+  emitArrayBufferTransfer,
   emitDataViewAccessor,
   ensureDvAccessorHelper,
   ensureTaDynCopyWithinHelper,
@@ -686,6 +687,25 @@ export function compileReceiverMethodCall(
         compileExpression(ctx, fctx, e, hint),
       );
       return VOID_RESULT;
+    }
+  }
+
+  // (#1595) Direct-call adapter to the canonical native
+  // ArrayBufferCopyAndDetach helper. The operation itself is shared with the
+  // reflective ArrayBuffer.prototype member closures; this surface only
+  // compiles the receiver/argument expressions into that common ABI.
+  if (noJsHost(ctx) && (propAccess.name.text === "transfer" || propAccess.name.text === "transferToFixedLength")) {
+    const recvSym = receiverType.getSymbol()?.name;
+    if (recvSym === "ArrayBuffer") {
+      const transferResult = emitArrayBufferTransfer(
+        ctx,
+        fctx,
+        propAccess.name.text,
+        propAccess.expression,
+        expr.arguments,
+        (e, hint) => compileExpression(ctx, fctx, e, hint),
+      );
+      if (transferResult) return transferResult;
     }
   }
 
