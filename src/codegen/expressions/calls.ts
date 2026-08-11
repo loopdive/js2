@@ -3731,6 +3731,7 @@ export function tryEmitInlineDynamicCall(
   // captured, so the capture happens after every import insertion this
   // function performs (the stale-capture hazard the note above describes).
   if (!ctx.standalone && !ctx.wasi) {
+    ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
     ensureHostCallFallbackImports(ctx, hostCallPlan);
   }
 
@@ -3746,7 +3747,7 @@ export function tryEmitInlineDynamicCall(
   // null externref alike).
   const maxFormals = candidates.reduce((m, c) => Math.max(m, c.info.paramTypes.length), 0);
   const needsUndefinedPad = maxFormals > arity;
-  const needsUndefined = needsUndefinedPad || wantProxyArm || wantApplyFallback;
+  const needsUndefined = needsUndefinedPad || wantProxyArm || wantApplyFallback || (!ctx.standalone && !ctx.wasi);
   const undefinedIdx = needsUndefined ? ensureGetUndefined(ctx) : undefined;
   const undefinedSingletonPad = needsUndefined && undefinedIdx === undefined ? undefinedExternInstrs(ctx) : undefined;
   // (#2611) Flush the deferred late-import shift NOW — every other late-import
@@ -3776,6 +3777,7 @@ export function tryEmitInlineDynamicCall(
   // stale-capture note above).
   const boxNumberIdx = ctx.funcMap.get("__box_number");
   const unboxNumberIdx = ctx.funcMap.get(UNBOX_NUMBER);
+  const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
   if (boxNumberIdx === undefined || unboxNumberIdx === undefined) return null;
 
   // (#3031) Materialize the Proxy [[Call]] pieces while the gate is live. The
@@ -3886,7 +3888,11 @@ export function tryEmitInlineDynamicCall(
   // dedicated proxy/bound/ta-ctor arms above).
   if (!ctx.standalone && !ctx.wasi) {
     // Imports were ensured (and flushed) before box/unbox indices were captured.
-    dispatch = buildHostCallFallbackArm(ctx, fctx, hostCallPlan, anyLocal, argLocals) ?? dispatch;
+    // (#4313) A bare call's `thisArg` is `undefined`, not a null externref, so it
+    // is materialized here and handed to the helper rather than hardcoded there.
+    const bareCallThisArg: Instr[] = [];
+    pushDynamicUndefinedExternref(bareCallThisArg, undefinedIdx, undefinedSingletonPad);
+    dispatch = buildHostCallFallbackArm(ctx, fctx, hostCallPlan, anyLocal, argLocals, bareCallThisArg) ?? dispatch;
   }
 
   // (#2933) Variadic builtin value-closure arm — INNERMOST (just above the
@@ -3975,7 +3981,8 @@ export function tryEmitInlineDynamicCall(
         // Missing arg → `undefined`. For ref/ref_null formals there is no
         // valid concrete struct to cast `undefined` to; pass the typed null.
         if (pType.kind === "f64") {
-          callBody.push({ op: "f64.const", value: Number.NaN });
+          callBody.push({ op: "i64.const", value: 0x7ff00000deadc0den });
+          callBody.push({ op: "f64.reinterpret_i64" });
         } else if (pType.kind === "i32") {
           callBody.push({ op: "i32.const", value: 0 });
         } else if (pType.kind === "externref") {
@@ -3987,7 +3994,20 @@ export function tryEmitInlineDynamicCall(
       }
       callBody.push({ op: "local.get", index: argLocals[i]! });
       if (pType.kind === "f64") {
-        callBody.push({ op: "call", funcIdx: unboxNumberIdx });
+        if (isUndefinedIdx === undefined) {
+          callBody.push({ op: "call", funcIdx: unboxNumberIdx });
+        } else {
+          callBody.push({ op: "call", funcIdx: isUndefinedIdx });
+          callBody.push({
+            op: "if",
+            blockType: { kind: "val", type: { kind: "f64" } },
+            then: [{ op: "i64.const", value: 0x7ff00000deadc0den }, { op: "f64.reinterpret_i64" }],
+            else: [
+              { op: "local.get", index: argLocals[i]! },
+              { op: "call", funcIdx: unboxNumberIdx },
+            ],
+          });
+        }
       } else if (pType.kind === "i32") {
         callBody.push({ op: "call", funcIdx: unboxNumberIdx });
         callBody.push({ op: "i32.trunc_sat_f64_s" });
@@ -8102,6 +8122,16 @@ export function compileConditionalCallee(
         const finalFuncIdx = ctx.funcMap.get(funcName) ?? funcIdx;
         maybeSetArgcForKnownCall(ctx, fctx, funcName, expr.arguments.length, ccParamCount);
         fctx.body.push({ op: "call", funcIdx: finalFuncIdx });
+        // The checker's result for the *conditional call* is only the desired
+        // join representation. It does not describe what this direct branch
+        // physically leaves on the Wasm stack. For example, lodash's
+        // `arrayEach` returns the canonical vec ref while `baseForOwn` returns
+        // externref, even though the conditional call is typed as `any`.
+        // Report the emitted function's real result here so the join below can
+        // insert the required ref -> externref conversion.
+        if (wasmFuncReturnsVoid(ctx, finalFuncIdx)) return VOID_RESULT;
+        const actualRetType = getWasmFuncReturnType(ctx, finalFuncIdx);
+        if (actualRetType) return actualRetType;
         if (callRetType) return callRetType;
         // Try to determine return type from the branch function's signature
         const branchType = ctx.checker.getTypeAtLocation(branchExpr);
@@ -8193,14 +8223,14 @@ export function compileConditionalCallee(
   let resultType: ValType = callRetType ?? thenVal;
 
   // If types don't match, coerce both to the result type
-  if (thenVal.kind !== resultType.kind) {
+  if (!valTypesMatch(thenVal, resultType)) {
     const coerceBody: Instr[] = [];
     fctx.body = coerceBody;
     coerceType(ctx, fctx, thenVal, resultType);
     fctx.body = savedBody;
     thenInstrs = [...thenInstrs, ...coerceBody];
   }
-  if (elseVal.kind !== resultType.kind) {
+  if (!valTypesMatch(elseVal, resultType)) {
     const coerceBody: Instr[] = [];
     fctx.body = coerceBody;
     coerceType(ctx, fctx, elseVal, resultType);

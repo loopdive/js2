@@ -22,7 +22,10 @@
  */
 import { describe, expect, it } from "vitest";
 
+import { hoistConstantBoxedNumbers } from "../src/codegen/const-box-hoist.js";
+import type { CodegenContext } from "../src/codegen/context/types.js";
 import { compile } from "../src/index.js";
+import type { Instr, WasmFunction, WasmModule } from "../src/ir/types.js";
 
 /**
  * `state` is a top-level binding, which is what gives the module a
@@ -204,6 +207,49 @@ const allocationsIn = (slope: Map<string, number>): Map<string, number> => {
 };
 
 describe("#4157 — constant number boxing hoisted to module globals", () => {
+  it("visits a shared instruction-array DAG once instead of expanding every path", () => {
+    const leaf: Instr[] = [
+      { op: "f64.const", value: 42 },
+      { op: "call", funcIdx: 7 },
+    ];
+    let shared = leaf;
+    for (let depth = 0; depth < 28; depth++) {
+      shared = [{ op: "if", blockType: { kind: "empty" }, then: shared, else: shared }];
+    }
+    const init: WasmFunction = { name: "__module_init", typeIdx: 0, locals: [], body: [] };
+    const target: WasmFunction = { name: "target", typeIdx: 0, locals: [], body: shared };
+    const mod = {
+      types: [],
+      imports: [],
+      functions: [init, target],
+      exports: [],
+      tables: [],
+      elements: [],
+      globals: [],
+      tags: [],
+      stringPool: [],
+      externClasses: [],
+      nodeBuiltinModules: new Set(),
+      stringLiteralValues: new Map(),
+      asyncFunctions: new Set(),
+      declaredFuncRefs: [],
+      funcOrdinalToPosition: [],
+      memories: [],
+      dataSegments: [],
+    } satisfies WasmModule;
+    const ctx = {
+      mod,
+      funcMap: new Map([["__box_number", 7]]),
+      numImportGlobals: 0,
+      programAbiModuleInitCallables: { firstFunction: () => init },
+    } as unknown as CodegenContext;
+
+    hoistConstantBoxedNumbers(ctx);
+
+    expect(leaf).toEqual([{ op: "global.get", index: 0 }]);
+    expect(mod.globals).toHaveLength(2);
+  });
+
   it("agrees with native Node, with hoisting on and off", async () => {
     const off = await instantiate(await build(false, false));
     const on = await instantiate(await build(true, false));

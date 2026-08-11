@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts, forEachChild } from "../ts-api.js";
 import { registerAnnexBGlobalLiveBindings } from "./annexb-global-live-binding.js";
+import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { emitToBoolean } from "./coercion-engine.js";
 import { emitWasiErrorConstructor, fillExternGetErrorProps } from "./registry/error-types.js";
 import { analyzeLinearUint8 } from "./linear-uint8-analysis.js";
@@ -7147,6 +7148,33 @@ export function generateMultiModule(
     // Emit __call_fn_1 export for calling one-arg closures from JS (#1090, #1308).
     emitClosureCallExport1(ctx);
 
+    // Multi-source projects can pass entry-module closures into an imported
+    // function whose dynamic call is compiled before that closure wrapper is
+    // known. The host fallback then needs the same 2..4 argument dispatchers
+    // as the single-source pipeline; otherwise it silently falls back to the
+    // highest available arity (formerly 1) and returns null for wider closures.
+    emitClosureCallExport2(ctx);
+    emitClosureCallExport3(ctx);
+    emitClosureCallExport4(ctx);
+
+    // Mirror the single-source receiver bridge over the complete multi-source
+    // closure registry. Include native-construction demand in the cap so its
+    // deferred drivers and ordinary host method calls share one dispatcher set.
+    {
+      let maxClosureArity = 5;
+      for (const info of ctx.closureInfoByTypeIdx.values()) {
+        if (info.paramTypes.length > maxClosureArity) maxClosureArity = info.paramTypes.length;
+      }
+      maxClosureArity = maxHostFnctorMethodArity(ctx, maxClosureArity);
+      maxClosureArity = Math.max(maxClosureArity, maxReservedNativeConstructArity(ctx));
+      const cap = Math.min(maxClosureArity, 8);
+      for (let n = 0; n <= cap; n++) emitClosureMethodCallExportN(ctx, n);
+    }
+
+    // Unknown-arity host wrappers use this classifier to choose a dispatcher
+    // wide enough for the closure's declared parameters.
+    emitClosureArityExport(ctx);
+
     // #1504: emit __is_closure for wrapExports discrimination.
     emitIsClosureExport(ctx);
 
@@ -7190,12 +7218,8 @@ export function generateMultiModule(
     // than the null it replaced: an uncatchable Wasm trap. Emit the dispatchers
     // ONLY up to the arity a construct driver actually reserved, so a
     // multi-file module without such a site stays byte-identical.
-    {
-      const constructArity = maxReservedNativeConstructArity(ctx);
-      for (let n = 0; n <= constructArity; n++) emitClosureMethodCallExportN(ctx, n);
-      fillNativeConstructDrivers(ctx);
-      fillConstructBoundDriver(ctx); // (#4196) same stub hazard; degrades to null
-    }
+    fillNativeConstructDrivers(ctx);
+    fillConstructBoundDriver(ctx); // (#4196) same stub hazard; degrades to null
 
     // (#1716) Emit __call_@@toPrimitive(self, hint) for runtime ToPrimitive
     // dispatch of a class's [Symbol.toPrimitive] *method* on opaque structs.
@@ -8173,8 +8197,10 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
       return { kind: "externref" };
     }
 
-    let name = sym?.name;
-    // Map class expression symbol names to their synthetic names
+    let name = exactClassExpressionTypeName(ctx, tsType) ?? sym?.name;
+    // Map class expression display names to their synthetic names only when
+    // declaration identity was unavailable. Unrelated anonymous classes all
+    // use `__class`, so this fallback cannot safely override an exact match.
     if (name && !ctx.structMap.has(name)) {
       name = ctx.classExprNameMap.get(name) ?? name;
     }

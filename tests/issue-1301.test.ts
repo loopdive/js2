@@ -140,4 +140,41 @@ describe("#1301 closure environment field-type mismatch (param shadowing outer f
     expect(r.success).toBe(true);
     expect(() => new WebAssembly.Module(r.binary)).not.toThrow();
   });
+
+  it("captures a callable parameter shadowing a nested declaration in a returned function", async () => {
+    // Redux's bindActionCreator returns a function expression that closes over
+    // its `dispatch` parameter. A different nested declaration named
+    // `dispatch` may already be present in the module-wide function map. The
+    // parameter is the lexically visible binding and must be captured into the
+    // returned closure rather than resolved as that unrelated declaration.
+    const src = `
+      type Dispatch = (value: number) => number;
+
+      function makeBinder(): (dispatch: Dispatch) => (value: number) => number {
+        let state = 1;
+        function dispatch(value: number): number {
+          state = state + value;
+          return state;
+        }
+
+        function bindActionCreator(dispatch: Dispatch): (value: number) => number {
+          return function(value: number): number {
+            return dispatch(value);
+          };
+        }
+
+        return bindActionCreator;
+      }
+
+      export function test(): number {
+        const bind = makeBinder();
+        return bind((value: number) => value * 10)(3);
+      }
+    `;
+    const r = await compile(src, { fileName: "test.ts" });
+    expect(r.success).toBe(true);
+    const imports = buildImports(r.imports, undefined, r.stringPool);
+    const { instance } = await WebAssembly.instantiate(r.binary, imports);
+    expect((instance.exports.test as () => number)()).toBe(30);
+  });
 });

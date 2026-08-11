@@ -15,7 +15,7 @@ task_type: bug
 area: codegen
 language_feature: async, promises
 goal: async-model
-related: [1042, 1796, 2906, 2967, 1373b, 3545]
+related: [1042, 1796, 2906, 2967, 1373b, 3545, 4302]
 origin: "2026-07-25 Fable substrate/async review (plan/agent-context/fable-substrate-async-review-2026-07-24.md), probes a5b/a5c/a5d"
 loc-budget-allow:
   - src/codegen/async-frame.ts
@@ -201,3 +201,12 @@ dynamic-import for-await agen). Zero pass→CE flips.
   issue-2906-{3c,multiawait,gap3}, async-census, issue-2957, issue-2174,
   issue-2635, issue-2856, equivalence async-function / async-iteration /
   for-await-of / promise-chains / scope-and-error-handling / try-catch-\*.
+
+## Residual package frontier (2026-08-09)
+
+The loud refusal added here is now reached by the published Prettier and Axios
+entries and, after explicitly enabling its required filesystem capability, by
+Stylelint. That is the intended safe behavior for shapes this completed issue
+did not claim. The additional CFG work, exact measurements, and suspended
+handoff are tracked in #4302; this issue remains done and its refusal must not
+be weakened to make those packages appear to compile.

@@ -67,7 +67,7 @@ const EQ_HEAP_TYPE = -19; // signed LEB128 → 0x6d → TYPE.eq (for ref.null an
  * shared sub-object becomes an independent copy so `shiftLateImportIndices`
  * remaps each `funcIdx`/operand occurrence exactly once (the #1302 hazard).
  */
-function deepCloneInstrs<T>(value: T): T {
+export function deepCloneInstrs<T>(value: T): T {
   if (Array.isArray(value)) {
     return value.map((v) => deepCloneInstrs(v)) as unknown as T;
   }
@@ -78,7 +78,6 @@ function deepCloneInstrs<T>(value: T): T {
     }
     return out as T;
   }
-  // Primitives (including ±Infinity / NaN) are copied by value.
   return value;
 }
 
@@ -2680,10 +2679,10 @@ export function emitJsonParseText(ctx: CodegenContext): number {
   //
   // NOTE: `structuredClone` is NOT sufficient — it *preserves* internal
   // aliasing, so a shared object stays shared (just freshly) and is still
-  // re-visited N times. The JSON round-trip below *expands* every shared
-  // reference into an independent copy, so each `typeIdx` operand is remapped
-  // exactly once. Bodies hold only plain JSON-safe data (no funcs/cycles).
-  const cloneBody = (b: Instr[]): Instr[] => JSON.parse(JSON.stringify(b));
+  // re-visited N times. `deepCloneInstrs` expands every shared reference into
+  // an independent copy, so each `typeIdx` operand is remapped exactly once.
+  // It preserves BigInt i64 operands and non-finite f64 constants.
+  const cloneBody = (b: Instr[]): Instr[] => deepCloneInstrs(b);
 
   pushDefinedFunc(ctx, valueFuncIdx, {
     name: "__json_parse_value",

@@ -558,6 +558,12 @@ export interface FunctionContext {
   sourceFunctionStrict?: boolean;
   /** Root function body where an activation-entry snapshot must be inserted. */
   callerStrictEntryBody?: Instr[];
+  /**
+   * Root instruction buffer for source-function activation prologues. Unlike
+   * `body`, this remains stable while conditional/loop arms temporarily swap
+   * in detached instruction buffers.
+   */
+  activationEntryBody?: Instr[];
   /** Activation-local snapshot of the immediate caller's source strictness. */
   callerStrictLocalIdx?: number;
   /** Parameters (these are the first N locals) */
@@ -3621,7 +3627,15 @@ export interface CodegenContext {
   /** Per-shape default property flags table */
   shapePropFlags: Map<number, Uint8Array>;
   /** Cache for function-constructor struct types */
-  funcConstructorMap: Map<string, { structTypeIdx: number; ctorFuncName: string }>;
+  funcConstructorMap: Map<
+    string,
+    {
+      structTypeIdx: number;
+      ctorFuncName: string;
+      /** Exact leading-capture ABI used when the synthesized constructor was minted. */
+      captureLayout: import("../fnctor-constructor-identity.js").FnctorCaptureLayout;
+    }
+  >;
   /**
    * (#2660 S2) Per-fnctor prototype `$Object` — fnctor symbol name → module
    * global index (`mut externref`) holding a native `$Object` for `F.prototype`.

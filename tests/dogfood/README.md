@@ -7,21 +7,30 @@ package running natively under Node (zero version skew — any divergence is a
 compiler bug, never an oracle mismatch). Runtime results remain explicitly
 unavailable for package entries that do not yet have that API-level proof.
 
-The npm-compat catalog adds another sixteen packages through one data-driven,
+The npm-compat catalog adds another seventeen packages through one data-driven,
 bounded package-entry harness:
 
-`hono`, `lodash`, `axios`, `react-dom`, `jsdom`, `webpack`, `uuid`, `typescript`,
+`hono`, `lodash`, `axios`, `react`, `react-dom`, `jsdom`, `webpack`, `uuid`, `typescript`,
 `redux`, `jest`, `styled-components`, `moment`, `stylelint`,
 `three`, `lit`, and `tailwindcss`.
 
 Every catalog entry pins the canonical npm tarball sha1/integrity and the exact
 published entry file. The package's locked dependency graph is installed so a
 compile failure is not manufactured by omitting declared dependencies. None of
-these sixteen npm tarballs ships its upstream unit-test sources. Their cards
-therefore say “upstream suite — not shipped; adapter pending”; they do not
-substitute harness-authored smoke vectors or imply that validation is a test
-pass. Matching upstream source suites can be pinned and adapted package by
-package, following the existing Acorn/React precedent.
+these seventeen npm tarballs ships its upstream unit-test sources. A package
+without a matching source adapter says “upstream suite — not shipped; adapter
+pending”; UUID and the separately listed packages below pin immutable matching
+source revisions instead. Neither lane substitutes harness-authored smoke
+vectors or implies that validation is a test pass. Matching upstream source
+suites can be pinned and adapted package by package, following the existing
+Acorn/React precedent.
+
+ESLint, jsdom, and Redux are the explicit runtime-workload exceptions. Their npm
+tarballs still omit the upstream suites, but each has a separate API workload
+that is only scored after the generated Wasm driver actually runs and matches
+a native Node oracle. ESLint additionally pins one complete original upstream
+unit file as a deliberately named slice. A compile timeout or invalid module
+remains an unverified workload, never a pass.
 
 The extracted catalog fixture is also given the installed package's importer
 context (`node_modules`), including pnpm's private dependency links. This keeps
@@ -29,8 +38,52 @@ the published bytes under test while allowing relative imports such as jsdom's
 `tough-cookie` dependency to resolve from the same locked graph. A pin marker
 invalidates stale ignored extractions when a tarball revision changes.
 
+## TypeScript upstream-source compile probe (#1058)
+
+The published TypeScript package contains one large generated JavaScript
+bundle, but the matching upstream tag also contains the original module graph.
+The worker-isolated probe compares those two representations with the same
+`compileProject` options, streams compiler-phase markers, and records periodic
+CPU/RSS heartbeats so a long compile can be distinguished from a blocked
+process:
+
+```bash
+node tests/dogfood/typescript-upstream-build-probe.mjs \
+  --root /path/to/TypeScript-5.9.3 --mode source --timeout-ms 1800000 --heap-mb 4096 --json
+
+node tests/dogfood/typescript-upstream-build-probe.mjs \
+  --root /path/to/TypeScript-5.9.3 --mode bundle --timeout-ms 1800000 --heap-mb 4096 --json
+
+node tests/dogfood/typescript-upstream-build-probe.mjs \
+  --root /path/to/TypeScript-5.9.3 --mode source --entry js2-parser-workload.ts \
+  --consumer-driven-barrels --invoke-export runCase \
+  --invoke-string 'export const answer: number = 6 * 7;' \
+  --expected-number 308001 --timeout-ms 300000 --heap-mb 4096 --json
+```
+
+`--mode source` selects `src/typescript/typescript.ts`; `--mode bundle`
+selects `lib/typescript.js`. Pass `--entry <path-relative-to-root>` for a
+narrow upstream-source entry such as a parser workload. The probe defaults to
+a 30-minute budget, a 4 GiB worker heap, and 30-second heartbeats. It reports
+compile and validation separately and never treats elapsed CPU time or a valid
+binary as a package test pass. `--consumer-driven-barrels` is an explicit,
+default-off source-tree specialization experiment. When `--invoke-export` is
+provided, the probe passes `--invoke-string` at runtime and requires the result
+to equal `--expected-number`; a source literal folded during compilation cannot
+satisfy that check.
+
 The original package-specific harnesses, plus the deeper Acorn conformance
 check, are:
+
+The focused lodash callback-capture regression can be run without extracting
+the full package:
+
+```bash
+node --import tsx tests/dogfood/lodash-callback-frame-regression.mjs
+```
+
+It compiles a reduced `stringToPath` shape, validates and instantiates the Wasm,
+then compares its result with the same operation in native Node.
 
 | package                                 | issue | entry file                | oracle diff                                                                 |
 | --------------------------------------- | ----- | ------------------------- | --------------------------------------------------------------------------- |
@@ -39,10 +92,42 @@ check, are:
 | **acorn official suite**                | #3729 | `dist/acorn.mjs`          | acorn's own real `test/tests*.js` (~3,500 cases)                            |
 | **clsx** (className joiner)             | #3748 | `dist/clsx.mjs`           | per-op string equality (see below — driver epilogue, not a raw export call) |
 | **cookie** (RFC-6265 parser/serializer) | #3751 | `dist/index.js`           | per-op JSON-normalized equality (direct export calls, no epilogue)          |
-| **eslint** (JavaScript linter)          | #1400 | `lib/api.js`              | bounded full-package compile/validate; runtime diff pending                 |
+| **eslint** (JavaScript linter)          | #1400 | `lib/api.js`              | bounded full-package compile/validate; `Linter.verify` API workload         |
+| **eslint selected upstream unit**       | #4293 | `lib/shared/deep-merge-arrays.js` | all 44 original cases from the matching source tag                    |
 | **prettier** (code formatter)           | —     | `standalone.mjs`          | bounded package-entry compile/validate; runtime diff pending                |
 | **react** (UI library)                  | —     | `index.js`                | bounded package-entry compile/validate                                      |
 | **react upstream suite**                | —     | `cjs/react.production.js` | React's own real `packages/react/src/__tests__` unit tests                  |
+| **react-dom upstream suite**             | #3982 | `cjs/react-dom*.js`       | ReactDOM's own real `packages/react-dom/src/__tests__` unit tests            |
+| **uuid upstream suite**                 | #3995 | `dist/index.js`           | UUID's own 75 `src/test/*.test.ts` cases                                    |
+| **redux** (state container)             | #3996 | `dist/redux.mjs`          | consumed store/reducer/subscription/action-creator API workload             |
+
+## uuid v14.0.1 upstream suite (#3995)
+
+```bash
+pnpm run dogfood:uuid-upstream-suite
+DOGFOOD_UUID_UPSTREAM_SUITE=1 pnpm exec vitest run tests/dogfood/uuid-upstream-suite.test.ts
+```
+
+The harness verifies the published `uuid@14.0.1` tarball and clones the
+matching `uuidjs/uuid` tag at commit
+`70177807e9229dfacde2038dc1e722f1828f358a` for the ten original TypeScript test
+files. It runs the same registered test bodies in a native Node oracle and in
+one Wasm module per file; the shared table helper is pinned alongside the test
+files. The 2026-08-09 baseline is **75/75 native, 6/75 Wasm** (exact runtime
+denominator 75). Every failure remains in the JSON report, including the
+invalid `v35` binary and v1/validate/version runtime traps.
+
+## Redux 5.0.1 API workload (#3996)
+
+```bash
+pnpm run dogfood:redux-workload
+```
+
+The generated driver imports the pinned published bundle and consumes
+`combineReducers`, `createStore`, `subscribe`, and `bindActionCreators`. It
+returns one numeric summary after dispatch and unsubscribe operations; the
+same operations run against the installed package in native Node. This is an
+API workload, not a substitute for Redux's original upstream suite.
 
 ## acorn (#1710)
 
@@ -171,10 +256,63 @@ DOGFOOD_ESLINT=1 pnpm test -- tests/dogfood/eslint.test.ts
 for focused diagnostics. A timeout remains a failed compile result. It is never
 relabelled as validation or runtime success.
 
-The harness currently reports compile/validate separately and leaves the test
-count unavailable until the real `Linter.verify()` proof in #1400 is complete.
-This is intentional: the npm-compat page includes unfinished packages such as
-marked, and ESLint should be equally visible without overstating support.
+The package-entry harness reports compile/validate separately. Once that
+frontier is green, the companion workload is attempted automatically by the
+npm-compat report generator:
+
+```bash
+pnpm run dogfood:eslint-workload
+npx tsx tests/dogfood/eslint-workload-harness.mjs --json
+```
+
+The workload compiles a generated driver outside the extracted fixture, imports
+the verified installed ESLint graph, and returns the number of `semi` rule
+diagnostics for `var x = 1`. The native oracle evaluates that same operation
+against the same installed package at run time. `DOGFOOD_ESLINT_WORKLOAD_TIMEOUT_MS`
+can shorten the bounded probe for local diagnostics.
+
+If the package-entry compile is still blocked, the report leaves the workload
+explicitly unverified. This is intentional: a valid module is not evidence of
+correct `Linter.verify` behavior, and a timeout is not a pass.
+
+The package-entry timeout does not prevent smaller original units from exposing
+real runtime semantics. ESLint's npm tarball omits its tests, so the selected
+upstream-unit lane clones the exact `v10.0.3` source commit
+`bfce7eaa0ec5d6591fd247b7ff57b51e45fb88a1`, verifies it, and runs all 44 bodies
+from `tests/lib/shared/deep-merge-arrays.js` against the byte-verified published
+implementation:
+
+```bash
+pnpm run dogfood:eslint-upstream-suite
+DOGFOOD_ESLINT_UPSTREAM_SUITE=1 pnpm exec vitest run tests/dogfood/eslint-upstream-suite.test.ts
+```
+
+Only the two CommonJS bindings are adapted: the package-relative implementation
+require points at the pinned npm payload, and `node:assert` is replaced by one
+deterministic `deepStrictEqual` shim shared by the Node and Wasm lanes. No test
+body is transcribed, rejected, or skipped. The current baseline is **44/44 in
+both Node and Wasm**. #4293 fixed the generic nested-array carrier bug exposed by
+the seven former divergences. The npm-compat card calls this a “selected
+upstream unit” so 44/44 can never be mistaken for ESLint's whole suite.
+
+## jsdom (#3995)
+
+`jsdom`'s published npm tarball omits its upstream Mocha/Web Platform Tests, so
+there is no honest upstream-suite denominator to report from the fixture alone.
+The package-entry catalog harness still compiles the real `lib/api.js` graph,
+with the installed pnpm importer context wired into the extracted fixture. The
+API workload adds a small consumed DOM check (selector text, list cardinality,
+and serialized markup) and compares the primitive count with native `JSDOM`:
+
+```bash
+pnpm run dogfood:jsdom-workload
+npx tsx tests/dogfood/jsdom-harness.mjs --json
+```
+
+This is explicitly an API smoke workload, not jsdom's upstream suite. It is
+only marked verified after the compiled workload runs and matches the native
+oracle; a compile timeout remains unverified. The npm-compat report generator
+attempts it after the package-entry compile/validation step succeeds.
 
 ## prettier and react
 
@@ -214,14 +352,15 @@ bodies and assertions are upstream's — nothing is transcribed or reworded.
 
 Three rules keep the number honest:
 
-1. **Everything runs; the SCORE is what is guarded.** All 272 upstream tests
-   that upstream does not itself `.skip` are compiled and executed, including
+1. **Everything is accounted for; the SCORE is what is guarded.** All 272
+   upstream tests that upstream does not itself `.skip` are admitted, including
    the ones reaching for ReactDOM, `act`, `jest.*` or a `document`. Those are
    expected to fail — a failure that is run and counted is more honest than a
    test filtered out before it runs. What they are not is _compiler evidence_:
    the native oracle fails them too, so they land in `harness-incompatible` and
-   sit outside the pass rate. The report prints all three numbers (run, scored,
-   infra-blocked) so neither can hide the other.
+   sit outside the pass rate. Eight more are compile-quarantined by name rather
+   than described as executed. The report prints selected, executed, scored,
+   infra-blocked and quarantined counts so none can hide another.
 2. **The `expect` shim implements only the matchers the admitted tests use**
    (`SUPPORTED_MATCHERS`); a test using anything else is rejected rather than
    scored against an approximation of Jest. The same shim source runs on both
@@ -240,6 +379,15 @@ the harness never turns a native-only adapter into compiler evidence.
 
 Failures stay in the corpus. The vitest wrapper enforces a pass FLOOR, not a
 target, so a regression is caught while the remaining frontier stays visible.
+
+Current exact result (2026-08-09): **64/64** natively scoreable upstream tests
+pass against compiled Wasm. The harness admits 272 of React's 273 tests (one is
+upstream-skipped), executes 264, reports 200 as needing unavailable
+Jest/renderer infrastructure on both lanes, and keeps eight explicitly
+compile-quarantined. The production
+`__DEV__ = false` constant is embedded in the shared native/Wasm source because
+that is the transform React itself applies to `react.production.js`; it does
+not precompute a test result.
 
 ## lit upstream suite (#3977)
 

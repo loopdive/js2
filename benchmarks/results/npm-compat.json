@@ -691,18 +691,20 @@
       },
       "tests": {
         "kind": "upstream-suite",
-        "passed": 55,
-        "total": 55,
+        "passed": 64,
+        "total": 64,
         "passRatePct": 100,
         "admitted": 272,
+        "executed": 264,
         "upstreamTestsSeen": 273,
-        "harnessIncompatible": 209,
+        "harnessIncompatible": 200,
+        "quarantined": 8,
         "sourceIssue": 3958
       },
       "correctness": {
         "status": "verified",
-        "passed": 55,
-        "total": 55
+        "passed": 64,
+        "total": 64
       },
       "perf": null,
       "knownBugs": [],
@@ -1127,7 +1129,7 @@
     {
       "name": "jsdom",
       "version": "30.0.1",
-      "issue": null,
+      "issue": 4299,
       "entryFile": "lib/api.js",
       "shape": "cjs-project",
       "compile": {
@@ -1150,8 +1152,22 @@
       },
       "tests": {
         "kind": "upstream-suite",
-        "status": "not-integrated",
-        "reason": "not shipped in npm tarball; adapter pending"
+        "status": "compile-blocked",
+        "reason": "318 original upstream tests identified; none ran because the package entry emitted no valid binary",
+        "admitted": 0,
+        "executed": 0,
+        "upstreamTestsSeen": 318,
+        "harnessIncompatible": 0,
+        "quarantined": 0,
+        "sourceIssue": 4299,
+        "upstreamPin": {
+          "repo": "https://github.com/jsdom/jsdom.git",
+          "tag": "v30.0.1",
+          "commit": "6584485f094d5b271553005b68804c93a455c002",
+          "testDirectory": "test/api",
+          "testFiles": 17,
+          "upstreamSkipped": 0
+        }
       },
       "correctness": {
         "status": "unverified",

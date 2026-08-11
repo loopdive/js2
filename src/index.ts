@@ -523,6 +523,21 @@ export interface CompileOptions {
     modules?: string[];
     /** File extensions to try during resolution (default: [".ts", ".tsx", ".d.ts"]) */
     extensions?: string[];
+    /**
+     * Opt in to consumer-driven expansion of declaration-free barrel modules.
+     *
+     * When a module contains only imports and re-exports, named consumers only
+     * pull the re-export providers for the names they request. Namespace
+     * imports are narrowed only when every use is a static property read;
+     * dynamic namespace uses and side-effect imports retain the complete
+     * graph. This is intended for
+     * source trees generated for bundlers (for example TypeScript's
+     * `_namespaces/ts.ts`) where unused import/re-export targets and unreachable
+     * declaration bodies are declared side-effect-free by the caller. Default
+     * false preserves exact ESM module evaluation semantics and the historical
+     * graph.
+     */
+    consumerDrivenBarrels?: boolean;
   };
   /** Packages to keep as host imports (not resolved/bundled) */
   externals?: string[];

@@ -51,14 +51,13 @@ upstream's; nothing is transcribed or reworded.
 The pin now names React's **entire** public `packages/react/src/__tests__`
 directory (18 files, 273 upstream tests) rather than two hand-picked files.
 
-**Every upstream test runs.** 272 of 273 are compiled and executed; the single
-exclusion is one upstream itself marks `it.skip`. That includes async bodies
-(140 of them — over half the suite), which compile to async exports and are
-awaited on both sides: their `await`s are upstream's, and rewriting them away
-would silently change what the test checks. It also includes the tests that
-reach for ReactDOM, `act`, `jest.*` or a `document`, which are expected to
-fail — a failure that is run and counted is more honest than a test filtered
-out before it runs.
+**Every upstream test is accounted for.** 272 of 273 are admitted; the single
+exclusion is one upstream itself marks `it.skip`. Of those, 264 execute and
+eight are compile-quarantined by exact name. That includes async bodies, whose
+`await`s are upstream's and are awaited on both sides rather than rewritten
+away. It also includes tests that reach for ReactDOM, `act`, `jest.*` or a
+`document`; those execute but are classified outside the compiler score when
+the native oracle cannot reproduce them.
 
 Two rules keep the resulting number honest:
 
@@ -100,7 +99,8 @@ it appears only past a size threshold, which points at a stale global index.
 |             | before                 | after                             |
 | ----------- | ---------------------- | --------------------------------- |
 | test source | 5 hand-written vectors | React's own 273 upstream tests    |
-| run         | 5                      | **272** (1 is upstream's `.skip`) |
+| admitted    | 5                      | **272** (1 is upstream's `.skip`) |
+| executed    | 5                      | **264** (8 compile-quarantined)   |
 | scored      | 5                      | 55                                |
 | passing     | 2                      | **39**                            |
 
@@ -118,8 +118,9 @@ deliberately not attempted here.
 
 - [x] The corpus is React's own test sources at a verified commit, not
       harness-authored vectors.
-- [x] Every upstream test that upstream does not itself `.skip` is RUN —
-      including async bodies and the ones that need unavailable infrastructure.
+- [x] Every upstream test that upstream does not itself `.skip` is accounted
+      for as executed or compile-quarantined — including async bodies and tests
+      that need unavailable infrastructure.
 - [x] Every upstream test is either scored or rejected with a recorded reason;
       `admitted + rejected == upstreamTestsSeen` is asserted.
 - [x] Natively-unreproducible tests are scored in their own bucket, never as
@@ -134,8 +135,8 @@ deliberately not attempted here.
 ## Permanent test reference
 
 `tests/dogfood/react-upstream-suite.test.ts` — pin/commit assertions run
-always; the full run is gated behind `DOGFOOD_REACT_UPSTREAM=1` (36 compiles,
-~80s) and enforces `admitted >= 270`, `scored >= 50`, `passed >= 39`. The
+always; the full run is gated behind `DOGFOOD_REACT_UPSTREAM=1` and now enforces
+`admitted >= 270`, `executed >= 264`, `scored >= 64`, `passed >= 64`. The
 `admitted` floor is the one that prevents the failure mode this issue exists to
 avoid: quietly filtering a test out to keep the pass rate tidy.
 
@@ -150,3 +151,20 @@ DOGFOOD_REACT_UPSTREAM=1 pnpm exec vitest run tests/dogfood/react-upstream-suite
   acorn ships a build-independent driver, React does not.
 - #3959, #3960 — compiler bugs this suite found and this PR fixes.
 - #3961 — the dominant remaining failure cluster.
+
+## Follow-up result (2026-08-09)
+
+The same pinned corpus now scores **64/64** passing compiled-Wasm tests. It
+admits 272/273 upstream tests and executes 264; eight are explicitly
+compile-quarantined. Two generic fixes account for the move:
+
+- the shared oracle/Wasm source now receives React's lexical production build
+  constant (`__DEV__ = false`), exactly as React's Jest transform does; this
+  makes nine additional original tests natively scoreable without changing
+  their bodies;
+- #4298 makes `Object.keys` enumerate descriptor-less dynamic properties on a
+  WasmGC object, closing the final `ReactElementClone` divergence.
+
+The other 200 admitted tests remain `harness-incompatible` because the native
+oracle also lacks their Jest/renderer infrastructure. They are still executed
+and counted, not filtered from the corpus.

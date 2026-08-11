@@ -110,7 +110,10 @@ import {
   appendFnctorConstructorParam,
   emitFnctorConstructorArguments,
   emitFnctorFieldInitializers,
+  fnctorCaptureLayout,
   fnctorConstructorParams,
+  fnctorUserParamTypes,
+  registerFnctorCaptureParams,
 } from "../fnctor-constructor-identity.js";
 import { funcSignatureOf, mintDefinedFunc, pushDefinedFunc } from "../func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 
@@ -1511,8 +1514,9 @@ function compileNewFunctionDeclaration(
     const paramType = ctx.checker.getTypeAtLocation(param);
     userCtorParams.push(resolveWasmType(ctx, paramType));
   }
-  const ctorIdentityParamIdx = userCtorParams.length;
-  const ctorParams = fnctorConstructorParams(ctx, userCtorParams);
+  const captureLayout = fnctorCaptureLayout(ctx, funcName);
+  const ctorIdentityParamIdx = captureLayout.allParamTypes.length + userCtorParams.length;
+  const ctorParams = fnctorConstructorParams(ctx, userCtorParams, captureLayout.allParamTypes);
 
   const ctorName = `${structName}_new`;
   const ctorResults: ValType[] = [{ kind: "ref", typeIdx: structTypeIdx }];
@@ -1533,10 +1537,23 @@ function compileNewFunctionDeclaration(
   ctx.funcConstructorMap.set(funcName, {
     structTypeIdx,
     ctorFuncName: ctorName,
+    captureLayout,
   });
 
   // 4. Compile the constructor body
   const paramDefs: { name: string; type: ValType }[] = [];
+  for (let i = 0; i < captureLayout.captures.length; i++) {
+    const capture = captureLayout.captures[i]!;
+    paramDefs.push({ name: capture.name, type: captureLayout.valueParamTypes[i]! });
+  }
+  for (const capture of captureLayout.captures) {
+    if (capture.hasTdzFlag) {
+      const flagIndex =
+        captureLayout.captures.slice(0, captureLayout.captures.indexOf(capture) + 1).filter((entry) => entry.hasTdzFlag)
+          .length - 1;
+      paramDefs.push({ name: `__tdz_box_${capture.name}`, type: captureLayout.tdzFlagParamTypes[flagIndex]! });
+    }
+  }
   for (let i = 0; i < funcDecl.parameters.length; i++) {
     const p = funcDecl.parameters[i]!;
     paramDefs.push({
@@ -1565,6 +1582,7 @@ function compileNewFunctionDeclaration(
   for (let i = 0; i < ctorFctx.params.length; i++) {
     ctorFctx.localMap.set(ctorFctx.params[i]!.name, i);
   }
+  registerFnctorCaptureParams(ctx, ctorFctx, captureLayout);
 
   // (#3927 per-type layouts) A split family allocates the layout the caller
   // hinted (via the per-family hint global), defaulting to the full-union
@@ -1654,7 +1672,7 @@ function compileNewFunctionDeclaration(
   // would read the PREVIOUS function's params and coerce arguments against the
   // wrong types (observed: `call[0] expected externref, found (ref null $N)`).
   const paramTypes: ValType[] | undefined = userCtorParams;
-  emitFnctorConstructorArguments(ctx, fctx, expr.expression, args, paramTypes);
+  emitFnctorConstructorArguments(ctx, fctx, captureLayout, expr.expression, args, paramTypes);
   // Re-lookup funcIdx in case addUnionImports shifted indices
   const finalCtorIdx = ctx.funcMap.get(classMemberFuncKey(ctx, ctorName)) ?? ctorFuncIdx; // (#1983)
   maybeSetArgcForKnownCall(ctx, fctx, ctorName, args.length, paramTypes?.length ?? args.length);
@@ -3512,15 +3530,6 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   // `any`/none, so `symbol` is undefined). Used by the #1679 build path below.
   let thisFnctorSym: ts.Symbol | undefined;
 
-  // For class expressions (const C = class { ... }), the symbol name may be
-  // the internal anonymous name (e.g. "__class"). Look up the mapped name first,
-  // then fall back to the identifier used in the new expression.
-  if (className && !ctx.classSet.has(className)) {
-    const mapped = ctx.classExprNameMap.get(className);
-    if (mapped) {
-      className = mapped;
-    }
-  }
   // (#3163) Resolve the callee identifier THROUGH cast/paren wrappers —
   // `new (P as any)()` must construct exactly like `new P()`. The raw-node
   // `ts.isIdentifier(expr.expression)` gates below made every cast-wrapped
@@ -3531,6 +3540,52 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   // never changes the runtime VALUE, so symbol resolution on the unwrapped
   // identifier reflects the actual binding.
   const calleeIdent = ts.isIdentifier(unwrappedNonId) ? unwrappedNonId : undefined;
+
+  // (#4288) Published JavaScript commonly spells classes as `var C = class {}`.
+  // TypeScript gives every one of those anonymous class types the display name
+  // `__class`, which is not a binding identity: a global string lookup is
+  // necessarily last-writer-wins across modules. Follow the direct callee's
+  // symbol (and import alias) to the exact ClassExpression AST node first, then
+  // recover the synthetic name registered for that node. Hono imports three
+  // such router classes; without this identity path each `new Router()` became
+  // `new Hono()` and recursively re-entered Hono's initializer.
+  let boundClassExpressionName: string | undefined;
+  if (calleeIdent) {
+    let boundSymbol = ctx.checker.getSymbolAtLocation(calleeIdent);
+    const seenAliases = new Set<ts.Symbol>();
+    while (boundSymbol && (boundSymbol.flags & ts.SymbolFlags.Alias) !== 0 && !seenAliases.has(boundSymbol)) {
+      seenAliases.add(boundSymbol);
+      try {
+        const target = ctx.checker.getAliasedSymbol(boundSymbol);
+        if (target === boundSymbol) break;
+        boundSymbol = target;
+      } catch {
+        break;
+      }
+    }
+    for (const declaration of boundSymbol?.getDeclarations() ?? []) {
+      const initializer = ts.isVariableDeclaration(declaration) ? declaration.initializer : undefined;
+      const candidate = initializer ? unwrapNewTarget(initializer) : declaration;
+      if (!ts.isClassExpression(candidate)) continue;
+      const syntheticName = ctx.anonClassExprNames.get(candidate);
+      if (syntheticName && ctx.classSet.has(syntheticName)) {
+        boundClassExpressionName = syntheticName;
+        break;
+      }
+    }
+  }
+
+  if (boundClassExpressionName) {
+    className = boundClassExpressionName;
+  } else if (className && !ctx.classSet.has(className)) {
+    // Compatibility fallback for class expressions whose exact binding is not
+    // statically available (for example `let C; C = class {}`). Internal symbol
+    // names are safe here only after the exact declaration path above missed.
+    const mapped = ctx.classExprNameMap.get(className);
+    if (mapped) {
+      className = mapped;
+    }
+  }
   // #3371: a compiler-synthesized `new` used by standalone Reflect.construct
   // has no checker-owned type for the synthetic NewExpression itself. The
   // callee is still the original source identifier, so retain the exact native
@@ -3617,9 +3672,9 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       const ctorFuncIdx = ctx.funcMap.get(cachedFnCtor.ctorFuncName);
       if (ctorFuncIdx !== undefined) {
         const allParamTypes = getFuncParamTypes(ctx, ctorFuncIdx);
-        const paramTypes = ctx.standalone ? allParamTypes?.slice(0, -1) : allParamTypes;
+        const paramTypes = fnctorUserParamTypes(ctx, cachedFnCtor.captureLayout, allParamTypes);
         const args = expr.arguments ?? [];
-        emitFnctorConstructorArguments(ctx, fctx, expr.expression, args, paramTypes);
+        emitFnctorConstructorArguments(ctx, fctx, cachedFnCtor.captureLayout, expr.expression, args, paramTypes);
         maybeSetArgcForKnownCall(ctx, fctx, cachedFnCtor.ctorFuncName, args.length, paramTypes?.length ?? args.length);
         fctx.body.push({ op: "call", funcIdx: ctorFuncIdx });
         return { kind: "ref", typeIdx: cachedFnCtor.structTypeIdx };
@@ -3682,9 +3737,9 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       const ctorFuncIdx = ctx.funcMap.get(cachedFnCtor.ctorFuncName);
       if (ctorFuncIdx !== undefined) {
         const allParamTypes = getFuncParamTypes(ctx, ctorFuncIdx);
-        const paramTypes = ctx.standalone ? allParamTypes?.slice(0, -1) : allParamTypes;
+        const paramTypes = fnctorUserParamTypes(ctx, cachedFnCtor.captureLayout, allParamTypes);
         const args = expr.arguments ?? [];
-        emitFnctorConstructorArguments(ctx, fctx, expr.expression, args, paramTypes);
+        emitFnctorConstructorArguments(ctx, fctx, cachedFnCtor.captureLayout, expr.expression, args, paramTypes);
         const finalIdx = ctx.funcMap.get(cachedFnCtor.ctorFuncName) ?? ctorFuncIdx;
         maybeSetArgcForKnownCall(ctx, fctx, cachedFnCtor.ctorFuncName, args.length, paramTypes?.length ?? args.length);
         fctx.body.push({ op: "call", funcIdx: finalIdx });

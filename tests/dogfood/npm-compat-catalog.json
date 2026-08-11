@@ -33,6 +33,17 @@
     "issue": 1032
   },
   {
+    "name": "react",
+    "version": "19.2.6",
+    "tarball": "fixtures/react-19.2.6.tgz",
+    "registryTarball": "https://registry.npmjs.org/react/-/react-19.2.6.tgz",
+    "shasum": "3dadb8e12b2a7934c1d5317973e5dce1301f9a4d",
+    "integrity": "sha512-sfWGGfavi0xr8Pg0sVsyHMAOziVYKgPLNrS7ig+ivMNb3wbCBw3KxtflsGBAwD3gYQlE/AEZsTLgToRrSCjb0Q==",
+    "entryModule": "package/index.js",
+    "shape": "cjs-project",
+    "issue": 3958
+  },
+  {
     "name": "react-dom",
     "version": "19.2.6",
     "tarball": "fixtures/react-dom-19.2.6.tgz",
@@ -52,7 +63,17 @@
     "integrity": "sha512-52v7mUVUfNQVYYqE1lcdaymWL0njO7lTLUog6ZvW2U5KsbiLk/GnZlVJ+qx0xfNJZ6Gn+KSpPNE52vurbxZwrA==",
     "entryModule": "package/lib/api.js",
     "shape": "cjs-project",
-    "timeoutMs": 180000
+    "issue": 4299,
+    "timeoutMs": 180000,
+    "upstreamSuite": {
+      "repo": "https://github.com/jsdom/jsdom.git",
+      "tag": "v30.0.1",
+      "commit": "6584485f094d5b271553005b68804c93a455c002",
+      "testDirectory": "test/api",
+      "testFiles": 17,
+      "totalTests": 318,
+      "upstreamSkipped": 0
+    }
   },
   {
     "name": "webpack",
@@ -134,7 +155,10 @@
     "shasum": "a3a2e6e2e9feab2202463fcf15df74de00140b1c",
     "integrity": "sha512-xVQwyiuxALUBNB2fBe0tmNemg9KqLtdj3T64mioFDar79B2cU8LIyz+3KL6LdiHs9NkeNfwxpKSaIVOY8f112g==",
     "entryModule": "package/lib/index.mjs",
-    "shape": "esm-project"
+    "shape": "esm-project",
+    "compileOptions": {
+      "allowFs": true
+    }
   },
   {
     "name": "three",

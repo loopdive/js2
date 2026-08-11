@@ -39,6 +39,10 @@ import { runHarness as runClsx } from "../tests/dogfood/clsx-harness.mjs";
 import { runHarness as runCookie } from "../tests/dogfood/cookie-harness.mjs";
 import { correctnessRollup, correctnessVerdict } from "./lib/npm-compat-correctness.mjs"; // (#4127)
 import { runHarness as runEslint } from "../tests/dogfood/eslint-harness.mjs";
+import { runHarness as runEslintWorkload } from "../tests/dogfood/eslint-workload-harness.mjs";
+import { runHarness as runEslintUpstreamSuite } from "../tests/dogfood/eslint-upstream-suite.mjs";
+import { runHarness as runReduxWorkload } from "../tests/dogfood/redux-workload-harness.mjs";
+import { runHarness as runJsdomWorkload } from "../tests/dogfood/jsdom-harness.mjs";
 import { runHarness as runPrettier } from "../tests/dogfood/prettier-harness.mjs";
 import { runHarness as runReact } from "../tests/dogfood/react-harness.mjs";
 import { runHarness as runReactUpstreamSuite } from "../tests/dogfood/react-upstream-suite.mjs";
@@ -65,7 +69,9 @@ import {
 import { renderHarnessThrownText } from "./lib/wasm-exn-render.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
-const PACKAGE_NAMES = ["acorn", "marked", "clsx", "cookie", "eslint", "prettier", "react", ...NPM_COMPAT_CATALOG_NAMES];
+const PACKAGE_NAMES = [
+  ...new Set(["acorn", "marked", "clsx", "cookie", "eslint", "prettier", "react", ...NPM_COMPAT_CATALOG_NAMES]),
+];
 // Committed npm API snapshot keeps report generation deterministic and offline.
 // Refresh these together from:
 // https://api.npmjs.org/downloads/point/last-week/{package}
@@ -1410,6 +1416,7 @@ async function buildPackageEntry({ name, version, issue, entryFile, shape, repor
     shape,
     compile: report.compile,
     validation: report.validation,
+    capabilities: report.capabilities ?? null,
     // True when the published entry module is a re-export barrel with no
     // implementation of its own, so `compile`/`validation` above describe the
     // barrel rather than the package's code. Consumers must not present that
@@ -1559,8 +1566,37 @@ if (selectedPackages.has("cookie")) {
 }
 
 if (selectedPackages.has("eslint")) {
-  console.log("[npm-compat] eslint — bounded package-entry compile/validate...");
+  console.log("[npm-compat] eslint — bounded package entry + selected original upstream unit...");
   const eslintReport = await runEslint({ quiet: true });
+  const eslintSuite = await runEslintUpstreamSuite({ quiet: true });
+  // Do not spend a second bounded compile on a package-entry failure. Once
+  // lib/api.js is a valid module, the workload harness compiles a generated
+  // driver that calls the real Linter.verify API and compares its primitive
+  // diagnostic count with native Node. Until then, retain an explicit blocked
+  // workload row so the correctness axis cannot read as an implicit pass.
+  const eslintWorkload =
+    eslintReport.compile.success && eslintReport.validation.validates ? await runEslintWorkload({ quiet: true }) : null;
+  const eslintTests = {
+    kind: "upstream-unit",
+    passed: eslintSuite.results?.passed ?? null,
+    total: eslintSuite.results?.scored ?? null,
+    passRatePct:
+      eslintSuite.results?.scored > 0
+        ? Number(((eslintSuite.results.passed / eslintSuite.results.scored) * 100).toFixed(1))
+        : null,
+    admitted: eslintSuite.extraction?.admitted ?? null,
+    upstreamTestsSeen: eslintSuite.extraction?.upstreamTestsSeen ?? null,
+    harnessIncompatible: 0,
+    scope: eslintSuite.upstreamSuite?.scope ?? null,
+    sourceFiles: eslintSuite.upstreamSuite?.testFiles ?? [],
+    sourceIssue: 4293,
+    packageApiWorkload: eslintWorkload?.tests ?? {
+      status: "blocked",
+      reason: eslintReport.compile.success
+        ? "package-entry validation did not produce a runnable Linter workload"
+        : "package-entry compile blocked before the Linter workload could run",
+    },
+  };
   packages.push(
     await buildPackageEntry({
       name: "eslint",
@@ -1569,7 +1605,7 @@ if (selectedPackages.has("eslint")) {
       entryFile: eslintReport.eslint.entryModule.replace(/^package\//, ""),
       shape: "cjs-project",
       report: eslintReport,
-      tests: null,
+      tests: eslintTests,
       perf: null,
     }),
   );
@@ -1617,8 +1653,10 @@ if (selectedPackages.has("react")) {
         total: reactSuite.results?.scored ?? null,
         passRatePct: reactSuite.summary?.passRatePct ?? null,
         admitted: reactSuite.extraction?.admitted ?? null,
+        executed: reactSuite.results?.executed ?? null,
         upstreamTestsSeen: reactSuite.extraction?.upstreamTestsSeen ?? null,
         harnessIncompatible: reactSuite.results?.harnessIncompatible ?? null,
+        quarantined: reactSuite.compile?.quarantined?.length ?? null,
         sourceIssue: 3958,
       },
       perf: null,
@@ -1726,9 +1764,57 @@ for (const entry of NPM_COMPAT_CATALOG) {
   if (!selectedPackages.has(entry.name)) continue;
   // Handled above with its own upstream suite rather than as a bare
   if (entry.name === "lit") continue;
+  if (entry.name === "react") continue;
   if (entry.name === "react-dom") continue;
   console.log(`[npm-compat] ${entry.name} — bounded published package-entry compile/validate...`);
   const report = await runNpmCompatCatalogHarness(entry.name, { quiet: true });
+  const workloadRunner = entry.name === "jsdom" ? runJsdomWorkload : entry.name === "redux" ? runReduxWorkload : null;
+  const workload =
+    workloadRunner && report.compile.success && report.validation.validates
+      ? await workloadRunner({ quiet: true })
+      : null;
+  const hasApiWorkload = workloadRunner !== null;
+  const upstreamSuite = entry.upstreamSuite;
+  const upstreamTests = upstreamSuite
+    ? {
+        kind: "upstream-suite",
+        status: report.compile.success && report.validation.validates ? "not-integrated" : "compile-blocked",
+        reason:
+          report.compile.success && report.validation.validates
+            ? `${upstreamSuite.totalTests} original upstream tests identified; runtime adapter pending`
+            : `${upstreamSuite.totalTests} original upstream tests identified; none ran because the package entry emitted no valid binary`,
+        admitted: 0,
+        executed: 0,
+        upstreamTestsSeen: upstreamSuite.totalTests,
+        harnessIncompatible: 0,
+        quarantined: 0,
+        sourceIssue: entry.issue ?? null,
+        upstreamPin: {
+          repo: upstreamSuite.repo,
+          tag: upstreamSuite.tag,
+          commit: upstreamSuite.commit,
+          testDirectory: upstreamSuite.testDirectory,
+          testFiles: upstreamSuite.testFiles,
+          upstreamSkipped: upstreamSuite.upstreamSkipped,
+        },
+      }
+    : null;
+  const tests =
+    workload?.tests ??
+    upstreamTests ??
+    (hasApiWorkload
+      ? {
+          kind: "api-workload",
+          status: "blocked",
+          reason: report.compile.success
+            ? `package-entry validation did not produce a runnable ${entry.name} workload`
+            : `package-entry compile blocked before the ${entry.name} workload could run`,
+        }
+      : {
+          kind: "upstream-suite",
+          status: "not-integrated",
+          reason: "not shipped in npm tarball; adapter pending",
+        });
   packages.push(
     await buildPackageEntry({
       name: entry.name,
@@ -1737,11 +1823,7 @@ for (const entry of NPM_COMPAT_CATALOG) {
       entryFile: entry.entryModule.replace(/^package\//, ""),
       shape: entry.shape,
       report,
-      tests: {
-        kind: "upstream-suite",
-        status: "not-integrated",
-        reason: "not shipped in npm tarball; adapter pending",
-      },
+      tests,
       perf: null,
     }),
   );

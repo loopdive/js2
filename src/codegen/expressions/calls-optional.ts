@@ -19,6 +19,7 @@ import { compileCallablePropertyCall } from "./calls-closures.js";
 import { ensureExternIsUndefinedImport, flushLateImportShifts } from "./late-imports.js";
 import { getFuncParamTypes } from "./helpers.js";
 import { resolveStructName } from "./misc.js";
+import { compileReceiverMethodCall } from "./call-receiver-method.js";
 
 export function compileOptionalCallExpression(
   ctx: CodegenContext,
@@ -173,6 +174,33 @@ export function compileOptionalCallExpression(
     }
   }
 
+  // (#4292) An optional call on an unannotated/dynamic receiver still has to
+  // perform ordinary method dispatch in the non-null branch. Hono's published
+  // `mergePath(base, ...)` uses `base?.at(-1)` where `base` is an unannotated
+  // JavaScript parameter: the static string arm above cannot prove its brand,
+  // but at runtime it is a native string. The old fallback emitted only the
+  // default result, so `.at()` became undefined even for a non-null receiver.
+  // Delegate repeatable local dynamic receivers to the same generic runtime
+  // method ladder as a non-optional call; the outer branch has already applied
+  // the nullish short-circuit. The delegated path re-evaluates its receiver, so
+  // property chains are deliberately excluded: even a syntactically simple
+  // `box.value` can invoke an observable getter.
+  if (
+    !methodResolved &&
+    (tsReceiverType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 &&
+    isRepeatableDynamicOptionalReceiver(propAccess.expression)
+  ) {
+    const delegated = compileReceiverMethodCall(ctx, fctx, expr, propAccess);
+    if (delegated !== undefined) {
+      if (delegated === VOID_RESULT || delegated === null) {
+        fctx.body.push(...defaultValueInstrs(resultType));
+      } else {
+        resultType = delegated;
+      }
+      methodResolved = true;
+    }
+  }
+
   // Closure-field / function-typed-property callee (e.g. `o?.f(x)` where `f`
   // holds a closure on an object/struct, not a named method). None of the
   // method-resolution branches above match these, so without this fallback the
@@ -213,6 +241,13 @@ export function compileOptionalCallExpression(
   });
 
   return resultType;
+}
+
+/** A dynamic optional-method receiver that can be read twice observably safely. */
+function isRepeatableDynamicOptionalReceiver(expr: ts.Expression): boolean {
+  let cur = expr;
+  while (ts.isParenthesizedExpression(cur) || ts.isNonNullExpression(cur)) cur = cur.expression;
+  return ts.isIdentifier(cur) || cur.kind === ts.SyntaxKind.ThisKeyword;
 }
 
 /**

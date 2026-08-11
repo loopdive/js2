@@ -120,4 +120,29 @@ export function main(): number { return factory(); }
     // node: capture(2) = 21, capture(3) = 26 -> 21 + 52 = 73.
     expect((exports.main as () => number)()).toBe(73);
   });
+
+  it("threads an ancestor sibling's capture through a nested descendant", async () => {
+    const exports = await run(`
+function factory(): number {
+${WIDE_HOST_PRELUDE}
+  const STATE = 42;
+
+  function getState(): number { return STATE; }
+
+  // subscribe is a sibling of getState, so it receives STATE as a
+  // transitive capture. observeState is one lexical level deeper and also
+  // has to receive STATE before it can forward the call to getState.
+  function subscribe(): number {
+    function observeState(): number { return getState(); }
+    return observeState();
+  }
+
+  const sink = ${WIDE_HOST_SINK};
+  return subscribe() + sink * 0;
+}
+
+export function main(): number { return factory(); }
+`);
+    expect((exports.main as () => number)()).toBe(42);
+  });
 });

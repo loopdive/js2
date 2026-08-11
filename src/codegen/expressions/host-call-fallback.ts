@@ -44,13 +44,17 @@ export function buildHostCallFallbackArm(
   plan: HostCallFallbackPlan,
   calleeAnyLocal: number,
   argLocals: readonly number[],
+  // (#4313) A bare call's `thisArg` is `undefined`. A caller that can
+  // materialize a real `undefined` externref passes it here; the null default
+  // preserves the previous behaviour for callers that cannot.
+  thisArgInstrs: readonly Instr[] = [{ op: "ref.null.extern" }],
 ): Instr[] | undefined {
   const callFn = ctx.funcMap.get(plan.importName);
   if (callFn === undefined) return undefined;
   const invokePrefix: Instr[] = [
     { op: "local.get", index: calleeAnyLocal },
     { op: "extern.convert_any" },
-    { op: "ref.null.extern" }, // bare-call thisArg
+    ...thisArgInstrs, // bare-call thisArg
   ];
   if (plan.fixedArity) {
     for (const argLocal of argLocals) invokePrefix.push({ op: "local.get", index: argLocal });

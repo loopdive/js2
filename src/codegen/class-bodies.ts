@@ -5,6 +5,7 @@
  * Extracted from codegen/index.ts (#1013).
  */
 import { ts } from "../ts-api.js";
+import { findConstructorImplementation, hasStaticModifier } from "./ast-modifiers.js";
 import { nativeTypeFromTypeNode, nativeTypeOfDeclaration } from "./native-type-annotations.js";
 import { resolveIrDynamicCarrierType } from "./any-helpers.js";
 import { isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
@@ -18,6 +19,7 @@ import { isStandalonePromiseActive } from "./async-scheduler.js"; // (#2637 B2) 
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "./async-frame.js";
 import { genBodyReferencesThis, genBodyReferencesSuper, emitCachedFuncClosureAccess } from "./closures.js"; // (#3132 / #3123 fnctor parent closure)
 import { classMemberFuncKey, fnctorAncestorOfClass } from "./class-member-keys.js"; // (#1983 / #3123)
+import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { installAstFreeClassConstructorNewWrapper } from "./class-constructor-wrapper.js";
 import { commitClassStructLayout } from "./class-layout-registration.js";
 import { mintDefinedFunc, pushProgramAbiClassCallable } from "./program-abi-class-callable-planning.js";
@@ -47,8 +49,6 @@ import {
 import {
   cacheStringLiterals,
   extractConstantDefault,
-  hasAbstractModifier,
-  hasStaticModifier,
   hoistLetConstWithTdz, // (#2641) lexical shadowing in class method/ctor/generator bodies
   hoistVarDeclarations, // (#2641)
   resolveWasmType,
@@ -385,7 +385,7 @@ function findNearestAncestorCtorParams(
   while (anc && !seen.has(anc)) {
     seen.add(anc);
     const ancDecl = ctx.classDeclarationMap.get(anc);
-    const ancCtor = ancDecl?.members.find(ts.isConstructorDeclaration) as ts.ConstructorDeclaration | undefined;
+    const ancCtor = ancDecl ? findConstructorImplementation(ancDecl) : undefined;
     if (ancCtor) return ancCtor.parameters;
     anc = ctx.classParentMap.get(anc);
   }
@@ -671,7 +671,12 @@ export function collectClassDeclaration(
       if (clause.token === ts.SyntaxKind.ExtendsKeyword && clause.types.length > 0) {
         const baseExpr = clause.types[0]!.expression;
         if (ts.isIdentifier(baseExpr)) {
-          parentClassName = baseExpr.text;
+          // (#4291) The local import spelling is not the class identity. Hono's
+          // published base is declared as `var Hono = class _Hono {}`, exported
+          // as `HonoBase`, and imported through that alias. Resolve the exact
+          // class-expression declaration so the derived struct is registered
+          // as a subtype of the synthetic base struct whose bodies actually run.
+          parentClassName = exactClassExpressionTypeName(ctx, ctx.checker.getTypeAtLocation(baseExpr)) ?? baseExpr.text;
           // Guard against circular inheritance (e.g., class X extends X)
           if (parentClassName === className) {
             parentClassName = undefined;
@@ -796,7 +801,7 @@ export function collectClassDeclaration(
   ctx.typeIdxToStructName.set(structTypeIdx, className);
 
   // Find the constructor to determine struct fields from `this.x = ...` assignments
-  const ctor = decl.members.find(ts.isConstructorDeclaration) as ts.ConstructorDeclaration | undefined;
+  const ctor = findConstructorImplementation(decl);
   const ownFields: FieldDef[] = [];
   // (#3673) Declared instance properties, by name — the constructor-assignment
   // pass below needs the DECLARATION to see an explicit native annotation.
@@ -1134,8 +1139,8 @@ export function collectClassDeclaration(
     if (ctorRest) ctx.funcRestParams.set(initName, ctorRest);
   }
 
-  // Register method functions (own methods defined on this class)
-  // Skip abstract methods — they have no body and are implemented by subclasses
+  // Register method functions (own methods defined on this class).
+  // Bodyless overload signatures and abstract methods are type-only.
   const ownMethodNames = new Set<string>();
   for (const member of decl.members) {
     if (ts.isMethodDeclaration(member) && member.name) {
@@ -1143,8 +1148,7 @@ export function collectClassDeclaration(
       if (methodName === undefined) continue; // dynamic computed name — skip
       ownMethodNames.add(methodName);
 
-      // Abstract methods have no body — skip generating a wasm function stub
-      if (hasAbstractModifier(member)) continue;
+      if (!member.body) continue;
 
       const fullName = `${className}_${methodName}`;
       const isStatic = hasStaticModifier(member);
@@ -1780,7 +1784,7 @@ function compileClassBodiesInner(
   routing?: ClassBodyCompileRouting,
 ): void {
   // Compile constructor
-  const ctor = decl.members.find(ts.isConstructorDeclaration) as ts.ConstructorDeclaration | undefined;
+  const ctor = findConstructorImplementation(decl);
   const ctorName = `${className}_new`;
   const ctorLocalIdx = funcByName.get(classMemberFuncKey(ctx, ctorName)); // (#1983)
   if (
@@ -1851,6 +1855,7 @@ function compileClassBodiesInner(
       isConstructor: true,
       isDerivedConstructor: ctx.classParentMap.has(className),
     };
+    fctx.activationEntryBody = fctx.body;
 
     // Re-resolve the constructor (and init) function types now that all class
     // struct types are registered. Constructor parameter types that reference
@@ -2322,7 +2327,7 @@ function compileClassBodiesInner(
   // both static and instance methods share the same name.
   const compiledMethods = new Set<string>();
   for (const member of decl.members) {
-    if (ts.isMethodDeclaration(member) && member.name) {
+    if (ts.isMethodDeclaration(member) && member.name && member.body) {
       if (skipExactPreparedClassBody(ctx, member, routing)) continue;
       const methodName = resolveClassMemberName(ctx, member.name);
       if (methodName === undefined) continue; // dynamic computed name — skip
@@ -2413,6 +2418,7 @@ function compileClassBodiesInner(
         // `emitUndefined` because static methods have no `this` param.
         isStaticContext: isStatic ? true : undefined,
       };
+      fctx.activationEntryBody = fctx.body;
 
       // Re-resolve the function type now that all class struct types are registered.
       // During the collection phase, forward-referenced class types (e.g., a method
@@ -2751,6 +2757,7 @@ function compileClassBodiesInner(
         enclosingClassName: className,
         isStaticContext: getterIsStatic ? true : undefined,
       };
+      fctx.activationEntryBody = fctx.body;
 
       // Re-resolve getter function type (see method type re-resolution above)
       {
@@ -2864,6 +2871,7 @@ function compileClassBodiesInner(
         enclosingClassName: className,
         isStaticContext: setterIsStatic ? true : undefined,
       };
+      fctx.activationEntryBody = fctx.body;
 
       // Re-resolve setter function type (see method type re-resolution above)
       {
@@ -3025,6 +3033,7 @@ function emitPromiseSubclassOnHostCtor(
     // dispatching this body via `__call_fn_method_1`; `this` reads that global.
     readsCurrentThis: true,
   };
+  fctx.activationEntryBody = fctx.body;
 
   // Re-resolve the function type now that all struct types are registered
   // (parity with the direct-new ctor's re-resolution).

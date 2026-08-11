@@ -20,11 +20,8 @@ import { buildImports, wrapExports } from "../src/runtime.js";
  *    any returned Wasm closure struct in a JS function. The wrapper
  *    dispatches via `__call_fn_0` (0 args) or `__call_fn_1` (1 arg).
  *
- * Limitation: variadic closures (`function(...args){...}`) are lifted as
- * 0-arg functions whose body reads `arguments`. Without a JS-side path
- * to populate `__extras_argv` + `__argc` before invoking, calls like
- * `wrapped(2)` fall back to `__call_fn_0` and the closure body sees an
- * empty arguments object. That's tracked as the next step on this issue.
+ * Variadic closures use the same bridge: positional host arguments are packed
+ * into the lifted function's internal rest vec before `call_ref`.
  */
 
 async function runSingle(src: string): Promise<{ exports: Record<string, any> }> {
@@ -78,6 +75,39 @@ describe("#1308 — wrapExports makes Wasm closure returns JS-callable", () => {
     expect(inc(7)).toBe(8);
   });
 
+  it("packs positional host arguments for a returned rest closure", async () => {
+    const { exports } = await runSingle(`
+      export function makeCollector(seed: number): (...values: number[]) => number {
+        return (...values: number[]): number => {
+          let total = seed + values.length * 100;
+          for (let i = 0; i < values.length; i++) total += values[i] * (i + 1);
+          return total;
+        };
+      }
+    `);
+    const collect = exports.makeCollector(10);
+    expect(collect()).toBe(10);
+    expect(collect(2)).toBe(112);
+    expect(collect(2, 3, 4)).toBe(330);
+  });
+
+  it("decodes standalone boolean closure arguments through the numeric union carrier", async () => {
+    const result = await compile(
+      `
+        export function makePredicate(): (condition: boolean) => number {
+          return (condition: boolean): number => condition ? 1 : 0;
+        }
+      `,
+      { fileName: "standalone-boolean-bridge.ts", target: "standalone" },
+    );
+    expect(result.success, JSON.stringify(result.errors)).toBe(true);
+    const wat = result.wat ?? "";
+    const start = wat.indexOf("(func $__call_fn_1");
+    const end = wat.indexOf("\n  (func ", start + 1);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(wat.slice(start, end >= 0 ? end : undefined)).toContain("i32.trunc_sat_f64_s");
+  });
+
   it("non-callable exports pass through unchanged", async () => {
     const { exports } = await runSingle(`
       export function pure(x: number): number {
@@ -113,11 +143,8 @@ describe("#1308 — wrapExports makes Wasm closure returns JS-callable", () => {
     // before reaching this point. Pre-#1308: typeof was "object".
     expect(typeof negated).toBe("function");
 
-    // 0-arg call goes through case 0 of negate's switch:
-    // `!predicate.call(this)` → !isEven(undefined) → !false → 1.
-    // (Variadic arg propagation is the remaining gap — `negated(2)` still
-    // routes through __call_fn_0 with no args until __extras_argv plumbing
-    // from JS lands.)
-    expect(negated()).toBe(1);
+    // The returned variadic closure now receives an empty rest vec, calls the
+    // predicate with no arguments, and preserves the JavaScript boolean result.
+    expect(negated()).toBe(true);
   });
 });

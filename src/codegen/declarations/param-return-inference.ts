@@ -17,12 +17,15 @@ import type { CodegenContext } from "../context/types.js";
 export function resolveGenericCallSiteTypes(
   ctx: CodegenContext,
   funcName: string,
+  implementation: ts.FunctionDeclaration,
   sourceFile: ts.SourceFile,
+  resolveMissingParam: (parameter: ts.ParameterDeclaration, index: number) => ValType,
 ): { params: ValType[]; results: ValType[] } | null {
   let found: { params: ValType[]; results: ValType[] } | null = null;
+  const implementationArity = implementation.parameters.length;
 
   function visit(node: ts.Node) {
-    if (found) return;
+    if (found && found.params.length >= implementationArity) return;
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === funcName) {
       const sig = ctx.checker.getResolvedSignature(node);
       if (sig) {
@@ -48,14 +51,33 @@ export function resolveGenericCallSiteTypes(
         const effRetType =
           isStandalonePromiseActive(ctx) && calleeIsAsync ? unwrapPromiseType(retType, ctx.checker) : retType;
         const results: ValType[] = isVoidType(effRetType) ? [] : [resolveWasmType(ctx, effRetType)];
-        found = { params, results };
+        if (!found) {
+          found = { params, results };
+        } else if (params.length > found.params.length) {
+          // (#4268) Preserve the first call's established specialization and
+          // result ABI, but append slots from a resolved wider overload. A
+          // short overload cannot erase parameters owned by the implementation.
+          found = { params: [...found.params, ...params.slice(found.params.length)], results: found.results };
+        }
       }
     }
     forEachChild(node, visit);
   }
 
   forEachChild(sourceFile, visit);
-  return found;
+  // TypeScript does not model assignments made by the recursive visitor when
+  // narrowing the captured variable after forEachChild returns.
+  const resolved = found as { params: ValType[]; results: ValType[] } | null;
+  if (!resolved || resolved.params.length >= implementationArity) return resolved;
+
+  // No local call supplies every implementation parameter. Keep the omitted
+  // optional slots with conservative declaration-derived carriers so body
+  // locals and call-site padding still share a complete ABI.
+  const params = [...resolved.params];
+  for (let i = params.length; i < implementationArity; i++) {
+    params.push(resolveMissingParam(implementation.parameters[i]!, i));
+  }
+  return { params, results: resolved.results };
 }
 
 // ---------------------------------------------------------------------------

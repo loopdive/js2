@@ -14,6 +14,13 @@ export function createNpmCompatCatalogHarness(name) {
     issue: entry.issue ?? null,
     setup: () => setupNpmCompatCatalogPackage(name),
     timeoutMs: entry.timeoutMs ?? 120_000,
+    compileOptions: {
+      allowJs: true,
+      skipSemanticDiagnostics: true,
+      target: "gc",
+      platform: "node",
+      ...(entry.compileOptions ?? {}),
+    },
   });
 }
 

@@ -332,6 +332,35 @@ function externToClosureParamRef(paramType: ValType): Instr[] {
   return ops;
 }
 
+/** Preserve explicit host `undefined` for numeric default-parameter checks. */
+function externToClosureF64(argLocalIdx: number, unboxIdx: number, isUndefinedIdx?: number): Instr[] {
+  const unbox: Instr[] = [
+    { op: "local.get", index: argLocalIdx },
+    { op: "call", funcIdx: unboxIdx },
+  ];
+  if (isUndefinedIdx === undefined) return unbox;
+  return [
+    { op: "local.get", index: argLocalIdx },
+    { op: "call", funcIdx: isUndefinedIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "f64" } },
+      then: [{ op: "i64.const", value: 0x7ff00000deadc0den }, { op: "f64.reinterpret_i64" }],
+      else: unbox,
+    },
+  ];
+}
+
+/**
+ * Number of positional host arguments consumed before a source rest
+ * parameter. The lifted Wasm function still has one additional vec formal for
+ * `...rest`; the host bridge materializes that vec from the remaining
+ * positional arguments instead of counting it as a JavaScript argument.
+ */
+function closureHostArity(info: { paramTypes: ValType[]; hasRestParam?: boolean }): number {
+  return info.hasRestParam === true ? Math.max(0, info.paramTypes.length - 1) : info.paramTypes.length;
+}
+
 /**
  * Emit __call_fn_<arity> export (#1382): call an N-arg WasmGC closure from
  * JS. Takes (externref closure, externref arg0, ..., externref arg<arity-1>)
@@ -384,10 +413,18 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
     returnType: ValType | null;
     selfTypeIdx: number;
     closureArity: number;
+    rest?: {
+      matchTypeIdx: number;
+      vecTypeIdx: number;
+      arrTypeIdx: number;
+      elemType: ValType;
+    };
   }[] = [];
+  const restEntries: (typeof entries)[number][] = [];
 
   for (const [typeIdx, info] of ctx.closureInfoByTypeIdx) {
-    if (info.paramTypes.length > arity) continue;
+    const hostArity = closureHostArity(info);
+    if (hostArity > arity) continue;
 
     const typeDef = mod.types[typeIdx];
     if (!typeDef || typeDef.kind !== "struct") continue;
@@ -396,22 +433,45 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
       baseWrapperIdx = typeIdx;
     }
 
+    const funcTypeDef = mod.types[info.funcTypeIdx];
+    const selfParam = funcTypeDef?.kind === "func" ? funcTypeDef.params[0] : undefined;
+    const selfTypeIdx =
+      selfParam && (selfParam.kind === "ref" || selfParam.kind === "ref_null")
+        ? (selfParam as { typeIdx: number }).typeIdx
+        : typeIdx;
+
+    if (info.hasRestParam === true && funcTypeDef?.kind === "func") {
+      const restParam = funcTypeDef.params[hostArity + 1];
+      if (restParam && (restParam.kind === "ref" || restParam.kind === "ref_null")) {
+        const vecTypeIdx = restParam.typeIdx;
+        const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+        const arrDef = mod.types[arrTypeIdx];
+        if (arrDef?.kind === "array") {
+          restEntries.push({
+            funcTypeIdx: info.funcTypeIdx,
+            returnType: info.returnType,
+            selfTypeIdx,
+            closureArity: hostArity,
+            rest: { matchTypeIdx: typeIdx, vecTypeIdx, arrTypeIdx, elemType: arrDef.element },
+          });
+          continue;
+        }
+      }
+    }
+
     if (!seenFuncTypeIdx.has(info.funcTypeIdx)) {
       seenFuncTypeIdx.add(info.funcTypeIdx);
-      const funcTypeDef = mod.types[info.funcTypeIdx];
-      const selfParam = funcTypeDef?.kind === "func" ? funcTypeDef.params[0] : undefined;
-      const selfTypeIdx =
-        selfParam && (selfParam.kind === "ref" || selfParam.kind === "ref_null")
-          ? (selfParam as { typeIdx: number }).typeIdx
-          : typeIdx;
       entries.push({
         funcTypeIdx: info.funcTypeIdx,
         returnType: info.returnType,
         selfTypeIdx,
-        closureArity: info.paramTypes.length,
+        closureArity: hostArity,
       });
     }
   }
+  // Rest arms are shape-qualified and must run before a same-signature normal
+  // vec parameter arm. `funcrefDispatch` is prepended below, so append them.
+  entries.push(...restEntries);
 
   if (entries.length === 0) return;
 
@@ -424,6 +484,7 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
 
   addUnionImports(ctx);
   const boxNumberIdx = ctx.funcMap.get("__box_number");
+  const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
 
   // #820l — globals for argc + extras-argv plumbing into the callee's
   // `arguments` object. Both globals are mode-agnostic; ensureExtrasArgvGlobal
@@ -455,13 +516,17 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
         if (paramType.kind === "f64") {
           const unboxIdx = ctx.funcMap.get("__unbox_number");
           if (unboxIdx !== undefined) {
-            ops.push({ op: "call", funcIdx: unboxIdx });
+            return externToClosureF64(argLocalIdx, unboxIdx, isUndefinedIdx);
           }
         } else if (paramType.kind === "i32") {
+          // A host boolean may arrive as the engine's i31 numeric carrier in
+          // standalone mode. __unbox_number recognizes i31, boxed-number, and
+          // boxed-boolean values; __unbox_boolean recognizes only the latter
+          // and turned true conditions into false across the closure bridge.
           const unboxIdx = ctx.funcMap.get("__unbox_number");
           if (unboxIdx !== undefined) {
             ops.push({ op: "call", funcIdx: unboxIdx });
-            ops.push({ op: "i32.trunc_f64_s" });
+            ops.push({ op: "i32.trunc_sat_f64_s" });
           }
         } else if (needsExternToAnyForClosureParam(paramType)) {
           // The host-facing param is `externref`, but the closure funcref
@@ -478,13 +543,22 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
       return ops;
     };
 
-    // Push self + user args 0..closureArity-1. Args beyond the closure's
-    // declared arity are dropped (no `local.get` emitted for them).
+    // Push self + fixed user args. For a source rest parameter, materialize its
+    // final Wasm vec formal from every remaining positional host argument.
     const argInstrs: Instr[] = [];
     for (let i = 0; i < entry.closureArity; i++) {
       const paramType =
         funcTypeDef?.kind === "func" && funcTypeDef.params.length >= i + 2 ? funcTypeDef.params[i + 1] : undefined;
       argInstrs.push(...buildArgConversion(i + 1, paramType));
+    }
+    if (entry.rest) {
+      const restCount = arity - entry.closureArity;
+      argInstrs.push({ op: "i32.const", value: restCount });
+      for (let i = entry.closureArity; i < arity; i++) {
+        argInstrs.push(...buildArgConversion(i + 1, entry.rest.elemType));
+      }
+      argInstrs.push({ op: "array.new_fixed", typeIdx: entry.rest.arrTypeIdx, length: restCount });
+      argInstrs.push({ op: "struct.new", typeIdx: entry.rest.vecTypeIdx });
     }
 
     // #820l — argc/extras-argv plumbing so the callee's `arguments` object
@@ -538,9 +612,26 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
     // buildClosureResultBoxing.
     callBody.push(...buildClosureResultBoxing(ctx, entry.returnType, boxNumberIdx));
 
+    const entryMatches: Instr[] = entry.rest
+      ? [
+          { op: "local.get", index: anyLocal },
+          { op: "ref.test", typeIdx: entry.rest.matchTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: [
+              { op: "local.get", index: funcLocal },
+              { op: "ref.test", typeIdx: entry.funcTypeIdx },
+            ],
+            else: [{ op: "i32.const", value: 0 }],
+          },
+        ]
+      : [
+          { op: "local.get", index: funcLocal },
+          { op: "ref.test", typeIdx: entry.funcTypeIdx },
+        ];
     funcrefDispatch = [
-      { op: "local.get", index: funcLocal },
-      { op: "ref.test", typeIdx: entry.funcTypeIdx },
+      ...entryMatches,
       {
         op: "if",
         blockType: { kind: "val", type: { kind: "externref" } },
@@ -696,33 +787,62 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
     returnType: ValType | null;
     selfTypeIdx: number;
     closureArity: number;
+    rest?: {
+      matchTypeIdx: number;
+      vecTypeIdx: number;
+      arrTypeIdx: number;
+      elemType: ValType;
+    };
   }[] = [];
+  const restEntries: (typeof entries)[number][] = [];
   // (#3992) Every native-proto METHOD closure of this arity — see the collector.
   const nativeProtoReceiverEntries = collectTransferredNativeProtoReceivers(ctx, arity);
 
   for (const [typeIdx, info] of ctx.closureInfoByTypeIdx) {
-    if (info.paramTypes.length > arity) continue;
+    const hostArity = closureHostArity(info);
+    if (hostArity > arity) continue;
     const typeDef = mod.types[typeIdx];
     if (!typeDef || typeDef.kind !== "struct") continue;
     if (typeDef.superTypeIdx === -1 && baseWrapperIdx === undefined) {
       baseWrapperIdx = typeIdx;
     }
+    const funcTypeDef = mod.types[info.funcTypeIdx];
+    const selfParam = funcTypeDef?.kind === "func" ? funcTypeDef.params[0] : undefined;
+    const selfTypeIdx =
+      selfParam && (selfParam.kind === "ref" || selfParam.kind === "ref_null")
+        ? (selfParam as { typeIdx: number }).typeIdx
+        : typeIdx;
+
+    if (info.hasRestParam === true && funcTypeDef?.kind === "func") {
+      const restParam = funcTypeDef.params[hostArity + 1];
+      if (restParam && (restParam.kind === "ref" || restParam.kind === "ref_null")) {
+        const vecTypeIdx = restParam.typeIdx;
+        const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+        const arrDef = mod.types[arrTypeIdx];
+        if (arrDef?.kind === "array") {
+          restEntries.push({
+            funcTypeIdx: info.funcTypeIdx,
+            returnType: info.returnType,
+            selfTypeIdx,
+            closureArity: hostArity,
+            rest: { matchTypeIdx: typeIdx, vecTypeIdx, arrTypeIdx, elemType: arrDef.element },
+          });
+          continue;
+        }
+      }
+    }
+
     if (!seenFuncTypeIdx.has(info.funcTypeIdx)) {
       seenFuncTypeIdx.add(info.funcTypeIdx);
-      const funcTypeDef = mod.types[info.funcTypeIdx];
-      const selfParam = funcTypeDef?.kind === "func" ? funcTypeDef.params[0] : undefined;
-      const selfTypeIdx =
-        selfParam && (selfParam.kind === "ref" || selfParam.kind === "ref_null")
-          ? (selfParam as { typeIdx: number }).typeIdx
-          : typeIdx;
       entries.push({
         funcTypeIdx: info.funcTypeIdx,
         returnType: info.returnType,
         selfTypeIdx,
-        closureArity: info.paramTypes.length,
+        closureArity: hostArity,
       });
     }
   }
+  entries.push(...restEntries);
   if (entries.length === 0 && nativeProtoReceiverEntries.length === 0) return;
 
   baseWrapperIdx = resolveClosureBaseWrapperTypeIdx(ctx, arity, baseWrapperIdx);
@@ -730,6 +850,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
 
   addUnionImports(ctx);
   const boxNumberIdx = ctx.funcMap.get("__box_number");
+  const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
   const currentThisGlobalIdx = ensureCurrentThisGlobal(ctx);
   // (#2745) Same #820l argc/extras plumbing as `emitClosureCallExportN`, so a
   // method-dispatched closure's `arguments` object observes over-arity args
@@ -777,13 +898,16 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
         if (paramType.kind === "f64") {
           const unboxIdx = ctx.funcMap.get("__unbox_number");
           if (unboxIdx !== undefined) {
-            ops.push({ op: "call", funcIdx: unboxIdx });
+            return externToClosureF64(argLocalIdx, unboxIdx, isUndefinedIdx);
           }
         } else if (paramType.kind === "i32") {
+          // Mirror the free-call bridge above: standalone host booleans can be
+          // i31 numeric carriers, so the numeric coercion is the lossless union
+          // decoder for both booleans and integer-valued arguments here.
           const unboxIdx = ctx.funcMap.get("__unbox_number");
           if (unboxIdx !== undefined) {
             ops.push({ op: "call", funcIdx: unboxIdx });
-            ops.push({ op: "i32.trunc_f64_s" });
+            ops.push({ op: "i32.trunc_sat_f64_s" });
           }
         } else if (needsExternToAnyForClosureParam(paramType)) {
           // See emitClosureCallExportN: a non-extern reference param (anyref /
@@ -814,13 +938,22 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
       ];
     };
 
-    // User args occupy locals [2..arity+1]. Push only as many as the
-    // closure declared.
+    // User args occupy locals [2..arity+1]. Push fixed formals, then build the
+    // rest vec formal (when present) from the remaining positional args.
     const argInstrs: Instr[] = [];
     for (let i = 0; i < entry.closureArity; i++) {
       const paramType =
         funcTypeDef?.kind === "func" && funcTypeDef.params.length >= i + 2 ? funcTypeDef.params[i + 1] : undefined;
       argInstrs.push(...buildArgConversion(i + 2, i, paramType));
+    }
+    if (entry.rest) {
+      const restCount = arity - entry.closureArity;
+      argInstrs.push({ op: "i32.const", value: restCount });
+      for (let i = entry.closureArity; i < arity; i++) {
+        argInstrs.push(...buildArgConversion(i + 2, i, entry.rest.elemType));
+      }
+      argInstrs.push({ op: "array.new_fixed", typeIdx: entry.rest.arrTypeIdx, length: restCount });
+      argInstrs.push({ op: "struct.new", typeIdx: entry.rest.vecTypeIdx });
     }
 
     // (#2745) #820l argc/extras plumbing (clamped-to-formals convention; see
@@ -881,9 +1014,26 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
     // (#4082) One shared decision — see buildClosureResultBoxing.
     callBody.push(...buildClosureResultBoxing(ctx, entry.returnType, boxNumberIdx));
 
+    const entryMatches: Instr[] = entry.rest
+      ? [
+          { op: "local.get", index: anyLocal },
+          { op: "ref.test", typeIdx: entry.rest.matchTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: [
+              { op: "local.get", index: funcLocal },
+              { op: "ref.test", typeIdx: entry.funcTypeIdx },
+            ],
+            else: [{ op: "i32.const", value: 0 }],
+          },
+        ]
+      : [
+          { op: "local.get", index: funcLocal },
+          { op: "ref.test", typeIdx: entry.funcTypeIdx },
+        ];
     funcrefDispatch = [
-      { op: "local.get", index: funcLocal },
-      { op: "ref.test", typeIdx: entry.funcTypeIdx },
+      ...entryMatches,
       {
         op: "if",
         blockType: { kind: "val", type: { kind: "externref" } },
@@ -949,8 +1099,24 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
           op: "if",
           blockType: { kind: "empty" },
           then: items.flatMap(({ entry, callBody }): Instr[] => [
-            { op: "local.get", index: funcLocal },
-            { op: "ref.test", typeIdx: entry.funcTypeIdx },
+            ...(entry.rest
+              ? [
+                  { op: "local.get", index: anyLocal } as Instr,
+                  { op: "ref.test", typeIdx: entry.rest.matchTypeIdx } as Instr,
+                  {
+                    op: "if",
+                    blockType: { kind: "val", type: { kind: "i32" } },
+                    then: [
+                      { op: "local.get", index: funcLocal },
+                      { op: "ref.test", typeIdx: entry.funcTypeIdx },
+                    ],
+                    else: [{ op: "i32.const", value: 0 }],
+                  } as Instr,
+                ]
+              : [
+                  { op: "local.get", index: funcLocal } as Instr,
+                  { op: "ref.test", typeIdx: entry.funcTypeIdx } as Instr,
+                ]),
             {
               op: "if",
               blockType: { kind: "empty" },
@@ -1136,7 +1302,7 @@ function collectClosureArityEntries(
       selfParam && (selfParam.kind === "ref" || selfParam.kind === "ref_null")
         ? (selfParam as { typeIdx: number }).typeIdx
         : typeIdx;
-    entries.push({ funcTypeIdx: info.funcTypeIdx, selfTypeIdx, closureArity: info.paramTypes.length });
+    entries.push({ funcTypeIdx: info.funcTypeIdx, selfTypeIdx, closureArity: closureHostArity(info) });
   }
   return entries;
 }

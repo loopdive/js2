@@ -4,6 +4,7 @@ import { ts } from "./ts-api.js";
 import type { CompileOptions } from "./index.js";
 import { rewriteCjsRequire } from "./cjs-rewrite.js";
 import { getDefaultEnvironment } from "./env.js";
+import { resolveConsumerDrivenImports } from "./resolve/consumer-driven-barrels.js";
 
 export interface ModuleResolutionDiagnostic {
   message: string;
@@ -36,6 +37,8 @@ export class ModuleResolver {
   private resolvedImports = new Map<string, Map<string, string>>();
   private staticJsonSources = new Map<string, string>();
   private diagnostics: ModuleResolutionDiagnostic[] = [];
+  /** Whether pure barrels may be expanded from their consumers' named demand. */
+  readonly consumerDrivenBarrels: boolean;
 
   /**
    * Create a resolver rooted at a directory.
@@ -49,6 +52,7 @@ export class ModuleResolver {
   ) {
     this.externals = new Set(options?.externals ?? []);
     this.extensions = options?.resolve?.extensions ?? [".ts", ".tsx", ".d.ts"];
+    this.consumerDrivenBarrels = options?.resolve?.consumerDrivenBarrels === true;
 
     // Build compiler options for TS resolver
     const moduleDirs = options?.resolve?.modules ?? ["node_modules"];
@@ -481,6 +485,18 @@ export function getBarePackageName(specifier: string): string | null {
  * @returns A map of file paths to source contents (including the entry file)
  */
 export function resolveAllImports(entryFile: string, resolver: ModuleResolver): Map<string, string> {
+  if (resolver.consumerDrivenBarrels) {
+    return resolveConsumerDrivenImports(entryFile, resolver, (filePath) => {
+      const synthesized = resolver.getStaticJsonSource(filePath);
+      if (synthesized !== undefined) return synthesized;
+      try {
+        return getFs()!.readFileSync(filePath, "utf-8");
+      } catch {
+        return undefined;
+      }
+    });
+  }
+
   const resolved = new Map<string, string>();
   const visited = new Set<string>();
   const onStack = new Set<string>();

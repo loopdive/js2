@@ -406,7 +406,17 @@ export class TsCheckerOracle implements TypeOracle {
   valueDeclarationOf(id: ts.Node): ts.Declaration | undefined {
     try {
       if (!ts.isIdentifier(id)) return undefined;
-      const sym = this.checker.getSymbolAtLocation(id);
+      // A shorthand assignment (`{ value }`) has a synthetic property symbol
+      // at the identifier location. Resolve the value-side binding instead so
+      // callers get the declaration that JavaScript actually reads.
+      const sym =
+        id.parent && ts.isShorthandPropertyAssignment(id.parent) && id.parent.name === id
+          ? (
+              this.checker as unknown as {
+                getShorthandAssignmentValueSymbol?: (node: ts.Node) => ts.Symbol | undefined;
+              }
+            ).getShorthandAssignmentValueSymbol?.(id.parent)
+          : this.checker.getSymbolAtLocation(id);
       return sym?.valueDeclaration ?? sym?.declarations?.[0];
     } catch {
       return undefined;

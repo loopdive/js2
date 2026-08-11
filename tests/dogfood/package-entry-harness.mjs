@@ -97,6 +97,9 @@ export function createPackageEntryHarness({
         validates,
         firstError: validates ? null : blockedReason,
       },
+      capabilities: {
+        nodeFs: compileOptions.allowFs === true,
+      },
       diff: {
         runnable: false,
         skippedReason: blockedReason,

@@ -439,24 +439,18 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
     fctx.linearU8ArenaMarkLocalIdx = emitLinearU8ArenaMark(ctx, fctx, "__linu8_fn_mark");
   }
 
-  // Emit default-value initialization for parameters with initializers.
-  // For params with constant defaults (#869), the caller already inlined the value,
-  // so we skip the check. For expression defaults, check if the caller sent a sentinel.
-  const funcOptInfo = ctx.funcOptionalParams.get(func.name);
+  // Emit default-value initialization for parameters with initializers. Known
+  // direct callers may inline a constant default, but first-class/dynamic
+  // callers cannot; the callee must therefore retain the semantic check.
   const defaultArgcLocal = decl.parameters.some((param, i) => {
     if (!param.initializer) return false;
-    const optEntry = funcOptInfo?.find((o) => o.index === i);
-    return !optEntry?.constantDefault && paramDefaultNeedsArgc(params[i]?.type);
+    return paramDefaultNeedsArgc(params[i]?.type);
   })
     ? cacheParamDefaultArgc(ctx, fctx)
     : undefined;
   for (let i = 0; i < decl.parameters.length; i++) {
     const param = decl.parameters[i]!;
     if (!param.initializer) continue;
-
-    // Skip callee-side check for constant defaults — caller inlined the value (#869)
-    const optEntry = funcOptInfo?.find((o) => o.index === i);
-    if (optEntry?.constantDefault) continue;
 
     const paramIdx = i;
     const paramType = params[i]!.type;

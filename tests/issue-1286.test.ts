@@ -19,9 +19,9 @@ async function runFn(source: string, exportName: string): Promise<unknown> {
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
   // The host-import fallback (`__array_join_any` + `__object_keys`) calls back
-  // into Wasm exports through `__struct_field_names` to discover field names —
-  // wire wasmExports through setExports so the callbacks can reach them.
-  imports.setExports?.(instance.exports as Record<string, Function>);
+  // into Wasm exports through the instance-aware data-struct bridge. Wire the
+  // complete instance so both ordinary exports and bridge metadata are live.
+  imports.setInstance?.(instance);
   return (instance.exports as Record<string, (...a: unknown[]) => unknown>)[exportName]!();
 }
 

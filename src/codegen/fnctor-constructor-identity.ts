@@ -2,20 +2,191 @@
 
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import type { ts } from "../ts-api.js";
-import { allocLocal } from "./context/locals.js";
+import { captureSourceSlot } from "./closures/capture-source-slot.js";
+import { allocLocal, getLocalType } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { FNCTOR_CONSTRUCTOR_FIELD } from "./fnctor-identity-fields.js";
+import { getOrRegisterRefCellType, refCellValueType } from "./registry/types.js";
 import { coerceType, compileExpression } from "./shared.js";
 import { pushDefaultValue } from "./type-coercion.js";
 
-/** Add the exact runtime callee as the hidden trailing constructor parameter. */
-export function fnctorConstructorParams(ctx: CodegenContext, userParams: ValType[]): ValType[] {
-  return ctx.standalone ? [...userParams, { kind: "externref" }] : userParams;
+export interface FnctorCapture {
+  name: string;
+  outerLocalIdx: number;
+  mutable?: boolean;
+  valType?: ValType;
+  hasTdzFlag?: boolean;
+  outerTdzFlagIdx?: number;
+}
+
+export interface FnctorCaptureLayout {
+  captures: readonly FnctorCapture[];
+  valueParamTypes: ValType[];
+  tdzFlagParamTypes: ValType[];
+  allParamTypes: ValType[];
+}
+
+/** Resolve the leading capture-parameter layout for a synthesized fnctor ctor. */
+export function fnctorCaptureLayout(ctx: CodegenContext, funcName: string): FnctorCaptureLayout {
+  const captures = (ctx.nestedFuncCaptures.get(funcName) ?? []).map((capture) => ({ ...capture }));
+  const valueParamTypes = captures.map((capture) => {
+    if (capture.mutable && capture.valType) {
+      return { kind: "ref" as const, typeIdx: getOrRegisterRefCellType(ctx, capture.valType) };
+    }
+    return capture.valType ?? { kind: "externref" as const };
+  });
+  const tdzFlagParamTypes = captures
+    .filter((capture) => capture.hasTdzFlag)
+    .map(() => ({ kind: "ref" as const, typeIdx: getOrRegisterRefCellType(ctx, { kind: "i32" }) }));
+  return {
+    captures,
+    valueParamTypes,
+    tdzFlagParamTypes,
+    allParamTypes: [...valueParamTypes, ...tdzFlagParamTypes],
+  };
+}
+
+/** Add leading captures and the exact runtime callee as the hidden trailing constructor parameter. */
+export function fnctorConstructorParams(
+  ctx: CodegenContext,
+  userParams: ValType[],
+  captureParamTypes: readonly ValType[] = [],
+): ValType[] {
+  const params = [...captureParamTypes, ...userParams];
+  return ctx.standalone ? [...params, { kind: "externref" }] : params;
+}
+
+/** Recover the user-visible constructor parameters from a cached ctor signature. */
+export function fnctorUserParamTypes(
+  ctx: CodegenContext,
+  captureLayout: FnctorCaptureLayout,
+  allParamTypes: ValType[] | undefined,
+): ValType[] | undefined {
+  if (!allParamTypes) return undefined;
+  const firstUser = captureLayout.allParamTypes.length;
+  const end = ctx.standalone ? -1 : undefined;
+  return allParamTypes.slice(firstUser, end);
 }
 
 /** Add the hidden parameter definition without shifting user parameter indices. */
 export function appendFnctorConstructorParam(ctx: CodegenContext, params: { name: string; type: ValType }[]): void {
   if (ctx.standalone) params.push({ name: "__constructor_identity", type: { kind: "externref" } });
+}
+
+/** Register synthesized ctor capture params as the body-visible bindings. */
+export function registerFnctorCaptureParams(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  layout: FnctorCaptureLayout,
+): void {
+  if (layout.captures.length === 0) return;
+  fctx.liftedCaptureNames = new Set(layout.captures.map((capture) => capture.name));
+  for (let i = 0; i < layout.captures.length; i++) {
+    const capture = layout.captures[i]!;
+    if (!capture.mutable) {
+      const valueType = layout.valueParamTypes[i]!;
+      const isRefCell =
+        (valueType.kind === "ref" || valueType.kind === "ref_null") &&
+        ctx.typeIdxToStructName.get(valueType.typeIdx)?.startsWith("__ref_cell_");
+      if (isRefCell) {
+        const inner = refCellValueType(ctx, valueType.typeIdx);
+        if (inner) {
+          (fctx.boxedCaptures ??= new Map()).set(capture.name, {
+            refCellTypeIdx: valueType.typeIdx,
+            valType: inner,
+          });
+        }
+      }
+      continue;
+    }
+    const paramType = layout.valueParamTypes[i]!;
+    if (paramType.kind !== "ref" && paramType.kind !== "ref_null") continue;
+    (fctx.boxedCaptures ??= new Map()).set(capture.name, {
+      refCellTypeIdx: paramType.typeIdx,
+      valType: capture.valType ?? { kind: "externref" },
+    });
+  }
+
+  const valueCount = layout.captures.length;
+  for (let i = 0; i < layout.captures.length; i++) {
+    const capture = layout.captures[i]!;
+    if (!capture.hasTdzFlag) continue;
+    const flagIndex = valueCount + layout.captures.slice(0, i + 1).filter((entry) => entry.hasTdzFlag).length - 1;
+    const flagType =
+      layout.tdzFlagParamTypes[layout.captures.slice(0, i + 1).filter((entry) => entry.hasTdzFlag).length - 1]!;
+    if (flagType.kind !== "ref" && flagType.kind !== "ref_null") continue;
+    (fctx.boxedTdzFlags ??= new Map()).set(capture.name, {
+      refCellTypeIdx: flagType.typeIdx,
+      localIdx: flagIndex,
+    });
+    (fctx.tdzFlagLocals ??= new Map()).set(capture.name, flagIndex);
+  }
+}
+
+function emitFnctorCaptureArgument(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  capture: FnctorCapture,
+  expectedType: ValType,
+): void {
+  if (capture.mutable && capture.valType && (expectedType.kind === "ref" || expectedType.kind === "ref_null")) {
+    const existing = fctx.boxedCaptures?.has(capture.name) ? fctx.localMap.get(capture.name) : undefined;
+    if (existing !== undefined) {
+      fctx.body.push({ op: "local.get", index: existing });
+      const actual = getLocalType(fctx, existing);
+      if (actual && actual.kind !== expectedType.kind) coerceType(ctx, fctx, actual, expectedType);
+      return;
+    }
+    const promoted =
+      fctx.localMap.get(capture.name) === undefined ? ctx.capturedBoxGlobals?.get(capture.name) : undefined;
+    if (promoted !== undefined) {
+      fctx.body.push({ op: "global.get", index: promoted.globalIdx });
+      fctx.body.push({ op: "ref.as_non_null" });
+      return;
+    }
+    const source = captureSourceSlot(fctx, capture);
+    fctx.body.push({ op: "local.get", index: source });
+    fctx.body.push({ op: "struct.new", typeIdx: expectedType.typeIdx });
+    const boxedLocal = allocLocal(fctx, `__boxed_${capture.name}`, expectedType);
+    fctx.body.push({ op: "local.tee", index: boxedLocal });
+    fctx.localMap.set(capture.name, boxedLocal);
+    (fctx.boxedCaptures ??= new Map()).set(capture.name, {
+      refCellTypeIdx: expectedType.typeIdx,
+      valType: capture.valType,
+    });
+    return;
+  }
+
+  if (fctx.localMap.get(capture.name) === undefined && ctx.capturedGlobals.has(capture.name)) {
+    fctx.body.push({ op: "global.get", index: ctx.capturedGlobals.get(capture.name)! });
+    if (ctx.capturedGlobalsWidened.has(capture.name)) fctx.body.push({ op: "ref.as_non_null" });
+    return;
+  }
+  const source = captureSourceSlot(fctx, capture);
+  fctx.body.push({ op: "local.get", index: source });
+  const actual = getLocalType(fctx, source);
+  if (actual && actual.kind !== expectedType.kind) coerceType(ctx, fctx, actual, expectedType);
+}
+
+function emitFnctorCaptureFlagArgument(ctx: CodegenContext, fctx: FunctionContext, capture: FnctorCapture): void {
+  const existing = fctx.boxedTdzFlags?.get(capture.name);
+  if (existing) {
+    fctx.body.push({ op: "local.get", index: existing.localIdx });
+    return;
+  }
+  const live = fctx.tdzFlagLocals?.get(capture.name);
+  const liveType = live === undefined ? undefined : getLocalType(fctx, live);
+  if (live !== undefined && liveType?.kind === "i32") {
+    fctx.body.push({ op: "local.get", index: live });
+  } else {
+    fctx.body.push({ op: "i32.const", value: 1 });
+  }
+  const flagType = getOrRegisterRefCellType(ctx, { kind: "i32" });
+  fctx.body.push({ op: "struct.new", typeIdx: flagType });
+  const flagLocal = allocLocal(fctx, `__tdz_box_${capture.name}`, { kind: "ref", typeIdx: flagType });
+  fctx.body.push({ op: "local.tee", index: flagLocal });
+  (fctx.boxedTdzFlags ??= new Map()).set(capture.name, { refCellTypeIdx: flagType, localIdx: flagLocal });
+  (fctx.tdzFlagLocals ??= new Map()).set(capture.name, flagLocal);
 }
 
 /**
@@ -57,6 +228,7 @@ export function emitFnctorFieldInitializers(
 export function emitFnctorConstructorArguments(
   ctx: CodegenContext,
   fctx: FunctionContext,
+  captureLayout: FnctorCaptureLayout,
   callee: ts.Expression,
   args: readonly ts.Expression[],
   userParamTypes: ValType[] | undefined,
@@ -73,6 +245,13 @@ export function emitFnctorConstructorArguments(
       kind: "externref",
     });
     fctx.body.push({ op: "local.set", index: constructorIdentityLocal });
+  }
+
+  for (let i = 0; i < captureLayout.captures.length; i++) {
+    emitFnctorCaptureArgument(ctx, fctx, captureLayout.captures[i]!, captureLayout.valueParamTypes[i]!);
+  }
+  for (const capture of captureLayout.captures) {
+    if (capture.hasTdzFlag) emitFnctorCaptureFlagArgument(ctx, fctx, capture);
   }
 
   for (let i = 0; i < args.length; i++) {

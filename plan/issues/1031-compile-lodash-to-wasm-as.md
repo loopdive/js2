@@ -3,13 +3,18 @@ id: 1031
 title: "Compile lodash to Wasm as a real-world stress test; harvest error patterns"
 status: done
 created: 2026-04-11
-updated: 2026-04-14
+updated: 2026-08-09
 completed: 2026-04-14
 priority: high
 feasibility: hard
 reasoning_effort: high
 goal: core-semantics
 sprint: 40
+loc-budget-allow:
+  - src/codegen/closures.ts
+  - src/codegen/expressions/calls.ts
+func-budget-allow:
+  - src/codegen/closures.ts::compileArrowAsCallback
 ---
 # #1031 — Compile lodash to Wasm as a real-world test corpus
 
@@ -280,6 +285,57 @@ All four reference `parent: 1031`. #1060 + #1061 unlock the "compile a real loda
 
 - Acceptance criterion "one Tier 1 module compiles and runs correctly" is **not yet met**. Reclassify per the dispatch's worst-case branch: "demonstrate what the blocker is so the next attempt can unblock."
 - Architecture Principle (dual-mode JS host) not violated — no compiler source was modified in this PR.
+
+### Callback frame follow-up (2026-08-09)
+
+The pinned npm-compat catalog entry now reaches code generation without the
+previous callback-frame failure. In lodash 4.18.1, the callback at
+`lodash.js:6835` reads the function-local array `result`, while the same
+module also registers a user function named `result` in the global `funcMap`.
+The old name-only skip therefore omitted the real capture and left the callback
+body with an outer-frame local index (`__cb_26` → local 258).
+
+`compileArrowAsCallback` now asks the checker for the declaration behind each
+direct callback reference before applying the function-map skip. A lexical
+binding wins over a same-spelled function entry; transitive nested-function
+captures are retained as environment values. The reduced regression is
+`tests/dogfood/lodash-callback-frame-regression.mjs` and compares the compiled
+callback result (`"a|b"`) with native Node. With the old skip it traps with an
+illegal cast; with the fix it validates, instantiates, and matches the oracle.
+
+The full published entry remains blocked by a separate latent validator defect:
+the catalog harness reports `transform` (function #813) with
+`expected externref, got (ref null 2)`. The emitted `transform` function is
+byte-identical before and after the callback fix (confirmed from selected WAT
+output), so this is not a regression from capture remapping. The full entry
+therefore reports compile success but validation failure and no honest lodash
+API workload is run yet; this blocker needs its own follow-up.
+
+### Full-bundle validation follow-up (2026-08-09)
+
+The two subsequent validation failures were independent representation bugs.
+Conditional direct-call branches used the checker join type as if it were each
+branch's physical Wasm result; the reduced `arrayEach`/`baseForOwn` regression
+now joins the actual emitted result types and returns `42` through both arms.
+
+After that fix, lodash reached a repeated-frame capture failure in `unzip`.
+The `runInContext` function expression is emitted once as a stored closure and
+again through a direct call. Its nested-function capture metadata retained the
+first frame's boxed `MAX_SAFE_INTEGER` slot, while the second frame boxed the
+same binding at a different local. Reading the stale local supplied an unrelated
+reference to the closure constructor. Closure materialization now selects the
+current frame's ref cell only when the recorded capture type, live box registry,
+and current local all agree on the same ref-cell type and the recorded slot does
+not. This deliberately preserves the restricted lookup introduced after the
+broad local-map-first attempt in #1177 regressed Test262.
+
+`tests/issue-1031-lodash-nested-frame-capture.test.ts` reproduces both emissions
+with valid JavaScript. The old code produces valid Wasm but traps with an illegal
+cast during module initialization; the fixed code instantiates and returns
+`42`. The exact pinned lodash 4.18.1 catalog source now compiles to a validating
+Wasm binary. The catalog still has no honest runtime differential workload for
+the monolithic bundle, so this result is recorded as compile + validate rather
+than runtime compatibility.
 
 ### What this PR ships
 

@@ -30,6 +30,7 @@ import {
 } from "./closures.js";
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "./async-frame.js"; // (#3132 S2) obj-literal async-gen method drive
 import { addFunctionOwnLocals } from "./binding-info.js";
+import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { emitHoleSentinel } from "./array-holes.js"; // (#2001 S1)
 import { ensureStrToCharVecHelper, stringConstantExternrefInstrs } from "./native-strings.js";
@@ -159,6 +160,155 @@ function arrayLiteralIsUndefinedOrHoleOnly(arr: ts.ArrayLiteralExpression): bool
 function arrayLiteralHasAnyElementContext(ctx: CodegenContext, arr: ts.ArrayLiteralExpression): boolean {
   const contextual = ctx.oracle.contextualFactOf(arr);
   return contextual?.kind === "any" || (contextual?.kind === "array" && contextual.element.kind === "any");
+}
+
+/**
+ * Return the statically known own data-property names of an object literal.
+ *
+ * This is deliberately narrower than the full object-literal compiler: a
+ * spread, method/accessor, or dynamic computed key returns `null`. Such a
+ * literal cannot prove that it shares another literal's closed struct carrier,
+ * so an array containing it must use the lossless externref element carrier.
+ */
+function staticObjectLiteralDataKeys(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): string[] | null {
+  const keys = new Set<string>();
+  for (const prop of expr.properties) {
+    if (!ts.isPropertyAssignment(prop) && !ts.isShorthandPropertyAssignment(prop)) return null;
+    const key = resolvePropertyNameText(ctx, prop);
+    if (key === undefined) return null;
+    keys.add(key);
+  }
+  return [...keys].sort();
+}
+
+function unwrapObjectLiteralElement(expr: ts.Expression): ts.ObjectLiteralExpression | null {
+  let current = expr;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isTypeAssertionExpression(current) ||
+    ts.isSatisfiesExpression(current) ||
+    ts.isNonNullExpression(current)
+  ) {
+    current = current.expression;
+  }
+  return ts.isObjectLiteralExpression(current) ? current : null;
+}
+
+/**
+ * Does a first-object array literal contain another element that cannot inhabit
+ * the first object's exact closed struct? `compileArrayLiteral` historically
+ * keyed the vec to element zero, then guarded-cast every later object to it;
+ * differing field sets therefore became null and trapped at construction.
+ */
+function hasHeterogeneousObjectLiteralFields(
+  ctx: CodegenContext,
+  expr: ts.ArrayLiteralExpression,
+  first: ts.Expression,
+): boolean {
+  const firstObject = unwrapObjectLiteralElement(first);
+  if (!firstObject) return false;
+  const firstKeys = staticObjectLiteralDataKeys(ctx, firstObject);
+  if (!firstKeys) return true;
+
+  for (const element of expr.elements) {
+    if (ts.isOmittedExpression(element) || ts.isSpreadElement(element) || _isUndefinedLike(element)) continue;
+    const object = unwrapObjectLiteralElement(element);
+    if (!object) return true;
+    const keys = staticObjectLiteralDataKeys(ctx, object);
+    if (!keys || keys.length !== firstKeys.length || keys.some((key, index) => key !== firstKeys[index])) return true;
+  }
+  return false;
+}
+
+function unwrapArrayCarrierExpression(expr: ts.Expression): ts.Expression {
+  let current = expr;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isTypeAssertionExpression(current) ||
+    ts.isSatisfiesExpression(current) ||
+    ts.isNonNullExpression(current)
+  ) {
+    current = current.expression;
+  }
+  return current;
+}
+
+function nestedArrayElementCarrier(ctx: CodegenContext, expr: ts.Expression): ValType | null {
+  const nested = unwrapArrayCarrierExpression(expr);
+  const nestedType = ctx.checker.getTypeAtLocation(nested);
+  const symbol = (nestedType as ts.TypeReference).symbol ?? nestedType.symbol;
+  if (symbol?.name !== "Array" && symbol?.name !== "ReadonlyArray") return null;
+  const elementType = ctx.checker.getTypeArguments(nestedType as ts.TypeReference)[0];
+  return elementType ? resolveWasmType(ctx, elementType) : null;
+}
+
+/**
+ * Does an array-of-arrays require distinct inner element carriers? If so, the
+ * parent must select a vec<externref> carrier for every inner array rather than
+ * coercing later inner vecs through the first one's element representation.
+ */
+function hasHeterogeneousNestedArrayCarriers(
+  ctx: CodegenContext,
+  expr: ts.ArrayLiteralExpression,
+  first: ts.Expression,
+): boolean {
+  const firstCarrier = nestedArrayElementCarrier(ctx, first);
+  if (!firstCarrier) return false;
+
+  for (const element of expr.elements) {
+    if (ts.isOmittedExpression(element) || _isUndefinedLike(element)) continue;
+    if (ts.isSpreadElement(element)) return false;
+    const carrier = nestedArrayElementCarrier(ctx, element);
+    if (!carrier) return false;
+    if (!valTypesMatch(carrier, firstCarrier)) return true;
+  }
+  return false;
+}
+
+/** Exact synthetic classes constructed by every real element, when provable. */
+function exactConstructedClassNames(ctx: CodegenContext, expr: ts.ArrayLiteralExpression): string[] | null {
+  const names: string[] = [];
+  for (const element of expr.elements) {
+    if (ts.isOmittedExpression(element) || ts.isSpreadElement(element) || _isUndefinedLike(element)) return null;
+    let value: ts.Expression = element;
+    while (
+      ts.isParenthesizedExpression(value) ||
+      ts.isAsExpression(value) ||
+      ts.isTypeAssertionExpression(value) ||
+      ts.isSatisfiesExpression(value) ||
+      ts.isNonNullExpression(value)
+    ) {
+      value = value.expression;
+    }
+    if (!ts.isNewExpression(value)) return null;
+    const name = exactClassExpressionTypeName(ctx, ctx.checker.getTypeAtLocation(value.expression));
+    if (!name) return null;
+    names.push(name);
+  }
+  return names;
+}
+
+function classExtendsCarrier(ctx: CodegenContext, className: string, carrierName: string): boolean {
+  const seen = new Set<string>();
+  let current: string | undefined = className;
+  while (current && !seen.has(current)) {
+    if (current === carrierName) return true;
+    seen.add(current);
+    current = ctx.classParentMap.get(current);
+  }
+  return false;
+}
+
+/** Whether the selected ref is a genuine common base of all exact classes. */
+function isCommonClassCarrier(ctx: CodegenContext, elemWasm: ValType, classNames: readonly string[]): boolean {
+  if (elemWasm.kind !== "ref" && elemWasm.kind !== "ref_null") return false;
+  for (const [carrierName, typeIdx] of ctx.structMap) {
+    if (typeIdx !== elemWasm.typeIdx) continue;
+    if (classNames.every((className) => classExtendsCarrier(ctx, className, carrierName))) return true;
+  }
+  return false;
 }
 
 /**
@@ -3618,8 +3768,9 @@ export function compileArrayLiteral(
   // require the universal externref vec carrier; skip contextual tuple lowering
   // and preserve their runtime tag/identity.
   const hasDynamicOrCallableElement = expr.elements.some((element) => {
-    if (ts.isOmittedExpression(element) || ts.isSpreadElement(element)) return false;
-    const fact = ctx.oracle.typeFactOf(element);
+    if (ts.isOmittedExpression(element)) return false;
+    const value = ts.isSpreadElement(element) ? element.expression : element;
+    const fact = ctx.oracle.typeFactOf(value);
     return fact.kind === "any" || fact.kind === "unknown" || fact.kind === "function";
   });
 
@@ -3835,6 +3986,7 @@ export function compileArrayLiteral(
     // is assignable to `T`, so widening to it is sound. (`[new Shape(), new
     // Circle()]` — base first — already worked because element 0 IS the
     // supertype; this fixes the subclass-first ordering.)
+    let hasContextualRefCarrier = false;
     if (elemWasm.kind === "ref" || elemWasm.kind === "ref_null") {
       const ctxType = ctx.checker.getContextualType(expr);
       if (ctxType) {
@@ -3849,9 +4001,41 @@ export function compileArrayLiteral(
             ) {
               elemWasm = ctxElemWasm;
             }
+            hasContextualRefCarrier = ctxElemWasm.kind === "ref" || ctxElemWasm.kind === "ref_null";
           }
         }
       }
+    }
+    // (#4289) With no declared common ref carrier, a plain object array is not
+    // allowed to assume every element has element zero's exact closed struct.
+    // `{a: ...}` and `{d: ...}` are distinct WasmGC structs; coercing the latter
+    // into the former emits `ref.test` → `ref.null` → `ref.as_non_null` and
+    // traps while constructing otherwise valid JavaScript. Preserve every
+    // value in the canonical externref vec when the static field sets differ
+    // (or cannot be proven equal). Homogeneous literals and contextually typed
+    // `Array<T>` carriers retain their closed representation.
+    if (
+      !hasSpread &&
+      !hasContextualRefCarrier &&
+      (elemWasm.kind === "ref" || elemWasm.kind === "ref_null") &&
+      hasHeterogeneousObjectLiteralFields(ctx, expr, firstElem)
+    ) {
+      elemWasm = { kind: "externref" };
+    }
+    // (#4290) A contextual union such as `(RegExpRouter | TrieRouter)[]`
+    // can make TypeScript report that same union for each `new` expression.
+    // The generic type mapper then picks one concrete struct for the union,
+    // even though the other constructor returns an unrelated struct. Preserve
+    // the exact declaration identities of imported class expressions: when
+    // they differ and the selected carrier is not a real common base, use the
+    // universal ref vec instead of guard-casting a valid instance to null.
+    const constructedClassNames = !hasSpread ? exactConstructedClassNames(ctx, expr) : null;
+    if (
+      constructedClassNames &&
+      new Set(constructedClassNames).size > 1 &&
+      !isCommonClassCarrier(ctx, elemWasm, constructedClassNames)
+    ) {
+      elemWasm = { kind: "externref" };
     }
     // If the literal mixes a `null` literal with another kind (e.g. `[1, null]`),
     // fall back to externref so the null survives. Without this, null gets coerced
@@ -3986,6 +4170,15 @@ export function compileArrayLiteral(
       }
     }
   }
+  // A spread contributes elements just like an explicit literal slot. In
+  // published/untyped JavaScript its source is commonly `any`; selecting a
+  // concrete vec from the first fixed element (`[boolean, ...anyValue]`) would
+  // coerce every spread value through that primitive representation and can
+  // also violate the enclosing callback's `any[]` result ABI. Preserve the
+  // source values in the universal carrier, including the spread-first shape.
+  if (hasDynamicOrCallableElement) {
+    elemWasm = { kind: "externref" };
+  }
   // (#2106 S0) `any[]` element tag-recovery. When the contextual element type is
   // `any`, the first-element heuristic above can pick a bare primitive ValType
   // (e.g. `[true]` → i32, because `boolean` lowers to i32 and the contextual-type
@@ -4079,6 +4272,21 @@ export function compileArrayLiteral(
         }
       }
     }
+  }
+  // (#4293) An array-of-arrays cannot use the first inner vec as a closed
+  // carrier when later inner arrays select a different element
+  // representation. `[[0], [undefined]]` historically coerced the second
+  // externref vec to the first f64 vec, turning undefined into numeric NaN
+  // before any consumer ran. Normalize only proven heterogeneous nested
+  // arrays to vec<externref>; homogeneous numeric matrices keep their compact
+  // vec<f64> carrier.
+  if (
+    !hasSpread &&
+    (elemWasm.kind === "ref" || elemWasm.kind === "ref_null") &&
+    hasHeterogeneousNestedArrayCarriers(ctx, expr, firstElem)
+  ) {
+    const innerVecIdx = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
+    elemWasm = { kind: "ref_null", typeIdx: innerVecIdx };
   }
   // (#3543) Preserve the carrier that a nested heterogeneous literal ACTUALLY
   // builds in an `any` context. With `unionAnyRep` enabled, the outer literal's

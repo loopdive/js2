@@ -286,6 +286,50 @@ function implicitAnyParamNeedsDynamicObjectCarrier(
 
 const dynamicObjectReturnByFunction = new WeakMap<ts.FunctionDeclaration, boolean>();
 
+const functionValueEscapeByDeclaration = new WeakMap<ts.FunctionDeclaration, boolean>();
+
+/**
+ * Whether a function declaration is consumed as a first-class value rather
+ * than only invoked through statically visible `f(...)` / `new f(...)` sites.
+ *
+ * Call-site inference can only describe the latter. Once the function is put
+ * in an object, collection, callback argument, or returned value, an
+ * implicit-any parameter may receive values from calls the source scan cannot
+ * see. Narrowing such a parameter to one observed anonymous object shape is
+ * unsound because WasmGC shapes are nominal even when JavaScript objects are
+ * structurally compatible.
+ */
+function functionDeclarationEscapesAsValue(
+  ctx: CodegenContext,
+  stmt: ts.FunctionDeclaration,
+  sourceFile: ts.SourceFile,
+): boolean {
+  const cached = functionValueEscapeByDeclaration.get(stmt);
+  if (cached !== undefined) return cached;
+
+  let escapes = false;
+  const visit = (node: ts.Node): void => {
+    if (escapes) return;
+    if (ts.isIdentifier(node) && node !== stmt.name) {
+      const parent = node.parent;
+      const valueDeclaration = ctx.oracle.valueDeclarationOf(node);
+      if (valueDeclaration !== stmt) {
+        forEachChild(node, visit);
+        return;
+      }
+      const isDirectCall = (ts.isCallExpression(parent) || ts.isNewExpression(parent)) && parent.expression === node;
+      if (!isDirectCall) {
+        escapes = true;
+        return;
+      }
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(sourceFile, visit);
+  functionValueEscapeByDeclaration.set(stmt, escapes);
+  return escapes;
+}
+
 /**
  * Detect a function that returns an empty object populated/read through computed
  * keys. Its representation is the native open `$Object`, so an inferred closed
@@ -386,6 +430,8 @@ function lowerParamType(
         inferredTypeIdx === undefined ? undefined : ctx.typeIdxToStructName.get(inferredTypeIdx);
       const inferredIndexedCarrier =
         inferredStructName?.startsWith("__vec_") || inferredStructName?.startsWith("__arr_");
+      const inferredEscapingAnonymousObject =
+        inferredStructName?.startsWith("__anon_") === true && functionDeclarationEscapesAsValue(ctx, stmt, sourceFile);
       // A call-site object literal is only one observed shape of an untyped JS
       // parameter. In standalone, specialising that parameter to the literal's
       // nominal `__anon_*` struct breaks forwarding chains (`parse(input,
@@ -396,7 +442,8 @@ function lowerParamType(
       // proved the indexed vec/array family rather than one incidental object.
       if (
         !(needsDynamicObjectCarrier && !inferredIndexedCarrier) &&
-        !(ctx.standalone && inferredStructName?.startsWith("__anon_"))
+        !(ctx.standalone && inferredStructName?.startsWith("__anon_")) &&
+        !inferredEscapingAnonymousObject
       ) {
         wasmType = inferred;
       }
@@ -507,6 +554,17 @@ function functionDeclarationCapturesEnclosingLocal(ctx: CodegenContext, stmt: ts
   return false;
 }
 
+function resolveGenericDeclarationCallSiteTypes(
+  ctx: CodegenContext,
+  name: string,
+  stmt: ts.FunctionDeclaration,
+  sourceFile: ts.SourceFile,
+): { params: ValType[]; results: ValType[] } | null {
+  return resolveGenericCallSiteTypes(ctx, name, stmt, sourceFile, (param, index) =>
+    lowerParamType(ctx, param, name, index, stmt, sourceFile),
+  );
+}
+
 function registerBodylessFunctionDeclaration(
   ctx: CodegenContext,
   stmt: ts.FunctionDeclaration,
@@ -526,7 +584,7 @@ function registerBodylessFunctionDeclaration(
   }
 
   const isGeneric = stmt.typeParameters && stmt.typeParameters.length > 0;
-  const resolved = isGeneric ? resolveGenericCallSiteTypes(ctx, name, sourceFile) : null;
+  const resolved = isGeneric ? resolveGenericDeclarationCallSiteTypes(ctx, name, stmt, sourceFile) : null;
   if (resolved) {
     ctx.genericResolved.set(name, resolved);
   }
@@ -1159,9 +1217,9 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   // GlobalDeclarationInstantiation (§16.1.7) instantiates only the LAST
   // definition per name. Registering every duplicate created one dead stub
   // WasmFunction per shadowed declaration and compiled the shadowed body
-  // against the survivor's signature (transient garbage). Skip shadowed
-  // duplicates outright — only declarations WITH a body participate, so
-  // TS overload signatures (bodyless) keep their existing behavior.
+  // against the survivor's signature (transient garbage). The same map also
+  // identifies TypeScript overload sets: their bodyless signatures are
+  // type-only, while the one body-bearing declaration is the runtime callable.
   const lastTopLevelFnWithBody = new Map<string, ts.FunctionDeclaration>();
   for (const stmt of sourceFile.statements) {
     if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.body && !hasDeclareModifier(stmt)) {
@@ -1174,9 +1232,9 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     if (ts.isFunctionDeclaration(stmt) && (stmt.name || hasExportModifier(stmt))) {
       // Skip ambient stubs: `declare function`, and `.d.ts` implicit-declare (#1282).
       if (hasDeclareModifier(stmt) || stmt.getSourceFile().isDeclarationFile) continue;
-      // (#3419) Shadowed duplicate — a later same-name top-level declaration
-      // wins; this one is never observable.
-      if (stmt.name && stmt.body && lastTopLevelFnWithBody.get(stmt.name.text) !== stmt) continue;
+      // (#3419/#4267) Keep the canonical body; erase its shadowed bodies and type-only overload signatures.
+      const implementation = stmt.name ? lastTopLevelFnWithBody.get(stmt.name.text) : undefined;
+      if (implementation && (stmt.body ? implementation !== stmt : true)) continue;
 
       // Anonymous `export default function() {}` gets the synthetic name "default"
       const name = stmt.name ? stmt.name.text : "default";
@@ -1206,7 +1264,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
 
       // Check if this is a generic function — resolve types from call site
       const isGeneric = stmt.typeParameters && stmt.typeParameters.length > 0;
-      const resolved = isGeneric ? resolveGenericCallSiteTypes(ctx, name, sourceFile) : null;
+      const resolved = isGeneric ? resolveGenericDeclarationCallSiteTypes(ctx, name, stmt, sourceFile) : null;
       if (resolved) {
         ctx.genericResolved.set(name, resolved);
       }

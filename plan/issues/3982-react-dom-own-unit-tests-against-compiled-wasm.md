@@ -4,7 +4,7 @@ title: "Run react-dom's own unit tests against compiled react-dom"
 status: backlog
 sprint: current
 created: 2026-08-01
-updated: 2026-08-03
+updated: 2026-08-09
 priority: high
 horizon: m
 feasibility: medium
@@ -142,6 +142,41 @@ This work is suspended at the user's request. The branch intentionally retains
 the last valid-module state and does not commit the speculative early-cycle
 reservation that creates invalid Wasm.
 
+## Current origin/main measurement (2026-08-09)
+
+The current upstream extractor now admits the complete reproducible ReactDOM
+slice (1,942 of 2,003 tests), so the older 166-test count above is historical.
+The first current run exposed a generic compiler diagnostic bug: the native
+JSON codec's instruction clone still used `JSON.stringify`, which crashed on
+the `BigInt` operands used by generated `i64.const` instructions. That clone
+now uses the existing alias-expanding `deepCloneInstrs` helper, covered by
+`tests/json-codec-clone.test.ts`.
+
+After that fix, ReactDOM's implementation-only compile reaches the real next
+blocker instead of the serialization crash. Reproduction (with one selected
+upstream test to keep the run bounded) is:
+
+```bash
+DOGFOOD_REACT_DOM_TEST_LIMIT=1 \
+  node --import tsx tests/dogfood/react-dom-upstream-suite.mjs --json
+```
+
+The bounded harness still surfaces the BigInt message because
+`src/codegen/stack-balance.ts` tries to JSON-serialize the malformed body while
+building its diagnostic. A diagnostic-only local probe that renders BigInt
+operands without changing the compiler then reveals the underlying invariant:
+
+```text
+stack-balance invariant (entry): 'updateForwardRef' references local 202,
+but only 39 params + 31 locals are declared
+```
+
+That is local 202 in a 70-slot frame, not a JSON/diagnostic formatting issue.
+Do not stringify around or quarantine this invariant: it is the next generic
+frame/capture compiler blocker. Until it is fixed, the implementation does not
+produce a valid module and ReactDOM correctness remains **unverified** (no
+scored upstream workload).
+
 ### Reproduction
 
 ```bash
@@ -149,6 +184,19 @@ DOGFOOD_REACT_DOM_ADMIT_ALL=0 \
 DOGFOOD_REACT_DOM_TEST_LIMIT=1 \
 pnpm run dogfood:react-dom-upstream-suite
 ```
+
+### Suspension checkpoint (2026-08-09)
+
+The npm-compat branch is suspended with the current full implementation
+frontier unchanged: `updateForwardRef` references local 202 in a frame with
+only 39 parameters plus 31 locals. No ReactDOM correctness test is scored and
+the tiny entry-barrel validation must not be presented as ReactDOM support.
+The reporting/harness state is on `codex/npm-compat-handoff`; there is no
+separate uncommitted ReactDOM fix to recover.
+
+Resume by mapping local 202 back to its capture owner and freezing the relevant
+deferred capture ABI before emission. Keep the invariant loud—formatting or
+quarantining the malformed body would only hide the invalid module.
 
 ## Remaining blockers (skipped tests in `tests/issue-3982.test.ts`)
 
@@ -197,7 +245,7 @@ add binding-aware slots on top of main's design, not restore that one.
 - [x] `admitted + rejected == upstreamTestsSeen` is asserted.
 - [x] The implementation is compiled alone and reported by name with the
       compiler's own message when it fails.
-- [x] react-dom's published client module compiles to a valid Wasm module.
+- [ ] react-dom's published client module compiles to a valid Wasm module.
 - [x] The native oracle and compiled lane run under the same jsdom host setup.
 - [ ] Freeze deferred capture-cycle ABIs before compiling ordinary callers.
 - [ ] Capture a nested `async function` declaration inside an `async` parent.

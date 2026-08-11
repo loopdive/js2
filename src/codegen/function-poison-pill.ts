@@ -135,6 +135,7 @@ export function initializeFunctionPoisonPillContext(
   fctx.sourceFunction = sourceFunction;
   fctx.sourceFunctionStrict = strict;
   fctx.callerStrictEntryBody = fctx.body;
+  fctx.activationEntryBody = fctx.body;
   ctx.sourceFunctionStrictness.set(fctx.name, strict);
   ctx.sourceFunctionStrictnessByBody.set(fctx.body, strict);
 }

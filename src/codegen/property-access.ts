@@ -22,6 +22,7 @@ import { emitHoleToUndefined } from "./array-holes.js"; // (#2001 S1)
 import type { PresenceSlot } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
 import { presenceSlotOf, presenceTestInstrs } from "./fnctor-presence-bits.js";
 import { classMemberFuncKey, resolveMethodOwnerClass } from "./class-member-keys.js"; // (#1983) collision-free class-member funcMap keys; (#2963) method-owner chain
+import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { resolveWidenedVarKey, integrityVarKey } from "./widened-var-key.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
@@ -734,6 +735,8 @@ export function resolveStructName(ctx: CodegenContext, tsType: ts.Type): string 
   // `{}` var never resolves to a struct — receivers of that type route through
   // the externref host-MOP path (see resolveWasmType's matching guard).
   if (ctx.objectHashConsumerTypes.has(tsType)) return undefined;
+  const exactClassExpression = exactClassExpressionTypeName(ctx, tsType);
+  if (exactClassExpression) return exactClassExpression;
   const name = tsType.symbol?.name;
   if (name && name !== "__type" && name !== "__object" && ctx.structMap.has(name)) {
     return name;

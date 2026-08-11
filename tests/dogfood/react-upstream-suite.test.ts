@@ -9,18 +9,21 @@ import { describe, expect, it } from "vitest";
 import { isReactUpstreamSuiteCheckoutValid, loadReactUpstreamSuitePin } from "./setup-react-upstream-suite.mjs";
 // @ts-expect-error — .mjs dogfood environment has no declaration file
 import { installReactTestEnvironment } from "./react-test-environment.mjs";
+// @ts-expect-error — .mjs dogfood shim has no declaration file
+import { REACT_EXPECT_SHIM } from "./react-upstream-shim.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 // Regression floor, not a target. Raise it whenever a compiler fix moves the
 // number up; never lower it to make a red run green.
-const PASS_FLOOR = 55;
-const SCORED_FLOOR = 50;
-// Every upstream test that upstream itself does not `.skip` must RUN. Filtering
-// one out to keep the pass rate tidy is the failure mode this floor prevents.
+const PASS_FLOOR = 64;
+const SCORED_FLOOR = 64;
+// Every upstream test that upstream itself does not `.skip` must be admitted.
+// Execution is guarded separately because a compile-quarantined test did not run.
 const ADMITTED_FLOOR = 270;
-// Ceiling, not a floor: batches whose module #3775 makes invalid. Lower it when
-// #3775 is fixed; raising it needs a reason.
+const EXECUTED_FLOOR = 264;
+// Ceiling, not a floor: compile/validation-rejected batches. Lower it when a
+// blocker is fixed; raising it needs a reason.
 const INVALID_BATCH_CEILING = 5;
 
 describe("react upstream suite", () => {
@@ -59,6 +62,14 @@ describe("react upstream suite", () => {
     for (const file of pin.testFiles) expect(file.startsWith(`${pin.testDirectory}/`)).toBe(true);
   });
 
+  it("runs upstream assertions with React's production build constant", () => {
+    // React's Jest transform injects this lexical build constant. An ambient
+    // global is not equivalent: the native oracle would see it while the same
+    // source compiled into Wasm would still throw `__DEV__ is not defined`.
+    // eslint-disable-next-line no-new-func
+    expect(new Function(`${REACT_EXPECT_SHIM}\nreturn __DEV__;`)()).toBe(false);
+  });
+
   const heavy = process.env.DOGFOOD_REACT_UPSTREAM === "1" ? it : it.skip;
   heavy("runs React's own unit tests against compiled Wasm", { timeout: 1_800_000 }, () => {
     const out = execFileSync("npx", ["tsx", join(HERE, "react-upstream-suite.mjs"), "--json"], {
@@ -69,10 +80,10 @@ describe("react upstream suite", () => {
 
     expect(report.upstreamSuite.commit).toBe("eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401");
 
-    // Compilation is per upstream file and subdivides on validation failure, so
-    // "every batch valid" is NOT the contract while #3775 is open — 3 of 36
-    // batches currently emit an invalid module. What IS the contract: that
-    // number stays bounded (a compiler regression breaking more batches fails
+    // Compilation is per upstream file and subdivides on compile/validation failure, so
+    // "every batch valid" is NOT the contract while #3587 is open — one of 27
+    // batches currently contains an unsupported await-in-try shape. What IS
+    // the contract: that number stays bounded (a compiler regression breaking more batches fails
     // here), and every invalid batch is reported with its validator error
     // rather than silently dropping its tests.
     expect(report.compile.batches.length).toBeGreaterThanOrEqual(20);
@@ -85,13 +96,18 @@ describe("react upstream suite", () => {
     // test is either scored or rejected with a recorded reason, never dropped.
     expect(report.extraction.admitted + report.extraction.rejected).toBe(report.extraction.upstreamTestsSeen);
     expect(report.extraction.rejectedTests.every((t: { reason?: string }) => !!t.reason)).toBe(true);
+    expect(report.results.executed + report.compile.quarantined.length + report.extraction.rejected).toBe(
+      report.extraction.upstreamTestsSeen,
+    );
 
     // A test that cannot even be reproduced natively says nothing about the
     // compiler, so it is excluded from the score — but it still RAN, and the
     // scored set must stay large enough to be meaningful.
     expect(report.extraction.admitted).toBeGreaterThanOrEqual(ADMITTED_FLOOR);
+    expect(report.results.executed).toBeGreaterThanOrEqual(EXECUTED_FLOOR);
     expect(report.results.scored).toBeGreaterThanOrEqual(SCORED_FLOOR);
     expect(report.results.passed).toBeGreaterThanOrEqual(PASS_FLOOR);
+    expect(report.results.scored + report.results.harnessIncompatible).toBe(report.results.executed);
 
     // Frontier reporting, not pass-rate fiction: failures stay visible and
     // enumerated rather than being trimmed out of the corpus.
