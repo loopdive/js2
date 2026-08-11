@@ -2,20 +2,19 @@
 id: 3995
 title: "npm-compat: pin and adapt original upstream test suites for catalog packages"
 status: ready
-sprint: Backlog
 created: 2026-07-30
-updated: 2026-08-09
+updated: 2026-08-11
 priority: medium
-horizon: m
 feasibility: medium
 reasoning_effort: high
-task_type: bug
+task_type: bugfix
 area: ci
 language_feature: n/a
 goal: dogfood
+sprint: Backlog
+horizon: m
 related: [1058, 3587, 3672, 3958, 3982, 3997, 3999, 4000, 4287, 4299, 4301, 4302, 4303]
 ---
-
 # npm-compat: pin and adapt original upstream test suites for catalog packages
 
 ## Problem
@@ -94,3 +93,21 @@ original suite and Hono's runtime workload are not yet wired into the generated
 npm-compat report. Preserve their standalone evidence until the generator can
 consume it; do not copy pass counts into static report data. Performance
 regressions remain informational rather than a gate, per the catalog policy.
+
+## 2026-08-11 resumed compiler progress
+
+The pinned catalog was rerun from current `main` while resuming this umbrella:
+
+- `lit@3.3.3` now compiles to a valid 98,116-byte module after unknown-field
+  logical assignment was routed through dynamic property storage (#3978);
+- `styled-components@6.4.4` now compiles to a valid 272,297-byte module after
+  three generic validation bugs were fixed (#3999);
+- neither card has a runtime differential workload yet, so both remain
+  correctness-unverified despite validation succeeding.
+
+The full pinned Lit upstream suite was also rerun: 583/587 upstream tests are
+admitted, 8/16 scored tests pass, 554 need browser/test infrastructure, and two
+implementation files (28 tests total) still emit invalid call operands before
+execution. The report also contains 92 invalid per-test batches. #3978 remains
+the active owner for that compiler frontier; this umbrella continues to own the
+missing consistent runtime adapters and report integration.
