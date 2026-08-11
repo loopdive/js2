@@ -40,9 +40,11 @@ import { reserveVecOverlayHelpers } from "./vec-overlay.js";
 import { buildIntegrityPredicate, registerIntegrityBagResolver } from "./object-integrity-carrier.js";
 import { buildObjectIntegrityMutationHelpers } from "./object-runtime-integrity.js";
 import { bagGopdBetween, bagKeysIf } from "./carrier-bag-visibility.js"; // (#4010 S3) visibility over the bags
-// (#4161) DEFINE-side closure-bag arms — Object.defineProperty/defineProperties
-// on a FUNCTION receiver store into the #3468 own-property bag.
-import { closureBagSubstitutionArm, closurePropertiesBagArm, isClosureCarrierInstrs } from "./carrier-bag-define.js";
+import {
+  defineCarrierBagSubstitutionArm,
+  definePropertiesCarrierBagArm,
+  isDefineCarrierInstrs,
+} from "./carrier-bag-define.js";
 // (#4230) VEC `Properties` maps — a complete own-key source built from the
 // #3537 bag ∪ the #3251 overlay companion.
 import { reserveVecPropsKeySource, vecPropertiesKeySourceArm } from "./vec-props-key-source.js";
@@ -373,11 +375,10 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       },
     ];
 
-    // (#4161) Closure-receiver bag substitution; bag local APPENDED at index 13
-    // (standalone/wasi only — `undefined` in gc/host keeps the body and local
-    // vector byte-identical). Runs AFTER the vec overlay (#3251 owns vec
+    // (#4161, #4098) Carrier-bag substitution; bag local APPENDED at index 13
+    // Runs AFTER the vec overlay (#3251 owns vec
     // receivers) and carries the lenient no-op as its bag-absent fallback.
-    const dpValueClosureArm = closureBagSubstitutionArm(ctx, {
+    const dpValueClosureArm = defineCarrierBagSubstitutionArm(ctx, {
       recvLocalIdx: 0,
       anyLocalIdx: 5,
       bagLocalIdx: 13,
@@ -386,8 +387,8 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     const body: Instr[] = [
       // any = any.convert_extern(obj) ; if !$Object → vec receivers route to
       // the #3251 overlay (per-index/expando descriptor storage on a
-      // companion $Object); a CLOSURE receiver defines into its #3468
-      // own-property bag (#4161) and falls through into the unchanged
+      // companion $Object); a closure or native Error receiver defines into
+      // its authoritative own-property bag and falls through into the unchanged
       // `$Object` path below — including the #2042-S4
       // ValidateAndApplyPropertyDescriptor preflight, which a function
       // receiver previously skipped entirely via the lenient no-op; anything
@@ -702,9 +703,9 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       { op: "i32.const", value: 0 },
       { op: "i32.ne" },
     ];
-    // (#4161) Closure-receiver bag substitution; bag local APPENDED at index 16
+    // (#4161, #4098) Carrier-bag substitution; bag local APPENDED at index 16
     // (standalone/wasi only) — same shape as the `__defineProperty_value` arm.
-    const dpAccessorClosureArm = closureBagSubstitutionArm(ctx, {
+    const dpAccessorClosureArm = defineCarrierBagSubstitutionArm(ctx, {
       recvLocalIdx: 0,
       anyLocalIdx: 6,
       bagLocalIdx: 16,
@@ -712,8 +713,8 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     });
     const body: Instr[] = [
       // any = any.convert_extern(obj) ; if !$Object → vec receivers route to
-      // the #3251 overlay; a CLOSURE receiver defines into its #3468
-      // own-property bag (#4161); anything else keeps the lenient no-op.
+      // the #3251 overlay; a closure or native Error receiver defines into its
+      // own-property bag; anything else keeps the lenient no-op.
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "local.tee", index: 6 },
@@ -724,7 +725,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
         blockType: { kind: "empty" },
         then: [
           ...vecOverlayArm(6, vecOverlay?.dpAccessorIdx ?? -1, 5),
-          // The closure arm carries the lenient-no-op return as its own
+          // The carrier arm carries the lenient-no-op return as its own
           // bag-absent fallback and otherwise FALLS THROUGH to the `$Object`
           // path — so it must not be followed by an unconditional return.
           ...(dpAccessorClosureArm ?? [{ op: "local.get", index: 0 }, { op: "return" }]),
@@ -1174,10 +1175,10 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     const throwPropertiesNotCoercible = (): Instr[] =>
       throwTypeError("TypeError: Cannot convert undefined or null to object");
 
-    // (#4161) closure `Properties` bag substitution (LOOKUP, never ensure).
-    // `undefined` when the #3468 substrate is absent — the gate then keeps its
+    // (#4161, #4098) carrier `Properties` bag substitution (LOOKUP, never ensure).
+    // `undefined` when every supported substrate is absent — the gate keeps its
     // pre-existing refusal and the local vector stays byte-identical.
-    const propsClosureArm = closurePropertiesBagArm(ctx, {
+    const propsClosureArm = definePropertiesCarrierBagArm(ctx, {
       propsLocalIdx: 1,
       descsAnyLocalIdx: L_DESCS_ANY,
       bagLocalIdx: L_BAG,
@@ -1187,8 +1188,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
 
     // (#4230) VEC `Properties` map. Tried BEFORE the closure arm (a vec is
     // never a closure, so the order is only about which fallback wraps which)
-    // and carrying the closure arm as its own non-vec fallback, so the two
-    // compose into one chain ending in the unchanged refusal. The key source is
+    // The arms compose into one chain ending in the unchanged refusal. The key source is
     // the #3537 bag ∪ the #3251 overlay companion — see
     // `vec-props-key-source.ts` for why a UNION is as sound as the "one
     // authoritative store" the old comment demanded, and why an indexed vec
@@ -1219,7 +1219,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
             { op: "local.get", index: 0 },
             { op: "call", funcIdx: isVecCarrierIdx },
           ] satisfies Instr[])),
-      ...(isClosureCarrierInstrs(ctx, 0) ?? ([{ op: "i32.const", value: 0 }] satisfies Instr[])),
+      ...(isDefineCarrierInstrs(ctx, 0) ?? ([{ op: "i32.const", value: 0 }] satisfies Instr[])),
       { op: "i32.or" },
     ];
     /**
@@ -1396,8 +1396,8 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
             then: throwTypeError("Object.defineProperties called on non-object"),
           },
           // An object, but is there anywhere to STORE a descriptor? The vec
-          // carrier (#3251 overlay) and — since #4161 — the closure carrier
-          // (the appliers' own-property-bag arm) both have applier arms; pass 2
+          // carrier (#3251 overlay), closure carrier, and native Error carrier
+          // (the appliers' own-property-bag arms) have applier arms; pass 2
           // passes the raw `local.get 0` receiver to the appliers, which carry
           // their own dispatch, so admission is all that is needed here.
           // Anything else (Date/RegExp/closed struct) keeps the loud refusal:
@@ -1428,7 +1428,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
                   ],
                 },
               ] satisfies Instr[])
-            : isVecCarrierIdx === undefined && isClosureCarrierInstrs(ctx, 0) === undefined
+            : isVecCarrierIdx === undefined && isDefineCarrierInstrs(ctx, 0) === undefined
               ? throwUnsupported(" [SITE-O-NO-CARRIER]")
               : ([
                   ...oCarrierPresentTest,
@@ -1559,21 +1559,21 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
             blockType: { kind: "empty" },
             then: [{ op: "local.get", index: 0 }, { op: "return" }],
           },
-          // (d) a CLOSURE (function) `Properties` map (#4161): substitute its
-          //     #3468 own-property bag for the map and fall through into the
+          // (d) a closure or native Error `Properties` map: substitute its
+          //     authoritative own-property bag and fall through into the
           //     unchanged `$Object` key walk. SOUND NOW, and only now: the
           //     #4047-era measurement that reverted bag-enumeration found the
           //     bag was not the complete own-property store because
           //     `Object.defineProperty(props,"p",…)` on a Function landed
           //     NOWHERE (`__defineProperty_value`'s terminal arm was a lenient
           //     no-op for closures). With the #4161 applier arms, defines land
-          //     in the same bag `__extern_set` writes, so the closure bag IS
-          //     the complete own-NAMED-property store. A closure with no bag
+          //     in the same bag `__extern_set` writes, so the carrier bag IS
+          //     the complete own-NAMED-property store. A carrier with no bag
           //     has no own enumerable named properties (builtin `name`/
           //     `length` metadata is non-enumerable), so "define nothing,
           //     return O" is the complete spec answer.
           //
-          // (e) any OTHER object — Array, arguments, Date, RegExp, Error, a
+          // (e) any OTHER object — Array, arguments, Date, RegExp, a
           //     closed struct — KEEPS REFUSING. The ARRAY half of the
           //     #4047-era unsoundness still holds: a vec's defines land in the
           //     SEPARATE #3251 overlay companion, not in its #3537 bag, so

@@ -6,7 +6,7 @@ assignee: ttraenkler/dev-4098-g1
 blocked_by: []
 sprint: current
 created: 2026-08-02
-updated: 2026-08-04
+updated: 2026-08-12
 # (#4098 G1 stage 1) The three screen call sites live in `object-runtime.ts`
 # because that is where the closed-struct ladders they screen are BUILT — a
 # screen has to be emitted ahead of the arms it narrows, and those arms return
@@ -665,3 +665,70 @@ Both pre-existing on `main` (present in the before-arm), neither touched here:
 
 Worth their own issue ids; not filed here to avoid burning a reservation on a
 lane that is standing down.
+
+---
+
+## Native Error `$props` slice, 2026-08-12
+
+The residual Object/property census exposed a separate, bounded #4098-shaped
+carrier gap: native Error-family instances already had a nullable
+`$Error_struct.$props` field, but assignment, define, reflection, enumeration
+and delete did not agree that it was the Error instance's ordinary-own-property
+store.
+
+The fix makes that existing field authoritative across the shared standalone
+runtime MOP:
+
+- assignment and reads route through Error-specific get/set helpers;
+- `Object.defineProperty` and `Object.defineProperties` substitute the same bag
+  into the existing `$Object` descriptor engine;
+- `hasOwnProperty`, `Object.hasOwn`, `in`, gOPD, keys, names and for-in see the
+  bag through `__carrier_bag_of`;
+- delete delegates to the existing ordinary `$Object` delete implementation;
+- accessors are invoked with the original Error receiver, not the hidden bag,
+  so `this === err` remains true;
+- object-integrity operations resolve the same bag, so
+  `Object.preventExtensions(err)` blocks later named and indexed expandos;
+- the multi-source finalizer fills both the shared helpers and the Error read
+  splice, keeping `compileMulti` write/read behavior aligned with `compile`;
+- only bag entries are visible. Native struct fields such as `tag`,
+  `userClassId` and `props` are not fabricated as JavaScript keys.
+
+### Exact same-SHA A/B
+
+Both runs used standalone, official scope, and base SHA
+`803ab26e36c2dea1ae617614ff60ecdec714acf3`.
+
+| slice | before | after | delta |
+| --- | ---: | ---: | ---: |
+| ES5 `Object/{create,defineProperty,defineProperties}` failures containing a native Error-family instance | 0 / 23 | **23 / 23** | **+23, -0** |
+| broader Error-family control population in those directories | — | **43 / 43** | no observed regression |
+| Error `Object.preventExtensions` controls (`15.2.3.10-3-{10,20}`) | 2 / 2 | **2 / 2** | **0, preserved** |
+
+The focused regression suite also proves stored-null presence, coherent
+define/read/descriptor/enumerate/delete behavior, Error-as-descriptor and
+Error-as-`Properties` operation, receiver-correct getters/setters, and absence
+of leaked native internals.
+
+### IR boundary
+
+This is shared runtime ABI, not a second AST-only property model. A prepared
+dynamic member read emits IR (`irBodyEmitted: true`, `stage: patch`) and reaches
+`__dyn_member_get -> __extern_get ->` the Error bag MOP. Some surrounding
+dynamic assignment/reflection source shapes remain selector-rejected and retain
+the existing legacy compile-twice fallback; this slice does not claim those
+frontend selectors are complete.
+
+### Bounded scope
+
+This slice covers native Error-family instances only. Date, RegExp, Arguments
+and other closed carriers have distinct representations and remain separate
+work. It does not claim the broader class-instance population in #4098 is
+complete.
+
+Two Error-adjacent residuals remain explicit and are not claimed here:
+
+- `propertyIsEnumerable` still has a separate non-`$Object` dispatch path that
+  does not consult the Error bag;
+- strict-mode assignment to a non-writable Error property is refused, but the
+  current non-`$Object` strict-set path cannot surface the required throw.
