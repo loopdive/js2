@@ -474,6 +474,23 @@ The six are the prefix/postfix increment/decrement string cases plus the two
 Boolean-wrapper increment cases. The Boolean-primitive correctness proof and
 sloppy-redeclaration coverage live in the focused unit suite.
 
+The same implementation also closes the update-expression overlap with S3.
+Four object-operand files previously catalogued as red now exercise user
+`valueOf` through the canonical coercion path and pass in both lanes:
+
+- `postfix-decrement/S11.3.2_A2.2_T1.js`
+- `postfix-increment/S11.3.1_A2.2_T1.js`
+- `prefix-decrement/S11.4.5_A2.2_T1.js`
+- `prefix-increment/S11.4.4_A2.2_T1.js`
+
+| lane | after | run id |
+| --- | ---: | --- |
+| host GC | **4 / 4** | `20260811-201901` |
+| standalone | **4 / 4** | `20260811-202024` |
+
+That makes ten previously-red update-expression files verified green in both
+lanes. The remaining S3 population covers other operators and stays open.
+
 ### Verification
 
 - `issue-4208-update-to-number-ir`, `issue-4208-strict-eq-type-disjoint`,
@@ -484,5 +501,6 @@ sloppy-redeclaration coverage live in the focused unit suite.
 
 Fresh whole-suite baselines contain 9,029 ES5 tests: standalone is 8,052 pass,
 880 fail, 93 compile-error and 4 timeout; host GC is 7,218 pass, 1,760 fail and
-51 compile-error. S2 removes a verified six-file slice from that residue; this
-issue remains open for S3–S7 rather than claiming the overall ES5 goal complete.
+51 compile-error. This change removes a verified ten-file update-expression
+slice from that residue; this issue remains open for the rest of S3–S7 rather
+than claiming the overall ES5 goal complete.
