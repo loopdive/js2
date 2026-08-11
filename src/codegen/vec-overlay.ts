@@ -90,6 +90,7 @@ import {
   fillVecHasOwnHelpers,
 } from "./vec-bag-seed.js";
 import { buildVecHasIdxPresencePrologue } from "./vec-overlay-presence.js";
+import { protoIndexGetIdxMissInstrs, protoIndexHasIdxInstrs } from "./proto-index-store.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
 import { nonExtensibleFreshIndexGuard, nonWritableLengthIndexGuard } from "./vec-define-rejections.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
@@ -2023,6 +2024,21 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
                       op: "if",
                       blockType: { kind: "empty" },
                       then: [
+                        // A deleted own index does not terminate prototype
+                        // lookup. Get must continue at Array.prototype (then
+                        // Object.prototype); only a true chain miss is
+                        // undefined. Check this before COMPANION_VALUE because
+                        // tombstones deliberately carry both flags.
+                        { op: "local.get", index: pE },
+                        { op: "ref.as_non_null" },
+                        { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
+                        { op: "i32.const", value: FLAG_DELETED_INDEX },
+                        { op: "i32.and" },
+                        {
+                          op: "if",
+                          blockType: { kind: "empty" },
+                          then: [...(protoIndexGetIdxMissInstrs(ctx, 0, 1, 1) ?? missExtern()), { op: "return" }],
+                        },
                         // accessor → invoke getter with the VEC as `this`
                         { op: "local.get", index: pE },
                         { op: "ref.as_non_null" },
@@ -2240,6 +2256,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         numToStringIdx,
         objFindIdx,
         deletedIndexFlag: FLAG_DELETED_INDEX,
+        deletedIndexMiss: protoIndexHasIdxInstrs(ctx, 1, 1),
       });
     }
   }

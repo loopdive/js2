@@ -53,14 +53,18 @@ import { emitRuntimeEvalSharedValueUnwrap } from "./global-environment.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 
 /**
- * Single gate for both directions — standalone, plus either pre-scan flag that
- * says the overlay companion may hold something the dense backing does not:
- * `vecAccessorDescriptorDirty` (#4159, an accessor / non-writable descriptor) or
- * `vecIndexDeleteDirty` (#4222, a `delete arr[i]` tombstone). Either one alone
- * makes the raw `array.get` / `i < length` answer wrong.
+ * Single gate for both directions — standalone, plus any pre-scan flag that
+ * says the dense backing alone cannot answer indexed Get / HasProperty:
+ * `vecAccessorDescriptorDirty` (#4159, an accessor / non-writable descriptor),
+ * `vecIndexDeleteDirty` (#4222, a `delete arr[i]` tombstone), or
+ * `protoIndexDirty` (#4160, an inherited numeric property). Any one alone makes
+ * the raw `array.get` / `i < length` answer wrong.
  */
 export function overlayRouteActive(ctx: CodegenContext): boolean {
-  return ctx.standalone === true && (ctx.vecAccessorDescriptorDirty === true || ctx.vecIndexDeleteDirty === true);
+  return (
+    ctx.standalone === true &&
+    (ctx.vecAccessorDescriptorDirty === true || ctx.vecIndexDeleteDirty === true || ctx.protoIndexDirty === true)
+  );
 }
 
 /**
