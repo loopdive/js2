@@ -1,0 +1,652 @@
+{
+  "generated": "2026-08-10T00:03:53.001Z",
+  "features": [
+    {
+      "name": "Primitive types (string, number, boolean, null, undefined)",
+      "testCategories": ["language/types", "language/literals"],
+      "passCount": 615,
+      "totalCount": 647
+    },
+    {
+      "name": "Operators (arithmetic, comparison, logical, bitwise)",
+      "testCategories": [
+        "language/expressions/addition",
+        "language/expressions/subtraction",
+        "language/expressions/multiplication",
+        "language/expressions/division",
+        "language/expressions/modulus",
+        "language/expressions/bitwise-and",
+        "language/expressions/bitwise-or",
+        "language/expressions/bitwise-xor",
+        "language/expressions/bitwise-not",
+        "language/expressions/left-shift",
+        "language/expressions/right-shift",
+        "language/expressions/unsigned-right-shift",
+        "language/expressions/equals",
+        "language/expressions/does-not-equals",
+        "language/expressions/strict-equals",
+        "language/expressions/strict-does-not-equals",
+        "language/expressions/less-than",
+        "language/expressions/less-than-or-equal",
+        "language/expressions/greater-than",
+        "language/expressions/greater-than-or-equal",
+        "language/expressions/logical-and",
+        "language/expressions/logical-or",
+        "language/expressions/logical-not",
+        "language/expressions/unary-plus",
+        "language/expressions/unary-minus",
+        "language/expressions/conditional",
+        "language/expressions/grouping",
+        "language/expressions/postfix-increment",
+        "language/expressions/postfix-decrement",
+        "language/expressions/prefix-increment",
+        "language/expressions/prefix-decrement",
+        "language/expressions/in",
+        "language/expressions/void",
+        "language/expressions/concatenation",
+        "language/expressions/relational"
+      ],
+      "passCount": 916,
+      "totalCount": 1083
+    },
+    {
+      "name": "typeof / instanceof",
+      "testCategories": ["language/expressions/typeof", "language/expressions/instanceof"],
+      "passCount": 36,
+      "totalCount": 59
+    },
+    {
+      "name": "delete operator",
+      "testCategories": ["language/expressions/delete"],
+      "passCount": 59,
+      "totalCount": 69
+    },
+    {
+      "name": "Comma operator",
+      "testCategories": ["language/expressions/comma"],
+      "passCount": 5,
+      "totalCount": 6
+    },
+    {
+      "name": "Labeled statements (break / continue)",
+      "testCategories": ["language/statements/labeled"],
+      "passCount": 21,
+      "totalCount": 24
+    },
+    {
+      "name": "for-in",
+      "testCategories": ["language/statements/for-in"],
+      "passCount": 102,
+      "totalCount": 119
+    },
+    {
+      "name": "arguments object (full)",
+      "testCategories": ["language/arguments-object"],
+      "passCount": 118,
+      "totalCount": 263
+    },
+    {
+      "name": "eval()",
+      "testCategories": ["language/eval-code", "built-ins/eval"],
+      "passCount": 332,
+      "totalCount": 357
+    },
+    {
+      "name": "with statement",
+      "testCategories": ["language/statements/with", "annexB/language/statements/with"],
+      "passCount": 96,
+      "totalCount": 181
+    },
+    {
+      "name": "Variables (var, let, const)",
+      "testCategories": [
+        "language/statements/let",
+        "language/statements/const",
+        "language/statements/variable",
+        "language/block-scope"
+      ],
+      "passCount": 526,
+      "totalCount": 604
+    },
+    {
+      "name": "Functions & closures",
+      "testCategories": ["language/statements/function", "language/function-code", "built-ins/Function"],
+      "passCount": 869,
+      "totalCount": 1177
+    },
+    {
+      "name": "Control flow",
+      "testCategories": [
+        "language/statements/if",
+        "language/statements/switch",
+        "language/statements/while",
+        "language/statements/do-while",
+        "language/statements/for",
+        "language/statements/break",
+        "language/statements/continue",
+        "language/statements/return"
+      ],
+      "passCount": 612,
+      "totalCount": 699
+    },
+    {
+      "name": "try / catch / finally",
+      "testCategories": ["language/statements/try"],
+      "passCount": 180,
+      "totalCount": 201
+    },
+    {
+      "name": "throw",
+      "testCategories": ["language/statements/throw"],
+      "passCount": 12,
+      "totalCount": 14
+    },
+    {
+      "name": "Objects",
+      "testCategories": ["language/expressions/object", "built-ins/Object"],
+      "passCount": 3865,
+      "totalCount": 4581
+    },
+    {
+      "name": "Strings",
+      "testCategories": ["built-ins/String", "built-ins/StringIteratorPrototype"],
+      "passCount": 999,
+      "totalCount": 1230
+    },
+    {
+      "name": "Numbers",
+      "testCategories": ["built-ins/Number", "built-ins/Math"],
+      "passCount": 610,
+      "totalCount": 667
+    },
+    {
+      "name": "JSON",
+      "testCategories": ["built-ins/JSON"],
+      "passCount": 90,
+      "totalCount": 165
+    },
+    {
+      "name": "Error types",
+      "testCategories": [
+        "built-ins/Error",
+        "built-ins/NativeErrors",
+        "built-ins/AggregateError",
+        "built-ins/SuppressedError"
+      ],
+      "passCount": 83,
+      "totalCount": 234
+    },
+    {
+      "name": "Arrays",
+      "testCategories": ["built-ins/Array", "built-ins/ArrayIteratorPrototype", "language/expressions/array"],
+      "passCount": 1696,
+      "totalCount": 3161
+    },
+    {
+      "name": "Regular expressions",
+      "testCategories": ["built-ins/RegExp", "built-ins/RegExpStringIteratorPrototype"],
+      "passCount": 1589,
+      "totalCount": 1896
+    },
+    {
+      "name": "Property accessors (get / set)",
+      "testCategories": ["language/expressions/property-accessors"],
+      "passCount": 15,
+      "totalCount": 21
+    },
+    {
+      "name": "Object.defineProperty (full)",
+      "testCategories": ["built-ins/Object/defineProperty"],
+      "passCount": 1053,
+      "totalCount": 1131
+    },
+    {
+      "name": "Arrow functions",
+      "testCategories": ["language/expressions/arrow-function", "language/expressions/async-arrow-function"],
+      "passCount": 341,
+      "totalCount": 440
+    },
+    {
+      "name": "Template literals",
+      "testCategories": ["language/expressions/template-literal", "language/expressions/tagged-template"],
+      "passCount": 0,
+      "totalCount": 1
+    },
+    {
+      "name": "Destructuring",
+      "testCategories": ["language/destructuring"],
+      "passCount": 3618,
+      "totalCount": 4290
+    },
+    {
+      "name": "Spread / rest operators",
+      "testCategories": ["language/rest-parameters"],
+      "passCount": 60,
+      "totalCount": 60
+    },
+    {
+      "name": "Default parameters",
+      "testCategories": ["language/statements/function/default-parameter"],
+      "passCount": 1328,
+      "totalCount": 1552
+    },
+    {
+      "name": "Computed property names",
+      "testCategories": ["language/computed-property-names"],
+      "passCount": 70,
+      "totalCount": 133
+    },
+    {
+      "name": "for-of",
+      "testCategories": ["language/statements/for-of"],
+      "passCount": 2,
+      "totalCount": 4
+    },
+    {
+      "name": "Generators (function*, yield)",
+      "testCategories": [
+        "language/statements/generators",
+        "language/expressions/generators",
+        "language/expressions/yield",
+        "built-ins/GeneratorFunction",
+        "built-ins/GeneratorPrototype"
+      ],
+      "passCount": 1751,
+      "totalCount": 2486
+    },
+    {
+      "name": "Classes",
+      "testCategories": [
+        "language/expressions/class",
+        "language/statements/class",
+        "language/expressions/super",
+        "language/expressions/new",
+        "language/expressions/new.target"
+      ],
+      "passCount": 321,
+      "totalCount": 461
+    },
+    {
+      "name": "Map / Set",
+      "testCategories": [
+        "built-ins/Map",
+        "built-ins/Set",
+        "built-ins/MapIteratorPrototype",
+        "built-ins/SetIteratorPrototype",
+        "built-ins/WeakMap",
+        "built-ins/WeakSet"
+      ],
+      "passCount": 110,
+      "totalCount": 129
+    },
+    {
+      "name": "Symbol",
+      "testCategories": ["built-ins/Symbol"],
+      "passCount": 697,
+      "totalCount": 1955
+    },
+    {
+      "name": "TypedArray / ArrayBuffer",
+      "testCategories": [
+        "built-ins/TypedArray",
+        "built-ins/TypedArrayConstructors",
+        "built-ins/ArrayBuffer",
+        "built-ins/DataView",
+        "built-ins/Uint8Array"
+      ],
+      "passCount": 290,
+      "totalCount": 1106
+    },
+    {
+      "name": "Modules (import / export)",
+      "testCategories": ["language/module-code", "language/import", "language/export"],
+      "passCount": 0,
+      "totalCount": 0
+    },
+    {
+      "name": "Proxy / Reflect",
+      "testCategories": ["built-ins/Proxy", "built-ins/Reflect"],
+      "passCount": 447,
+      "totalCount": 1072
+    },
+    {
+      "name": "Promise .then / .catch / .finally",
+      "testCategories": ["built-ins/Promise"],
+      "passCount": 2,
+      "totalCount": 3
+    },
+    {
+      "name": "async / await",
+      "testCategories": [
+        "built-ins/AsyncFunction",
+        "language/expressions/await",
+        "language/expressions/async-function",
+        "language/statements/async-function"
+      ],
+      "passCount": 284,
+      "totalCount": 348
+    },
+    {
+      "name": "Object.entries / values",
+      "testCategories": ["built-ins/Object/entries", "built-ins/Object/values"],
+      "passCount": 0,
+      "totalCount": 0
+    },
+    {
+      "name": "SharedArrayBuffer / Atomics",
+      "testCategories": ["built-ins/SharedArrayBuffer", "built-ins/Atomics"],
+      "passCount": 60,
+      "totalCount": 342
+    },
+    {
+      "name": "Object spread / rest",
+      "testCategories": ["language/expressions/object/spread"],
+      "passCount": 173,
+      "totalCount": 401
+    },
+    {
+      "name": "Async iteration (for-await-of)",
+      "testCategories": [
+        "built-ins/AsyncGeneratorFunction",
+        "built-ins/AsyncGeneratorPrototype",
+        "built-ins/AsyncIteratorPrototype",
+        "built-ins/AsyncFromSyncIteratorPrototype",
+        "language/expressions/async-generator",
+        "language/statements/async-generator"
+      ],
+      "passCount": 2520,
+      "totalCount": 3812
+    },
+    {
+      "name": "Optional chaining (?.)",
+      "testCategories": ["language/expressions/optional-chaining"],
+      "passCount": 33,
+      "totalCount": 52
+    },
+    {
+      "name": "Nullish coalescing (??)",
+      "testCategories": ["language/expressions/coalesce"],
+      "passCount": 22,
+      "totalCount": 25
+    },
+    {
+      "name": "globalThis",
+      "testCategories": ["built-ins/global", "built-ins/globalThis"],
+      "passCount": 96,
+      "totalCount": 122
+    },
+    {
+      "name": "BigInt",
+      "testCategories": ["built-ins/BigInt"],
+      "passCount": 262,
+      "totalCount": 1048
+    },
+    {
+      "name": "Dynamic import()",
+      "testCategories": ["language/expressions/dynamic-import"],
+      "passCount": 152,
+      "totalCount": 557
+    },
+    {
+      "name": "WeakRef / FinalizationRegistry",
+      "testCategories": ["built-ins/WeakRef", "built-ins/FinalizationRegistry"],
+      "passCount": 32,
+      "totalCount": 82
+    },
+    {
+      "name": "Class fields (public, private, static)",
+      "testCategories": ["language/statements/class/fields"],
+      "passCount": 3300,
+      "totalCount": 4979
+    },
+    {
+      "name": "Error.cause",
+      "testCategories": ["built-ins/Error/cause"],
+      "passCount": 0,
+      "totalCount": 5
+    },
+    {
+      "name": "Array.at / String.at",
+      "testCategories": ["built-ins/Array/prototype/at", "built-ins/String/prototype/at"],
+      "passCount": 16,
+      "totalCount": 36
+    },
+    {
+      "name": "Top-level await",
+      "testCategories": ["language/module-code/top-level-await"],
+      "passCount": 176,
+      "totalCount": 257
+    },
+    {
+      "name": "Array.prototype.includes",
+      "testCategories": ["built-ins/Array/prototype/includes"],
+      "passCount": 16,
+      "totalCount": 29
+    },
+    {
+      "name": "Exponentiation operator (**)",
+      "testCategories": ["language/expressions/exponentiation"],
+      "passCount": 50,
+      "totalCount": 72
+    },
+    {
+      "name": "Optional catch binding",
+      "testCategories": ["language/statements/try/optional-catch-binding"],
+      "passCount": 4,
+      "totalCount": 5
+    },
+    {
+      "name": "Array.prototype.flat / flatMap",
+      "testCategories": ["built-ins/Array/prototype/flat", "built-ins/Array/prototype/flatMap"],
+      "passCount": 9,
+      "totalCount": 35
+    },
+    {
+      "name": "Object.fromEntries",
+      "testCategories": ["built-ins/Object/fromEntries"],
+      "passCount": 6,
+      "totalCount": 25
+    },
+    {
+      "name": "Array.findLast / findLastIndex",
+      "testCategories": ["built-ins/Array/prototype/findLast", "built-ins/Array/prototype/findLastIndex"],
+      "passCount": 34,
+      "totalCount": 109
+    },
+    {
+      "name": "Change array by copy (toSorted, toReversed, toSpliced)",
+      "testCategories": [
+        "built-ins/Array/prototype/toSorted",
+        "built-ins/Array/prototype/toReversed",
+        "built-ins/Array/prototype/toSpliced"
+      ],
+      "passCount": 42,
+      "totalCount": 132
+    },
+    {
+      "name": "Hashbang (#!) comments",
+      "testCategories": ["language/comments/hashbang", "language/source-text"],
+      "passCount": 28,
+      "totalCount": 29
+    },
+    {
+      "name": "Promise.withResolvers",
+      "testCategories": ["built-ins/Promise/withResolvers"],
+      "passCount": 2,
+      "totalCount": 9
+    },
+    {
+      "name": "Resizable ArrayBuffer",
+      "testCategories": ["built-ins/ArrayBuffer/prototype/resize"],
+      "passCount": 0,
+      "totalCount": 18
+    },
+    {
+      "name": "RegExp v flag",
+      "testCategories": ["built-ins/RegExp/unicodeSets"],
+      "passCount": 180,
+      "totalCount": 187
+    },
+    {
+      "name": "Set methods (union, intersection, difference)",
+      "testCategories": [
+        "built-ins/Set/prototype/union",
+        "built-ins/Set/prototype/intersection",
+        "built-ins/Set/prototype/difference",
+        "built-ins/Set/prototype/symmetricDifference",
+        "built-ins/Set/prototype/isSubsetOf",
+        "built-ins/Set/prototype/isSupersetOf",
+        "built-ins/Set/prototype/isDisjointFrom"
+      ],
+      "passCount": 151,
+      "totalCount": 186
+    },
+    {
+      "name": "Iterator helpers (map, filter, take)",
+      "testCategories": ["built-ins/Iterator"],
+      "passCount": 109,
+      "totalCount": 393
+    },
+    {
+      "name": "RegExp duplicate named groups",
+      "testCategories": ["built-ins/RegExp/named-groups"],
+      "passCount": 0,
+      "totalCount": 16
+    },
+    {
+      "name": "Error.isError",
+      "testCategories": [],
+      "passCount": 2,
+      "totalCount": 12
+    },
+    {
+      "name": "Upsert (Map.getOrInsert)",
+      "testCategories": [],
+      "passCount": 47,
+      "totalCount": 72
+    },
+    {
+      "name": "Array.fromAsync",
+      "testCategories": [],
+      "passCount": 4,
+      "totalCount": 95
+    },
+    {
+      "name": "Math.sumPrecise",
+      "testCategories": [],
+      "passCount": 0,
+      "totalCount": 10
+    },
+    {
+      "name": "Iterator sequencing (Iterator.concat)",
+      "testCategories": [],
+      "passCount": 10,
+      "totalCount": 32
+    },
+    {
+      "name": "Uint8Array to/from Base64",
+      "testCategories": [],
+      "passCount": 7,
+      "totalCount": 68
+    },
+    {
+      "name": "JSON.parse source text access",
+      "testCategories": [],
+      "passCount": 15,
+      "totalCount": 21
+    },
+    {
+      "name": "var hoisting",
+      "testCategories": ["language/statements/variable", "language/statements/var"],
+      "passCount": 157,
+      "totalCount": 178
+    },
+    {
+      "name": "arguments.callee",
+      "testCategories": ["language/arguments-object/callee"],
+      "passCount": 0,
+      "totalCount": 0
+    },
+    {
+      "name": "__proto__ accessor",
+      "testCategories": ["annexB/language/expressions/object/__proto__"],
+      "passCount": 0,
+      "totalCount": 0
+    },
+    {
+      "name": "String.prototype.substr",
+      "testCategories": ["annexB/built-ins/String/prototype/substr"],
+      "passCount": 13,
+      "totalCount": 15
+    },
+    {
+      "name": "Octal literals (0777)",
+      "testCategories": ["annexB/language/literals/numeric"],
+      "passCount": 0,
+      "totalCount": 0
+    },
+    {
+      "name": "escape() / unescape()",
+      "testCategories": ["annexB/built-ins/escape", "annexB/built-ins/unescape"],
+      "passCount": 19,
+      "totalCount": 35
+    },
+    {
+      "name": "Function.prototype.caller",
+      "testCategories": ["annexB/built-ins/Function/prototype/caller"],
+      "passCount": 0,
+      "totalCount": 0
+    },
+    {
+      "name": "HTML string methods (.bold(), .anchor())",
+      "testCategories": [
+        "annexB/built-ins/String/prototype/anchor",
+        "annexB/built-ins/String/prototype/big",
+        "annexB/built-ins/String/prototype/blink",
+        "annexB/built-ins/String/prototype/bold",
+        "annexB/built-ins/String/prototype/fixed",
+        "annexB/built-ins/String/prototype/fontcolor",
+        "annexB/built-ins/String/prototype/fontsize",
+        "annexB/built-ins/String/prototype/italics",
+        "annexB/built-ins/String/prototype/link",
+        "annexB/built-ins/String/prototype/small",
+        "annexB/built-ins/String/prototype/strike",
+        "annexB/built-ins/String/prototype/sub",
+        "annexB/built-ins/String/prototype/sup"
+      ],
+      "passCount": 4,
+      "totalCount": 82
+    },
+    {
+      "name": "RegExp.$1 static properties",
+      "testCategories": ["annexB/built-ins/RegExp/legacy-accessors"],
+      "passCount": 1,
+      "totalCount": 24
+    },
+    {
+      "name": "Hono-style router (Map + closures + classes)",
+      "testCategories": [],
+      "passCount": 0,
+      "totalCount": 0
+    },
+    {
+      "name": "Temporal",
+      "testCategories": ["built-ins/Temporal"],
+      "passCount": 0,
+      "totalCount": 0
+    },
+    {
+      "name": "Decorators",
+      "testCategories": [],
+      "passCount": 0,
+      "totalCount": 0
+    },
+    {
+      "name": "Pattern matching",
+      "testCategories": [],
+      "passCount": 0,
+      "totalCount": 0
+    }
+  ],
+  "features_generated": "2026-08-09T23:53:24.533Z"
+}

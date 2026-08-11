@@ -11,11 +11,13 @@
  * Usage:
  *   node scripts/append-run-history.mjs --runs-dir <dir> [--sha <sha>] \
  *     [--editions <test262-editions.json>] \
+ *     [--standalone-editions <test262-standalone-editions.json>] \
  *     [--standalone-report <test262-standalone-report.json>]
  *
  * Writes/updates (only for inputs that were passed and exist):
- *   <runs-dir>/editions-index.json    — [{ timestamp, gitHash, editions: [{edition, pass, total}] }]
- *   <runs-dir>/standalone-index.json  — [{ timestamp, gitHash, pass, fail, ce, skip, total }]
+ *   <runs-dir>/editions-index.json            — [{ timestamp, gitHash, editions: [{edition, pass, total}] }]
+ *   <runs-dir>/standalone-editions-index.json — same shape, host-free lane (#4362)
+ *   <runs-dir>/standalone-index.json          — [{ timestamp, gitHash, pass, fail, ce, skip, total }]
  *
  * Best-effort: each file is appended independently, and any failure (missing
  * or malformed input) is logged and skipped rather than failing the process —
@@ -67,9 +69,21 @@ function appendEntry(indexPath, entry, isDuplicate) {
   console.log(`append-run-history: appended to ${indexPath}`);
 }
 
-function appendEditions(runsDir, editionsPath, gitHash) {
+/**
+ * Append one per-ES-edition snapshot.
+ *
+ * `indexName` selects the lane: `editions-index.json` (JS-host) or
+ * `standalone-editions-index.json` (#4362, host-free). The two lanes are
+ * separate FILES rather than two series in one entry because they are produced
+ * by different runs at different times — the host editions file is regenerated
+ * in promote-baseline, the standalone one alongside it from the standalone
+ * baseline JSONL — and interleaving them in a single index would make the
+ * duplicate-suppression check compare a host snapshot against a standalone one
+ * and never dedupe.
+ */
+function appendEditions(runsDir, editionsPath, gitHash, indexName = "editions-index.json") {
   if (!editionsPath || typeof editionsPath !== "string" || !existsSync(editionsPath)) {
-    console.log("append-run-history: no editions file provided/found — skipping editions-index.json.");
+    console.log(`append-run-history: no editions file provided/found — skipping ${indexName}.`);
     return;
   }
   try {
@@ -84,7 +98,7 @@ function appendEditions(runsDir, editionsPath, gitHash) {
         total: Number(e?.total || 0),
       })),
     };
-    appendEntry(join(runsDir, "editions-index.json"), entry, (last, next) => {
+    appendEntry(join(runsDir, indexName), entry, (last, next) => {
       if (!Array.isArray(last.editions) || last.editions.length !== next.editions.length) return false;
       return last.editions.every(
         (e, i) =>
@@ -94,7 +108,7 @@ function appendEditions(runsDir, editionsPath, gitHash) {
       );
     });
   } catch (err) {
-    console.log(`append-run-history: editions-index.json append failed (non-fatal): ${err.message}`);
+    console.log(`append-run-history: ${indexName} append failed (non-fatal): ${err.message}`);
   }
 }
 
@@ -134,6 +148,7 @@ function main() {
     return;
   }
   appendEditions(runsDir, args["editions"], args["sha"]);
+  appendEditions(runsDir, args["standalone-editions"], args["sha"], "standalone-editions-index.json");
   appendStandalone(runsDir, args["standalone-report"], args["sha"]);
 }
 

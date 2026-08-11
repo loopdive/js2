@@ -102,6 +102,12 @@ try {
       // the per-edition slider counted leaky (host-import) passes and diverged
       // from the honest headline/floor.
       "--host-free",
+      // (#4362) Also emit the standalone twin of the landing-page feature-row
+      // counts. Reads the host catalog (for row names / testCategories /
+      // curated examples) and writes ONLY the recomputed host-free
+      // passCount/totalCount to a separate file, leaving the host one intact.
+      "--feature-examples-out",
+      resolve(ROOT, "website", "public", "feature-examples-standalone.json"),
     ]);
   } else {
     console.warn(

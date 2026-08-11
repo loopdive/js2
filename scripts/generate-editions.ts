@@ -18,7 +18,7 @@
  * Issue: #959
  */
 
-import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 
@@ -1162,12 +1162,20 @@ async function main() {
   // override, i.e. the run that owns test262-editions.json + feature-examples
   // .json). The standalone run passes --output and is skipped, keeping the
   // host-lane feature counts intact.
+  //
+  // (#4362) …UNLESS it also passes `--feature-examples-out`, which reads the
+  // host catalog and writes a SEPARATE standalone twin. Without a distinct out
+  // path the standalone lane must stay skipped: patching in place would
+  // overwrite the host counts with host-free ones and the landing page would
+  // then show standalone numbers in BOTH toggle positions — the mirror image
+  // of the bug this issue fixes.
   const featureExamplesPath = getArg(args, "--feature-examples") ?? FEATURE_EXAMPLES_PATH;
+  const featureExamplesOut = getArg(args, "--feature-examples-out");
   const wantFeatureExamples =
     !args.includes("--no-feature-examples") &&
-    (outputPath === OUTPUT_PATH || getArg(args, "--feature-examples") != null);
+    (outputPath === OUTPUT_PATH || getArg(args, "--feature-examples") != null || featureExamplesOut != null);
   if (wantFeatureExamples) {
-    patchFeatureExamples(featureExamplesPath, taggedTests, pathTests);
+    patchFeatureExamples(featureExamplesPath, taggedTests, pathTests, featureExamplesOut);
   }
 }
 
@@ -1181,10 +1189,11 @@ async function main() {
  * set to 0/0 so the runtime treats them as headline-only (no phantom count).
  * Best-effort: a missing map or catalog leaves the file untouched.
  */
-function patchFeatureExamples(
+export function patchFeatureExamples(
   examplesPath: string,
   taggedTests: ClassifiedTest[],
   pathTests: Array<{ file: string; status: StatusKey }>,
+  outPath?: string,
 ): void {
   if (!existsSync(examplesPath)) {
     console.warn(`[#2910] feature-examples not found at ${examplesPath} — skipping row reconciliation.`);
@@ -1277,9 +1286,31 @@ function patchFeatureExamples(
     }
   }
 
-  writeFileSync(examplesPath, JSON.stringify(examples, null, 2) + "\n");
+  const writePath = outPath ?? examplesPath;
+  mkdirSync(dirname(writePath), { recursive: true });
+  // (#4362) A twin written to a separate path is SLIM: only the fields the
+  // landing page reads off the ACTIVE catalog (row identity, report links, and
+  // the two counts). Everything else on a row — curated js/wat, the shiki
+  // `jsHtml`/`watHtml`, and above all the per-row `tests[]` failure list — is
+  // lane-independent and already present in the host catalog the page loads
+  // anyway. Carrying it twice would ship a second ~4 MB file to every visitor
+  // (the host catalog is ~4 MB, of which ~96% is `tests[]`) to convey ~10 KB of
+  // differing numbers. In-place patching (no out path) still writes the whole
+  // record, since there it IS the catalog.
+  const payload = outPath
+    ? {
+        ...examples,
+        features: examples.features.map((f) => ({
+          name: f.name,
+          testCategories: f.testCategories,
+          passCount: f.passCount,
+          totalCount: f.totalCount,
+        })),
+      }
+    : examples;
+  writeFileSync(writePath, JSON.stringify(payload, null, 2) + "\n");
   console.log(
-    `\n[#2910] Reconciled feature-examples row counts: ${reconciled} tag-sliced, ${pathScored} path-scored, ${headlineOnly} headline-only → ${examplesPath}`,
+    `\n[#2910] Reconciled feature-examples row counts: ${reconciled} tag-sliced, ${pathScored} path-scored, ${headlineOnly} headline-only → ${writePath}`,
   );
   if (unmapped.length > 0) {
     console.warn(

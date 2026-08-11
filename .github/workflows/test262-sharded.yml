@@ -2497,7 +2497,24 @@ jobs:
             --update --sha "${{ github.sha }}" || true
 
       - name: Regenerate edition buckets
-        run: node --experimental-strip-types scripts/generate-editions.ts --results benchmarks/results/test262-current.jsonl
+        run: |
+          node --experimental-strip-types scripts/generate-editions.ts --results benchmarks/results/test262-current.jsonl
+          # (#4362) Same classifier over the STANDALONE lane, host-free, so the
+          # landing page's host/standalone toggle has a per-edition standalone
+          # trend series to append below (`standalone-editions-index.json`) —
+          # not just the overall one. Best-effort: the standalone lane is
+          # conditional (steps.group.outputs.sa), so a missing JSONL must skip
+          # rather than fail the promote.
+          if [ -f benchmarks/results/test262-standalone-current.jsonl ]; then
+            node --experimental-strip-types scripts/generate-editions.ts \
+              --results benchmarks/results/test262-standalone-current.jsonl \
+              --output website/public/benchmarks/results/test262-standalone-editions.json \
+              --host-free \
+              --feature-examples-out website/public/feature-examples-standalone.json \
+              || echo "::warning::standalone edition buckets failed (non-fatal)"
+          else
+            echo "no standalone baseline JSONL on disk — skipping standalone edition buckets"
+          fi
 
       - name: Push baseline artifacts to js2wasm-baselines repo
         # (#3344) Bound the git-over-SSH clone/push to the baselines repo. Without
@@ -2637,6 +2654,7 @@ jobs:
           node scripts/append-run-history.mjs \
             --runs-dir /tmp/js2wasm-baselines/runs \
             --editions website/public/benchmarks/results/test262-editions.json \
+            --standalone-editions website/public/benchmarks/results/test262-standalone-editions.json \
             --standalone-report /tmp/js2wasm-baselines/test262-standalone-current.json \
             --sha "${{ github.sha }}" || echo "::warning::append-run-history failed (non-fatal)"
 

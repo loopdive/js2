@@ -5077,18 +5077,38 @@ console.log(instance.exports.run()); // &rarr; 55</pre
             if (strictToggle) tables.classList.toggle("strict-only", strictToggle.checked);
             if (hostToggle) tables.classList.toggle("host-off", !hostToggle.checked);
             const hostEnabled = hostToggle ? hostToggle.checked : true;
+            // (#4362) Re-apply the per-row counts for the selected lane FIRST.
+            // Order is load-bearing: this rewrites every badge from the lane's
+            // dataset, so it must run BEFORE the host-only override below —
+            // otherwise it would immediately undo the `×` those rows need.
+            if (typeof window.__applyFeatureBadges === "function") {
+              window.__applyFeatureBadges(hostEnabled);
+            }
             hostRows.forEach((row) => {
               const badge = row.querySelector(".feat-badge");
               if (!(badge instanceof HTMLElement)) return;
               const origClass = badge.dataset.origClass || "";
               const origText = badge.dataset.origText || "";
               badge.className = "feat-badge";
+              // Set only the leading glyph text node so an injected
+              // `.feat-badge-pct` child survives (assigning `textContent`
+              // would delete it, dropping the row's percentage on every
+              // toggle).
+              const setGlyph = (text) => {
+                const first = badge.firstChild;
+                if (first && first.nodeType === Node.TEXT_NODE) first.textContent = text;
+                else badge.insertBefore(document.createTextNode(text), badge.firstChild);
+              };
               if (hostEnabled) {
                 if (origClass) badge.classList.add(...origClass.split(/\s+/).filter(Boolean));
-                badge.textContent = origText;
+                setGlyph(origText);
               } else {
                 badge.classList.add("none");
-                badge.textContent = "×";
+                setGlyph("×");
+                // A host-only row is unsupported in standalone: its pass-rate
+                // chip/percentage describe the JS-host lane and would read as
+                // if the `×` row still scored.
+                badge.querySelector(".feat-badge-pct")?.remove();
               }
             });
             if (typeof window.updateEditionPassBars === "function") {
@@ -5283,13 +5303,22 @@ console.log(instance.exports.run()); // &rarr; 55</pre
               total: run?.total,
               timestampRaw: run?.timestamp,
             }));
-          } else if (!hostEnabled) {
-            // Specific ES edition + standalone: no per-edition standalone
-            // history exists yet (only an overall standalone series) — leave
-            // the chart hidden rather than substitute a misleading series.
-            points = null;
           } else {
-            const runs = await fetchJsonSafe("./benchmarks/results/runs/editions-index.json");
+            // (#4362) Specific ES edition. The standalone lane now has its own
+            // per-edition trend series (`standalone-editions-index.json`,
+            // appended by scripts/append-run-history.mjs from the host-free
+            // edition buckets), so the chart tracks the toggle instead of
+            // hiding itself. It is deliberately NOT backfilled — no historical
+            // standalone edition snapshots exist — so the series starts short
+            // and `buildHistoryPoints`'s own `< 2 points` guard keeps the chart
+            // hidden until it has something real to plot. Never fall back to
+            // the host series here: a host curve under a "standalone" label is
+            // exactly the kind of quietly-wrong number this issue is fixing.
+            const runs = await fetchJsonSafe(
+              hostEnabled
+                ? "./benchmarks/results/runs/editions-index.json"
+                : "./benchmarks/results/runs/standalone-editions-index.json",
+            );
             const label = normalizeEditionLabel(scope);
             points = buildHistoryPoints(runs, (run) => {
               if (!Array.isArray(run?.editions)) return null;
@@ -5332,12 +5361,22 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           ? date.getUTCFullYear()
           : date.getUTCFullYear() - 1;
       };
+      // (#4362) Keyed by lane: the JS-host toggle picks which edition buckets
+      // back the feature-list pass bars. This used to be a single memoised
+      // fetch of the host file, so flipping the toggle re-ran the render over
+      // identical numbers and the bars never moved. Each lane memoises
+      // separately (one fetch per lane, not per toggle).
       const loadEditionBuckets = (() => {
-        let pending;
-        return async () => {
+        const pendingByLane = new Map();
+        return async (hostEnabled = true) => {
+          const lane = hostEnabled ? "host" : "standalone";
+          let pending = pendingByLane.get(lane);
           if (!pending) {
             pending = (async () => {
-              const editionsResp = await fetch("./benchmarks/results/test262-editions.json");
+              const url = hostEnabled
+                ? "./benchmarks/results/test262-editions.json"
+                : "./benchmarks/results/test262-standalone-editions.json";
+              const editionsResp = await fetch(url);
               if (!editionsResp.ok) throw new Error("edition data unavailable");
               const editions = await editionsResp.json();
               if (!Array.isArray(editions) || editions.length === 0) {
@@ -5360,6 +5399,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
                 proposalBucket,
               };
             })();
+            pendingByLane.set(lane, pending);
           }
           return pending;
         };
@@ -6092,8 +6132,11 @@ console.log(instance.exports.run()); // &rarr; 55</pre
         };
 
         const updateEditionPassBars = async () => {
+          // (#4362) Read the lane the JS-host toggle currently selects, so the
+          // per-edition bars show standalone numbers in standalone mode.
+          const hostEnabled = hostToggle ? hostToggle.checked : true;
           try {
-            const { editionList, editionMap, proposalBucket } = await loadEditionBuckets();
+            const { editionList, editionMap, proposalBucket } = await loadEditionBuckets(hostEnabled);
             const panel = document.querySelector(".feat-panel");
             if (panel instanceof HTMLElement) {
               editionList.forEach((edition) => {
@@ -6228,10 +6271,10 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           return (s || "").replace(/\s+/g, " ").trim();
         };
 
-        const fetchFeatures = async () => {
-          for (const url of ["./feature-examples.json", "/feature-examples.json", "../feature-examples.json"]) {
+        const fetchFeaturesFrom = async (file) => {
+          for (const base of ["./", "/", "../"]) {
             try {
-              const resp = await fetch(url);
+              const resp = await fetch(`${base}${file}`);
               if (!resp.ok) continue;
               const payload = await resp.json();
               if (Array.isArray(payload?.features) && payload.features.length > 0) return payload.features;
@@ -6241,6 +6284,15 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           }
           return null;
         };
+        const fetchFeatures = () => fetchFeaturesFrom("feature-examples.json");
+        // (#4362) Host-free twin, written by generate-editions.ts's
+        // `--feature-examples-out` on the standalone lane. Absent on an older
+        // deploy (or a local build that never ran the standalone pass) — in
+        // that case the standalone view keeps showing the host numbers, which
+        // is the pre-#4362 behaviour and strictly better than blanking the
+        // rows. `standaloneFeatures === null` is therefore a soft degrade, not
+        // an error.
+        const fetchStandaloneFeatures = () => fetchFeaturesFrom("feature-examples-standalone.json");
 
         const toneFor = (ratio) => {
           if (ratio >= 0.9) return "pass";
@@ -6254,130 +6306,188 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           fail: { cls: "none", glyph: "✗" },
         };
 
-        const features = await fetchFeatures();
+        const [features, standaloneFeatures] = await Promise.all([fetchFeatures(), fetchStandaloneFeatures()]);
         if (!features) return;
-        const byName = new Map();
-        for (const f of features) {
-          if (typeof f?.name === "string") byName.set(decodeEntities(f.name), f);
-        }
+        const indexByName = (list) => {
+          const map = new Map();
+          for (const f of list ?? []) {
+            if (typeof f?.name === "string") map.set(decodeEntities(f.name), f);
+          }
+          return map;
+        };
+        const hostByName = indexByName(features);
+        const standaloneByName = standaloneFeatures ? indexByName(standaloneFeatures) : null;
 
-        const rows = document.querySelectorAll(".feat-row");
-        for (const row of rows) {
-          const nameEl = row.querySelector(".feat-name");
-          if (!nameEl) continue;
-          const name = decodeEntities(nameEl.textContent);
-          const feature = byName.get(name);
-          if (!feature) continue;
+        // (#4362) Applying the counts is now a re-runnable function keyed by
+        // lane, not a one-shot pass. The JS-host toggle calls it, so the
+        // per-row badge / "N / M" chip / "NN%" all switch datasets instead of
+        // staying pinned to the js-host numbers they were hydrated with.
+        const applyFeatureBadges = (hostEnabled = true) => {
+          const byName = !hostEnabled && standaloneByName ? standaloneByName : hostByName;
+          applyRows(byName);
+          // Re-cache AFTER the rewrite so the host toggle restores this lane's
+          // derived badge, not the previous lane's.
+          if (typeof window.__recacheHostBadges === "function") window.__recacheHostBadges();
+        };
 
-          const paths = Array.isArray(feature.testCategories) ? feature.testCategories.filter(Boolean) : [];
-          const pass = Number(feature.passCount ?? 0);
-          const total = Number(feature.totalCount ?? 0);
-          const badge = row.querySelector(".feat-badge");
+        function applyRows(byName) {
+          const rows = document.querySelectorAll(".feat-row");
+          for (const row of rows) {
+            const nameEl = row.querySelector(".feat-name");
+            if (!nameEl) continue;
+            // (#4362) Cache the row's ORIGINAL name on first pass. A later pass
+            // must not re-read `nameEl.textContent`, because the first pass
+            // appends the "N / M" chip INTO this element — so on re-apply the
+            // text would read "eval() 294 / 357" and match nothing, silently
+            // leaving every row frozen on the lane it first hydrated with.
+            if (row.dataset.featName === undefined) row.dataset.featName = decodeEntities(nameEl.textContent);
+            const name = row.dataset.featName;
+            const feature = byName.get(name);
+            if (!feature) continue;
 
-          if (total <= 0) {
-            // No measurable test262 data — flag the row so the gap is visible
-            // (and auditable) rather than a misleading auto-derived status.
-            row.dataset.noT262Data = "";
-            if (badge && paths.length === 0) row.dataset.noT262Category = "";
-            // A `partial` (⚠) badge with no measurable data reads as a broken
-            // or still-loading warning (the yellow sign with no percentage).
-            // Downgrade it to a neutral "not individually measured" mark.
-            // Author-set ✓ (full) and ✗ (none) badges are unambiguous and stay.
-            if (badge instanceof HTMLElement && badge.classList.contains("partial")) {
-              badge.classList.remove("partial");
-              badge.classList.add("nodata");
-              badge.dataset.glyph = "–";
-              const firstChild = badge.firstChild;
-              if (firstChild && firstChild.nodeType === Node.TEXT_NODE) {
-                firstChild.textContent = "–";
-              } else {
-                badge.insertBefore(document.createTextNode("–"), badge.firstChild);
+            const paths = Array.isArray(feature.testCategories) ? feature.testCategories.filter(Boolean) : [];
+            const pass = Number(feature.passCount ?? 0);
+            const total = Number(feature.totalCount ?? 0);
+            const badge = row.querySelector(".feat-badge");
+
+            if (total <= 0) {
+              // No measurable test262 data — flag the row so the gap is visible
+              // (and auditable) rather than a misleading auto-derived status.
+              row.dataset.noT262Data = "";
+              if (badge && paths.length === 0) row.dataset.noT262Category = "";
+              // A `partial` (⚠) badge with no measurable data reads as a broken
+              // or still-loading warning (the yellow sign with no percentage).
+              // Downgrade it to a neutral "not individually measured" mark.
+              // Author-set ✓ (full) and ✗ (none) badges are unambiguous and stay.
+              if (badge instanceof HTMLElement && badge.classList.contains("partial")) {
+                badge.classList.remove("partial");
+                badge.classList.add("nodata");
+                badge.dataset.glyph = "–";
+                const firstChild = badge.firstChild;
+                if (firstChild && firstChild.nodeType === Node.TEXT_NODE) {
+                  firstChild.textContent = "–";
+                } else {
+                  badge.insertBefore(document.createTextNode("–"), badge.firstChild);
+                }
+                badge.title = "No isolated test262 subset scores this feature individually.";
               }
-              badge.title = "No isolated test262 subset scores this feature individually.";
-            }
-          } else {
-            const ratio = pass / total;
-            const tone = toneFor(ratio);
-            const { cls, glyph } = BADGE[tone];
+              // (#4362) Drop any chip/percentage left by the other lane — a row
+              // that is unmeasured here must not keep showing the other lane's
+              // "N / M".
+              nameEl.querySelector(".feat-row-counts")?.remove();
+              badge?.querySelector(".feat-badge-pct")?.remove();
+            } else {
+              delete row.dataset.noT262Data;
+              badge?.classList.remove("nodata");
+              const ratio = pass / total;
+              const tone = toneFor(ratio);
+              const { cls, glyph } = BADGE[tone];
 
-            // Derive the badge state from the live pass rate.
-            if (badge instanceof HTMLElement) {
-              badge.classList.remove("full", "partial", "none");
-              badge.classList.add(cls);
-              // Preserve any already-injected `.feat-badge-pct` child by
-              // setting only the leading text node (the glyph). Track the
-              // glyph in a dataset field so the host toggle restores it.
-              badge.dataset.glyph = glyph;
-              const firstChild = badge.firstChild;
-              if (firstChild && firstChild.nodeType === Node.TEXT_NODE) {
-                firstChild.textContent = glyph;
-              } else {
-                badge.insertBefore(document.createTextNode(glyph), badge.firstChild);
+              // Derive the badge state from the live pass rate.
+              if (badge instanceof HTMLElement) {
+                badge.classList.remove("full", "partial", "none");
+                badge.classList.add(cls);
+                // Preserve any already-injected `.feat-badge-pct` child by
+                // setting only the leading text node (the glyph). Track the
+                // glyph in a dataset field so the host toggle restores it.
+                badge.dataset.glyph = glyph;
+                const firstChild = badge.firstChild;
+                if (firstChild && firstChild.nodeType === Node.TEXT_NODE) {
+                  firstChild.textContent = glyph;
+                } else {
+                  badge.insertBefore(document.createTextNode(glyph), badge.firstChild);
+                }
+                badge.title = `Live test262 pass rate: ${pass}/${total} (${Math.round(ratio * 100)}%)`;
               }
-              badge.title = `Live test262 pass rate: ${pass}/${total} (${Math.round(ratio * 100)}%)`;
-            }
 
-            // Pass-count chip next to the feature name (within the grid cell).
-            if (!nameEl.querySelector(".feat-row-counts")) {
-              const span = document.createElement("span");
-              span.className = "feat-row-counts feature-test-count";
+              // Pass-count chip next to the feature name (within the grid cell).
+              // (#4362) Create-or-UPDATE: this used to bail whenever the chip
+              // already existed, which is correct for a one-shot hydration and
+              // wrong for a re-appliable one — the toggle would swap the badge
+              // while the chip kept the other lane's numbers.
+              let span = nameEl.querySelector(".feat-row-counts");
+              if (!span) {
+                span = document.createElement("span");
+                span.className = "feat-row-counts feature-test-count";
+                nameEl.appendChild(span);
+              }
               span.textContent = `${pass} / ${total}`;
               span.dataset.tone = tone;
-              nameEl.appendChild(span);
-            }
 
-            // Explicit `NN%` under the badge glyph when below 95% — gives an
-            // at-a-glance "not everything passes yet" signal even on green rows.
-            if (badge && ratio < 0.95 && !badge.querySelector(".feat-badge-pct")) {
-              const pct = Math.round(ratio * 100);
-              const pctEl = document.createElement("span");
-              pctEl.className = "feat-badge-pct";
-              pctEl.dataset.tone = tone;
-              pctEl.textContent = `${pct}%`;
-              pctEl.title = `Live test262 pass rate for ${name}: ${pass}/${total} (${pct}%)`;
-              badge.appendChild(pctEl);
-            }
-          }
-
-          // #1327 / #1583 — deep-link into the per-feature report and the
-          // test262 source for every mapped feature (regardless of total).
-          const details = row.querySelector("details");
-          if (details && paths.length > 0) {
-            if (!details.querySelector(".feat-report-link")) {
-              const linkWrap = document.createElement("div");
-              linkWrap.className = "feat-report-link";
-              const a = document.createElement("a");
-              a.href = `./benchmarks/feature-report.html?feature=${encodeURIComponent(paths[0])}`;
-              a.textContent = total > 0 ? `View test results (${pass}/${total}) →` : "View test results →";
-              a.rel = "noopener";
-              linkWrap.appendChild(a);
-              details.appendChild(linkWrap);
-            }
-            if (!details.querySelector(".feat-test262-paths")) {
-              const wrap = document.createElement("div");
-              wrap.className = "feat-test262-paths";
-              const label = document.createElement("span");
-              label.className = "feat-test262-paths-label";
-              label.textContent = "test262 source:";
-              wrap.appendChild(label);
-              for (const p of paths) {
-                const a = document.createElement("a");
-                a.href = `https://github.com/tc39/test262/tree/main/test/${p}`;
-                a.target = "_blank";
-                a.rel = "noopener";
-                a.textContent = p;
-                wrap.appendChild(a);
+              // Explicit `NN%` under the badge glyph when below 95% — gives an
+              // at-a-glance "not everything passes yet" signal even on green rows.
+              // Removed again when the other lane is at/above the threshold, so a
+              // stale percentage can't outlive the dataset that produced it.
+              if (badge) {
+                let pctEl = badge.querySelector(".feat-badge-pct");
+                if (ratio < 0.95) {
+                  const pct = Math.round(ratio * 100);
+                  if (!pctEl) {
+                    pctEl = document.createElement("span");
+                    pctEl.className = "feat-badge-pct";
+                    badge.appendChild(pctEl);
+                  }
+                  pctEl.dataset.tone = tone;
+                  pctEl.textContent = `${pct}%`;
+                  pctEl.title = `Live test262 pass rate for ${name}: ${pass}/${total} (${pct}%)`;
+                } else if (pctEl) {
+                  pctEl.remove();
+                }
               }
-              details.appendChild(wrap);
+            }
+
+            // #1327 / #1583 — deep-link into the per-feature report and the
+            // test262 source for every mapped feature (regardless of total).
+            const details = row.querySelector("details");
+            if (details && paths.length > 0) {
+              let linkWrap = details.querySelector(".feat-report-link");
+              if (!linkWrap) {
+                linkWrap = document.createElement("div");
+                linkWrap.className = "feat-report-link";
+                const a = document.createElement("a");
+                a.href = `./benchmarks/feature-report.html?feature=${encodeURIComponent(paths[0])}`;
+                a.rel = "noopener";
+                linkWrap.appendChild(a);
+                details.appendChild(linkWrap);
+              }
+              // (#4362) Refresh the count in the link label on every apply, so it
+              // agrees with the chip rather than keeping the first lane's numbers.
+              const reportLink = linkWrap.querySelector("a");
+              if (reportLink) {
+                reportLink.textContent = total > 0 ? `View test results (${pass}/${total}) →` : "View test results →";
+              }
+              if (!details.querySelector(".feat-test262-paths")) {
+                const wrap = document.createElement("div");
+                wrap.className = "feat-test262-paths";
+                const label = document.createElement("span");
+                label.className = "feat-test262-paths-label";
+                label.textContent = "test262 source:";
+                wrap.appendChild(label);
+                for (const p of paths) {
+                  const a = document.createElement("a");
+                  a.href = `https://github.com/tc39/test262/tree/main/test/${p}`;
+                  a.target = "_blank";
+                  a.rel = "noopener";
+                  a.textContent = p;
+                  wrap.appendChild(a);
+                }
+                details.appendChild(wrap);
+              }
             }
           }
         }
 
+        // Expose BEFORE the first apply so a toggle that fires mid-hydration
+        // still finds it.
+        window.__applyFeatureBadges = applyFeatureBadges;
+        window.__hasStandaloneFeatureData = standaloneByName != null;
+
         // The host-support toggle cached each host row's *static* badge
-        // class/glyph on init; re-cache now that the badges reflect the
-        // live data so toggling "JS host" off/on restores the derived
-        // state, not the stale static markup.
-        if (typeof window.__recacheHostBadges === "function") window.__recacheHostBadges();
+        // class/glyph on init; the apply re-caches once the badges reflect the
+        // live data, so toggling "JS host" off/on restores the derived state,
+        // not the stale static markup.
+        const hostToggleEl = document.getElementById("host-support-toggle");
+        applyFeatureBadges(hostToggleEl ? hostToggleEl.checked : true);
       })();
 
       (async function updateHowItWorksSizes() {
