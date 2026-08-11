@@ -4,7 +4,7 @@ title: "IR-only R3: compile-once classes, members, and closures"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-08-09
+updated: 2026-08-12
 priority: critical
 horizon: xl
 complexity: XL
@@ -628,6 +628,64 @@ The resumable production branch is `codex/3522-builtins-retirement` in
 `/private/tmp/ts2wasm-3522-builtins-retirement`. The dirty root checkout is
 outside it and remains untouched. Publish this branch as one ready PR, freeze
 it once queued, and run full Test262 only through the merge queue.
+
+### Class-to-free cross-owner checkpoint (2026-08-12)
+
+The next serial R3 slice is implemented locally on
+`codex/3522-general-classes-retirement` in
+`/private/tmp/ts2wasm-3522-general-classes-retirement`, stacked on the ready
+Calendar retirement PR #4395. Do not publish or rebase this branch until #4395
+lands; it remains the only active IR production PR.
+
+The old selector deliberately rejected every class member that called a
+top-level free function even when both bodies had exact Program ABI identities
+and were otherwise preparation-safe. R2 also closed only the free-function
+candidate set, so the free callee was withdrawn because its class caller was
+outside that set. The slice removes that obsolete family barrier and runs one
+bidirectional call-ownership fixed point over the free-function and eligible
+class-member candidates together. If either endpoint is unprepared, both still
+withdraw before body emission; otherwise the existing combined dependency
+sealer and exact AST-site call plans own the edge.
+
+An exact `Counter.next -> increment` fixture measures the improvement. Before
+the slice, `increment`, `Counter_next`, and `run` emitted legacy bodies while
+`Counter_new` was already compile-once (**3 -> 0 legacy bodies across four
+terminals**). After the slice, all four terminals report `direct=0, IR=1` on
+both WasmGC and standalone. A direct-class-body poison on `Counter_next`
+remains green, proving the old method emitter is not entered.
+
+Optimization parity is explicit: the final IR still applies inline-small to
+`increment`, so `Counter_next` contains the direct `f64.const 1; f64.add`
+shape with no direct call, `call_ref`, or `call_indirect`. Because the final
+post-pass IR has no callee edge after inlining, the independently complete
+callee may seal separately while the constructor, method, and exported caller
+share their class-layout component. The existing selector-rejected default-
+parameter constructor remains a typed direct negative control. The same test
+file now records the already-landed Algorithms component as zero legacy bodies
+instead of preserving its obsolete pre-#3523 six-body snapshot.
+
+The exact pre/post artifact comparison strengthens that parity claim. For the
+same fixture, target, source name, and unoptimized compiler options, the
+`Counter_next` WAT body hash is unchanged in both backends:
+
+| Target | Before | After | Delta | `Counter_next` WAT |
+| --- | ---: | ---: | ---: | --- |
+| WasmGC | 1,068 bytes | 972 bytes | -96 bytes (-9.0%) | identical SHA-256 `6935d4c2...33446` |
+| standalone | 46,283 bytes | 21,286 bytes | -24,997 bytes (-54.0%) | identical SHA-256 `08c8a32e...2b2d` |
+
+The size decrease is the removed legacy-body/provider closure, not a weakened
+hot path: both final method bodies retain the same typed struct read and direct
+`f64.const 1; f64.add; return` sequence. The full focused R2/R3 matrix passes
+**96/96**, alongside typecheck, formatting, IR-only, fallback, optimization-
+retirement, issue-integrity, LOC-budget, and function-budget gates.
+
+The removed cross-owner exclusion is itself obsolete production policy and is
+deleted in this slice. General direct free-function and class body emitters
+still have unsupported consumers (unsafe/conditional super, externref-backed
+classes, forward class ABIs, nested executable owners, and dynamic member
+families), so deleting those shared implementations here would be premature.
+Those families remain the next R3 retirement work before generic R4/R5 can be
+claimed complete.
 
 ## Exhaustive source-unit census
 

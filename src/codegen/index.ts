@@ -169,7 +169,7 @@ import {
   computePreparedInheritedIrFirstSkipUnitIds,
   finalizeR3PreparedOwnerPopulation,
   prepareIrBodies,
-  selectR2PreparedFreeFunctions,
+  selectR2PreparedOwnerComponents,
   selectR3PreparedPromiseDelayFunctions,
   selectPreparedClassMemberUnitIds,
   type PreparedIrClassMemberBodies,
@@ -3712,19 +3712,6 @@ function planIrFirstBodyRouting(
     moduleInitPlanning,
     plan.identityPlan.identityContext,
   );
-  const preliminaryR2Names =
-    !hasLateFeaturePreparation || preliminaryModuleInit
-      ? selectR2PreparedFreeFunctions({
-          ctx,
-          sourceFile,
-          selectedLegacyNames: preliminarySelection.funcs,
-          baselineLegacyNames: new Set(),
-          identityPlan: plan.identityPlan,
-          claimsByUnitId: plan.functionClaimsByUnitId,
-          overridesByUnitId: plan.overrideMapByUnitId,
-          hostVoidCallbacks: plan.hostVoidCallbacks,
-        })
-      : new Set<string>();
   const selectedPreliminaryClassMemberUnitIds = selectPreparedClassMemberUnitIds(
     ctx,
     preliminarySelection,
@@ -3734,7 +3721,7 @@ function planIrFirstBodyRouting(
   // constructors. Only exact selected accessor UnitIds are an
   // independently sealed component that may prepare beside host/import/date/
   // promise work in the surrounding Test262 harness.
-  const preliminaryClassMemberUnitIds = new Set(
+  const eligiblePreliminaryClassMemberUnitIds = new Set(
     [...selectedPreliminaryClassMemberUnitIds].filter((unitId) => {
       if (!hasLateFeaturePreparation) return true;
       const terminal = plan.identityPlan.identityContext.terminalByUnitId.get(unitId);
@@ -3747,15 +3734,34 @@ function planIrFirstBodyRouting(
       );
     }),
   );
+  const preliminaryOwnerPopulation =
+    !hasLateFeaturePreparation || preliminaryModuleInit
+      ? selectR2PreparedOwnerComponents({
+          ctx,
+          sourceFile,
+          selectedLegacyNames: preliminarySelection.funcs,
+          baselineLegacyNames: new Set(),
+          classMemberUnitIds: eligiblePreliminaryClassMemberUnitIds,
+          identityPlan: plan.identityPlan,
+          claimsByUnitId: plan.functionClaimsByUnitId,
+          overridesByUnitId: plan.overrideMapByUnitId,
+          hostVoidCallbacks: plan.hostVoidCallbacks,
+        })
+      : {
+          freeFunctionNames: new Set<string>(),
+          classMemberUnitIds: eligiblePreliminaryClassMemberUnitIds,
+        };
+  const preliminaryR2Names = preliminaryOwnerPopulation.freeFunctionNames;
+  const preliminaryClassMemberUnitIds = preliminaryOwnerPopulation.classMemberUnitIds;
   // A class or module owner does not make an unrelated free-function component
   // direct-owned. Dependency-complete free functions, ordinary members,
   // accessors, and eligible source constructor `_init` bodies enter one sealed
   // preparation transaction. Constructor `_new` wrappers remain AST-free
   // support. The exact prepared Map initializer may join that transaction;
   // every other module-init shape remains direct.
-  // selectR2PreparedFreeFunctions closes candidates over exact local call
-  // edges, so any callable edge that crosses into one of those owners removes
-  // the complete affected free-function component before preparation.
+  // selectR2PreparedOwnerComponents closes candidates over exact local call
+  // edges, so any callable edge that crosses into those owners removes the
+  // complete affected free/class component before preparation.
   const hasPromiseDelayComponent = plan.promiseDelays.constructions.size > 0;
   const hasSuspendingAsyncComponent = plan.suspendingAsyncUnitIds.size > 0;
   const usePreparedRouting =

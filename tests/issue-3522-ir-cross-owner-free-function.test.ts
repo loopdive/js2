@@ -246,6 +246,73 @@ describe("#3522 prepared cross-owner retirement", () => {
     expect(tracedExports.traceStatus!()).toBe(900);
   });
 
+  it.each(["gc", "standalone"] as const)(
+    "prepares a class method across a free-function boundary without a legacy body in %s",
+    async (target) => {
+      const source = `
+      function increment(value: number): number { return value + 1; }
+      class Counter {
+        value: number;
+        constructor(value: number) { this.value = value; }
+        next(): number { return increment(this.value); }
+      }
+      export function run(): number { return new Counter(4).next(); }
+    `;
+      const previousClassPoison = process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY;
+      const previousFunctionPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+      let result: CompileResult;
+      try {
+        process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = "Counter_next";
+        process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "increment,run";
+        result = await compile(source, {
+          fileName: `cross-owner-class-to-free-${target}.ts`,
+          experimentalIR: true,
+          trackIrOutcomes: true,
+          emitWat: true,
+          target,
+        });
+      } finally {
+        if (previousClassPoison === undefined) {
+          Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
+        } else {
+          process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = previousClassPoison;
+        }
+        if (previousFunctionPoison === undefined) {
+          Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+        } else {
+          process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previousFunctionPoison;
+        }
+      }
+
+      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(WebAssembly.validate(result.binary)).toBe(true);
+      const terminals = [
+        outcome(result, "function", "increment"),
+        outcome(result, "class-member", "Counter_new"),
+        outcome(result, "class-member", "Counter_next"),
+        outcome(result, "function", "run"),
+      ];
+      for (const terminal of terminals) {
+        expect(terminal).toMatchObject({
+          kind: "emitted",
+          legacyBodyEmitted: false,
+          irBodyEmitted: true,
+          preparedComponentId: expect.stringMatching(/^prepared-component:/),
+        });
+      }
+      for (const terminal of terminals.slice(1)) {
+        expect(terminal.preparedComponentId).toBe(terminals[1]!.preparedComponentId);
+      }
+      const nextBody = watFunctionBody(result.wat, "Counter_next");
+      // Preserve the existing inline-small optimization: after inlining, the
+      // callee has no final dependency edge and may seal independently.
+      expect(watCallTargets(result.wat, nextBody)).toEqual([]);
+      expect(nextBody).toMatch(/f64\.const 1\s+f64\.add/);
+      expect(nextBody).not.toMatch(/(?:return_)?call_ref|call_indirect/);
+      expect((await instantiate(result)).run!()).toBe(5);
+    },
+  );
+
   it("keeps a selector-rejected class dependency and its free owner on the direct route", async () => {
     const source = `
       class UnsupportedConstructor {
@@ -366,7 +433,7 @@ describe("#3522 prepared cross-owner retirement", () => {
     }
   });
 
-  it("peels blocked algorithms owners while sealing the independent fibIter dependency", async () => {
+  it("keeps the retired Algorithms component free of legacy bodies", async () => {
     const result = await compile(ALGORITHMS_SOURCE, {
       fileName: "website/playground/examples/js/algorithms.ts",
       experimentalIR: true,
@@ -387,14 +454,7 @@ describe("#3522 prepared cross-owner retirement", () => {
       (result.irOutcomes ?? [])
         .filter((candidate) => candidate.legacyBodyEmitted)
         .map((candidate) => `${candidate.unitKind}:${candidate.displayName}`),
-    ).toEqual([
-      "function:fibMemo",
-      "function:binarySearch",
-      "function:quicksort",
-      "function:joinNums",
-      "function:main",
-      "module-init:<module-init>",
-    ]);
+    ).toEqual([]);
 
     const fibIter = watFunctionBody(result.wat, "fibIter");
     expect(fibIter.match(/\(loop/g) ?? []).toHaveLength(1);
