@@ -687,6 +687,55 @@ families), so deleting those shared implementations here would be premature.
 Those families remain the next R3 retirement work before generic R4/R5 can be
 claimed complete.
 
+### Next slice inventory: plain implicit constructors (2026-08-12)
+
+The shortest remaining R3 family is a top-level class with no explicit
+constructor, no instance initializer, and no heritage. Its implicit
+`<Class>_new` / `<Class>_init` pair already has exact structural
+`class-implicit-constructor` identity and Program ABI handles, but
+`compileClassBodiesInner` still installs both support bodies during the direct
+class pass. Prepared dependency sealing therefore cannot own a free caller
+whose `new Class()` expression targets that pair.
+
+The exact inventory fixture is:
+
+```ts
+function increment(value: number): number {
+  return value + 1;
+}
+class Box {
+  value(): number {
+    return increment(41);
+  }
+}
+export function run(): number {
+  return new Box().value();
+}
+```
+
+On the current checkpoint, `increment` and `Box_value` are compile-once while
+`run` still reports `legacyBodyEmitted:true, irBodyEmitted:true`. The implicit
+constructor is a support unit rather than a terminal body, so the measurable
+terminal improvement is **1 -> 0**, while the stronger structural result is
+that neither `Box_new` nor `Box_init` is installed by the direct class-body
+pass.
+
+The implementation must prepare the empty `_init(self) -> self` body and the
+existing allocation-plus-init `_new()` wrapper from the frozen class layout,
+then route their exact implicit-constructor support UnitId around direct class
+body emission. It must not weaken the first-slice boundary: implicit derived
+constructors that forward parent parameters/defaults, classes with instance
+field initializers, externref-backed parents, and nested/dynamic class owners
+remain typed direct controls until their complete semantics are represented.
+
+Required parity evidence is GC plus standalone execution returning `42`, a
+`Box_new` direct-body poison, zero legacy terminal bodies, and pre/post artifact
+comparison. The final `_new`, `_init`, `Box_value`, and `run` shapes must retain
+the direct typed struct allocation/read/call sequence with no ambient `this`,
+boxing, `call_ref`, or `call_indirect`. Delete only support-generation code that
+has no remaining consumer after those negative controls are accounted for;
+the shared implicit-derived and field-initializer machinery remains live.
+
 ## Exhaustive source-unit census
 
 Before preparing any body, walk the source once in lexical/source order and
