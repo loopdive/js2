@@ -78,7 +78,33 @@ one.** The fine gate is already net-aware — it waived the 84.4 % regression
 ratio on this very diff because "net conformance change is +41 … ratio is
 advisory on a net-positive diff" (#3457).
 
-## CORRECTION 2026-08-11 — Failure 1 does not reproduce on current main
+## RETRACTED — "Failure 1 does not reproduce" was WRONG
+
+**Retraction, 2026-08-11, same day.** The section below concluded the `oob`
+growth was a stale measurement. It is not. `merge_group` run `31456242513`,
+built on a `main` that already contained #4366, reproduced it again — the
+FOURTH consecutive run, and the first against a merged state that genuinely
+included current `main`. #4313 was re-parked by the bot.
+
+Do not act on the conclusion below. Its measurements are real and are kept
+because they remain unexplained, but the inference was wrong and the
+recommendation that followed ("do not declare a `trap-growth-allow`") is
+withdrawn. CI reproduces the reclassification consistently, so a
+`tests:`-bearing declaration will now VERIFY rather than risk the #3644 wedge.
+That is the unblocking path.
+
+**The genuinely open question**, which the retracted section stumbled into
+without recognising it: all four runs report *byte-identical* numbers — 221
+regressions, +52, `32533 → 32585`, signature `b9d2b71f0d9944b5`,
+`48735 baseline → 48735 new tests` — across two days and three different merged
+states. A PR-caused delta moves as `main` moves; this one has not.
+`diff-test262` itself flags that shape ("Same signature on another PR ⇒
+identical cluster ⇒ likely baseline drift") while the #2562 detector in the
+sibling job asserts the baseline is content-current. Those signals contradict
+each other, and the baseline is fetched from `js2wasm-baselines` rather than
+produced by the run. Establish which is right before trusting these numbers.
+
+## (retained, but see retraction above) local A/B measurements
 
 Measured by A/B on current `main` (`8b4c45b`) for
 `test/built-ins/Temporal/PlainDateTime/from/limits.js`:
