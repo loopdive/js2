@@ -154,6 +154,7 @@ function enterInlineIifeBindingScope(fctx: FunctionContext, names: ReadonlySet<s
       ? new Map(Array.from(fctx.annexBCancelled, ([name, ranges]) => [name, ranges.map((range) => ({ ...range }))]))
       : undefined,
     annexBOuterBindings: cloneNameSet(fctx.annexBOuterBindings),
+    annexBRepeatedOuterBindings: cloneNameSet(fctx.annexBRepeatedOuterBindings),
     moduleBindingShadowLocals: cloneNameMap(fctx.moduleBindingShadowLocals),
   };
 
@@ -179,6 +180,7 @@ function enterInlineIifeBindingScope(fctx: FunctionContext, names: ReadonlySet<s
     fctx.fnctorWidenedLocals?.delete(name);
     fctx.annexBCancelled?.delete(name);
     fctx.annexBOuterBindings?.delete(name);
+    fctx.annexBRepeatedOuterBindings?.delete(name);
     fctx.moduleBindingShadowLocals?.delete(name);
   }
 
@@ -220,6 +222,11 @@ function enterInlineIifeBindingScope(fctx: FunctionContext, names: ReadonlySet<s
     fctx.fnctorWidenedLocals = restoreNameSet(fctx.fnctorWidenedLocals, snapshot.fnctorWidenedLocals, names);
     fctx.annexBCancelled = restoreNameMap(fctx.annexBCancelled, snapshot.annexBCancelled, names);
     fctx.annexBOuterBindings = restoreNameSet(fctx.annexBOuterBindings, snapshot.annexBOuterBindings, names);
+    fctx.annexBRepeatedOuterBindings = restoreNameSet(
+      fctx.annexBRepeatedOuterBindings,
+      snapshot.annexBRepeatedOuterBindings,
+      names,
+    );
     fctx.moduleBindingShadowLocals = restoreNameMap(
       fctx.moduleBindingShadowLocals,
       snapshot.moduleBindingShadowLocals,

@@ -128,6 +128,14 @@ function localBindingShadowsCapturingFunction(
   return !!(callSignatures?.length || (declaration && ts.isParameter(declaration)));
 }
 
+function hasLiveFunctionBinding(ctx: CodegenContext, fctx: FunctionContext, name: string): boolean {
+  if (fctx.annexBRepeatedOuterBindings?.has(name)) return true;
+  const hasModuleBinding =
+    ctx.runtimeEvalGlobalFunctionBindings ||
+    (ctx.annexBModuleBindings?.has(name) === true && fctx.localMap.get(name) === undefined);
+  return hasModuleBinding && ctx.liveFuncBindingGlobals?.has(name) === true;
+}
+
 /**
  * (#742) Identifier-callee call dispatch — extracted verbatim from
  * compileCallExpression. Handles the cases where the call target is a bare
@@ -984,15 +992,13 @@ export function compileIdentifierCall(
     // interpreted closure. Such a binding must call its live externref global
     // through the generic apply bridge; a direct call to the declaration's
     // immutable funcIdx would ignore the replacement entirely.
-    // (#4182) A module-scope Annex B B.3.3.2 block-fn binding is live the same
-    // way: the value a call must invoke is whatever the last-evaluated
-    // declaration stored in the global (a direct funcMap call would pin the
-    // GDI winner forever). Locally-shadowed names keep their local resolution.
-    if (
-      (ctx.runtimeEvalGlobalFunctionBindings ||
-        (ctx.annexBModuleBindings?.has(funcName) === true && fctx.localMap.get(funcName) === undefined)) &&
-      ctx.liveFuncBindingGlobals?.has(funcName)
-    ) {
+    // (#4182/#2552) Annex B block-fn bindings are live the same way: the value
+    // a call must invoke is whatever declaration most recently evaluated. At
+    // module scope that value lives in a global; inside a function it lives in
+    // the flag-gated outer-binding local. A direct funcMap call would instead
+    // pin whichever declaration happened to compile last, even when its branch
+    // did not execute. Locally-shadowed names keep their local resolution.
+    if (hasLiveFunctionBinding(ctx, fctx, funcName)) {
       const liveCall = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
       if (liveCall !== null) return liveCall;
     }
