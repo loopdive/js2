@@ -18,6 +18,7 @@ import {
 import { compileArrayJoinExtern } from "../array-methods.js";
 import { tryCompileNativeDisposableStackAnyMethodCall } from "../disposable-runtime.js";
 import { noJsHost } from "../js-errors.js";
+import { emitRuntimeEvalCarrierUnwrapAny } from "../runtime-eval-callable.js";
 import { allocLocal } from "../context/locals.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
 import { addFuncType, addImport, localGlobalIdx, resolveWasmType } from "../index.js";
@@ -380,6 +381,10 @@ export function compileClosureCall(
       if (boxed.valType.kind === "externref") {
         fctx.body.push({ op: "any.convert_extern" });
       }
+      // (#4307) A direct-eval binding cell holds the runtime-eval carrier once
+      // the binding has crossed the seam. Unwrap it back to the closure it
+      // wraps, or the guard cast below yields null and the call traps.
+      emitRuntimeEvalCarrierUnwrapAny(ctx, fctx);
       emitGuardedRefCast(fctx, selfStructTypeIdx);
       fctx.body.push({ op: "local.set", index: castLocal });
       effectiveLocalIdx = castLocal;
@@ -389,6 +394,7 @@ export function compileClosureCall(
       const castLocal = allocLocal(fctx, `__closure_cast_${fctx.locals.length}`, castType);
       fctx.body.push({ op: "local.get", index: localIdx });
       fctx.body.push({ op: "any.convert_extern" });
+      emitRuntimeEvalCarrierUnwrapAny(ctx, fctx);
       // Guard cast to avoid illegal cast traps (#778)
       emitGuardedRefCast(fctx, selfStructTypeIdx);
       fctx.body.push({ op: "local.set", index: castLocal });
@@ -404,6 +410,7 @@ export function compileClosureCall(
       const castLocal = allocLocal(fctx, `__closure_cast_${fctx.locals.length}`, castType);
       fctx.body.push({ op: "global.get", index: moduleIdx });
       fctx.body.push({ op: "any.convert_extern" });
+      emitRuntimeEvalCarrierUnwrapAny(ctx, fctx);
       emitGuardedRefCast(fctx, selfStructTypeIdx);
       fctx.body.push({ op: "local.set", index: castLocal });
       effectiveLocalIdx = castLocal;
