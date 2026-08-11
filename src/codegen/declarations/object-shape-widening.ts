@@ -527,6 +527,127 @@ function recordOpenObjectConsumerTypes(
   if (sig) ctx.objectHashConsumerTypes.add(checker.getReturnTypeOfSignature(sig));
 }
 
+function ordinaryToPrimitivePropertyName(property: ts.ObjectLiteralElementLike): string | undefined {
+  if (!ts.isPropertyAssignment(property)) return undefined;
+  const name = property.name;
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) return name.text;
+  return undefined;
+}
+
+function isOrdinaryToPrimitiveLiteralCandidate(literal: ts.ObjectLiteralExpression): boolean {
+  if (literal.properties.length === 0) return false;
+  let hasMethod = false;
+  for (const property of literal.properties) {
+    const name = ordinaryToPrimitivePropertyName(property);
+    if (name === undefined) return false;
+    if (name !== "valueOf" && name !== "toString") return false;
+    const initializer = (property as ts.PropertyAssignment).initializer;
+    if (!ts.isFunctionExpression(initializer) || initializer.name || initializer.parameters.length !== 0) return false;
+    hasMethod = true;
+  }
+  return hasMethod;
+}
+
+function isNumericOrdinaryToPrimitiveUse(identifier: ts.Identifier): boolean {
+  const parent = identifier.parent;
+  if (!parent) return false;
+  if (ts.isPrefixUnaryExpression(parent) && parent.operand === identifier) {
+    return (
+      parent.operator === ts.SyntaxKind.PlusToken ||
+      parent.operator === ts.SyntaxKind.MinusToken ||
+      parent.operator === ts.SyntaxKind.TildeToken
+    );
+  }
+  if ((ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) && parent.operand === identifier) {
+    return parent.operator === ts.SyntaxKind.PlusPlusToken || parent.operator === ts.SyntaxKind.MinusMinusToken;
+  }
+  if (!ts.isBinaryExpression(parent) || (parent.left !== identifier && parent.right !== identifier)) return false;
+  switch (parent.operatorToken.kind) {
+    case ts.SyntaxKind.PlusToken:
+    case ts.SyntaxKind.MinusToken:
+    case ts.SyntaxKind.AsteriskToken:
+    case ts.SyntaxKind.SlashToken:
+    case ts.SyntaxKind.PercentToken:
+    case ts.SyntaxKind.LessThanLessThanToken:
+    case ts.SyntaxKind.GreaterThanGreaterThanToken:
+    case ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken:
+    case ts.SyntaxKind.AmpersandToken:
+    case ts.SyntaxKind.BarToken:
+    case ts.SyntaxKind.CaretToken:
+    case ts.SyntaxKind.LessThanToken:
+    case ts.SyntaxKind.LessThanEqualsToken:
+    case ts.SyntaxKind.GreaterThanToken:
+    case ts.SyntaxKind.GreaterThanEqualsToken:
+    case ts.SyntaxKind.EqualsEqualsToken:
+    case ts.SyntaxKind.ExclamationEqualsToken:
+      return true;
+    default:
+      return false;
+  }
+}
+
+/**
+ * #4208 — find one exact ES3/ES5 idiom before local-slot allocation:
+ *
+ *   var object = { valueOf: function () { ... } };
+ *   ... ToNumber(object) ...
+ *   var object = { toString: function () { ... } };
+ *
+ * Every `var` declaration denotes the same function-scoped binding, but the
+ * old representation selected a different closed anonymous struct at each
+ * initializer. The later guarded store therefore produced null. Keep this
+ * bounded to checker-identical bindings, compatible method-only literals, and
+ * an observed coercive use, then pin every declaration/literal to the open
+ * `$Object` representation used by the canonical OrdinaryToPrimitive runtime.
+ */
+function collectRepeatedOrdinaryToPrimitiveObjects(
+  ctx: CodegenContext,
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+): void {
+  const declarationsBySymbol = new Map<ts.Symbol, ts.VariableDeclaration[]>();
+  const coerciveSymbols = new Set<ts.Symbol>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+      const list = node.parent;
+      const isVar =
+        ts.isVariableDeclarationList(list) &&
+        (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing)) === 0;
+      const symbol = isVar ? checker.getSymbolAtLocation(node.name) : undefined;
+      if (symbol) {
+        const declarations = declarationsBySymbol.get(symbol) ?? [];
+        declarations.push(node);
+        declarationsBySymbol.set(symbol, declarations);
+      }
+    } else if (ts.isIdentifier(node) && isNumericOrdinaryToPrimitiveUse(node)) {
+      const symbol = checker.getSymbolAtLocation(node);
+      if (symbol) coerciveSymbols.add(symbol);
+    }
+    forEachChild(node, visit);
+  };
+  visit(sourceFile);
+
+  for (const [symbol, declarations] of declarationsBySymbol) {
+    if (declarations.length < 2 || !coerciveSymbols.has(symbol)) continue;
+    if (
+      declarations.some(
+        (declaration) =>
+          !declaration.initializer ||
+          !ts.isObjectLiteralExpression(declaration.initializer) ||
+          !isOrdinaryToPrimitiveLiteralCandidate(declaration.initializer),
+      )
+    ) {
+      continue;
+    }
+    for (const declaration of declarations) {
+      const literal = declaration.initializer as ts.ObjectLiteralExpression;
+      ctx.ordinaryToPrimitiveObjectDeclarations.add(declaration);
+      ctx.ordinaryToPrimitiveObjectLiterals.add(literal);
+      recordOpenObjectConsumerTypes(ctx, checker, declaration, (declaration.name as ts.Identifier).text);
+    }
+  }
+}
+
 /**
  * (#2837) Detection pre-pass: mark variables initialized by a NON-EMPTY object
  * literal that later receive an OUT-OF-SHAPE property write, so `compileObjectLiteral`
@@ -559,6 +680,7 @@ export function collectGrowableObjectLiterals(
   checker: ts.TypeChecker,
   sourceFile: ts.SourceFile,
 ): void {
+  collectRepeatedOrdinaryToPrimitiveObjects(ctx, checker, sourceFile);
   // Emergency rollback for the closed-outer-table refinement below. Keeping
   // this narrow switch makes the performance claim directly A/B measurable:
   // `0` restores the old "every depth-2 write opens the root" policy.

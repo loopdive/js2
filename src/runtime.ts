@@ -2059,6 +2059,10 @@ function _maybeWrapCallable(
           const wrapped = _wrapWasmClosure(val, arity, callbackState);
           return wrapped ?? val;
         }
+        // The exact runtime classifier is authoritative. Falling through to
+        // the opaque-struct heuristic would turn an ordinary data struct into
+        // a callable merely because it is an object.
+        return val;
       } catch {
         // Fall through to the older opaque-struct heuristic below.
       }
@@ -9675,7 +9679,13 @@ assert._isSameValue = isSameValue;
           // struct — `p1.then = fn; Promise.race([p1])` traps with
           // "object is not a function". Wrap it via __call_fn_<arity> so
           // host-driven invocation reaches the closure body.
-          let wrappedVal = _maybeWrapCallableUnknownArity(val, callbackState);
+          // OrdinaryToPrimitive methods have a fixed zero-argument call shape.
+          // Prefer the exact dispatcher so a method-only object literal does
+          // not depend on the broader unknown-arity export family being live.
+          let wrappedVal =
+            key === "valueOf" || key === "toString"
+              ? _maybeWrapCallable(val, 0, callbackState)
+              : _maybeWrapCallableUnknownArity(val, callbackState);
           // (#3051) `regexp.exec = fn` override: the native RegExp protocol
           // (@@replace/@@split/@@match/@@search) calls this and reads the
           // returned match-result object via Get + ToXxx. A compiled result
@@ -9699,7 +9709,10 @@ assert._isSameValue = isSameValue;
       // throw catchable by the user's try/catch.
       if (name === "__extern_set_strict")
         return (obj: any, key: any, val: any) => {
-          let wrappedVal = _maybeWrapCallableUnknownArity(val, callbackState);
+          let wrappedVal =
+            key === "valueOf" || key === "toString"
+              ? _maybeWrapCallable(val, 0, callbackState)
+              : _maybeWrapCallableUnknownArity(val, callbackState);
           // (#3051) See __extern_set: wrap a `regexp.exec` override's return so
           // the native RegExp protocol can read the compiled result object.
           // (Slice 3) Widened to any object receiver — see __extern_set.
@@ -15398,7 +15411,10 @@ assert._isSameValue = isSameValue;
       return (obj: any, key: any, val: any) => {
         // (#860) Wrap closure-as-value before storing — see __extern_set
         // binding above. Mirrors the by-name path.
-        let wrappedVal = _maybeWrapCallableUnknownArity(val, callbackState);
+        let wrappedVal =
+          key === "valueOf" || key === "toString"
+            ? _maybeWrapCallable(val, 0, callbackState)
+            : _maybeWrapCallableUnknownArity(val, callbackState);
         // (#3051) `regexp.exec = fn` override — wrap the return so the native
         // RegExp protocol (@@replace/@@split/@@match/@@search) can read the
         // compiled match-result object (a WasmGC struct) via Get + ToXxx.
@@ -15414,7 +15430,10 @@ assert._isSameValue = isSameValue;
       // `obj.k = v` accessor writes here (ESM is always strict); the throw is
       // catchable in the user's try/catch via the host-import exception bridge.
       return (obj: any, key: any, val: any) => {
-        let wrappedVal = _maybeWrapCallableUnknownArity(val, callbackState);
+        let wrappedVal =
+          key === "valueOf" || key === "toString"
+            ? _maybeWrapCallable(val, 0, callbackState)
+            : _maybeWrapCallableUnknownArity(val, callbackState);
         // (#3051) See extern_set — wrap a `regexp.exec` override's return so the
         // native RegExp protocol can read the compiled result object.
         if (typeof wrappedVal === "function" && key === "exec" && obj instanceof RegExp) {

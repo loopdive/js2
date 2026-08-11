@@ -7210,6 +7210,38 @@ function isPhase1ObjectLiteral(
   // overrides pass would skip them when shape resolution failed.
   if (expr.properties.length === 0) return shapeNo("objectlit-empty", expr);
 
+  // Function-valued data properties have no general closed-object IR
+  // representation. The one certified exception is the exact #4208
+  // OrdinaryToPrimitive shape; require EVERY property to belong to it so a
+  // mixed `{ valueOf: function... , data: 1 }` literal is rejected before
+  // claim instead of claimed and demoted by lowerObjectLiteral.
+  if (
+    expr.properties.some(
+      (property) => ts.isPropertyAssignment(property) && ts.isFunctionExpression(property.initializer),
+    )
+  ) {
+    const seenMethods = new Set<string>();
+    for (const property of expr.properties) {
+      if (!ts.isPropertyAssignment(property) || !ts.isFunctionExpression(property.initializer)) {
+        return shapeNo("objectlit-ordinary-to-primitive-mixed", property);
+      }
+      const name = phase1PropertyName(property.name);
+      if (
+        (name !== "valueOf" && name !== "toString") ||
+        seenMethods.has(name) ||
+        property.initializer.parameters.length !== 0 ||
+        (property.initializer.type?.kind !== ts.SyntaxKind.NumberKeyword &&
+          property.initializer.type?.kind !== ts.SyntaxKind.StringKeyword &&
+          property.initializer.type?.kind !== ts.SyntaxKind.BooleanKeyword) ||
+        !isPhase1ClosureLiteral(property.initializer, scope, localClasses)
+      ) {
+        return shapeNo("objectlit-ordinary-to-primitive-method", property.initializer);
+      }
+      seenMethods.add(name);
+    }
+    return true;
+  }
+
   const seen = new Set<string>();
   for (const prop of expr.properties) {
     if (ts.isPropertyAssignment(prop)) {
