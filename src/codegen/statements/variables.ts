@@ -2243,20 +2243,29 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       const boxedForInitStore = fctx.boxedCaptures?.get(name);
       if (boxedForInitStore) {
         const boxedForInit = boxedForInitStore;
+        // (#4368) The initializer itself may be what first captures `name`.
+        // In that case closure construction boxes the binding mid-expression
+        // and re-aims localMap[name] from the raw pre-hoisted value slot to the
+        // new ref-cell slot. `localIdx` was resolved before compiling the
+        // initializer, so using it here writes a struct value where the cell
+        // reference belongs and produces invalid Wasm for shapes such as
+        // `let n = { again: () => n }`. Resolve the live storage after the
+        // initializer, exactly as the ordinary assignment path does (#3128).
+        const boxedLocalIdx = fctx.localMap.get(name) ?? localIdx;
         // Coerce stack to value type if needed.
         if (!valTypesMatch(stackType, boxedForInit.valType)) {
           coerceType(ctx, fctx, stackType, boxedForInit.valType);
         }
         const tmpVal = allocLocal(fctx, `__box_init_tmp_${fctx.locals.length}`, boxedForInit.valType);
         fctx.body.push({ op: "local.set", index: tmpVal });
-        fctx.body.push({ op: "local.get", index: localIdx });
+        fctx.body.push({ op: "local.get", index: boxedLocalIdx });
         fctx.body.push({ op: "ref.is_null" });
         fctx.body.push({
           op: "if",
           blockType: { kind: "empty" },
           then: [],
           else: [
-            { op: "local.get", index: localIdx },
+            { op: "local.get", index: boxedLocalIdx },
             { op: "local.get", index: tmpVal },
             {
               op: "struct.set",
