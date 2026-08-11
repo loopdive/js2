@@ -18,10 +18,24 @@ goal: es5
 related: [3055, 4183, 4173, 2733, 3216, 3397, 4205, 4204]
 assignee: ttraenkler/codex-4208
 loc-budget-allow:
+  - src/codegen/context/types.ts
+  - src/codegen/declarations.ts
+  - src/codegen/declarations/object-shape-widening.ts
+  - src/codegen/index.ts
+  - src/codegen/literals.ts
+  - src/codegen/statements/variables.ts
+  - src/ir/integration.ts
   - src/ir/module-bindings.ts
   - src/ir/select.ts
   - src/codegen/binary-ops-typed-dispatch.ts
   - src/ir/from-ast.ts
+  - src/runtime.ts
+func-budget-allow:
+  - src/codegen/context/create-context.ts::createCodegenContext
+  - src/codegen/declarations.ts::collectDeclarations
+  - src/codegen/literals.ts::compileObjectLiteral
+  - src/codegen/statements/variables.ts::compileVariableStatement
+  - src/runtime.ts::resolveImport
 origin: "2026-08-07 W23 census of the ES5 standalone failing residue. #3055 covers only `any === any` on boxed numbers; nothing covers ToNumber/ToPrimitive in update, compound-assignment and relational operators."
 ---
 
@@ -504,3 +518,81 @@ Fresh whole-suite baselines contain 9,029 ES5 tests: standalone is 8,052 pass,
 51 compile-error. This change removes a verified ten-file update-expression
 slice from that residue; this issue remains open for the rest of S3–S7 rather
 than claiming the overall ES5 goal complete.
+
+---
+
+## S3/S7 first OrdinaryToPrimitive slice — 2026-08-11
+
+Continued from the ready #4377 head on `origin/main@6c1117f8767e9b43ab9eefa0bd0084bf9c980a7d`,
+fetched from the renamed canonical repository `loopdive/js2wasm` in the same
+isolated worktree.
+
+The first five S3/S7 crash cases shared a representation failure, not five
+operator bugs. Test262's wrapper repeatedly declares one function-scoped
+`var object` with different anonymous object shapes. Each declaration denotes
+the same JS binding, but legacy allocation selected a different closed WasmGC
+struct for every initializer; a later guarded assignment stored null when the
+shapes disagreed, and unary/bitwise coercion dereferenced it.
+
+The compatibility prepass now groups declarations by exact checker symbol and
+widens only the bounded shape where all repeated initializers are method-only
+`valueOf`/`toString` function literals and the binding has a coercive numeric
+use. Those exact declarations and literals share the open object carrier. The
+host bridge also treats its exact `__is_closure` classifier as authoritative
+and wraps OrdinaryToPrimitive methods with the zero-argument dispatcher before
+storing them.
+
+### IR ownership boundary
+
+The real Test262 wrapper is still deliberately legacy-owned: duplicate `var`
+bindings are outside the current IR declaration model, and its unannotated JS
+function expressions are outside the typed closure surface. It is therefore
+reported as a selector rejection rather than falsely counted as IR coverage.
+
+A focused typed source is genuinely IR-emitted in both lanes:
+
+```ts
+export function probe(): number {
+  const object = { valueOf: function (): number { return 1; } };
+  return +object;
+}
+```
+
+The selector admits only zero-argument, explicitly typed `valueOf`/`toString`
+function properties. From-AST lowering builds an open object through symbolic
+`__new_plain_object`/`__extern_set` calls, packs the closure through the
+canonical callable ABI, and lowers unary ToNumber as
+`__to_primitive(value, null)` followed by `__unbox_number`. Runtime providers
+are preregistered before Phase 3 for both host imports and the standalone native
+object runtime. Mixed method/data objects remain a pre-claim rejection.
+
+### Maintained-runner measurement
+
+Node 25.9.0, Test262 `b363f29d3c43c626dc852744ad64a0b48a003693`,
+maintained `pnpm run test:262` runner:
+
+| lane | before | after | after run id |
+| --- | ---: | ---: | --- |
+| host GC | 0 / 5 | **5 / 5** | `20260811-205948` |
+| standalone | 0 / 5 | **5 / 5** | `20260811-210129` |
+
+The five previously crashing files are:
+
+- `unary-plus/S11.4.6_A2.2_T1.js`
+- `unary-minus/S11.4.7_A2.2_T1.js`
+- `bitwise-not/S11.4.8_A2.2_T1.js`
+- `bitwise-not/S9.5_A3.1_T4.js`
+- `unsigned-right-shift/S9.6_A3.1_T4.js`
+
+### Verification
+
+- Focused host/standalone IR ownership, repeated-`var`, and selector-boundary
+  suite: **6 / 6**.
+- Related #4208 and object-method suites: **41 / 41**.
+- `pnpm run typecheck`: pass.
+- `pnpm run check:ir-fallbacks`: pass; no unintended, post-claim, or
+  module-level fallback increase.
+
+This is a five-file slice, not closure of S3/S7 or the ES5 goal. Relational,
+addition, abstract-equality, Date/function operands, and wider
+OrdinaryToPrimitive shapes remain to be measured and implemented.
