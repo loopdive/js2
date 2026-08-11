@@ -1,22 +1,69 @@
 ---
 id: 3978
-title: "lit-html's published bytes compile to an INVALID Wasm module — `global.set` targets an immutable global, and the `lit` npm-compat card hides it behind a four-line barrel"
+title: "lit: make the published implementation and upstream batches emit valid Wasm"
 status: ready
-sprint: current
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-11
 priority: high
-horizon: l
 feasibility: hard
 reasoning_effort: max
-task_type: bug
+task_type: bugfix
 area: codegen
 language_feature: compiler-internals
 goal: dogfood
+sprint: current
+horizon: l
 related: [3775, 3977]
 ---
-
 # lit-html's published bytes compile to an invalid Wasm module
+
+## 2026-08-11 continuation
+
+The catalog's pinned `lit@3.3.3` entry now follows enough implementation code
+to expose `@lit/reactive-element`'s class-initializer path. Its current first
+failure was no longer the immutable-global signature documented below, but a
+type-invalid `y_addInitializer` body:
+
+```text
+local.tee expected (ref null 2), found f64.const
+```
+
+The source is the generic Lit pattern:
+
+```js
+static addInitializer(initializer) {
+  this._$Ei();
+  (this.l ??= []).push(initializer);
+}
+```
+
+`l` is not a collected class struct field. The logical-assignment lowering
+treated an unknown property as a numeric `NaN` sentinel, skipped the required
+dynamic get/set, and then used that f64 as the receiver of `.push`. Unknown
+class/object properties under `??=`, `||=`, and `&&=` now use the ordinary
+dynamic property path. The reduced regression is
+`tests/issue-3978-dynamic-logical-property.test.ts`.
+
+Measured catalog result after the fix:
+
+- compile succeeds in about 2.03 seconds;
+- the emitted binary is 98,116 bytes;
+- `WebAssembly.Module` accepts it.
+
+That does **not** complete this issue. The full pinned Lit source suite was run
+unchanged after the fix. It admits 583 of 587 upstream tests and still scores
+8/16. Two implementation files remain invalid before their tests can run:
+
+| file | tests | current validation failure |
+| --- | ---: | --- |
+| `directives/async-append_test.ts` | 11 | `return_call[2]` expects `externref`, gets a GC ref |
+| `directives/async-replace_test.ts` | 17 | `call[2]` expects `externref`, gets a GC ref |
+
+The suite also reports 92 invalid test batches, primarily stale/mistyped
+`global.set` operands in ReactiveElement tests plus async-resume stack errors.
+Those are genuine remaining compiler failures, not missing browser
+infrastructure. Keep this issue `ready` until `compile.implementationInvalid`
+is empty and the invalid-batch frontier is assigned or fixed.
 
 ## Problem
 
