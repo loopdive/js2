@@ -587,11 +587,47 @@ describe("#3523 Calendar retirement oracle and current baseline", () => {
     );
   });
 
-  // Scaffold-only fork diagnostic. Both recognized snapshots must be deleted,
-  // not promoted to acceptance ceilings, once conflict resolution chooses the
-  // production base. The skipped final gate compares the chosen IR artifact
-  // against a freshly compiled direct artifact instead.
-  it("makes the current IR duplication and TDZ bloat explicit instead of treating emission as parity", async () => {
+  it("prepares unique string support through an ordinary for-loop before direct emission", async () => {
+    const functionName = "issue3523PreparedDeepStringLoop";
+    const literal = "__calendar_deep_loop_literal__";
+    const previous = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+    try {
+      process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = functionName;
+      const result = await compile(
+        `export function ${functionName}(count: number): string {
+          let output = "";
+          for (let index = 0; index < count; index++) output = output + "${literal}";
+          return output;
+        }`,
+        {
+          fileName: "issue-3523-prepared-deep-string-loop.ts",
+          experimentalIR: true,
+          trackFallbacks: true,
+          trackIrOutcomes: true,
+          target: "gc",
+        },
+      );
+      expectSuccess(result);
+      expect(outcome(result, "function", functionName)).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+        preparedComponentId: expect.stringMatching(/^prepared-component:/),
+      });
+      expect(result.stringPool).toContain(literal);
+      const imports = buildImports(result.imports, undefined, result.stringPool);
+      const { instance } = await WebAssembly.instantiate(result.binary, imports);
+      imports.setExports?.(instance.exports as Record<string, Function>);
+      expect((instance.exports[functionName] as (count: number) => string)(2)).toBe(literal + literal);
+    } finally {
+      if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+      else process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previous;
+    }
+  });
+
+  // Transitional relational diagnostic. The final gate below replaces these
+  // expected-red TDZ/size inequalities when the ten-body transaction lands.
+  it("shows the remaining TDZ bloat without freezing an absolute artifact snapshot", async () => {
     const [direct, ir] = await Promise.all([compileCalendar(false), compileCalendar(true)]);
     expectSuccess(direct);
     expectSuccess(ir);
@@ -603,10 +639,11 @@ describe("#3523 Calendar retirement oracle and current baseline", () => {
       div: countMatches(irFdow, /\bf64\.div\b/g),
       arrayGet: countMatches(irFdow, /\barray\.get(?:_[su])?\b/g),
       i32And: countMatches(irFdow, /\bi32\.and\b/g),
-    }).toEqual({ fmod: 4, div: 6, arrayGet: 2, i32And: 6 });
+    }).toEqual({ fmod: 2, div: 3, arrayGet: 1, i32And: 3 });
     expect(countMatches(directFdow, /\bf64\.div\b/g)).toBe(3);
 
     const renderCal = watFunction(ir, "renderCal").body;
+    const directRenderCal = watFunction(direct, "renderCal").body;
     const currentRevision = {
       binaryBytes: ir.binary.length,
       renderCalLocals: countMatches(renderCal, /\(local /g),
@@ -617,47 +654,30 @@ describe("#3523 Calendar retirement oracle and current baseline", () => {
       mainReferenceErrors: targetCount(ir, "main", "__new_ReferenceError"),
       mainLocals: countMatches(watFunction(ir, "main").body, /\(local /g),
     };
-    expect(
-      [
-        // Frozen #4323 queue head before the landed class-accessor merge.
-        {
-          binaryBytes: 18_438,
-          renderCalLocals: 301,
-          renderCalWatBytes: 32_999,
-          renderCalReferenceErrors: 0,
-          onDayReferenceErrors: 0,
-          updFootReferenceErrors: 0,
-          mainReferenceErrors: 0,
-          mainLocals: 55,
-        },
-        // Read-only #4323 + current-main merge audit. These guards are nested
-        // in exceptional arms, but they are still real output/size work and
-        // are not accepted as optimization parity.
-        {
-          binaryBytes: 19_437,
-          renderCalLocals: 338,
-          renderCalWatBytes: 35_851,
-          renderCalReferenceErrors: 40,
-          onDayReferenceErrors: 14,
-          updFootReferenceErrors: 20,
-          mainReferenceErrors: 12,
-          mainLocals: 77,
-        },
-      ],
-      "recognized exact pre-retirement revision",
-    ).toContainEqual(currentRevision);
+    expect(currentRevision.binaryBytes).toBeGreaterThan(direct.binary.length);
+    expect(currentRevision.renderCalLocals).toBeGreaterThan(countMatches(directRenderCal, /\(local /g));
+    expect(currentRevision.renderCalWatBytes).toBeGreaterThan(directRenderCal.trimEnd().length);
+    expect(currentRevision.mainLocals).toBeGreaterThan(countMatches(watFunction(direct, "main").body, /\(local /g));
+    for (const count of [
+      currentRevision.renderCalReferenceErrors,
+      currentRevision.onDayReferenceErrors,
+      currentRevision.updFootReferenceErrors,
+      currentRevision.mainReferenceErrors,
+    ]) {
+      expect(count, "pre-retirement IR still carries module TDZ guards").toBeGreaterThan(0);
+    }
 
     expect({
       numberToString: targetCount(ir, "renderCal", "number_toString"),
       textSetters: targetCount(ir, "renderCal", "Element_set_textContent"),
       concat7: targetCount(ir, "renderCal", "__concat_7"),
       concat8: targetCount(ir, "renderCal", "__concat_8"),
-    }).toEqual({ numberToString: 8, textSetters: 9, concat7: 0, concat8: 1 });
+    }).toEqual({ numberToString: 7, textSetters: 8, concat7: 1, concat8: 0 });
     expect({
       numberToString: targetCount(ir, "updFoot", "number_toString"),
       concat: targetCount(ir, "updFoot", "concat"),
       textSetters: targetCount(ir, "updFoot", "Element_set_textContent"),
-    }).toEqual({ numberToString: 3, concat: 3, textSetters: 6 });
+    }).toEqual({ numberToString: 2, concat: 2, textSetters: 4 });
     expect(countMatches(watFunction(direct, "main").body, /\(local /g)).toBe(35);
     expect(ir.binary.length).toBeGreaterThan(direct.binary.length);
   });

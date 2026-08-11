@@ -4,7 +4,7 @@ title: "IR-only R4: typed ordered module-init compile-once ownership"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-08-09
+updated: 2026-08-11
 priority: critical
 horizon: xl
 complexity: XL
@@ -30,10 +30,19 @@ files:
   - src/ir/from-ast.ts
   - src/ir/select.ts
   - src/ir/integration.ts
+  - src/ir/array-element-lowering.ts
+  - src/ir/passes/batch-string-concat.ts
   - src/codegen/declarations.ts
   - src/codegen/index.ts
+  - src/codegen/ir-prepared-free-functions.ts
   - src/codegen/context/types.ts
   - tests/issue-3523-ir-module-init-compile-once.test.ts
+  - tests/issue-3523-ir-calendar-retirement.test.ts
+  - tests/issue-2766.test.ts
+  - tests/issue-2856-nonterminating-if-guard.test.ts
+  - tests/issue-3734-i32-array-elements.test.ts
+  - tests/issue-4110-ir-fetch-all-parallel.test.ts
+  - tests/ir/passes.test.ts
 loc-budget-allow:
   - src/codegen/index.ts
   - src/codegen/declarations.ts
@@ -347,7 +356,7 @@ withdrawn.
 
 ### Calendar retirement oracle and resumable handover (2026-08-09)
 
-The final Calendar family has a disjoint test-only checkpoint on branch
+The final family in the five-entry single-host playground lane has a disjoint test-only checkpoint on branch
 `codex/3523-calendar-test-oracle`:
 
 - `c3384c7748302ecfcff65f8bbc16176e711a7349` adds the deterministic runtime,
@@ -358,7 +367,7 @@ The final Calendar family has a disjoint test-only checkpoint on branch
   global access, relative body/binary ceilings, and mutation-free collision
   fallback.
 
-The active portion passes **4/4** and the **7** final retirement tests remain
+The original active portion passed **4/4** and the **7** final retirement tests remain
 intentionally skipped until production satisfies them. The oracle exercises
 twelve renders; December/January navigation; hover and selection isolation;
 the exact `2300`/`2800`/`2550 EUR` totals; clear/save behavior; fourteen ordered
@@ -422,6 +431,57 @@ Resume sequence:
 5. Lower the checked legacy-body ceiling **10 → 0**, update the IR-only shadow
    baseline and optimization-retirement ledger, run the full focused and
    repository gates, open a ready PR, and freeze its exact head once queued.
+
+#### Calendar playground production checkpoint (2026-08-11)
+
+The live production branch is `codex/3523-calendar-retirement` in isolated
+worktree `/private/tmp/ts2wasm-3523-calendar-retirement`, based on
+`origin/main` `70d531bcccc8a608da45b90998a2f6f2d4efb73e`. PR #4323's merge commit
+`8c35f68e4467a43ea19ee6431a6d40446be8730f` is confirmed in that base's
+history. The dirty root checkout remains untouched. The two oracle commits and
+their documentation handover were cherry-picked as the first three branch
+commits.
+
+The Calendar oracle now has **5/5 active tests passing**; the **7** end-state
+tests stay skipped until all ten terminals can retire atomically. The combined
+optimization/parity matrix passes **117 active tests** with those seven skips,
+and TypeScript, fallback, allocation-provenance, formatting, and optimization-
+retirement checks are green.
+
+Three of the four required optimization groups are implemented and explicitly
+covered:
+
+- nonterminating `if` guards lower as one structured body, evaluating the
+  condition and trailing statements once;
+- safe vector reads consume the native `i32` length, with both in-bounds and
+  out-of-bounds narrowed-vector runtime coverage; and
+- canonical deep string preparation plus provenance-safe adjacent-literal
+  concat batching covers synchronous nested buffers and post-`await` state
+  bodies, while retaining provider, owned-append, shared, and prepared
+  boundaries.
+
+The exact owner-qualified module-binding TDZ certificate remains pending. The
+production body count is therefore still **10**, not zero. The remaining
+atomic work is:
+
+1. add the owner/source/binding-qualified post-start TDZ-elision certificate;
+2. generalize the lexical module-init selector with exact plan/order evidence;
+3. admit only the seven exact planned Calendar callbacks;
+4. aggregate callback-maker, all Date, and all typed-DOM provider checks in a
+   read-only preflight before any mutation;
+5. make every preflight rejection withdraw all ten terminals with one typed
+   reason, and make every post-prepare count/owner/artifact mismatch fatal;
+6. enable the seven final tests, using injected callback/DOM preflight
+   collisions against untouched source plus explicit missing-terminal and
+   missing-artifact invariant injections; and
+7. lower the bounded legacy/IR-only blocker ceiling from **10 to 0**.
+
+The last step proves only **5/5 playground entries, 37/37 targeted terminals,
+and zero legacy bodies in this bounded single-host lane**. It does not prove
+repository-wide IR-only readiness. Wider class/method and closure ownership,
+generic ordered module init, multi-source ownership, runtime intents,
+async-plan removal, shared linear IR, R9 default selection, and R10 direct-root
+deletion remain tracked by #3518 and the adjacent family issues.
 
 Do not create a GitHub Issue for this work. This Markdown record remains the
 source of truth for ownership, acceptance, and handover.

@@ -2277,7 +2277,7 @@ export function compileIrPathFunctions(
       // Final synchronous parity pass: fuse only after mono/TU has settled.
       const batched =
         !ctx.nativeStrings && !ctx.standalone && !ctx.wasi && !ctx.strictNoHostImports
-          ? batchStringConcat(hygienic)
+          ? batchStringConcat(hygienic, allocRegistry)
           : hygienic;
       const final = batched === hygienic ? hygienic : runHygienePasses(batched, allocRegistry);
       const verifyErrors = verifyIrFunction(final);
@@ -4979,13 +4979,14 @@ function prepareStrings(ctx: CodegenContext, fns: BuiltFn[]): BuiltFn[] {
   // Slice 10 (#1169i): the `extern.regex` instr lowers to two `string.const`
   // ops (pattern + flags). We collect them here too so the host-strings
   // backend pre-registers their `string_constants.<value>` globals before
-  // Phase 3 emission. `forof.*` body instrs also need walking — slice 6
-  // body buffers may contain string ops nested inside the for-of.
+  // Phase 3 emission. Walk every nested instruction buffer through the
+  // canonical IR visitor: loop bodies, condition arms, try regions, and
+  // future structured instructions can all contain otherwise-hidden strings.
   const literals = new Set<string>();
   let usesStringOp = false;
   let usesStringLen = false;
   let usesStringCharAt = false;
-  const walk = (instr: IrInstr): void => {
+  const visit = (instr: IrInstr): void => {
     if (instrUsesStrings(instr)) usesStringOp = true;
     if (instr.kind === "string.const") literals.add(instr.value);
     if (instr.kind === "string.len") usesStringLen = true;
@@ -5022,25 +5023,14 @@ function prepareStrings(ctx: CodegenContext, fns: BuiltFn[]): BuiltFn[] {
       literals.add(instr.pattern);
       literals.add(instr.flags);
     }
-    if (instr.kind === "forof.vec" || instr.kind === "forof.iter" || instr.kind === "forof.string") {
-      for (const sub of instr.body) walk(sub);
-    }
-    // (#3156) Value-producing if/else arms and try bodies are nested instr
-    // buffers too — a `s.charCodeAt(i)` (or any string op) inside a ternary
-    // arm or try block would otherwise escape pre-registration.
-    if (instr.kind === "if") {
-      for (const sub of instr.then) walk(sub);
-      for (const sub of instr.else) walk(sub);
-    }
-    if (instr.kind === "try") {
-      for (const sub of instr.body) walk(sub);
-      if (instr.catchClause) for (const sub of instr.catchClause.body) walk(sub);
-      if (instr.finallyBody) for (const sub of instr.finallyBody) walk(sub);
-    }
   };
   for (const entry of fns) {
-    for (const block of entry.fn.blocks) {
-      for (const instr of block.instrs) walk(instr);
+    const instructionBuffers = [
+      ...entry.fn.blocks.map((block) => block.instrs),
+      ...(entry.fn.asyncPlan?.states.map((state) => state.body) ?? []),
+    ];
+    for (const buffer of instructionBuffers) {
+      for (const instr of buffer) forEachInstrDeep(instr, visit);
     }
   }
   if (usesStringOp && !ctx.nativeStrings) {

@@ -41,15 +41,23 @@ const JS_STRING = {
 interface RunResult {
   value: unknown;
   binary: Uint8Array;
+  outcome: unknown;
   postClaim: unknown[];
+  wat: string;
 }
 
-async function compileRun(source: string, fn: string, args: unknown[], experimentalIR: boolean): Promise<RunResult> {
-  const r = await compile(source, { experimentalIR, trackFallbacks: true });
+async function compileRun(
+  source: string,
+  fn: string,
+  args: unknown[],
+  experimentalIR: boolean,
+  deps: Record<string, unknown> = {},
+): Promise<RunResult> {
+  const r = await compile(source, { experimentalIR, trackFallbacks: true, trackIrOutcomes: true });
   if (!r.success) {
     throw new Error(`compile failed (${experimentalIR ? "IR" : "legacy"}): ${r.errors[0]?.message ?? "unknown"}`);
   }
-  const built = buildImports(r.imports, ENV_STUB, r.stringPool);
+  const built = buildImports(r.imports, { ...ENV_STUB, ...deps }, r.stringPool);
   const imports: WebAssembly.Imports = { env: built.env, string_constants: built.string_constants };
   imports["wasm:js-string"] = JS_STRING as unknown as WebAssembly.ModuleImports;
   const { instance } = await WebAssembly.instantiate(r.binary, imports);
@@ -59,8 +67,33 @@ async function compileRun(source: string, fn: string, args: unknown[], experimen
   return {
     value: (f as (...a: unknown[]) => unknown)(...args),
     binary: r.binary,
+    outcome: r.irOutcomes?.find((candidate) => candidate.unitKind === "function" && candidate.displayName === fn),
     postClaim: r.irPostClaimErrors ?? [],
+    wat: r.wat,
   };
+}
+
+function functionBody(wat: string, name: string): string {
+  const start = wat.indexOf(`(func $${name} `);
+  if (start < 0) return "";
+  let depth = 0;
+  for (let index = start; index < wat.length; index++) {
+    if (wat[index] === "(") depth++;
+    else if (wat[index] === ")" && --depth === 0) return wat.slice(start, index + 1);
+  }
+  return "";
+}
+
+function watCallTargets(wat: string, body: string): string[] {
+  const imports = [...wat.matchAll(/^\s*\(import .+ \(func(?: \$([^\s(]+))?/gm)].map(
+    (match) => match[1] ?? "<anonymous-import>",
+  );
+  const definitions = [...wat.matchAll(/^\s*\(func \$([^\s(]+)/gm)].map((match) => match[1]!);
+  const names = [...imports, ...definitions];
+  return [...body.matchAll(/\b(?:return_)?call (\d+)/g)].map((match) => {
+    const target = names[Number(match[1])] ?? "<missing>";
+    return target.endsWith("_import") ? target.slice(0, -"_import".length) : target;
+  });
 }
 
 async function expectParity(
@@ -166,6 +199,44 @@ describe("#2856 — non-terminating if-guard at non-void body position", () => {
       "f",
       [1, 0],
       10,
+    );
+  });
+
+  it("evaluates a side-effecting guard once and emits the trailing tail once", async () => {
+    const source = `
+      let hits = 0;
+      function probe(flag: number): boolean {
+        hits = hits + 1;
+        if (flag > 0) return true;
+        return false;
+      }
+      export function f(flag: number): number {
+        let value = 0;
+        if (probe(flag)) value = 10;
+        return value + hits;
+      }
+    `;
+    const [legacyTaken, irTaken, legacyMiss, irMiss] = await Promise.all([
+      compileRun(source, "f", [1], false),
+      compileRun(source, "f", [1], true),
+      compileRun(source, "f", [0], false),
+      compileRun(source, "f", [0], true),
+    ]);
+    expect([legacyTaken.value, irTaken.value]).toEqual([11, 11]);
+    expect([legacyMiss.value, irMiss.value]).toEqual([1, 1]);
+    expect(irTaken.postClaim).toEqual([]);
+    expect(irMiss.postClaim).toEqual([]);
+    for (const result of [irTaken, irMiss]) {
+      expect(result.outcome).toMatchObject({
+        kind: "emitted",
+        irBodyEmitted: true,
+      });
+    }
+    expect(watCallTargets(irTaken.wat, functionBody(irTaken.wat, "f")).filter((name) => name === "probe")).toHaveLength(
+      1,
+    );
+    expect(watCallTargets(irMiss.wat, functionBody(irMiss.wat, "f")).filter((name) => name === "probe")).toHaveLength(
+      1,
     );
   });
 

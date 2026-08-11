@@ -1529,6 +1529,18 @@ function lowerStatementList(stmts: readonly ts.Statement[], cx: LowerCtx): void 
         // in the same block / scope.
         continue;
       }
+
+      // A non-terminating guard is already representable by the structured
+      // statement-if used inside loop/body buffers. Keep it in the current
+      // statement list so the condition is evaluated exactly once and the
+      // trailing statements are emitted once, rather than building a CFG
+      // continuation that the Wasm structurizer must duplicate into both
+      // arms.
+      if (!terminates) {
+        lowerIfBodyStatement(s, cx);
+        continue;
+      }
+
       const rawCond = lowerExpr(s.expression, cx, irVal({ kind: "i32" }));
       // The move-only selector already admits dynamic conditions and the
       // structured-if path below uses this same canonical ToBoolean bridge.
@@ -1536,50 +1548,21 @@ function lowerStatementList(stmts: readonly ts.Statement[], cx: LowerCtx): void 
       const cond = coerceLoopCondToBool(rawCond, s.expression, cx, "if");
       const rest = stmts.slice(i + 1);
 
-      if (terminates) {
-        // Early-return rewrite: `if (cond) <tail> else { <rest> }`.
-        const thenId = cx.builder.reserveBlockId();
-        const elseId = cx.builder.reserveBlockId();
-        cx.builder.terminate({
-          kind: "br_if",
-          condition: cond,
-          ifTrue: { target: thenId, args: [] },
-          ifFalse: { target: elseId, args: [] },
-        });
-
-        cx.builder.openReservedBlock(thenId);
-        lowerTail(s.thenStatement, { ...cx, scope: new Map(cx.scope) });
-
-        cx.builder.openReservedBlock(elseId);
-        lowerStatementList(rest, { ...cx, scope: new Map(cx.scope) });
-        return;
-      }
-
-      // Non-terminating then-arm: emit a converging guard. Both the then-block
-      // (after its side effect) and the false branch fall through to a shared
-      // continuation block holding `<rest>`. (#1979)
+      // Early-return rewrite: `if (cond) <tail> else { <rest> }`.
       const thenId = cx.builder.reserveBlockId();
-      const contId = cx.builder.reserveBlockId();
+      const elseId = cx.builder.reserveBlockId();
       cx.builder.terminate({
         kind: "br_if",
         condition: cond,
         ifTrue: { target: thenId, args: [] },
-        ifFalse: { target: contId, args: [] },
+        ifFalse: { target: elseId, args: [] },
       });
 
       cx.builder.openReservedBlock(thenId);
-      const thenCx: LowerCtx = { ...cx, scope: new Map(cx.scope) };
-      lowerStmt(s.thenStatement, thenCx);
-      cx.builder.terminate({ kind: "br", branch: { target: contId, args: [] } });
+      lowerTail(s.thenStatement, { ...cx, scope: new Map(cx.scope) });
 
-      cx.builder.openReservedBlock(contId);
-      const continuationScope = joinedStringEncodingScope(cx.scope, [cx.scope, thenCx.scope]);
-      if (rest.length === 0) {
-        // No trailing statements — the function's implicit void return.
-        cx.builder.terminate({ kind: "return", values: [] });
-      } else {
-        lowerStatementList(rest, { ...cx, scope: continuationScope });
-      }
+      cx.builder.openReservedBlock(elseId);
+      lowerStatementList(rest, { ...cx, scope: new Map(cx.scope) });
       return;
     }
     throw new Error(`ir/from-ast: unexpected statement before tail (got ${ts.SyntaxKind[s.kind]} in ${cx.funcName})`);
