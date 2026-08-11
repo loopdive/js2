@@ -851,6 +851,46 @@ bucket's count did not move), `$262.createRealm`, not this slice.
    direct-eval cells and returned by `__extern_get` on non-carrier receivers);
    filing it is deliberately left to the lead, since it edits `src/` and this
    issue's hard constraint says to report before touching it.
+
+   **UPDATE (#4307):** the two halves of this residual turned out to have
+   DIFFERENT owners, and only one of them is caller-side.
+   - The `var f = function(){…}` half — a local closure reached by direct eval,
+     and the same shape at script scope — **is** caller-side and is FIXED by
+     #4307 (`__runtime_eval_wrap_callable` at the direct-eval cell push and the
+     globals push, plus an AOT-side unwrap on `compileClosureCall`, which
+     otherwise TRAPS once a binding holds a carrier). The lane case above is
+     retired: it now reads `1042` (typeof "function" + the compiled body's
+     value) instead of `12`.
+   - The "closure read off a plain compiled object" half is **NOT caller-side
+     reachable, and belongs to SLICE 2** — see the subsection immediately below.
+
+   #### Slice 2 input: plain-object reads never reach the owning module
+
+   `__membrane_get` does `const value: any = target[key]` in the **adapter's
+   own compiled code**, and for a plain compiled object that read is answered
+   **structurally inside the adapter**, by walking the caller's canonical object
+   vector directly. The caller's `__extern_get` is never invoked, so there is no
+   caller-side codegen on that path to hook — carrier-wrapping "`__extern_get`
+   results" (as this residual originally proposed) cannot work.
+
+   Two probes measured on the slice-1 artifact (`d8a5a91d6f183b87`), standalone
+   + `JS2WASM_EVAL_ENGINE=quickjs`, each eval source composed through a runtime
+   loop so nothing is constant-folded:
+
+   | probe | expected if caller-routed | measured |
+   | --- | --- | --- |
+   | `var acc = { get g() { side += 1; return 5 } }`, then `(0,eval)("acc.g + 0")` | `5`, and `side === 1` | **`0`, and `side` stays `0`** — the caller's getter never ran |
+   | `class C { m() { return 9 } }`, `inst = new C()`, then `(0,eval)("typeof inst.m")` | `"function"` | **`"undefined"`** — the prototype chain is never consulted |
+   | control: `var ctl = { s: "ok" }`, `(0,eval)("ctl.s + '!'").length` | `3` | `3` (own data property, structural read works) |
+
+   So slice 2's `__membrane_get` needs to **delegate the read back to the module
+   that owns the object** — the data-side counterpart of the callable carrier —
+   rather than reading the vector itself. Getting that right buys three things
+   at once that are currently silently wrong, not merely missing: accessors run,
+   the prototype chain resolves, and a closure held as an object property comes
+   back through the caller's `__extern_get`, where the #4307 carrier wrap
+   already exists (`syncedPropertyGetTrampolineBody` wraps closure results
+   today, but only for a CARRIER receiver).
 2. **Enumeration is empty** — `get_own_property_names` is NULL this slice, so
    `Object.keys(wrapper)` / `for…in` over a wrapper yields nothing. Slice 2
    (`__membrane_own_keys` + `qjs_new_array`/`qjs_set_prop_idx`).

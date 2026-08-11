@@ -24,7 +24,9 @@ import { addFuncType, getOrRegisterRefCellType } from "../registry/types.js";
 import {
   emitRuntimeEvalAotCallableAdapter,
   emitRuntimeEvalInterpretedCallableAdapterIfCallable,
+  ensureRuntimeEvalCallableWrapHelper,
   refreshRuntimeEvalCallableTrampolines,
+  RUNTIME_EVAL_WRAP_CALLABLE,
 } from "../runtime-eval-callable.js";
 import { buildRuntimeEvalValueUnwrap, ensureRuntimeEvalProviderActiveGlobal } from "../runtime-eval-boundary.js";
 import { coerceType, compileExpression } from "../shared.js";
@@ -242,9 +244,11 @@ function emitRuntimeEvalGlobalBindingPushBody(ctx: CodegenContext, fctx: Functio
     );
   }
 
+  const wrapCallableIdx = ensureRuntimeEvalCallableWrapHelper(ctx);
   for (const name of names) {
     let valueType: ValType | null = null;
     let needsAotAdapter = false;
+    let wrapGlobalName: string | undefined;
     if (ctx.topLevelFunctionNames.has(name)) {
       const liveGlobalIdx = ctx.liveFuncBindingGlobals?.has(name) ? ctx.moduleGlobals.get(name) : undefined;
       if (liveGlobalIdx !== undefined) {
@@ -266,6 +270,16 @@ function emitRuntimeEvalGlobalBindingPushBody(ctx: CodegenContext, fctx: Functio
       if (globalIdx !== undefined) {
         fctx.body.push({ op: "global.get", index: globalIdx });
         valueType = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type ?? { kind: "externref" };
+        // (#4307) `var f = function () {…}` at script scope is a plain module
+        // global, not a `topLevelFunctionNames` declaration, so the AOT-callable
+        // adapter above never ran for it and the closure crossed raw. Wrap it
+        // and write the carrier BACK into the global: a per-push wrap would mint
+        // a fresh carrier on every provider entry and break `f === f` across two
+        // evaluations, exactly the way a live function binding avoids by holding
+        // its carrier in the module global permanently (declarations.ts, #2928).
+        // Externref-typed globals only — a typed closure global would reject the
+        // store, and its AOT reads are static enough not to need the carrier.
+        if (valueType.kind === "externref") wrapGlobalName = name;
       } else if (RUNTIME_EVAL_INTRINSIC_GLOBALS.includes(name)) {
         // Provider-originated native Error payloads cross as externrefs. Give
         // this module the structurally canonical `$Error_struct` and register
@@ -287,6 +301,14 @@ function emitRuntimeEvalGlobalBindingPushBody(ctx: CodegenContext, fctx: Functio
     if (valueType === null) continue;
     if (valueType.kind !== "externref") coerceType(ctx, fctx, valueType, { kind: "externref" });
     if (needsAotAdapter) emitRuntimeEvalAotCallableAdapter(ctx, fctx);
+    const liveWrapGlobalIdx = wrapGlobalName === undefined ? undefined : ctx.moduleGlobals.get(wrapGlobalName);
+    if (liveWrapGlobalIdx !== undefined) {
+      fctx.body.push(
+        { op: "call", funcIdx: ctx.funcMap.get(RUNTIME_EVAL_WRAP_CALLABLE) ?? wrapCallableIdx },
+        { op: "global.set", index: liveWrapGlobalIdx },
+        { op: "global.get", index: liveWrapGlobalIdx },
+      );
+    }
     const valueLocal = allocLocal(fctx, `__runtime_eval_global_${name}_${fctx.locals.length}`, {
       kind: "externref",
     });
@@ -461,6 +483,48 @@ export function emitRuntimeEvalResultUnwrap(ctx: CodegenContext, fctx: FunctionC
 }
 
 /**
+ * (#4307) Carrier-wrap a direct-eval binding cell IN PLACE when its current
+ * value is a raw module-local closure.
+ *
+ * In-place rather than wrapping a copy, for two reasons: the cell IS the
+ * interpreter's write-back target, so a copy would silently drop assignments
+ * made inside the evaluated source; and the carrier is itself AOT-callable
+ * (`__apply_closure`'s #2928 arm, `__call_fn_method_N`'s #4197 front-guard, and
+ * `emitRuntimeEvalCarrierUnwrapAny` on the static closure-call fast path), so
+ * the compiled side keeps calling the binding normally afterwards. The helper
+ * is a no-op for every non-closure value AND for a value that is already a
+ * carrier, which is what keeps reference identity stable across evaluations.
+ */
+function directEvalCellWrapInstrs(
+  ctx: CodegenContext,
+  cellLocal: number,
+  cellTypeIdx: number,
+  wrapCallableIdx: number,
+): Instr[] {
+  // A cell local can legitimately still be null here (`arguments` in a function
+  // that never materialized it), so the null test is required — a bare
+  // `ref.as_non_null` traps on that path.
+  return [
+    { op: "local.get", index: cellLocal },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: cellLocal },
+        { op: "ref.as_non_null" },
+        { op: "local.get", index: cellLocal },
+        { op: "ref.as_non_null" },
+        { op: "struct.get", typeIdx: cellTypeIdx, fieldIdx: 0 },
+        { op: "call", funcIdx: ctx.funcMap.get(RUNTIME_EVAL_WRAP_CALLABLE) ?? wrapCallableIdx },
+        { op: "struct.set", typeIdx: cellTypeIdx, fieldIdx: 0 },
+      ],
+    },
+  ];
+}
+
+/**
  * Standalone direct eval route. The caller supplies three name/cell vector
  * pairs: a persistent current-activation environment, fresh call-site lexical
  * shadows, and captured outer bindings. The provider links those records in
@@ -516,9 +580,14 @@ export function emitStandaloneDirectEvalRuntime(
   const objVecNewIdx = ctx.funcMap.get("__objvec_new")!;
   const objVecPushIdx = ctx.funcMap.get("__objvec_push")!;
 
+  const wrapCallableIdx = ensureRuntimeEvalCallableWrapHelper(ctx);
   const bindingPushInstrs = (namesLocal: number, slotsLocal: number, layer: typeof bindings.activation): Instr[] => {
     const instrs: Instr[] = [];
+    const cellTypeIdx = fctx.directEvalRefCellTypeIdx;
     for (const binding of layer) {
+      if (cellTypeIdx !== undefined) {
+        instrs.push(...directEvalCellWrapInstrs(ctx, binding.cellLocal, cellTypeIdx, wrapCallableIdx));
+      }
       instrs.push(
         { op: "local.get", index: namesLocal },
         ...stringConstantExternrefInstrs(ctx, binding.name),

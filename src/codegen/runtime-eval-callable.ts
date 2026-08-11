@@ -22,6 +22,8 @@ import type { Instr, ValType } from "../ir/types.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { addFuncType } from "./registry/types.js";
+import { nextModuleGlobalIdx } from "./registry/imports.js";
 import { ensureObjectRuntime, ensureObjVecBuilders, reserveApplyClosure } from "./object-runtime.js";
 import { collectClosureBaseWrapperTypeIdxs } from "./closure-classifier.js";
 import { ensureNativeStringHelpers, nativeStringLiteralInstrs } from "./native-strings.js";
@@ -42,7 +44,13 @@ export interface RuntimeEvalAotCallableCarrier {
   trampolineFuncIdx?: number;
   propertyGetTrampolineFuncIdx?: number;
   interpretedTrampolineFuncIdx?: number;
+  /** `(externref) -> externref` — see {@link ensureRuntimeEvalCallableWrapHelper}. */
+  wrapHelperFuncIdx?: number;
 }
+
+export const RUNTIME_EVAL_WRAP_CALLABLE = "__runtime_eval_wrap_callable";
+/** Private `moduleGlobals` key for the one-entry carrier memo (see below). */
+const RUNTIME_EVAL_CARRIER_MEMO_GLOBAL = "\0runtime-eval-carrier-memo";
 
 const RUNTIME_EVAL_PUSH_GLOBALS = "__runtime_eval_push_globals";
 const RUNTIME_EVAL_PULL_GLOBALS = "__runtime_eval_pull_globals";
@@ -339,10 +347,202 @@ function syncedPropertyGetTrampolineBody(
   };
 }
 
+/**
+ * (#4307) Body of `__runtime_eval_wrap_callable`: replace a RAW module-local
+ * closure with the canonical carrier, and pass everything else — primitives,
+ * plain objects, and a value that is ALREADY a carrier — through byte-for-byte.
+ *
+ * Wrapping is idempotent by construction: the classifier's carrier arm is
+ * skipped, so a second crossing of the same binding re-tests as "already a
+ * carrier" and returns the identical reference. That is what keeps `f === f`
+ * across two separate evaluations.
+ *
+ * IDENTITY across two DIFFERENT bindings of one closure (`var g = f`) needs
+ * more than idempotence — each cell would otherwise mint its own carrier and
+ * `f === g` would read false inside evaluated code, which it does not today.
+ * A one-entry most-recent-target memo covers that: aliases are wrapped in the
+ * same push loop, back to back, against the same target, so the second one
+ * hits. Once a cell holds a carrier it is never re-wrapped, so the memo cannot
+ * thrash across evaluations either. It is a cache, not a registry — a program
+ * that interleaves N distinct closures per crossing keeps only the last, which
+ * is a documented residual rather than a correctness hazard (the miss path
+ * mints a fresh carrier, which is exactly today's behaviour).
+ */
+function callableWrapHelperBody(ctx: CodegenContext, carrier: RuntimeEvalAotCallableCarrier): Instr[] {
+  const trampolineFuncIdx = carrier.trampolineFuncIdx;
+  const propertyGetTrampolineFuncIdx = carrier.propertyGetTrampolineFuncIdx;
+  if (trampolineFuncIdx === undefined || propertyGetTrampolineFuncIdx === undefined) {
+    return [{ op: "local.get", index: 0 }];
+  }
+  const memoIdx = ctx.moduleGlobals.get(RUNTIME_EVAL_CARRIER_MEMO_GLOBAL);
+  const memoTarget = (): Instr[] => [
+    { op: "global.get", index: memoIdx! },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx: carrier.structTypeIdx, fieldIdx: 2 },
+    { op: "any.convert_extern" },
+  ];
+  // WasmGC `eq` abstract heap type — the same encoding `__extern_strict_eq`
+  // uses for its object-identity fast path.
+  const EQ_HEAP_TYPE = -19;
+  const memoHit = (): Instr[] =>
+    memoIdx === undefined
+      ? []
+      : [
+          { op: "global.get", index: memoIdx },
+          { op: "ref.is_null" },
+          { op: "i32.eqz" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              ...memoTarget(),
+              { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  ...memoTarget(),
+                  { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+                  { op: "local.get", index: 0 },
+                  { op: "any.convert_extern" },
+                  { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+                  { op: "ref.eq" },
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: [
+                      { op: "global.get", index: memoIdx },
+                      { op: "ref.as_non_null" },
+                      { op: "extern.convert_any" },
+                      { op: "return" },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        ];
+  // Fresh per arm: late-import index shifting rewrites `funcIdx` in place, and a
+  // shared array would be shifted once per arm that references it.
+  const mint = (): Instr[] => [
+    { op: "ref.func", funcIdx: trampolineFuncIdx },
+    { op: "ref.func", funcIdx: propertyGetTrampolineFuncIdx },
+    { op: "local.get", index: 0 },
+    { op: "i32.const", value: RUNTIME_EVAL_AOT_CALLABLE_BRAND_A },
+    { op: "i32.const", value: RUNTIME_EVAL_AOT_CALLABLE_BRAND_B },
+    { op: "struct.new", typeIdx: carrier.structTypeIdx },
+    ...(memoIdx === undefined
+      ? ([{ op: "extern.convert_any" }] satisfies Instr[])
+      : ([
+          { op: "global.set", index: memoIdx },
+          { op: "global.get", index: memoIdx },
+          { op: "ref.as_non_null" },
+          { op: "extern.convert_any" },
+        ] satisfies Instr[])),
+    { op: "return" },
+  ];
+  const body: Instr[] = [];
+  for (const typeIdx of collectClosureBaseWrapperTypeIdxs(ctx)) {
+    if (typeIdx === carrier.structTypeIdx) continue;
+    body.push(
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx },
+      { op: "if", blockType: { kind: "empty" }, then: [...memoHit(), ...mint()] },
+    );
+  }
+  body.push({ op: "local.get", index: 0 });
+  return body;
+}
+
+/**
+ * (#4307) Reserve the caller-owned "carrier-wrap this value if it is a closure"
+ * helper and return its function index.
+ *
+ * WHY A HELPER FUNCTION and not an inline sequence at each call site: the set of
+ * closure base-wrapper types is not final until every closure in the module has
+ * been emitted, so an inline `ref.test` ladder built while compiling an
+ * expression would test against a PARTIAL hierarchy and silently miss the very
+ * closures declared after it. Routing through one function whose body is rebuilt
+ * by {@link refreshRuntimeEvalCallableTrampolines} at finalize time — the same
+ * discipline the carrier trampolines already use — makes the ladder complete.
+ */
+export function ensureRuntimeEvalCallableWrapHelper(ctx: CodegenContext): number {
+  const carrier = ensureRuntimeEvalAotCallableTrampoline(ctx);
+  ensureRuntimeEvalAotCallablePropertyGetTrampoline(ctx);
+  if (carrier.wrapHelperFuncIdx !== undefined) return carrier.wrapHelperFuncIdx;
+  if (!ctx.moduleGlobals.has(RUNTIME_EVAL_CARRIER_MEMO_GLOBAL)) {
+    // Registered in `moduleGlobals` under a private key so the established
+    // late-import global fixup shifts it with every source-level module global;
+    // the body builder re-reads the live index on every rebuild.
+    const memoIdx = nextModuleGlobalIdx(ctx);
+    ctx.mod.globals.push({
+      name: "__runtime_eval_carrier_memo",
+      type: { kind: "ref_null", typeIdx: carrier.structTypeIdx },
+      mutable: true,
+      init: [{ op: "ref.null", typeIdx: carrier.structTypeIdx }],
+    });
+    ctx.moduleGlobals.set(RUNTIME_EVAL_CARRIER_MEMO_GLOBAL, memoIdx);
+  }
+  const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
+  const funcIdx = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: RUNTIME_EVAL_WRAP_CALLABLE,
+    typeIdx,
+    locals: [],
+    body: callableWrapHelperBody(ctx, carrier),
+    exported: false,
+  });
+  ctx.funcMap.set(RUNTIME_EVAL_WRAP_CALLABLE, funcIdx);
+  carrier.wrapHelperFuncIdx = funcIdx;
+  return funcIdx;
+}
+
+/**
+ * (#4307) The INVERSE of {@link ensureRuntimeEvalCallableWrapHelper}, for the
+ * AOT side: consume an `anyref` and leave the closure a carrier wraps, passing
+ * every other value through unchanged.
+ *
+ * Needed because #4307 makes a direct-eval binding cell hold the carrier once
+ * the binding has crossed the seam, and the STATIC closure-call fast path
+ * (`compileClosureCall`) reaches the callee by guard-casting the cell's value
+ * to the lifted self-carrier struct. A carrier fails that cast, the cast yields
+ * null, and the call traps on a null funcref. Unwrapping to `target` — which is
+ * the very closure the carrier was minted around — restores the fast path with
+ * no dispatch, no argument vector, and no `this` bookkeeping.
+ *
+ * Emits nothing in a module that never minted a carrier, which is every module
+ * that does not consume the runtime-eval provider.
+ */
+export function emitRuntimeEvalCarrierUnwrapAny(ctx: CodegenContext, fctx: FunctionContext): void {
+  const carrier = ctx.runtimeEvalAotCallableCarrier;
+  if (carrier === undefined) return;
+  const anyLocal = allocLocal(fctx, `__runtime_eval_unwrap_any_${fctx.locals.length}`, { kind: "anyref" });
+  fctx.body.push(
+    { op: "local.tee", index: anyLocal },
+    { op: "ref.test", typeIdx: carrier.structTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "anyref" } },
+      then: [
+        { op: "local.get", index: anyLocal },
+        { op: "ref.cast", typeIdx: carrier.structTypeIdx },
+        { op: "struct.get", typeIdx: carrier.structTypeIdx, fieldIdx: 2 },
+        { op: "any.convert_extern" },
+      ],
+      else: [{ op: "local.get", index: anyLocal }],
+    },
+  );
+}
+
 /** Rebuild already-reserved carrier trampolines after global sync helpers appear. */
 export function refreshRuntimeEvalCallableTrampolines(ctx: CodegenContext): void {
   const carrier = ctx.runtimeEvalAotCallableCarrier;
   if (!carrier) return;
+  if (carrier.wrapHelperFuncIdx !== undefined) {
+    const fn = definedFuncAt(ctx, carrier.wrapHelperFuncIdx);
+    if (fn) fn.body = callableWrapHelperBody(ctx, carrier);
+  }
   const applyIdx = ctx.funcMap.get("__apply_closure");
   if (applyIdx === undefined) return;
   if (carrier.trampolineFuncIdx !== undefined) {

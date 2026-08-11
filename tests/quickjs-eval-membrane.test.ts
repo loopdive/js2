@@ -212,17 +212,17 @@ const MEMBRANE_DIRECT_SOURCE = `
   }
   directObject = directObjectCaller();
 
-  // A LOCAL closure VALUE is the enumerated residual: it is not carrier-wrapped
-  // by the caller, so the membrane can only surface it as a plain (non-callable)
-  // wrapper and a call is a LOUD TypeError inside evaluated code.
+  // A LOCAL closure VALUE. This was slice 1's enumerated residual (it crossed
+  // as a plain non-callable wrapper); #4307 carrier-wraps it caller-side, so
+  // it now answers typeof "function" AND the call re-enters compiled code.
   var directCall = 0;
   function directCallCaller(): number {
     var twice: any = function (x: number): number { return x * 2; };
     try {
       var kind: any = eval(joinSource(["typeof tw", "ice"]));
-      var called = 0;
-      try { eval(joinSource(["twice(2", "1)"])); called = 1; } catch (inner) { called = 2; }
-      return (kind === "object" ? 10 : 0) + called;
+      var got = 0;
+      try { got = eval(joinSource(["twice(2", "1)"])) as number; } catch (inner) { got = -100; }
+      return (kind === "function" ? 1000 : 0) + got;
     } catch (e) { return -1; }
   }
   directCall = directCallCaller();
@@ -914,15 +914,12 @@ describe.skipIf(!enabled)("#4245 slice 1 — quickjs eval membrane (inward)", ()
     expect(direct.directObjectProbe!()).toBe(26);
   });
 
-  it("a LOCAL closure value is a non-callable wrapper — the loud residual, pinned", () => {
-    // 10 = evaluated code sees it as an object, +2 = calling it THREW. Only a
-    // caller-side change can lift this: an adapter cannot invoke another
-    // module's private closure struct, which is exactly why #2928 has the AOT
-    // callable carrier — and the caller mints that carrier for top-level
-    // function bindings (which DO work above), not for closure values.
-    // A reading of 11 would mean the call silently succeeded with a wrong
-    // result; 1 or 2 would mean `typeof` lies about what it is.
-    expect(direct.directCallProbe!()).toBe(12);
+  it("a LOCAL closure value is callable across the membrane (#4307 retires the residual)", () => {
+    // 1000 = evaluated code sees `typeof` as "function"; +42 = `twice(21)` ran
+    // the COMPILED body and returned its value. Slice 1 read 12 here (object +
+    // throw). A reading of 42 alone would mean the call works but `typeof`
+    // still lies; 1000 + -100 would mean the reverse.
+    expect(direct.directCallProbe!()).toBe(1042);
   });
 
   // ---------------------------------------- #4308 slice A: error identity ---
