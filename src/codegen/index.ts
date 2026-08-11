@@ -3992,6 +3992,21 @@ export function generateModule(
       // registered up-front so `emitLazyClassObjectGet` finds it in funcMap.
       const regClassTypeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }], []);
       addImport(ctx, "env", "__register_class_object", { kind: "func", typeIdx: regClassTypeIdx });
+      // (#4371) A name-only class-object registration can make reflection
+      // report a static method, but it cannot invoke that method after the
+      // class value crosses an `any`/host boundary. Register the real compiled
+      // closure on the singleton as well. This import is host-only for the same
+      // reason as __register_class_object; standalone/wasi keep their zero-host
+      // class representation and direct in-Wasm calls.
+      const regStaticMethodTypeIdx = addFuncType(
+        ctx,
+        [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+        [],
+      );
+      addImport(ctx, "env", "__register_class_static_method", {
+        kind: "func",
+        typeIdx: regStaticMethodTypeIdx,
+      });
     }
 
     // #1677 — reconcile native-string helper func indices before emitting more

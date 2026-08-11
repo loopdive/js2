@@ -10343,6 +10343,18 @@ assert._isSameValue = isSameValue;
           const names = typeof csv === "string" && csv.length > 0 ? csv.split(",") : [];
           _staticMethodNames.set(classObj, names);
         };
+      if (name === "__register_class_static_method")
+        return function registerClassStaticMethod(classObj: any, methodName: any, closure: any): void {
+          // (#4371) Pair the class object's existing name allowlist with the
+          // actual compiled closure. Keeping the value in the descriptor-aware
+          // sidecar preserves the WasmGC class singleton/type (dynamic `new`
+          // relies on it), while `_wrapForHost` already knows how to turn this
+          // raw closure struct into a callable JavaScript function on read.
+          if (classObj == null || typeof classObj !== "object") return;
+          if (typeof methodName !== "string" || methodName.length === 0) return;
+          _sidecarSet(classObj, methodName, closure);
+          _getSidecarDescs(classObj).set(methodName, _SC_DEFINED | _SC_WRITABLE | _SC_CONFIGURABLE);
+        };
       if (name === "__unbox_string")
         return (s: any): any => {
           if (typeof s === "string") return s; // already a string primitive
@@ -11331,7 +11343,30 @@ assert._isSameValue = isSameValue;
           }
           // (#1629 S1) WasmGC struct: single canonical read-back path, shared
           // with Object.getOwnPropertyDescriptors.
-          return _readOwnDescriptor(obj, prop, callbackState?.getExports());
+          const desc = _readOwnDescriptor(obj, prop, callbackState?.getExports());
+          // (#4371) A declared class static is stored as its raw Wasm closure
+          // so compiled reads/calls stay in the existing closure ABI. A
+          // descriptor object, however, is an ordinary host object; expose its
+          // `value` with the same callable JS wrapper a normal property read
+          // would produce. This preserves the public `typeof desc.value ===
+          // "function"` contract without replacing the canonical sidecar
+          // value (which the in-Wasm extracted-call path needs).
+          if (desc && "value" in desc) {
+            const staticMethods = _staticMethodNames.get(obj);
+            if (staticMethods?.includes(String(prop))) {
+              // Reuse the canonical class-object proxy read. Besides the
+              // generic __is_closure route, it has the per-name
+              // `__call_<method>` bridge needed by modules whose only closure
+              // value is this static and therefore do not export a generic
+              // closure discriminator.
+              const wrapped = _wrapForHost(obj, callbackState?.getExports());
+              const callable = wrapped?.[prop];
+              desc.value = typeof callable === "function" ? callable : _getClassMethodBridge(obj, String(prop));
+            } else {
+              desc.value = _maybeWrapCallableUnknownArity(desc.value, callbackState);
+            }
+          }
+          return desc;
         };
       if (name === "__getOwnPropertyNames")
         return (obj: any) => {
@@ -12258,6 +12293,16 @@ assert._isSameValue = isSameValue;
           for (const key of _ownStructKeys(obj, exports)) {
             const desc = _readOwnDescriptor(obj, key, exports);
             if (desc !== undefined) {
+              if ("value" in desc) {
+                const staticMethods = _staticMethodNames.get(obj);
+                if (staticMethods?.includes(String(key))) {
+                  const wrapped = _wrapForHost(obj, exports);
+                  const callable = wrapped?.[key];
+                  desc.value = typeof callable === "function" ? callable : _getClassMethodBridge(obj, String(key));
+                } else {
+                  desc.value = _maybeWrapCallableUnknownArity(desc.value, callbackState);
+                }
+              }
               // Per spec, the result is an ordinary object whose own
               // properties are enumerable, writable, configurable data
               // properties holding each descriptor object. Plain assignment
