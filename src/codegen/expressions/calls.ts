@@ -3892,8 +3892,7 @@ export function tryEmitInlineDynamicCall(
     // is materialized here and handed to the helper rather than hardcoded there.
     const bareCallThisArg: Instr[] = [];
     pushDynamicUndefinedExternref(bareCallThisArg, undefinedIdx, undefinedSingletonPad);
-    dispatch =
-      buildHostCallFallbackArm(ctx, fctx, hostCallPlan, anyLocal, argLocals, bareCallThisArg) ?? dispatch;
+    dispatch = buildHostCallFallbackArm(ctx, fctx, hostCallPlan, anyLocal, argLocals, bareCallThisArg) ?? dispatch;
   }
 
   // (#2933) Variadic builtin value-closure arm — INNERMOST (just above the
