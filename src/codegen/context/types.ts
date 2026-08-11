@@ -2167,7 +2167,7 @@ export interface CodegenContext {
   callerStrictGlobalIdx: number;
   /** Source function name → source strictness, consumed by the final call-site pass. */
   sourceFunctionStrictness: Map<string, boolean>;
-  /** Root source-function body → strictness; avoids collisions between shadowed names. */
+  /** Source-function or inlined-IIFE instruction region → strictness. */
   sourceFunctionStrictnessByBody: Map<Instr[], boolean>;
   /** Idempotence guard for the final call-site instrumentation pass. */
   functionPoisonPillCallsFinalized?: boolean;

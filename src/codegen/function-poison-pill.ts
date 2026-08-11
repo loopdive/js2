@@ -185,10 +185,11 @@ export function finalizeFunctionPoisonPillCalls(ctx: CodegenContext): void {
   ];
 
   const instrument = (body: Instr[], strict: boolean): void => {
-    const stack: Instr[][] = [body];
+    const stack: { body: Instr[]; strict: boolean }[] = [{ body, strict }];
     const seen = new Set<Instr[]>();
     while (stack.length > 0) {
-      const instrs = stack.pop()!;
+      const region = stack.pop()!;
+      const instrs = region.body;
       if (seen.has(instrs)) continue;
       seen.add(instrs);
       for (let i = 0; i < instrs.length; i++) {
@@ -197,11 +198,16 @@ export function finalizeFunctionPoisonPillCalls(ctx: CodegenContext): void {
           (instr.op === "call" || instr.op === "return_call") && sourceFuncIdxs.has(instr.funcIdx);
         const dynamicSourceCall = instr.op === "call_ref" || instr.op === "return_call_ref";
         if (directSourceCall || dynamicSourceCall) {
-          const prefix = marker(strict);
+          const prefix = marker(region.strict);
           instrs.splice(i, 0, ...prefix);
           i += prefix.length;
         }
-        walkChildren(instr, (child) => stack.push(child));
+        walkChildren(instr, (child) =>
+          stack.push({
+            body: child,
+            strict: ctx.sourceFunctionStrictnessByBody.get(child) ?? region.strict,
+          }),
+        );
       }
     }
   };
