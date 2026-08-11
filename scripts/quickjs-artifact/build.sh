@@ -133,6 +133,11 @@ done
 # -mexec-model=reactor: no _start, an _initialize the peer/host calls once.
 # Memory is EXPORTED (wasm-ld default) — this module owns the shared heap and
 # the js2wasm peer imports it; see qjs_shim.c ABI note 4.
+# --export-table/--growable-table: the #4245 membrane's inward property traps
+# call the GC adapter through THIS module's __indirect_function_table. The
+# harness grows it once at link time and stores the adapter's exported
+# functions into the fresh slots, so the trap edge is a wasm `call_indirect`,
+# not a JS closure — the artifact still imports ONLY wasi_snapshot_preview1.
 say "link libquickjs.wasm"
 "$CC" "${CFLAGS[@]}" \
   -mexec-model=reactor \
@@ -141,6 +146,8 @@ say "link libquickjs.wasm"
   -Wl,--export=realloc \
   -Wl,--export=calloc \
   -Wl,--export-memory \
+  -Wl,--export-table \
+  -Wl,--growable-table \
   -Wl,--initial-memory=16777216 \
   -Wl,--max-memory=1073741824 \
   -Wl,--stack-first \

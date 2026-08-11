@@ -24,7 +24,7 @@
 
 import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { performance } from "node:perf_hooks";
 import { Session } from "node:inspector";
@@ -47,6 +47,7 @@ import { runHarness as runPrettier } from "../tests/dogfood/prettier-harness.mjs
 import { runHarness as runReact } from "../tests/dogfood/react-harness.mjs";
 import { runHarness as runReactUpstreamSuite } from "../tests/dogfood/react-upstream-suite.mjs";
 import { runHarness as runLitUpstreamSuite } from "../tests/dogfood/lit-upstream-suite.mjs";
+import { setupLitImplementation } from "../tests/dogfood/setup-lit-upstream-suite.mjs";
 import { runHarness as runReactDomUpstreamSuite } from "../tests/dogfood/react-dom-upstream-suite.mjs";
 import { NPM_COMPAT_CATALOG, NPM_COMPAT_CATALOG_NAMES } from "../tests/dogfood/npm-compat-catalog.mjs";
 import { runNpmCompatCatalogHarness } from "../tests/dogfood/npm-compat-catalog-harness.mjs";
@@ -159,9 +160,9 @@ const runStandaloneLane =
 const runStandaloneDynamicLane = selectedLane === "both" || selectedLane === "standalone-dynamic";
 if (
   perfOnly &&
-  (selectedPackages.size !== 1 || !["acorn", "clsx", "cookie"].some((name) => selectedPackages.has(name)))
+  (selectedPackages.size !== 1 || !["acorn", "clsx", "cookie", "lit"].some((name) => selectedPackages.has(name)))
 ) {
-  throw new Error("--perf-only requires exactly one of --only acorn, --only clsx, or --only cookie");
+  throw new Error("--perf-only requires exactly one of --only acorn, --only clsx, --only cookie, or --only lit");
 }
 if ((diagnosticsOnly || inspectBoundaries) && !runJsHostLane) {
   throw new Error("--diagnostics-only and --inspect-boundaries require --lane js-host or --lane both");
@@ -314,6 +315,7 @@ function instrumentImports(importObject, { callbacks = true } = {}) {
 const STANDALONE_BENCHMARK_EXPORT = "__npmCompatStandaloneBenchmark";
 const STANDALONE_STATIC_OPERATION_EXPORT = "__npmCompatStaticOperation";
 const CLSX_PERF_OP_NAME = "op_two_strings";
+const LIT_WHEN_PERF_EXPORT = "__npmCompatLitWhen";
 
 function chunkedStringArray(value, chunkSize = 1024) {
   const chunks = [];
@@ -1287,6 +1289,89 @@ async function perfCookie() {
   );
 }
 
+function litWhenModule() {
+  const implementation = setupLitImplementation();
+  const packageRecord = implementation.packages.find((entry) => entry.name === "lit-html");
+  if (!packageRecord) throw new Error("[npm-compat] pinned lit-html implementation is missing");
+  const entryModulePath = join(packageRecord.packageDir, "directives", "when.js");
+  return { entryModulePath, source: readFileSync(entryModulePath, "utf-8") };
+}
+
+async function perfLitJsHost() {
+  const { entryModulePath, source } = litWhenModule();
+  const compileStarted = performance.now();
+  const result = await compile(
+    `${source}\nexport function ${LIT_WHEN_PERF_EXPORT}(condition, truthy, falsy) { return n(condition, truthy, falsy); }`,
+    {
+      fileName: "when.js",
+      skipSemanticDiagnostics: true,
+      optimize: 4,
+    },
+  );
+  const compileDurationMs = performance.now() - compileStarted;
+  if (!result.success || !result.binary?.length) return null;
+  if (inspectBinaryPath) {
+    writeFileSync(inspectBinaryPath, result.binary);
+    console.log(`[npm-compat] wrote lit JS-host binary to ${inspectBinaryPath}`);
+  }
+
+  const importObject = result.importObject ?? {};
+  const module = await WebAssembly.compile(result.binary);
+  const moduleImports = WebAssembly.Module.imports(module).map(
+    ({ module: namespace, name, kind }) => `${namespace}.${name}:${kind}`,
+  );
+  const instance = await WebAssembly.instantiate(module, importObject);
+  importObject.__setInstance?.(instance);
+  const exports = wrapExports(instance.exports, { signatures: result.exportSignatures });
+  if (typeof exports[LIT_WHEN_PERF_EXPORT] !== "function") return null;
+
+  const nativeModule = await import(pathToFileURL(entryModulePath).href);
+  const truthy = () => 7;
+  const falsy = () => 11;
+  const expectedChecksum = nativeModule.when(true, truthy, falsy);
+  const actualChecksum = exports[LIT_WHEN_PERF_EXPORT](true, truthy, falsy);
+  if (!Object.is(actualChecksum, expectedChecksum)) {
+    return failedPerfLane(
+      "js-host",
+      "result-mismatch",
+      `lit when checksum mismatch: ${String(actualChecksum)} !== ${String(expectedChecksum)}`,
+    );
+  }
+  const sampleOp = "select one of two runtime-owned callbacks";
+  return {
+    ...measureJsHostPerf(
+      sampleOp,
+      () => exports[LIT_WHEN_PERF_EXPORT](true, truthy, falsy),
+      () => nativeModule.when(true, truthy, falsy),
+    ),
+    compileDurationMs,
+    binaryBytes: result.binary.length,
+    ...moduleImportMetadata(moduleImports),
+    expectedChecksum,
+    actualChecksum,
+    testCompiledToWasm: false,
+    target: "js-host",
+  };
+}
+
+async function perfLit() {
+  const jsHost = runJsHostLane ? await perfLitJsHost() : skippedPerfLane("js-host");
+  const standalone = {
+    ...skippedPerfLane("standalone"),
+    reason: "the pinned Lit callback probe currently covers the JS-host lane only",
+  };
+  const standaloneDynamic = {
+    ...skippedPerfLane("standalone", "runtime-dynamic"),
+    reason: "the pinned Lit callback probe currently covers the JS-host lane only",
+  };
+  return packagePerfRecord(
+    jsHost?.sampleOp ?? standalone?.sampleOp ?? standaloneDynamic?.sampleOp ?? "select one of two callbacks",
+    jsHost ?? failedPerfLane("js-host", "compile-error", "host compilation failed"),
+    standalone,
+    { standaloneDynamic },
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Assemble
 // ---------------------------------------------------------------------------
@@ -1580,44 +1665,57 @@ if (selectedPackages.has("react")) {
 }
 
 if (selectedPackages.has("lit")) {
-  console.log("[npm-compat] lit — package entry + lit's own upstream unit tests...");
   const litEntry = NPM_COMPAT_CATALOG.find((entry) => entry.name === "lit");
-  const litReport = await runNpmCompatCatalogHarness("lit", { quiet: true });
-  const litSuite = await runLitUpstreamSuite({ quiet: true });
-  packages.push(
-    await buildPackageEntry({
+  if (perfOnly) {
+    console.log("[npm-compat] lit — perf only (correctness and upstream suite skipped)...");
+    packages.push({
       name: "lit",
       version: litEntry.version,
       issue: 3977,
       entryFile: litEntry.entryModule.replace(/^package\//, ""),
       shape: litEntry.shape,
-      report: litReport,
-      // (#3977) The compile/validate numbers on this card come from
-      // `lit/index.js`, which is a FOUR-LINE BARREL — it re-exports
-      // `lit-element` and `lit-html` and contains no implementation, so
-      // "201 bytes, validates" was never a statement about lit. The test
-      // numbers come from the three PUBLISHED packages that actually carry
-      // lit's code, running lit's own upstream suite. `entryIsBarrel` exists
-      // so the card can say that out loud rather than letting the two numbers
-      // be read as being about the same thing.
-      entryIsBarrel: true,
-      tests: {
-        kind: "upstream-suite",
-        passed: litSuite.results?.passed ?? null,
-        total: litSuite.results?.scored ?? null,
-        passRatePct: litSuite.summary?.passRatePct ?? null,
-        admitted: litSuite.extraction?.admitted ?? null,
-        upstreamTestsSeen: litSuite.extraction?.upstreamTestsSeen ?? null,
-        harnessIncompatible: litSuite.results?.harnessIncompatible ?? null,
-        // The headline finding, and the reason the pass rate is low: most of
-        // lit's corpus sits behind an implementation module the validator
-        // rejects (#3978), so those tests never ran against Wasm at all.
-        implementationInvalidTests: litSuite.summary?.implementationInvalidTests ?? null,
-        sourceIssue: 3977,
-      },
-      perf: null,
-    }),
-  );
+      perf: await perfLit(),
+      knownBugs: knownBugsFor("lit"),
+    });
+  } else {
+    console.log("[npm-compat] lit — package entry + lit's own upstream unit tests...");
+    const litReport = await runNpmCompatCatalogHarness("lit", { quiet: true });
+    const litSuite = await runLitUpstreamSuite({ quiet: true });
+    packages.push(
+      await buildPackageEntry({
+        name: "lit",
+        version: litEntry.version,
+        issue: 3977,
+        entryFile: litEntry.entryModule.replace(/^package\//, ""),
+        shape: litEntry.shape,
+        report: litReport,
+        // (#3977) The compile/validate numbers on this card come from
+        // `lit/index.js`, which is a FOUR-LINE BARREL — it re-exports
+        // `lit-element` and `lit-html` and contains no implementation, so
+        // "201 bytes, validates" was never a statement about lit. The test
+        // numbers come from the three PUBLISHED packages that actually carry
+        // lit's code, running lit's own upstream suite. `entryIsBarrel` exists
+        // so the card can say that out loud rather than letting the two numbers
+        // be read as being about the same thing.
+        entryIsBarrel: true,
+        tests: {
+          kind: "upstream-suite",
+          passed: litSuite.results?.passed ?? null,
+          total: litSuite.results?.scored ?? null,
+          passRatePct: litSuite.summary?.passRatePct ?? null,
+          admitted: litSuite.extraction?.admitted ?? null,
+          upstreamTestsSeen: litSuite.extraction?.upstreamTestsSeen ?? null,
+          harnessIncompatible: litSuite.results?.harnessIncompatible ?? null,
+          // The headline finding, and the reason the pass rate is low: most of
+          // lit's corpus sits behind an implementation module the validator
+          // rejects (#3978), so those tests never ran against Wasm at all.
+          implementationInvalidTests: litSuite.summary?.implementationInvalidTests ?? null,
+          sourceIssue: 3977,
+        },
+        perf: await perfLit(),
+      }),
+    );
+  }
 }
 
 if (selectedPackages.has("react-dom")) {

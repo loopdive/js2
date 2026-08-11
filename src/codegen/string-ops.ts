@@ -32,6 +32,7 @@ import {
 import { emitBrandCheckTypeError } from "./native-proto.js";
 import { emitFlattenWithInlineFlatFastPath } from "./string-materialize.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
+import { collectConcatOperands, ensureNativeBatchedConcat } from "./native-batched-concat.js";
 import {
   emitStandaloneRegExpToStringFromExpr,
   isStaticallyUndefinedExpr,
@@ -1641,22 +1642,6 @@ export function emitBoolToString(ctx: CodegenContext, fctx: FunctionContext): Va
 // ── Batched string concat chains ─────────────────────────────────────
 
 /**
- * Walk a left-associative (or right-associative) tree of `+` BinaryExpressions
- * whose result type is string, collecting all leaf operands in order.
- * Returns the flat list of operands for the concat chain.
- */
-function collectConcatOperands(ctx: CodegenContext, expr: ts.Expression): ts.Expression[] {
-  if (
-    ts.isBinaryExpression(expr) &&
-    expr.operatorToken.kind === ts.SyntaxKind.PlusToken &&
-    isStringType(ctx.checker.getTypeAtLocation(expr))
-  ) {
-    return [...collectConcatOperands(ctx, expr.left), ...collectConcatOperands(ctx, expr.right)];
-  }
-  return [expr];
-}
-
-/**
  * Fold runs of adjacent compile-time-constant operands in a concat chain
  * into single synthetic string literals. E.g. [var, "a", "b", "c", var2]
  * becomes [var, "abc", var2] — reducing 4 concat ops to 2.
@@ -1719,6 +1704,21 @@ function compileNativeStringConcat(
 ): ValType | null {
   const constVal = resolveStrictConstant(ctx, expr);
   if (typeof constVal === "string") return compileStringLiteral(ctx, fctx, constVal, expr);
+
+  if (noJsHost(ctx) && process.env.JS2WASM_NATIVE_BATCHED_CONCAT !== "0") {
+    const operands = collectConcatOperands(ctx, expr);
+    const folded = foldAdjacentConstantOperands(ctx, operands);
+    const batchedIdx = ensureNativeBatchedConcat(ctx, folded.length);
+    if (batchedIdx !== undefined) {
+      for (const operand of folded) {
+        // A flattened nested Symbol must throw before operands to its right.
+        if (tryThrowOnSymbolStringCoercion(ctx, fctx, operand)) return nativeStringType(ctx);
+        compileNativeConcatOperand(ctx, fctx, operand);
+      }
+      fctx.body.push({ op: "call", funcIdx: batchedIdx });
+      return nativeStringType(ctx);
+    }
+  }
 
   // #1470 — `__str_concat` takes two native strings. Standalone/WASI must
   // coerce mixed operands in Wasm; the legacy JS-host native-string mode keeps

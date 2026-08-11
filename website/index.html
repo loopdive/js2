@@ -20,13 +20,13 @@
     />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="js2wasm" />
-    <meta property="og:url" content="https://js2.loopdive.com/" />
+    <meta property="og:url" content="https://js2wasm.loopdive.com/" />
     <meta property="og:title" content="js2wasm — AOT JavaScript/TypeScript → WebAssembly GC" />
     <meta
       property="og:description"
       content="Direct ahead-of-time compilation to WebAssembly GC with no embedded JS engine — turning every module into a Wasm sandbox for untrusted / AI-generated code."
     />
-    <meta property="og:image" content="https://js2.loopdive.com/og-image.png" />
+    <meta property="og:image" content="https://js2wasm.loopdive.com/og-image.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta property="og:image:alt" content="js2wasm — AOT JavaScript/TypeScript to WebAssembly GC" />
@@ -36,7 +36,7 @@
       name="twitter:description"
       content="Direct AOT compilation to WebAssembly GC. No embedded JS engine. A Wasm sandbox for untrusted / AI-generated code."
     />
-    <meta name="twitter:image" content="https://js2.loopdive.com/og-image.png" />
+    <meta name="twitter:image" content="https://js2wasm.loopdive.com/og-image.png" />
     <style>
       :root {
         --bg: #060a14;
@@ -1909,7 +1909,7 @@ f64.const 3</pre
                 </details>
               </div>
               <div class="feat-row" data-t262-paths="language/statements/labeled">
-                <span class="feat-badge partial">⚠</span>
+                <span class="feat-badge full">✓</span>
                 <span class="feat-name">Labeled statements (break / continue)</span>
                 <span class="feat-desc">Named loop targets for break and continue</span>
 
@@ -2092,7 +2092,7 @@ for (let i = 0; i &lt; 10; i++) {
                 </details>
               </div>
               <div class="feat-row" data-t262-paths="language/statements/try">
-                <span class="feat-badge partial">⚠</span>
+                <span class="feat-badge full">✓</span>
                 <span class="feat-name">try / catch / finally</span>
                 <span class="feat-desc">Exception handling with optional finally block</span>
                 <details>
@@ -2279,7 +2279,7 @@ const found = arr.find(x =&gt; x &gt; 5);</pre
                 </details>
               </div>
               <div class="feat-row" data-t262-paths="built-ins/RegExp,built-ins/RegExpStringIteratorPrototype">
-                <span class="feat-badge partial">⚠</span>
+                <span class="feat-badge full">✓</span>
                 <span class="feat-host">host</span>
                 <span class="feat-name">Regular expressions</span>
                 <span class="feat-desc">Pattern matching and string search</span>
@@ -2688,7 +2688,7 @@ new Proxy(t, handler);      // trap dispatch not yet</pre
                 </details>
               </div>
               <div class="feat-row" data-t262-paths="built-ins/Promise">
-                <span class="feat-badge none">✗</span>
+                <span class="feat-badge partial">⚠</span>
                 <span class="feat-host">host</span>
                 <span class="feat-name">Promise .then / .catch / .finally</span>
                 <span class="feat-desc">Promise chaining and error handling</span>
@@ -2832,7 +2832,7 @@ const { a, ...rest } = obj;</pre
                 </details>
               </div>
               <div class="feat-row" data-t262-paths="language/expressions/coalesce">
-                <span class="feat-badge partial">⚠</span>
+                <span class="feat-badge full">✓</span>
                 <span class="feat-name">Nullish coalescing (??)</span>
                 <span class="feat-desc">Default values for null or undefined</span>
                 <details>
@@ -2945,7 +2945,7 @@ class Counter {
                 </details>
               </div>
               <div class="feat-row" data-t262-paths="built-ins/Error/cause">
-                <span class="feat-badge none">✗</span>
+                <span class="feat-badge partial">⚠</span>
                 <span class="feat-name">Error.cause</span>
                 <span class="feat-desc">Chain errors with a cause property</span>
                 <details>
@@ -3135,7 +3135,7 @@ const rev = arr.toReversed();</pre
                 </details>
               </div>
               <div class="feat-row" data-t262-paths="language/comments/hashbang,language/source-text">
-                <span class="feat-badge partial">⚠</span>
+                <span class="feat-badge full">✓</span>
                 <span class="feat-name">Hashbang (#!) comments</span>
                 <span class="feat-desc">Unix shebang line support</span>
 
@@ -3300,7 +3300,7 @@ counts.getOrInsert("a", 0);</pre
                 </details>
               </div>
               <div class="feat-row" data-t262-paths="">
-                <span class="feat-badge partial">⚠</span>
+                <span class="feat-badge none">✗</span>
                 <span class="feat-name">Math.sumPrecise</span>
                 <span class="feat-desc">Exactly-rounded sum of a list of numbers</span>
 
@@ -4514,7 +4514,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
       // Pages site with an identical schema; the raw baseline URL stays as a
       // resilience fallback for the case where the same-origin file is missing
       // from a build. URLs stay relative so they resolve against the dynamic
-      // <base href> (loopdive.github.io/js2wasm vs js2.loopdive.com vs local).
+      // <base href> (loopdive.github.io/js2wasm vs js2wasm.loopdive.com vs local).
       const JSHOST_TEST262_REPORT_URLS = [
         "./benchmarks/results/test262-report.json",
         "https://raw.githubusercontent.com/loopdive/js2wasm-baselines/main/test262-current.json",

@@ -2163,13 +2163,44 @@ jobs:
             echo "regressions=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # (#4352 triage gap) The gate above runs `--quiet`, which prints ONLY summary counts —
+      # diff-test262.ts emits the per-file list behind `if (!quiet …)`. So when
+      # auto-park (#2547) parks a PR for regressions, the evidence needed to
+      # triage it is discarded: the park comment says "222 regressions" and
+      # nothing anywhere records WHICH 222. Reconstructing them means
+      # re-downloading the 5 MB merged-report artifact (1-day retention) and
+      # re-diffing by hand, if it has not already expired.
+      #
+      # Emit a second, verbose copy purely as triage evidence. Deliberately
+      # separate from the gate invocation so the gate's stdout, exit-code
+      # contract (#3303) and artifact stay byte-identical — this step cannot
+      # change any verdict. `--all` (diff-test262.ts:1450 — NOT `--show-all`)
+      # lifts the default 20-row cap to Infinity, so a large diff is not
+      # truncated exactly when the detail matters most.
+      # Non-fatal: triage evidence must never fail the run that produces it.
+      - name: Enumerate regressed files for triage
+        if: always() && env.HOST_RAN == 'true'
+        continue-on-error: true
+        run: |
+          npx tsx scripts/diff-test262.ts "$BASELINE" merged-reports/test262-results-merged.jsonl --all $META_ARGS \
+            ${TEST262_SCOPE:+--path-filter "$TEST262_SCOPE"} \
+            > merged-reports/test262-regressions-detail.txt 2>&1 || true
+          echo "--- first 40 lines of the detailed report ---"
+          head -40 merged-reports/test262-regressions-detail.txt || true
+
       - name: Upload regressions report
         uses: actions/upload-artifact@v6
         if: always() && env.HOST_RAN == 'true'
         with:
           retention-days: 1
           name: test262-regressions-report
-          path: merged-reports/test262-regressions.txt
+          # (#4352 triage gap) Ship the verbose per-file listing alongside the quiet
+          # summary. Retention stays 1 day, matching the merged report — but a
+          # ~kB text file is far cheaper to keep than re-deriving the list from
+          # the 5 MB JSONL after the fact.
+          path: |
+            merged-reports/test262-regressions.txt
+            merged-reports/test262-regressions-detail.txt
           if-no-files-found: warn
 
       # #1853 — hard-error stability gate. Count malformed-Wasm / missing-
