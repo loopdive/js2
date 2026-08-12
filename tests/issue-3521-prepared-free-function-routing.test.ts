@@ -650,12 +650,11 @@ describe("#3521 prepare-before-emit free-function routing", () => {
         preparedComponentId: expect.stringMatching(/^prepared-component:/),
       });
     }
-    // The implicit-constructor caller remains a separate R3 family; this
-    // checkpoint retires the exact class-to-free edge without overclaiming it.
     expect(outcome(result, "run")).toMatchObject({
       kind: "emitted",
-      legacyBodyEmitted: true,
+      legacyBodyEmitted: false,
       irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
     });
     expect((await instantiate(result)).run!()).toBe(42);
   });

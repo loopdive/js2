@@ -397,6 +397,45 @@ export class ProgramAbiClassCallableRegistry {
     return handle;
   }
 
+  /** Plan one exact non-terminal implicit-constructor `_init` support unit. */
+  preparePlainImplicitConstructorUnit(unitId: IrUnitId): FuncHandle {
+    this.assertOpen(unitId);
+    const unit = this.identityContext.unitByUnitId.get(unitId);
+    const canonical = this.units
+      .get(unitId)
+      ?.filter((observation) => definedFuncAt(this.ctx, observation.funcIdx))
+      .at(-1);
+    const func = canonical ? definedFuncAt(this.ctx, canonical.funcIdx) : undefined;
+    if (unit?.kind !== "class-implicit-constructor" || unit.terminalOwnerId !== null || !canonical || !func) {
+      throw new ProgramAbiInvariantError(
+        "missing-source-unit",
+        `plain implicit constructor support ${unitId} has no exact live non-terminal allocator`,
+      );
+    }
+    const expectedBindingId = irUnitCallableBindingId(unitId);
+    if (this.session.hasPlan(expectedBindingId)) {
+      if (!this.session.hasLocator(expectedBindingId, func)) {
+        throw new ProgramAbiInvariantError(
+          "duplicate-slot-locator",
+          `plain implicit constructor support ${canonical.displayName} is not the exact allocator owned by ${expectedBindingId}`,
+        );
+      }
+    } else {
+      const bindingId = planProgramAbiUnitCallable(this.ctx, {
+        ref: irUnitFuncRef({ unitId, name: canonical.displayName }),
+        signature: functionSignature(this.ctx, func),
+        func,
+      });
+      if (bindingId !== expectedBindingId) {
+        throw new ProgramAbiInvariantError(
+          "missing-source-unit",
+          `plain implicit constructor support ${canonical.displayName} was not accepted for ${unitId}`,
+        );
+      }
+    }
+    return canonical.funcIdx;
+  }
+
   /** Resolve one exact class source unit to its current stable allocator handle. */
   handleForUnit(unitId: IrUnitId): FuncHandle | undefined {
     const canonical = this.units

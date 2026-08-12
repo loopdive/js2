@@ -1954,7 +1954,8 @@ export class ProgramAbiSession {
         draft.intent.kind === "callable" &&
         draft.intent.origin === "source" &&
         draft.intent.unitId !== undefined &&
-        !unitIds.has(draft.intent.unitId)
+        !unitIds.has(draft.intent.unitId) &&
+        !this.isPreparedPlainImplicitConstructorSupportDraft(draft)
       ) {
         throw new ProgramAbiInvariantError(
           "invalid-callable-provenance",
@@ -2221,7 +2222,11 @@ export class ProgramAbiSession {
       this.assertPreparedBorrowedDependency(scopeId, terminalUnitIds, draft, borrowing);
       return;
     }
-    if (draft.intent.kind === "export" || (draft.intent.kind === "callable" && draft.intent.origin === "source")) {
+    const plainImplicitConstructorSupport = this.isPreparedPlainImplicitConstructorSupportDraft(draft);
+    if (
+      draft.intent.kind === "export" ||
+      (draft.intent.kind === "callable" && draft.intent.origin === "source" && !plainImplicitConstructorSupport)
+    ) {
       throw new ProgramAbiInvariantError(
         "invalid-callable-provenance",
         `prepared ABI scope ${scopeId} may request only external/support dependencies, not ${draft.intent.kind} binding ${draft.id}`,
@@ -2255,6 +2260,33 @@ export class ProgramAbiSession {
         `prepared ABI scope ${scopeId} requested dependency ${draft.id} owned by terminal ${ownerTerminalId}`,
       );
     }
+  }
+
+  /** Exact AST-free `_init(self) -> self` body allowed as a shared prepared dependency. */
+  private isPreparedPlainImplicitConstructorSupportDraft(draft: ProgramAbiDraft): boolean {
+    const intent = draft.intent;
+    if (intent.kind !== "callable" || intent.origin !== "source" || !intent.unitId) return false;
+    const unit = this.inventory.allUnits.find(({ id }) => id === intent.unitId);
+    const locator = this.locators.get(draft.id);
+    if (
+      unit?.kind !== "class-implicit-constructor" ||
+      unit.terminalOwnerId !== null ||
+      locator?.kind !== "defined-function"
+    ) {
+      return false;
+    }
+    const func = locator.value;
+    const signature = this.module.types[func.typeIdx];
+    return (
+      func.locals.length === 0 &&
+      func.body.length === 1 &&
+      func.body[0]?.op === "local.get" &&
+      func.body[0].index === 0 &&
+      signature?.kind === "func" &&
+      signature.params.length === 1 &&
+      signature.results.length === 1 &&
+      canonicalProgramAbiValType(signature.params[0]!) === canonicalProgramAbiValType(signature.results[0]!)
+    );
   }
 
   private assertPreparedBorrowedDependency(

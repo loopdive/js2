@@ -906,6 +906,30 @@ function recordUnitReference(
   if (!entry) return;
 }
 
+/**
+ * A plain implicit base constructor is source-identifiable but has no terminal
+ * source body: preparation installs its exact `_init(self) -> self` support
+ * body. Treat that non-terminal callable as a sealed support dependency rather
+ * than trying to union it with a terminal component that cannot exist.
+ */
+function recordPlainImplicitConstructorSupportReference(
+  evidence: MutableFunctionEvidence,
+  targetUnitId: IrUnitId,
+  input: DerivePreparedComponentDependenciesInput,
+  ownership: OwnershipIndex,
+): boolean {
+  const unit = input.inventory.allUnits.find(({ id }) => id === targetUnitId);
+  if (unit?.kind !== "class-implicit-constructor" || unit.terminalOwnerId !== null) return false;
+  const bindingId = irUnitCallableBindingId(targetUnitId);
+  addAbiDependency(evidence, input.abi, ownership, {
+    bindingId,
+    kind: "support",
+    structuralReferenceKey: irCallableBindingKey({ kind: "unit", unitId: targetUnitId }),
+    expected: (intent) => intent.kind === "callable" && intent.origin === "source" && intent.unitId === targetUnitId,
+  });
+  return true;
+}
+
 function recordGlobalReference(
   evidence: MutableFunctionEvidence,
   ref: IrGlobalRef,
@@ -1440,14 +1464,18 @@ function collectFunctionEvidence(
         if (nested.kind === "class.new") {
           const initTarget = shape?.constructorInitTarget;
           if (initTarget?.binding.kind === "unit") {
-            recordUnitReference(
-              evidence,
-              initTarget.binding.unitId,
-              functionsByUnitId,
-              input.terminalUnitIds,
-              input.abi,
-              ownership,
-            );
+            if (
+              !recordPlainImplicitConstructorSupportReference(evidence, initTarget.binding.unitId, input, ownership)
+            ) {
+              recordUnitReference(
+                evidence,
+                initTarget.binding.unitId,
+                functionsByUnitId,
+                input.terminalUnitIds,
+                input.abi,
+                ownership,
+              );
+            }
           } else {
             addFailure(evidence, {
               code: "class-member-callable-unavailable",

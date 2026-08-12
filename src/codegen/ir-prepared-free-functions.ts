@@ -35,6 +35,7 @@ import {
   type IrExactFunctionClaim,
 } from "./ir-overlay-safety.js";
 import { containsUnplannedNestedExecutableSyntax } from "./ir-prepared-nested-executable-syntax.js";
+import { preparePlainImplicitConstructorSupports } from "./ir-plain-implicit-constructors.js";
 
 /** Preserve the inherited compile-once allowlist for owners not prepared early. */
 export function computePreparedInheritedIrFirstSkipUnitIds(input: {
@@ -125,6 +126,8 @@ export interface PreparedIrBodies {
   readonly freeFunctions: PreparedIrFreeFunctionBodies;
   readonly classMembers?: PreparedIrClassMemberBodies;
   readonly moduleInit?: PreparedIrModuleInitBody;
+  /** Exact support units whose plain implicit constructor bodies were prepared before direct emission. */
+  readonly plainImplicitConstructorUnitIds: ReadonlySet<IrUnitId>;
 }
 
 function topLevelClassDeclarationsByName(sourceFile: ts.SourceFile): ReadonlyMap<string, ts.ClassDeclaration> {
@@ -1269,6 +1272,14 @@ export function prepareIrBodies(input: {
     classMemberUnitIds: classPopulation?.memberUnitIds ?? new Set<IrUnitId>(),
     moduleInit: input.selection.moduleInit,
   };
+  const plainImplicitConstructorUnitIds = preparePlainImplicitConstructorSupports({
+    ctx: input.ctx,
+    sourceFile: input.sourceFile,
+    ownerUnitIds: new Set(claimsByUnitId.keys()),
+    identityPlan: input.identityPlan,
+    classShapes: input.classShapes,
+    classShapesById: input.classShapesById,
+  });
   const stagedTopLevelAccessorSetterUnitIds = classPopulation
     ? stageSelectedTopLevelAccessorSetterAbis({
         ctx: input.ctx,
@@ -1369,6 +1380,7 @@ export function prepareIrBodies(input: {
   return {
     report,
     freeFunctions,
+    plainImplicitConstructorUnitIds,
     ...(classPopulation && classRequestedSkipProjection && classPreparedProjection
       ? {
           classMembers: {

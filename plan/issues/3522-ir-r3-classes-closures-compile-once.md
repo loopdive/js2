@@ -40,6 +40,7 @@ files:
   - src/codegen/class-constructor-wrapper.ts
   - src/codegen/closures.ts
   - src/codegen/declarations.ts
+  - src/codegen/ir-plain-implicit-constructors.ts
   - src/codegen/ir-prepared-free-functions.ts
   - src/codegen/ir-overlay-outcomes.ts
   - src/codegen/program-abi-class-callable-planning.ts
@@ -58,6 +59,7 @@ files:
 loc-budget-allow:
   - src/codegen/class-bodies.ts
   - src/codegen/index.ts
+  - src/codegen/program-abi-session.ts
   - src/ir/builder.ts
   - src/ir/from-ast.ts
   - src/ir/integration.ts
@@ -687,15 +689,22 @@ families), so deleting those shared implementations here would be premature.
 Those families remain the next R3 retirement work before generic R4/R5 can be
 claimed complete.
 
-### Next slice inventory: plain implicit constructors (2026-08-12)
+### Plain implicit-constructor checkpoint (2026-08-12)
 
-The shortest remaining R3 family is a top-level class with no explicit
+This checkpoint retires the top-level class family with no explicit
 constructor, no instance initializer, and no heritage. Its implicit
 `<Class>_new` / `<Class>_init` pair already has exact structural
-`class-implicit-constructor` identity and Program ABI handles, but
-`compileClassBodiesInner` still installs both support bodies during the direct
-class pass. Prepared dependency sealing therefore cannot own a free caller
-whose `new Class()` expression targets that pair.
+`class-implicit-constructor` identity and Program ABI handles. Preparation now
+installs the exact empty `_init(self) -> self` body and existing AST-free
+allocation-plus-init `_new()` wrapper before dependency sealing. The Program
+ABI treats this exact non-terminal callable as immutable prepared support only
+after checking its inventory kind, terminal-owner absence, allocator identity,
+signature, locals, and single `local.get 0` body. The direct class pass then
+skips the same support UnitId and correlates that skip after emission.
+The narrow `program-abi-session.ts` LOC allowance covers that central seal-time
+provenance guard; family discovery and body installation live in the bounded
+`ir-plain-implicit-constructors.ts` subsystem module instead of growing the
+prepared-body driver.
 
 The exact inventory fixture is:
 
@@ -713,28 +722,39 @@ export function run(): number {
 }
 ```
 
-On the current checkpoint, `increment` and `Box_value` are compile-once while
-`run` still reports `legacyBodyEmitted:true, irBodyEmitted:true`. The implicit
-constructor is a support unit rather than a terminal body, so the measurable
-terminal improvement is **1 -> 0**, while the stronger structural result is
-that neither `Box_new` nor `Box_init` is installed by the direct class-body
-pass.
+Before this slice, `increment` and `Box_value` were compile-once while `run`
+reported `legacyBodyEmitted:true, irBodyEmitted:true`. After it, all three
+terminals report `direct=0, IR=1` in GC and standalone, so the measurable
+terminal improvement is **1 -> 0**. A `Box_new` direct-body poison and
+`increment,run` direct-function poison stay green, proving neither support nor
+terminal source bodies enter the old emitters. Both backends validate and
+execute `run() === 42` with zero legacy outcomes.
 
-The implementation must prepare the empty `_init(self) -> self` body and the
-existing allocation-plus-init `_new()` wrapper from the frozen class layout,
-then route their exact implicit-constructor support UnitId around direct class
-body emission. It must not weaken the first-slice boundary: implicit derived
-constructors that forward parent parameters/defaults, classes with instance
-field initializers, externref-backed parents, and nested/dynamic class owners
-remain typed direct controls until their complete semantics are represented.
+Optimization and binary parity are exact for the inventory fixture. The
+generated sizes and SHA-256 hashes match the pre-slice direct artifacts:
 
-Required parity evidence is GC plus standalone execution returning `42`, a
-`Box_new` direct-body poison, zero legacy terminal bodies, and pre/post artifact
-comparison. The final `_new`, `_init`, `Box_value`, and `run` shapes must retain
-the direct typed struct allocation/read/call sequence with no ambient `this`,
-boxing, `call_ref`, or `call_indirect`. Delete only support-generation code that
-has no remaining consumer after those negative controls are accounted for;
-the shared implicit-derived and field-initializer machinery remains live.
+| Target | Bytes before/after | `Box_new` | `Box_init` | `Box_value` | `run` |
+| --- | ---: | --- | --- | --- | --- |
+| WasmGC | 661 / 661 | `09aa9869...26724` | `0054a90e...249f` | `12c24a74...f5b` | `72a05351...e023` |
+| standalone | 21,122 / 21,122 | `cbf64de4...dc64` | `061c5143...208c` | `a9ef6662...977f` | `d6eef269...6c9c` |
+
+The final bodies retain typed struct allocation, direct `_init` and method
+calls, and the folded `f64.const 42`, with no ambient `this`, boxing,
+`call_ref`, or `call_indirect`. Explicit GC/standalone negative controls prove
+that implicit derived forwarding and instance field initialization still use
+the direct class path and trip their direct-body poisons. Externref-backed and
+nested/dynamic classes remain excluded by the same fail-closed boundary.
+Because those consumers still exist, the shared implicit-derived and field-
+initializer implementation is not deleted in this checkpoint.
+
+The focused preparation, class, dependency, and Program ABI suites pass
+**113/113**. Typecheck, formatting, oracle, ordinary and shape-diagnostic
+fallback, issue/optimization-retirement, LOC, and function-budget gates are
+green. The
+IR-only shadow corpus is **37/37 IR-emitted, 0 legacy bodies, 0 Unsupported,
+and 0 Invariants**. This branch remains local and stacked on queued PR #4395;
+rebase, publication, and merge-queue entry wait until that immutable parent
+lands.
 
 ## Exhaustive source-unit census
 

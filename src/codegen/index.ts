@@ -3468,6 +3468,7 @@ interface IrFirstBodyRouting {
   readonly preparedFreeFunctions?: PreparedIrFreeFunctionBodies;
   readonly preparedClassMembers?: PreparedIrClassMemberBodies;
   readonly preparedModuleInit?: PreparedIrModuleInitBody;
+  readonly preparedPlainImplicitConstructorUnitIds?: ReadonlySet<IrUnitId>;
   readonly preparedReport?: IrIntegrationReport;
   readonly preparedSelection?: Pick<IrSelection, "funcs" | "classMembers" | "classMemberUnitIds" | "moduleInit">;
   readonly skipBodies?: ReadonlySet<string>;
@@ -3888,6 +3889,7 @@ function planIrFirstBodyRouting(
       const preparedFreeFunctions = preparedBodies.freeFunctions;
       const preparedClassMembers = preparedBodies.classMembers;
       const preparedModuleInit = preparedBodies.moduleInit;
+      const preparedPlainImplicitConstructorUnitIds = preparedBodies.plainImplicitConstructorUnitIds;
       const preparedReport = preparedBodies.report;
       const requestedSkipUnitIds = computePreparedInheritedIrFirstSkipUnitIds(inheritedSkipInput);
       for (const entry of preparedFreeFunctions.requestedSkipProjection.entries) {
@@ -3902,6 +3904,7 @@ function planIrFirstBodyRouting(
         preparedFreeFunctions,
         ...(preparedClassMembers ? { preparedClassMembers } : {}),
         ...(preparedModuleInit ? { preparedModuleInit } : {}),
+        ...(preparedPlainImplicitConstructorUnitIds.size > 0 ? { preparedPlainImplicitConstructorUnitIds } : {}),
         preparedReport,
         preparedSelection,
         skipBodies: new Set(requestedSkipProjection.entries.map(({ legacyName }) => legacyName)),
@@ -4476,6 +4479,7 @@ export function generateModule(
     let preparedFreeFunctions: PreparedIrFreeFunctionBodies | undefined;
     let preparedClassMembers: PreparedIrClassMemberBodies | undefined;
     let preparedModuleInit: PreparedIrModuleInitBody | undefined;
+    let preparedPlainImplicitConstructorUnitIds: ReadonlySet<IrUnitId> | undefined;
     let preparedReport: IrIntegrationReport | undefined;
     let preparedSelection:
       | Pick<IrSelection, "funcs" | "classMembers" | "classMemberUnitIds" | "moduleInit">
@@ -4492,6 +4496,7 @@ export function generateModule(
       preparedFreeFunctions = routing.preparedFreeFunctions;
       preparedClassMembers = routing.preparedClassMembers;
       preparedModuleInit = routing.preparedModuleInit;
+      preparedPlainImplicitConstructorUnitIds = routing.preparedPlainImplicitConstructorUnitIds;
       preparedReport = routing.preparedReport;
       preparedSelection = routing.preparedSelection;
       irSkipBodies = routing.skipBodies;
@@ -4501,17 +4506,21 @@ export function generateModule(
     // Third pass: compile function bodies
     const actuallySkippedClassMembers: string[] = [];
     const actuallySkippedClassMemberUnitIds: IrUnitId[] = [];
+    const actuallySkippedPlainImplicitConstructorUnitIds: IrUnitId[] = [];
     const actuallySkippedModuleInit: string[] = [];
-    const classBodyRouting = preparedClassMembers
-      ? {
-          skipBodies: preparedClassMembers.skipBodies,
-          preserveSkippedBodies: preparedClassMembers.preserveBodies,
-          skippedNames: actuallySkippedClassMembers,
-          skipBodyUnitIds: preparedClassMembers.skipBodyUnitIds,
-          preserveSkippedBodyUnitIds: preparedClassMembers.preserveBodyUnitIds,
-          skippedUnitIds: actuallySkippedClassMemberUnitIds,
-        }
-      : undefined;
+    const classBodyRouting =
+      preparedClassMembers || (preparedPlainImplicitConstructorUnitIds?.size ?? 0) > 0
+        ? {
+            skipBodies: preparedClassMembers?.skipBodies ?? new Set<string>(),
+            preserveSkippedBodies: preparedClassMembers?.preserveBodies ?? new Set<string>(),
+            skippedNames: actuallySkippedClassMembers,
+            skipBodyUnitIds: preparedClassMembers?.skipBodyUnitIds ?? new Set<IrUnitId>(),
+            preserveSkippedBodyUnitIds: preparedClassMembers?.preserveBodyUnitIds ?? new Set<IrUnitId>(),
+            skippedUnitIds: actuallySkippedClassMemberUnitIds,
+            skipPlainImplicitConstructorUnitIds: preparedPlainImplicitConstructorUnitIds ?? new Set<IrUnitId>(),
+            skippedPlainImplicitConstructorUnitIds: actuallySkippedPlainImplicitConstructorUnitIds,
+          }
+        : undefined;
     const moduleInitBodyRouting = preparedModuleInit
       ? {
           skipBody: preparedModuleInit.skipBodies.has(MODULE_INIT_UNIT_NAME),
@@ -4560,6 +4569,13 @@ export function generateModule(
           preparedClassMembers.skipBodyUnitIds,
           actuallySkippedClassMemberUnitIds,
           "class member",
+        );
+      }
+      if (preparedPlainImplicitConstructorUnitIds && preparedPlainImplicitConstructorUnitIds.size > 0) {
+        correlateIrSkippedBodyUnitIds(
+          preparedPlainImplicitConstructorUnitIds,
+          actuallySkippedPlainImplicitConstructorUnitIds,
+          "plain implicit constructor support",
         );
       }
       if (preparedModuleInit) {
