@@ -258,6 +258,7 @@ import { unshiftExternGetProtoMethodArm } from "./native-proto-instance-method-r
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { fillInstanceTombstones } from "./instance-tombstones.js"; // (#4098 G1 s1) per-instance own-property deletability
 import { fillInstanceProps } from "./instance-props.js"; // (#4194) instance expando bag substrate
+import { fillErrorPropHelpers } from "./error-props.js"; // (#4098) native Error `$props` shared MOP
 import { fillVecPropHelpers } from "./vec-props.js"; // (#3537) array ($Vec) expando side table
 import { fillProtoIndexStore } from "./proto-index-store.js"; // (#4160) prototype-index companions
 import { finalizeFunctionPoisonPillCalls } from "./function-poison-pill.js";
@@ -5112,6 +5113,7 @@ export function generateModule(
 
     // Closed compiler structs are not `$Object` hash maps. Fill the native
     // Object.hasOwn / hasOwnProperty predicates from the complete shape table.
+    fillErrorPropHelpers(ctx); // (#4098) fill reserved Error bag ABI before its MOP consumers finalize
     fillInstanceTombstones(ctx); // (#4098 G1 s1) BEFORE the ladders below: they bake its call
     fillInstanceProps(ctx); // (#4194) instance expando carrier + bag get/set + tombstone resurrect
     fillClosedStructHasOwnArms(ctx);
@@ -7463,6 +7465,7 @@ export function generateMultiModule(
     fillTypedMemberGetF64Dispatch(ctx); // (#3673) typed f64 twins
 
     // Mirror the single-source closed-struct own-property finalizer.
+    fillErrorPropHelpers(ctx); // (#4098) multi-source parity for the shared Error bag ABI
     fillInstanceTombstones(ctx); // (#4098 G1 s1) BEFORE the ladders below: they bake its call
     fillInstanceProps(ctx); // (#4194) instance expando carrier + bag get/set + tombstone resurrect
     fillClosedStructHasOwnArms(ctx);
@@ -7507,6 +7510,9 @@ export function generateMultiModule(
     fillExternGetIdxVecArms(ctx);
     // (#3666/#3251) Multi-source parity after every carrier/dynamic reader is complete.
     fillObjVecReflectionHelpers(ctx);
+    // (#4098) Multi-source parity: the helper bodies were filled above; now
+    // splice the native Error reader after the other dynamic-reader fills.
+    fillExternGetErrorProps(ctx);
     // (#3371) Reflect.construct reserves the same host-free constructor
     // classifier and native-view prototype overrides in project compilation as
     // in the single-source pipeline. Keep native views after generic vec fills
@@ -7562,6 +7568,9 @@ export function generateMultiModule(
       const cap = Math.min(maxClosureArity, 8);
       for (let n = 0; n <= cap; n++) emitClosureMethodCallExportN(ctx, n);
     }
+    // (#4098) Error sidecar accessors reserve receiver-aware drivers while the
+    // MOP is built. Refill them only after multi-source method dispatchers exist.
+    fillAccessorDrivers(ctx);
 
     // Unknown-arity host wrappers use this classifier to choose a dispatcher
     // wide enough for the closure's declared parameters.
