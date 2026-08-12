@@ -76,4 +76,22 @@ describe("#2930 — import-alias name mismatch resolution", () => {
     });
     expect(ret).toBe(7);
   });
+
+  it("default import aliases stay module-backed inside function-expression closures", async () => {
+    const ret = await runTest({
+      "./test.ts": `
+        import api from "./h.ts";
+        const cases: any[] = [];
+        function register(name: string, body: Function): void { cases.push({ name, body }); }
+        register("reads import", function (): number { return api.value; });
+        export function test(): number { return cases[0].body(); }
+      `,
+      "./h.ts": `
+        function api(): number { return 1; }
+        (api as any).value = 42;
+        export default api;
+      `,
+    });
+    expect(ret).toBe(42);
+  });
 });

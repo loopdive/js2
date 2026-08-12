@@ -14,6 +14,32 @@ goal: dogfood
 sprint: Backlog
 horizon: m
 related: [1058, 3587, 3672, 3958, 3982, 3997, 3999, 4000, 4287, 4299, 4301, 4302, 4303]
+oracle-ratchet-allow:
+  # The Hono fix compares the actual registered Wasm carriers for two inferred
+  # anonymous object literals. TypeOracle deliberately exposes only
+  # registry-free facts, so it cannot answer whether their concrete typeIdx
+  # values match; keep this exact representation query at the codegen seam.
+  - src/codegen/literals.ts
+loc-budget-allow:
+  - src/codegen/closures.ts
+  - src/codegen/expressions/calls.ts
+  - src/codegen/object-runtime.ts
+  - src/codegen/expressions/identifiers.ts
+  - src/codegen/context/types.ts
+  - src/codegen/declarations/import-collector.ts
+  - src/codegen/literals.ts
+  - src/codegen/index.ts
+  - src/codegen/declarations.ts
+  - src/codegen/statements/control-flow.ts
+  - src/compiler.ts
+func-budget-allow:
+  - src/codegen/expressions/calls.ts::compileCallExpression
+  - src/codegen/object-runtime.ts::fillApplyClosure
+  - src/codegen/declarations/import-collector.ts::finalizeUnifiedCollector
+  - src/codegen/closures.ts::compileArrowAsCallback
+  - src/codegen/closures/arrow-phases.ts::planClosureCaptures
+  - src/codegen/expressions/identifiers.ts::compileIdentifierCore
+  - src/codegen/context/create-context.ts::createCodegenContext
 ---
 # npm-compat: pin and adapt original upstream test suites for catalog packages
 
@@ -83,15 +109,27 @@ Deferred files/registration sites remain explicit report fields; they are not
 counted as passes or silently removed from the upstream denominator. UUID's
 existing 75-test lane is reused unchanged rather than duplicated.
 
-Measured runtime results on the initial adapters:
+Measured runtime results after the 2026-08-12 compiler fixes:
 
-- Hono: **31/31 native, 25/31 Wasm**. Both generated modules compile and
-  validate; six exact assertion cases differ in Wasm.
-- Lodash: **11/11 native, 0/11 Wasm**. The generated module compiles and
-  validates, then the shared callback runner fails with `null is not a
-  function`; all eleven callbacks are reported as runtime failures.
-- Moment: **10/10 native, 0/10 Wasm**. All six generated modules compile and
-  validate; every callback executes but fails at least one original assertion.
+- Hono: **31/31 native, 31/31 Wasm**. Both selected modules compile and
+  validate. The six initial failures were generic compiler defects: an
+  incompatible nested object carrier reused across array elements, host-null
+  instead of real `undefined` on closure fallthrough, and an untyped JavaScript
+  object-default parameter closed to the default object's exact shape.
+- Lodash CommonJS: **11/11 native, 11/11 Wasm**. Static top-level `require`
+  linking, CommonJS export-object handling, JSDoc `*` parameter preservation,
+  mixed callable arrays, and callback/apply lowering are exercised by the
+  unchanged selected QUnit modules.
+- lodash-es 4.18.1 is a separate catalog lane: its published 308-module ESM
+  barrel now compiles to valid Wasm, and the same seven original QUnit modules
+  pass **11/11 native, 11/11 Wasm** against the modular ESM implementation. A
+  source-qualified ambient-builtin registry prevents `toNumber`'s
+  `freeParseInt` alias from being confused with lodash-es's own exported
+  three-argument `parseInt` function.
+- Moment: **10/10 native, 0/10 Wasm**. All six selected modules compile and
+  validate, but the generated callbacks observe a null Moment implementation.
+  The exact implementation-versus-adjacent-declaration resolution defect is
+  split into #4384.
 
 These are exact selected-slice denominators, not whole-suite pass rates. The
 reports retain the larger upstream inventories and deferred counts separately.
@@ -125,11 +163,11 @@ is not evidence that ReactDOM or Lit's implementation works.
 | Redux | runtime workload passes 1/1 | adapter can be expanded to originals |
 | Jest / Lodash / Moment | entry compiles and validates; no original-suite score yet | add pinned adapters here |
 
-Two integration gaps remain even where a standalone harness exists: UUID's
-original suite and Hono's runtime workload are not yet wired into the generated
-npm-compat report. Preserve their standalone evidence until the generator can
-consume it; do not copy pass counts into static report data. Performance
-regressions remain informational rather than a gate, per the catalog policy.
+The npm-compat generator now invokes the Hono, Lodash, lodash-es, UUID, and
+Moment upstream runners directly. Pass counts therefore come from a fresh run,
+not copied static data. UUID remains **3/75** with exact per-test messages and
+is tracked in #4383. Performance regressions remain informational rather than
+a gate, per the catalog policy.
 
 ## 2026-08-11 resumed compiler progress
 

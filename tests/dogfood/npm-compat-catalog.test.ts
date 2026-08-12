@@ -10,6 +10,7 @@ import { runNpmCompatCatalogHarness } from "./npm-compat-catalog-harness.mjs";
 const EXPECTED_NAMES = [
   "hono",
   "lodash",
+  "lodash-es",
   "axios",
   "react",
   "react-dom",

@@ -51,6 +51,7 @@ import { emitStringExternResultFlatten, emitStringRefResultFlatten } from "../st
 import { compileStringLiteral, emitBoolToString, emitNativeStringToHostExternref } from "../string-ops.js";
 import { usesNativeNumberFormat } from "../number-format-native.js";
 import { emitSymbolToString } from "../symbol-native.js";
+import { resolveGlobalParseBuiltin } from "../global-builtin-resolution.js";
 import {
   defaultValueInstrs,
   emitGuardedFuncRefCast,
@@ -326,19 +327,10 @@ export function compileIdentifierCall(
 
   // Handle global isNaN(n) / isFinite(n) / parseInt / parseFloat — inline wasm
   if (ts.isIdentifier(expr.expression)) {
-    // Resolve aliases like `var freeParseInt = parseInt; freeParseInt(...)` (#1109)
-    let funcName = expr.expression.text;
-    const _knownGlobalFuncs = new Set(["parseInt", "parseFloat", "isNaN", "isFinite"]);
-    if (!_knownGlobalFuncs.has(funcName)) {
-      const sym = ctx.checker.getSymbolAtLocation(expr.expression);
-      const decl = sym?.valueDeclaration;
-      if (decl && ts.isVariableDeclaration(decl) && decl.initializer && ts.isIdentifier(decl.initializer)) {
-        const initName = decl.initializer.text;
-        if (_knownGlobalFuncs.has(initName)) {
-          funcName = initName;
-        }
-      }
-    }
+    // Preserve source identity for parseInt/parseFloat aliases. A package can
+    // legitimately export a different function with the same spelling.
+    const globalParseBuiltin = resolveGlobalParseBuiltin(expr.expression, ctx.oracle);
+    const funcName = globalParseBuiltin ?? expr.expression.text;
 
     if (funcName === "isNaN" && expr.arguments.length >= 1) {
       // isNaN(n) → n !== n
@@ -367,8 +359,8 @@ export function compileIdentifierCall(
     }
 
     // parseInt(s, radix?) and parseFloat(s) — host imports
-    if ((funcName === "parseInt" || funcName === "parseFloat") && expr.arguments.length >= 1) {
-      const importFuncIdx = ctx.funcMap.get(funcName);
+    if (globalParseBuiltin !== undefined && expr.arguments.length >= 1) {
+      const importFuncIdx = ctx.ambientBuiltinFuncMap.get(globalParseBuiltin) ?? ctx.funcMap.get(globalParseBuiltin);
       if (importFuncIdx !== undefined) {
         const arg0 = expr.arguments[0]!;
         // (#2652) §19.2.5 step 1 / §19.2.4 step 1: ToString(argument) BEFORE

@@ -68,6 +68,7 @@ import {
 } from "../global-environment.js";
 import { runtimeEvalStateMayShadowBinding } from "../direct-eval-environment.js";
 import { emitStandaloneIntrinsicEvalValue, emitStandaloneIntrinsicFunctionValue } from "./eval-inline.js";
+import { definedFuncAt } from "../func-space.js";
 
 /**
  * #1473 — Build the set of `$Error_struct` `$tag` values compatible with an
@@ -1121,8 +1122,19 @@ function compileIdentifierCore(
     return { kind: "externref" };
   }
 
-  // globalThis — return the JS global object.
-  if (name === "globalThis") {
+  // #3995 — Node's `global` is an alias of `globalThis`. Lodash deliberately
+  // probes that alias before falling back to `Function("return this")()`. The
+  // latter is dynamic code and may be unavailable, so lowering an unshadowed
+  // Node-platform `global` to null made the fallback run and aborted the whole
+  // CommonJS graph during module initialization.
+  //
+  // This check is after lexical/module/capture resolution, so a user binding
+  // named `global` still wins. Web/Deno and platform-unspecified builds keep
+  // their previous behavior.
+  const isNodeGlobalAlias = name === "global" && ctx.nodeGlobals;
+
+  // globalThis (and Node's unshadowed `global` alias) — return the JS global object.
+  if (name === "globalThis" || isNodeGlobalAlias) {
     // (#2996) Standalone / WASI (no-JS-host): resolve to a native, cached
     // `$Object` singleton instead of the `env::__get_globalThis` host import,
     // which a host-free binary can't satisfy (it merely leaks into the import
@@ -1263,7 +1275,7 @@ function compileIdentifierCore(
   };
   if (
     funcRefIdx !== undefined &&
-    funcRefIdx >= ctx.numImportFuncs &&
+    definedFuncAt(ctx, funcRefIdx) !== undefined &&
     !isInternalHelperName() &&
     !ctx.classSet.has(name)
   ) {

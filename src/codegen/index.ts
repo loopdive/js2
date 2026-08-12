@@ -9,7 +9,7 @@ import { analyzeFnctorEscapeGate, deriveFnctorFields } from "./fnctor-escape-gat
 import { resolveFnctorInstanceType } from "./fnctor-typed-instances.js";
 import { resolveFnctorTypedBindingType } from "./fnctor-typed-bindings.js";
 import { isLinearU8RepresentableNew } from "./linear-uint8-signatures.js";
-import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
+import { definedFuncAt, isImportFuncIdx, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 import { fillHostFnctorMethodDrivers, maxHostFnctorMethodArity } from "./host-fnctor-method-driver.js";
 import { fillNativeConstructDrivers, maxReservedNativeConstructArity } from "./native-construct.js";
 import { fillConstructBoundDriver } from "./construct-bound.js"; // (#4196)
@@ -6853,7 +6853,12 @@ function registerImportBindingAliases(ctx: CodegenContext, sourceFiles: readonly
     const localName = localId.text;
     // Already resolvable under the local name (e.g. `import { add }` where the
     // local name equals the export) — nothing to alias.
-    if (ctx.funcMap.has(localName) || ctx.moduleGlobals.has(localName) || ctx.closureMap.has(localName)) {
+    const existingLocalFunc = ctx.funcMap.get(localName);
+    if (
+      ctx.moduleGlobals.has(localName) ||
+      ctx.closureMap.has(localName) ||
+      (existingLocalFunc !== undefined && !isImportFuncIdx(ctx, existingLocalFunc))
+    ) {
       return;
     }
     let sym: ts.Symbol | undefined;

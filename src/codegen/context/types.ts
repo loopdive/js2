@@ -99,6 +99,11 @@ export interface CodegenOptions {
   /** WASI target: emit WASI imports (fd_write, proc_exit) instead of JS host imports */
   wasi?: boolean;
   /**
+   * Node-compatible ambient globals are enabled. This is distinct from the
+   * Wasm backend target: a gc-host build can still target the Node platform.
+   */
+  nodeGlobals?: boolean;
+  /**
    * #2783 — the dynamic-linking axis: namespaces to leave as link-time imports
    * (satisfied by a preloaded provider) instead of inline-lowering. `["node:fs"]`
    * routes std-IO through the `node:fs` shim (the user module imports
@@ -1246,6 +1251,10 @@ export interface CodegenContext {
   useUsageInfer: boolean;
   /** Map from function name to its absolute index (imports + locals) */
   funcMap: Map<string, number>;
+  /** Source-qualified realm builtins whose names may also occur in package
+   * modules. Kept separate from funcMap so a user function named parseInt does
+   * not steal a call through an ambient-builtin alias. */
+  ambientBuiltinFuncMap: Map<string, number>;
   /** Exact IR artifact identity to its allocator-owned defined-function object. */
   irUnitFuncMap: Map<IrUnitId, WasmFunction>;
   /** Map from struct/interface name to type index */
@@ -3187,6 +3196,8 @@ export interface CodegenContext {
   funcClosureGlobals: Map<string, number>;
   /** Whether targeting WASI */
   wasi: boolean;
+  /** Whether Node-compatible ambient globals such as `global` are enabled. */
+  nodeGlobals: boolean;
   /** Whether targeting standalone (no JS host, no WASI runtime — #1470).
    *  When true, the emitter MUST NOT add `wasm:js-string` namespace imports
    *  or JS-host string helpers (`__concat_N`, `__extern_toString`,

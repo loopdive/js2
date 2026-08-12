@@ -4,7 +4,7 @@ title: "Silent runtime bug: assigning a closure to an existing object-literal pr
 status: ready
 sprint: current
 created: 2026-07-28
-updated: 2026-07-28
+updated: 2026-08-12
 priority: high
 horizon: m
 feasibility: hard
@@ -125,3 +125,20 @@ just an academic corner case.
 - [ ] No regression in the two currently-working shapes (new dynamic
       property; plain variable reassignment) — both stay correct.
 - [ ] Equivalence/regression test added and passing.
+
+## 2026-08-12 CommonJS split
+
+The CommonJS rewriter can now synthesize an ambient `module`/`exports` carrier,
+so real ambient UMD branches and `module.exports = identifier` default imports
+work. The original explicit-local carrier remains broken:
+
+```js
+var module = { exports: {} };
+module.exports = factory();
+export default module.exports;
+```
+
+Calling that imported value still reports `[object Object] is not a function`.
+The regression suite marks this exact case as an expected failure while keeping
+the newly working ambient UMD cases as ordinary passing tests. This issue stays
+open for the underlying pre-existing-property carrier change.

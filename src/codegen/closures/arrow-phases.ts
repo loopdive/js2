@@ -39,6 +39,7 @@ import {
   arrowOwnLocals,
   buildCaptureFieldDef,
   closureProvablyAfterLetDecl,
+  closureNameResolvesToImportBinding,
   collectOverBody,
   collectParamDefaultReferences,
   collectReferencedIdentifiers,
@@ -392,6 +393,17 @@ export function planClosureCaptures(
   // calls a capturing nested function also pulls in that function's transitive
   // captures.
   removeClosureOwnedBlockBindingCollisions(ctx, fctx, arrow, ownLocals, referencedNames);
+  // Imported bindings remain live views of module storage. Never snapshot one
+  // into a closure capture merely because the module-initializer frame also
+  // carries a same-named staging local.
+  for (const name of [...referencedNames]) {
+    if (
+      (ctx.moduleGlobals.has(name) || ctx.funcMap.has(name) || ctx.closureMap.has(name)) &&
+      closureNameResolvesToImportBinding(ctx, arrow, name)
+    ) {
+      referencedNames.delete(name);
+    }
+  }
   // Direct-eval source is opaque to the static identifier scan. Its lexical
   // ancestors have already promoted all eval-visible bindings to cells; make
   // those cells explicit captures so this closure can forward the live scope.
