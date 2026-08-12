@@ -14,6 +14,9 @@ record is
 - Compiler ABI fix: `35423bb9c1d4aa`
 - Embedded runtime follow-up: `3917c3caa3a63e`
 - Primordials bootstrap: `b0386cbd5e5afd`
+- Published v8x branch:
+  `loopdive/v8x:codex/js2wasm-module-backend` at
+  `074091faa356043c1795ebeab159c86bf77ab62f`
 - PR base: `loopdive/js2wasm:main`
 - v8x pin: `v149.4.0-rc.4`, commit
   `22cf7342405794d6e1cd851aa43a9b3447654742`
@@ -24,9 +27,9 @@ record is
 - Diagnostic execution result: startup reaches
   `ext:core/00_primordials.js`, then v8x reports the missing shared-instance
   semantic boundary as an explicit failure.
-- Runtime prototype result: an embedded, persistent Wasmtime 45 instance calls
-  a typed Rust `Deno.cwd()` bridge and can reload the saved artifact with the
-  compiler path deliberately absent.
+- Runtime prototype result: an embedded, persistent Wasmtime 47.0.3 instance
+  calls a typed Rust `Deno.cwd()` bridge and can reload the saved artifact with
+  the compiler path deliberately absent.
 - Compiler bootstrap result: the pinned unchanged `00_primordials.js` now
   compiles in the two-source graph. #4378 fixes its pristine
   `Array.prototype` iterator capture; #4380 fixes the IIFE empty-object carrier

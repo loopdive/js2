@@ -93,8 +93,8 @@ The implemented vertical slice provides Rust-owned:
 
 The module path gathers untouched `.ts` sources through v8x's existing module
 resolver, passes the linked graph to js2wasm with `platform: "deno"`, and runs
-the WasmGC result in an embedded Wasmtime 45 store. The store and instance are
-owned by the v8x module handle and remain alive after evaluation.
+the WasmGC result in an embedded Wasmtime 47.0.3 store. The store and instance
+are owned by the v8x module handle and remain alive after evaluation.
 
 The integration fixture enters through the public `rusty_v8` API, evaluates a
 typed three-module graph, and calls a Rust-owned `Deno.cwd()` implementation
@@ -292,4 +292,6 @@ next slice are recorded in
 The initial spike merged in
 [#4396](https://github.com/loopdive/js2wasm/pull/4396). The compiler/runtime
 follow-ups and primordials bootstrap are published in ready PR
-[#4404](https://github.com/loopdive/js2wasm/pull/4404).
+[#4404](https://github.com/loopdive/js2wasm/pull/4404). The v8x-side changes
+are also published on
+[`loopdive/v8x:codex/js2wasm-module-backend`](https://github.com/loopdive/v8x/tree/codex/js2wasm-module-backend).

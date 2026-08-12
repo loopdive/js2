@@ -35,6 +35,9 @@ than calling js2wasm directly.
   `Deno.cwd()` object shape and lowers it to two primitive host imports.
 - `v8x-js2wasm.patch` adds the opt-in backend and its rusty_v8 integration test
   to v8x `v149.4.0-rc.4` at commit `22cf7342405794d6e1cd851aa43a9b3447654742`.
+- The same patch is published on
+  [`loopdive/v8x:codex/js2wasm-module-backend`](https://github.com/loopdive/v8x/tree/codex/js2wasm-module-backend)
+  at commit `074091faa356043c1795ebeab159c86bf77ab62f`.
 - `../../tests/v8x-js2wasm-spike.test.ts` tests the sidecar independently.
 
 ## Run the v8x proof
@@ -63,8 +66,8 @@ cargo test --no-default-features \
   --test js2wasm_spike
 ```
 
-The feature is a third backend, embeds Wasmtime 45, and does not enable the JSC
-or QuickJS features.
+The feature is a third backend, embeds Wasmtime 47.0.3, and does not enable the
+JSC or QuickJS features.
 
 ## What this proves
 
