@@ -1,8 +1,9 @@
 ---
 id: 3630
 title: "Runtime eval: compile the string via acorn + IR→codegen (no TS parser/checker), linked as a separate module"
-status: backlog
+status: in-progress
 created: 2026-07-25
+updated: 2026-08-12
 priority: low
 horizon: xl
 feasibility: hard
@@ -10,13 +11,44 @@ area: codegen, runtime
 goal: es5
 related: [1006, 1054, 1066, 1073, 1102, 2927, 2928]
 blocked-by: [1102, 1066]
+sprint: current
 ---
 
 # #3630 — runtime eval compilation via acorn + IR→codegen
 
-**Deliberately last of three.** This is the most expensive way to support `eval`
-and it must not be started before the two cheaper phases have landed. Filed to
-capture the design, not to schedule it.
+**Deliberately last of three for production.** This is the most expensive way
+to support `eval`; the bounded POC activated on 2026-08-12 validates only the
+portable host boundary. It does not displace the cheaper AOT and interpreter
+phases or claim production conformance coverage.
+
+## 2026-08-12 POC checkpoint — JavaScript + Wasmtime boundary works
+
+The core architectural risk has a positive result: one core-Wasm broker can
+compile runtime source into a second Wasm module and execute it through the same
+import contract under both host families.
+
+The POC is in `examples/runtime-eval-side-module/`:
+
+- The broker imports shared memory, a replaceable
+  `js2wasm:compiler::compileEval` capability, and narrow operations modeled on
+  `WebAssembly.Module`, `WebAssembly.Instance`, and instance export invocation.
+- Module and Instance values cross the broker boundary as opaque `externref`s.
+  JavaScript stores the real JS WebAssembly objects; Wasmtime stores real native
+  `wasmtime::Module` / `wasmtime::Instance` values in the same Engine and Store.
+- The generated numeric-expression module is standalone (zero imports). Both
+  hosts compile runtime-created source `6 * 7`, instantiate the 21,001-byte side
+  module, and return `42`; the broker itself is 295 bytes.
+- Wasmtime invokes the current js2wasm compiler through a deterministic Node
+  helper at runtime. That proves native module instantiation/execution and the
+  portable host ABI, but not yet an embedded/self-hosted compiler payload.
+- No existing eval backend or default changes. The native bytecode interpreter
+  remains available, and QuickJS remains independent.
+
+The POC intentionally limits the result ABI to `f64`. Before production use,
+the design still needs boxed JS values, direct-scope reification/write-back,
+exception transfer, caching/policy, and the Acorn + all-dynamic IR/codegen
+compiler payload. See the example README for the exact ABI and acceptance
+commands.
 
 ## Phase ordering (stakeholder-set, 2026-07-25)
 
