@@ -1767,14 +1767,14 @@ function skipPreparedClassConstructorBody(
   const initLocalIdx = funcByName.get(initKey);
   const initFuncIdx = ctx.funcMap.get(initKey);
   const initFunc = initLocalIdx === undefined ? undefined : ctx.mod.functions[initLocalIdx];
-  const unitId = declaration ? ctx.irPlanningIdentityContext?.unitIdByDeclaration.get(declaration) : undefined;
+  const unitId = ctx.irPlanningIdentityContext?.unitIdByDeclaration.get(declaration ?? classDeclaration);
   const terminal = unitId ? ctx.irPlanningIdentityContext?.terminalByUnitId.get(unitId) : undefined;
   const allocated = unitId ? ctx.programAbiClassCallables?.functionForUnit(unitId) : undefined;
   if (
     unitId === undefined ||
     routing.skipBodyUnitIds?.has(unitId) !== true ||
-    terminal?.kind !== "class-constructor" ||
-    ctx.irPlanningIdentityContext?.declarationByUnitId.get(unitId) !== declaration ||
+    (terminal?.kind !== "class-constructor" && terminal?.kind !== "class-implicit-constructor") ||
+    ctx.irPlanningIdentityContext?.declarationByUnitId.get(unitId) !== (declaration ?? classDeclaration) ||
     !initFunc ||
     allocated !== initFunc
   ) {

@@ -539,39 +539,331 @@ describe("#3522 prepared cross-owner retirement", () => {
   );
 
   it.each(["gc", "standalone"] as const)(
-    "keeps initialized implicit fields on the direct constructor path in %s",
+    "prepares source-ordered initialized fields through an implicit inheritance chain in %s",
     async (target) => {
       const source = `
-        class FieldBase { value: number = 7; }
-        class ImplicitField extends FieldBase {}
-        export function run(): number { return new ImplicitField().value; }
+        class Base { base: number = 1; }
+        class Mid extends Base { mid: number = this.base * 10 + 2; }
+        class Leaf extends Mid { leaf: number = this.mid * 10 + 3; }
+        export function run(): number {
+          const value = new Leaf();
+          return value.base * 10000 + value.mid * 100 + value.leaf;
+        }
       `;
       const fileName = `implicit-initialized-field-${target}.ts`;
+      const direct = await compile(source, {
+        fileName,
+        experimentalIR: false,
+        emitWat: true,
+        target,
+      });
+      expect(direct.success, direct.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(WebAssembly.validate(direct.binary)).toBe(true);
+      expect((await instantiate(direct)).run!()).toBe(11323);
+      const previousClassPoison = process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY;
+      const previousFunctionPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+      let prepared: CompileResult;
+      try {
+        process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = "Base_new,Mid_new,Leaf_new";
+        process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run";
+        prepared = await compile(source, {
+          fileName,
+          experimentalIR: true,
+          trackIrOutcomes: true,
+          emitWat: true,
+          target,
+        });
+      } finally {
+        if (previousClassPoison === undefined) {
+          Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
+        } else {
+          process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = previousClassPoison;
+        }
+        if (previousFunctionPoison === undefined) {
+          Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+        } else {
+          process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previousFunctionPoison;
+        }
+      }
+
+      expect(prepared.success, prepared.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(WebAssembly.validate(prepared.binary)).toBe(true);
+      expect((await instantiate(prepared)).run!()).toBe(11323);
+      expect(prepared.binary.length).toBeLessThanOrEqual(direct.binary.length);
+      for (const name of ["Base_new", "Mid_new", "Leaf_new"] as const) {
+        const terminal = outcome(prepared, "class-member", name);
+        expect(terminal, JSON.stringify(terminal, null, 2)).toMatchObject({
+          kind: "emitted",
+          legacyBodyEmitted: false,
+          irBodyEmitted: true,
+          preparedComponentId: expect.stringMatching(/^prepared-component:/),
+        });
+      }
+      expect(outcome(prepared, "function", "run")).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+      });
+      expect((prepared.irOutcomes ?? []).filter(({ legacyBodyEmitted }) => legacyBodyEmitted)).toEqual([]);
+      expect(watCallTargets(prepared.wat, watFunctionBody(prepared.wat, "Base_init"))).toEqual([]);
+      expect(watCallTargets(prepared.wat, watFunctionBody(prepared.wat, "Mid_init"))).toEqual(["Base_init"]);
+      expect(watCallTargets(prepared.wat, watFunctionBody(prepared.wat, "Leaf_init"))).toEqual(["Mid_init"]);
+      for (const name of ["Base_init", "Mid_init", "Leaf_init"] as const) {
+        const body = watFunctionBody(prepared.wat, name);
+        const directBody = watFunctionBody(direct.wat, name);
+        expect(body.match(/struct\.set/g) ?? []).toHaveLength(1);
+        if (name === "Base_init") {
+          // IR spells the terminal stack result with an explicit `return`
+          // while the direct base body uses Wasm fallthrough; all
+          // value-producing work is otherwise byte-for-byte the same shape.
+          expect(body.replace(/\n\s+return(?=\n\s*\)$)/, "")).toBe(directBody);
+        } else {
+          // The typed IR receiver removes the direct backend's nullable /
+          // nominal receiver guard before inherited field reads.
+          expect(body.split("\n").length).toBeLessThan(directBody.split("\n").length);
+          expect(directBody).toMatch(/ref\.is_null|ref\.test/);
+          expect(body).not.toMatch(/ref\.is_null|ref\.test/);
+        }
+        expect(body).not.toMatch(
+          /__current_this|(?:return_)?call_ref|call_indirect|any\.convert_extern|extern\.convert_any|(?:^|_)(?:box|unbox)(?:_|$)/,
+        );
+      }
+    },
+  );
+
+  it.each(["gc", "standalone"] as const)(
+    "runs explicit base fields before the body and derived fields after super in %s",
+    async (target) => {
+      const source = `
+        class Base {
+          base: number = 1;
+          order: number = this.base * 10 + 2;
+          constructor() { this.order = this.order * 10 + 3; }
+        }
+        class Child extends Base {
+          child: number = this.order * 10 + 4;
+          constructor() { super(); this.child = this.child * 10 + 5; }
+        }
+        export function run(): number {
+          const value = new Child();
+          return value.base * 100000 + value.order * 100 + value.child;
+        }
+      `;
+      const previousClassPoison = process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY;
+      const previousFunctionPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+      let prepared: CompileResult;
+      try {
+        process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = "Base_new,Child_new";
+        process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run";
+        prepared = await compile(source, {
+          fileName: `explicit-initialized-field-order-${target}.ts`,
+          experimentalIR: true,
+          trackIrOutcomes: true,
+          emitWat: true,
+          target,
+        });
+      } finally {
+        if (previousClassPoison === undefined) {
+          Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
+        } else {
+          process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = previousClassPoison;
+        }
+        if (previousFunctionPoison === undefined) {
+          Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+        } else {
+          process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previousFunctionPoison;
+        }
+      }
+
+      expect(prepared.success, prepared.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(WebAssembly.validate(prepared.binary)).toBe(true);
+      expect((await instantiate(prepared)).run!()).toBe(124645);
+      for (const name of ["Base_new", "Child_new"] as const) {
+        expect(outcome(prepared, "class-member", name)).toMatchObject({
+          kind: "emitted",
+          legacyBodyEmitted: false,
+          irBodyEmitted: true,
+          preparedComponentId: expect.stringMatching(/^prepared-component:/),
+        });
+      }
+      expect(outcome(prepared, "function", "run")).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+      });
+      expect((prepared.irOutcomes ?? []).filter(({ legacyBodyEmitted }) => legacyBodyEmitted)).toEqual([]);
+      const baseInit = watFunctionBody(prepared.wat, "Base_init");
+      const childInit = watFunctionBody(prepared.wat, "Child_init");
+      expect(baseInit.match(/struct\.set/g) ?? []).toHaveLength(3);
+      expect(watCallTargets(prepared.wat, childInit)).toEqual(["Base_init"]);
+      expect(childInit.match(/struct\.set/g) ?? []).toHaveLength(2);
+      expect(childInit.indexOf("call ")).toBeLessThan(childInit.indexOf("struct.set"));
+      for (const body of [baseInit, childInit]) {
+        expect(body).not.toMatch(
+          /__current_this|(?:return_)?call_ref|call_indirect|any\.convert_extern|extern\.convert_any|(?:^|_)(?:box|unbox)(?:_|$)/,
+        );
+      }
+    },
+  );
+
+  it.each(["gc", "standalone"] as const)(
+    "preserves direct-call inlining inside initialized fields in %s",
+    async (target) => {
+      const source = `
+        function bump(value: number): number { return value + 1; }
+        class Box {
+          first: number = bump(1);
+          second: number = bump(this.first);
+        }
+        export function run(): number {
+          const value = new Box();
+          return value.first * 10 + value.second;
+        }
+      `;
+      const previousClassPoison = process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY;
+      const previousFunctionPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+      let prepared: CompileResult;
+      try {
+        process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = "Box_new";
+        process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "bump,run";
+        prepared = await compile(source, {
+          fileName: `initialized-field-inline-${target}.ts`,
+          experimentalIR: true,
+          trackIrOutcomes: true,
+          emitWat: true,
+          target,
+        });
+      } finally {
+        if (previousClassPoison === undefined) {
+          Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
+        } else {
+          process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = previousClassPoison;
+        }
+        if (previousFunctionPoison === undefined) {
+          Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+        } else {
+          process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previousFunctionPoison;
+        }
+      }
+
+      expect(prepared.success, prepared.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(WebAssembly.validate(prepared.binary)).toBe(true);
+      expect((await instantiate(prepared)).run!()).toBe(23);
+      for (const [kind, name] of [
+        ["function", "bump"],
+        ["class-member", "Box_new"],
+        ["function", "run"],
+      ] as const) {
+        expect(outcome(prepared, kind, name)).toMatchObject({
+          kind: "emitted",
+          legacyBodyEmitted: false,
+          irBodyEmitted: true,
+          preparedComponentId: expect.stringMatching(/^prepared-component:/),
+        });
+      }
+      expect((prepared.irOutcomes ?? []).filter(({ legacyBodyEmitted }) => legacyBodyEmitted)).toEqual([]);
+      const boxInit = watFunctionBody(prepared.wat, "Box_init");
+      expect(watCallTargets(prepared.wat, boxInit)).toEqual([]);
+      expect(boxInit.match(/struct\.set/g) ?? []).toHaveLength(2);
+      expect(boxInit).toMatch(/f64\.const 2[\s\S]*f64\.const 1[\s\S]*f64\.add/);
+      expect(boxInit).not.toMatch(/(?:return_)?call_ref|call_indirect|__current_this/);
+    },
+  );
+
+  it.each(["gc", "standalone"] as const)(
+    "prepares private and literal-computed fields without mixing static initialization in %s",
+    async (target) => {
+      const source = `
+        class Box {
+          static count: number = 9;
+          #secret: number = 4;
+          ["value"]: number = this.#secret + 1;
+          read(): number { return this.value; }
+        }
+        export function runInstance(): number { return new Box().read(); }
+        export function readStatic(): number { return Box.count; }
+      `;
+      const previousClassPoison = process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY;
+      const previousFunctionPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+      let prepared: CompileResult;
+      try {
+        process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = "Box_new,Box_read";
+        process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "runInstance";
+        prepared = await compile(source, {
+          fileName: `initialized-private-literal-static-${target}.ts`,
+          experimentalIR: true,
+          trackIrOutcomes: true,
+          emitWat: true,
+          target,
+        });
+      } finally {
+        if (previousClassPoison === undefined) {
+          Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
+        } else {
+          process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = previousClassPoison;
+        }
+        if (previousFunctionPoison === undefined) {
+          Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+        } else {
+          process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previousFunctionPoison;
+        }
+      }
+
+      expect(prepared.success, prepared.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(WebAssembly.validate(prepared.binary)).toBe(true);
+      const exports = await instantiate(prepared);
+      expect(exports.runInstance!()).toBe(5);
+      expect(exports.readStatic!()).toBe(9);
+      for (const [kind, name] of [
+        ["class-member", "Box_new"],
+        ["class-member", "Box_read"],
+        ["function", "runInstance"],
+      ] as const) {
+        expect(outcome(prepared, kind, name)).toMatchObject({
+          kind: "emitted",
+          legacyBodyEmitted: false,
+          irBodyEmitted: true,
+          preparedComponentId: expect.stringMatching(/^prepared-component:/),
+        });
+      }
+      const boxInit = watFunctionBody(prepared.wat, "Box_init");
+      expect(boxInit.match(/struct\.set/g) ?? []).toHaveLength(2);
+      expect(boxInit).not.toMatch(/f64\.const 9|__current_this|(?:return_)?call_ref|call_indirect/);
+    },
+  );
+
+  it.each(["gc", "standalone"] as const)(
+    "refuses a dynamic computed field name before prepared constructor emission in %s",
+    async (target) => {
+      const source = `
+        const key: string = "value";
+        class DynamicField { [key]: number = 7; }
+        export function run(): number { new DynamicField(); return 1; }
+      `;
+      const options = {
+        fileName: `initialized-dynamic-computed-${target}.ts`,
+        experimentalIR: true,
+        trackIrOutcomes: true,
+        target,
+      } as const;
+      const result = await compile(source, options);
+      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(WebAssembly.validate(result.binary)).toBe(true);
+      expect(outcome(result, "class-member", "DynamicField_new")).toMatchObject({
+        kind: "unsupported",
+        stage: "select",
+        legacyBodyEmitted: true,
+        irBodyEmitted: false,
+      });
+
       const previous = process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY;
       try {
-        Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
-        const direct = await compile(source, {
-          fileName,
-          experimentalIR: true,
-          trackIrOutcomes: true,
-          target,
-        });
-        expect(direct.success, direct.errors.map((error) => error.message).join("\n")).toBe(true);
-        expect(WebAssembly.validate(direct.binary)).toBe(true);
-        expect((await instantiate(direct)).run!()).toBe(7);
-        expect(outcome(direct, "function", "run").legacyBodyEmitted).toBe(true);
-
-        process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = "ImplicitField_new";
-        const poisoned = await compile(source, {
-          fileName,
-          experimentalIR: true,
-          trackIrOutcomes: true,
-          target,
-        });
+        process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = "DynamicField_new";
+        const poisoned = await compile(source, options);
         expect(poisoned.success).toBe(false);
         expect(
           poisoned.errors.some((error) =>
-            error.message.includes("injected direct class-body poison: ImplicitField_new"),
+            error.message.includes("injected direct class-body poison: DynamicField_new"),
           ),
         ).toBe(true);
       } finally {

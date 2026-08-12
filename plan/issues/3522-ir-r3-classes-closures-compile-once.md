@@ -24,6 +24,7 @@ related: [1370, 1983, 2857, 2951, 3000, 3045, 3144, 3518]
 origin: "#3518 R3 — extend PreparedIrProgram from free functions to every single-source executable class/closure unit"
 files:
   - src/ir/identity.ts
+  - src/ir/class-instance-initializers.ts
   - src/ir/builder.ts
   - src/ir/extern-support.ts
   - src/ir/program.ts
@@ -32,6 +33,8 @@ files:
   - src/ir/select.ts
   - src/ir/from-ast.ts
   - src/ir/integration.ts
+  - src/ir/integration-identity.ts
+  - src/ir/select-identity.ts
   - src/ir/passes/constant-fold.ts
   - src/ir/prepared-component-dependencies.ts
   - src/ir/prepared-component-sealing.ts
@@ -41,6 +44,7 @@ files:
   - src/codegen/closures.ts
   - src/codegen/declarations.ts
   - src/codegen/ir-overlay-safety.ts
+  - src/codegen/ir-imported-call-planning.ts
   - src/codegen/ir-plain-implicit-constructors.ts
   - src/codegen/ir-prepared-free-functions.ts
   - src/codegen/ir-overlay-outcomes.ts
@@ -812,6 +816,83 @@ default/rest and forward ABIs, unsafe or conditional `super`, externref/builtin
 construction, and nested/class-expression owners still consume those paths.
 Each remaining family must delete its obsolete implementation in the same PR
 that proves its complete IR replacement.
+
+### Initialized instance-field checkpoint (2026-08-12)
+
+This checkpoint moves fixed-name instance property initializers into the same
+source-owned constructor `_init` IR as explicit constructor statements. One
+immutable source-order plan records each public/private/literal-computed field
+and expression. An implicit base constructor runs its own plan before return;
+an implicit derived constructor calls the exact parent `_init` on the same
+receiver and then runs its own plan; an explicit derived constructor runs its
+plan immediately after the one selector-proven leading `super(...)`. Dynamic
+computed field names refuse the complete constructor atomically instead of
+partially initializing an object.
+
+Initialized implicit constructors are now ordinary terminal class-member
+owners, not a special direct-only exception. Their exact class declaration is
+carried through identity validation, ambient/import call planning, combined
+free/class dependency closure, Program ABI layout sealing, IR build/lower, and
+the direct-body skip audit. The inventory's hard-coded
+`implicit-class-initializer` failure was deleted. Explicit and implicit
+constructors share `lowerConstructorFieldInitializers`; no legacy expression
+compiler is called from the IR route.
+
+The GC/standalone matrix proves a three-level `Base -> Mid -> Leaf` initialized
+field chain returns `11323`, every `_new` terminal records `direct=0, IR=1`,
+and each `_init` has exactly one typed `struct.set` after its exact parent call.
+A second matrix proves base fields precede the explicit base body and child
+fields run after `super` but before the explicit child body (`124645`). A third
+matrix proves `inline-small` still removes both calls to a numeric helper from
+field initializers. A fourth matrix proves private and literal-computed
+instance fields use the same typed writes while a static initializer remains
+outside the constructor plan. Direct class/function poison is active in all
+four matrices, both Wasm targets validate, and no prepared terminal reports a
+legacy body. A separate dynamic-computed-name fixture records a typed selector
+`Unsupported`, emits exactly one legacy constructor body under hybrid policy,
+and trips the direct-body poison; the prepared route therefore cannot claim a
+partial initializer plan.
+
+The paired unoptimized inheritance artifact is smaller on the prepared route:
+
+| Target | Direct | Prepared IR | Delta |
+| --- | ---: | ---: | ---: |
+| WasmGC | 1,846 bytes | 1,682 bytes | -164 bytes (-8.9%) |
+| standalone | 47,869 bytes | 21,868 bytes | -26,001 bytes (-54.3%) |
+
+The base initializer's value-producing WAT is identical apart from IR's final
+explicit `return`. Derived IR bodies are strictly shorter because the typed
+receiver removes the direct nullable/nominal receiver guards before inherited
+field reads; no `ref.test`, ambient `this`, boxing, `call_ref`, or
+`call_indirect` remains. Optimization decision
+`IR-OPT-TYPED-INSTANCE-FIELD-INITIALIZATION` is therefore retirement-ready.
+
+The expanded adjacency matrix also exposed and closes a preparation-order
+regression: when one caller in a provisional component had a hard foreign-unit
+failure, the sealer treated a sibling's already-observed native string-concat
+provider as non-retryable and withdrew `Animal_speak` / `Dog_speak` with the
+caller. Mixed-failure peeling now removes only the hard owner, rederives the
+component, and plans the remaining callable provider. Exact outcome assertions
+prove those methods compile once with zero legacy bodies in host-string and
+native-string lanes. The focused R2/R3 matrix passes **133/133**; hybrid and
+strict single-host shadows both pass at **37/37 IR, 0 legacy bodies, 0
+Unsupported, and 0 Invariants**. Typecheck, lint, formatting, ordinary and
+shape-diagnostic fallback, issue/optimization-retirement, LOC/function budget,
+oracle/adoption, equivalence, and the **29/29** cross-backend differential gate
+are green.
+
+The shared direct initializer loop is not yet dead: dynamic computed fields,
+externref/builtin classes, nested/class-expression owners, and constructor
+families withdrawn by default/rest/forward ABI or unsafe `super` policy still
+consume it. Deleting that loop in this checkpoint would remove supported
+fallback behavior. Those consumers remain the next exact family slices; the
+loop is deleted with the last one, after a fresh reachability proof.
+
+The resumable checkpoint remains on
+`codex/3522-general-classes-retirement` in
+`/private/tmp/ts2wasm-3522-general-classes-retirement`, stacked on queued PR
+#4395. Keep it local until that immutable parent lands; then rebase, requalify,
+publish one ready PR, and queue it without further branch mutation.
 
 ## Exhaustive source-unit census
 

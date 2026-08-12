@@ -172,7 +172,8 @@ export function selectPreparedClassMemberUnitIds(
   for (const claim of identityPlan.identitySelection.classMembers?.values() ?? []) {
     const terminal = identityPlan.identityContext.terminalByUnitId.get(claim.unitId);
     const declaration = identityPlan.identityContext.declarationByUnitId.get(claim.unitId);
-    const owner = declaration?.parent;
+    const implicitConstructorBody = terminal?.kind === "class-implicit-constructor";
+    const owner = implicitConstructorBody ? declaration : declaration?.parent;
     const classId =
       owner !== undefined && (ts.isClassDeclaration(owner) || ts.isClassExpression(owner))
         ? identityPlan.identityContext.classIdByDeclaration.get(owner)
@@ -198,7 +199,7 @@ export function selectPreparedClassMemberUnitIds(
       terminal?.kind === "class-instance-setter";
     const instanceAccessorBody =
       terminal?.kind === "class-instance-getter" || terminal?.kind === "class-instance-setter";
-    const constructorBody = terminal?.kind === "class-constructor";
+    const constructorBody = terminal?.kind === "class-constructor" || implicitConstructorBody;
     const staticAccessorBody = terminal?.kind === "class-static-getter" || terminal?.kind === "class-static-setter";
     const nestedAccessorBody =
       (instanceAccessorBody || staticAccessorBody) && terminal?.containingTerminalOwnerId !== undefined;
@@ -212,8 +213,9 @@ export function selectPreparedClassMemberUnitIds(
       (ts.isMethodDeclaration(declaration) ||
         ts.isGetAccessorDeclaration(declaration) ||
         ts.isSetAccessorDeclaration(declaration) ||
+        (implicitConstructorBody && (ts.isClassDeclaration(declaration) || ts.isClassExpression(declaration))) ||
         (ts.isConstructorDeclaration(declaration) && constructorHasIrSafeReceiverSemantics(declaration))) &&
-      !containsNestedExecutableSyntax(declaration)
+      (implicitConstructorBody || !containsNestedExecutableSyntax(declaration as ts.FunctionLikeDeclaration))
     ) {
       memberUnitIds.add(claim.unitId);
     }
@@ -1072,6 +1074,7 @@ function prepareIrClassMemberPopulation(input: {
     if (terminal?.kind === "class-static-method") continue;
     if (
       terminal?.kind !== "class-constructor" &&
+      terminal?.kind !== "class-implicit-constructor" &&
       terminal?.kind !== "class-instance-method" &&
       terminal?.kind !== "class-instance-getter" &&
       terminal?.kind !== "class-instance-setter" &&
@@ -1085,7 +1088,7 @@ function prepareIrClassMemberPopulation(input: {
       );
     }
     const declaration = input.identityPlan.identityContext.declarationByUnitId.get(unitId);
-    const owner = declaration?.parent;
+    const owner = terminal.kind === "class-implicit-constructor" ? declaration : declaration?.parent;
     const classId =
       owner !== undefined && (ts.isClassDeclaration(owner) || ts.isClassExpression(owner))
         ? input.identityPlan.identityContext.classIdByDeclaration.get(owner)
@@ -1115,9 +1118,10 @@ function prepareIrClassMemberPopulation(input: {
   // the final post-pass IR, after that mutation window has closed.
   prepareClassConstructorSupports(input.ctx, input.classShapes);
   for (const unitId of claimsByUnitId.keys()) {
-    if (input.identityPlan.identityContext.terminalByUnitId.get(unitId)?.kind !== "class-constructor") continue;
+    const terminal = input.identityPlan.identityContext.terminalByUnitId.get(unitId);
+    if (terminal?.kind !== "class-constructor" && terminal?.kind !== "class-implicit-constructor") continue;
     const declaration = input.identityPlan.identityContext.declarationByUnitId.get(unitId);
-    const owner = declaration?.parent;
+    const owner = terminal.kind === "class-implicit-constructor" ? declaration : declaration?.parent;
     const classId =
       owner !== undefined && ts.isClassDeclaration(owner)
         ? input.identityPlan.identityContext.classIdByDeclaration.get(owner)
