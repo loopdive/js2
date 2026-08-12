@@ -70,7 +70,12 @@ import {
   reifyCurrentDirectEvalBindings,
   RUNTIME_EVAL_STATE_POOL_CAPTURE_NAME,
 } from "../direct-eval-environment.js";
-import { annexBHoistCancels } from "../annexb-cancel.js";
+import {
+  annexBDeclaringRange,
+  annexBHoistCancels,
+  enclosingVarScope,
+  hasInterveningLexicalBinder,
+} from "../annexb-cancel.js";
 import { emitArgumentsVecTail } from "../arguments-vector-tail.js";
 
 /**
@@ -1628,9 +1633,9 @@ function isAnnexBScopeBoundary(node: ts.Node): boolean {
  * keeps the hot path untouched while still implementing the case-B lifecycle
  * where it is actually visible.
  */
-function annexBNameObservedOutsideBlock(name: string, block: ts.Block): boolean {
+function annexBNameObservedOutsideRange(name: string, declaringRange: ts.Node): boolean {
   // Find the enclosing Annex-B scope (function body / source file) holding `block`.
-  let scope: ts.Node = block.parent;
+  let scope: ts.Node = declaringRange.parent;
   while (scope && !isAnnexBScopeBoundary(scope)) scope = scope.parent;
   if (!scope) return false;
   // For a function-like boundary, scan its body; for SourceFile/ModuleBlock, the
@@ -1645,7 +1650,7 @@ function annexBNameObservedOutsideBlock(name: string, block: ts.Block): boolean 
     if (observed) return;
     // Do not descend into the declaring block itself — references there are the
     // function's own scope, not the outer binding.
-    if (node === block) return;
+    if (node === declaringRange) return;
     // Do not cross into a NESTED function scope (it has its own bindings; a
     // same-named decl there shadows and is handled on its own pass). The
     // `scanRoot` boundary itself is allowed (we started inside it).
@@ -1704,7 +1709,7 @@ function isAnnexBValueReference(id: ts.Identifier): boolean {
  * count (not reads); the scan stays within the declaring block (nested function
  * scopes are skipped — they have their own bindings).
  */
-function annexBNameReassignedInBlock(name: string, block: ts.Block): boolean {
+function annexBNameReassignedInRange(name: string, declaringRange: ts.Node): boolean {
   let reassigned = false;
   const visit = (node: ts.Node): void => {
     if (reassigned) return;
@@ -1726,25 +1731,45 @@ function annexBNameReassignedInBlock(name: string, block: ts.Block): boolean {
     }
     ts.forEachChild(node, visit);
   };
-  ts.forEachChild(block, visit);
+  ts.forEachChild(declaringRange, visit);
   return reassigned;
 }
 
 /**
  * (#2552) Does the enclosing Annex-B scope (the nearest function body / global
- * holding `block`) already declare a function-scoped `var name`? Per Annex B
- * B.3.3 step 2 ("If instantiatedVarNames does not contain F"), a block-nested
- * `function F` creates NO fresh outer binding when a same-named `var F` already
- * exists — the function uses the existing var. `var` declarations hoist
- * function-wide, so a `var F` ANYWHERE in the enclosing scope (including nested
- * blocks) counts, but NOT one inside a nested function scope. Excluding this case
- * keeps the existing-var binding (often a non-externref slot, e.g. an f64 number)
- * as the single home for `F`; allocating a separate externref outer binding on
- * top of it desyncs the type (a read would wrongly go through the externref path
- * → `expected externref, got f64`).
+ * holding `block`) already declare a function-scoped `var name` or direct
+ * `function name`? Per Annex B B.3.3 step 2 ("If instantiatedVarNames does not
+ * contain F"), a block-nested `function F` creates NO fresh outer binding when
+ * either already exists — the declaration uses that instantiated binding.
+ * `var` declarations hoist function-wide, so a `var F` ANYWHERE in the
+ * enclosing scope (including nested blocks) counts, but NOT one inside a nested
+ * function scope. A direct function declaration is likewise part of the
+ * enclosing scope's instantiated names. Excluding these cases keeps the
+ * existing binding as the single home for `F`; allocating a separate externref
+ * outer binding on top of it either desyncs its type or masks its eagerly
+ * initialized function value with `undefined`.
  */
-function annexBSameNameVarInScope(name: string, block: ts.Block): boolean {
-  let scope: ts.Node = block.parent;
+function annexBSameNameDirectFunctionInScope(name: string, declaringRange: ts.Node): boolean {
+  let scope: ts.Node = declaringRange.parent;
+  while (scope && !isAnnexBScopeBoundary(scope)) scope = scope.parent;
+  if (!scope) return false;
+  const scanRoot: ts.Node =
+    !ts.isSourceFile(scope) && !ts.isModuleBlock(scope) && "body" in scope
+      ? ((scope as ts.FunctionLikeDeclarationBase).body ?? scope)
+      : scope;
+  if (!ts.isSourceFile(scanRoot) && !ts.isModuleBlock(scanRoot) && !ts.isBlock(scanRoot)) return false;
+  return scanRoot.statements.some((statement) => ts.isFunctionDeclaration(statement) && statement.name?.text === name);
+}
+
+function annexBSameNameVarOrFunctionInScope(name: string, declaringRange: ts.Node): boolean {
+  // B.3.4's direct `if` form must not mask an already-instantiated direct
+  // function while the recursively visited arm is hoisted. Explicit blocks and
+  // switch clauses retain their existing update path, which installs the inner
+  // declaration when control reaches it.
+  if (ts.isFunctionDeclaration(declaringRange) && annexBSameNameDirectFunctionInScope(name, declaringRange)) {
+    return true;
+  }
+  let scope: ts.Node = declaringRange.parent;
   while (scope && !isAnnexBScopeBoundary(scope)) scope = scope.parent;
   if (!scope) return false;
   const scanRoot: ts.Node =
@@ -1786,26 +1811,18 @@ function annexBSameNameVarInScope(name: string, block: ts.Block): boolean {
  * `annexBNameReassignedInBlock`) — the mutable-binding split is beyond the
  * single-slot flag-gated machinery and reverts to the (passing) pre-Phase-2 path.
  */
-function annexBBlockNestedEligible(fnDecl: ts.FunctionDeclaration): ts.Block | null {
+function annexBBlockNestedEligible(fnDecl: ts.FunctionDeclaration): ts.Node | null {
   const name = fnDecl.name?.text;
   if (!name || !fnDecl.body) return null;
-  const block = fnDecl.parent;
-  if (!ts.isBlock(block)) return null;
-  const owner = block.parent;
-  if (
-    owner &&
-    !ts.isSourceFile(owner) &&
-    !ts.isModuleBlock(owner) &&
-    isAnnexBScopeBoundary(owner) &&
-    (owner as ts.FunctionLikeDeclarationBase).body === block
-  ) {
-    return null; // direct fn body → not block-nested
-  }
+  const declaringRange = annexBDeclaringRange(fnDecl);
+  if (declaringRange === null) return null;
   if (annexBHoistCancels(fnDecl) !== null) return null; // cancelled → Phase 1, no outer binding
-  if (!annexBNameObservedOutsideBlock(name, block)) return null; // (#2552) not observed → no binding
-  if (annexBNameReassignedInBlock(name, block)) return null; // (#2552) mutable split → pre-Phase-2 path
-  if (annexBSameNameVarInScope(name, block)) return null; // (#2552) existing var F → use it, no fresh binding
-  return block;
+  const scope = enclosingVarScope(fnDecl);
+  if (scope && hasInterveningLexicalBinder(fnDecl.parent, name, scope)) return null;
+  if (!annexBNameObservedOutsideRange(name, declaringRange)) return null; // (#2552) not observed → no binding
+  if (annexBNameReassignedInRange(name, declaringRange)) return null; // (#2552) mutable split → pre-Phase-2 path
+  if (annexBSameNameVarOrFunctionInScope(name, declaringRange)) return null; // (#2552) existing F → use it
+  return declaringRange;
 }
 
 /**
@@ -2122,6 +2139,18 @@ export function hoistFunctionDeclarations(
 
   for (const stmt of stmts) {
     if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.body) {
+      const declaringRange = annexBDeclaringRange(stmt);
+      // A direct function declaration in the enclosing activation already owns
+      // F's instantiated binding and its eagerly-hoisted value. Do not let a
+      // recursively visited Annex B arm replace the name-keyed funcMap entry
+      // before that direct declaration is compiled.
+      if (
+        declaringRange &&
+        ts.isFunctionDeclaration(declaringRange) &&
+        annexBSameNameDirectFunctionInScope(stmt.name.text, declaringRange)
+      ) {
+        continue;
+      }
       // (#3419) Earlier duplicate of a later same-name sibling — never
       // instantiated (last-wins, §10.2.11 step 14). Skip: the surviving
       // declaration owns the funcMap slot and the Annex B bookkeeping.
@@ -2241,11 +2270,15 @@ export function hoistFunctionDeclarations(
     if (ts.isIfStatement(stmt)) {
       if (ts.isBlock(stmt.thenStatement)) {
         hoistFunctionDeclarations(ctx, fctx, stmt.thenStatement.statements, eagerBoxFuncNames);
+      } else {
+        hoistFunctionDeclarations(ctx, fctx, [stmt.thenStatement], eagerBoxFuncNames);
       }
       if (stmt.elseStatement) {
         if (ts.isBlock(stmt.elseStatement)) {
           hoistFunctionDeclarations(ctx, fctx, stmt.elseStatement.statements, eagerBoxFuncNames);
         } else if (ts.isIfStatement(stmt.elseStatement)) {
+          hoistFunctionDeclarations(ctx, fctx, [stmt.elseStatement], eagerBoxFuncNames);
+        } else {
           hoistFunctionDeclarations(ctx, fctx, [stmt.elseStatement], eagerBoxFuncNames);
         }
       }
