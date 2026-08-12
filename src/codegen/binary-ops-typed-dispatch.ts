@@ -141,8 +141,7 @@ export function compileTypedBinaryDispatch(
             (ctx.standalone === true || ctx.wasi === true) &&
             ctx.nativeStrings &&
             leftIsAnyValue !== rightIsAnyValue &&
-            ((leftIsAnyValue && isNativeStringRef(rightType)) ||
-              (rightIsAnyValue && isNativeStringRef(leftType)));
+            ((leftIsAnyValue && isNativeStringRef(rightType)) || (rightIsAnyValue && isNativeStringRef(leftType)));
           if (mixedAnyValueNativeString) {
             const honestFromExternIdx = ensureAnyFromExternHelper(ctx, { forceHonest: true });
             ensureAnyHelpers(ctx);

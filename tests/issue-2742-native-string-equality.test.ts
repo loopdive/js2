@@ -35,18 +35,10 @@ async function runStandalone(source: string): Promise<number> {
 }
 
 describe("#2742 — standalone native String value equality", () => {
-  it.each(ES5_STRING_EQUALITY_FILES)(
-    "passes the exact ES5 Test262 row %s",
-    async (file) => {
-      const result = await runTest262File(
-        join("test262/test", file),
-        "String.prototype",
-        20_000,
-        "standalone",
-      );
-      expect(result.status, result.error).toBe("pass");
-    },
-  );
+  it.each(ES5_STRING_EQUALITY_FILES)("passes the exact ES5 Test262 row %s", async (file) => {
+    const result = await runTest262File(join("test262/test", file), "String.prototype", 20_000, "standalone");
+    expect(result.status, result.error).toBe("pass");
+  });
 
   it("compares an inline borrowed-method concatenation by value in both operand orders", async () => {
     expect(
@@ -69,9 +61,7 @@ describe("#2742 — standalone native String value equality", () => {
         return identity("f") + identity("a") + identity("l") === "fal" ? 1 : 0;
       }
     `);
-    expect(result.irCompiledFuncs).toEqual(
-      expect.arrayContaining(["identity", "test"]),
-    );
+    expect(result.irCompiledFuncs).toEqual(expect.arrayContaining(["identity", "test"]));
     const { instance } = await WebAssembly.instantiate(result.binary, {});
     expect((instance.exports.test as () => number)()).toBe(1);
   });
