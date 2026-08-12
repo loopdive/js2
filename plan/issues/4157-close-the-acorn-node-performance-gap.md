@@ -1053,3 +1053,87 @@ distinct populations, needing two different fixes:
    removed; it can only be made a direct call instead of a lookup-then-dispatch.
 
 Call dispatch (11.39 %) is still untouched by anything in this umbrella.
+
+## 2026-08-12 (2) — the per-key cache hit rate, and what it costs to redo the gap budget
+
+Two follow-ups to the profile above. Both are first-time numbers.
+
+### The `__extern_get` per-key cache is at 87 % — it is not the problem
+
+`__extern_get` already carries a per-key inline cache (#3673 round 9b/21):
+the `(owner, props-array, entry)` triple is memoized **on the interned key
+string** (`$HashedString` fields 5/6/7), validated by `ref.eq` on the owner and
+on the owner's props array, with tombstone/accessor flags re-checked. It was
+never measured. It is now, by counter globals compiled into the census build
+(reverted after measurement; harness in the reproduction note below):
+
+| | per parse | % of calls |
+| --- | ---: | ---: |
+| `__extern_get` calls | **506,752** | 100 % |
+| key is an interned `$HashedString` | 501,111 | 98.89 % |
+| cache populated for that key | 461,159 | 91.00 % |
+| owner + props both matched | 442,072 | 87.24 % |
+| **served from cache** | **442,072** | **87.24 %** |
+| populated but owner/props missed (thrash) | 19,087 | 3.77 % |
+
+Checksum 422 on the instrumented build.
+
+**Consequences, and they are the useful part:**
+
+- **"Make the cache smarter" is priced out.** Thrash is 3.77 %. A wider
+  (N-way, or shape-keyed rather than single-owner) cache is chasing at most
+  that, and the monomorphic-per-key design is not the bottleneck it looked
+  like from the source.
+- **It explains the ladder-screen null recorded above, exactly.** The cache arm
+  is unshifted LAST, so it runs BEFORE the declared-field ladder. The screen
+  therefore only ever executed on the 12.76 % that missed — 64,680 calls, not
+  506,752. A ladder skip on that population is worth ~0.05 %, which is precisely
+  the ≤0.3 pp null that was measured. The two measurements agree; the earlier
+  entry should be read with this one.
+- **The cost is the HIT PATH, not the misses.** 11 ms of parse across 506,752
+  calls is **21.7 ns per call** (~45 cycles at 2.1 GHz). The hit path is roughly
+  40 instructions — a `ref.test`/cast on the key, a re-classification of the
+  receiver, two `ref.cast`+`ref.eq` validity checks, then the entry read — plus
+  the call itself. That is the budget any improvement has to come out of.
+
+### Re-doing the gap attribution with GC collapsed
+
+The 2026-08-08 cross-runtime table charged **12.7 ms/parse (13 % of the gap)** to
+extra GC. GC is now 2.97 % of self time, so that line is down to roughly 3.5 ms:
+**about 9 ms of the 100.3 ms gap has been closed by the allocation program**, and
+the remaining gap is ~91 ms. Helper buckets with no Node counterpart now carry
+close to **55 %** of it, with dynamic lookup alone (21.15 % ≈ 25 ms/parse) the
+single largest addressable line — larger than the compiled scanner and the
+compiled parser individually.
+
+The 2026-08-08 conclusion is unchanged and now better supported: eliminating
+every helper/GC/regexp millisecond leaves ~3× against Node, and the residue below
+that is register allocation / inlining / IC-class work on the compiled code
+itself, not helper elision.
+
+### The named next slice, with its number
+
+**Site- or name-local inline caching, to remove the CALL rather than speed the
+helper.** Inside a per-name `__get_member_<name>` the key is a compile-time
+constant, so the key `ref.test` + cast + hash are provably unnecessary, and the
+receiver classification can be a single `ref.test $Object`. Serving 87 % of
+506,752 calls from ~10 inline instructions instead of a call plus ~40 is worth on
+the order of **5 % of total runtime** — above this box's ±0.3 pp measurement
+floor, unlike everything else priced in this issue since #4208.
+
+It is not free: it needs an entry-returning form of `__extern_get` (the value
+alone cannot be cached — in-place value updates must stay visible, which is why
+the existing cache stores the `$PropEntry`), plus per-name cache globals and
+correct fallback for accessor, tombstone and non-`$Object` receivers. Note also
+that the hot names in acorn (`locations`, `ranges`, `ecmaVersion`, `onToken`)
+get **no** `__get_member_<name>` dispatcher today, precisely because no closed
+struct carries them — so the slice must widen dispatcher reservation to
+static-name reads with zero struct candidates, which is currently the condition
+for emitting a direct `__extern_get` call.
+
+**Reproduction (cache census).** Add counter globals at five points in
+`unshiftExternGetProtoCacheArm` (arm entry, key-is-hashed, populated,
+owner+props matched, value returned) using `newCounterGlobal`'s pattern from
+`src/codegen/alloc-census.ts`, compile the standalone acorn self-parse driver at
+`optimize: 0`, and read the exported globals after `__census_run()`. The
+increments are stack-neutral, so they can be spliced mid-sequence.
