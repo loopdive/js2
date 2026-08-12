@@ -12,6 +12,7 @@ interface Options {
   entry: string;
   manifest: string;
   output: string;
+  optimize?: 1 | 2 | 3 | 4;
 }
 
 function parseArgs(argv: string[]): Options {
@@ -28,9 +29,14 @@ function parseArgs(argv: string[]): Options {
   const entry = values.get("entry");
   const output = values.get("output");
   if (!manifest || !entry || !output) {
-    throw new Error("usage: compile-graph.ts --manifest FILE --entry URL --output FILE");
+    throw new Error("usage: compile-graph.ts --manifest FILE --entry URL --output FILE [--optimize 1|2|3|4]");
   }
-  return { manifest, entry, output };
+  const rawOptimize = values.get("optimize");
+  const optimize = rawOptimize === undefined ? undefined : Number(rawOptimize);
+  if (optimize !== undefined && ![1, 2, 3, 4].includes(optimize)) {
+    throw new Error("--optimize must be 1, 2, 3, or 4");
+  }
+  return { manifest, entry, output, optimize: optimize as 1 | 2 | 3 | 4 | undefined };
 }
 
 function compilerPath(specifier: string): string {
@@ -60,6 +66,7 @@ async function main(): Promise<void> {
     moduleName: "v8x-js2wasm-spike",
     externImportModule: "v8x:deno",
     allowJs: true,
+    ...(options.optimize === undefined ? {} : { optimize: options.optimize }),
   });
   if (!result.success) {
     const diagnostics = result.errors
@@ -67,9 +74,19 @@ async function main(): Promise<void> {
       .join("\n");
     throw new Error(diagnostics || "js2wasm compilation failed without diagnostics");
   }
+  if (options.optimize !== undefined) {
+    const optimizerWarnings = result.errors.filter(
+      (diagnostic) => diagnostic.severity === "warning" && diagnostic.message.includes("wasm-opt"),
+    );
+    if (optimizerWarnings.length > 0) {
+      throw new Error(optimizerWarnings.map((diagnostic) => diagnostic.message).join("\n"));
+    }
+  }
 
   writeFileSync(options.output, result.binary);
-  process.stdout.write(`${JSON.stringify({ bytes: result.binary.byteLength, modules: Object.keys(files).length })}\n`);
+  process.stdout.write(
+    `${JSON.stringify({ bytes: result.binary.byteLength, modules: Object.keys(files).length, optimize: options.optimize ?? 0 })}\n`,
+  );
 }
 
 await main();

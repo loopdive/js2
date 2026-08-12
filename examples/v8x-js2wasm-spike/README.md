@@ -30,7 +30,10 @@ than calling js2wasm directly.
 
 ## Files
 
-- `compile-graph.ts` is the temporary compiler sidecar used by v8x.
+- `compile-graph.ts` is the temporary compiler sidecar used by v8x. Its
+  optional `--optimize 1|2|3|4` argument runs `wasm-opt` at that level and
+  fails rather than silently returning unoptimized output when the optimizer
+  is unavailable or rejects the module.
 - `deno.ts` is the first typed Deno API adapter. It presents the natural
   `Deno.cwd()` object shape and lowers it to two primitive host imports.
 - `v8x-js2wasm.patch` adds the opt-in backend and its rusty_v8 integration test
