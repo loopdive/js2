@@ -77,9 +77,6 @@ import { isForeignEvalNode } from "./eval-source.js";
 import { resolvesToGlobalFunctionAlias } from "./eval-inline.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import {
-  buildArgcExtrasReset,
-  buildArgcExtrasSetupFromLocals,
-  buildArgcResetNoLazyExtras,
   calleeIsCapabilityCtorParam,
   calleeIsPromiseExecutorParam,
   calleeMayBeHostCallable,
@@ -92,6 +89,13 @@ import {
   tryEmitArrayToStringNative,
   tryEmitInlineDynamicCall,
 } from "./calls.js";
+import {
+  appendArgcSetupFromExtras,
+  appendDynamicCandidateArgcSetup as setCandidateArgc,
+  buildArgcExtrasReset,
+  buildArgcResetNoLazyExtras,
+  saveArgumentLocalAsExtern,
+} from "./argc-extras.js";
 
 /**
  * (#3912) Report the representation of `String(<number>)`'s result truthfully.
@@ -123,10 +127,11 @@ function localBindingShadowsCapturingFunction(
   callee: ts.Identifier,
 ): boolean {
   const name = callee.text;
-  if (!fctx.localMap.has(name) || !ctx.nestedFuncCaptures.has(name)) return false;
-  const callSignatures = ctx.checker.getTypeAtLocation(callee).getCallSignatures?.();
+  if (!fctx.localMap.has(name)) return false;
+  if (fctx.hoistedFunctionValueBindings?.has(name)) return false;
   const declaration = ctx.oracle.valueDeclarationOf(callee);
-  return !!(callSignatures?.length || (declaration && ts.isParameter(declaration)));
+  // JavaScript locals inferred as `any` still shadow same-named lifted bodies.
+  return declaration !== undefined;
 }
 
 function hasLiveFunctionBinding(ctx: CodegenContext, fctx: FunctionContext, name: string): boolean {
@@ -1388,6 +1393,7 @@ export function compileIdentifierCall(
           // Compile call arguments with type coercion (only up to declared param count)
           // Save them to locals so they can be re-pushed in each dispatch branch.
           const argLocals: number[] = [];
+          const actualArgExternLocals: number[] = [];
           const cpParamCnt = matchedClosureInfo.paramTypes.length;
           // (#1511) Save overflow args to externref locals so we can pack them
           // into __extras_argv right before the call (whichever dispatch arm
@@ -1401,6 +1407,7 @@ export function compileIdentifierCall(
               const argLocal = allocLocal(fctx, `__carg_${fctx.locals.length}`, matchedClosureInfo.paramTypes[i]!);
               fctx.body.push({ op: "local.set", index: argLocal });
               argLocals.push(argLocal);
+              saveArgumentLocalAsExtern(ctx, fctx, argLocal, matchedClosureInfo.paramTypes[i]!, actualArgExternLocals);
             }
             for (let i = cpParamCnt; i < expr.arguments.length; i++) {
               const extraType = compileExpression(ctx, fctx, expr.arguments[i]!, { kind: "externref" });
@@ -1429,6 +1436,7 @@ export function compileIdentifierCall(
               const extraLocal = allocLocal(fctx, `__cextra_${fctx.locals.length}`, { kind: "externref" });
               fctx.body.push({ op: "local.set", index: extraLocal });
               cpExtrasLocals.push(extraLocal);
+              actualArgExternLocals.push(extraLocal);
             }
           }
 
@@ -1619,9 +1627,7 @@ export function compileIdentifierCall(
               fctx.body.push({ op: "local.get", index: al });
             }
             // (#1511) Set __extras_argv from saved overflow locals + __argc
-            for (const ins of buildArgcExtrasSetupFromLocals(ctx, fctx, cpParamCnt, cpExtrasLocals)) {
-              fctx.body.push(ins);
-            }
+            appendArgcSetupFromExtras(ctx, fctx, fctx.body, cpParamCnt, cpExtrasLocals, expr.arguments.length);
             // Push funcref back, guarded cast, call
             fctx.body.push({ op: "local.get", index: funcrefLocal });
             emitGuardedFuncRefCast(fctx, matchedClosureInfo.funcTypeIdx);
@@ -1746,6 +1752,14 @@ export function compileIdentifierCall(
               // Exactness belongs solely to the funcref type; wrapper subtypes
               // are module-local allocation identities.
               const fcCallBody: Instr[] = [];
+              setCandidateArgc(
+                ctx,
+                fctx,
+                fcCallBody,
+                fc.paramTypes.length,
+                actualArgExternLocals,
+                expr.arguments.length,
+              );
               // Shared func types use canonical-root self. A private/named
               // closure func type still names its concrete self, so its arm
               // needs a concrete cast to remain statically call_ref-valid.
@@ -1832,21 +1846,7 @@ export function compileIdentifierCall(
               ];
             }
 
-            // (#2704) Set __argc / __extras_argv ONCE around the funcref-type
-            // dispatch so the callee's `arguments` object observes the TRUE
-            // call-site arg count. The single-funcref arm above already does
-            // this (via buildArgcExtrasSetupFromLocals); this multi-funcref arm
-            // previously omitted it, so an aliased / indirect method call —
-            // `var ref = obj.m; ref(42)` — left __argc at its -1 sentinel and
-            // the callee fell back to its formal-param count: `arguments.length`
-            // came back 0 for a 0-formal method that reads `arguments` (the
-            // async-gen-meth / static-async-gen test262 forms in #2704). The
-            // dispatch chain below is pure ref.test/if with no intervening
-            // calls and exactly ONE arm runs, so a single set-before /
-            // reset-after is correct.
-            for (const ins of buildArgcExtrasSetupFromLocals(ctx, fctx, cpParamCnt, cpExtrasLocals)) {
-              fctx.body.push(ins);
-            }
+            // Each arm derives `arguments` from its own formal count (#2704).
             fctx.body.push(...funcDispatch);
             // (#2704) Reset __argc to its sentinel after the dispatch so a stale
             // count can't leak into a subsequent callee that reads `arguments`

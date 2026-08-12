@@ -179,6 +179,11 @@ export async function compileAndRunUpstreamModule({ generatedPath, source, timeo
         skipSemanticDiagnostics: true,
         target: "gc",
         platform: "node",
+        // Original suites frequently initialize object graphs at module load.
+        // In the JS-host lane, WasmGC field/callable reflection only becomes
+        // available after the instance is handed to the runtime. Run the same
+        // initializer after that handoff instead of inside WebAssembly.start.
+        deferTopLevelInit: true,
       }),
       timeoutMs,
     );
@@ -214,7 +219,9 @@ export async function compileAndRunUpstreamModule({ generatedPath, source, timeo
   try {
     const imports = result.importObject ?? {};
     const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    imports.setInstance?.(instance);
     imports.__setInstance?.(instance);
+    instance.exports.__module_init?.();
     const exports = wrapExports(instance, { signatures: result.exportSignatures });
     const statuses = Array.from(exports.runUpstreamTests(), (value) => Number(value) === 1);
     const errors = Array.from(exports.upstreamTestErrors(), String);

@@ -63,6 +63,7 @@ import { tryReshapeBindToNamedThisCall } from "../named-this-call.js"; // (#4203
 import { compileSuperElementMethodCall } from "./new-super.js";
 import { compileCallDispatchTail } from "./stored-member-closure-call.js";
 import { emitPlainObjectDynamicCallWithReceiver } from "./plain-object-dynamic-receiver-call.js";
+import { tryEmitDynamicElementHostMethodCall } from "./dynamic-element-host-call.js";
 import {
   classInstanceHasField,
   coerceNumberMethodArgToF64,
@@ -1421,9 +1422,8 @@ export function compileTailDispatch(
       // (`c[1+1]`) carries no call signature — `compileCallableElementAccessCall`
       // above bailed — and it is NOT a prototype method (no `ClassName_2` in
       // funcMap). The struct-field READ works (numeric/string keys already
-      // canonicalise to field "2"); only the INVOCATION was dropped. Route the
-      // read + dynamic closure dispatch through the same ref.test-guarded
-      // `call_ref` machinery an `any`-typed identifier call uses. The runtime
+      // canonicalise to field "2"); route the invocation through dynamic
+      // closure dispatch. The runtime
       // ref.test guards make this safe for a non-closure field value (the
       // default arm reproduces the historical `ref.null.extern`).
       if (elemAccessReceiverIsUserClass(ctx, elemAccess) && classInstanceHasField(ctx, elemAccess, methodName)) {
@@ -1450,8 +1450,9 @@ export function compileTailDispatch(
         if (dyn !== null) return dyn;
       }
 
-      // Fallback for resolved element access calls that didn't match any known method:
-      // compile receiver, discard; compile each argument for side effects; return externref.
+      const dynamicHostCall = tryEmitDynamicElementHostMethodCall(ctx, fctx, expr, elemAccess);
+      if (dynamicHostCall !== undefined) return dynamicHostCall;
+
       {
         const recvType = compileExpression(ctx, fctx, elemAccess.expression);
         if (recvType) {
@@ -1468,9 +1469,7 @@ export function compileTailDispatch(
       }
     }
 
-    // ELEM ACCESS UNRESOLVED — try callable element type (#1306) before
-    // falling through to the drop-everything path. Covers
-    // `mws[idx](c, next)` where `idx` is a runtime variable.
+    // Try the callable element type before the unresolved-key fallback (#1306).
     {
       const cea = compileCallableElementAccessCall(ctx, fctx, expr, elemAccess);
       if (cea !== undefined) return cea;
@@ -1501,8 +1500,9 @@ export function compileTailDispatch(
       if (dyn !== null) return dyn;
     }
 
-    // Fallback for element access calls where the key couldn't be resolved statically:
-    // compile receiver + index expression + arguments for side effects; return externref.
+    const dynamicHostCall = tryEmitDynamicElementHostMethodCall(ctx, fctx, expr, elemAccess);
+    if (dynamicHostCall !== undefined) return dynamicHostCall;
+
     {
       const recvType = compileExpression(ctx, fctx, elemAccess.expression);
       if (recvType) {

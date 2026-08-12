@@ -33,6 +33,8 @@ import type { FunctionContext } from "../context/types.js";
  * with 35 locals.
  */
 export function captureSourceSlot(fctx: FunctionContext, cap: { name: string; outerLocalIdx: number }): number {
+  const capturedSlot = fctx.liftedCaptureSlots?.get(cap.name);
+  if (capturedSlot !== undefined) return capturedSlot;
   const inFrameIdx = fctx.localMap.get(cap.name);
   if (fctx.liftedCaptureNames?.has(cap.name)) return inFrameIdx ?? cap.outerLocalIdx;
 
@@ -40,4 +42,16 @@ export function captureSourceSlot(fctx: FunctionContext, cap: { name: string; ou
   if (!existsHere && inFrameIdx !== undefined) return inFrameIdx;
 
   return cap.outerLocalIdx;
+}
+
+/** Freeze the leading capture-param slots before body locals can shadow their names. */
+export function recordLiftedCaptureSlots(fctx: FunctionContext, names: Iterable<string>): void {
+  const captureNames = [...names];
+  fctx.liftedCaptureNames = new Set(captureNames);
+  fctx.liftedCaptureSlots = new Map(
+    captureNames.flatMap((name) => {
+      const slot = fctx.localMap.get(name);
+      return slot === undefined ? [] : [[name, slot] as const];
+    }),
+  );
 }

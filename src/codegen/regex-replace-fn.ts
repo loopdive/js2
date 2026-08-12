@@ -41,7 +41,7 @@ import { undefinedExternInstrs } from "./any-helpers.js";
 import { guardedFuncRefCastInstrs } from "./array-methods.js";
 import { allocLocal } from "./context/locals.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
-import { buildArgcExtrasReset, buildArgcExtrasSetupFromLocals } from "./expressions/calls.js";
+import { buildArgcExtrasReset, buildArgcExtrasSetupFromLocals } from "./expressions/argc-extras.js";
 import { ensureRegexSearch, regexI32ArrayType } from "./native-regex.js";
 import { ensureNativeStringHelpers, nativeStringType } from "./native-strings.js";
 import {
