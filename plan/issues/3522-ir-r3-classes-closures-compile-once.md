@@ -23,6 +23,8 @@ required_by: [3523, 3525, 3527]
 related: [1370, 1983, 2857, 2951, 3000, 3045, 3144, 3518]
 origin: "#3518 R3 — extend PreparedIrProgram from free functions to every single-source executable class/closure unit"
 files:
+  - .github/workflows/test262-sharded.yml
+  - .github/workflows/refresh-baseline.yml
   - src/ir/identity.ts
   - src/ir/class-instance-initializers.ts
   - src/ir/builder.ts
@@ -61,6 +63,8 @@ files:
   - tests/issue-3522-ir-class-compile-once.test.ts
   - tests/issue-3522-ir-cross-owner-free-function.test.ts
   - tests/issue-3522-ir-static-class-method.test.ts
+  - tests/issue-3522-test262-shard-completion.test.ts
+  - tests/test262-shared.ts
   - tests/issue-3792-ir-optimization-retirement-gate.test.ts
 loc-budget-allow:
   - src/codegen/class-bodies.ts
@@ -926,6 +930,51 @@ merge-group regressions to pass (and the matching class-expression variant),
 with zero compile errors. The two wider substring matches remain their known
 baseline runtime failures rather than changing category. The ready PR remains
 held outside the queue until the complete branch gates are requalified.
+
+### Merge-queue shard-completion repair (2026-08-12)
+
+The next #4402 merge-group run contained no standalone verdict changes in the
+rows it completed, but standalone shards 10 and 17 terminated their single
+Vitest file process at its 512 MiB heap limit. They uploaded only 305 and 188
+rows respectively instead of their complete roughly 1,350-row partitions.
+Vitest uses exit code 1 both for ordinary Test262 assertion failures and for
+this parent-process failure, and the shard workflow intentionally accepted 1;
+the partial JSONLs therefore reached the merge job and appeared as a false
+standalone high-water regression. Every one of the 493 completed rows has the
+same status as the exact main baseline. The four compiler workers did not OOM
+and retain their independent 512 MiB limits.
+
+The Test262 file process now receives the same 1 GiB heap ceiling already used
+by the repository's issue and equivalence gates. Both the ordinary sharded
+baseline path and the consolidated merge-group path use that ceiling, and the
+independent refresh-baseline workflow mirrors it. This is runner capacity, not
+a compiler-policy or oracle change.
+
+More importantly, shard completion is now fail-closed. `test262-shared.ts`
+writes a source-specific completion marker only from `afterAll`, after all
+registered tests settle and the JSONL descriptor closes. Every shard-producing
+workflow requires that marker before accepting Vitest's otherwise-ambiguous
+exit code 1, and publishes it beside the JSONL for audit. An OOM, signal, or
+other early parent death can no longer masquerade as complete conformance
+evidence even if it leaves a non-empty partial file.
+
+The one JS-host pass-to-fail row from the same merge group was replayed first as
+an exact single path and then inside its complete 66-way shard with the pinned
+Test262 revision and pool size four; both replays passed. It is therefore kept
+classified as a queue flake rather than patched into production semantics.
+Re-enqueue still requires the parent-heap/completion-marker workflow contracts,
+the exact affected standalone shard replay, and the complete branch gates to
+pass.
+
+Local qualification with the pinned `b363f29d` Test262 tree, pool size four,
+the exact full runtime-eval provider, and the new parent ceiling completed both
+formerly truncated 36-way partitions: shard 10 and shard 17 each recorded and
+marked **1,357/1,357** rows. Shard 10 is status-identical to the current main
+baseline across all 1,357 rows. Shard 17 has three local RegExp Unicode-property
+failures whose baseline rows are passes, but an isolated worktree at the exact
+`4227031433a964` baseline commit reproduces the same three failures with identical
+error signatures on this host; they are platform-control differences, not
+#4402 changes. The merge queue remains the authoritative Linux comparison.
 
 ## Exhaustive source-unit census
 
