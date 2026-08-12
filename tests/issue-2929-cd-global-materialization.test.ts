@@ -24,7 +24,20 @@ import { selectCachedRuntimeEvalProvider } from "../scripts/runtime-eval-provide
 import { assembleOriginalHarness } from "./test262-original-harness.js";
 import { parseMeta } from "./test262-runner.js";
 
-const selection = selectCachedRuntimeEvalProvider() as { module: unknown; message: string };
+function selectInterpreterTier(): { module: unknown; message: string } {
+  const saved = process.env.JS2WASM_EVAL_ENGINE;
+  process.env.JS2WASM_EVAL_ENGINE = "interpreter";
+  try {
+    return selectCachedRuntimeEvalProvider() as { module: unknown; message: string };
+  } finally {
+    if (saved === undefined) Reflect.deleteProperty(process.env, "JS2WASM_EVAL_ENGINE");
+    else process.env.JS2WASM_EVAL_ENGINE = saved;
+  }
+}
+
+// This suite specifies the kept native interpreter's declaration semantics,
+// so it must never inherit the repository's QuickJS default (#4242).
+const selection = selectInterpreterTier();
 const INTERPRETER_TIER = typeof selection?.message === "string" && selection.message.startsWith("INTERPRETER");
 
 let pool: CompilerPool;

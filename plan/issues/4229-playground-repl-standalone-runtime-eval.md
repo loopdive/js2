@@ -39,6 +39,14 @@ self-hosting story — far more visceral than a conformance percentage — and a
 standing dogfood surface that exercises the interpreter on adversarial
 human-typed input instead of test262's shapes.
 
+**Engine-selection update (#4242, 2026-08-12):** QuickJS-NG is now the
+standalone runtime-eval default, but this issue intentionally remains an
+interpreter dogfood surface. Its build and runtime commands must set
+`JS2WASM_EVAL_ENGINE=interpreter` explicitly. Either engine is legitimate for
+future playground products; this demo's purpose is specifically to keep the
+native Acorn + bytecode path visible, packaged, and exercised after the default
+flip.
+
 Proven feasible end-to-end on 2026-08-08 (session demo, `.tmp/eval-demo.mjs`
 pattern): runtime-assembled sources through direct eval (caller-scope read
 AND write), `new Function`, indirect eval creating a real global that a later

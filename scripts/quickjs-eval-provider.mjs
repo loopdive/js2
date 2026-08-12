@@ -3702,8 +3702,8 @@ export function selectQuickjsEvalProvider(cacheDir, bundleHash, cacheKeyOf) {
     },
     engine: "quickjs",
     message:
-      `QUICKJS (artifact ${artifact.sha256.slice(0, 12)}, adapter key ${key}) — flag-gated engine ` +
-      `(#4238), NOT CI-comparable with the interpreter tier; TEST262_FULL_RUNTIME_EVAL is ignored ` +
-      `under this engine`,
+      `QUICKJS (artifact ${artifact.sha256.slice(0, 12)}, adapter key ${key}) — DEFAULT engine ` +
+      `(#4242); JS2WASM_EVAL_ENGINE=interpreter selects the kept native bytecode engine; ` +
+      `TEST262_FULL_RUNTIME_EVAL is ignored under this engine`,
   };
 }

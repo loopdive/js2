@@ -34,6 +34,7 @@
 //   1 — at least one sampled row diverged (pass→non-pass, or fail→pass); drift suspected
 //   2 — internal error (missing files, etc.)
 
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -51,6 +52,22 @@ import {
 } from "./fetch-baseline-jsonl.mjs";
 
 const ROOT = resolve(fileURLToPath(import.meta.url), "..", "..");
+
+/** Prepare the default standalone eval engine before sampling its baseline. */
+function prepareStandaloneEvalProvider(): void {
+  const engine = process.env.JS2WASM_EVAL_ENGINE ?? "quickjs";
+  if (engine !== "quickjs") return;
+
+  // The selector is intentionally build-free and never falls back to the
+  // native interpreter. Establish a fresh compiler key, then make the default
+  // QuickJS artifact+adapter pair available before any sampled eval row runs.
+  execFileSync("pnpm", ["run", "build:compiler-bundle"], { cwd: ROOT, stdio: "inherit" });
+  execFileSync(process.execPath, ["scripts/build-quickjs-eval-provider.mjs"], {
+    cwd: ROOT,
+    env: { ...process.env, JS2WASM_EVAL_ENGINE: "quickjs" },
+    stdio: "inherit",
+  });
+}
 
 // (#2095) Per-lane `pass`-row sample size (the historical SAMPLE_SIZE knob) and
 // a separate, smaller `fail`-row sample. Fail rows assert STILL-failing: a fail
@@ -339,6 +356,7 @@ async function main(): Promise<void> {
   const laneResults: LaneResult[] = [];
   laneResults.push(await validateLane("host", undefined, BASELINE_CACHE_PATH, rng));
   if (standaloneAvailable) {
+    prepareStandaloneEvalProvider();
     laneResults.push(await validateLane("standalone", "standalone", STANDALONE_BASELINE_CACHE_PATH, rng));
   }
 

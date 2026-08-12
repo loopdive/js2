@@ -39,6 +39,11 @@ concurrency:
 jobs:
   shard:
     runs-on: ubuntu-latest
+    env:
+      # This broad post-merge detector intentionally stays toolchain-light and
+      # preserves its pre-#4242 outcomes. The dedicated QuickJS workflow tests
+      # the default; selector tests delete this env when asserting that default.
+      JS2WASM_EVAL_ENGINE: interpreter
     strategy:
       fail-fast: false
       # max-parallel keeps runners free for PR-critical jobs (test262 shards,

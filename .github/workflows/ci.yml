@@ -442,6 +442,11 @@ jobs:
         # Mass edits (>20 files, e.g. a repo-wide reformat) skip with a
         # warning — the post-merge detector covers them.
         if: github.event_name == 'pull_request'
+        env:
+          # Keep this broad, toolchain-light gate on the native engine. The
+          # dedicated QuickJS artifact workflow exercises the default engine;
+          # the selector tests below still delete this env to prove the default.
+          JS2WASM_EVAL_ENGINE: interpreter
         run: |
           git fetch --no-tags --depth=200 origin main 2>/dev/null || true
           pnpm run test:changed-root

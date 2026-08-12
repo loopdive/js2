@@ -48,7 +48,7 @@ function results(rows: Row[], path = "synthetic.jsonl") {
 }
 
 const QUICKJS_TIER = parseTierAnnouncement(
-  "QUICKJS (artifact 0c848fd169d8, adapter key 24b25990cf116fd5) — flag-gated engine (#4238)",
+  "QUICKJS (artifact 0c848fd169d8, adapter key 24b25990cf116fd5) — DEFAULT engine (#4242)",
 );
 const INTERPRETER_TIER = parseTierAnnouncement(
   "INTERPRETER (key abc123, TEST262_FULL_RUNTIME_EVAL=1) — authoritative CI-comparable standalone tier (#2928 E7)",
@@ -708,18 +708,25 @@ describe("QuickJS provider cache-only handoff", () => {
   });
 });
 
-// ── default-neutral CI plumbing ─────────────────────────────────────────────
+// ── default-engine CI plumbing ──────────────────────────────────────────────
 
 describe("QuickJS default-readiness CI wiring", () => {
   const root = join(import.meta.dirname ?? ".", "..");
   const sharded = readFileSync(join(root, ".github", "workflows", "test262-sharded.yml"), "utf8");
   const scheduled = readFileSync(join(root, ".github", "workflows", "quickjs-wasi-artifact.yml"), "utf8");
+  const refresh = readFileSync(join(root, ".github", "workflows", "refresh-baseline.yml"), "utf8");
+  const interpreterLane = readFileSync(join(root, ".github", "workflows", "eval-interpreter-lane.yml"), "utf8");
+  const issueTests = readFileSync(join(root, ".github", "workflows", "issue-tests.yml"), "utf8");
+  const interpreterFloor = JSON.parse(
+    readFileSync(join(root, "benchmarks", "results", "eval-interpreter-lane-floor.json"), "utf8"),
+  ) as { pass: number; total: number; tolerance: number };
   const runner = readFileSync(join(root, "scripts", "run-test262-vitest.sh"), "utf8");
 
-  it("keeps interpreter as the explicit default while exposing a QuickJS dispatch", () => {
-    expect(sharded).toMatch(/eval_engine:\n(?:.*\n){0,5}\s+default: interpreter\n\s+type: choice/);
-    expect(sharded).toContain("JS2WASM_EVAL_ENGINE: ${{ inputs.eval_engine || 'interpreter' }}");
-    expect(runner).toContain('EVAL_ENGINE="${JS2WASM_EVAL_ENGINE:-interpreter}"');
+  it("makes QuickJS the default while exposing the kept interpreter selector", () => {
+    expect(sharded).toMatch(/eval_engine:\n(?:.*\n){0,5}\s+default: quickjs\n\s+type: choice/);
+    expect(sharded).toContain("JS2WASM_EVAL_ENGINE: ${{ inputs.eval_engine || 'quickjs' }}");
+    expect(runner).toContain('EVAL_ENGINE="${JS2WASM_EVAL_ENGINE:-quickjs}"');
+    expect(sharded).toContain("- interpreter");
   });
 
   it("distributes and cache-only verifies exactly the selected full provider", () => {
@@ -730,9 +737,29 @@ describe("QuickJS default-readiness CI wiring", () => {
     expect(sharded.match(/build-runtime-eval-provider\.mjs --require-full-cache/g)).toHaveLength(2);
   });
 
-  it("keeps QuickJS dispatches measurement-only until the parity gate passes", () => {
-    expect(sharded).toContain("inputs.eval_engine == 'quickjs'");
-    expect(sharded).toMatch(/promote-baseline:[\s\S]*inputs\.eval_engine == 'quickjs'/);
+  it("keeps explicit interpreter dispatches measurement-only after the flip", () => {
+    expect(sharded).toContain("inputs.eval_engine == 'interpreter'");
+    expect(sharded).toMatch(/promote-baseline:[\s\S]*inputs\.eval_engine == 'interpreter'/);
+  });
+
+  it("runs scheduled baseline refreshes on the same QuickJS default", () => {
+    expect(refresh).toContain("JS2WASM_EVAL_ENGINE: quickjs");
+    expect(refresh).toContain("build-quickjs-eval-provider.mjs");
+    expect(refresh).toContain("build-quickjs-eval-provider.mjs --require-cache");
+    expect(refresh).toContain(".test262-cache/quickjs-eval-adapter-*.wasm");
+    expect(refresh).not.toContain("build-runtime-eval-provider.mjs --require-full-cache");
+  });
+
+  it("keeps a weekly native-interpreter anti-rot lane with a bounded floor", () => {
+    expect(interpreterLane).toContain("JS2WASM_EVAL_ENGINE: interpreter");
+    expect(interpreterLane).toContain('TEST262_FULL_RUNTIME_EVAL: "1"');
+    expect(interpreterLane).toContain("TEST262_PATH_FILTER: language/eval-code/");
+    expect(interpreterLane).toContain("tests/issue-4242-no-removal.test.ts");
+    expect(interpreterFloor).toMatchObject({ pass: 782, total: 816, tolerance: 3 });
+  });
+
+  it("pins the broad toolchain-light root-test detector to the kept interpreter", () => {
+    expect(issueTests).toMatch(/shard:\n[\s\S]*?JS2WASM_EVAL_ENGINE: interpreter/);
   });
 
   it("provisions submodules and runs all QuickJS engine suites in the scheduled lane", () => {

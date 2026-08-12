@@ -84,37 +84,29 @@ describe("#2928 E6 — runtime-eval provider seam", () => {
     expect(workflow).not.toContain("Prebuild refusal runtime-eval provider (#2928)");
   });
 
-  // (#4354) refresh-baseline.yml promotes the SAME standalone baseline that
-  // test262-sharded.yml does, so it must measure the same tier. It previously
-  // built the provider with `--refusal-only` and never set
-  // TEST262_FULL_RUNTIME_EVAL, so every baseline it promoted recorded
-  // eval-dependent standalone tests as "no js2wasm:runtime-eval interpreter
-  // linked" — 740 tests low (ES5 standalone 82.5 % instead of 89.1 %), and
-  // that figure reached the published site.
-  //
-  // The env var is the load-bearing half: building the provider only puts the
-  // module on disk, and without the flag the runner still links the refusal
-  // path. Fixing only the build produced a byte-identical wrong baseline with
-  // every step reporting success, so assert BOTH halves here.
-  it("measures the full runtime-eval tier in refresh-baseline too, not the refusal tier", () => {
+  // (#4242/#4354) refresh-baseline.yml promotes the SAME standalone baseline
+  // as test262-sharded.yml, so it must build and select the QuickJS default.
+  // A provider on disk without the matching selector is a green no-op; assert
+  // both halves so scheduled refreshes cannot silently publish another tier.
+  it("measures the default QuickJS tier in refresh-baseline too", () => {
     const workflow = readFileSync(join(process.cwd(), ".github/workflows/refresh-baseline.yml"), "utf8");
+    expect(workflow).toContain("JS2WASM_EVAL_ENGINE: quickjs");
     expect(workflow).toContain("TEST262_FULL_RUNTIME_EVAL:");
-    expect(workflow).toContain("node scripts/build-runtime-eval-provider.mjs\n");
-    expect(workflow).not.toContain("build-runtime-eval-provider.mjs --refusal-only");
+    expect(workflow).toContain("node scripts/build-quickjs-eval-provider.mjs\n");
+    expect(workflow).not.toContain("node scripts/build-runtime-eval-provider.mjs\n");
   });
 
   // (#4354) …and builds it ONCE, fanning the artifact out to the 57 standalone
-  // shards rather than recompiling an identical ~3 GB / ~5 min artifact in
-  // every cell. `--require-full-cache` is the integrity half: it fails loudly
-  // if the downloaded artifact is missing or stale, so a broken fan-out cannot
-  // silently drop the measured tier back to refusal.
+  // shards. `--require-cache` is the integrity half: a broken fan-out cannot
+  // silently fall back to the interpreter or refusal tier.
   it("builds the refresh-baseline provider once and fans it out to the shards", () => {
     const workflow = readFileSync(join(process.cwd(), ".github/workflows/refresh-baseline.yml"), "utf8");
     expect(workflow).toContain("runtime-eval-provider:");
-    expect(workflow).toContain("path: .test262-cache/runtime-eval-provider-*.wasm");
+    expect(workflow).toContain(".test262-cache/quickjs-artifact-*/");
+    expect(workflow).toContain(".test262-cache/quickjs-eval-adapter-*.wasm");
     expect(workflow).toContain("uses: actions/upload-artifact@v6");
     expect(workflow).toContain("uses: actions/download-artifact@v7");
-    expect(workflow).toContain("--require-full-cache");
+    expect(workflow).toContain("build-quickjs-eval-provider.mjs --require-cache");
     expect(workflow).toContain("needs: [validate-inputs, runtime-eval-provider]");
   });
 });

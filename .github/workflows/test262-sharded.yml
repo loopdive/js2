@@ -72,13 +72,13 @@ on:
         default: "4"
         type: string
       eval_engine:
-        description: "Standalone eval engine. QuickJS is a measurement lane until #4242's parity gate passes; it never promotes a baseline."
+        description: "Standalone eval engine. QuickJS is the default; interpreter is the kept native bytecode-engine lane."
         required: true
-        default: interpreter
+        default: quickjs
         type: choice
         options:
-          - interpreter
           - quickjs
+          - interpreter
       force_baseline_refresh:
         description: "Force promote merged report to baseline regardless of regressions. Requires confirm_force=YES."
         required: false
@@ -589,11 +589,11 @@ jobs:
 
   # #2928 E7 / #4013 / #4242 P1-S2 — build the SELECTED standalone eval
   # provider ONCE, canary-verify it, and distribute it to every standalone
-  # shard. Push and merge_group select the current default (interpreter);
-  # workflow_dispatch may explicitly select quickjs for the Phase-1 parity
-  # measurement. Neither engine may fall back to the other on a cache miss.
+  # shard. Push and merge_group select the current default (QuickJS);
+  # workflow_dispatch may explicitly select the kept native bytecode
+  # interpreter. Neither engine may fall back to the other on a cache miss.
   runtime-eval-provider:
-    name: build standalone runtime-eval provider (${{ inputs.eval_engine || 'interpreter' }})
+    name: build standalone runtime-eval provider (${{ inputs.eval_engine || 'quickjs' }})
     needs: [changes, mg-artifact-probe]
     if: |
       always() &&
@@ -607,8 +607,8 @@ jobs:
     env:
       # Explicit in the provider job even when workflow inputs do not exist
       # (push / merge_group). Keep this fallback aligned with the repo default
-      # until #4242's Phase-1 parity gate records PROCEED.
-      JS2WASM_EVAL_ENGINE: ${{ inputs.eval_engine || 'interpreter' }}
+      # declared by the synchronous selector in runtime-eval-provider.mjs.
+      JS2WASM_EVAL_ENGINE: ${{ inputs.eval_engine || 'quickjs' }}
     steps:
       # A host-only merge_group still needs this job to succeed so its shard
       # matrix is not cascade-skipped through `needs`. Every expensive step is
@@ -861,9 +861,10 @@ jobs:
       RUN_TIMESTAMP: ${{ github.run_id }}-${{ matrix.target.name }}-chunk${{ matrix.chunk }}
       TEST262_TARGET: ${{ matrix.target.test262_target }}
       TEST262_RESULT_PREFIX: ${{ matrix.target.result_prefix }}
-      JS2WASM_EVAL_ENGINE: ${{ matrix.target.test262_target == 'standalone' && (inputs.eval_engine || 'interpreter') || '' }}
-      # The shared provider artifact makes the full interpreter tier the
-      # authoritative CI standalone lane. Host cells leave the flag empty.
+      JS2WASM_EVAL_ENGINE: ${{ matrix.target.test262_target == 'standalone' && (inputs.eval_engine || 'quickjs') || '' }}
+      # The shared provider artifact makes QuickJS the authoritative CI
+      # standalone lane. Host cells leave the flag empty; the interpreter
+      # escape hatch still uses this full-tier switch.
       TEST262_FULL_RUNTIME_EVAL: ${{ matrix.target.test262_target == 'standalone' && '1' || '' }}
       # #1954 — empty (= run everything) unless the PR body opts into a scope.
       # Applied in runTest262Chunk BEFORE source read/compile, so out-of-scope
@@ -1042,7 +1043,7 @@ jobs:
       RUN_TIMESTAMP: ${{ github.run_id }}-${{ matrix.target_name }}-mgchunk${{ matrix.chunk_label }}
       TEST262_TARGET: ${{ matrix.test262_target }}
       TEST262_RESULT_PREFIX: ${{ matrix.result_prefix }}
-      JS2WASM_EVAL_ENGINE: ${{ matrix.test262_target == 'standalone' && 'interpreter' || '' }}
+      JS2WASM_EVAL_ENGINE: ${{ matrix.test262_target == 'standalone' && 'quickjs' || '' }}
       TEST262_FULL_RUNTIME_EVAL: ${{ matrix.test262_target == 'standalone' && '1' || '' }}
       TEST262_CHUNK_INDEX: ${{ matrix.chunk_index }}
       TEST262_CHUNK_TOTAL: ${{ matrix.chunk_total }}
@@ -2372,11 +2373,10 @@ jobs:
           exit 1
 
   promote-baseline:
-    # Measurement dispatches (IR-first, layout-emit, or the pre-flip QuickJS
-    # engine) must NEVER promote their merged report: promoting a flagged
-    # pass-set would poison the regression baseline every PR gates against.
-    # The merged-report ARTIFACT is the measurement deliverable; the baseline
-    # stays owned by default interpreter runs until #4242's parity gate passes.
+    # Measurement dispatches (IR-first, layout-emit, or the explicit native
+    # interpreter lane) must NEVER promote their merged report: promoting a
+    # non-default pass-set would poison the QuickJS baseline every PR gates
+    # against. The merged-report ARTIFACT is the measurement deliverable.
     # (#3611) `!cancelled() &&` IS LOAD-BEARING — do not "simplify" it away.
     #
     # Measured 2026-08-01 across **30 of 30** available push:main runs: this job
@@ -2408,11 +2408,10 @@ jobs:
       github.actor != 'github-actions[bot]' &&
       !(github.event_name == 'workflow_dispatch' && inputs.ir_first) &&
       !(github.event_name == 'workflow_dispatch' && inputs.layout_emit) &&
-      !(github.event_name == 'workflow_dispatch' && inputs.eval_engine == 'quickjs')
+      !(github.event_name == 'workflow_dispatch' && inputs.eval_engine == 'interpreter')
     name: promote merged report to main baseline
-    # The measurement-dispatch exclusions above are load-bearing: before the
-    # default flip, a QuickJS full-matrix artifact is evidence for #4242, not a
-    # replacement for the interpreter-owned baseline.
+    # Explicit interpreter dispatches are anti-rot measurements for the kept
+    # engine, not replacements for the QuickJS-owned default baseline.
     #
     # #3448 — mg-artifact-probe decides where the merged JSONLs come from:
     # MISS → the `test262-merged-report` artifact built by merge-report from a

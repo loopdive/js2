@@ -1,0 +1,79 @@
+name: native eval interpreter anti-rot
+
+# QuickJS is the default, but the self-compiled Acorn + bytecode interpreter is
+# a permanent supported engine (#4242). This non-required weekly lane proves it
+# still builds and keeps its focused conformance floor. It never opens issues or
+# comments on pull requests.
+on:
+  schedule:
+    - cron: "23 4 * * 3"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: eval-interpreter-anti-rot
+  cancel-in-progress: true
+
+jobs:
+  interpreter:
+    name: kept native bytecode engine
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      JS2WASM_EVAL_ENGINE: interpreter
+      TEST262_FULL_RUNTIME_EVAL: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Setup Node and pnpm (cached)
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and verify the native interpreter provider
+        env:
+          NODE_OPTIONS: --max-old-space-size=3072
+        run: |
+          pnpm run build:compiler-bundle
+          node scripts/build-runtime-eval-provider.mjs
+
+      - name: Run native interpreter semantic guards
+        run: |
+          pnpm exec vitest run \
+            tests/issue-2928-refusal-provider.test.ts \
+            tests/issue-2929-cd-global-materialization.test.ts \
+            tests/issue-2960.test.ts \
+            tests/issue-1102.test.ts \
+            tests/issue-4197-consumer-mode-decl-getter.test.ts \
+            tests/issue-4242-no-removal.test.ts
+
+      - name: Measure the interpreter eval-code floor
+        env:
+          TEST262_TARGET: standalone
+          TEST262_PATH_FILTER: language/eval-code/
+          TEST262_REPORTER: dot
+          TEST262_WORKERS: "4"
+          COMPILER_POOL_SIZE: "4"
+          TEST262_MAX_UNCLASSIFIED_ROOT_CAUSES: "9999"
+        run: pnpm run test:262 -- --official-scope-only
+
+      - name: Enforce the committed interpreter floor
+        run: |
+          REPORT="$(ls -t benchmarks/results/test262-standalone-report-*.json | head -1)"
+          REPORT="$REPORT" node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            const floor = JSON.parse(readFileSync("benchmarks/results/eval-interpreter-lane-floor.json", "utf8"));
+            const report = JSON.parse(readFileSync(process.env.REPORT, "utf8"));
+            const passFloor = floor.pass - floor.tolerance;
+            if (report.summary.total !== floor.total || report.summary.pass < passFloor) {
+              throw new Error(`native interpreter floor breached: ${report.summary.pass}/${report.summary.total}; expected total ${floor.total}, pass >= ${passFloor}`);
+            }
+            console.log(`native interpreter floor OK: ${report.summary.pass}/${report.summary.total} (minimum ${passFloor})`);
+          '

@@ -825,3 +825,44 @@ the default engine and does not remove, disable, or degrade the native bytecode
 interpreter. Phase 2 remains ready as a separately reviewable default-selection
 and CI-packaging change; `JS2WASM_EVAL_ENGINE=interpreter` remains a permanent,
 tested option.
+
+## Phase 2 implementation checkpoint — 2026-08-12
+
+Phase 2 is implemented on `codex/4242-quickjs-parity`, stacked directly on the
+measured parity checkpoint above:
+
+- the synchronous provider selector and standalone Test262 runner now choose
+  QuickJS when `JS2WASM_EVAL_ENGINE` is unset;
+- a missing or compiler-key-mismatched QuickJS artifact is still a hard error —
+  there is no interpreter or refusal fallback on the default path;
+- push, merge-group, and scheduled baseline-refresh jobs build, distribute,
+  verify, and measure the QuickJS pair. An explicit
+  `eval_engine=interpreter` dispatch remains available but cannot replace the
+  QuickJS-owned promoted baseline;
+- `JS2WASM_EVAL_ENGINE=interpreter` still selects the native Acorn + bytecode
+  branch, with its full/refusal distinction unchanged. Both successful and
+  diagnostic selections announce that kept-engine provenance;
+- `tests/issue-4242-no-removal.test.ts` enumerates the ten `src/interp/`
+  modules, verifies the pinned Acorn tarball and provider builder, and exercises
+  both the interpreter selector and the two-engine unknown-value diagnostic;
+- `.github/workflows/eval-interpreter-lane.yml` builds the native provider and
+  runs its semantic guards plus the 816-file `language/eval-code/` slice every
+  week. The committed current-tree floor is 782/816 with a three-test
+  tolerance; and
+- the architecture guide and #4229 playground consumer now document the two
+  engines and pin the interpreter explicitly where that is the intended
+  dogfood surface.
+
+Local flip validation is green: QuickJS provider/default selection 29/29,
+parity and CI-routing 39/39, no-removal 4/4, provider-cache 7/7, explicit full
+interpreter declaration semantics 11/11, the surrounding CI/baseline routing
+slice 166/166, shell syntax, and typecheck. Direct selection prints `QUICKJS …
+DEFAULT engine (#4242)` with the env unset and `INTERPRETER … kept native
+bytecode engine (#4242)` with the explicit selector.
+
+No file is deleted from `src/interp/`, `src/ir/`, the pinned Acorn input, or
+the native provider build. Because the project lead asked for the flip in the
+existing parity PR, the PR's earlier Phase-1 parity repairs do modify four
+`src/interp/` files; the Phase-2 checkpoint itself adds no `src/` edit. The
+remaining acceptance evidence is the live QuickJS CI run and first green
+manual interpreter anti-rot dispatch on the published head.

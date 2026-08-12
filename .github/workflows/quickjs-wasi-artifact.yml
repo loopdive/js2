@@ -1,14 +1,12 @@
 # Build the QuickJS "boxed tier" WASI artifact (#4236), then exercise the
-# flag-gated QuickJS eval ENGINE, membrane, and closure bridge that consume it
+# default QuickJS eval engine, membrane, and closure bridge that consume it
 # (#4238/#4245/#4307).
 #
 # NON-REQUIRED: it is not in the branch-protection ruleset (docs/ci-policy.md §7
 # stays at six required checks). Pull requests that touch the QuickJS artifact,
 # provider, membrane, parity gate, or this workflow get semantic coverage; the
 # path filter keeps unrelated PRs free of this long build. Manual dispatch plus
-# a weekly cron remain the anti-rot floor from #4238 hard-constraint 3 — the
-# QuickJS engine must not decay silently while the interpreter remains the
-# default.
+# a weekly cron remain the artifact and semantic anti-rot floor.
 #
 # Modelled on the `runtime-eval-provider` job in test262-sharded.yml (#4013):
 # build one content-keyed wasm artifact centrally instead of in every consumer.
@@ -42,6 +40,7 @@ on:
       - "scripts/test262-worker.mjs"
       - "src/codegen/expressions/runtime-eval-provider.ts"
       - "tests/issue-4242-eval-engine-parity.test.ts"
+      - "tests/issue-4242-no-removal.test.ts"
       - "tests/issue-4307-closure-carrier-wrap.test.ts"
       - "tests/quickjs-eval-membrane.test.ts"
       - "tests/quickjs-eval-provider.test.ts"
@@ -184,19 +183,14 @@ jobs:
           retention-days: 30
 
   # ---------------------------------------------------------------------------
-  # #4238/#4245/#4307 — the flag-gated eval ENGINE lane.
+  # #4238/#4245/#4307 — the default QuickJS eval-engine lane.
   #
   # NON-REQUIRED by construction (see the header). It compiles the GC adapter
   # against the artifact this run just produced and runs the scoped eval suite
-  # under `JS2WASM_EVAL_ENGINE=quickjs`, so the QuickJS path cannot rot while
-  # the interpreter stays the default.
+  # under `JS2WASM_EVAL_ENGINE=quickjs`, so the default path cannot rot.
   #
-  # It ALSO runs the interpreter-tier proof suites with NO engine flag set, in
-  # the same job: the load-bearing property is that the default path is
-  # untouched, and a lane that only ever exercises the flag would never notice
-  # if it stopped being true. The semantic step runs all 94 QuickJS engine
-  # tests (provider 28 + membrane 57 + closure carrier 9), plus the 37 parity
-  # artifact/gate tests.
+  # It ALSO runs interpreter-tier proof suites with the engine selected
+  # explicitly, so the kept native bytecode engine cannot rot behind the flip.
   eval-provider-lane:
     name: quickjs eval-engine lane (non-required)
     needs: build
@@ -246,9 +240,12 @@ jobs:
             tests/quickjs-eval-provider.test.ts \
             tests/quickjs-eval-membrane.test.ts \
             tests/issue-4307-closure-carrier-wrap.test.ts \
-            tests/issue-4242-eval-engine-parity.test.ts
+            tests/issue-4242-eval-engine-parity.test.ts \
+            tests/issue-4242-no-removal.test.ts
 
-      - name: Default path is untouched (no engine flag set)
+      - name: Kept native interpreter path remains selectable
+        env:
+          JS2WASM_EVAL_ENGINE: interpreter
         run: |
           npx vitest run \
             tests/issue-2928-refusal-provider.test.ts \
