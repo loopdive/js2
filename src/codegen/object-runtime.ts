@@ -102,6 +102,7 @@ import {
   buildInstancePropGetArm,
   reserveInstanceProps,
 } from "./instance-props.js";
+import { buildErrorPropSetArm, reserveErrorPropHelpers } from "./error-props.js"; // (#4098) native Error `$props` MOP
 import {
   INSTANCE_FIELD_DELETED,
   buildTombstoneScreen,
@@ -892,6 +893,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // (#3537) reserve the array-expando side table right after — same
     // reserve-before-arms-bake discipline, appended indices only.
     reserveVecPropHelpers(ctx);
+    reserveErrorPropHelpers(ctx); // (#4098) before every write/define/visibility call site bakes its funcIdx
     reserveCarrierBagVisibility(ctx); // (#4010 S3) visibility over both bags — see that module
     reserveInstanceTombstones(ctx); // (#4098 G1 s1) per-instance delete over the SAME bag
     reserveInstanceProps(ctx); // (#4194) per-instance WRITE-through + expando over that bag
@@ -2547,7 +2549,10 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         // prologue (`fillClosedStructExternSetArms`) missed, so a declared name
         // can never be deposited in the bag — the invariant that structurally
         // excludes the #4055 v1 -684 shape.
-        then: buildInstanceOrVecOrClosurePropSetMissArm(ctx),
+        // (#4098) Native Error values own an open `$props` sidecar. Its arm
+        // precedes the disjoint instance/vec/closure carriers and preserves the
+        // original Error receiver when an accessor is invoked.
+        then: [...buildErrorPropSetArm(ctx), ...buildInstanceOrVecOrClosurePropSetMissArm(ctx)],
       },
       // o = cast<$Object>(any)
       { op: "local.get", index: 6 },

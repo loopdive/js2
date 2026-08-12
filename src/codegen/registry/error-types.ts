@@ -50,6 +50,8 @@ import { userErrorCtorCarrierGlobal } from "../error-ctor-carrier.js"; // (#4262
 import { addFuncType, getOrRegisterErrorStructType } from "./types.js";
 import { addStringConstantGlobal } from "./imports.js";
 import { nativeStringLiteralInstrs, stringConstantExternrefInstrs } from "../native-strings.js";
+import { CARRIER_BAG_HAS } from "../carrier-bag-visibility.js";
+import { ERROR_PROP_GET } from "../error-props.js";
 
 // (#2962) `getOrRegisterErrorStructType` moved to registry/types.ts so
 // native-strings.ts can import it without an import cycle (this module imports
@@ -319,33 +321,24 @@ export function fillExternGetErrorProps(ctx: CodegenContext): void {
   if (errTypeIdx < 0) return; // no native Error structs in this module
   const fn = ctx.mod.functions.find((f) => f.name === "__extern_get");
   if (!fn) return; // object runtime never emitted (nothing reads dynamically)
-  const externGetIdx = ctx.funcMap.get("__extern_get");
   const strFlattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
   const strEqualsIdx = ctx.nativeStrHelpers.get("__str_equals");
   const newObjectIdx = ctx.funcMap.get("__new_plain_object");
-  if (
-    externGetIdx === undefined ||
-    strFlattenIdx === undefined ||
-    strEqualsIdx === undefined ||
-    newObjectIdx === undefined
-  ) {
+  if (strFlattenIdx === undefined || strEqualsIdx === undefined || newObjectIdx === undefined) {
     return;
   }
   if (ctx.anyStrTypeIdx < 0 || ctx.nativeStrTypeIdx < 0) return;
-  // (#2106 S1) Under the undefined-singleton regime the recursive $props read
-  // answers the singleton on a miss (non-null), so presence is "non-nullish";
-  // legacy regime: miss = null.
-  const isNullishIdx = ctx.funcMap.get("__extern_is_nullish");
+  const bagHasIdx = ctx.funcMap.get(CARRIER_BAG_HAS);
+  const errorPropGetIdx = ctx.funcMap.get(ERROR_PROP_GET);
+  if (bagHasIdx === undefined || errorPropGetIdx === undefined) return;
 
   // __extern_get: params 0=obj 1=key; existing locals o(2) e(3) any(4)
   // getter(5) bfmeta(6). Append ours — never renumber existing ones.
   const anyL = 2 + fn.locals.length;
   const fkeyL = anyL + 1;
-  const scratchL = anyL + 2;
   fn.locals.push(
     { name: "__err_any", type: { kind: "anyref" } },
     { name: "__err_fkey", type: { kind: "ref_null", typeIdx: ctx.nativeStrTypeIdx } },
-    { name: "__err_scratch", type: { kind: "externref" } },
   );
 
   const errRef = (): Instr[] => [
@@ -512,15 +505,6 @@ export function fillExternGetErrorProps(ctx: CodegenContext): void {
     );
   }
 
-  // "is the $props read a miss?" — leaves an i32 on the stack.
-  const propsMiss = (): Instr[] =>
-    isNullishIdx !== undefined
-      ? [
-          { op: "local.get", index: scratchL },
-          { op: "call", funcIdx: isNullishIdx },
-        ]
-      : [{ op: "local.get", index: scratchL }, { op: "ref.is_null" }];
-
   const arm: Instr[] = [
     { op: "local.get", index: 0 },
     { op: "any.convert_extern" },
@@ -530,28 +514,21 @@ export function fillExternGetErrorProps(ctx: CodegenContext): void {
       op: "if",
       blockType: { kind: "empty" },
       then: [
-        // 1) $props sidecar first — subclass own fields / dynamic writes shadow
-        //    the builtin surface (JS shadowing order).
-        ...errRef(),
-        { op: "struct.get", typeIdx: errTypeIdx, fieldIdx: 5 },
-        { op: "local.tee", index: scratchL },
-        { op: "ref.is_null" },
-        { op: "i32.eqz" },
+        // 1) `$props` own entry first — dynamic writes/defines shadow the
+        //    builtin surface. Presence and value are separate so a stored null
+        //    is still a handled value. The getter helper receives the ORIGINAL
+        //    Error receiver, not the hidden sidecar, preserving accessor `this`.
+        { op: "local.get", index: 0 },
+        { op: "local.get", index: 1 },
+        { op: "call", funcIdx: bagHasIdx },
         {
           op: "if",
           blockType: { kind: "empty" },
           then: [
-            { op: "local.get", index: scratchL },
+            { op: "local.get", index: 0 },
             { op: "local.get", index: 1 },
-            { op: "call", funcIdx: externGetIdx }, // recursive: $props IS a plain $Object
-            { op: "local.set", index: scratchL },
-            ...propsMiss(),
-            { op: "i32.eqz" },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [{ op: "local.get", index: scratchL }, { op: "return" }],
-            },
+            { op: "call", funcIdx: errorPropGetIdx },
+            { op: "return" },
           ],
         },
         // 2) Named-key dispatch — string keys only. A Symbol / boxed-number key

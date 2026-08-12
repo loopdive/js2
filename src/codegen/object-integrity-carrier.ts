@@ -30,8 +30,9 @@
  * ## The fix — two independent halves, and deliberately NO new side table
  *
  * **(a) Storage: reuse the bags that already exist.** `__vec_bag_ensure`
- * (#3537, Array expando bag) and `__closure_bag_ensure` (#3468, closure
- * own-property bag) already map a carrier to a per-object `$Object`. A `$Object`
+ * (#3537, Array expando bag), `__closure_bag_ensure` (#3468, closure
+ * own-property bag), and `__error_prop_bag_ensure` (#4098, native Error's
+ * existing `$props` slot) map a carrier to a per-object `$Object`. A `$Object`
  * *has* a real flags slot, so the bag **is** the missing storage.
  * {@link registerIntegrityBagResolver} adds one native that resolves a receiver
  * to its bag, and both the predicates and the mutators route through it.
@@ -94,6 +95,7 @@ export const OBJECT_INTEGRITY_OBJ_PREDICATES: readonly string[] = [
  * Register `__integrity_bag(externref v) -> externref`:
  *   vec carrier     → `__vec_bag_ensure(v)`
  *   closure carrier → `__closure_bag_ensure(v)`
+ *   Error carrier   → `__error_prop_bag_ensure(v)`
  *   otherwise       → `ref.null.extern`
  *
  * Returns `undefined` when the bag substrates are absent (host mode), which is
@@ -104,6 +106,8 @@ export function registerIntegrityBagResolver(ctx: CodegenContext, registerNative
   const vecBagEnsureIdx = ctx.funcMap.get("__vec_bag_ensure");
   const isClosureCarrierIdx = ctx.funcMap.get("__is_closure_prop_carrier");
   const closureBagEnsureIdx = ctx.funcMap.get("__closure_bag_ensure");
+  const isErrorCarrierIdx = ctx.funcMap.get("__is_error_prop_carrier");
+  const errorBagEnsureIdx = ctx.funcMap.get("__error_prop_bag_ensure");
   if (
     isVecCarrierIdx === undefined ||
     vecBagEnsureIdx === undefined ||
@@ -132,6 +136,17 @@ export function registerIntegrityBagResolver(ctx: CodegenContext, registerNative
         blockType: { kind: "empty" },
         then: [{ op: "local.get", index: 0 }, { op: "call", funcIdx: closureBagEnsureIdx }, { op: "return" }],
       },
+      ...(isErrorCarrierIdx === undefined || errorBagEnsureIdx === undefined
+        ? []
+        : ([
+            { op: "local.get", index: 0 },
+            { op: "call", funcIdx: isErrorCarrierIdx },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [{ op: "local.get", index: 0 }, { op: "call", funcIdx: errorBagEnsureIdx }, { op: "return" }],
+            },
+          ] satisfies Instr[])),
       { op: "ref.null.extern" },
     ],
   );
