@@ -233,7 +233,7 @@ class SiteNav extends HTMLElement {
         }
 
         /* ── Responsive ── */
-        @media (max-width: 768px) {
+        @media (max-width: 1280px) {
           .site-nav {
             padding: 0 20px;
           }
@@ -340,6 +340,13 @@ class SiteNav extends HTMLElement {
             </span>
             <span>GitHub</span>
           </a>
+          <a class="btn-outline" href="https://x.com/js2wasm" aria-label="js2wasm on X">
+            <span class="btn-icon" aria-hidden="true">
+              <svg viewBox="0 0 16 16" focusable="false">
+                <path d="M12.6.75h2.45L9.7 6.86 16 15.25h-4.93L7.21 10.2l-4.42 5.05H.34l5.72-6.54L0 .75h5.05l3.49 4.62L12.6.75Zm-.86 12.97h1.35L4.31 2.2H2.86l8.88 11.52Z"></path>
+              </svg>
+            </span>
+          </a>
           <a class="btn-outline" href="https://discord.gg/fZWxnBjzSj">
             <span class="btn-icon" aria-hidden="true">
               <svg viewBox="0 0 16 16" focusable="false">
@@ -366,6 +373,14 @@ class SiteNav extends HTMLElement {
               </svg>
             </span>
             <span>GitHub</span>
+          </a>
+          <a class="btn-outline" href="https://x.com/js2wasm" aria-label="js2wasm on X">
+            <span class="btn-icon" aria-hidden="true">
+              <svg viewBox="0 0 16 16" focusable="false">
+                <path d="M12.6.75h2.45L9.7 6.86 16 15.25h-4.93L7.21 10.2l-4.42 5.05H.34l5.72-6.54L0 .75h5.05l3.49 4.62L12.6.75Zm-.86 12.97h1.35L4.31 2.2H2.86l8.88 11.52Z"></path>
+              </svg>
+            </span>
+            <span>@js2wasm</span>
           </a>
           <a class="btn-outline" href="https://discord.gg/fZWxnBjzSj">
             <span class="btn-icon" aria-hidden="true">
