@@ -201,6 +201,88 @@
       .trend-delta.neutral {
         color: var(--text-muted);
       }
+      .eval-benchmark {
+        margin: 1.5rem 0 3rem;
+        padding: clamp(1.25rem, 3vw, 2rem);
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        background: radial-gradient(circle at 85% 0%, rgba(88, 166, 255, 0.11), transparent 38%), var(--bg-soft);
+      }
+      .eval-eyebrow {
+        display: block;
+        margin-bottom: 0.45rem;
+        color: #6db3ff;
+        font-family: var(--mono);
+        font-size: 0.7rem;
+        font-weight: 600;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+      .eval-benchmark h2 {
+        margin: 0 0 0.5rem;
+        font-size: clamp(1.35rem, 3vw, 1.75rem);
+      }
+      .eval-summary {
+        max-width: 78ch;
+        color: rgba(255, 255, 255, 0.68);
+        font-size: 0.9rem;
+      }
+      .eval-chart-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 1rem;
+        margin-top: 1.5rem;
+      }
+      .eval-chart-card {
+        min-width: 0;
+        padding: 1rem;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.025);
+      }
+      .eval-chart-card p {
+        margin: -0.65rem 0 0.85rem;
+        color: var(--text-muted);
+        font-size: 0.72rem;
+      }
+      .eval-chart-card perf-benchmark-chart {
+        --surface: rgba(255, 255, 255, 0.07);
+        --fg-soft: rgba(255, 255, 255, 0.65);
+        --fg-faint: rgba(255, 255, 255, 0.42);
+      }
+      .eval-takeaway {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 0.8rem;
+        align-items: start;
+        margin-top: 1rem;
+        padding: 0.9rem 1rem;
+        border-left: 2px solid #6db3ff;
+        background: rgba(109, 179, 255, 0.07);
+        color: rgba(255, 255, 255, 0.7);
+        font-size: 0.82rem;
+      }
+      .eval-takeaway strong {
+        color: var(--text);
+      }
+      .eval-methodology {
+        margin-top: 1rem;
+        color: var(--text-muted);
+        font-size: 0.78rem;
+      }
+      .eval-methodology summary {
+        width: fit-content;
+        cursor: pointer;
+        color: rgba(255, 255, 255, 0.68);
+        font-weight: 600;
+      }
+      .eval-methodology p {
+        max-width: 90ch;
+        margin-top: 0.75rem;
+      }
+      .eval-methodology a {
+        color: #6db3ff;
+      }
       @media (max-width: 640px) {
         body {
           padding: 1rem;
@@ -208,6 +290,9 @@
         }
         h1 {
           font-size: 2rem;
+        }
+        .eval-takeaway {
+          grid-template-columns: 1fr;
         }
       }
     </style>
@@ -220,6 +305,96 @@
       runtime speed per benchmark, plus how those numbers have trended across benchmark runs over time.
     </p>
     <a class="back-link" href="../#benchmarks">← Back to home</a>
+
+    <section class="eval-benchmark" aria-labelledby="eval-benchmark-title">
+      <span class="eval-eyebrow">Dynamic code evaluation</span>
+      <h2 id="eval-benchmark-title">Bytecode interpreter vs QuickJS vs AOT</h2>
+      <p class="eval-summary">
+        The same dynamically assembled function sums
+        <code>i % 7</code>
+        over 10,000 iterations. Every measured sample returned the expected value, 29,994. Lower is better; factors are
+        relative to the fastest lane in each panel.
+      </p>
+
+      <div class="eval-chart-grid">
+        <article class="eval-chart-card">
+          <perf-benchmark-chart
+            src="./results/runtime-eval-engines.json"
+            src-filter="cold process"
+            mode="absolute-lower-better"
+            title="Cold process"
+            legend="Fresh Node process, engine state, Wasm instances and first eval"
+            baseline-label="fastest"
+            show-delta
+            delta-kind="factor"
+          ></perf-benchmark-chart>
+          <p>Includes engine loading and the first parse or compilation. Prebuilt provider artifacts remain cached.</p>
+        </article>
+
+        <article class="eval-chart-card">
+          <perf-benchmark-chart
+            src="./results/runtime-eval-engines.json"
+            src-filter="hot eval"
+            mode="absolute-lower-better"
+            title="Hot eval"
+            legend="Warm engine; parse or compile and execute on every call"
+            baseline-label="fastest"
+            show-delta
+            delta-kind="factor"
+          ></perf-benchmark-chart>
+          <p>
+            This is actual repeated
+            <code>eval(source)</code>
+            : compilation happens again for every measured call.
+          </p>
+        </article>
+
+        <article class="eval-chart-card">
+          <perf-benchmark-chart
+            src="./results/runtime-eval-engines.json"
+            src-filter="hot prepared"
+            mode="absolute-lower-better"
+            title="Hot prepared"
+            legend="Compile once before timing; execute only"
+            baseline-label="fastest"
+            show-delta
+            delta-kind="factor"
+          ></perf-benchmark-chart>
+          <p>Models a cached function or tier-up: only execution of the prepared result is timed.</p>
+        </article>
+      </div>
+
+      <div class="eval-takeaway">
+        <strong>Two different winners.</strong>
+        <span>
+          QuickJS-NG has the lowest latency for cold and repeated eval. The AOT side module is fastest once its compiled
+          result is reused; its displayed lane is unoptimized so the deterministic loop is not folded away by
+          <code>wasm-opt</code>
+          .
+        </span>
+      </div>
+
+      <details class="eval-methodology">
+        <summary>Methodology and provenance</summary>
+        <p>
+          Measured 12 August 2026 on an Apple M4 with Node 24.4.1. Cold results are medians of 7 interleaved fresh
+          processes. Hot eval uses 3 warmups and 9 measured calls. Prepared execution uses 5 warmups and 15 calibrated
+          measured batches. Filesystem caches were not flushed. All three lanes run under the same Node host; the AOT
+          proof of concept uses the Node-hosted js2wasm compiler. See the
+          <a href="./results/runtime-eval-engines.json">raw samples and artifact hashes</a>
+          , the
+          <a href="https://github.com/loopdive/js2wasm/commit/71d379293c22411578f49b4ab8b12d61f3e011fb">
+            interpreter and QuickJS revision
+          </a>
+          , and the
+          <a href="https://github.com/loopdive/js2wasm/commit/786ac78e773942f7f651289fe152310eadbb3e88">
+            AOT side-module revision
+          </a>
+          .
+        </p>
+      </details>
+    </section>
+
     <div id="app"><div class="no-data">Loading benchmark data…</div></div>
 
     <script type="module" src="../components/perf-benchmark-chart.js"></script>
