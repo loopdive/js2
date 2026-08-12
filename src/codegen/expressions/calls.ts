@@ -6369,7 +6369,7 @@ function compileCallExpression(
             ? emitStandaloneIndirectEvalRuntime(ctx, fctx, expr.arguments)
             : ctx.directEvalMode === "reified-host"
               ? emitStandaloneDirectEvalRuntime(ctx, fctx, expr)
-              : ensureRuntimeEvalCallableCarrier(ctx, fctx)
+              : ctx.standalone && ensureRuntimeEvalCallableCarrier(ctx, fctx)
                 ? emitStandaloneDirectEvalRuntime(ctx, fctx, expr)
                 : undefined
           : emitStandaloneIndirectEvalRuntime(ctx, fctx, expr.arguments);
