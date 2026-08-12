@@ -137,6 +137,27 @@ function hasLiveFunctionBinding(ctx: CodegenContext, fctx: FunctionContext, name
 }
 
 /**
+ * Dispatch standalone carriers whose runtime representation must win over the
+ * checker-inferred call signature. A `.bind(...)` initializer stores the
+ * canonical `$__bound_fn`, not an ordinary funcref-wrapper struct. Casting it
+ * through the typed path can therefore null the value—or trap while coercing
+ * an argument—before the existing bound arm of the native callable ladder can
+ * reach `__apply_closure`.
+ */
+function tryCompileStoredStandaloneCarrierCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  isKnownVariable: boolean,
+): InnerResult | undefined {
+  if (!isKnownVariable || (!ctx.standalone && !noJsHost(ctx))) return undefined;
+  const storedObjectCall = tryCompileStoredObjectBuiltinCall(ctx, fctx, expr);
+  if (storedObjectCall !== undefined) return storedObjectCall;
+  if (!calleeIsBoundFunctionVar(ctx.oracle, expr.expression)) return undefined;
+  return tryEmitInlineDynamicCall(ctx, fctx, expr, true) ?? undefined;
+}
+
+/**
  * (#742) Identifier-callee call dispatch — extracted verbatim from
  * compileCallExpression. Handles the cases where the call target is a bare
  * identifier: node:fs global functions (readFileSync / writeFileSync, both the
@@ -1144,10 +1165,8 @@ export function compileIdentifierCall(
         const hostCall = emitBoundFunctionCall(ctx, fctx, expr);
         if (hostCall !== null) return hostCall;
       }
-      if (isKnownVariable && (ctx.standalone || noJsHost(ctx))) {
-        const storedObjectCall = tryCompileStoredObjectBuiltinCall(ctx, fctx, expr);
-        if (storedObjectCall !== undefined) return storedObjectCall;
-      }
+      const storedCarrierCall = tryCompileStoredStandaloneCarrierCall(ctx, fctx, expr, isKnownVariable);
+      if (storedCarrierCall !== undefined) return storedCarrierCall;
       // `%Function%` is represented by the linked provider's structural
       // callable marker. Calling an alias through the checker-derived
       // FunctionConstructor signature first would compile native-string
