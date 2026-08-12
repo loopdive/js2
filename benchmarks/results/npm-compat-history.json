@@ -3892,7 +3892,8 @@
           },
           "standalone": {}
         }
-      }
+      },
+      "recordedIn": "10ab0a25a4aceafe46f43c983b8268def7171c3a"
     },
     {
       "generatedAt": "2026-08-12T09:25:27.626Z",
@@ -4163,6 +4164,45 @@
         "lit": {
           "jsHost": {
             "dynamic": 0.0098407149021114
+          },
+          "standalone": {}
+        }
+      }
+    },
+    {
+      "generatedAt": "2026-08-12T15:52:02.294Z",
+      "sourceRevision": "10ab0a25a4aceafe46f43c983b8268def7171c3a",
+      "packages": {
+        "acorn": {
+          "jsHost": {
+            "dynamic": 0.0035324675286760665
+          },
+          "standalone": {
+            "static": 11925.48510825301,
+            "dynamic": 0.13190053674810576
+          }
+        },
+        "cookie": {
+          "jsHost": {
+            "dynamic": 0.000912051556802311
+          },
+          "standalone": {
+            "static": 753.1745695498997,
+            "dynamic": 0.24045661308017938
+          }
+        },
+        "clsx": {
+          "jsHost": {
+            "dynamic": 0.1286321365105839
+          },
+          "standalone": {
+            "static": 41.0751705450759,
+            "dynamic": 0.13915951839739865
+          }
+        },
+        "lit": {
+          "jsHost": {
+            "dynamic": 0.009031275576281327
           },
           "standalone": {}
         }
