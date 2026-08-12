@@ -1137,3 +1137,52 @@ owner+props matched, value returned) using `newCounterGlobal`'s pattern from
 `src/codegen/alloc-census.ts`, compile the standalone acorn self-parse driver at
 `optimize: 0`, and read the exported globals after `__census_run()`. The
 increments are stack-neutral, so they can be spliced mid-sequence.
+
+## 2026-08-12 (3) — the lookup call volume is concentrated, and the call census is broken
+
+Two findings from trying to size the inline-cache slice named above.
+
+### Concentration: 15 functions carry 90 % of it
+
+There are **1,812 static `__extern_get` / `__extern_get_idx` call sites** in the
+standalone acorn build (reported by the #4185 call census at instrumentation
+time, which succeeds even though the resulting module does not — see below).
+But the profile's per-caller attribution shows the *dynamic* volume is nothing
+like uniform across them: the top 15 callers carry **8.35 pp of `__extern_get`'s
+9.22 pp, i.e. 90.6 %**, and the top 4 alone carry 4.19 pp.
+
+This matters for the slice's design and for its main risk. Inlining ~20
+instructions of cache check at all 1,812 sites would cost roughly +40 KB
+(extrapolating the two measured inlining points recorded in the `__box_number`
+entry above: 4 instructions × 1,314 sites = +814 B; 11 × 1,255 = +22,847 B).
+Inlining at the sites inside the top ~15 callers gets ~90 % of the benefit for a
+small fraction of the size. **The slice should be caller-targeted, not global** —
+and because the ranking is a property of the corpus rather than of the program,
+the *selection rule* has to be corpus-independent the way #3927's field ranking
+had to be (see that issue's §7 for why observed-frequency ranking is not
+admissible, and what it costs to give it up).
+
+### DEFECT — `JS2WASM_ALLOC_CENSUS_CALLS` produces an invalid module
+
+Running the call census against `__extern_get` instruments 1,812 sites and then
+fails to instantiate:
+
+```
+[call-census] 2 callee(s) match [__extern_get]: __extern_get, __extern_get_idx
+[call-census] instrumented 1812 static call site(s)
+CompileError: Compiling function #106:"hasProp" failed:
+  call[1] expected type f64, found local.get of type i32
+```
+
+The counter increment (`global.get` / `i32.const` / `i32.add` / `global.set`) is
+stack-neutral, so a naive splice should validate; something about where it is
+spliced relative to the argument sequence is not. The failure is at least loud —
+it does not silently produce wrong counts — but it means **the second
+attribution level (`WHO calls the helper, how often`) is unavailable for any
+callee with this call shape**, and that is exactly the instrument the inline-cache
+slice needs to verify its caller targeting. The per-type census
+(`JS2WASM_ALLOC_CENSUS=1`) is unaffected and still trustworthy.
+
+Not filed as its own issue: `claim-issue.mjs --allocate` reports the open-PR scan
+DEGRADED in this container (no `gh`), and reserving an id against a degraded
+universe is how #4215 was burned. It should get one when allocation is healthy.
