@@ -4,7 +4,7 @@ title: "umbrella: close the acorn-vs-Node performance gap — representation fir
 status: ready
 sprint: current
 created: 2026-08-04
-updated: 2026-08-08
+updated: 2026-08-12
 priority: high
 horizon: xl
 feasibility: hard
@@ -942,3 +942,247 @@ generality. pako becomes a runnable corpus once #4216 (i16 packed-local emit
 bug, sole standalone blocker) lands; luxon/styled-components were measured
 unusable (native-class syntax bypasses the fnctor machinery entirely / non-
 self-contained bundle).
+
+## 2026-08-12 — re-profile on current main: GC is spent, dynamic lookup is now the gap
+
+First profile since the hot/cold split (#3927/#4217) and the constant-box hoist
+went in by default. Same instrument as every prior table in this issue: acorn
+self-parse, lane `standalone-dynamic`, 300 iterations, closure name map
+attached, bucketed by self time.
+
+| bucket | 2026-08-07 | **2026-08-12** |
+| --- | ---: | ---: |
+| gc-engine | 23.1 % | **2.97 %** |
+| dynamic-lookup | 13.5 % | **21.15 %** |
+| call-dispatch | 8.1 % | **11.39 %** |
+| compiled + scanner (acorn's own code) | — | 40.00 % |
+| dynamic-eq | — | 6.93 % |
+| cast-convert | — | 6.07 % |
+| string-runtime | — | 4.39 % |
+| regexp | — | 4.04 % |
+| alloc-helpers | — | 1.53 % |
+
+**The allocation program is finished.** GC fell from the largest bucket to the
+ninth. The two buckets this issue recorded as "untouched by anything" are now,
+together, **32.5 %** — the largest addressable block left, and `__extern_get`
+alone (9.22 %) is the single hottest frame in the profile, ahead of every
+compiled acorn function and ahead of GC.
+
+Note the earlier tables folded `scanner` into `compiled`; only the two bucket
+columns marked with prior values are directly comparable.
+
+### Where the dynamic reads come from
+
+Every hot caller of `__extern_get` was read back to its acorn source, and they
+are overwhelmingly one idiom — a flag read off the plain object `getOptions()`
+returns:
+
+| caller | self % | what it reads |
+| --- | ---: | --- |
+| `__fnctor_Node_new` | 1.26 | `parser.options.{locations,directSourceFile,ranges}` |
+| `checkUnreserved` | 1.15 | `this.{inGenerator,inAsync}` — **prototype getters** |
+| `__call_m_call_2` | 0.96 | method value |
+| `finishNodeAt` | 0.82 | `this.options.{locations,ranges}` |
+| `parseSubscripts` | 0.69 | `this.options.ecmaVersion` |
+| `pp.next` | 0.68 | `this.options.onToken` |
+| `readToken` | 0.56 | `this.options.ecmaVersion` |
+| `nextToken` | 0.51 | `this.options.locations` |
+
+`options` is built by `for (var opt in defaultOptions) options[opt] = …` — a
+computed-key loop, so its key set is not syntactically visible and it stays an
+open hash bag. It is written once at parse start, never mutated, and then read
+on every node construction, every `finishNode` and every token.
+
+### MEASURED NEGATIVE — the declared-field ladder is not the cost
+
+The obvious first cut was tried and **does not pay**. Every arm of the
+`fillClosedStructExternGetArms` ladder is guarded by `ref.test <closed struct>`
+on the *receiver*, so a plain-`$Object` receiver can never satisfy one — yet it
+still pays the full key dispatch first (`__str_flatten`, the hash read, the
+`br_table`, a `__str_equals` per name in the bucket). A single `ref.test
+$Object` up front skips all of it.
+
+It was built, proved sound (no arm's receiver type is `$Object` or transitively
+declared under it — `ref.test` is subtype-inclusive, so the check walks
+`superTypeIdx` and any positive answer drops the screen rather than narrowing
+it), and measured order-reversed **ON → OFF → OFF → ON**:
+
+| block | order | `__extern_get` self | dynamic-lookup |
+| --- | --- | ---: | ---: |
+| onA | 1 (screen) | 9.09 % | 20.49 % |
+| offA | 2 (base) | 8.85 % | 21.04 % |
+| offB | 3 (base) | 9.17 % | 20.95 % |
+| onB | 4 (screen) | 8.98 % | 20.81 % |
+
+Mean 9.04 % ON vs 9.01 % OFF. The ON blocks replicate to 0.11 pp, so the null
+is solid to about **±0.3 pp**. Wall clock also did not separate (and is below
+this box's resolvability anyway — §6 of #3927).
+
+**The guard was verified to fire, not merely to compile.** Poisoning the
+screened branch — returning `undefined` immediately whenever the receiver is a
+plain `$Object` — drops the parse from checksum 422 / 4,642 nodes to **0 / 0**.
+So plain-object receivers really are a large share of the calls, and the null
+is a statement about cost, not a broken instrument.
+
+**Why it does not pay, in one number.** `__extern_get`'s final body is **15,032
+instructions, and the ladder is 14,770 of them (98.3 %)** — but the *executed*
+path through it is one `br_table` and one or two `__str_equals`. The ladder is
+almost all of the function's SIZE and almost none of its TIME. The ~260
+instructions outside it — the tombstone screen, receiver classification, the
+own-property walk and the prototype walk — run on every call and are the 9 %.
+
+The codegen change was therefore **reverted, not shipped**: a few instructions
+of provably-dead-work elimination in the most load-bearing dynamic helper in the
+compiler, for a benefit bounded at 0.3 pp, is the wrong trade. It is recorded
+here in enough detail to rebuild if a future change makes the ladder hot.
+
+### What this redirects to
+
+The lever is **not a faster `__extern_get` — it is fewer calls to it.** Two
+distinct populations, needing two different fixes:
+
+1. **Plain objects with a stable shape.** `options` has a fixed key set for the
+   whole parse; it is only "open" because the keys arrive through a computed
+   write in a `for…in` over another static literal. Closing it (or caching the
+   read at the site) turns millions of hash-bag walks into `struct.get`s. This
+   is the same shape-set machinery as #3927's per-type layouts, applied to
+   object literals rather than fnctors.
+2. **Prototype accessors.** `this.inGenerator` / `this.inAsync` are
+   `Object.defineProperties` getters and must run the accessor. `checkUnreserved`
+   (1.15 %) and `currentVarScope` (1.21 %) are both this. Nothing here can be
+   removed; it can only be made a direct call instead of a lookup-then-dispatch.
+
+Call dispatch (11.39 %) is still untouched by anything in this umbrella.
+
+## 2026-08-12 (2) — the per-key cache hit rate, and what it costs to redo the gap budget
+
+Two follow-ups to the profile above. Both are first-time numbers.
+
+### The `__extern_get` per-key cache is at 87 % — it is not the problem
+
+`__extern_get` already carries a per-key inline cache (#3673 round 9b/21):
+the `(owner, props-array, entry)` triple is memoized **on the interned key
+string** (`$HashedString` fields 5/6/7), validated by `ref.eq` on the owner and
+on the owner's props array, with tombstone/accessor flags re-checked. It was
+never measured. It is now, by counter globals compiled into the census build
+(reverted after measurement; harness in the reproduction note below):
+
+| | per parse | % of calls |
+| --- | ---: | ---: |
+| `__extern_get` calls | **506,752** | 100 % |
+| key is an interned `$HashedString` | 501,111 | 98.89 % |
+| cache populated for that key | 461,159 | 91.00 % |
+| owner + props both matched | 442,072 | 87.24 % |
+| **served from cache** | **442,072** | **87.24 %** |
+| populated but owner/props missed (thrash) | 19,087 | 3.77 % |
+
+Checksum 422 on the instrumented build.
+
+**Consequences, and they are the useful part:**
+
+- **"Make the cache smarter" is priced out.** Thrash is 3.77 %. A wider
+  (N-way, or shape-keyed rather than single-owner) cache is chasing at most
+  that, and the monomorphic-per-key design is not the bottleneck it looked
+  like from the source.
+- **It explains the ladder-screen null recorded above, exactly.** The cache arm
+  is unshifted LAST, so it runs BEFORE the declared-field ladder. The screen
+  therefore only ever executed on the 12.76 % that missed — 64,680 calls, not
+  506,752. A ladder skip on that population is worth ~0.05 %, which is precisely
+  the ≤0.3 pp null that was measured. The two measurements agree; the earlier
+  entry should be read with this one.
+- **The cost is the HIT PATH, not the misses.** 11 ms of parse across 506,752
+  calls is **21.7 ns per call** (~45 cycles at 2.1 GHz). The hit path is roughly
+  40 instructions — a `ref.test`/cast on the key, a re-classification of the
+  receiver, two `ref.cast`+`ref.eq` validity checks, then the entry read — plus
+  the call itself. That is the budget any improvement has to come out of.
+
+### Re-doing the gap attribution with GC collapsed
+
+The 2026-08-08 cross-runtime table charged **12.7 ms/parse (13 % of the gap)** to
+extra GC. GC is now 2.97 % of self time, so that line is down to roughly 3.5 ms:
+**about 9 ms of the 100.3 ms gap has been closed by the allocation program**, and
+the remaining gap is ~91 ms. Helper buckets with no Node counterpart now carry
+close to **55 %** of it, with dynamic lookup alone (21.15 % ≈ 25 ms/parse) the
+single largest addressable line — larger than the compiled scanner and the
+compiled parser individually.
+
+The 2026-08-08 conclusion is unchanged and now better supported: eliminating
+every helper/GC/regexp millisecond leaves ~3× against Node, and the residue below
+that is register allocation / inlining / IC-class work on the compiled code
+itself, not helper elision.
+
+### The named next slice, with its number
+
+**Site- or name-local inline caching, to remove the CALL rather than speed the
+helper.** Inside a per-name `__get_member_<name>` the key is a compile-time
+constant, so the key `ref.test` + cast + hash are provably unnecessary, and the
+receiver classification can be a single `ref.test $Object`. Serving 87 % of
+506,752 calls from ~10 inline instructions instead of a call plus ~40 is worth on
+the order of **5 % of total runtime** — above this box's ±0.3 pp measurement
+floor, unlike everything else priced in this issue since #4208.
+
+It is not free: it needs an entry-returning form of `__extern_get` (the value
+alone cannot be cached — in-place value updates must stay visible, which is why
+the existing cache stores the `$PropEntry`), plus per-name cache globals and
+correct fallback for accessor, tombstone and non-`$Object` receivers. Note also
+that the hot names in acorn (`locations`, `ranges`, `ecmaVersion`, `onToken`)
+get **no** `__get_member_<name>` dispatcher today, precisely because no closed
+struct carries them — so the slice must widen dispatcher reservation to
+static-name reads with zero struct candidates, which is currently the condition
+for emitting a direct `__extern_get` call.
+
+**Reproduction (cache census).** Add counter globals at five points in
+`unshiftExternGetProtoCacheArm` (arm entry, key-is-hashed, populated,
+owner+props matched, value returned) using `newCounterGlobal`'s pattern from
+`src/codegen/alloc-census.ts`, compile the standalone acorn self-parse driver at
+`optimize: 0`, and read the exported globals after `__census_run()`. The
+increments are stack-neutral, so they can be spliced mid-sequence.
+
+## 2026-08-12 (3) — the lookup call volume is concentrated, and the call census is broken
+
+Two findings from trying to size the inline-cache slice named above.
+
+### Concentration: 15 functions carry 90 % of it
+
+There are **1,812 static `__extern_get` / `__extern_get_idx` call sites** in the
+standalone acorn build (reported by the #4185 call census at instrumentation
+time, which succeeds even though the resulting module does not — see below).
+But the profile's per-caller attribution shows the *dynamic* volume is nothing
+like uniform across them: the top 15 callers carry **8.35 pp of `__extern_get`'s
+9.22 pp, i.e. 90.6 %**, and the top 4 alone carry 4.19 pp.
+
+This matters for the slice's design and for its main risk. Inlining ~20
+instructions of cache check at all 1,812 sites would cost roughly +40 KB
+(extrapolating the two measured inlining points recorded in the `__box_number`
+entry above: 4 instructions × 1,314 sites = +814 B; 11 × 1,255 = +22,847 B).
+Inlining at the sites inside the top ~15 callers gets ~90 % of the benefit for a
+small fraction of the size. **The slice should be caller-targeted, not global** —
+and because the ranking is a property of the corpus rather than of the program,
+the *selection rule* has to be corpus-independent the way #3927's field ranking
+had to be (see that issue's §7 for why observed-frequency ranking is not
+admissible, and what it costs to give it up).
+
+### DEFECT — `JS2WASM_ALLOC_CENSUS_CALLS` produces an invalid module
+
+Running the call census against `__extern_get` instruments 1,812 sites and then
+fails to instantiate:
+
+```
+[call-census] 2 callee(s) match [__extern_get]: __extern_get, __extern_get_idx
+[call-census] instrumented 1812 static call site(s)
+CompileError: Compiling function #106:"hasProp" failed:
+  call[1] expected type f64, found local.get of type i32
+```
+
+The counter increment (`global.get` / `i32.const` / `i32.add` / `global.set`) is
+stack-neutral, so a naive splice should validate; something about where it is
+spliced relative to the argument sequence is not. The failure is at least loud —
+it does not silently produce wrong counts — but it means **the second
+attribution level (`WHO calls the helper, how often`) is unavailable for any
+callee with this call shape**, and that is exactly the instrument the inline-cache
+slice needs to verify its caller targeting. The per-type census
+(`JS2WASM_ALLOC_CENSUS=1`) is unaffected and still trustworthy.
+
+Not filed as its own issue: `claim-issue.mjs --allocate` reports the open-PR scan
+DEGRADED in this container (no `gh`), and reserving an id against a degraded
+universe is how #4215 was burned. It should get one when allocation is healthy.
