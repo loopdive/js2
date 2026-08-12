@@ -41,6 +41,7 @@ files:
   - src/ir/prepared-component-dependencies.ts
   - src/ir/prepared-component-sealing.ts
   - src/codegen/class-bodies.ts
+  - src/codegen/class-callable-abi.ts
   - src/codegen/function-body.ts
   - src/codegen/class-constructor-wrapper.ts
   - src/codegen/closures.ts
@@ -80,6 +81,7 @@ func-budget-allow:
   - src/codegen/class-bodies.ts::collectClassDeclaration
   - src/codegen/function-body.ts::compileFunctionBody
   - src/codegen/index.ts::buildIrClassShapes
+  - src/codegen/index.ts::generateModule
   - src/ir/from-ast.ts::lowerMethodCall
   - src/ir/integration.ts::compileIrPathFunctions
   - src/ir/integration.ts::makeFromAstResolver
@@ -975,6 +977,64 @@ failures whose baseline rows are passes, but an isolated worktree at the exact
 `4227031433a964` baseline commit reproduces the same three failures with identical
 error signatures on this host; they are platform-control differences, not
 #4402 changes. The merge queue remains the authoritative Linux comparison.
+
+### Forward/exact class-reference ABI checkpoint (2026-08-12)
+
+The next R3 family moves exact class references out of body-time ABI repair.
+TypeScript permits a constructor, method, or accessor in an earlier class to
+refer to a class declared later in the same source. Class callable slots were
+historically reserved before that later struct existed and therefore received
+provisional `externref` positions. The direct class-body compiler repaired the
+signature while emitting the body. A Prepared owner correctly skips that
+compiler, which exposed the phase violation as both missing symbolic class
+bindings and a final callable-signature mismatch.
+
+`orderIrClassShapeDeclarationsForProjection` now performs a stable,
+identity-based topological projection for acyclic local class-position
+dependencies. It preserves the authoritative published class order and does
+not widen the heritage policy. After all class structs are registered, the
+dedicated backend-neutral `class-callable-abi.ts` phase finalizes fixed
+constructor, method, getter, setter, and static-method slots before IR planning
+or either body emitter can run. The direct compiler's late re-resolution stays
+temporarily as an idempotent hybrid assertion and remains live for families not
+covered here.
+
+The exact `Holder -> Value` fixture establishes the measured boundary. On
+current main, all five `Holder` terminals (`_new`, instance method, getter,
+setter, and static method) report `legacyBodyEmitted:true` and IR false in both
+targets; the combined constructing caller then fails the final provisional ABI
+invariant. This checkpoint makes all five compile once through IR (**5 -> 0
+legacy bodies**) and the complete seven-terminal fixture validates and returns
+`5` in WasmGC and standalone. Direct-class-body poison covers every migrated
+member, so an emitted legacy body cannot satisfy the positive test.
+
+Optimization and representation parity are explicit. Every migrated callable
+uses the exact `(ref null $Value)` ABI and the WAT rejects `externref`,
+`any.convert_extern`, `extern.convert_any`, `ref.test`, `ref.cast`, `call_ref`,
+and `call_indirect`. The exact class-typed field fixture likewise accepts a
+field only when its already-committed struct index matches the projected class
+identity. Prepared artifacts are smaller than the same-source direct artifacts:
+
+| Fixture | Target | Direct | Prepared IR | Delta |
+| --- | --- | ---: | ---: | ---: |
+| forward callable positions | WasmGC | 1,720 bytes | 1,261 bytes | -459 bytes (-26.7%) |
+| forward callable positions | standalone | 47,614 bytes | 21,490 bytes | -26,124 bytes (-54.9%) |
+| exact class-typed field | WasmGC | 1,562 bytes | 1,224 bytes | -338 bytes (-21.6%) |
+| exact class-typed field | standalone | 46,973 bytes | 21,466 bytes | -25,507 bytes (-54.3%) |
+
+Two fail-closed controls define what this PR does not claim. A field that
+refers to a later class remains direct because the legacy class collector has
+already committed that storage slot as `externref`; fixing callable order must
+not silently rewrite object layout. A mutually recursive `Left <-> Right`
+constructor ABI also remains direct because immutable recursive class-shape
+cells do not exist yet. Default/rest/optional parameters, unsafe `super`,
+externref/builtin classes, and nested/class-expression owners retain their
+existing typed route.
+
+No shared legacy implementation is deleted in this checkpoint. Forward fields,
+recursive layouts, the direct-only mode, and the other excluded class families
+still consume the late class ABI/body paths. The next exact R3 transaction is
+forward class-field layout commitment; recursive cells follow separately.
 
 ## Exhaustive source-unit census
 

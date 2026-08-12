@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
+import type { TypeOracle } from "../checker/oracle.js";
 import { irUnitFuncRef } from "../ir/callable-bindings.js";
 import type { IrClassId, IrSourceId, IrUnitKind } from "../ir/identity.js";
 import type { IrClassShape, IrFuncRef } from "../ir/nodes.js";
@@ -273,6 +274,134 @@ export function collectIrClassShapeDeclarations(
     }
   }
   return selected;
+}
+
+function hasModifier(
+  node: ts.Node & { readonly modifiers?: ts.NodeArray<ts.ModifierLike> },
+  kind: ts.SyntaxKind,
+): boolean {
+  return node.modifiers?.some((modifier) => modifier.kind === kind) === true;
+}
+
+function hasFixedClassShapeParameters(parameters: readonly ts.ParameterDeclaration[]): boolean {
+  return parameters.every(
+    (parameter) =>
+      ts.isIdentifier(parameter.name) &&
+      parameter.dotDotDotToken === undefined &&
+      parameter.questionToken === undefined &&
+      parameter.initializer === undefined,
+  );
+}
+
+/**
+ * Order exact class-shape candidates so every acyclic, local class type used by
+ * a shape position is projected before its consumer. TypeScript permits a type
+ * annotation to reference a later declaration; the legacy struct registry is
+ * already complete before IR planning, so source-order projection was an
+ * accidental restriction rather than an ABI constraint.
+ *
+ * Dependencies are identity-based and local to the candidate population.
+ * Cycles deliberately retain their original order and therefore remain on the
+ * typed direct path until recursive class-shape cells are planned explicitly.
+ */
+export function orderIrClassShapeDeclarationsForProjection(
+  oracle: TypeOracle,
+  declarations: readonly IrClassShapeDeclaration[],
+  context: IrPlanningIdentityContext,
+): readonly IrClassShapeDeclaration[] {
+  const byClassId = new Map(declarations.map((entry) => [entry.classId, entry] as const));
+  const sourcePosition = new Map(declarations.map((entry, index) => [entry.classId, index] as const));
+  const dependencies = new Map<IrClassId, Set<IrClassId>>();
+
+  for (const entry of declarations) {
+    const required = new Set<IrClassId>();
+    const addTypeNode = (typeNode: ts.TypeNode | undefined): void => {
+      if (!typeNode || !ts.isTypeReferenceNode(typeNode) || !ts.isIdentifier(typeNode.typeName)) return;
+      const declaration = oracle
+        .declarationsOf(typeNode.typeName)
+        .find((candidate): candidate is ts.ClassDeclaration => ts.isClassDeclaration(candidate));
+      const dependency = declaration === undefined ? undefined : context.classIdByDeclaration.get(declaration);
+      if (dependency !== undefined && dependency !== entry.classId && byClassId.has(dependency)) {
+        required.add(dependency);
+      }
+    };
+
+    for (const member of entry.declaration.members) {
+      if (ts.isConstructorDeclaration(member)) {
+        if (hasFixedClassShapeParameters(member.parameters)) {
+          for (const parameter of member.parameters) addTypeNode(parameter.type);
+        }
+        continue;
+      }
+      if (ts.isPropertyDeclaration(member)) {
+        if (
+          !hasModifier(member, ts.SyntaxKind.StaticKeyword) &&
+          (ts.isIdentifier(member.name) || ts.isPrivateIdentifier(member.name))
+        ) {
+          addTypeNode(member.type);
+        }
+        continue;
+      }
+      if (ts.isMethodDeclaration(member)) {
+        if (
+          !ts.isIdentifier(member.name) ||
+          member.asteriskToken ||
+          hasModifier(member, ts.SyntaxKind.AbstractKeyword) ||
+          !hasFixedClassShapeParameters(member.parameters)
+        ) {
+          continue;
+        }
+        for (const parameter of member.parameters) addTypeNode(parameter.type);
+        addTypeNode(member.type);
+        continue;
+      }
+      if (ts.isGetAccessorDeclaration(member)) {
+        addTypeNode(member.type);
+        continue;
+      }
+      if (ts.isSetAccessorDeclaration(member) && member.parameters.length === 1) {
+        const parameter = member.parameters[0]!;
+        if (hasFixedClassShapeParameters([parameter])) addTypeNode(parameter.type);
+      }
+    }
+    dependencies.set(entry.classId, required);
+  }
+
+  const dependents = new Map<IrClassId, Set<IrClassId>>();
+  const remaining = new Map<IrClassId, number>();
+  for (const entry of declarations) {
+    const required = dependencies.get(entry.classId) ?? new Set<IrClassId>();
+    remaining.set(entry.classId, required.size);
+    for (const dependency of required) {
+      const consumers = dependents.get(dependency) ?? new Set<IrClassId>();
+      consumers.add(entry.classId);
+      dependents.set(dependency, consumers);
+    }
+  }
+
+  const ready = declarations.filter((entry) => remaining.get(entry.classId) === 0);
+  const ordered: IrClassShapeDeclaration[] = [];
+  const emitted = new Set<IrClassId>();
+  while (ready.length > 0) {
+    ready.sort((left, right) => sourcePosition.get(left.classId)! - sourcePosition.get(right.classId)!);
+    const entry = ready.shift()!;
+    if (emitted.has(entry.classId)) continue;
+    emitted.add(entry.classId);
+    ordered.push(entry);
+    for (const dependent of dependents.get(entry.classId) ?? []) {
+      const count = (remaining.get(dependent) ?? 0) - 1;
+      remaining.set(dependent, count);
+      if (count === 0) ready.push(byClassId.get(dependent)!);
+    }
+  }
+
+  // A non-empty residue is an exact class-type cycle. Retain its declaration
+  // order so the existing shape builder refuses it without inventing mutable
+  // placeholders or weakening prepare-before-emit immutability.
+  for (const entry of declarations) {
+    if (!emitted.has(entry.classId)) ordered.push(entry);
+  }
+  return ordered;
 }
 
 /** Create the only name-keyed class-shape view, omitting every ambiguous label. */
