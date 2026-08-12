@@ -4,7 +4,7 @@ title: "umbrella: close the acorn-vs-Node performance gap — representation fir
 status: ready
 sprint: current
 created: 2026-08-04
-updated: 2026-08-08
+updated: 2026-08-12
 priority: high
 horizon: xl
 feasibility: hard
@@ -942,3 +942,114 @@ generality. pako becomes a runnable corpus once #4216 (i16 packed-local emit
 bug, sole standalone blocker) lands; luxon/styled-components were measured
 unusable (native-class syntax bypasses the fnctor machinery entirely / non-
 self-contained bundle).
+
+## 2026-08-12 — re-profile on current main: GC is spent, dynamic lookup is now the gap
+
+First profile since the hot/cold split (#3927/#4217) and the constant-box hoist
+went in by default. Same instrument as every prior table in this issue: acorn
+self-parse, lane `standalone-dynamic`, 300 iterations, closure name map
+attached, bucketed by self time.
+
+| bucket | 2026-08-07 | **2026-08-12** |
+| --- | ---: | ---: |
+| gc-engine | 23.1 % | **2.97 %** |
+| dynamic-lookup | 13.5 % | **21.15 %** |
+| call-dispatch | 8.1 % | **11.39 %** |
+| compiled + scanner (acorn's own code) | — | 40.00 % |
+| dynamic-eq | — | 6.93 % |
+| cast-convert | — | 6.07 % |
+| string-runtime | — | 4.39 % |
+| regexp | — | 4.04 % |
+| alloc-helpers | — | 1.53 % |
+
+**The allocation program is finished.** GC fell from the largest bucket to the
+ninth. The two buckets this issue recorded as "untouched by anything" are now,
+together, **32.5 %** — the largest addressable block left, and `__extern_get`
+alone (9.22 %) is the single hottest frame in the profile, ahead of every
+compiled acorn function and ahead of GC.
+
+Note the earlier tables folded `scanner` into `compiled`; only the two bucket
+columns marked with prior values are directly comparable.
+
+### Where the dynamic reads come from
+
+Every hot caller of `__extern_get` was read back to its acorn source, and they
+are overwhelmingly one idiom — a flag read off the plain object `getOptions()`
+returns:
+
+| caller | self % | what it reads |
+| --- | ---: | --- |
+| `__fnctor_Node_new` | 1.26 | `parser.options.{locations,directSourceFile,ranges}` |
+| `checkUnreserved` | 1.15 | `this.{inGenerator,inAsync}` — **prototype getters** |
+| `__call_m_call_2` | 0.96 | method value |
+| `finishNodeAt` | 0.82 | `this.options.{locations,ranges}` |
+| `parseSubscripts` | 0.69 | `this.options.ecmaVersion` |
+| `pp.next` | 0.68 | `this.options.onToken` |
+| `readToken` | 0.56 | `this.options.ecmaVersion` |
+| `nextToken` | 0.51 | `this.options.locations` |
+
+`options` is built by `for (var opt in defaultOptions) options[opt] = …` — a
+computed-key loop, so its key set is not syntactically visible and it stays an
+open hash bag. It is written once at parse start, never mutated, and then read
+on every node construction, every `finishNode` and every token.
+
+### MEASURED NEGATIVE — the declared-field ladder is not the cost
+
+The obvious first cut was tried and **does not pay**. Every arm of the
+`fillClosedStructExternGetArms` ladder is guarded by `ref.test <closed struct>`
+on the *receiver*, so a plain-`$Object` receiver can never satisfy one — yet it
+still pays the full key dispatch first (`__str_flatten`, the hash read, the
+`br_table`, a `__str_equals` per name in the bucket). A single `ref.test
+$Object` up front skips all of it.
+
+It was built, proved sound (no arm's receiver type is `$Object` or transitively
+declared under it — `ref.test` is subtype-inclusive, so the check walks
+`superTypeIdx` and any positive answer drops the screen rather than narrowing
+it), and measured order-reversed **ON → OFF → OFF → ON**:
+
+| block | order | `__extern_get` self | dynamic-lookup |
+| --- | --- | ---: | ---: |
+| onA | 1 (screen) | 9.09 % | 20.49 % |
+| offA | 2 (base) | 8.85 % | 21.04 % |
+| offB | 3 (base) | 9.17 % | 20.95 % |
+| onB | 4 (screen) | 8.98 % | 20.81 % |
+
+Mean 9.04 % ON vs 9.01 % OFF. The ON blocks replicate to 0.11 pp, so the null
+is solid to about **±0.3 pp**. Wall clock also did not separate (and is below
+this box's resolvability anyway — §6 of #3927).
+
+**The guard was verified to fire, not merely to compile.** Poisoning the
+screened branch — returning `undefined` immediately whenever the receiver is a
+plain `$Object` — drops the parse from checksum 422 / 4,642 nodes to **0 / 0**.
+So plain-object receivers really are a large share of the calls, and the null
+is a statement about cost, not a broken instrument.
+
+**Why it does not pay, in one number.** `__extern_get`'s final body is **15,032
+instructions, and the ladder is 14,770 of them (98.3 %)** — but the *executed*
+path through it is one `br_table` and one or two `__str_equals`. The ladder is
+almost all of the function's SIZE and almost none of its TIME. The ~260
+instructions outside it — the tombstone screen, receiver classification, the
+own-property walk and the prototype walk — run on every call and are the 9 %.
+
+The codegen change was therefore **reverted, not shipped**: a few instructions
+of provably-dead-work elimination in the most load-bearing dynamic helper in the
+compiler, for a benefit bounded at 0.3 pp, is the wrong trade. It is recorded
+here in enough detail to rebuild if a future change makes the ladder hot.
+
+### What this redirects to
+
+The lever is **not a faster `__extern_get` — it is fewer calls to it.** Two
+distinct populations, needing two different fixes:
+
+1. **Plain objects with a stable shape.** `options` has a fixed key set for the
+   whole parse; it is only "open" because the keys arrive through a computed
+   write in a `for…in` over another static literal. Closing it (or caching the
+   read at the site) turns millions of hash-bag walks into `struct.get`s. This
+   is the same shape-set machinery as #3927's per-type layouts, applied to
+   object literals rather than fnctors.
+2. **Prototype accessors.** `this.inGenerator` / `this.inAsync` are
+   `Object.defineProperties` getters and must run the accessor. `checkUnreserved`
+   (1.15 %) and `currentVarScope` (1.21 %) are both this. Nothing here can be
+   removed; it can only be made a direct call instead of a lookup-then-dispatch.
+
+Call dispatch (11.39 %) is still untouched by anything in this umbrella.
