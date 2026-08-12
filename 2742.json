@@ -1,11 +1,10 @@
 {
   "id": "2742",
-  "assignee": "ttraenkler/s78-dev2",
-  "requested_by": "claude.ai@thomas.traenkler.com",
-  "status": "released",
-  "branch": "issue-2742-standalone-string-generic-receiver",
-  "claimed_at": "2026-08-01T01:42:30Z",
-  "updated_at": "2026-08-01T08:31:12Z",
-  "write_id": "37194-jbbcfzw1",
-  "released_at": "2026-08-01T08:31:12Z"
+  "assignee": "ttraenkler/codex-es5-string",
+  "requested_by": "ttraenkler/codex-es5-string",
+  "status": "in-progress",
+  "branch": "codex/2742-es5-string-generic-receiver",
+  "claimed_at": "2026-08-12T20:56:49Z",
+  "updated_at": "2026-08-12T20:56:49Z",
+  "write_id": "29360-gevsvaxt"
 }
