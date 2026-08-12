@@ -3,7 +3,7 @@ id: 2929
 title: "Interpreter direct eval + with + Proxy-MOP convergence"
 status: in_progress
 created: 2026-07-02
-updated: 2026-08-04
+updated: 2026-08-11
 priority: medium
 horizon: xl
 feasibility: hard
@@ -1588,3 +1588,111 @@ recorded rather than forced.
 - `tests/issue-2929-evaldecl-early-errors.test.ts` — 28/28. Four tests changed
   from splice-behaviour to routing assertions, because their global-varEnv var
   declarations are now provider-owned by design.
+
+## Implementation record — slice 3 checkpoint (2026-08-11)
+
+The runtime-eval state slice above is implemented on
+`codex/2928-runtime-eval-mvp-20260811`, based on `origin/main` `6c1117f8767e9b`.
+No provider export or callable/rec-group ABI changed.
+
+### Deletable eval-created bindings
+
+- Eval/script bytecode now emits `DeleteName` for a bound identifier when
+  EvalDeclarationInstantiation predeclared the script bindings. Ordinary
+  function/module bound-name deletes remain folded to `false`.
+- Each persistent source-visible eval binding occupies an even environment
+  entry; the adjacent odd entry carries the impossible name
+  `\0js2wasm:deletable-eval-binding`. This is a flat, native-string metadata
+  carrier: `$EnvRec` and `$EvalBindingCell` stay frozen, and the separately
+  compiled provider does not depend on a provider-local weak collection.
+- Successful deletion tombstones both entries and clears the live value cell.
+  A later eval reuses the pair. Established caller cells have no adjacent marker
+  and still reject deletion.
+- The caller state pool is one 256-cell flat carrier. Each source-visible
+  binding consumes four `$EvalBindingCell` entries —
+  `[name, value, markerName, markerValue]` — so the logical capacity remains
+  64 bindings. AOT sibling lookup advances by that four-cell stride and never
+  exposes the companion marker as a source binding.
+
+The flat marker is deliberate. Self-compiled `WeakMap`/`WeakSet` metadata lost
+identity at the provider boundary, while nested array/object metadata either
+trapped on a foreign structural cast or made the standalone self-compiler's
+type specialisation exceed its heap ceiling.
+
+### AOT sibling visibility
+
+Provider snapshot now normalises values written into caller-owned state cells
+through the existing runtime-eval result carrier. A no-symbol AOT identifier
+(including the `typeof` paths) first scans those persistent cells, unwraps a
+match, and falls back to the ordinary realm-global read on a miss. Functions
+without direct eval still take the byte-identical global-read path.
+
+### Measured acceptance
+
+Fresh compiler/runtime bundles and a fresh full interpreter provider were built
+after the source changes. Provider key `cea83b3383b5f8ea`, 4,299,913 bytes,
+canary-verified. Run `20260811-201606`, `TEST262_FULL_RUNTIME_EVAL=1`:
+
+| file | result |
+| --- | --- |
+| `direct/var-env-var-init-local-new-delete.js` | PASS |
+| `direct/var-env-func-init-local-new-delete.js` | PASS |
+| `direct/var-env-func-non-strict.js` | PASS |
+
+Report: **3/3**, zero compile errors. The full 816-file remeasurement is still
+required before replacing the recorded aggregate baseline.
+
+Additional gates at this checkpoint:
+
+- `tests/interp/eval-environment.test.ts`: 55/55, including delete, tombstone
+  reuse, function closure severing, and caller-binding refusal.
+- `tests/issue-2928.test.ts`: standalone interpreter self-compile/canary PASS.
+- targeted #2923/#2928/#2929 regression set: 125 passes; its nine failures
+  reproduce identically on clean `origin/main` and are stale #2923
+  warning-based bail expectations after runtime routing landed.
+- typecheck PASS.
+
+The QuickJS adapter shares this caller state pool. Its compatibility patch now
+skips the exact marker pair, retains 64 *visible* slots, reconciles successful
+deletions, and reuses tombstoned groups. The cross-engine result is recorded in
+#4242; it does not change the interpreter default.
+
+## Final runtime-eval parity checkpoint — 2026-08-11
+
+The authoritative full-provider comparison now covers the complete 1,351-file
+eval-dependent scope from #4242, not only the three repaired probes. Both arms
+used the same compiler/runtime bundle, standalone target, official scope, two
+compiler workers, two execution workers, and an identical expected-file gate.
+
+| Engine | Run | Pass | Fail | Compile error | Timeout / skip |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Acorn + bytecode interpreter | `20260811-222840` | **1,099 / 1,351** | 226 | 26 | 0 / 0 |
+| QuickJS compatibility engine | `20260811-221743` | 1,081 / 1,351 | 244 | 26 | 0 / 0 |
+
+The interpreter arm announces `INTERPRETER`, uses a fresh self-compiled
+zero-import provider, and passes `tests/issue-2928.test.ts`. Relative to the
+fresh promoted standalone baseline it has exactly three `fail -> pass`
+transitions:
+
+- `direct/var-env-var-init-local-new-delete.js`;
+- `direct/var-env-func-init-local-new-delete.js`; and
+- `direct/var-env-func-non-strict.js`.
+
+This closes the three slice-3 residues above: eval-created local bindings are
+deletable, deletion severs a returned interpreted closure's persistent state,
+and later AOT siblings can observe runtime-created `var`/function bindings.
+Direct eval, indirect eval, and `Function`/`new Function` continue to use the
+same frozen provider/callable seam.
+
+Two state-coherence extensions remain deliberately explicit rather than hidden
+behind the successful simple-assignment surface:
+
+1. compound, logical, and update writes (`+=`, `&&=`, `++`, and peers) still
+   need to route through the persistent caller-state lookup; and
+2. a nested closure that both captures an outer eval-state pool and owns its
+   own direct eval needs an inner/outer two-pool chain. Capture-only nested
+   arrows and function expressions already carry the single pool correctly.
+
+Those are conformance follow-ups, not routing blockers for the runtime-eval
+MVP. The interpreter remains the default and remains a permanent selectable
+engine.

@@ -323,7 +323,8 @@ const PROVIDER_EXPORT_WRAPPER = `
             outerNames,
             outerSlots,
             callerStrict,
-            mappedParamNames
+            mappedParamNames,
+            activationState
           );
           exposeRuntimeEvalCallerSlots(activationSeedSlots, lexicalSlots, outerSlots);
           exposeRuntimeEvalGlobalLexicalCells(globalObject);
@@ -608,7 +609,7 @@ export function selectCachedRuntimeEvalProvider() {
   // (#4238) Engine selector. Read + VALIDATED here, OUTSIDE the try/catch
   // below: an unknown engine must fail the process loudly, never degrade into
   // the NONE tier where it would look like an ordinary missing-cache result.
-  const engine = process.env.JS2WASM_EVAL_ENGINE ?? "interpreter";
+  const engine = process.env.JS2WASM_EVAL_ENGINE ?? "quickjs";
   if (engine !== "interpreter" && engine !== "quickjs") {
     throw new Error(
       `JS2WASM_EVAL_ENGINE=${JSON.stringify(engine)} is not a known eval engine ` +
@@ -641,7 +642,8 @@ export function selectCachedRuntimeEvalProvider() {
         engine: "interpreter",
         message:
           `INTERPRETER (key ${full.key}, TEST262_FULL_RUNTIME_EVAL=1) — authoritative CI-comparable ` +
-          `standalone tier (#2928 E7)`,
+          `standalone tier (#2928 E7) — selected via JS2WASM_EVAL_ENGINE=interpreter ` +
+          `(kept native bytecode engine, #4242)`,
       };
     }
     const refusal = load(buildRuntimeEvalRefusalProviderSource(), runtimeEvalRefusalCachePath);
@@ -650,12 +652,20 @@ export function selectCachedRuntimeEvalProvider() {
       engine: refusal.module ? "refusal" : "none",
       message: refusal.module
         ? `REFUSAL (key ${refusal.key}; interpreter ${full.key}) — fast local diagnostic only, NOT ` +
-          `CI-comparable: eval-mentioning modules instantiate and dynamic-code calls throw TypeError`
+          `CI-comparable: eval-mentioning modules instantiate and dynamic-code calls throw TypeError — ` +
+          `selected via JS2WASM_EVAL_ENGINE=interpreter (kept native bytecode engine, #4242)`
         : `NONE — refusal provider missing (key ${refusal.key}); eval-mentioning standalone modules stay ` +
-          `unlinkable. Prebuild with: node scripts/build-runtime-eval-provider.mjs --refusal-only`,
+          `unlinkable. Prebuild with: node scripts/build-runtime-eval-provider.mjs --refusal-only — ` +
+          `selected via JS2WASM_EVAL_ENGINE=interpreter (kept native bytecode engine, #4242)`,
     };
   } catch (err) {
-    return { module: null, engine: "none", message: `NONE — provider load failed: ${err?.message ?? err}` };
+    return {
+      module: null,
+      engine: "none",
+      message:
+        `NONE — provider load failed: ${err?.message ?? err} — ` +
+        `selected via JS2WASM_EVAL_ENGINE=interpreter (kept native bytecode engine, #4242)`,
+    };
   }
 }
 

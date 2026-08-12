@@ -631,8 +631,12 @@ export interface FunctionContext {
   directEvalOuterBindingNames?: Set<string>;
   /** Stable activation binding name → canonical cell local. */
   directEvalActivationBindings?: Map<string, number>;
-  /** Hidden caller-owned canonical cells for eval-created activation vars. */
-  directEvalActivationStateCellLocals?: number[];
+  /**
+   * Hidden caller-owned flat state pool for eval-created activation vars.
+   * One nullable externref local persists for the Wasm invocation and is
+   * lazily filled with the provider ABI's 256 ref-cell carriers.
+   */
+  directEvalActivationStatePoolLocal?: number;
   /** Canonical `(mut externref)` cell type used at the AOT↔interpreter seam. */
   directEvalRefCellTypeIdx?: number;
   /**

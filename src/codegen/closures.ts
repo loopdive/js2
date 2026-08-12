@@ -149,8 +149,11 @@ import {
 import {
   collectDirectEvalActivationBindingNames,
   collectDirectEvalBindingNames,
+  emitEnsureDirectEvalActivationStatePoolInitialized,
+  enclosingFunctionOwnScopeMayReachDirectEval,
   functionMayReachDirectEval,
   reifyCurrentDirectEvalBindings,
+  RUNTIME_EVAL_STATE_POOL_CAPTURE_NAME,
 } from "./direct-eval-environment.js";
 import { initializeFunctionPoisonPillContext } from "./function-poison-pill.js";
 import {
@@ -2256,6 +2259,15 @@ export function compileLiftedClosureBody(
       liftedFctx.body.push({ op: "local.get", index: selfLocalForCaptures });
       liftedFctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: CLOSURE_CAPTURE_FIELD_BASE + i });
       liftedFctx.body.push({ op: "local.set", index: localIdx });
+      if (cap.name === RUNTIME_EVAL_STATE_POOL_CAPTURE_NAME) {
+        liftedFctx.directEvalActivationStatePoolLocal = localIdx;
+        liftedFctx.directEvalRefCellTypeIdx = fctx.directEvalRefCellTypeIdx;
+        liftedFctx.directEvalOuterBindingNames = new Set(
+          captures
+            .filter((capture) => capture.name !== RUNTIME_EVAL_STATE_POOL_CAPTURE_NAME)
+            .map((capture) => capture.name),
+        );
+      }
     }
   }
   rehydrateWithEnvironmentScopes(fctx, liftedFctx, closureName, arrowOwnLocals(arrow));
@@ -2801,6 +2813,42 @@ function reportClosureNameMap(arrow: ts.ArrowFunction | ts.FunctionExpression, c
   console.error(`[js2:closure-map] ${closureName} <- ${label || "(anonymous)"} @${line + 1}`);
 }
 
+/**
+ * A closure with no direct-eval subtree can still outlive and observe a var
+ * binding created by direct eval in its owning activation. Thread the stable
+ * pool pointer as an impossible-name internal capture, initialized before
+ * construction so a closure created textually before eval does not capture a
+ * null pre-state. A closure that reaches direct eval needs an inner+outer pool
+ * chain and stays on the existing path; reusing its owner's pool would merge
+ * two VarEnvs.
+ */
+function captureOwningDirectEvalState(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  arrow: ts.ArrowFunction | ts.FunctionExpression,
+  reachesDirectEval: boolean,
+  captures: ArrowClosureCapture[],
+): void {
+  if (
+    !(ctx.standalone || ctx.wasi) ||
+    reachesDirectEval ||
+    (fctx.directEvalActivationStatePoolLocal === undefined &&
+      !enclosingFunctionOwnScopeMayReachDirectEval(arrow, ctx.oracle))
+  ) {
+    return;
+  }
+  const state = emitEnsureDirectEvalActivationStatePoolInitialized(ctx, fctx);
+  captures.push({
+    name: RUNTIME_EVAL_STATE_POOL_CAPTURE_NAME,
+    type: { kind: "externref" },
+    localIdx: state.poolLocal,
+    mutable: false,
+    alreadyBoxed: false,
+    hasTdzFlag: false,
+    eagerDominatingBox: false,
+  });
+}
+
 /** Compile an arrow function as a first-class closure value (Wasm GC struct + funcref) */
 export function compileArrowAsClosure(
   ctx: CodegenContext,
@@ -2814,9 +2862,7 @@ export function compileArrowAsClosure(
 
   // Check if this is a generator function expression (function*() { ... })
   const isGenerator = ts.isFunctionExpression(arrow) && arrow.asteriskToken !== undefined;
-  if (isGenerator) {
-    ctx.generatorFunctions.add(closureName);
-  }
+  if (isGenerator) ctx.generatorFunctions.add(closureName);
   // `isAsync` is still consumed below (generator-create name selection); the
   // return-type derivation moved into computeClosureWrapperSig.
   const isAsync = arrow.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
@@ -2858,6 +2904,7 @@ export function compileArrowAsClosure(
   const reachesDirectEval = functionMayReachDirectEval(arrow, ctx.oracle);
   const additionalCaptureNames = planAdditionalWithEnvironmentCaptureNames(fctx, reachesDirectEval);
   const { captures, selfBindingName } = planClosureCaptures(ctx, fctx, arrow, body, additionalCaptureNames);
+  captureOwningDirectEvalState(ctx, fctx, arrow, reachesDirectEval, captures);
 
   // 3. Create struct type: field 0 = funcref, fields 1..N = captured vars
   //    For mutable captures, the field type is a ref cell (struct { value: T })

@@ -4,7 +4,7 @@ title: "Eval engine parity measurement + default flip to QuickJS — interpreter
 status: ready
 sprint: current
 created: 2026-08-08
-updated: 2026-08-09
+updated: 2026-08-12
 priority: medium
 horizon: l
 feasibility: medium
@@ -15,7 +15,7 @@ area: runtime-eval
 language_feature: eval
 goal: runtime-eval
 related: [2928, 2929, 4013, 4229, 4236, 4238, 4245]
-blocked_by: [4238, 4245]
+blocked_by: []
 # id 4242 reserved via claim-issue.mjs --allocate --allow-unscanned on
 # 2026-08-08 (gh CLI unavailable; pr_scan=degraded). Equivalent open-PR scan
 # via the GitHub MCP at reservation time: sole open PR was PR 4250 (#4238
@@ -43,13 +43,13 @@ So the migration endgame is a **default flip, not a retirement**:
 
 ## Phase 1 — parity measurement (the decision artifact)
 
-- [ ] Run the full eval-dependent test262 set (the ~826-file eval bucket +
+- [x] Run the full eval-dependent test262 set (the ~826-file eval bucket +
       Annex B eval families + `new Function` buckets) under
       `JS2WASM_EVAL_ENGINE=quickjs` on the #4238+#4245 stack; produce a
       three-way diff: quickjs-vs-interpreter-vs-baseline, bucketed by root
       cause (scope fidelity, membrane residuals, engine differences,
       genuine wins where QuickJS fixes interpreter residuals).
-- [ ] Record the table in this file. Gate: proceed to Phase 2 only if the
+- [x] Record the table in this file. Gate: proceed to Phase 2 only if the
       quickjs engine is **net ≥ interpreter** on the measured set, or every
       net-negative bucket has an explicit accepted-residual entry approved
       in this file.
@@ -242,20 +242,24 @@ against run C. Fallback if CI capacity is tight: a local full standalone run
 
 #### P1.3 `scripts/eval-engine-parity.mjs` — the three-way diff artifact
 
-New script. Subcommands:
+Implemented command-line contract:
 
-- `--manifest` — write the manifest (§P1.1).
-- `--diff --quickjs <a.jsonl> --interpreter <b.jsonl> --baseline <c.jsonl>
-  [--full]` — the three-way diff. `--full` activates the manifest partition
-  (outside-set invariant); scoped mode skips it.
-- `--gate --diff-json <parity.json> --issue plan/issues/4242-…md` — evaluate
-  the gate (§P1.4), exit 0/1.
-
-Reuse, do not reinvent: import the jsonl loader + status normalization from
-`scripts/diff-test262.ts` (export a `loadResults` helper if not already
-exported — S-size refactor, no behavior change) and its bucket convention
-(`REGRESSION_BUCKET_PATH_DEPTH = 5`). `/analyze-regression` stays the
-ad-hoc skill; this script is its reproducible, attributed sibling.
+- Build a three-way artifact directly with `--quickjs <a.jsonl>
+  --interpreter <b.jsonl> --baseline <c.jsonl>` plus live tier provenance from
+  `--quickjs-tier`/`--quickjs-log` and
+  `--interpreter-tier`/`--interpreter-log`. There is no `--diff` subcommand.
+- Every gated scoped run must supply either `--expected-files <path>` (the
+  preferred exact set) or a positive `--expected-count <n>`. This prevents two
+  identically truncated engine runs from passing the equal-set check.
+- `--full --manifest <path>` consumes an already generated manifest and enables
+  the outside-set invariant. `--manifest` is an input option, not a manifest
+  generator.
+- `--json-out` and `--markdown-out` persist the compact decision artifacts.
+  `--gate` embeds the verdict and exits 0 for `PROCEED`, 1 for `BLOCKED`, or 2
+  for refused/malformed input.
+- `--gate --diff-json <parity.json> --issue plan/issues/4242-…md` re-evaluates a
+  stored artifact without the raw JSONLs. The stored artifact retains the
+  expected-set proof and baseline-completeness evidence.
 
 Output `benchmarks/results/eval-parity/parity-<ts>.json`:
 
@@ -271,14 +275,18 @@ Output `benchmarks/results/eval-parity/parity-<ts>.json`:
     "baseline":    { "path": "…", "fetchedAt": "…" }
   },
   "set": { "mode": "scoped|full", "manifest": "…", "files": 1351,
-           "test262_sha": "…" },
+           "outside_files": 0 },
+  "expected_set": { "kind": "files|count", "count": 1351,
+                     "complete": true, "missing": [], "unexpected": [] },
   "summary": {
     "quickjs":     { "pass": 0, "fail": 0, "compile_error": 0, "total": 0 },
     "interpreter": { "…": 0 },
     "baseline":    { "…": 0 },
     "net_vs_interpreter": 0            // quickjs.pass − interpreter.pass
   },
-  "sanity": { "interpreter_vs_baseline_flips": 0 },   // run-B health check
+  "sanity": { "interpreter_vs_baseline_flips": 0,
+              "baseline_missing_files": 0,
+              "baseline_missing_file_paths": [] },
   "flips": [ { "file": "language/eval-code/…",
                "interpreter": "pass", "quickjs": "fail",
                "baseline": "pass", "error": "…first line…",
@@ -318,9 +326,9 @@ each rule = `{ name, pathPrefixes?, errorPatterns?, bucket }`:
    artifact/instantiation failures, timeouts. **Any entry here means the
    measurement itself is broken — fix and re-run, never gate on it** (the
    #4162 lesson: an instrument artifact overwrites the real signature).
-6. `unattributed` — remainder. The gate treats `unattributed` losses as
-   BLOCKING (they are un-reviewed net-negatives by construction); they must
-   be manually triaged into 2–4 (extending `RULES`) or accepted explicitly.
+6. `unattributed` — remainder. Any loss here is unconditionally BLOCKING and
+   cannot be accepted. It must be manually triaged into 2–4 by extending the
+   ordered rules before the measurement is admissible.
 
 #### P1.4 The gate (mechanically checkable)
 
@@ -328,18 +336,22 @@ Compared quantity: `summary.net_vs_interpreter` on the measured set —
 quickjs pass-count minus interpreter pass-count, same set, same runner,
 same day. Invariants the `--gate` subcommand enforces:
 
-1. `net_vs_interpreter ≥ 0`, **OR** every bucket with `net < 0` has a
+1. Both engine inputs contain the identical file set, and that set exactly
+   matches `--expected-files` or the positive `--expected-count`.
+2. `net_vs_interpreter ≥ 0`, **OR** every accept-capable bucket with `net < 0` has a
    matching entry in the `accepted-residuals` JSON block in this issue file
    (schema below) whose `count_ceiling ≥ losses` for that bucket.
-2. `buckets["harness-infra"].losses === 0` and
-   `buckets["unattributed"].losses === 0` (or each unattributed file is
-   individually listed in an accepted-residuals entry).
-3. Full mode only: `outside_set_delta.count === 0` — the engine flip moves
+3. `buckets["harness-infra"].losses === 0` and
+   `buckets["unattributed"].losses === 0`. Neither bucket can be waived by an
+   accepted-residual entry.
+4. The promoted standalone baseline contains every measured file. A partial or
+   zero-overlap baseline blocks even when interpreter drift happens to be zero.
+5. Full mode only: `outside_set_delta.count === 0` — the engine flip moves
    NOTHING outside the eval-dependent manifest. Non-zero = a link/perf
    regression class the flip may not carry.
-4. `sanity.interpreter_vs_baseline_flips ≤ 10` (drift tolerance; more means
+6. `sanity.interpreter_vs_baseline_flips ≤ 10` (drift tolerance; more means
    run B is not a trustworthy interpreter reference — re-run).
-5. Tier-announcement pins (see P1.2): `inputs.quickjs.tier_announcement`
+7. Tier-announcement pins (see P1.2): `inputs.quickjs.tier_announcement`
    contains `QUICKJS`, `inputs.interpreter.tier_announcement` contains
    `INTERPRETER` and not `REFUSAL`. Absent announcements = BLOCKED (the
    run's tier is unproven — the refusal-tier fake-landslide hazard).
@@ -348,14 +360,16 @@ same day. Invariants the `--gate` subcommand enforces:
 same commit as the parity table):
 
 ```jsonc
-// accepted-residuals (#4242) — parsed by eval-engine-parity.mjs --gate
+// Schema example only. A real approved block uses the parser marker documented
+// below; do not put that marker on examples because the gate treats it as live.
 [ { "bucket": "scope-fidelity", "count_ceiling": 13,
     "rationale": "var-env EvalDeclarationInstantiation approximation, #4238 §4 residual 2",
     "approved_by": "project-lead", "date": "…" } ]
 ```
 
-**Sign-off**: the project lead (author of the no-removal directive) approves
-each entry; the tech lead commits the block. The gate is evaluated in the
+**Sign-off**: a real block starts with the exact comment marker
+`accepted-residuals (#4242)`. The project lead (author of the no-removal
+directive) approves each entry; the tech lead commits the block. The gate is evaluated in the
 Phase-2 flip PR's description (paste the `--gate` output) and re-run by the
 reviewer — it is a script, not a judgment call.
 
@@ -611,3 +625,244 @@ The flip PR must include and pass ALL of:
 - Membrane internals, interpreter fixes, quickjs-ng version bumps, the
   `--evalEngine` CLI surface (still reserved for the #2527 packaging CLI),
   host/gc-lane eval behavior.
+
+## P1-S2 implementation checkpoint — 2026-08-11
+
+The default-neutral CI/artifact plumbing is implemented locally on
+`codex/2928-runtime-eval-mvp-20260811`; the required live
+`workflow_dispatch(eval_engine=quickjs)` remains the done-signal before this
+slice is marked complete.
+
+- `test262-sharded.yml` exposes an explicit `eval_engine` choice. It defaults
+  to `interpreter`; push and merge-group runs remain interpreter-owned.
+  QuickJS is selectable only by a measurement dispatch, and such a dispatch is
+  prohibited from promoting the interpreter baseline.
+- The central provider job builds and uploads exactly the selected provider.
+  Shards consume it through a read-only `--require-cache` check: a missing or
+  compiler-key-mismatched QuickJS artifact is a hard failure, never an implicit
+  interpreter fallback.
+- The scheduled, dispatchable, and QuickJS-path-filtered PR artifact lane now
+  checks out submodules recursively, verifies the current artifact/adapter ABI,
+  and runs all 94 QuickJS engine tests (28 provider + 57 membrane + 9
+  closure-carrier) plus the 37 parity artifact/gate tests. The default
+  interpreter proof suites still run without an engine flag in the same job.
+- The caller activation pool's deletable-binding metadata is compatible across
+  both engines: QuickJS skips the exact companion marker, preserves 64 visible
+  slots over the 256-cell / four-cell-stride layout, reconciles successful
+  deletions, and reuses tombstoned groups.
+- The test262 path allowlist, per-lane shell matcher, and baseline-staleness JS
+  mirror all classify QuickJS provider/build inputs as standalone-only. Their
+  lockstep tests include all three path families.
+
+Local evidence with a freshly built WASI artifact:
+
+- QuickJS artifact key `d8a5a91d6f183b87`, 1,016,254 bytes,
+  SHA-256 `b0662069c241d0430d91c53a3b0e2d1281fd9eb78dd1c93490b0a9dfa70eec5b`;
+  adapter key `df8f1f1cab646aa7` against compiler bundle
+  `c22375b83cdd9aab`.
+- Linked artifact R2/R3/R4 probes pass (round-trip, identity/tag/float decode,
+  eval loop).
+- Cache-only linked-pair verification passes.
+- Combined QuickJS gate: **131/131** (provider, membrane, closure carrier,
+  parity tooling).
+- Path/gating lockstep: **101/101**, followed by the expanded baseline-mirror
+  slice at **76/76**.
+- Typecheck, lint, formatting, shell syntax, and diff whitespace checks pass.
+
+This checkpoint does **not** flip the default and does not delete, retire, or
+degrade the Acorn bytecode interpreter. `interpreter` remains a first-class
+engine option permanently. The P1-S3 evidence recorded below blocks a default
+change on the measured result.
+
+## Parity Measurement (Phase 1) — 2026-08-11
+
+P1-S3 is complete with an explicit **BLOCKED** verdict. No residual was
+accepted and Phase 2 did not start.
+
+Both engines ran this exact standalone, official-scope-only filter with two
+compiler workers and two execution workers:
+
+```text
+language/eval-code/|built-ins/eval/|built-ins/Function/|language/expressions/call/eval-
+```
+
+The parity tool required the independently counted 1,351-file set, parsed the
+live engine announcement from each run, and compared both arms to a freshly
+fetched promoted standalone baseline.
+
+| Provenance | Value |
+| --- | --- |
+| QuickJS run | `20260811-221743`; JSONL SHA-256 `9721d97b0f5615149d4a02499c353c38b59784ac263fe51b2911b477f217ae19` |
+| Interpreter run | `20260811-222840`; JSONL SHA-256 `867d5ed9f0a2c77c37805f290895eb3474af24f217cf7f84ffe00b998edcd1bf` |
+| QuickJS tier | `QUICKJS` |
+| Interpreter tier | `INTERPRETER` (fresh self-compiled full provider) |
+| Baseline | fresh standalone promotion fetched 2026-08-11; 48,661 rows |
+| Expected / measured set | 1,351 / 1,351 in each engine arm |
+| Persisted decision artifact | `benchmarks/results/eval-parity/parity-20260811-221743-222840.json` (SHA-256 `c8191008a10d75aff37c912229bf58a51134a515ff5889936b3882b78f8c78b0`) plus the sibling Markdown report |
+
+| Engine | Pass | Fail | Compile error | Timeout / skip | Total |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| QuickJS | 1,081 | 244 | 26 | 0 / 0 | 1,351 |
+| Interpreter | **1,099** | 226 | 26 | 0 / 0 | 1,351 |
+| Promoted baseline (present rows) | 1,094 | 229 | 26 | 0 / 0 | 1,349 |
+
+**Net QuickJS vs interpreter: -18.** All 22 pass/fail flips are attributed;
+there are zero unattributed and zero harness-infrastructure flips.
+
+| Bucket | QuickJS wins | QuickJS losses | Net |
+| --- | ---: | ---: | ---: |
+| genuine win | 2 | 0 | +2 |
+| scope fidelity | 0 | 1 | -1 |
+| membrane residual | 0 | 0 | 0 |
+| engine difference | 0 | 19 | -19 |
+| harness infrastructure | 0 | 0 | 0 |
+| unattributed | 0 | 0 | 0 |
+
+The two QuickJS wins are the direct-eval
+`non-definable-global-{function,generator}` cases. Its one scope-fidelity loss
+is `direct/var-env-func-non-strict.js`. Seventeen engine-difference losses are
+legacy `built-ins/Function/S15.3.2.1_*` constructor-identity checks; the other
+two are `Function.prototype.{apply,call}` receiver-property checks.
+
+The interpreter health cross-check has exactly three baseline `fail -> pass`
+transitions — the two eval-created-binding deletion cases and
+`direct/var-env-func-non-strict.js`. The promoted baseline lacks two newly
+present Annex-B rows; both current engines pass them. The gate therefore blocks
+for three independent reasons:
+
+1. the -1 `scope-fidelity` bucket has no project-lead-approved accepted
+   residual;
+2. the -19 `engine-difference` bucket has no project-lead-approved accepted
+   residual; and
+3. the baseline does not contain every measured file.
+
+Default selection consequently remains `interpreter`. QuickJS remains an
+explicit measurement/compatibility engine, and no interpreter, Acorn, IR, or
+supporting code is removed. To reopen Phase 2, fix the 20 QuickJS losses (or
+obtain an explicit accepted-residual decision), refresh a complete baseline,
+and rerun the same mechanical gate.
+
+## Parity closure checkpoint — 2026-08-12
+
+The Phase-1 blocker above is retired. The 20 QuickJS-only losses were fixed and
+the two engines were rerun from the same compiler tree, with the same complete
+1,351-file filter and freshly selected full providers. The mechanical gate now
+returns **PROCEED**.
+
+| Engine | Pass | Fail | Compile error | Timeout / skip | Total |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| QuickJS | **1,103** | 222 | 26 | 0 / 0 | 1,351 |
+| Interpreter | 1,099 | 226 | 26 | 0 / 0 | 1,351 |
+| Promoted baseline | 1,096 | 229 | 26 | 0 / 0 | 1,351 |
+
+**Net QuickJS vs interpreter: +4.** There are four QuickJS wins, zero QuickJS
+losses, zero neutral status changes, and zero missing or unexpected rows. The
+four wins are:
+
+- `Function.prototype.apply/S15.3.4.3_A3_T10.js`;
+- `Function.prototype.call/S15.3.4.4_A3_T10.js`;
+- `direct/non-definable-global-function.js`; and
+- `direct/non-definable-global-generator.js`.
+
+The repair has three parts:
+
+- published QuickJS functions carry the realm's stable `%Function%` identity,
+  so `new Function(...).constructor === Function` survives the provider seam;
+- primitive properties created on QuickJS `globalThis` are reconciled to the
+  caller realm after eval and interpreted calls, including the
+  `Function(...).apply/call(undefined)` family; and
+- caller-side activation-pool lookup/delete decodes the canonical
+  cross-module value carrier before comparing binding names and deletion
+  markers, so a QuickJS-created function declaration is visible and callable
+  from the surrounding compiled activation.
+
+The intrinsic `eval` and `Function` properties are installed non-enumerably,
+matching the native interpreter and preventing a first-class intrinsic read
+from corrupting a later direct-eval snapshot. Build-time parity canaries cover
+all three repaired families, including constructor identity followed by a
+direct eval in the same module. The compact state-pool suite also stores names,
+values, and markers exactly as a separately compiled provider does, and proves
+read plus deletion across that boundary.
+
+Persisted evidence:
+
+- `benchmarks/results/eval-parity/parity-20260812-0208-0214.json`;
+- `benchmarks/results/eval-parity/parity-20260812-0208-0214.md`;
+- QuickJS provider suite: 28/28;
+- compact direct-eval state-pool suite: 21/21; and
+- the QuickJS build verified its broad strict/sloppy canaries plus the two new
+  focused parity canary modules before publishing the adapter cache entry.
+
+### Post-merge parity revalidation — 2026-08-12
+
+After merging `origin/main` at `1d61405370467f` into the parity branch, both
+engines were rebuilt and rerun from merge head `d649fda75db515` against a
+freshly downloaded promoted standalone baseline. The exact 1,351-file set,
+worker counts, target, and official-scope filter were identical in both arms.
+
+| Engine | Pass | Fail | Compile error | Timeout / skip | Total |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| QuickJS | **1,112** | 213 | 26 | 0 / 0 | 1,351 |
+| Interpreter | 1,108 | 217 | 26 | 0 / 0 | 1,351 |
+| Promoted baseline | 1,105 | 220 | 26 | 0 / 0 | 1,351 |
+
+The mechanical gate again returns **PROCEED**: QuickJS has the same four
+genuine wins, zero losses, zero neutral changes, and no missing or unexpected
+rows. The interpreter differs from the freshly promoted baseline on only three
+files, within the gate's sanity tolerance. The exact run hashes are:
+
+- QuickJS JSONL: `1de3b5558869eabd51186895d8ebc567f297dbe11e2fbbedb39e3fd570e66f16`;
+- interpreter JSONL: `2e922fcdc24497e54bc52cc3c05eb59a7dd2a04bf1f04587f1d6ec933a2eb5f5`;
+- promoted baseline JSONL: `a0c28f73430d14250feb852217cf641e103b841945998d0d700db07f1fd314d2`.
+
+The persisted decision artifacts are
+`benchmarks/results/eval-parity/parity-20260812-0230-0237.json` and its sibling
+Markdown report. Post-merge typecheck and production build pass, as do 163/163
+focused provider, membrane, state-pool, parity-gate, and CI-routing tests.
+
+This checkpoint only satisfies the parity prerequisite. It does **not** flip
+the default engine and does not remove, disable, or degrade the native bytecode
+interpreter. Phase 2 remains ready as a separately reviewable default-selection
+and CI-packaging change; `JS2WASM_EVAL_ENGINE=interpreter` remains a permanent,
+tested option.
+
+## Phase 2 implementation checkpoint — 2026-08-12
+
+Phase 2 is implemented on `codex/4242-quickjs-parity`, stacked directly on the
+measured parity checkpoint above:
+
+- the synchronous provider selector and standalone Test262 runner now choose
+  QuickJS when `JS2WASM_EVAL_ENGINE` is unset;
+- a missing or compiler-key-mismatched QuickJS artifact is still a hard error —
+  there is no interpreter or refusal fallback on the default path;
+- push, merge-group, and scheduled baseline-refresh jobs build, distribute,
+  verify, and measure the QuickJS pair. An explicit
+  `eval_engine=interpreter` dispatch remains available but cannot replace the
+  QuickJS-owned promoted baseline;
+- `JS2WASM_EVAL_ENGINE=interpreter` still selects the native Acorn + bytecode
+  branch, with its full/refusal distinction unchanged. Both successful and
+  diagnostic selections announce that kept-engine provenance;
+- `tests/issue-4242-no-removal.test.ts` enumerates the ten `src/interp/`
+  modules, verifies the pinned Acorn tarball and provider builder, and exercises
+  both the interpreter selector and the two-engine unknown-value diagnostic;
+- `.github/workflows/eval-interpreter-lane.yml` builds the native provider and
+  runs its semantic guards plus the 816-file `language/eval-code/` slice every
+  week. The committed current-tree floor is 782/816 with a three-test
+  tolerance; and
+- the architecture guide and #4229 playground consumer now document the two
+  engines and pin the interpreter explicitly where that is the intended
+  dogfood surface.
+
+Local flip validation is green: QuickJS provider/default selection 29/29,
+parity and CI-routing 39/39, no-removal 4/4, provider-cache 7/7, explicit full
+interpreter declaration semantics 11/11, the surrounding CI/baseline routing
+slice 166/166, shell syntax, and typecheck. Direct selection prints `QUICKJS …
+DEFAULT engine (#4242)` with the env unset and `INTERPRETER … kept native
+bytecode engine (#4242)` with the explicit selector.
+
+No file is deleted from `src/interp/`, `src/ir/`, the pinned Acorn input, or
+the native provider build. Because the project lead asked for the flip in the
+existing parity PR, the PR's earlier Phase-1 parity repairs do modify four
+`src/interp/` files; the Phase-2 checkpoint itself adds no `src/` edit. The
+remaining acceptance evidence is the live QuickJS CI run and first green
+manual interpreter anti-rot dispatch on the published head.

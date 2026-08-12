@@ -10,13 +10,43 @@
  * second environment representation or a lossy copy-in/copy-out bridge.
  */
 import { ts, forEachChild } from "../ts-api.js";
-import type { ValType } from "../ir/types.js";
+import type { Instr, ValType } from "../ir/types.js";
 import type { TypeOracle } from "../checker/oracle.js";
+import { ensureExternStrictEqHelper } from "./any-helpers.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { isStrictContext } from "./helpers/is-strict-function.js";
-import { getOrRegisterRefCellType } from "./registry/types.js";
+import { ensureObjVecBuilders } from "./object-runtime.js";
+import { addFuncType, getOrRegisterRefCellType } from "./registry/types.js";
+import { buildRuntimeEvalValueUnwrap } from "./runtime-eval-boundary.js";
 import { coerceType } from "./shared.js";
+
+/**
+ * Frozen direct-eval state-pool layout shared with both runtime providers.
+ *
+ * Each source-visible binding consumes four ref-cell carriers:
+ * `[name, value, deletability-marker-name, marker-value]`. The caller hands
+ * the provider one flat `$ObjVec` containing 256 carriers, hence 64 visible
+ * bindings. Keep these values aligned with the interpreter and QuickJS
+ * membranes; changing them is an ABI change even though the helper functions
+ * below are module-private.
+ */
+const DIRECT_EVAL_STATE_POOL_CELLS = 256;
+const DIRECT_EVAL_STATE_BINDING_STRIDE = 4;
+const RUNTIME_EVAL_NEW_STATE_POOL = "__runtime_eval_new_activation_state_pool";
+const RUNTIME_EVAL_FIND_STATE_VALUE_CELL = "__runtime_eval_find_activation_state_value_cell";
+const RUNTIME_EVAL_DELETE_STATE_BINDING = "__runtime_eval_delete_activation_state_binding";
+
+/** Exact companion name that authenticates a configurable eval-created var.
+ * Keep this aligned with `src/interp/eval-environment.ts`; it is part of the
+ * existing four-cell provider/caller carrier, not a new ABI field. */
+export const RUNTIME_EVAL_DELETABLE_BINDING_MARKER = "\0js2wasm:deletable-eval-binding";
+
+/** Impossible source name used only inside a lifted closure's capture layout.
+ * It threads the owning activation's state-pool pointer without changing the
+ * runtime-provider ABI or making the pool observable to JavaScript. */
+export const RUNTIME_EVAL_STATE_POOL_CAPTURE_NAME = "\0js2wasm:runtime-eval-state-pool";
 
 /** (#4309) An iteration statement that installs its own declarative record —
  * a `let`/`const` head. §14.7.4.2/§14.7.5.6 wrap the WHOLE statement (head,
@@ -97,6 +127,42 @@ export function functionMayReachDirectEval(decl: ts.FunctionLikeDeclaration, ora
   };
   visit(decl.body);
   return found;
+}
+
+/** Direct eval owned by this exact function activation, excluding every nested
+ * function/class body. This differs from {@link functionMayReachDirectEval},
+ * whose deliberate descendant walk is used to reify outer lexical bindings. */
+export function functionOwnScopeMayReachDirectEval(decl: ts.FunctionLikeDeclaration, oracle: TypeOracle): boolean {
+  if (!decl.body) return false;
+  let found = false;
+  const root = decl.body;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (node !== root && (ts.isFunctionLike(node) || ts.isClassDeclaration(node) || ts.isClassExpression(node))) {
+      return;
+    }
+    if (isDirectEvalCall(node, oracle)) {
+      found = true;
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  visit(root);
+  return found;
+}
+
+/** Whether the immediately enclosing source-function activation owns direct
+ * eval. Lifted closures/declarations use this source-level predicate before
+ * the owner's pool local necessarily exists (notably during declaration
+ * pre-registration), so their capture layout is independent of compile order. */
+export function enclosingFunctionOwnScopeMayReachDirectEval(
+  node: ts.FunctionLikeDeclaration,
+  oracle: TypeOracle,
+): boolean {
+  let owner: ts.Node | undefined = node.parent;
+  while (owner && !ts.isFunctionLike(owner)) owner = owner.parent;
+  if (!owner || !("body" in owner) || owner.body === undefined) return false;
+  return functionOwnScopeMayReachDirectEval(owner as ts.FunctionLikeDeclaration, oracle);
 }
 
 function addBindingName(name: ts.BindingName, names: Set<string>): void {
@@ -268,6 +334,424 @@ export function reifyCurrentDirectEvalBindings(ctx: CodegenContext, fctx: Functi
       }
     }
   }
+}
+
+/**
+ * Register the module-level constructor for one caller-owned direct-eval state
+ * pool. The runtime loop keeps the call site constant-size: the AOT activation
+ * owns one nullable externref local, and its first executed direct eval fills
+ * that local with the exact 256-cell flat carrier expected by the provider.
+ */
+export function ensureDirectEvalStatePoolNewHelper(ctx: CodegenContext, cellTypeIdx: number): number {
+  const existing = ctx.funcMap.get(RUNTIME_EVAL_NEW_STATE_POOL);
+  if (existing !== undefined) return existing;
+
+  const { newIdx, pushIdx } = ensureObjVecBuilders(ctx);
+  const funcIdx = mintDefinedFunc(ctx);
+  const typeIdx = addFuncType(ctx, [], [{ kind: "externref" }], "$runtime_eval_new_activation_state_pool_type");
+  const poolLocal = 0;
+  const indexLocal = 1;
+  const loopBody: Instr[] = [
+    { op: "local.get", index: indexLocal },
+    { op: "i32.const", value: DIRECT_EVAL_STATE_POOL_CELLS },
+    { op: "i32.ge_u" },
+    { op: "br_if", depth: 1 },
+    { op: "local.get", index: poolLocal },
+    { op: "ref.null.extern" },
+    { op: "struct.new", typeIdx: cellTypeIdx },
+    { op: "extern.convert_any" },
+    { op: "call", funcIdx: pushIdx },
+    { op: "local.get", index: indexLocal },
+    { op: "i32.const", value: 1 },
+    { op: "i32.add" },
+    { op: "local.set", index: indexLocal },
+    { op: "br", depth: 0 },
+  ];
+  const body: Instr[] = [
+    { op: "call", funcIdx: newIdx },
+    { op: "local.set", index: poolLocal },
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: indexLocal },
+    {
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }],
+    },
+    { op: "local.get", index: poolLocal },
+  ];
+  ctx.funcMap.set(RUNTIME_EVAL_NEW_STATE_POOL, funcIdx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: RUNTIME_EVAL_NEW_STATE_POOL,
+    typeIdx,
+    locals: [
+      { name: "pool", type: { kind: "externref" } },
+      { name: "i", type: { kind: "i32" } },
+    ],
+    body,
+    exported: false,
+  });
+  return funcIdx;
+}
+
+/** Reserve the nullable pool pointer before source-order lowering decides
+ * whether a particular read precedes the textual eval call. Wasm initializes
+ * the externref local to null; the first actual eval (or an escaping closure
+ * that must retain the activation) fills it through the shared constructor. */
+export function ensureDirectEvalActivationStatePoolLocal(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+): { poolLocal: number; cellTypeIdx: number } {
+  const cellTypeIdx = fctx.directEvalRefCellTypeIdx ?? getOrRegisterRefCellType(ctx, { kind: "externref" });
+  fctx.directEvalRefCellTypeIdx = cellTypeIdx;
+  if (fctx.directEvalActivationStatePoolLocal === undefined) {
+    fctx.directEvalActivationStatePoolLocal = allocLocal(
+      fctx,
+      `__runtime_direct_eval_activation_state_pool_${fctx.locals.length}`,
+      { kind: "externref" },
+    );
+  }
+  return { poolLocal: fctx.directEvalActivationStatePoolLocal, cellTypeIdx };
+}
+
+/** Materialize the current activation's state pool if it is still null. */
+export function emitEnsureDirectEvalActivationStatePoolInitialized(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+): { poolLocal: number; cellTypeIdx: number } {
+  const state = ensureDirectEvalActivationStatePoolLocal(ctx, fctx);
+  const newIdx = ensureDirectEvalStatePoolNewHelper(ctx, state.cellTypeIdx);
+  fctx.body.push(
+    { op: "local.get", index: state.poolLocal },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "call", funcIdx: newIdx },
+        { op: "local.set", index: state.poolLocal },
+      ],
+    },
+  );
+  return state;
+}
+
+/** Whether a provider-created binding in the activation pool can win this
+ * identifier lookup. Current-function var/lexical bindings remain static;
+ * only an outer capture or a name with no current binding can be shadowed by a
+ * later sloppy direct-eval var declaration. */
+export function runtimeEvalStateMayShadowBinding(ctx: CodegenContext, fctx: FunctionContext, name: string): boolean {
+  // The caller-owned activation carrier belongs to the standalone/WASI
+  // provider seam. JS-host direct eval keeps its existing static-splice/host
+  // behavior and must not synthesize provider-only helpers into that module.
+  if (!ctx.standalone && !ctx.wasi) return false;
+  if (fctx.directEvalActivationStatePoolLocal === undefined && fctx.directEvalBindingNames === undefined) {
+    return false;
+  }
+  if (fctx.directEvalActivationBindingNames?.has(name)) return false;
+  if (fctx.localMap.has(name) && !fctx.directEvalOuterBindingNames?.has(name)) return false;
+  return true;
+}
+
+/**
+ * Register the shared sibling-read lookup. It returns the matching VALUE-cell
+ * carrier (never the value itself), using null only for a miss. That preserves
+ * the old found/value distinction even when the stored JavaScript value is
+ * null or undefined; the caller performs the canonical value unwrap exactly
+ * where it did before this compaction.
+ */
+export function ensureDirectEvalStateValueCellLookup(ctx: CodegenContext, cellTypeIdx: number): number | undefined {
+  const existing = ctx.funcMap.get(RUNTIME_EVAL_FIND_STATE_VALUE_CELL);
+  if (existing !== undefined) return existing;
+
+  ensureObjVecBuilders(ctx);
+  const objVecTypeIdx = ctx.objectRuntimeTypes?.objVecTypeIdx;
+  const objVecArrTypeIdx = ctx.objectRuntimeTypes?.objVecArrTypeIdx;
+  const strictEqIdx = ensureExternStrictEqHelper(ctx);
+  if (objVecTypeIdx === undefined || objVecArrTypeIdx === undefined || strictEqIdx === undefined) return undefined;
+
+  // params 0=pool, 1=name; locals 2=poolAny, 3=vec, 4=data, 5=len,
+  // 6=i, 7=cellAny.
+  const poolAnyLocal = 2;
+  const vecLocal = 3;
+  const dataLocal = 4;
+  const lengthLocal = 5;
+  const indexLocal = 6;
+  const cellAnyLocal = 7;
+  const locals: { name: string; type: ValType }[] = [
+    { name: "poolAny", type: { kind: "anyref" } },
+    { name: "vec", type: { kind: "ref_null", typeIdx: objVecTypeIdx } },
+    { name: "data", type: { kind: "ref_null", typeIdx: objVecArrTypeIdx } },
+    { name: "len", type: { kind: "i32" } },
+    { name: "i", type: { kind: "i32" } },
+    { name: "cellAny", type: { kind: "anyref" } },
+  ];
+  const unwrapSharedValue = buildRuntimeEvalValueUnwrap(ctx, locals, 2);
+  const loopBody: Instr[] = [
+    // A malformed/truncated carrier is a miss, never an array OOB trap.
+    { op: "local.get", index: indexLocal },
+    { op: "i32.const", value: 1 },
+    { op: "i32.add" },
+    { op: "local.get", index: lengthLocal },
+    { op: "i32.ge_u" },
+    { op: "br_if", depth: 1 },
+    { op: "local.get", index: dataLocal },
+    { op: "ref.as_non_null" },
+    { op: "local.get", index: indexLocal },
+    { op: "array.get", typeIdx: objVecArrTypeIdx },
+    { op: "any.convert_extern" },
+    { op: "local.tee", index: cellAnyLocal },
+    { op: "ref.test", typeIdx: cellTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: cellAnyLocal },
+        { op: "ref.cast", typeIdx: cellTypeIdx },
+        { op: "struct.get", typeIdx: cellTypeIdx, fieldIdx: 0 },
+        ...unwrapSharedValue,
+        { op: "local.get", index: 1 },
+        { op: "call", funcIdx: strictEqIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: dataLocal },
+            { op: "ref.as_non_null" },
+            { op: "local.get", index: indexLocal },
+            { op: "i32.const", value: 1 },
+            { op: "i32.add" },
+            { op: "array.get", typeIdx: objVecArrTypeIdx },
+            { op: "return" },
+          ],
+        },
+      ],
+    },
+    { op: "local.get", index: indexLocal },
+    { op: "i32.const", value: DIRECT_EVAL_STATE_BINDING_STRIDE },
+    { op: "i32.add" },
+    { op: "local.set", index: indexLocal },
+    { op: "br", depth: 0 },
+  ];
+  const body: Instr[] = [
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "local.tee", index: poolAnyLocal },
+    { op: "ref.test", typeIdx: objVecTypeIdx },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "ref.null.extern" }, { op: "return" }],
+    },
+    { op: "local.get", index: poolAnyLocal },
+    { op: "ref.cast", typeIdx: objVecTypeIdx },
+    { op: "local.set", index: vecLocal },
+    { op: "local.get", index: vecLocal },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx: objVecTypeIdx, fieldIdx: 1 },
+    { op: "local.set", index: dataLocal },
+    { op: "local.get", index: vecLocal },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx: objVecTypeIdx, fieldIdx: 0 },
+    { op: "local.set", index: lengthLocal },
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: indexLocal },
+    {
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }],
+    },
+    { op: "ref.null.extern" },
+  ];
+  const funcIdx = mintDefinedFunc(ctx);
+  const typeIdx = addFuncType(
+    ctx,
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+    "$runtime_eval_find_activation_state_value_cell_type",
+  );
+  ctx.funcMap.set(RUNTIME_EVAL_FIND_STATE_VALUE_CELL, funcIdx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: RUNTIME_EVAL_FIND_STATE_VALUE_CELL,
+    typeIdx,
+    locals,
+    body,
+    exported: false,
+  });
+  return funcIdx;
+}
+
+/** Register the shared AOT delete operation for a provider-created binding.
+ * The result is 1 when a matching four-cell group was tombstoned and 0 on a
+ * miss. The caller retains the ordinary global/static delete as the miss arm. */
+export function ensureDirectEvalStateBindingDelete(ctx: CodegenContext, cellTypeIdx: number): number | undefined {
+  const existing = ctx.funcMap.get(RUNTIME_EVAL_DELETE_STATE_BINDING);
+  if (existing !== undefined) return existing;
+
+  ensureObjVecBuilders(ctx);
+  const objVecTypeIdx = ctx.objectRuntimeTypes?.objVecTypeIdx;
+  const objVecArrTypeIdx = ctx.objectRuntimeTypes?.objVecArrTypeIdx;
+  const strictEqIdx = ensureExternStrictEqHelper(ctx);
+  if (objVecTypeIdx === undefined || objVecArrTypeIdx === undefined || strictEqIdx === undefined) return undefined;
+
+  // params 0=pool, 1=name, 2=exact deletability marker; locals 3=poolAny,
+  // 4=vec, 5=data, 6=len, 7=i, 8=cellAny.
+  const poolAnyLocal = 3;
+  const vecLocal = 4;
+  const dataLocal = 5;
+  const lengthLocal = 6;
+  const indexLocal = 7;
+  const cellAnyLocal = 8;
+  const locals: { name: string; type: ValType }[] = [
+    { name: "poolAny", type: { kind: "anyref" } },
+    { name: "vec", type: { kind: "ref_null", typeIdx: objVecTypeIdx } },
+    { name: "data", type: { kind: "ref_null", typeIdx: objVecArrTypeIdx } },
+    { name: "len", type: { kind: "i32" } },
+    { name: "i", type: { kind: "i32" } },
+    { name: "cellAny", type: { kind: "anyref" } },
+  ];
+  const unwrapSharedValue = buildRuntimeEvalValueUnwrap(ctx, locals, 3);
+  const clearCell = (offset: number): Instr[] => [
+    { op: "local.get", index: dataLocal },
+    { op: "ref.as_non_null" },
+    { op: "local.get", index: indexLocal },
+    ...(offset === 0 ? [] : [{ op: "i32.const", value: offset } as Instr, { op: "i32.add" } as Instr]),
+    { op: "array.get", typeIdx: objVecArrTypeIdx },
+    { op: "any.convert_extern" },
+    { op: "local.tee", index: cellAnyLocal },
+    { op: "ref.test", typeIdx: cellTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: cellAnyLocal },
+        { op: "ref.cast", typeIdx: cellTypeIdx },
+        { op: "ref.null.extern" },
+        { op: "struct.set", typeIdx: cellTypeIdx, fieldIdx: 0 },
+      ],
+    },
+  ];
+  const loopBody: Instr[] = [
+    { op: "local.get", index: indexLocal },
+    { op: "i32.const", value: DIRECT_EVAL_STATE_BINDING_STRIDE - 1 },
+    { op: "i32.add" },
+    { op: "local.get", index: lengthLocal },
+    { op: "i32.ge_u" },
+    { op: "br_if", depth: 1 },
+    { op: "local.get", index: dataLocal },
+    { op: "ref.as_non_null" },
+    { op: "local.get", index: indexLocal },
+    { op: "array.get", typeIdx: objVecArrTypeIdx },
+    { op: "any.convert_extern" },
+    { op: "local.tee", index: cellAnyLocal },
+    { op: "ref.test", typeIdx: cellTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: cellAnyLocal },
+        { op: "ref.cast", typeIdx: cellTypeIdx },
+        { op: "struct.get", typeIdx: cellTypeIdx, fieldIdx: 0 },
+        ...unwrapSharedValue,
+        { op: "local.get", index: 1 },
+        { op: "call", funcIdx: strictEqIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            // A source-visible name is deletable only when the adjacent marker
+            // cell carries the exact internal marker. A same-shaped ordinary
+            // declarative group must fall through without being tombstoned.
+            { op: "local.get", index: dataLocal },
+            { op: "ref.as_non_null" },
+            { op: "local.get", index: indexLocal },
+            { op: "i32.const", value: 2 },
+            { op: "i32.add" },
+            { op: "array.get", typeIdx: objVecArrTypeIdx },
+            { op: "any.convert_extern" },
+            { op: "local.tee", index: cellAnyLocal },
+            { op: "ref.test", typeIdx: cellTypeIdx },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: cellAnyLocal },
+                { op: "ref.cast", typeIdx: cellTypeIdx },
+                { op: "struct.get", typeIdx: cellTypeIdx, fieldIdx: 0 },
+                ...unwrapSharedValue,
+                { op: "local.get", index: 2 },
+                { op: "call", funcIdx: strictEqIdx },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    ...clearCell(0),
+                    ...clearCell(1),
+                    ...clearCell(2),
+                    ...clearCell(3),
+                    { op: "i32.const", value: 1 },
+                    { op: "return" },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    { op: "local.get", index: indexLocal },
+    { op: "i32.const", value: DIRECT_EVAL_STATE_BINDING_STRIDE },
+    { op: "i32.add" },
+    { op: "local.set", index: indexLocal },
+    { op: "br", depth: 0 },
+  ];
+  const body: Instr[] = [
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "local.tee", index: poolAnyLocal },
+    { op: "ref.test", typeIdx: objVecTypeIdx },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "i32.const", value: 0 }, { op: "return" }],
+    },
+    { op: "local.get", index: poolAnyLocal },
+    { op: "ref.cast", typeIdx: objVecTypeIdx },
+    { op: "local.set", index: vecLocal },
+    { op: "local.get", index: vecLocal },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx: objVecTypeIdx, fieldIdx: 1 },
+    { op: "local.set", index: dataLocal },
+    { op: "local.get", index: vecLocal },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx: objVecTypeIdx, fieldIdx: 0 },
+    { op: "local.set", index: lengthLocal },
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: indexLocal },
+    {
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }],
+    },
+    { op: "i32.const", value: 0 },
+  ];
+  const funcIdx = mintDefinedFunc(ctx);
+  const typeIdx = addFuncType(
+    ctx,
+    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+    [{ kind: "i32" }],
+    "$runtime_eval_delete_activation_state_binding_type",
+  );
+  ctx.funcMap.set(RUNTIME_EVAL_DELETE_STATE_BINDING, funcIdx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: RUNTIME_EVAL_DELETE_STATE_BINDING,
+    typeIdx,
+    locals,
+    body,
+    exported: false,
+  });
+  return funcIdx;
 }
 
 export interface DirectEvalBinding {

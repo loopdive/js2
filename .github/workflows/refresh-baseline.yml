@@ -102,19 +102,19 @@ jobs:
             echo "✓ Manual NORMAL baseline refresh — records main's current test262 state (no force)."
           fi
 
-  # (#4354) Compile the real Acorn+interpreter provider ONCE and fan the
-  # resulting zero-import Wasm module out to all 57 standalone shards, exactly
-  # as test262-sharded.yml does.
+  # (#4242/#4354) Build the default QuickJS provider pair ONCE and fan it out
+  # to all 57 standalone shards, exactly as test262-sharded.yml does.
   #
   # The first cut of this fix built it per standalone shard. That is correct
-  # but wasteful: the build costs ~5 min and ~3 GB, this matrix has 57
-  # standalone cells, and the workflow fires every 8 h — roughly 285 runner-
-  # minutes burned per refresh recompiling an identical artifact.
+  # but wasteful: the native interpreter build cost ~5 min and ~3 GB per cell;
+  # the same one-build/fan-out rule remains load-bearing for QuickJS.
   runtime-eval-provider:
-    name: build standalone runtime-eval provider
+    name: build default QuickJS runtime-eval provider
     needs: validate-inputs
     runs-on: ubuntu-latest
     timeout-minutes: 12
+    env:
+      JS2WASM_EVAL_ENGINE: quickjs
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -128,18 +128,53 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build and verify full runtime-eval provider (#2928/#4354)
+      - name: Compute QuickJS artifact cache key (#4242)
+        id: quickjs-key
+        run: |
+          set -euo pipefail
+          ARTIFACT_KEY="$(node --input-type=module -e '
+            import { quickjsArtifactCacheKey } from "./scripts/quickjs-eval-provider.mjs";
+            process.stdout.write(quickjsArtifactCacheKey());
+          ')"
+          CLANG_V="$(clang-18 --version | head -1)"
+          CACHE_HASH="$(printf '%s|%s' "$ARTIFACT_KEY" "$CLANG_V" | sha256sum | cut -d' ' -f1)"
+          echo "cache_hash=$CACHE_HASH" >> "$GITHUB_OUTPUT"
+
+      - name: Restore QuickJS WASI artifact (#4242)
+        id: quickjs-cache
+        uses: actions/cache@v4
+        with:
+          path: .tmp/quickjs-artifact
+          key: quickjs-wasi-${{ steps.quickjs-key.outputs.cache_hash }}
+
+      - name: Install QuickJS wasm toolchain on cache miss (#4242)
+        if: steps.quickjs-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 lld-18 llvm-18 cmake
+
+      - name: Build QuickJS WASI artifact on cache miss (#4242)
+        if: steps.quickjs-cache.outputs.cache-hit != 'true'
         env:
+          JOBS: "4"
+          OUT_DIR: .tmp/quickjs-artifact
+        run: bash scripts/quickjs-artifact/build.sh
+
+      - name: Build and verify default QuickJS provider pair (#4242)
+        env:
+          JS2WASM_QUICKJS_ARTIFACT_DIR: .tmp/quickjs-artifact
           NODE_OPTIONS: --max-old-space-size=3072
         run: |
           pnpm run build:compiler-bundle
-          node scripts/build-runtime-eval-provider.mjs
+          node scripts/build-quickjs-eval-provider.mjs
 
-      - name: Upload full runtime-eval provider
+      - name: Upload default QuickJS provider pair
         uses: actions/upload-artifact@v6
         with:
           name: runtime-eval-provider-${{ github.run_id }}
-          path: .test262-cache/runtime-eval-provider-*.wasm
+          path: |
+            .test262-cache/quickjs-artifact-*/
+            .test262-cache/quickjs-eval-adapter-*.wasm
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 1
@@ -238,19 +273,12 @@ jobs:
       # pick the compile target and name its JSONL (tests/test262-shared.ts).
       TEST262_TARGET: ${{ matrix.target.test262_target }}
       TEST262_RESULT_PREFIX: ${{ matrix.target.result_prefix }}
+      JS2WASM_EVAL_ENGINE: ${{ matrix.target.test262_target == 'standalone' && 'quickjs' || '' }}
       # Namespace by target so host + standalone shards for the same chunk never
       # collide on the JSONL path / blob outfile / artifact name.
       RUN_TIMESTAMP: ${{ github.run_id }}-${{ matrix.target.name }}-chunk${{ matrix.chunk }}
-      # (#4354) Mirror test262-sharded.yml — BOTH halves are required, and this
-      # one is the actual switch. Building the full provider only puts the
-      # module on disk; the runner links it solely when this flag is set, so
-      # without it the standalone lane silently falls back to the refusal path
-      # and every eval-dependent test records
-      #   "no js2wasm:runtime-eval interpreter linked".
-      # The first #4354 fix changed the build to drop `--refusal-only` but
-      # missed this env, and the resulting baseline was byte-for-byte as wrong
-      # as before (standalone still 28,455 instead of ~29,494) with the
-      # provider build step reporting success — a green no-op.
+      # Harmless under QuickJS; load-bearing when a developer explicitly runs
+      # this lane with the native interpreter selector.
       TEST262_FULL_RUNTIME_EVAL: ${{ matrix.target.test262_target == 'standalone' && '1' || '' }}
 
     steps:
@@ -290,38 +318,19 @@ jobs:
           ./node_modules/.bin/esbuild src/runtime.ts --bundle --platform=node --format=esm \
             --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
 
-      # (#2928 E7 / #4013 / #4354) Mirror test262-sharded.yml: the standalone
-      # lane links the FULL Acorn+interpreter runtime-eval provider, so
-      # eval-dependent modules actually evaluate instead of refusing.
-      #
-      # This step used to pass `--refusal-only`, which silently made every
-      # baseline this workflow promoted ~740 standalone tests LOW: eval tests
-      # recorded `TypeError: dynamic code evaluation is not supported in this
-      # standalone build (no js2wasm:runtime-eval interpreter linked)` rather
-      # than their real result (ES5 standalone read 82.5 % instead of 89.1 %).
-      # `test262-sharded.yml` moved to the full provider in #4013; this
-      # workflow was left behind, so the two lanes disagreed and whichever ran
-      # last won. See #4354.
-      #
-      # Built ONCE by the `runtime-eval-provider` job above and downloaded
-      # here, mirroring test262-sharded.yml — the build costs ~5 min and ~3 GB
-      # and this matrix has 57 standalone cells, so rebuilding it per shard
-      # burned ~285 runner-minutes per refresh for an identical artifact.
-      - name: Download full runtime-eval provider (#2928/#4354)
+      # Built ONCE by the provider job above and downloaded here. A shard only
+      # verifies the keyed pair; it never builds or falls back to another
+      # engine, so the promoted baseline cannot be mislabeled.
+      - name: Download default QuickJS runtime-eval provider (#4242/#4354)
         if: matrix.target.test262_target == 'standalone'
         uses: actions/download-artifact@v7
         with:
           name: runtime-eval-provider-${{ github.run_id }}
           path: .test262-cache
 
-      # Builds the cheap refusal fallback and fails loudly unless the
-      # downloaded full provider matches this cell's compiler-bundle content
-      # key, so a missing or stale artifact cannot silently drop the measured
-      # capability tier back to refusal — which is the exact failure this
-      # whole issue is about.
-      - name: Verify shared runtime-eval provider cache (#2928/#4354)
+      - name: Verify shared QuickJS provider cache (#4242/#4354)
         if: matrix.target.test262_target == 'standalone'
-        run: node scripts/build-runtime-eval-provider.mjs --require-full-cache
+        run: node scripts/build-quickjs-eval-provider.mjs --require-cache
 
       - name: Run shard
         run: |
