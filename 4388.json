@@ -1,12 +1,11 @@
 {
   "id": "4388",
   "assignee": "ttraenkler/codex-es5-descriptor",
-  "requested_by": "ttraenkler/codex-es5-descriptor",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/es5-descriptor-20260812",
-  "reserved_at": "2026-08-12T21:12:28Z",
   "claimed_at": "2026-08-12T21:12:28Z",
-  "updated_at": "2026-08-12T21:12:28Z",
-  "write_id": "42579-bc1dq1t2",
-  "pr_scan": "ok"
+  "updated_at": "2026-08-12T21:29:00Z",
+  "write_id": "62760-32dx5ko2",
+  "released_at": "2026-08-12T21:29:00Z"
 }
