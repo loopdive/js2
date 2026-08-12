@@ -338,7 +338,7 @@
           }
         }
       },
-      "recordedIn": "0bfe35c91b9baf642a9e75626e2119ad123a7025"
+      "recordedIn": "f633c7bf68b16f27de6da12f55a6c26bf2423262"
     },
     {
       "generatedAt": "2026-07-30T12:46:59.971Z",
@@ -2684,7 +2684,7 @@
     },
     {
       "generatedAt": "2026-08-08T22:24:11.466Z",
-      "recordedIn": "56f7a2cc782efabeb13ad32bf4d60edb59a504af",
+      "recordedIn": "c1eed0951fd6800bf1710f769a86599d8f15bb35",
       "packages": {
         "acorn": {
           "jsHost": {
@@ -2717,7 +2717,7 @@
     },
     {
       "generatedAt": "2026-08-09T10:31:15.282Z",
-      "recordedIn": "a71186c3b34b6b5767b5dcf52178e0238ee5b124",
+      "recordedIn": "707b5da425e3fb54f4f41687dfa2c708746b4e11",
       "packages": {
         "acorn": {
           "jsHost": {
@@ -2750,7 +2750,7 @@
     },
     {
       "generatedAt": "2026-08-09T11:12:43.888Z",
-      "recordedIn": "b40960eefd46d30c28c8e8955f4f7607548a3179",
+      "recordedIn": "df4ce067089165581afb2922cf90c1f7bce41a31",
       "packages": {
         "acorn": {
           "jsHost": {
@@ -2783,7 +2783,7 @@
     },
     {
       "generatedAt": "2026-08-09T15:20:34.134Z",
-      "recordedIn": "bcdfdc22f768405dad736ea6a6521a54b68806b1",
+      "recordedIn": "597b17cdef7a6357a3db898556daa35ab2470365",
       "packages": {
         "acorn": {
           "jsHost": {
@@ -3080,7 +3080,7 @@
     },
     {
       "generatedAt": "2026-08-09T22:58:35.340Z",
-      "recordedIn": "abc3c17760c1e57f4d5c83f3f19641ddbbbc6bc3",
+      "recordedIn": "fd148fff6e0df485c7fd490c65090cf81b022bca",
       "packages": {
         "acorn": {
           "jsHost": {
@@ -3152,7 +3152,7 @@
     },
     {
       "generatedAt": "2026-08-10T22:31:37.208Z",
-      "recordedIn": "3b384bcd1ed0c331f081de224f2cdf3ff2b6874d",
+      "recordedIn": "64f4f8ec9368bb416f791c3ee3ce5602075331ad",
       "packages": {
         "acorn": {
           "jsHost": {
@@ -3227,7 +3227,7 @@
           "standalone": {}
         }
       },
-      "recordedIn": "7ac9b53715114fcf09995626b785c50333884d7d"
+      "recordedIn": "9268d5a5da0008cf56e51f7adfafa6cf12b09bd2"
     },
     {
       "generatedAt": "2026-08-11T11:27:28.491Z",
@@ -3345,7 +3345,7 @@
           "standalone": {}
         }
       },
-      "recordedIn": "6c1117f8767e9b43ab9eefa0bd0084bf9c980a7d"
+      "recordedIn": "cb63af504ecec3c5602196f82abbd767f65ea22b"
     },
     {
       "generatedAt": "2026-08-11T16:42:53.469Z",
@@ -3615,6 +3615,46 @@
         "lit": {
           "jsHost": {
             "dynamic": 0.011624590860915378
+          },
+          "standalone": {}
+        }
+      },
+      "recordedIn": "4d1dfeb22c0f7fbd788051cb6b7c230c3e2e2f5e"
+    },
+    {
+      "generatedAt": "2026-08-12T09:18:49.552Z",
+      "sourceRevision": "69f66da9d8fe3494b67042653e9fd8743a0bf224",
+      "packages": {
+        "acorn": {
+          "jsHost": {
+            "dynamic": 0.0038239805940111188
+          },
+          "standalone": {
+            "static": 59788.76389345231,
+            "dynamic": 0.13447296960070834
+          }
+        },
+        "cookie": {
+          "jsHost": {
+            "dynamic": 0.0015622821116604766
+          },
+          "standalone": {
+            "static": 393.88546695153497,
+            "dynamic": 0.2890971732011104
+          }
+        },
+        "clsx": {
+          "jsHost": {
+            "dynamic": 0.10921140975377089
+          },
+          "standalone": {
+            "static": 17.235894298381897,
+            "dynamic": 0.19236609310264907
+          }
+        },
+        "lit": {
+          "jsHost": {
+            "dynamic": 0.021810028735569403
           },
           "standalone": {}
         }
