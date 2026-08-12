@@ -82,6 +82,41 @@ export { compileArrayLikePrototypeCall, compileArrayPrototypeCall } from "./arra
 type ArrayMethodAccess = ts.PropertyAccessExpression | ts.ElementAccessExpression;
 
 /**
+ * True for the exact unshadowed builtin `Array.prototype` value used while the
+ * realm is still pristine. `Array.prototype` is itself an initially empty
+ * Array exotic object, even though standalone represents its general
+ * first-class value as `$NativeProto` metadata (#4378).
+ */
+export function isPristineArrayPrototypeExpression(fctx: FunctionContext, expression: ts.Expression): boolean {
+  return (
+    ts.isPropertyAccessExpression(expression) &&
+    expression.name.text === "prototype" &&
+    ts.isIdentifier(expression.expression) &&
+    expression.expression.text === "Array" &&
+    !fctx.localMap.has("Array") &&
+    !(fctx.boxedCaptures?.has("Array") ?? false)
+  );
+}
+
+/** Exact `Array.prototype[Symbol.iterator]()` bootstrap shape. */
+export function isPristineArrayPrototypeIteratorCall(fctx: FunctionContext, expression: ts.Expression): boolean {
+  if (!ts.isCallExpression(expression) || expression.arguments.length !== 0) return false;
+  const callee = expression.expression;
+  if (!ts.isElementAccessExpression(callee) || !isPristineArrayPrototypeExpression(fctx, callee.expression)) {
+    return false;
+  }
+  const key = callee.argumentExpression;
+  return (
+    ts.isPropertyAccessExpression(key) &&
+    ts.isIdentifier(key.expression) &&
+    key.expression.text === "Symbol" &&
+    key.name.text === "iterator" &&
+    !fctx.localMap.has("Symbol") &&
+    !(fctx.boxedCaptures?.has("Symbol") ?? false)
+  );
+}
+
+/**
  * #2036 — content-equality for native-string array elements in the search
  * methods (`indexOf`/`lastIndexOf`/`includes`).
  *
@@ -2283,8 +2318,30 @@ function compileNativeArrayIterator(
     objVecPushIdx = builders.pushIdx;
   }
 
-  // Compile the receiver to discover its vec type.
-  const recvType = compileExpression(ctx, fctx, propAccess.expression);
+  // `Array.prototype` is specified to be an Array exotic object whose initial
+  // length is zero. The standalone builtin-value representation is instead a
+  // `$NativeProto` metadata carrier, which is deliberately not a `$Vec`; trying
+  // to compile it through the generic receiver path therefore rejected Deno's
+  // bootstrap-time `%ArrayIteratorPrototype%` capture (#4378). For this exact,
+  // unshadowed builtin expression, iterate the spec-equivalent pristine empty
+  // array. This intentionally does not claim support for indexed mutations of
+  // `Array.prototype`; a user binding named `Array` stays on the normal path.
+  const receiver = propAccess.expression;
+  const isPristineArrayPrototype = isPristineArrayPrototypeExpression(fctx, receiver);
+
+  // Compile the receiver to discover its vec type. The synthetic receiver uses
+  // the canonical externref vec so it can flow through the same iterator
+  // runtime as every other empty array without adding a host import.
+  let recvType: ValType | null;
+  if (isPristineArrayPrototype) {
+    fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "array.new_default", typeIdx: canonArrTypeIdx });
+    fctx.body.push({ op: "struct.new", typeIdx: canonVecTypeIdx });
+    recvType = { kind: "ref_null", typeIdx: canonVecTypeIdx };
+  } else {
+    recvType = compileExpression(ctx, fctx, receiver);
+  }
   if (!recvType || (recvType.kind !== "ref" && recvType.kind !== "ref_null")) {
     reportError(ctx, propAccess, `Codegen error: #1320 ${methodName}() receiver is not an array`);
     return null;
