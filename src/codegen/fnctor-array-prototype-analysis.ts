@@ -71,6 +71,11 @@ export function analyzeStableArrayPrototypeNames(
   };
   for (const sourceFile of sourceFiles) collectWrites(sourceFile);
 
+  // Most programs, including the Test262 harness, do not assign an Array to a
+  // constructor prototype. Avoid the symbol-heavy reference pass entirely in
+  // that common case; an empty candidate set cannot produce a positive proof.
+  if (verdicts.size === 0) return new Set();
+
   // The consumer is still name-keyed, so same-named symbols decline. Any
   // constructor reference outside its declaration, the direct assignment, or
   // zero-argument construction also declines: aliases and computed writes can
