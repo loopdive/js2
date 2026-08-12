@@ -1451,6 +1451,7 @@ function binopResultKind(op: import("./nodes.js").IrBinop): ValType["kind"] | nu
     case "f64.sub":
     case "f64.mul":
     case "f64.div":
+    case "f64.copysign":
       return "f64";
     // js.bit* result is f64 by default but may be narrowed to i32 (Stage 3) —
     // both are valid, so it has no single fixed result kind. Return null to
@@ -1467,7 +1468,8 @@ function binopResultKind(op: import("./nodes.js").IrBinop): ValType["kind"] | nu
     case "i32.add":
     case "i32.sub":
     case "i32.mul":
-      return "i32";
+    case "i64.rem_s":
+      return op === "i64.rem_s" ? "i64" : "i32";
     default:
       // All remaining binops are comparisons / i32 logical → i32 (bool).
       return "i32";
@@ -1482,6 +1484,7 @@ function binopResultKind(op: import("./nodes.js").IrBinop): ValType["kind"] | nu
 function binopOperandKind(op: import("./nodes.js").IrBinop): ValType["kind"] | null {
   if (op.startsWith("f64.")) return "f64";
   if (op.startsWith("i32.")) return "i32";
+  if (op.startsWith("i64.")) return "i64";
   // js.bit* — operands may be i32 or f64; no single required kind.
   return null;
 }
@@ -1493,12 +1496,15 @@ function unopResultKind(op: import("./nodes.js").IrUnop): ValType["kind"] | null
     case "f64.reinterpret_i64":
     // (#3168) boolean → f64 ToNumber for unary `+`/`-`.
     case "f64.convert_i32_s":
+    case "f64.convert_i64_s":
       return "f64";
     case "i32.eqz":
     case "ref.is_null":
       return "i32";
     case "i32.trunc_sat_f64_s":
       return "i32";
+    case "i64.trunc_f64_s":
+      return "i64";
     default:
       return null;
   }
@@ -1509,6 +1515,7 @@ function unopOperandKind(op: import("./nodes.js").IrUnop): ValType["kind"] | nul
   switch (op) {
     case "f64.neg":
     case "i32.trunc_sat_f64_s":
+    case "i64.trunc_f64_s":
       return "f64";
     case "f64.reinterpret_i64":
       return "i64";
@@ -1516,6 +1523,8 @@ function unopOperandKind(op: import("./nodes.js").IrUnop): ValType["kind"] | nul
     // (#3168) the boolean-ToNumber conversion consumes the i32 0/1.
     case "f64.convert_i32_s":
       return "i32";
+    case "f64.convert_i64_s":
+      return "i64";
     // ref.is_null takes a ref/externref/funcref — not a fixed scalar; skip.
     default:
       return null;

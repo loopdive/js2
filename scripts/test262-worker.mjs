@@ -15,7 +15,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createContext, runInContext } from "node:vm";
 import { compile, compileMulti, createIncrementalCompiler } from "./compiler-bundle.mjs";
-import { buildImports } from "./runtime-bundle.mjs";
+import { buildImports, _resetIteratorRuntimeIntrinsicsForRealmIsolation } from "./runtime-bundle.mjs";
 import { poisonRecycleReason } from "./test262-poison-error.mjs";
 import { negativeCompileErrorMatches, negativeCompileSucceededVerdict } from "./negative-verdict.mjs";
 // (#3613) ONE renderer, shared with tests/test262-runner.ts. The worker's
@@ -797,6 +797,13 @@ function _restoreMethodProp(obj, key, orig, origDesc) {
 }
 
 function restoreBuiltins() {
+  // The runtime's synthetic %(Async)Generator/Iterator% graph is cached at
+  // module scope and therefore sits outside the host-prototype snapshots
+  // below. Treat every worker request as a fresh realm: prior generator
+  // objects retain their old prototypes, while the next buildImports call
+  // allocates a clean graph.
+  _resetIteratorRuntimeIntrinsicsForRealmIsolation();
+
   // Restore Array.prototype[Symbol.iterator].
   // Critical for the compiler's internal Array.from calls (on TypeScript
   // NodeArrays + other plain arrays). If left poisoned to a non-function

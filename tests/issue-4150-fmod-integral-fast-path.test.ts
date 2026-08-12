@@ -1,9 +1,10 @@
-// #4150 — `%` on integral operands takes an `i32.rem_s` fast path in `__fmod`.
+// #4150 — `%` on integral operands takes a signed-integer fast path.
 //
-// The helper's slow path is a binary long-division loop whose iteration count
-// scales with the binary-exponent difference of the operands, so an ordinary
-// `x % 3` cost ~26 f64 iterations. The fast path answers it with one
-// `i32.rem_s` when both operands are whole numbers in i32 range.
+// At the call site, operands proven integral and in signed-i64 range use a
+// direct `i64.rem_s`. Unknown operands use the same operation behind runtime
+// integrality/range checks and fall back to exact `__fmod`. A negative proof
+// (fractional, non-finite, out-of-range, or a zero divisor) emits only the exact
+// path. The helper retains its narrower i32 path for callers that reach it.
 //
 // This test exists because that fast path is a REPRESENTATION change on a core
 // arithmetic operator: it must be indistinguishable from the exact path, not
@@ -29,6 +30,13 @@ async function remainder(): Promise<(a: number, b: number) => number> {
     mod = instance.exports as unknown as { m(a: number, b: number): number };
   }
   return (a, b) => mod!.m(a, b);
+}
+
+function functionWat(wat: string, name: string): string {
+  const start = wat.indexOf(`(func $${name}`);
+  expect(start).toBeGreaterThanOrEqual(0);
+  const next = wat.indexOf("\n  (func $", start + 1);
+  return wat.slice(start, next < 0 ? undefined : next);
 }
 
 /** `Object.is` except that any NaN matches any NaN (payload is unobservable). */
@@ -67,7 +75,14 @@ describe("#4150 — __fmod integral fast path", () => {
       [-2147483648, -1],
       [2147483647, 3],
       [-2147483648, 3],
-      [2147483648, 3], // just outside i32 → exact path
+      [2147483648, 3],
+      // Signed-i64 boundaries. 2^63 is excluded because f64 cannot represent
+      // i64::MAX separately; INT64_MIN % -1 must avoid the Wasm overflow trap.
+      [-(2 ** 63), -1],
+      [-(2 ** 63), 3],
+      [2 ** 63, 3],
+      [Number.MAX_SAFE_INTEGER, 97],
+      [Number.MAX_SAFE_INTEGER + 1, 97],
       // Fractional and huge/tiny — exact path, including the #2056 ULP-drift
       // repros the long-division algorithm was written for.
       [2.5, 1],
@@ -83,6 +98,75 @@ describe("#4150 — __fmod integral fast path", () => {
     ];
     const bad = cases.filter(([a, b]) => !same(m(a, b), a % b));
     expect(bad.map(([a, b]) => `${a} % ${b} -> ${m(a, b)}, want ${a % b}`)).toEqual([]);
+  });
+
+  it("uses positive, unknown, and negative AOT proofs to choose the emitted path", async () => {
+    const source = `
+      export function proven(): number {
+        let checksum = 0;
+        for (let round = 0; round < 512; round = round + 1) {
+          checksum = checksum + round % 17;
+        }
+        return checksum;
+      }
+      export function guarded(value: number): number { return value % 1000003; }
+      export function fractional(value: number): number { return value % 2.5; }
+      export function outside(divisor: number): number { return 1e20 % divisor; }
+      export function zero(value: number): number { return value % 0; }
+    `;
+    for (const experimentalIR of [true, false]) {
+      const result = await compile(`${source}\n// IR: ${experimentalIR}`, {
+        fileName: "remainder-proof-shapes.ts",
+        target: "standalone",
+        fast: true,
+        optimize: 0,
+        experimentalIR,
+        emitWat: true,
+        emitWatOnlyFunctions: ["proven", "guarded", "fractional", "outside", "zero"],
+      } as never);
+      expect(result.success, result.success ? undefined : result.errors?.[0]?.message).toBe(true);
+
+      const proven = functionWat(result.wat, "proven");
+      expect(proven).toContain("i64.rem_s");
+      expect(proven).not.toMatch(/\bcall\b/);
+      expect(proven).not.toContain("f64.trunc");
+
+      const guarded = functionWat(result.wat, "guarded");
+      expect(guarded).toContain("f64.trunc");
+      expect(guarded).toContain("i64.trunc_f64_s");
+      expect(guarded).toContain("i64.rem_s");
+      expect(guarded).toMatch(/\bcall\b/);
+
+      for (const name of ["fractional", "outside", "zero"]) {
+        const rejected = functionWat(result.wat, name);
+        expect(rejected).toMatch(/\bcall\b/);
+        expect(rejected).not.toContain("i64.trunc_f64_s");
+        expect(rejected).not.toContain("i64.rem_s");
+      }
+    }
+  });
+
+  it("keeps an exact-helper-only kill switch", async () => {
+    const previous = process.env.JS2WASM_INLINE_REMAINDER_FAST_PATH;
+    try {
+      process.env.JS2WASM_INLINE_REMAINDER_FAST_PATH = "0";
+      const result = await compile("export function guarded(value: number): number { return value % 1000003; }", {
+        fileName: "remainder-fast-path-disabled.ts",
+        target: "standalone",
+        fast: true,
+        optimize: 0,
+        emitWat: true,
+        emitWatOnlyFunctions: ["guarded"],
+      } as never);
+      expect(result.success, result.success ? undefined : result.errors?.[0]?.message).toBe(true);
+      const guarded = functionWat(result.wat, "guarded");
+      expect(guarded).toMatch(/\bcall\b/);
+      expect(guarded).not.toContain("i64.rem_s");
+      expect(guarded).not.toContain("f64.trunc");
+    } finally {
+      if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_INLINE_REMAINDER_FAST_PATH");
+      else process.env.JS2WASM_INLINE_REMAINDER_FAST_PATH = previous;
+    }
   });
 
   it("matches the host over a seeded random sweep spanning both paths", async () => {
@@ -161,15 +245,9 @@ describe("#4150 — __fmod integral fast path", () => {
     expect(linear.success, linear.success ? undefined : linear.errors?.[0]?.message).toBe(true);
     expect(linear.wat).toContain("$__fmod");
 
-    const helperWat = (wat: string, name: string): string => {
-      const start = wat.indexOf(`(func $${name}`);
-      expect(start).toBeGreaterThanOrEqual(0);
-      const next = wat.indexOf("\n  (func $", start + 1);
-      return wat.slice(start, next < 0 ? undefined : next);
-    };
-    const candidateHelper = helperWat(candidate.wat, "__fmod_early_magnitude");
-    const controlHelper = helperWat(control.wat, "__fmod");
-    const smallHelper = helperWat(smallDivisor.wat, "__fmod");
+    const candidateHelper = functionWat(candidate.wat, "__fmod_early_magnitude");
+    const controlHelper = functionWat(control.wat, "__fmod");
+    const smallHelper = functionWat(smallDivisor.wat, "__fmod");
     const candidateTrunc = candidateHelper.indexOf("i32.trunc_sat_f64_s");
     const candidateMagnitude = candidateHelper.indexOf("f64.lt");
     const controlTrunc = controlHelper.indexOf("i32.trunc_sat_f64_s");
