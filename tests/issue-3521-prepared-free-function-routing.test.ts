@@ -424,7 +424,7 @@ describe("#3521 prepare-before-emit free-function routing", () => {
     expect((await instantiate(result)).answer!()).toBe(42);
   });
 
-  it("defers module globals but seals free-to-class dependencies in one prepared component", async () => {
+  it("seals an exact lexical module global with its reader and free-to-class dependencies", async () => {
     const moduleGlobal = await compile(
       `
       let answer = 42;
@@ -437,13 +437,50 @@ describe("#3521 prepare-before-emit free-function routing", () => {
       },
     );
     expect(moduleGlobal.success, moduleGlobal.errors.map((error) => error.message).join("\n")).toBe(true);
-    expect(moduleGlobal.irFirstSkipped ?? []).not.toContain("readAnswer");
+    expect(moduleGlobal.irFirstSkipped ?? []).toContain("readAnswer");
     expect(outcome(moduleGlobal, "readAnswer")).toMatchObject({
       kind: "emitted",
-      legacyBodyEmitted: true,
+      legacyBodyEmitted: false,
       irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
+    });
+    expect(
+      moduleGlobal.irOutcomes?.find(
+        ({ unitKind, displayName }) => unitKind === "module-init" && displayName === "<module-init>",
+      ),
+    ).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+      preparedComponentId: outcome(moduleGlobal, "readAnswer").preparedComponentId,
     });
     expect((await instantiate(moduleGlobal)).readAnswer!()).toBe(42);
+
+    const earlyClassCall = await compile(
+      `
+      class Reader {
+        value(): number { return value; }
+      }
+      const observed: number = new Reader().value();
+      let value: number = 42;
+      export function readObserved(): number { return observed; }
+      `,
+      {
+        fileName: "prepared-module-class-tdz-boundary.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+        skipSemanticDiagnostics: true,
+      },
+    );
+    expect(earlyClassCall.success, earlyClassCall.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(earlyClassCall.irOutcomes?.find(({ unitKind }) => unitKind === "module-init")).toMatchObject({
+      legacyBodyEmitted: true,
+    });
+    expect(
+      earlyClassCall.irOutcomes?.find(({ unitKind }) => unitKind === "module-init")?.preparedComponentId,
+    ).toBeUndefined();
+    const earlyImports = buildImports(earlyClassCall.imports, undefined, earlyClassCall.stringPool);
+    await expect(WebAssembly.instantiate(earlyClassCall.binary, earlyImports)).rejects.toThrow();
 
     const classOwned = await compile(
       `

@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import type { IrClassId, IrUnitId } from "./identity.js";
+import type { IrBindingId, IrClassId, IrUnitId } from "./identity.js";
 import type { IrClassShape, IrClosureSignature, IrFuncRef, IrGlobalRef, IrType } from "./nodes.js";
 import type { IrLegacyUnitProjection, IrPlanningIdentityContext } from "./planning-identity.js";
 import type { IrPromiseDelayLoweringPlans } from "./promise-delay-lowering.js";
@@ -104,6 +104,20 @@ export interface IrHostVoidCallbackLoweringPlan {
   readonly liftedOrdinal: number;
 }
 
+export type IrHostDateSnapshotGetter = "getDate" | "getMonth" | "getFullYear";
+
+/** Exact checker-certified zero-argument ambient Date snapshot construction. */
+export interface IrHostDateSnapshotLoweringPlan {
+  readonly ownerUnitId: IrUnitId;
+  readonly ownerName: string;
+}
+
+/** Exact getter use tied to one certified snapshot carrier. */
+export interface IrHostDateGetterLoweringPlan extends IrHostDateSnapshotLoweringPlan {
+  readonly snapshot: ts.NewExpression;
+  readonly getter: IrHostDateSnapshotGetter;
+}
+
 /** One module binding's legacy storage, optionally tied to an exact terminal owner. */
 export interface ModuleBindingGlobal {
   readonly ownerUnitId?: IrUnitId;
@@ -115,6 +129,8 @@ export interface ModuleBindingGlobal {
   readonly globalName: string;
   readonly tdzGlobalName: string | null;
   readonly type: IrType;
+  /** Exact owner-qualified proof that this use executes only after Wasm start. */
+  readonly omitTdzReadCheck?: true;
 }
 
 export interface IrIntegrationLoweringPlans {
@@ -129,13 +145,27 @@ export interface IrIntegrationLoweringPlans {
   readonly importedCalls: ReadonlyMap<ts.CallExpression, IrImportedCallLoweringPlan>;
   readonly topLevelFunctionValues: ReadonlyMap<ts.Identifier, IrTopLevelFunctionValueLoweringPlan>;
   readonly hostVoidCallbacks: ReadonlyMap<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>;
+  readonly hostDateSnapshots: ReadonlyMap<ts.NewExpression, IrHostDateSnapshotLoweringPlan>;
+  readonly hostDateGetters: ReadonlyMap<ts.CallExpression, IrHostDateGetterLoweringPlan>;
   readonly promiseDelays: IrPromiseDelayLoweringPlans;
   /** Exact engine-activated source owners admitted by the async-plan producer. */
   readonly suspendingAsyncUnitIds: ReadonlySet<IrUnitId>;
+  /**
+   * Exact post-Wasm-start proof: these owners cannot execute until their
+   * source-owned lexical globals have completed module initialization.
+   */
+  readonly postWasmStartTdzSafeBindingsByOwnerUnitId?: ReadonlyMap<IrUnitId, ReadonlySet<IrBindingId>>;
 }
 
 export function requireMatchingLoweringPlanOwner(
-  planKind: "direct call" | "imported call" | "top-level function value" | "host void callback" | "module binding",
+  planKind:
+    | "direct call"
+    | "imported call"
+    | "top-level function value"
+    | "host void callback"
+    | "host Date snapshot"
+    | "host Date getter"
+    | "module binding",
   planOwnerUnitId: IrUnitId,
   activeOwnerUnitId: IrUnitId | undefined,
   funcName: string,

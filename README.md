@@ -13,7 +13,7 @@ Conformance is tracked along the two compile paths — both figures auto-update 
 
 <!-- AUTO:conformance-start -->
 
-**test262 conformance**: 31,776 / 43,621 (72.8 %)
+**test262 conformance**: 31,957 / 43,621 (73.3 %)
 
 <!-- AUTO:conformance-end -->
 
@@ -21,7 +21,7 @@ The line above is the **JS-host path** (default `gc` target): runs alongside the
 
 <!-- AUTO:conformance-standalone-start -->
 
-**standalone (host-free) test262 conformance**: 29,220 / 43,621 (67.0 %)
+**standalone (host-free) test262 conformance**: 29,436 / 43,621 (67.5 %)
 
 <!-- AUTO:conformance-standalone-end -->
 
@@ -154,6 +154,10 @@ The imports a module needs depend on the compile target:
   const { instance } = await WebAssembly.instantiate(r.binary, r.importObject);
   (instance.exports as any).add(2, 3); // → 5
   ```
+
+  Dynamic `eval` / `new Function` can instead use an isolated JS evaluator
+  while the AOT Wasm instance stays in its original host. See
+  [Isolated JS-host eval](docs/js-host-eval-isolation.md).
 - **Standalone mode** (`target: "standalone"`, also `target: "wasi"`) emits a
   pure WasmGC module with Wasm-native intrinsics and **no host imports**, so it
   instantiates with `WebAssembly.instantiate(binary, {})` and runs anywhere

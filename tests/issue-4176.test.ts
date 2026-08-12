@@ -21,7 +21,7 @@
  * descriptor, reading its fields through the prototype chain.
  */
 import { describe, expect, it } from "vitest";
-import { compile } from "../src/index.js";
+import { compile, type CompileResult, type IrObservedOutcome } from "../src/index.js";
 
 async function runStandalone(source: string): Promise<unknown> {
   const result = await compile(source, { target: "standalone" });
@@ -32,6 +32,10 @@ async function runStandalone(source: string): Promise<unknown> {
   expect(WebAssembly.validate(result.binary!), "module must be valid Wasm").toBe(true);
   const { instance } = await WebAssembly.instantiate(result.binary!, {});
   return (instance.exports as { main: () => unknown }).main();
+}
+
+function outcomeFor(result: CompileResult, name: string): IrObservedOutcome | undefined {
+  return result.irOutcomes?.find((outcome) => outcome.displayName === name);
 }
 
 describe("#4176 named keys on builtin prototypes (standalone)", () => {
@@ -59,6 +63,111 @@ describe("#4176 named keys on builtin prototypes (standalone)", () => {
         }
       `),
     ).toBe(11);
+  });
+
+  it("for-in enumerates a bound function's inherited enumerable companion key", async () => {
+    expect(
+      await runStandalone(`
+        export function main(): number {
+          Object.defineProperty(Function.prototype, "forInMarker", {
+            value: 7,
+            enumerable: true,
+            configurable: true
+          });
+          const base = function (): void {};
+          const bound: any = base.bind({});
+          let count = 0;
+          let value = 0;
+          for (const key in bound) {
+            if (key === "forInMarker") {
+              count++;
+              value = bound[key];
+            }
+          }
+          return count * 100 + value;
+        }
+      `),
+    ).toBe(107);
+  });
+
+  it("for-in enumerates Object.prototype companion keys on plain objects", async () => {
+    expect(
+      await runStandalone(`
+        export function main(): number {
+          Object.defineProperty(Object.prototype, "objectForInMarker", {
+            value: 3,
+            enumerable: true,
+            configurable: true
+          });
+          const value: any = {};
+          for (const key in value) {
+            if (key === "objectForInMarker") return value[key];
+          }
+          return 0;
+        }
+      `),
+    ).toBe(3);
+  });
+
+  it("for-in's array fast path appends Array.prototype companion keys", async () => {
+    expect(
+      await runStandalone(`
+        export function main(): number {
+          Object.defineProperty(Array.prototype, "arrayForInMarker", {
+            value: 5,
+            enumerable: true,
+            configurable: true
+          });
+          const value: any = [9];
+          let sawIndex = 0;
+          let sawInherited = 0;
+          for (const key in value) {
+            if (key === "0") sawIndex = 1;
+            if (key === "arrayForInMarker") sawInherited = value[key];
+          }
+          return sawIndex * 10 + sawInherited;
+        }
+      `),
+    ).toBe(15);
+  });
+
+  it("prepared IR for-in shares prototype-companion enumeration", async () => {
+    const result = await compile(
+      `
+        Object.defineProperty(Function.prototype, "irInherited", {
+          value: 1,
+          enumerable: true,
+          configurable: true
+        });
+        export function makeFunction(): any {
+          return function (): void {};
+        }
+        export function hasInherited(object: any): boolean {
+          for (var key in object) {
+            return true;
+          }
+          return false;
+        }
+      `,
+      {
+        target: "standalone",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+        fileName: "issue-4176-for-in-ir.ts",
+      },
+    );
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(result.imports ?? []).toEqual([]);
+    expect(outcomeFor(result, "hasInherited")).toMatchObject({
+      kind: "emitted",
+      irBodyEmitted: true,
+    });
+    const { instance } = await WebAssembly.instantiate(result.binary, {});
+    const exports = instance.exports as {
+      makeFunction: () => unknown;
+      hasInherited: (object: unknown) => number;
+    };
+    expect(exports.hasInherited(exports.makeFunction())).toBe(1);
   });
 
   it("Array.prototype.<name> is visible on an array", async () => {

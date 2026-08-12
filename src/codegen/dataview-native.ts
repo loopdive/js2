@@ -129,6 +129,11 @@ export function emitArrayBufferSlice(
   const vecTypeIdx = getOrRegisterVecType(ctx, "i32_byte", { kind: "i8" }); // (#2835) packed byte buffer
   const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
   if (arrTypeIdx < 0) return null;
+  const detachedThrow = buildThrowJsErrorInstrs(
+    ctx,
+    "TypeError",
+    "TypeError: ArrayBuffer.prototype.slice called on a detached buffer",
+  );
 
   // Recover the source vec struct from the receiver (externref → struct).
   const srcVecLocal = allocLocal(fctx, `__abs_src_${fctx.locals.length}`, {
@@ -153,6 +158,9 @@ export function emitArrayBufferSlice(
   fctx.body.push({ op: "local.get", index: srcVecLocal });
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
   fctx.body.push({ op: "local.set", index: srcLenLocal });
+  // §25.1.5.3 step 4 — validate detachment before coercing begin/end. The
+  // native detached state is the shared buffer vec's negative length marker.
+  emitArrayBufferDetachedCheck(fctx, srcVecLocal, vecTypeIdx, detachedThrow);
   const srcArrLocal = allocLocal(fctx, `__abs_srcarr_${fctx.locals.length}`, {
     kind: "ref",
     typeIdx: arrTypeIdx,
@@ -274,8 +282,26 @@ export function emitArrayBufferResize(
   compileExpr: (expr: import("../ts-api.js").ts.Expression, hint?: ValType) => ValType | null,
 ): ValType | null {
   const rabTypeIdx = getOrRegisterResizableAbType(ctx);
-  const arrTypeIdx = getArrTypeIdxFromVec(ctx, getOrRegisterVecType(ctx, "i32_byte", { kind: "i8" }));
+  const vecTypeIdx = getOrRegisterVecType(ctx, "i32_byte", { kind: "i8" });
+  const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
   if (arrTypeIdx < 0) return null;
+  // Build real JS error objects before compiling operands so any helper
+  // registration happens before later function indices are captured.
+  const brandThrow = buildThrowJsErrorInstrs(
+    ctx,
+    "TypeError",
+    "TypeError: ArrayBuffer.prototype.resize called on non-resizable buffer",
+  );
+  const detachedThrow = buildThrowJsErrorInstrs(
+    ctx,
+    "TypeError",
+    "TypeError: ArrayBuffer.prototype.resize called on a detached buffer",
+  );
+  const rangeThrow = buildThrowJsErrorInstrs(
+    ctx,
+    "RangeError",
+    "RangeError: ArrayBuffer.prototype.resize length exceeds maxByteLength",
+  );
 
   // Recover the receiver as anyref, then require it to be a $__resizable_ab.
   const recvType = compileExpr(receiver);
@@ -291,17 +317,7 @@ export function emitArrayBufferResize(
   fctx.body.push({ op: "local.get", index: anyLocal });
   fctx.body.push({ op: "ref.test", typeIdx: rabTypeIdx });
   fctx.body.push({ op: "i32.eqz" });
-  {
-    const msg = "TypeError: ArrayBuffer.prototype.resize called on non-resizable buffer";
-    addStringConstantGlobal(ctx, msg);
-    const tagIdx = ensureExnTag(ctx);
-    fctx.body.push({
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [...stringConstantExternrefInstrs(ctx, msg), { op: "throw", tagIdx }],
-      else: [],
-    });
-  }
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: brandThrow, else: [] });
 
   // rab = ref.cast $__resizable_ab (the checked receiver).
   const rabLocal = allocLocal(fctx, `__rabz_rab_${fctx.locals.length}`, { kind: "ref", typeIdx: rabTypeIdx });
@@ -338,26 +354,26 @@ export function emitArrayBufferResize(
   fctx.body.push({ op: "i32.trunc_sat_f64_s" });
   fctx.body.push({ op: "local.set", index: newLen });
 
-  // RangeError if newLen < 0 OR newLen > maxByteLength (field 2).
-  fctx.body.push({ op: "local.get", index: newLen });
-  fctx.body.push({ op: "i32.const", value: 0 });
-  fctx.body.push({ op: "i32.lt_s" });
+  // ToIndex range validation happens before the detached check.
+  fctx.body.push({ op: "local.get", index: newLenF64 });
+  fctx.body.push({ op: "f64.const", value: 0 });
+  fctx.body.push({ op: "f64.lt" });
+  fctx.body.push({ op: "local.get", index: newLenF64 });
+  fctx.body.push({ op: "f64.const", value: 9007199254740991 });
+  fctx.body.push({ op: "f64.gt" });
+  fctx.body.push({ op: "i32.or" });
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: rangeThrow, else: [] });
+
+  // §25.1.6.4 step 5 — the shared negative-length marker is checked after
+  // ToIndex, before the declared maxByteLength bound.
+  emitArrayBufferDetachedCheck(fctx, rabLocal, vecTypeIdx, detachedThrow);
+
+  // RangeError if newLen > maxByteLength (field 2).
   fctx.body.push({ op: "local.get", index: newLen });
   fctx.body.push({ op: "local.get", index: rabLocal });
   fctx.body.push({ op: "struct.get", typeIdx: rabTypeIdx, fieldIdx: 2 });
   fctx.body.push({ op: "i32.gt_s" });
-  fctx.body.push({ op: "i32.or" });
-  {
-    const msg = "RangeError: ArrayBuffer.prototype.resize length exceeds maxByteLength";
-    addStringConstantGlobal(ctx, msg);
-    const tagIdx = ensureExnTag(ctx);
-    fctx.body.push({
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [...stringConstantExternrefInstrs(ctx, msg), { op: "throw", tagIdx }],
-      else: [],
-    });
-  }
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: rangeThrow, else: [] });
 
   // oldLen = min(rab.length, newLen) — bytes to preserve.
   const oldLen = allocLocal(fctx, `__rabz_ol_${fctx.locals.length}`, { kind: "i32" });
@@ -396,6 +412,344 @@ export function emitArrayBufferResize(
   fctx.body.push({ op: "struct.set", typeIdx: rabTypeIdx, fieldIdx: 0 });
 
   return null;
+}
+
+/**
+ * Shared native IsDetachedBuffer check for ArrayBuffer operations. Standalone
+ * detachment is represented by field 0 (`length`) being negative; every
+ * operation consumes this same state instead of maintaining method-specific
+ * sidecars or AST-only flags.
+ */
+function emitArrayBufferDetachedCheck(
+  fctx: FunctionContext,
+  bufferLocal: number,
+  vecTypeIdx: number,
+  detachedThrow: Instr[],
+): void {
+  fctx.body.push({ op: "local.get", index: bufferLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "i32.lt_s" });
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: detachedThrow, else: [] });
+}
+
+type ArrayBufferTransferMethod = "transfer" | "transferToFixedLength";
+
+function arrayBufferTransferHelperName(method: ArrayBufferTransferMethod): string {
+  return method === "transfer" ? "__ab_transfer" : "__ab_transfer_fixed";
+}
+
+/**
+ * Native ArrayBufferCopyAndDetach core shared by direct instance calls and
+ * reflective `ArrayBuffer.prototype.<method>.call(...)` closures.
+ *
+ * ABI: `(receiver: externref, newLengthOrUndefined: externref) -> externref`.
+ * The canonical standalone undefined singleton distinguishes an omitted or
+ * explicit `undefined` length from an explicit JS `null` (which ToIndex maps
+ * to zero).
+ * The helper performs the observable ToIndex conversion before checking the
+ * shared detached marker, allocates/copies a new native byte vec, preserves
+ * resizability only for `transfer`, and finally detaches the source by setting
+ * its length to -1. All semantics live here; AST and reflective call surfaces
+ * are thin adapters to the same native runtime operation.
+ */
+export function ensureArrayBufferTransferHelper(
+  ctx: CodegenContext,
+  method: ArrayBufferTransferMethod,
+): number | undefined {
+  if (!noJsHost(ctx)) return undefined;
+  const helperName = arrayBufferTransferHelperName(method);
+  const existing = ctx.funcMap.get(helperName);
+  if (existing !== undefined) return existing;
+
+  // ArrayBufferCopyAndDetach distinguishes undefined from null. Reserve the
+  // canonical standalone undefined predicate before constructing the helper;
+  // both direct and reflective adapters pass the same singleton for omission.
+  ensureObjectRuntime(ctx);
+  const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
+
+  const vecTypeIdx = getOrRegisterVecType(ctx, "i32_byte", { kind: "i8" });
+  const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+  if (arrTypeIdx < 0) return undefined;
+  const rabTypeIdx = getOrRegisterResizableAbType(ctx);
+
+  const params: ValType[] = [{ kind: "externref" }, { kind: "externref" }];
+  const fctx: FunctionContext = {
+    name: helperName,
+    params: [
+      { name: "receiver", type: params[0]! },
+      { name: "newLength", type: params[1]! },
+    ],
+    locals: [],
+    localMap: new Map(),
+    returnType: { kind: "externref" },
+    body: [],
+    blockDepth: 0,
+    breakStack: [],
+    continueStack: [],
+    labelMap: new Map(),
+    savedBodies: [],
+  };
+
+  // Error constructors are resolved before operand coercion freezes any
+  // function indices. These templates throw real catchable Error instances.
+  const brandThrow = buildThrowJsErrorInstrs(
+    ctx,
+    "TypeError",
+    `TypeError: ArrayBuffer.prototype.${method} called on an incompatible receiver`,
+  );
+  const detachedThrow = buildThrowJsErrorInstrs(
+    ctx,
+    "TypeError",
+    `TypeError: ArrayBuffer.prototype.${method} called on a detached buffer`,
+  );
+  const rangeThrow = buildThrowJsErrorInstrs(ctx, "RangeError", "RangeError: Invalid array buffer length");
+
+  const anyLocal = allocLocal(fctx, "receiverAny", { kind: "anyref" });
+  const srcLocal = allocLocal(fctx, "source", { kind: "ref", typeIdx: vecTypeIdx });
+  fctx.body.push({ op: "local.get", index: 0 });
+  fctx.body.push({ op: "any.convert_extern" });
+  fctx.body.push({ op: "local.tee", index: anyLocal });
+  fctx.body.push({ op: "ref.test", typeIdx: vecTypeIdx });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [
+      { op: "local.get", index: anyLocal },
+      { op: "ref.cast", typeIdx: vecTypeIdx },
+      { op: "local.set", index: srcLocal },
+    ],
+    else: brandThrow,
+  });
+
+  const oldLenLocal = allocLocal(fctx, "oldLength", { kind: "i32" });
+  fctx.body.push({ op: "local.get", index: srcLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "local.set", index: oldLenLocal });
+
+  // Missing/undefined newLength defaults to the current byte length. An
+  // explicit value takes the ordinary ToPrimitive(number) / ToNumber route.
+  const hasLengthLocal = allocLocal(fctx, "hasLength", { kind: "i32" });
+  fctx.body.push({ op: "local.get", index: 1 });
+  if (isUndefinedIdx !== undefined) {
+    fctx.body.push({ op: "call", funcIdx: isUndefinedIdx });
+  } else {
+    // Flag-disabled compatibility: standalone historically conflated null and
+    // undefined. Default builds always use the distinct singleton above.
+    fctx.body.push({ op: "ref.is_null" });
+  }
+  fctx.body.push({ op: "i32.eqz" });
+  fctx.body.push({ op: "local.set", index: hasLengthLocal });
+
+  const newLenF64Local = allocLocal(fctx, "newLengthF64", { kind: "f64" });
+  fctx.body.push({ op: "local.get", index: hasLengthLocal });
+  const explicitLength: Instr[] = [];
+  const savedBody = fctx.body;
+  fctx.body = explicitLength;
+  fctx.body.push({ op: "local.get", index: 1 });
+  coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" });
+  fctx.body = savedBody;
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "f64" } },
+    then: explicitLength,
+    else: [
+      // A detached source uses -1 internally, but the spec's detached
+      // [[ArrayBufferByteLength]] default is observed as zero before the
+      // subsequent IsDetachedBuffer TypeError.
+      { op: "local.get", index: oldLenLocal },
+      { op: "i32.const", value: 0 },
+      { op: "local.get", index: oldLenLocal },
+      { op: "i32.const", value: 0 },
+      { op: "i32.ge_s" },
+      { op: "select" },
+      { op: "f64.convert_i32_s" },
+    ],
+  });
+  fctx.body.push({ op: "local.set", index: newLenF64Local });
+
+  // ToIndex: NaN -> +0, truncate toward zero, then reject negative or values
+  // above Number.MAX_SAFE_INTEGER before reading the detached state.
+  fctx.body.push({ op: "local.get", index: newLenF64Local });
+  fctx.body.push({ op: "f64.const", value: 0 });
+  fctx.body.push({ op: "local.get", index: newLenF64Local });
+  fctx.body.push({ op: "local.get", index: newLenF64Local });
+  fctx.body.push({ op: "f64.eq" });
+  fctx.body.push({ op: "select" });
+  fctx.body.push({ op: "f64.trunc" });
+  fctx.body.push({ op: "local.set", index: newLenF64Local });
+  fctx.body.push({ op: "local.get", index: newLenF64Local });
+  fctx.body.push({ op: "f64.const", value: 0 });
+  fctx.body.push({ op: "f64.lt" });
+  fctx.body.push({ op: "local.get", index: newLenF64Local });
+  fctx.body.push({ op: "f64.const", value: 9007199254740991 });
+  fctx.body.push({ op: "f64.gt" });
+  fctx.body.push({ op: "i32.or" });
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: rangeThrow, else: [] });
+
+  const newLenLocal = allocLocal(fctx, "newLengthI32", { kind: "i32" });
+  fctx.body.push({ op: "local.get", index: newLenF64Local });
+  fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+  fctx.body.push({ op: "local.set", index: newLenLocal });
+
+  // ArrayBufferCopyAndDetach checks detachment after argument conversion.
+  emitArrayBufferDetachedCheck(fctx, srcLocal, vecTypeIdx, detachedThrow);
+
+  const preserveResizableLocal = allocLocal(fctx, "preserveResizable", { kind: "i32" });
+  if (method === "transfer") {
+    fctx.body.push({ op: "local.get", index: srcLocal });
+    fctx.body.push({ op: "ref.test", typeIdx: rabTypeIdx });
+  } else {
+    fctx.body.push({ op: "i32.const", value: 0 });
+  }
+  fctx.body.push({ op: "local.set", index: preserveResizableLocal });
+
+  const maxLenLocal = allocLocal(fctx, "maxLength", { kind: "i32" });
+  fctx.body.push({ op: "local.get", index: preserveResizableLocal });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [
+      { op: "local.get", index: srcLocal },
+      { op: "ref.cast", typeIdx: rabTypeIdx },
+      { op: "struct.get", typeIdx: rabTypeIdx, fieldIdx: 2 },
+      { op: "local.tee", index: maxLenLocal },
+      { op: "local.get", index: newLenLocal },
+      { op: "i32.lt_s" },
+      { op: "if", blockType: { kind: "empty" }, then: rangeThrow, else: [] },
+    ],
+    else: [],
+  });
+
+  const srcArrLocal = allocLocal(fctx, "sourceData", { kind: "ref", typeIdx: arrTypeIdx });
+  fctx.body.push({ op: "local.get", index: srcLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
+  fctx.body.push({ op: "local.set", index: srcArrLocal });
+
+  const dstArrLocal = allocLocal(fctx, "destinationData", { kind: "ref", typeIdx: arrTypeIdx });
+  fctx.body.push({ op: "local.get", index: newLenLocal });
+  fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
+  fctx.body.push({ op: "local.set", index: dstArrLocal });
+
+  const copyLenLocal = allocLocal(fctx, "copyLength", { kind: "i32" });
+  fctx.body.push({ op: "local.get", index: oldLenLocal });
+  fctx.body.push({ op: "local.get", index: newLenLocal });
+  fctx.body.push({ op: "local.get", index: oldLenLocal });
+  fctx.body.push({ op: "local.get", index: newLenLocal });
+  fctx.body.push({ op: "i32.lt_s" });
+  fctx.body.push({ op: "select" });
+  fctx.body.push({ op: "local.set", index: copyLenLocal });
+  fctx.body.push({ op: "local.get", index: dstArrLocal });
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "local.get", index: srcArrLocal });
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "local.get", index: copyLenLocal });
+  fctx.body.push({ op: "array.copy", dstTypeIdx: arrTypeIdx, srcTypeIdx: arrTypeIdx });
+
+  // Detach the source only after allocation and copying succeed.
+  fctx.body.push({ op: "local.get", index: srcLocal });
+  fctx.body.push({ op: "i32.const", value: -1 });
+  fctx.body.push({ op: "struct.set", typeIdx: vecTypeIdx, fieldIdx: 0 });
+
+  // `transfer` preserves a resizable source's maxByteLength;
+  // `transferToFixedLength` and fixed sources return the parent vec type.
+  fctx.body.push({ op: "local.get", index: preserveResizableLocal });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "externref" } },
+    then: [
+      { op: "local.get", index: newLenLocal },
+      { op: "local.get", index: dstArrLocal },
+      { op: "local.get", index: maxLenLocal },
+      { op: "struct.new", typeIdx: rabTypeIdx },
+      { op: "extern.convert_any" },
+    ],
+    else: [
+      { op: "local.get", index: newLenLocal },
+      { op: "local.get", index: dstArrLocal },
+      { op: "struct.new", typeIdx: vecTypeIdx },
+      { op: "extern.convert_any" },
+    ],
+  });
+
+  flushLateImportShifts(ctx, fctx);
+  const typeIdx = addFuncType(ctx, params, [{ kind: "externref" }]);
+  const funcIdx = mintDefinedFunc(ctx);
+  ctx.funcMap.set(helperName, funcIdx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: helperName,
+    typeIdx,
+    locals: fctx.locals,
+    body: fctx.body,
+    exported: false,
+  });
+  return funcIdx;
+}
+
+/** Thin direct-call adapter to the shared native transfer helper. */
+export function emitArrayBufferTransfer(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  method: ArrayBufferTransferMethod,
+  receiver: import("../ts-api.js").ts.Expression,
+  args: readonly import("../ts-api.js").ts.Expression[],
+  compileExpr: (expr: import("../ts-api.js").ts.Expression, hint?: ValType) => ValType | null,
+): ValType | null {
+  if (!noJsHost(ctx) || ensureArrayBufferTransferHelper(ctx, method) === undefined) return null;
+
+  const receiverType = compileExpr(receiver);
+  if (!receiverType) return null;
+  coerceType(ctx, fctx, receiverType, { kind: "externref" });
+  const receiverLocal = allocLocal(fctx, `__abt_recv_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: receiverLocal });
+
+  const lengthLocal = allocLocal(fctx, `__abt_len_${fctx.locals.length}`, { kind: "externref" });
+  const omittedLength = undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" } as Instr];
+  if (args.length > 0) {
+    const argType = compileExpr(args[0]!);
+    if (argType) {
+      coerceType(ctx, fctx, argType, { kind: "externref" });
+    } else {
+      fctx.body.push(...omittedLength);
+    }
+  } else {
+    fctx.body.push(...omittedLength);
+  }
+  fctx.body.push({ op: "local.set", index: lengthLocal });
+
+  // Extra arguments are ignored by the operation but still evaluated.
+  for (let i = 1; i < args.length; i++) {
+    const extraType = compileExpr(args[i]!);
+    if (extraType) fctx.body.push({ op: "drop" });
+  }
+
+  flushLateImportShifts(ctx, fctx);
+  const helperIdx = ctx.funcMap.get(arrayBufferTransferHelperName(method));
+  if (helperIdx === undefined) return null;
+  fctx.body.push({ op: "local.get", index: receiverLocal });
+  fctx.body.push({ op: "local.get", index: lengthLocal });
+  fctx.body.push({ op: "call", funcIdx: helperIdx });
+  return { kind: "externref" };
+}
+
+/** Reflective member-closure adapter to the same native transfer helper. */
+export function emitArrayBufferProtoMemberBody(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  member: string,
+): ValType | null {
+  if (member !== "transfer" && member !== "transferToFixedLength") return null;
+  const helperIdx = ensureArrayBufferTransferHelper(ctx, member);
+  if (helperIdx === undefined) return null;
+  // Closure ABI: param 0 = wrapper, param 1 = this, param 2 = optional length.
+  fctx.body.push({ op: "local.get", index: 1 });
+  if (fctx.params.length > 2) {
+    fctx.body.push({ op: "local.get", index: 2 });
+  } else {
+    fctx.body.push({ op: "ref.null.extern" });
+  }
+  fctx.body.push({ op: "call", funcIdx: helperIdx });
+  return { kind: "externref" };
 }
 
 /**

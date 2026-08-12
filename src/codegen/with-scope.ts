@@ -10,6 +10,7 @@
  */
 import { ts, forEachChild } from "../ts-api.js";
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
+import { selectWithEnvironmentClosures } from "../ir/with-environment.js";
 import { reportError } from "./context/errors.js";
 import { pushBody, popBody } from "./context/bodies.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
@@ -174,12 +175,17 @@ export function compileWithBindingAssignment(
 }
 
 export function compileWithStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.WithStatement): void {
+  const closureSelection = selectWithEnvironmentClosures(stmt.statement);
+  if (!closureSelection.ok) {
+    reportWithStatementDiagnostic(ctx, stmt, closureSelection.reason);
+    return;
+  }
   const proof = proveObjectLiteralWithTarget(fctx, stmt.expression);
   // (#2663 Slice 1) Tier-1 (static closed-shape) is the zero-overhead fast path.
-  // A body with a nested function/class boundary is deferred (the closure can't
-  // capture the object environment yet) — route it to the dynamic path, which
-  // emits the matching diagnostic.
-  if (proof.ok && !containsNestedFunctionBoundary(stmt.statement)) {
+  // Ordinary synchronous function expressions may capture the receiver through
+  // the #4206 environment contract. The selector above refuses every other
+  // nested function/class boundary before either target tier is considered.
+  if (proof.ok) {
     const targetType = compileClosedObjectLiteralTarget(ctx, fctx, proof.expr);
     finalizeStaticWithScope(ctx, fctx, stmt, targetType, proof.keys, proof.integrity, /* guardInheritedKeys */ true);
     return;
@@ -194,19 +200,17 @@ export function compileWithStatement(ctx: CodegenContext, fctx: FunctionContext,
   // host `in`/get reflection), so without this every own-field read misses and
   // resolves to a bare global → ReferenceError. Conservative gates (all →
   // fall through to Tier-2, never a compile error): see `proveStructTypedWithTarget`.
-  if (!containsNestedFunctionBoundary(stmt.statement)) {
-    const structProof = proveStructTypedWithTarget(ctx, stmt);
-    if (structProof) {
-      const targetType = compileExpression(ctx, fctx, stmt.expression, undefined);
-      if (targetType && (targetType.kind === "ref" || targetType.kind === "ref_null")) {
-        finalizeStaticWithScope(ctx, fctx, stmt, targetType, new Set(), "plain", /* guardInheritedKeys */ false);
-        return;
-      }
-      // The proof said struct-typed but lowering did not yield a struct ref. The
-      // target is a side-effect-free identifier, so dropping it and re-routing to
-      // the dynamic path below re-evaluates it harmlessly (no double side effect).
-      if (targetType) fctx.body.push({ op: "drop" });
+  const structProof = proveStructTypedWithTarget(ctx, stmt);
+  if (structProof) {
+    const targetType = compileExpression(ctx, fctx, stmt.expression, undefined);
+    if (targetType && (targetType.kind === "ref" || targetType.kind === "ref_null")) {
+      finalizeStaticWithScope(ctx, fctx, stmt, targetType, new Set(), "plain", /* guardInheritedKeys */ false);
+      return;
     }
+    // The proof said struct-typed but lowering did not yield a struct ref. The
+    // target is a side-effect-free identifier, so dropping it and re-routing to
+    // the dynamic path below re-evaluates it harmlessly (no double side effect).
+    if (targetType) fctx.body.push({ op: "drop" });
   }
 
   // Any non-proven target — `with(fn())`, host objects, `any`-typed, etc. —
@@ -245,7 +249,8 @@ function finalizeStaticWithScope(
   }
 
   const structTypeIdx = targetType.typeIdx;
-  const localIdx = allocLocal(fctx, `__with_scope_${fctx.locals.length}`, targetType);
+  const captureName = `__with_scope_${fctx.locals.length}`;
+  const localIdx = allocLocal(fctx, captureName, targetType);
   fctx.body.push({ op: "local.set", index: localIdx });
 
   const typeName = ctx.typeIdxToStructName.get(structTypeIdx);
@@ -292,7 +297,7 @@ function finalizeStaticWithScope(
     }
   }
   const scopeFields = integrity === "frozen" ? fields.map((field) => ({ ...field, mutable: false })) : fields;
-  const scope = { kind: "static" as const, localIdx, structTypeIdx, fields: scopeFields, blockedNames };
+  const scope = { kind: "static" as const, captureName, localIdx, structTypeIdx, fields: scopeFields, blockedNames };
   (fctx.withScopes ??= []).push(scope);
   try {
     compileStatement(ctx, fctx, stmt.statement);
@@ -404,23 +409,11 @@ function proveStructTypedWithTarget(ctx: CodegenContext, stmt: ts.WithStatement)
  * reads inside the body are resolved at runtime via `emitDynamicWithGet`
  * (HasBinding gate + Get, falling back to the outer lowering when absent).
  *
- * Scope of THIS slice (READ only): writes/compound/inc-dec/`typeof`/`delete`
- * (Slices 2-3) still take their non-with lowering — they don't consult the
- * dynamic scope yet. `@@unscopables` (Slice 4) is not consulted; HasProperty is
- * treated as HasBinding. A body containing a nested function/class boundary is
- * rejected (the closure can't capture the object environment at runtime yet),
- * matching the Tier-1 boundary refusal.
+ * Ordinary synchronous function expressions may retain this scope entry via
+ * the #4206 environment capture contract. Other nested function/class forms
+ * are refused by the shared selector before dynamic lowering begins.
  */
 function compileDynamicWithStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.WithStatement): void {
-  if (containsNestedFunctionBoundary(stmt.statement)) {
-    reportWithStatementDiagnostic(
-      ctx,
-      stmt,
-      "body contains a nested function or class that could capture the object environment (Tier-2 dynamic with: deferred)",
-    );
-    return;
-  }
-
   // §14.11.7 step 1-3: evaluate the target and coerce to a uniform externref
   // receiver (struct ref / boxed any / host object all normalize to externref).
   const targetType = compileExpression(ctx, fctx, stmt.expression, { kind: "externref" });
@@ -431,7 +424,8 @@ function compileDynamicWithStatement(ctx: CodegenContext, fctx: FunctionContext,
   if (targetType.kind !== "externref") {
     coerceType(ctx, fctx, targetType, { kind: "externref" });
   }
-  const localIdx = allocLocal(fctx, `__with_dyn_${fctx.locals.length}`, { kind: "externref" });
+  const captureName = `__with_dyn_${fctx.locals.length}`;
+  const localIdx = allocLocal(fctx, captureName, { kind: "externref" });
   fctx.body.push({ op: "local.set", index: localIdx });
 
   // §14.11.7: ToObject(undefined|null) throws TypeError. A JS `undefined`/`null`
@@ -468,7 +462,7 @@ function compileDynamicWithStatement(ctx: CodegenContext, fctx: FunctionContext,
   // ⇒ falls to the hoisted var). (#2663 Slice 2 var-precedence refinement.)
   const blockedNames = collectBodyLexicalNames(stmt.statement);
 
-  (fctx.withScopes ??= []).push({ kind: "dynamic", localIdx, blockedNames });
+  (fctx.withScopes ??= []).push({ kind: "dynamic", captureName, localIdx, blockedNames });
   try {
     compileStatement(ctx, fctx, stmt.statement);
   } finally {
@@ -1031,20 +1025,6 @@ function bodyContainsIdentifierDelete(stmt: ts.Statement): boolean {
         found = true;
         return;
       }
-    }
-    forEachChild(node, walk);
-  };
-  walk(stmt);
-  return found;
-}
-
-function containsNestedFunctionBoundary(stmt: ts.Statement): boolean {
-  let found = false;
-  const walk = (node: ts.Node): void => {
-    if (found) return;
-    if (node !== stmt && isFunctionOrClassBoundary(node)) {
-      found = true;
-      return;
     }
     forEachChild(node, walk);
   };

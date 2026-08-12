@@ -62,6 +62,20 @@ export const NEVER_CALLABLE_FACT_KINDS = new Set([
 ]);
 
 /**
+ * Standalone runtime-eval global pull-sync can replace an AOT binding after
+ * the checker has classified its initializer. In particular, Annex B B.3.3.3
+ * turns `var f = 123` into a callable when global eval executes a block-level
+ * `function f(){}`. The primitive-callee guard runs before call IR selection,
+ * so it must leave those live globals to the native IsCallable dispatcher.
+ */
+function runtimeEvalMayReplaceCallee(ctx: CodegenContext, fctx: FunctionContext, callee: ts.Expression): boolean {
+  if (!ctx.standalone || ctx.runtimeEvalGlobalFunctionBindings !== true || !ts.isIdentifier(callee)) return false;
+  const name = callee.text;
+  if (fctx.localMap.has(name)) return false;
+  return (ctx.globalObjectVarBindings?.has(name) ?? false) || (ctx.globalLexicalBindings?.has(name) ?? false);
+}
+
+/**
  * (#4221) §13.3.6.2 EvaluateCall steps 4-5 — calling a value that is provably
  * NOT callable must throw a TypeError. Before this guard the callee fell to
  * `compileCallExpression`'s last-resort arm, which compiles the callee + args
@@ -91,6 +105,11 @@ export function tryNonCallableValueCall(
   const callee = unwrapCallee(expr.expression);
   // `super(...)` / `import(...)` are not value calls.
   if (callee.kind === ts.SyntaxKind.SuperKeyword || callee.kind === ts.SyntaxKind.ImportKeyword) return undefined;
+
+  // Global eval can change the value and representation of these bindings
+  // after static type analysis. Preserve runtime IsCallable semantics instead
+  // of baking the initializer's primitive fact into an unconditional throw.
+  if (runtimeEvalMayReplaceCallee(ctx, fctx, callee)) return undefined;
 
   const fact = ctx.oracle.typeFactOf(callee);
   if (!NEVER_CALLABLE_FACT_KINDS.has(fact.kind) && !isFreshlyConstructedNonCallable(ctx, callee, fact.kind)) {

@@ -20,6 +20,9 @@
       "tests/dogfood/.react/**",
       "tests/dogfood/.react-upstream-suite/**",
       "tests/dogfood/.lit-upstream-suite/**",
+      "tests/dogfood/.hono-upstream-suite/**",
+      "tests/dogfood/.lodash-upstream-suite/**",
+      "tests/dogfood/.moment-upstream-suite/**",
       "tests/dogfood/.lit-implementation/**",
       "tests/dogfood/.npm-compat/**"
     ]

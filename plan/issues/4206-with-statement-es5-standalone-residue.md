@@ -1,10 +1,10 @@
 ---
 id: 4206
-title: "`with` statement, ES5 standalone: 105 failing files (39 `#1387` gate refusals + 66 runtime wrong-answers). Tier-2 dynamic `with` was measured BLIND in standalone and is fixed; the residue is blocked by a non-`with` global-binding defect"
+title: "`with` statement, ES5 standalone: 73-row residue reduced to 51; first IR closure-environment slice converts 22/39 legacy gate rows"
 status: ready
 sprint: current
 created: 2026-08-07
-updated: 2026-08-07
+updated: 2026-08-11
 priority: high
 horizon: xl
 feasibility: hard
@@ -14,7 +14,7 @@ area: codegen
 es_edition: 5
 language_feature: with-statement
 goal: es5
-related: [671, 1387, 3025, 4179, 4205, 1472]
+related: [671, 1387, 3025, 4179, 4205, 4231, 4264, 1472]
 origin: "2026-08-07 W23 census of the ES5 standalone failing residue (published standalone baseline 20260807, oracle v13). Supersedes the 2026-03 stub #671."
 loc-budget-allow:
   # +5 lines of WIRING only (one import, one call, a 3-line pointer comment).
@@ -24,6 +24,16 @@ loc-budget-allow:
   # any hook at all trips it; moving an unrelated sibling marker out purely to
   # buy back 5 lines would enlarge the diff for a budget technicality.
   - src/codegen/declarations/object-shape-widening.ts
+  # #4206 closure slice: the backend-neutral contract and codegen adapter live
+  # in new modules. These are the unavoidable IR selector/lowerer hooks plus
+  # the FunctionContext field and selector/lowerer hooks.
+  - src/ir/from-ast.ts
+  - src/ir/select.ts
+  - src/codegen/context/types.ts
+func-budget-allow:
+  # Four-line statement-dispatch hook; all selection logic is in the dedicated
+  # isPhase1WithStatement helper and ir/with-environment subsystem.
+  - src/ir/select.ts::isPhase1StatementListInScope
 ---
 
 # #4206 — the `with` statement residue, correctly sized
@@ -118,11 +128,10 @@ Representative: `language/statements/with/S12.10_A1.12_T1.js`,
 
 ## Acceptance criteria
 
-- [x] **Measured count per rejection reason** for the 39 gate-refusal files:
-      39/39 are `body contains a nested function or class`; the predicted
-      ~6 spread/accessor/computed-key/non-literal-target files do not exist.
-      Not compiled — cohort A is measured DOWNSTREAM of cohort D (see the W26
-      record), so it is deliberately deferred rather than attempted.
+- [x] **Measured count and outcome for the 39 gate-refusal files:** 39/39 were
+      the nested-function/class gate. The first callable function-expression
+      slice now yields **22 pass / 7 runtime fail / 10 explicit constructor
+      refusals**; see the 2026-08-11 record.
 - [ ] The 5 `S10.2.2_A1_T*` scope-chain files resolve identifiers through the
       object environment record. **Not attempted.**
 - [ ] `with(null)` / `with(undefined)` throw TypeError. **Not attempted**
@@ -346,3 +355,106 @@ environment would land those 39 on exactly the failures cohort D already has, so
 expected yield ≈ 0. Sequence it after D, or not at all until D moves.
 
 Session-wide context: `plan/agent-context/session-2026-08-07-lead-handoff.md`.
+
+---
+
+# 2026-08-11 — first closure-captured Object Environment Record slice
+
+## Outcome
+
+The fresh program residue was **73 failing ES5 standalone rows**. The original
+39-row closure gate was re-run on canonical `main@ebba42dfff7ceb` with the FULL
+interpreter provider. This slice converts **22/39** to pass, so the ES5 residue
+falls to **51**. It is a real semantic slice, not a diagnostic deletion:
+
+| original 39-row gate cohort | base | head |
+| --- | ---: | ---: |
+| pass | 0 | **22** |
+| runtime fail | 0 | 7 |
+| compile error | 39 | **10** |
+
+The ten remaining compile errors are the `S12.10_A{1,3}.8_T*` constructor
+rows. `new` needs a constructible-closure ABI that carries the captured
+environment, so the shared selector retains an explicit `constructible closure
+capture` refusal rather than compiling to a runtime `TypeError`.
+
+## Root cause and contract
+
+The statement compiler already kept an active `withScopes` entry while
+compiling the body, but closure construction captured only identifier values.
+Once control left the statement, the lifted function had no Object Environment
+Record and bare names could not perform invocation-time `HasBinding`/Get/Set.
+
+`src/ir/with-environment.ts` now owns the backend-neutral contract:
+
+- capture the environment **receiver reference**, never a property snapshot;
+- preserve outer-to-inner scope ordering;
+- admit ordinary synchronous function expressions only;
+- explicitly refuse arrows, declarations/hoisting, async/generators,
+  classes/methods/accessors, and construction.
+
+`src/ir/select.ts` and `src/ir/from-ast.ts` exercise that contract through an
+actual first IR slice: a closed inline object literal, block body, no
+field/declaration collision, and at least one admitted closure. The IR binds
+fields as `withField` entries, emits ordinary `object.get`/`object.set`, captures
+the receiver in `closure.new`, and rehydrates the property binding in the lifted
+body. The regression test asserts `irBodyEmitted: true` and executes the module
+host-free; this is not a legacy-only bypass.
+
+The maintained standalone lowering consumes the same contract for the larger
+measured surface (struct and dynamic externref receivers). Its normal WasmGC
+closure ABI and JS-host callback capture struct carry the hidden receiver, then
+recreate `withScopes` before body compilation. The lifted function's parameters
+and own `var` bindings are added to the scope's blocked names because its own
+Declarative Environment precedes the captured Object Environment Record.
+
+## Maintained A/B and controls
+
+Command (both arms, same 190 exact paths):
+
+```sh
+TEST262_TARGET=standalone TEST262_FULL_RUNTIME_EVAL=1 \
+TEST262_PATH_FILTER='language/statements/with|language/statements/function/S13.2.2_A17_T2.js|language/statements/function/S13.2.2_A19_' \
+TEST262_REPORTER=dot pnpm run test:262 -- --official-scope-only
+```
+
+| full filtered matrix | base | head | delta |
+| --- | ---: | ---: | ---: |
+| pass | 97 | **121** | **+24** |
+| pass→non-pass | — | **0** | 0 |
+
+The extra two improvements outside the 39-row ES5 cohort are the ES6
+`has-property-err.js` and `scope-var-close.js` rows. All **97/97 passing
+controls remain pass**. The maintained diff gate reports +24 net, zero
+regressions, and no compile-timeout noise.
+
+Full artifacts:
+
+- base: `test262-standalone-results-20260811-225827.jsonl` (97/190);
+- head: `test262-standalone-results-20260811-232846.jsonl` (121/190).
+
+After the full run, the constructor selector was narrowed so `new
+Test262Error(...)` does not look like construction of the captured closure. A
+maintained one-row rerun of `S13.2.2_A19_T8.js` confirms the only status change:
+the over-broad selector's compile error returns to its pre-existing assertion
+failure. Pass and regression arithmetic is unchanged; inferred final broad
+status is 121 pass / 54 fail / 15 compile error.
+
+## Remaining 17 rows in the original cohort
+
+- **10 constructor refusals:** constructible closure/environment ABI, named
+  above.
+- **2 early-return rows** (`A1.7_T3`, `A1.12_T3`): the function-local `var`
+  correctly shadows the object, but its uninitialized value is represented as
+  `null`, not `undefined`.
+- **2 abrupt-completion rows** (`A3.7_T4/T5`): the assertion-message path traps
+  in the pre-existing `__str_concat` null handling after an implicit-global
+  result mismatch.
+- **`S13.2.2_A17_T2`:** assigning a function value through the object
+  environment loses the callable carrier (`getRight()` returns `null`).
+- **`S13.2.2_A19_T7/T8`:** script-global ownership/hoisting assertions fail
+  before or outside the captured-environment read.
+
+This issue stays `ready`: the callable environment slice is complete and
+measured, while constructor capture and those independently named runtime
+mechanisms remain follow-up work.
