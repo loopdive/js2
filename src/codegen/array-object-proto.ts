@@ -42,7 +42,7 @@ import { compileArraySliceFromVecLocal } from "./array-methods.js";
 import { getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
-import { undefinedSingletonActive } from "./any-helpers.js";
+import { undefinedExternInstrs, undefinedSingletonActive } from "./any-helpers.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import {
   ensureAnyToStringHelper,
@@ -2465,10 +2465,15 @@ export function emitNativeGlobalThisObject(ctx: CodegenContext, fctx: FunctionCo
     ctx.builtinObjectGlobals.set(globalName, globalIdx);
   }
 
-  // Lazy init: `if (global == null) global = __new_plain_object();` then read it.
-  // The init body is nested directly inside the `if` (part of `fctx.body`), so
-  // any later late-import funcIdx shift walks it naturally — no detached-body
-  // (`liveBodies`) registration needed.
+  // Lazy init: allocate the one realm object and install the three immutable
+  // ES5 global value properties on that REAL carrier.  The old gOPD special
+  // case assumed top-level script `this` still lowered to undefined; #3365 now
+  // correctly lowers it to this object, so the runtime object itself must own
+  // the descriptors.  Seeding here also makes dynamic/IR-driven reflection see
+  // the same state instead of depending on an AST-only gOPD fold.
+  //
+  // Attach `initBody` before asking for any late helpers. Import shifts then
+  // walk the nested body through `fctx.body`, keeping its baked indices valid.
   const initBody: Instr[] = [
     { op: "call", funcIdx: newObjectIdx },
     { op: "global.set", index: globalIdx },
@@ -2476,6 +2481,34 @@ export function emitNativeGlobalThisObject(ctx: CodegenContext, fctx: FunctionCo
   fctx.body.push({ op: "global.get", index: globalIdx });
   fctx.body.push({ op: "ref.is_null" });
   fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: initBody, else: [] });
+
+  const boxNumberIdx = ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+  const defineValueIdx = ctx.funcMap.get("__defineProperty_value");
+  const liveBoxNumberIdx = ctx.funcMap.get("__box_number") ?? boxNumberIdx;
+  if (defineValueIdx !== undefined && liveBoxNumberIdx !== undefined) {
+    for (const key of ["NaN", "Infinity", "undefined"]) addStringConstantGlobal(ctx, key);
+    const seed = (key: string, value: Instr[]): void => {
+      initBody.push(
+        { op: "global.get", index: globalIdx },
+        ...stringConstantExternrefInstrs(ctx, key),
+        ...value,
+        { op: "f64.const", value: 0 }, // writable/enumerable/configurable: false
+        { op: "call", funcIdx: defineValueIdx },
+        { op: "drop" },
+      );
+    };
+    seed("NaN", [
+      { op: "f64.const", value: Number.NaN },
+      { op: "call", funcIdx: liveBoxNumberIdx },
+    ]);
+    seed("Infinity", [
+      { op: "f64.const", value: Number.POSITIVE_INFINITY },
+      { op: "call", funcIdx: liveBoxNumberIdx },
+    ]);
+    seed("undefined", undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }]);
+  }
+
   fctx.body.push({ op: "global.get", index: globalIdx });
   return { kind: "externref" };
 }
