@@ -888,11 +888,12 @@ consume it. Deleting that loop in this checkpoint would remove supported
 fallback behavior. Those consumers remain the next exact family slices; the
 loop is deleted with the last one, after a fresh reachability proof.
 
-The resumable checkpoint remains on
+The resumable checkpoint is published as ready PR #4402 from
 `codex/3522-general-classes-retirement` in
-`/private/tmp/ts2wasm-3522-general-classes-retirement`, stacked on queued PR
-#4395. Keep it local until that immutable parent lands; then rebase, requalify,
-publish one ready PR, and queue it without further branch mutation.
+`/private/tmp/ts2wasm-3522-general-classes-retirement`. It was rebased and
+fully requalified after parent PR #4395 landed. Once #4402 enters the merge
+queue, do not modify its branch; resume the next exact constructor family only
+after this overlapping production checkpoint lands.
 
 ## Exhaustive source-unit census
 
